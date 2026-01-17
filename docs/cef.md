@@ -511,11 +511,18 @@ When launched directly from terminal, CEF's message pump or browser management
 may not function correctly because the process isn't properly registered as a
 GUI app.
 
-**Potential Fix:** Call `NSApplication.setActivationPolicy(.regular)` BEFORE CEF
-initialization. Currently, WezTerm sets this after CEF init.
+**Fix Status:**
 
-**Workaround:** Always launch via `open` command rather than running the binary
-directly.
+- **cef-rs OSR example:** FIXED (commit `b4f4bbab5`). Adding
+  `NSApp().setActivationPolicy_(NSApplicationActivationPolicyRegular)` before
+  CEF initialization allows multiple browsers to work from terminal.
+- **WezTerm + CEF:** NOT YET FIXED. The same fix was attempted but produced
+  inconsistent results (debug builds can't load any browsers, release builds
+  load only one). WezTerm's more complex initialization may require additional
+  work. Deferred for now.
+
+**Workaround:** Use `open WezTerm.app` for development and testing. This works
+reliably with multiple browsers.
 
 ## Next Steps
 
