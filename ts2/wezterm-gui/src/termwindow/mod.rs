@@ -3671,14 +3671,31 @@ impl TermWindow {
             }
         };
 
-        // Get pane dimensions
-        let (width, height) = {
+        // Compute device scale factor from DPI
+        // macOS uses 72.0 as base DPI, so scale = dpi / 72.0
+        // e.g., Retina display: 144 DPI / 72.0 = 2.0x scale
+        const MACOS_BASE_DPI: f32 = 72.0;
+        let device_scale_factor = self.dimensions.dpi as f32 / MACOS_BASE_DPI;
+        log::info!(
+            "[CEF] Display DPI: {}, scale factor: {:.2}",
+            self.dimensions.dpi,
+            device_scale_factor
+        );
+
+        // Get pane dimensions in physical pixels, then convert to logical pixels
+        let (logical_width, logical_height) = {
             let mux = Mux::get();
             if let Some(pane) = mux.get_pane(pane_id) {
                 let dims = pane.get_dimensions();
+                // Physical pixel dimensions (render_metrics.cell_size is DPI-aware)
+                let physical_width =
+                    dims.cols as f32 * self.render_metrics.cell_size.width as f32;
+                let physical_height =
+                    dims.viewport_rows as f32 * self.render_metrics.cell_size.height as f32;
+                // Convert to logical pixels for CEF (CEF expects DIP coordinates)
                 (
-                    (dims.cols as f32 * self.render_metrics.cell_size.width as f32) as u32,
-                    (dims.viewport_rows as f32 * self.render_metrics.cell_size.height as f32) as u32,
+                    (physical_width / device_scale_factor) as u32,
+                    (physical_height / device_scale_factor) as u32,
                 )
             } else {
                 log::error!("[CEF] Pane {} not found", pane_id);
@@ -3694,12 +3711,13 @@ impl TermWindow {
             }
         });
 
-        // Create browser state
+        // Create browser state with logical dimensions
         match crate::cef_browser::BrowserState::new(
             pane_id,
             &url,
-            width.max(100),
-            height.max(100),
+            logical_width.max(100),
+            logical_height.max(100),
+            device_scale_factor,
             &device,
             &queue,
             &cef_bind_group_layout,

@@ -43,25 +43,29 @@ pub struct PaneRect {
 
 impl BrowserState {
     /// Create a new browser for the given pane
+    ///
+    /// Parameters:
+    /// - `width`, `height`: Logical pixel dimensions (DIP), not physical pixels
+    /// - `device_scale_factor`: Display scale factor (e.g., 2.0 for Retina)
     pub fn new(
         pane_id: PaneId,
         url: &str,
         width: u32,
         height: u32,
+        device_scale_factor: f32,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         bind_group_layout: &wgpu::BindGroupLayout,
         invalidate_callback: Arc<dyn Fn() + Send + Sync>,
     ) -> anyhow::Result<Self> {
         log::info!(
-            "[CEF] Creating browser for pane {} with URL: {} ({}x{})",
+            "[CEF] Creating browser for pane {} with URL: {} ({}x{} @ {:.1}x scale)",
             pane_id,
             url,
             width,
-            height
+            height,
+            device_scale_factor
         );
-
-        let device_scale_factor = 1.0; // TODO: Get from window
 
         // Create render handler parts
         let size = std::rc::Rc::new(RefCell::new((width, height)));
