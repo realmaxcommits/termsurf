@@ -34,6 +34,9 @@ pub struct BrowserState {
     pane_bounds: PaneBoundsHolder,
     /// Logical size for CEF (DIP)
     size: std::rc::Rc<RefCell<(u32, u32)>>,
+    /// Time of last resize call - used for settle-and-rerender logic
+    /// When Some, we're waiting to do a final "settle" render after 10ms of no changes
+    last_resize_time: RefCell<Option<std::time::Instant>>,
 }
 
 impl BrowserState {
@@ -121,6 +124,7 @@ impl BrowserState {
             texture_holder,
             pane_bounds,
             size,
+            last_resize_time: RefCell::new(None),
         })
     }
 
@@ -138,6 +142,22 @@ impl BrowserState {
     /// Get the current logical size (DIP)
     pub fn get_size(&self) -> (u32, u32) {
         *self.size.borrow()
+    }
+
+    /// Mark that a resize just happened (for settle-and-rerender logic)
+    pub fn mark_resize_time(&self) {
+        *self.last_resize_time.borrow_mut() = Some(std::time::Instant::now());
+    }
+
+    /// Clear the resize time (after settle render is done)
+    pub fn clear_resize_time(&self) {
+        *self.last_resize_time.borrow_mut() = None;
+    }
+
+    /// Check if we're waiting for a settle render and if enough time has passed
+    /// Returns Some(elapsed) if waiting, None if not waiting
+    pub fn time_since_last_resize(&self) -> Option<std::time::Duration> {
+        self.last_resize_time.borrow().map(|t| t.elapsed())
     }
 
     /// Get the browser host for sending events

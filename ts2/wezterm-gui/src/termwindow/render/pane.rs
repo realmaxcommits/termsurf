@@ -8,6 +8,8 @@ use crate::termwindow::render::{
 use crate::termwindow::{ScrollHit, UIItem, UIItemType};
 use ::window::bitmaps::TextureRect;
 use ::window::DeadKeyStatus;
+#[cfg(all(target_os = "macos", feature = "cef"))]
+use ::window::WindowOps;
 use anyhow::Context;
 use config::VisualBellTarget;
 use mux::pane::{PaneId, WithPaneLines};
@@ -805,6 +807,10 @@ impl crate::TermWindow {
         pos: &PositionedPane,
         _layers: &mut TripleLayerQuadAllocator,
     ) -> anyhow::Result<()> {
+        use std::time::Duration;
+
+        const SETTLE_DELAY: Duration = Duration::from_millis(10);
+
         let (x, y, width, height) = self.calculate_pane_pixel_bounds(pos)?;
 
         let pane_id = pos.pane.pane_id();
@@ -820,10 +826,33 @@ impl crate::TermWindow {
             let logical_height = (height / device_scale_factor) as u32;
 
             // Request re-render if size changed
-            // Uses same source of truth as viewport - no bouncing
             let (current_w, current_h) = browser.get_size();
             if logical_width != current_w || logical_height != current_h {
                 browser.resize(logical_width, logical_height);
+                browser.mark_resize_time();
+            }
+
+            // Settle-and-rerender logic:
+            // After 10ms of no size changes, trigger one final render to fix any
+            // texture mismatches that occurred during rapid resize
+            if let Some(elapsed) = browser.time_since_last_resize() {
+                if elapsed >= SETTLE_DELAY {
+                    // Settled! Do final render at current size
+                    log::debug!(
+                        "[CEF] Settle render for pane {} at {}x{} (waited {:?})",
+                        pane_id,
+                        logical_width,
+                        logical_height,
+                        elapsed
+                    );
+                    browser.resize(logical_width, logical_height);
+                    browser.clear_resize_time();
+                } else {
+                    // Still waiting to settle - keep paint loop running
+                    if let Some(ref w) = self.window {
+                        w.invalidate();
+                    }
+                }
             }
         }
 
