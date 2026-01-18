@@ -36,7 +36,11 @@ The browser must always match the precise position and dimensions of its pane.
    place. We detect pane changes, not window changes. The pane is the source of
    truth.
 
-2. **Re-render loop**: When CEF finishes rendering a new texture, we check if
+2. **Pixel coordinates, not grid**: Use precise pixel bounds, not grid
+   calculations (cols × cell_width). Grid-based sizing causes chunky resizing.
+   The browser must resize continuously to the pane's exact pixel dimensions.
+
+3. **Re-render loop**: When CEF finishes rendering a new texture, we check if
    the pane has changed since we requested the render. If it has (e.g., user is
    still dragging), we request another render. This continues until the texture
    matches the current pane size.
