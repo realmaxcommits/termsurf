@@ -151,9 +151,33 @@ impl BrowserState {
 
     /// Resize the browser
     pub fn resize(&self, width: u32, height: u32) {
+        log::info!(
+            "[CEF] BrowserState::resize called for pane {}: {}x{}",
+            self.pane_id,
+            width,
+            height
+        );
+        let old_size = *self.size.borrow();
         *self.size.borrow_mut() = (width, height);
+        log::info!(
+            "[CEF] BrowserState::resize: size updated from {:?} to ({}, {})",
+            old_size,
+            width,
+            height
+        );
         if let Some(host) = self.host() {
+            log::info!("[CEF] BrowserState::resize: calling was_resized() on host");
             host.was_resized();
+            log::info!("[CEF] BrowserState::resize: was_resized() completed, now calling invalidate()");
+            // Force a repaint - CEF may go dormant after page load and not repaint on resize alone
+            host.invalidate(PaintElementType::default());
+            log::info!("[CEF] BrowserState::resize: invalidate() completed, now pumping CEF message loop");
+            // Pump CEF message loop to ensure the resize is processed immediately
+            // Without this, CEF may not process the resize until its next scheduled work
+            cef::do_message_loop_work();
+            log::info!("[CEF] BrowserState::resize: do_message_loop_work() completed");
+        } else {
+            log::error!("[CEF] BrowserState::resize: host() returned None, cannot call was_resized()");
         }
     }
 
@@ -269,8 +293,13 @@ wrap_render_handler! {
 
     impl RenderHandler {
         fn view_rect(&self, _browser: Option<&mut Browser>, rect: Option<&mut Rect>) {
+            let (width, height) = *self.handler.size.borrow();
+            log::info!(
+                "[CEF] view_rect called, returning {}x{}",
+                width,
+                height
+            );
             if let Some(rect) = rect {
-                let (width, height) = *self.handler.size.borrow();
                 if width > 0 && height > 0 {
                     rect.width = width as i32;
                     rect.height = height as i32;
