@@ -165,11 +165,24 @@ impl crate::TermWindow {
             return Ok(());
         }
 
-        log::trace!("[CEF] render_cef_overlays: {} browser(s) active", browser_states.len());
+        // Only render browsers for panes that are currently visible
+        let visible_pane_ids: std::collections::HashSet<_> = self
+            .get_panes_to_render()
+            .iter()
+            .map(|pos| pos.pane.pane_id())
+            .collect();
+
+        log::trace!("[CEF] render_cef_overlays: {} browser(s) active, {} panes visible",
+            browser_states.len(), visible_pane_ids.len());
 
         let view = output_texture.create_view(&wgpu::TextureViewDescriptor::default());
 
         for (pane_id, browser) in browser_states.iter() {
+            // Skip browsers whose panes are not visible (e.g., on another tab)
+            if !visible_pane_ids.contains(pane_id) {
+                log::trace!("[CEF] render_cef_overlays: skipping pane {} (not visible)", pane_id);
+                continue;
+            }
             let Some(bind_group) = browser.get_texture_bind_group() else {
                 // No texture yet - CEF hasn't painted
                 log::trace!("[CEF] render_cef_overlays: pane {} has no texture yet", pane_id);
