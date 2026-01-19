@@ -658,8 +658,62 @@ impl super::TermWindow {
                             return;
                         }
 
-                        // In Browse mode, consume all other keys (browser receives input)
-                        // TODO: Forward key events to CEF browser
+                        // Forward key events to CEF browser
+                        use crate::cef_browser::{
+                            macos_keycode_to_native, macos_keycode_to_windows_vk, CefKeyEvent,
+                        };
+                        use cef::KeyEventType;
+
+                        // Update modifier state
+                        self.update_cef_modifiers(window_key.modifiers);
+                        let modifiers = self.cef_all_modifiers();
+
+                        // Get native key code from the raw event
+                        let native_code = window_key
+                            .raw
+                            .as_ref()
+                            .map(|r| r.raw_code as u32)
+                            .unwrap_or(0);
+                        let windows_vk = macos_keycode_to_windows_vk(native_code);
+                        let cef_native = macos_keycode_to_native(native_code);
+
+                        // Determine event type
+                        let event_type = if window_key.key_is_down {
+                            KeyEventType::KEYDOWN
+                        } else {
+                            KeyEventType::KEYUP
+                        };
+
+                        // Send KEYDOWN or KEYUP
+                        if let Some(browser) = self.browser_states.borrow().get(&pane_id) {
+                            let key_event = CefKeyEvent {
+                                event_type,
+                                modifiers,
+                                windows_key_code: windows_vk,
+                                native_key_code: cef_native,
+                                character: 0,
+                                unmodified_character: 0,
+                            };
+                            browser.send_key_event(&key_event);
+
+                            // For key-down, also send CHAR events for printable characters
+                            if window_key.key_is_down {
+                                // Extract character from the key
+                                if let ::window::KeyCode::Char(ch) = &window_key.key {
+                                    let char_event = CefKeyEvent {
+                                        event_type: KeyEventType::CHAR,
+                                        modifiers,
+                                        windows_key_code: *ch as i32,
+                                        native_key_code: 0,
+                                        character: *ch as u16,
+                                        unmodified_character: *ch as u16,
+                                    };
+                                    browser.send_key_event(&char_event);
+                                }
+                            }
+                        }
+
+                        // Consume the key - don't let it fall through to terminal
                         return;
                     }
                     BrowserMode::Control => {

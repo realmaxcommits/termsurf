@@ -467,6 +467,14 @@ pub struct TermWindow {
     /// CEF browser states for web overlay panes
     #[cfg(all(target_os = "macos", feature = "cef"))]
     browser_states: RefCell<std::collections::HashMap<PaneId, crate::cef_browser::BrowserState>>,
+
+    /// CEF keyboard modifier state (Shift, Ctrl, Alt, Cmd)
+    #[cfg(all(target_os = "macos", feature = "cef"))]
+    cef_modifiers: u32,
+
+    /// CEF mouse button state (which buttons are held)
+    #[cfg(all(target_os = "macos", feature = "cef"))]
+    cef_mouse_buttons: u32,
 }
 
 impl TermWindow {
@@ -551,6 +559,15 @@ impl TermWindow {
 
         if let Some(pane) = self.get_active_pane_or_overlay() {
             pane.focus_changed(focused);
+
+            // Notify CEF browser of focus change
+            #[cfg(all(target_os = "macos", feature = "cef"))]
+            {
+                let pane_id = pane.pane_id();
+                if let Some(browser) = self.browser_states.borrow().get(&pane_id) {
+                    browser.set_focus(focused);
+                }
+            }
         }
 
         self.update_title();
@@ -794,6 +811,10 @@ impl TermWindow {
             opengl_info: None,
             #[cfg(all(target_os = "macos", feature = "cef"))]
             browser_states: RefCell::new(std::collections::HashMap::new()),
+            #[cfg(all(target_os = "macos", feature = "cef"))]
+            cef_modifiers: 0,
+            #[cfg(all(target_os = "macos", feature = "cef"))]
+            cef_mouse_buttons: 0,
         };
 
         let tw = Rc::new(RefCell::new(myself));
@@ -3778,6 +3799,31 @@ impl TermWindow {
             if let Some(ref w) = self.window {
                 w.invalidate();
             }
+        }
+    }
+
+    /// Get combined CEF modifiers (keyboard + mouse button state)
+    pub fn cef_all_modifiers(&self) -> u32 {
+        self.cef_modifiers | self.cef_mouse_buttons
+    }
+
+    /// Update CEF modifier state from WezTerm Modifiers
+    pub fn update_cef_modifiers(&mut self, modifiers: ::window::Modifiers) {
+        use crate::cef_browser::{
+            EVENTFLAG_ALT_DOWN, EVENTFLAG_COMMAND_DOWN, EVENTFLAG_CONTROL_DOWN, EVENTFLAG_SHIFT_DOWN,
+        };
+        self.cef_modifiers = 0;
+        if modifiers.contains(::window::Modifiers::SHIFT) {
+            self.cef_modifiers |= EVENTFLAG_SHIFT_DOWN;
+        }
+        if modifiers.contains(::window::Modifiers::CTRL) {
+            self.cef_modifiers |= EVENTFLAG_CONTROL_DOWN;
+        }
+        if modifiers.contains(::window::Modifiers::ALT) {
+            self.cef_modifiers |= EVENTFLAG_ALT_DOWN;
+        }
+        if modifiers.contains(::window::Modifiers::SUPER) {
+            self.cef_modifiers |= EVENTFLAG_COMMAND_DOWN;
         }
     }
 }

@@ -728,6 +728,17 @@ impl super::TermWindow {
             self.current_mouse_capture = Some(MouseCapture::TerminalPane(pane.pane_id()));
         }
 
+        // CEF browser mouse handling
+        #[cfg(all(target_os = "macos", feature = "cef"))]
+        {
+            let pane_id = pane.pane_id();
+            if self.has_browser_for_pane(pane_id) {
+                if self.mouse_event_browser(pane_id, &event, context) {
+                    return;
+                }
+            }
+        }
+
         let is_focused = if let Some(focused) = self.focused.as_ref() {
             !self.config.swallow_mouse_click_on_window_focus
                 || (focused.elapsed() > Duration::from_millis(200))
@@ -1041,6 +1052,163 @@ impl super::TermWindow {
                 context.invalidate();
             }
         }
+    }
+
+    /// Handle mouse events for CEF browser panes
+    /// Returns true if the event was handled and should not be passed to the terminal
+    #[cfg(all(target_os = "macos", feature = "cef"))]
+    fn mouse_event_browser(
+        &mut self,
+        pane_id: mux::pane::PaneId,
+        event: &MouseEvent,
+        context: &dyn WindowOps,
+    ) -> bool {
+        use crate::cef_browser::{
+            BrowserMode, EVENTFLAG_LEFT_MOUSE_BUTTON, EVENTFLAG_MIDDLE_MOUSE_BUTTON,
+            EVENTFLAG_RIGHT_MOUSE_BUTTON,
+        };
+        use cef::MouseButtonType;
+
+        let browser_states = self.browser_states.borrow();
+        let Some(browser) = browser_states.get(&pane_id) else {
+            return false;
+        };
+
+        // Get browser viewport bounds (this is the browser area BELOW the control bar)
+        // pane_y is where the browser starts, control bar is above it
+        let (pane_x, pane_y, _pane_width, _pane_height) = browser.get_pane_bounds();
+        let cell_height = self.render_metrics.cell_size.height as f32;
+        let control_bar_height = cell_height * 2.0;
+
+        // The control bar is above the browser viewport
+        let control_bar_top = pane_y - control_bar_height;
+        let mouse_y = event.coords.y as f32;
+
+        // Determine if click is on control bar or browser area
+        // Control bar: from control_bar_top to pane_y
+        // Browser: from pane_y onwards
+        let on_control_bar = mouse_y >= control_bar_top && mouse_y < pane_y;
+        let _on_browser = mouse_y >= pane_y;
+
+        // Calculate position relative to browser viewport (in physical pixels)
+        // pane_y is already the top of the browser, so rel_y is browser-relative
+        let rel_x = event.coords.x as f32 - pane_x;
+        let rel_y = mouse_y - pane_y;  // relative to browser top, NOT pane top
+
+        // Handle click-to-switch-mode
+        if matches!(&event.kind, WMEK::Press(_)) {
+            let mode = browser.get_mode();
+            drop(browser_states); // Release borrow before modifying
+
+            if on_control_bar && mode == BrowserMode::Browse {
+                // Click on control bar in browse mode -> switch to control mode
+                if let Some(browser) = self.browser_states.borrow().get(&pane_id) {
+                    browser.set_mode(BrowserMode::Control);
+                }
+                context.invalidate();
+                return true;
+            }
+
+            if !on_control_bar && mode == BrowserMode::Control {
+                // Click on browser area in control mode -> switch to browse mode
+                if let Some(browser) = self.browser_states.borrow().get(&pane_id) {
+                    browser.set_mode(BrowserMode::Browse);
+                }
+                context.invalidate();
+                // Fall through to also forward the click to the browser
+            }
+
+            // Re-borrow for the rest of the function
+            let browser_states = self.browser_states.borrow();
+            let Some(browser) = browser_states.get(&pane_id) else {
+                return true;
+            };
+
+            // Only forward if in browse mode and in browser area
+            if browser.get_mode() != BrowserMode::Browse || on_control_bar {
+                return on_control_bar; // Consume clicks on control bar
+            }
+
+            // Scale to logical pixels (CEF expects DIP)
+            // rel_y is already browser-relative (pane_y is the browser top)
+            let scale = self.dimensions.dpi as f32 / 72.0;
+            let cef_x = (rel_x / scale) as i32;
+            let cef_y = (rel_y / scale) as i32;
+
+            let modifiers = self.cef_all_modifiers();
+
+            // Handle mouse press
+            if let WMEK::Press(button) = &event.kind {
+                let cef_button = match button {
+                    MousePress::Left => MouseButtonType::LEFT,
+                    MousePress::Right => MouseButtonType::RIGHT,
+                    MousePress::Middle => MouseButtonType::MIDDLE,
+                };
+
+                // Update mouse button state
+                match button {
+                    MousePress::Left => self.cef_mouse_buttons |= EVENTFLAG_LEFT_MOUSE_BUTTON,
+                    MousePress::Right => self.cef_mouse_buttons |= EVENTFLAG_RIGHT_MOUSE_BUTTON,
+                    MousePress::Middle => self.cef_mouse_buttons |= EVENTFLAG_MIDDLE_MOUSE_BUTTON,
+                }
+
+                browser.send_mouse_click(cef_x, cef_y, cef_button, false, 1, modifiers);
+            }
+
+            return true;
+        }
+
+        // For non-press events, check mode
+        let mode = browser.get_mode();
+        if mode != BrowserMode::Browse || on_control_bar {
+            drop(browser_states);
+            return on_control_bar; // Only consume events on control bar
+        }
+
+        // Scale to logical pixels (CEF expects DIP)
+        // rel_y is already browser-relative (pane_y is the browser top)
+        let scale = self.dimensions.dpi as f32 / 72.0;
+        let cef_x = (rel_x / scale) as i32;
+        let cef_y = (rel_y / scale) as i32;
+
+        let modifiers = self.cef_all_modifiers();
+
+        match &event.kind {
+            WMEK::Move => {
+                browser.send_mouse_move(cef_x, cef_y, modifiers, false);
+            }
+
+            WMEK::Release(button) => {
+                let cef_button = match button {
+                    MousePress::Left => MouseButtonType::LEFT,
+                    MousePress::Right => MouseButtonType::RIGHT,
+                    MousePress::Middle => MouseButtonType::MIDDLE,
+                };
+
+                // Clear mouse button state
+                match button {
+                    MousePress::Left => self.cef_mouse_buttons &= !EVENTFLAG_LEFT_MOUSE_BUTTON,
+                    MousePress::Right => self.cef_mouse_buttons &= !EVENTFLAG_RIGHT_MOUSE_BUTTON,
+                    MousePress::Middle => self.cef_mouse_buttons &= !EVENTFLAG_MIDDLE_MOUSE_BUTTON,
+                }
+
+                browser.send_mouse_click(cef_x, cef_y, cef_button, true, 1, modifiers);
+            }
+
+            WMEK::VertWheel(delta) => {
+                browser.send_mouse_wheel(cef_x, cef_y, 0, (*delta as i32) * 120, modifiers);
+            }
+
+            WMEK::HorzWheel(delta) => {
+                browser.send_mouse_wheel(cef_x, cef_y, (*delta as i32) * 120, 0, modifiers);
+            }
+
+            WMEK::Press(_) => {
+                // Already handled above
+            }
+        }
+
+        true
     }
 }
 
