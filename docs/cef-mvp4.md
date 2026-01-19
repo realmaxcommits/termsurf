@@ -10,11 +10,10 @@ adapted for CEF and WezTerm.
 TermSurf 1.x has a modal system for browser panes:
 
 - **Control mode**: Terminal keybindings work, browser is inactive
-- **Browse mode**: Browser has focus, terminal keybindings intercepted
-- **Insert mode**: URL field is editable
+- **Browse mode**: Browser has focus, receives all input
 
 This provides a clear UX where users always know whether their keystrokes go to
-the terminal or browser, with a guaranteed escape hatch (Ctrl+C).
+the terminal or browser.
 
 ## Requirements
 
@@ -24,81 +23,82 @@ the terminal or browser, with a guaranteed escape hatch (Ctrl+C).
 
    - Terminal keybindings work (pane navigation, splits, etc.)
    - Browser is visually dimmed
+   - No input goes to the browser
    - Keybindings:
      - `Enter` → browse mode
-     - `i` → insert mode
      - `Ctrl+C` → close browser
-   - Status bar: "i to edit, Enter to browse, Ctrl+C to close"
+   - Control bar displays: "Enter to browse. Ctrl+C to exit."
 
 2. **Browse Mode**
 
-   - Browser receives all input
-   - Control bar is visually dimmed
-   - `Ctrl+C` always exits to control mode (cannot be overridden by page)
-   - Terminal keybindings still work (intercepted before browser)
-   - Status bar: "Ctrl+C to control"
-
-3. **Insert Mode**
-
-   - URL field is editable, text selected
-   - `Enter` → navigate to URL, switch to browse mode
-   - `Esc` → cancel, restore URL, switch to control mode
-   - Status bar: "Enter to go, Esc to cancel"
+   - Browser receives all input (keys, mouse, touch)
+   - If browser doesn't use a keybinding, it passes through to WezTerm
+   - Control bar displays: current URL only
 
 ### Control Bar
 
-A horizontal bar at the bottom of the browser pane:
+A horizontal bar at the top of the browser pane:
+
+**Browse mode:**
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│ (1/2) https://example.com/path/to/page    Ctrl+C to control │
-│ └─┬─┘ └──────────────┬──────────────────┘ └───────┬───────┘ │
-│ stack        URL (truncates)                  mode hint     │
+│ https://example.com/path/to/page                            │
 └─────────────────────────────────────────────────────────────┘
 ```
 
-- **Stack indicator**: "(1/2)" when multiple browsers in pane (future feature)
-- **URL field**: Current URL, truncates with ellipsis, editable in insert mode
-- **Mode hint**: Context-sensitive help text
+**Control mode:**
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│ Enter to browse. Ctrl+C to exit.                            │
+└─────────────────────────────────────────────────────────────┘
+```
+
+- URL truncates with ellipsis if too long
+- Height: 2 cell heights (half-cell top margin + text + half-cell bottom margin)
+
+### No Stacking
+
+Only one browser per pane is supported. Attempting to open a second browser in
+the same pane returns an error. This simplifies the implementation and avoids
+confusion about which browser is active.
 
 ### Visual Feedback
 
-- **Dim overlay**: Inactive area (browser or control bar) is dimmed
-- Clicking dimmed area switches to that mode
-- Opacity matches WezTerm's `inactive_pane_hsb` setting
+- **Control mode**: Browser area is dimmed
+- **Browse mode**: Control bar is dimmed (optional, may skip for MVP)
+- Clicking browser area switches to browse mode
+- Clicking control bar switches to control mode
 
 ## Technical Approach
 
 ### 1. Control Bar Rendering
 
-The control bar is rendered as part of the browser overlay in
-`paint_browser_overlay`. It consists of:
+The control bar is rendered in two phases to avoid wgpu buffer conflicts:
 
-- Background: Solid color matching terminal background or config
-- URL text: Left-aligned, monospace, truncates
-- Mode hint: Right-aligned, secondary color
-- Height: ~24-28 pixels
+1. **Background**: Rendered via `filled_rectangle` during `paint_pane` (while
+   layers buffer is mapped)
+2. **Text**: Rendered via `render_element` in `paint_browser_control_bars`
+   (after layers buffer is dropped)
 
-**Rendering approach**: Render as quads/text using WezTerm's existing text
-rendering, or as a separate wgpu pass after the browser texture.
+This matches the pattern used by `paint_modal`.
 
 ### 2. Mode State
 
-Add mode tracking to `BrowserState`:
+Mode tracking in `BrowserState`:
 
 ```rust
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum BrowserMode {
     Control,
     Browse,
-    Insert,
 }
 
 pub struct BrowserState {
     // ... existing fields ...
     mode: RefCell<BrowserMode>,
     url: RefCell<String>,
-    edit_url: RefCell<String>,  // URL being edited in insert mode
 }
 ```
 
@@ -113,17 +113,13 @@ In `keyevent.rs`, the CEF browser key handling section needs mode-aware logic:
     if let Some(browser) = self.browser_states.borrow().get(&pane_id) {
         match browser.get_mode() {
             BrowserMode::Control => {
-                // Handle Enter, i, Ctrl+C
-                // Other keys: check if terminal keybinding, else ignore
+                // Handle Enter → browse mode
+                // Handle Ctrl+C → close browser
+                // Other keys: process as terminal keybindings
             }
             BrowserMode::Browse => {
-                // Ctrl+C always exits to control mode
-                // Check terminal keybindings first
-                // Forward remaining keys to CEF
-            }
-            BrowserMode::Insert => {
-                // Handle Enter (submit), Esc (cancel)
-                // Forward text input to URL field state
+                // Forward all input to CEF
+                // If CEF doesn't handle it, fall through to WezTerm
             }
         }
     }
@@ -132,84 +128,82 @@ In `keyevent.rs`, the CEF browser key handling section needs mode-aware logic:
 
 ### 4. CEF Input Forwarding
 
-In browse mode, forward key events to CEF:
+In browse mode, forward all input to CEF:
 
 ```rust
 impl BrowserState {
-    pub fn forward_key_event(&self, event: &KeyEvent) {
+    pub fn forward_key_event(&self, event: &KeyEvent) -> bool {
         // Convert WezTerm KeyEvent to CEF KeyEvent
         // Send via browser.host().send_key_event()
+        // Return true if CEF handled it, false to pass through
     }
 }
 ```
 
-### 5. Dim Overlay
-
-Render a semi-transparent overlay on the inactive area:
-
-- **Control/Insert mode**: Dim the browser area
-- **Browse mode**: Dim the control bar
-
-The overlay is rendered after the browser texture but uses the same viewport
-bounds system from MVP3.
-
-### 6. Click Handling
+### 5. Click Handling
 
 Mouse clicks need mode-aware routing:
 
-- Click on dimmed browser → switch to browse mode
-- Click on dimmed control bar → switch to control mode
-- Click on URL field (in control mode) → switch to insert mode
+- Click on browser area → switch to browse mode, forward click to CEF
+- Click on control bar → switch to control mode
+
+### 6. Single Browser Enforcement
+
+When opening a browser in a pane that already has one:
+
+```rust
+pub fn open_browser_in_pane(&mut self, pane_id: PaneId, url: &str) -> Result<()> {
+    if self.browser_states.borrow().contains_key(&pane_id) {
+        return Err(anyhow!("Pane already has a browser open"));
+    }
+    // ... create browser ...
+}
+```
 
 ## Implementation Plan
 
-### Phase 1: Mode State and Basic Switching
+### Phase 1: Mode State and Basic Switching (Done)
 
 1. Add `BrowserMode` enum and state to `BrowserState`
 2. Update key handling in `keyevent.rs` for mode switching
-3. Add mode-based key routing (control: Enter/i/Ctrl+C, browse: Ctrl+C)
+3. Add mode-based key routing (control: Enter/Ctrl+C)
 
-### Phase 2: Control Bar Rendering
+### Phase 2: Control Bar Rendering (Done)
 
-1. Calculate control bar bounds (bottom of pane, fixed height)
-2. Render control bar background
-3. Render URL text (truncated)
-4. Render mode hint text
-5. Adjust browser viewport to exclude control bar height
+1. Calculate control bar bounds (top of pane, 2 cell heights)
+2. Render control bar background (during paint_pane)
+3. Render control bar text (after layers dropped)
+4. Adjust browser viewport to exclude control bar height
 
-### Phase 3: Visual Feedback
+### Phase 3: Control Bar Text Content
 
-1. Render dim overlay on inactive area
+1. In browse mode: display current URL
+2. In control mode: display "Enter to browse. Ctrl+C to exit."
+
+### Phase 4: Visual Feedback
+
+1. Render dim overlay on browser area in control mode
 2. Implement click detection for mode switching
-3. Match opacity to WezTerm inactive pane settings
-
-### Phase 4: Insert Mode
-
-1. Track edit URL separately from actual URL
-2. Handle text input in insert mode
-3. Render cursor in URL field
-4. Handle Enter (navigate) and Esc (cancel)
 
 ### Phase 5: CEF Input Forwarding
 
-1. Convert WezTerm key events to CEF format
-2. Forward mouse events to CEF
-3. Handle focus/blur for CEF browser
+1. Forward key events to CEF in browse mode
+2. Forward mouse events to CEF in browse mode
+3. Handle pass-through for unhandled keys
 
 ## Key Differences from TS1
 
-| Aspect          | TS1 (Swift/WKWebView)            | TS2 (Rust/CEF)                 |
-| --------------- | -------------------------------- | ------------------------------ |
-| Event monitor   | NSEvent.addLocalMonitorForEvents | WezTerm key_event_impl         |
-| First responder | NSView responder chain           | WezTerm pane focus             |
-| Text rendering  | NSTextField                      | WezTerm text rendering or wgpu |
-| Dim overlay     | NSView with alpha                | wgpu quad with alpha           |
-| URL editing     | Native text field                | Custom text input handling     |
+| Aspect          | TS1 (Swift/WKWebView)            | TS2 (Rust/CEF)                     |
+| --------------- | -------------------------------- | ---------------------------------- |
+| Event monitor   | NSEvent.addLocalMonitorForEvents | WezTerm key_event_impl             |
+| First responder | NSView responder chain           | WezTerm pane focus                 |
+| Text rendering  | NSTextField                      | WezTerm box model (render_element) |
+| Dim overlay     | NSView with alpha                | wgpu quad with alpha               |
 
 ## Non-Goals for MVP4
 
-- Multiple browser stack (future feature)
-- Full text editing (selection, copy/paste in URL field)
+- Insert mode (URL editing)
+- Multiple browser stack
 - Navigation controls (back/forward buttons)
 - Tab completion for URLs
 
@@ -217,14 +211,14 @@ Mouse clicks need mode-aware routing:
 
 The implementation is complete when:
 
+- [x] Control bar renders with background and text
+- [x] Browse mode displays current URL
+- [ ] Control mode displays "Enter to browse. Ctrl+C to exit."
 - [ ] Pressing Enter in control mode switches to browse mode
-- [ ] Pressing i in control mode switches to insert mode
 - [ ] Pressing Ctrl+C in control mode closes the browser
-- [ ] Pressing Ctrl+C in browse mode switches to control mode
-- [ ] Pressing Enter in insert mode navigates and switches to browse mode
-- [ ] Pressing Esc in insert mode cancels and switches to control mode
-- [ ] Control bar displays current URL and mode hint
-- [ ] Inactive area is visually dimmed
-- [ ] Clicking dimmed area switches modes
-- [ ] Terminal keybindings work in control mode
-- [ ] Browser receives input in browse mode
+- [ ] In browse mode, input goes to browser
+- [ ] Unhandled browser keys pass through to WezTerm
+- [ ] Clicking browser area switches to browse mode
+- [ ] Clicking control bar switches to control mode
+- [ ] Browser area is dimmed in control mode
+- [ ] Opening second browser in same pane returns error
