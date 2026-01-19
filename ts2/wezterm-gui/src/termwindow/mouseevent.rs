@@ -1104,6 +1104,7 @@ impl super::TermWindow {
                 // Click on control bar in browse mode -> switch to control mode
                 if let Some(browser) = self.browser_states.borrow().get(&pane_id) {
                     browser.set_mode(BrowserMode::Control);
+                    browser.set_focus(false); // Remove focus in control mode
                 }
                 context.invalidate();
                 return true;
@@ -1113,6 +1114,7 @@ impl super::TermWindow {
                 // Click on browser area in control mode -> switch to browse mode
                 if let Some(browser) = self.browser_states.borrow().get(&pane_id) {
                     browser.set_mode(BrowserMode::Browse);
+                    browser.set_focus(true); // Give focus in browse mode
                 }
                 context.invalidate();
                 // Fall through to also forward the click to the browser

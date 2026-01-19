@@ -645,6 +645,7 @@ impl super::TermWindow {
                             );
                             if let Some(browser) = self.browser_states.borrow().get(&pane_id) {
                                 browser.set_mode(BrowserMode::Control);
+                                browser.set_focus(false); // Remove focus in control mode
                             }
                             return;
                         }
@@ -770,6 +771,7 @@ impl super::TermWindow {
                             );
                             if let Some(browser) = self.browser_states.borrow().get(&pane_id) {
                                 browser.set_mode(BrowserMode::Browse);
+                                browser.set_focus(true); // Give focus in browse mode
                             }
                             return;
                         }

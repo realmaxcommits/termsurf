@@ -560,12 +560,16 @@ impl TermWindow {
         if let Some(pane) = self.get_active_pane_or_overlay() {
             pane.focus_changed(focused);
 
-            // Notify CEF browser of focus change
+            // Notify CEF browser of focus change (only if in browse mode)
             #[cfg(all(target_os = "macos", feature = "cef"))]
             {
+                use crate::cef_browser::BrowserMode;
                 let pane_id = pane.pane_id();
                 if let Some(browser) = self.browser_states.borrow().get(&pane_id) {
-                    browser.set_focus(focused);
+                    // Only set focus if in browse mode; control mode should stay unfocused
+                    if browser.get_mode() == BrowserMode::Browse {
+                        browser.set_focus(focused);
+                    }
                 }
             }
         }
@@ -3746,6 +3750,8 @@ impl TermWindow {
             invalidate_callback,
         ) {
             Ok(state) => {
+                // Browser starts in browse mode, so give it focus
+                state.set_focus(true);
                 self.browser_states.borrow_mut().insert(pane_id, state);
                 log::info!("[CEF] Browser created successfully for pane {}", pane_id);
 

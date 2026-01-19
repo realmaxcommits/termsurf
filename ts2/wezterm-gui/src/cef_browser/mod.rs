@@ -264,6 +264,7 @@ impl BrowserState {
 
     /// Send focus to the browser
     pub fn set_focus(&self, focused: bool) {
+        log::info!("[CEF] set_focus({})", focused);
         if let Some(host) = self.host() {
             host.set_focus(focused as i32);
         }
