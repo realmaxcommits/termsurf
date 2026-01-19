@@ -734,7 +734,10 @@ impl crate::TermWindow {
     ///
     /// `(x, y, width, height)` in physical pixels as `f32`
     #[cfg(all(target_os = "macos", feature = "cef"))]
-    fn calculate_pane_pixel_bounds(&self, pos: &PositionedPane) -> anyhow::Result<(f32, f32, f32, f32)> {
+    fn calculate_pane_pixel_bounds(
+        &self,
+        pos: &PositionedPane,
+    ) -> anyhow::Result<(f32, f32, f32, f32)> {
         let (padding_left, padding_top) = self.padding_left_top();
 
         let tab_bar_height = if self.show_tab_bar {
@@ -758,7 +761,10 @@ impl crate::TermWindow {
         // Calculate position and size - extends to window edges for edge panes
         let (x, width_delta) = if pos.left == 0 {
             // Left edge pane: start at true window edge
-            (0., padding_left + border.left.get() as f32 + (cell_width / 2.0))
+            (
+                0.,
+                padding_left + border.left.get() as f32 + (cell_width / 2.0),
+            )
         } else {
             // Interior pane: extend half-cell into left divider
             (
@@ -809,7 +815,7 @@ impl crate::TermWindow {
     ) -> anyhow::Result<()> {
         use std::time::Duration;
 
-        const SETTLE_DELAY: Duration = Duration::from_millis(10);
+        const SETTLE_DELAY: Duration = Duration::from_millis(30);
 
         let (x, y, width, height) = self.calculate_pane_pixel_bounds(pos)?;
 
