@@ -463,6 +463,62 @@ impl super::TermWindow {
             None => return,
         };
 
+        // CEF browser shortcut handling - must be before WezTerm keybinding processing
+        // to ensure browser shortcuts take priority when in Browse mode
+        #[cfg(all(target_os = "macos", feature = "cef"))]
+        {
+            use crate::cef_browser::BrowserMode;
+
+            let pane_id = pane.pane_id();
+            let browser_mode = self
+                .browser_states
+                .borrow()
+                .get(&pane_id)
+                .map(|b| b.get_mode());
+
+            if let Some(BrowserMode::Browse) = browser_mode {
+                // Handle navigation/reload shortcuts: Cmd+[, Cmd+], Cmd+R, Cmd+Shift+R
+                if key.key_is_down && key.modifiers.contains(Modifiers::SUPER) {
+                    let handled = match &key.key {
+                        KeyCode::Char('[') => {
+                            log::info!("[CEF] Cmd+[: navigating back for pane {}", pane_id);
+                            if let Some(browser) = self.browser_states.borrow().get(&pane_id) {
+                                browser.go_back();
+                            }
+                            true
+                        }
+                        KeyCode::Char(']') => {
+                            log::info!("[CEF] Cmd+]: navigating forward for pane {}", pane_id);
+                            if let Some(browser) = self.browser_states.borrow().get(&pane_id) {
+                                browser.go_forward();
+                            }
+                            true
+                        }
+                        KeyCode::Char('r') => {
+                            log::info!("[CEF] Cmd+R: reload for pane {}", pane_id);
+                            if let Some(browser) = self.browser_states.borrow().get(&pane_id) {
+                                browser.reload();
+                            }
+                            true
+                        }
+                        KeyCode::Char('R') => {
+                            // Cmd+Shift+R (uppercase R with SHIFT modifier)
+                            log::info!("[CEF] Cmd+Shift+R: hard reload for pane {}", pane_id);
+                            if let Some(browser) = self.browser_states.borrow().get(&pane_id) {
+                                browser.reload_ignore_cache();
+                            }
+                            true
+                        }
+                        _ => false,
+                    };
+                    if handled {
+                        key.set_handled();
+                        return;
+                    }
+                }
+            }
+        }
+
         // First, try to match raw physical key
         let phys_key = match &key.key {
             phys @ KeyCode::Physical(_) => Some(phys.clone()),
@@ -659,49 +715,11 @@ impl super::TermWindow {
                             return;
                         }
 
-                        // Handle Cmd+[ (go back) and Cmd+] (go forward)
-                        if window_key.key_is_down
-                            && window_key.modifiers.contains(::window::Modifiers::SUPER)
-                        {
-                            match &window_key.key {
-                                ::window::KeyCode::Char('[') => {
-                                    log::info!("[CEF] Cmd+[: navigating back for pane {}", pane_id);
-                                    if let Some(browser) =
-                                        self.browser_states.borrow().get(&pane_id)
-                                    {
-                                        browser.go_back();
-                                    }
-                                    return;
-                                }
-                                ::window::KeyCode::Char(']') => {
-                                    log::info!(
-                                        "[CEF] Cmd+]: navigating forward for pane {}",
-                                        pane_id
-                                    );
-                                    if let Some(browser) =
-                                        self.browser_states.borrow().get(&pane_id)
-                                    {
-                                        browser.go_forward();
-                                    }
-                                    return;
-                                }
-                                _ => {}
-                            }
-                        }
-
                         // Forward key events to CEF browser
                         use crate::cef_browser::{
                             macos_keycode_to_native, macos_keycode_to_windows_vk, CefKeyEvent,
                         };
                         use cef::KeyEventType;
-
-                        // DEBUG: Log incoming key event
-                        log::info!(
-                            "[CEF KEY] Received: key_is_down={}, key={:?}, raw_code={:?}",
-                            window_key.key_is_down,
-                            window_key.key,
-                            window_key.raw.as_ref().map(|r| r.raw_code)
-                        );
 
                         // Skip KEYUP for action keys - CEF responds to both KEYDOWN and KEYUP,
                         // causing double actions (e.g., Tab moves focus twice, Enter submits twice)

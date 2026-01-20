@@ -283,6 +283,18 @@ impl BrowserState {
         self.browser.go_forward();
     }
 
+    /// Reload the current page
+    pub fn reload(&self) {
+        log::info!("[CEF] reload()");
+        self.browser.reload();
+    }
+
+    /// Reload the current page, ignoring cached content
+    pub fn reload_ignore_cache(&self) {
+        log::info!("[CEF] reload_ignore_cache()");
+        self.browser.reload_ignore_cache();
+    }
+
     /// Send mouse move event to the browser
     /// x, y are in logical pixels (DIP) relative to the browser viewport
     pub fn send_mouse_move(&self, x: i32, y: i32, modifiers: u32, mouse_leave: bool) {

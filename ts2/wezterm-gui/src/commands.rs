@@ -1266,7 +1266,7 @@ pub fn derive_command_from_key_assignment(action: &KeyAssignment) -> Option<Comm
         ReloadConfiguration => CommandDef {
             brief: "Reload configuration".into(),
             doc: "Reloads the configuration file".into(),
-            keys: vec![(Modifiers::SUPER, "r".into())],
+            keys: vec![],
             args: &[],
             menubar: &["WezTerm"],
             icon: Some("md_reload"),
