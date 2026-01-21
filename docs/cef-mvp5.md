@@ -571,7 +571,7 @@ Cut now appears in Edit menu and works in browser Browse mode.
 
 ### Experiment 5: Make Cut act as Copy in Terminal
 
-**Status:** Planned
+**Status:** SUCCESS
 
 **Goal:** When Cut (Cmd+X) is triggered outside of browser Browse mode, perform
 a copy operation instead of doing nothing.
@@ -599,3 +599,44 @@ a copy operation instead of doing nothing.
   ```
 
 This is the same logic used by `CopyTo(ClipboardCopyDestination::Clipboard)`.
+
+#### Test Result
+
+Cut now copies selected text in terminal panes.
+
+## Conclusion
+
+MVP5 is complete. Copy, cut, and paste now work in CEF browser panes.
+
+### Lessons Learned
+
+**1. Never implement without explicit approval**
+
+Even when confident, present the plan and wait for approval before touching
+code. Violations cost time and money.
+
+**2. Research the full system, not just the obvious parts**
+
+- Experiment 1 failed because the event flow was traced but the asynchronous
+  nature of `send_key_event()` through CEF's message loop was missed, causing
+  re-entrant callbacks that conflicted with RefCell borrows.
+- Experiment 3 failed because `CommandDef` was added but the separate explicit
+  list that populates menu items was not discovered. The `CommandDef` only
+  defines metadata—it doesn't add items to menus.
+
+**3. Synchronous is safer than asynchronous**
+
+Experiment 2 succeeded by using direct synchronous FFI calls (`frame.copy()`,
+`frame.paste()`) instead of simulating key events through the message loop. When
+given a choice, prefer the simpler, synchronous approach.
+
+**4. Build success ≠ feature works**
+
+Both Experiment 1 and Experiment 3 compiled successfully but failed at
+runtime/testing. Compilation only proves syntax is correct, not that the feature
+is properly integrated.
+
+**5. Document failures honestly**
+
+Recording what went wrong and why helps avoid repeating mistakes and provides a
+clear trail for future reference.
