@@ -405,7 +405,7 @@ loop.
 
 ### Experiment 2: Direct Frame Clipboard Methods
 
-**Status:** Build succeeded, awaiting test
+**Status:** SUCCESS
 
 **Approach:** Use CEF's direct clipboard methods instead of simulating key
 events.
@@ -488,3 +488,13 @@ Same pattern for `PasteFrom` with `frame.paste()`.
 
 Build succeeded with `cargo build --features cef`. Only pre-existing warnings,
 no errors.
+
+#### Test Result
+
+**Copy+paste works in browser.** Tested with Google search bar - able to copy
+text and paste into text fields.
+
+**Still to verify:**
+
+- Cut (Cmd+X) in browser
+- Terminal copy+paste still works (no regression)
