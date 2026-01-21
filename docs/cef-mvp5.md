@@ -305,3 +305,52 @@ Modify `termwindow/mod.rs` at the `CopyTo` and `PasteFrom` match arms (~lines
 
 All infrastructure exists. This is a surgical change to ~20 lines in one
 location.
+
+#### Logging Strategy
+
+All logs use `[CEF CLIPBOARD]` prefix to distinguish from existing `[CEF]` and
+`[CEF KEY]` logs.
+
+**Entry point:**
+
+```rust
+log::info!("[CEF CLIPBOARD] CopyTo triggered for pane {}", pane_id);
+```
+
+**Browser check:**
+
+```rust
+// If browser found:
+log::info!("[CEF CLIPBOARD] Found browser for pane {}, mode={:?}", pane_id, mode);
+
+// If no browser:
+log::info!("[CEF CLIPBOARD] No browser for pane {}, using terminal copy", pane_id);
+```
+
+**Mode decision:**
+
+```rust
+// If Browse mode - forwarding to CEF:
+log::info!("[CEF CLIPBOARD] Browse mode - sending Cmd+C to CEF (windows_vk={}, native={})", windows_vk, native_code);
+
+// If Control mode - fall through to terminal:
+log::info!("[CEF CLIPBOARD] Control mode - using terminal copy");
+```
+
+**CEF event sent:**
+
+```rust
+log::info!("[CEF CLIPBOARD] Sent KEYDOWN to CEF");
+log::info!("[CEF CLIPBOARD] Sent CHAR to CEF");
+```
+
+Same pattern applies for `PasteFrom` (Cmd+V).
+
+**To run with logging:**
+
+```bash
+open ts2/target/debug/TermSurf.app \
+  --stdout /tmp/termsurf-debug.log \
+  --stderr /tmp/termsurf-debug.log \
+  --env WEZTERM_LOG=info,wezterm_gui=debug
+```
