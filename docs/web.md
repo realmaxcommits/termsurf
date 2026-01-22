@@ -30,6 +30,16 @@ back to the terminal, similar to running `node script.js`. The CLI command
 remains running and streams console output until the browser is closed or the
 user presses Ctrl+C.
 
+### One Browser Per Pane
+
+Each pane supports only one browser at a time. If `web open` or `web file` is
+called on a pane that already has an open browser, the command will fail with an
+error. To open a different URL, first close the existing browser with
+`web close`, then open the new one.
+
+This constraint simplifies the implementation by avoiding browser stacking
+complexity.
+
 ### Invocation
 
 Phase 1: Subcommand of `termsurf cli`:
