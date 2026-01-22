@@ -429,66 +429,227 @@ CEF provides native console capture via `DisplayHandler::on_console_message()`:
 - Receives: log level, message, source URL, line number
 - Already implemented in cef-rs (`cef/src/handlers/display_handler.rs`)
 
+TS1's routing approach (to support multiple simultaneous browser panes):
+
+- Routes by **browser → connection**, not by pane broadcast
+- Stores `browserId → connection` and `browserId → request_id` mappings
+- Connection is passed through when creating browser
+- Events sent directly to the stored connection
+
 **Plan:**
 
-1. Create DisplayHandler for console capture:
+1. Store browser → connection mappings in socket server:
+
+   ```rust
+   // In termsurf_socket/mod.rs
+   pub struct TermsurfSocketServer {
+       // ...existing fields...
+       /// Maps browser_id to the connection that created it (weak ref)
+       browser_connections: RwLock<HashMap<String, Weak<TermsurfConnection>>>,
+       /// Maps browser_id to request_id for event correlation
+       browser_request_ids: RwLock<HashMap<String, String>>,
+   }
+
+   impl TermsurfSocketServer {
+       /// Register a browser with its creating connection
+       pub fn register_browser(
+           &self,
+           browser_id: String,
+           connection: Arc<TermsurfConnection>,
+           request_id: String,
+       ) {
+           self.browser_connections.write().unwrap()
+               .insert(browser_id.clone(), Arc::downgrade(&connection));
+           self.browser_request_ids.write().unwrap()
+               .insert(browser_id, request_id);
+       }
+
+       /// Send event to the connection that created a browser
+       pub fn send_browser_event(&self, browser_id: &str, event_type: &str, data: Value) {
+           let conn = self.browser_connections.read().unwrap()
+               .get(browser_id).and_then(|w| w.upgrade());
+           let request_id = self.browser_request_ids.read().unwrap()
+               .get(browser_id).cloned();
+
+           if let (Some(conn), Some(request_id)) = (conn, request_id) {
+               let event = TermsurfEvent {
+                   id: request_id,
+                   event: event_type.to_string(),
+                   data: Some(data),
+               };
+               let _ = conn.send_event_direct(&event);
+           }
+       }
+
+       /// Unregister a browser when it closes
+       pub fn unregister_browser(&self, browser_id: &str) {
+           self.browser_connections.write().unwrap().remove(browser_id);
+           self.browser_request_ids.write().unwrap().remove(browser_id);
+       }
+   }
+   ```
+
+2. Update "open" handler to register browser:
+
+   ```rust
+   // In handle_open()
+   fn handle_open(&self, conn: &Arc<TermsurfConnection>, request: &TermsurfRequest) -> TermsurfResponse {
+       // ...existing validation...
+
+       // Generate browser_id (or get from CEF)
+       let browser_id = format!("browser-{}", pane_id);
+
+       // Register this browser with its connection
+       self.register_browser(browser_id.clone(), conn.clone(), request.id.clone());
+
+       // Notify GUI to open browser
+       mux.notify(mux::MuxNotification::WebOpen {
+           pane_id,
+           url: url.clone(),
+           browser_id: browser_id.clone(),  // Pass browser_id for event routing
+       });
+
+       TermsurfResponse::ok(request.id.clone(), Some(json!({"browser_id": browser_id})))
+   }
+   ```
+
+3. Create DisplayHandler for console capture:
 
    - File: `wezterm-gui/src/cef_render/display_handler.rs` (new)
    - Implement `DisplayHandler` trait with `on_console_message`
-   - Convert CEF log levels to event types:
-     - `LOGSEVERITY_DEBUG` → `console_debug`
-     - `LOGSEVERITY_INFO` → `console_info`
-     - `LOGSEVERITY_WARNING` → `console_warn`
-     - `LOGSEVERITY_ERROR` → `console_error`
-     - Default → `console_log`
-   - Send events to socket server via `broadcast_event`
+   - Convert CEF log levels:
+     - `LOGSEVERITY_DEBUG` → `"debug"`
+     - `LOGSEVERITY_INFO` → `"info"`
+     - `LOGSEVERITY_WARNING` → `"warn"`
+     - `LOGSEVERITY_ERROR` → `"error"`
+     - Default → `"log"`
+   - Call `socket_server.send_browser_event(browser_id, "console", data)`
 
-2. Track request_id in BrowserState:
+   ```rust
+   impl DisplayHandler for TermsurfDisplayHandler {
+       fn on_console_message(
+           &self,
+           _browser: &Browser,
+           level: LogSeverity,
+           message: &str,
+           source: &str,
+           line: i32,
+       ) -> bool {
+           let level_str = match level {
+               LogSeverity::Debug => "debug",
+               LogSeverity::Info => "info",
+               LogSeverity::Warning => "warn",
+               LogSeverity::Error | LogSeverity::Fatal => "error",
+               _ => "log",
+           };
 
-   - File: `wezterm-gui/src/cef_render/browser_state.rs`
-   - Add `request_id: Option<String>` field
-   - Set when browser is created via socket request
-   - Include in console events for correlation
+           if let Some(server) = get_server() {
+               server.send_browser_event(
+                   &self.browser_id,
+                   "console",
+                   json!({
+                       "level": level_str,
+                       "message": message,
+                       "source": source,
+                       "line": line,
+                   }),
+               );
+           }
 
-3. Broadcast console events via socket:
-
-   - Events sent to connections subscribed to the pane
-   - Event format:
-     ```json
-     {
-       "id": "<request_id>",
-       "event": "console_log",
-       "data": {
-         "level": "info",
-         "message": "Hello world",
-         "source": "https://example.com/app.js",
-         "line": 42
+           false // Don't suppress default handling
        }
-     }
-     ```
+   }
+   ```
 
-4. CLI event loop:
+4. Add direct event sending to connection:
 
-   - File: `wezterm/src/cli/web.rs`
-   - After sending `open` request, enter read loop for events
-   - Route events to appropriate output:
-     - `console_log`, `console_info`, `console_debug` → stdout
-     - `console_warn`, `console_error` → stderr
-   - Exit on `closed` event or connection close
+   ```rust
+   // In termsurf_socket/connection.rs
+   impl TermsurfConnection {
+       /// Send event directly (bypasses subscription check)
+       pub fn send_event_direct(&self, event: &TermsurfEvent) -> std::io::Result<()> {
+           self.send_message(event)
+       }
+   }
+   ```
 
-5. Send `closed` event when browser closes:
+5. CLI event loop:
 
-   - When browser is destroyed, send `{event: "closed"}` to socket
-   - CLI exits cleanly on receiving this event
+   ```rust
+   // In wezterm/src/cli/web.rs
+   impl WebOpen {
+       pub fn run(&self) -> anyhow::Result<()> {
+           // ...existing connect and send request code...
+
+           // Read response
+           let response: TermsurfResponse = read_response(&mut reader)?;
+           if response.status != "ok" {
+               return Err(anyhow!(response.error.unwrap_or_default()));
+           }
+
+           // Event loop - read until closed or Ctrl+C
+           loop {
+               let mut line = String::new();
+               match reader.read_line(&mut line) {
+                   Ok(0) => break, // Connection closed
+                   Ok(_) => {
+                       if let Ok(event) = serde_json::from_str::<TermsurfEvent>(&line) {
+                           match event.event.as_str() {
+                               "console" => {
+                                   if let Some(data) = &event.data {
+                                       let level = data.get("level")
+                                           .and_then(|v| v.as_str())
+                                           .unwrap_or("log");
+                                       let message = data.get("message")
+                                           .and_then(|v| v.as_str())
+                                           .unwrap_or("");
+
+                                       match level {
+                                           "warn" | "error" => eprintln!("{}", message),
+                                           _ => println!("{}", message),
+                                       }
+                                   }
+                               }
+                               "closed" => break,
+                               _ => {}
+                           }
+                       }
+                   }
+                   Err(_) => break,
+               }
+           }
+
+           Ok(())
+       }
+   }
+   ```
+
+6. Send "closed" event when browser closes:
+
+   ```rust
+   // When browser is destroyed (in cef_render or wherever close is handled)
+   if let Some(server) = get_server() {
+       server.send_browser_event(&browser_id, "closed", json!({}));
+       server.unregister_browser(&browser_id);
+   }
+   ```
+
+**Event format:**
+
+```json
+{"id":"req-123","event":"console","data":{"level":"log","message":"Hello world","source":"https://example.com/app.js","line":42}}
+{"id":"req-123","event":"closed","data":{}}
+```
 
 **Files to modify:**
 
-| File                                            | Change                   |
-| ----------------------------------------------- | ------------------------ |
-| `wezterm-gui/src/cef_render/display_handler.rs` | New: DisplayHandler impl |
-| `wezterm-gui/src/cef_render/browser_state.rs`   | Add request_id field     |
-| `wezterm-gui/src/cef_render/mod.rs`             | Register DisplayHandler  |
-| `wezterm-gui/src/termsurf_socket/protocol.rs`   | Add console event types  |
-| `wezterm/src/cli/web.rs`                        | Add event loop           |
+| File                                            | Change                              |
+| ----------------------------------------------- | ----------------------------------- |
+| `wezterm-gui/src/termsurf_socket/mod.rs`        | Add browser→connection registry     |
+| `wezterm-gui/src/termsurf_socket/connection.rs` | Add `send_event_direct` method      |
+| `wezterm-gui/src/cef_render/display_handler.rs` | New: DisplayHandler impl            |
+| `wezterm-gui/src/cef_render/mod.rs`             | Register DisplayHandler, send close |
+| `wezterm/src/cli/web.rs`                        | Add event loop                      |
+| `mux/src/lib.rs`                                | Add browser_id to WebOpen notif     |
 
 **Dependencies:** Experiment 2 must be complete (Unix socket communication).
