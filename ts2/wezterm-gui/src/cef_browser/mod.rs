@@ -40,6 +40,8 @@ pub struct BrowserState {
     pub pane_id: PaneId,
     pub url: String,
     pub texture_holder: TextureHolder,
+    /// Unique browser ID for socket event routing
+    pub browser_id: String,
     /// Current pane bounds (x, y, width, height) - updated every frame
     pane_bounds: PaneBoundsHolder,
     /// Logical size for CEF (DIP)
@@ -60,6 +62,7 @@ impl BrowserState {
     /// Parameters:
     /// - `width`, `height`: Logical pixel dimensions (DIP), not physical pixels
     /// - `device_scale_factor`: Display scale factor (e.g., 2.0 for Retina)
+    /// - `browser_id`: Unique ID for socket event routing
     pub fn new(
         pane_id: PaneId,
         url: &str,
@@ -70,14 +73,16 @@ impl BrowserState {
         queue: &wgpu::Queue,
         bind_group_layout: &wgpu::BindGroupLayout,
         invalidate_callback: Arc<dyn Fn() + Send + Sync>,
+        browser_id: String,
     ) -> anyhow::Result<Self> {
         log::info!(
-            "[CEF] Creating browser for pane {} with URL: {} ({}x{} @ {:.1}x scale)",
+            "[CEF] Creating browser for pane {} with URL: {} ({}x{} @ {:.1}x scale, browser_id: {})",
             pane_id,
             url,
             width,
             height,
-            device_scale_factor
+            device_scale_factor,
+            browser_id
         );
 
         // Create render handler parts
@@ -122,7 +127,7 @@ impl BrowserState {
         // Create the browser synchronously
         let browser = cef::browser_host_create_browser_sync(
             Some(&window_info),
-            Some(&mut CefClientBuilder::build(render_handler)),
+            Some(&mut CefClientBuilder::build(render_handler, browser_id.clone())),
             Some(&url.into()),
             Some(&browser_settings),
             None,
@@ -138,6 +143,7 @@ impl BrowserState {
             pane_id,
             url: url.to_string(),
             texture_holder,
+            browser_id,
             pane_bounds,
             size,
             last_resize_time: RefCell::new(None),
@@ -809,6 +815,79 @@ impl CefContextMenuHandlerBuilder {
 }
 
 // ============================================================================
+// CEF Display Handler (for console message capture)
+// ============================================================================
+
+use cef::{wrap_display_handler, DisplayHandler, ImplDisplayHandler, LogSeverity, WrapDisplayHandler};
+
+#[derive(Clone)]
+struct CefDisplayHandler {
+    browser_id: String,
+}
+
+wrap_display_handler! {
+    struct CefDisplayHandlerBuilder {
+        handler: CefDisplayHandler,
+    }
+
+    impl DisplayHandler {
+        fn on_console_message(
+            &self,
+            _browser: Option<&mut Browser>,
+            level: LogSeverity,
+            message: Option<&cef::CefString>,
+            source: Option<&cef::CefString>,
+            line: ::std::os::raw::c_int,
+        ) -> ::std::os::raw::c_int {
+            let level_str = if level == LogSeverity::VERBOSE {
+                "debug"
+            } else if level == LogSeverity::INFO {
+                "info"
+            } else if level == LogSeverity::WARNING {
+                "warn"
+            } else if level == LogSeverity::ERROR || level == LogSeverity::FATAL {
+                "error"
+            } else {
+                "log"
+            };
+
+            let message_str = message.map(|m| m.to_string()).unwrap_or_default();
+            let source_str = source.map(|s| s.to_string()).unwrap_or_default();
+
+            log::debug!(
+                "[CEF Console] [{}] {}:{} - {}",
+                level_str,
+                source_str,
+                line,
+                message_str
+            );
+
+            // Send to socket server
+            if let Some(server) = crate::termsurf_socket::get_server() {
+                server.send_browser_event(
+                    &self.handler.browser_id,
+                    "console",
+                    serde_json::json!({
+                        "level": level_str,
+                        "message": message_str,
+                        "source": source_str,
+                        "line": line,
+                    }),
+                );
+            }
+
+            0 // Don't suppress default handling
+        }
+    }
+}
+
+impl CefDisplayHandlerBuilder {
+    fn build(browser_id: String) -> DisplayHandler {
+        Self::new(CefDisplayHandler { browser_id })
+    }
+}
+
+// ============================================================================
 // CEF Client
 // ============================================================================
 
@@ -816,6 +895,7 @@ wrap_client! {
     struct CefClientBuilder {
         render_handler: RenderHandler,
         context_menu_handler: ContextMenuHandler,
+        display_handler: DisplayHandler,
     }
 
     impl Client {
@@ -826,14 +906,19 @@ wrap_client! {
         fn context_menu_handler(&self) -> Option<cef::ContextMenuHandler> {
             Some(self.context_menu_handler.clone())
         }
+
+        fn display_handler(&self) -> Option<cef::DisplayHandler> {
+            Some(self.display_handler.clone())
+        }
     }
 }
 
 impl CefClientBuilder {
-    fn build(render_handler: CefRenderHandler) -> Client {
+    fn build(render_handler: CefRenderHandler, browser_id: String) -> Client {
         Self::new(
             CefRenderHandlerBuilder::build(render_handler),
             CefContextMenuHandlerBuilder::build(),
+            CefDisplayHandlerBuilder::build(browser_id),
         )
     }
 }

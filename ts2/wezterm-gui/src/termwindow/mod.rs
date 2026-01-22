@@ -1348,12 +1348,16 @@ impl TermWindow {
                 | MuxNotification::Empty
                 | MuxNotification::WindowCreated(_)
                 | MuxNotification::WebClosed { .. } => {}
-                MuxNotification::WebOpen { pane_id, url } => {
+                MuxNotification::WebOpen {
+                    pane_id,
+                    url,
+                    browser_id,
+                } => {
                     #[cfg(all(target_os = "macos", feature = "cef"))]
-                    self.handle_web_open(pane_id, url);
+                    self.handle_web_open(pane_id, url, browser_id);
                     #[cfg(not(all(target_os = "macos", feature = "cef")))]
                     {
-                        let _ = (pane_id, url);
+                        let _ = (pane_id, url, browser_id);
                         log::warn!("WebOpen notification received but CEF is not enabled");
                     }
                 }
@@ -3803,11 +3807,12 @@ impl TermWindow {
 #[cfg(all(target_os = "macos", feature = "cef"))]
 impl TermWindow {
     /// Handle WebOpen notification - create a browser overlay for the pane
-    pub fn handle_web_open(&self, pane_id: PaneId, url: String) {
+    pub fn handle_web_open(&self, pane_id: PaneId, url: String, browser_id: String) {
         log::info!(
-            "[CEF] handle_web_open called for pane {} with URL: {}",
+            "[CEF] handle_web_open called for pane {} with URL: {} (browser_id: {})",
             pane_id,
-            url
+            url,
+            browser_id
         );
 
         // Check if we already have a browser for this pane
@@ -3883,6 +3888,7 @@ impl TermWindow {
             &queue,
             &cef_bind_group_layout,
             invalidate_callback,
+            browser_id,
         ) {
             Ok(state) => {
                 // Browser starts in browse mode; focus will be set on first paint
@@ -3904,6 +3910,21 @@ impl TermWindow {
     /// Close and remove the browser for a pane
     pub fn close_browser_for_pane(&self, pane_id: PaneId) {
         log::info!("[CEF] Closing browser for pane {}", pane_id);
+
+        // Get browser_id before removing, so we can send the closed event
+        let browser_id = self
+            .browser_states
+            .borrow()
+            .get(&pane_id)
+            .map(|s| s.browser_id.clone());
+
+        // Send "closed" event to CLI via socket server
+        if let Some(browser_id) = &browser_id {
+            if let Some(server) = crate::termsurf_socket::get_server() {
+                server.send_browser_event(browser_id, "closed", serde_json::json!({}));
+                server.unregister_browser(browser_id);
+            }
+        }
 
         // Remove browser state (Drop impl will close the browser)
         self.browser_states.borrow_mut().remove(&pane_id);

@@ -996,10 +996,14 @@ impl SessionHandler {
                                 .get_pane(pane_id)
                                 .ok_or_else(|| anyhow!("pane_id {} invalid", pane_id))?;
 
+                            // Generate browser_id for RPC path (socket path handles this differently)
+                            let browser_id = format!("browser-{}", pane_id);
+
                             // Notify GUI to open browser overlay
                             mux.notify(MuxNotification::WebOpen {
                                 pane_id,
                                 url: url.clone(),
+                                browser_id,
                             });
 
                             let message = format!("Opening {}", url);

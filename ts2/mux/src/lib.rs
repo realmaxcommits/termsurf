@@ -98,6 +98,7 @@ pub enum MuxNotification {
     WebOpen {
         pane_id: PaneId,
         url: String,
+        browser_id: String,
     },
     WebClosed {
         pane_id: PaneId,

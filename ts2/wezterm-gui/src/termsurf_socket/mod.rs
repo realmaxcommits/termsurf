@@ -8,10 +8,11 @@ use connection::TermsurfConnection;
 use mux::pane::PaneId;
 use mux::Mux;
 use protocol::{TermsurfEvent, TermsurfRequest, TermsurfResponse};
+use serde_json::json;
 use std::collections::HashMap;
 use std::os::unix::net::UnixListener;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex, OnceLock, RwLock};
+use std::sync::{Arc, Mutex, OnceLock, RwLock, Weak};
 use std::thread;
 
 /// Global socket server instance
@@ -47,6 +48,10 @@ pub struct TermsurfSocketServer {
     listener: UnixListener,
     connections: RwLock<HashMap<String, Arc<TermsurfConnection>>>,
     running: Mutex<bool>,
+    /// Maps browser_id to the connection that created it (weak ref to avoid cycles)
+    browser_connections: RwLock<HashMap<String, Weak<TermsurfConnection>>>,
+    /// Maps browser_id to request_id for event correlation
+    browser_request_ids: RwLock<HashMap<String, String>>,
 }
 
 impl TermsurfSocketServer {
@@ -77,6 +82,8 @@ impl TermsurfSocketServer {
             listener,
             connections: RwLock::new(HashMap::new()),
             running: Mutex::new(false),
+            browser_connections: RwLock::new(HashMap::new()),
+            browser_request_ids: RwLock::new(HashMap::new()),
         })
     }
 
@@ -125,9 +132,10 @@ impl TermsurfSocketServer {
 
                     // Handle connection in a new thread
                     let server = self.clone();
+                    let conn_id_for_handler = conn_id.clone();
                     thread::spawn(move || {
                         conn.read_loop(|conn, request| {
-                            server.handle_request(conn, request);
+                            server.handle_request(conn, &conn_id_for_handler, request);
                         });
 
                         // Remove connection when done
@@ -144,10 +152,10 @@ impl TermsurfSocketServer {
     }
 
     /// Handle a request from a client
-    fn handle_request(&self, conn: &TermsurfConnection, request: TermsurfRequest) {
+    fn handle_request(&self, conn: &TermsurfConnection, conn_id: &str, request: TermsurfRequest) {
         let response = match request.action.as_str() {
-            "ping" => TermsurfResponse::ok(request.id.clone(), Some(serde_json::json!({"pong": true}))),
-            "open" => self.handle_open(conn, &request),
+            "ping" => TermsurfResponse::ok(request.id.clone(), Some(json!({"pong": true}))),
+            "open" => self.handle_open(conn, conn_id, &request),
             "close" => self.handle_close(&request),
             _ => TermsurfResponse::error(
                 request.id.clone(),
@@ -161,11 +169,19 @@ impl TermsurfSocketServer {
     }
 
     /// Handle "open" action - open a URL in a browser pane
-    fn handle_open(&self, conn: &TermsurfConnection, request: &TermsurfRequest) -> TermsurfResponse {
+    fn handle_open(
+        &self,
+        conn: &TermsurfConnection,
+        conn_id: &str,
+        request: &TermsurfRequest,
+    ) -> TermsurfResponse {
         let url = match request.get_string("url") {
             Some(url) => url.to_string(),
             None => {
-                return TermsurfResponse::error(request.id.clone(), "Missing 'url' in data".to_string())
+                return TermsurfResponse::error(
+                    request.id.clone(),
+                    "Missing 'url' in data".to_string(),
+                )
             }
         };
 
@@ -188,18 +204,30 @@ impl TermsurfSocketServer {
             );
         }
 
-        // Subscribe connection to events for this pane
+        // Generate browser_id for this browser instance
+        let browser_id = format!("browser-{}", pane_id);
+
+        // Look up the Arc<TermsurfConnection> and register the browser
+        if let Some(conn_arc) = self.connections.read().unwrap().get(conn_id).cloned() {
+            self.register_browser(browser_id.clone(), conn_arc, request.id.clone());
+        }
+
+        // Subscribe connection to events for this pane (legacy, kept for compatibility)
         conn.subscribe_to_pane(pane_id);
 
         // Notify GUI to open browser (using existing MuxNotification)
         mux.notify(mux::MuxNotification::WebOpen {
             pane_id,
             url: url.clone(),
+            browser_id: browser_id.clone(),
         });
 
         TermsurfResponse::ok(
             request.id.clone(),
-            Some(serde_json::json!({"message": format!("Opening {}", url)})),
+            Some(json!({
+                "message": format!("Opening {}", url),
+                "browser_id": browser_id
+            })),
         )
     }
 
@@ -230,6 +258,71 @@ impl TermsurfSocketServer {
                 log::error!("[TermsurfSocket] Failed to send event: {}", e);
             }
         }
+    }
+
+    /// Register a browser with its creating connection
+    pub fn register_browser(
+        &self,
+        browser_id: String,
+        connection: Arc<TermsurfConnection>,
+        request_id: String,
+    ) {
+        log::info!(
+            "[TermsurfSocket] Registering browser {} with request {}",
+            browser_id,
+            request_id
+        );
+        self.browser_connections
+            .write()
+            .unwrap()
+            .insert(browser_id.clone(), Arc::downgrade(&connection));
+        self.browser_request_ids
+            .write()
+            .unwrap()
+            .insert(browser_id, request_id);
+    }
+
+    /// Send event to the connection that created a browser
+    pub fn send_browser_event(
+        &self,
+        browser_id: &str,
+        event_type: &str,
+        data: serde_json::Value,
+    ) {
+        let conn = self
+            .browser_connections
+            .read()
+            .unwrap()
+            .get(browser_id)
+            .and_then(|w| w.upgrade());
+        let request_id = self
+            .browser_request_ids
+            .read()
+            .unwrap()
+            .get(browser_id)
+            .cloned();
+
+        if let (Some(conn), Some(request_id)) = (conn, request_id) {
+            let event = TermsurfEvent::new(request_id, event_type.to_string(), Some(data));
+            if let Err(e) = conn.send_event_direct(&event) {
+                log::error!("[TermsurfSocket] Failed to send browser event: {}", e);
+            }
+        } else {
+            log::debug!(
+                "[TermsurfSocket] No connection found for browser {} (may have disconnected)",
+                browser_id
+            );
+        }
+    }
+
+    /// Unregister a browser when it closes
+    pub fn unregister_browser(&self, browser_id: &str) {
+        log::info!("[TermsurfSocket] Unregistering browser {}", browser_id);
+        self.browser_connections
+            .write()
+            .unwrap()
+            .remove(browser_id);
+        self.browser_request_ids.write().unwrap().remove(browser_id);
     }
 }
 

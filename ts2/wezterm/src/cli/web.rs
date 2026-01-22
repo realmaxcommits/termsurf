@@ -45,6 +45,14 @@ struct TermsurfResponse {
     error: Option<String>,
 }
 
+#[allow(dead_code)] // Constructed via serde deserialization
+#[derive(Debug, Deserialize)]
+struct TermsurfEvent {
+    id: String,
+    event: String,
+    data: Option<Value>,
+}
+
 impl WebCommand {
     /// Run the web command using Unix socket (not RPC)
     pub fn run(&self) -> anyhow::Result<()> {
@@ -101,18 +109,72 @@ impl WebOpen {
             .with_context(|| format!("Failed to parse response: {}", response_line))?;
 
         // Handle response
-        if response.status == "ok" {
-            if let Some(data) = response.data {
-                if let Some(message) = data.get("message").and_then(|m| m.as_str()) {
-                    println!("{}", message);
-                }
-            }
-            Ok(())
-        } else {
-            Err(anyhow!(
+        if response.status != "ok" {
+            return Err(anyhow!(
                 "{}",
                 response.error.unwrap_or_else(|| "Unknown error".to_string())
-            ))
+            ));
         }
+
+        // Print initial message
+        if let Some(data) = &response.data {
+            if let Some(message) = data.get("message").and_then(|m| m.as_str()) {
+                eprintln!("{}", message);
+            }
+        }
+
+        // Event loop - read events until closed or connection drops
+        loop {
+            let mut line = String::new();
+            match reader.read_line(&mut line) {
+                Ok(0) => {
+                    // Connection closed
+                    break;
+                }
+                Ok(_) => {
+                    let line = line.trim();
+                    if line.is_empty() {
+                        continue;
+                    }
+
+                    // Try to parse as an event
+                    if let Ok(event) = serde_json::from_str::<TermsurfEvent>(line) {
+                        match event.event.as_str() {
+                            "console" => {
+                                if let Some(data) = &event.data {
+                                    let level = data
+                                        .get("level")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("log");
+                                    let message = data
+                                        .get("message")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("");
+
+                                    // Route to appropriate output stream
+                                    match level {
+                                        "warn" | "error" => eprintln!("{}", message),
+                                        _ => println!("{}", message),
+                                    }
+                                }
+                            }
+                            "closed" => {
+                                // Browser was closed
+                                break;
+                            }
+                            _ => {
+                                // Unknown event type, ignore
+                            }
+                        }
+                    }
+                }
+                Err(_) => {
+                    // Read error, connection likely closed
+                    break;
+                }
+            }
+        }
+
+        Ok(())
     }
 }

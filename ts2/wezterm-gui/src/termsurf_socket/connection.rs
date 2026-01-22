@@ -46,11 +46,16 @@ impl TermsurfConnection {
         self.subscribed_panes.lock().unwrap().contains(&pane_id)
     }
 
-    /// Send an event to this connection (if subscribed)
+    /// Send an event to this connection (if subscribed to the pane)
     pub fn send_event(&self, event: &TermsurfEvent, pane_id: PaneId) -> std::io::Result<()> {
         if !self.is_subscribed_to(pane_id) {
             return Ok(());
         }
+        self.send_message(event)
+    }
+
+    /// Send an event directly to this connection (bypasses subscription check)
+    pub fn send_event_direct(&self, event: &TermsurfEvent) -> std::io::Result<()> {
         self.send_message(event)
     }
 
