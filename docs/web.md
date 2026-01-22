@@ -8,11 +8,11 @@ The `web` command provides CLI access to TermSurf's browser functionality.
 
 The `web` command supports the following subcommands:
 
-| Command           | Description                      |
-| ----------------- | -------------------------------- |
-| `web open <url>`  | Open a URL in a browser pane     |
-| `web file <path>` | Open a local file in the browser |
-| `web close`       | Close the browser overlay        |
+| Command                                        | Description                      |
+| ---------------------------------------------- | -------------------------------- |
+| `web open <url> [--profile X \| --incognito]`  | Open a URL in a browser pane     |
+| `web file <path> [--profile X \| --incognito]` | Open a local file in the browser |
+| `web close`                                    | Close the browser overlay        |
 
 ### Console Output
 
@@ -40,12 +40,43 @@ error. To open a different URL, first close the existing browser with
 This constraint simplifies the implementation by avoiding browser stacking
 complexity.
 
+### Browser Profiles
+
+Browsers can use named profiles to isolate cookies, localStorage, and other
+session data. Profiles are stored in `~/.config/termsurf/profiles/<name>/`.
+
+```bash
+termsurf cli web open https://example.com --profile myproject
+termsurf cli web open https://example.com --profile testing
+```
+
+**Profile name constraints:**
+
+- Lowercase alphanumeric characters only (`a-z`, `0-9`)
+- Must start with a letter
+- Examples: `myproject`, `test1`, `devenv`
+- Invalid: `MyProject`, `123test`, `my-project`, `my_project`
+
+If `--profile` is omitted, it defaults to `default`.
+
+Use `--incognito` for in-memory only mode where no data persists:
+
+```bash
+termsurf cli web open https://example.com --incognito
+```
+
+The `--profile` and `--incognito` flags are mutually exclusive.
+
+The profile name validator is implemented once and reused by both the CLI tool
+and the server-side handler to ensure consistent validation.
+
 ### Invocation
 
 Phase 1: Subcommand of `termsurf cli`:
 
 ```bash
 termsurf cli web open https://example.com
+termsurf cli web open https://example.com --profile myproject
 termsurf cli web file ./index.html
 termsurf cli web close
 ```
@@ -54,6 +85,7 @@ Phase 2: Standalone `web` command:
 
 ```bash
 web open https://example.com
+web open https://example.com --profile myproject
 web file ./index.html
 web close
 ```
