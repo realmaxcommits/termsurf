@@ -869,3 +869,104 @@ not logged in. The profile directory remains empty.
 This suggests that setting `cache_path` in `RequestContextSettings` alone is not
 sufficient for CEF to persist session data. Further investigation is needed to
 determine why CEF is not writing to the profile directory.
+
+---
+
+### Experiment 5: Fix Profile Path Hierarchy
+
+**Status:** Pending
+
+**Goal:** Fix browser profile persistence by correcting the path hierarchy and
+enabling session cookie persistence.
+
+**Root Cause Analysis:**
+
+CEF requires per-browser `RequestContextSettings.cache_path` to be under the
+global `Settings.root_cache_path`. Our current paths violate this:
+
+| Setting                              | Current Value                            |
+| ------------------------------------ | ---------------------------------------- |
+| Global `root_cache_path` (main.rs)   | `~/Library/Caches/termsurf/cef/` (macOS) |
+| Profile `cache_path` (cef_browser)   | `~/.config/termsurf/profiles/<name>/`    |
+
+Since `~/.config/termsurf/profiles/` is not under `~/Library/Caches/termsurf/cef/`,
+CEF silently ignores our cache_path setting.
+
+Additionally, `persist_session_cookies` was not set to `1`, so even if the path
+were correct, session cookies would not be persisted.
+
+**Plan:**
+
+1. Move profile directories under `root_cache_path` (`cef_browser/mod.rs`):
+
+   ```rust
+   // Before (Experiment 4):
+   let profile_dir = format!("{}/.config/termsurf/profiles/{}", home, profile_name);
+
+   // After:
+   // Use config::CACHE_DIR to match root_cache_path from main.rs
+   let profile_dir = config::CACHE_DIR
+       .join("cef")
+       .join("profiles")
+       .join(profile_name);
+   ```
+
+   This places profiles at `~/Library/Caches/termsurf/cef/profiles/<name>/` on
+   macOS, which is under `root_cache_path`.
+
+2. Enable session cookie persistence (`cef_browser/mod.rs`):
+
+   ```rust
+   let request_context_settings = RequestContextSettings {
+       cache_path: cache_path.as_str().into(),
+       persist_session_cookies: 1,  // Add this line
+       ..Default::default()
+   };
+   ```
+
+3. Update documentation to reflect new profile location:
+
+   - Update `docs/web.md` product requirements section
+   - Profile path changes from `~/.config/termsurf/profiles/<name>/` to
+     `~/Library/Caches/termsurf/cef/profiles/<name>/` (macOS)
+
+4. Build and test:
+
+   ```bash
+   ./scripts/build-debug.sh --open
+   termsurf cli web open https://google.com
+   # Log in to Google
+   # Close browser (Ctrl+W or close pane)
+   termsurf cli web open https://google.com
+   # Verify still logged in
+   ```
+
+5. Verify profile directory contains data:
+
+   ```bash
+   ls -la ~/Library/Caches/termsurf/cef/profiles/default/
+   # Should see: Cookies, Visited Links, Local Storage/, etc.
+   ```
+
+**What CEF stores automatically (once path is correct):**
+
+| Data Type       | Location in Profile Directory |
+| --------------- | ----------------------------- |
+| Cookies         | `Cookies` (SQLite database)   |
+| Visited links   | `Visited Links` (file)        |
+| localStorage    | `Local Storage/` (directory)  |
+| IndexedDB       | `IndexedDB/` (directory)      |
+| HTTP cache      | `Cache/` (directory)          |
+| Preferences     | `Preferences` (JSON file)     |
+
+No additional flags are needed for these—they persist automatically when
+`cache_path` is valid and under `root_cache_path`.
+
+**Files to modify:**
+
+| File                                 | Change                                  |
+| ------------------------------------ | --------------------------------------- |
+| `wezterm-gui/src/cef_browser/mod.rs` | Fix profile path, add persist_session  |
+| `docs/web.md`                        | Update profile path in product section |
+
+**Dependencies:** Experiment 4 must be complete (profile infrastructure exists).
