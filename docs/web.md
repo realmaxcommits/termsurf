@@ -43,7 +43,7 @@ complexity.
 ### Browser Profiles
 
 Browsers can use named profiles to isolate cookies, localStorage, and other
-session data. Profiles are stored in `~/.config/termsurf/profiles/<name>/`.
+session data. Profiles are stored in `~/.config/termsurf/cef/profiles/<name>/`.
 
 ```bash
 termsurf cli web open https://example.com --profile myproject
@@ -897,24 +897,32 @@ were correct, session cookies would not be persisted.
 
 **Plan:**
 
-1. Move profile directories under `root_cache_path` (`cef_browser/mod.rs`):
+1. Change global `root_cache_path` to `~/.config/termsurf/cef/` (`main.rs`):
+
+   ```rust
+   // Before:
+   let cef_cache = config::CACHE_DIR.join("cef");
+   // = ~/Library/Caches/termsurf/cef/
+
+   // After:
+   let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+   let cef_cache = PathBuf::from(format!("{}/.config/termsurf/cef", home));
+   ```
+
+   This makes `root_cache_path` = `~/.config/termsurf/cef/`, which encompasses
+   our profile paths at `~/.config/termsurf/cef/profiles/<name>/`.
+
+2. Update profile path to be under the new root (`cef_browser/mod.rs`):
 
    ```rust
    // Before (Experiment 4):
    let profile_dir = format!("{}/.config/termsurf/profiles/{}", home, profile_name);
 
    // After:
-   // Use config::CACHE_DIR to match root_cache_path from main.rs
-   let profile_dir = config::CACHE_DIR
-       .join("cef")
-       .join("profiles")
-       .join(profile_name);
+   let profile_dir = format!("{}/.config/termsurf/cef/profiles/{}", home, profile_name);
    ```
 
-   This places profiles at `~/Library/Caches/termsurf/cef/profiles/<name>/` on
-   macOS, which is under `root_cache_path`.
-
-2. Enable session cookie persistence (`cef_browser/mod.rs`):
+3. Enable session cookie persistence (`cef_browser/mod.rs`):
 
    ```rust
    let request_context_settings = RequestContextSettings {
@@ -923,12 +931,6 @@ were correct, session cookies would not be persisted.
        ..Default::default()
    };
    ```
-
-3. Update documentation to reflect new profile location:
-
-   - Update `docs/web.md` product requirements section
-   - Profile path changes from `~/.config/termsurf/profiles/<name>/` to
-     `~/Library/Caches/termsurf/cef/profiles/<name>/` (macOS)
 
 4. Build and test:
 
@@ -944,9 +946,26 @@ were correct, session cookies would not be persisted.
 5. Verify profile directory contains data:
 
    ```bash
-   ls -la ~/Library/Caches/termsurf/cef/profiles/default/
+   ls -la ~/.config/termsurf/cef/profiles/default/
    # Should see: Cookies, Visited Links, Local Storage/, etc.
    ```
+
+**Final directory structure:**
+
+```
+~/.config/termsurf/
+└── cef/
+    └── profiles/
+        ├── default/
+        │   ├── Cookies
+        │   ├── Visited Links
+        │   ├── Local Storage/
+        │   ├── IndexedDB/
+        │   ├── Cache/
+        │   └── Preferences
+        └── myproject/
+            └── ...
+```
 
 **What CEF stores automatically (once path is correct):**
 
@@ -964,9 +983,9 @@ No additional flags are needed for these—they persist automatically when
 
 **Files to modify:**
 
-| File                                 | Change                                  |
-| ------------------------------------ | --------------------------------------- |
-| `wezterm-gui/src/cef_browser/mod.rs` | Fix profile path, add persist_session  |
-| `docs/web.md`                        | Update profile path in product section |
+| File                                 | Change                            |
+| ------------------------------------ | --------------------------------- |
+| `wezterm-gui/src/main.rs`            | Change root_cache_path to ~/.config |
+| `wezterm-gui/src/cef_browser/mod.rs` | Update profile path, add persist_session |
 
 **Dependencies:** Experiment 4 must be complete (profile infrastructure exists).
