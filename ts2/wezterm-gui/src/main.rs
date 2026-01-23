@@ -104,8 +104,10 @@ fn init_cef() -> Result<(), String> {
     }
     log::info!("CEF execute_process returned {ret}");
 
-    // Create CEF cache directory
-    let cef_cache = config::CACHE_DIR.join("cef");
+    // Create CEF cache directory under ~/.config/termsurf/cef/
+    // This must be the parent of all profile cache_path directories
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+    let cef_cache = PathBuf::from(format!("{}/.config/termsurf/cef", home));
     let _ = std::fs::create_dir_all(&cef_cache);
     let cache_path_str = cef_cache.to_string_lossy().to_string();
 
@@ -128,6 +130,7 @@ fn init_cef() -> Result<(), String> {
         no_sandbox: 1,
         root_cache_path: CefString::from(cache_path_str.as_str()),
         browser_subprocess_path: CefString::from(helper_path_str.as_str()),
+        persist_session_cookies: 1, // Enable cookie persistence
         ..Default::default()
     };
 

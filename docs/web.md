@@ -884,13 +884,13 @@ enabling session cookie persistence.
 CEF requires per-browser `RequestContextSettings.cache_path` to be under the
 global `Settings.root_cache_path`. Our current paths violate this:
 
-| Setting                              | Current Value                            |
-| ------------------------------------ | ---------------------------------------- |
-| Global `root_cache_path` (main.rs)   | `~/Library/Caches/termsurf/cef/` (macOS) |
-| Profile `cache_path` (cef_browser)   | `~/.config/termsurf/profiles/<name>/`    |
+| Setting                            | Current Value                            |
+| ---------------------------------- | ---------------------------------------- |
+| Global `root_cache_path` (main.rs) | `~/Library/Caches/termsurf/cef/` (macOS) |
+| Profile `cache_path` (cef_browser) | `~/.config/termsurf/profiles/<name>/`    |
 
-Since `~/.config/termsurf/profiles/` is not under `~/Library/Caches/termsurf/cef/`,
-CEF silently ignores our cache_path setting.
+Since `~/.config/termsurf/profiles/` is not under
+`~/Library/Caches/termsurf/cef/`, CEF silently ignores our cache_path setting.
 
 Additionally, `persist_session_cookies` was not set to `1`, so even if the path
 were correct, session cookies would not be persisted.
@@ -969,23 +969,23 @@ were correct, session cookies would not be persisted.
 
 **What CEF stores automatically (once path is correct):**
 
-| Data Type       | Location in Profile Directory |
-| --------------- | ----------------------------- |
-| Cookies         | `Cookies` (SQLite database)   |
-| Visited links   | `Visited Links` (file)        |
-| localStorage    | `Local Storage/` (directory)  |
-| IndexedDB       | `IndexedDB/` (directory)      |
-| HTTP cache      | `Cache/` (directory)          |
-| Preferences     | `Preferences` (JSON file)     |
+| Data Type     | Location in Profile Directory |
+| ------------- | ----------------------------- |
+| Cookies       | `Cookies` (SQLite database)   |
+| Visited links | `Visited Links` (file)        |
+| localStorage  | `Local Storage/` (directory)  |
+| IndexedDB     | `IndexedDB/` (directory)      |
+| HTTP cache    | `Cache/` (directory)          |
+| Preferences   | `Preferences` (JSON file)     |
 
 No additional flags are needed for these—they persist automatically when
 `cache_path` is valid and under `root_cache_path`.
 
 **Files to modify:**
 
-| File                                 | Change                            |
-| ------------------------------------ | --------------------------------- |
-| `wezterm-gui/src/main.rs`            | Change root_cache_path to ~/.config |
+| File                                 | Change                                   |
+| ------------------------------------ | ---------------------------------------- |
+| `wezterm-gui/src/main.rs`            | Change root_cache_path to ~/.config      |
 | `wezterm-gui/src/cef_browser/mod.rs` | Update profile path, add persist_session |
 
 **Dependencies:** Experiment 4 must be complete (profile infrastructure exists).

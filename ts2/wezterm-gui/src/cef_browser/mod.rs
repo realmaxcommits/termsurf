@@ -126,26 +126,17 @@ impl BrowserState {
 
         // Create request context with profile-specific cache path
         // Empty cache_path = incognito mode (in-memory only)
-        // Non-empty cache_path = persistent storage at ~/.config/termsurf/profiles/<profile>/
+        // Non-empty cache_path = persistent storage at ~/.config/termsurf/cef/profiles/<profile>/
+        // Note: cache_path must be under the global root_cache_path set in main.rs
         let cache_path = if incognito {
             log::info!("[CEF] Using incognito mode (in-memory storage)");
             String::new()
         } else if let Some(ref profile_name) = profile {
-            // Build profile directory path
+            // Build profile directory path (must be under ~/.config/termsurf/cef/)
             let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
-            let profile_dir = format!("{}/.config/termsurf/profiles/{}", home, profile_name);
+            let profile_dir = format!("{}/.config/termsurf/cef/profiles/{}", home, profile_name);
 
-            // Create directory if it doesn't exist
-            if let Err(e) = std::fs::create_dir_all(&profile_dir) {
-                log::warn!(
-                    "[CEF] Failed to create profile directory {}: {}",
-                    profile_dir,
-                    e
-                );
-            } else {
-                log::info!("[CEF] Using profile directory: {}", profile_dir);
-            }
-
+            log::info!("[CEF] Using profile directory: {}", profile_dir);
             profile_dir
         } else {
             // No profile and not incognito - shouldn't happen, but default to incognito
@@ -155,23 +146,32 @@ impl BrowserState {
 
         let request_context_settings = RequestContextSettings {
             cache_path: cache_path.as_str().into(),
+            persist_session_cookies: 1,
             ..Default::default()
         };
 
-        let mut context = cef::request_context_create_context(
-            Some(&request_context_settings),
-            Some(&mut CefRequestContextHandlerBuilder::build()),
+        // For now, skip custom RequestContext - CEF's Chrome-based architecture
+        // has issues with custom profile paths ("Cannot create profile at path").
+        // Use the global context instead, which stores data in ~/.config/termsurf/cef/Default/
+        // TODO: Investigate CEF profile requirements for custom cache_path
+        log::info!(
+            "[CEF] Profile requested: {:?}, incognito: {} (using global context for now)",
+            profile,
+            incognito
         );
+        let _ = cache_path; // Silence unused warning
+        let _ = request_context_settings; // Silence unused warning
 
-        // Create the browser synchronously
+        // Create the browser synchronously using global context (None)
         let browser = cef::browser_host_create_browser_sync(
             Some(&window_info),
             Some(&mut CefClientBuilder::build(render_handler, browser_id.clone())),
             Some(&url.into()),
             Some(&browser_settings),
             None,
-            context.as_mut(),
+            None, // Use global context
         );
+        log::info!("[CEF] browser_host_create_browser_sync returned");
 
         let browser = browser.ok_or_else(|| anyhow::anyhow!("Failed to create CEF browser"))?;
 
