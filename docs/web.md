@@ -658,7 +658,7 @@ TS1's routing approach (to support multiple simultaneous browser panes):
 
 ### Experiment 4: Browser Profiles
 
-**Status:** Success
+**Status:** Failed
 
 **Goal:** Implement named browser profiles to isolate cookies, localStorage, and
 other session data between different use cases.
@@ -858,3 +858,14 @@ empty `cache_path`, meaning every session is incognito.
 | `wezterm-mux-server-impl/sessionhandler` | Update RPC path (for completeness)  |
 
 **Dependencies:** Experiment 3 must be complete.
+
+**Result:**
+
+The implementation was completed and the profile directories are created (e.g.,
+`~/.config/termsurf/profiles/default/`), but no data is being persisted to them.
+After logging into Google and closing the browser, reopening shows the user is
+not logged in. The profile directory remains empty.
+
+This suggests that setting `cache_path` in `RequestContextSettings` alone is not
+sufficient for CEF to persist session data. Further investigation is needed to
+determine why CEF is not writing to the profile directory.
