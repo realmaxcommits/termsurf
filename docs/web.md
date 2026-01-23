@@ -10,8 +10,8 @@ The `web` command supports the following subcommands:
 
 | Command                                        | Description                      |
 | ---------------------------------------------- | -------------------------------- |
-| `web open <url> [--profile X \| --incognito]`  | Open a URL in a browser pane     |
-| `web file <path> [--profile X \| --incognito]` | Open a local file in the browser |
+| `web open <url> [--profile N \| --incognito]`  | Open a URL in a browser pane     |
+| `web file <path> [--profile N \| --incognito]` | Open a local file in the browser |
 | `web close`                                    | Close the browser overlay        |
 
 ### Console Output
@@ -42,22 +42,30 @@ complexity.
 
 ### Browser Profiles
 
-Browsers can use named profiles to isolate cookies, localStorage, and other
-session data. Profiles are stored in `~/.config/termsurf/cef/profiles/<name>/`.
+Browsers can use numbered profiles to isolate cookies, localStorage, and other
+session data. Profiles follow Chrome's internal naming convention and are stored
+in `~/.config/termsurf/cef/`.
 
 ```bash
-termsurf cli web open https://example.com --profile myproject
-termsurf cli web open https://example.com --profile testing
+# Default profile (profile 0)
+termsurf cli web open https://example.com
+termsurf cli web open https://example.com --profile 0
+
+# Profile 1
+termsurf cli web open https://example.com --profile 1
+
+# Profile 5 (numbers don't need to be sequential)
+termsurf cli web open https://example.com --profile 5
 ```
 
-**Profile name constraints:**
+**Profile storage:**
 
-- Lowercase alphanumeric characters only (`a-z`, `0-9`)
-- Must start with a letter
-- Examples: `myproject`, `test1`, `devenv`
-- Invalid: `MyProject`, `123test`, `my-project`, `my_project`
-
-If `--profile` is omitted, it defaults to `default`.
+| CLI Flag      | Directory Name | Storage Path                        |
+| ------------- | -------------- | ----------------------------------- |
+| (none)        | `Default`      | `~/.config/termsurf/cef/Default/`   |
+| `--profile 0` | `Default`      | `~/.config/termsurf/cef/Default/`   |
+| `--profile 1` | `Profile 1`    | `~/.config/termsurf/cef/Profile 1/` |
+| `--profile N` | `Profile N`    | `~/.config/termsurf/cef/Profile N/` |
 
 Use `--incognito` for in-memory only mode where no data persists:
 
@@ -67,16 +75,13 @@ termsurf cli web open https://example.com --incognito
 
 The `--profile` and `--incognito` flags are mutually exclusive.
 
-The profile name validator is implemented once and reused by both the CLI tool
-and the server-side handler to ensure consistent validation.
-
 ### Invocation
 
 Phase 1: Subcommand of `termsurf cli`:
 
 ```bash
 termsurf cli web open https://example.com
-termsurf cli web open https://example.com --profile myproject
+termsurf cli web open https://example.com --profile 1
 termsurf cli web file ./index.html
 termsurf cli web close
 ```
@@ -85,7 +90,7 @@ Phase 2: Standalone `web` command:
 
 ```bash
 web open https://example.com
-web open https://example.com --profile myproject
+web open https://example.com --profile 1
 web file ./index.html
 web close
 ```
@@ -989,3 +994,229 @@ No additional flags are needed for these—they persist automatically when
 | `wezterm-gui/src/cef_browser/mod.rs` | Update profile path, add persist_session |
 
 **Dependencies:** Experiment 4 must be complete (profile infrastructure exists).
+
+---
+
+### Experiment 6: Chrome-Native Profile Naming
+
+**Status:** Pending
+
+**Goal:** Enable multi-profile support by using Chrome's native profile naming
+convention (`Default`, `Profile 1`, `Profile 2`, etc.) instead of custom names.
+
+**Background:**
+
+Experiment 5 showed that using the global context successfully persists data to
+`~/.config/termsurf/cef/Default/`. However, attempts to create custom
+RequestContexts with arbitrary profile paths failed with:
+
+```
+ERROR:cef/libcef/browser/chrome/chrome_browser_context.cc:115]
+Cannot create profile at path /Users/ryan/.config/termsurf/cef/profiles/default
+```
+
+This error occurs because CEF's Chrome-based backend requires profiles to follow
+Chrome's internal naming conventions. Chrome profiles use:
+
+- `Default` for the primary profile
+- `Profile 1`, `Profile 2`, etc. for additional profiles
+
+These are **directory names**, not user-facing names. Chrome stores the
+user-facing "display name" in a `Preferences` file inside each profile
+directory.
+
+**Key findings:**
+
+1. Profile directory names must be `Default`, `Profile 1`, `Profile 2`, etc.
+2. Profile numbers do NOT need to be sequential (can have `Profile 5` without
+   `Profile 1-4`)
+3. CEF rejects arbitrary names like `profiles/default` or `myproject`
+
+**Plan:**
+
+1. Change CLI from `--profile <name>` to `--profile <number>` (`web.rs`):
+
+   ```rust
+   #[derive(Debug, Parser, Clone)]
+   pub struct WebOpen {
+       /// The URL to open
+       url: String,
+
+       /// Browser profile number (0 = Default, 1+ = Profile N)
+       #[arg(long)]
+       profile: Option<u32>,
+
+       /// Use incognito mode (in-memory only, no persistence)
+       #[arg(long, conflicts_with = "profile")]
+       incognito: bool,
+   }
+   ```
+
+2. Map profile number to Chrome directory name:
+
+   ```rust
+   fn profile_dir_name(profile_num: Option<u32>) -> String {
+       match profile_num {
+           None | Some(0) => "Default".to_string(),
+           Some(n) => format!("Profile {}", n),
+       }
+   }
+   ```
+
+3. Update socket request to send profile number (`web.rs`):
+
+   ```rust
+   let request = TermsurfRequest {
+       id: request_id,
+       action: "open".to_string(),
+       pane_id: Some(pane_id),
+       data: Some(serde_json::json!({
+           "url": self.url,
+           "profile": self.profile,  // Option<u32> or null
+           "incognito": self.incognito,
+       })),
+   };
+   ```
+
+4. Update socket server to parse profile number (`termsurf_socket/mod.rs`):
+
+   ```rust
+   let profile_num: Option<u32> = request.data.as_ref()
+       .and_then(|d| d.get("profile"))
+       .and_then(|v| v.as_u64())
+       .map(|n| n as u32);
+   ```
+
+5. Update `MuxNotification::WebOpen` to use profile number (`mux/src/lib.rs`):
+
+   ```rust
+   WebOpen {
+       pane_id: PaneId,
+       url: String,
+       browser_id: String,
+       profile: Option<u32>,  // Changed from Option<String>
+       incognito: bool,
+   },
+   ```
+
+6. Update `BrowserState::new` to use Chrome paths (`cef_browser/mod.rs`):
+
+   ```rust
+   pub fn new(
+       // ... existing params ...
+       profile: Option<u32>,
+       incognito: bool,
+   ) -> anyhow::Result<Self> {
+       // Compute cache_path using Chrome naming convention
+       let cache_path = if incognito {
+           String::new()  // Empty = in-memory only
+       } else {
+           let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+           let profile_dir = match profile {
+               None | Some(0) => "Default".to_string(),
+               Some(n) => format!("Profile {}", n),
+           };
+           format!("{}/.config/termsurf/cef/{}", home, profile_dir)
+       };
+
+       // Create request context settings
+       let request_context_settings = if cache_path.is_empty() {
+           RequestContextSettings::default()  // Incognito
+       } else {
+           RequestContextSettings {
+               cache_path: CefString::from(cache_path.as_str()),
+               persist_session_cookies: 1,
+               ..Default::default()
+           }
+       };
+
+       // Create custom RequestContext (should work with Chrome naming)
+       let request_context = cef::request_context_create_context(
+           Some(&request_context_settings),
+           None,
+       );
+
+       // Create browser with custom context
+       let browser = cef::browser_host_create_browser_sync(
+           Some(&window_info),
+           Some(&mut client),
+           Some(&url.into()),
+           Some(&browser_settings),
+           None,
+           request_context.as_ref(),  // Use custom context
+       );
+   }
+   ```
+
+7. Remove profile name validation (no longer needed - numbers are
+   self-validating).
+
+**CLI Usage:**
+
+```bash
+# Default profile (stored in ~/.config/termsurf/cef/Default/)
+termsurf cli web open https://example.com
+termsurf cli web open https://example.com --profile 0
+
+# Profile 1 (stored in ~/.config/termsurf/cef/Profile 1/)
+termsurf cli web open https://example.com --profile 1
+
+# Profile 5 (works even without Profile 1-4)
+termsurf cli web open https://example.com --profile 5
+
+# Incognito (in-memory only)
+termsurf cli web open https://example.com --incognito
+```
+
+**Directory structure:**
+
+```
+~/.config/termsurf/cef/
+├── Default/
+│   ├── Cookies
+│   ├── Visited Links
+│   ├── Local Storage/
+│   └── ...
+├── Profile 1/
+│   └── ...
+├── Profile 5/
+│   └── ...
+└── (CEF shared files)
+```
+
+**Files to modify:**
+
+| File                                     | Change                                    |
+| ---------------------------------------- | ----------------------------------------- |
+| `wezterm/src/cli/web.rs`                 | Change --profile to u32, remove validator |
+| `wezterm-gui/src/termsurf_socket/mod.rs` | Parse profile as u32, remove validator    |
+| `mux/src/lib.rs`                         | Change profile to Option<u32>             |
+| `wezterm-gui/src/cef_browser/mod.rs`     | Use Chrome naming, re-enable RequestCtx   |
+| `docs/web.md`                            | Update profile documentation              |
+
+**Test plan:**
+
+1. Build and run: `./scripts/build-debug.sh --open`
+2. Test default profile:
+   ```bash
+   termsurf cli web open https://google.com
+   # Log in to Google, close browser
+   termsurf cli web open https://google.com
+   # Verify still logged in
+   ```
+3. Test Profile 1:
+   ```bash
+   termsurf cli web open https://google.com --profile 1
+   # Should NOT be logged in (separate profile)
+   # Log in, close browser
+   termsurf cli web open https://google.com --profile 1
+   # Verify still logged in
+   ```
+4. Verify directory structure:
+   ```bash
+   ls -la ~/.config/termsurf/cef/
+   # Should see: Default/, Profile 1/
+   ```
+
+**Dependencies:** Experiment 5 progress (global context working with
+persistence).
