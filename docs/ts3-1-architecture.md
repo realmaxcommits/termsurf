@@ -335,7 +335,7 @@ commands and eventually texture handle passing.
 
 ### Experiment 3: Multi-Pane Subprocess Sharing
 
-**Status:** Not Started
+**Status:** SUCCESS
 
 **Goal:** Validate that multiple `web` invocations with the same profile share
 one subprocess, while different profiles get separate subprocesses. This is
@@ -412,14 +412,14 @@ ryan  12345  web --browser-subprocess --profile test
 
 **Success criteria:**
 
-- [ ] Second `web --profile=test` reuses existing subprocess (no "Spawning"
+- [x] Second `web --profile=test` reuses existing subprocess (no "Spawning"
       message, no CEF init)
-- [ ] Different profile (`--profile=other`) spawns separate subprocess
-- [ ] Subprocess survives when first client disconnects
-- [ ] Subprocess exits when last browser is closed
-- [ ] `ps aux | grep web` shows expected number of processes (one per active
+- [x] Different profile (`--profile=other`) spawns separate subprocess
+- [x] Subprocess survives when first client disconnects
+- [x] Subprocess exits when last browser is closed
+- [x] `ps aux | grep web` shows expected number of processes (one per active
       profile)
-- [ ] Stale socket from crashed subprocess is detected and cleaned up
+- [x] Stale socket from crashed subprocess is detected and cleaned up
 
 **Design decisions:**
 
@@ -436,4 +436,33 @@ ryan  12345  web --browser-subprocess --profile test
 3. **Connection detection**: Rely on socket EOF detection when clients
    disconnect. No heartbeat mechanism needed.
 
-**Results:** (to be filled in after experiment)
+**Results:** SUCCESS (2025-01-24)
+
+All test cases passed. Key implementation details:
+
+1. **Threaded connection handling**: The subprocess uses a non-blocking listener
+   to accept connections, spawning a new thread for each client. Each thread
+   handles requests for that connection until the client disconnects.
+
+2. **Shared browser state**: An `Arc<BrowserState>` tracks browser count and
+   next browser ID across all connection threads. Atomic operations ensure
+   thread-safe updates.
+
+3. **Shutdown coordination**: When `close_browser` decrements the count to zero,
+   it returns `was_last=true`. The connection handler sets a shared shutdown
+   flag, causing the accept loop to exit. The subprocess then waits for all
+   connection threads to finish before cleaning up.
+
+4. **Socket-based discovery**: The coordinator first attempts to connect to the
+   socket. If successful, it reuses the existing subprocess. If the socket
+   exists but connection fails (stale socket from crash), it removes the socket
+   and spawns a new subprocess.
+
+5. **Background spawning**: The coordinator spawns the subprocess without
+   waiting for it (`Stdio::null()` for all handles). The subprocess runs
+   independently and outlives the spawning coordinator.
+
+This validates the core multi-pane architecture. Multiple browser panes using
+the same profile share one subprocess (and thus one CEF context with shared
+cookies/storage), while different profiles are fully isolated in separate
+processes.

@@ -4,7 +4,9 @@ use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
-use std::process::{Child, Command, Stdio};
+use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 use uuid::Uuid;
@@ -122,7 +124,7 @@ fn validate_profile_name(name: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn parse_args() -> Result<(bool, ProfileMode), String> {
+fn parse_args() -> Result<(bool, ProfileMode, Option<String>), String> {
     let args: Vec<String> = env::args().collect();
 
     let is_subprocess = args.iter().any(|a| a == "--browser-subprocess");
@@ -140,6 +142,13 @@ fn parse_args() -> Result<(bool, ProfileMode), String> {
         .position(|a| a == "--incognito-id")
         .and_then(|i| args.get(i + 1).cloned());
 
+    // Find URL (first arg that doesn't start with --)
+    let url = args
+        .iter()
+        .skip(1) // Skip program name
+        .find(|a| !a.starts_with("--") && !a.is_empty())
+        .cloned();
+
     // Check for mutual exclusivity
     if has_incognito && profile_value.is_some() {
         return Err("Cannot specify both --incognito and --profile".into());
@@ -156,7 +165,7 @@ fn parse_args() -> Result<(bool, ProfileMode), String> {
         ProfileMode::Named("default".to_string())
     };
 
-    Ok((is_subprocess, profile_mode))
+    Ok((is_subprocess, profile_mode, url))
 }
 
 // ============================================================================
@@ -237,152 +246,315 @@ fn load_cef(_profile: &ProfileMode) -> Result<(), String> {
 }
 
 // ============================================================================
-// Socket Server (Browser Subprocess)
+// Browser State (shared across connections)
 // ============================================================================
 
-fn handle_request(request: &Request) -> Response {
-    match request.action.as_str() {
-        "ping" => Response::ok(&request.id, Some(serde_json::json!({"pong": true}))),
-        _ => Response::error(&request.id, &format!("Unknown action: {}", request.action)),
+struct BrowserState {
+    browser_count: AtomicUsize,
+    next_browser_id: AtomicU64,
+}
+
+impl BrowserState {
+    fn new() -> Self {
+        Self {
+            browser_count: AtomicUsize::new(0),
+            next_browser_id: AtomicU64::new(1),
+        }
+    }
+
+    fn open_browser(&self, url: &str) -> u64 {
+        let id = self.next_browser_id.fetch_add(1, Ordering::SeqCst);
+        self.browser_count.fetch_add(1, Ordering::SeqCst);
+        println!("[Subprocess] Opened browser {} with url: {}", id, url);
+        id
+    }
+
+    fn close_browser(&self, id: u64) -> bool {
+        let prev_count = self.browser_count.fetch_sub(1, Ordering::SeqCst);
+        println!(
+            "[Subprocess] Closed browser {} (remaining: {})",
+            id,
+            prev_count - 1
+        );
+        prev_count == 1 // Returns true if this was the last browser
+    }
+
+    fn count(&self) -> usize {
+        self.browser_count.load(Ordering::SeqCst)
     }
 }
 
-fn handle_connection(mut stream: UnixStream) {
+// ============================================================================
+// Socket Server (Browser Subprocess)
+// ============================================================================
+
+fn handle_request(request: &Request, state: &Arc<BrowserState>) -> (Response, bool) {
+    let should_exit = false;
+
+    match request.action.as_str() {
+        "ping" => (
+            Response::ok(&request.id, Some(serde_json::json!({"pong": true}))),
+            should_exit,
+        ),
+
+        "open_browser" => {
+            let url = request
+                .data
+                .as_ref()
+                .and_then(|d| d.get("url"))
+                .and_then(|u| u.as_str())
+                .unwrap_or("about:blank");
+
+            let browser_id = state.open_browser(url);
+
+            (
+                Response::ok(
+                    &request.id,
+                    Some(serde_json::json!({"browser_id": browser_id})),
+                ),
+                should_exit,
+            )
+        }
+
+        "close_browser" => {
+            let browser_id = request
+                .data
+                .as_ref()
+                .and_then(|d| d.get("browser_id"))
+                .and_then(|id| id.as_u64())
+                .unwrap_or(0);
+
+            let was_last = state.close_browser(browser_id);
+
+            (Response::ok(&request.id, None), was_last)
+        }
+
+        "get_status" => (
+            Response::ok(
+                &request.id,
+                Some(serde_json::json!({
+                    "browser_count": state.count(),
+                    "pid": std::process::id()
+                })),
+            ),
+            should_exit,
+        ),
+
+        _ => (
+            Response::error(&request.id, &format!("Unknown action: {}", request.action)),
+            should_exit,
+        ),
+    }
+}
+
+fn handle_connection(mut stream: UnixStream, state: Arc<BrowserState>) -> bool {
+    let peer_id = Uuid::new_v4().to_string()[..8].to_string();
+    println!("[Subprocess] Client {} connected", peer_id);
+
     let reader = BufReader::new(stream.try_clone().expect("Failed to clone stream"));
+    let mut should_exit = false;
 
     for line in reader.lines() {
         match line {
             Ok(line) if line.is_empty() => continue,
             Ok(line) => {
-                let response = match serde_json::from_str::<Request>(&line) {
+                let (response, exit_after) = match serde_json::from_str::<Request>(&line) {
                     Ok(request) => {
-                        println!("Received request: {:?}", request);
-                        handle_request(&request)
+                        println!("[Subprocess] {} -> {:?}", peer_id, request);
+                        handle_request(&request, &state)
                     }
-                    Err(e) => Response::error("unknown", &format!("Invalid JSON: {}", e)),
+                    Err(e) => (
+                        Response::error("unknown", &format!("Invalid JSON: {}", e)),
+                        false,
+                    ),
                 };
 
                 let response_json = serde_json::to_string(&response).unwrap();
-                println!("Sending response: {}", response_json);
+                println!("[Subprocess] {} <- {}", peer_id, response_json);
 
                 if let Err(e) = writeln!(stream, "{}", response_json) {
-                    eprintln!("Failed to write response: {}", e);
+                    eprintln!("[Subprocess] Failed to write response: {}", e);
                     break;
                 }
                 let _ = stream.flush();
+
+                if exit_after {
+                    should_exit = true;
+                    break;
+                }
             }
             Err(e) => {
-                eprintln!("Error reading from socket: {}", e);
+                eprintln!("[Subprocess] Error reading from {}: {}", peer_id, e);
                 break;
             }
         }
     }
-    println!("Connection closed");
+
+    println!("[Subprocess] Client {} disconnected", peer_id);
+    should_exit
 }
 
-fn run_socket_server(socket_path: &PathBuf) -> Result<(), String> {
+fn run_socket_server(socket_path: PathBuf, state: Arc<BrowserState>, shutdown_flag: Arc<std::sync::atomic::AtomicBool>) {
     // Remove stale socket if it exists
     if socket_path.exists() {
-        fs::remove_file(socket_path).map_err(|e| format!("Failed to remove stale socket: {}", e))?;
+        if let Err(e) = fs::remove_file(&socket_path) {
+            eprintln!(
+                "[Subprocess] Failed to remove stale socket: {} (continuing anyway)",
+                e
+            );
+        }
     }
 
-    let listener =
-        UnixListener::bind(socket_path).map_err(|e| format!("Failed to bind socket: {}", e))?;
-
-    println!("Socket server listening at {:?}", socket_path);
-
-    // Accept one connection for this test
-    match listener.accept() {
-        Ok((stream, _addr)) => {
-            println!("Client connected");
-            handle_connection(stream);
-        }
+    let listener = match UnixListener::bind(&socket_path) {
+        Ok(l) => l,
         Err(e) => {
-            return Err(format!("Failed to accept connection: {}", e));
+            eprintln!("[Subprocess] Failed to bind socket: {}", e);
+            return;
+        }
+    };
+
+    // Set non-blocking so we can check shutdown flag
+    listener.set_nonblocking(true).expect("Failed to set non-blocking");
+
+    println!(
+        "[Subprocess] Socket server listening at {:?}",
+        socket_path
+    );
+
+    let mut handles = Vec::new();
+
+    // Accept connections in a loop
+    loop {
+        if shutdown_flag.load(Ordering::SeqCst) {
+            println!("[Subprocess] Shutdown flag set, stopping accept loop");
+            break;
+        }
+
+        match listener.accept() {
+            Ok((stream, _)) => {
+                // Set stream to blocking mode (listener is non-blocking but we want blocking reads)
+                stream.set_nonblocking(false).expect("Failed to set stream to blocking");
+
+                let state_clone = Arc::clone(&state);
+                let shutdown_clone = Arc::clone(&shutdown_flag);
+
+                let handle = thread::spawn(move || {
+                    let should_exit = handle_connection(stream, state_clone);
+                    if should_exit {
+                        shutdown_clone.store(true, Ordering::SeqCst);
+                    }
+                });
+                handles.push(handle);
+            }
+            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                // No connection ready, sleep briefly and check shutdown flag
+                thread::sleep(Duration::from_millis(50));
+            }
+            Err(e) => {
+                eprintln!("[Subprocess] Failed to accept connection: {}", e);
+            }
         }
     }
 
-    Ok(())
+    // Wait for all connection handlers to finish
+    println!("[Subprocess] Waiting for {} connections to close...", handles.len());
+    for handle in handles {
+        let _ = handle.join();
+    }
+
+    // Cleanup socket
+    let _ = fs::remove_file(&socket_path);
+    println!("[Subprocess] Socket cleaned up");
 }
 
 fn run_browser_subprocess(profile: ProfileMode) {
     let socket_path = profile.socket_path();
 
     println!(
-        "Browser subprocess starting with profile={}",
+        "[Subprocess] Starting with profile={}",
         profile.display_name()
     );
 
     match load_cef(&profile) {
         Ok(()) => {
-            println!("loaded CEF with profile={}", profile.display_name());
+            println!(
+                "[Subprocess] CEF initialized with profile={}",
+                profile.display_name()
+            );
         }
         Err(e) => {
-            eprintln!("Failed to load CEF: {}", e);
+            eprintln!("[Subprocess] Failed to load CEF: {}", e);
             std::process::exit(1);
         }
     }
 
-    // Start socket server
-    println!("Starting socket server...");
-    if let Err(e) = run_socket_server(&socket_path) {
-        eprintln!("Socket server error: {}", e);
-    }
+    // Create shared browser state and shutdown flag
+    let state = Arc::new(BrowserState::new());
+    let shutdown_flag = Arc::new(std::sync::atomic::AtomicBool::new(false));
 
-    // Cleanup
-    let _ = fs::remove_file(&socket_path);
-    println!("Socket cleaned up");
+    // Run socket server (this blocks until shutdown)
+    run_socket_server(socket_path, state, shutdown_flag);
 
     #[cfg(target_os = "macos")]
     cef::shutdown();
+
+    println!("[Subprocess] Exiting");
 }
 
 // ============================================================================
 // Socket Client (Coordinator)
 // ============================================================================
 
-fn wait_for_socket(socket_path: &PathBuf, timeout: Duration) -> Result<(), String> {
+fn try_connect(socket_path: &PathBuf) -> Option<UnixStream> {
+    if !socket_path.exists() {
+        return None;
+    }
+
+    match UnixStream::connect(socket_path) {
+        Ok(stream) => Some(stream),
+        Err(_) => {
+            // Socket exists but can't connect - stale socket
+            let _ = fs::remove_file(socket_path);
+            None
+        }
+    }
+}
+
+fn wait_for_socket(socket_path: &PathBuf, timeout: Duration) -> Result<UnixStream, String> {
     let start = std::time::Instant::now();
-    while !socket_path.exists() {
+
+    loop {
+        if let Some(stream) = try_connect(socket_path) {
+            return Ok(stream);
+        }
+
         if start.elapsed() > timeout {
             return Err(format!("Timeout waiting for socket at {:?}", socket_path));
         }
+
         thread::sleep(Duration::from_millis(50));
     }
-    // Small delay to ensure socket is ready to accept
-    thread::sleep(Duration::from_millis(100));
-    Ok(())
 }
 
-fn send_ping(socket_path: &PathBuf) -> Result<Response, String> {
-    let mut stream =
-        UnixStream::connect(socket_path).map_err(|e| format!("Failed to connect: {}", e))?;
-
+fn send_request(stream: &mut UnixStream, action: &str, data: Option<serde_json::Value>) -> Result<Response, String> {
     let request = Request {
         id: Uuid::new_v4().to_string(),
-        action: "ping".to_string(),
-        data: None,
+        action: action.to_string(),
+        data,
     };
 
     let request_json = serde_json::to_string(&request).unwrap();
-    println!("Sending: {}", request_json);
-
     writeln!(stream, "{}", request_json).map_err(|e| format!("Failed to write: {}", e))?;
     stream.flush().map_err(|e| format!("Failed to flush: {}", e))?;
 
-    let reader = BufReader::new(stream);
-    let response_line = reader
-        .lines()
-        .next()
-        .ok_or("No response received")?
-        .map_err(|e| format!("Failed to read response: {}", e))?;
-
-    println!("Received: {}", response_line);
+    let mut reader = BufReader::new(stream.try_clone().map_err(|e| format!("Clone failed: {}", e))?);
+    let mut response_line = String::new();
+    reader.read_line(&mut response_line).map_err(|e| format!("Failed to read: {}", e))?;
 
     serde_json::from_str(&response_line).map_err(|e| format!("Invalid response JSON: {}", e))
 }
 
-fn spawn_subprocess(profile: &ProfileMode) -> Child {
+fn spawn_subprocess(profile: &ProfileMode) {
     let exe = env::current_exe().expect("Failed to get current executable path");
 
     let mut cmd = Command::new(&exe);
@@ -397,69 +569,106 @@ fn spawn_subprocess(profile: &ProfileMode) -> Child {
         }
     }
 
-    cmd.stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+    // Spawn in background - don't wait for it
+    cmd.stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .stdin(Stdio::null())
         .spawn()
-        .expect("Failed to spawn browser subprocess")
+        .expect("Failed to spawn browser subprocess");
 }
 
-fn run_coordinator(profile: ProfileMode) {
+fn run_coordinator(profile: ProfileMode, url: Option<String>) {
     let socket_path = profile.socket_path();
+    let url = url.unwrap_or_else(|| "about:blank".to_string());
 
-    println!(
-        "Coordinator: spawning browser subprocess with profile={}...",
-        profile.display_name()
-    );
-    println!("Socket path: {:?}", socket_path);
+    // Try to connect to existing subprocess
+    let mut stream = if let Some(stream) = try_connect(&socket_path) {
+        println!(
+            "Connected to existing subprocess for profile={}",
+            profile.display_name()
+        );
+        stream
+    } else {
+        println!(
+            "Spawning new subprocess for profile={}...",
+            profile.display_name()
+        );
+        spawn_subprocess(&profile);
 
-    let mut child = spawn_subprocess(&profile);
-
-    // Wait for socket to be created
-    println!("Waiting for socket...");
-    match wait_for_socket(&socket_path, Duration::from_secs(10)) {
-        Ok(()) => println!("Socket ready"),
-        Err(e) => {
-            eprintln!("Error: {}", e);
-            let _ = child.kill();
-            std::process::exit(1);
-        }
-    }
-
-    // Send ping
-    println!("Sending ping...");
-    match send_ping(&socket_path) {
-        Ok(response) => {
-            if response.status == "ok" {
-                println!("SUCCESS: Received pong response!");
-                if let Some(data) = response.data {
-                    println!("Response data: {}", data);
-                }
-            } else {
-                eprintln!("ERROR: {}", response.error.unwrap_or_default());
+        match wait_for_socket(&socket_path, Duration::from_secs(10)) {
+            Ok(stream) => {
+                println!("Connected to subprocess");
+                stream
+            }
+            Err(e) => {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
             }
         }
+    };
+
+    // Open a browser
+    println!("Opening browser: {}", url);
+    let response = send_request(
+        &mut stream,
+        "open_browser",
+        Some(serde_json::json!({"url": url})),
+    );
+
+    let browser_id = match response {
+        Ok(resp) if resp.status == "ok" => {
+            let id = resp.data.as_ref()
+                .and_then(|d| d.get("browser_id"))
+                .and_then(|id| id.as_u64())
+                .unwrap_or(0);
+            println!("Browser opened with id={}", id);
+            id
+        }
+        Ok(resp) => {
+            eprintln!("Failed to open browser: {}", resp.error.unwrap_or_default());
+            std::process::exit(1);
+        }
         Err(e) => {
-            eprintln!("Failed to send ping: {}", e);
+            eprintln!("Failed to open browser: {}", e);
+            std::process::exit(1);
+        }
+    };
+
+    // Get subprocess status
+    if let Ok(resp) = send_request(&mut stream, "get_status", None) {
+        if let Some(data) = resp.data {
+            println!(
+                "Subprocess status: pid={}, browsers={}",
+                data.get("pid").and_then(|p| p.as_u64()).unwrap_or(0),
+                data.get("browser_count").and_then(|c| c.as_u64()).unwrap_or(0)
+            );
         }
     }
 
-    // Wait for subprocess to finish
-    println!("Waiting for subprocess to exit...");
-    let output = child.wait_with_output().expect("Failed to wait for subprocess");
+    // Wait for user to press Enter (simulating browser being open)
+    println!("\nPress Enter to close browser...");
+    let mut input = String::new();
+    let _ = std::io::stdin().read_line(&mut input);
 
-    if !output.stdout.is_empty() {
-        println!(
-            "Subprocess stdout:\n{}",
-            String::from_utf8_lossy(&output.stdout)
-        );
+    // Close the browser
+    println!("Closing browser {}...", browser_id);
+    match send_request(
+        &mut stream,
+        "close_browser",
+        Some(serde_json::json!({"browser_id": browser_id})),
+    ) {
+        Ok(resp) if resp.status == "ok" => {
+            println!("Browser closed");
+        }
+        Ok(resp) => {
+            eprintln!("Failed to close browser: {}", resp.error.unwrap_or_default());
+        }
+        Err(e) => {
+            eprintln!("Failed to close browser: {}", e);
+        }
     }
-    if !output.stderr.is_empty() {
-        eprintln!(
-            "Subprocess stderr:\n{}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-    }
-    println!("Subprocess exited with: {}", output.status);
+
+    println!("Coordinator exiting");
 }
 
 // ============================================================================
@@ -468,17 +677,17 @@ fn run_coordinator(profile: ProfileMode) {
 
 fn main() {
     match parse_args() {
-        Ok((is_subprocess, profile)) => {
+        Ok((is_subprocess, profile, url)) => {
             if is_subprocess {
                 run_browser_subprocess(profile);
             } else {
-                run_coordinator(profile);
+                run_coordinator(profile, url);
             }
         }
         Err(e) => {
             eprintln!("Error: {}", e);
             eprintln!();
-            eprintln!("Usage: web [--profile <name>] [--incognito]");
+            eprintln!("Usage: web [URL] [--profile <name>] [--incognito]");
             eprintln!();
             eprintln!("Options:");
             eprintln!("  --profile <name>  Use named profile (default: 'default')");
