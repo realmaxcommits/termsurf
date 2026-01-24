@@ -167,3 +167,43 @@ The following has been validated and is ready for ts3:
   but we are only testing on macOS for now.
 - **Profile management UI**: How users create, switch, and manage profiles.
 - **DevTools**: Exposing Chrome DevTools for browser panes.
+
+## Experiments
+
+### Experiment 1: Profile Loading
+
+**Status:** In Progress
+
+**Goal:** Validate that the `web` CLI can load CEF with different profile
+directories, confirming our core architecture is sound.
+
+**Hypothesis:** CEF will initialize successfully with profile-specific cache
+paths, and we can run multiple browser subprocesses with different profiles
+simultaneously.
+
+**Test cases:**
+
+1. `web` - loads default profile (`~/.config/termsurf/cef/default/`)
+2. `web --profile work` - loads work profile (`~/.config/termsurf/cef/work/`)
+3. `web --incognito` - loads with no persistent profile
+4. Run two instances with different profiles simultaneously
+5. Verify CEF rejects two processes opening the same profile
+
+**Implementation:**
+
+- Add `--profile <name>` flag (default: "default")
+- Add `--incognito` flag (mutually exclusive with `--profile`)
+- Validate profile name: lowercase alphanumeric, must start with letter
+- Pass profile to subprocess via `--browser-subprocess --profile <name>`
+- Set CEF `root_cache_path` to `~/.config/termsurf/cef/<profile>/`
+- For incognito, use empty cache path or temp directory
+
+**Success criteria:**
+
+- [ ] `web` prints "loaded CEF" with profile=default
+- [ ] `web --profile work` prints "loaded CEF" with profile=work
+- [ ] `web --incognito` prints "loaded CEF" with no profile
+- [ ] Two processes with different profiles run simultaneously
+- [ ] Two processes with the same profile: second fails gracefully
+
+**Results:** (to be filled in after experiment)
