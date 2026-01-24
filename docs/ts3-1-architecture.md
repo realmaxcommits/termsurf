@@ -885,27 +885,30 @@ also use sRGB views when importing the IOSurface texture.
 - [x] Profile server renders webpage to IOSurface
 - [x] Profile server returns texture handle (IOSurface ID) to coordinator
 - [x] Coordinator passes texture handle to GUI
-- [ ] GUI imports IOSurface and displays webpage in correct pane - **NOT IMPLEMENTED**
+- [ ] GUI imports IOSurface and displays webpage in correct pane - **NOT
+      IMPLEMENTED**
 - [ ] Webpage is visible and correctly sized - **NOT VISIBLE**
-- [ ] Colors are correct (no washed-out appearance from double gamma correction) - **UNTESTABLE**
+- [ ] Colors are correct (no washed-out appearance from double gamma
+      correction) - **UNTESTABLE**
 - [x] ctrl+c exits coordinator and hides webview
 
 **Results:** FAILURE (2026-01-24)
 
 **What worked:**
 
-1. **Profile server CEF rendering**: Accelerated OSR works - `on_accelerated_paint`
-   fires (not software fallback), IOSurface IDs are captured successfully.
+1. **Profile server CEF rendering**: Accelerated OSR works -
+   `on_accelerated_paint` fires (not software fallback), IOSurface IDs are
+   captured successfully.
 
 2. **Socket communication**: Coordinator connects to both profile server socket
    and GUI socket. Full protocol round-trip works.
 
-3. **GUI socket timing**: Fixed by starting server early in `main.rs` before
-   any windows/shells spawn (learned from ts2's `start_server()` pattern).
+3. **GUI socket timing**: Fixed by starting server early in `main.rs` before any
+   windows/shells spawn (learned from ts2's `start_server()` pattern).
 
 4. **Single-threaded profile server**: Fixed CEF threading requirement (browser
-   creation must happen on main thread) by replacing threaded connection handling
-   with a single-threaded poll loop.
+   creation must happen on main thread) by replacing threaded connection
+   handling with a single-threaded poll loop.
 
 5. **Protocol flow**: Complete data flow works - profile server creates browser,
    captures IOSurface ID, coordinator receives it and forwards to GUI socket,
@@ -977,3 +980,203 @@ streaming IOSurface IDs across processes. Alternative approaches to explore:
 2. Use software rendering and shared memory (slower but stable IDs)
 3. Investigate CEF's `shared_texture_handle` stability guarantees
 4. Consider a hybrid: CEF in-process, profile switching via CEF restart
+
+### Experiment 7: Render Static Webview Texture
+
+**Status:** Not Started
+
+**Goal:** Complete the missing piece from Experiment 6: render a static webview
+texture in the GUI. Display a "screenshot" of the webpage - one frame, stretched
+on resize, no interactivity.
+
+**Background:** Experiment 6 established the full data flow:
+
+- Profile server creates CEF browser and captures IOSurface ID ✓
+- Coordinator receives IOSurface ID and forwards to GUI ✓
+- GUI socket server receives and stores overlay info in `WebviewOverlayState` ✓
+
+The missing piece: the GUI rendering code that actually displays the texture.
+
+**Key insight:** Even though CEF cycles through multiple IOSurface buffers (IDs
+change every frame), the old IOSurfaces don't disappear. IOSurface ID 246
+remains valid and contains the rendered content. We just need to:
+
+1. Look up the IOSurface by ID using `lookup_iosurface_by_id()`
+2. Import it into a wgpu texture using `IOSurfaceImporter::from_id()`
+3. Create a bind group and render it
+
+This is how ts2's MVP worked before interactivity was added.
+
+**Reference implementation (ts2):**
+
+ts2 renders browser overlays in two places:
+
+1. `ts2/wezterm-gui/src/termwindow/render/pane.rs`:
+   - `paint_pane()` checks `has_browser_for_pane()` and calls
+     `paint_browser_overlay()`
+   - `paint_browser_overlay()` sets pane bounds on the browser state
+
+2. `ts2/wezterm-gui/src/termwindow/render/draw.rs`:
+   - `render_cef_overlays()` is called after main terminal rendering
+   - Gets bind group from `browser.get_texture_bind_group()`
+   - Renders fullscreen quad at pane bounds
+
+In ts2, the bind group is created in `on_accelerated_paint` (in-process). In
+ts3, we'll create the bind group in the rendering code by looking up the
+IOSurface ID.
+
+**Implementation steps:**
+
+1. **Add IOSurface import to GUI** (`wezterm-gui/Cargo.toml`):
+   ```toml
+   [target.'cfg(target_os = "macos")'.dependencies]
+   cef = { path = "../../cef-rs/cef", features = ["accelerated_osr"] }
+   ```
+   (Already done in Experiment 6)
+
+2. **Modify `pane.rs`** - Check for webview overlay:
+   ```rust
+   // In paint_pane(), before terminal rendering:
+   #[cfg(target_os = "macos")]
+   {
+       if let Some(server) = crate::termwindow::webview_socket::get_server() {
+           let state = server.state().read().unwrap();
+           if state.has_overlay(pos.pane.pane_id()) {
+               // Skip terminal rendering, webview will be rendered in draw.rs
+               return Ok(());
+           }
+       }
+   }
+   ```
+
+3. **Modify `draw.rs`** - Render webview overlays after terminal content:
+   ```rust
+   // After main rendering, before output.present():
+   #[cfg(target_os = "macos")]
+   self.render_webview_overlays(&output.texture, webgpu)?;
+   ```
+
+4. **Implement `render_webview_overlays()`** in `draw.rs`:
+   ```rust
+   #[cfg(target_os = "macos")]
+   fn render_webview_overlays(
+       &self,
+       output_texture: &wgpu::Texture,
+       webgpu: &WebGpuState,
+   ) -> anyhow::Result<()> {
+       use cef::osr_texture_import::iosurface_ipc::lookup_iosurface_by_id;
+       use cef::osr_texture_import::iosurface::IOSurfaceImporter;
+
+       let server = match crate::termwindow::webview_socket::get_server() {
+           Some(s) => s,
+           None => return Ok(()),
+       };
+
+       let state = server.state().read().unwrap();
+
+       for pos in self.get_panes_to_render() {
+           let pane_id = pos.pane.pane_id();
+           let Some(overlay) = state.get_overlay(pane_id) else {
+               continue;
+           };
+
+           // Look up IOSurface by ID
+           let handle = match lookup_iosurface_by_id(overlay.iosurface_id) {
+               Some(h) => h,
+               None => {
+                   log::warn!("IOSurface {} not found", overlay.iosurface_id);
+                   continue;
+               }
+           };
+
+           // Import into wgpu texture
+           let importer = IOSurfaceImporter::from_id(
+               overlay.iosurface_id,
+               cef::sys::cef_color_type_t::CEF_COLOR_TYPE_BGRA_8888,
+               overlay.width,
+               overlay.height,
+           );
+
+           let texture = match importer {
+               Some(imp) => imp.import_texture(&webgpu.device),
+               None => continue,
+           };
+
+           // Create bind group with sRGB view (prevents double gamma correction)
+           let view = texture.create_view(&wgpu::TextureViewDescriptor {
+               format: Some(wgpu::TextureFormat::Bgra8UnormSrgb),
+               ..Default::default()
+           });
+
+           // ... create sampler, bind group, render fullscreen quad at pane bounds
+       }
+
+       Ok(())
+   }
+   ```
+
+5. **Create shader and pipeline** for rendering fullscreen textured quads (may
+   be able to reuse existing infrastructure from WezTerm's image rendering)
+
+6. **Calculate pane bounds** - use similar logic to ts2's
+   `calculate_pane_pixel_bounds()` to determine where to render the texture
+
+**Color profile handling (critical):**
+
+Use sRGB texture view format to prevent double gamma correction:
+
+```rust
+let view = texture.create_view(&wgpu::TextureViewDescriptor {
+    format: Some(wgpu::TextureFormat::Bgra8UnormSrgb),
+    ..Default::default()
+});
+```
+
+Chromium renders in sRGB (already gamma-corrected). If the GPU sees the texture
+as linear (`Bgra8Unorm`), it applies gamma correction again, causing washed-out
+colors.
+
+**MVP scope:**
+
+- Single pane with webview overlay
+- Static texture (captured once when browser first renders)
+- Texture stretches on pane resize (no CEF resize)
+- No interactivity (no mouse, no keyboard to webview)
+- Ctrl+C to exit
+
+**Deferred:**
+
+- Continuous texture updates (streaming at 60fps)
+- Proper resize (tell CEF to resize, not just stretch)
+- Input handling (mouse, keyboard)
+- Multiple webviews
+- Control bar / browse mode
+
+**Success criteria:**
+
+- [ ] IOSurface imported successfully by ID in GUI process
+- [ ] Texture rendered at correct pane position
+- [ ] Colors correct (no washed-out appearance)
+- [ ] Webpage content visible (google.com logo, search box, etc.)
+- [ ] Texture stretches when pane resizes
+- [ ] Ctrl+C exits and hides webview
+
+**Files to modify:**
+
+- `ts3/wezterm-gui/src/termwindow/render/pane.rs` - Skip terminal for webview
+  panes
+- `ts3/wezterm-gui/src/termwindow/render/draw.rs` - Add
+  `render_webview_overlays()`
+- `ts3/wezterm-gui/src/termwindow/webview_socket.rs` - May need to expose state
+  access for rendering code
+- Possibly shader files if new pipeline needed
+
+**Verification:**
+
+1. Run `wezterm-gui` (ts3)
+2. Run `web https://google.com` in a pane
+3. See Google homepage rendered in the pane
+4. Resize the pane - texture should stretch
+5. Press Ctrl+C - webview disappears, terminal restored
+
+**Results:** (to be filled in after experiment)
