@@ -8,4 +8,5 @@ description = "Web browser coordinator for TermSurf"
 name = "web"
 path = "src/main.rs"
 
-[dependencies]
+[target.'cfg(target_os = "macos")'.dependencies]
+cef = { path = "../../cef-rs/cef" }
