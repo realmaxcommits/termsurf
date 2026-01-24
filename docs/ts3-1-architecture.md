@@ -685,3 +685,209 @@ All changes applied and tested. The terminology is now consistent:
 
 The rename clarifies that this process is the CEF context for a specific
 profile, not just a generic subprocess.
+
+### Experiment 6: Display Webview in GUI
+
+**Status:** Not Started
+
+**Goal:** Render a webpage in the profile server and display it in the GUI
+(wezterm-gui), with the coordinator acting as intermediary. This is the first
+end-to-end test of the full architecture.
+
+**Background:** Experiments 1-5 established:
+
+- Profile server can initialize CEF and manage webviews
+- Coordinator can communicate with profile server via socket
+- Webview lifecycle is tied to coordinator connection
+
+Now we need to connect the GUI. The GUI (wezterm-gui) is the graphical
+application that displays terminal panes. We want webviews to appear in the same
+space as terminal panes, rendered by the profile server and composited by the
+GUI.
+
+**Research findings from ts2:**
+
+1. **IPC mechanism**: ts2 uses Unix domain sockets (not WezTerm's built-in IPC,
+   which is one-way and can't stream console.log back). Socket path is stored in
+   `TERMSURF_SOCKET` env var, set by the GUI for child processes.
+
+2. **Pane identification**: ts2 uses `WEZTERM_PANE` (WezTerm's built-in numeric
+   pane ID). ts1 used a custom `TERMSURF_PANE_ID` string. We'll use
+   `WEZTERM_PANE` since we're building on WezTerm.
+
+3. **Resize handling**: ts2 uses a "settle-and-rerender" pattern - waits 30ms
+   after bounds change before resizing CEF to avoid intermediate resize calls.
+   For MVP, we skip this and just stretch the texture.
+
+4. **Focus handling**: ts2 has two modes (Browse/Control). For MVP, we skip
+   interactivity entirely.
+
+**Architecture:**
+
+```
+┌─────────────┐     socket      ┌─────────────────┐
+│ coordinator │ <-------------> │  profile server │
+│   (web)     │                 │  (CEF process)  │
+└─────────────┘                 └─────────────────┘
+       │                                │
+       │ socket                         │ IOSurface
+       │ (TERMSURF_SOCKET)              │ (shared texture)
+       ▼                                ▼
+┌─────────────────────────────────────────────────┐
+│                      GUI                         │
+│                  (wezterm-gui)                   │
+│  ┌─────────────┐  ┌─────────────┐               │
+│  │ terminal    │  │  webview    │               │
+│  │ pane        │  │  (texture)  │               │
+│  └─────────────┘  └─────────────┘               │
+└─────────────────────────────────────────────────┘
+```
+
+**Key insight:** The coordinator is the intermediary for control flow, but the
+texture memory is shared directly via IOSurface (macOS). The coordinator passes
+the texture handle (an integer), not the actual pixels.
+
+**Environment variables (set by GUI):**
+
+- `TERMSURF_SOCKET` - Path to GUI's Unix domain socket (e.g.,
+  `/tmp/termsurf-{pid}.sock`)
+- `WEZTERM_PANE` - Numeric pane ID (WezTerm built-in)
+
+**Data flow (MVP):**
+
+1. User runs `web google.com` in a terminal pane
+2. Coordinator reads `TERMSURF_SOCKET` and `WEZTERM_PANE` from environment
+3. Coordinator connects to profile server, sends `open` with URL and pane size
+4. Profile server creates CEF browser at requested size, renders to IOSurface
+5. Profile server returns IOSurface handle to coordinator
+6. Coordinator connects to GUI socket, sends `display_webview` with texture
+   handle and pane ID
+7. GUI imports IOSurface and composites it over the terminal pane
+8. User sees google.com rendered in the pane
+9. User presses ctrl+c, coordinator disconnects, GUI hides webview
+
+**Protocol: Coordinator <-> Profile Server**
+
+Request (coordinator sends):
+
+```json
+{
+  "id": "uuid",
+  "action": "open",
+  "data": {"url": "https://google.com", "width": 800, "height": 600}
+}
+```
+
+Response (profile server returns):
+
+```json
+{
+  "id": "uuid",
+  "status": "ok",
+  "data": {"texture_handle": 12345, "width": 800, "height": 600}
+}
+```
+
+**Protocol: Coordinator <-> GUI**
+
+Same socket protocol as ts2 (newline-delimited JSON):
+
+```json
+{"id": "uuid", "action": "display_webview", "pane_id": 42, "data": {"texture_handle": 12345, "width": 800, "height": 600}}
+{"id": "uuid", "status": "ok"}
+```
+
+```json
+{"id": "uuid", "action": "hide_webview", "pane_id": 42}
+{"id": "uuid", "status": "ok"}
+```
+
+**Implementation steps:**
+
+1. **GUI: Create socket server**
+
+   - Create Unix socket at `/tmp/termsurf-{pid}.sock`
+   - Set `TERMSURF_SOCKET` env var for child processes
+   - Handle `display_webview` and `hide_webview` actions
+   - Port relevant code from `ts2/wezterm-gui/src/termsurf_socket/`
+
+2. **Profile server: Render to IOSurface**
+
+   - Use cef-rs OSR to create browser at requested size
+   - Render to IOSurface (already validated in cef-rs examples)
+   - Return IOSurfaceID in `open` response
+
+3. **Coordinator: Bridge profile server and GUI**
+
+   - Read `TERMSURF_SOCKET` and `WEZTERM_PANE` from environment
+   - Connect to profile server, send `open` with URL and pane dimensions
+   - Receive texture handle from profile server
+   - Connect to GUI socket, send `display_webview`
+   - Wait for ctrl+c, then send `hide_webview` and exit
+
+4. **GUI: Import and display texture**
+   - Receive `display_webview` with texture handle and pane ID
+   - Import IOSurface using handle
+   - Composite texture over terminal pane content
+   - On `hide_webview`, remove texture overlay
+
+**Color profile handling (critical):**
+
+ts2 encountered washed-out colors due to double gamma correction. The fix:
+
+- **Problem:** Chromium renders in sRGB (already gamma-corrected). If GPU sees
+  texture as linear (`Bgra8Unorm`), it applies gamma correction again.
+- **Solution:** Use sRGB texture view formats to tell GPU the data is already
+  sRGB-encoded.
+
+Profile server side (cef-rs already handles this):
+
+```rust
+// Texture created with sRGB view formats allowed
+view_formats: &[wgpu::TextureFormat::Bgra8UnormSrgb]
+```
+
+GUI side (must do this when importing):
+
+```rust
+// Create texture view with sRGB format
+let view = texture.create_view(&wgpu::TextureViewDescriptor {
+    format: Some(wgpu::TextureFormat::Bgra8UnormSrgb),
+    ..Default::default()
+});
+```
+
+This prevents double gamma correction and ensures colors match what Chromium
+intended. The fix is already in cef-rs (commit `2b3aa8a3d`), but the GUI must
+also use sRGB views when importing the IOSurface texture.
+
+**MVP scope (this experiment):**
+
+- Single webview, single pane
+- Render once at initial size
+- No interactivity (no mouse, no keyboard to webview)
+- Stretch texture if pane resizes (no CEF resize)
+- ctrl+c to exit
+- Correct DPI/color profile handling
+
+**Deferred for later experiments:**
+
+- Input handling (mouse, keyboard)
+- Proper resize (tell CEF to resize, not just stretch)
+- Console.log streaming
+- Multiple webviews
+- Control bar / browse mode / control mode
+- Focus management
+
+**Success criteria:**
+
+- [ ] GUI creates socket and sets `TERMSURF_SOCKET`
+- [ ] Profile server renders webpage to IOSurface
+- [ ] Profile server returns texture handle to coordinator
+- [ ] Coordinator passes texture handle to GUI
+- [ ] GUI imports IOSurface and displays webpage in correct pane
+- [ ] Webpage is visible and correctly sized
+- [ ] Colors are correct (no washed-out appearance from double gamma correction)
+- [ ] ctrl+c exits coordinator and hides webview
+
+**Results:** (to be filled in after experiment)
