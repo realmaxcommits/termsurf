@@ -999,7 +999,7 @@ No additional flags are needed for these—they persist automatically when
 
 ### Experiment 6: Chrome-Native Profile Naming
 
-**Status:** Pending
+**Status:** Failed
 
 **Goal:** Enable multi-profile support by using Chrome's native profile naming
 convention (`Default`, `Profile 1`, `Profile 2`, etc.) instead of custom names.
@@ -1220,3 +1220,99 @@ termsurf cli web open https://example.com --incognito
 
 **Dependencies:** Experiment 5 progress (global context working with
 persistence).
+
+**Result:**
+
+The implementation was completed, but custom profiles still fail. Observed
+behavior:
+
+| Profile Flag  | cache_path                         | Result                 |
+| ------------- | ---------------------------------- | ---------------------- |
+| (none)        | `~/.config/termsurf/cef/Default`   | Works                  |
+| `--profile 0` | `~/.config/termsurf/cef/Default`   | Works                  |
+| `--profile 1` | `~/.config/termsurf/cef/Profile 1` | Browser creation fails |
+| `--profile 5` | `~/.config/termsurf/cef/Profile 5` | Browser creation fails |
+| `--incognito` | (empty)                            | Works                  |
+
+Log output for `--profile 1`:
+
+```
+[CEF] Using profile directory: /Users/ryan/.config/termsurf/cef/Profile 1 (profile: Some(1))
+[CEF] RequestContext created for profile Some(1), cache_path: /Users/ryan/.config/termsurf/cef/Profile 1
+ERROR [CEF] Failed to create browser for pane 0: Failed to create CEF browser
+```
+
+The `request_context_create_context()` call succeeds (returns `Some`), but
+`browser_host_create_browser_sync()` returns `None` for any cache_path that
+isn't `Default`.
+
+**Conclusion:**
+
+Chrome's profile naming convention (`Default`, `Profile 1`, `Profile 2`) is for
+Chrome's internal use only. Simply creating a RequestContext with a cache_path
+matching these names is not sufficient - Chrome's profile management system must
+internally recognize and register the profile. CEF does not expose an API to
+create new profiles programmatically.
+
+**What works:**
+
+- Global context → automatically creates/uses `Default` profile
+- Custom context with empty cache_path → incognito mode
+
+**What doesn't work:**
+
+- Custom context with ANY non-empty cache_path (including Chrome-style names)
+
+**Research: Why Custom Profiles Fail**
+
+Further investigation revealed this is **documented behavior in CEF's Chrome
+runtime**. From the
+[official CEF documentation](https://cef-builds.spotifycdn.com/docs/120.2/structcef__settings__t.html):
+
+> "When using the Chrome runtime any child directory value will be ignored and
+> the 'default' profile (also a child directory) will be used instead."
+
+This is not a bug or misconfiguration - CEF's Chrome runtime intentionally
+ignores custom `cache_path` values.
+
+**Why this happens:**
+
+1. **CEF 126+ uses Chrome Bootstrap by default** - This brought the full Chrome
+   profile management system
+2. **Chrome's profile system** expects profiles to be managed internally, not
+   via arbitrary directory paths
+3. **The Alloy runtime** (which supported custom `cache_path`) is deprecated and
+   will be removed
+
+**Confirmed behavior:**
+
+| Approach                   | Result                       |
+| -------------------------- | ---------------------------- |
+| `cache_path = "Default"`   | Works (Chrome recognizes it) |
+| `cache_path = "Profile 1"` | Ignored → uses "Default"     |
+| `cache_path = ""` (empty)  | Works (incognito mode)       |
+| Any custom path under root | Ignored → uses "Default"     |
+
+**Sources:**
+
+- [CEF Settings Documentation](https://cef-builds.spotifycdn.com/docs/120.2/structcef__settings__t.html)
+- [CefSharp Issue #4961](https://github.com/cefsharp/CefSharp/issues/4961) -
+  Same problem, unresolved
+- [CEF Forum - Chrome vs Alloy Runtime](https://www.magpcss.org/ceforum/viewtopic.php?f=17&t=18750)
+- [CefSharp Discussion #4899](https://github.com/cefsharp/CefSharp/discussions/4899) -
+  CachePath not working with ChromeRuntime
+
+**Remaining options for multi-profile support:**
+
+1. **Multiple `root_cache_path` values** - Each profile needs its own CEF
+   instance with a different root directory (e.g.,
+   `~/.config/termsurf/cef/profile-1/`, `~/.config/termsurf/cef/profile-2/`).
+   Each would have its own `Default` subdirectory. This is the only way to have
+   truly isolated profiles with Chrome runtime.
+
+2. **Use Alloy runtime** (`chrome_runtime = false`) - This would support custom
+   `cache_path`, but Alloy is deprecated and being removed. Not a viable
+   long-term solution.
+
+3. **Accept single profile** - Use the `Default` profile for all browsers, offer
+   `--incognito` for isolation when needed.
