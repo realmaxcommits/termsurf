@@ -46,6 +46,10 @@ Browsers can use numbered profiles to isolate cookies, localStorage, and other
 session data. Profiles follow Chrome's internal naming convention and are stored
 in `~/.config/termsurf/cef/`.
 
+> **Note:** Multi-profile support requires separate CEF processes due to Chrome
+> runtime limitations. See [profile.md](profile.md) for the full research and
+> architecture details.
+
 ```bash
 # Default profile (profile 0)
 termsurf cli web open https://example.com
@@ -1316,3 +1320,6 @@ ignores custom `cache_path` values.
 
 3. **Accept single profile** - Use the `Default` profile for all browsers, offer
    `--incognito` for isolation when needed.
+
+See [profile.md](profile.md) for the complete research findings and recommended
+architecture for multi-profile support.
