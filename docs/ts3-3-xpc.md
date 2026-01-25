@@ -284,20 +284,59 @@ web CLI                    GUI                         Launcher (XPC)           
 
 #### Components
 
-##### 1. Launcher XPC Service (`ts3/termsurf-launcher/`)
+##### 1. Launcher XPC Service (`ts3/termsurf-launcher/`) — Swift, macOS-only
+
+**Why macOS-only?** The launcher exists solely because XPC is required for Mach
+port transfer. Other platforms don't need it:
+
+- **Linux:** DMA-BUF file descriptors pass over Unix sockets via `SCM_RIGHTS`
+- **Windows:** `DuplicateHandle()` copies DXGI handles between processes
+
+On Linux/Windows, the GUI spawns profile servers directly and passes texture
+handles over existing IPC. No launcher needed.
+
+**Why Swift?** Swift has first-class XPC support (`NSXPCConnection`,
+`NSXPCListener`). No need for Rust FFI bindings to XPC APIs. The launcher is
+small (~100 lines) and macOS-specific, so using a macOS-native language makes
+sense.
 
 Minimal XPC service that relays endpoints between GUI and spawned processes:
 
-```rust
-// Pseudocode
-fn handle_spawn_profile(endpoint, profile, session_id) {
-    pending_sessions.insert(session_id, endpoint);
-    spawn("termsurf-test-sender", ["--session-id", session_id]);
+```swift
+// termsurf-launcher/main.swift
+import Foundation
+
+class LauncherDelegate: NSObject, NSXPCListenerDelegate {
+    var pendingSessions: [String: NSXPCListenerEndpoint] = [:]
+
+    func listener(_ listener: NSXPCListener,
+                  shouldAcceptNewConnection conn: NSXPCConnection) -> Bool {
+        conn.exportedInterface = NSXPCInterface(with: LauncherProtocol.self)
+        conn.exportedObject = self
+        conn.resume()
+        return true
+    }
+
+    func spawnProfile(endpoint: NSXPCListenerEndpoint,
+                      profile: String,
+                      sessionId: String) {
+        pendingSessions[sessionId] = endpoint
+        let task = Process()
+        task.executableURL = Bundle.main.url(forAuxiliaryExecutable: "termsurf-test-sender")
+        task.arguments = ["--session-id", sessionId]
+        try? task.run()
+    }
+
+    func claimSession(sessionId: String) -> NSXPCListenerEndpoint? {
+        return pendingSessions.removeValue(forKey: sessionId)
+    }
 }
 
-fn handle_claim_session(session_id) -> endpoint {
-    pending_sessions.remove(session_id)
-}
+let delegate = LauncherDelegate()
+let listener = NSXPCListener(machServiceName: "com.termsurf.launcher")
+listener.delegate = delegate
+listener.resume()
+RunLoop.main.run()
 ```
 
 **Info.plist:** Registers as `com.termsurf.launcher`
@@ -380,14 +419,15 @@ handles everything internally.
 
 #### Files to Create
 
-| File                                            | Purpose                    |
-| ----------------------------------------------- | -------------------------- |
-| `ts3/termsurf-launcher/Cargo.toml`              | Launcher crate manifest    |
-| `ts3/termsurf-launcher/src/main.rs`             | XPC service implementation |
-| `ts3/termsurf-launcher/Info.plist`              | XPC service registration   |
-| `ts3/termsurf-test-sender/Cargo.toml`           | Test sender crate manifest |
-| `ts3/termsurf-test-sender/src/main.rs`          | IOSurface creation + send  |
-| `ts3/wezterm-gui/src/termwindow/webview_xpc.rs` | XPC client + listener      |
+| File                                            | Purpose                              |
+| ----------------------------------------------- | ------------------------------------ |
+| `ts3/termsurf-launcher/main.swift`              | XPC service implementation (Swift)   |
+| `ts3/termsurf-launcher/LauncherProtocol.swift`  | XPC protocol definition              |
+| `ts3/termsurf-launcher/Info.plist`              | XPC service registration             |
+| `ts3/termsurf-launcher/termsurf-launcher.entitlements` | Sandbox disabled             |
+| `ts3/termsurf-test-sender/Cargo.toml`           | Test sender crate manifest           |
+| `ts3/termsurf-test-sender/src/main.rs`          | IOSurface creation + send            |
+| `ts3/wezterm-gui/src/termwindow/webview_xpc.rs` | XPC client + listener (Rust via FFI) |
 
 #### Files to Modify
 
