@@ -225,3 +225,189 @@ mechanism differs.
 
 The next step is to design and implement XPC-based communication between the GUI
 and profile servers.
+
+## Experiments
+
+### Experiment 1: XPC IOSurface Transfer with Test Texture
+
+**Status:** PLANNED
+
+**Goal:** Validate the complete XPC architecture by displaying a test texture in
+the terminal pane. Running `web google.com` will display a pink 100x100 texture
+stretched to fill the pane, proving the entire IPC pipeline works before
+integrating CEF.
+
+#### What the User Sees
+
+```
+$ web google.com
+```
+
+- Terminal pane fills with solid pink (stretched from 100x100 texture)
+- Resizing the pane stretches the pink to fit
+- Ctrl+C exits and restores the terminal
+
+#### Why Pink?
+
+- **Not purple** — Purple often indicates uninitialized GPU memory or errors
+- **Not black** — Could be confused with "nothing rendered"
+- **Not white** — Could be confused with a blank page
+- **Bright pink (#FF69B4)** — Unmistakably intentional, clearly a test texture
+
+#### Architecture
+
+```
+web CLI                    GUI                         Launcher (XPC)           Test Sender
+───────                    ───                         ──────────────           ───────────
+    │                       │                               │                        │
+    │── open_webview ──────>│                               │                        │
+    │                       │                               │                        │
+    │                       │── connect ───────────────────>│                        │
+    │                       │                               │                        │
+    │                       │── spawn_profile ─────────────>│                        │
+    │                       │   + XPC endpoint              │                        │
+    │                       │                               │── spawn ──────────────>│
+    │                       │                               │   --session-id UUID    │
+    │                       │                               │                        │
+    │                       │                               │<── claim_session ──────│
+    │                       │                               │                        │
+    │                       │                               │── GUI endpoint ───────>│
+    │                       │                               │                        │
+    │                       │<══════════ XPC connection (direct) ═══════════════════>│
+    │                       │                               │                        │
+    │                       │<── IOSurface Mach port ───────────────────────────────│
+    │                       │    (100x100 pink texture)     │                        │
+    │                       │                               │                        │
+    │                       │── render stretched ──>        │                        │
+    │                       │   to pane size                │                        │
+```
+
+#### Components
+
+##### 1. Launcher XPC Service (`ts3/termsurf-launcher/`)
+
+Minimal XPC service that relays endpoints between GUI and spawned processes:
+
+```rust
+// Pseudocode
+fn handle_spawn_profile(endpoint, profile, session_id) {
+    pending_sessions.insert(session_id, endpoint);
+    spawn("termsurf-test-sender", ["--session-id", session_id]);
+}
+
+fn handle_claim_session(session_id) -> endpoint {
+    pending_sessions.remove(session_id)
+}
+```
+
+**Info.plist:** Registers as `com.termsurf.launcher`
+
+##### 2. Test Sender (`ts3/termsurf-test-sender/`)
+
+Minimal binary that creates and sends a test IOSurface:
+
+```rust
+fn main() {
+    let session_id = args.session_id;
+
+    // 1. Connect to launcher, claim session, get GUI endpoint
+    let launcher = xpc_connect("com.termsurf.launcher");
+    let gui_endpoint = claim_session(launcher, session_id);
+
+    // 2. Connect to GUI
+    let gui = xpc_connect_from_endpoint(gui_endpoint);
+
+    // 3. Create pink IOSurface
+    let surface = create_iosurface(100, 100);
+    fill_with_color(surface, 0xFF69B4);  // Hot pink
+
+    // 4. Send Mach port to GUI
+    let port = IOSurfaceCreateMachPort(surface);
+    send_iosurface_port(gui, port, pane_id, 100, 100);
+
+    // 5. Keep alive until GUI disconnects
+    run_loop();
+}
+```
+
+##### 3. GUI Modifications (`ts3/wezterm-gui/`)
+
+**New file:** `src/termwindow/webview_xpc.rs`
+
+- Create anonymous XPC listener on startup
+- Connect to launcher
+- Handle `open_webview` by sending spawn request with endpoint
+- Receive IOSurface Mach port from test sender
+- Call `IOSurfaceLookupFromMachPort()` to get handle
+- Store handle for rendering
+
+**Render changes:**
+
+- Check for active webview overlay on pane
+- Import IOSurface as wgpu texture
+- Render fullscreen quad stretched to pane dimensions
+- Re-stretch on resize (no re-request to sender)
+
+##### 4. Web CLI
+
+Existing code already sends `open_webview` to GUI. No changes needed — GUI
+handles everything internally.
+
+#### Files to Create
+
+| File                                            | Purpose                    |
+| ----------------------------------------------- | -------------------------- |
+| `ts3/termsurf-launcher/Cargo.toml`              | Launcher crate manifest    |
+| `ts3/termsurf-launcher/src/main.rs`             | XPC service implementation |
+| `ts3/termsurf-launcher/Info.plist`              | XPC service registration   |
+| `ts3/termsurf-test-sender/Cargo.toml`           | Test sender crate manifest |
+| `ts3/termsurf-test-sender/src/main.rs`          | IOSurface creation + send  |
+| `ts3/wezterm-gui/src/termwindow/webview_xpc.rs` | XPC client + listener      |
+
+#### Files to Modify
+
+| File                                               | Changes                         |
+| -------------------------------------------------- | ------------------------------- |
+| `ts3/wezterm-gui/src/termwindow/mod.rs`            | Initialize XPC manager          |
+| `ts3/wezterm-gui/src/termwindow/webview_socket.rs` | Route to XPC for `open_webview` |
+| `ts3/wezterm-gui/src/termwindow/render/*.rs`       | Render stretched texture        |
+| `ts3/Cargo.toml`                                   | Add workspace members           |
+| Build scripts                                      | Bundle XPC service in app       |
+
+#### Success Criteria
+
+- [ ] `web google.com` displays solid pink in the pane
+- [ ] Pink fills entire pane (stretched from 100x100)
+- [ ] Resizing pane re-stretches the pink (no flicker, no re-fetch)
+- [ ] Ctrl+C exits cleanly, terminal restored
+- [ ] Logs show: "IOSurfaceLookupFromMachPort returned valid handle"
+
+#### What This Proves
+
+1. **XPC service bundling works** — launchd finds and launches our service
+2. **Endpoint relay works** — GUI endpoint successfully passed through launcher
+3. **Direct XPC connection works** — Test sender connects to GUI via endpoint
+4. **Mach port transfer works** — IOSurface port sent over XPC
+5. **IOSurfaceLookupFromMachPort works** — Handle valid in receiving process
+6. **Texture import works** — IOSurface → wgpu texture pipeline
+7. **Rendering works** — Stretched quad displays correctly
+
+#### Failure Modes
+
+| Symptom                     | Likely Cause                                            |
+| --------------------------- | ------------------------------------------------------- |
+| `web` hangs                 | Launcher not starting, check Console.app for XPC errors |
+| Black pane                  | IOSurfaceLookupFromMachPort failed, check logs          |
+| Purple pane                 | Texture import failed, uninitialized GPU memory         |
+| Pink square (not stretched) | Render quad not using pane dimensions                   |
+| Crash on resize             | Texture lifecycle issue                                 |
+
+#### After This Experiment
+
+If successful, Experiment 2 replaces `termsurf-test-sender` with the real
+profile server:
+
+1. Profile server uses same XPC flow
+2. Instead of pink IOSurface, uses `on_accelerated_paint` IOSurface
+3. Sends Mach port on first paint and on resize
+4. Real webpage appears in pane
