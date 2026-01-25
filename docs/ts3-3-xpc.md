@@ -150,6 +150,69 @@ This is not a matter of preference or convenience. On modern macOS:
 XPC is the only non-deprecated, non-entitled mechanism for transferring Mach
 port rights between unrelated processes on macOS.
 
+## Cross-Platform Considerations
+
+XPC is macOS-specific. Other platforms have their own GPU texture sharing
+mechanisms, and importantly, they're often simpler.
+
+### Platform-Specific Transfer Mechanisms
+
+| Platform    | Handle Type               | Transfer Mechanism         | Complexity |
+| ----------- | ------------------------- | -------------------------- | ---------- |
+| **macOS**   | IOSurface (`*mut c_void`) | XPC + Mach ports           | High       |
+| **Linux**   | DMA-BUF (file descriptor) | Unix socket + `SCM_RIGHTS` | Low        |
+| **Windows** | DXGI handle (`HANDLE`)    | `DuplicateHandle`          | Medium     |
+
+### Linux Is Easier
+
+On Linux, CEF renders to DMA-BUF textures, which are represented as file
+descriptors. File descriptors can be sent over Unix domain sockets using
+`SCM_RIGHTS` ancillary data. This means the existing Unix socket infrastructure
+can carry texture handles directly — no new IPC mechanism needed.
+
+From cef-rs `dmabuf.rs`:
+
+```rust
+pub struct DmaBufImporter {
+    fds: Vec<std::os::fd::RawFd>,  // File descriptors - can use SCM_RIGHTS
+    // ...
+}
+```
+
+### Windows Is Medium Complexity
+
+On Windows, DXGI shared handles can be duplicated into another process using
+`DuplicateHandle()`. This requires the target process handle, which the GUI has
+for profile servers it spawns.
+
+### Architectural Consistency
+
+Despite different transfer mechanisms, the overall architecture remains
+identical across platforms:
+
+```
+Profile Server                      GUI
+──────────────                      ───
+on_accelerated_paint(handle)
+        │
+        ├── macOS: XPC + Mach port
+        ├── Linux: Unix socket + SCM_RIGHTS
+        └── Windows: DuplicateHandle
+                                    │
+                                    └── Import texture, render
+```
+
+The profile server sends; the GUI receives and imports. Only the transfer
+mechanism differs.
+
+### Implementation Strategy
+
+1. **macOS first** — XPC/Mach ports are the most complex; solving this first
+   de-risks the architecture
+2. **Linux second** — Add `SCM_RIGHTS` support to existing Unix socket code
+3. **Windows third** — `DuplicateHandle` is straightforward once we have the
+   process handle
+
 ## Summary
 
 | Approach               | Status   | Reason                                 |
