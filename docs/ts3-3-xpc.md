@@ -228,7 +228,594 @@ and profile servers.
 
 ## Experiments
 
-### Experiment 1: XPC IOSurface Transfer with Test Texture
+### Experiment 1: XPC Test Bundle
+
+**Status:** PLANNED
+
+**Goal:** Validate the `termsurf-xpc` Rust bindings and XPC service architecture
+with a minimal standalone test before integrating with wezterm/CEF. This
+isolates XPC complexity from GUI/rendering complexity.
+
+**Critical validation:** The launcher must be able to **spawn child processes**.
+This is the entire reason the launcher exists — if it can't spawn profile
+servers, the architecture fails.
+
+#### What This Tests
+
+| API / Capability                        | Purpose                                  |
+| --------------------------------------- | ---------------------------------------- |
+| `xpc_connection_create_mach_service()`  | Connect to named XPC service             |
+| `xpc_connection_set_event_handler()`    | Handle incoming messages (via blocks)    |
+| `XpcListener::new_anonymous()`          | Create endpoint for peer-to-peer         |
+| `xpc_endpoint_create()`                 | Extract endpoint from listener           |
+| `xpc_dictionary_set_endpoint()`         | Send endpoint in message                 |
+| `xpc_connection_create_from_endpoint()` | Connect to anonymous listener            |
+| `xpc_dictionary_set_mach_send()`        | Send Mach port in message                |
+| `xpc_dictionary_copy_mach_send()`       | Receive Mach port from message           |
+| `IOSurfaceCreateMachPort()`             | Create sendable port from IOSurface      |
+| `IOSurfaceLookupFromMachPort()`         | Reconstruct IOSurface from received port |
+| **Process spawning from XPC service**   | Launcher spawns sender (critical!)       |
+| **Sandbox compatibility**               | XPC service can spawn with entitlements  |
+
+#### Architecture
+
+This test mirrors the production architecture:
+
+| Test Component | Production Equivalent |
+| -------------- | --------------------- |
+| Receiver       | wezterm-gui           |
+| Launcher       | termsurf-launcher     |
+| Sender         | profile server        |
+
+```
+┌────────────────────────────────────────────────────────────────────────┐
+│                     TermSurf XPC Test Bundle                           │
+│                     (ts3/termsurf-xpc/)                                │
+├────────────────────────────────────────────────────────────────────────┤
+│                                                                        │
+│  ┌─────────────┐          ┌─────────────┐          ┌─────────────┐    │
+│  │  Receiver   │          │   Launcher  │ ──spawn──>   Sender    │    │
+│  │   (Rust)    │          │   (XPC Svc) │          │   (Rust)    │    │
+│  └──────┬──────┘          └──────┬──────┘          └──────┬──────┘    │
+│         │                        │                        │           │
+│    1. Create              2. Spawn sender            3. Create        │
+│       anonymous              + pass endpoint            IOSurface     │
+│       listener               + session ID               + send port   │
+│                                                                       │
+└───────────────────────────────────────────────────────────────────────┘
+```
+
+#### Test Flow
+
+**Key difference from naive approach:** The launcher spawns the sender. This
+validates that XPC services can spawn child processes (required for production).
+
+```
+Receiver                      Launcher                     Sender
+────────                      ────────                     ──────
+    │                            │
+    │── connect ────────────────>│
+    │                            │
+    │── spawn_sender ───────────>│
+    │   + my endpoint            │
+    │   + session_id: "test-1"   │
+    │                            │
+    │                            │── spawn ──────────────────>│
+    │                            │   args: --session test-1   │
+    │                            │                            │
+    │                            │<──────── connect ──────────│
+    │                            │                            │
+    │                            │<── claim_session ──────────│
+    │                            │    session_id: "test-1"    │
+    │                            │                            │
+    │                            │── receiver endpoint ──────>│
+    │                            │                            │
+    │<════════════ direct XPC connection ════════════════════>│
+    │                            │                            │
+    │                            │    (IOSurface Mach port)   │
+    │<─────────────────────────────────── send_surface ───────│
+    │                            │                            │
+    │   IOSurfaceLookupFromMachPort() → handle                │
+    │   Verify: width=100, height=100, pixel[0,0]=0xFF69B4    │
+    │                            │                            │
+    │   print "SUCCESS"          │                            │
+    │                            │                            │
+```
+
+#### Components
+
+##### 1. XPC Service (Launcher)
+
+**Location:** `ts3/termsurf-xpc/launcher/`
+
+XPC service that spawns child processes and relays endpoints:
+
+```
+ts3/termsurf-xpc/launcher/
+├── Info.plist                       # Service registration + entitlements
+├── main.swift                       # ~80 lines
+└── termsurf-xpc-test.entitlements   # Sandbox disabled for spawning
+```
+
+```swift
+// launcher/main.swift
+import Foundation
+
+class Launcher: NSObject, NSXPCListenerDelegate {
+    var pendingSessions: [String: xpc_endpoint_t] = [:]
+    let senderPath: String
+
+    init(senderPath: String) {
+        self.senderPath = senderPath
+    }
+
+    func listener(_ listener: NSXPCListener,
+                  shouldAcceptNewConnection conn: NSXPCConnection) -> Bool {
+        conn.exportedInterface = NSXPCInterface(with: LauncherProtocol.self)
+        conn.exportedObject = self
+        conn.resume()
+        return true
+    }
+}
+
+extension Launcher: LauncherProtocol {
+    func spawnSender(receiverEndpoint: xpc_endpoint_t, sessionId: String) {
+        // Store endpoint for sender to claim
+        pendingSessions[sessionId] = receiverEndpoint
+
+        // Spawn sender as child process
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: senderPath)
+        task.arguments = ["--session", sessionId]
+
+        do {
+            try task.run()
+            print("Launcher: Spawned sender for session \(sessionId)")
+        } catch {
+            print("Launcher: Failed to spawn sender: \(error)")
+        }
+    }
+
+    func claimSession(sessionId: String, reply: @escaping (xpc_endpoint_t?) -> Void) {
+        let endpoint = pendingSessions.removeValue(forKey: sessionId)
+        reply(endpoint)
+    }
+}
+
+// Main
+let bundlePath = Bundle.main.bundlePath
+let senderPath = (bundlePath as NSString)
+    .deletingLastPathComponent
+    .appending("/sender")
+
+let launcher = Launcher(senderPath: senderPath)
+let listener = NSXPCListener(machServiceName: "com.termsurf.xpc-test")
+listener.delegate = launcher
+listener.resume()
+
+print("Launcher: Running...")
+RunLoop.main.run()
+```
+
+**Entitlements (sandbox disabled):**
+
+```xml
+<!-- launcher/termsurf-xpc-test.entitlements -->
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>com.apple.security.app-sandbox</key>
+    <false/>
+</dict>
+</plist>
+```
+
+**Info.plist:**
+
+```xml
+<!-- launcher/Info.plist -->
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleIdentifier</key>
+    <string>com.termsurf.xpc-test</string>
+    <key>CFBundleName</key>
+    <string>termsurf-xpc-test</string>
+    <key>CFBundleExecutable</key>
+    <string>termsurf-xpc-test</string>
+    <key>XPCService</key>
+    <dict>
+        <key>ServiceType</key>
+        <string>Application</string>
+    </dict>
+</dict>
+</plist>
+```
+
+##### 2. Receiver (Rust)
+
+**Location:** `ts3/termsurf-xpc/examples/receiver.rs`
+
+Tests the "GUI side" — creates anonymous listener, asks launcher to spawn
+sender:
+
+```rust
+// examples/receiver.rs
+use termsurf_xpc::*;
+
+fn main() -> Result<()> {
+    println!("Receiver: Starting...");
+
+    // 1. Connect to launcher
+    let launcher = XpcConnection::connect_mach_service("com.termsurf.xpc-test")?;
+    set_event_handler(&launcher, |event| {
+        // Handle any errors from launcher
+        if let Err(e) = event {
+            eprintln!("Receiver: Launcher error: {}", e);
+        }
+    });
+    launcher.resume();
+    println!("Receiver: Connected to launcher");
+
+    // 2. Create anonymous listener for sender to connect
+    let listener = XpcListener::new_anonymous()?;
+    let endpoint = listener.get_endpoint()?;
+    println!("Receiver: Created anonymous listener");
+
+    // 3. Set up handler for incoming peer connections
+    set_new_connection_handler(&listener, |peer| {
+        println!("Receiver: Sender connected!");
+
+        set_event_handler(&peer, |event| {
+            match event {
+                Ok(msg) => {
+                    let action = msg.get_string("action").unwrap_or_default();
+                    if action == "send_surface" {
+                        // Receive IOSurface Mach port
+                        let port = msg.copy_mach_send("iosurface_port");
+                        let handle = unsafe { IOSurfaceLookupFromMachPort(port) };
+
+                        if handle.is_null() {
+                            eprintln!("FAILED: IOSurfaceLookupFromMachPort returned NULL");
+                            std::process::exit(1);
+                        }
+
+                        // Verify dimensions
+                        let width = unsafe { IOSurfaceGetWidth(handle) };
+                        let height = unsafe { IOSurfaceGetHeight(handle) };
+
+                        if width != 100 || height != 100 {
+                            eprintln!("FAILED: Expected 100x100, got {}x{}", width, height);
+                            std::process::exit(1);
+                        }
+
+                        // Verify pixel color (hot pink: 0xFF69B4)
+                        let pixel = read_pixel(handle, 0, 0);
+                        let expected = 0xFF69B4FF; // RGBA
+
+                        if pixel != expected {
+                            eprintln!("FAILED: Expected pixel 0x{:08X}, got 0x{:08X}",
+                                     expected, pixel);
+                            std::process::exit(1);
+                        }
+
+                        println!("SUCCESS: Received 100x100 pink IOSurface via XPC!");
+                        std::process::exit(0);
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Receiver: Peer error: {}", e);
+                }
+            }
+        });
+        peer.resume();
+    });
+    listener.resume();
+
+    // 4. Ask launcher to spawn sender with our endpoint
+    let msg = XpcDictionary::new();
+    msg.set_string("action", "spawn_sender");
+    msg.set_string("session_id", "test-1");
+    msg.set_endpoint("receiver_endpoint", endpoint);
+    launcher.send(&msg);
+    println!("Receiver: Requested sender spawn");
+
+    // 5. Run event loop
+    println!("Receiver: Waiting for sender...");
+    run_loop();
+}
+```
+
+##### 3. Sender (Rust)
+
+**Location:** `ts3/termsurf-xpc/examples/sender.rs`
+
+Tests the "profile server side" — spawned by launcher, claims endpoint, sends
+IOSurface:
+
+```rust
+// examples/sender.rs
+use termsurf_xpc::*;
+use clap::Parser;
+
+#[derive(Parser)]
+struct Args {
+    #[arg(long)]
+    session: String,
+}
+
+fn main() -> Result<()> {
+    let args = Args::parse();
+    println!("Sender: Starting for session '{}'", args.session);
+
+    // 1. Connect to launcher
+    let launcher = XpcConnection::connect_mach_service("com.termsurf.xpc-test")?;
+    launcher.resume();
+    println!("Sender: Connected to launcher");
+
+    // 2. Claim session, get receiver endpoint
+    let msg = XpcDictionary::new();
+    msg.set_string("action", "claim_session");
+    msg.set_string("session_id", &args.session);
+    let reply = launcher.send_with_reply_sync(&msg)?;
+
+    let receiver_endpoint = reply.get_endpoint("endpoint")
+        .ok_or_else(|| XpcError::Unknown("No endpoint in reply".into()))?;
+    println!("Sender: Got receiver endpoint");
+
+    // 3. Connect directly to receiver
+    let receiver = XpcConnection::from_endpoint(receiver_endpoint)?;
+    set_event_handler(&receiver, |event| {
+        if let Err(e) = event {
+            eprintln!("Sender: Receiver error: {}", e);
+        }
+    });
+    receiver.resume();
+    println!("Sender: Connected to receiver");
+
+    // 4. Create pink IOSurface (100x100, hot pink 0xFF69B4)
+    let surface = create_iosurface(100, 100)?;
+    fill_with_color(surface, 0xFF, 0x69, 0xB4, 0xFF); // Hot pink, full alpha
+    println!("Sender: Created 100x100 pink IOSurface");
+
+    // 5. Send Mach port to receiver
+    let port = unsafe { IOSurfaceCreateMachPort(surface) };
+    if port == 0 {
+        return Err(XpcError::Unknown("IOSurfaceCreateMachPort failed".into()));
+    }
+
+    let msg = XpcDictionary::new();
+    msg.set_string("action", "send_surface");
+    msg.set_mach_send("iosurface_port", port);
+    msg.set_int64("width", 100);
+    msg.set_int64("height", 100);
+    receiver.send(&msg);
+    println!("Sender: Sent IOSurface Mach port");
+
+    // 6. Keep alive briefly to ensure message delivered
+    std::thread::sleep(std::time::Duration::from_secs(2));
+    println!("Sender: Done");
+
+    Ok(())
+}
+```
+
+#### Directory Structure
+
+```
+ts3/termsurf-xpc/
+├── Cargo.toml
+├── src/
+│   ├── lib.rs
+│   ├── connection.rs
+│   ├── listener.rs
+│   ├── dictionary.rs
+│   ├── error.rs
+│   ├── ffi.rs
+│   ├── iosurface.rs              # IOSurface FFI bindings
+│   ├── block.rs                  # Safe block wrappers (uses block2)
+│   └── runloop.rs                # CFRunLoop wrapper
+├── examples/
+│   ├── receiver.rs
+│   └── sender.rs
+├── launcher/
+│   ├── Info.plist
+│   ├── main.swift
+│   ├── LauncherProtocol.swift
+│   └── termsurf-xpc-test.entitlements
+└── scripts/
+    ├── build-test.sh             # Build everything
+    └── run-test.sh               # Run the test
+```
+
+#### Build Script
+
+```bash
+#!/bin/bash
+# ts3/termsurf-xpc/scripts/build-test.sh
+
+set -e
+cd "$(dirname "$0")/.."
+
+echo "=== Building XPC Test Bundle ==="
+
+# Build Rust binaries
+cargo build --release --example receiver
+cargo build --release --example sender
+
+# Build Swift XPC service
+swiftc -o launcher/termsurf-xpc-test \
+    launcher/main.swift \
+    launcher/LauncherProtocol.swift
+
+# Create test app bundle structure
+APP="TestXPC.app"
+rm -rf "$APP"
+mkdir -p "$APP/Contents/MacOS"
+mkdir -p "$APP/Contents/XPCServices/com.termsurf.xpc-test.xpc/Contents/MacOS"
+
+# Copy binaries
+cp ../../target/release/examples/receiver "$APP/Contents/MacOS/"
+cp ../../target/release/examples/sender "$APP/Contents/MacOS/"
+cp launcher/termsurf-xpc-test \
+   "$APP/Contents/XPCServices/com.termsurf.xpc-test.xpc/Contents/MacOS/"
+
+# Copy XPC service plists
+cp launcher/Info.plist \
+   "$APP/Contents/XPCServices/com.termsurf.xpc-test.xpc/Contents/"
+
+# Create app Info.plist
+cat > "$APP/Contents/Info.plist" << 'EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleIdentifier</key>
+    <string>com.termsurf.xpc-test</string>
+    <key>CFBundleExecutable</key>
+    <string>receiver</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+</dict>
+</plist>
+EOF
+
+# Sign the XPC service (required for launchd to load it)
+codesign --force --sign - \
+    "$APP/Contents/XPCServices/com.termsurf.xpc-test.xpc"
+
+# Sign the app
+codesign --force --sign - "$APP"
+
+echo "=== Build complete: $APP ==="
+```
+
+#### Test Script
+
+```bash
+#!/bin/bash
+# ts3/termsurf-xpc/scripts/run-test.sh
+
+set -e
+cd "$(dirname "$0")/.."
+
+# Build first
+./scripts/build-test.sh
+
+echo ""
+echo "=== Running XPC Test ==="
+echo ""
+
+# Run receiver (it will ask launcher to spawn sender)
+# Timeout after 30 seconds
+timeout 30 ./TestXPC.app/Contents/MacOS/receiver
+EXIT_CODE=$?
+
+echo ""
+if [ $EXIT_CODE -eq 0 ]; then
+    echo "=== TEST PASSED ==="
+else
+    echo "=== TEST FAILED (exit code: $EXIT_CODE) ==="
+    exit 1
+fi
+```
+
+#### Success Criteria
+
+- [ ] XPC service starts when receiver connects (check Activity Monitor)
+- [ ] Launcher successfully spawns sender as child process
+- [ ] Sender connects to launcher and claims session
+- [ ] Sender receives receiver's endpoint
+- [ ] Sender connects directly to receiver via endpoint
+- [ ] Sender creates IOSurface (100x100 pink)
+- [ ] `IOSurfaceCreateMachPort()` succeeds
+- [ ] Receiver receives Mach port
+- [ ] `IOSurfaceLookupFromMachPort()` returns valid handle
+- [ ] IOSurface dimensions are 100x100
+- [ ] Pixel at (0,0) is hot pink (0xFF69B4)
+- [ ] Test prints "SUCCESS" and exits 0
+
+#### Failure Modes
+
+| Symptom                               | Likely Cause                                           |
+| ------------------------------------- | ------------------------------------------------------ |
+| "Connection refused" on launcher      | XPC service not bundled correctly, check Console.app   |
+| Sender never starts                   | Launcher can't spawn (sandbox?), check entitlements    |
+| Sender starts but can't connect       | Timing issue, or XPC service crashed after spawn       |
+| "No endpoint in reply"                | Session not registered, race condition                 |
+| Direct connection fails               | Endpoint invalid, or anonymous listener pattern broken |
+| `IOSurfaceCreateMachPort` returns 0   | IOSurface not created correctly                        |
+| `IOSurfaceLookupFromMachPort` is NULL | Mach port not transferred, or wrong port type          |
+| Wrong dimensions/color                | IOSurface creation bug (unrelated to XPC)              |
+| Test hangs                            | Event handler not called, check block implementation   |
+
+#### Debugging
+
+**Console.app filters:**
+
+- Process: `com.termsurf.xpc-test`
+- Process: `receiver`
+- Process: `sender`
+
+**Check XPC service is running:**
+
+```bash
+launchctl list | grep termsurf
+```
+
+**Check code signing:**
+
+```bash
+codesign -dvv TestXPC.app
+codesign -dvv TestXPC.app/Contents/XPCServices/com.termsurf.xpc-test.xpc
+```
+
+#### Dependencies
+
+Before running this experiment, complete these in `termsurf-xpc`:
+
+1. **Block-based event handlers** (`src/block.rs`)
+   - Use `block2` crate to create Objective-C blocks from Rust closures
+   - Implement `set_event_handler()` and `set_new_connection_handler()`
+   - Handle block lifetime correctly (prevent use-after-free)
+
+2. **IOSurface bindings** (`src/iosurface.rs`)
+   - `IOSurfaceCreate()` — create new surface
+   - `IOSurfaceGetBaseAddress()` / `IOSurfaceLock()` / `IOSurfaceUnlock()` —
+     pixel access
+   - `IOSurfaceCreateMachPort()` — create sendable port
+   - `IOSurfaceLookupFromMachPort()` — reconstruct from port
+   - `IOSurfaceGetWidth()` / `IOSurfaceGetHeight()` — dimension queries
+   - Helper: `create_iosurface(w, h)`, `fill_with_color()`, `read_pixel()`
+
+3. **Run loop** (`src/runloop.rs`)
+   - `CFRunLoopRun()` wrapper
+   - Or use `dispatch_main()` if using dispatch queues
+
+4. **Verify anonymous listener pattern**
+   - Test that `xpc_connection_create_mach_service(NULL, queue, LISTENER)` works
+   - If not, research alternative approaches
+
+#### After This Experiment
+
+With all XPC primitives validated, Experiment 2 integrates with the real app:
+
+1. Move launcher into `WezTerm.app/Contents/XPCServices/`
+2. Replace receiver logic → `wezterm-gui` XPC client
+3. Replace sender → profile server with CEF
+4. Replace pink IOSurface → CEF's `on_accelerated_paint` surface
+5. Render received texture in terminal pane
+6. Replace pink IOSurface with CEF `on_accelerated_paint` surface
+7. Render to actual terminal pane
+
+---
+
+### Experiment 2: XPC IOSurface Transfer with Test Texture
 
 **Status:** PLANNED
 
@@ -419,15 +1006,15 @@ handles everything internally.
 
 #### Files to Create
 
-| File                                            | Purpose                              |
-| ----------------------------------------------- | ------------------------------------ |
-| `ts3/termsurf-launcher/main.swift`              | XPC service implementation (Swift)   |
-| `ts3/termsurf-launcher/LauncherProtocol.swift`  | XPC protocol definition              |
-| `ts3/termsurf-launcher/Info.plist`              | XPC service registration             |
-| `ts3/termsurf-launcher/termsurf-launcher.entitlements` | Sandbox disabled             |
-| `ts3/termsurf-test-sender/Cargo.toml`           | Test sender crate manifest           |
-| `ts3/termsurf-test-sender/src/main.rs`          | IOSurface creation + send            |
-| `ts3/wezterm-gui/src/termwindow/webview_xpc.rs` | XPC client + listener (Rust via FFI) |
+| File                                                   | Purpose                              |
+| ------------------------------------------------------ | ------------------------------------ |
+| `ts3/termsurf-launcher/main.swift`                     | XPC service implementation (Swift)   |
+| `ts3/termsurf-launcher/LauncherProtocol.swift`         | XPC protocol definition              |
+| `ts3/termsurf-launcher/Info.plist`                     | XPC service registration             |
+| `ts3/termsurf-launcher/termsurf-launcher.entitlements` | Sandbox disabled                     |
+| `ts3/termsurf-test-sender/Cargo.toml`                  | Test sender crate manifest           |
+| `ts3/termsurf-test-sender/src/main.rs`                 | IOSurface creation + send            |
+| `ts3/wezterm-gui/src/termwindow/webview_xpc.rs`        | XPC client + listener (Rust via FFI) |
 
 #### Files to Modify
 
