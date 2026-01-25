@@ -688,15 +688,25 @@ typedef struct {
    - Store send right in webview state
 
 5. **Profile server: Send IOSurface Mach ports** (`termsurf-web/src/main.rs`)
-   - In `on_accelerated_paint`, call `IOSurfaceCreateMachPort(handle)`
-   - Construct Mach message with `mach_msg_port_descriptor_t`
-   - Send to GUI using `mach_msg()` with `MACH_SEND_MSG`
+   - Track `last_sent_iosurface_id` per webview (initialized to 0)
+   - In `on_accelerated_paint`:
+     - Get current IOSurface ID via `IOSurfaceGetID(handle)`
+     - If ID differs from `last_sent_iosurface_id`:
+       - Call `IOSurfaceCreateMachPort(handle)`
+       - Construct Mach message with `mach_msg_port_descriptor_t`
+       - Send to GUI using `mach_msg()` with `MACH_SEND_MSG`
+       - Update `last_sent_iosurface_id`
+     - If ID is same, skip (CEF reuses IOSurface, only contents changed)
+   - **Important:** Only send on first paint and when IOSurface changes (e.g.,
+     resize). CEF updates the same IOSurface in-place for normal frame updates.
 
 6. **GUI: Receive Mach messages** (`webview_socket.rs`)
    - Spawn a thread to listen for Mach messages on the receive port
    - On message receipt, extract the IOSurface port
    - Call `IOSurfaceLookupFromMachPort()` to get valid handle
    - Store handle in `WebviewOverlayState` for rendering
+   - **Caching:** Keep the IOSurface handle until a new Mach message arrives
+     (indicating IOSurface changed). Don't re-import every frame.
 
 7. **GUI: Import and render texture** (`render/draw.rs`)
    - Use the IOSurface handle with existing `IOSurfaceImporter`
@@ -720,10 +730,14 @@ typedef struct {
 #[cfg(target_os = "macos")]
 #[link(name = "IOSurface", kind = "framework")]
 extern "C" {
+    fn IOSurfaceGetID(buffer: *const c_void) -> u32;  // For tracking changes
     fn IOSurfaceCreateMachPort(buffer: *const c_void) -> mach_port_t;
     fn IOSurfaceLookupFromMachPort(port: mach_port_t) -> *mut c_void;
 }
 ```
+
+Note: `IOSurfaceGetID` already exists in `iosurface_ipc.rs`. Only the Mach port
+functions need to be added.
 
 #### Success Criteria
 
@@ -745,6 +759,26 @@ extern "C" {
    check lifecycle
 4. **Texture import fails**: Verify IOSurface dimensions match, check pixel
    format
+
+#### Performance Note: IOSurface Reuse
+
+CEF allocates IOSurfaces and reuses them across frames. A typical session:
+
+1. **First paint:** New IOSurface created, ID = 100
+2. **Frames 2-1000:** Same IOSurface (ID = 100), only pixel contents change
+3. **Resize event:** New IOSurface created, ID = 101
+4. **Frames 1001+:** Same IOSurface (ID = 101)
+
+The profile server only needs to send a Mach port when the IOSurface ID changes
+(steps 1 and 3). Sending on every frame would:
+
+- Waste CPU cycles creating/destroying Mach ports
+- Risk leaking port resources if cleanup isn't perfect
+- Add unnecessary IPC overhead (60 Mach messages/sec at 60fps vs 1-2 total)
+
+The GUI similarly only needs to import the texture when it receives a new Mach
+message. Between messages, it renders from the cached IOSurface handle — CEF
+updates the pixel contents in-place via the GPU.
 
 #### Cleanup Considerations
 
