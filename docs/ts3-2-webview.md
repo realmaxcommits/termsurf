@@ -76,6 +76,175 @@ Once texture display works, we will address (in rough order):
 These features are deferred until we solve the fundamental texture sharing
 problem.
 
+## Hypotheses
+
+### Hypothesis 1: IOSurface Global ID Deprecation
+
+Investigation into the cross-process IOSurface sharing failure revealed a
+potential root cause: **the IOSurface is created by CEF's GPU subprocess, and
+global ID lookup is deprecated**.
+
+#### CEF's Multi-Process Architecture
+
+CEF (Chromium Embedded Framework) uses multiple processes:
+
+```
+wezterm-gui (separate process tree - CANNOT lookup IOSurface by global ID)
+
+termsurf-web (profile server / CEF browser process)
+    └── WezTerm Helper (CEF GPU process - CREATES the IOSurface)
+        └── IOSurface lives here
+```
+
+When `on_accelerated_paint` is called in the profile server, the IOSurface
+handle is valid within that process tree (profile server + GPU subprocess).
+However, wezterm-gui is a completely separate process with no relationship to
+the CEF process hierarchy.
+
+#### The kIOSurfaceIsGlobal Deprecation
+
+Apple deprecated `kIOSurfaceIsGlobal` in macOS 10.11 (2015). This flag was
+required for `IOSurfaceGetID`/`IOSurfaceLookup` to work across arbitrary
+processes. Without it:
+
+- IOSurfaces are not globally registered
+- `IOSurfaceLookup(id)` only works within the same process hierarchy
+- Apple considers globally accessible screen buffers a security hole
+
+CEF/Chromium does not set this flag because:
+
+1. Their internal processes use Mach port IPC, not global IDs
+2. Global accessibility is a security concern
+3. The flag has been deprecated for nearly a decade
+
+#### Apple-Recommended Solutions
+
+**Mach Port Transfer**: Apple's recommended approach for cross-process IOSurface
+sharing:
+
+```
+Profile server:  IOSurfaceCreateMachPort(handle) → send port to GUI
+GUI:             IOSurfaceLookupFromMachPort(port) → get valid handle
+```
+
+Challenge: Mach ports cannot be sent over regular Unix domain sockets. They
+require XPC or direct Mach IPC (`mach_msg`).
+
+**XPC Service**: Apple provides `IOSurfaceCreateXPCObject()` and
+`IOSurfaceLookupFromXPCObject()` for this exact use case. Would require
+restructuring the profile server as an XPC service.
+
+**Shared Memory Fallback**: Profile server reads pixels from IOSurface, writes
+to shared memory (`shm_open`), GUI reads and uploads to GPU. Loses zero-copy GPU
+performance but guaranteed to work.
+
+#### How Others Solve This
+
+- **OBS Browser**: Runs CEF in the same process as the main application. No
+  cross-process transfer needed.
+- **Chromium internally**: Uses Mach ports between browser and GPU processes.
+- **Syphon Framework**: Struggled with the same `kIOSurfaceIsGlobal` deprecation
+  issue.
+
+#### Sources
+
+- [Chromium IOSurface Meeting Notes](https://www.chromium.org/developers/design-documents/iosurface-meeting-notes/)
+- [Apple Developer Forums - kIOSurfaceIsGlobal deprecated](https://developer.apple.com/forums/thread/18958)
+- [IOSurfaceCreateMachPort Example](https://fdiv.net/2011/01/27/example-iosurfacecreatemachport-and-iosurfacelookupfrommachport)
+- [OBS Browser CEF Integration](https://github.com/obsproject/obs-browser/pull/252)
+- [Syphon Framework - kIOSurfaceIsGlobal Deprecation](https://github.com/Syphon/Syphon-Framework/issues/47)
+
+### Hypothesis 2: Process Tree Ancestry Enables IOSurface Lookup
+
+An alternative explanation: `IOSurfaceLookup()` may work when the calling
+process is an **ancestor** of the process that created the IOSurface.
+
+#### Evidence from Chromium
+
+Chromium's internal architecture uses the same `IOSurfaceGetID` /
+`IOSurfaceLookup` pattern we attempted:
+
+> The GPU process uses `IOSurfaceGetID()` to get a global identifier. The ID is
+> sent to the browser process via IPC. The browser process uses
+> `IOSurfaceLookup()` to get an IOSurfaceRef.
+
+This works because the browser process **launches** the GPU process. The browser
+is the parent/ancestor of the GPU process in the process tree.
+
+#### How ts2 Works
+
+In ts2, wezterm-gui runs CEF directly. The `on_accelerated_paint` callback
+receives the IOSurface handle, and it's used **directly** without any
+`IOSurfaceLookup()` call:
+
+```rust
+// ts2: Handle used directly in the same process
+let shared_handle = SharedTextureHandle::new(info);  // info.shared_texture_io_surface
+let src_texture = shared_handle.import_texture(&self.handler.device);
+```
+
+ts2 never needs `IOSurfaceLookup()` because everything runs in the same process.
+But this confirms CEF's GPU subprocess (WezTerm Helper) creates IOSurfaces that
+its parent process can access.
+
+#### Current ts3 Process Tree (Broken)
+
+```
+wezterm-gui (CANNOT lookup - not an ancestor of GPU process)
+
+coordinator (web CLI)
+    └── termsurf-web (profile server)
+        └── WezTerm Helper (CEF GPU - creates IOSurface)
+```
+
+wezterm-gui is completely separate from the process tree containing the GPU
+process. It has no ancestral relationship.
+
+#### Proposed ts3 Process Tree (May Work)
+
+```
+wezterm-gui (ancestor of GPU process - may be able to lookup)
+    └── termsurf-web (profile server)
+        └── WezTerm Helper (CEF GPU - creates IOSurface)
+```
+
+If wezterm-gui launches the profile server instead of the coordinator, then
+wezterm-gui becomes an ancestor of the CEF GPU process. This mirrors Chromium's
+architecture where the browser process can lookup IOSurfaces from its GPU
+subprocess.
+
+#### Architectural Change Required
+
+Instead of:
+
+1. Coordinator spawns profile server
+2. Coordinator tells GUI about IOSurface ID
+3. GUI fails to lookup IOSurface (not in same process tree)
+
+Change to:
+
+1. Coordinator tells GUI to spawn profile server
+2. GUI spawns profile server (becomes ancestor)
+3. Profile server sends IOSurface ID to GUI
+4. GUI lookups IOSurface (now in same process tree - may work)
+
+#### Why This Might Work
+
+The `kIOSurfaceIsGlobal` deprecation may not be the full story. The deprecation
+notes say IOSurfaces are no longer **globally** accessible, but they may still
+be accessible within the same process tree/session. Chromium successfully uses
+`IOSurfaceLookup()` between its browser and GPU processes, which suggests
+parent-child relationships still enable lookup.
+
+#### What We Need to Test
+
+1. Modify ts3 so wezterm-gui launches profile servers
+2. Keep the existing socket communication for commands
+3. Test if `IOSurfaceLookup()` succeeds when GUI is the ancestor
+
+If this works, it's a simpler solution than Mach ports or XPC, requiring only an
+architectural change to process spawning.
+
 ## Experiments
 
 _Experiments will be added as we explore solutions to cross-process texture
