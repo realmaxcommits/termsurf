@@ -75,13 +75,17 @@ Once basic webpage rendering with profiles works:
 
 ## Experiments
 
-### Experiment 3: CEF Profile Server
+### Experiment 1: CEF Profile Server (Display Only)
 
 **Status:** PLANNED
 
 **Goal:** Create `termsurf-profile`, a CEF-based profile server that renders
 real webpages and sends them to the GUI via XPC. Verify that profile directories
 are created correctly.
+
+**Scope:** Display only. No keyboard input, no mouse input, no scrolling, no
+clicking. The page renders once and remains static. Interactivity is a separate
+future experiment.
 
 #### What the User Sees
 
@@ -90,12 +94,14 @@ $ web --profile myprofile google.com
 ```
 
 - Terminal pane shows Google's homepage (not pink)
+- Page is static (no scrolling, clicking, or typing — display only)
 - `~/.config/termsurf/cef/myprofile/` exists with CEF data files
 - Ctrl+C exits cleanly
 
 #### Architecture
 
-Same as Experiment 2, but `termsurf-profile` replaces `termsurf-test-sender`:
+Same as ts3-3-xpc Experiment 2, but `termsurf-profile` replaces
+`termsurf-test-sender`:
 
 ```
 web CLI                    GUI                      Launcher              termsurf-profile
@@ -322,13 +328,22 @@ CefBrowserHost::create_browser_sync(
 - [ ] Ctrl+C exits cleanly
 - [ ] No CEF crashes or GPU errors in logs
 
+**Out of scope for this experiment:**
+
+- Keyboard input (typing in search box)
+- Mouse input (clicking links, scrolling)
+- Page resize (window resize updates texture)
+- Navigation (back, forward, URL changes)
+
 #### What This Proves
 
 1. **CEF initialization works** in the profile server process
 2. **Profile isolation works** — each profile gets its own directory
 3. **on_accelerated_paint works** — CEF sends IOSurface to our handler
 4. **End-to-end rendering works** — real webpage pixels reach the screen
-5. **Architecture is viable** — ready for interactivity features
+
+This experiment validates rendering only. Interactivity (keyboard, mouse) will
+be proven in subsequent experiments.
 
 #### After This Experiment
 
