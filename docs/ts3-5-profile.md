@@ -69,6 +69,94 @@ $ web google.com
 - [ ] Verify different `--profile` values create different directories
 - [ ] Verify profiles are isolated (separate cookies, storage, cache)
 
+## Experiments
+
+### Experiment 1: Fix Profile Path and Verify Isolation
+
+**Status:** PLANNED
+
+**Goal:** Fix the profile cache path to use `~/.config/termsurf/cef/<profile>/`
+and verify that different profiles create separate, isolated directories.
+
+#### Fix
+
+One line change in `termsurf-profile/src/main.rs`.
+
+**File:** `ts3/termsurf-profile/src/main.rs`
+
+Change (line 94-97):
+
+```rust
+let cache_path = dirs_next::config_dir()
+    .unwrap_or_else(|| std::path::PathBuf::from("/tmp"))
+    .join("termsurf/cef")
+    .join(&args.profile);
+```
+
+To:
+
+```rust
+let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+let cache_path = std::path::PathBuf::from(home)
+    .join(".config/termsurf/cef")
+    .join(&args.profile);
+```
+
+This matches ts2's `init_cef()` which uses `$HOME/.config/termsurf/cef/`.
+
+The `dirs_next` dependency can also be removed from
+`ts3/termsurf-profile/Cargo.toml` since it is no longer used.
+
+#### Files to Modify
+
+| File                               | Changes                                        |
+| ---------------------------------- | ---------------------------------------------- |
+| `ts3/termsurf-profile/src/main.rs` | Replace `dirs_next::config_dir()` with `$HOME` |
+| `ts3/termsurf-profile/Cargo.toml`  | Remove `dirs-next` dependency                  |
+
+#### Verification
+
+```bash
+# Clean up stale profiles from previous experiments
+rm -rf ~/Library/Application\ Support/termsurf/cef/
+rm -rf ~/.config/termsurf/cef/
+
+# Build
+cd ts3
+./scripts/build-debug.sh --open
+
+# Test 1: default profile
+web google.com
+# Check: ls ~/.config/termsurf/cef/default/
+
+# Test 2: named profile
+web --profile work google.com
+# Check: ls ~/.config/termsurf/cef/work/
+
+# Test 3: second named profile
+web --profile personal google.com
+# Check: ls ~/.config/termsurf/cef/personal/
+
+# Test 4: verify all three directories exist independently
+ls ~/.config/termsurf/cef/
+# Expected: default/  work/  personal/
+```
+
+#### Success Criteria
+
+- [ ] `~/.config/termsurf/cef/default/` is created when running `web google.com`
+- [ ] `~/.config/termsurf/cef/work/` is created when running
+      `web --profile work google.com`
+- [ ] `~/.config/termsurf/cef/personal/` is created when running
+      `web --profile personal google.com`
+- [ ] All three directories exist simultaneously under `~/.config/termsurf/cef/`
+- [ ] No profile directories are created under
+      `~/Library/Application Support/termsurf/cef/`
+- [ ] Each profile directory contains CEF data (cookies, cache, `Default/`
+      subdirectory)
+
+---
+
 ### Next Steps (After This Document)
 
 Once profile isolation is verified:
