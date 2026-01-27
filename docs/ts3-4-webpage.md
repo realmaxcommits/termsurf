@@ -801,11 +801,12 @@ failed with no visible output because `open` discards stdout/stderr.
 
 **Result:** GUI log (`/tmp/termsurf-gui.log`) captured successfully via
 `open --stdout --stderr`. It revealed that the XPC launcher connection goes
-invalid immediately after connecting (`Launcher connection error: XPC connection
-invalid`), confirming the launcher XPC service never starts. No launcher or
-profile logs were created, which per the diagnostic guide means "XPC service
-never started." The logging infrastructure works and will carry forward into
-future experiments.
+invalid immediately after connecting
+(`Launcher connection error: XPC connection
+invalid`), confirming the launcher
+XPC service never starts. No launcher or profile logs were created, which per
+the diagnostic guide means "XPC service never started." The logging
+infrastructure works and will carry forward into future experiments.
 
 #### Problem
 
@@ -925,10 +926,26 @@ The logs will show which step in the pipeline failed:
 
 ### Experiment 4: Restore launchd Mach Service Registration
 
-**Status:** PLANNED
+**Status:** FAILED
 
 **Goal:** Re-register the launcher as a launchd Mach service in the build
 scripts, restoring the mechanism that made the pink screen work in Experiment 2.
+
+**Result:** The launchd registration fix restored the XPC pipeline. The launcher
+log (`/tmp/termsurf-launcher.log`) now exists and shows the full flow: service
+starts, receives `spawn_profile`, spawns the profile server, receives
+`claim_session`, and returns the GUI endpoint successfully. The GUI log no longer
+shows "XPC connection invalid." The profile server log
+(`/tmp/termsurf-profile-pane-0-31693.log`) shows it starts, loads CEF, connects
+to the GUI, and finds the helper binary. It then crashes at CEF initialization:
+
+```
+[FATAL:cef/libcef_dll/ctocpp/app_ctocpp.cc:118] CefApp_0_CToCpp called with invalid version -1
+```
+
+The XPC fix works. The `web google.com` command still times out because the
+profile server crashes before rendering. The failure is now a cef-rs binding
+version mismatch, not an XPC issue.
 
 #### Root Cause
 
@@ -942,8 +959,8 @@ When the code was moved into `build-debug.sh`, the registration was removed
 (`launchctl bootout`) but never re-created. The launcher binary was placed in
 `Contents/XPCServices/` (embedded XPC service model), but the code still uses
 Mach service APIs that talk to launchd's registry — not embedded service
-discovery. Result: launchd says "never heard of it," connection invalid, launcher
-never starts.
+discovery. Result: launchd says "never heard of it," connection invalid,
+launcher never starts.
 
 #### Fix
 
@@ -1002,9 +1019,9 @@ model — they just need launchd to know about the service.
 
 #### Files to Modify
 
-| File                         | Changes                                      |
-| ---------------------------- | -------------------------------------------- |
-| `ts3/scripts/build-debug.sh` | Add plist creation + `launchctl bootstrap`   |
+| File                           | Changes                                    |
+| ------------------------------ | ------------------------------------------ |
+| `ts3/scripts/build-debug.sh`   | Add plist creation + `launchctl bootstrap` |
 | `ts3/scripts/build-release.sh` | Same                                       |
 
 #### Verification
