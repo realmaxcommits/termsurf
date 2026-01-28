@@ -540,13 +540,17 @@ browsers) sharing that process.
                               │           Launcher                  │
                               │                                     │
                               │  running_profiles: {                │
-                              │    "default" → ProfileEndpoint,     │
-                              │    "work" → ProfileEndpoint,        │
+                              │    "default" → Connection,          │
+                              │    "work" → Connection,             │
                               │  }                                  │
+                              │                                     │
+                              │  (persistent connections to each    │
+                              │   profile for sending commands)     │
                               └─────────────────────────────────────┘
                                     │                    ▲
                      spawn_profile  │                    │ register_profile
-                     (or forward)   │                    │
+                     (or forward)   │                    │ (sends endpoint,
+                                    │                    │  launcher connects)
                                     ▼                    │
 ┌──────────┐        ┌───────────────────────────────────────────────────┐
 │   GUI    │◄──────►│              Profile Server (default)             │
@@ -555,23 +559,32 @@ browsers) sharing that process.
 │ pane 2 ◄─┼────────┤    "session-1" → Browser (google.com) → pane 1   │
 │          │        │    "session-2" → Browser (github.com) → pane 2   │
 └──────────┘        │  }                                                │
+                    │                                                   │
+                    │  command_listener: XpcListener                    │
+                    │  (receives create_browser from launcher)          │
                     └───────────────────────────────────────────────────┘
 ```
+
+**Key insight:** XPC endpoints are single-use. Once you create a connection from
+an endpoint, that endpoint is consumed. The launcher must store **persistent
+connections** to profiles, not endpoints.
 
 #### Flow: First Webview for a Profile
 
 ```
 1. CLI sends "open_webview" to GUI (profile=default, url=google.com)
 2. GUI creates anonymous XPC listener for pane 1, gets endpoint
-3. GUI sends "spawn_profile" to launcher with gui_endpoint, url, profile, dimensions
+3. GUI sends "spawn_profile" to launcher with gui_endpoint, url, profile, dims
 4. Launcher checks running_profiles["default"] → not found
 5. Launcher stores gui_endpoint in pending_sessions, spawns termsurf-profile
-6. Profile initializes CEF with root_cache_path for "default"
-7. Profile creates XPC listener, sends "register_profile" to launcher
-8. Launcher stores profile's endpoint in running_profiles["default"]
-9. Profile claims session from launcher, gets gui_endpoint
-10. Profile creates browser for google.com, connects to GUI
-11. on_accelerated_paint sends IOSurface Mach port to GUI pane 1
+6. Profile connects to launcher
+7. Profile claims session from launcher, gets gui_endpoint for initial browser
+8. Profile initializes CEF with root_cache_path for "default"
+9. Profile creates command_listener, sends "register_profile" to launcher
+   (includes command_endpoint so launcher can send future commands)
+10. Launcher creates connection from endpoint, stores in running_profiles
+11. Profile creates initial browser in on_context_initialized
+12. on_accelerated_paint sends IOSurface Mach port to GUI pane 1
 ```
 
 #### Flow: Second Webview for Same Profile
@@ -579,13 +592,13 @@ browsers) sharing that process.
 ```
 1. CLI sends "open_webview" to GUI (profile=default, url=github.com)
 2. GUI creates anonymous XPC listener for pane 2, gets endpoint
-3. GUI sends "spawn_profile" to launcher with gui_endpoint, url, profile, dimensions
-4. Launcher checks running_profiles["default"] → FOUND
-5. Launcher sends "create_browser" to existing profile process
+3. GUI sends "spawn_profile" to launcher with gui_endpoint, url, profile, dims
+4. Launcher checks running_profiles["default"] → FOUND (has connection)
+5. Launcher sends "create_browser" on existing connection to profile
    (includes gui_endpoint, url, dimensions, session_id)
-6. Profile receives create_browser on its XPC listener
-7. Profile creates second browser for github.com
-8. Profile connects new browser's RenderHandler to GUI pane 2's endpoint
+6. Profile receives create_browser on command_listener
+7. Profile marshals to CEF UI thread via cef::post_task
+8. Profile creates second browser, connects its RenderHandler to GUI pane 2
 9. on_accelerated_paint sends IOSurface Mach port to GUI pane 2
 ```
 
@@ -593,138 +606,250 @@ No new process spawned. Both browsers share the same CEF context.
 
 #### Changes
 
-**1. Launcher: Track running profiles**
+**1. Launcher: Track running profiles with persistent connections**
 
 **File:** `ts3/termsurf-launcher/src/main.rs`
 
-Add a map to track which profiles have running processes:
+Store connections (not endpoints) to each running profile:
 
 ```rust
-struct LauncherState {
-    pending_sessions: Mutex<HashMap<String, XpcEndpoint>>,  // existing
-    running_profiles: Mutex<HashMap<String, XpcEndpoint>>,  // NEW: profile → endpoint
-}
+// At top of main(), add to existing state
+let pending_sessions: Arc<Mutex<HashMap<String, XpcEndpoint>>> =
+    Arc::new(Mutex::new(HashMap::new()));
+
+// NEW: Store persistent connections to profile servers
+let running_profiles: Arc<Mutex<HashMap<String, Arc<XpcConnection>>>> =
+    Arc::new(Mutex::new(HashMap::new()));
 ```
 
 **2. Launcher: Handle register_profile action**
 
-When a profile server finishes CEF init, it registers itself:
+When a profile server registers, create a connection and store it:
 
 ```rust
 "register_profile" => {
-    let profile = msg.get_string("profile").unwrap();
-    let endpoint = msg.copy_endpoint("endpoint").unwrap();
+    let profile = match msg.get_string("profile") {
+        Some(p) => p,
+        None => {
+            eprintln!("Launcher: register_profile missing profile");
+            return;
+        }
+    };
+    let endpoint = match msg.get_endpoint("endpoint") {
+        Some(ep) => ep,
+        None => {
+            eprintln!("Launcher: register_profile missing endpoint");
+            return;
+        }
+    };
 
-    state.running_profiles.lock().unwrap()
-        .insert(profile.to_string(), endpoint);
+    // Create persistent connection from endpoint (consumes endpoint)
+    let profile_conn = match XpcConnection::from_endpoint(endpoint) {
+        Ok(c) => Arc::new(c),
+        Err(e) => {
+            eprintln!("Launcher: Failed to connect to profile: {}", e);
+            return;
+        }
+    };
 
-    log::info!("[Launcher] Profile '{}' registered", profile);
+    // Set up error handler for the connection
+    let profile_name = profile.to_string();
+    set_event_handler(&*profile_conn, move |event| {
+        if let Err(e) = event {
+            eprintln!("Launcher: Profile '{}' connection error: {}", profile_name, e);
+        }
+    });
+    profile_conn.resume();
+
+    // Store connection for sending future commands
+    running_profiles.lock().unwrap()
+        .insert(profile.to_string(), profile_conn);
+
+    println!("Launcher: Profile '{}' registered", profile);
 }
 ```
 
 **3. Launcher: Route spawn_profile to existing process**
 
-Modify `spawn_profile` handler to check for existing process first:
+Check for existing connection before spawning:
 
 ```rust
 "spawn_profile" => {
-    let profile = msg.get_string("profile").unwrap();
-    let session_id = msg.get_string("session_id").unwrap();
-    let gui_endpoint = msg.copy_endpoint("gui_endpoint").unwrap();
-    let url = msg.get_string("url").unwrap();
-    let width = msg.get_i64("width") as u32;
-    let height = msg.get_i64("height") as u32;
-    let scale = msg.get_string("scale").unwrap();
+    let profile = msg.get_string("profile").unwrap_or_default();
+    let session_id = msg.get_string("session_id").unwrap_or_default();
+    let gui_endpoint = match msg.get_endpoint("gui_endpoint") {
+        Some(ep) => ep,
+        None => {
+            eprintln!("Launcher: Missing gui_endpoint");
+            return;
+        }
+    };
+    let url = msg.get_string("url").unwrap_or_else(|| "about:blank".to_string());
+    let width = msg.get_i64("width");
+    let height = msg.get_i64("height");
+    let scale = msg.get_string("scale").unwrap_or_else(|| "2.0".to_string());
 
-    // Store GUI endpoint for claiming
-    state.pending_sessions.lock().unwrap()
-        .insert(session_id.to_string(), gui_endpoint.clone());
+    // Always store GUI endpoint for claiming (profile needs it)
+    pending_sessions.lock().unwrap()
+        .insert(session_id.to_string(), gui_endpoint);
 
     // Check if profile process already running
-    let existing = state.running_profiles.lock().unwrap()
-        .get(profile).cloned();
+    let existing_conn = running_profiles.lock().unwrap()
+        .get(&profile).cloned();
 
-    if let Some(profile_endpoint) = existing {
-        // Forward to existing process
-        log::info!("[Launcher] Forwarding to existing profile '{}'", profile);
+    if let Some(profile_conn) = existing_conn {
+        // Forward to existing process via stored connection
+        println!("Launcher: Forwarding to existing profile '{}'", profile);
 
-        let conn = XpcConnection::from_endpoint(profile_endpoint)?;
         let create_msg = XpcDictionary::new();
         create_msg.set_string("action", "create_browser");
-        create_msg.set_string("session_id", session_id);
-        create_msg.set_endpoint("gui_endpoint", gui_endpoint);
-        create_msg.set_string("url", url);
-        create_msg.set_i64("width", width as i64);
-        create_msg.set_i64("height", height as i64);
-        create_msg.set_string("scale", scale);
-        conn.send(&create_msg);
+        create_msg.set_string("session_id", &session_id);
+        create_msg.set_string("url", &url);
+        create_msg.set_i64("width", width);
+        create_msg.set_i64("height", height);
+        create_msg.set_string("scale", &scale);
+        // Note: gui_endpoint already stored in pending_sessions,
+        // profile will claim it using session_id
+
+        profile_conn.send(&create_msg);
     } else {
-        // Spawn new process (existing code)
-        log::info!("[Launcher] Spawning new profile '{}'", profile);
-        // ... spawn termsurf-profile with CLI args ...
+        // Spawn new process (existing code unchanged)
+        println!("Launcher: Spawning new profile '{}'", profile);
+
+        let mut cmd = Command::new(&profile_bin_path);
+        cmd.args(["--session-id", &session_id])
+            .args(["--url", &url])
+            .args(["--profile", &profile])
+            .args(["--width", &width.to_string()])
+            .args(["--height", &height.to_string()])
+            .args(["--scale", &scale]);
+        // ... rest of spawn logic ...
     }
 }
 ```
 
-**4. Profile server: Register with launcher after CEF init**
+**4. Profile server: Restructure main flow**
 
 **File:** `ts3/termsurf-profile/src/main.rs`
 
-After CEF initializes, create a listener and register:
+The profile server needs a new structure to support multi-browser:
 
 ```rust
-// After cef::initialize() succeeds...
+fn run_profile_server(args: Args) {
+    // 1. Load CEF framework (unchanged)
+    let _loader = LibraryLoader::new(&exe, false);
+    // ... subprocess check ...
 
-// Create listener for incoming create_browser commands
-let profile_listener = XpcListener::new_anonymous()?;
-let profile_endpoint = profile_listener.get_endpoint()?;
+    // 2. Connect to launcher (unchanged)
+    let launcher = XpcConnection::connect_mach_service("com.termsurf.launcher")
+        .expect("Failed to connect to launcher");
+    set_event_handler(&launcher, |event| { /* ... */ });
+    launcher.resume();
 
-// Register with launcher
-let register_msg = XpcDictionary::new();
-register_msg.set_string("action", "register_profile");
-register_msg.set_string("profile", &args.profile);
-register_msg.set_endpoint("endpoint", profile_endpoint);
-launcher.send(&register_msg);
+    // 3. Claim initial session (unchanged - gets gui_endpoint for first browser)
+    let initial_gui_endpoint = claim_session_with_retry(&launcher, &args.session_id)
+        .expect("Failed to claim session");
 
-// Set up handler for create_browser commands
-set_new_connection_handler(&profile_listener, move |conn| {
-    set_event_handler(&conn, move |event| {
-        if let Ok(msg) = event {
-            let action = msg.get_string("action").unwrap_or_default();
-            if action == "create_browser" {
-                // Marshal to CEF UI thread
-                let url = msg.get_string("url").unwrap().to_string();
-                let session_id = msg.get_string("session_id").unwrap().to_string();
-                let gui_endpoint = msg.copy_endpoint("gui_endpoint").unwrap();
-                let width = msg.get_i64("width") as u32;
-                let height = msg.get_i64("height") as u32;
+    // 4. Initialize CEF (unchanged)
+    let settings = cef::Settings { /* ... */ };
+    // Note: Don't create SharedState yet - we'll use ProfileState
 
-                cef::post_task(ThreadId::UI, move || {
-                    create_browser(&url, &session_id, gui_endpoint, width, height);
-                });
-            }
-        }
+    // 5. Initialize ProfileState BEFORE CEF init
+    let profile_state = Arc::new(ProfileState {
+        scale: args.scale,
+        initial_browser_info: Mutex::new(Some(InitialBrowserInfo {
+            url: args.url.clone(),
+            session_id: args.session_id.clone(),
+            gui_endpoint: initial_gui_endpoint,
+            width: args.width,
+            height: args.height,
+        })),
+        browsers: Mutex::new(HashMap::new()),
+        command_connections: Mutex::new(Vec::new()),
     });
-    conn.resume();
-});
-profile_listener.resume();
+    PROFILE_STATE.set(Arc::clone(&profile_state)).unwrap();
+
+    let mut app = create_app(Arc::clone(&profile_state));
+    cef::initialize(/* ... */);
+
+    // 6. Create command listener and register with launcher
+    // MUST happen after CEF init but BEFORE run_message_loop
+    let command_listener = XpcListener::new_anonymous()
+        .expect("Failed to create command listener");
+    let command_endpoint = command_listener.get_endpoint()
+        .expect("Failed to get command endpoint");
+
+    // Set up handler for create_browser commands from launcher
+    let profile_state_for_handler = Arc::clone(&profile_state);
+    let launcher_for_claim = launcher.clone(); // Need launcher to claim sessions
+
+    set_new_connection_handler(&command_listener, move |conn| {
+        println!("Profile: New command connection from launcher");
+
+        let conn = Arc::new(conn);
+        let state = Arc::clone(&profile_state_for_handler);
+        let launcher = launcher_for_claim.clone();
+        let conn_for_storage = Arc::clone(&conn);
+
+        set_event_handler(&*conn, move |event| {
+            match event {
+                Ok(msg) => {
+                    let action = msg.get_string("action").unwrap_or_default();
+                    println!("Profile: Received command: {}", action);
+
+                    if action == "create_browser" {
+                        handle_create_browser(&msg, &state, &launcher);
+                    }
+                }
+                Err(e) => eprintln!("Profile: Command connection error: {}", e),
+            }
+        });
+        conn.resume();
+
+        // Store connection to keep alive
+        state.command_connections.lock().unwrap().push(conn_for_storage);
+    });
+    command_listener.resume();
+
+    // 7. Register with launcher (send our command endpoint)
+    let register_msg = XpcDictionary::new();
+    register_msg.set_string("action", "register_profile");
+    register_msg.set_string("profile", &args.profile);
+    register_msg.set_endpoint("endpoint", command_endpoint);
+    launcher.send(&register_msg);
+    println!("Profile: Registered with launcher");
+
+    // 8. Store command_listener to keep it alive
+    // (Could store in ProfileState or just keep in scope)
+
+    // 9. Run CEF message loop (blocks)
+    // on_context_initialized will fire, creating the initial browser
+    // create_browser commands will be received on command_listener
+    cef::run_message_loop();
+
+    // 10. Shutdown
+    cef::shutdown();
+}
 ```
 
 **5. Profile server: Multi-browser state**
 
-Refactor from single-browser to multi-browser state:
-
 ```rust
-// OLD: Single browser
-struct SharedState {
+use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::atomic::{AtomicU32, AtomicPtr};
+use std::collections::HashMap;
+use std::ffi::c_void;
+
+/// Info for creating the initial browser (from CLI args)
+struct InitialBrowserInfo {
     url: String,
-    width: AtomicU32,
-    height: AtomicU32,
-    gui: Arc<XpcConnection>,
-    last_handle: AtomicPtr<c_void>,
+    session_id: String,
+    gui_endpoint: XpcEndpoint,
+    width: u32,
+    height: u32,
 }
 
-// NEW: Multiple browsers
+/// Per-browser state
 struct BrowserState {
     session_id: String,
     gui: Arc<XpcConnection>,
@@ -733,89 +858,193 @@ struct BrowserState {
     last_handle: AtomicPtr<c_void>,
 }
 
+/// Profile-wide state (shared across all browsers)
 struct ProfileState {
     scale: f32,
-    browsers: Mutex<HashMap<i32, Arc<BrowserState>>>,  // browser_id → state
+    /// Initial browser info, consumed by on_context_initialized
+    initial_browser_info: Mutex<Option<InitialBrowserInfo>>,
+    /// All browsers in this profile, keyed by CEF browser ID
+    browsers: Mutex<HashMap<i32, Arc<BrowserState>>>,
+    /// Command connections from launcher (keep alive)
+    command_connections: Mutex<Vec<Arc<XpcConnection>>>,
 }
 
 static PROFILE_STATE: OnceLock<Arc<ProfileState>> = OnceLock::new();
 ```
 
-**6. Profile server: Create browser function**
-
-Extract browser creation into a reusable function:
+**6. Profile server: Handle create_browser command**
 
 ```rust
-fn create_browser(
+fn handle_create_browser(
+    msg: &XpcDictionary,
+    state: &Arc<ProfileState>,
+    launcher: &XpcConnection,
+) {
+    let session_id = msg.get_string("session_id").unwrap_or_default();
+    let url = msg.get_string("url").unwrap_or_default();
+    let width = msg.get_i64("width") as u32;
+    let height = msg.get_i64("height") as u32;
+
+    println!("Profile: create_browser session={}, url={}", session_id, url);
+
+    // Claim GUI endpoint from launcher using session_id
+    let gui_endpoint = match claim_session_with_retry(launcher, &session_id) {
+        Ok(ep) => ep,
+        Err(e) => {
+            eprintln!("Profile: Failed to claim session {}: {:?}", session_id, e);
+            return;
+        }
+    };
+
+    // Marshal browser creation to CEF UI thread
+    let state = Arc::clone(state);
+    cef::post_task(cef::ThreadId::UI, move || {
+        create_browser_on_ui_thread(&url, &session_id, gui_endpoint, width, height, &state);
+    });
+}
+```
+
+**7. Profile server: Create browser function (runs on UI thread)**
+
+```rust
+fn create_browser_on_ui_thread(
     url: &str,
     session_id: &str,
     gui_endpoint: XpcEndpoint,
     width: u32,
     height: u32,
+    state: &Arc<ProfileState>,
 ) {
-    let profile_state = PROFILE_STATE.get().unwrap();
-
     // Connect to GUI for this browser
-    let gui = XpcConnection::from_endpoint(gui_endpoint).unwrap();
+    let gui = match XpcConnection::from_endpoint(gui_endpoint) {
+        Ok(g) => Arc::new(g),
+        Err(e) => {
+            eprintln!("Profile: Failed to connect to GUI: {:?}", e);
+            return;
+        }
+    };
+    set_event_handler(&*gui, |event| {
+        if let Err(e) = event {
+            eprintln!("Profile: GUI connection error: {}", e);
+        }
+    });
     gui.resume();
 
     // Create browser-specific state
     let browser_state = Arc::new(BrowserState {
         session_id: session_id.to_string(),
-        gui: Arc::new(gui),
+        gui,
         width: AtomicU32::new(width),
         height: AtomicU32::new(height),
         last_handle: AtomicPtr::new(std::ptr::null_mut()),
     });
 
-    // Create render handler for this browser
-    let render_handler = RenderHandler::new(RenderHandlerInner {
+    // Create render handler with this browser's state
+    let render_handler = ProfileRenderHandler::new(RenderHandlerInner {
         state: Arc::clone(&browser_state),
-        scale: profile_state.scale,
+        scale: state.scale,
     });
 
-    // Create client and browser
-    let client = Client::builder()
-        .render_handler(render_handler)
-        .life_span_handler(/* ... */)
-        .build();
+    let context_menu_handler = ProfileContextMenuHandler::new(ContextMenuInner);
+    let mut client = ProfileClient::new(render_handler, context_menu_handler);
 
-    let window_info = WindowInfo::new_for_offscreen(width, height);
-    let browser_settings = BrowserSettings::new();
+    let window_info = WindowInfo {
+        windowless_rendering_enabled: 1,
+        shared_texture_enabled: 1,
+        ..Default::default()
+    };
 
-    let browser = cef::BrowserHost::create_browser_sync(
-        &window_info,
-        Some(client),
-        url,
-        &browser_settings,
+    let browser_settings = BrowserSettings {
+        windowless_frame_rate: 60,
+        ..Default::default()
+    };
+
+    let cef_url: cef::CefString = url.into();
+    let browser = cef::browser_host_create_browser_sync(
+        Some(&window_info),
+        Some(&mut client),
+        Some(&cef_url),
+        Some(&browser_settings),
         None,
         None,
-    ).unwrap();
+    );
 
-    // Store browser state keyed by browser ID
-    let browser_id = browser.get_identifier();
-    profile_state.browsers.lock().unwrap()
-        .insert(browser_id, browser_state);
+    match browser {
+        Some(b) => {
+            let browser_id = b.get_identifier();
+            state.browsers.lock().unwrap().insert(browser_id, browser_state);
+            println!("Profile: Created browser {} for '{}'", browser_id, url);
+        }
+        None => eprintln!("Profile: Failed to create browser for '{}'", url),
+    }
 }
 ```
 
-**7. Profile server: Route paint callbacks to correct browser**
+**8. Profile server: Update on_context_initialized**
 
-Each `RenderHandlerInner` holds its own `BrowserState`, so paint callbacks
-automatically go to the correct GUI endpoint. No routing needed — it's built
-into the structure.
+The initial browser (from CLI args) is created in `on_context_initialized`,
+using the same `create_browser_on_ui_thread` function:
 
-**8. GUI: No changes required**
+```rust
+impl BrowserProcessHandler for ProfileBPH {
+    fn on_context_initialized(&self) {
+        println!("Profile: CEF context initialized");
+
+        // Take the initial browser info (only used once)
+        let info = self.state.initial_browser_info.lock().unwrap().take();
+
+        if let Some(info) = info {
+            create_browser_on_ui_thread(
+                &info.url,
+                &info.session_id,
+                info.gui_endpoint,
+                info.width,
+                info.height,
+                &self.state,
+            );
+        } else {
+            eprintln!("Profile: No initial browser info (already consumed?)");
+        }
+    }
+}
+```
+
+**9. Profile server: Update RenderHandlerInner**
+
+Each render handler holds its own browser's state:
+
+```rust
+#[derive(Clone)]
+struct RenderHandlerInner {
+    state: Arc<BrowserState>,  // Per-browser state (not ProfileState)
+    scale: f32,
+}
+
+// In on_accelerated_paint:
+fn on_accelerated_paint(&self, /* ... */) {
+    // ... dedup logic using self.state.last_handle ...
+
+    // Send to THIS browser's GUI connection
+    let msg = XpcDictionary::new();
+    msg.set_string("action", "display_surface");
+    msg.set_mach_send("iosurface_port", port);
+    msg.set_i64("width", width as i64);
+    msg.set_i64("height", height as i64);
+    self.state.gui.send(&msg);  // Uses browser-specific connection
+}
+```
+
+**10. GUI: No changes required**
 
 The GUI already creates a separate XPC listener per pane. It doesn't know or
 care whether the profile server is new or reused.
 
 #### Files to Modify
 
-| Action | File                                | Change                          |
-| ------ | ----------------------------------- | ------------------------------- |
-| Modify | `ts3/termsurf-launcher/src/main.rs` | Add running_profiles, routing   |
-| Modify | `ts3/termsurf-profile/src/main.rs`  | Multi-browser, register_profile |
+| Action | File                                | Change                                  |
+| ------ | ----------------------------------- | --------------------------------------- |
+| Modify | `ts3/termsurf-launcher/src/main.rs` | Add running_profiles (connections), routing |
+| Modify | `ts3/termsurf-profile/src/main.rs`  | Multi-browser state, command listener, register_profile |
 
 #### Verification
 
@@ -831,23 +1060,41 @@ ps aux | grep termsurf-profile
 # Second webview same profile - reuses process
 web github.com
 ps aux | grep termsurf-profile
-# Should STILL show 1 process (same PID)
+# Should STILL show 1 process (same PID as before)
 
 # Both panes should render their respective pages
-# Check logs
-cat /tmp/termsurf-launcher.log
-# Should show: "Forwarding to existing profile 'default'"
 
+# Check launcher logs
+cat /tmp/termsurf-launcher.log
+# First request: "Spawning new profile 'default'"
+# Second request: "Forwarding to existing profile 'default'"
+# Should show: "Profile 'default' registered"
+
+# Check profile logs
 cat /tmp/termsurf-profile-*.log
-# Should show: two "create_browser" logs, two IOSurface sends
+# Should show:
+#   "Registered with launcher"
+#   "CEF context initialized"
+#   "Created browser 1 for 'google.com'"
+#   "New command connection from launcher"
+#   "Received command: create_browser"
+#   "Created browser 2 for 'github.com'"
+#   Two "Sending IOSurface" logs (one per browser)
+
+# Different profile should spawn new process
+web --profile work gitlab.com
+ps aux | grep termsurf-profile
+# Should show 2 processes now (default + work)
 ```
 
 #### Success Criteria
 
 - [ ] First `web` command spawns a profile process
-- [ ] Second `web` command (same profile) reuses existing process
-- [ ] Both webviews render in their respective panes
+- [ ] Second `web` command (same profile) reuses existing process (same PID)
+- [ ] Both webviews render in their respective panes simultaneously
 - [ ] Different profiles spawn separate processes
+- [ ] Launcher logs show "Profile 'X' registered" after first browser
 - [ ] Launcher logs show "Forwarding to existing profile" on second request
-- [ ] Profile logs show multiple browser creations
+- [ ] Profile logs show "New command connection from launcher" on second request
+- [ ] Profile logs show two separate "Created browser" entries
 - [ ] No CEF SingletonLock errors
