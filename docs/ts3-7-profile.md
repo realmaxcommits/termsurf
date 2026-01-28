@@ -520,7 +520,7 @@ ps aux | grep termsurf-launcher
 
 ### Experiment 2: One Process Per Profile
 
-**Status:** PLANNED
+**Status:** FAILED
 
 **Goal:** Implement the core architectural requirement: exactly one
 `termsurf-profile` process per browser profile, with multiple webviews (CEF
@@ -532,6 +532,34 @@ browsers) sharing that process.
 - `web --profile work gitlab.com` → different process for `work` profile
 - Shared cookies/storage within a profile (like Chrome tabs)
 - No CEF `SingletonLock` crashes from duplicate profile processes
+
+#### Failure Analysis
+
+**Unable to test:** The browser renders at full window size instead of pane
+dimensions. This prevents opening two panes side by side to verify multi-browser
+functionality.
+
+**Root cause (suspected):** The pane dimensions being passed to CEF are the
+window dimensions rather than the actual pane dimensions within a split layout.
+When a single pane occupies the full window, the dimensions are correct. But
+when panes are split, the webview still renders at full window size, obscuring
+other panes.
+
+**Blocking issue:** Cannot verify that:
+
+- Second `web` command reuses the existing profile process
+- Both webviews render independently in their respective panes
+- IOSurface Mach ports are correctly routed to the right panes
+
+**Code status:** Implementation complete and compiles. The launcher correctly
+tracks running profiles and forwards `create_browser` commands. The profile
+server accepts commands and creates multiple browsers. However, the rendering
+size bug prevents functional testing.
+
+**Next step:** Fix pane dimension calculation in the GUI before retesting
+multi-browser support. The issue is likely in `webview_socket.rs` where pane
+dimensions are read from the Mux - it may be reading window dimensions instead
+of the specific pane's dimensions within a split layout.
 
 #### Architecture Overview
 
@@ -1041,9 +1069,9 @@ care whether the profile server is new or reused.
 
 #### Files to Modify
 
-| Action | File                                | Change                                  |
-| ------ | ----------------------------------- | --------------------------------------- |
-| Modify | `ts3/termsurf-launcher/src/main.rs` | Add running_profiles (connections), routing |
+| Action | File                                | Change                                                  |
+| ------ | ----------------------------------- | ------------------------------------------------------- |
+| Modify | `ts3/termsurf-launcher/src/main.rs` | Add running_profiles (connections), routing             |
 | Modify | `ts3/termsurf-profile/src/main.rs`  | Multi-browser state, command listener, register_profile |
 
 #### Verification
