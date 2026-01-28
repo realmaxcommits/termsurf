@@ -232,16 +232,40 @@ connections from profile servers. The crash occurs at line 52 of
    service name — the XPC framework expects services registered via launchd to
    follow specific patterns that a GUI app doesn't follow.
 
-**Conclusion:** The separate launcher process is architecturally necessary, not
-just a design choice. The launcher provides:
+#### Decision: Keep the Launcher
+
+The separate launcher process is architecturally necessary, not just a design
+choice. The initial rationale was wrong: the launcher exists because it's the
+correct macOS pattern, not because "it was designed that way."
+
+**Why the launcher is simpler:**
+
+1. **It's the correct XPC pattern.** XPC services bundled in
+   `Contents/XPCServices/` are designed to be spawned by launchd on-demand,
+   managed by the system, and run as simple focused binaries. The launcher is
+   ~100 lines of straightforward code that does one thing well.
+
+2. **Merging adds complexity, not removes it.** Every workaround for the Mach
+   service registration issue (Unix socket handshakes, custom bootstrap
+   registration, connection handler hacks) adds complexity. "One fewer process"
+   is an illusory benefit when the process is tiny and launchd-managed.
+
+3. **Fighting the platform is always harder.** macOS XPC services work a
+   specific way. The launcher follows that pattern. The GUI-as-service approach
+   fights against it.
+
+**What the launcher provides:**
 
 - Proper XPC service lifecycle management by launchd
 - Isolation from GUI crashes/restarts
 - Correct Mach service semantics for peer connections
+- A clean separation of concerns
 
-The experiment has been reverted. The launcher-based architecture remains.
+The launcher stays. The experiment is closed.
 
-#### Changes
+---
+
+#### Attempted Changes (Not Merged)
 
 **1. GUI: Add Mach service listener and session handling**
 
