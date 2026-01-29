@@ -995,7 +995,7 @@ and should produce correctly-sized IOSurfaces after resize.
 
 ### Experiment 3: Fix Scale Factor for Resize
 
-**Status:** PLANNED
+**Status:** FAILED
 
 **Goal:** Fix the scale factor bug from Experiment 2. Send logical dimensions
 (physical / scale) instead of physical dimensions when resizing.
@@ -1120,3 +1120,529 @@ cat /tmp/termsurf-profile-*.log | grep "Sending IOSurface" | tail -5
 - [ ] Content reflows naturally to new width
 - [ ] Multiple consecutive resizes all work correctly
 - [ ] Window drag resize works with 30ms debounce
+
+#### Conclusion
+
+**Result:** FAILED — Resize does not work most of the time. When it does work
+(rarely), the dimensions are completely wrong, causing black bands and distorted
+content.
+
+**Symptoms:**
+
+1. **Resize rarely triggers** — Changing pane size usually has no effect on the
+   webview. The browser continues displaying at its original size.
+
+2. **When resize does occur, dimensions are wrong** — The one time it did
+   resize, large black bands appeared at top and bottom, and the content was
+   squeezed horizontally. This indicates a fundamental mismatch between the sent
+   dimensions and the expected dimensions.
+
+3. **No consistent behavior** — There's no predictable pattern for when resize
+   will or won't work.
+
+**What the Logs Show:**
+
+GUI logs confirm resize commands ARE being sent:
+
+```
+[XPC] Sent resize to pane 0: 799x795
+[XPC] Sent resize to pane 0: 1716x1215
+```
+
+These are logical dimensions (physical / scale), which appears correct.
+
+**Hypotheses for Why It's Failing:**
+
+1. **XPC connection may be broken or stale**
+
+   The peer connection stored in `peer_connections` HashMap might not be the
+   same connection the profile server is listening on. The GUI thinks it's
+   sending, but the messages may not be reaching the profile.
+
+   The deferred state wrapper in the profile might be interfering with the
+   connection setup. Setting the event handler before `gui.resume()` with an
+   empty state wrapper, then populating it later, might cause issues with how
+   XPC handles message delivery.
+
+2. **Dimension source mismatch between initial spawn and resize**
+
+   Initial spawn uses: `cols * cell_width / scale` Resize uses:
+   `pos.pixel_width / scale`
+
+   These are fundamentally different dimension sources. The pane layout
+   dimensions (`pos.pixel_width`) may not match the terminal cell-based
+   dimensions (`cols * cell_width`). This could explain why the aspect ratio is
+   wrong when resize does occur.
+
+3. **The resize render path may not be triggered**
+
+   The webview overlay rendering only happens when there's a valid overlay in
+   `self.webview_overlays`. If the overlay's dimensions aren't being updated
+   when the pane resizes, or if the render function isn't being called when pane
+   sizes change, the resize detection wouldn't run.
+
+4. **Profile server may not be processing resize commands**
+
+   The deferred state wrapper (`Arc<Mutex<Option<Arc<BrowserState>>>>`) might
+   not be populated by the time resize commands arrive. If the handler checks
+   `state_guard.as_ref()` and finds `None`, it silently ignores the command.
+
+**Root Cause Analysis:**
+
+After detailed code analysis, the root cause was identified: **there are two
+separate data stores that are disconnected**.
+
+1. **`XpcManager::received_surfaces`** (webview_xpc.rs:93) — where XPC stores
+   incoming textures when `display_surface` messages arrive
+
+2. **`WebviewOverlayState::overlays`** (webview_socket.rs:337) — where the
+   render loop reads textures for drawing
+
+These are **completely different data structures**. When the profile sends a new
+texture after resize, it goes into `received_surfaces`, but the render loop
+reads from `overlays`.
+
+**Why Initial Spawn Works:**
+
+```
+CLI sends spawn_browser →
+  socket handler spawns profile →
+  socket handler POLLS get_received_surface() in a loop (line 476) →
+  socket handler COPIES surface to WebviewOverlayState::overlays (line 504) →
+  render loop reads from overlays ✓
+```
+
+**Why Resize Fails:**
+
+```
+render loop calls check_and_send_resize →
+  sends resize_browser via XPC →
+  profile resizes, calls on_accelerated_paint →
+  profile sends display_surface via XPC →
+  XPC handler stores in received_surfaces (webview_xpc.rs:230) →
+  ❌ NOTHING copies to overlays →
+  render loop still reads OLD texture from overlays
+```
+
+The new texture sits unused in `received_surfaces`. The render loop keeps
+drawing the old texture because `overlays` is never updated.
+
+**The Fix:**
+
+Eliminate the dual state stores. The render loop should read directly from
+`XpcManager::received_surfaces` instead of `WebviewOverlayState::overlays`. This
+creates a single source of truth for received textures.
+
+### Experiment 4: Single Source of Truth for Textures
+
+**Status:** PENDING
+
+**Goal:** Fix the disconnect between where XPC stores textures and where the
+render loop reads them. Make the render loop read directly from
+`XpcManager::received_surfaces` so that resized textures are immediately
+available for rendering.
+
+#### The Problem
+
+There are two separate state stores for webview textures:
+
+| Store                           | Location              | Purpose                |
+| ------------------------------- | --------------------- | ---------------------- |
+| `XpcManager::received_surfaces` | webview_xpc.rs:93     | XPC writes here        |
+| `WebviewOverlayState::overlays` | webview_socket.rs:337 | Render loop reads here |
+
+The initial spawn includes explicit code to copy from one to the other:
+
+```rust
+// webview_socket.rs:476 - polling loop during spawn_browser
+let surface = loop {
+    if let Some(s) = xpc_manager.get_received_surface(pane_id) {
+        break s;
+    }
+    // ... timeout handling ...
+};
+
+// webview_socket.rs:504 - copy to overlays
+state.write().unwrap().add_overlay(pane_id, overlay);
+```
+
+But when resize sends a new texture, this copy never happens. The XPC handler
+stores to `received_surfaces`, but nothing propagates it to `overlays`.
+
+#### Solution: Read Directly from XpcManager
+
+Instead of maintaining two state stores, have the render loop read directly from
+`XpcManager::received_surfaces`. This makes XpcManager the single source of
+truth for texture data.
+
+**Before (dual state stores):**
+
+```
+XPC → received_surfaces → (manual copy) → overlays → render loop
+```
+
+**After (single source of truth):**
+
+```
+XPC → received_surfaces → render loop
+```
+
+#### Changes
+
+**1. Modify render loop to read from XpcManager**
+
+**File:** `ts3/wezterm-gui/src/termwindow/render/draw.rs`
+
+Change `render_webview_overlays_webgpu` to read from XpcManager instead of
+WebviewOverlayState:
+
+```rust
+fn render_webview_overlays_webgpu(
+    &self,
+    webgpu: &crate::termwindow::webgpu::WebGpuState,
+    output_texture: &wgpu::Texture,
+) -> anyhow::Result<()> {
+    use crate::termwindow::webview_xpc::get_xpc_manager;
+    use cef::osr_texture_import::iosurface::IOSurfaceImporter;
+    use cef::osr_texture_import::TextureImporter;
+    use cef::sys::cef_color_type_t;
+
+    // Get XPC manager (single source of truth for textures)
+    let xpc_manager = match get_xpc_manager() {
+        Some(m) => m,
+        None => return Ok(()),
+    };
+
+    // Get positioned panes for viewport calculation
+    let positioned_panes = self.get_panes_to_render();
+
+    // Check if tab bar is visible (needed for offset calculation)
+    let tab_bar_height = if self.show_tab_bar {
+        self.tab_bar_pixel_height().unwrap_or(0.)
+    } else {
+        0.0
+    };
+    let border = self.get_os_border();
+
+    let output_view = output_texture.create_view(&wgpu::TextureViewDescriptor::default());
+
+    // Iterate over positioned panes and check if each has a webview texture
+    for pos in positioned_panes.iter() {
+        let pane_id = pos.pane.pane_id();
+
+        // Check if this pane has a received surface from XPC
+        let surface = match xpc_manager.get_received_surface(pane_id) {
+            Some(s) => s,
+            None => continue, // No webview for this pane
+        };
+
+        if surface.mach_port == 0 {
+            continue;
+        }
+
+        log::info!(
+            "[Render] Importing IOSurface for pane {} from mach_port={}, size={}x{}",
+            pane_id,
+            surface.mach_port,
+            surface.width,
+            surface.height
+        );
+
+        // Import IOSurface from Mach port
+        let importer = match IOSurfaceImporter::from_mach_port(
+            surface.mach_port,
+            cef_color_type_t::CEF_COLOR_TYPE_BGRA_8888,
+            surface.width,
+            surface.height,
+        ) {
+            Some(imp) => imp,
+            None => {
+                log::warn!(
+                    "[Render] Failed to import IOSurface from mach_port={}",
+                    surface.mach_port
+                );
+                continue;
+            }
+        };
+
+        // Import to wgpu texture
+        let texture = match importer.import_to_wgpu(&webgpu.device) {
+            Ok(tex) => tex,
+            Err(e) => {
+                log::warn!("[Render] Failed to import IOSurface to wgpu: {}", e);
+                continue;
+            }
+        };
+
+        // ... rest of rendering code (texture view, sampler, bind group, render pass) ...
+
+        // Calculate viewport from pane position
+        let cell_width = self.render_metrics.cell_size.width as f32;
+        let cell_height = self.render_metrics.cell_size.height as f32;
+
+        let viewport_x = pos.left as f32 * cell_width + border.left.get() as f32;
+        let viewport_y = pos.top as f32 * cell_height + tab_bar_height + border.top.get() as f32;
+        let viewport_w = pos.pixel_width as f32;
+        let viewport_h = pos.pixel_height as f32;
+
+        log::info!(
+            "[Render] Pane {} viewport: ({}, {}) {}x{}",
+            pane_id, viewport_x, viewport_y, viewport_w, viewport_h
+        );
+
+        // Check if we need to send resize command (with 30ms debounce)
+        let scale = self.dimensions.dpi as f32 / 72.0;
+        let scale = if scale <= 0.0 { 2.0 } else { scale };
+        let logical_w = (viewport_w / scale) as u32;
+        let logical_h = (viewport_h / scale) as u32;
+
+        xpc_manager.check_and_send_resize(pane_id, logical_w, logical_h);
+
+        // ... render pass code ...
+    }
+
+    Ok(())
+}
+```
+
+**Key Changes:**
+
+1. Remove dependency on `get_server()` and `WebviewOverlayState`
+2. Iterate over `positioned_panes` (all panes in the window)
+3. For each pane, check `xpc_manager.get_received_surface(pane_id)`
+4. If a surface exists, render it; if not, skip (not a webview pane)
+
+**2. Track which panes have webviews**
+
+The above approach has one problem: we're iterating all panes and checking
+XpcManager for each. But `received_surfaces` only contains panes that have
+received at least one texture. We also need to know which panes are webview
+panes BEFORE the first texture arrives (for the 5-second timeout case).
+
+**Solution:** Keep `WebviewOverlayState` for tracking which panes are webview
+panes, but DON'T store texture data there. Use it only as a "this pane has a
+webview" registry.
+
+**File:** `ts3/wezterm-gui/src/termwindow/webview_socket.rs`
+
+Simplify `WebviewOverlay` to remove texture data:
+
+```rust
+/// Marker that a pane has an active webview (texture data is in XpcManager)
+#[derive(Debug, Clone)]
+pub struct WebviewOverlay {
+    /// Session ID for this webview (for cleanup/debugging)
+    pub session_id: String,
+}
+
+impl WebviewOverlayState {
+    pub fn add_overlay(&mut self, pane_id: PaneId, session_id: String) {
+        log::info!("Marking pane {} as webview (session={})", pane_id, session_id);
+        self.overlays.insert(pane_id, WebviewOverlay { session_id });
+    }
+
+    // Remove mach_port, width, height from WebviewOverlay
+    // These now come exclusively from XpcManager::received_surfaces
+}
+```
+
+**3. Update spawn_browser handler to not store texture data**
+
+**File:** `ts3/wezterm-gui/src/termwindow/webview_socket.rs`
+
+In the `spawn_browser` handler, after waiting for the surface, mark the pane as
+a webview but don't copy texture data:
+
+```rust
+// Wait for surface from XPC (existing polling loop)
+let surface = loop {
+    if let Some(s) = xpc_manager.get_received_surface(pane_id) {
+        break s;
+    }
+    if start.elapsed() > max_wait {
+        return Response::error(&request.id, "Timeout waiting for surface");
+    }
+    thread::sleep(poll_interval);
+};
+
+// Mark pane as webview (texture data stays in XpcManager)
+state.write().unwrap().add_overlay(pane_id, session_id.clone());
+
+Response::ok(...)
+```
+
+**4. Update render loop to use registry + XpcManager**
+
+**File:** `ts3/wezterm-gui/src/termwindow/render/draw.rs`
+
+```rust
+fn render_webview_overlays_webgpu(...) -> anyhow::Result<()> {
+    // Get webview registry (which panes have webviews)
+    let server = match get_server() {
+        Some(s) => s,
+        None => return Ok(()),
+    };
+    let state = server.state();
+    let webview_panes = state.read().unwrap();
+
+    if webview_panes.overlays.is_empty() {
+        return Ok(());
+    }
+
+    // Get XPC manager (texture data source)
+    let xpc_manager = match get_xpc_manager() {
+        Some(m) => m,
+        None => return Ok(()),
+    };
+
+    let positioned_panes = self.get_panes_to_render();
+    // ...
+
+    // For each webview pane, get texture from XpcManager
+    for (pane_id, _overlay) in webview_panes.overlays.iter() {
+        // Get CURRENT texture from XpcManager (may have been updated by resize)
+        let surface = match xpc_manager.get_received_surface(*pane_id) {
+            Some(s) => s,
+            None => {
+                log::warn!("[Render] Webview pane {} has no surface yet", pane_id);
+                continue;
+            }
+        };
+
+        // Find pane position
+        let pos = match positioned_panes.iter().find(|p| p.pane.pane_id() == *pane_id) {
+            Some(p) => p,
+            None => {
+                log::warn!("[Render] Pane {} not in layout", pane_id);
+                continue;
+            }
+        };
+
+        // Import and render using surface from XpcManager
+        // ... existing import and render code ...
+
+        // Check if resize needed
+        let scale = self.dimensions.dpi as f32 / 72.0;
+        let scale = if scale <= 0.0 { 2.0 } else { scale };
+        let logical_w = (pos.pixel_width as f32 / scale) as u32;
+        let logical_h = (pos.pixel_height as f32 / scale) as u32;
+
+        xpc_manager.check_and_send_resize(*pane_id, logical_w, logical_h);
+
+        // ... render ...
+    }
+
+    Ok(())
+}
+```
+
+#### Why This Fixes Resize
+
+**Before:** Render loop reads `overlays.mach_port` which was set during initial
+spawn and never updated.
+
+**After:** Render loop reads `xpc_manager.get_received_surface(pane_id)` which
+returns the LATEST texture received via XPC. When profile sends a resized
+texture, it immediately appears in `received_surfaces` and the next render frame
+uses it.
+
+The flow becomes:
+
+```
+1. GUI detects resize in render loop
+2. GUI sends resize_browser via XPC
+3. Profile resizes browser, CEF calls on_accelerated_paint
+4. Profile sends display_surface via XPC
+5. XPC handler stores NEW texture in received_surfaces
+6. Next render frame reads NEW texture from received_surfaces ✓
+7. GUI renders at new size
+```
+
+No manual copying between state stores. The texture flows directly from XPC to
+the render loop.
+
+#### Files to Modify
+
+| File                                               | Changes                                                         |
+| -------------------------------------------------- | --------------------------------------------------------------- |
+| `ts3/wezterm-gui/src/termwindow/render/draw.rs`    | Read texture from XpcManager instead of overlays                |
+| `ts3/wezterm-gui/src/termwindow/webview_socket.rs` | Remove texture data from WebviewOverlay (keep only as registry) |
+
+#### Verification
+
+```bash
+cd ts3 && ./scripts/build-debug.sh --open
+
+# Test 1: Initial render still works
+web google.com
+# Expected: Page renders correctly
+
+# Test 2: Split pane triggers resize
+# Press Cmd+Shift+D
+cat /tmp/termsurf-gui.log | grep "Sent resize"
+# Expected: Resize command sent with logical dimensions
+
+cat /tmp/termsurf-profile-*.log | grep "Sending IOSurface"
+# Expected: New IOSurface with smaller dimensions
+
+# CRITICAL TEST: Verify render loop uses NEW texture
+# After split, the webview should show at SMALLER size
+# If it still shows at original size, texture propagation is broken
+
+# Test 3: Drag window edge
+# Expected: Webview resizes smoothly after 30ms debounce
+# Multiple resize commands should appear in logs
+
+# Test 4: Visual verification
+# Text should remain crisp after resize (not stretched)
+# Content should reflow to fit new width
+```
+
+#### Success Criteria
+
+- [ ] Render loop reads texture from `XpcManager::received_surfaces`
+- [ ] Initial spawn still works (no regression)
+- [ ] Split pane causes webview to resize and re-render
+- [ ] Resized texture is immediately visible (no stale texture)
+- [ ] Multiple consecutive resizes work correctly
+- [ ] Window drag resize works with debounce
+- [ ] Text remains crisp after resize
+- [ ] Content reflows naturally
+
+#### Risks
+
+1. **Performance** — Reading from XpcManager on every frame adds a mutex lock.
+   However, `received_surfaces` is a small HashMap and the lock is brief. Should
+   be negligible.
+
+2. **Race condition** — There's a brief window where `received_surfaces` might
+   be updated mid-render. This is acceptable since we're just reading; the worst
+   case is rendering the previous frame's texture.
+
+3. **Memory** — The old texture in `received_surfaces` is replaced by the new
+   one. CEF manages IOSurface lifetime, so the old surface should be released
+   when no longer referenced.
+
+#### Why Previous Experiments Failed
+
+- **Experiment 1** failed due to XPC handler ordering (resume before handler)
+- **Experiment 2** fixed the ordering but sent physical instead of logical
+  pixels
+- **Experiment 3** fixed the scale factor but the ACTUAL root cause was never
+  addressed: the new texture was stored in the wrong place
+
+All three experiments correctly implemented the resize COMMAND pathway:
+
+```
+GUI detects resize → sends command → profile resizes → CEF re-renders ✓
+```
+
+But none of them fixed the TEXTURE pathway:
+
+```
+CEF re-renders → sends texture → GUI stores in received_surfaces →
+❌ render loop reads from overlays (WRONG PLACE)
+```
+
+This experiment fixes the texture pathway by making the render loop read from
+the same place XPC writes to.
