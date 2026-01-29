@@ -186,49 +186,64 @@ impl crate::TermWindow {
         use cef::osr_texture_import::TextureImporter;
         use cef::sys::cef_color_type_t;
 
-        // Get overlay state
+        // Get webview registry (which panes have webviews)
         let server = match get_server() {
             Some(s) => s,
             None => return Ok(()),
         };
 
         let state = server.state();
-        let overlays = state.read().unwrap();
+        let webview_panes = state.read().unwrap();
 
-        if overlays.overlays.is_empty() {
+        if webview_panes.overlays.is_empty() {
             return Ok(());
         }
+
+        // Get XPC manager (single source of truth for texture data)
+        let xpc_manager = match crate::termwindow::webview_xpc::get_xpc_manager() {
+            Some(m) => m,
+            None => return Ok(()),
+        };
 
         // Get positioned panes for viewport calculation
         let positioned_panes = self.get_panes_to_render();
 
         let output_view = output_texture.create_view(&wgpu::TextureViewDescriptor::default());
 
-        // For each overlay, import the IOSurface and render it
-        for (pane_id, overlay) in overlays.overlays.iter() {
-            if overlay.mach_port == 0 {
+        // For each webview pane, get CURRENT texture from XpcManager
+        for (pane_id, _overlay) in webview_panes.overlays.iter() {
+            // Get texture from XpcManager (may have been updated by resize)
+            let surface = match xpc_manager.get_received_surface(*pane_id) {
+                Some(s) => s,
+                None => {
+                    log::warn!("[Render] Webview pane {} has no surface yet", pane_id);
+                    continue;
+                }
+            };
+
+            if surface.mach_port == 0 {
                 continue;
             }
 
             log::info!(
                 "[Render] Importing IOSurface from mach_port={}, size={}x{}",
-                overlay.mach_port,
-                overlay.width,
-                overlay.height
+                surface.mach_port,
+                surface.width,
+                surface.height
             );
 
             // Import IOSurface from Mach port
             let importer = match IOSurfaceImporter::from_mach_port(
-                overlay.mach_port,
+                surface.mach_port,
                 cef_color_type_t::CEF_COLOR_TYPE_BGRA_8888,
-                overlay.width,
-                overlay.height,
+                surface.width,
+                surface.height,
             ) {
                 Some(imp) => imp,
                 None => {
                     log::warn!(
                         "[Render] Failed to import IOSurface from mach_port={}",
-                        overlay.mach_port
+                        surface.mach_port
                     );
                     continue;
                 }
@@ -359,6 +374,18 @@ impl crate::TermWindow {
 
                 render_pass.set_viewport(viewport_x, viewport_y, viewport_w, viewport_h, 0.0, 1.0);
 
+                // Check if we need to send a resize command (with 30ms debounce)
+                if let Some(xpc_manager) = crate::termwindow::webview_xpc::get_xpc_manager() {
+                    // Convert physical pixels to logical (CEF expects DIP coordinates)
+                    // Scale factor: macOS base DPI is 72, Retina is 144 (scale = 2.0)
+                    let scale = self.dimensions.dpi as f32 / 72.0;
+                    let scale = if scale <= 0.0 { 2.0 } else { scale };
+                    let logical_w = (viewport_w / scale) as u32;
+                    let logical_h = (viewport_h / scale) as u32;
+
+                    xpc_manager.check_and_send_resize(*pane_id, logical_w, logical_h);
+                }
+
                 // Draw a single triangle that covers the viewport
                 render_pass.draw(0..3, 0..1);
             }
@@ -367,8 +394,8 @@ impl crate::TermWindow {
 
             log::info!(
                 "[Render] Rendered {}x{} webview texture to screen",
-                overlay.width,
-                overlay.height
+                surface.width,
+                surface.height
             );
         }
 

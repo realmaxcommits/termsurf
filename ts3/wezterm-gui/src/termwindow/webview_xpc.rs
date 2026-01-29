@@ -13,6 +13,8 @@
 use std::collections::HashMap;
 #[cfg(target_os = "macos")]
 use std::sync::{Arc, Mutex, OnceLock};
+#[cfg(target_os = "macos")]
+use std::time::Instant;
 
 #[cfg(target_os = "macos")]
 use mux::pane::PaneId;
@@ -68,6 +70,16 @@ pub struct ReceivedSurface {
 // XPC Manager
 // ============================================================================
 
+/// Debounce state for resize commands
+#[cfg(target_os = "macos")]
+#[derive(Debug, Clone)]
+struct ResizeDebounceState {
+    /// Last size successfully sent to the browser
+    last_sent_size: Option<(u32, u32)>,
+    /// Pending resize: (width, height, timestamp when size first changed)
+    pending_resize: Option<(u32, u32, Instant)>,
+}
+
 /// Manages XPC communication for IOSurface sharing
 #[cfg(target_os = "macos")]
 pub struct XpcManager {
@@ -79,10 +91,13 @@ pub struct XpcManager {
     /// Received surfaces ready for rendering
     /// Map from pane_id to surface info
     received_surfaces: Mutex<HashMap<PaneId, ReceivedSurface>>,
-    /// Stored connections (must keep alive)
-    connections: Mutex<Vec<Arc<XpcConnection>>>,
+    /// Peer connections from profile servers, keyed by pane_id.
+    /// Used to send commands (resize, input) back to the browser.
+    peer_connections: Mutex<HashMap<PaneId, Arc<XpcConnection>>>,
     /// Stored listeners (must keep alive to accept connections)
     listeners: Mutex<Vec<XpcListener>>,
+    /// Debounce state for resize commands, keyed by pane_id
+    resize_debounce: Mutex<HashMap<PaneId, ResizeDebounceState>>,
 }
 
 #[cfg(target_os = "macos")]
@@ -107,8 +122,9 @@ impl XpcManager {
             _launcher: launcher,
             pending_sessions: Mutex::new(HashMap::new()),
             received_surfaces: Mutex::new(HashMap::new()),
-            connections: Mutex::new(Vec::new()),
+            peer_connections: Mutex::new(HashMap::new()),
             listeners: Mutex::new(Vec::new()),
+            resize_debounce: Mutex::new(HashMap::new()),
         })
     }
 
@@ -155,7 +171,18 @@ impl XpcManager {
             let conn = Arc::new(conn);
             let session_id = session_id_clone.clone();
             let manager = Arc::clone(&self_clone);
-            let manager_for_storage = Arc::clone(&manager);
+
+            // Look up pane_id from session BEFORE setting event handler
+            // This works because pending_sessions.insert() happens before spawn_profile
+            let pane_id = manager.pending_sessions.lock().unwrap()
+                .get(&session_id).copied();
+
+            // Store connection by pane_id for sending commands back
+            if let Some(pane_id) = pane_id {
+                manager.peer_connections.lock().unwrap()
+                    .insert(pane_id, Arc::clone(&conn));
+                log::info!("[XPC] Stored peer connection for pane {}", pane_id);
+            }
 
             set_event_handler(&*conn, move |event| {
                 match event {
@@ -222,9 +249,6 @@ impl XpcManager {
             });
 
             conn.resume();
-
-            // Store connection to keep it alive
-            manager_for_storage.connections.lock().unwrap().push(conn);
         });
 
         listener.resume();
@@ -273,6 +297,82 @@ impl XpcManager {
             .lock()
             .unwrap()
             .retain(|_, &mut pid| pid != pane_id);
+    }
+
+    /// Send a command to the browser in the given pane
+    pub fn send_command(&self, pane_id: PaneId, msg: &XpcDictionary) -> bool {
+        let connections = self.peer_connections.lock().unwrap();
+        if let Some(conn) = connections.get(&pane_id) {
+            conn.send(msg);
+            true
+        } else {
+            log::warn!("[XPC] No connection for pane {}", pane_id);
+            false
+        }
+    }
+
+    /// Send a resize command to the browser in the given pane
+    pub fn send_resize(&self, pane_id: PaneId, width: u32, height: u32) -> bool {
+        let msg = XpcDictionary::new();
+        msg.set_string("action", "resize_browser");
+        msg.set_i64("width", width as i64);
+        msg.set_i64("height", height as i64);
+
+        if self.send_command(pane_id, &msg) {
+            log::info!("[XPC] Sent resize to pane {}: {}x{}", pane_id, width, height);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Remove a peer connection (e.g., when webview pane is closed)
+    pub fn remove_connection(&self, pane_id: PaneId) {
+        self.peer_connections.lock().unwrap().remove(&pane_id);
+        self.resize_debounce.lock().unwrap().remove(&pane_id);
+        log::info!("[XPC] Removed connection for pane {}", pane_id);
+    }
+
+    /// Check if resize should be sent and send it if debounce delay has passed.
+    /// Call this from the render loop with the current viewport size.
+    /// Returns true if a resize was sent.
+    pub fn check_and_send_resize(&self, pane_id: PaneId, width: u32, height: u32) -> bool {
+        use std::time::Duration;
+        const SETTLE_DELAY: Duration = Duration::from_millis(30);
+
+        let current_size = (width, height);
+        let now = Instant::now();
+
+        let mut debounce = self.resize_debounce.lock().unwrap();
+        let state = debounce.entry(pane_id).or_insert(ResizeDebounceState {
+            last_sent_size: None,
+            pending_resize: None,
+        });
+
+        // Check if size changed from what we last sent
+        if state.last_sent_size != Some(current_size) {
+            // Size changed - update pending if different from current pending
+            if state.pending_resize.map(|(w, h, _)| (w, h)) != Some(current_size) {
+                state.pending_resize = Some((width, height, now));
+            }
+        }
+
+        // Check if we should send resize command
+        if let Some((w, h, time)) = state.pending_resize {
+            if time.elapsed() >= SETTLE_DELAY {
+                // Drop the lock before sending to avoid holding it during XPC
+                let should_send = true;
+                state.last_sent_size = Some((w, h));
+                state.pending_resize = None;
+                drop(debounce);
+
+                if should_send {
+                    return self.send_resize(pane_id, w, h);
+                }
+            }
+        }
+
+        false
     }
 }
 

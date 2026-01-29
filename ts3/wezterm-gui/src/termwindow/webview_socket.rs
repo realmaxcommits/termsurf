@@ -315,15 +315,13 @@ impl ProfileServerManager {
 // Webview Overlay State
 // ============================================================================
 
-/// Information about an active webview overlay on a pane
+/// Marker that a pane has an active webview.
+/// Texture data (mach_port, dimensions) is stored in XpcManager::received_surfaces.
+/// This struct only serves as a registry of "which panes have webviews".
 #[derive(Debug, Clone)]
 pub struct WebviewOverlay {
-    /// Mach port for IOSurface (received via XPC)
-    pub mach_port: u32,
-    /// Width of the webview texture
-    pub width: u32,
-    /// Height of the webview texture
-    pub height: u32,
+    /// Session ID for this webview (for cleanup/debugging)
+    pub session_id: String,
 }
 
 /// Tracks active webview overlays (global, not per-window)
@@ -342,11 +340,9 @@ impl WebviewOverlayState {
 
     pub fn add_overlay(&mut self, pane_id: PaneId, overlay: WebviewOverlay) {
         log::info!(
-            "Adding webview overlay to pane {}: mach_port={}, size={}x{}",
+            "Marking pane {} as webview (session={})",
             pane_id,
-            overlay.mach_port,
-            overlay.width,
-            overlay.height
+            overlay.session_id
         );
         self.overlays.insert(pane_id, overlay);
     }
@@ -486,13 +482,12 @@ fn handle_request(
                 surface.height
             );
 
-            // Allocate webview ID and store overlay
+            // Allocate webview ID and mark pane as webview
+            // (texture data stays in XpcManager::received_surfaces)
             let webview_id = profile_manager.lock().unwrap().next_webview_id();
 
             let overlay = WebviewOverlay {
-                mach_port: surface.mach_port,
-                width: surface.width,
-                height: surface.height,
+                session_id: session_id.clone(),
             };
 
             state.write().unwrap().add_overlay(pane_id, overlay);
@@ -510,6 +505,10 @@ fn handle_request(
 
         "display_webview" => {
             // Legacy action - accepts mach_port for direct overlay display
+            // WARNING: This bypasses XPC and won't work correctly with resize.
+            // Texture data should come through XpcManager for resize support.
+            log::warn!("[GUI Socket] display_webview is deprecated - use spawn_browser for resize support");
+
             let data = match &request.data {
                 Some(d) => d,
                 None => return Response::error(&request.id, "Missing data"),
@@ -520,18 +519,13 @@ fn handle_request(
                 None => return Response::error(&request.id, "Missing pane_id"),
             };
 
-            let mach_port = match data.get("mach_port").and_then(|v| v.as_u64()) {
-                Some(id) => id as u32,
-                None => return Response::error(&request.id, "Missing mach_port"),
-            };
-
-            let width = data.get("width").and_then(|v| v.as_u64()).unwrap_or(800) as u32;
-            let height = data.get("height").and_then(|v| v.as_u64()).unwrap_or(600) as u32;
+            // Note: mach_port, width, height are ignored - texture data must come via XPC
+            let _mach_port = data.get("mach_port").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+            let _width = data.get("width").and_then(|v| v.as_u64()).unwrap_or(800) as u32;
+            let _height = data.get("height").and_then(|v| v.as_u64()).unwrap_or(600) as u32;
 
             let overlay = WebviewOverlay {
-                mach_port,
-                width,
-                height,
+                session_id: format!("legacy-pane-{}", pane_id),
             };
 
             state.write().unwrap().add_overlay(pane_id, overlay);

@@ -86,6 +86,8 @@ struct BrowserState {
     width: AtomicU32,
     height: AtomicU32,
     last_handle: AtomicPtr<c_void>,
+    /// Browser reference for resize operations
+    browser: Mutex<Option<cef::Browser>>,
 }
 
 /// Profile-wide state (shared across all browsers in this process)
@@ -374,14 +376,14 @@ mod cef_handlers {
         wrap_app, wrap_browser_process_handler, wrap_client, wrap_context_menu_handler,
         wrap_render_handler, wrap_task, AcceleratedPaintInfo, App, Browser,
         BrowserProcessHandler, BrowserSettings, Client, ContextMenuHandler, ContextMenuParams,
-        Frame, ImplApp, ImplBrowser, ImplBrowserProcessHandler, ImplClient, ImplCommandLine,
-        ImplContextMenuHandler, ImplMenuModel, ImplRenderHandler, ImplTask, MenuModel,
-        PaintElementType, Rect, RenderHandler, ScreenInfo, Task, WindowInfo, WrapApp,
+        Frame, ImplApp, ImplBrowser, ImplBrowserHost, ImplBrowserProcessHandler, ImplClient,
+        ImplCommandLine, ImplContextMenuHandler, ImplMenuModel, ImplRenderHandler, ImplTask,
+        MenuModel, PaintElementType, Rect, RenderHandler, ScreenInfo, Task, WindowInfo, WrapApp,
         WrapBrowserProcessHandler, WrapClient, WrapContextMenuHandler, WrapRenderHandler,
         WrapTask,
     };
     use std::sync::atomic::Ordering;
-    use std::sync::Arc;
+    use std::sync::{Arc, Mutex};
     use termsurf_xpc::*;
 
     // ====== Render Handler ======
@@ -630,7 +632,7 @@ mod cef_handlers {
     ) {
         use std::sync::atomic::AtomicPtr;
 
-        // Connect to GUI for this browser
+        // 1. Connect to GUI (don't resume yet)
         let gui = match XpcConnection::from_endpoint(gui_endpoint) {
             Ok(c) => Arc::new(c),
             Err(e) => {
@@ -638,20 +640,56 @@ mod cef_handlers {
                 return;
             }
         };
-        set_event_handler(&*gui, |event| {
-            if let Err(e) = event {
-                eprintln!("Profile: GUI connection error: {}", e);
+
+        // 2. Create deferred state wrapper (will be populated after browser creation)
+        let deferred_state: Arc<Mutex<Option<Arc<BrowserState>>>> =
+            Arc::new(Mutex::new(None));
+
+        // 3. Set event handler BEFORE resume
+        let deferred_for_handler = Arc::clone(&deferred_state);
+        set_event_handler(&*gui, move |event| {
+            match event {
+                Ok(msg) => {
+                    let action = msg.get_string("action").unwrap_or_default();
+                    match action.as_str() {
+                        "resize_browser" => {
+                            // Get state from deferred wrapper
+                            let state_guard = deferred_for_handler.lock().unwrap();
+                            let Some(bs) = state_guard.as_ref() else {
+                                println!("Profile: resize_browser ignored (state not ready)");
+                                return;
+                            };
+
+                            let width = msg.get_i64("width") as u32;
+                            let height = msg.get_i64("height") as u32;
+                            println!("Profile: resize_browser {}x{}", width, height);
+
+                            let bs = Arc::clone(bs);
+                            drop(state_guard); // Release lock before post_task
+
+                            let mut task = ResizeBrowserTask::new(bs, width, height);
+                            cef::post_task(cef::ThreadId::UI, Some(&mut task));
+                        }
+                        _ => {}
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Profile: GUI connection error: {}", e);
+                }
             }
         });
+
+        // 4. NOW resume the connection (handler is ready)
         gui.resume();
 
-        // Create per-browser state
+        // 5. Create per-browser state
         let browser_state = Arc::new(BrowserState {
             session_id: session_id.to_string(),
-            gui,
+            gui: Arc::clone(&gui),
             width: std::sync::atomic::AtomicU32::new(width),
             height: std::sync::atomic::AtomicU32::new(height),
             last_handle: AtomicPtr::new(std::ptr::null_mut()),
+            browser: Mutex::new(None),
         });
 
         // Create render handler with browser-specific state
@@ -687,12 +725,18 @@ mod cef_handlers {
         );
 
         match browser {
-            Some(browser) => {
-                let browser_id = browser.identifier();
+            Some(b) => {
+                let browser_id = b.identifier();
                 println!(
                     "Profile: Browser {} created for '{}' (session='{}')",
                     browser_id, url, session_id
                 );
+
+                // Store browser reference for resize operations
+                *browser_state.browser.lock().unwrap() = Some(b);
+
+                // 6. Populate deferred state (handler can now access it)
+                *deferred_state.lock().unwrap() = Some(Arc::clone(&browser_state));
 
                 // Store browser state by ID
                 state
@@ -702,6 +746,41 @@ mod cef_handlers {
                     .insert(browser_id, browser_state);
             }
             None => eprintln!("Profile: Failed to create browser for '{}'", url),
+        }
+    }
+
+    // ====== Resize Browser Task ======
+    //
+    // Task for resizing browsers on the UI thread when resize commands arrive via XPC.
+
+    wrap_task! {
+        pub struct ResizeBrowserTask {
+            state: Arc<BrowserState>,
+            width: u32,
+            height: u32,
+        }
+
+        impl Task {
+            fn execute(&self) {
+                resize_browser_on_ui_thread(&self.state, self.width, self.height);
+            }
+        }
+    }
+
+    /// Resize a browser (called on CEF UI thread via post_task)
+    fn resize_browser_on_ui_thread(state: &BrowserState, width: u32, height: u32) {
+        // Update stored dimensions (used by get_view_rect)
+        state.width.store(width, Ordering::Relaxed);
+        state.height.store(height, Ordering::Relaxed);
+
+        // Notify CEF of size change
+        if let Some(ref browser) = *state.browser.lock().unwrap() {
+            if let Some(host) = browser.host() {
+                println!("Profile: was_resized {}x{}", width, height);
+                host.was_resized();
+                // PaintElementType::default() is PET_VIEW (0)
+                host.invalidate(PaintElementType::default());
+            }
         }
     }
 }
