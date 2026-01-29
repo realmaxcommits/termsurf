@@ -345,7 +345,19 @@ struct ProfileState {
 }
 ```
 
-**2. Profile Server: Include session_id and profile in display_surface**
+**2. Profile Server: Store command_listener in ProfileState**
+
+**File:** `ts3/termsurf-profile/src/main.rs`
+
+After creating the command listener, store it in ProfileState so we can get
+endpoints later:
+
+```rust
+// After creating command_listener:
+*profile_state.command_listener.lock().unwrap() = Some(command_listener);
+```
+
+**3. Profile Server: Include session_id and profile in display_surface**
 
 **File:** `ts3/termsurf-profile/src/main.rs`
 
@@ -354,17 +366,22 @@ GUI can track which pane belongs to which profile:
 
 ```rust
 // In on_accelerated_paint:
+// Access profile from global PROFILE_STATE (render handler doesn't have direct access)
+let profile = PROFILE_STATE.get()
+    .map(|ps| ps.profile.clone())
+    .unwrap_or_default();
+
 let msg = XpcDictionary::new();
 msg.set_string("action", "display_surface");
 msg.set_string("session_id", &self.inner.state.session_id);  // NEW
-msg.set_string("profile", &profile_state.profile);            // NEW
+msg.set_string("profile", &profile);                          // NEW
 msg.set_mach_send("iosurface_port", port);
 msg.set_i64("width", width as i64);
 msg.set_i64("height", height as i64);
 self.inner.state.gui.send(&msg);
 ```
 
-**3. Profile Server: Handle resize_browser command**
+**4. Profile Server: Handle resize_browser command**
 
 **File:** `ts3/termsurf-profile/src/main.rs`
 
@@ -424,7 +441,7 @@ match browser {
 }
 ```
 
-**4. Profile Server: Resize task for UI thread**
+**5. Profile Server: Resize task for UI thread**
 
 **File:** `ts3/termsurf-profile/src/main.rs`
 
@@ -480,7 +497,7 @@ fn resize_browser_on_ui_thread(
 }
 ```
 
-**5. GUI: Store command connections per profile**
+**6. GUI: Store command connections per profile**
 
 **File:** `ts3/wezterm-gui/src/termwindow/webview_xpc.rs`
 
@@ -550,7 +567,7 @@ impl XpcManager {
 }
 ```
 
-**6. GUI: Track session_id and profile per pane**
+**7. GUI: Track session_id and profile per pane**
 
 **File:** `ts3/wezterm-gui/src/termwindow/webview_xpc.rs`
 
@@ -604,7 +621,7 @@ pub struct WebviewOverlay {
 }
 ```
 
-**7. GUI: Detect size change and debounce**
+**8. GUI: Detect size change and debounce**
 
 **File:** `ts3/wezterm-gui/src/termwindow/render/draw.rs`
 
