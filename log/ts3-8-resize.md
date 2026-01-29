@@ -992,3 +992,131 @@ xpc_manager.check_and_send_resize(*pane_id, logical_w, logical_h);
 
 This matches how the initial dimensions are calculated in `webview_socket.rs`
 and should produce correctly-sized IOSurfaces after resize.
+
+### Experiment 3: Fix Scale Factor for Resize
+
+**Status:** PLANNED
+
+**Goal:** Fix the scale factor bug from Experiment 2. Send logical dimensions
+(physical / scale) instead of physical dimensions when resizing.
+
+#### The Problem
+
+Experiment 2 fixed the XPC handler ordering but sent wrong dimensions:
+
+```rust
+// draw.rs line 364 - WRONG: sends physical pixels
+xpc_manager.check_and_send_resize(*pane_id, viewport_w as u32, viewport_h as u32);
+```
+
+CEF expects logical dimensions and multiplies by `device_scale_factor`:
+
+- GUI sends: 2067×2100 (physical pixels)
+- CEF interprets as: 2067×2100 logical
+- CEF renders at: 4134×4200 physical (2× scale applied)
+
+The initial spawn in `webview_socket.rs` correctly divides by scale:
+
+```rust
+let scale = dims.dpi as f32 / 72.0;
+let lw = (physical_width / scale) as u32;
+let lh = (physical_height / scale) as u32;
+```
+
+#### Solution
+
+Apply the same scale division in `draw.rs`:
+
+```rust
+// Get scale factor (macOS base DPI = 72)
+let scale = self.dimensions.dpi as f32 / 72.0;
+let scale = if scale <= 0.0 { 2.0 } else { scale };
+
+// Convert physical pixels to logical for CEF
+let logical_w = (viewport_w / scale) as u32;
+let logical_h = (viewport_h / scale) as u32;
+
+xpc_manager.check_and_send_resize(*pane_id, logical_w, logical_h);
+```
+
+#### Changes
+
+**File:** `ts3/wezterm-gui/src/termwindow/render/draw.rs`
+
+Replace the resize call (around line 362-365):
+
+```rust
+// Check if we need to send a resize command (with 30ms debounce)
+if let Some(xpc_manager) = crate::termwindow::webview_xpc::get_xpc_manager() {
+    // Convert physical pixels to logical (CEF expects DIP coordinates)
+    // Scale factor: macOS base DPI is 72, Retina is 144 (scale = 2.0)
+    let scale = self.dimensions.dpi as f32 / 72.0;
+    let scale = if scale <= 0.0 { 2.0 } else { scale };
+    let logical_w = (viewport_w / scale) as u32;
+    let logical_h = (viewport_h / scale) as u32;
+
+    xpc_manager.check_and_send_resize(*pane_id, logical_w, logical_h);
+}
+```
+
+#### Files to Modify
+
+| File                                            | Changes                                            |
+| ----------------------------------------------- | -------------------------------------------------- |
+| `ts3/wezterm-gui/src/termwindow/render/draw.rs` | Divide viewport dimensions by scale before sending |
+
+No changes needed to profile server — it already handles logical dimensions
+correctly.
+
+#### Expected Behavior
+
+With the fix:
+
+- Initial spawn: logical 1033×1050 → physical IOSurface 2066×2100 ✓
+- Resize sends: 1034×1050 logical (was 2067×2100 physical)
+- CEF renders at: 2068×2100 physical ✓
+
+The IOSurface size should remain consistent with the initial render, just at the
+new dimensions.
+
+#### Verification
+
+```bash
+cd ts3 && ./scripts/build-debug.sh --open
+
+# Test 1: Basic webview works
+web google.com
+# Expected: Page renders correctly
+
+# Test 2: Check initial dimensions
+cat /tmp/termsurf-profile-*.log | grep "Sending IOSurface" | head -3
+# Expected: ~2066x2100 (physical, 2× logical)
+
+# Test 3: Split pane and verify resize
+# Press Cmd+Shift+D to split
+cat /tmp/termsurf-gui.log | grep "Sent resize"
+# Expected: Dimensions should be ~1000x1050 (logical, not ~2000x2100)
+
+cat /tmp/termsurf-profile-*.log | grep "Sending IOSurface" | tail -5
+# Expected: ~2000x2100 (physical, matching 2× the logical resize)
+
+# Test 4: Visual verification
+# After split, webview should re-render at smaller size
+# Text should remain crisp (same resolution density)
+# Content should reflow to fit narrower width
+
+# Test 5: Multiple resizes
+# Drag window edge to resize
+# Webview should update smoothly after 30ms debounce
+# Check logs show multiple resize commands with correct logical dimensions
+```
+
+#### Success Criteria
+
+- [ ] `web google.com` renders correctly (no change from Experiment 2)
+- [ ] Split pane sends logical dimensions (half of previous physical / scale)
+- [ ] IOSurface size after resize matches 2× logical dimensions
+- [ ] Text remains crisp after resize (same pixel density)
+- [ ] Content reflows naturally to new width
+- [ ] Multiple consecutive resizes all work correctly
+- [ ] Window drag resize works with 30ms debounce
