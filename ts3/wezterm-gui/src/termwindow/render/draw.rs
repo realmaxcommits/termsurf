@@ -7,6 +7,8 @@ use ::window::glium::uniforms::{
     MagnifySamplerFilter, MinifySamplerFilter, Sampler, SamplerWrapFunction,
 };
 use ::window::glium::{BlendingFunction, LinearBlendingFactor, Surface};
+#[cfg(target_os = "macos")]
+use ::window::WindowOps;
 use config::FreeTypeLoadTarget;
 
 impl crate::TermWindow {
@@ -181,6 +183,11 @@ impl crate::TermWindow {
         webgpu: &crate::termwindow::webgpu::WebGpuState,
         output_texture: &wgpu::Texture,
     ) -> anyhow::Result<()> {
+        log::info!(
+            "[RENDER-LOOP] render_webview_overlays_webgpu called at {:?}",
+            std::time::Instant::now()
+        );
+
         use crate::termwindow::webview_socket::get_server;
         use cef::osr_texture_import::iosurface::IOSurfaceImporter;
         use cef::osr_texture_import::TextureImporter;
@@ -212,6 +219,23 @@ impl crate::TermWindow {
 
         // For each webview pane, get CURRENT texture from XpcManager
         for (pane_id, _overlay) in webview_panes.overlays.iter() {
+            // Register invalidate callback if not already registered.
+            // This allows XPC to trigger a window redraw when new textures arrive.
+            if !xpc_manager.has_invalidate_callback(*pane_id) {
+                let window = self.window.clone();
+                let pane_id_for_log = *pane_id;
+                let callback = std::sync::Arc::new(move || {
+                    if let Some(ref w) = window {
+                        log::info!(
+                            "[XPC] Invalidate callback fired for pane {}",
+                            pane_id_for_log
+                        );
+                        w.invalidate();
+                    }
+                });
+                xpc_manager.register_invalidate_callback(*pane_id, callback);
+            }
+
             // Get texture from XpcManager (may have been updated by resize)
             let surface = match xpc_manager.get_received_surface(*pane_id) {
                 Some(s) => s,
@@ -400,16 +424,77 @@ impl crate::TermWindow {
                     surface.width == viewport_w as u32 && surface.height == viewport_h as u32
                 );
 
-                // Check if we need to send a resize command (with 30ms debounce)
-                if let Some(xpc_manager) = crate::termwindow::webview_xpc::get_xpc_manager() {
-                    // Convert physical pixels to logical (CEF expects DIP coordinates)
-                    // Scale factor: macOS base DPI is 72, Retina is 144 (scale = 2.0)
+                // Debounce resize commands (ts2 pattern)
+                {
+                    use std::time::{Duration, Instant};
+                    const SETTLE_DELAY: Duration = Duration::from_millis(30);
+
                     let scale = self.dimensions.dpi as f32 / 72.0;
                     let scale = if scale <= 0.0 { 2.0 } else { scale };
                     let logical_w = (viewport_w / scale) as u32;
                     let logical_h = (viewport_h / scale) as u32;
+                    let target_size = (logical_w, logical_h);
 
-                    xpc_manager.check_and_send_resize(*pane_id, logical_w, logical_h);
+                    let mut resize_state = self.webview_resize_state.borrow_mut();
+                    let state = resize_state.entry(*pane_id).or_insert(crate::termwindow::WebviewResizeState {
+                        pending_size: None,
+                        pending_since: None,
+                        last_sent_size: None,
+                    });
+
+                    // Fast path: size unchanged from last sent
+                    if state.last_sent_size == Some(target_size) {
+                        log::info!(
+                            "[DEBOUNCE] pane={} FAST_PATH size={}x{} (already sent)",
+                            pane_id, logical_w, logical_h
+                        );
+                        state.pending_size = None;
+                        state.pending_since = None;
+                        drop(resize_state);
+                    } else {
+                        // Check if target size changed
+                        if state.pending_size != Some(target_size) {
+                            state.pending_size = Some(target_size);
+                            state.pending_since = Some(Instant::now());
+                            log::info!(
+                                "[DEBOUNCE] pane={} TARGET_CHANGED to {}x{} (timer reset)",
+                                pane_id, logical_w, logical_h
+                            );
+                        }
+
+                        // Settle-and-send logic
+                        if let Some(since) = state.pending_since {
+                            let elapsed = since.elapsed();
+                            if elapsed >= SETTLE_DELAY {
+                                log::info!(
+                                    "[DEBOUNCE] pane={} SENDING {}x{} (settled {:?})",
+                                    pane_id, logical_w, logical_h, elapsed
+                                );
+                                state.last_sent_size = Some(target_size);
+                                state.pending_size = None;
+                                state.pending_since = None;
+                                drop(resize_state);
+
+                                if let Some(xpc_manager) = crate::termwindow::webview_xpc::get_xpc_manager() {
+                                    xpc_manager.send_resize(*pane_id, logical_w, logical_h);
+                                }
+                            } else {
+                                let remaining = SETTLE_DELAY.saturating_sub(elapsed);
+                                log::info!(
+                                    "[DEBOUNCE] pane={} WAITING elapsed={:?} remaining={:?}",
+                                    pane_id, elapsed, remaining
+                                );
+                                drop(resize_state);
+                                log::info!("[DEBOUNCE] pane={} calling window.invalidate()", pane_id);
+                                if let Some(ref w) = self.window {
+                                    w.invalidate();
+                                    log::info!("[DEBOUNCE] pane={} invalidate() completed", pane_id);
+                                } else {
+                                    log::warn!("[DEBOUNCE] pane={} self.window is None!", pane_id);
+                                }
+                            }
+                        }
+                    }
                 }
 
                 // Draw a single triangle that covers the viewport

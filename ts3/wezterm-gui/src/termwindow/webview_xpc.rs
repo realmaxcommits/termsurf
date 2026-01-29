@@ -13,8 +13,6 @@
 use std::collections::HashMap;
 #[cfg(target_os = "macos")]
 use std::sync::{Arc, Mutex, OnceLock};
-#[cfg(target_os = "macos")]
-use std::time::Instant;
 
 #[cfg(target_os = "macos")]
 use mux::pane::PaneId;
@@ -70,16 +68,6 @@ pub struct ReceivedSurface {
 // XPC Manager
 // ============================================================================
 
-/// Debounce state for resize commands
-#[cfg(target_os = "macos")]
-#[derive(Debug, Clone)]
-struct ResizeDebounceState {
-    /// Last size successfully sent to the browser
-    last_sent_size: Option<(u32, u32)>,
-    /// Pending resize: (width, height, timestamp when size first changed)
-    pending_resize: Option<(u32, u32, Instant)>,
-}
-
 /// Manages XPC communication for IOSurface sharing
 #[cfg(target_os = "macos")]
 pub struct XpcManager {
@@ -96,8 +84,10 @@ pub struct XpcManager {
     peer_connections: Mutex<HashMap<PaneId, Arc<XpcConnection>>>,
     /// Stored listeners (must keep alive to accept connections)
     listeners: Mutex<Vec<XpcListener>>,
-    /// Debounce state for resize commands, keyed by pane_id
-    resize_debounce: Mutex<HashMap<PaneId, ResizeDebounceState>>,
+    /// Callbacks to invalidate windows when new textures arrive.
+    /// Registered by TermWindow during first render of each pane.
+    /// Called from XPC event handler to trigger redraw after texture receipt.
+    invalidate_callbacks: Mutex<HashMap<PaneId, Arc<dyn Fn() + Send + Sync>>>,
 }
 
 #[cfg(target_os = "macos")]
@@ -124,7 +114,7 @@ impl XpcManager {
             received_surfaces: Mutex::new(HashMap::new()),
             peer_connections: Mutex::new(HashMap::new()),
             listeners: Mutex::new(Vec::new()),
-            resize_debounce: Mutex::new(HashMap::new()),
+            invalidate_callbacks: Mutex::new(HashMap::new()),
         })
     }
 
@@ -249,6 +239,21 @@ impl XpcManager {
                                     pane_id,
                                     session_id
                                 );
+
+                                // Trigger window invalidate to display the new texture
+                                if let Some(callback) = manager
+                                    .invalidate_callbacks
+                                    .lock()
+                                    .unwrap()
+                                    .get(&pane_id)
+                                    .cloned()
+                                {
+                                    log::info!(
+                                        "[XPC Manager] Calling invalidate callback for pane {}",
+                                        pane_id
+                                    );
+                                    callback();
+                                }
                             } else {
                                 log::warn!(
                                     "[XPC Manager] No pane_id found for session {}",
@@ -344,39 +349,34 @@ impl XpcManager {
     /// Remove a peer connection (e.g., when webview pane is closed)
     pub fn remove_connection(&self, pane_id: PaneId) {
         self.peer_connections.lock().unwrap().remove(&pane_id);
-        self.resize_debounce.lock().unwrap().remove(&pane_id);
         log::info!("[XPC] Removed connection for pane {}", pane_id);
     }
 
-    /// Send resize command immediately if size changed from last sent.
-    /// No debouncing — send on every frame where size differs.
-    pub fn check_and_send_resize(&self, pane_id: PaneId, width: u32, height: u32) -> bool {
-        let current_size = (width, height);
-
-        let mut debounce = self.resize_debounce.lock().unwrap();
-        let state = debounce.entry(pane_id).or_insert(ResizeDebounceState {
-            last_sent_size: None,
-            pending_resize: None,
-        });
-
-        // Only send if size actually changed
-        if state.last_sent_size == Some(current_size) {
-            return false;
+    /// Register a callback to invalidate the window when a new texture arrives.
+    /// Called by TermWindow during first render of each webview pane.
+    /// The callback is only registered once per pane (no-op if already registered).
+    pub fn register_invalidate_callback(
+        &self,
+        pane_id: PaneId,
+        callback: Arc<dyn Fn() + Send + Sync>,
+    ) {
+        use std::collections::hash_map::Entry;
+        let mut callbacks = self.invalidate_callbacks.lock().unwrap();
+        if let Entry::Vacant(e) = callbacks.entry(pane_id) {
+            e.insert(callback);
+            log::info!("[XPC] Registered invalidate callback for pane {}", pane_id);
         }
+    }
 
-        log::info!(
-            "[RESIZE] pane={} SENDING {}x{} (was {:?})",
-            pane_id,
-            width,
-            height,
-            state.last_sent_size
-        );
+    /// Check if an invalidate callback is registered for a pane.
+    pub fn has_invalidate_callback(&self, pane_id: PaneId) -> bool {
+        self.invalidate_callbacks.lock().unwrap().contains_key(&pane_id)
+    }
 
-        state.last_sent_size = Some(current_size);
-        state.pending_resize = None;
-        drop(debounce);
-
-        self.send_resize(pane_id, width, height)
+    /// Remove invalidate callback (e.g., when webview pane is closed)
+    pub fn remove_invalidate_callback(&self, pane_id: PaneId) {
+        self.invalidate_callbacks.lock().unwrap().remove(&pane_id);
+        log::info!("[XPC] Removed invalidate callback for pane {}", pane_id);
     }
 }
 

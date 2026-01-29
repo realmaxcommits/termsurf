@@ -366,6 +366,17 @@ enum EventState {
     InProgressWithQueued(Option<PaneId>),
 }
 
+/// State for debouncing webview resize commands (ts2 pattern + XPC dedup).
+#[cfg(target_os = "macos")]
+pub struct WebviewResizeState {
+    /// The target size we want to resize to
+    pub pending_size: Option<(u32, u32)>,
+    /// When pending_size last changed (timer start)
+    pub pending_since: Option<std::time::Instant>,
+    /// What we last sent via XPC (prevents infinite loop after send)
+    pub last_sent_size: Option<(u32, u32)>,
+}
+
 pub struct TermWindow {
     pub window: Option<Window>,
     pub config: ConfigHandle,
@@ -410,6 +421,10 @@ pub struct TermWindow {
     tab_state: RefCell<HashMap<TabId, TabState>>,
     pane_state: RefCell<HashMap<PaneId, PaneState>>,
     semantic_zones: HashMap<PaneId, SemanticZoneCache>,
+
+    /// Per-pane resize debounce state (like ts2's BrowserState fields)
+    #[cfg(target_os = "macos")]
+    webview_resize_state: RefCell<HashMap<PaneId, WebviewResizeState>>,
 
     window_background: Vec<LoadedBackgroundLayer>,
 
@@ -785,6 +800,8 @@ impl TermWindow {
             scheduled_animation: RefCell::new(None),
             allow_images: AllowImage::Yes,
             semantic_zones: HashMap::new(),
+            #[cfg(target_os = "macos")]
+            webview_resize_state: RefCell::new(HashMap::new()),
             ui_items: vec![],
             dragging: None,
             last_ui_item: None,

@@ -1167,7 +1167,7 @@ the window that a new texture has arrived and needs to be displayed.
 
 ### Experiment 5: Invalidate Callback for XPC Texture Receipt
 
-**Status:** PENDING
+**Status:** SUCCESS
 
 **Goal:** When the XPC handler receives a new texture from the profile server,
 trigger a window invalidate so the render loop runs and displays the new
@@ -1331,9 +1331,9 @@ tail -f /tmp/termsurf-gui.log | grep "\[TEXTURE-RX\]\|\[RENDER-LOOP\]"
 
 #### Success Criteria
 
-- [ ] `invalidate_callbacks` HashMap added to XpcManager
-- [ ] Callback registered during `request_profile_spawn`
-- [ ] Callback invoked when `display_surface` received
-- [ ] Window redraws immediately after new texture arrives
-- [ ] No user interaction needed to see resized content
-- [ ] Cleanup works when pane closes
+- [x] `invalidate_callbacks` HashMap added to XpcManager
+- [x] Callback registered during first render (adjusted from spawn time)
+- [x] Callback invoked when `display_surface` received
+- [x] Window redraws immediately after new texture arrives
+- [x] No user interaction needed to see resized content
+- [ ] Cleanup works when pane closes (not yet tested)
