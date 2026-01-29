@@ -1337,3 +1337,48 @@ tail -f /tmp/termsurf-gui.log | grep "\[TEXTURE-RX\]\|\[RENDER-LOOP\]"
 - [x] Window redraws immediately after new texture arrives
 - [x] No user interaction needed to see resized content
 - [ ] Cleanup works when pane closes (not yet tested)
+
+---
+
+## Conclusion
+
+**Primary goal accomplished.** Webview panes now resize correctly when the user
+drags the window edge or splits panes. The solution combines:
+
+1. **Debounce pattern (Experiment 3)** — Resize commands are sent after 30ms of
+   stable target size, preventing XPC flooding during rapid drag.
+
+2. **Invalidate callback (Experiment 5)** — When the profile server sends a new
+   IOSurface via XPC, the callback triggers a window redraw so the new texture
+   is displayed immediately.
+
+The resize pipeline now works end-to-end:
+
+```
+User drags window → debounce waits 30ms → GUI sends resize via XPC →
+Profile server resizes CEF → CEF re-renders → Profile sends new IOSurface →
+XPC handler calls invalidate callback → Window redraws → New texture displayed
+```
+
+## Remaining Issues
+
+### Critical: Browser overlay leaks across tabs
+
+**Symptom:** After opening a browser pane with `web google.com`, opening a new
+tab (Cmd+T) causes the browser to:
+
+1. Appear in the new tab (incorrectly — new tabs should have no browser)
+2. Cover the tab bar, making mouse navigation impossible
+
+The browser overlay seems to be rendered globally rather than per-pane. When a
+new tab is created, the overlay logic doesn't correctly scope the browser to its
+original pane, causing it to "leak" into the new tab's rendering and overflow
+its intended bounds.
+
+**Impact:** Users cannot navigate back to the original tab using the mouse. Only
+keyboard shortcuts work. This is a critical UX bug.
+
+**Next steps:** Investigate how the overlay registry (`WebviewOverlayState`)
+interacts with tab/pane creation, and ensure the viewport calculation in
+`render_webview_overlays_webgpu` correctly constrains rendering to the specific
+pane bounds rather than the full window.
