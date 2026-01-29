@@ -1235,7 +1235,7 @@ creates a single source of truth for received textures.
 
 ### Experiment 4: Single Source of Truth for Textures
 
-**Status:** PENDING
+**Status:** FAILED (partial success)
 
 **Goal:** Fix the disconnect between where XPC stores textures and where the
 render loop reads them. Make the render loop read directly from
@@ -1646,3 +1646,76 @@ CEF re-renders → sends texture → GUI stores in received_surfaces →
 
 This experiment fixes the texture pathway by making the render loop read from
 the same place XPC writes to.
+
+#### Conclusion
+
+**Result:** FAILED (partial success) — Resize now triggers and new textures are
+received, but behavior is inconsistent. Sometimes resize works correctly,
+sometimes the webview appears stretched, and sometimes it doesn't fill the pane
+dimensions properly.
+
+**What Worked:**
+
+- The single source of truth approach is correct — render loop now reads from
+  `XpcManager::received_surfaces`
+- Resize commands are being sent to the profile
+- Profile is resizing the browser and sending new textures
+- New textures are being received and rendered
+
+**What's Still Broken:**
+
+1. **Inconsistent resize triggering** — Resize doesn't always happen when the
+   window size changes. No predictable pattern for when it works vs doesn't.
+
+2. **Stretched appearance** — Sometimes the webview appears visibly stretched,
+   indicating texture dimensions don't match viewport dimensions.
+
+3. **Doesn't fill pane** — Sometimes the webview doesn't fill the pane
+   dimensions correctly, leaving gaps or overflowing.
+
+**Hypotheses for Remaining Issues:**
+
+1. **Texture/Viewport Size Mismatch During Transition**
+
+   When resize occurs, there's a transition period where the old texture is
+   rendered at the new viewport size (causing stretching). If the new texture
+   never arrives or arrives with wrong dimensions, stretching persists.
+
+2. **Debounce Logic Prevents Resize Commands**
+
+   The 30ms debounce requires the render loop to run after the delay. If the
+   render loop doesn't run (static content, no cursor blink), the elapsed time
+   check never happens. Also, `last_sent_size` is updated optimistically before
+   confirming the resize succeeded.
+
+3. **Scale Factor Inconsistency**
+
+   Initial spawn uses pane's DPI: `dims.dpi as f32 / 72.0`
+   Resize uses window's DPI: `self.dimensions.dpi as f32 / 72.0`
+
+   If these differ, the logical dimensions sent for resize won't match what was
+   used for initial spawn, causing texture size mismatches.
+
+4. **Render Loop Timing**
+
+   Resize detection only happens when `render_webview_overlays_webgpu` runs. If
+   terminal content is static with no animations, the render loop might not run
+   frequently enough to detect size changes.
+
+5. **Viewport Position Drift**
+
+   The viewport calculation depends on cell dimensions, tab bar height, and
+   border offsets. If any of these change without the viewport being
+   recalculated, the webview won't align with the pane.
+
+**Most Likely Root Causes:**
+
+- Scale factor inconsistency between initial spawn and resize
+- Transition period where old texture is rendered at new viewport size
+- Debounce logic not triggering reliably
+
+**Next Steps:**
+
+- Add logging to compare scale factors used in initial spawn vs resize
+- Investigate why resize doesn't trigger consistently
+- Consider forcing a render loop iteration after resize events
