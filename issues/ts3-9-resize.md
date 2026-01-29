@@ -654,7 +654,7 @@ Some remaining issues exist but are unrelated to debounce timing.
 
 ### Experiment 3: Correct Debounce Pattern (from ts2)
 
-**Status:** PENDING
+**Status:** FAILED
 
 **Goal:** Implement the correct debounce pattern from ts2, which properly waits
 for size to "settle" before sending resize commands. This provides the best of
@@ -712,11 +712,11 @@ method. This gives direct access to `self.window` for invalidation.
 
 Three pieces of state per pane:
 
-| State             | Purpose                                    |
-| ----------------- | ------------------------------------------ |
-| `pending_size`    | The target size we want to resize to       |
-| `pending_since`   | When the target last changed (timer start) |
-| `last_sent_size`  | What we last sent via XPC (for dedup)      |
+| State            | Purpose                                    |
+| ---------------- | ------------------------------------------ |
+| `pending_size`   | The target size we want to resize to       |
+| `pending_since`  | When the target last changed (timer start) |
+| `last_sent_size` | What we last sent via XPC (for dedup)      |
 
 **Why ts3 needs `last_sent_size` but ts2 doesn't:**
 
@@ -857,25 +857,26 @@ if state.last_sent_size == Some(target_size) {
 
 #### Structural Comparison with ts2
 
-| Aspect | ts2 | Experiment 3 (updated) |
-|--------|-----|------------------------|
-| State location | `BrowserState` on TermWindow | `WebviewResizeState` on TermWindow |
-| State access | `browser.get_pending_size()` | `self.webview_resize_state.borrow_mut()` |
-| Concurrency | `RefCell` | `RefCell` |
-| Debounce logic | Inline in `paint_browser_overlay` | Inline in `render_webview_overlays_webgpu` |
-| Window invalidate | `self.window.invalidate()` | `self.window.invalidate()` |
+| Aspect            | ts2                               | Experiment 3 (updated)                     |
+| ----------------- | --------------------------------- | ------------------------------------------ |
+| State location    | `BrowserState` on TermWindow      | `WebviewResizeState` on TermWindow         |
+| State access      | `browser.get_pending_size()`      | `self.webview_resize_state.borrow_mut()`   |
+| Concurrency       | `RefCell`                         | `RefCell`                                  |
+| Debounce logic    | Inline in `paint_browser_overlay` | Inline in `render_webview_overlays_webgpu` |
+| Window invalidate | `self.window.invalidate()`        | `self.window.invalidate()`                 |
 
 Only unavoidable XPC differences remain:
+
 - `last_sent_size` field (XPC resizes are expensive)
 - `xpc_manager.send_resize()` instead of `browser.resize()`
 
 #### Files to Modify
 
-| File                                             | Changes                                        |
-| ------------------------------------------------ | ---------------------------------------------- |
-| `ts3/wezterm-gui/src/termwindow/mod.rs`          | Add `WebviewResizeState` and field on TermWindow |
-| `ts3/wezterm-gui/src/termwindow/render/draw.rs`  | Inline debounce logic using `self`             |
-| `ts3/wezterm-gui/src/termwindow/webview_xpc.rs`  | Remove `resize_debounce`, keep only `send_resize` |
+| File                                            | Changes                                           |
+| ----------------------------------------------- | ------------------------------------------------- |
+| `ts3/wezterm-gui/src/termwindow/mod.rs`         | Add `WebviewResizeState` and field on TermWindow  |
+| `ts3/wezterm-gui/src/termwindow/render/draw.rs` | Inline debounce logic using `self`                |
+| `ts3/wezterm-gui/src/termwindow/webview_xpc.rs` | Remove `resize_debounce`, keep only `send_resize` |
 
 #### Why Inline Matters
 
@@ -915,19 +916,221 @@ cat /tmp/termsurf-gui.log | grep "SENDING" | wc -l
 
 #### Expected Behavior
 
-| Scenario            | Experiment 1 (broken) | Experiment 2 (no debounce) | Experiment 3 (fixed) |
-| ------------------- | --------------------- | -------------------------- | -------------------- |
-| Fast continuous drag| No sends until stop   | Send every frame           | No sends until pause |
-| Drag with pauses    | Send after each stop  | Send every frame           | Send after 30ms pause|
-| Stable size         | No sends              | No sends                   | No sends             |
-| XPC traffic         | Low but delayed       | High                       | Moderate             |
-| Static terminal     | Timer never fires     | N/A                        | Timer fires (invalidate) |
+| Scenario             | Experiment 1 (broken) | Experiment 2 (no debounce) | Experiment 3 (fixed)     |
+| -------------------- | --------------------- | -------------------------- | ------------------------ |
+| Fast continuous drag | No sends until stop   | Send every frame           | No sends until pause     |
+| Drag with pauses     | Send after each stop  | Send every frame           | Send after 30ms pause    |
+| Stable size          | No sends              | No sends                   | No sends                 |
+| XPC traffic          | Low but delayed       | High                       | Moderate                 |
+| Static terminal      | Timer never fires     | N/A                        | Timer fires (invalidate) |
 
 #### Success Criteria
 
-- [ ] Debounce logic is inline in draw.rs (like ts2)
-- [ ] `window.invalidate()` called when waiting for timer
-- [ ] Timer only resets when target size changes
+- [x] Debounce logic is inline in draw.rs (like ts2)
+- [x] `window.invalidate()` called when waiting for timer
+- [x] Timer only resets when target size changes
 - [ ] Resize sends after 30ms of stable target
 - [ ] Fewer resize commands than Experiment 2
 - [ ] Works even with static terminal content
+
+#### Outcome
+
+The debouncing does not work reliably. Sometimes the browser will re-render
+after the user stops dragging the window. Other times, it simply won't re-render
+at all. If it doesn't re-render, clicking on the webview "fixes" it — for some
+reason that causes it to re-render.
+
+This suggests `window.invalidate()` is not reliably triggering render loop
+iterations, or there's a race condition where the debounce state is being
+checked at the wrong time relative to when the timer expires.
+
+#### Hypothesis: Why Experiment 3 Failed
+
+**The core problem:** The debounce logic depends on `window.invalidate()` to
+schedule another render pass so the timer expiry can be checked. But WezTerm may
+be optimizing away these invalidations when "nothing has changed" from its
+perspective.
+
+**Evidence supporting this:**
+
+1. **Clicking "fixes" it** — Input events definitively trigger render cycles.
+   This proves the debounce logic works when a render pass actually occurs. The
+   problem is getting render passes to happen.
+
+2. **Inconsistent behavior** — Sometimes it works (render loop happens to run),
+   sometimes it doesn't (no render scheduled). This suggests `invalidate()` is
+   unreliable, not that the logic itself is broken.
+
+3. **ts2 works, ts3 doesn't** — ts2 has CEF running in-process. CEF's `OnPaint`
+   callback fires whenever the browser renders new content, which would
+   naturally trigger render cycles. In ts3, the webview is just a static texture
+   overlay with no in-process engine keeping the loop active.
+
+**Why `invalidate()` might fail:**
+
+- Window systems often coalesce multiple invalidate requests
+- WezTerm might have optimization logic that says "terminal content unchanged,
+  skip redraw"
+- The invalidate might be happening but the render pass completes before the
+  30ms timer expires, then nothing schedules the next check
+
+**Potential fixes to explore in future experiments:**
+
+1. Use `schedule_callback` or a timer mechanism instead of relying on
+   render-loop invalidation
+2. Track "debounce pending" as explicit state that forces renders until resolved
+3. Investigate WezTerm's existing mechanisms for scheduled re-renders (cursor
+   blink, etc.) and hook into those
+
+---
+
+### Experiment 4: Diagnose invalidate() Behavior
+
+**Status:** PENDING
+
+**Goal:** Add diagnostic logging to determine whether `window.invalidate()` is
+being called and whether it's actually triggering render passes. This will
+pinpoint why Experiment 3's debounce fails intermittently.
+
+#### Background
+
+Experiment 3 implemented the correct debounce pattern from ts2, but it fails
+intermittently. The hypothesis is that `window.invalidate()` isn't reliably
+triggering render passes. Before attempting fixes, we need to confirm this
+hypothesis with data.
+
+#### Key Questions
+
+1. Is the render loop running at all after the user stops dragging?
+2. Is `invalidate()` being called?
+3. Is `self.window` ever `None` (causing silent skip)?
+4. What's the time gap between renders? (reveals if invalidate works)
+5. Which debounce branch are we taking?
+
+#### Log Points
+
+**1. Render loop entry (draw.rs)**
+
+At the very start of `render_webview_overlays_webgpu`, before any pane
+iteration:
+
+```rust
+log::info!(
+    "[RENDER-LOOP] render_webview_overlays_webgpu called at {:?}",
+    std::time::Instant::now()
+);
+```
+
+**2. Debounce branch: Fast path (draw.rs)**
+
+When `last_sent_size == target_size`:
+
+```rust
+log::info!(
+    "[DEBOUNCE] pane={} FAST_PATH size={}x{} (already sent)",
+    pane_id, logical_w, logical_h
+);
+```
+
+**3. Debounce branch: Target changed (draw.rs)**
+
+When `pending_size != target_size`:
+
+```rust
+log::info!(
+    "[DEBOUNCE] pane={} TARGET_CHANGED to {}x{} (timer reset)",
+    pane_id, logical_w, logical_h
+);
+```
+
+**4. Debounce branch: Waiting (draw.rs)**
+
+When timer hasn't expired, right before calling invalidate:
+
+```rust
+let remaining = SETTLE_DELAY.saturating_sub(elapsed);
+log::info!(
+    "[DEBOUNCE] pane={} WAITING elapsed={:?} remaining={:?}",
+    pane_id, elapsed, remaining
+);
+```
+
+**5. Before invalidate() call (draw.rs)**
+
+```rust
+log::info!("[DEBOUNCE] pane={} calling window.invalidate()", pane_id);
+if let Some(ref w) = self.window {
+    w.invalidate();
+    log::info!("[DEBOUNCE] pane={} invalidate() completed", pane_id);
+} else {
+    log::warn!("[DEBOUNCE] pane={} self.window is None!", pane_id);
+}
+```
+
+**6. Debounce branch: Sending (draw.rs)**
+
+When timer expired and we're sending:
+
+```rust
+log::info!(
+    "[DEBOUNCE] pane={} SENDING {}x{} (elapsed={:?})",
+    pane_id, logical_w, logical_h, elapsed
+);
+```
+
+#### Files to Modify
+
+| File                                            | Changes                                |
+| ----------------------------------------------- | -------------------------------------- |
+| `ts3/wezterm-gui/src/termwindow/render/draw.rs` | Add all 6 log points in debounce logic |
+
+#### Verification
+
+```bash
+cd ts3 && ./scripts/build-debug.sh --open
+
+# Test 1: Normal resize
+web google.com
+# Drag window slowly, then stop
+tail -f /tmp/termsurf-gui.log | grep "\[DEBOUNCE\]\|\[RENDER-LOOP\]"
+
+# Expected if invalidate works:
+# [RENDER-LOOP] ... (continuous stream)
+# [DEBOUNCE] WAITING elapsed=5ms remaining=25ms
+# [DEBOUNCE] calling window.invalidate()
+# [DEBOUNCE] invalidate() completed
+# [RENDER-LOOP] ... (another render quickly follows)
+# ... repeats until timer expires ...
+# [DEBOUNCE] SENDING
+
+# Expected if invalidate fails:
+# [RENDER-LOOP] ... (during drag)
+# [DEBOUNCE] WAITING ...
+# [DEBOUNCE] calling window.invalidate()
+# [DEBOUNCE] invalidate() completed
+# ... long gap, no more [RENDER-LOOP] logs ...
+# (user clicks)
+# [RENDER-LOOP] ... (render finally happens)
+# [DEBOUNCE] SENDING (timer has long since expired)
+```
+
+#### What Each Pattern Reveals
+
+| Log Pattern                             | Diagnosis                            |
+| --------------------------------------- | ------------------------------------ |
+| Continuous RENDER-LOOP after drag stops | invalidate() works, bug is elsewhere |
+| RENDER-LOOP stops after drag stops      | invalidate() not triggering renders  |
+| "self.window is None" logged            | Window reference issue               |
+| WAITING logs but never SENDING          | Timer logic bug                      |
+| FAST_PATH when shouldn't be             | last_sent_size incorrectly set       |
+| Long gap between RENDER-LOOP entries    | invalidate() being throttled         |
+
+#### Success Criteria
+
+- [ ] All 6 log points implemented
+- [ ] Can observe render loop frequency via timestamps
+- [ ] Can trace exact debounce state transitions
+- [ ] Can confirm whether invalidate() is called
+- [ ] Can confirm whether invalidate() triggers another render
+- [ ] Have data to design Experiment 5 (the fix)
+
