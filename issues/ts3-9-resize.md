@@ -746,14 +746,16 @@ This means:
 
 #### Changes
 
-**webview_xpc.rs — Simplify to just state + send**
+**mod.rs — Add state to TermWindow (like ts2's BrowserState)**
 
-Keep `ResizeDebounceState` but remove the debounce logic from `check_and_send_resize`.
-The method becomes a simple state accessor + sender:
+Add the debounce state directly to `TermWindow`, using `RefCell` like ts2:
 
 ```rust
+use std::cell::RefCell;
+use std::time::Instant;
+
 /// State for debouncing resize commands (ts2 pattern + last_sent for XPC dedup).
-pub struct ResizeDebounceState {
+pub struct WebviewResizeState {
     /// The target size we want to resize to
     pub pending_size: Option<(u32, u32)>,
     /// When pending_size last changed (timer start)
@@ -764,12 +766,21 @@ pub struct ResizeDebounceState {
     pub last_sent_size: Option<(u32, u32)>,
 }
 
-impl XpcManager {
-    /// Get mutable access to debounce state for a pane.
-    pub fn get_resize_state(&self, pane_id: PaneId) -> std::sync::MutexGuard<'_, HashMap<PaneId, ResizeDebounceState>> {
-        self.resize_debounce.lock().unwrap()
-    }
+pub struct TermWindow {
+    // ... existing fields ...
 
+    /// Per-pane resize debounce state (like ts2's BrowserState fields)
+    webview_resize_state: RefCell<HashMap<PaneId, WebviewResizeState>>,
+}
+```
+
+**webview_xpc.rs — Keep only send_resize**
+
+Remove `resize_debounce` field and `get_resize_state` method. Keep only
+`send_resize`:
+
+```rust
+impl XpcManager {
     /// Send resize command to profile server.
     pub fn send_resize(&self, pane_id: PaneId, width: u32, height: u32) -> bool {
         // ... existing send_resize implementation ...
@@ -777,10 +788,10 @@ impl XpcManager {
 }
 ```
 
-**draw.rs — Inline debounce logic (like ts2)**
+**draw.rs — Inline debounce logic using self (like ts2)**
 
-In `render_webview_overlays_webgpu`, replace the `check_and_send_resize` call
-with inline debounce logic:
+In `render_webview_overlays_webgpu`, access state via `self` instead of
+`xpc_manager`:
 
 ```rust
 // Inside render_webview_overlays_webgpu, after calculating logical_w/logical_h:
@@ -790,64 +801,80 @@ const SETTLE_DELAY: Duration = Duration::from_millis(30);
 
 let target_size = (logical_w, logical_h);
 
-if let Some(xpc_manager) = crate::termwindow::webview_xpc::get_xpc_manager() {
-    let mut debounce = xpc_manager.get_resize_state(*pane_id);
-    let state = debounce.entry(*pane_id).or_insert(ResizeDebounceState {
-        pending_size: None,
-        pending_since: None,
-        last_sent_size: None,
-    });
+// Access state via self (like ts2 accesses browser.get_pending_size())
+let mut resize_state = self.webview_resize_state.borrow_mut();
+let state = resize_state.entry(*pane_id).or_insert(WebviewResizeState {
+    pending_size: None,
+    pending_since: None,
+    last_sent_size: None,
+});
 
-    // Fast path: size unchanged from last sent, nothing to do
-    // This prevents infinite loop: send → clear pending → set pending → send...
-    if state.last_sent_size == Some(target_size) {
-        state.pending_size = None;
-        state.pending_since = None;
-        drop(debounce);
-        // Already at correct size, skip debounce logic
-    } else {
-        // Check if target size changed (compare against pending, not sent)
-        if state.pending_size != Some(target_size) {
-            state.pending_size = Some(target_size);
-            state.pending_since = Some(Instant::now());
-            log::debug!(
-                "[DEBOUNCE] pane={} target changed to {}x{}",
-                pane_id, logical_w, logical_h
+// Fast path: size unchanged from last sent, nothing to do
+// This prevents infinite loop: send → clear pending → set pending → send...
+if state.last_sent_size == Some(target_size) {
+    state.pending_size = None;
+    state.pending_since = None;
+    // Already at correct size, skip debounce logic
+} else {
+    // Check if target size changed (compare against pending, not sent)
+    if state.pending_size != Some(target_size) {
+        state.pending_size = Some(target_size);
+        state.pending_since = Some(Instant::now());
+        log::debug!(
+            "[DEBOUNCE] pane={} target changed to {}x{}",
+            pane_id, logical_w, logical_h
+        );
+    }
+
+    // Settle-and-send logic
+    if let Some(since) = state.pending_since {
+        let elapsed = since.elapsed();
+        if elapsed >= SETTLE_DELAY {
+            log::info!(
+                "[DEBOUNCE] pane={} SENDING {}x{} (settled {:?})",
+                pane_id, logical_w, logical_h, elapsed
             );
-        }
+            // Record what we sent and clear pending state
+            state.last_sent_size = Some(target_size);
+            state.pending_size = None;
+            state.pending_since = None;
+            drop(resize_state);  // Release borrow before XPC call
 
-        // Settle-and-send logic
-        if let Some(since) = state.pending_since {
-            let elapsed = since.elapsed();
-            if elapsed >= SETTLE_DELAY {
-                log::info!(
-                    "[DEBOUNCE] pane={} SENDING {}x{} (settled {:?})",
-                    pane_id, logical_w, logical_h, elapsed
-                );
-                // Record what we sent and clear pending state
-                state.last_sent_size = Some(target_size);
-                state.pending_size = None;
-                state.pending_since = None;
-                drop(debounce);  // Release lock before XPC call
+            if let Some(xpc_manager) = crate::termwindow::webview_xpc::get_xpc_manager() {
                 xpc_manager.send_resize(*pane_id, logical_w, logical_h);
-            } else {
-                // Not settled yet — ensure render loop runs again
-                drop(debounce);  // Release lock before window call
-                if let Some(ref w) = self.window {
-                    w.invalidate();
-                }
+            }
+        } else {
+            // Not settled yet — ensure render loop runs again
+            drop(resize_state);  // Release borrow before window call
+            if let Some(ref w) = self.window {
+                w.invalidate();
             }
         }
     }
 }
 ```
 
+#### Structural Comparison with ts2
+
+| Aspect | ts2 | Experiment 3 (updated) |
+|--------|-----|------------------------|
+| State location | `BrowserState` on TermWindow | `WebviewResizeState` on TermWindow |
+| State access | `browser.get_pending_size()` | `self.webview_resize_state.borrow_mut()` |
+| Concurrency | `RefCell` | `RefCell` |
+| Debounce logic | Inline in `paint_browser_overlay` | Inline in `render_webview_overlays_webgpu` |
+| Window invalidate | `self.window.invalidate()` | `self.window.invalidate()` |
+
+Only unavoidable XPC differences remain:
+- `last_sent_size` field (XPC resizes are expensive)
+- `xpc_manager.send_resize()` instead of `browser.resize()`
+
 #### Files to Modify
 
-| File                                             | Changes                                   |
-| ------------------------------------------------ | ----------------------------------------- |
-| `ts3/wezterm-gui/src/termwindow/webview_xpc.rs`  | Simplify: expose state, keep send_resize  |
-| `ts3/wezterm-gui/src/termwindow/render/draw.rs`  | Inline debounce logic with invalidate()   |
+| File                                             | Changes                                        |
+| ------------------------------------------------ | ---------------------------------------------- |
+| `ts3/wezterm-gui/src/termwindow/mod.rs`          | Add `WebviewResizeState` and field on TermWindow |
+| `ts3/wezterm-gui/src/termwindow/render/draw.rs`  | Inline debounce logic using `self`             |
+| `ts3/wezterm-gui/src/termwindow/webview_xpc.rs`  | Remove `resize_debounce`, keep only `send_resize` |
 
 #### Why Inline Matters
 
