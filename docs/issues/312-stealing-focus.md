@@ -229,3 +229,98 @@ fix with the least risk. If that doesn't work or has issues, fall back to
 - [Apple: LSUIElement](https://developer.apple.com/documentation/bundleresources/information_property_list/lsuielement)
 - [Apple: NSApplicationActivationPolicy](https://developer.apple.com/documentation/appkit/nsapplication/activationpolicy)
 - [CEF Forum: Background/Headless Mode](https://magpcss.org/ceforum/)
+
+---
+
+## Experiments
+
+### Experiment 1: Set NSApplicationActivationPolicyProhibited
+
+**Goal:** Prevent termsurf-profile from appearing in the dock and stealing focus
+by setting `NSApplicationActivationPolicyProhibited` before CEF initializes
+NSApplication.
+
+**Hypothesis:** If we set the activation policy to "Prohibited" before CEF
+creates its NSApplication instance, macOS will treat termsurf-profile as a
+background process that cannot activate or appear in the dock.
+
+#### Changes
+
+**File: `ts3/termsurf-profile/src/main.rs`**
+
+Add a function to set the activation policy at the very start of `main()`,
+before any CEF initialization:
+
+```rust
+/// Set NSApplication activation policy to Prohibited.
+/// This prevents the process from appearing in the dock or stealing focus.
+/// Must be called before CEF initializes NSApplication.
+#[cfg(target_os = "macos")]
+fn set_background_activation_policy() {
+    use objc::{class, msg_send, sel, sel_impl};
+    unsafe {
+        let ns_app: *mut objc::runtime::Object =
+            msg_send![class!(NSApplication), sharedApplication];
+        // NSApplicationActivationPolicyProhibited = 2
+        let _: () = msg_send![ns_app, setActivationPolicy: 2i64];
+    }
+}
+```
+
+Call it as the first thing in `main()`:
+
+```rust
+fn main() {
+    #[cfg(target_os = "macos")]
+    set_background_activation_policy();
+
+    // ... existing code (redirect_output, args parsing, CEF init, etc.)
+}
+```
+
+**File: `ts3/termsurf-profile/Cargo.toml`**
+
+Add the `objc` dependency if not already present:
+
+```toml
+[target.'cfg(target_os = "macos")'.dependencies]
+objc = "0.2"
+```
+
+#### Verification
+
+```bash
+cd ts3 && ./scripts/build-debug.sh --open
+
+# Test 1: Open a webview
+web google.com
+
+# Observe:
+# - Does a second dock icon appear?
+# - Does the terminal window lose focus?
+# - Can you continue typing immediately?
+
+# Test 2: Open multiple webviews
+web github.com
+web apple.com
+
+# Observe:
+# - Still no extra dock icons?
+# - Focus remains on terminal?
+
+# Test 3: Verify webview still works
+# - Does the webpage render correctly?
+# - Does resize still work?
+```
+
+#### Success Criteria
+
+1. [ ] No new dock icon appears when running `web ...`
+2. [ ] Terminal window retains keyboard focus after `web ...`
+3. [ ] User can continue typing immediately without clicking
+4. [ ] Webview renders correctly (no regression in CEF functionality)
+5. [ ] Resize behavior unchanged from issue 311 fixes
+
+#### Result
+
+_Pending_
