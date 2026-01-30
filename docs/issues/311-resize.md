@@ -268,3 +268,132 @@ Add XPC response from profile server after resize completes:
 - [ ] Webview fills exact pixel bounds of pane (no blank space at edges)
 - [ ] Resize behavior matches ts2's accuracy
 - [ ] No regression in debounce functionality (still batches rapid resizes)
+
+---
+
+## Experiments
+
+### Experiment 1: Diagnostic Logging
+
+Add detailed logging to understand the exact size mismatches at each stage.
+
+#### Goal
+
+Capture concrete data showing:
+
+1. What size we request at spawn time
+2. What size the profile server actually renders
+3. What viewport size we render to
+4. Where and why mismatches occur
+
+#### Log Points
+
+**1. Spawn-time sizing** (`webview_socket.rs`, in `open_webview` handler):
+
+```rust
+log::info!(
+    "[SPAWN-SIZE] pane={} grid={}x{} cell={}x{} physical={}x{} scale={:.2} logical={}x{}",
+    pane_id, dims.cols, dims.viewport_rows,
+    cell_width, cell_height,
+    physical_width, physical_height,
+    scale, logical_w, logical_h
+);
+```
+
+**2. Received texture** (`webview_xpc.rs`, when IOSurface arrives):
+
+```rust
+log::info!(
+    "[TEXTURE-SIZE] pane={} received={}x{} (from mach_port={})",
+    pane_id, surface.width, surface.height, surface.mach_port
+);
+```
+
+**3. Viewport dimensions** (`draw.rs`, in render loop):
+
+```rust
+log::info!(
+    "[VIEWPORT-SIZE] pane={} viewport={}x{} logical={}x{} scale={:.2}",
+    pane_id, viewport_w, viewport_h, logical_w, logical_h, scale
+);
+```
+
+**4. Size mismatch detection** (`draw.rs`, after getting texture and viewport):
+
+```rust
+let texture_physical_w = (surface.width as f32 * scale) as u32;
+let texture_physical_h = (surface.height as f32 * scale) as u32;
+if texture_physical_w != viewport_w as u32 || texture_physical_h != viewport_h as u32 {
+    log::warn!(
+        "[SIZE-MISMATCH] pane={} texture_physical={}x{} viewport={}x{} diff=({}, {})",
+        pane_id,
+        texture_physical_w, texture_physical_h,
+        viewport_w as u32, viewport_h as u32,
+        texture_physical_w as i32 - viewport_w as i32,
+        texture_physical_h as i32 - viewport_h as i32
+    );
+}
+```
+
+**5. Resize command sent** (`draw.rs`, when debounce fires):
+
+```rust
+log::info!(
+    "[RESIZE-SEND] pane={} logical={}x{} (physical={}x{} at scale={:.2})",
+    pane_id, logical_w, logical_h,
+    (logical_w as f32 * scale) as u32,
+    (logical_h as f32 * scale) as u32,
+    scale
+);
+```
+
+**6. Profile server resize received** (`termsurf-profile/src/main.rs`):
+
+```rust
+log::info!(
+    "[RESIZE-RECV] logical={}x{} scale={:.2} -> physical={}x{}",
+    width, height, scale,
+    (width as f32 * scale) as u32,
+    (height as f32 * scale) as u32
+);
+```
+
+#### Files to Modify
+
+| File                                               | Log Points                              |
+| -------------------------------------------------- | --------------------------------------- |
+| `ts3/wezterm-gui/src/termwindow/webview_socket.rs` | SPAWN-SIZE                              |
+| `ts3/wezterm-gui/src/termwindow/webview_xpc.rs`    | TEXTURE-SIZE                            |
+| `ts3/wezterm-gui/src/termwindow/render/draw.rs`    | VIEWPORT-SIZE, SIZE-MISMATCH, RESIZE-SEND |
+| `ts3/termsurf-profile/src/main.rs`                 | RESIZE-RECV                             |
+
+#### Verification
+
+```bash
+cd ts3 && ./scripts/build-debug.sh --open
+
+# In terminal:
+web google.com
+
+# Resize the window by dragging edges
+# Check logs:
+tail -f /tmp/termsurf-gui.log | grep -E "\[(SPAWN|TEXTURE|VIEWPORT|SIZE|RESIZE)"
+tail -f /tmp/termsurf-profile-*.log | grep "RESIZE-RECV"
+```
+
+#### Expected Findings
+
+1. **If Issue 1 (borders)**: SIZE-MISMATCH logs will show texture lagging behind
+   viewport during resize. Texture catches up after XPC round-trip.
+
+2. **If Issue 2 (blank space)**: SPAWN-SIZE will show grid-based calculation
+   (cols × cell_width) differs from VIEWPORT-SIZE (exact pixels from layout).
+
+3. **Precision loss**: Compare RESIZE-SEND logical dimensions with TEXTURE-SIZE.
+   If they differ, truncation during `as u32` conversion is the culprit.
+
+#### Success Criteria
+
+- [ ] Logs clearly show the source of size mismatches
+- [ ] Can correlate texture/viewport divergence with visible borders
+- [ ] Can measure latency between RESIZE-SEND and TEXTURE-SIZE update
