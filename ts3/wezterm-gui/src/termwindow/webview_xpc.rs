@@ -207,11 +207,11 @@ impl XpcManager {
                             };
                             if let Some(pid) = pane_id_for_log {
                                 log::info!(
-                                    "[TEXTURE-SIZE] pane={} received={}x{} (mach_port={})",
+                                    "[TEXTURE-SIZE] pane={} size={}x{} timestamp={:?}",
                                     pid,
                                     width,
                                     height,
-                                    port
+                                    std::time::SystemTime::now()
                                 );
                             }
 

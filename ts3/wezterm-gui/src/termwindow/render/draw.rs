@@ -435,7 +435,7 @@ impl crate::TermWindow {
 
                 // Debounce resize commands (ts2 pattern)
                 {
-                    use std::time::{Duration, Instant};
+                    use std::time::{Duration, Instant, SystemTime};
                     const SETTLE_DELAY: Duration = Duration::from_millis(30);
 
                     let scale = self.dimensions.dpi as f32 / 72.0;
@@ -450,17 +450,27 @@ impl crate::TermWindow {
                     );
 
                     // Check for size mismatch between texture and viewport
-                    // Texture size from CEF is in logical pixels, convert to physical for comparison
-                    let texture_physical_w = (surface.width as f32 * scale) as u32;
-                    let texture_physical_h = (surface.height as f32 * scale) as u32;
-                    if texture_physical_w != viewport_w as u32 || texture_physical_h != viewport_h as u32 {
+                    // Texture size from IOSurface is already in physical pixels
+                    if surface.width != viewport_w as u32 || surface.height != viewport_h as u32 {
                         log::warn!(
-                            "[SIZE-MISMATCH] pane={} texture_physical={}x{} viewport={}x{} diff=({}, {})",
+                            "[SIZE-MISMATCH] pane={} texture={}x{} viewport={}x{} diff=({}, {})",
                             pane_id,
-                            texture_physical_w, texture_physical_h,
+                            surface.width, surface.height,
                             viewport_w as u32, viewport_h as u32,
-                            texture_physical_w as i32 - viewport_w as i32,
-                            texture_physical_h as i32 - viewport_h as i32
+                            surface.width as i32 - viewport_w as i32,
+                            surface.height as i32 - viewport_h as i32
+                        );
+                    }
+
+                    // Detect when borders would be visible (texture smaller than viewport)
+                    if surface.width < viewport_w as u32 || surface.height < viewport_h as u32 {
+                        log::warn!(
+                            "[BORDER-VISIBLE] pane={} texture={}x{} < viewport={}x{} gap=({}, {})",
+                            pane_id,
+                            surface.width, surface.height,
+                            viewport_w as u32, viewport_h as u32,
+                            viewport_w as i32 - surface.width as i32,
+                            viewport_h as i32 - surface.height as i32
                         );
                     }
 
@@ -498,11 +508,11 @@ impl crate::TermWindow {
                             let elapsed = since.elapsed();
                             if elapsed >= SETTLE_DELAY {
                                 log::info!(
-                                    "[RESIZE-SEND] pane={} logical={}x{} (physical={}x{} at scale={:.2})",
+                                    "[RESIZE-SEND] pane={} logical={}x{} physical={}x{} timestamp={:?}",
                                     pane_id, logical_w, logical_h,
                                     (logical_w as f32 * scale) as u32,
                                     (logical_h as f32 * scale) as u32,
-                                    scale
+                                    SystemTime::now()
                                 );
                                 state.last_sent_size = Some(target_size);
                                 state.pending_size = None;
