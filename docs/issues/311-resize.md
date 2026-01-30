@@ -636,3 +636,141 @@ This confirms **Hypothesis 3** from the research section: truncation during
 2. Consider sending physical pixels directly to avoid logical conversion errors
 3. For async lag, explore pre-sizing texture larger or synchronization
    mechanisms
+
+### Experiment 3: Send Physical Pixels Directly
+
+Eliminate truncation errors by sending physical pixel dimensions directly to the
+profile server, letting it handle the logical conversion.
+
+#### Goal
+
+Fix the 1-pixel truncation bug that causes a permanent border at steady state.
+
+#### Root Cause
+
+The current flow loses precision:
+
+```
+GUI:
+  viewport_w = 1547 (physical)
+  logical_w = (1547 / 2.0) as u32 = 773  // truncates 773.5
+  send logical_w to profile server
+
+Profile Server:
+  physical = 773 * 2.0 = 1546  // 1 pixel short!
+```
+
+#### Solution
+
+Send physical pixels directly. Profile server converts to logical:
+
+```
+GUI:
+  viewport_w = 1547 (physical)
+  send (viewport_w, viewport_h, scale) to profile server
+
+Profile Server:
+  logical_w = (1547 / 2.0).ceil() = 774
+  physical = 774 * 2.0 = 1548  // >= viewport, no border
+```
+
+#### Changes
+
+**1. Add `send_resize_physical` to XpcManager (`webview_xpc.rs`):**
+
+```rust
+/// Send a resize command using physical pixel dimensions.
+/// Profile server will convert to logical using the scale factor.
+pub fn send_resize_physical(&self, pane_id: PaneId, width: u32, height: u32, scale: f32) -> bool {
+    let msg = XpcDictionary::new();
+    msg.set_string("action", "resize_browser");
+    msg.set_i64("physical_width", width as i64);
+    msg.set_i64("physical_height", height as i64);
+    msg.set_string("scale", &format!("{}", scale));
+
+    if self.send_command(pane_id, &msg) {
+        log::info!(
+            "[XPC] Sent resize_physical to pane {}: {}x{} scale={}",
+            pane_id, width, height, scale
+        );
+        true
+    } else {
+        false
+    }
+}
+```
+
+**2. Update resize call in `draw.rs`:**
+
+```rust
+// BEFORE:
+let logical_w = (viewport_w / scale) as u32;
+let logical_h = (viewport_h / scale) as u32;
+xpc_manager.send_resize(*pane_id, logical_w, logical_h);
+
+// AFTER:
+xpc_manager.send_resize_physical(
+    *pane_id,
+    viewport_w as u32,
+    viewport_h as u32,
+    scale
+);
+```
+
+**3. Update profile server to handle physical dimensions (`main.rs`):**
+
+```rust
+// Check for physical dimensions first (new protocol)
+let (width, height) = if msg.get_i64("physical_width") != 0 {
+    let physical_w = msg.get_i64("physical_width") as u32;
+    let physical_h = msg.get_i64("physical_height") as u32;
+    let scale_str = msg.get_string("scale").unwrap_or_default();
+    let scale: f32 = scale_str.parse().unwrap_or(2.0);
+    // Convert to logical, rounding up to ensure texture >= viewport
+    let logical_w = (physical_w as f32 / scale).ceil() as u32;
+    let logical_h = (physical_h as f32 / scale).ceil() as u32;
+    (logical_w, logical_h)
+} else {
+    // Fallback to legacy logical dimensions
+    let width = msg.get_i64("width") as u32;
+    let height = msg.get_i64("height") as u32;
+    (width, height)
+};
+```
+
+#### Files to Modify
+
+| File                                            | Changes                                    |
+| ----------------------------------------------- | ------------------------------------------ |
+| `ts3/wezterm-gui/src/termwindow/webview_xpc.rs` | Add `send_resize_physical` method          |
+| `ts3/wezterm-gui/src/termwindow/render/draw.rs` | Call `send_resize_physical` instead        |
+| `ts3/termsurf-profile/src/main.rs`              | Handle physical dimensions, use `ceil()`   |
+
+#### Verification
+
+```bash
+cd ts3 && ./scripts/build-debug.sh --open
+
+# In terminal:
+web google.com
+
+# Resize window and wait for it to settle
+# Check for SIZE-MISMATCH with diff=(0,0) or positive values (texture >= viewport)
+grep "SIZE-MISMATCH" /tmp/termsurf-gui.log | tail -10
+
+# Check that BORDER-VISIBLE no longer fires at steady state
+# (may still fire during resize transitions due to async lag)
+grep "BORDER-VISIBLE" /tmp/termsurf-gui.log | tail -10
+```
+
+#### Expected Results
+
+1. At steady state, texture size >= viewport size (no 1-pixel gap)
+2. SIZE-MISMATCH diff should be (0,0) or small positive values
+3. BORDER-VISIBLE should only fire during resize transitions, not at rest
+
+#### Success Criteria
+
+- [ ] No 1-pixel border at steady state after resize completes
+- [ ] Texture dimensions >= viewport dimensions
+- [ ] No regression in resize behavior during transitions
