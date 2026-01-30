@@ -360,12 +360,12 @@ log::info!(
 
 #### Files to Modify
 
-| File                                               | Log Points                              |
-| -------------------------------------------------- | --------------------------------------- |
-| `ts3/wezterm-gui/src/termwindow/webview_socket.rs` | SPAWN-SIZE                              |
-| `ts3/wezterm-gui/src/termwindow/webview_xpc.rs`    | TEXTURE-SIZE                            |
+| File                                               | Log Points                                |
+| -------------------------------------------------- | ----------------------------------------- |
+| `ts3/wezterm-gui/src/termwindow/webview_socket.rs` | SPAWN-SIZE                                |
+| `ts3/wezterm-gui/src/termwindow/webview_xpc.rs`    | TEXTURE-SIZE                              |
 | `ts3/wezterm-gui/src/termwindow/render/draw.rs`    | VIEWPORT-SIZE, SIZE-MISMATCH, RESIZE-SEND |
-| `ts3/termsurf-profile/src/main.rs`                 | RESIZE-RECV                             |
+| `ts3/termsurf-profile/src/main.rs`                 | RESIZE-RECV                               |
 
 #### Verification
 
@@ -427,10 +427,10 @@ The diagnostic computes 1872 × 2 = 3744, but 1872 is already the physical size.
 
 **Actual mismatch (correcting for the bug):**
 
-| Dimension | Texture (physical) | Viewport (physical) | Diff   |
-| --------- | ------------------ | ------------------- | ------ |
-| Width     | 1872               | 1547                | +325   |
-| Height    | 2190               | 1950                | +240   |
+| Dimension | Texture (physical) | Viewport (physical) | Diff |
+| --------- | ------------------ | ------------------- | ---- |
+| Width     | 1872               | 1547                | +325 |
+| Height    | 2190               | 1950                | +240 |
 
 The texture is **larger** than the viewport, not smaller. This confirms Issue 2
 from the Summary: the texture is sized based on grid dimensions (cols ×
@@ -574,6 +574,65 @@ grep "BORDER-VISIBLE" /tmp/termsurf-gui.log
 
 #### Success Criteria
 
-- [ ] SIZE-MISMATCH shows correct physical-to-physical comparison
-- [ ] Can measure latency between RESIZE-SEND and TEXTURE-SIZE
-- [ ] BORDER-VISIBLE logs correlate with visible borders during resize
+- [x] SIZE-MISMATCH shows correct physical-to-physical comparison
+- [x] Can measure latency between RESIZE-SEND and TEXTURE-SIZE
+- [x] BORDER-VISIBLE logs correlate with visible borders during resize
+
+#### Result: PASSED
+
+All three success criteria met.
+
+#### Conclusion
+
+**Latency measurement:**
+
+Round-trip latency from RESIZE-SEND to matching TEXTURE-SIZE:
+
+| Measured Latency | Notes            |
+| ---------------- | ---------------- |
+| 74ms             | Minimum observed |
+| 80-100ms         | Typical range    |
+| 378ms            | Maximum observed |
+
+This is significantly higher than the expected 10-50ms. The async XPC + CEF
+render pipeline introduces substantial lag during which borders are visible.
+
+**Systematic 1-pixel truncation bug discovered:**
+
+Logs revealed a consistent pattern of texture being exactly 1 pixel smaller than
+viewport at steady state:
+
+```
+texture=1988x2250 viewport=1989x2250 diff=(-1, 0)
+texture=1546x2100 viewport=1547x2100 diff=(-1, 0)
+texture=1312x1860 viewport=1313x1860 diff=(-1, 0)
+texture=1130x1650 viewport=1131x1650 diff=(-1, 0)
+```
+
+Root cause is precision loss during logical/physical conversion:
+
+```
+viewport_w = 1547 (physical pixels)
+logical_w = (1547 / 2.0) as u32 = 773  // truncates 773.5 → 773
+physical_sent = (773 * 2.0) as u32 = 1546  // 1 pixel short!
+```
+
+This confirms **Hypothesis 3** from the research section: truncation during
+`as u32` conversion loses precision and causes a permanent 1-pixel border.
+
+**Two distinct causes of borders identified:**
+
+1. **Async lag (74-378ms)**: During resize transitions, the old texture doesn't
+   match the new viewport. BORDER-VISIBLE fires with large gaps like
+   `gap=(287, 120)` or `gap=(1144, 0)`.
+
+2. **Truncation error (1px)**: Even at steady state after resize completes, the
+   texture is 1 pixel smaller than viewport due to integer truncation. This
+   causes a permanent 1-pixel border.
+
+**Next steps:**
+
+1. Fix the 1-pixel truncation by using ceiling or rounding instead of truncation
+2. Consider sending physical pixels directly to avoid logical conversion errors
+3. For async lag, explore pre-sizing texture larger or synchronization
+   mechanisms
