@@ -807,16 +807,16 @@ cat /tmp/termsurf-profile-*.log | grep "key_event"
 
 #### Success Criteria
 
-- [ ] `send_key_event` sends XPC messages with key data
-- [ ] Profile server receives and processes `key_event` action
-- [ ] CEF `send_key_event` is called with correct KeyEvent
-- [ ] Printable characters appear when typing in text fields
-- [ ] Backspace deletes characters
-- [ ] Tab moves focus between elements
-- [ ] Enter submits forms / activates links
-- [ ] Arrow keys work for navigation
-- [ ] Ctrl+C still switches to Control mode
-- [ ] WezTerm keybindings still work (not forwarded)
+- [x] `send_key_event` sends XPC messages with key data
+- [x] Profile server receives and processes `key_event` action
+- [x] CEF `send_key_event` is called with correct KeyEvent
+- [x] Printable characters appear when typing in text fields
+- [x] Backspace deletes characters
+- [x] Tab moves focus between elements
+- [x] Enter submits forms / activates links
+- [x] Arrow keys work for navigation
+- [x] Ctrl+C still switches to Control mode
+- [x] WezTerm keybindings still work (not forwarded)
 
 #### Known Limitations (Phase 1)
 
@@ -828,3 +828,56 @@ cat /tmp/termsurf-profile-*.log | grep "key_event"
 
 3. **Complex input** — IME (Chinese, Japanese input) not supported. Standard
    keyboard input only.
+
+#### Result: SUCCESS
+
+Keyboard input forwarding works. Users can type in text fields and navigate with
+keyboard.
+
+#### Conclusion
+
+**What worked:**
+
+- Typing printable characters in focused text fields (Google search box)
+- Shift+Left/Right for text selection
+- Tab for focus navigation
+- Enter for form submission
+- Backspace for deletion
+- Ctrl+C to switch to Control mode
+
+**Issues discovered:**
+
+1. **Copy/paste does not work in the browser**
+
+   When pressing Cmd+V (paste) in Browse mode, the paste action does NOT go to
+   the browser. Instead, the pasted text appears in the terminal behind the
+   webview. This reveals a fundamental issue: **WezTerm keybindings are being
+   processed before keys are forwarded to the browser.**
+
+   The current flow is:
+   ```
+   Key event → handle_webview_key_event (forwards to CEF) → process_key (WezTerm keybindings)
+   ```
+
+   But `process_key` happens AFTER our handler returns, and keybindings like
+   Cmd+V still execute because they're processed in the normal WezTerm key
+   handling path that runs after `handle_webview_key_event`.
+
+   **Root cause:** In `key_event_impl`, our webview handler returns `Some(true)`
+   to consume the key, but this only prevents the key from reaching the
+   terminal's PTY. It does NOT prevent WezTerm from processing its own
+   keybindings (which happens earlier in the flow via `process_key`).
+
+2. **Cmd+C also affected**
+
+   Similarly, Cmd+C (copy) likely goes to WezTerm instead of the browser. This
+   is separate from Ctrl+C which correctly switches to Control mode.
+
+**Fix required:**
+
+The key interception needs to happen BEFORE `process_key` in `key_event_impl`,
+not after. When a webview pane is active in Browse mode, WezTerm keybindings
+should be suppressed (except for explicitly allowed ones like Ctrl+Shift+T for
+new tab).
+
+This will be addressed in Experiment 2.
