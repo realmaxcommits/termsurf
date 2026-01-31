@@ -212,10 +212,10 @@ fix with the least risk. If that doesn't work or has issues, fall back to
 
 ## Success Criteria
 
-1. [ ] Opening a webview with `web ...` does not create a new dock icon
-2. [ ] Opening a webview does not steal focus from the terminal window
-3. [ ] Keyboard input continues working in the terminal after opening a webview
-4. [ ] The webview still renders correctly (CEF functionality not broken)
+1. [x] Opening a webview with `web ...` does not create a new dock icon
+2. [x] Opening a webview does not steal focus from the terminal window
+3. [x] Keyboard input continues working in the terminal after opening a webview
+4. [x] The webview still renders correctly (CEF functionality not broken)
 
 ## Files to Modify
 
@@ -315,12 +315,22 @@ web apple.com
 
 #### Success Criteria
 
-1. [ ] No new dock icon appears when running `web ...`
-2. [ ] Terminal window retains keyboard focus after `web ...`
-3. [ ] User can continue typing immediately without clicking
-4. [ ] Webview renders correctly (no regression in CEF functionality)
-5. [ ] Resize behavior unchanged from issue 311 fixes
+1. [x] No new dock icon appears when running `web ...`
+2. [x] Terminal window retains keyboard focus after `web ...`
+3. [x] User can continue typing immediately without clicking
+4. [x] Webview renders correctly (no regression in CEF functionality)
+5. [x] Resize behavior unchanged from issue 311 fixes
 
 #### Result
 
-_Pending_
+**Success.** Setting `NSApplicationActivationPolicyProhibited` before CEF
+initializes NSApplication completely eliminates the focus-stealing behavior.
+
+The fix confirms Hypothesis A: the profile process was defaulting to regular app
+activation policy, causing macOS to show it in the dock and give it focus. By
+explicitly setting the policy to "Prohibited" at the very start of `main()`,
+before any CEF or Cocoa initialization, macOS now treats termsurf-profile as a
+true background process that cannot activate or appear in the dock.
+
+This is a minimal, non-invasive fix that requires no build system changes or app
+bundle restructuring.
