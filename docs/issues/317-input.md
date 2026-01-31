@@ -1209,3 +1209,228 @@ This is a deeper CEF integration issue that may require:
 - Checking if off-screen browsers have clipboard limitations
 - Possibly implementing explicit clipboard commands via XPC rather than relying
   on key events
+
+---
+
+### Experiment 4: Diagnose Clipboard Behavior
+
+**Goal:** Add diagnostic logging to understand why Cmd+V doesn't paste into the
+browser. Before implementing a fix, we need to know if the issue is:
+
+1. Key event not arriving at profile server
+2. Key event arriving but with wrong modifiers/VK code
+3. CEF receiving the event but not having "focus"
+4. CEF off-screen browser lacking clipboard access
+5. Something else entirely
+
+#### Diagnostic Points
+
+| Location | What to Log |
+|----------|-------------|
+| GUI (keyevent.rs) | When Cmd+V is forwarded to XPC |
+| GUI (webview_xpc.rs) | The exact XPC message being sent |
+| Profile (main.rs) | When key_event action is received |
+| Profile (main.rs) | Modifiers being set (especially `meta`) |
+| Profile (main.rs) | Windows VK code for the key |
+| Profile (main.rs) | CEF focus state (if queryable) |
+| Profile (main.rs) | After `send_key_event` call |
+
+#### Approach
+
+**Part A: Enhanced logging in GUI (keyevent.rs)**
+
+Add log when forwarding Cmd+V specifically:
+
+```rust
+// In handle_webview_key_event, Browse mode section:
+if let Some(xpc_manager) = crate::termwindow::webview_xpc::get_xpc_manager() {
+    // Log Cmd+V specifically for debugging
+    if window_key.modifiers.contains(Modifiers::SUPER) {
+        if let KeyCode::Char(c) = &window_key.key {
+            if *c == 'v' || *c == 'V' {
+                log::info!(
+                    "[CLIPBOARD-DEBUG] Forwarding Cmd+V to pane {}: down={}, raw={:?}",
+                    pane_id,
+                    window_key.key_is_down,
+                    window_key.raw.as_ref().map(|r| r.raw_code)
+                );
+            }
+        }
+    }
+    xpc_manager.send_key_event(pane_id, window_key);
+}
+```
+
+**Part B: Enhanced logging in profile server (main.rs)**
+
+Add detailed logging in `send_key_event_to_cef`:
+
+```rust
+fn send_key_event_to_cef(
+    state: &BrowserState,
+    key_is_down: bool,
+    key_type: &str,
+    raw_code: u32,
+    char_code: u32,
+    shift: bool,
+    ctrl: bool,
+    alt: bool,
+    meta: bool,
+) {
+    use cef::{KeyEvent, KeyEventType};
+
+    // Detailed logging for clipboard shortcuts
+    let is_potential_paste = meta && (char_code == 'v' as u32 || char_code == 'V' as u32);
+    let is_potential_copy = meta && (char_code == 'c' as u32 || char_code == 'C' as u32);
+
+    if is_potential_paste || is_potential_copy {
+        println!(
+            "[CLIPBOARD-DEBUG] {} received: key_is_down={}, raw_code={}, char_code={}, modifiers=[shift={}, ctrl={}, alt={}, meta={}]",
+            if is_potential_paste { "Cmd+V" } else { "Cmd+C" },
+            key_is_down,
+            raw_code,
+            char_code,
+            shift, ctrl, alt, meta
+        );
+    }
+
+    let browser = match state.browser.lock().unwrap().as_ref() {
+        Some(b) => b.clone(),
+        None => {
+            if is_potential_paste || is_potential_copy {
+                println!("[CLIPBOARD-DEBUG] ERROR: No browser instance!");
+            }
+            return;
+        }
+    };
+    let host = match browser.host() {
+        Some(h) => h,
+        None => {
+            if is_potential_paste || is_potential_copy {
+                println!("[CLIPBOARD-DEBUG] ERROR: No browser host!");
+            }
+            return;
+        }
+    };
+
+    // Build CEF modifiers
+    let mut modifiers = 0u32;
+    if shift { modifiers |= EVENTFLAG_SHIFT_DOWN; }
+    if ctrl { modifiers |= EVENTFLAG_CONTROL_DOWN; }
+    if alt { modifiers |= EVENTFLAG_ALT_DOWN; }
+    if meta { modifiers |= EVENTFLAG_COMMAND_DOWN; }
+
+    // Convert to Windows VK code
+    let windows_vk = macos_keycode_to_windows_vk(raw_code);
+    let native_code = raw_code as i32;
+
+    if is_potential_paste || is_potential_copy {
+        println!(
+            "[CLIPBOARD-DEBUG] CEF event: windows_vk={:#x} (expected V={:#x}), native={}, modifiers={:#x} (COMMAND_DOWN={:#x})",
+            windows_vk,
+            0x56, // VK_V
+            native_code,
+            modifiers,
+            EVENTFLAG_COMMAND_DOWN
+        );
+    }
+
+    // ... rest of function, add logging after send_key_event:
+    host.send_key_event(Some(&key_event));
+
+    if is_potential_paste || is_potential_copy {
+        println!(
+            "[CLIPBOARD-DEBUG] send_key_event called for {:?}",
+            event_type
+        );
+    }
+
+    // Also try sending focus event to ensure CEF thinks it has focus
+    if is_potential_paste && key_is_down {
+        println!("[CLIPBOARD-DEBUG] Calling send_focus_event(true) before paste");
+        host.send_focus_event(1); // 1 = focused
+    }
+}
+```
+
+**Part C: Check if focus is the issue**
+
+Add a one-time focus event when the browser is first created:
+
+```rust
+// In create_browser_on_ui_thread, after browser creation:
+match browser {
+    Some(b) => {
+        let browser_id = b.identifier();
+        println!(
+            "Profile: Browser {} created for '{}' (session='{}')",
+            browser_id, url, session_id
+        );
+
+        // Ensure browser has focus for clipboard operations
+        if let Some(host) = b.host() {
+            println!("[FOCUS-DEBUG] Sending initial focus event to browser");
+            host.send_focus_event(1);
+        }
+
+        // Store browser reference...
+    }
+}
+```
+
+#### Files to Modify
+
+| File | Changes |
+|------|---------|
+| `ts3/wezterm-gui/src/termwindow/keyevent.rs` | Log when Cmd+V/C forwarded |
+| `ts3/termsurf-profile/src/main.rs` | Detailed clipboard logging, focus event |
+
+#### Verification
+
+```bash
+cd ts3 && ./scripts/build-debug.sh --open
+
+# Test: Cmd+V paste attempt
+web google.com
+# Copy text in another app
+# Return to TermSurf, press Cmd+V
+
+# Check logs for diagnostic output
+cat /tmp/termsurf-gui.log | grep "CLIPBOARD-DEBUG"
+cat /tmp/termsurf-profile-*.log | grep -E "(CLIPBOARD-DEBUG|FOCUS-DEBUG)"
+```
+
+Expected log output to analyze:
+```
+# GUI side:
+[CLIPBOARD-DEBUG] Forwarding Cmd+V to pane 0: down=true, raw=Some(9)
+
+# Profile side:
+[CLIPBOARD-DEBUG] Cmd+V received: key_is_down=true, raw_code=9, char_code=118, modifiers=[shift=false, ctrl=false, alt=false, meta=true]
+[CLIPBOARD-DEBUG] CEF event: windows_vk=0x56 (expected V=0x56), native=9, modifiers=0x80 (COMMAND_DOWN=0x80)
+[CLIPBOARD-DEBUG] Calling send_focus_event(true) before paste
+[CLIPBOARD-DEBUG] send_key_event called for KEYDOWN
+```
+
+#### What We're Looking For
+
+1. **If no GUI log appears**: Key not reaching forwarding code
+2. **If no Profile log appears**: XPC message not arriving
+3. **If modifiers wrong**: Need to fix modifier handling
+4. **If VK code wrong**: Need to fix keycode conversion (macOS 0x09 → Windows 0x56)
+5. **If everything looks correct**: Issue is likely focus or CEF off-screen limitation
+
+#### Success Criteria
+
+- [ ] Diagnostic logging added for Cmd+V and Cmd+C
+- [ ] Logs show the full event path from GUI to CEF
+- [ ] Focus event sent to CEF when clipboard shortcut detected
+- [ ] Analysis of logs reveals root cause
+
+#### Result
+
+*Pending*
+
+#### Conclusion
+
+*Pending*
