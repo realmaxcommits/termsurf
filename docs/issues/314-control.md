@@ -458,14 +458,57 @@ grep "url=" /tmp/termsurf-gui.log
 
 #### Success Criteria
 
-1. [ ] `BrowserState` in profile server stores URL
-2. [ ] URL initialized from browser creation arguments
-3. [ ] `on_address_change` callback updates URL on navigation
-4. [ ] `display_surface` XPC message includes URL
-5. [ ] `ReceivedSurface` in GUI stores URL
-6. [ ] URL extracted from XPC message correctly
-7. [ ] URL updates when page navigates (requires input forwarding to test fully)
+1. [x] `BrowserState` in profile server stores URL
+2. [x] URL initialized from browser creation arguments
+3. [x] `on_address_change` callback updates URL on navigation
+4. [x] `display_surface` XPC message includes URL
+5. [x] `ReceivedSurface` in GUI stores URL
+6. [x] URL extracted from XPC message correctly
+7. [~] URL updates when page navigates (requires input forwarding to test fully)
 
 #### Result
 
-_Pending_
+**Success.** URL transmission via XPC is working correctly.
+
+#### Conclusion
+
+**What was accomplished:**
+
+The URL now flows from CEF through XPC to the GUI with every texture update:
+
+1. **Profile server stores URL** — Added `url: Mutex<String>` to `BrowserState`,
+   initialized from the browser creation arguments.
+
+2. **DisplayHandler tracks navigation** — Implemented `ProfileDisplayHandler`
+   with `on_address_change` callback that updates the stored URL whenever CEF
+   navigates to a new page.
+
+3. **URL included in XPC message** — The `display_surface` message now includes
+   the current URL alongside the Mach port and dimensions.
+
+4. **GUI receives and stores URL** — `ReceivedSurface` now has a `url` field,
+   extracted from each incoming XPC message.
+
+**Verification from logs:**
+
+```
+Profile: URL changed to 'https://www.google.com/'
+[XPC Manager] Surface URL: 'https://www.google.com/'
+```
+
+**What this enables:**
+
+The control panel rendering code (Experiment 2) can now access the current URL
+via `xpc_manager.get_received_surface(pane_id).url` to display it in the
+control bar.
+
+**Files modified:**
+
+- `ts3/termsurf-profile/src/main.rs` — Added URL to BrowserState, DisplayHandler,
+  and XPC message
+- `ts3/wezterm-gui/src/termwindow/webview_xpc.rs` — Added URL to ReceivedSurface
+
+**Next step:**
+
+Experiment 2 will implement the actual control panel rendering (background,
+text, viewport adjustment).

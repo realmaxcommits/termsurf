@@ -62,6 +62,8 @@ pub struct ReceivedSurface {
     pub width: u32,
     /// Height of the surface
     pub height: u32,
+    /// Current URL (for control panel display)
+    pub url: String,
 }
 
 // ============================================================================
@@ -187,6 +189,7 @@ impl XpcManager {
                             let height = msg.get_i64("height") as u32;
                             let width = if width == 0 { 100 } else { width };
                             let height = if height == 0 { 100 } else { height };
+                            let url = msg.get_string("url").unwrap_or_default();
 
                             if port == 0 {
                                 log::error!("[XPC Manager] Received null Mach port");
@@ -226,7 +229,12 @@ impl XpcManager {
                                     mach_port: port,
                                     width,
                                     height,
+                                    url: url.clone(),
                                 };
+                                log::info!(
+                                    "[XPC Manager] Surface URL: '{}'",
+                                    url
+                                );
 
                                 manager
                                     .received_surfaces

@@ -88,6 +88,8 @@ struct BrowserState {
     last_handle: AtomicPtr<c_void>,
     /// Browser reference for resize operations
     browser: Mutex<Option<cef::Browser>>,
+    /// Current URL (updated on navigation via DisplayHandler)
+    url: Mutex<String>,
 }
 
 /// Profile-wide state (shared across all browsers in this process)
@@ -381,13 +383,14 @@ mod cef_handlers {
     use cef::rc::Rc;
     use cef::{
         wrap_app, wrap_browser_process_handler, wrap_client, wrap_context_menu_handler,
-        wrap_render_handler, wrap_task, AcceleratedPaintInfo, App, Browser,
-        BrowserProcessHandler, BrowserSettings, Client, ContextMenuHandler, ContextMenuParams,
-        Frame, ImplApp, ImplBrowser, ImplBrowserHost, ImplBrowserProcessHandler, ImplClient,
-        ImplCommandLine, ImplContextMenuHandler, ImplMenuModel, ImplRenderHandler, ImplTask,
-        MenuModel, PaintElementType, Rect, RenderHandler, ScreenInfo, Task, WindowInfo, WrapApp,
-        WrapBrowserProcessHandler, WrapClient, WrapContextMenuHandler, WrapRenderHandler,
-        WrapTask,
+        wrap_display_handler, wrap_render_handler, wrap_task, AcceleratedPaintInfo, App, Browser,
+        BrowserProcessHandler, BrowserSettings, CefString, Client, ContextMenuHandler,
+        ContextMenuParams, DisplayHandler, Frame, ImplApp, ImplBrowser, ImplBrowserHost,
+        ImplBrowserProcessHandler, ImplClient, ImplCommandLine, ImplContextMenuHandler,
+        ImplDisplayHandler, ImplMenuModel, ImplRenderHandler, ImplTask, MenuModel,
+        PaintElementType, Rect, RenderHandler, ScreenInfo, Task, WindowInfo, WrapApp,
+        WrapBrowserProcessHandler, WrapClient, WrapContextMenuHandler, WrapDisplayHandler,
+        WrapRenderHandler, WrapTask,
     };
     use std::sync::atomic::Ordering;
     use std::sync::{Arc, Mutex};
@@ -491,6 +494,7 @@ mod cef_handlers {
                 msg.set_mach_send("iosurface_port", port);
                 msg.set_i64("width", width as i64);
                 msg.set_i64("height", height as i64);
+                msg.set_string("url", &self.inner.state.url.lock().unwrap());
                 self.inner.state.gui.send(&msg);
             }
         }
@@ -523,12 +527,43 @@ mod cef_handlers {
         }
     }
 
+    // ====== Display Handler ======
+    //
+    // Tracks URL changes for the control panel display.
+
+    #[derive(Clone)]
+    struct DisplayHandlerInner {
+        state: Arc<BrowserState>,
+    }
+
+    wrap_display_handler! {
+        pub struct ProfileDisplayHandler {
+            inner: DisplayHandlerInner,
+        }
+
+        impl DisplayHandler {
+            fn on_address_change(
+                &self,
+                _browser: Option<&mut Browser>,
+                _frame: Option<&mut Frame>,
+                url: Option<&CefString>,
+            ) {
+                if let Some(url) = url {
+                    let url_str = url.to_string();
+                    println!("Profile: URL changed to '{}'", url_str);
+                    *self.inner.state.url.lock().unwrap() = url_str;
+                }
+            }
+        }
+    }
+
     // ====== Client ======
 
     wrap_client! {
         pub struct ProfileClient {
             render_handler: RenderHandler,
             context_menu_handler: ContextMenuHandler,
+            display_handler: DisplayHandler,
         }
 
         impl Client {
@@ -538,6 +573,10 @@ mod cef_handlers {
 
             fn context_menu_handler(&self) -> Option<ContextMenuHandler> {
                 Some(self.context_menu_handler.clone())
+            }
+
+            fn display_handler(&self) -> Option<DisplayHandler> {
+                Some(self.display_handler.clone())
             }
         }
     }
@@ -740,17 +779,24 @@ mod cef_handlers {
             height: std::sync::atomic::AtomicU32::new(height),
             last_handle: AtomicPtr::new(std::ptr::null_mut()),
             browser: Mutex::new(None),
+            url: Mutex::new(url.to_string()),
         });
 
         // Create render handler with browser-specific state
-        let inner = RenderHandlerInner {
+        let render_inner = RenderHandlerInner {
             state: Arc::clone(&browser_state),
             scale: state.scale,
         };
+        let render_handler = ProfileRenderHandler::new(render_inner);
 
-        let render_handler = ProfileRenderHandler::new(inner);
+        // Create display handler to track URL changes
+        let display_inner = DisplayHandlerInner {
+            state: Arc::clone(&browser_state),
+        };
+        let display_handler = ProfileDisplayHandler::new(display_inner);
+
         let context_menu_handler = ProfileContextMenuHandler::new(ContextMenuInner);
-        let mut client = ProfileClient::new(render_handler, context_menu_handler);
+        let mut client = ProfileClient::new(render_handler, context_menu_handler, display_handler);
 
         let window_info = WindowInfo {
             windowless_rendering_enabled: 1,
