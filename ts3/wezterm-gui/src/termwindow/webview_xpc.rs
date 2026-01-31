@@ -426,6 +426,20 @@ impl XpcManager {
         }
     }
 
+    /// Send clipboard text to paste into the browser (experiment 6)
+    pub fn send_paste_text(&self, pane_id: PaneId, text: &str) -> bool {
+        let msg = XpcDictionary::new();
+        msg.set_string("action", "paste_text");
+        msg.set_string("text", text);
+
+        if self.send_command(pane_id, &msg) {
+            log::info!("[XPC] Sent paste_text to pane {} ({} chars)", pane_id, text.len());
+            true
+        } else {
+            false
+        }
+    }
+
     /// Remove a peer connection (e.g., when webview pane is closed)
     pub fn remove_connection(&self, pane_id: PaneId) {
         self.peer_connections.lock().unwrap().remove(&pane_id);

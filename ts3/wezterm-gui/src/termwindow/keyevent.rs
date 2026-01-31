@@ -964,9 +964,51 @@ impl super::TermWindow {
                     return Some(true);
                 }
 
-                // Forward key to browser via XPC
+                // Handle Cmd+V (paste) specially - proxy clipboard contents via XPC
+                let is_cmd_v = window_key.key_is_down
+                    && window_key.modifiers.contains(Modifiers::SUPER)
+                    && matches!(&window_key.key, KeyCode::Char('v') | KeyCode::Char('V'));
+
+                if is_cmd_v {
+                    log::info!("[CLIPBOARD] Cmd+V detected, proxying clipboard to browser");
+                    drop(overlays); // Release lock before clipboard access
+
+                    // Get clipboard contents asynchronously and send to browser
+                    if let Some(window) = self.window.as_ref() {
+                        let window = window.clone();
+                        let future = window.get_clipboard(::window::Clipboard::Clipboard);
+                        promise::spawn::spawn(async move {
+                            if let Ok(text) = future.await {
+                                if !text.is_empty() {
+                                    if let Some(xpc_manager) = crate::termwindow::webview_xpc::get_xpc_manager() {
+                                        log::info!("[CLIPBOARD] Sending {} chars to browser pane {}", text.len(), pane_id);
+                                        xpc_manager.send_paste_text(pane_id, &text);
+                                    }
+                                }
+                            }
+                        })
+                        .detach();
+                    }
+                    return Some(true); // Consume the key
+                }
+
+                // Forward other keys to browser via XPC
                 drop(overlays); // Release lock before XPC call
                 if let Some(xpc_manager) = crate::termwindow::webview_xpc::get_xpc_manager() {
+                    // Log Cmd+C specifically for clipboard debugging
+                    if window_key.modifiers.contains(Modifiers::SUPER) {
+                        if let KeyCode::Char(c) = &window_key.key {
+                            if *c == 'c' || *c == 'C' {
+                                log::info!(
+                                    "[CLIPBOARD-DEBUG] Forwarding Cmd+{} to pane {}: down={}, raw={:?}",
+                                    c,
+                                    pane_id,
+                                    window_key.key_is_down,
+                                    window_key.raw.as_ref().map(|r| r.raw_code)
+                                );
+                            }
+                        }
+                    }
                     xpc_manager.send_key_event(pane_id, window_key);
                 }
 

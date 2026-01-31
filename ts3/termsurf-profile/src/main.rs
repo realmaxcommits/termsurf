@@ -385,7 +385,7 @@ mod cef_handlers {
         wrap_app, wrap_browser_process_handler, wrap_client, wrap_context_menu_handler,
         wrap_display_handler, wrap_render_handler, wrap_task, AcceleratedPaintInfo, App, Browser,
         BrowserProcessHandler, BrowserSettings, CefString, Client, ContextMenuHandler,
-        ContextMenuParams, DisplayHandler, Frame, ImplApp, ImplBrowser, ImplBrowserHost,
+        ContextMenuParams, DisplayHandler, Frame, ImplApp, ImplBrowser, ImplBrowserHost, ImplFrame,
         ImplBrowserProcessHandler, ImplClient, ImplCommandLine, ImplContextMenuHandler,
         ImplDisplayHandler, ImplMenuModel, ImplRenderHandler, ImplTask, MenuModel,
         PaintElementType, Rect, RenderHandler, ScreenInfo, Task, WindowInfo, WrapApp,
@@ -787,6 +787,25 @@ mod cef_handlers {
                             );
                             cef::post_task(cef::ThreadId::UI, Some(&mut task));
                         }
+                        "paste_text" => {
+                            // Get state from deferred wrapper
+                            let state_guard = deferred_for_handler.lock().unwrap();
+                            let Some(bs) = state_guard.as_ref() else {
+                                println!("Profile: paste_text ignored (state not ready)");
+                                return;
+                            };
+
+                            let text = msg.get_string("text").unwrap_or_default();
+                            println!("[CLIPBOARD] Received paste_text: {} chars", text.len());
+
+                            let bs = Arc::clone(bs);
+                            let text = text.to_string();
+                            drop(state_guard); // Release lock before post_task
+
+                            // Post to CEF UI thread
+                            let mut task = PasteTextTask::new(bs, text);
+                            cef::post_task(cef::ThreadId::UI, Some(&mut task));
+                        }
                         _ => {}
                     }
                 }
@@ -855,6 +874,12 @@ mod cef_handlers {
                     "Profile: Browser {} created for '{}' (session='{}')",
                     browser_id, url, session_id
                 );
+
+                // Ensure browser has focus for clipboard operations (experiment 4)
+                if let Some(host) = b.host() {
+                    println!("[FOCUS-DEBUG] Sending initial focus event to browser {}", browser_id);
+                    host.set_focus(1); // 1 = focused
+                }
 
                 // Store browser reference for resize operations
                 *browser_state.browser.lock().unwrap() = Some(b);
@@ -942,6 +967,62 @@ mod cef_handlers {
         }
     }
 
+    // ====== Paste Text Task ======
+    //
+    // Task for pasting clipboard text into the browser via JavaScript injection.
+    // This bypasses macOS clipboard restrictions by receiving text from GUI via XPC.
+
+    wrap_task! {
+        pub struct PasteTextTask {
+            state: Arc<BrowserState>,
+            text: String,
+        }
+
+        impl Task {
+            fn execute(&self) {
+                paste_text_to_browser(&self.state, &self.text);
+            }
+        }
+    }
+
+    /// Paste text into the browser by executing JavaScript (called on CEF UI thread)
+    fn paste_text_to_browser(state: &BrowserState, text: &str) {
+        let browser = match state.browser.lock().unwrap().as_ref() {
+            Some(b) => b.clone(),
+            None => {
+                println!("[CLIPBOARD] paste_text_to_browser: no browser");
+                return;
+            }
+        };
+
+        let frame = match browser.main_frame() {
+            Some(f) => f,
+            None => {
+                println!("[CLIPBOARD] paste_text_to_browser: no main frame");
+                return;
+            }
+        };
+
+        // Escape text for JavaScript string literal
+        let escaped = text
+            .replace('\\', "\\\\")
+            .replace('\'', "\\'")
+            .replace('\n', "\\n")
+            .replace('\r', "\\r")
+            .replace('\t', "\\t");
+
+        // Use execCommand to insert text at the current cursor position
+        // This works in input fields, textareas, and contenteditable elements
+        let js = format!(
+            "document.execCommand('insertText', false, '{}');",
+            escaped
+        );
+
+        println!("[CLIPBOARD] Executing JS to paste {} chars", text.len());
+        let js_cef: CefString = js.as_str().into();
+        frame.execute_java_script(Some(&js_cef), None, 0);
+    }
+
     // CEF event flags (same values as CEF uses internally)
     const EVENTFLAG_SHIFT_DOWN: u32 = 1 << 1;
     const EVENTFLAG_CONTROL_DOWN: u32 = 1 << 2;
@@ -962,13 +1043,40 @@ mod cef_handlers {
     ) {
         use cef::{KeyEvent, KeyEventType};
 
+        // Detect clipboard shortcuts for diagnostic logging
+        let is_potential_paste = meta && (char_code == 'v' as u32 || char_code == 'V' as u32);
+        let is_potential_copy = meta && (char_code == 'c' as u32 || char_code == 'C' as u32);
+        let is_clipboard_op = is_potential_paste || is_potential_copy;
+
+        if is_clipboard_op {
+            println!(
+                "[CLIPBOARD-DEBUG] {} received: key_is_down={}, raw_code={:#x}, char_code={} ('{}'), modifiers=[shift={}, ctrl={}, alt={}, meta={}]",
+                if is_potential_paste { "Cmd+V" } else { "Cmd+C" },
+                key_is_down,
+                raw_code,
+                char_code,
+                char::from_u32(char_code).unwrap_or('?'),
+                shift, ctrl, alt, meta
+            );
+        }
+
         let browser = match state.browser.lock().unwrap().as_ref() {
             Some(b) => b.clone(),
-            None => return,
+            None => {
+                if is_clipboard_op {
+                    println!("[CLIPBOARD-DEBUG] ERROR: No browser instance!");
+                }
+                return;
+            }
         };
         let host = match browser.host() {
             Some(h) => h,
-            None => return,
+            None => {
+                if is_clipboard_op {
+                    println!("[CLIPBOARD-DEBUG] ERROR: No browser host!");
+                }
+                return;
+            }
         };
 
         // Build CEF modifiers
@@ -989,6 +1097,18 @@ mod cef_handlers {
         // Convert to Windows VK code
         let windows_vk = macos_keycode_to_windows_vk(raw_code);
         let native_code = raw_code as i32;
+
+        if is_clipboard_op {
+            println!(
+                "[CLIPBOARD-DEBUG] CEF event: windows_vk={:#x} (expected V={:#x}, C={:#x}), native={:#x}, modifiers={:#x} (COMMAND_DOWN={:#x})",
+                windows_vk,
+                0x56, // VK_V
+                0x43, // VK_C
+                native_code,
+                modifiers,
+                EVENTFLAG_COMMAND_DOWN
+            );
+        }
 
         // Determine if this is an action key (skip KEYUP to avoid double actions)
         let is_action_key = matches!(
@@ -1011,6 +1131,12 @@ mod cef_handlers {
             KeyEventType::KEYUP
         };
 
+        // For clipboard operations, ensure browser has focus before sending key
+        if is_clipboard_op && key_is_down {
+            println!("[CLIPBOARD-DEBUG] Calling send_focus_event(true) before clipboard operation");
+            host.set_focus(1); // 1 = focused
+        }
+
         let key_event = KeyEvent {
             size: std::mem::size_of::<KeyEvent>(),
             type_: event_type,
@@ -1023,6 +1149,13 @@ mod cef_handlers {
             focus_on_editable_field: 0,
         };
         host.send_key_event(Some(&key_event));
+
+        if is_clipboard_op {
+            println!(
+                "[CLIPBOARD-DEBUG] send_key_event called for {:?}",
+                event_type
+            );
+        }
 
         // For key-down of printable characters, also send CHAR event
         if key_is_down && key_type == "char" && char_code > 0 && char_code < 0x10000 {
@@ -1038,10 +1171,14 @@ mod cef_handlers {
                 focus_on_editable_field: 0,
             };
             host.send_key_event(Some(&char_event));
+
+            if is_clipboard_op {
+                println!("[CLIPBOARD-DEBUG] CHAR event also sent");
+            }
         }
 
         println!(
-            "Profile: key_event type={} vk={} native={} char={} down={}",
+            "Profile: key_event type={} vk={:#x} native={:#x} char={} down={}",
             key_type, windows_vk, native_code, char_code, key_is_down
         );
     }

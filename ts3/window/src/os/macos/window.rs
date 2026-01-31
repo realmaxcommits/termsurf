@@ -2837,10 +2837,20 @@ impl WindowView {
             modifiers,
         );
 
+        // Cmd or Cmd+Shift (for clipboard shortcuts that may have shift variants)
+        let dominated_by_super = modifiers == Modifiers::SUPER
+            || modifiers == (Modifiers::SUPER | Modifiers::SHIFT);
+
         if (chars == "." && modifiers == Modifiers::SUPER)
             || (chars == "\u{1b}" && modifiers == Modifiers::CTRL)
             || (chars == "\t" && modifiers == Modifiers::CTRL)
             || (chars == "\x19"/* Shift-Tab: See issue #1902 */)
+            // Clipboard shortcuts - synthesize KeyEvents so webviews can handle them
+            // (macOS routes these to menu system otherwise, never generating KeyEvents)
+            || (chars == "c" && dominated_by_super)  // Cmd+C (copy)
+            || (chars == "v" && dominated_by_super)  // Cmd+V (paste)
+            || (chars == "x" && dominated_by_super)  // Cmd+X (cut)
+            || (chars == "a" && dominated_by_super)  // Cmd+A (select all)
         {
             // Synthesize a key down event for this, because macOS will
             // not do that, even though we tell it that we handled this event.
