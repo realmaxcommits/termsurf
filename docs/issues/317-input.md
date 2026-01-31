@@ -1473,3 +1473,165 @@ This will generate KeyEvents for clipboard shortcuts, allowing our webview key h
 to forward them to CEF via XPC.
 
 **Next experiment:** Implement the `perform_key_equivalent` fix.
+
+---
+
+### Experiment 5: Synthesize KeyEvents for Cmd+C/V/X/A
+
+**Goal:** Make Cmd+C/V/X/A generate KeyEvents so they can be forwarded to CEF.
+
+#### Background
+
+Experiment 4 revealed that `performKeyEquivalent:` returns `NO` for Cmd+C/V/X,
+causing macOS to route them to the menu system instead of generating KeyEvents.
+
+WezTerm already handles this pattern for other shortcuts. In
+`window/src/os/macos/window.rs:2840-2851`:
+
+```rust
+if (chars == "." && modifiers == Modifiers::SUPER)
+    || (chars == "\u{1b}" && modifiers == Modifiers::CTRL)
+    || (chars == "\t" && modifiers == Modifiers::CTRL)
+    || (chars == "\x19"/* Shift-Tab */)
+{
+    // Synthesize a key down event for this
+    Self::key_common(this, nsevent, true);
+    YES
+} else {
+    NO
+}
+```
+
+We extend this to include Cmd+C/V/X/A (clipboard and select-all shortcuts).
+
+#### Approach
+
+**Modify perform_key_equivalent (window/src/os/macos/window.rs)**
+
+Add clipboard shortcuts to the condition:
+
+```rust
+extern "C" fn perform_key_equivalent(this: &mut Object, _sel: Sel, nsevent: id) -> BOOL {
+    let chars = unsafe { nsstring_to_str(nsevent.characters()) };
+    let modifier_flags = unsafe { nsevent.modifierFlags() };
+    let modifiers = key_modifiers(modifier_flags);
+
+    log::trace!(
+        "perform_key_equivalent: chars=`{}` modifiers=`{:?}`",
+        chars.escape_debug(),
+        modifiers,
+    );
+
+    // Shortcuts that need KeyEvent synthesis (macOS won't generate them otherwise)
+    let dominated_by_super = modifiers == Modifiers::SUPER
+        || modifiers == (Modifiers::SUPER | Modifiers::SHIFT);
+
+    if (chars == "." && modifiers == Modifiers::SUPER)
+        || (chars == "\u{1b}" && modifiers == Modifiers::CTRL)
+        || (chars == "\t" && modifiers == Modifiers::CTRL)
+        || (chars == "\x19"/* Shift-Tab: See issue #1902 */)
+        // Clipboard shortcuts - synthesize KeyEvents so webviews can handle them
+        || (chars == "c" && dominated_by_super)  // Cmd+C (copy)
+        || (chars == "v" && dominated_by_super)  // Cmd+V (paste)
+        || (chars == "x" && dominated_by_super)  // Cmd+X (cut)
+        || (chars == "a" && dominated_by_super)  // Cmd+A (select all)
+    {
+        // Synthesize a key down event for this, because macOS will
+        // not do that, even though we tell it that we handled this event.
+        Self::key_common(this, nsevent, true);
+
+        // Prevent macOS from handling this as a menu action
+        YES
+    } else {
+        // Allow macOS to process built-in shortcuts like CMD-`
+        NO
+    }
+}
+```
+
+**Note on `dominated_by_super`:** This allows both `Cmd+C` and `Cmd+Shift+C` to be
+captured. Some apps use Cmd+Shift+C for "copy as..." variants.
+
+#### Impact Analysis
+
+This change affects ALL Cmd+C/V/X/A keypresses in WezTerm, not just webview mode.
+
+**When webview is active (Browse mode):**
+- KeyEvent is generated → forwarded to CEF via XPC → browser handles clipboard
+
+**When webview is NOT active (normal terminal):**
+- KeyEvent is generated → goes through normal key processing
+- WezTerm's keybindings still work (Cmd+V = PasteFrom clipboard)
+- No behavior change for terminal users
+
+**Potential concern:** WezTerm already has keybindings for Cmd+C/V. Will this
+cause double-handling?
+
+No, because:
+1. `perform_key_equivalent` is called BEFORE keybinding processing
+2. We synthesize a KeyEvent via `key_common()`
+3. The KeyEvent flows through normal processing (`raw_key_event_impl` → `key_event_impl`)
+4. Our Browse mode check in `raw_key_event_impl` skips keybindings when appropriate
+5. If not in Browse mode, normal keybinding processing handles it
+
+The key insight: we're not changing WHAT happens, just ensuring the KeyEvent EXISTS.
+
+#### Files to Modify
+
+| File | Changes |
+|------|---------|
+| `ts3/window/src/os/macos/window.rs` | Add Cmd+C/V/X/A to `perform_key_equivalent` |
+
+#### Verification
+
+```bash
+cd ts3 && ./scripts/build-debug.sh --open
+
+# Test 1: Cmd+V in Browse mode
+web google.com
+# Copy text from another app
+# Press Cmd+V in the browser search box
+# Expected: Text pastes into browser (not terminal)
+
+# Test 2: Cmd+C in Browse mode
+# Select text in browser with Shift+arrows
+# Press Cmd+C
+# Paste in another app
+# Expected: Browser text was copied
+
+# Test 3: Cmd+A in Browse mode
+# Press Cmd+A
+# Expected: All text selected in browser
+
+# Test 4: Cmd+V in terminal (no webview)
+# Close browser (Ctrl+C twice)
+# Press Cmd+V
+# Expected: Normal terminal paste works
+
+# Test 5: Cmd+C in terminal
+# Select text in terminal
+# Press Cmd+C
+# Expected: Normal terminal copy works
+
+# Check logs
+cat /tmp/termsurf-gui.log | grep "CLIPBOARD-DEBUG"
+cat /tmp/termsurf-profile-*.log | grep "CLIPBOARD-DEBUG"
+```
+
+#### Success Criteria
+
+- [ ] `perform_key_equivalent` intercepts Cmd+C/V/X/A
+- [ ] KeyEvents are generated for these shortcuts
+- [ ] Cmd+V pastes into browser in Browse mode
+- [ ] Cmd+C copies from browser in Browse mode
+- [ ] Cmd+A selects all in browser
+- [ ] Normal terminal Cmd+C/V still works when no webview active
+- [ ] No regressions in terminal keybinding behavior
+
+#### Result
+
+*Pending*
+
+#### Conclusion
+
+*Pending*
