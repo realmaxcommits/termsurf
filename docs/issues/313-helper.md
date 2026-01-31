@@ -529,3 +529,83 @@ Contents/Frameworks/TermSurf Profile Helper.app/Contents/MacOS/
 
 Then joins with `Chromium Embedded Framework.framework/...` to find the correct
 framework location.
+
+---
+
+### Experiment 2: Fix CEF Library Loader Path Resolution
+
+**Goal:** Fix the CEF framework loading failure from Experiment 1 by telling the
+`LibraryLoader` that termsurf-profile is now a helper app.
+
+**Problem:** Experiment 1 successfully bundled termsurf-profile as a helper app,
+but the process crashes on startup because `LibraryLoader::new(&exe, false)`
+uses the wrong path resolver. The `false` parameter assumes the binary is at
+`Contents/MacOS/`, but it's now at
+`Contents/Frameworks/TermSurf Profile Helper.app/Contents/MacOS/`.
+
+**Hypothesis:** Changing `helper: false` to `helper: true` will make the library
+loader use the correct path resolution for helper app binaries.
+
+#### Changes
+
+**File: `ts3/termsurf-profile/src/main.rs`**
+
+Change line ~115 from:
+```rust
+let _loader = LibraryLoader::new(&exe, false);
+```
+
+To:
+```rust
+let _loader = LibraryLoader::new(&exe, true);
+```
+
+#### Verification
+
+```bash
+cd ts3 && ./scripts/build-debug.sh --open
+
+# 1. Verify helper app structure (from Experiment 1)
+ls -la target/debug/wezterm-gui.app/Contents/Frameworks/ | grep Profile
+ls "target/debug/wezterm-gui.app/Contents/Frameworks/TermSurf Profile Helper.app/Contents/MacOS/"
+grep -A1 LSUIElement "target/debug/wezterm-gui.app/Contents/Frameworks/TermSurf Profile Helper.app/Contents/Info.plist"
+
+# 2. Verify NOT in MacOS folder
+ls target/debug/wezterm-gui.app/Contents/MacOS/ | grep -c profile
+# Expected: 0
+
+# 3. Check launcher log for correct path
+grep "Profile binary path" /tmp/termsurf-launcher.log
+
+# 4. Check profile log for successful CEF initialization
+grep "CEF framework loaded" /tmp/termsurf-profile-default.log
+# Expected: "Profile: CEF framework loaded"
+
+# 5. Test webview functionality
+web google.com
+# Expected: No dock icon, no focus stealing, webview renders
+
+# 6. Test multiple webviews
+web github.com
+web apple.com
+
+# 7. Test resize
+# Drag window edge, verify no black borders
+```
+
+#### Success Criteria
+
+1. [ ] Helper app bundle exists at `Frameworks/TermSurf Profile Helper.app`
+2. [ ] `Info.plist` contains `LSUIElement=1`
+3. [ ] Binary located inside helper app, not in `Contents/MacOS/`
+4. [ ] Launcher finds and spawns the binary correctly
+5. [ ] CEF framework loads successfully (no panic)
+6. [ ] No dock icon when opening webviews
+7. [ ] No focus stealing
+8. [ ] Webviews render correctly
+9. [ ] Resize still works (issue 311 fixes intact)
+10. [ ] `objc` dependency removed, workaround code deleted
+
+#### Result
+
+_Pending_
