@@ -256,4 +256,274 @@ web google.com
 
 ## Experiments
 
-(To be added during implementation)
+### Experiment 1: Mode State and Key Interception
+
+**Goal:** Add mode state (Browse/Control) and intercept key events so that no
+keys reach the terminal underneath while a webview is visible.
+
+**Background:**
+
+ts2 handles key interception in `keyevent.rs:660-845`. The key insight is that
+the browser mode check happens early in `key_event_impl`, before keys are
+processed for terminal input.
+
+```rust
+// ts2 approach (simplified)
+fn key_event_impl(&mut self, window_key: KeyEvent, ...) {
+    // 1. Check for browser mode FIRST
+    if let Some(mode) = get_browser_mode(pane_id) {
+        match mode {
+            Browse => {
+                if is_ctrl_c { set_mode(Control); return; }
+                // Forward to CEF (future)
+                return; // Consume all keys
+            }
+            Control => {
+                if is_enter { set_mode(Browse); return; }
+                if is_ctrl_c { close_browser(); return; }
+                // Fall through to keybindings only
+            }
+        }
+    }
+
+    // 2. Process WezTerm keybindings
+    if self.process_key(...) { return; }
+
+    // 3. Send to terminal (we must prevent this for webview panes!)
+    pane.writer().write_all(...)
+}
+```
+
+The difference from ts2: we want NO keys to reach the terminal in either mode.
+In Control mode, ts2 lets non-keybinding keys fall through. We will consume them.
+
+#### Approach
+
+**Part A: Add WebviewMode enum and state**
+
+Add mode enum to `webview_socket.rs`:
+
+```rust
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WebviewMode {
+    Browse,  // Browser focused, receiving input (future)
+    Control, // Control panel focused, browser dimmed
+}
+
+impl Default for WebviewMode {
+    fn default() -> Self {
+        WebviewMode::Browse
+    }
+}
+```
+
+Add mode field to `WebviewOverlay`:
+
+```rust
+pub struct WebviewOverlay {
+    pub session_id: String,
+    pub tab_id: TabId,
+    pub mode: WebviewMode,
+}
+```
+
+**Part B: Key interception in key_event_impl**
+
+Add early check in `keyevent.rs` `key_event_impl`:
+
+```rust
+pub fn key_event_impl(&mut self, window_key: KeyEvent, context: &dyn WindowOps) {
+    let pane = match self.get_active_pane_or_overlay() {
+        Some(pane) => pane,
+        None => return,
+    };
+
+    // Check for webview overlay and handle mode-specific input
+    #[cfg(target_os = "macos")]
+    if let Some(handled) = self.handle_webview_key_event(&pane, &window_key) {
+        if handled {
+            return; // Key was consumed by webview handling
+        }
+        // If not handled, continue to keybindings but NOT terminal
+    }
+
+    // ... rest of existing key handling ...
+}
+```
+
+**Part C: Implement handle_webview_key_event**
+
+New helper function:
+
+```rust
+#[cfg(target_os = "macos")]
+fn handle_webview_key_event(
+    &mut self,
+    pane: &Arc<dyn Pane>,
+    window_key: &KeyEvent,
+) -> Option<bool> {
+    use crate::termwindow::webview_socket::{get_server, WebviewMode};
+
+    let pane_id = pane.pane_id();
+
+    // Check if this pane has a webview overlay
+    let server = get_server()?;
+    let state = server.state();
+    let mut overlays = state.write().unwrap();
+    let overlay = overlays.overlays.get_mut(&pane_id)?;
+
+    // Check for Ctrl+C
+    let is_ctrl_c = window_key.key_is_down
+        && window_key.modifiers.contains(::window::Modifiers::CTRL)
+        && matches!(
+            &window_key.key,
+            ::window::KeyCode::Char('c') | ::window::KeyCode::Char('C')
+        );
+
+    // Check for Enter
+    let is_enter = window_key.key_is_down
+        && window_key.modifiers.is_empty()
+        && matches!(&window_key.key, ::window::KeyCode::Char('\r'));
+
+    match overlay.mode {
+        WebviewMode::Browse => {
+            if is_ctrl_c {
+                log::info!("[Webview] Ctrl+C in Browse mode → Control mode");
+                overlay.mode = WebviewMode::Control;
+                // Trigger redraw for visual feedback
+                drop(overlays);
+                if let Some(ref w) = self.window {
+                    w.invalidate();
+                }
+                return Some(true);
+            }
+            // In Browse mode, consume all keys (future: forward to CEF)
+            if window_key.key_is_down {
+                log::debug!("[Webview] Consuming key in Browse mode");
+            }
+            Some(true)
+        }
+        WebviewMode::Control => {
+            if is_enter {
+                log::info!("[Webview] Enter in Control mode → Browse mode");
+                overlay.mode = WebviewMode::Browse;
+                drop(overlays);
+                if let Some(ref w) = self.window {
+                    w.invalidate();
+                }
+                return Some(true);
+            }
+            if is_ctrl_c {
+                log::info!("[Webview] Ctrl+C in Control mode → Exit browser");
+                drop(overlays);
+                self.close_webview_for_pane(pane_id);
+                return Some(true);
+            }
+            // In Control mode, return None to allow keybindings
+            // but we'll block terminal input separately
+            None
+        }
+    }
+}
+```
+
+**Part D: Block terminal input in Control mode**
+
+After `process_key` in `key_event_impl`, check if we should block terminal input:
+
+```rust
+// After process_key returns false (no keybinding matched)
+#[cfg(target_os = "macos")]
+{
+    // If this pane has a webview, consume the key instead of sending to terminal
+    if self.pane_has_webview_overlay(pane.pane_id()) {
+        log::debug!("[Webview] Consuming unbound key in Control mode");
+        return;
+    }
+}
+
+// ... existing terminal input code ...
+```
+
+**Part E: Add close_webview_for_pane helper**
+
+```rust
+#[cfg(target_os = "macos")]
+fn close_webview_for_pane(&mut self, pane_id: PaneId) {
+    use crate::termwindow::webview_socket::get_server;
+
+    if let Some(server) = get_server() {
+        let state = server.state();
+        let mut overlays = state.write().unwrap();
+        overlays.overlays.remove(&pane_id);
+    }
+
+    // Also clean up XPC resources
+    if let Some(xpc_manager) = crate::termwindow::webview_xpc::get_xpc_manager() {
+        xpc_manager.remove_surface(pane_id);
+        xpc_manager.remove_connection(pane_id);
+        xpc_manager.remove_invalidate_callback(pane_id);
+    }
+
+    // Trigger redraw
+    if let Some(ref w) = self.window {
+        w.invalidate();
+    }
+}
+```
+
+#### Files to Modify
+
+| File | Changes |
+|------|---------|
+| `ts3/wezterm-gui/src/termwindow/webview_socket.rs` | Add `WebviewMode` enum, add `mode` field |
+| `ts3/wezterm-gui/src/termwindow/keyevent.rs` | Add key interception, mode transitions |
+| `ts3/wezterm-gui/src/termwindow/mod.rs` | Add helper methods if needed |
+
+#### Verification
+
+```bash
+cd ts3 && ./scripts/build-debug.sh --open
+
+# 1. Open webview (starts in Browse mode)
+web google.com
+
+# 2. Type random keys
+# Expected: Nothing appears in terminal
+
+# 3. Press Ctrl+C
+# Expected: Log shows "Ctrl+C in Browse mode → Control mode"
+
+# 4. Type random keys
+# Expected: Nothing appears in terminal
+
+# 5. Press Enter
+# Expected: Log shows "Enter in Control mode → Browse mode"
+
+# 6. Press Ctrl+C twice
+# First: → Control mode
+# Second: Browser closes, terminal visible
+
+# 7. Verify WezTerm keybindings work
+# - In Browse mode: Ctrl+Shift+T should open new tab
+# - In Control mode: Ctrl+Shift+T should open new tab
+
+# Check logs
+grep "\[Webview\]" /tmp/termsurf-gui.log
+```
+
+#### Success Criteria
+
+1. [ ] `WebviewMode` enum exists with Browse and Control variants
+2. [ ] `WebviewOverlay` has `mode` field, defaults to Browse
+3. [ ] Key events intercepted for webview panes
+4. [ ] No keys reach terminal in Browse mode
+5. [ ] No keys reach terminal in Control mode
+6. [ ] Ctrl+C in Browse mode → Control mode
+7. [ ] Enter in Control mode → Browse mode
+8. [ ] Ctrl+C in Control mode → closes webview
+9. [ ] WezTerm keybindings work in both modes
+
+#### Result
+
+(Pending)
