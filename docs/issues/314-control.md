@@ -1343,3 +1343,62 @@ This completes the two-phase rendering approach:
 **Next steps (Phase 2):**
 - Add Control mode / Browse mode switching
 - Add keyboard/mouse input forwarding to CEF
+
+---
+
+## Conclusion
+
+### What Was Accomplished
+
+Issue 314 Phase 1 is complete. The control panel now renders at the top of each
+webview pane, matching ts2's visual appearance:
+
+- **Solid background** using terminal palette background color
+- **URL text** with half-cell margins (left, top, bottom)
+- **2 cell height** control bar area
+- **Proper viewport adjustment** — webview content renders below the control bar
+- **Multiple webview support** — each pane has its own control bar with its own URL
+
+The implementation required understanding WezTerm's two-phase rendering architecture:
+
+1. **Phase 1** (layers mapped): `filled_rectangle` for background
+2. **Phase 2** (layers dropped): `render_element` for text
+
+This was discovered through four experiments:
+
+| Experiment | Goal | Result |
+|------------|------|--------|
+| 1 | Add URL to XPC protocol | Success |
+| 2 | Render control panel | Partial — viewport worked, text failed |
+| 3 | Fix text rendering in paint_pass | Partial — text worked, background transparent |
+| 4 | Add solid background | Success |
+
+### Files Modified
+
+| File | Changes |
+|------|---------|
+| `ts3/termsurf-profile/src/main.rs` | URL storage, DisplayHandler, XPC transmission |
+| `ts3/wezterm-gui/src/termwindow/webview_xpc.rs` | URL in ReceivedSurface |
+| `ts3/wezterm-gui/src/termwindow/render/pane.rs` | Control bar background and text rendering |
+| `ts3/wezterm-gui/src/termwindow/render/paint.rs` | Call text rendering after drop(layers) |
+| `ts3/wezterm-gui/src/termwindow/render/draw.rs` | Viewport adjustment, cleanup |
+
+### What Comes Next
+
+**Phase 2: Mode Switching**
+- Implement Control mode (terminal keybindings active) and Browse mode (browser input)
+- `Enter` to enter Browse mode
+- `Ctrl+C` to exit browser / return to Control mode
+- Visual dimming in Control mode to indicate inactive state
+
+**Phase 3: Input Forwarding**
+- Forward keyboard events to CEF in Browse mode
+- Forward mouse events (clicks, scroll, hover) to CEF in Browse mode
+- Handle focus transitions between terminal and browser
+
+**Future Enhancements**
+- Back/forward navigation buttons
+- Refresh button
+- Loading indicator
+- Favicon display
+- Tab title from page title
