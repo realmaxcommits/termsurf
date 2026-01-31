@@ -24,19 +24,6 @@ use std::thread;
 use std::time::Duration;
 use termsurf_xpc::*;
 
-/// Set NSApplication activation policy to Prohibited.
-/// This prevents the process from appearing in the dock or stealing focus.
-/// Must be called before CEF initializes NSApplication.
-#[cfg(target_os = "macos")]
-fn set_background_activation_policy() {
-    use objc::{class, msg_send, sel, sel_impl};
-    unsafe {
-        let ns_app: *mut objc::runtime::Object = msg_send![class!(NSApplication), sharedApplication];
-        // NSApplicationActivationPolicyProhibited = 2
-        let _: () = msg_send![ns_app, setActivationPolicy: 2i64];
-    }
-}
-
 #[derive(Parser)]
 struct Args {
     #[arg(long)]
@@ -62,11 +49,6 @@ struct Args {
 }
 
 fn main() {
-    // Set activation policy FIRST, before CEF initializes NSApplication.
-    // This prevents the process from appearing in the dock or stealing focus.
-    #[cfg(target_os = "macos")]
-    set_background_activation_policy();
-
     let args = Args::parse();
     println!(
         "Profile: Starting session='{}', url='{}', profile='{}', size={}x{}, scale={}",
@@ -129,8 +111,8 @@ fn run_profile_server(args: Args) {
     let exe = std::env::current_exe().expect("Failed to get executable path");
     println!("Profile: Executable: {:?}", exe);
 
-    // 1. Load CEF framework
-    let _loader = LibraryLoader::new(&exe, false);
+    // 1. Load CEF framework (helper=true because we're in a helper app bundle)
+    let _loader = LibraryLoader::new(&exe, true);
     if !_loader.load() {
         eprintln!("Profile: Failed to load CEF framework");
         std::process::exit(1);
@@ -190,7 +172,14 @@ fn run_profile_server(args: Args) {
     let _ = PROFILE_STATE.set(Arc::clone(&profile_state));
 
     // 6. Compute paths
-    let app_contents = exe.parent().unwrap().parent().unwrap();
+    // Navigate from helper app binary to main app's Contents/
+    // Binary is at: Contents/Frameworks/TermSurf Profile Helper.app/Contents/MacOS/termsurf-profile
+    let app_contents = exe
+        .parent().unwrap()  // MacOS/
+        .parent().unwrap()  // Contents/ (of helper app)
+        .parent().unwrap()  // TermSurf Profile Helper.app/
+        .parent().unwrap()  // Frameworks/
+        .parent().unwrap(); // Contents/ (of main app)
     let helper_path = app_contents
         .join("Frameworks")
         .join("WezTerm Helper.app")

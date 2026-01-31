@@ -70,7 +70,13 @@ mkdir -p "$APP_BUNDLE/Contents/Resources"
 cp "$REPO_DIR/target/debug/wezterm-gui" "$APP_BUNDLE/Contents/MacOS/"
 cp "$REPO_DIR/target/debug/wezterm" "$APP_BUNDLE/Contents/MacOS/"
 cp "$REPO_DIR/target/debug/web" "$APP_BUNDLE/Contents/MacOS/"
-cp "$REPO_DIR/target/debug/termsurf-profile" "$APP_BUNDLE/Contents/MacOS/"
+
+# 4b. Create TermSurf Profile Helper app bundle (proper macOS helper pattern)
+echo "Creating TermSurf Profile Helper app..."
+PROFILE_HELPER="$APP_BUNDLE/Contents/Frameworks/TermSurf Profile Helper.app"
+mkdir -p "$PROFILE_HELPER/Contents/MacOS"
+cp "$REPO_DIR/target/debug/termsurf-profile" "$PROFILE_HELPER/Contents/MacOS/"
+cp "$REPO_DIR/termsurf-profile/helper-app/Info.plist" "$PROFILE_HELPER/Contents/"
 
 # 5. Copy CEF framework
 echo "Copying CEF framework..."
@@ -161,10 +167,10 @@ echo "Registered com.termsurf.launcher with launchd"
 echo ""
 echo "=== Debug Build Complete ==="
 echo "App bundle: $APP_BUNDLE"
-echo "  Contents/MacOS/wezterm-gui       (terminal)"
-echo "  Contents/MacOS/wezterm           (CLI)"
-echo "  Contents/MacOS/web               (web coordinator)"
-echo "  Contents/MacOS/termsurf-profile  (CEF profile server)"
+echo "  Contents/MacOS/wezterm-gui                              (terminal)"
+echo "  Contents/MacOS/wezterm                                  (CLI)"
+echo "  Contents/MacOS/web                                      (web coordinator)"
+echo "  Contents/Frameworks/TermSurf Profile Helper.app         (CEF profile server)"
 echo ""
 
 # Open if requested

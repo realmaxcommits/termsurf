@@ -48,7 +48,7 @@ fn main() {
 
     // Path to profile server binary
     // Launcher is at: .app/Contents/XPCServices/com.termsurf.launcher.xpc/Contents/MacOS/termsurf-launcher
-    // Profile is at:  .app/Contents/MacOS/termsurf-profile
+    // Profile is at:  .app/Contents/Frameworks/TermSurf Profile Helper.app/Contents/MacOS/termsurf-profile
     let exe_path = env::current_exe().expect("Failed to get exe path");
     let profile_bin_path = exe_path
         .parent() // MacOS
@@ -56,7 +56,11 @@ fn main() {
         .and_then(|p| p.parent()) // com.termsurf.launcher.xpc
         .and_then(|p| p.parent()) // XPCServices
         .and_then(|p| p.parent()) // Contents
-        .map(|p| p.join("MacOS").join("termsurf-profile"))
+        .map(|p| {
+            p.join("Frameworks")
+                .join("TermSurf Profile Helper.app")
+                .join("Contents/MacOS/termsurf-profile")
+        })
         .unwrap_or_else(|| {
             // Fallback for testing outside app bundle
             exe_path
