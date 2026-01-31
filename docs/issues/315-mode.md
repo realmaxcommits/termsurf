@@ -636,6 +636,34 @@ web google.com
 
 #### Success Criteria
 
-1. [ ] Browse mode shows URL in control panel
-2. [ ] Control mode shows "Enter to browse. Ctrl+C to exit."
-3. [ ] Text updates immediately on mode switch
+1. [x] Browse mode shows URL in control panel
+2. [x] Control mode shows "Enter to browse. Ctrl+C to exit."
+3. [x] Text updates immediately on mode switch
+
+#### Result
+
+**Success.** Control panel text now changes based on mode.
+
+#### Conclusion
+
+**What was accomplished:**
+
+The control panel now displays context-appropriate text based on the current
+webview mode:
+
+- **Browse mode**: Shows the URL (e.g., "https://www.google.com/")
+- **Control mode**: Shows "Enter to browse. Ctrl+C to exit."
+
+**Implementation details:**
+
+- Added mode check in `paint_webview_control_bars()` after fetching the URL
+- Uses `overlay.mode` to determine which text to display
+- Text updates immediately when mode transitions (invalidate already triggered)
+
+**Files modified:**
+
+- `ts3/wezterm-gui/src/termwindow/render/pane.rs` — Mode-aware display text
+
+**Next steps:**
+
+- Experiment 3: Add visual dimming in Control mode
