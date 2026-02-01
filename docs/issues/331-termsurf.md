@@ -184,3 +184,34 @@ cd ts3 && ./scripts/build-debug.sh --open
 # Set TERMSURF_CONFIG_FILE=/path/to/custom.lua before launch
 # App should use the custom config path
 ```
+
+---
+
+## Experiment 7: Rename CEF helper apps
+
+Rename "WezTerm Helper" to "TermSurf Helper" in build scripts and source code.
+
+### Changes
+
+| File | Line | Change |
+|------|------|--------|
+| `ts3/scripts/build-debug.sh` | 90 | `WezTerm Helper` → `TermSurf Helper` (dst path) |
+| `ts3/scripts/build-debug.sh` | 93 | Comment: `WezTerm` → `TermSurf` |
+| `ts3/scripts/build-debug.sh` | 94 | sed: `WezTerm` → `TermSurf` |
+| `ts3/scripts/build-debug.sh` | 96 | `WezTerm Helper` → `TermSurf Helper` (mv) |
+| `ts3/scripts/build-release.sh` | 90 | `WezTerm Helper` → `TermSurf Helper` (dst path) |
+| `ts3/scripts/build-release.sh` | 93 | Comment: `WezTerm` → `TermSurf` |
+| `ts3/scripts/build-release.sh` | 94 | sed: `WezTerm` → `TermSurf` |
+| `ts3/scripts/build-release.sh` | 96 | `WezTerm Helper` → `TermSurf Helper` (mv) |
+| `ts3/termsurf-profile/src/main.rs` | 203 | `WezTerm Helper.app` → `TermSurf Helper.app` |
+| `ts3/termsurf-profile/src/main.rs` | 204 | `WezTerm Helper` → `TermSurf Helper` |
+| `ts3/termsurf-web/src/main.rs` | 298 | `WezTerm Helper.app` → `TermSurf Helper.app` |
+| `ts3/termsurf-web/src/main.rs` | 301 | `WezTerm Helper` → `TermSurf Helper` |
+
+### Verification
+
+```bash
+cd ts3 && ./scripts/build-debug.sh --open
+web google.com
+# Webview should render (CEF helper path must match)
+```
