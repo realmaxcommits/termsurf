@@ -183,10 +183,11 @@ impl crate::TermWindow {
         webgpu: &crate::termwindow::webgpu::WebGpuState,
         output_texture: &wgpu::Texture,
     ) -> anyhow::Result<()> {
-        log::info!(
-            "[RENDER-LOOP] render_webview_overlays_webgpu called at {:?}",
-            std::time::Instant::now()
-        );
+        // Issue 325, Experiment 2: Use same time base as XPC for comparison
+        use crate::termwindow::webview_xpc::GUI_START_TIME;
+        let gui_start = *GUI_START_TIME.get_or_init(std::time::Instant::now);
+        let render_time_ms = gui_start.elapsed().as_millis();
+        log::info!("[RENDER] t={}ms", render_time_ms);
 
         use crate::termwindow::webview_socket::get_server;
         use cef::osr_texture_import::iosurface::IOSurfaceImporter;

@@ -13,6 +13,8 @@
 use std::collections::HashMap;
 #[cfg(target_os = "macos")]
 use std::sync::{Arc, Mutex, OnceLock};
+#[cfg(target_os = "macos")]
+use std::time::Instant;
 
 #[cfg(target_os = "macos")]
 use mux::pane::PaneId;
@@ -23,6 +25,10 @@ use termsurf_xpc::*;
 // ============================================================================
 // Global XPC Manager
 // ============================================================================
+
+// Issue 325, Experiment 2: GUI start time for frame timing diagnostics
+#[cfg(target_os = "macos")]
+pub static GUI_START_TIME: OnceLock<Instant> = OnceLock::new();
 
 #[cfg(target_os = "macos")]
 static XPC_MANAGER: OnceLock<Arc<XpcManager>> = OnceLock::new();
@@ -197,6 +203,16 @@ impl XpcManager {
                         log::info!("[XPC Manager] Received action: {}", action);
 
                         if action == "display_surface" {
+                            // Issue 325, Experiment 2: Frame timing diagnostics
+                            let frame_id = msg.get_i64("frame_id");
+                            let tx_time_ms = msg.get_i64("tx_time_ms");
+                            let gui_start = *GUI_START_TIME.get_or_init(Instant::now);
+                            let rx_time_ms = gui_start.elapsed().as_millis() as i64;
+                            log::info!(
+                                "[FRAME-RX] frame={} tx={}ms rx={}ms",
+                                frame_id, tx_time_ms, rx_time_ms
+                            );
+
                             // Get the Mach port
                             let port = msg.copy_mach_send("iosurface_port");
                             let width = msg.get_i64("width") as u32;
@@ -208,28 +224,6 @@ impl XpcManager {
                             if port == 0 {
                                 log::error!("[XPC Manager] Received null Mach port");
                                 return;
-                            }
-
-                            log::info!(
-                                "[XPC Manager] Received IOSurface: port={}, size={}x{}",
-                                port,
-                                width,
-                                height
-                            );
-
-                            // Look up pane_id early for logging
-                            let pane_id_for_log = {
-                                let pending = manager.pending_sessions.lock().unwrap();
-                                pending.get(&session_id).copied()
-                            };
-                            if let Some(pid) = pane_id_for_log {
-                                log::info!(
-                                    "[TEXTURE-SIZE] pane={} size={}x{} timestamp={:?}",
-                                    pid,
-                                    width,
-                                    height,
-                                    std::time::SystemTime::now()
-                                );
                             }
 
                             // Look up pane_id from session
@@ -245,22 +239,12 @@ impl XpcManager {
                                     height,
                                     url: url.clone(),
                                 };
-                                log::info!(
-                                    "[XPC Manager] Surface URL: '{}'",
-                                    url
-                                );
 
                                 manager
                                     .received_surfaces
                                     .lock()
                                     .unwrap()
                                     .insert(pane_id, surface);
-
-                                log::info!(
-                                    "[XPC Manager] Stored surface for pane {} (session {})",
-                                    pane_id,
-                                    session_id
-                                );
 
                                 // Trigger window invalidate to display the new texture
                                 if let Some(callback) = manager
@@ -271,8 +255,8 @@ impl XpcManager {
                                     .cloned()
                                 {
                                     log::info!(
-                                        "[XPC Manager] Calling invalidate callback for pane {}",
-                                        pane_id
+                                        "[INVALIDATE] frame={} pane={} rx={}ms",
+                                        frame_id, pane_id, rx_time_ms
                                     );
                                     callback();
                                 }

@@ -17,10 +17,14 @@
 
 use clap::Parser;
 use std::collections::HashMap;
-use std::sync::atomic::AtomicU32;
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering as AtomicOrdering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
+
+// Issue 325, Experiment 2: Diagnostic logging for frame rate analysis
+static FRAME_COUNTER: AtomicU64 = AtomicU64::new(0);
+static PROFILE_START_TIME: OnceLock<Instant> = OnceLock::new();
 use termsurf_xpc::*;
 
 #[derive(Parser)]
@@ -268,17 +272,25 @@ fn run_profile_server(args: Args) {
     println!("Profile: Registered with launcher as '{}'", args.profile);
 
     // 9. Install Ctrl+C handler for clean shutdown
-    ctrlc::set_handler(|| {
-        println!("Profile: Ctrl+C, quitting...");
-        cef::quit_message_loop();
+    // Issue 325, Experiment 3: Use quit flag instead of quit_message_loop()
+    // because we're using a custom polling loop instead of run_message_loop()
+    let quit_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let quit_flag_handler = quit_flag.clone();
+    ctrlc::set_handler(move || {
+        println!("Profile: Ctrl+C, setting quit flag...");
+        quit_flag_handler.store(true, std::sync::atomic::Ordering::Relaxed);
     })
     .expect("Failed to set Ctrl+C handler");
 
-    // 10. Run CEF message loop (blocks until quit_message_loop)
-    // on_context_initialized fires during this loop, creating the initial browser.
-    // on_accelerated_paint fires when pages render, sending IOSurface to GUI.
-    println!("Profile: Running message loop...");
-    cef::run_message_loop();
+    // 10. Run CEF message loop with high-frequency polling
+    // Issue 325, Experiment 3: Replace run_message_loop() with polling loop.
+    // Hypothesis: run_message_loop() doesn't pump work fast enough for 60fps.
+    // Polling at ~1000Hz should allow CEF to render at its configured 60fps.
+    println!("Profile: Running message loop (polling mode)...");
+    while !quit_flag.load(std::sync::atomic::Ordering::Relaxed) {
+        cef::do_message_loop_work();
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
 
     // 11. Shutdown
     println!("Profile: Shutting down...");
@@ -458,6 +470,12 @@ mod cef_handlers {
                     return;
                 }
 
+                // Issue 325, Experiment 2: Frame timing diagnostics
+                let frame_id = crate::FRAME_COUNTER.fetch_add(1, crate::AtomicOrdering::Relaxed);
+                let start = *crate::PROFILE_START_TIME.get_or_init(std::time::Instant::now);
+                let tx_time_ms = start.elapsed().as_millis() as i64;
+                println!("[FRAME-TX] frame={} t={}ms", frame_id, tx_time_ms);
+
                 // Create Mach port from IOSurface handle
                 let port = termsurf_xpc::iosurface::create_mach_port(handle);
                 if port == 0 {
@@ -467,18 +485,6 @@ mod cef_handlers {
 
                 let width = info.extra.coded_size.width;
                 let height = info.extra.coded_size.height;
-                println!(
-                    "Profile: [{}] Sending IOSurface {}x{} (port={})",
-                    self.inner.state.session_id, width, height, port
-                );
-                println!(
-                    "[TEXTURE-TX] session={} iosurface={}x{} view_rect={}x{}",
-                    self.inner.state.session_id,
-                    width,
-                    height,
-                    self.inner.state.width.load(Ordering::Relaxed),
-                    self.inner.state.height.load(Ordering::Relaxed)
-                );
 
                 // Send to this browser's GUI connection via XPC
                 let msg = XpcDictionary::new();
@@ -487,6 +493,9 @@ mod cef_handlers {
                 msg.set_i64("width", width as i64);
                 msg.set_i64("height", height as i64);
                 msg.set_string("url", &self.inner.state.url.lock().unwrap());
+                // Issue 325, Experiment 2: Include frame timing in XPC message
+                msg.set_i64("frame_id", frame_id as i64);
+                msg.set_i64("tx_time_ms", tx_time_ms);
                 self.inner.state.gui.send(&msg);
             }
         }
