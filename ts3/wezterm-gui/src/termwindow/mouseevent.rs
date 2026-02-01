@@ -87,9 +87,10 @@ impl super::TermWindow {
             None => return,
         };
 
-        // Check for webview mouse event (issue 319)
+        // Check for webview mouse event (issue 319, 324 for cursor feedback)
         #[cfg(target_os = "macos")]
-        if self.handle_webview_mouse_event(&event) {
+        if let Some(cursor) = self.handle_webview_mouse_event(&event) {
+            context.set_cursor(Some(cursor));
             return; // Event consumed by webview
         }
 
@@ -1092,6 +1093,19 @@ fn modifiers_to_cef_flags(mods: ::window::Modifiers) -> u32 {
     flags
 }
 
+/// Convert CEF cursor type to WezTerm MouseCursor (issue 324).
+#[cfg(target_os = "macos")]
+fn cef_cursor_to_mouse_cursor(cef_type: i64) -> MouseCursor {
+    match cef_type {
+        0 => MouseCursor::Arrow,              // CT_POINTER
+        2 => MouseCursor::Hand,               // CT_HAND
+        3 => MouseCursor::Text,               // CT_IBEAM
+        6 | 8 => MouseCursor::SizeLeftRight,  // CT_EASTRESIZE, CT_WESTRESIZE
+        7 | 9 => MouseCursor::SizeUpDown,     // CT_NORTHRESIZE, CT_SOUTHRESIZE
+        _ => MouseCursor::Arrow,              // Default for unsupported
+    }
+}
+
 /// Check if mouse event is over a webview pane in Browse mode.
 /// Returns Some((pane_id, rel_x, rel_y, scale)) if so, None otherwise.
 /// Issue 319, experiment 1 (updated in experiment 5 with control panel offset logging).
@@ -1211,9 +1225,9 @@ impl super::TermWindow {
     }
 
     /// Handle mouse events for webview panes in Browse mode.
-    /// Returns true if the event was consumed.
-    /// Issue 319, experiment 1.
-    fn handle_webview_mouse_event(&mut self, event: &MouseEvent) -> bool {
+    /// Returns Some(cursor) if the event was consumed, None otherwise.
+    /// Issue 319, experiment 1. Updated issue 324 for cursor feedback.
+    fn handle_webview_mouse_event(&mut self, event: &MouseEvent) -> Option<MouseCursor> {
         use ::window::MouseEventKind as WMEK;
         use ::window::MousePress;
 
@@ -1222,7 +1236,7 @@ impl super::TermWindow {
             None => {
                 // Log when mouse is NOT over webview (could indicate boundary issues)
                 log::trace!("[MOUSE] Not over webview: coords=({}, {})", event.coords.x, event.coords.y);
-                return false;
+                return None;
             }
         };
 
@@ -1232,8 +1246,14 @@ impl super::TermWindow {
 
         let xpc_manager = match crate::termwindow::webview_xpc::get_xpc_manager() {
             Some(m) => m,
-            None => return false,
+            None => return None,
         };
+
+        // Issue 324: Get cursor from XPC manager
+        let cursor = xpc_manager
+            .get_cursor(pane_id)
+            .map(cef_cursor_to_mouse_cursor)
+            .unwrap_or(MouseCursor::Arrow);
 
         match &event.kind {
             WMEK::Move => {
@@ -1247,7 +1267,7 @@ impl super::TermWindow {
                     pane_id, cef_x, cef_y, modifiers
                 );
                 xpc_manager.send_mouse_move(pane_id, cef_x, cef_y, modifiers);
-                true
+                Some(cursor) // Issue 324: Return cursor for feedback
             }
             WMEK::Press(MousePress::Left) => {
                 // Issue 322: Track button state for drag selection
@@ -1266,7 +1286,7 @@ impl super::TermWindow {
                     pane_id, cef_x, cef_y, click_count, kb_modifiers
                 );
                 xpc_manager.send_mouse_click(pane_id, cef_x, cef_y, 0, false, click_count as i32, kb_modifiers);
-                true
+                Some(cursor)
             }
             WMEK::Release(MousePress::Left) => {
                 // Issue 322: Clear button state
@@ -1290,7 +1310,7 @@ impl super::TermWindow {
                     pane_id, cef_x, cef_y, click_count, kb_modifiers
                 );
                 xpc_manager.send_mouse_click(pane_id, cef_x, cef_y, 0, true, click_count as i32, kb_modifiers);
-                true
+                Some(cursor)
             }
             WMEK::VertWheel(amount) => {
                 // Issue 321, experiment 2: Smooth trackpad scrolling
@@ -1301,7 +1321,7 @@ impl super::TermWindow {
                     pane_id, amount, delta_y
                 );
                 xpc_manager.send_mouse_wheel(pane_id, cef_x, cef_y, 0, delta_y, 0);
-                true
+                Some(cursor)
             }
             WMEK::HorzWheel(amount) => {
                 // Issue 321, experiment 2: Smooth trackpad scrolling
@@ -1311,11 +1331,11 @@ impl super::TermWindow {
                     pane_id, amount, delta_x
                 );
                 xpc_manager.send_mouse_wheel(pane_id, cef_x, cef_y, delta_x, 0, 0);
-                true
+                Some(cursor)
             }
             other => {
                 log::debug!("[MOUSE] Ignored event: {:?}", other);
-                false // Let other events pass through for now
+                None // Let other events pass through for now
             }
         }
     }

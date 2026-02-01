@@ -90,6 +90,9 @@ pub struct XpcManager {
     /// Registered by TermWindow during first render of each pane.
     /// Called from XPC event handler to trigger redraw after texture receipt.
     invalidate_callbacks: Mutex<HashMap<PaneId, Arc<dyn Fn() + Send + Sync>>>,
+    /// Current cursor type per pane (CEF cursor type value).
+    /// Issue 324: Cursor feedback
+    webview_cursors: Mutex<HashMap<PaneId, i64>>,
 }
 
 #[cfg(target_os = "macos")]
@@ -117,6 +120,7 @@ impl XpcManager {
             peer_connections: Mutex::new(HashMap::new()),
             listeners: Mutex::new(Vec::new()),
             invalidate_callbacks: Mutex::new(HashMap::new()),
+            webview_cursors: Mutex::new(HashMap::new()),
         })
     }
 
@@ -278,6 +282,38 @@ impl XpcManager {
                                     session_id
                                 );
                             }
+                        } else if action == "cursor_change" {
+                            // Issue 324: Cursor feedback
+                            let cursor_type = msg.get_i64("cursor_type");
+                            log::info!(
+                                "[XPC Manager] Cursor change: session={} type={}",
+                                session_id, cursor_type
+                            );
+
+                            // Look up pane_id from session
+                            let pane_id = {
+                                let pending = manager.pending_sessions.lock().unwrap();
+                                pending.get(&session_id).copied()
+                            };
+
+                            if let Some(pane_id) = pane_id {
+                                manager
+                                    .webview_cursors
+                                    .lock()
+                                    .unwrap()
+                                    .insert(pane_id, cursor_type);
+
+                                // Trigger invalidation to update cursor on next mouse move
+                                if let Some(callback) = manager
+                                    .invalidate_callbacks
+                                    .lock()
+                                    .unwrap()
+                                    .get(&pane_id)
+                                    .cloned()
+                                {
+                                    callback();
+                                }
+                            }
                         }
                     }
                     Err(e) => {
@@ -335,6 +371,11 @@ impl XpcManager {
             .lock()
             .unwrap()
             .retain(|_, &mut pid| pid != pane_id);
+    }
+
+    /// Get the current cursor type for a pane (issue 324)
+    pub fn get_cursor(&self, pane_id: PaneId) -> Option<i64> {
+        self.webview_cursors.lock().unwrap().get(&pane_id).copied()
     }
 
     /// Send a command to the browser in the given pane

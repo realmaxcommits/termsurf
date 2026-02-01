@@ -385,10 +385,10 @@ mod cef_handlers {
         wrap_app, wrap_browser_process_handler, wrap_client, wrap_context_menu_handler,
         wrap_display_handler, wrap_render_handler, wrap_task, AcceleratedPaintInfo, App, Browser,
         BrowserProcessHandler, BrowserSettings, CefString, Client, ContextMenuHandler,
-        ContextMenuParams, DisplayHandler, Frame, ImplApp, ImplBrowser, ImplBrowserHost, ImplFrame,
-        ImplBrowserProcessHandler, ImplClient, ImplCommandLine, ImplContextMenuHandler,
-        ImplDisplayHandler, ImplMenuModel, ImplRenderHandler, ImplTask, MenuModel,
-        PaintElementType, Rect, RenderHandler, ScreenInfo, Task, WindowInfo, WrapApp,
+        ContextMenuParams, CursorInfo, CursorType, DisplayHandler, Frame, ImplApp, ImplBrowser,
+        ImplBrowserHost, ImplFrame, ImplBrowserProcessHandler, ImplClient, ImplCommandLine,
+        ImplContextMenuHandler, ImplDisplayHandler, ImplMenuModel, ImplRenderHandler, ImplTask,
+        MenuModel, PaintElementType, Rect, RenderHandler, ScreenInfo, Task, WindowInfo, WrapApp,
         WrapBrowserProcessHandler, WrapClient, WrapContextMenuHandler, WrapDisplayHandler,
         WrapRenderHandler, WrapTask,
     };
@@ -553,6 +553,28 @@ mod cef_handlers {
                     println!("Profile: URL changed to '{}'", url_str);
                     *self.inner.state.url.lock().unwrap() = url_str;
                 }
+            }
+
+            // Issue 324: Cursor feedback
+            fn on_cursor_change(
+                &self,
+                _browser: Option<&mut Browser>,
+                _cursor: *mut u8,
+                type_: CursorType,
+                _custom_cursor_info: Option<&CursorInfo>,
+            ) -> ::std::os::raw::c_int {
+                // Convert CursorType to i64 for XPC
+                let cef_type: cef::sys::cef_cursor_type_t = type_.into();
+                let cursor_type = cef_type as i64;
+                println!("Profile: Cursor changed to type {}", cursor_type);
+
+                // Send to GUI via XPC
+                let msg = XpcDictionary::new();
+                msg.set_string("action", "cursor_change");
+                msg.set_i64("cursor_type", cursor_type);
+                self.inner.state.gui.send(&msg);
+
+                0 // Return value not used
             }
         }
     }
