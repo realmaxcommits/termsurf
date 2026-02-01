@@ -714,6 +714,121 @@ cat /tmp/termsurf-gui.log | grep "Removed connection"
 
 **Result: Success.** One-line fix works as expected.
 
+### Experiment 5: Fix Block Leak in termsurf-xpc
+
+**Goal:** Stop leaking Objective-C blocks when setting XPC event handlers.
+
+**Background:** Research revealed that `xpc_connection_set_event_handler` copies the
+block via `Block_copy()` internally. The current code unnecessarily leaks blocks:
+
+```rust
+// Current code (block.rs:46-52)
+let block = RcBlock::new(move |event| { ... });
+let block_ptr = RcBlock::into_raw(block);  // LEAK: +1 ref never released
+xpc_connection_set_event_handler(conn.as_raw(), block_ptr as *mut _);
+```
+
+This creates two references:
+1. Our leaked reference (via `into_raw`)
+2. XPC's copy (via `Block_copy`)
+
+When the connection is canceled, XPC releases its copy, but our leaked copy persists.
+
+**Research findings:**
+
+| Finding | Source |
+|---------|--------|
+| XPC copies blocks via `Block_copy` | [libxpc source](https://github.com/jceel/libxpc/blob/master/xpc_connection.c) |
+| `xpc_connection_cancel` releases handler blocks | [xpc_object man page](https://keith.github.io/xcode-man-pages/xpc_hash.3.html) |
+| RcBlock is ref-counted; safe to drop after passing to copying API | [block2 docs](https://docs.rs/block2/latest/block2/) |
+
+**Fix:** Pass a reference to the block, then let it drop normally. XPC has its own copy.
+
+**Changes:**
+
+1. **Update `set_event_handler`** (`ts3/termsurf-xpc/src/block.rs`)
+
+   Current code (lines 39-53):
+
+   ```rust
+   let handler = Arc::new(handler);
+
+   let block = RcBlock::new(move |event: ffi::xpc_object_t| {
+       let result = unsafe { XpcConnection::parse_event(event) };
+       handler(result);
+   });
+
+   // Leak the block to ensure it lives forever.
+   // This is necessary because XPC holds a reference to the block
+   // and we have no way to know when XPC is done with it.
+   let block_ptr = RcBlock::into_raw(block);
+
+   unsafe {
+       ffi::xpc_connection_set_event_handler(conn.as_raw(), block_ptr as *mut _);
+   }
+   ```
+
+   Change to:
+
+   ```rust
+   let handler = Arc::new(handler);
+
+   let block = RcBlock::new(move |event: ffi::xpc_object_t| {
+       let result = unsafe { XpcConnection::parse_event(event) };
+       handler(result);
+   });
+
+   // XPC copies the block via Block_copy(), so we can let ours drop.
+   // When the connection is canceled, XPC releases its copy.
+   unsafe {
+       ffi::xpc_connection_set_event_handler(
+           conn.as_raw(),
+           &*block as *const _ as *mut std::ffi::c_void,
+       );
+   }
+   // block drops here, decrementing ref count (XPC still has its copy)
+   ```
+
+2. **Update `set_new_connection_handler`** (same file, lines 101-125)
+
+   Same pattern: remove `into_raw()`, pass `&*block as *const _ as *mut _`.
+
+3. **Update doc comments** to remove outdated "leak" warnings.
+
+**Files to modify:**
+
+| File | Changes |
+|------|---------|
+| `ts3/termsurf-xpc/src/block.rs` | Remove `into_raw()` leaks, pass block references |
+
+**Verification:**
+
+```bash
+cd ts3 && cargo build
+
+# Run with memory profiler to verify no leak
+# (Manual verification - open/close many webviews, check memory growth)
+./scripts/build-debug.sh --open
+
+# Open and close 20+ webviews
+for i in {1..20}; do
+  web google.com
+  # Ctrl+C twice to close
+done
+
+# Memory should stabilize, not grow unbounded
+```
+
+**Success criteria:**
+
+- [ ] Blocks not leaked (no `into_raw()` calls)
+- [ ] XPC event handling still works (messages received)
+- [ ] Webview open/close still works
+- [ ] No crashes or memory corruption
+
+**Risk:** Medium. Changing block lifetime semantics could cause use-after-free if
+our understanding of XPC's `Block_copy` behavior is wrong. Careful testing required.
+
 ## Success Criteria
 
 - [x] Closing one webview does not affect other webviews
