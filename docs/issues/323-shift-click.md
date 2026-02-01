@@ -4,7 +4,7 @@ Extend text selection by Shift-clicking.
 
 ## Status
 
-Not started.
+**Complete.** Shift-click selection extension working.
 
 ## Product Requirements
 
@@ -164,11 +164,11 @@ WMEK::Press(MousePress::Left) => {
 
 ## Success Criteria
 
-- [ ] Shift-click extends existing selection
-- [ ] Extension works forwards and backwards
-- [ ] Works after double-click word selection
-- [ ] Works after triple-click line selection
-- [ ] Works after drag selection
+- [x] Shift-click extends existing selection
+- [x] Extension works forwards and backwards
+- [x] Works after double-click word selection
+- [x] Works after triple-click line selection
+- [x] Works after drag selection
 
 ## Next Steps (Other Mouse Input)
 
@@ -185,7 +185,7 @@ After Shift-click, these features remain:
 
 ### Experiment 1: Pass Keyboard Modifiers to Click Events
 
-**Status:** Not started
+**Status:** SUCCESS
 
 **Hypothesis:** Converting WezTerm's keyboard modifiers to CEF flags and passing
 them with click events will enable Shift-click selection extension.
@@ -301,11 +301,85 @@ tail -f /tmp/termsurf-gui.log | grep "\[MOUSE\]"
 
 #### Success Criteria
 
-- [ ] Log shows modifiers=0x2 when Shift is held during click
-- [ ] Shift-click after double-click extends selection
-- [ ] Shift-click after drag extends selection
-- [ ] Extension works forwards (click after selection)
-- [ ] Extension works backwards (click before selection)
+- [x] Log shows modifiers=0x2 when Shift is held during click
+- [x] Shift-click after double-click extends selection
+- [x] Shift-click after drag extends selection
+- [x] Extension works forwards (click after selection)
+- [x] Extension works backwards (click before selection)
+
+---
+
+## Conclusion
+
+### What Was Accomplished
+
+Shift-click selection extension for ts3 webviews is complete:
+
+1. **Modifier conversion** — Added `modifiers_to_cef_flags()` helper that converts
+   WezTerm's `Modifiers` bitmask to CEF event flags (Shift=0x02, Ctrl=0x04,
+   Alt=0x08, Cmd=0x80).
+
+2. **Click event modifiers** — Updated Press and Release handlers to include
+   keyboard modifiers in click events sent to CEF.
+
+3. **Selection extension** — Users can now Shift-click to extend selections made
+   by double-click, triple-click, or drag, in either direction.
+
+### What We Learned
+
+1. **Infrastructure was already there** — The `send_mouse_click` method already
+   accepted a modifiers parameter; we were just passing 0. A simple conversion
+   function was all that was needed.
+
+2. **CEF handles the logic** — Once CEF receives the Shift modifier with the
+   click event, it handles selection extension automatically. No anchor tracking
+   or range calculation needed on our side.
+
+3. **All modifiers now work** — By converting the full modifier set, we also
+   enabled Ctrl-click, Alt-click, and Cmd-click for future features like link
+   opening or context menus.
+
+### Implementation Summary
+
+```
+Shift-Click Flow:
+
+User holds Shift + clicks
+    │
+    ▼
+MouseEvent with modifiers.contains(SHIFT)
+    │
+    ▼
+modifiers_to_cef_flags() → 0x02
+    │
+    ▼
+send_mouse_click(..., modifiers=0x02)
+    │
+    ▼
+CEF extends selection to click point
+```
+
+### Files Modified
+
+| File | Changes |
+|------|---------|
+| `mouseevent.rs` | Added `modifiers_to_cef_flags()`, updated Press/Release handlers |
+
+### What's Next
+
+With Shift-click complete, the remaining mouse input features are:
+
+| Feature | Priority | Notes |
+|---------|----------|-------|
+| Cmd-click | Medium | Open links in new tab (modifier now passed, needs link detection) |
+| Right-click | Medium | Context menus |
+| Middle-click | Low | Paste or open in new tab |
+| Cursor feedback | Low | Change cursor shape over links, text |
+
+Recommended next issue: **324-right-click** for context menu support, or
+**Cmd-click link handling** if link detection is already working.
+
+---
 
 ## References
 
