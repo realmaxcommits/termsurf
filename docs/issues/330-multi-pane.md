@@ -228,23 +228,78 @@ cat /tmp/termsurf-gui.log | grep "Removing connection"
 
 **Success criteria:**
 
-- [ ] Logs clearly show which connection ID receives each disconnect
-- [ ] Can determine if both connections genuinely error or if it's a double-call
-- [ ] Identify root cause for further experiments
+- [x] Logs clearly show which connection ID receives each disconnect
+- [x] Can determine if both connections genuinely error or if it's a double-call
+- [x] Identify root cause for further experiments
 
-**Expected outcome:** The logs will reveal whether:
+**Result: Success.** The diagnostic logging revealed the root cause.
 
-- CONN-0 and CONN-1 both receive genuine XPC errors (library/OS issue)
-- Only CONN-1 should disconnect but CONN-0's handler fires too (shared state)
-- The error handler is being called twice for the same connection (bug)
+**Observed logs:**
+
+Profile server:
+
+```
+[CONN-0] Creating GUI connection for session pane-0-29793
+[CONN-0] GUI connection established (total: 1)
+[CONN-1] Creating GUI connection for session pane-1-29793
+[CONN-1] GUI connection established (total: 2)
+[CONN-1] GUI disconnected (remaining: 1)
+[CONN-1] GUI disconnected (remaining: 0)   <- Same CONN-1, not CONN-0!
+[CONN-1] No more GUI connections, exiting gracefully
+```
+
+GUI:
+
+```
+13:41:33.225  [XPC] Removing connection for pane 1: 0xa82008750 (dropping Arc)
+13:41:33.225  ERROR Connection error: XPC connection invalid
+13:41:33.293  New connection for session pane-1-29793   <- Mystery reconnection
+13:41:33.383  ERROR Connection error: XPC connection invalid
+```
+
+**Conclusion:**
+
+The bug is **not** that both CONN-0 and CONN-1 receive errors. Instead, **CONN-1's
+error handler fires twice**. Both disconnect messages show `[CONN-1]`.
+
+The sequence of events:
+
+1. GUI drops `Arc<XpcConnection>` for pane 1
+2. XPC invalidates the connection
+3. Profile server's CONN-1 error handler fires (count: 2 → 1)
+4. Something triggers a reconnection attempt to pane-1's listener
+5. GUI accepts this new connection (listener is still alive in `Vec<XpcListener>`)
+6. This new connection immediately fails
+7. CONN-1's error handler fires again (count: 1 → 0)
+8. Profile server exits
+
+Two issues identified:
+
+1. **Listeners are never cleaned up** — The GUI stores listeners in a
+   `Vec<XpcListener>` that's never pruned. When a webview closes, its listener
+   remains active and accepts spurious reconnection attempts.
+
+2. **Double error callback** — The same connection's error handler is invoked
+   twice, possibly because XPC sends multiple invalidation events or because the
+   reconnection attempt reuses the same handler closure.
+
+**Next step:** Experiment 2 should focus on listener cleanup — removing the
+listener when a webview closes to prevent spurious reconnections.
+
+### Experiment 2: Listener Cleanup
+
+**Goal:** Clean up XPC listeners when webviews close to prevent spurious
+reconnections.
+
+**Hypothesis:** The mystery reconnection occurs because the listener for pane 1
+remains active after the webview closes. By removing the listener when the
+webview closes, we can prevent the reconnection and the double error callback.
 
 ### Future Experiments
 
-**Experiment 2: Delay Connection Removal** — Test if timing affects the issue by
-adding a delay before dropping the connection.
-
-**Experiment 3: Listener Lifecycle** — Investigate whether XPC listeners need
-cleanup when webviews close.
+**Experiment 3: Idempotent Error Handler** — If listener cleanup doesn't fully
+solve the issue, make the error handler idempotent by tracking whether it has
+already fired for a given connection.
 
 **Experiment 4: Separate Endpoints** — Test if using completely separate XPC
 mechanisms for each browser avoids the issue.
