@@ -74,9 +74,11 @@ cd ts3 && ./scripts/build-debug.sh --open
 
 ---
 
-## Experiment 3: Rename menu bar items
+## Experiment 3: Rename menu bar items ✓
 
 Rename "WezTerm" to "TermSurf" in macOS menu bar.
+
+**Status: Success**
 
 ### Changes
 
