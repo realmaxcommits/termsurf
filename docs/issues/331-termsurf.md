@@ -52,9 +52,11 @@ cd ts3 && ./scripts/build-debug.sh --open
 
 ---
 
-## Experiment 2: Rename app bundle
+## Experiment 2: Rename app bundle ✓
 
 Rename `wezterm-gui.app` to `termsurf-gui.app`.
+
+**Status: Success**
 
 ### Changes
 
