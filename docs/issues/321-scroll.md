@@ -203,7 +203,182 @@ After scroll, these features remain for full mouse support:
 
 ## Experiments
 
-_No experiments yet._
+### Experiment 1: Basic Scroll Pipeline
+
+**Status:** Not started
+
+**Hypothesis:** Adding scroll event handling through the existing XPC pipeline
+will enable CEF to receive scroll input and scroll page content.
+
+**Approach:** Follow the same pattern as mouse click (issue 319): add XPC method,
+handle events in GUI, create CEF task in profile server.
+
+#### 1a. Add XPC Method (webview_xpc.rs)
+
+Add `send_mouse_wheel` method after `send_mouse_click`:
+
+```rust
+/// Send mouse wheel event to the browser (issue 321, experiment 1)
+pub fn send_mouse_wheel(
+    &self,
+    pane_id: PaneId,
+    x: i32,
+    y: i32,
+    delta_x: i32,
+    delta_y: i32,
+    modifiers: u32,
+) -> bool {
+    let msg = XpcDictionary::new();
+    msg.set_string("action", "mouse_wheel");
+    msg.set_i64("x", x as i64);
+    msg.set_i64("y", y as i64);
+    msg.set_i64("delta_x", delta_x as i64);
+    msg.set_i64("delta_y", delta_y as i64);
+    msg.set_i64("modifiers", modifiers as i64);
+
+    if self.send_command(pane_id, &msg) {
+        log::debug!(
+            "[XPC] Sent mouse_wheel to pane {}: ({}, {}) delta=({}, {})",
+            pane_id, x, y, delta_x, delta_y
+        );
+        true
+    } else {
+        false
+    }
+}
+```
+
+#### 1b. Handle Scroll Events (mouseevent.rs)
+
+Add cases for `VertWheel` and `HorzWheel` in `handle_webview_mouse_event()`:
+
+```rust
+WMEK::VertWheel(amount) => {
+    // CEF expects delta in "wheel ticks" where 120 = 1 line
+    // WezTerm amount is already scaled appropriately
+    let delta_y = amount * 120;
+    log::info!(
+        "[MOUSE] VertWheel pane={} cef=({}, {}) amount={} delta_y={}",
+        pane_id, cef_x, cef_y, amount, delta_y
+    );
+    xpc_manager.send_mouse_wheel(pane_id, cef_x, cef_y, 0, delta_y, 0);
+    true
+}
+WMEK::HorzWheel(amount) => {
+    let delta_x = amount * 120;
+    log::info!(
+        "[MOUSE] HorzWheel pane={} cef=({}, {}) amount={} delta_x={}",
+        pane_id, cef_x, cef_y, amount, delta_x
+    );
+    xpc_manager.send_mouse_wheel(pane_id, cef_x, cef_y, delta_x, 0, 0);
+    true
+}
+```
+
+#### 1c. Add MouseWheelTask (termsurf-profile/main.rs)
+
+Add task struct after `MouseClickTask`:
+
+```rust
+wrap_task! {
+    pub struct MouseWheelTask {
+        state: Arc<BrowserState>,
+        x: i32,
+        y: i32,
+        delta_x: i32,
+        delta_y: i32,
+        modifiers: u32,
+    }
+
+    impl Task {
+        fn execute(&self) {
+            println!("[MOUSE-TASK] MouseWheelTask::execute() called");
+
+            let browser_guard = self.state.browser.lock().unwrap();
+            let Some(browser) = browser_guard.as_ref() else {
+                println!("[MOUSE-TASK] FAIL: browser is None");
+                return;
+            };
+
+            let Some(host) = browser.host() else {
+                println!("[MOUSE-TASK] FAIL: browser.host() is None");
+                return;
+            };
+            println!("[MOUSE-TASK] Host obtained, calling send_mouse_wheel_event");
+
+            let mouse_event = cef::MouseEvent {
+                x: self.x,
+                y: self.y,
+                modifiers: self.modifiers,
+            };
+            host.send_mouse_wheel_event(
+                Some(&mouse_event),
+                self.delta_x,
+                self.delta_y,
+            );
+            println!("[MOUSE-TASK] send_mouse_wheel_event returned");
+        }
+    }
+}
+```
+
+#### 1d. Add Handler for mouse_wheel Action
+
+In the XPC event handler, add case after `mouse_click`:
+
+```rust
+"mouse_wheel" => {
+    println!("[MOUSE] mouse_wheel handler entered");
+
+    let state_guard = deferred_for_handler.lock().unwrap();
+    let Some(bs) = state_guard.as_ref() else {
+        println!("[MOUSE] FAIL: deferred_for_handler is None");
+        return;
+    };
+
+    let x = msg.get_i64("x") as i32;
+    let y = msg.get_i64("y") as i32;
+    let delta_x = msg.get_i64("delta_x") as i32;
+    let delta_y = msg.get_i64("delta_y") as i32;
+    let modifiers = msg.get_i64("modifiers") as u32;
+    println!(
+        "[MOUSE] mouse_wheel coords: ({}, {}) delta=({}, {})",
+        x, y, delta_x, delta_y
+    );
+
+    let bs = Arc::clone(bs);
+    drop(state_guard);
+
+    let mut task = MouseWheelTask::new(bs, x, y, delta_x, delta_y, modifiers);
+    println!("[MOUSE] Calling post_task for MouseWheelTask");
+    cef::post_task(cef::ThreadId::UI, Some(&mut task));
+    println!("[MOUSE] post_task returned");
+}
+```
+
+#### Verification
+
+```bash
+cd ts3 && ./scripts/build-debug.sh --open
+
+# Test 1: Trackpad scroll
+web google.com
+# Two-finger scroll gesture on trackpad
+# Watch logs for scroll events
+
+tail -f /tmp/termsurf-gui.log | grep "\[MOUSE\].*Wheel"
+tail -f /tmp/termsurf-profile-*.log | grep "\[MOUSE\]"
+
+# Expected: Page scrolls, logs show delta values
+```
+
+#### Success Criteria
+
+- [ ] Log shows VertWheel/HorzWheel events received in GUI
+- [ ] Log shows mouse_wheel action received in profile server
+- [ ] Log shows send_mouse_wheel_event called in CEF task
+- [ ] Page content scrolls when using trackpad gesture
+- [ ] Scroll direction feels correct (natural scrolling)
 
 ## References
 
