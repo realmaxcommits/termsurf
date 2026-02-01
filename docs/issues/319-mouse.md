@@ -645,6 +645,218 @@ The profile logs show repeated "XPC connection interrupted" errors and unexpecte
    test message on click and verify it arrives. Remove all the coordinate
    transformation and throttling to isolate the core IPC issue.
 
+---
+
+## Experiment 2: Diagnostic Logging
+
+**Status: Not started**
+
+Add comprehensive logging to trace exactly where mouse events are lost in the
+XPC pipeline. The goal is to determine whether messages are:
+1. Not being sent by GUI
+2. Sent but not arriving at profile
+3. Arriving but not being handled
+
+### Goal
+
+Understand why keyboard events work via `send_command()` but mouse events don't.
+Produce log output that pinpoints the failure location.
+
+### Files to Modify
+
+| File | Changes |
+|------|---------|
+| `ts3/wezterm-gui/src/termwindow/webview_xpc.rs` | Log connection state on send |
+| `ts3/termsurf-profile/src/main.rs` | Log all incoming XPC messages before parsing |
+
+### Part 1: GUI-Side Logging (webview_xpc.rs)
+
+**1a. Add connection state logging in `send_command`**
+
+Find the `send_command` method and add logging before the send:
+
+```rust
+fn send_command(&self, pane_id: PaneId, msg: &XpcDictionary) -> bool {
+    let connections = self.peer_connections.lock().unwrap();
+    let Some(conn) = connections.get(&pane_id) else {
+        log::warn!("[XPC] No connection for pane {}", pane_id);
+        return false;
+    };
+
+    // NEW: Log connection pointer and message action for debugging
+    let action = msg.get_string("action").unwrap_or("unknown");
+    log::info!(
+        "[XPC-SEND] pane={} action={} conn={:p}",
+        pane_id, action, conn.as_ptr()
+    );
+
+    conn.send(msg);
+    true
+}
+```
+
+**1b. Log connection storage in `handle_new_connection`**
+
+When storing a new connection, log its pointer:
+
+```rust
+// In handle_new_connection, after inserting into peer_connections:
+log::info!(
+    "[XPC-CONN] Stored connection for pane {}: {:p}",
+    pane_id, conn.as_ptr()
+);
+```
+
+**1c. Log when connection is replaced**
+
+If a connection already exists for a pane, log that it's being replaced:
+
+```rust
+// In handle_new_connection, before inserting:
+if let Some(old_conn) = peer_connections.get(&pane_id) {
+    log::warn!(
+        "[XPC-CONN] Replacing connection for pane {}: old={:p} new={:p}",
+        pane_id, old_conn.as_ptr(), conn.as_ptr()
+    );
+}
+peer_connections.insert(pane_id, conn);
+```
+
+### Part 2: Profile-Side Logging (main.rs)
+
+**2a. Log ALL incoming messages at handler entry**
+
+At the very first line of the XPC event handler, before any action matching:
+
+```rust
+// In the XPC event_handler closure, first thing:
+let action = msg.get_string("action").unwrap_or("none");
+log::info!("[XPC-RECV] Received message: action={}", action);
+
+// Then the existing match on action...
+match action.as_deref() {
+    // ...
+}
+```
+
+**2b. Add catch-all logging for unhandled actions**
+
+In the action match, add a default case:
+
+```rust
+match action.as_deref() {
+    Some("create_browser") => { /* existing */ }
+    Some("key_event") => { /* existing */ }
+    Some("mouse_move") => { /* existing */ }
+    Some("mouse_click") => { /* existing */ }
+    // ... other cases ...
+    other => {
+        log::warn!("[XPC-RECV] Unhandled action: {:?}", other);
+    }
+}
+```
+
+**2c. Log connection events**
+
+Add logging for connection lifecycle:
+
+```rust
+// In XPC listener setup, after creating the connection handler:
+log::info!("[XPC] Event handler registered on connection");
+
+// If there are connection error callbacks:
+// log::error!("[XPC] Connection error: ...");
+```
+
+### Part 3: Test Procedure
+
+```bash
+cd ts3 && ./scripts/build-debug.sh --open
+
+# Terminal 1: Watch GUI logs
+tail -f /tmp/termsurf-gui.log | grep -E "\[XPC-(SEND|CONN)\]"
+
+# Terminal 2: Watch profile logs
+tail -f /tmp/termsurf-profile-*.log | grep -E "\[XPC-RECV\]"
+
+# Terminal 3: Run TermSurf
+# 1. Start TermSurf
+# 2. Type: web google.com
+# 3. Wait for page to load
+# 4. Move mouse over the webview
+# 5. Click once on a link
+
+# After test, examine both log outputs
+```
+
+### Expected Log Patterns
+
+**If messages are being sent but not received:**
+```
+# GUI log shows:
+[XPC-SEND] pane=0 action=mouse_move conn=0x12345678
+[XPC-SEND] pane=0 action=mouse_move conn=0x12345678
+
+# Profile log shows nothing, or only:
+[XPC-RECV] Received message: action=create_browser
+# No mouse_move entries
+```
+
+**If connection is being replaced:**
+```
+# GUI log shows:
+[XPC-CONN] Stored connection for pane 0: 0x12345678
+[XPC-CONN] Replacing connection for pane 0: old=0x12345678 new=0xABCDEF00
+[XPC-SEND] pane=0 action=mouse_move conn=0xABCDEF00
+
+# Profile's handler may still be on 0x12345678 (the old connection)
+```
+
+**If messages arrive but aren't handled:**
+```
+# Profile log shows:
+[XPC-RECV] Received message: action=mouse_move
+# But no further processing logs from MouseMoveTask
+```
+
+**If everything works (baseline with keyboard):**
+```
+# GUI log:
+[XPC-SEND] pane=0 action=key_event conn=0x12345678
+
+# Profile log:
+[XPC-RECV] Received message: action=key_event
+```
+
+### Analysis Guide
+
+| GUI Log | Profile Log | Diagnosis |
+|---------|-------------|-----------|
+| SEND appears | RECV appears | Handler bug (action parsing) |
+| SEND appears | No RECV | XPC transport issue |
+| CONN replaced | No RECV | Handler on wrong connection |
+| No SEND | — | GUI interception bug |
+
+### Success Criteria
+
+- [ ] Can trace the full path of a keyboard event (control)
+- [ ] Can see where mouse events diverge from keyboard
+- [ ] Logs reveal whether messages arrive at profile
+- [ ] Connection pointer logging reveals any mismatch
+
+### Next Steps After Diagnosis
+
+Based on what the logs reveal:
+
+1. **If messages don't arrive**: Focus on XPC connection management. May need
+   to re-register handlers on connection replacement.
+
+2. **If messages arrive but aren't handled**: Check action string matching,
+   possibly encoding issue or typo.
+
+3. **If connection is replaced**: Need to either prevent replacement or
+   re-register the event handler on the new connection.
+
 ## References
 
 - `docs/issues/317-input.md` — Keyboard input (completed)
