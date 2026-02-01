@@ -896,6 +896,269 @@ not at the critical decision points inside the handlers:
 A deeper experiment would need logging at each of these stages to pinpoint where
 the chain breaks.
 
+---
+
+## Experiment 3: Deep Handler Logging
+
+**Status: Not started**
+
+Add logging at every decision point in the mouse event handler chain. Experiment 2
+showed messages arrive at `[XPC-RECV]` but gave no visibility into what happens next.
+This experiment adds logging inside the handlers to trace the complete execution path.
+
+### Goal
+
+Determine exactly where mouse event handling fails:
+- Does `deferred_for_handler` contain a valid BrowserState?
+- Does `post_task` get called?
+- Does the task's `execute()` method run?
+- Does CEF's `send_mouse_*_event()` get called?
+
+### Files to Modify
+
+| File | Changes |
+|------|---------|
+| `ts3/termsurf-profile/src/main.rs` | Add logging inside action handlers and tasks |
+
+### Part 1: Handler Entry Logging
+
+In the XPC event handler, add logging inside each mouse action case BEFORE checking
+`deferred_for_handler`:
+
+```rust
+"mouse_move" => {
+    println!("[MOUSE] mouse_move handler entered");
+
+    let state_guard = deferred_for_handler.lock().unwrap();
+    let Some(bs) = state_guard.as_ref() else {
+        println!("[MOUSE] FAIL: deferred_for_handler is None");
+        return;
+    };
+    println!("[MOUSE] BrowserState available, posting task");
+
+    let x = msg.get_i64("x") as i32;
+    let y = msg.get_i64("y") as i32;
+    let modifiers = msg.get_i64("modifiers") as u32;
+    println!("[MOUSE] mouse_move coords: ({}, {}) mods={}", x, y, modifiers);
+
+    let bs = Arc::clone(bs);
+    drop(state_guard);
+
+    let mut task = MouseMoveTask::new(bs, x, y, modifiers);
+    println!("[MOUSE] Calling post_task for MouseMoveTask");
+    cef::post_task(cef::ThreadId::UI, Some(&mut task));
+    println!("[MOUSE] post_task returned");
+}
+"mouse_click" => {
+    println!("[MOUSE] mouse_click handler entered");
+
+    let state_guard = deferred_for_handler.lock().unwrap();
+    let Some(bs) = state_guard.as_ref() else {
+        println!("[MOUSE] FAIL: deferred_for_handler is None");
+        return;
+    };
+    println!("[MOUSE] BrowserState available, posting task");
+
+    let x = msg.get_i64("x") as i32;
+    let y = msg.get_i64("y") as i32;
+    let button = msg.get_i64("button") as u32;
+    let is_up = msg.get_bool("is_up");
+    let click_count = msg.get_i64("click_count") as i32;
+    let modifiers = msg.get_i64("modifiers") as u32;
+    println!(
+        "[MOUSE] mouse_click coords: ({}, {}) btn={} up={} count={}",
+        x, y, button, is_up, click_count
+    );
+
+    let bs = Arc::clone(bs);
+    drop(state_guard);
+
+    let mut task = MouseClickTask::new(bs, x, y, button, is_up, click_count, modifiers);
+    println!("[MOUSE] Calling post_task for MouseClickTask");
+    cef::post_task(cef::ThreadId::UI, Some(&mut task));
+    println!("[MOUSE] post_task returned");
+}
+```
+
+### Part 2: Task Execution Logging
+
+Add logging inside the task `execute()` methods:
+
+**MouseMoveTask:**
+
+```rust
+fn execute(&self) {
+    println!("[MOUSE-TASK] MouseMoveTask::execute() called");
+
+    let browser_guard = self.state.browser.lock().unwrap();
+    let Some(browser) = browser_guard.as_ref() else {
+        println!("[MOUSE-TASK] FAIL: browser is None");
+        return;
+    };
+    println!("[MOUSE-TASK] Browser obtained");
+
+    let Some(host) = browser.host() else {
+        println!("[MOUSE-TASK] FAIL: browser.host() is None");
+        return;
+    };
+    println!("[MOUSE-TASK] Host obtained, calling send_mouse_move_event");
+
+    let mouse_event = cef::MouseEvent {
+        x: self.x,
+        y: self.y,
+        modifiers: self.modifiers,
+    };
+    host.send_mouse_move_event(Some(&mouse_event), 0);
+    println!("[MOUSE-TASK] send_mouse_move_event returned");
+}
+```
+
+**MouseClickTask:**
+
+```rust
+fn execute(&self) {
+    println!("[MOUSE-TASK] MouseClickTask::execute() called");
+
+    let browser_guard = self.state.browser.lock().unwrap();
+    let Some(browser) = browser_guard.as_ref() else {
+        println!("[MOUSE-TASK] FAIL: browser is None");
+        return;
+    };
+    println!("[MOUSE-TASK] Browser obtained");
+
+    let Some(host) = browser.host() else {
+        println!("[MOUSE-TASK] FAIL: browser.host() is None");
+        return;
+    };
+    println!("[MOUSE-TASK] Host obtained, calling send_mouse_click_event");
+
+    let mouse_event = cef::MouseEvent {
+        x: self.x,
+        y: self.y,
+        modifiers: self.modifiers,
+    };
+    let button_type = match self.button {
+        0 => cef::MouseButtonType::MBT_LEFT,
+        1 => cef::MouseButtonType::MBT_MIDDLE,
+        2 => cef::MouseButtonType::MBT_RIGHT,
+        _ => cef::MouseButtonType::MBT_LEFT,
+    };
+    let mouse_up = if self.is_up { 1 } else { 0 };
+    host.send_mouse_click_event(
+        Some(&mouse_event),
+        button_type,
+        mouse_up,
+        self.click_count,
+    );
+    println!("[MOUSE-TASK] send_mouse_click_event returned");
+}
+```
+
+### Part 3: Control Comparison
+
+Add identical logging to the keyboard handler to establish a working baseline:
+
+```rust
+"key_event" => {
+    println!("[KEY] key_event handler entered");
+
+    let state_guard = deferred_for_handler.lock().unwrap();
+    let Some(bs) = state_guard.as_ref() else {
+        println!("[KEY] FAIL: deferred_for_handler is None");
+        return;
+    };
+    println!("[KEY] BrowserState available, posting task");
+
+    // ... existing key event handling ...
+
+    println!("[KEY] post_task returned");
+}
+```
+
+### Test Procedure
+
+```bash
+cd ts3 && ./scripts/build-debug.sh --open
+
+# Terminal 1: Watch profile logs for mouse events
+tail -f /tmp/termsurf-profile-*.log | grep -E "\[(MOUSE|KEY)"
+
+# Terminal 2: Run TermSurf
+# 1. Type: web google.com
+# 2. Wait for page to load
+# 3. Type a few characters (keyboard control test)
+# 4. Move mouse over the webview
+# 5. Click once
+
+# After test, analyze the full log sequence
+```
+
+### Expected Log Patterns
+
+**Pattern A: Handler never entered (action matching failed)**
+```
+[XPC-RECV] Received message: action=mouse_move
+# No [MOUSE] handler entered log follows
+```
+
+**Pattern B: BrowserState not available**
+```
+[XPC-RECV] Received message: action=mouse_move
+[MOUSE] mouse_move handler entered
+[MOUSE] FAIL: deferred_for_handler is None
+```
+
+**Pattern C: Task not executed (post_task failed or task dropped)**
+```
+[XPC-RECV] Received message: action=mouse_move
+[MOUSE] mouse_move handler entered
+[MOUSE] BrowserState available, posting task
+[MOUSE] Calling post_task for MouseMoveTask
+[MOUSE] post_task returned
+# No [MOUSE-TASK] MouseMoveTask::execute() called
+```
+
+**Pattern D: Browser/Host unavailable**
+```
+[MOUSE-TASK] MouseMoveTask::execute() called
+[MOUSE-TASK] FAIL: browser is None
+```
+
+**Pattern E: Everything works (expected for keyboard)**
+```
+[KEY] key_event handler entered
+[KEY] BrowserState available, posting task
+[KEY] post_task returned
+[KEY-TASK] KeyTask::execute() called
+[KEY-TASK] send_key_event returned
+```
+
+### Analysis Guide
+
+| Log Sequence | Diagnosis | Fix Direction |
+|--------------|-----------|---------------|
+| No handler log | Action string mismatch | Check action parsing |
+| deferred_for_handler is None | BrowserState not initialized | Check initialization timing |
+| No task execute log | post_task failing | Check CEF thread state |
+| browser is None | Browser not created yet | Check creation timing |
+| host is None | Browser destroyed | Check lifecycle management |
+| All logs present but CEF silent | CEF API issue | Check CEF event format |
+
+### Success Criteria
+
+- [ ] Can trace keyboard events through entire chain (control)
+- [ ] Can identify exact failure point for mouse events
+- [ ] Logs clearly show which pattern matches our failure
+
+### Next Steps After Diagnosis
+
+Based on which pattern emerges:
+
+1. **Pattern A**: Debug action string matching — possibly encoding issue or whitespace
+2. **Pattern B**: Debug BrowserState initialization timing — deferred_for_handler may be set too late
+3. **Pattern C**: Debug CEF task posting — UI thread may not be running or task may be dropped
+4. **Pattern D/E (browser/host None)**: Debug browser lifecycle — timing issue between creation and first mouse event
+
 ## References
 
 - `docs/issues/317-input.md` — Keyboard input (completed)
