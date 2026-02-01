@@ -5,7 +5,8 @@ creating orphaned background processes.
 
 ## Status
 
-Not started.
+Experiment 1 partial success — profile server exits on GUI disconnect, but
+launcher remains running. Experiment 2 needed for launcher.
 
 ## Problem
 
@@ -218,6 +219,51 @@ cat /tmp/termsurf-profile-*.log | tail -10
 # Repeat Test 1 several times
 # Expected: No accumulation of orphaned processes
 ```
+
+**Status:** Partial success.
+
+**Result:** Profile server now exits when GUI disconnects. However, the launcher
+process remains running.
+
+**Implementation notes:**
+
+- Added global `QUIT_FLAG` static (couldn't use local variable in closure)
+- Updated Ctrl+C handler and main loop to use `QUIT_FLAG`
+- Event handler detects `ConnectionInterrupted`/`ConnectionInvalid` and sets flag
+- Profile exits within ~1ms of GUI disconnect (polling loop detects flag)
+
+**What worked:**
+
+- Profile server exits gracefully when GUI closes
+- Logs show "GUI disconnected, exiting gracefully" followed by "Shutting down..."
+- CEF shutdown is clean (no crashes)
+
+**What didn't work:**
+
+- Launcher remains running after GUI exits
+- This blocks development iteration — launcher code changes require manual `pkill`
+
+**Why launcher stays running:**
+
+The launcher is a Mach service designed to serve multiple GUI instances. It has
+no "quit on disconnect" logic. Unlike the profile server (which has a direct
+XPC connection to the GUI), the launcher's connection model is different — GUIs
+connect to it, not the other way around.
+
+**Next steps:**
+
+Add similar disconnect detection to the launcher. When the GUI disconnects from
+the launcher, and there are no remaining connections, the launcher should exit.
+
+### Experiment 2: Launcher Exits on GUI Disconnect
+
+**Goal:** Make the launcher exit when all GUI connections disconnect.
+
+**Hypothesis:** The launcher receives XPC connection events. When a GUI
+disconnects and no other GUIs are connected, the launcher should exit.
+
+**Approach:** Track active GUI connections in the launcher. On disconnect, check
+if any connections remain. If not, exit.
 
 **Status:** Not started.
 
