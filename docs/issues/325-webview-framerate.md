@@ -4,8 +4,7 @@ Webview content does not refresh at 60fps, causing visible lag.
 
 ## Status
 
-Experiment 1 complete (partial success). Dedup removed, but lag persists. Root
-cause still unknown.
+Experiment 2 designed. Ready to add diagnostic logging to identify bottleneck.
 
 ## Product Requirements
 
@@ -328,6 +327,107 @@ println!("[RENDER] t={:?}", Instant::now());
 ```
 
 Compare timestamps to see where time is lost.
+
+### Experiment 2: Diagnostic Logging
+
+**Goal:** Identify where time is lost in the frame pipeline by adding timestamps
+at each stage.
+
+**Approach:** Add frame counter and timestamp logging to measure latency between
+each stage of the pipeline:
+
+```
+CEF paint → XPC send → XPC receive → invalidate → render
+```
+
+**Changes:**
+
+1. **`ts3/termsurf-profile/src/main.rs`** — Add frame counter and timestamp in
+   `on_accelerated_paint`:
+
+   ```rust
+   use std::sync::atomic::{AtomicU64, Ordering};
+   use std::time::Instant;
+
+   static FRAME_COUNTER: AtomicU64 = AtomicU64::new(0);
+   static START_TIME: OnceLock<Instant> = OnceLock::new();
+
+   // In on_accelerated_paint, before sending XPC:
+   let frame_id = FRAME_COUNTER.fetch_add(1, Ordering::Relaxed);
+   let start = *START_TIME.get_or_init(Instant::now);
+   let elapsed_ms = start.elapsed().as_millis();
+   println!("[FRAME-TX] frame={} t={}ms", frame_id, elapsed_ms);
+
+   // Add frame_id to XPC message:
+   msg.set_i64("frame_id", frame_id as i64);
+   msg.set_i64("tx_time_ms", elapsed_ms as i64);
+   ```
+
+2. **`ts3/wezterm-gui/src/termwindow/webview_xpc.rs`** — Log receipt time in
+   `display_surface` handler:
+
+   ```rust
+   // In handle_xpc_message, display_surface case:
+   let frame_id = msg.get_i64("frame_id");
+   let tx_time = msg.get_i64("tx_time_ms");
+   let rx_time = /* current time since GUI start */;
+   println!("[FRAME-RX] frame={} tx={}ms rx={}ms delta={}ms",
+            frame_id, tx_time, rx_time, rx_time - tx_time);
+   ```
+
+   Note: TX and RX times use different clocks (profile vs GUI process), so
+   `delta` is only meaningful if both started at similar times. The key metric
+   is the *pattern* — are deltas consistent or do they grow?
+
+3. **`ts3/wezterm-gui/src/termwindow/webview_xpc.rs`** — Log invalidate call:
+
+   ```rust
+   // When calling invalidate callback:
+   println!("[INVALIDATE] frame={} t={}ms", frame_id, rx_time);
+   ```
+
+4. **`ts3/wezterm-gui/src/termwindow/render/draw.rs`** — Log render time in
+   `render_webview_overlays_webgpu`:
+
+   ```rust
+   // At start of webview render:
+   println!("[RENDER] t={}ms (webview overlay rendering)", elapsed_ms);
+   ```
+
+**Verification:**
+
+```bash
+cd ts3 && ./scripts/build-debug.sh --open
+
+# In one terminal, watch profile logs:
+tail -f /tmp/termsurf-profile-*.log | grep FRAME-TX
+
+# In another terminal, watch GUI logs:
+tail -f /tmp/termsurf-gui.log | grep -E "(FRAME-RX|INVALIDATE|RENDER)"
+
+# Then interact with webview:
+web google.com
+# Scroll, hover, click around
+
+# Look for:
+# 1. Frame rate: How many FRAME-TX per second? Should be ~60.
+# 2. XPC latency: delta between TX and RX times
+# 3. Invalidate gap: time between RX and INVALIDATE (should be ~0)
+# 4. Render gap: time between INVALIDATE and RENDER
+# 5. Dropped frames: frame_ids that appear in TX but not RX
+```
+
+**Expected Findings:**
+
+| Symptom | Likely Cause |
+|---------|--------------|
+| TX rate < 60fps | CEF not rendering fast enough |
+| Large TX→RX delta | XPC message latency |
+| RX without INVALIDATE | Invalidate callback not firing |
+| INVALIDATE without RENDER | WezTerm batching/dropping repaints |
+| Growing delta over time | Backpressure / queue buildup |
+
+**Status:** Not started.
 
 ## References
 
