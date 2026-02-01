@@ -900,7 +900,7 @@ the chain breaks.
 
 ## Experiment 3: Deep Handler Logging
 
-**Status: Not started**
+**Status: FAILED**
 
 Add logging at every decision point in the mouse event handler chain. Experiment 2
 showed messages arrive at `[XPC-RECV]` but gave no visibility into what happens next.
@@ -1158,6 +1158,47 @@ Based on which pattern emerges:
 2. **Pattern B**: Debug BrowserState initialization timing — deferred_for_handler may be set too late
 3. **Pattern C**: Debug CEF task posting — UI thread may not be running or task may be dropped
 4. **Pattern D/E (browser/host None)**: Debug browser lifecycle — timing issue between creation and first mouse event
+
+### Conclusion (Experiment 3)
+
+**Result: Failed.** The logging showed the entire pipeline working, but mouse input remains
+broken with highly inconsistent, non-deterministic behavior.
+
+#### What We Learned
+
+1. **Pipeline is complete**: Every stage executes successfully:
+   - Handler enters
+   - BrowserState is available
+   - post_task is called and returns
+   - Task execute() runs
+   - Browser and host are obtained
+   - CEF APIs (send_mouse_move_event, send_mouse_click_event) are called and return
+
+2. **Coordinates are correct**: Mouse positions are within view_rect bounds after
+   proper physical-to-logical conversion.
+
+3. **Behavior is inconsistent**: User observed:
+   - Cursor does NOT change to pointer on links
+   - Links highlight only briefly and incorrectly
+   - Visual feedback is highly inconsistent, "more broken than not"
+
+4. **XPC connection errors**: Logs show "XPC connection interrupted" errors occurring
+   during mouse event processing, but the profile continues running.
+
+#### Why This Experiment Failed
+
+The deep logging proved the pipeline executes correctly, but the mouse input is still
+broken. This means the issue is NOT in the execution path we instrumented. Possible
+causes that remain uninvestigated:
+
+1. **CEF internal state**: CEF receives events but doesn't process them correctly
+   (focus, hit testing, or rendering state issues)
+2. **Timing/threading**: Events arrive but CEF's internal state machine rejects them
+3. **Coordinate system mismatch**: CEF might expect different coordinate semantics
+4. **Connection lifecycle**: XPC errors may indicate deeper connection instability
+
+The experiment successfully ruled out pipeline failures but did not identify the
+actual root cause of the inconsistent mouse behavior.
 
 ## References
 
