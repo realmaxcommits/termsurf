@@ -34,6 +34,9 @@ static QUIT_FLAG: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool:
 static CONNECTION_ID: AtomicU64 = AtomicU64::new(0);
 static ACTIVE_CONNECTIONS: OnceLock<Mutex<HashSet<u64>>> = OnceLock::new();
 
+// Issue 332, Experiment 2: Store launcher connection for unregister notification
+static LAUNCHER_CONNECTION: OnceLock<Arc<XpcConnection>> = OnceLock::new();
+
 fn active_connections() -> &'static Mutex<HashSet<u64>> {
     ACTIVE_CONNECTIONS.get_or_init(|| Mutex::new(HashSet::new()))
 }
@@ -248,6 +251,8 @@ fn run_profile_server(args: Args) {
     // Set up handler for create_browser commands from launcher
     let profile_state_for_handler = Arc::clone(&profile_state);
     let launcher_for_claim = Arc::new(launcher);
+    // Issue 332, Experiment 2: Store launcher connection for unregister notification on exit
+    let _ = LAUNCHER_CONNECTION.set(Arc::clone(&launcher_for_claim));
     let launcher_for_handler = Arc::clone(&launcher_for_claim);
 
     set_new_connection_handler(&command_listener, move |conn| {
@@ -1039,7 +1044,22 @@ mod cef_handlers {
                                         "[CONN-{}] No more GUI connections, exiting gracefully",
                                         conn_id_for_handler
                                     );
-                                    drop(conns); // Release lock before setting flag
+                                    drop(conns); // Release lock before sending
+
+                                    // Issue 332, Experiment 2: Notify launcher to unregister this profile
+                                    if let Some(launcher) = crate::LAUNCHER_CONNECTION.get() {
+                                        if let Some(state) = crate::PROFILE_STATE.get() {
+                                            let msg = XpcDictionary::new();
+                                            msg.set_string("action", "unregister_profile");
+                                            msg.set_string("profile", &state.profile);
+                                            launcher.send(&msg);
+                                            println!(
+                                                "[CONN-{}] Sent unregister_profile to launcher",
+                                                conn_id_for_handler
+                                            );
+                                        }
+                                    }
+
                                     crate::QUIT_FLAG.store(true, std::sync::atomic::Ordering::Relaxed);
                                 }
                             } else {

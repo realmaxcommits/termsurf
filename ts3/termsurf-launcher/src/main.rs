@@ -225,12 +225,20 @@ fn main() {
                         };
 
                         let profile_name = profile.to_string();
+                        let running_profiles_for_handler = running_profiles.clone();
                         set_event_handler(&*profile_conn, move |event| {
+                            // Issue 332, Experiment 1: Safety net for crashes
                             if let Err(e) = event {
                                 eprintln!(
                                     "Launcher: Profile '{}' connection error: {}",
                                     profile_name, e
                                 );
+                                // Unregister so next request spawns fresh
+                                running_profiles_for_handler
+                                    .lock()
+                                    .unwrap()
+                                    .remove(&profile_name);
+                                println!("Launcher: Unregistered dead profile '{}'", profile_name);
                             }
                         });
                         profile_conn.resume();
@@ -278,6 +286,13 @@ fn main() {
 
                         // Send reply on the connection
                         conn_for_handler.send(&reply);
+                    }
+
+                    "unregister_profile" => {
+                        // Issue 332, Experiment 3: Profile self-reports shutdown
+                        let profile = msg.get_string("profile").unwrap_or_default();
+                        running_profiles.lock().unwrap().remove(&profile);
+                        println!("Launcher: Profile '{}' unregistered (self-reported)", profile);
                     }
 
                     _ => {

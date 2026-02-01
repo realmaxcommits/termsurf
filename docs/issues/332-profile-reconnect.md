@@ -275,6 +275,8 @@ Launcher: Unknown action: unregister_profile
 
 ## Experiment 3: Fix unregister handler location
 
+**Status: Success**
+
 Move the `unregister_profile` handler from the profile connection event handler
 to the main connection event handler.
 
