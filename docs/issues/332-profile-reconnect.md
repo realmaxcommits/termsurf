@@ -252,8 +252,8 @@ The `unregister_profile` message was sent but handled by the **wrong handler**.
 
 The launcher has two types of connections:
 
-1. **Main connections** - from GUI/profile clients connecting to the Mach service
-   (handles `spawn_profile`, `claim_session`, `register_profile`)
+1. **Main connections** - from GUI/profile clients connecting to the Mach
+   service (handles `spawn_profile`, `claim_session`, `register_profile`)
 2. **Profile connections** - created when a profile registers its endpoint
    (handles errors from that specific profile)
 
@@ -282,7 +282,8 @@ to the main connection event handler.
 
 ### Current Code
 
-The main event handler (lines 108-300) handles actions via `match action.as_str()`:
+The main event handler (lines 108-300) handles actions via
+`match action.as_str()`:
 
 - `"spawn_profile"` - spawn or forward to profile
 - `"register_profile"` - register profile's command endpoint
@@ -317,3 +318,47 @@ tail -f /tmp/termsurf-launcher.log
 # Expected: "Profile 'default' unregistered (self-reported)"
 web google.com   # Should spawn new profile and work immediately
 ```
+
+---
+
+## Conclusion
+
+### The Problem
+
+When a webview closes, the profile server exits but the launcher keeps a stale
+reference. The next `web` command forwards to the dead profile and fails.
+
+### What We Learned
+
+1. **Reactive error handling is too late (Experiment 1)**
+
+   The "safety net" approach—detecting connection errors and unregistering dead
+   profiles—doesn't help the _current_ request. XPC's `send()` is
+   fire-and-forget; the error handler fires asynchronously after the GUI has
+   already given up. This approach only helps _future_ requests, but by then the
+   launcher may have exited.
+
+2. **Proactive notification is the fix (Experiments 2-3)**
+
+   The profile must notify the launcher _before_ exiting. This ensures the
+   profile is already unregistered when the next request arrives, so the
+   launcher spawns fresh instead of forwarding to a dead process.
+
+3. **XPC connection topology matters (Experiment 2)**
+
+   The launcher has two types of connections: main connections (from clients
+   connecting to the Mach service) and profile connections (from registered
+   profile endpoints). Messages sent via the original launcher connection arrive
+   at the main handler, not the profile connection handler. Understanding this
+   topology was key to placing the handler correctly.
+
+### Final Implementation
+
+| Component      | Change                                                                                      |
+| -------------- | ------------------------------------------------------------------------------------------- |
+| Profile server | Stores launcher connection in global; sends `unregister_profile` before setting `QUIT_FLAG` |
+| Launcher       | Handles `unregister_profile` in main event handler; removes profile from `running_profiles` |
+| Safety net     | Profile connection error handler also unregisters (catches crashes)                         |
+
+The fix is both proactive (profile notifies on clean shutdown) and reactive
+(launcher handles unexpected deaths), providing defense in depth.
