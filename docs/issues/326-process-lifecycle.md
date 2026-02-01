@@ -5,8 +5,8 @@ creating orphaned background processes.
 
 ## Status
 
-Experiment 1 partial success — profile server exits on GUI disconnect, but
-launcher remains running. Experiment 2 needed for launcher.
+Experiments 1-2 failed. Experiment 1 broke multi-pane support by exiting on
+first disconnect instead of last. Experiment 3 needed to add connection counting.
 
 ## Problem
 
@@ -220,10 +220,11 @@ cat /tmp/termsurf-profile-*.log | tail -10
 # Expected: No accumulation of orphaned processes
 ```
 
-**Status:** Partial success.
+**Status:** Failed.
 
-**Result:** Profile server now exits when GUI disconnects. However, the launcher
-process remains running.
+**Result:** Profile server exits when GUI disconnects, but this **breaks
+multi-pane support**. Opening two webviews for the same profile, then closing
+one pane, kills the entire profile server — leaving the second pane unresponsive.
 
 **Implementation notes:**
 
@@ -234,26 +235,28 @@ process remains running.
 
 **What worked:**
 
-- Profile server exits gracefully when GUI closes
-- Logs show "GUI disconnected, exiting gracefully" followed by "Shutting down..."
+- Single-pane case: profile exits when GUI closes
 - CEF shutdown is clean (no crashes)
 
-**What didn't work:**
+**What broke:**
 
-- Launcher remains running after GUI exits
-- This blocks development iteration — launcher code changes require manual `pkill`
+- **Multi-pane support is completely broken**
+- Profile server exits on *any* disconnect, not just *last* disconnect
+- A profile can serve multiple browsers (one per webview pane), each with its
+  own GUI connection
+- Closing one pane disconnects that connection → profile exits → other panes die
 
-**Why launcher stays running:**
+**Root cause:**
 
-The launcher is a Mach service designed to serve multiple GUI instances. It has
-no "quit on disconnect" logic. Unlike the profile server (which has a direct
-XPC connection to the GUI), the launcher's connection model is different — GUIs
-connect to it, not the other way around.
+The implementation exits on the first disconnect instead of tracking connection
+count and only exiting when all connections are closed.
 
 **Next steps:**
 
-Add similar disconnect detection to the launcher. When the GUI disconnects from
-the launcher, and there are no remaining connections, the launcher should exit.
+Both profile server and launcher need **connection counting**:
+1. Increment count when connection established
+2. Decrement count on disconnect
+3. Only exit when count reaches 0
 
 ### Experiment 2: Launcher Exits on GUI Disconnect
 
@@ -264,6 +267,55 @@ disconnects and no other GUIs are connected, the launcher should exit.
 
 **Approach:** Track active GUI connections in the launcher. On disconnect, check
 if any connections remain. If not, exit.
+
+**Changes made:**
+
+1. Added `CFRunLoopStop` and `CFRunLoopGetMain` to `termsurf-xpc/src/ffi.rs`
+2. Added `stop_run_loop()` function to `termsurf-xpc/src/runloop.rs`
+3. Changed `run_loop()` return type from `-> !` to `()` (can now return)
+4. Added `GUI_CONNECTION_COUNT` atomic counter to launcher
+5. Increment on new connection, decrement on disconnect
+6. Call `stop_run_loop()` when count reaches 0
+
+**Status:** Failed (not tested due to Experiment 1 failure).
+
+**Result:** Implementation was completed but could not be properly tested because
+Experiment 1 broke multi-pane support. The launcher changes follow the correct
+pattern (connection counting), but the profile server changes do not.
+
+**Key learnings:**
+
+1. **Both processes need connection counting** — A profile server can have
+   multiple browsers (webview panes), each with its own GUI connection. The
+   launcher can have multiple GUI clients. Both must track counts.
+
+2. **Exit on last disconnect, not first** — The pattern must be:
+   - Increment count when connection established
+   - Decrement count when connection closes
+   - Only exit when count reaches 0
+
+3. **Profile server architecture:**
+   - `create_browser_on_ui_thread` creates a new GUI connection per browser
+   - Each browser has its own event handler
+   - Need to increment count in `create_browser_on_ui_thread`
+   - Need to decrement count in the error handler, exit only when count = 0
+
+4. **Launcher architecture (correctly implemented):**
+   - `set_new_connection_handler` fires for each GUI connection
+   - Increment count there
+   - Decrement in error handler, call `stop_run_loop()` when count = 0
+
+### Experiment 3: Connection Counting for Both Processes
+
+**Goal:** Fix experiment 1 by adding connection counting to the profile server,
+matching the pattern used in the launcher.
+
+**Approach:**
+
+1. Add `GUI_CONNECTION_COUNT` atomic to profile server
+2. Increment in `create_browser_on_ui_thread` when GUI connection established
+3. Decrement in event handler on disconnect
+4. Only set `QUIT_FLAG` when count reaches 0
 
 **Status:** Not started.
 
