@@ -176,12 +176,12 @@ web google.com
 
 ## Success Criteria
 
-- [ ] Caret stops blinking when entering Control mode
-- [ ] Caret resumes blinking when entering Browse mode
+- [x] Caret stops blinking when entering Control mode
+- [x] Caret resumes blinking when entering Browse mode
 - [ ] Caret stops blinking when switching to another pane
 - [ ] Caret resumes blinking when switching back to webview in Browse mode
 - [ ] Multiple webviews: only active one has blinking caret
-- [ ] No regression in keyboard/mouse input
+- [x] No regression in keyboard/mouse input
 
 ## Experiments
 
@@ -351,11 +351,13 @@ cat /tmp/termsurf-profile-*.log | grep "\[FOCUS\]"
 
 **Success criteria:**
 
-- [ ] Caret stops blinking when pressing Ctrl+C (Browse → Control)
-- [ ] Caret resumes blinking when pressing Enter (Control → Browse)
-- [ ] Keyboard input still works in Browse mode
-- [ ] Ctrl+C in Control mode still closes the webview
-- [ ] Logs show focus commands being sent and received
+- [x] Caret stops blinking when pressing Ctrl+C (Browse → Control)
+- [x] Caret resumes blinking when pressing Enter (Control → Browse)
+- [x] Keyboard input still works in Browse mode
+- [x] Ctrl+C in Control mode still closes the webview
+- [x] Logs show focus commands being sent and received
+
+**Status:** Success.
 
 **Risks:**
 
