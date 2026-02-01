@@ -71,3 +71,33 @@ Rename `wezterm-gui.app` to `termsurf-gui.app`.
 cd ts3 && ./scripts/build-debug.sh --open
 # App should launch from termsurf-gui.app bundle
 ```
+
+---
+
+## Experiment 3: Rename menu bar items
+
+Rename "WezTerm" to "TermSurf" in macOS menu bar.
+
+### Changes
+
+| File                              | Change                            |
+| --------------------------------- | --------------------------------- |
+| `ts3/wezterm-gui/src/commands.rs` | "WezTerm" → "TermSurf" (8 places) |
+
+### Locations
+
+- Line 423: Menu order array
+- Line 443: Menu bar check
+- Line 447: Version string format
+- Line 748: menubar array
+- Line 1271: menubar array
+- Line 1275: "Quit WezTerm" brief
+- Line 1276: "Quits WezTerm" doc
+- Line 1279: menubar array
+
+### Verification
+
+```bash
+cd ts3 && ./scripts/build-debug.sh --open
+# Check menu bar shows "TermSurf" instead of "WezTerm"
+```
