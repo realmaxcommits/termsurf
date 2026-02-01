@@ -5,7 +5,9 @@ the same profile inactive.
 
 ## Status
 
-**Resolved.** Fixed by experiment 3 (idempotent error handler).
+**Resolved.** Core bug fixed by experiment 3 (idempotent error handler). Memory
+leaks addressed by experiments 4 and 5. Known limitation: listeners accumulate
+(~1-2 KB per closed webview) due to XPC semantics.
 
 ## Problem
 
@@ -841,3 +843,74 @@ done
 - Issue 329 — Where this bug was discovered
 - Issue 326 — Profile server graceful shutdown (introduced connection counting)
 - `CLAUDE.md` — Documents "Current gap" with multi-webview support
+
+## Conclusion
+
+### What We Accomplished
+
+**Core bug fixed.** Multiple webviews in the same profile now work correctly.
+Closing one webview no longer kills the profile server or affects other webviews.
+
+| Experiment | Outcome | Impact |
+|------------|---------|--------|
+| 1: Diagnostic logging | ✅ Success | Identified root cause: XPC fires multiple disconnect events per connection |
+| 2: Listener cleanup | ❌ Failed | Proved listeners can't be dropped (invalidates all connections) |
+| 3: Idempotent handler | ✅ Success | **Fixed the core bug** — HashSet tracks connections by ID |
+| 4: Cursor cleanup | ✅ Success | Fixed minor memory leak (~8 bytes/webview) |
+| 5: Block leak fix | ✅ Success | Fixed block leak (~128 bytes/webview) |
+
+### Key Learnings About XPC
+
+1. **XPC fires multiple error events per disconnect.** A single connection close can
+   trigger 10+ `ConnectionInvalid` events. Any code that decrements a counter on
+   error must be idempotent.
+
+2. **Canceling a listener invalidates ALL connections through its endpoint.** This
+   is documented XPC behavior: anonymous endpoints become invalid when their
+   listener is canceled. We cannot clean up listeners without breaking other
+   webviews.
+
+3. **XPC copies blocks via `Block_copy()`.** The original comment claiming "we have
+   no way to know when XPC is done with it" was wrong. XPC copies the block when
+   you call `xpc_connection_set_event_handler`, so leaking the original is
+   unnecessary.
+
+4. **Mystery reconnections occur after webview close.** When a webview closes, its
+   listener (still alive in the Vec) accepts spurious reconnection attempts. The
+   idempotent handler safely ignores these.
+
+### Known Limitations
+
+**Listener accumulation (~1-2 KB per closed webview).** Each `web` command creates
+an `XpcListener` that's never freed. We cannot drop listeners because doing so
+invalidates all connections through their endpoints (experiment 2). This is
+acceptable for typical usage but would matter for long-running sessions with
+hundreds of webview open/close cycles.
+
+| Resource | Leak per webview | Status |
+|----------|------------------|--------|
+| `XpcListener` | ~1-2 KB | **Known limitation** (can't fix without XPC changes) |
+| `webview_cursors` | 8 bytes | ✅ Fixed (experiment 4) |
+| Objective-C blocks | ~128 bytes | ✅ Fixed (experiment 5) |
+| `peer_connections` | 0 | ✅ Already cleaned |
+| `received_surfaces` | 0 | ✅ Already cleaned |
+| `pending_sessions` | 0 | ✅ Already cleaned |
+| `invalidate_callbacks` | 0 | ✅ Already cleaned |
+
+### What's Next
+
+With multi-webview support working, the remaining gaps from `CLAUDE.md` are:
+
+1. **Dynamic resize on pane change** — Webviews should resize when terminal panes
+   are resized. Currently tracked in issue 306.
+
+2. **Input forwarding** — Keyboard and mouse events need to be forwarded to CEF.
+   Partially implemented but needs testing.
+
+3. **Profile process reuse** — The launcher should detect existing profile servers
+   and send `create_browser` commands instead of spawning new processes. This is
+   architecturally correct but not yet implemented.
+
+Multi-pane support is now **production-ready** for the single-profile case. Users
+can open multiple webviews in the same profile, close them independently, and the
+profile server will exit gracefully when the last webview closes.
