@@ -106,9 +106,11 @@ cd ts3 && ./scripts/build-debug.sh --open
 
 ---
 
-## Experiment 4: Rename bundle name
+## Experiment 4: Rename bundle name ✓
 
 Rename `CFBundleName` from "WezTerm" to "TermSurf" so the main menu bar shows "TermSurf".
+
+**Status: Success**
 
 ### Changes
 

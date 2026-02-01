@@ -118,7 +118,7 @@ cat > "$APP_BUNDLE/Contents/Info.plist" << 'PLIST'
     <key>CFBundleIdentifier</key>
     <string>org.wezfurlong.wezterm</string>
     <key>CFBundleName</key>
-    <string>WezTerm</string>
+    <string>TermSurf</string>
     <key>CFBundleVersion</key>
     <string>1.0</string>
     <key>CFBundlePackageType</key>
