@@ -214,10 +214,18 @@ pub fn mach_task_self() -> mach_port_t {
 
 // === CoreFoundation (for run loop) ===
 
+pub type CFRunLoopRef = *mut c_void;
+
 #[link(name = "CoreFoundation", kind = "framework")]
 extern "C" {
     /// Run the current thread's run loop (blocks until stopped).
     pub fn CFRunLoopRun();
+
+    /// Stop a run loop.
+    pub fn CFRunLoopStop(rl: CFRunLoopRef);
+
+    /// Get the main thread's run loop.
+    pub fn CFRunLoopGetMain() -> CFRunLoopRef;
 }
 
 // === IOSurface ===

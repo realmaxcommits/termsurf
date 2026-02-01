@@ -10,8 +10,12 @@ use std::collections::HashMap;
 use std::env;
 use std::fs::File;
 use std::process::Command;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use termsurf_xpc::*;
+
+// Issue 326, Experiment 2: Track active GUI connections for graceful shutdown
+static GUI_CONNECTION_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 extern "C" {
     fn dup2(oldfd: i32, newfd: i32) -> i32;
@@ -88,7 +92,9 @@ fn main() {
     let running_profiles_clone = running_profiles.clone();
 
     set_new_connection_handler(&listener, move |conn| {
-        println!("Launcher: New connection");
+        // Issue 326, Experiment 2: Track GUI connections for graceful shutdown
+        let count = GUI_CONNECTION_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
+        println!("Launcher: New connection (total: {})", count);
 
         // Wrap in Arc so we can share with event handler
         let conn = Arc::new(conn);
@@ -280,7 +286,18 @@ fn main() {
                 }
             }
             Err(e) => {
-                eprintln!("Launcher: Connection error: {}", e);
+                // Issue 326, Experiment 2: Detect GUI disconnect and exit when no clients remain
+                match e {
+                    XpcError::ConnectionInterrupted | XpcError::ConnectionInvalid => {
+                        let count = GUI_CONNECTION_COUNT.fetch_sub(1, Ordering::Relaxed) - 1;
+                        println!("Launcher: GUI disconnected (remaining: {})", count);
+                        if count == 0 {
+                            println!("Launcher: No more GUI connections, exiting...");
+                            stop_run_loop();
+                        }
+                    }
+                    _ => eprintln!("Launcher: Connection error: {}", e),
+                }
             }
         });
 
@@ -294,4 +311,5 @@ fn main() {
 
     println!("Launcher: Running...");
     run_loop();
+    println!("Launcher: Exiting...");
 }

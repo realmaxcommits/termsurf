@@ -23,13 +23,21 @@ use crate::ffi;
 /// // Block and process events
 /// run_loop();
 /// ```
-pub fn run_loop() -> ! {
+pub fn run_loop() {
     unsafe {
         ffi::CFRunLoopRun();
     }
-    // CFRunLoopRun can return if explicitly stopped, but for XPC services
-    // it typically runs forever. If it returns, just exit.
-    std::process::exit(0);
+    // CFRunLoopRun returns when explicitly stopped via stop_run_loop()
+}
+
+/// Stop the main run loop.
+///
+/// This causes `run_loop()` to return on the main thread.
+/// Call this from an event handler when you want to shut down gracefully.
+pub fn stop_run_loop() {
+    unsafe {
+        ffi::CFRunLoopStop(ffi::CFRunLoopGetMain());
+    }
 }
 
 /// Run the main dispatch queue.

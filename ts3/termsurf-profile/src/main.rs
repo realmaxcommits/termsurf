@@ -25,6 +25,12 @@ use std::time::{Duration, Instant};
 // Issue 325, Experiment 2: Diagnostic logging for frame rate analysis
 static FRAME_COUNTER: AtomicU64 = AtomicU64::new(0);
 static PROFILE_START_TIME: OnceLock<Instant> = OnceLock::new();
+
+// Issue 326, Experiment 1: Global quit flag for graceful shutdown on GUI disconnect
+static QUIT_FLAG: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+// Issue 326, Experiment 3: Track GUI connections - only exit when all disconnect
+static GUI_CONNECTION_COUNT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 use termsurf_xpc::*;
 
 #[derive(Parser)]
@@ -274,11 +280,9 @@ fn run_profile_server(args: Args) {
     // 9. Install Ctrl+C handler for clean shutdown
     // Issue 325, Experiment 3: Use quit flag instead of quit_message_loop()
     // because we're using a custom polling loop instead of run_message_loop()
-    let quit_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let quit_flag_handler = quit_flag.clone();
     ctrlc::set_handler(move || {
         println!("Profile: Ctrl+C, setting quit flag...");
-        quit_flag_handler.store(true, std::sync::atomic::Ordering::Relaxed);
+        QUIT_FLAG.store(true, std::sync::atomic::Ordering::Relaxed);
     })
     .expect("Failed to set Ctrl+C handler");
 
@@ -287,7 +291,7 @@ fn run_profile_server(args: Args) {
     // Hypothesis: run_message_loop() doesn't pump work fast enough for 60fps.
     // Polling at ~1000Hz should allow CEF to render at its configured 60fps.
     println!("Profile: Running message loop (polling mode)...");
-    while !quit_flag.load(std::sync::atomic::Ordering::Relaxed) {
+    while !QUIT_FLAG.load(std::sync::atomic::Ordering::Relaxed) {
         cef::do_message_loop_work();
         std::thread::sleep(std::time::Duration::from_millis(1));
     }
@@ -724,6 +728,10 @@ mod cef_handlers {
             }
         };
 
+        // Issue 326, Experiment 3: Track GUI connections for graceful shutdown
+        let count = crate::GUI_CONNECTION_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+        println!("Profile: GUI connection established (total: {})", count);
+
         // 2. Create deferred state wrapper (will be populated after browser creation)
         let deferred_state: Arc<Mutex<Option<Arc<BrowserState>>>> =
             Arc::new(Mutex::new(None));
@@ -972,7 +980,18 @@ mod cef_handlers {
                     }
                 }
                 Err(e) => {
-                    eprintln!("Profile: GUI connection error: {}", e);
+                    // Issue 326, Experiment 3: Track disconnects, only exit when all gone
+                    match e {
+                        XpcError::ConnectionInterrupted | XpcError::ConnectionInvalid => {
+                            let count = crate::GUI_CONNECTION_COUNT.fetch_sub(1, std::sync::atomic::Ordering::Relaxed) - 1;
+                            println!("Profile: GUI disconnected (remaining: {})", count);
+                            if count == 0 {
+                                println!("Profile: No more GUI connections, exiting gracefully");
+                                crate::QUIT_FLAG.store(true, std::sync::atomic::Ordering::Relaxed);
+                            }
+                        }
+                        _ => eprintln!("Profile: GUI connection error: {}", e),
+                    }
                 }
             }
         });

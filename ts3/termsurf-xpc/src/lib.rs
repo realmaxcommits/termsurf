@@ -104,7 +104,7 @@ pub use block::{set_event_handler, set_new_connection_handler};
 
 // Run loop
 #[cfg(target_os = "macos")]
-pub use runloop::{dispatch_main, run_loop};
+pub use runloop::{dispatch_main, run_loop, stop_run_loop};
 
 // Re-export types for convenience
 #[cfg(target_os = "macos")]

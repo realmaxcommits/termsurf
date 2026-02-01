@@ -5,8 +5,8 @@ creating orphaned background processes.
 
 ## Status
 
-Experiments 1-2 failed. Experiment 1 broke multi-pane support by exiting on
-first disconnect instead of last. Experiment 3 needed to add connection counting.
+**Resolved.** Profile server and launcher both exit gracefully when all GUI
+connections close. Multi-pane support preserved.
 
 ## Problem
 
@@ -317,7 +317,26 @@ matching the pattern used in the launcher.
 3. Decrement in event handler on disconnect
 4. Only set `QUIT_FLAG` when count reaches 0
 
-**Status:** Not started.
+**Status:** Success.
+
+**Result:** Both profile server and launcher now exit gracefully when all GUI
+connections close. Multi-pane support works correctly.
+
+**Test results:**
+
+1. **Single pane:** Open webview, close GUI → profile and launcher both exit ✓
+2. **Multi-pane:** Open two webviews, close one → profile stays running, second
+   pane remains responsive. Close second → profile exits ✓
+3. **Multiple cycles:** Repeated open/close cycles → no orphaned processes ✓
+
+**Files changed:**
+
+- `ts3/termsurf-profile/src/main.rs` — Added `GUI_CONNECTION_COUNT`, increment
+  on connect, decrement on disconnect, exit only when count = 0
+- `ts3/termsurf-launcher/src/main.rs` — Added `GUI_CONNECTION_COUNT`, same pattern
+- `ts3/termsurf-xpc/src/ffi.rs` — Added `CFRunLoopStop`, `CFRunLoopGetMain`
+- `ts3/termsurf-xpc/src/runloop.rs` — Added `stop_run_loop()` function
+- `ts3/termsurf-xpc/src/lib.rs` — Exported `stop_run_loop`
 
 ## References
 
