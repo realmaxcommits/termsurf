@@ -205,7 +205,7 @@ After scroll, these features remain for full mouse support:
 
 ### Experiment 1: Basic Scroll Pipeline
 
-**Status:** Not started
+**Status:** SUCCESS
 
 **Hypothesis:** Adding scroll event handling through the existing XPC pipeline
 will enable CEF to receive scroll input and scroll page content.
@@ -374,11 +374,134 @@ tail -f /tmp/termsurf-profile-*.log | grep "\[MOUSE\]"
 
 #### Success Criteria
 
-- [ ] Log shows VertWheel/HorzWheel events received in GUI
-- [ ] Log shows mouse_wheel action received in profile server
-- [ ] Log shows send_mouse_wheel_event called in CEF task
-- [ ] Page content scrolls when using trackpad gesture
-- [ ] Scroll direction feels correct (natural scrolling)
+- [x] Log shows VertWheel/HorzWheel events received in GUI
+- [x] Log shows mouse_wheel action received in profile server
+- [x] Log shows send_mouse_wheel_event called in CEF task
+- [x] Page content scrolls when using trackpad gesture
+- [x] Scroll direction feels correct (natural scrolling)
+
+#### Results
+
+The scroll pipeline works. Page content scrolls when using trackpad gestures,
+and the direction matches system preferences (natural scrolling).
+
+**How it works:**
+
+1. **GUI receives scroll events** — WezTerm's window system delivers
+   `WMEK::VertWheel(amount)` and `WMEK::HorzWheel(amount)` events.
+
+2. **Delta conversion** — The amount is multiplied by 120 (CEF's standard
+   "wheel tick" unit where 120 = 1 line of scroll).
+
+3. **XPC transport** — `send_mouse_wheel()` packages delta_x/delta_y into an
+   XPC dictionary and sends to the profile server.
+
+4. **CEF task execution** — `MouseWheelTask` runs on CEF's UI thread and calls
+   `host.send_mouse_wheel_event()` with the delta values.
+
+5. **Page scrolls** — CEF processes the wheel event and scrolls the page.
+
+**Issue discovered:** Scrolling feels blocky/jerky rather than smooth. This is
+because the `* 120` multiplier is designed for line-based scrolling (traditional
+mouse wheels), not pixel-based scrolling (trackpad gestures). The cef-rs OSR
+example uses different multipliers:
+
+- Line-based (mouse wheel): `* 120`
+- Pixel-based (trackpad): `* 2`
+
+WezTerm's `WMEK::VertWheel` doesn't distinguish between these types. Experiment 2
+will investigate reducing the multiplier or detecting scroll type to achieve
+smooth trackpad scrolling.
+
+---
+
+### Experiment 2: Smooth Trackpad Scrolling
+
+**Status:** Not started
+
+**Hypothesis:** Reducing the scroll multiplier from 120 to a smaller value will
+make trackpad scrolling feel smooth instead of blocky.
+
+**Background:** The cef-rs OSR example uses two different multipliers:
+
+```rust
+// Line-based (mouse wheel clicks): large discrete jumps
+MouseScrollDelta::LineDelta(x, y) => ((x * 120.0) as i32, (y * 120.0) as i32),
+// Pixel-based (trackpad gestures): small smooth increments
+MouseScrollDelta::PixelDelta(pos) => ((pos.x * 2.0) as i32, (pos.y * 2.0) as i32),
+```
+
+The 120 value comes from Windows' `WHEEL_DELTA` constant — one "notch" of a
+mouse wheel equals 120 units. Trackpads report many small pixel deltas instead.
+
+**Approach:** Test progressively smaller multipliers to find one that feels
+smooth for trackpad gestures.
+
+#### 2a. First Try: No Multiplier
+
+Change the scroll handler to pass the raw amount:
+
+```rust
+WMEK::VertWheel(amount) => {
+    // Experiment 2: Try raw amount (no multiplier)
+    let delta_y = *amount as i32;
+    log::info!(
+        "[MOUSE] VertWheel pane={} amount={} delta_y={}",
+        pane_id, amount, delta_y
+    );
+    xpc_manager.send_mouse_wheel(pane_id, cef_x, cef_y, 0, delta_y, 0);
+    true
+}
+```
+
+If too slow, try `* 2`. If still blocky, the issue may be elsewhere.
+
+#### 2b. Add Diagnostic Logging
+
+Log the raw amount values to understand what WezTerm sends:
+
+```rust
+log::info!(
+    "[SCROLL-DEBUG] raw_amount={} current_multiplier=1",
+    amount
+);
+```
+
+This will reveal:
+- Trackpad: Many events with small amounts (e.g., 1-5 per event)
+- Mouse wheel: Few events with larger amounts (e.g., 1-3 lines)
+
+#### 2c. Test Matrix
+
+| Multiplier | Expected Feel | Test Result |
+|------------|---------------|-------------|
+| `* 120`    | Blocky (current) | Confirmed blocky |
+| `* 1`      | Very slow or smooth? | TBD |
+| `* 2`      | Smooth (cef-rs default) | TBD |
+| `* 10`     | Medium | TBD |
+
+#### Verification
+
+```bash
+cd ts3 && ./scripts/build-debug.sh --open
+
+# Test with trackpad
+web google.com
+# Two-finger scroll gesture
+# Observe: Is scrolling smooth or blocky?
+
+# Check raw values
+tail -f /tmp/termsurf-gui.log | grep "VertWheel"
+```
+
+#### Success Criteria
+
+- [ ] Trackpad scrolling feels smooth (not jerky)
+- [ ] Scroll speed feels natural (not too fast or slow)
+- [ ] Momentum scrolling still works
+- [ ] Identified the optimal multiplier value
+
+---
 
 ## References
 
