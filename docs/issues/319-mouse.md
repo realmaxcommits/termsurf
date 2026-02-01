@@ -649,7 +649,7 @@ The profile logs show repeated "XPC connection interrupted" errors and unexpecte
 
 ## Experiment 2: Diagnostic Logging
 
-**Status: Not started**
+**Status: FAILED**
 
 Add comprehensive logging to trace exactly where mouse events are lost in the
 XPC pipeline. The goal is to determine whether messages are:
@@ -856,6 +856,45 @@ Based on what the logs reveal:
 
 3. **If connection is replaced**: Need to either prevent replacement or
    re-register the event handler on the new connection.
+
+### Conclusion (Experiment 2)
+
+**Result: Failed.** The diagnostic logging was insufficient to identify the root cause.
+
+#### What We Learned
+
+1. **XPC transport works**: Messages ARE being delivered. GUI logs show `[XPC-SEND]`
+   and profile logs show `[XPC-RECV]` for all mouse_move and mouse_click events.
+
+2. **Connection is stable during sends**: The same connection pointer (`0xb02e80df0`)
+   is used consistently. No `[XPC-CONN] Replacing connection` warnings appeared.
+
+3. **Connection errors occur later**: Many "XPC connection interrupted" errors appear
+   in the profile logs AFTER mouse events are received.
+
+#### What We Didn't Learn
+
+1. **Why handlers don't execute**: Messages arrive at `[XPC-RECV]` but we have no
+   visibility into whether the action matching succeeds or whether `deferred_for_handler`
+   contains a valid BrowserState.
+
+2. **CEF task execution**: No logging confirms whether `post_task` is called or
+   whether `MouseMoveTask.execute()` runs.
+
+3. **CEF API response**: No logging shows if `send_mouse_move_event` is called or
+   if CEF acknowledges the events.
+
+#### Why This Experiment Failed
+
+The logging was too shallow. We only logged at the entry point (`[XPC-RECV]`) but
+not at the critical decision points inside the handlers:
+- Is `deferred_for_handler.as_ref()` returning None?
+- Is `post_task` being called?
+- Is the task executing?
+- Is CEF receiving the events?
+
+A deeper experiment would need logging at each of these stages to pinpoint where
+the chain breaks.
 
 ## References
 
