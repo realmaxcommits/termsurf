@@ -4,8 +4,8 @@ Webview content does not refresh at 60fps, causing visible lag.
 
 ## Status
 
-Experiment 2 complete. CEF confirmed as bottleneck — producing ~12-20fps instead
-of 60fps. XPC and WezTerm rendering are not the issue.
+Experiment 3 designed. Testing whether `do_message_loop_work()` polling improves
+frame rate over blocking `run_message_loop()`.
 
 ## Product Requirements
 
@@ -550,6 +550,88 @@ Investigate CEF's rendering pipeline:
 
 6. **Profile CEF internally** — Use Chrome's tracing (`--enable-tracing`) to see
    where time is spent inside CEF's rendering pipeline.
+
+### Experiment 3: Replace run_message_loop with Polling
+
+**Goal:** Test whether replacing `run_message_loop()` with a tight polling loop
+using `do_message_loop_work()` improves frame rate.
+
+**Hypothesis:** CEF's `run_message_loop()` is not pumping work frequently enough.
+Calling `do_message_loop_work()` at a higher frequency will increase the frame
+rate toward 60fps.
+
+**Approach:** Replace the blocking `run_message_loop()` with a custom loop that
+calls `do_message_loop_work()` with short sleeps between iterations.
+
+**Changes:**
+
+1. **`ts3/termsurf-profile/src/main.rs`** — Replace message loop:
+
+   Before:
+   ```rust
+   // 10. Run CEF message loop (blocks until quit_message_loop)
+   println!("Profile: Running message loop...");
+   cef::run_message_loop();
+   ```
+
+   After:
+   ```rust
+   // 10. Run CEF message loop with high-frequency polling
+   println!("Profile: Running message loop (polling mode)...");
+   let quit_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+   let quit_flag_handler = quit_flag.clone();
+
+   // Update Ctrl+C handler to set flag instead of calling quit_message_loop
+   ctrlc::set_handler(move || {
+       println!("Profile: Ctrl+C, setting quit flag...");
+       quit_flag_handler.store(true, std::sync::atomic::Ordering::Relaxed);
+   }).expect("Failed to set Ctrl+C handler");
+
+   // Poll at ~1000Hz (1ms sleep) to ensure responsive frame rendering
+   while !quit_flag.load(std::sync::atomic::Ordering::Relaxed) {
+       cef::do_message_loop_work();
+       std::thread::sleep(std::time::Duration::from_millis(1));
+   }
+   ```
+
+   Note: The Ctrl+C handler setup needs to move after this change since we can't
+   call `quit_message_loop()` when not using the blocking loop.
+
+**Verification:**
+
+```bash
+cd ts3 && ./scripts/build-debug.sh --open
+
+# Watch frame rate in profile logs:
+tail -f /tmp/termsurf-profile-*.log | grep FRAME-TX
+
+# Test scrolling:
+web google.com
+# Scroll and observe frame intervals
+
+# Compare to before:
+# - Before: Frame intervals 9-588ms (12-20fps)
+# - Expected: Frame intervals ~16ms (60fps)
+```
+
+**Expected outcome:**
+
+| Metric | Before (Exp 2) | Expected (Exp 3) |
+|--------|----------------|------------------|
+| Frame interval | 9-588ms | ~16ms |
+| Effective FPS | 12-20 | ~60 |
+| CPU usage | Low | Higher (polling) |
+
+**Risks:**
+
+- **Higher CPU usage** — Polling at 1000Hz will use more CPU than the blocking
+  loop. This is acceptable for testing; if successful, we can optimize with
+  proper `on_schedule_message_pump_work` integration later.
+
+- **Ctrl+C handling** — Need to restructure shutdown logic since
+  `quit_message_loop()` won't work with a custom loop.
+
+**Status:** Not started.
 
 ## References
 
