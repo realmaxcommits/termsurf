@@ -126,6 +126,84 @@ include:
 - Click count (for double/triple click)
 - Wheel deltas (for scroll)
 
+## Hypothesis: Forward Transformed Events via XPC
+
+Do coordinate transformation in the GUI (where we have pane bounds and DPI),
+then send logical coordinates via XPC. The profile server just calls CEF
+methods — no layout knowledge needed.
+
+### GUI Side (wezterm-gui)
+
+**1. Intercept in `mouse_event_impl()` (mouseevent.rs)**
+
+Check if mouse is over a webview pane in Browse mode. If so, intercept instead
+of normal handling.
+
+**2. Transform coordinates**
+
+```rust
+// Get pane bounds (already available from render state)
+let rel_x = event.coords.x - pane_x;
+let rel_y = event.coords.y - pane_y;
+
+// Convert to logical pixels
+let scale = dpi / 72.0;
+let cef_x = (rel_x / scale) as i32;
+let cef_y = (rel_y / scale) as i32;
+```
+
+**3. Send via XPC (webview_xpc.rs)**
+
+One method for each event type:
+
+```rust
+pub fn send_mouse_move(&self, pane_id, x, y, modifiers);
+pub fn send_mouse_click(&self, pane_id, x, y, button, is_up, click_count, modifiers);
+pub fn send_mouse_wheel(&self, pane_id, x, y, delta_x, delta_y, modifiers);
+```
+
+**4. Track button state on GUI side**
+
+Maintain `mouse_buttons: u32` flag field, update on press/release, combine with
+keyboard modifiers.
+
+### Profile Server Side (termsurf-profile)
+
+**1. Handle XPC messages**
+
+```rust
+"mouse_move" => { post MouseMoveTask }
+"mouse_click" => { post MouseClickTask }
+"mouse_wheel" => { post MouseWheelTask }
+```
+
+**2. Tasks call CEF host methods**
+
+```rust
+host.send_mouse_move_event(Some(&mouse_event), mouse_leave);
+host.send_mouse_click_event(Some(&mouse_event), button, mouse_up, click_count);
+host.send_mouse_wheel_event(Some(&mouse_event), delta_x, delta_y);
+```
+
+### Why This Should Work
+
+1. **Same pattern as keyboard** — We already do XPC message → post_task → CEF
+2. **GUI has all layout info** — Pane bounds, DPI, mode state already available
+3. **Profile server stays simple** — Just receives coordinates and calls CEF
+4. **No new architecture** — Extends existing XpcManager methods
+
+### Potential Complications
+
+1. **Click counting** — Double/triple click detection needs timeout logic on GUI
+2. **Mouse leave events** — Need to detect when mouse exits pane bounds
+3. **Cursor changes** — CEF may need to send cursor type back to GUI (reverse XPC)
+4. **Latency** — XPC round-trip for every mouse move could feel sluggish
+
+### Suggested First Experiment
+
+Start with just `send_mouse_move` and `send_mouse_click` for left button. Verify
+clicking links works before adding wheel, modifiers, and click counting.
+
 ## Success Criteria
 
 - [ ] Can click links to navigate
