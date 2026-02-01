@@ -159,6 +159,8 @@ to a dead process.
 
 ## Experiment 2: Profile notifies launcher before exit
 
+**Status: Failed**
+
 Implement Option 4. When the profile server detects all GUI connections are
 gone, it sends an `unregister_profile` message to the launcher before exiting.
 
@@ -243,3 +245,28 @@ web google.com   # Should spawn new profile and work
 tail -f /tmp/termsurf-launcher.log
 # Expected: "Profile 'default' unregistered (self-reported)" then "Spawning new profile"
 ```
+
+### Conclusion
+
+The `unregister_profile` message was sent but handled by the **wrong handler**.
+
+The launcher has two types of connections:
+
+1. **Main connections** - from GUI/profile clients connecting to the Mach service
+   (handles `spawn_profile`, `claim_session`, `register_profile`)
+2. **Profile connections** - created when a profile registers its endpoint
+   (handles errors from that specific profile)
+
+The profile sends `unregister_profile` via its original launcher connection
+(`LAUNCHER_CONNECTION`), which is a main connection. But the handler was added
+to the profile connection event handler.
+
+Log evidence:
+
+```
+Launcher: Received action: unregister_profile
+Launcher: Unknown action: unregister_profile
+```
+
+**Fix:** Add the `unregister_profile` handler to the main connection handler
+(alongside `spawn_profile`, `claim_session`, `register_profile`).
