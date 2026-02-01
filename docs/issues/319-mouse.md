@@ -1200,6 +1200,95 @@ causes that remain uninvestigated:
 The experiment successfully ruled out pipeline failures but did not identify the
 actual root cause of the inconsistent mouse behavior.
 
+---
+
+## Experiment 4: Clean Log Verification
+
+**Status: Not started**
+
+A diagnostic-only experiment with no code changes. Verify whether multiple browsers
+are being created for a single `web` command by examining clean logs.
+
+### Goal
+
+Confirm or rule out the "multiple browsers" hypothesis by running a controlled test
+with fresh logs.
+
+### Procedure
+
+**Step 1: Clear all logs**
+
+```bash
+rm -f /tmp/termsurf-gui.log
+rm -f /tmp/termsurf-launcher.log
+rm -f /tmp/termsurf-profile-*.log
+```
+
+**Step 2: Build and run the app**
+
+```bash
+cd ts3 && ./scripts/build-debug.sh --open
+```
+
+**Step 3: Open exactly one webview**
+
+In the terminal, type:
+```
+web google.com
+```
+
+Wait for the page to fully load.
+
+**Step 4: Interact with mouse**
+
+- Move mouse around the webview
+- Click on a few different elements
+- Observe behavior (note any inconsistencies)
+
+**Step 5: Close the app**
+
+Quit TermSurf normally (Cmd+Q or close window).
+
+**Step 6: Analyze logs**
+
+Count browser creation events:
+```bash
+cat /tmp/termsurf-profile-*.log | grep "Browser .* created"
+```
+
+Check for duplicate sessions:
+```bash
+cat /tmp/termsurf-profile-*.log | grep "session="
+```
+
+Count XPC connection errors:
+```bash
+cat /tmp/termsurf-profile-*.log | grep -c "connection.*error\|interrupted"
+```
+
+### Expected Results
+
+**If single browser (hypothesis disproven):**
+```
+Profile: Browser 1 created for 'https://google.com' (session='pane-0-XXXXX')
+```
+Only one "Browser N created" line should appear.
+
+**If multiple browsers (hypothesis confirmed):**
+```
+Profile: Browser 1 created for 'https://google.com' (session='pane-0-XXXXX')
+Profile: Browser 2 created for 'https://google.com' (session='pane-0-XXXXX')
+...
+```
+Multiple browsers created for the same session indicates a retry/duplication bug.
+
+### Success Criteria
+
+- [ ] Logs are clean (no data from previous runs)
+- [ ] Exactly one `web` command was issued
+- [ ] Browser creation count is definitively determined
+- [ ] Results inform next debugging direction
+
 ## References
 
 - `docs/issues/317-input.md` — Keyboard input (completed)
