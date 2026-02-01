@@ -708,9 +708,11 @@ cat /tmp/termsurf-gui.log | grep "Removed connection"
 
 **Success criteria:**
 
-- [ ] `webview_cursors` cleaned when webview closes
-- [ ] No functional regression (cursor still works while webview is open)
-- [ ] Cleanup logged for debugging
+- [x] `webview_cursors` cleaned when webview closes
+- [x] No functional regression (cursor still works while webview is open)
+- [x] Cleanup logged for debugging
+
+**Result: Success.** One-line fix works as expected.
 
 ## Success Criteria
 

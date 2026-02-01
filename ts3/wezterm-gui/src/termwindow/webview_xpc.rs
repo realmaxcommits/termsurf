@@ -613,6 +613,7 @@ impl XpcManager {
     /// Remove a peer connection (e.g., when webview pane is closed)
     pub fn remove_connection(&self, pane_id: PaneId) {
         self.peer_connections.lock().unwrap().remove(&pane_id);
+        self.webview_cursors.lock().unwrap().remove(&pane_id);
         log::info!("[XPC] Removed connection for pane {}", pane_id);
     }
 
