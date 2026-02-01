@@ -426,6 +426,10 @@ pub struct TermWindow {
     #[cfg(target_os = "macos")]
     webview_resize_state: RefCell<HashMap<PaneId, WebviewResizeState>>,
 
+    /// Per-pane click state for double/triple-click detection (issue 320)
+    #[cfg(target_os = "macos")]
+    click_state: RefCell<HashMap<PaneId, crate::termwindow::mouseevent::ClickState>>,
+
     window_background: Vec<LoadedBackgroundLayer>,
 
     current_modifier_and_leds: (Modifiers, KeyboardLedStatus),
@@ -802,6 +806,8 @@ impl TermWindow {
             semantic_zones: HashMap::new(),
             #[cfg(target_os = "macos")]
             webview_resize_state: RefCell::new(HashMap::new()),
+            #[cfg(target_os = "macos")]
+            click_state: RefCell::new(HashMap::new()),
             ui_items: vec![],
             dragging: None,
             last_ui_item: None,

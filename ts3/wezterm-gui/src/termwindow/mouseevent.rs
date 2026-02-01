@@ -23,6 +23,28 @@ use wezterm_dynamic::ToDynamic;
 use wezterm_term::input::{MouseButton, MouseEventKind as TMEK};
 use wezterm_term::{ClickPosition, LastMouseClick, StableRowIndex};
 
+/// State for tracking multi-click sequences (double-click, triple-click)
+/// Used for webview panes to detect rapid clicks at the same position.
+#[derive(Debug, Clone)]
+pub struct ClickState {
+    /// Timestamp of last click
+    pub last_time: std::time::Instant,
+    /// Position of last click (CEF coordinates)
+    pub last_pos: (i32, i32),
+    /// Current click count (1, 2, or 3)
+    pub count: u32,
+}
+
+impl Default for ClickState {
+    fn default() -> Self {
+        Self {
+            last_time: std::time::Instant::now(),
+            last_pos: (0, 0),
+            count: 0,
+        }
+    }
+}
+
 impl super::TermWindow {
     fn resolve_ui_item(&self, event: &MouseEvent) -> Option<UIItem> {
         let x = event.coords.x;
@@ -1203,19 +1225,25 @@ impl super::TermWindow {
                 true
             }
             WMEK::Press(MousePress::Left) => {
+                let click_count = self.compute_click_count(pane_id, cef_x, cef_y);
                 log::info!(
-                    "[MOUSE] Press LEFT pane={} cef=({}, {})",
-                    pane_id, cef_x, cef_y
+                    "[MOUSE] Press LEFT pane={} cef=({}, {}) click_count={}",
+                    pane_id, cef_x, cef_y, click_count
                 );
-                xpc_manager.send_mouse_click(pane_id, cef_x, cef_y, 0, false, 1, 0);
+                xpc_manager.send_mouse_click(pane_id, cef_x, cef_y, 0, false, click_count as i32, 0);
                 true
             }
             WMEK::Release(MousePress::Left) => {
+                // Use same count as press (don't re-compute on release)
+                let click_count = {
+                    let states = self.click_state.borrow();
+                    states.get(&pane_id).map(|s| s.count).unwrap_or(1)
+                };
                 log::info!(
-                    "[MOUSE] Release LEFT pane={} cef=({}, {})",
-                    pane_id, cef_x, cef_y
+                    "[MOUSE] Release LEFT pane={} cef=({}, {}) click_count={}",
+                    pane_id, cef_x, cef_y, click_count
                 );
-                xpc_manager.send_mouse_click(pane_id, cef_x, cef_y, 0, true, 1, 0);
+                xpc_manager.send_mouse_click(pane_id, cef_x, cef_y, 0, true, click_count as i32, 0);
                 true
             }
             other => {
@@ -1223,6 +1251,47 @@ impl super::TermWindow {
                 false // Let other events pass through for now
             }
         }
+    }
+
+    /// Compute click count based on timing and position (issue 320, experiment 1).
+    /// Returns 1, 2, or 3 depending on rapid successive clicks at the same position.
+    #[cfg(target_os = "macos")]
+    fn compute_click_count(&self, pane_id: mux::pane::PaneId, x: i32, y: i32) -> u32 {
+        use std::time::{Duration, Instant};
+
+        const DOUBLE_CLICK_TIME: Duration = Duration::from_millis(500);
+        const DOUBLE_CLICK_DISTANCE: i32 = 5;
+
+        let mut states = self.click_state.borrow_mut();
+        let state = states.entry(pane_id).or_default();
+
+        let now = Instant::now();
+        let elapsed = now.duration_since(state.last_time);
+        let dx = (x - state.last_pos.0).abs();
+        let dy = (y - state.last_pos.1).abs();
+
+        let new_count = if elapsed < DOUBLE_CLICK_TIME
+            && dx <= DOUBLE_CLICK_DISTANCE
+            && dy <= DOUBLE_CLICK_DISTANCE
+        {
+            // Rapid click near same position: increment (max 3)
+            (state.count + 1).min(3)
+        } else {
+            // Too slow or too far: reset to 1
+            1
+        };
+
+        // Update state for next click
+        state.last_time = now;
+        state.last_pos = (x, y);
+        state.count = new_count;
+
+        log::info!(
+            "[CLICK] pane={} pos=({},{}) elapsed={:?} distance=({},{}) count={}",
+            pane_id, x, y, elapsed, dx, dy, new_count
+        );
+
+        new_count
     }
 }
 
