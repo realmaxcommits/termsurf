@@ -405,15 +405,65 @@ cat /tmp/termsurf-gui.log | grep -E "(Removed listener|Removing connection)"
 
 **Success criteria:**
 
-- [ ] Listener is removed before connection during webview close
+- [x] Listener is removed before connection during webview close
 - [ ] No "New connection" appears after removing pane 1's listener
 - [ ] CONN-1's error handler fires only once
 - [ ] Profile server remains running with count = 1
 - [ ] Pane 0's webview continues to receive frames
 
-**Expected outcome:** By removing the listener before dropping the connection,
-the mystery reconnection will have nowhere to connect to. This should prevent
-the double error callback and keep the profile server alive.
+**Result: Failure.** Removing the listener made things worse.
+
+**Observed behavior:**
+
+Before experiment 2:
+
+```
+[CONN-1] GUI disconnected (remaining: 1)
+[CONN-1] GUI disconnected (remaining: 0)   <- Same CONN-1 twice
+```
+
+After experiment 2:
+
+```
+[CONN-1] GUI disconnected (remaining: 1)
+[CONN-0] GUI disconnected (remaining: 0)   <- Now CONN-0 also disconnects!
+```
+
+The mystery reconnection still occurred 15ms after removing the listener:
+
+```
+13:50:52.548  [XPC] Removed listener for pane 1
+13:50:52.563  New connection for session pane-1-32024
+```
+
+**Conclusion:**
+
+Dropping the `XpcListener` invalidates more than just the connections created
+through that specific listener. It appears to affect the entire XPC subsystem,
+causing CONN-0's connection to also fail. This is likely because:
+
+1. The XPC library shares underlying Mach port state between listeners in the
+   same process
+2. Dropping a listener sends an invalidation that propagates to sibling
+   connections
+3. There may be reference counting issues in the termsurf-xpc wrapper
+
+The mystery reconnection still occurs because the connection was already
+in-flight when we removed the listener.
+
+**Rollback required:** Revert the listener cleanup changes. The correct approach
+is not to prevent reconnections, but to make the error handler idempotent so
+that multiple disconnect events for the same connection only decrement the count
+once.
+
+### Experiment 3: Idempotent Error Handler
+
+**Goal:** Make the profile server's error handler idempotent so that multiple
+disconnect events for the same connection only decrement the count once.
+
+**Hypothesis:** The double error callback is unavoidable at the XPC level, but
+we can prevent the double decrement by tracking which connections have already
+fired their error handler.
 
 ### Future Experiments
 
