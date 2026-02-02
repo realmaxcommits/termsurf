@@ -47,4 +47,59 @@ or `rgba(255, 255, 255, 1)`).
 
 ## Experiments
 
-(To be designed)
+### Experiment 1: Set BrowserSettings.background_color to opaque white
+
+**Status: Pending**
+
+CEF's `BrowserSettings` has a `background_color` field (type `cef_color_t` =
+`u32`) in ARGB format. Setting it to an opaque value disables transparent
+painting and provides a default background.
+
+#### Analysis
+
+From `cef-rs/cef/src/window_info.rs` (line 47-48):
+
+> "Transparent painting is enabled by default but can be disabled by setting
+> CefBrowserSettings.background_color to an opaque value."
+
+The current browser creation in `termsurf-profile/src/main.rs` (line 1150):
+
+```rust
+let browser_settings = BrowserSettings {
+    windowless_frame_rate: 60,
+    ..Default::default()
+};
+```
+
+The `background_color` defaults to 0, which means transparent.
+
+#### Color Format
+
+CEF uses ARGB format: `0xAARRGGBB`
+
+- Opaque white: `0xFFFFFFFF` (A=255, R=255, G=255, B=255)
+
+#### Implementation
+
+Update `BrowserSettings` in `termsurf-profile/src/main.rs` (line 1150):
+
+```rust
+let browser_settings = BrowserSettings {
+    windowless_frame_rate: 60,
+    background_color: 0xFFFFFFFF, // Opaque white (issue 336)
+    ..Default::default()
+};
+```
+
+#### Verification
+
+```bash
+cd ts3 && ./scripts/build-debug.sh --open
+web example.com    # Simple page, should have white background
+web google.com     # Should still look normal
+```
+
+Test pages:
+- A page with no background CSS → should be white
+- A page with explicit dark background → should show dark
+- A page with transparent elements → should blend over white
