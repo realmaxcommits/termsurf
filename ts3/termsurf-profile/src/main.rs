@@ -1149,6 +1149,7 @@ mod cef_handlers {
 
         let browser_settings = BrowserSettings {
             windowless_frame_rate: 60,
+            background_color: 0xFFFFFFFF, // Opaque white (issue 336)
             ..Default::default()
         };
 

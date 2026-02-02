@@ -49,7 +49,7 @@ or `rgba(255, 255, 255, 1)`).
 
 ### Experiment 1: Set BrowserSettings.background_color to opaque white
 
-**Status: Pending**
+**Status: Success**
 
 CEF's `BrowserSettings` has a `background_color` field (type `cef_color_t` =
 `u32`) in ARGB format. Setting it to an opaque value disables transparent
@@ -103,3 +103,24 @@ Test pages:
 - A page with no background CSS → should be white
 - A page with explicit dark background → should show dark
 - A page with transparent elements → should blend over white
+
+---
+
+## Conclusion
+
+Webviews now render with an opaque white background by default, matching the
+behavior of Chrome, Safari, and other browsers. Pages that don't explicitly set
+a background color will display correctly instead of showing the terminal's
+dark background bleeding through.
+
+### Implementation Summary
+
+| Component         | Change                                            |
+| ----------------- | ------------------------------------------------- |
+| BrowserSettings   | Set `background_color: 0xFFFFFFFF` (opaque white) |
+
+### Technical Note
+
+CEF uses ARGB color format. Setting `background_color` to an opaque value
+(alpha = 0xFF) disables transparent painting mode, which was causing the
+terminal background to show through.
