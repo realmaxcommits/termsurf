@@ -344,6 +344,8 @@ pub struct WebviewOverlay {
     pub mode: WebviewMode,
     /// Browser profile name (for control panel display)
     pub profile: String,
+    /// When set, show "url copied" feedback until this instant (Issue 334)
+    pub copy_feedback_until: Option<std::time::Instant>,
 }
 
 /// Tracks active webview overlays (global, not per-window)
@@ -541,6 +543,7 @@ fn handle_request(
                 tab_id,
                 mode: WebviewMode::default(),
                 profile: profile.to_string(),
+                copy_feedback_until: None,
             };
 
             state.write().unwrap().add_overlay(pane_id, overlay);
@@ -597,6 +600,7 @@ fn handle_request(
                 tab_id,
                 mode: WebviewMode::default(),
                 profile: "default".to_string(),
+                copy_feedback_until: None,
             };
 
             state.write().unwrap().add_overlay(pane_id, overlay);

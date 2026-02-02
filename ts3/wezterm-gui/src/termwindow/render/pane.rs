@@ -19,6 +19,7 @@ use wezterm_dynamic::Value;
 use wezterm_term::color::{ColorAttribute, ColorPalette};
 use wezterm_term::{Line, StableRowIndex};
 use window::color::LinearRgba;
+use window::WindowOps;
 
 impl crate::TermWindow {
     fn paint_pane_box_model(&mut self, pos: &PositionedPane) -> anyhow::Result<()> {
@@ -959,8 +960,26 @@ impl crate::TermWindow {
                         "...".to_string()
                     }
                 }
-                WebviewMode::Control => "Enter to browse. Ctrl+C to exit.".to_string(),
+                WebviewMode::Control => {
+                    // Check for copy feedback (Issue 334)
+                    if let Some(until) = overlay.copy_feedback_until {
+                        if std::time::Instant::now() < until {
+                            "url copied".to_string()
+                        } else {
+                            "Enter to browse. Ctrl+C to exit.".to_string()
+                        }
+                    } else {
+                        "Enter to browse. Ctrl+C to exit.".to_string()
+                    }
+                }
             };
+
+            // Schedule invalidation for feedback timeout (Issue 334)
+            if overlay.copy_feedback_until.is_some() {
+                if let Some(ref w) = self.window {
+                    w.invalidate();
+                }
+            }
 
             // Create text element with padding for margins (matching ts2)
             let element = Element::new(&font, ElementContent::Text(display_text))

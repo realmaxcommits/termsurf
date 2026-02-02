@@ -199,15 +199,15 @@ web google.com                    # Opens webview
 
 ### Conclusion
 
-Cmd+C in Control mode did not trigger the handler. The key event was not reaching
-`handle_webview_key_event` because the macOS menu system intercepts Cmd+C and
-routes it to the `CopyTo` key assignment handler instead.
+Cmd+C in Control mode did not trigger the handler. The key event was not
+reaching `handle_webview_key_event` because the macOS menu system intercepts
+Cmd+C and routes it to the `CopyTo` key assignment handler instead.
 
 ---
 
 ## Experiment 2: Modify CopyTo handler for webview URL
 
-**Status: Pending**
+**Status: Success**
 
 Instead of intercepting the key event, modify the `CopyTo` action handler to
 check for webview Control mode and copy the URL.
@@ -225,6 +225,7 @@ CopyTo(dest) => {
 ```
 
 When Cmd+C is pressed, the menu system triggers this handler. We need to:
+
 1. Check if the pane has a webview overlay in Control mode
 2. If yes, copy the URL and set feedback timestamp
 3. If no, do the normal selection copy
@@ -289,4 +290,40 @@ web google.com                    # Opens webview
 # Press Cmd+C
 # Expected: "url copied" appears briefly, then reverts to normal
 # Check clipboard: pbpaste should show the URL
+```
+
+---
+
+## Conclusion
+
+Users can now copy the current webview URL to the clipboard using Cmd+C while in
+Control mode. A brief "url copied" feedback message appears in the control panel
+for 1.5 seconds.
+
+### What We Learned
+
+1. **Menu shortcuts take priority over key events.** Cmd+C is intercepted by the
+   macOS menu system and routed to the `CopyTo` key assignment handler, never
+   reaching the key event handler. Experiment 1 failed because it tried to
+   intercept the key event directly.
+
+2. **Work with the system, not against it.** Instead of fighting the menu
+   system, Experiment 2 modified the `CopyTo` handler to check for webview
+   Control mode. This integrates naturally with WezTerm's existing architecture.
+
+### Implementation Summary
+
+| Component               | Change                                                         |
+| ----------------------- | -------------------------------------------------------------- |
+| `WebviewOverlay` struct | Added `copy_feedback_until: Option<Instant>` field             |
+| `CopyTo` handler        | Check for webview Control mode; copy URL instead of selection  |
+| Control panel rendering | Show "url copied" when feedback timestamp is active            |
+| Auto-invalidate         | Continuous redraws while feedback is visible to ensure timeout |
+
+### User Experience
+
+```
+Control mode (normal):     "Enter to browse. Ctrl+C to exit."
+After Cmd+C (1.5 sec):     "url copied"
+Then reverts to:           "Enter to browse. Ctrl+C to exit."
 ```

@@ -2787,6 +2787,41 @@ impl TermWindow {
                 window.set_window_level(level.clone());
             }
             CopyTo(dest) => {
+                // Issue 334: Check for webview Control mode
+                #[cfg(target_os = "macos")]
+                {
+                    use crate::termwindow::webview_socket::{get_server, WebviewMode};
+
+                    let pane_id = pane.pane_id();
+                    if let Some(server) = get_server() {
+                        let state = server.state();
+                        let mut overlays = state.write().unwrap();
+                        if let Some(overlay) = overlays.overlays.get_mut(&pane_id) {
+                            if overlay.mode == WebviewMode::Control {
+                                // Copy URL instead of selection
+                                if let Some(xpc_manager) = crate::termwindow::webview_xpc::get_xpc_manager() {
+                                    if let Some(surface) = xpc_manager.get_received_surface(pane_id) {
+                                        let url = surface.url.clone();
+                                        log::info!("[Webview] CopyTo in Control mode → Copy URL: {}", url);
+                                        self.copy_to_clipboard(*dest, url);
+
+                                        // Set feedback timestamp
+                                        overlay.copy_feedback_until = Some(
+                                            std::time::Instant::now() + std::time::Duration::from_millis(1500)
+                                        );
+                                        drop(overlays);
+                                        if let Some(ref w) = self.window {
+                                            w.invalidate();
+                                        }
+                                        return Ok(PerformAssignmentResult::Handled);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Normal copy behavior
                 let text = self.selection_text(pane);
                 self.copy_to_clipboard(*dest, text);
             }
