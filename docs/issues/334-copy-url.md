@@ -200,4 +200,93 @@ web google.com                    # Opens webview
 ### Conclusion
 
 Cmd+C in Control mode did not trigger the handler. The key event was not reaching
-`handle_webview_key_event`.
+`handle_webview_key_event` because the macOS menu system intercepts Cmd+C and
+routes it to the `CopyTo` key assignment handler instead.
+
+---
+
+## Experiment 2: Modify CopyTo handler for webview URL
+
+**Status: Pending**
+
+Instead of intercepting the key event, modify the `CopyTo` action handler to
+check for webview Control mode and copy the URL.
+
+### Analysis
+
+The `CopyTo` key assignment is handled in `perform_key_assignment`
+(`termwindow/mod.rs` line 2789):
+
+```rust
+CopyTo(dest) => {
+    let text = self.selection_text(pane);
+    self.copy_to_clipboard(*dest, text);
+}
+```
+
+When Cmd+C is pressed, the menu system triggers this handler. We need to:
+1. Check if the pane has a webview overlay in Control mode
+2. If yes, copy the URL and set feedback timestamp
+3. If no, do the normal selection copy
+
+### Step 1: Modify CopyTo handler
+
+In `termwindow/mod.rs`, update the `CopyTo` handler (line 2789):
+
+```rust
+CopyTo(dest) => {
+    // Issue 334: Check for webview Control mode
+    #[cfg(target_os = "macos")]
+    {
+        use crate::termwindow::webview_socket::{get_server, WebviewMode};
+
+        let pane_id = pane.pane_id();
+        if let Some(server) = get_server() {
+            let state = server.state();
+            let mut overlays = state.write().unwrap();
+            if let Some(overlay) = overlays.overlays.get_mut(&pane_id) {
+                if overlay.mode == WebviewMode::Control {
+                    // Copy URL instead of selection
+                    if let Some(xpc_manager) = crate::termwindow::webview_xpc::get_xpc_manager() {
+                        if let Some(surface) = xpc_manager.get_received_surface(pane_id) {
+                            let url = surface.url.clone();
+                            log::info!("[Webview] CopyTo in Control mode → Copy URL: {}", url);
+                            self.copy_to_clipboard(*dest, url);
+
+                            // Set feedback timestamp
+                            overlay.copy_feedback_until = Some(
+                                std::time::Instant::now() + std::time::Duration::from_millis(1500)
+                            );
+                            drop(overlays);
+                            if let Some(ref w) = self.window {
+                                w.invalidate();
+                            }
+                            return Ok(PerformAssignmentResult::Handled);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Normal copy behavior
+    let text = self.selection_text(pane);
+    self.copy_to_clipboard(*dest, text);
+}
+```
+
+### Step 2: Remove key event handler (cleanup)
+
+Remove the Cmd+C handling added in Experiment 1 from `keyevent.rs` since it's
+now handled in the CopyTo action.
+
+### Verification
+
+```bash
+cd ts3 && ./scripts/build-debug.sh --open
+web google.com                    # Opens webview
+# Press Ctrl+C to enter control mode
+# Press Cmd+C
+# Expected: "url copied" appears briefly, then reverts to normal
+# Check clipboard: pbpaste should show the URL
+```
