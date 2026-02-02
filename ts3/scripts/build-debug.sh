@@ -71,7 +71,7 @@ cp "$REPO_DIR/assets/AppIcon.icns" "$APP_BUNDLE/Contents/Resources/"
 
 # 4. Copy executables
 cp "$REPO_DIR/target/debug/termsurf-gui" "$APP_BUNDLE/Contents/MacOS/"
-cp "$REPO_DIR/target/debug/wezterm" "$APP_BUNDLE/Contents/MacOS/"
+cp "$REPO_DIR/target/debug/termsurf" "$APP_BUNDLE/Contents/MacOS/"
 cp "$REPO_DIR/target/debug/web" "$APP_BUNDLE/Contents/MacOS/"
 
 # 4b. Create TermSurf Profile Helper app bundle (proper macOS helper pattern)

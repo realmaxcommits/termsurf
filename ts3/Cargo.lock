@@ -5909,6 +5909,47 @@ dependencies = [
 ]
 
 [[package]]
+name = "termsurf"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "cc",
+ "chrono",
+ "clap",
+ "clap_complete",
+ "clap_complete_fig",
+ "codec",
+ "config",
+ "embed-resource",
+ "env-bootstrap",
+ "filedescriptor",
+ "hostname",
+ "humantime",
+ "image",
+ "libc",
+ "log",
+ "mux",
+ "portable-pty",
+ "promise",
+ "serde",
+ "serde_json",
+ "shell-words",
+ "smol",
+ "tabout",
+ "tempfile",
+ "termios",
+ "termwiz",
+ "termwiz-funcs",
+ "textwrap",
+ "umask",
+ "url",
+ "wezterm-client",
+ "wezterm-gui-subcommands",
+ "wezterm-term",
+ "winapi",
+]
+
+[[package]]
 name = "termsurf-gui"
 version = "0.1.0"
 dependencies = [
@@ -7023,47 +7064,6 @@ name = "weezl"
 version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "009936b22a61d342859b5f0ea64681cbb35a358ab548e2a44a8cf0dac2d980b8"
-
-[[package]]
-name = "wezterm"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "cc",
- "chrono",
- "clap",
- "clap_complete",
- "clap_complete_fig",
- "codec",
- "config",
- "embed-resource",
- "env-bootstrap",
- "filedescriptor",
- "hostname",
- "humantime",
- "image",
- "libc",
- "log",
- "mux",
- "portable-pty",
- "promise",
- "serde",
- "serde_json",
- "shell-words",
- "smol",
- "tabout",
- "tempfile",
- "termios",
- "termwiz",
- "termwiz-funcs",
- "textwrap",
- "umask",
- "url",
- "wezterm-client",
- "wezterm-gui-subcommands",
- "wezterm-term",
- "winapi",
-]
 
 [[package]]
 name = "wezterm-bidi"
