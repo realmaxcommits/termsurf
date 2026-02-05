@@ -210,7 +210,7 @@ window, no display connection), not in the texture forwarding to the GUI.
 
 ### Experiment 2: Add Event Loop to Profile Server
 
-**Status:** Not started
+**Status:** FAILED — Event loop integration did not improve frame rate
 
 **Goal:** Test whether adding a winit event loop to the profile server (without
 a visible window) improves CEF's frame production rate.
@@ -218,7 +218,7 @@ a visible window) improves CEF's frame production rate.
 **Hypothesis:** CEF's compositor needs event loop integration to produce frames
 at full speed. The profile server's simple sleep loop doesn't provide this.
 
-#### Current Profile Server (slow)
+#### Before (slow)
 
 ```rust
 while !QUIT_FLAG.load(Ordering::Relaxed) {
@@ -227,13 +227,26 @@ while !QUIT_FLAG.load(Ordering::Relaxed) {
 }
 ```
 
-#### Proposed Change
+#### After (implemented)
 
 ```rust
-let event_loop = EventLoop::<()>::with_user_event().build().unwrap();
+// Minimal ApplicationHandler that does nothing (no window needed)
+struct MinimalApp;
+
+impl ApplicationHandler for MinimalApp {
+    fn resumed(&mut self, _event_loop: &ActiveEventLoop) {}
+    fn window_event(&mut self, _event_loop: &ActiveEventLoop, _window_id: WindowId, _event: WindowEvent) {}
+}
+
+// Main loop with winit event pump
+let mut event_loop = EventLoop::<()>::with_user_event().build().unwrap();
 event_loop.set_control_flow(ControlFlow::Poll);
+let mut app = MinimalApp;
 
 loop {
+    if QUIT_FLAG.load(Ordering::Relaxed) {
+        break;
+    }
     cef::do_message_loop_work();
     let timeout = Some(Duration::from_millis(1));
     let status = event_loop.pump_app_events(timeout, &mut app);
@@ -254,24 +267,47 @@ loop {
 
 #### Implementation Steps
 
-1. Add `winit` dependency to `termsurf-profile/Cargo.toml`
-2. Create a minimal `ApplicationHandler` implementation (can be empty)
-3. Replace the sleep loop with `pump_app_events`
-4. Measure frame rate with existing instrumentation
+1. ✅ Add `winit` dependency to `termsurf-profile/Cargo.toml`
+2. ✅ Create a minimal `ApplicationHandler` implementation (empty)
+3. ✅ Replace the sleep loop with `pump_app_events`
+4. ✅ Measure frame rate with existing instrumentation
 
-#### Success Criteria
+#### Results
 
-| Result       | Conclusion                                                        |
-| ------------ | ----------------------------------------------------------------- |
-| ~60fps       | Event loop integration was the issue. Keep this fix.              |
-| Still ~20fps | Event loop alone isn't enough. Try Experiment 3 (visible window). |
+**Status: FAILED** — The winit event loop did NOT improve frame rate.
 
-#### Notes
+| Metric                     | Value       |
+| -------------------------- | ----------- |
+| **Average FPS**            | **17.0**    |
+| Frames at ~30fps (21-40ms) | 443 (80%)   |
+| Frames at ~15fps (41-70ms) | 35 (6%)     |
+| Frames at ~10fps (71-110ms)| 21 (4%)     |
+| Stalls (>110ms)            | 37 (7%)     |
+| Fast frames (0-20ms)       | 17 (3%)     |
 
-- No visible window is created—this tests whether the event loop alone is
-  sufficient, or if CEF also needs a window/display connection
-- If this fails, Experiment 3 would add a hidden 1x1 window to see if CEF needs
-  a window to behave properly
+Frame interval distribution shows CEF is producing frames at roughly **30fps**
+when active (most intervals are 33-34ms), but frequent stalls bring the overall
+rate down to ~17fps.
+
+#### Conclusion
+
+The winit event loop hypothesis was **wrong**. CEF appears to have an internal
+~30fps cap that isn't affected by event loop integration. The
+`windowless_frame_rate: 60` setting isn't being honored.
+
+This disproves the theory that CEF needed event loop integration to produce
+frames at full speed. The profile server's simple sleep loop was not the
+bottleneck.
+
+#### Possible Next Steps
+
+1. **Experiment 3:** Add a hidden 1x1 window (test if CEF needs an actual
+   window, not just an event loop)
+2. **Investigate CEF's internal throttling** — the 33ms intervals suggest CEF is
+   internally targeting 30fps regardless of settings
+3. **Compare with cef-rs example timing** — measure the actual frame intervals
+   in the working example to see if it truly achieves 60fps or just feels
+   smoother
 
 ## Related Issues
 
