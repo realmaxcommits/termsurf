@@ -299,15 +299,38 @@ This disproves the theory that CEF needed event loop integration to produce
 frames at full speed. The profile server's simple sleep loop was not the
 bottleneck.
 
-#### Possible Next Steps
+### Experiment 3: Measure cef-rs Example Frame Rate
 
-1. **Experiment 3:** Add a hidden 1x1 window (test if CEF needs an actual
-   window, not just an event loop)
-2. **Investigate CEF's internal throttling** — the 33ms intervals suggest CEF is
-   internally targeting 30fps regardless of settings
-3. **Compare with cef-rs example timing** — measure the actual frame intervals
-   in the working example to see if it truly achieves 60fps or just feels
-   smoother
+**Status:** Not started
+
+**Goal:** Measure the actual frame rate in the cef-rs OSR example to determine
+whether it truly achieves 60fps or just feels smoother for other reasons.
+
+**Rationale:** We assumed the cef-rs example achieves 60fps because it "looks
+smooth." But we never actually measured it. This assumption drove our hypothesis
+that the profile server's environment was causing throttling. Before pursuing
+more complex experiments, we should verify this assumption.
+
+#### Expected Outcomes
+
+| Result                      | Implication                                                                                                      |
+| --------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| **cef-rs achieves ~60fps**  | CEF *can* do 60fps. Something about ts3's configuration or environment is different. Continue investigating ts3. |
+| **cef-rs also gets ~30fps** | The "smoothness" isn't frame rate—it's latency or frame pacing. The 30fps cap may be fundamental to CEF's OSR.   |
+
+#### Implementation Steps
+
+1. Add frame timing to `cef-rs/examples/osr/src/webrender.rs` in the
+   `on_accelerated_paint` handler (similar to ts3's `[FRAME-TX]` logging)
+2. Run the example, scroll around on a content-heavy page
+3. Analyze the frame intervals using the same methodology as Experiment 2
+
+#### Why This Experiment First
+
+- Requires no changes to ts3
+- Validates (or invalidates) the core assumption driving this investigation
+- If cef-rs also runs at ~30fps, we can stop chasing the "60fps CEF" goal and
+  focus on latency/smoothness instead
 
 ## Related Issues
 
