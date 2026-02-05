@@ -79,11 +79,9 @@ CEF's compositor is designed for normal browser windows. It may:
 - `external_begin_frame_enabled` had partial effect (it affects timing)
 - Same CEF version and settings produce different results based on environment
 
-## Experiments
+## Ideas for Experiments
 
-### Experiment 1: Add Event Loop to Profile Server
-
-**Status:** Not started
+### Idea 1: Add Event Loop to Profile Server
 
 **Hypothesis:** Adding a minimal event loop (even headless) to the profile
 server will increase CEF's frame production rate.
@@ -97,9 +95,7 @@ server will increase CEF's frame production rate.
 
 **Success criteria:** Frame production increases from ~20fps toward 60fps.
 
-### Experiment 2: Test with Visible Window
-
-**Status:** Not started
+### Idea 2: Test with Visible Window
 
 **Hypothesis:** If the profile server creates a visible (but hidden/offscreen)
 window, CEF's compositor will behave normally.
@@ -112,9 +108,7 @@ window, CEF's compositor will behave normally.
 
 **Success criteria:** Frame production matches the cef-rs OSR example (~60fps).
 
-### Experiment 3: Profile CEF's Internal Timing
-
-**Status:** Not started
+### Idea 3: Profile CEF's Internal Timing
 
 **Hypothesis:** CEF has internal throttling that activates in windowless mode.
 
@@ -126,6 +120,10 @@ window, CEF's compositor will behave normally.
 4. Identify where CEF decides to skip/delay frames
 
 **Success criteria:** Identify the specific CEF behavior causing throttling.
+
+## Experiments
+
+Not started yet.
 
 ## Related Issues
 
