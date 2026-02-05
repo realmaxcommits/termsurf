@@ -56,13 +56,74 @@ This breaks the Rust assumption.
 4. **Maintenance burden** — Long-term cost of each approach
 5. **Cross-platform** — macOS now, Linux/Windows later
 
-## What This Document Will Track
+## Research
+
+### What This Document Will Track
 
 - [ ] Survey of C++ terminals (Alacritty's C++ predecessors, etc.)
 - [ ] Feasibility of Rust + C++ FFI for Chromium embedding
 - [ ] Electron as a platform (not just browser component)
 - [ ] Alternative approaches (WebGPU terminals, etc.)
 - [ ] Decision framework and recommendation
+
+### Research 1: C++ Terminals
+
+**Question:** Are there C++ terminals that support tabs, panes, cross-platform
+(Windows/Linux/macOS), and GPU rendering?
+
+**Answer:** No. No C++ terminal meets all criteria.
+
+#### C++ Terminals Survey
+
+| Terminal                                               | Tabs | Panes | Platforms           | GPU          |
+| ------------------------------------------------------ | ---- | ----- | ------------------- | ------------ |
+| [Contour](https://github.com/contour-terminal/contour) | ✅   | ❌    | Win/Linux/macOS/BSD | ✅ OpenGL    |
+| [Konsole](https://konsole.kde.org/)                    | ✅   | ✅    | Linux only          | ❌ Qt/CPU    |
+| [Terminator](https://gnome-terminator.org/)            | ✅   | ✅    | Linux only          | ❌ GTK/CPU   |
+| cool-retro-term                                        | ❌   | ❌    | Linux/macOS         | ✅ Qt/OpenGL |
+
+**Contour** is the closest — C++23, GPU-accelerated via OpenGL, cross-platform —
+but splits/panes are
+[still a feature request](https://github.com/contour-terminal/contour/issues/1170).
+We could contribute splits ourselves, but that's significant work.
+
+**Konsole** has tabs and splits but is Linux-only and CPU-rendered (Qt).
+
+#### The Modern GPU Terminals Are Not C++
+
+The terminals that meet all criteria are written in other languages:
+
+| Terminal                                   | Tabs | Panes | Platforms       | GPU | Language     |
+| ------------------------------------------ | ---- | ----- | --------------- | --- | ------------ |
+| [WezTerm](https://wezfurlong.org/wezterm/) | ✅   | ✅    | Win/Linux/macOS | ✅  | **Rust**     |
+| [Alacritty](https://alacritty.org/)        | ❌   | ❌    | Win/Linux/macOS | ✅  | **Rust**     |
+| [Kitty](https://sw.kovidgoyal.net/kitty/)  | ✅   | ✅    | Linux/macOS     | ✅  | **Python/C** |
+| [Ghostty](https://ghostty.org/)            | ✅   | ✅    | Linux/macOS     | ✅  | **Zig**      |
+
+#### Alternative: Electron-Based Terminal
+
+Since we're considering embedding Electron anyway, [Hyper](https://hyper.is/) is
+notable — it's already Electron-based:
+
+| Feature   | Hyper                     |
+| --------- | ------------------------- |
+| Language  | TypeScript/Electron       |
+| Tabs      | ✅                        |
+| Splits    | ✅ (Cmd+D / Cmd+Shift+D)  |
+| Platforms | Win/Linux/macOS           |
+| Rendering | Canvas (xterm.js)         |
+| GPU       | ❌ (but runs in Chromium) |
+
+If we go the Electron route, terminal and browser would share the same runtime.
+
+#### Conclusion
+
+The C++ terminal ecosystem doesn't have what we need. Options:
+
+1. **Contour + contribute splits** — Significant C++ work
+2. **Hyper (Electron)** — Already has everything, shares runtime with browser
+3. **WezTerm + C++ FFI** — Keep current terminal, wrap Chromium in Rust
+4. **Build from scratch** — Unified architecture, highest effort
 
 ## Related Issues
 
