@@ -184,11 +184,11 @@ creates an additional IPC hop for texture sharing.
 
 #### IPC Hop Comparison
 
-| Path | cef-rs | ts3 |
-|------|--------|-----|
+| Path                  | cef-rs                | ts3                   |
+| --------------------- | --------------------- | --------------------- |
 | GPU → Browser Process | Chromium internal IPC | Chromium internal IPC |
-| Browser Process → GUI | Same process (direct) | ts3 XPC (Mach port) |
-| **Total hops** | 1 | 2 |
+| Browser Process → GUI | Same process (direct) | ts3 XPC (Mach port)   |
+| **Total hops**        | 1                     | 2                     |
 
 #### Key Finding: The Extra Hop Is Not the Bottleneck
 
@@ -196,8 +196,8 @@ Issue 338's measurements showed that the Profile Server → GUI hop was fast
 (frames arrived within milliseconds of production). The bottleneck was CEF
 producing frames at ~20fps in the profile server, not the XPC transport.
 
-This means the problem is not the extra IPC hop—it's something about the
-profile server's environment that causes CEF to throttle frame production.
+This means the problem is not the extra IPC hop—it's something about the profile
+server's environment that causes CEF to throttle frame production.
 
 #### Conclusion
 
@@ -207,6 +207,71 @@ same rate as the cef-rs example would—but CEF isn't producing them at 60fps.
 
 The root cause is likely in how the profile server runs CEF (no event loop, no
 window, no display connection), not in the texture forwarding to the GUI.
+
+### Experiment 2: Add Event Loop to Profile Server
+
+**Status:** Not started
+
+**Goal:** Test whether adding a winit event loop to the profile server (without
+a visible window) improves CEF's frame production rate.
+
+**Hypothesis:** CEF's compositor needs event loop integration to produce frames
+at full speed. The profile server's simple sleep loop doesn't provide this.
+
+#### Current Profile Server (slow)
+
+```rust
+while !QUIT_FLAG.load(Ordering::Relaxed) {
+    cef::do_message_loop_work();
+    std::thread::sleep(Duration::from_millis(1));
+}
+```
+
+#### Proposed Change
+
+```rust
+let event_loop = EventLoop::<()>::with_user_event().build().unwrap();
+event_loop.set_control_flow(ControlFlow::Poll);
+
+loop {
+    cef::do_message_loop_work();
+    let timeout = Some(Duration::from_millis(1));
+    let status = event_loop.pump_app_events(timeout, &mut app);
+
+    if let PumpStatus::Exit(_) = status {
+        break;
+    }
+}
+```
+
+#### Why This Respects the Architecture
+
+- Profile server remains a separate process (required for multi-profile support)
+- One CEF instance per profile server (hard constraint)
+- GUI process unchanged
+- XPC communication unchanged
+- Only the message loop implementation changes
+
+#### Implementation Steps
+
+1. Add `winit` dependency to `termsurf-profile/Cargo.toml`
+2. Create a minimal `ApplicationHandler` implementation (can be empty)
+3. Replace the sleep loop with `pump_app_events`
+4. Measure frame rate with existing instrumentation
+
+#### Success Criteria
+
+| Result       | Conclusion                                                        |
+| ------------ | ----------------------------------------------------------------- |
+| ~60fps       | Event loop integration was the issue. Keep this fix.              |
+| Still ~20fps | Event loop alone isn't enough. Try Experiment 3 (visible window). |
+
+#### Notes
+
+- No visible window is created—this tests whether the event loop alone is
+  sufficient, or if CEF also needs a window/display connection
+- If this fails, Experiment 3 would add a hidden 1x1 window to see if CEF needs
+  a window to behave properly
 
 ## Related Issues
 
