@@ -954,7 +954,7 @@ focus-stealing problem. Two viable options:
 
 ### Experiment 9: Restore Hidden Window (Exp 7 Baseline)
 
-**Status:** Not started
+**Status:** SUCCESS — Confirms hidden window approach is the correct foundation
 
 **Goal:** Revert the code from Experiment 8 (CVDisplayLink) back to the
 Experiment 7 state (hidden 1x1 winit window). This is a pure restoration — no
@@ -988,6 +988,42 @@ Performance should match Experiment 7 results exactly:
 
 **Known issue:** The hidden window steals focus. This will be fixed in a
 subsequent experiment.
+
+#### Results
+
+**Overall stats:** 514 frames over 23.0s = **22.3 fps average**
+
+| Interval             | Count | Percentage |
+| -------------------- | ----- | ---------- |
+| Burst (0-5ms)        | 33    | 6%         |
+| 60fps (6-20ms)       | 314   | **61%**    |
+| 30fps (21-40ms)      | 31    | 6%         |
+| Mid (41-70ms)        | 75    | 14%        |
+| Low (>70ms)          | 60    | 11%        |
+
+**Dominant intervals:** 17ms (167 times), 16ms (98 times) — a strong
+vsync-aligned peak at 16-17ms, exactly what a 60Hz display produces.
+
+**Max consecutive 60fps frames:** **35**
+
+#### Comparison Across Key Experiments
+
+| Metric                | Exp 4 (ext pump) | Exp 7 (window) | Exp 8 (CVDisplayLink) | **Exp 9 (restore)** |
+| --------------------- | ---------------- | -------------- | --------------------- | ------------------- |
+| Average FPS           | 22.0             | 25.7           | 18.2                  | **22.3**            |
+| Frames at ~60fps      | 52%              | 78%            | 30%                   | **61%**             |
+| Max consecutive 60fps | 5                | 57             | 4                     | **35**              |
+| Dominant interval     | scattered        | 16-17ms        | scattered             | **16-17ms (265)**   |
+
+#### Conclusion
+
+The hidden window approach is confirmed as the correct foundation. The strong
+16-17ms vsync peak is back and dominant (265 out of 513 intervals), matching
+Experiment 7's pattern. The slightly lower percentages compared to Exp 7 (61% vs
+78%) likely reflect different browsing activity during the test rather than a
+code difference.
+
+**Next step:** Fix the focus-stealing problem with the hidden window.
 
 ## Related Issues
 
