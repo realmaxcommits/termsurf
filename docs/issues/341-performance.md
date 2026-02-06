@@ -1105,7 +1105,7 @@ the NSWindow directly with `canBecomeKey: NO`.
 
 ### Experiment 11: Native NSWindow with canBecomeKey: NO
 
-**Status:** Not started
+**Status:** PARTIAL — Focus fix works, but lost vsync benefit
 
 **Goal:** Replace winit with a native NSWindow created via AppKit FFI, subclassed
 to override `canBecomeKey` returning `NO`. This prevents the window from ever
@@ -1184,16 +1184,50 @@ window without activating it) and `NSApplicationActivationPolicyAccessory` (whic
 prevents app-level activation), there are three layers of protection against
 focus stealing.
 
-#### Notes
+#### Results
 
-- Removes the `winit` dependency entirely — simpler, fewer transitive deps
-- Uses `cocoa` and `objc` crates (already in the dependency tree from Exp 10)
-- The Objective-C runtime allows dynamic class registration without needing
-  Xcode or Interface Builder
-- `orderBack:` places the window behind all other windows — it won't be visible
-  even if we forget `with_visible(false)`
-- The simple sleep+pump loop (`do_message_loop_work()` + 1ms sleep) replaces
-  winit's event loop
+**Focus:** SUCCESS — The main window retained focus when opening a webview.
+
+**Performance:** REGRESSION — Lost the vsync benefit entirely.
+
+**Overall stats:** 407 frames over 21.2s = **19.1 fps average**
+
+| Interval             | Count | Percentage |
+| -------------------- | ----- | ---------- |
+| Burst (0-5ms)        | 20    | 4%         |
+| 60fps (6-20ms)       | 140   | **34%**    |
+| 30fps (21-40ms)      | 50    | 12%        |
+| Mid (41-70ms)        | 90    | 22%        |
+| Low (>70ms)          | 106   | 26%        |
+
+**Dominant intervals:** Scattered (10ms, 13ms, 12ms) — no 16-17ms vsync peak.
+
+**Max consecutive 60fps frames:** Only **4**
+
+#### Comparison Across Key Experiments
+
+| Metric                | Exp 4 (baseline) | Exp 9 (winit window) | **Exp 11 (native NSWindow)** |
+| --------------------- | ---------------- | -------------------- | ---------------------------- |
+| Average FPS           | 22.0             | 22.3                 | **19.1**                     |
+| Frames at ~60fps      | 52%              | 61%                  | **34%**                      |
+| Max consecutive 60fps | 5                | 35                   | **4**                        |
+| Dominant interval     | scattered        | 16-17ms              | **scattered**                |
+
+#### Conclusion
+
+The native NSWindow fixed focus stealing but **lost the vsync signal**.
+Performance is worse than even the Exp 4 baseline. The bare `orderBack:`
+NSWindow doesn't get the same window server vsync notifications that winit's
+window was getting.
+
+Winit likely configures something extra — a CALayer, a content view, or a
+display link tied to the window — that our raw NSWindow doesn't have. A bare
+NSWindow created with `orderBack:` may not be fully registered with the window
+server's compositing pipeline.
+
+**Next step:** Either investigate what winit does differently (CALayer setup,
+`makeKeyAndOrderFront:` vs `orderBack:`, content view configuration), or return
+to the winit window and find a different way to prevent focus stealing.
 
 ## Related Issues
 
