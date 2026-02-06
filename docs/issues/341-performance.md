@@ -1230,7 +1230,7 @@ to be fully on-screen for the window server to send vsync notifications.
 
 ### Experiment 12: orderFront instead of orderBack
 
-**Status:** Not started
+**Status:** PARTIAL — Focus retained, but vsync still missing
 
 **Goal:** Fix the vsync regression from Experiment 11 by using `orderFront:nil`
 instead of `orderBack:nil`. Keep `canBecomeKey: NO` to prevent focus stealing.
@@ -1277,14 +1277,51 @@ A window can be ordered front (visible, composited, receiving vsync) without
 being key (receiving keyboard input). This is exactly how utility/palette windows
 work in macOS — they're visible and rendered but don't steal the text cursor.
 
-#### Notes
+#### Results
 
-- This is a one-line change from Experiment 11
-- The window is 1×1 borderless at origin (0,0) — effectively invisible even
-  when ordered front
-- If `orderFront:` doesn't work either, the next step is to investigate winit's
-  source code to find what window setup step triggers vsync registration
-  (likely CALayer backing or content view creation)
+**Focus:** SUCCESS — The main window retained focus.
+
+**Performance:** Still regressed — essentially identical to Experiment 11.
+
+**Overall stats:** 415 frames over 20.0s = **20.7 fps average**
+
+| Interval             | Count | Percentage |
+| -------------------- | ----- | ---------- |
+| Burst (0-5ms)        | 13    | 3%         |
+| 60fps (6-20ms)       | 141   | **34%**    |
+| 30fps (21-40ms)      | 58    | 14%        |
+| Mid (41-70ms)        | 103   | 24%        |
+| Low (>70ms)          | 99    | 23%        |
+
+**Dominant intervals:** Scattered (11ms, 10ms, 13ms) — no 16-17ms vsync peak.
+
+**Max consecutive 60fps frames:** Only **4** (same as Exp 11)
+
+#### Comparison
+
+| Metric                | Exp 9 (winit window) | Exp 11 (orderBack) | **Exp 12 (orderFront)** |
+| --------------------- | -------------------- | ------------------- | ----------------------- |
+| Average FPS           | 22.3                 | 19.1                | **20.7**                |
+| Frames at ~60fps      | 61%                  | 34%                 | **34%**                 |
+| Max consecutive 60fps | 35                   | 4                   | **4**                   |
+| Dominant interval     | 16-17ms              | scattered           | **scattered**           |
+
+#### Conclusion
+
+`orderFront:` did not restore vsync. The issue is not `orderBack` vs
+`orderFront` — our bare NSWindow is missing something that winit's window has.
+
+The most likely culprit is that winit creates a **content view with a CALayer
+backing**. On macOS, the window server's compositing pipeline is driven by Core
+Animation layers, not the NSWindow itself. A bare NSWindow without a layer-backed
+content view may not participate in the vsync-driven compositing cycle. Winit
+creates an `NSView` as the content view and enables layer backing
+(`wantsLayer = YES`), which is what actually hooks into the display's refresh
+cycle.
+
+**Next step:** Add a layer-backed NSView as the content view to the native
+NSWindow, or investigate winit's source code to identify the exact setup that
+triggers vsync registration.
 
 ## Related Issues
 
