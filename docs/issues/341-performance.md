@@ -1440,8 +1440,108 @@ The two remaining candidates:
    notifications as events through `NSApplication`, not directly to windows.
    Without pumping `NSApplication`, the events never arrive.
 
-**Next step:** Add `NSApplication` event pumping to the native window loop, or
-return to winit and find a different approach to the focus problem.
+**Next step:** Add `NSApplication` event pumping to the native window loop.
+
+### Experiment 14: NSApplication Event Pumping
+
+**Status:** Not started
+
+**Goal:** Restore vsync by pumping `NSApplication` events in the main loop,
+replacing the naive `sleep(1ms)` polling. Keep the native NSWindow with
+`canBecomeKey: NO` from Experiments 11-13.
+
+**Problem:** Experiments 11-13 proved that a native NSWindow (with various
+configurations) prevents focus stealing but doesn't get vsync. The window
+itself isn't the issue — all three configurations produced identical ~34-36%
+at 60fps. Winit's `pump_app_events` produces 61-78%. The difference must be
+the event loop, not the window.
+
+**Hypothesis:** Winit's `pump_app_events` internally calls
+`NSApplication.nextEventMatchingMask:untilDate:inMode:dequeue:`, which runs
+the macOS run loop. The macOS window server delivers display refresh
+notifications as events through `NSApplication`. Without pumping these events,
+the window server's vsync callbacks never fire, and CEF's compositor doesn't
+get the timing signal it needs.
+
+Evidence supporting this:
+
+| Configuration                     | Event loop          | 60fps %  | Max streak |
+| --------------------------------- | ------------------- | -------- | ---------- |
+| No window, sleep+pump             | None                | 52%      | 5          |
+| Native window, sleep+pump         | None                | 34-36%   | 3-4        |
+| Winit window, `pump_app_events`   | NSApp event pump    | 61-78%   | 35-57      |
+| CEF `run_message_loop`            | CEF's own loop      | 24%      | —          |
+
+The only configuration that achieves vsync is the one that pumps NSApplication
+events. The window alone actually makes things *worse* (34% vs 52%).
+
+#### Changes
+
+1. **Replace `sleep(1ms)` loop** with `NSApplication` event pumping:
+   - Call `nextEventMatchingMask:untilDate:inMode:dequeue:` to drain pending
+     macOS events
+   - Dispatch each event with `sendEvent:`
+   - Continue calling `do_message_loop_work()` after draining events
+   - Keep the 1ms sleep as a yield point
+2. **Everything else stays the same:** `canBecomeKey: NO` subclass,
+   `NSApplicationActivationPolicyAccessory`, layer-backed content view,
+   `orderFront:nil`
+
+#### Implementation
+
+```rust
+let ns_app = cocoa::appkit::NSApp();
+loop {
+    if QUIT_FLAG.load(Ordering::Relaxed) { break; }
+
+    // Pump all pending macOS events
+    unsafe {
+        loop {
+            let event: id = msg_send![ns_app,
+                nextEventMatchingMask:NSUIntegerMax
+                untilDate:nil
+                inMode:NSDefaultRunLoopMode
+                dequeue:YES
+            ];
+            if event == nil { break; }
+            let _: () = msg_send![ns_app, sendEvent:event];
+        }
+    }
+
+    cef::do_message_loop_work();
+    std::thread::sleep(Duration::from_millis(1));
+}
+```
+
+#### Expected Outcome
+
+| Result                       | Meaning                                                          |
+| ---------------------------- | ---------------------------------------------------------------- |
+| Vsync restored + no focus    | Event pumping was the missing piece. Problem fully solved.       |
+| Vsync still missing          | NSApp event pumping alone isn't enough. Winit does something else (CFRunLoop integration, timer sources, etc.). |
+| Focus stolen                 | Event pumping triggers app activation. Unlikely with Accessory policy + canBecomeKey: NO. |
+
+#### Why This Should Work
+
+The macOS window server communicates with applications through the
+`NSApplication` event queue. Display refresh notifications, window
+update events, and compositing signals are all delivered as events.
+`NSApplication.nextEventMatchingMask:` is the standard way to receive
+these — it runs the underlying `CFRunLoop`, which processes:
+
+- Display link callbacks (per-window vsync)
+- Window server notifications (damage, expose, update)
+- Core Animation commit triggers
+
+Without this event pumping, the window exists but the process never
+processes the vsync events the window server sends to it.
+
+#### Follow-up
+
+If this experiment succeeds (vsync restored with native window + event pumping),
+the next test is removing the window entirely to see if event pumping alone is
+sufficient. This would answer whether the window is needed at all, or whether
+it's purely the event loop that matters.
 
 ## Related Issues
 
