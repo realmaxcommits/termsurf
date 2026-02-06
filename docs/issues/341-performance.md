@@ -678,6 +678,76 @@ lack of a window and display link. The next experiment should revert to the
 Experiment 4 configuration (manual pump + `external_message_pump`) and add a
 hidden 1x1 window to provide a CVDisplayLink/display connection.
 
+### Experiment 7: Add a Hidden 1x1 Window
+
+**Status:** Not started
+
+**Goal:** Provide the process with a display link by creating a hidden window,
+closing the last remaining gap between ts3 and the cef-rs example.
+
+**Rationale:** Six experiments have eliminated every other variable:
+
+| Experiment | What it tested                  | Result  |
+| ---------- | ------------------------------- | ------- |
+| Exp 2      | winit event loop (no window)    | No help |
+| Exp 4      | `external_message_pump`         | Partial (52% at 60fps) |
+| Exp 5      | `NSApplicationActivationPolicy` | No help |
+| Exp 6      | `run_message_loop()`            | Worse   |
+
+CEF settings are now identical to the cef-rs example. The only remaining
+difference: the cef-rs example has **real windows** connected to the display
+server. The profile server has none.
+
+On macOS, a window connected to the window server provides a **CVDisplayLink**
+— a hardware-driven callback synchronized to the monitor's refresh rate (60Hz).
+This is the timing signal that winit's event loop processes. Without a window,
+`pump_app_events` has nothing meaningful to pump, and CEF's compositor has no
+vsync reference.
+
+This explains the bimodal pattern from Experiment 4: CEF sometimes catches a
+vsync beat (16ms), sometimes misses one or more (33ms, 50ms, 67ms, 83ms). The
+compositor is trying to synchronize but has no signal to lock onto.
+
+#### Implementation
+
+Revert to the Experiment 4 configuration (best result: 22fps, 52% at 60fps),
+then add a hidden window:
+
+1. Restore `winit` dependency
+2. Restore `external_message_pump: 1` in CEF settings
+3. Restore manual pump loop (`do_message_loop_work()` + `pump_app_events`)
+4. In `ApplicationHandler::resumed()`, create a 1x1 hidden window:
+
+```rust
+impl ApplicationHandler for MinimalApp {
+    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        // Create a tiny hidden window to establish a display link.
+        // The window itself is invisible — it just anchors the process
+        // to the macOS window server and its vsync callback.
+        let attrs = WindowAttributes::default()
+            .with_inner_size(winit::dpi::LogicalSize::new(1.0, 1.0))
+            .with_visible(false)
+            .with_title("termsurf-profile");
+        self.window = Some(event_loop.create_window(attrs).unwrap());
+    }
+}
+```
+
+#### Success Criteria
+
+| Result       | Conclusion                                                                |
+| ------------ | ------------------------------------------------------------------------- |
+| ~60fps       | The display link was the missing piece. Keep the hidden window.           |
+| Still ~22fps | It's not the display link. Try adding a wgpu surface on the window next.  |
+
+#### Notes
+
+- The window is invisible (`with_visible(false)`) — no UI impact
+- No wgpu surface or rendering is needed — just the window's existence
+- If this works, the hidden window is a clean permanent solution: minimal
+  overhead, no visible artifacts, just a display link anchor
+- This does NOT require `cocoa` — winit handles window creation natively
+
 ## Related Issues
 
 - [Issue 338: Browser lag investigation](./338-lag.md) — Original performance
