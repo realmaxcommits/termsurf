@@ -556,7 +556,7 @@ has no window — CEF's compositor has no display link to synchronize against.
 
 ### Experiment 6: Use `run_message_loop()` Instead of Manual Pump
 
-**Status:** Not started
+**Status:** FAILED — CEF's built-in loop is worse than manual pump
 
 **Goal:** Test whether CEF's built-in message loop achieves 60fps, eliminating
 our manual polling loop as the cause.
@@ -626,14 +626,57 @@ cef::quit_message_loop();
 | ~60fps       | Our manual pump was the problem. Keep `run_message_loop()`.              |
 | Still ~20fps | CEF's own loop can't do 60fps here either. The process needs a window.   |
 
-#### Notes
+#### Results
 
-- This removes winit entirely — the profile server doesn't need an event loop
-  if CEF manages its own
-- If this succeeds, the winit dependency (added in Experiment 2) and cocoa
-  dependency (added in Experiment 5) can be removed
-- If this fails, Experiment 7 should add a hidden 1x1 window to provide a
-  CVDisplayLink/display connection
+**Overall stats:** 298 frames over 16.4s = **18.1 fps average**
+
+| Interval             | Count | Percentage |
+| -------------------- | ----- | ---------- |
+| Burst (0-5ms)        | 36    | 12%        |
+| 60fps (6-20ms)       | 70    | **24%**    |
+| 30fps (21-40ms)      | 14    | 5%         |
+| Mid (41-70ms)        | 75    | 25%        |
+| Low (>70ms)          | 102   | **34%**    |
+
+**Most common long intervals:** 78ms (12), 75ms (11), 74ms (11), 76ms (10) —
+clustered around **~75ms** (roughly 5 vsync beats at 16.7ms each).
+
+**Frame pairing pattern:** Short+long pairs average **85ms**. CEF produces
+frames in bursts of 2 (one at 0-10ms, then another 70-80ms later), rather than
+the steady 16ms cadence seen in the cef-rs example.
+
+**Max consecutive 60fps frames:** Only **5** (occurred once). Most 60fps frames
+were isolated singles (53 occurrences of a lone 60fps frame).
+
+#### Comparison Across All Experiments
+
+| Metric               | Exp 4 (ext pump) | Exp 5 (+activation) | Exp 6 (run_msg_loop) | cef-rs |
+| -------------------- | ---------------- | -------------------- | -------------------- | ------ |
+| Average FPS          | 22.0             | 19.1                 | **18.1**             | 60.9   |
+| Frames at ~60fps     | 52%              | 42%                  | **24%**              | ~90%   |
+| Avg interval         | 45ms             | 52ms                 | **55ms**             | ~16ms  |
+| Low (>70ms)          | —                | 15%                  | **34%**              | rare   |
+| Dominant pattern     | bimodal 17/33ms  | bimodal 17/50-83ms   | **~75ms gaps**       | 16ms   |
+
+#### Conclusion
+
+`run_message_loop()` is **worse** than the manual pump with
+`external_message_pump` (Experiment 4). The frame rate character changed
+completely:
+
+- **Experiment 4** had a bimodal distribution with the majority of frames at
+  16-17ms — CEF was *trying* to hit 60fps but dropping some beats
+- **Experiment 6** has a dominant **~75ms** interval — CEF's own loop produces
+  frames at roughly **13fps** when active, with occasional bursts
+
+This rules out the manual polling loop as the cause. The manual pump
+(Experiment 4) was actually doing a **better** job of driving CEF's compositor
+than CEF's own `run_message_loop()`.
+
+The problem is confirmed to be the **process environment** — specifically the
+lack of a window and display link. The next experiment should revert to the
+Experiment 4 configuration (manual pump + `external_message_pump`) and add a
+hidden 1x1 window to provide a CVDisplayLink/display connection.
 
 ## Related Issues
 
