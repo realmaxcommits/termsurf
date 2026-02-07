@@ -1487,3 +1487,34 @@ cef-rs cefsimple example all do the same thing). If NSApp is null because CEF
 never initialized it, the first `objc_msgSend` will crash — but we'll see that
 immediately in the log and can add `[NSApplication sharedApplication]`
 initialization. The `cfrunloop` module is kept intact for easy revert.
+
+#### Results
+
+**Status: FAILED — webview did not open. Same behavior as Exp 6.**
+
+Replacing `CFRunLoopRunInMode` with the NSApplication event pump broke the app
+completely. The webview never rendered. This matches the "Crash or hang"
+expected outcome — though rather than crashing, the app simply never produced
+frames.
+
+#### Conclusion
+
+The NSApplication event pump **replaced** CFRunLoop servicing rather than
+**complementing** it. The problem is that `nsapp::pump_events()` drains the
+NSApplication event queue but does not service CFRunLoop sources — and Exp 6
+already proved that CFRunLoop servicing is necessary for `do_message_loop_work()`
+to produce frames.
+
+The failure reveals a misconception: we assumed `pump_app_events` was a
+superset of `CFRunLoopRunInMode` (processing NSApplication events *and*
+CFRunLoop sources). In reality, they may process different layers of the macOS
+event system. Our NSApplication pump only calls
+`nextEventMatchingMask:untilDate:inMode:dequeue:` + `sendEvent:`, which handles
+the NSApplication event queue. But `CFRunLoopRunInMode` services CFRunLoop
+sources (timers, ports, observers) that CEF depends on for frame scheduling.
+
+**The fix for a future experiment:** call **both** — `nsapp::pump_events()` for
+NSApplication events *and* `cfrunloop::run_for()` for CFRunLoop sources. The
+cef-rs example's `pump_app_events` likely does both internally via winit's
+macOS backend, which runs a full `NSRunLoop` iteration that encompasses both
+layers.
