@@ -353,3 +353,77 @@ itself needs better statistical reliability. Either run multiple iterations and
 average, or identify and control the source of variance.
 
 **Status:** Done
+
+### Experiment 3: Remove debug logging from hot paths
+
+**Goal:** Eliminate excessive `println!` calls from performance-critical paths and
+re-measure. The profile server currently emits ~660 println!/sec during mouse
+movement. Each call acquires a stdout lock, formats a string, and writes to a log
+file. This I/O overhead may be the primary cause of both the fps drop and the
+run-to-run variance.
+
+**What to remove:**
+
+Hot path logs to delete (these fire on every event, every frame, or every
+message):
+
+1. **Mouse move handler** (6 printlns, 60/sec each = 360/sec):
+   - `[MOUSE] mouse_move handler entered`
+   - `[MOUSE] BrowserState available, posting task`
+   - `[MOUSE] mouse_move coords: ...`
+   - `[MOUSE] Calling post_task for MouseMoveTask`
+   - `[MOUSE] post_task returned`
+
+2. **MouseMoveTask::execute** (4 printlns, 60/sec each = 240/sec):
+   - `[MOUSE-TASK] MouseMoveTask::execute() called`
+   - `[MOUSE-TASK] Browser obtained`
+   - `[MOUSE-TASK] Host obtained, calling send_mouse_move_event`
+   - `[MOUSE-TASK] send_mouse_move_event returned`
+
+3. **Mouse click handler** (same pattern as mouse_move)
+
+4. **Mouse wheel handler** (same pattern as mouse_move)
+
+5. **MouseClickTask/MouseWheelTask::execute** (same pattern as MouseMoveTask)
+
+6. **XPC receive** (1 println per message, 60/sec):
+   - `[XPC-RECV] Received message: action=...`
+
+7. **Frame transmit** (1 println per frame, ~40/sec):
+   - `[FRAME-TX] frame=N t=Xms`
+
+8. **Cursor change** (1 println per callback, ~17/sec):
+   - `Profile: Cursor changed to type N`
+
+9. **Loop timing** (every 1000 iterations + final):
+   - `[LOOP-TIMING] iter=... max_mlw=...`
+
+**What to keep:**
+
+- All startup/shutdown logs (fire once)
+- All error/failure logs (eprintln on error paths)
+- `[SCROLL]` logs (fire every 125 events, ~1/sec)
+- `[LOAD]` page loaded log (fires once)
+- `[PERF]` benchmark stats (fires every 10s)
+- `[BENCHMARK]` completion marker (fires once)
+- `[MOUSE-RATE]` and `[CURSOR-RATE]` (fire 1/sec each)
+- Connection/session logs (fire on connect/disconnect)
+
+**How to test:**
+
+1. `web benchmark` with no mouse — 3 runs, record all fps
+2. `web benchmark` with continuous mouse — 3 runs, record all fps
+3. Compare variance within each condition and difference between conditions
+
+**What the results tell us:**
+
+- If variance drops significantly (runs within ±2fps): logging was the variance
+  source, benchmark is now reliable
+- If no-mouse fps jumps well above 51.5: logging was dragging baseline
+  performance
+- If mouse-vs-no-mouse gap persists: mouse events have real overhead beyond
+  logging — proceed with H1/H2 investigation
+- If mouse-vs-no-mouse gap disappears: the entire "mouse performance" issue was
+  really a "logging performance" issue
+
+**Status:** Not started
