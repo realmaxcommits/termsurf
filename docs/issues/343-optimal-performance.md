@@ -672,3 +672,125 @@ the compositor pipeline.
 **H10 is ruled out.** Timer coalescing was not the cause of the 30fps drops.
 The problem is not scheduling precision — it's something in the interaction
 between `do_message_loop_work()`, CFRunLoop, and CEF's internal task pipeline.
+
+### Experiment 3: Measure Loop Iteration Timing
+
+**Status:** Not started
+
+**Goal:** Instrument the polling loop with microsecond-precision timing to
+understand the actual behavior of `do_message_loop_work()` and
+`CFRunLoopRunInMode` — how long each call takes, how they vary, and whether
+spikes correlate with dropped frames.
+
+**Hypothesis tested:** H1 (polling loop timing mismatch), plus general
+diagnostics to guide future experiments.
+
+#### Motivation
+
+Two interventions have failed (Exp 1: drain, Exp 2: QoS). Both changed timing
+behavior without understanding it, and both made things worse. Before trying
+another intervention, we need to see what the loop is actually doing.
+
+Key questions:
+
+1. **`do_message_loop_work()` duration** — Is it consistently fast (<0.1ms)? Or
+   does it spike when processing compositor tasks (5-10ms)? Spikes would
+   directly explain missed beats.
+2. **`CFRunLoopRunInMode` duration** — Does it always block for the full 1ms
+   timeout? Or does it sometimes return instantly (source handled in
+   microseconds)? This reveals how often CFRunLoop sources actually fire.
+3. **Total loop iteration time** — How consistent is the cadence? If most
+   iterations take 1.2ms but some take 8ms, timing drift is the cause.
+4. **Correlation with frame drops** — Do `do_message_loop_work()` spikes precede
+   33ms frame intervals? If yes, the spike is the cause. If no, the problem is
+   elsewhere (CEF internal, GPU process, IPC).
+
+#### Changes
+
+One modification to `ts3/termsurf-profile/src/main.rs`:
+
+**Replace the polling loop with an instrumented version:**
+
+```rust
+// Issue 343, Experiment 3: Instrumented polling loop.
+println!("Profile: Running message loop (instrumented)...");
+let mut loop_count: u64 = 0;
+let mut max_mlw_us: u128 = 0;  // max do_message_loop_work duration
+let mut max_cfl_us: u128 = 0;  // max CFRunLoopRunInMode duration
+let mut max_total_us: u128 = 0; // max total iteration
+let mut mlw_spike_count: u64 = 0; // iterations where mlw > 1ms
+let mut cfl_instant_count: u64 = 0; // iterations where cfl < 0.1ms
+
+while !QUIT_FLAG.load(std::sync::atomic::Ordering::Relaxed) {
+    let t0 = std::time::Instant::now();
+
+    cef::do_message_loop_work();
+    let t1 = std::time::Instant::now();
+
+    #[cfg(target_os = "macos")]
+    cfrunloop::run_for(0.001);
+    #[cfg(not(target_os = "macos"))]
+    std::thread::sleep(std::time::Duration::from_millis(1));
+    let t2 = std::time::Instant::now();
+
+    let mlw_us = (t1 - t0).as_micros();
+    let cfl_us = (t2 - t1).as_micros();
+    let total_us = (t2 - t0).as_micros();
+
+    if mlw_us > max_mlw_us { max_mlw_us = mlw_us; }
+    if cfl_us > max_cfl_us { max_cfl_us = cfl_us; }
+    if total_us > max_total_us { max_total_us = total_us; }
+    if mlw_us > 1000 { mlw_spike_count += 1; }
+    if cfl_us < 100 { cfl_instant_count += 1; }
+
+    loop_count += 1;
+
+    // Log every 1000 iterations (~1 second)
+    if loop_count % 1000 == 0 {
+        println!(
+            "[LOOP-TIMING] iter={} max_mlw={}us max_cfl={}us max_total={}us mlw_spikes={} cfl_instant={}",
+            loop_count, max_mlw_us, max_cfl_us, max_total_us, mlw_spike_count, cfl_instant_count
+        );
+    }
+}
+
+// Final summary
+println!(
+    "[LOOP-TIMING] FINAL iter={} max_mlw={}us max_cfl={}us max_total={}us mlw_spikes={} cfl_instant={}",
+    loop_count, max_mlw_us, max_cfl_us, max_total_us, mlw_spike_count, cfl_instant_count
+);
+```
+
+The instrumentation adds three `Instant::now()` calls per iteration (each ~20ns
+on Apple Silicon) — negligible overhead relative to the 1ms+ loop cadence.
+
+#### What This Measures
+
+| Metric | What it tells us |
+| --- | --- |
+| `max_mlw` | Worst-case `do_message_loop_work()` duration. If >5ms, it's eating into the frame budget. |
+| `max_cfl` | Worst-case `CFRunLoopRunInMode` duration. Should be ~1ms (timeout). If much longer, macOS is blocking us. |
+| `max_total` | Worst-case loop iteration. If >16ms, we're guaranteed to miss a beat. |
+| `mlw_spikes` | How often `do_message_loop_work()` takes >1ms. Frequent spikes = H1 confirmed. |
+| `cfl_instant` | How often CFRunLoop returns instantly (<0.1ms). High count = sources rarely fire (most iterations are just timeout waits). |
+
+#### What Stays the Same
+
+- Loop behavior is identical — same `do_message_loop_work()` + `run_for(0.001)`
+- CEF settings unchanged
+- No new dependencies
+- Frame production and XPC communication unaffected
+
+#### Expected Outcomes
+
+| Pattern | Meaning | Next step |
+| --- | --- | --- |
+| `mlw_spikes` is high, correlates with drops | `do_message_loop_work()` occasionally blocks. H1 confirmed. | Try `external_message_pump` (idea 7) for cooperative scheduling |
+| `cfl_instant` is very high (>90%) | CFRunLoop sources rarely fire — most iterations are idle waits | The 1ms timeout is mostly wasted. Try shorter timeout or busy-poll |
+| `max_total` stays under 2ms | Loop cadence is rock-solid. The problem is not in the loop. | Investigate CEF internals (idea 9) or GUI side (idea 10) |
+| `max_mlw` or `max_total` occasionally >10ms | Rare but large spikes cause the 33ms drops | Try yielding differently after spikes, or cap iteration time |
+
+#### Risk
+
+None. This is purely diagnostic — additive logging with negligible overhead.
+The loop behavior is bit-for-bit identical to the baseline.
