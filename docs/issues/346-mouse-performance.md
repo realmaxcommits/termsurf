@@ -173,3 +173,49 @@ iteration. The message loop already runs on the CEF UI thread, so
 does with scroll events.
 
 This eliminates task queue overhead entirely for mouse moves.
+
+## Experiments
+
+### Experiment 1: Measure the actual mouse event rate
+
+**Goal:** Determine how many `mouse_move` XPC messages per second actually reach
+the profile server. We've been assuming ~125Hz based on standard Apple mouse
+polling, but we haven't measured it. The true rate determines how much throttling
+would help and which hypotheses are most likely.
+
+**What to measure:**
+
+- Events per second reaching the profile server's XPC handler
+- Whether the rate is constant or bursty
+- How the rate changes with different mouse movement speeds (slow vs fast)
+
+**Implementation plan:**
+
+1. Add a global `AtomicU64` counter (`MOUSE_MOVE_COUNT`) to the profile server
+2. Increment it at the top of the `"mouse_move"` XPC handler (before any locking
+   or `post_task` calls — we want to measure arrival rate, not processing rate)
+3. In the message loop, log the count once per second:
+   ```
+   [MOUSE-RATE] 127 mouse_move events in last second
+   ```
+   Only log lines where the count is > 0 to avoid noise when the mouse is idle.
+4. Track with two variables: `last_mouse_rate_time` and `last_mouse_rate_count`,
+   computing the delta each second
+
+**How to test:**
+
+1. `web benchmark` with no mouse movement — expect 0 events logged
+2. `web benchmark` with slow mouse movement — expect moderate rate
+3. `web benchmark` with fast continuous mouse movement — expect peak rate
+
+**What the results tell us:**
+
+- If rate is ~125Hz: standard Apple mouse, throttling to 60Hz cuts traffic ~50%
+- If rate is >> 125Hz: high-polling mouse or macOS event coalescing behavior,
+  throttling is even more important
+- If rate is << 125Hz: WezTerm or XPC is already dropping events, the problem is
+  not volume but per-event cost
+- If rate is bursty (varying widely second to second): supports H1 (task queue
+  contention from bursts)
+
+**Status:** Not started
