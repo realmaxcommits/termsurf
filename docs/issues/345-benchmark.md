@@ -409,3 +409,48 @@ insufficient input rate through the GUI → XPC → profile path.
 | 4     | Scroll simulation           | Log shows `[SCROLL]`, page moves  | Done   |
 | 5     | FrameStats + auto-quit      | Log shows `[PERF]` every 10s      | Done   |
 | 6     | Stats printed to terminal   | `web benchmark` prints results    | Done   |
+
+## Conclusion
+
+### The experiment
+
+Two benchmark runs with identical simulated scrolling (125Hz, direct in profile
+server). The only difference: whether the user moved their mouse over the
+webview during the test.
+
+| Condition              | FPS  | p50    | p95    | 60fps% | Streak |
+| ---------------------- | ---- | ------ | ------ | ------ | ------ |
+| No mouse movement      | 51.5 | 18.7ms | 33.9ms | 55.4%  | 25     |
+| Continuous mouse moves | 39.0 | 17.4ms | 78.8ms | 38.3%  | 10     |
+| cef-test reference     | ~50  | —      | —      | —      | —      |
+
+### What this proves
+
+1. **ts3's rendering pipeline is not the bottleneck.** With no mouse input, ts3
+   achieves 51.5fps — matching cef-test's ~50fps. WezTerm's integration
+   (IOSurface import, texture rendering, event loop) adds negligible overhead.
+
+2. **Mouse move events cause frame drops.** The median frame interval (p50) is
+   nearly identical between runs (18.7ms vs 17.4ms), proving the rendering
+   pipeline itself runs at the same speed. But the p95 doubles from 33.9ms to
+   78.8ms — mouse move events traversing the GUI → XPC → profile path create
+   periodic stalls that destroy tail latency.
+
+3. **The original 38fps was caused by mouse contention, not scroll rate.** The
+   initial hypothesis (Issue 344) was that insufficient scroll input rate caused
+   the gap. The revised truth is subtler: scroll events arrive fine, but mouse
+   move events that accompany manual scrolling compete with rendering and cause
+   frame drops.
+
+### The fix
+
+The problem is not scroll rate — it's mouse move overhead in the profile server.
+Possible approaches:
+
+- **Throttle mouse moves** — the GUI currently forwards every mouse move event
+  over XPC. Throttling to ~60Hz (one per frame) would reduce XPC traffic by ~50%
+  without visible loss of cursor accuracy.
+- **Batch or coalesce events** — combine multiple mouse moves into one, sending
+  only the latest position.
+- **Process mouse moves off the critical path** — decouple mouse event handling
+  from CEF's message loop so it doesn't block frame delivery.
