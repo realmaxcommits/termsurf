@@ -596,12 +596,14 @@ fn bootstrap_xpc(pending: SharedPendingSurfaces) -> Option<XpcState> {
     listeners.push(right_listener);
     all_conns.push(right_conns);
 
+    let search_url = "https://www.google.com/search?q=asdf+asdf";
+
     // Spawn left profile
-    println!("GUI: Requesting profile 'left' (session=left-1, url=github.com)");
+    println!("GUI: Requesting profile 'left' (session=left-1, url=search)");
     let msg = XpcDictionary::new();
     msg.set_string("action", "spawn_profile");
     msg.set_string("session_id", "left-1");
-    msg.set_string("url", "https://github.com");
+    msg.set_string("url", search_url);
     msg.set_string("profile", "left");
     msg.set_i64("width", 800);
     msg.set_i64("height", 800);
@@ -610,11 +612,11 @@ fn bootstrap_xpc(pending: SharedPendingSurfaces) -> Option<XpcState> {
     launcher.send(&msg);
 
     // Spawn right profile
-    println!("GUI: Requesting profile 'right' (session=right-1, url=google.com)");
+    println!("GUI: Requesting profile 'right' (session=right-1, url=search)");
     let msg = XpcDictionary::new();
     msg.set_string("action", "spawn_profile");
     msg.set_string("session_id", "right-1");
-    msg.set_string("url", "https://google.com");
+    msg.set_string("url", search_url);
     msg.set_string("profile", "right");
     msg.set_i64("width", 800);
     msg.set_i64("height", 800);

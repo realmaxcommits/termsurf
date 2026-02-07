@@ -10,7 +10,7 @@
 
 use clap::Parser;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 #[cfg(target_os = "macos")]
@@ -19,6 +19,8 @@ use termsurf_xpc::XpcConnection;
 static FRAME_COUNTER: AtomicU64 = AtomicU64::new(0);
 static START_TIME: OnceLock<Instant> = OnceLock::new();
 static QUIT_FLAG: AtomicBool = AtomicBool::new(false);
+/// Set to true when the page finishes loading (is_loading=0).
+static PAGE_LOADED: AtomicBool = AtomicBool::new(false);
 
 #[cfg(target_os = "macos")]
 mod cfrunloop {
@@ -98,6 +100,9 @@ struct ProfileState {
     scale: f32,
     #[cfg(target_os = "macos")]
     gui_conn: Arc<XpcConnection>,
+    /// Stored after browser creation so the message loop can send scroll events.
+    #[cfg(target_os = "macos")]
+    browser: Mutex<Option<cef::Browser>>,
 }
 
 #[cfg(target_os = "macos")]
@@ -173,6 +178,7 @@ fn run(args: Args) {
         height: std::sync::atomic::AtomicU32::new(args.height),
         scale: args.scale,
         gui_conn,
+        browser: Mutex::new(None),
     });
 
     // Cache path (per-profile isolation)
@@ -222,6 +228,16 @@ fn run(args: Args) {
     let mut max_cfl_us: u128 = 0;
     let mut mlw_spike_count: u64 = 0;
 
+    // Scroll simulation state
+    let scroll_interval = Duration::from_millis(8); // ~125Hz, matching Apple mouse polling
+    let mut last_scroll_time = Instant::now();
+    let mut scroll_started = false;
+    let mut scroll_direction: i32 = -1; // -1 = down, +1 = up
+    let scroll_delta: i32 = 120; // standard scroll unit (one "notch")
+    let direction_switch_interval = Duration::from_secs(3); // reverse every 3s
+    let mut last_direction_switch = Instant::now();
+    let mut scroll_event_count: u64 = 0;
+
     while !QUIT_FLAG.load(Ordering::Relaxed) {
         let t0 = Instant::now();
 
@@ -244,18 +260,62 @@ fn run(args: Args) {
             mlw_spike_count += 1;
         }
 
+        // Simulated scroll input at ~125Hz
+        if PAGE_LOADED.load(Ordering::Relaxed) {
+            if !scroll_started {
+                println!("[SCROLL] Page loaded, starting simulated scroll at ~125Hz");
+                scroll_started = true;
+                last_scroll_time = Instant::now();
+                last_direction_switch = Instant::now();
+            }
+
+            let now = Instant::now();
+
+            // Reverse direction every 3 seconds
+            if now.duration_since(last_direction_switch) >= direction_switch_interval {
+                scroll_direction *= -1;
+                last_direction_switch = now;
+                println!(
+                    "[SCROLL] Direction switch: {} (events so far: {})",
+                    if scroll_direction < 0 { "DOWN" } else { "UP" },
+                    scroll_event_count
+                );
+            }
+
+            // Send scroll event at ~125Hz
+            if now.duration_since(last_scroll_time) >= scroll_interval {
+                last_scroll_time = now;
+                if let Some(browser) = state.browser.lock().unwrap().as_ref() {
+                    use cef::{ImplBrowser, ImplBrowserHost};
+                    if let Some(host) = browser.host() {
+                        let mouse_event = cef::MouseEvent {
+                            x: 400, // center of 800px logical width
+                            y: 400, // center of 800px logical height
+                            modifiers: 0,
+                        };
+                        host.send_mouse_wheel_event(
+                            Some(&mouse_event),
+                            0,
+                            scroll_delta * scroll_direction,
+                        );
+                        scroll_event_count += 1;
+                    }
+                }
+            }
+        }
+
         loop_count += 1;
         if loop_count % 1000 == 0 {
             println!(
-                "[LOOP-TIMING] iter={} max_mlw={}us max_cfl={}us mlw_spikes={}",
-                loop_count, max_mlw_us, max_cfl_us, mlw_spike_count
+                "[LOOP-TIMING] iter={} max_mlw={}us max_cfl={}us mlw_spikes={} scroll_events={}",
+                loop_count, max_mlw_us, max_cfl_us, mlw_spike_count, scroll_event_count
             );
         }
     }
 
     println!(
-        "[LOOP-TIMING] FINAL iter={} max_mlw={}us max_cfl={}us mlw_spikes={}",
-        loop_count, max_mlw_us, max_cfl_us, mlw_spike_count
+        "[LOOP-TIMING] FINAL iter={} max_mlw={}us max_cfl={}us mlw_spikes={} scroll_events={}",
+        loop_count, max_mlw_us, max_cfl_us, mlw_spike_count, scroll_event_count
     );
 
     // Shutdown
@@ -323,12 +383,14 @@ mod cef_handlers {
     use cef::rc::Rc;
     use cef::{
         wrap_app, wrap_browser_process_handler, wrap_client, wrap_context_menu_handler,
-        wrap_render_handler, AcceleratedPaintInfo, App, Browser, BrowserProcessHandler,
-        BrowserSettings, CefString, Client, ContextMenuHandler, ContextMenuParams, Frame,
-        ImplApp, ImplBrowser, ImplBrowserHost, ImplBrowserProcessHandler, ImplClient,
-        ImplCommandLine, ImplContextMenuHandler, ImplMenuModel, ImplRenderHandler, MenuModel,
+        wrap_load_handler, wrap_render_handler, AcceleratedPaintInfo, App, Browser,
+        BrowserProcessHandler, BrowserSettings, CefString, Client, ContextMenuHandler,
+        ContextMenuParams, Frame, ImplApp, ImplBrowser, ImplBrowserHost,
+        ImplBrowserProcessHandler, ImplClient, ImplCommandLine, ImplContextMenuHandler,
+        ImplLoadHandler, ImplMenuModel, ImplRenderHandler, LoadHandler, MenuModel,
         PaintElementType, Rect, RenderHandler, ScreenInfo, WindowInfo, WrapApp,
-        WrapBrowserProcessHandler, WrapClient, WrapContextMenuHandler, WrapRenderHandler,
+        WrapBrowserProcessHandler, WrapClient, WrapContextMenuHandler, WrapLoadHandler,
+        WrapRenderHandler,
     };
     use std::sync::atomic::Ordering;
     use std::sync::Arc;
@@ -442,12 +504,39 @@ mod cef_handlers {
         }
     }
 
+    // ====== Load Handler ======
+
+    #[derive(Clone)]
+    struct LoadHandlerInner;
+
+    wrap_load_handler! {
+        pub struct TestLoadHandler {
+            inner: LoadHandlerInner,
+        }
+
+        impl LoadHandler {
+            fn on_loading_state_change(
+                &self,
+                _browser: Option<&mut Browser>,
+                is_loading: ::std::os::raw::c_int,
+                _can_go_back: ::std::os::raw::c_int,
+                _can_go_forward: ::std::os::raw::c_int,
+            ) {
+                if is_loading == 0 {
+                    println!("[LOAD] Page finished loading");
+                    crate::PAGE_LOADED.store(true, crate::Ordering::Relaxed);
+                }
+            }
+        }
+    }
+
     // ====== Client ======
 
     wrap_client! {
         pub struct TestClient {
             render_handler: RenderHandler,
             context_menu_handler: ContextMenuHandler,
+            load_handler: LoadHandler,
         }
 
         impl Client {
@@ -457,6 +546,10 @@ mod cef_handlers {
 
             fn context_menu_handler(&self) -> Option<ContextMenuHandler> {
                 Some(self.context_menu_handler.clone())
+            }
+
+            fn load_handler(&self) -> Option<LoadHandler> {
+                Some(self.load_handler.clone())
             }
         }
     }
@@ -477,7 +570,8 @@ mod cef_handlers {
                 };
                 let render_handler = TestRenderHandler::new(render_inner);
                 let context_menu_handler = TestContextMenuHandler::new(ContextMenuInner);
-                let mut client = TestClient::new(render_handler, context_menu_handler);
+                let load_handler = TestLoadHandler::new(LoadHandlerInner);
+                let mut client = TestClient::new(render_handler, context_menu_handler, load_handler);
 
                 let window_info = WindowInfo {
                     windowless_rendering_enabled: 1,
@@ -513,6 +607,8 @@ mod cef_handlers {
                             host.set_focus(0);
                             host.set_focus(1);
                         }
+                        // Store browser so the message loop can send scroll events
+                        *self.state.browser.lock().unwrap() = Some(b);
                     }
                     None => eprintln!("Profile: Failed to create browser"),
                 }

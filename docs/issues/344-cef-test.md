@@ -945,6 +945,25 @@ up, in a repeating cycle. The `on_accelerated_paint` frame count during the
 scroll window gives the rendering throughput. Each run produces identical
 behavior with no manual interaction.
 
+**Result:** Working. Both profiles load Google search results, detect page load
+via `on_loading_state_change`, then begin automated scrolling. Pages scroll
+down for 3 seconds, reverse to scroll up for 3 seconds, and repeat.
+
+Key implementation details:
+- Added `wrap_load_handler` with `on_loading_state_change` — sets a global
+  `PAGE_LOADED` flag when `is_loading == 0`.
+- Browser stored in `ProfileState` via `Mutex<Option<Browser>>` after creation
+  in `on_context_initialized`, so the message loop can call
+  `BrowserHost::send_mouse_wheel_event()` directly.
+- Scroll events sent at ~125Hz (8ms interval) matching Apple mouse polling rate.
+  `MouseEvent` positioned at center of viewport (400, 400 logical), delta=120
+  (one standard scroll notch per event).
+- Direction reversal every 3 seconds keeps page in continuous motion.
+- Both URLs changed to `https://www.google.com/search?q=asdf+asdf` for
+  scrollable content.
+- No GUI-side changes needed for input — profile server drives scrolling
+  entirely on its own.
+
 ### Phase 9: Keyboard Input & Focus
 
 Route keyboard events to the focused profile. This completes the core user
