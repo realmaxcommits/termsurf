@@ -1,7 +1,7 @@
 //! cef-test profile server — headless CEF process with XPC connection.
 //!
-//! Loads a URL and renders it off-screen, logging frame output.
-//! Connects to the GUI via the launcher's XPC bootstrap chain.
+//! Loads a URL and renders it off-screen. Sends IOSurface Mach ports
+//! to the GUI via XPC for cross-process texture sharing.
 //!
 //! Usage:
 //!   cef-test-profile --session-id left-1 --url https://google.com \
@@ -12,6 +12,9 @@ use clap::Parser;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
+
+#[cfg(target_os = "macos")]
+use termsurf_xpc::XpcConnection;
 
 static FRAME_COUNTER: AtomicU64 = AtomicU64::new(0);
 static START_TIME: OnceLock<Instant> = OnceLock::new();
@@ -93,6 +96,8 @@ struct ProfileState {
     width: std::sync::atomic::AtomicU32,
     height: std::sync::atomic::AtomicU32,
     scale: f32,
+    #[cfg(target_os = "macos")]
+    gui_conn: Arc<XpcConnection>,
 }
 
 #[cfg(target_os = "macos")]
@@ -146,9 +151,11 @@ fn run(args: Args) {
     println!("Profile: Got GUI endpoint");
 
     // Connect directly to GUI via endpoint
-    let gui_conn = XpcConnection::from_endpoint(gui_endpoint)
-        .expect("Failed to connect to GUI");
-    set_event_handler(&gui_conn, |event| {
+    let gui_conn = Arc::new(
+        XpcConnection::from_endpoint(gui_endpoint)
+            .expect("Failed to connect to GUI"),
+    );
+    set_event_handler(&*gui_conn, |event| {
         if let Ok(msg) = event {
             let action = msg.get_string("action").unwrap_or_default();
             println!("Profile: Received from GUI: {}", action);
@@ -165,6 +172,7 @@ fn run(args: Args) {
         width: std::sync::atomic::AtomicU32::new(args.width),
         height: std::sync::atomic::AtomicU32::new(args.height),
         scale: args.scale,
+        gui_conn,
     });
 
     // Cache path (per-profile isolation)
@@ -384,10 +392,27 @@ mod cef_handlers {
                 let w = info.extra.coded_size.width;
                 let h = info.extra.coded_size.height;
 
+                // Create Mach port from IOSurface handle
+                let port = termsurf_xpc::iosurface::create_mach_port(handle);
+                if port == 0 {
+                    eprintln!("[FRAME-TX] frame={} create_mach_port failed", frame_id);
+                    return;
+                }
+
                 println!(
-                    "[FRAME-TX] frame={} w={} h={} time={}ms",
-                    frame_id, w, h, t_ms
+                    "[FRAME-TX] frame={} w={} h={} time={}ms port={}",
+                    frame_id, w, h, t_ms, port
                 );
+
+                // Send to GUI via XPC
+                let msg = termsurf_xpc::XpcDictionary::new();
+                msg.set_string("action", "display_surface");
+                msg.set_mach_send("iosurface_port", port);
+                msg.set_i64("width", w as i64);
+                msg.set_i64("height", h as i64);
+                msg.set_i64("frame_id", frame_id as i64);
+                msg.set_i64("tx_time_ms", t_ms);
+                self.inner.state.gui_conn.send(&msg);
             }
         }
     }

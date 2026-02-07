@@ -856,6 +856,29 @@ critical phase — it proves cross-process GPU texture sharing works in cef-test
 (google.com). The right half remains the solid placeholder color. The page should
 be static (no input yet) but fully rendered.
 
+**Result:** SUCCESS. Cross-process GPU texture sharing works in cef-test.
+
+- Switched GUI event loop from `run_app` to `pump_app_events` + `CFRunLoopRunInMode`
+  to pump the main dispatch queue — this fixed the Phase 5 anonymous listener
+  callback issue. XPC callbacks now fire reliably.
+- Profile server creates Mach port from IOSurface handle in `on_accelerated_paint`,
+  sends `display_surface` XPC message with port, width, height, frame timing.
+- GUI receives `display_surface`, stores pending Mach port. Main loop imports via
+  `IOSurfaceImporter::from_mach_port()` → `import_to_wgpu()` (Metal path), creates
+  sRGB texture view (`Bgra8UnormSrgb`), builds bind group, replaces left slot.
+- Left half shows live google.com (animated doodle was playing). Right half remains
+  green placeholder. 215 frames received over ~15 seconds — frame rate matches the
+  doodle animation rate, not a pipeline bottleneck.
+- Bug found: `termsurf_xpc::iosurface::deallocate_mach_port()` crashes because
+  `mach_task_self_` is declared as `fn` in FFI but is actually a static variable
+  in C (`extern mach_port_t mach_task_self_`; the `mach_task_self()` macro returns
+  the variable, not a function call). The FFI jumps to a data address and gets
+  `KERN_PROTECTION_FAILURE`. Workaround: skip Mach port deallocation — the real
+  termsurf code also never calls it. Ports are cleaned up at process exit.
+- Pending surface slot uses `Arc<Mutex<Option<PendingSurface>>>` shared between
+  XPC dispatch queue callback and main loop. Latest frame overwrites any
+  unprocessed frame (only latest matters for display).
+
 ### Phase 7: Two Profiles Side by Side
 
 Spawn a second profile server and render both textures. This proves the full

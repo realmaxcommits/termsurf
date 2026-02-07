@@ -1,21 +1,66 @@
 //! cef-test GUI — window with split-view wgpu rendering.
 //!
 //! Creates a single window and renders two colored halves side by side.
-//! Phase 5: connects to the launcher via XPC, spawns a profile server,
-//! and accepts the direct connection. No texture transfer yet — just
-//! proves the XPC bootstrap chain works.
+//! Phase 6: receives IOSurface Mach ports from the profile server via XPC,
+//! imports them as wgpu textures via Metal, and renders the left half with
+//! the live browser content. Uses pump_app_events + CFRunLoop to ensure
+//! XPC dispatch queue callbacks fire on the main thread.
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
 use wgpu::util::DeviceExt;
 use winit::{
     application::ApplicationHandler,
     event::WindowEvent,
-    event_loop::{ActiveEventLoop, EventLoop},
+    event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
+    platform::pump_events::{EventLoopExtPumpEvents, PumpStatus},
     window::{Window, WindowAttributes, WindowId},
 };
 
 #[cfg(target_os = "macos")]
 use termsurf_xpc::*;
+
+// ============================================================================
+// CFRunLoop (pump main dispatch queue for XPC callbacks)
+// ============================================================================
+
+#[cfg(target_os = "macos")]
+mod cfrunloop {
+    use std::ffi::c_void;
+
+    type CFStringRef = *const c_void;
+    type CFTimeInterval = f64;
+
+    extern "C" {
+        static kCFRunLoopDefaultMode: CFStringRef;
+        fn CFRunLoopRunInMode(
+            mode: CFStringRef,
+            seconds: CFTimeInterval,
+            return_after_source_handled: u8,
+        ) -> i32;
+    }
+
+    /// Run the main thread's CFRunLoop for up to `seconds`, returning after
+    /// one source is handled or the timeout expires. This pumps the main
+    /// dispatch queue, allowing XPC callbacks to fire.
+    pub fn run_for(seconds: f64) -> i32 {
+        unsafe { CFRunLoopRunInMode(kCFRunLoopDefaultMode, seconds, 1) }
+    }
+}
+
+// ============================================================================
+// Pending Surface (shared between XPC callback and main loop)
+// ============================================================================
+
+#[cfg(target_os = "macos")]
+struct PendingSurface {
+    mach_port: u32,
+    width: u32,
+    height: u32,
+}
+
+#[cfg(target_os = "macos")]
+type PendingSurfaceSlot = Arc<Mutex<Option<PendingSurface>>>;
 
 // ============================================================================
 // Vertex
@@ -67,6 +112,8 @@ struct GpuState {
     surface: wgpu::Surface<'static>,
     surface_format: wgpu::TextureFormat,
     pipeline: wgpu::RenderPipeline,
+    bind_group_layout: wgpu::BindGroupLayout,
+    sampler: wgpu::Sampler,
     left_vbuf: wgpu::Buffer,
     right_vbuf: wgpu::Buffer,
     left_bind_group: wgpu::BindGroup,
@@ -216,6 +263,8 @@ impl GpuState {
             surface,
             surface_format,
             pipeline,
+            bind_group_layout,
+            sampler,
             left_vbuf,
             right_vbuf,
             left_bind_group,
@@ -247,6 +296,63 @@ impl GpuState {
             self.size = new_size;
             self.configure_surface();
         }
+    }
+
+    /// Import an IOSurface from a Mach port and update the left bind group.
+    #[cfg(target_os = "macos")]
+    fn import_surface(&mut self, pending: PendingSurface) {
+        use cef::osr_texture_import::iosurface::IOSurfaceImporter;
+        use cef::osr_texture_import::TextureImporter;
+        use cef::sys::cef_color_type_t;
+
+        let importer = match IOSurfaceImporter::from_mach_port(
+            pending.mach_port,
+            cef_color_type_t::CEF_COLOR_TYPE_BGRA_8888,
+            pending.width,
+            pending.height,
+        ) {
+            Some(i) => i,
+            None => {
+                eprintln!(
+                    "GUI: IOSurfaceLookupFromMachPort failed (port={})",
+                    pending.mach_port
+                );
+                return;
+            }
+        };
+
+        // Import as wgpu texture via Metal
+        let texture = match importer.import_to_wgpu(&self.device) {
+            Ok(t) => t,
+            Err(e) => {
+                eprintln!("GUI: Failed to import texture: {:?}", e);
+                return;
+            }
+        };
+
+        // Create texture view with sRGB format for correct color interpretation.
+        // CEF outputs sRGB data — the texture is Bgra8Unorm but view_formats
+        // includes Bgra8UnormSrgb so we can sample it correctly.
+        let view = texture.create_view(&wgpu::TextureViewDescriptor {
+            format: Some(wgpu::TextureFormat::Bgra8UnormSrgb),
+            ..Default::default()
+        });
+
+        // Create bind group from the imported texture
+        self.left_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Left IOSurface Bind Group"),
+            layout: &self.bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&self.sampler),
+                },
+            ],
+        });
     }
 
     fn render(&self) {
@@ -285,12 +391,12 @@ impl GpuState {
 
             pass.set_pipeline(&self.pipeline);
 
-            // Draw left half (dark blue)
+            // Draw left half (live browser texture or blue placeholder)
             pass.set_bind_group(0, &self.left_bind_group, &[]);
             pass.set_vertex_buffer(0, self.left_vbuf.slice(..));
             pass.draw(0..4, 0..1);
 
-            // Draw right half (dark green)
+            // Draw right half (green placeholder)
             pass.set_bind_group(0, &self.right_bind_group, &[]);
             pass.set_vertex_buffer(0, self.right_vbuf.slice(..));
             pass.draw(0..4, 0..1);
@@ -369,17 +475,19 @@ fn create_solid_bind_group(
 /// State for tracking XPC connections to profile servers.
 #[cfg(target_os = "macos")]
 struct XpcState {
-    /// Connection to the launcher
+    /// Connection to the launcher (must keep alive)
     _launcher: XpcConnection,
     /// Listener for the left profile's direct connection (must keep alive)
     _left_listener: XpcListener,
-    /// Direct connection from the left profile server (set when profile connects)
-    _left_conn: std::sync::Mutex<Option<Arc<XpcConnection>>>,
+    /// Direct connection from the left profile server (must keep alive)
+    _left_conn: Mutex<Option<Arc<XpcConnection>>>,
 }
 
 /// Connect to the launcher and spawn the left profile server.
+/// The `pending` slot receives IOSurface Mach ports from the profile's
+/// `display_surface` XPC messages.
 #[cfg(target_os = "macos")]
-fn bootstrap_xpc() -> Option<XpcState> {
+fn bootstrap_xpc(pending: PendingSurfaceSlot) -> Option<XpcState> {
     println!("GUI: Connecting to launcher...");
 
     let launcher = match XpcConnection::connect_mach_service("com.cef-test.launcher") {
@@ -416,19 +524,48 @@ fn bootstrap_xpc() -> Option<XpcState> {
     };
 
     // Track the profile connection
-    let left_conn: Arc<std::sync::Mutex<Option<Arc<XpcConnection>>>> =
-        Arc::new(std::sync::Mutex::new(None));
+    let left_conn: Arc<Mutex<Option<Arc<XpcConnection>>>> =
+        Arc::new(Mutex::new(None));
     let left_conn_for_handler = Arc::clone(&left_conn);
 
     set_new_connection_handler(&left_listener, move |conn| {
         println!("GUI: Profile 'left' connected");
         let conn = Arc::new(conn);
+        let pending = Arc::clone(&pending);
 
-        set_event_handler(&*conn, |event| {
+        set_event_handler(&*conn, move |event| {
             match event {
                 Ok(msg) => {
                     let action = msg.get_string("action").unwrap_or_default();
-                    println!("GUI: Received from profile: {}", action);
+
+                    if action == "display_surface" {
+                        let port = msg.copy_mach_send("iosurface_port");
+                        let width = msg.get_i64("width") as u32;
+                        let height = msg.get_i64("height") as u32;
+                        let frame_id = msg.get_i64("frame_id");
+
+                        if port == 0 {
+                            eprintln!("GUI: Received null Mach port for frame {}", frame_id);
+                            return;
+                        }
+
+                        let mut guard = pending.lock().unwrap();
+                        // Note: old Mach ports are not explicitly deallocated here.
+                        // mach_task_self_ FFI is broken (declared as fn, actually a
+                        // static variable). Ports are cleaned up at process exit.
+                        *guard = Some(PendingSurface {
+                            mach_port: port,
+                            width,
+                            height,
+                        });
+
+                        println!(
+                            "[FRAME-RX] frame={} w={} h={} port={}",
+                            frame_id, width, height, port
+                        );
+                    } else {
+                        println!("GUI: Received from profile: {}", action);
+                    }
                 }
                 Err(e) => {
                     eprintln!("GUI: Profile connection error: {}", e);
@@ -462,7 +599,7 @@ fn bootstrap_xpc() -> Option<XpcState> {
     Some(XpcState {
         _launcher: launcher,
         _left_listener: left_listener,
-        _left_conn: std::sync::Mutex::new(None),
+        _left_conn: Mutex::new(None),
     })
 }
 
@@ -473,6 +610,8 @@ fn bootstrap_xpc() -> Option<XpcState> {
 struct App {
     window: Option<Arc<Window>>,
     gpu: Option<GpuState>,
+    #[cfg(target_os = "macos")]
+    pending_surface: PendingSurfaceSlot,
     #[cfg(target_os = "macos")]
     _xpc: Option<XpcState>,
 }
@@ -502,7 +641,7 @@ impl ApplicationHandler for App {
         // Bootstrap XPC after window creation
         #[cfg(target_os = "macos")]
         {
-            self._xpc = bootstrap_xpc();
+            self._xpc = bootstrap_xpc(Arc::clone(&self.pending_surface));
         }
 
         self.window = Some(window);
@@ -539,15 +678,58 @@ impl ApplicationHandler for App {
     }
 }
 
+impl App {
+    /// Check for a pending IOSurface from the profile server and import it.
+    #[cfg(target_os = "macos")]
+    fn process_pending_surface(&mut self) {
+        let pending = self.pending_surface.lock().unwrap().take();
+        if let Some(surface) = pending {
+            if let Some(gpu) = &mut self.gpu {
+                gpu.import_surface(surface);
+                if let Some(window) = &self.window {
+                    window.request_redraw();
+                }
+            }
+        }
+    }
+}
+
 fn main() {
     println!("GUI: Starting...");
-    let event_loop = EventLoop::new().unwrap();
+    let mut event_loop = EventLoop::new().unwrap();
+    event_loop.set_control_flow(ControlFlow::Poll);
+
+    #[cfg(target_os = "macos")]
+    let pending_surface: PendingSurfaceSlot = Arc::new(Mutex::new(None));
+
     let mut app = App {
         window: None,
         gpu: None,
         #[cfg(target_os = "macos")]
+        pending_surface,
+        #[cfg(target_os = "macos")]
         _xpc: None,
     };
-    event_loop.run_app(&mut app).unwrap();
+
+    // Use pump_app_events instead of run_app so we can pump the main dispatch
+    // queue (CFRunLoop) between winit iterations. This is required for XPC
+    // callbacks to fire — XpcListener::new_anonymous() dispatches on the main
+    // queue, which only gets pumped when CFRunLoop runs.
+    loop {
+        let status = event_loop.pump_app_events(Some(Duration::from_millis(1)), &mut app);
+
+        // Pump main dispatch queue for XPC callbacks
+        #[cfg(target_os = "macos")]
+        cfrunloop::run_for(0.001);
+
+        // Process any received IOSurface
+        #[cfg(target_os = "macos")]
+        app.process_pending_surface();
+
+        if let PumpStatus::Exit(_) = status {
+            break;
+        }
+    }
+
     println!("GUI: Done");
 }
