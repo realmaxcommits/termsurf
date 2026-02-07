@@ -415,26 +415,24 @@ Windows with D3D11 shared textures. It may work if used correctly:
 **Why it's low priority:** The API is fragile and our Experiment 17 results were
 catastrophic. Only revisit if all other approaches fail.
 
-## Experiment Priority Order
+## Experiment Checklist
 
-Based on likelihood of success and implementation effort:
+Ordered by likelihood of success and implementation effort:
 
-| Priority | Idea                                         | Rationale                                                  |
-| -------- | -------------------------------------------- | ---------------------------------------------------------- |
-| 1        | Idea 10: CEF debug logging                   | Zero code changes, may reveal root cause                   |
-| 2        | Idea 3: `run_message_loop()` (clean test)    | Simplest code change, may have been misconfigured in Exp 6 |
-| 3        | Idea 12: NSApplication init without window   | One line of code, may unlock CEF timers                    |
-| 4        | Idea 2: CFRunLoop-based pump                 | Addresses the likely root cause (timer infrastructure)     |
-| 5        | Idea 1: OnScheduleMessagePumpWork            | The "correct" way to drive CEF externally                  |
-| 6        | Idea 4: CVDisplayLink from display ID        | Proven timing source, needs proper integration             |
-| 7        | Idea 7: GUI-driven frame requests            | Architectural change, but fundamentally sound              |
-| 8        | Idea 9: Instrument SyntheticBeginFrameSource | Deep investigation if above ideas fail                     |
-| 9        | Idea 11: Compare process environments        | Diagnostic, helps guide further experiments                |
-| 10       | Idea 5: CADisplayLink via NSScreen           | Modern API, requires macOS 14+                             |
-| 11       | Idea 6: dispatch_source timer                | Simple fallback, not vsync-aligned                         |
-| 12       | Idea 8: Double buffering                     | Doesn't solve 60fps, papers over the problem               |
-| 13       | Idea 13: Invalidate() at 60Hz                | Hack, unlikely to work                                     |
-| 14       | Idea 14: external_begin_frame correct usage  | Fragile API, last resort                                   |
+- [ ] **1. CEF debug logging** (Idea 10) — Zero code changes, may reveal root cause
+- [ ] **2. `run_message_loop()` clean test** (Idea 3) — Simplest code change, may have been misconfigured in Exp 6
+- [ ] **3. NSApplication init without window** (Idea 12) — One line of code, may unlock CEF timers
+- [ ] **4. CFRunLoop-based pump** (Idea 2) — Addresses the likely root cause (timer infrastructure)
+- [ ] **5. OnScheduleMessagePumpWork** (Idea 1) — The "correct" way to drive CEF externally
+- [ ] **6. CVDisplayLink from display ID** (Idea 4) — Proven timing source, needs proper integration
+- [ ] **7. GUI-driven frame requests** (Idea 7) — Architectural change, but fundamentally sound
+- [ ] **8. Instrument SyntheticBeginFrameSource** (Idea 9) — Deep investigation if above ideas fail
+- [ ] **9. Compare process environments** (Idea 11) — Diagnostic, helps guide further experiments
+- [ ] **10. CADisplayLink via NSScreen** (Idea 5) — Modern API, requires macOS 14+
+- [ ] **11. dispatch_source timer** (Idea 6) — Simple fallback, not vsync-aligned
+- [ ] **12. Double buffering** (Idea 8) — Doesn't solve 60fps, papers over the problem
+- [ ] **13. Invalidate() at 60Hz** (Idea 13) — Hack, unlikely to work
+- [ ] **14. external_begin_frame correct usage** (Idea 14) — Fragile API, last resort
 
 ## Constraints
 
