@@ -469,7 +469,7 @@ Ordered by likelihood of success and implementation effort:
 
 ### Experiment 1: CEF Debug Logging
 
-**Status:** Not started
+**Status:** COMPLETE
 
 **Goal:** Enable Chromium's internal logging to see what CEF's compositor and
 frame scheduler are doing. Understand _why_ frames are being dropped or delayed.
@@ -521,3 +521,128 @@ diagnostics.
 `[FRAME-TX]` entries in `/tmp/termsurf-profile-default.log`. Cross-referencing
 these will reveal what happens between CEF's internal frame scheduling and our
 `on_accelerated_paint` callback.
+
+#### Results
+
+286 frames in 8.7 seconds = **32.6 fps** average. 58% of frames at 60fps.
+
+**The smoking gun — CEF uses a display link internally and it's failing:**
+
+```
+Viz.ExternalBeginFrameSourceMac.DisplayLink recorded 3 samples, mean = 1.0
+Viz.ExternalBeginFrameSource.Interval recorded 12 samples, mean = 16.0
+```
+
+CEF on macOS creates an `ExternalBeginFrameSourceMac` that uses a **display
+link** to drive frame timing. The interval is correctly configured at 16ms
+(60fps). But it only recorded **3 samples** — meaning the display link barely
+fired. In the cef-rs example (which has a window), this would record hundreds of
+samples.
+
+**Chromium's own metrics confirm the problem:**
+
+```
+Graphics.Smoothness.PercentDroppedFrames3.AllAnimations: mean = 28.0%
+Event.ScrollJank.MissedVsyncs.PerFrame: mean = 1,012,184.0
+```
+
+28% dropped frames according to Chromium itself. The missed vsync count is
+astronomically high (over 1 million per frame) — CEF's compositor is looking for
+vsync signals and not finding them, so the counter overflows.
+
+**Other notable entries:**
+
+```
+Viz.FrameSinkVideoCapturer.CaptureDuration: 285 samples, mean = 7.9ms
+```
+
+The video capturer is processing frames (~285 matching our frame count) and each
+capture takes ~8ms — well within a 16ms budget. The bottleneck is not rendering
+speed but frame scheduling.
+
+```
+[sandbox/mac/system_services.cc:31] SetApplicationIsDaemon: paramErr (-50)
+```
+
+A CEF subprocess is trying to register as a daemon app and failing. This may be
+related to the missing window server connection.
+
+#### Conclusion
+
+CEF on macOS uses `ExternalBeginFrameSourceMac.DisplayLink` internally to drive
+the compositor — it creates its own display link to schedule `BeginFrame`
+signals. In the cef-rs example this works because winit creates a window, giving
+the process a connection to the window server and a functioning display link. In
+the profile server there is no window, so the display link barely functions (3
+samples vs hundreds).
+
+This confirms the root cause: **the process needs a functioning display link,
+not a window.** The window was only incidentally necessary because it provided
+the display link. If we can provide a display link without a window, CEF's
+internal `ExternalBeginFrameSourceMac` should work correctly.
+
+**Next steps:** Idea 12 (NSApplication init without window) is the simplest
+test — one line of code that may fix CEF's internal display link. Idea 4
+(CVDisplayLink from CGDirectDisplayID) and Idea 7 (GUI-driven frame requests via
+XPC) are alternatives if NSApplication init alone isn't enough.
+
+### Experiment 2: Initialize NSApplication Without a Window
+
+**Status:** FAILED
+
+**Goal:** Initialize `NSApplication` in the profile server without creating any
+window. This registers the process with the macOS window server, which may be
+what CEF's internal `ExternalBeginFrameSourceMac.DisplayLink` needs to function.
+
+**Rationale:** Experiment 1 revealed that CEF creates its own display link
+internally (`ExternalBeginFrameSourceMac.DisplayLink`) but it only fired 3
+times. The cef-rs OSR example has a working display link because winit
+initializes `NSApplication` during setup. The hypothesis is that
+`NSApplication` initialization — not the window itself — is what gives the
+process a window server connection that makes the display link work.
+
+**Changes:** One addition to `ts3/termsurf-profile/src/main.rs`, before CEF
+initialization:
+
+```rust
+// Issue 342, Experiment 2: Initialize NSApplication to register with window server.
+// CEF's internal ExternalBeginFrameSourceMac.DisplayLink needs a window server
+// connection to fire vsync callbacks. NSApplication provides this without a window.
+unsafe {
+    let _: *mut std::ffi::c_void = msg_send![class!(NSApplication), sharedApplication];
+}
+```
+
+This requires adding the `objc` crate to `Cargo.toml`.
+
+**What to look for:**
+
+- Compare `Viz.ExternalBeginFrameSourceMac.DisplayLink` sample count — did it
+  increase from 3?
+- Compare `Viz.ExternalBeginFrameSource.Interval` sample count — did it increase
+  from 12?
+- Compare `Event.ScrollJank.MissedVsyncs.PerFrame` — did the astronomical count
+  drop?
+- Frame rate and interval distribution vs Experiment 1 baseline
+
+#### Results
+
+355 frames, **28.2 fps** average. Max consecutive 60fps streak: 19.
+
+| Metric | Exp 1 (no NSApp) | Exp 2 (NSApp init) |
+|--------|-----------------|-------------------|
+| `DisplayLink` samples | 3 | **3** (no change) |
+| `BeginFrameSource.Interval` samples | 12 | 9 (no change) |
+| `MissedVsyncs.PerFrame` | 1,012,184 | 698,623 (still astronomical) |
+| `PercentDroppedFrames3` | 28% | 27% (no change) |
+| Average FPS | 32.6 | 28.2 (no change) |
+| Frames at 60fps | 58% | 45% (no change) |
+
+#### Conclusion
+
+Initializing `NSApplication` without running its event loop has no effect on
+CEF's internal display link. The display link still only fired 3 times.
+Registering the process with the window server is necessary but not sufficient —
+the display link callbacks also need the CFRunLoop to be serviced in order to be
+delivered. The next step is to actually run a CFRunLoop so that display link
+callbacks (and CEF's internal timer sources) can fire.
