@@ -1223,3 +1223,79 @@ processes window server events, display link callbacks, and Core Animation
 commits. `CFRunLoopRunInMode` only processes CFRunLoop sources. The work that
 makes `do_message_loop_work()` spike to >1ms on every call may be work that
 should have been handled by the NSApplication event loop instead.
+
+### Experiment 6: Remove `do_message_loop_work()`
+
+**Status:** Not started
+
+**Goal:** Determine whether `do_message_loop_work()` is redundant when
+CFRunLoop is being serviced — and whether removing it improves frame delivery.
+
+**Hypothesis tested:** H3 (`do_message_loop_work()` and CFRunLoop fighting).
+
+#### Motivation
+
+Five experiments have established a clear picture:
+
+- `do_message_loop_work()` takes >1ms on **100% of calls** (Exp 3), up to 33ms
+- `CFRunLoopRunInMode` returns instantly **96% of the time** (Exp 3)
+- In the cef-rs example, `do_message_loop_work()` spikes only **5.7%** of calls
+  because `pump_app_events` handles most of the work (Exp 4)
+- Increasing CFRunLoop timeout to 16ms didn't help — no sources are pending at
+  longer timescales (Exp 5)
+
+The consistent finding is that `do_message_loop_work()` is doing *all* the
+work while CFRunLoop does *nothing*. But in the cef-rs example, the opposite
+is true — the event pump does the heavy lifting. This suggests the two systems
+may be fighting: `do_message_loop_work()` drains the task queue before
+CFRunLoop sources have a chance to fire, making CFRunLoop perpetually empty.
+
+If we remove `do_message_loop_work()`, CEF's internal timers and sources on
+the CFRunLoop may process the same work organically — the way they were
+designed to when a run loop is active. The question is whether CEF posts all
+its work as CFRunLoop sources, or whether some work only lives in the internal
+task queue that `do_message_loop_work()` drains.
+
+#### Changes
+
+One change to `ts3/termsurf-profile/src/main.rs`:
+
+**Remove the `do_message_loop_work()` call and increase CFRunLoop timeout to
+16ms:**
+
+```rust
+while !QUIT_FLAG.load(std::sync::atomic::Ordering::Relaxed) {
+    #[cfg(target_os = "macos")]
+    cfrunloop::run_for(0.016); // 16ms — let CFRunLoop drive everything
+    #[cfg(not(target_os = "macos"))]
+    std::thread::sleep(std::time::Duration::from_millis(16));
+}
+```
+
+The Exp 3 instrumentation is removed since there's no `do_message_loop_work()`
+to time. Frame delivery is still measured by the existing `[FRAME-TX]` logging.
+
+We use 16ms (one vsync period) so CFRunLoop has enough time to catch any
+pending sources per frame.
+
+#### What Stays the Same
+
+- CEF settings unchanged (`external_message_pump` is false)
+- `cfrunloop` module unchanged
+- XPC, IOSurface, render handler all unchanged
+- `[FRAME-TX]` frame logging still active
+
+#### Expected Outcomes
+
+| Result | Meaning |
+| --- | --- |
+| Frames still delivered, quality improves | CFRunLoop sources handle the work that `do_message_loop_work()` was doing. The explicit call was redundant and its overhead was causing stalls. H3 confirmed. |
+| Frames still delivered, quality similar or worse | CFRunLoop can drive CEF but not efficiently. The work isn't fought over — it's just slow either way. Need to explore NSApplication event loop (idea 7). |
+| No frames delivered (OnPaint stops firing) | `do_message_loop_work()` is essential — CFRunLoop sources alone cannot drive CEF's rendering pipeline. H3 ruled out. Need a different approach entirely. |
+
+#### Risk
+
+Medium. If `do_message_loop_work()` is the only thing driving CEF's rendering,
+removing it will produce zero frames. But the app won't crash — CEF will simply
+be idle. The `[FRAME-TX]` log will show immediately whether frames are arriving
+or not, and we can kill the process and revert.
