@@ -89,6 +89,10 @@ struct Args {
     /// Device scale factor (e.g. 2.0 for Retina)
     #[arg(long, default_value = "2.0")]
     scale: f32,
+
+    /// Enable benchmark mode: simulate scrolling at ~125Hz and collect frame stats
+    #[arg(long)]
+    benchmark: bool,
 }
 
 fn main() {

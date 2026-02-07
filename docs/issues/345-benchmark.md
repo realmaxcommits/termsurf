@@ -224,6 +224,9 @@ breaking any existing behavior.
 **Test:** `cd ts3 && cargo check -p termsurf-profile` succeeds. Run
 `termsurf-profile --help` and see `--benchmark` listed.
 
+**Result:** Done. Added `#[arg(long)] benchmark: bool` to `Args`. `cargo check`
+passes clean (only pre-existing warnings).
+
 ### Phase 2: Pass `--benchmark` through the full chain (`cargo check`)
 
 Thread the benchmark flag from the coordinator (`web benchmark`) through the GUI
@@ -369,11 +372,11 @@ needed.
 
 ### Phase summary
 
-| Phase | What                        | Test                              |
-| ----- | --------------------------- | --------------------------------- |
-| 1     | `--benchmark` flag parsed   | `cargo check -p termsurf-profile` |
-| 2     | Flag threaded through chain | `cargo check` (full workspace)    |
-| 3     | Page load detection         | Log shows `[LOAD]` message        |
-| 4     | Scroll simulation           | Log shows `[SCROLL]`, page moves  |
-| 5     | FrameStats + auto-quit      | Log shows `[PERF]` every 10s      |
-| 6     | Stats printed to terminal   | `web benchmark` prints results    |
+| Phase | What                        | Test                              | Status |
+| ----- | --------------------------- | --------------------------------- | ------ |
+| 1     | `--benchmark` flag parsed   | `cargo check -p termsurf-profile` | Done   |
+| 2     | Flag threaded through chain | `cargo check` (full workspace)    |        |
+| 3     | Page load detection         | Log shows `[LOAD]` message        |        |
+| 4     | Scroll simulation           | Log shows `[SCROLL]`, page moves  |        |
+| 5     | FrameStats + auto-quit      | Log shows `[PERF]` every 10s      |        |
+| 6     | Stats printed to terminal   | `web benchmark` prints results    |        |
