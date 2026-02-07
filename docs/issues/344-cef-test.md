@@ -466,8 +466,8 @@ ts3/
 ```
 
 Workspace membership is a build system convenience, not a code dependency.
-`cargo build -p cef-test-gui` builds only that crate and its direct
-dependencies — it does not compile WezTerm.
+`cargo build -p cef-test-gui` builds only that crate and its direct dependencies
+— it does not compile WezTerm.
 
 ### macOS App Bundle
 
@@ -497,8 +497,8 @@ name.
 ## Dependencies
 
 All three cef-test crates live in the ts3 Cargo workspace and use
-`foo.workspace = true` for shared dependencies. `termsurf-xpc` is referenced
-via `path = "../termsurf-xpc"` — no extraction needed.
+`foo.workspace = true` for shared dependencies. `termsurf-xpc` is referenced via
+`path = "../termsurf-xpc"` — no extraction needed.
 
 ### cef-test-gui
 
@@ -633,9 +633,10 @@ WezTerm or any other ts3 crate.
 5. Create minimal `src/main.rs` for each (just `fn main() {}`)
 6. Create `ts3/cef-test-scripts/` directory for build scripts
 
-**Test:** `cd ts3 && cargo build -p cef-test-gui -p cef-test-profile -p
-cef-test-launcher` succeeds. `cargo build -p wezterm-gui` still succeeds (no
-regressions).
+**Test:**
+`cd ts3 && cargo build -p cef-test-gui -p cef-test-profile -p
+cef-test-launcher`
+succeeds. `cargo build -p wezterm-gui` still succeeds (no regressions).
 
 ### Phase 2: Profile Server — Standalone Headless CEF
 
@@ -706,8 +707,8 @@ adding IOSurface import complexity.
 2. Initialize wgpu (Metal backend, Bgra8UnormSrgb surface format)
 3. Create shader (same pass-through as cef-rs OSR example)
 4. Create render pipeline with bind group layout (texture + sampler)
-5. Create two vertex buffers: left quad (NDC x ∈ [-1, 0]) and right quad (NDC
-   x ∈ [0, +1])
+5. Create two vertex buffers: left quad (NDC x ∈ [-1, 0]) and right quad (NDC x
+   ∈ [0, +1])
 6. Create two solid-color textures (e.g., dark blue and dark green) as
    placeholder bind groups
 7. Event loop: `pump_app_events` → on `RedrawRequested`, draw left quad with
@@ -745,8 +746,8 @@ bundle.
 5. Copy `cef-test-profile` to `Contents/Helpers/` (or `Frameworks/`)
 6. Copy CEF framework to `Contents/Frameworks/`
 7. Copy CEF helper processes
-8. Create `Contents/XPCServices/com.cef-test.launcher.xpc/` with launcher
-   binary and `Info.plist`
+8. Create `Contents/XPCServices/com.cef-test.launcher.xpc/` with launcher binary
+   and `Info.plist`
 9. Create app `Info.plist`
 10. Handle code signing if required for XPC
 
@@ -757,7 +758,8 @@ bundle.
 
 **Results:**
 
-- `./cef-test-scripts/build.sh` builds all three binaries and creates CefTest.app
+- `./cef-test-scripts/build.sh` builds all three binaries and creates
+  CefTest.app
 - Bundle structure verified:
   - `Contents/MacOS/cef-test-gui` — main binary
   - `Contents/Frameworks/cef-test-profile` — profile server binary
@@ -820,12 +822,13 @@ colored halves (no texture transfer yet).
 - Profile server runs CEF and produces `[FRAME-TX]` at expected rates
 - Profile output: 70 frames in 10 seconds (google.com, static after load)
 - GUI window shows blue/green placeholder halves (no texture transfer yet)
-- Logs spread across three files: `/tmp/cef-test-{gui,launcher,profile-left-1}.log`
+- Logs spread across three files:
+  `/tmp/cef-test-{gui,launcher,profile-left-1}.log`
 - Known issue: GUI's anonymous listener callback doesn't fire because
   `XpcListener::new_anonymous()` dispatches on `dispatch_get_main_queue()` and
-  winit's `run_app` may not pump it actively. The profile IS connected (confirmed
-  by profile log), but the GUI doesn't see the incoming connection in its
-  callback. This must be resolved in Phase 6 — likely by switching to
+  winit's `run_app` may not pump it actively. The profile IS connected
+  (confirmed by profile log), but the GUI doesn't see the incoming connection in
+  its callback. This must be resolved in Phase 6 — likely by switching to
   `pump_app_events` or using a private dispatch queue.
 
 ### Phase 6: IOSurface Transfer — One Browser Visible
@@ -853,28 +856,31 @@ critical phase — it proves cross-process GPU texture sharing works in cef-test
 3. Update rendering: replace left placeholder bind group with the live texture
 
 **Test:** Run via app bundle. The left half of the window shows a live webpage
-(google.com). The right half remains the solid placeholder color. The page should
-be static (no input yet) but fully rendered.
+(google.com). The right half remains the solid placeholder color. The page
+should be static (no input yet) but fully rendered.
 
 **Result:** SUCCESS. Cross-process GPU texture sharing works in cef-test.
 
-- Switched GUI event loop from `run_app` to `pump_app_events` + `CFRunLoopRunInMode`
-  to pump the main dispatch queue — this fixed the Phase 5 anonymous listener
-  callback issue. XPC callbacks now fire reliably.
-- Profile server creates Mach port from IOSurface handle in `on_accelerated_paint`,
-  sends `display_surface` XPC message with port, width, height, frame timing.
-- GUI receives `display_surface`, stores pending Mach port. Main loop imports via
-  `IOSurfaceImporter::from_mach_port()` → `import_to_wgpu()` (Metal path), creates
-  sRGB texture view (`Bgra8UnormSrgb`), builds bind group, replaces left slot.
-- Left half shows live google.com (animated doodle was playing). Right half remains
-  green placeholder. 215 frames received over ~15 seconds — frame rate matches the
-  doodle animation rate, not a pipeline bottleneck.
+- Switched GUI event loop from `run_app` to `pump_app_events` +
+  `CFRunLoopRunInMode` to pump the main dispatch queue — this fixed the Phase 5
+  anonymous listener callback issue. XPC callbacks now fire reliably.
+- Profile server creates Mach port from IOSurface handle in
+  `on_accelerated_paint`, sends `display_surface` XPC message with port, width,
+  height, frame timing.
+- GUI receives `display_surface`, stores pending Mach port. Main loop imports
+  via `IOSurfaceImporter::from_mach_port()` → `import_to_wgpu()` (Metal path),
+  creates sRGB texture view (`Bgra8UnormSrgb`), builds bind group, replaces left
+  slot.
+- Left half shows live google.com (animated doodle was playing). Right half
+  remains green placeholder. 215 frames received over ~15 seconds — frame rate
+  matches the doodle animation rate, not a pipeline bottleneck.
 - Bug found: `termsurf_xpc::iosurface::deallocate_mach_port()` crashes because
   `mach_task_self_` is declared as `fn` in FFI but is actually a static variable
-  in C (`extern mach_port_t mach_task_self_`; the `mach_task_self()` macro returns
-  the variable, not a function call). The FFI jumps to a data address and gets
-  `KERN_PROTECTION_FAILURE`. Workaround: skip Mach port deallocation — the real
-  termsurf code also never calls it. Ports are cleaned up at process exit.
+  in C (`extern mach_port_t mach_task_self_`; the `mach_task_self()` macro
+  returns the variable, not a function call). The FFI jumps to a data address
+  and gets `KERN_PROTECTION_FAILURE`. Workaround: skip Mach port deallocation —
+  the real termsurf code also never calls it. Ports are cleaned up at process
+  exit.
 - Pending surface slot uses `Arc<Mutex<Option<PendingSurface>>>` shared between
   XPC dispatch queue callback and main loop. Latest frame overwrites any
   unprocessed frame (only latest matters for display).
@@ -907,16 +913,17 @@ GitHub.com (left, static) renders its initial frames then goes idle. Google.com
 doodle animation rate as confirmed in a separate browser. No crashes.
 
 Key implementation details:
-- `create_profile_listener()` helper extracts per-profile XPC listener setup
-  for reuse. Each profile gets its own anonymous listener, endpoint, and
-  connection tracking.
+
+- `create_profile_listener()` helper extracts per-profile XPC listener setup for
+  reuse. Each profile gets its own anonymous listener, endpoint, and connection
+  tracking.
 - `PendingSurfaces` struct holds separate `left` and `right` slots. XPC
-  callbacks route to the correct slot via an `is_left` boolean captured in
-  the closure.
+  callbacks route to the correct slot via an `is_left` boolean captured in the
+  closure.
 - Launcher needed no changes — it already handles multiple `spawn_profile`
   calls, spawning a separate process for each.
-- Profile server needed no changes — each instance independently connects
-  back to its designated anonymous listener.
+- Profile server needed no changes — each instance independently connects back
+  to its designated anonymous listener.
 - Window size: 1600x800 logical (3200x1600 physical on Retina), with each
   profile rendering at 800x800 logical (1600x1600 physical).
 
@@ -946,10 +953,11 @@ scroll window gives the rendering throughput. Each run produces identical
 behavior with no manual interaction.
 
 **Result:** Working. Both profiles load Google search results, detect page load
-via `on_loading_state_change`, then begin automated scrolling. Pages scroll
-down for 3 seconds, reverse to scroll up for 3 seconds, and repeat.
+via `on_loading_state_change`, then begin automated scrolling. Pages scroll down
+for 3 seconds, reverse to scroll up for 3 seconds, and repeat.
 
 Key implementation details:
+
 - Added `wrap_load_handler` with `on_loading_state_change` — sets a global
   `PAGE_LOADED` flag when `is_loading == 0`.
 - Browser stored in `ProfileState` via `Mutex<Option<Browser>>` after creation
@@ -966,13 +974,13 @@ Key implementation details:
 
 ### Phase 9: Performance Measurement & Analysis
 
-Instrument everything and collect the data that answers the fundamental question:
-does the multi-process architecture reproduce the performance problem?
+Instrument everything and collect the data that answers the fundamental
+question: does the multi-process architecture reproduce the performance problem?
 
 **Steps:**
 
-1. GUI logs per-profile frame intervals:
-   `[LEFT] frame=N interval=Tms` / `[RIGHT] frame=N interval=Tms`
+1. GUI logs per-profile frame intervals: `[LEFT] frame=N interval=Tms` /
+   `[RIGHT] frame=N interval=Tms`
 2. Profile server logs message loop timing (same instrumentation as Issue 343
    Exp 3): `do_message_loop_work` duration, `cfrunloop` duration, total loop
    time, spike counts
@@ -997,19 +1005,3 @@ a performance summary. The numbers tell us which path to take:
   the reference, bisect ts3.
 - **Something in between:** Both factors contribute. Identify which experiments
   close the remaining gap.
-
-### Phase Summary
-
-| Phase | Deliverable                         | Key risk addressed                        |
-| ----- | ----------------------------------- | ----------------------------------------- |
-| 1     | Workspace scaffold                  | Dependency structure, ts3 not broken       |
-| 2     | Standalone headless CEF binary      | CEF initializes and renders in new binary  |
-| 3     | Window with split-view rendering    | wgpu pipeline and quad geometry correct    |
-| 4     | App bundle with build script        | Bundle structure valid for CEF + XPC       |
-| 5     | XPC bootstrap chain                 | GUI ↔ Launcher ↔ Profile connection works |
-| 6     | Live webpage in window (one side)   | Cross-process IOSurface sharing works      |
-| 7     | Two browsers side by side           | Multi-profile architecture works           |
-| 8     | Mouse interaction                   | Input routing and coordinate translation   |
-| 9     | Keyboard interaction                | Full user interaction (acceptance test)    |
-| 10    | Window resize                       | Dynamic dimension changes                  |
-| 11    | Performance numbers                 | The answer to the fundamental question     |
