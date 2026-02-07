@@ -646,3 +646,65 @@ Registering the process with the window server is necessary but not sufficient �
 the display link callbacks also need the CFRunLoop to be serviced in order to be
 delivered. The next step is to actually run a CFRunLoop so that display link
 callbacks (and CEF's internal timer sources) can fire.
+
+### Experiment 3: `run_message_loop()` with NSApplication
+
+**Status:** Not started
+
+**Goal:** Replace the manual polling loop with `cef::run_message_loop()`, which
+internally runs a CFRunLoop/NSRunLoop on macOS. Combined with the NSApplication
+initialization from Experiment 2, this gives CEF's internal display link both a
+window server connection AND a running run loop to deliver callbacks on.
+
+**Rationale:** Experiment 1 showed CEF's `ExternalBeginFrameSourceMac.DisplayLink`
+only fired 3 times. Experiment 2 showed that initializing NSApplication alone
+doesn't fix this — the display link callbacks need the CFRunLoop to be actively
+serviced. `run_message_loop()` runs CEF's own message loop, which on macOS is a
+CFRunLoop. This is the simplest way to provide everything the display link needs.
+
+Issue 341, Experiment 6 tried `run_message_loop()` and got 18fps. But that
+experiment also had `external_message_pump: 1` enabled, which is incompatible
+with `run_message_loop()` — CEF ignores its own loop when told an external pump
+is driving. This time we test with the correct configuration: no
+`external_message_pump`, just `run_message_loop()`.
+
+**Changes:** Two modifications to `ts3/termsurf-profile/src/main.rs`:
+
+1. **Replace the polling loop** (~line 314) with `run_message_loop()`:
+
+```rust
+// 10. Run CEF message loop
+// Issue 342, Experiment 3: Use run_message_loop() to provide a CFRunLoop
+// that services CEF's internal display link callbacks.
+println!("Profile: Running message loop (run_message_loop mode)...");
+cef::run_message_loop();
+```
+
+2. **Call `quit_message_loop()` instead of setting QUIT_FLAG** in shutdown paths:
+
+The Ctrl+C handler (~line 308) and the XPC disconnect handler (~line 1143) both
+set `QUIT_FLAG`. These must also call `cef::quit_message_loop()` to break out of
+the blocking loop:
+
+```rust
+// Ctrl+C handler:
+QUIT_FLAG.store(true, Ordering::Relaxed);
+cef::quit_message_loop();
+
+// XPC disconnect handler:
+QUIT_FLAG.store(true, Ordering::Relaxed);
+cef::quit_message_loop();
+```
+
+Keep `QUIT_FLAG` as-is — other code may check it. Just add the
+`quit_message_loop()` call alongside it.
+
+**Key difference from Issue 341, Exp 6:** No `external_message_pump: 1`. CEF
+owns the loop entirely.
+
+**What to look for:**
+
+- `Viz.ExternalBeginFrameSourceMac.DisplayLink` sample count — does the run loop
+  unlock the display link?
+- `Event.ScrollJank.MissedVsyncs.PerFrame` — does the missed vsync count drop?
+- Frame rate, interval distribution, and max 60fps streak vs Experiments 1-2
