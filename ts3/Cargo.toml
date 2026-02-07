@@ -22,6 +22,10 @@ members = [
   "termsurf-launcher",
   "termsurf-test-sender",
   "termsurf-profile",
+  # cef-test: minimal multi-process CEF test harness (Issue 344)
+  "cef-test-gui",
+  "cef-test-profile",
+  "cef-test-launcher",
 ]
 resolver = "2"
 exclude = [
