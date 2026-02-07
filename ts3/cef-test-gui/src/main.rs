@@ -20,34 +20,6 @@ use winit::{
 use termsurf_xpc::*;
 
 // ============================================================================
-// CFRunLoop (pump main dispatch queue for XPC callbacks)
-// ============================================================================
-
-#[cfg(target_os = "macos")]
-mod cfrunloop {
-    use std::ffi::c_void;
-
-    type CFStringRef = *const c_void;
-    type CFTimeInterval = f64;
-
-    extern "C" {
-        static kCFRunLoopDefaultMode: CFStringRef;
-        fn CFRunLoopRunInMode(
-            mode: CFStringRef,
-            seconds: CFTimeInterval,
-            return_after_source_handled: u8,
-        ) -> i32;
-    }
-
-    /// Run the main thread's CFRunLoop for up to `seconds`, returning after
-    /// one source is handled or the timeout expires. This pumps the main
-    /// dispatch queue, allowing XPC callbacks to fire.
-    pub fn run_for(seconds: f64) -> i32 {
-        unsafe { CFRunLoopRunInMode(kCFRunLoopDefaultMode, seconds, 1) }
-    }
-}
-
-// ============================================================================
 // Pending Surfaces (shared between XPC callbacks and main loop)
 // ============================================================================
 
@@ -849,6 +821,14 @@ impl App {
 
 fn main() {
     println!("GUI: Starting...");
+
+    // Register as a proper GUI app so the window close button and dock quit work.
+    #[cfg(target_os = "macos")]
+    unsafe {
+        use cocoa::appkit::{NSApp, NSApplication, NSApplicationActivationPolicyRegular};
+        NSApp().setActivationPolicy_(NSApplicationActivationPolicyRegular);
+    }
+
     let mut event_loop = EventLoop::new().unwrap();
     event_loop.set_control_flow(ControlFlow::Poll);
 
@@ -874,9 +854,6 @@ fn main() {
 
     loop {
         let status = event_loop.pump_app_events(Some(Duration::from_millis(1)), &mut app);
-
-        #[cfg(target_os = "macos")]
-        cfrunloop::run_for(0.001);
 
         #[cfg(target_os = "macos")]
         app.process_pending_surfaces();

@@ -20,3 +20,4 @@ cef = { path = "../../cef-rs/cef", features = ["accelerated_osr"] }
 metal = "0.33"
 objc.workspace = true
 io-surface = "0.16"
+cocoa = "0.26"
