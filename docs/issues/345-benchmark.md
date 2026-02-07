@@ -204,3 +204,176 @@ The only differences are on the GUI side: WezTerm's renderer vs bare wgpu. If
 the results match (~50fps), then WezTerm's integration is not the problem and
 the input path was the bottleneck all along. If they don't match, WezTerm's
 integration is the culprit and we can bisect it.
+
+## Implementation Phases
+
+Each phase is independently testable. We confirm each phase works before moving
+to the next.
+
+### Phase 1: `--benchmark` flag on termsurf-profile (`cargo check`)
+
+Add a `--benchmark` CLI flag to `termsurf-profile` that is parsed but does
+nothing yet. This confirms the flag is wired through argument parsing without
+breaking any existing behavior.
+
+**Files:**
+
+- `ts3/termsurf-profile/src/main.rs` — Add `#[arg(long)] benchmark: bool` to
+  `Args` struct.
+
+**Test:** `cd ts3 && cargo check -p termsurf-profile` succeeds. Run
+`termsurf-profile --help` and see `--benchmark` listed.
+
+### Phase 2: Pass `--benchmark` through the full chain (`cargo check`)
+
+Thread the benchmark flag from the coordinator (`web benchmark`) through the GUI
+socket, XPC manager, launcher, and into the profile server's command line. No
+behavior changes yet — just plumbing.
+
+**The chain:**
+
+1. **Coordinator** (`termsurf-web/src/main.rs`) — Detect `benchmark` as the URL
+   argument. When URL is `"benchmark"`, set `benchmark: true` in the JSON
+   `open_webview` request and hardcode the URL to
+   `https://www.google.com/search?q=asdf+asdf`.
+
+2. **GUI socket handler** (`webview_socket.rs`) — Extract `benchmark` bool from
+   the `open_webview` request data. Pass it to
+   `xpc_manager.request_profile_spawn()`.
+
+3. **XPC manager** (`webview_xpc.rs`) — Add `benchmark: bool` parameter to
+   `request_profile_spawn()`. Set `msg.set_bool("benchmark", true)` in the XPC
+   spawn message.
+
+4. **Launcher** (`termsurf-launcher/src/main.rs`) — Extract `benchmark` bool
+   from XPC message. When true, add `--benchmark` to the profile server command
+   line. Also forward in `create_browser` messages for existing profiles.
+
+5. **termsurf-xpc** — Add `set_bool` / `get_bool` to `XpcDictionary` if not
+   already present.
+
+**Files:**
+
+- `ts3/termsurf-web/src/main.rs` — Detect `"benchmark"` URL, set flag in JSON.
+- `ts3/wezterm-gui/src/termwindow/webview_socket.rs` — Extract and forward
+  benchmark flag.
+- `ts3/wezterm-gui/src/termwindow/webview_xpc.rs` — Add benchmark param to
+  `request_profile_spawn`, include in XPC message.
+- `ts3/termsurf-launcher/src/main.rs` — Read benchmark from XPC, add
+  `--benchmark` to spawn command.
+- `ts3/termsurf-xpc/` — Add `set_bool`/`get_bool` if needed.
+
+**Test:** `cd ts3 && cargo check` (full workspace check) succeeds. All five
+crates compile with the new plumbing.
+
+### Phase 3: Page load detection in termsurf-profile (`log output`)
+
+Add a `LoadHandler` to termsurf-profile that detects when the page finishes
+loading and sets a `PAGE_LOADED` atomic flag. This is a prerequisite for
+starting scroll simulation — we can't scroll until the page is loaded.
+
+cef-test-profile already has this pattern (`TestLoadHandler` +
+`on_loading_state_change`). Port it to termsurf-profile.
+
+**Files:**
+
+- `ts3/termsurf-profile/src/main.rs` — Add `PAGE_LOADED: AtomicBool` static. Add
+  `LoadHandler` impl to `cef_handlers` module. Wire it into `ProfileClient`.
+
+**Test:** Build and run `web google.com`. Check
+`/tmp/termsurf-profile-default.log` for `[LOAD] Page finished loading` message.
+This confirms the load handler fires in the real ts3 pipeline.
+
+### Phase 4: Scroll simulation in benchmark mode (`log output`)
+
+When `--benchmark` is set, inject simulated scroll events at ~125Hz after
+`PAGE_LOADED` becomes true. This is the core mechanic — identical to
+cef-test-profile's scroll loop.
+
+**Implementation:**
+
+- In the message loop (`while !QUIT_FLAG`), add scroll simulation code gated on
+  `args.benchmark && PAGE_LOADED.load(Relaxed)`.
+- Copy the scroll state from cef-test-profile: 8ms interval, direction reversal
+  every 25 events, delta of 120, mouse position at viewport center.
+- The scroll events are sent via `cef::post_task` using the existing
+  `MouseWheelTask`, calling `host.send_mouse_wheel_event()` directly on the CEF
+  UI thread.
+
+**Files:**
+
+- `ts3/termsurf-profile/src/main.rs` — Add scroll simulation state and logic to
+  the message loop. Gated behind `args.benchmark`.
+
+**Test:** Build and run `web benchmark`. Check the profile log for `[SCROLL]`
+messages. The webview should scroll automatically without any manual input.
+Visually confirm the page scrolls up and down.
+
+### Phase 5: FrameStats collection (`log output`)
+
+Add `FrameStats` tracking to the profile server. Record frame intervals in
+`on_accelerated_paint`. Print periodic summaries to the profile log using the
+same `[PERF]` format as cef-test.
+
+**Implementation:**
+
+- Port `FrameStats` struct from `cef-test-gui/src/main.rs` into
+  termsurf-profile. Since `on_accelerated_paint` runs on the CEF IO thread, use
+  a `Mutex<FrameStats>` behind a global `OnceLock`, or use per-frame atomics
+  with a `Vec<u64>` collection in the main loop.
+- In benchmark mode, print `[PERF]` summary every 10 seconds from the message
+  loop.
+- After 70 seconds, print the final summary and set `QUIT_FLAG`.
+
+**Files:**
+
+- `ts3/termsurf-profile/src/main.rs` — Add `FrameStats`, record in
+  `on_accelerated_paint`, print summaries, auto-quit after 70s in benchmark
+  mode.
+
+**Test:** Run `web benchmark`. Watch the profile log for `[PERF]` lines every
+10s. After 70s, the profile server should print final stats and exit. Compare
+numbers against cef-test's benchmark.
+
+### Phase 6: Statistics printed to the terminal (`end-to-end`)
+
+The coordinator (`web benchmark`) reads the final stats from the profile log and
+prints them to the user's terminal. This completes the user-facing feature.
+
+**Implementation:**
+
+- After the `open_webview` response, the coordinator enters a polling loop
+  instead of waiting for Ctrl+C.
+- Poll the profile log file (`/tmp/termsurf-profile-default.log`) for the final
+  `[PERF]` summary line.
+- When found (or after timeout), parse the stats and print the formatted output:
+
+  ```
+  === ts3 Benchmark (70s) ===
+
+  50.0 fps | 80.8% at 60fps | streak: 139 | p50: 16.7ms | p95: 33.6ms
+
+  3252 frames over 65.0s
+  ```
+
+- Send `close_webview` to clean up.
+
+**Files:**
+
+- `ts3/termsurf-web/src/main.rs` — Add benchmark polling loop to
+  `run_coordinator` (when benchmark mode is detected).
+
+**Test:** Run `web benchmark` from the terminal. The benchmark runs for 70s and
+prints formatted stats directly to the terminal. No manual log inspection
+needed.
+
+### Phase summary
+
+| Phase | What                        | Test                              |
+| ----- | --------------------------- | --------------------------------- |
+| 1     | `--benchmark` flag parsed   | `cargo check -p termsurf-profile` |
+| 2     | Flag threaded through chain | `cargo check` (full workspace)    |
+| 3     | Page load detection         | Log shows `[LOAD]` message        |
+| 4     | Scroll simulation           | Log shows `[SCROLL]`, page moves  |
+| 5     | FrameStats + auto-quit      | Log shows `[PERF]` every 10s      |
+| 6     | Stats printed to terminal   | `web benchmark` prints results    |
