@@ -656,20 +656,33 @@ in our new binary before adding cross-process complexity.
 7. Context menu handler: suppress (prevents crash)
 8. Message loop: `do_message_loop_work()` + `cfrunloop::run_for(0.001)`
 9. Ctrl+C handler for graceful shutdown
-10. Bundle using cef-rs's `bundle-cef-app` tool
+10. Bundle with custom build script (`cef-test-scripts/build-profile.sh`)
 
 **Test:** Run the bundled binary:
 
 ```bash
-cargo build -p cef-test-profile
-cargo run -p bundle-cef-app -- cef-test-profile -o cef-test-profile.app
+cd ts3 && ./cef-test-scripts/build-profile.sh
 ./cef-test-profile.app/Contents/MacOS/cef-test-profile --url https://google.com
 ```
 
-Observe `[FRAME-TX]` log lines appearing. Count frame intervals — they should
-roughly match ts3's baseline (~38fps, ~16-17ms intervals with periodic spikes).
-This confirms CEF is rendering and we've reproduced the same performance
-profile.
+Observe `[FRAME-TX]` log lines appearing.
+
+**Note:** `bundle-cef-app` is in the cef-rs workspace and uses `cargo_metadata`
+to find binaries, so it can't bundle binaries from the ts3 workspace. The build
+script creates the bundle manually instead: it builds cef-osr first (to get the
+CEF framework and helpers), then creates a standalone app bundle with the
+cef-test-profile binary, renamed helpers, and the CEF framework.
+
+**Results:**
+
+- CEF framework loads, browser creates, `on_accelerated_paint` fires
+- Physical dimensions correct: 800x600 logical at 2.0 scale = 1600x1200 physical
+- Initial burst: ~49 frames in ~800ms (~61fps) during page load
+- After page loads: frames drop to ~250ms intervals (expected — CEF only paints
+  on content changes, and google.com is static after load)
+- The initial 60fps burst confirms the headless standalone process CAN achieve
+  60fps during active rendering — the frame rate question will need interactive
+  content (scrolling, animation) to answer definitively
 
 ### Phase 3: GUI — Window + Split Rendering
 
