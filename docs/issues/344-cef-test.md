@@ -990,28 +990,7 @@ browsers respond to keyboard input independently.
 left and google.com on the right, type something into google.com, search, and
 scroll around."
 
-### Phase 10: Resize
-
-Handle window resize so both browsers re-render at the correct dimensions.
-
-**Steps:**
-
-1. On winit `Resized` event: recalculate per-profile dimensions (half window
-   width, full height)
-2. Reconfigure wgpu surface
-3. Update vertex buffers if needed (NDC coordinates are resolution-independent,
-   so likely no change)
-4. Send `resize` message to both profile servers with new logical dimensions and
-   scale factor
-5. Profile servers update `view_rect` return values and call
-   `browser_host.was_resized()`
-6. CEF re-renders at new size, sends new IOSurface
-
-**Test:** Drag the window corner to resize. Both browsers re-render at the new
-dimensions without distortion or crashes. Maximize the window — both browsers
-fill their halves correctly.
-
-### Phase 11: Performance Measurement & Analysis
+### Phase 10: Performance Measurement & Analysis
 
 Instrument everything and collect the data that answers the fundamental question:
 does the multi-process architecture reproduce the performance problem?
