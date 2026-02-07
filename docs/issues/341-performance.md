@@ -1819,6 +1819,65 @@ The XPC connection event is the ideal trigger because:
   before the profile server creates its winit window, giving the GUI time to
   set up a focus-reclaim callback first
 
+#### Results
+
+**Focus:** SUCCESS — The GUI retained focus. `activateIgnoringOtherApps:` fired
+on XPC connection and the user never lost keyboard focus.
+
+**Performance:** SEVERE REGRESSION — Frame rate dropped back to ~30fps baseline.
+
+**Overall stats:** 721 frames over 33.9s = **21.3 fps average**
+
+| Interval             | Count | Percentage |
+| -------------------- | ----- | ---------- |
+| Burst (0-5ms)        | 38    | 5%         |
+| 60fps (6-20ms)       | 148   | **20%**    |
+| 30fps (21-40ms)      | 316   | **43%**    |
+| Mid (41-70ms)        | 110   | 15%        |
+| Low (>70ms)          | 108   | 15%        |
+
+**Dominant intervals:** 33ms (131), 34ms (98) — back to 30fps, identical to the
+pre-hidden-window experiments.
+
+**Max consecutive 60fps frames:** 16
+
+#### Comparison Across All Experiments
+
+| Metric                | Exp 4 (baseline) | Exp 9 (winit window) | **Exp 16 (GUI reclaim)** |
+| --------------------- | ---------------- | -------------------- | ------------------------ |
+| Average FPS           | 22.0             | 22.3                 | **21.3**                 |
+| Frames at ~60fps      | 52%              | 61%                  | **20%**                  |
+| Frames at ~30fps      | 19%              | 6%                   | **43%**                  |
+| Max consecutive 60fps | 5                | 35                   | **16**                   |
+| Dominant interval     | scattered        | 16-17ms              | **33-34ms**              |
+
+#### Conclusion
+
+**FAILED.** Focus reclaim works, but the `activateIgnoringOtherApps:` call
+deactivated the profile server process, destroying the vsync signal that the
+hidden window was providing.
+
+The root cause is a timing problem: the GUI's XPC connection handler fires
+**before** the profile server creates its winit window. The profile server's
+startup sequence is: (1) connect to GUI via XPC → *GUI reclaims focus here* →
+(2) initialize CEF → (3) create winit window. The window is created while the
+process is already deactivated, so it never establishes a proper display link.
+
+More fundamentally, this reveals that the hidden window approach has two
+unsolvable problems:
+
+1. **Focus stealing:** Creating any window activates the process
+2. **Vsync dependency on activation:** The vsync signal requires the process to
+   be (or have been) the active app when the window is created
+
+These problems are in direct conflict. The hidden 1×1 window was always a hack
+— it works only when the profile server is allowed to steal focus, which is
+unacceptable in production.
+
+**The hidden window approach is abandoned.** Future experiments should explore
+fundamentally different approaches to achieving 60fps without requiring a window
+in the profile server process.
+
 ## Related Issues
 
 - [Issue 338: Browser lag investigation](./338-lag.md) — Original performance
