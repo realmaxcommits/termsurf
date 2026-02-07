@@ -300,7 +300,7 @@ would give maximum timer precision.
 **Test:** Set the main thread's QoS class to `QOS_CLASS_USER_INTERACTIVE` before
 entering the polling loop.
 
-## Experiment Checklist
+## Ideas Checklist
 
 Ordered by likelihood of impact and implementation simplicity:
 
@@ -371,12 +371,12 @@ The current code calls `CFRunLoopRunInMode` once per loop iteration with
 
 `CFRunLoopRunInMode` returns one of four values:
 
-| Return value                    | Int | Meaning                              |
-| ------------------------------- | --- | ------------------------------------ |
-| `kCFRunLoopRunFinished`         | 1   | No sources or timers in this mode    |
-| `kCFRunLoopRunStopped`          | 2   | Stopped via `CFRunLoopStop()`        |
-| `kCFRunLoopRunTimedOut`         | 3   | Timeout expired, no source handled   |
-| `kCFRunLoopRunHandledSource`    | 4   | A source was handled (early return)  |
+| Return value                 | Int | Meaning                             |
+| ---------------------------- | --- | ----------------------------------- |
+| `kCFRunLoopRunFinished`      | 1   | No sources or timers in this mode   |
+| `kCFRunLoopRunStopped`       | 2   | Stopped via `CFRunLoopStop()`       |
+| `kCFRunLoopRunTimedOut`      | 3   | Timeout expired, no source handled  |
+| `kCFRunLoopRunHandledSource` | 4   | A source was handled (early return) |
 
 When the return value is 4, there may be additional sources ready to fire. The
 current code ignores this and proceeds to the next `do_message_loop_work()` +
@@ -450,18 +450,18 @@ while !QUIT_FLAG.load(std::sync::atomic::Ordering::Relaxed) {
 
 #### Expected Outcomes
 
-| Result                    | Meaning                                            |
-| ------------------------- | -------------------------------------------------- |
-| >80% at 60fps, higher streak | Multiple sources were being starved. H2/H9 confirmed. |
-| ~71% at 60fps (unchanged) | Only one source fires per cycle anyway. H2/H9 ruled out. Investigate H1/H3 next. |
-| Performance regression    | Draining too aggressively delays `do_message_loop_work()`. Try capping drain iterations. |
+| Result                       | Meaning                                                                                  |
+| ---------------------------- | ---------------------------------------------------------------------------------------- |
+| >80% at 60fps, higher streak | Multiple sources were being starved. H2/H9 confirmed.                                    |
+| ~71% at 60fps (unchanged)    | Only one source fires per cycle anyway. H2/H9 ruled out. Investigate H1/H3 next.         |
+| Performance regression       | Draining too aggressively delays `do_message_loop_work()`. Try capping drain iterations. |
 
 #### Risk
 
-Low. The drain loop adds at most a few microseconds per extra source handled.
-If only one source ever fires (the common case today), the behavior is identical
-to the current code — one call returns 4, the next returns 3, loop exits after
-two calls instead of one.
+Low. The drain loop adds at most a few microseconds per extra source handled. If
+only one source ever fires (the common case today), the behavior is identical to
+the current code — one call returns 4, the next returns 3, loop exits after two
+calls instead of one.
 
 #### Results
 
@@ -469,13 +469,13 @@ two calls instead of one.
 
 **Overall stats:** 495 frames over 16.1s = **30.6 fps average**
 
-| Interval             | Count | Percentage |
-| -------------------- | ----- | ---------- |
-| Burst (0-5ms)        | 18    | 3.6%       |
-| 60fps (6-20ms)       | 303   | **61.3%**  |
-| 30fps (21-40ms)      | 108   | 21.9%      |
-| Mid (41-70ms)        | 25    | 5.1%       |
-| Low (>70ms)          | 40    | 8.1%       |
+| Interval        | Count | Percentage |
+| --------------- | ----- | ---------- |
+| Burst (0-5ms)   | 18    | 3.6%       |
+| 60fps (6-20ms)  | 303   | **61.3%**  |
+| 30fps (21-40ms) | 108   | 21.9%      |
+| Mid (41-70ms)   | 25    | 5.1%       |
+| Low (>70ms)     | 40    | 8.1%       |
 
 **Dominant intervals:** 17ms (79), 16ms (76), 18ms (70) — still vsync-aligned,
 but weaker than before. Secondary peak at 33-35ms (87 combined).
@@ -493,14 +493,14 @@ CEF debug log histograms:
 
 #### Comparison
 
-| Metric                     | Issue 342 Exp 5 (baseline) | **Exp 1 (drain)** |
-| -------------------------- | -------------------------- | ----------------- |
-| Average FPS                | 38.2                       | **30.6**          |
-| Frames at 60fps            | 71%                        | **61.3%**         |
-| Frames at 30fps            | ~15%                       | **21.9%**         |
-| Max consecutive 60fps      | 424                        | **62**            |
-| SyntheticBeginFrame fires  | 19                         | **11**            |
-| PercentDroppedFrames       | 19%                        | **22.2%**         |
+| Metric                    | Issue 342 Exp 5 (baseline) | **Exp 1 (drain)** |
+| ------------------------- | -------------------------- | ----------------- |
+| Average FPS               | 38.2                       | **30.6**          |
+| Frames at 60fps           | 71%                        | **61.3%**         |
+| Frames at 30fps           | ~15%                       | **21.9%**         |
+| Max consecutive 60fps     | 424                        | **62**            |
+| SyntheticBeginFrame fires | 19                         | **11**            |
+| PercentDroppedFrames      | 19%                        | **22.2%**         |
 
 #### Conclusion
 
