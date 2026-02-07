@@ -354,6 +354,12 @@ same `[PERF]` format as cef-test.
 10s. After 70s, the profile server should print final stats and exit. Compare
 numbers against cef-test's benchmark.
 
+**Result:** Done. Seven `[PERF]` summaries printed at 10s intervals. Auto-quit
+fired at 70s. Final stats: 2939 frames over 70.6s = 41.6fps, 57.4% at 60fps,
+max streak 57, p50=16.8ms, p95=49.9ms. This is close to the manually-measured
+38fps and well below cef-test's ~50fps — the input rate hypothesis is wrong, the
+bottleneck is in ts3's WezTerm integration.
+
 ### Phase 6: Statistics printed to the terminal (`end-to-end`)
 
 The coordinator (`web benchmark`) reads the final stats from the profile log and
@@ -394,5 +400,5 @@ needed.
 | 2     | Flag threaded through chain | `cargo check` (full workspace)    | Done   |
 | 3     | Page load detection         | Log shows `[LOAD]` message        | Done   |
 | 4     | Scroll simulation           | Log shows `[SCROLL]`, page moves  | Done   |
-| 5     | FrameStats + auto-quit      | Log shows `[PERF]` every 10s      |        |
+| 5     | FrameStats + auto-quit      | Log shows `[PERF]` every 10s      | Done   |
 | 6     | Stats printed to terminal   | `web benchmark` prints results    |        |

@@ -44,6 +44,99 @@ fn active_connections() -> &'static Mutex<HashSet<u64>> {
     ACTIVE_CONNECTIONS.get_or_init(|| Mutex::new(HashSet::new()))
 }
 
+// Issue 345: Benchmark frame statistics (only initialized in benchmark mode)
+static BENCHMARK_STATS: OnceLock<Mutex<FrameStats>> = OnceLock::new();
+
+struct FrameStats {
+    frame_count: u64,
+    last_rx_time: Option<Instant>,
+    first_rx_time: Option<Instant>,
+    intervals_us: Vec<u64>,
+}
+
+impl FrameStats {
+    fn new() -> Self {
+        Self {
+            frame_count: 0,
+            last_rx_time: None,
+            first_rx_time: None,
+            intervals_us: Vec::with_capacity(8000),
+        }
+    }
+
+    fn record_frame(&mut self) {
+        let now = Instant::now();
+        self.frame_count += 1;
+        if self.first_rx_time.is_none() {
+            self.first_rx_time = Some(now);
+        }
+        if let Some(prev) = self.last_rx_time {
+            let interval_us = now.duration_since(prev).as_micros() as u64;
+            self.intervals_us.push(interval_us);
+        }
+        self.last_rx_time = Some(now);
+    }
+
+    fn print_summary(&self) {
+        let n = self.intervals_us.len();
+        if n == 0 {
+            println!("[PERF] No frames recorded");
+            return;
+        }
+
+        let total_duration = match (self.first_rx_time, self.last_rx_time) {
+            (Some(first), Some(last)) => last.duration_since(first),
+            _ => Duration::ZERO,
+        };
+        let total_secs = total_duration.as_secs_f64();
+        let avg_fps = if total_secs > 0.0 {
+            self.frame_count as f64 / total_secs
+        } else {
+            0.0
+        };
+
+        // Count frames at 60fps (interval 10-20ms to allow some jitter)
+        let at_60fps = self
+            .intervals_us
+            .iter()
+            .filter(|&&i| i >= 10_000 && i <= 20_000)
+            .count();
+        let pct_60fps = (at_60fps as f64 / n as f64) * 100.0;
+
+        // Max consecutive 60fps streak
+        let mut max_streak = 0u64;
+        let mut current_streak = 0u64;
+        for &interval in &self.intervals_us {
+            if interval >= 10_000 && interval <= 20_000 {
+                current_streak += 1;
+                if current_streak > max_streak {
+                    max_streak = current_streak;
+                }
+            } else {
+                current_streak = 0;
+            }
+        }
+
+        // Percentiles
+        let mut sorted = self.intervals_us.clone();
+        sorted.sort();
+        let p50 = sorted[n / 2];
+        let p95 = sorted[(n as f64 * 0.95) as usize];
+        let p99 = sorted[(n as f64 * 0.99) as usize];
+        let min_interval = sorted[0];
+        let max_interval = sorted[n - 1];
+
+        println!(
+            "[PERF] frames={} duration={:.1}s avg_fps={:.1} 60fps%={:.1} max_streak={}",
+            self.frame_count, total_secs, avg_fps, pct_60fps, max_streak
+        );
+        println!(
+            "[PERF] intervals: min={}us p50={}us p95={}us p99={}us max={}us",
+            min_interval, p50, p95, p99, max_interval
+        );
+    }
+}
+
 // Issue 342, Experiment 5: Minimal CFRunLoop FFI for servicing run loop sources.
 #[cfg(target_os = "macos")]
 mod cfrunloop {
@@ -353,6 +446,13 @@ fn run_profile_server(args: Args) {
     let mut events_since_switch: u64 = 0;
     let mut scroll_event_count: u64 = 0;
 
+    // Issue 345: Initialize benchmark stats and timing
+    if args.benchmark {
+        let _ = BENCHMARK_STATS.set(Mutex::new(FrameStats::new()));
+    }
+    let mut benchmark_start: Option<Instant> = None;
+    let mut next_summary_time = Duration::from_secs(10);
+
     while !QUIT_FLAG.load(std::sync::atomic::Ordering::Relaxed) {
         let t0 = Instant::now();
 
@@ -390,6 +490,7 @@ fn run_profile_server(args: Args) {
                 println!("[SCROLL] Page loaded, starting simulated scroll at ~125Hz");
                 scroll_started = true;
                 last_scroll_time = Instant::now();
+                benchmark_start = Some(Instant::now());
             }
 
             let now = Instant::now();
@@ -426,6 +527,28 @@ fn run_profile_server(args: Args) {
                         }
                     }
                 }
+            }
+        }
+
+        // Issue 345: Benchmark periodic summary and auto-quit
+        if let Some(start) = benchmark_start {
+            let elapsed = start.elapsed();
+
+            // Print summary every 10 seconds
+            if elapsed >= next_summary_time {
+                if let Some(stats) = BENCHMARK_STATS.get() {
+                    stats.lock().unwrap().print_summary();
+                }
+                next_summary_time += Duration::from_secs(10);
+            }
+
+            // Auto-quit after 70 seconds
+            if elapsed >= Duration::from_secs(70) {
+                println!("[BENCHMARK] 70 seconds elapsed, printing final stats...");
+                if let Some(stats) = BENCHMARK_STATS.get() {
+                    stats.lock().unwrap().print_summary();
+                }
+                QUIT_FLAG.store(true, std::sync::atomic::Ordering::Relaxed);
             }
         }
     }
@@ -632,6 +755,11 @@ mod cef_handlers {
                 let start = *crate::PROFILE_START_TIME.get_or_init(std::time::Instant::now);
                 let tx_time_ms = start.elapsed().as_millis() as i64;
                 println!("[FRAME-TX] frame={} t={}ms", frame_id, tx_time_ms);
+
+                // Issue 345: Record frame for benchmark stats
+                if let Some(stats) = crate::BENCHMARK_STATS.get() {
+                    stats.lock().unwrap().record_frame();
+                }
 
                 // Create Mach port from IOSurface handle
                 let port = termsurf_xpc::iosurface::create_mach_port(handle);
