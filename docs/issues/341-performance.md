@@ -1878,6 +1878,154 @@ unacceptable in production.
 fundamentally different approaches to achieving 60fps without requiring a window
 in the profile server process.
 
+### Experiment 17: External Begin Frame at 60Hz
+
+**Status:** Not started
+
+**Goal:** Achieve flawless 60fps by taking direct control of CEF's frame
+production using `send_external_begin_frame`, driven by a high-resolution timer.
+No hidden windows, no vsync dependency, no hacks.
+
+**Problem:** All previous experiments tried to coax CEF's internal compositor
+into producing frames at 60fps by manipulating the process environment (windows,
+event loops, activation policies). This approach is fundamentally flawed — we
+were fighting CEF's internal scheduling instead of controlling it.
+
+CEF provides an explicit API for exactly this case: **external begin frame**.
+When enabled, CEF's compositor stops deciding when to render and instead waits
+for the embedder to call `send_external_begin_frame()`. The embedder becomes
+the frame clock.
+
+**Hypothesis:** If we call `send_external_begin_frame()` at exactly 60Hz using
+a high-resolution timer, CEF will produce exactly one frame per call, delivered
+via `on_accelerated_paint`. No window needed — the timer IS the frame clock.
+
+#### How It Works
+
+The standard CEF rendering cycle:
+
+```
+CEF decides when to render → compositor runs → on_accelerated_paint fires
+```
+
+With external begin frame:
+
+```
+Timer fires at 60Hz → send_external_begin_frame() → compositor runs → on_accelerated_paint fires
+```
+
+We replace CEF's internal frame scheduling with our own timer. CEF still does
+all the rendering work — we just tell it *when*.
+
+#### API Details
+
+The cef-rs bindings fully expose this feature:
+
+- **`WindowInfo.external_begin_frame_enabled`** — Set to `1` when creating the
+  browser. Tells CEF to wait for external begin frame signals instead of using
+  its internal compositor timing.
+- **`browser.get_host().send_external_begin_frame()`** — Triggers one compositor
+  cycle. CEF renders the current page state and delivers the result via
+  `on_accelerated_paint`. Takes no arguments.
+
+The cef-rs OSR example explicitly disables this (`external_begin_frame_enabled:
+false as _`) because it uses winit's event loop for timing instead.
+
+#### Changes
+
+1. **Remove winit** from `termsurf-profile` — no more hidden window, no event
+   loop dependency
+2. **Set `external_begin_frame_enabled: 1`** in `WindowInfo` when creating
+   browsers
+3. **Create a high-resolution timer** at 16.67ms (60Hz) using
+   `mach_absolute_time` + `mach_wait_until` (sub-millisecond precision on macOS)
+4. **In the timer loop**, call `send_external_begin_frame()` on every browser
+   in the profile, then call `do_message_loop_work()`
+5. **Keep `external_message_pump: 1`** in CEF settings
+
+#### Implementation
+
+```rust
+// WindowInfo change
+let window_info = WindowInfo {
+    windowless_rendering_enabled: 1,
+    shared_texture_enabled: 1,
+    external_begin_frame_enabled: 1,  // NEW: we control frame timing
+    ..Default::default()
+};
+
+// Main loop: high-resolution 60Hz timer
+let frame_interval_ns: u64 = 16_666_667; // 16.67ms in nanoseconds
+let mut next_frame_time = mach_absolute_time();
+
+loop {
+    if QUIT_FLAG.load(Ordering::Relaxed) { break; }
+
+    // Wait until next frame time with sub-ms precision
+    mach_wait_until(next_frame_time);
+    next_frame_time += frame_interval_ns * timebase_ratio;
+
+    // Tell every browser in this profile to render a frame
+    for browser in &browsers {
+        browser.get_host().send_external_begin_frame();
+    }
+
+    // Process CEF messages
+    cef::do_message_loop_work();
+}
+```
+
+Note: `mach_absolute_time` returns ticks in a hardware-specific timebase.
+The conversion ratio from nanoseconds to ticks is obtained from
+`mach_timebase_info`.
+
+#### Why This Should Work
+
+This approach is fundamentally different from all 16 previous experiments:
+
+| Previous experiments (1-16)         | Experiment 17                     |
+| ----------------------------------- | --------------------------------- |
+| CEF decides when to render          | **We** decide when to render      |
+| Tried to influence CEF's scheduling | Replaced CEF's scheduling         |
+| Needed vsync signal from OS         | Timer provides the signal         |
+| Required window/event loop          | No window, no event loop          |
+| Inconsistent frame timing           | Deterministic frame timing        |
+
+CEF's `external_begin_frame` is designed for embedders who have their own
+rendering pipeline and need CEF to synchronize with it. This is exactly our
+case — the GUI process has its own wgpu rendering loop, and we need CEF to
+produce frames on our schedule, not its own.
+
+#### Expected Outcome
+
+| Result                     | Meaning                                                      |
+| -------------------------- | ------------------------------------------------------------ |
+| ~100% at 60fps             | Perfect solution. No window, no vsync, deterministic frames. |
+| 60fps but frames are empty | CEF needs `do_message_loop_work` called more frequently or with different timing relative to `send_external_begin_frame`. |
+| No frames at all           | The binding may need additional setup (e.g., frame time argument). Check CEF source. |
+| Still ~30fps               | CEF's compositor has additional internal throttling that `external_begin_frame` doesn't override. Investigate `windowless_frame_rate` interaction. |
+
+#### Why This Wasn't Tried Earlier
+
+We assumed CEF needed environmental signals (vsync, display link, window server
+notifications) to produce frames. Experiments 1-16 tried to provide those
+signals. But the real answer was always available — CEF has an API to bypass its
+internal scheduling entirely. We were so focused on what the process *environment*
+needed that we missed what the CEF *API* offered.
+
+#### Notes
+
+- `windowless_frame_rate: 60` in `BrowserSettings` may be irrelevant when using
+  external begin frame (CEF doesn't decide timing). Keep it as a safety net.
+- If a page hasn't changed, `on_accelerated_paint` may not fire (CEF may
+  optimize away no-op frames). This is fine — the GUI keeps displaying the last
+  IOSurface.
+- The timer runs independently of page content. A static page still gets 60
+  begin-frame calls per second. This is intentionally wasteful for now —
+  efficiency can be optimized later.
+- No `cocoa`, `objc`, or `winit` dependencies needed. Pure Rust + CEF.
+- No focus stealing possible — no window is created.
+
 ## Related Issues
 
 - [Issue 338: Browser lag investigation](./338-lag.md) — Original performance
