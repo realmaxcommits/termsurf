@@ -1196,7 +1196,13 @@ fn send_request(
 }
 
 fn run_coordinator(profile: ProfileMode, url: Option<String>) {
-    let url = url.unwrap_or_else(|| "about:blank".to_string());
+    // Detect benchmark mode: `web benchmark` triggers automated framerate test
+    let is_benchmark = url.as_deref() == Some("benchmark");
+    let url = if is_benchmark {
+        "https://www.google.com/search?q=asdf+asdf".to_string()
+    } else {
+        url.unwrap_or_else(|| "about:blank".to_string())
+    };
 
     // Read environment variables for GUI integration
     let pane_id = env::var("WEZTERM_PANE")
@@ -1255,7 +1261,8 @@ fn run_coordinator(profile: ProfileMode, url: Option<String>) {
             "url": url,
             "pane_id": pane_id,
             "width": width,
-            "height": height
+            "height": height,
+            "benchmark": is_benchmark
         })),
     );
 

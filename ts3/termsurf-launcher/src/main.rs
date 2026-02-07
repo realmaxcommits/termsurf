@@ -139,6 +139,7 @@ fn main() {
                         let scale = msg
                             .get_string("scale")
                             .unwrap_or_else(|| "2.0".to_string());
+                        let benchmark = msg.get_bool("benchmark");
 
                         // Always store GUI endpoint for claiming (by profile process)
                         println!("Launcher: Storing endpoint for session {}", session_id);
@@ -180,6 +181,9 @@ fn main() {
                                 .args(["--width", &width.to_string()])
                                 .args(["--height", &height.to_string()])
                                 .args(["--scale", &scale]);
+                            if benchmark {
+                                cmd.arg("--benchmark");
+                            }
                             if let Ok(log_file) = File::create(&log_path) {
                                 if let Ok(log_file2) = log_file.try_clone() {
                                     cmd.stdout(log_file).stderr(log_file2);

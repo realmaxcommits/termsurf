@@ -269,6 +269,12 @@ behavior changes yet — just plumbing.
 **Test:** `cd ts3 && cargo check` (full workspace check) succeeds. All five
 crates compile with the new plumbing.
 
+**Result:** Done. `set_bool`/`get_bool` already existed in termsurf-xpc.
+Coordinator detects `web benchmark`, hardcodes the Google search URL, and sets
+`benchmark: true` in JSON. Socket handler extracts it, XPC manager includes it
+in the spawn message, launcher adds `--benchmark` to the command line. Full
+workspace `cargo check` passes.
+
 ### Phase 3: Page load detection in termsurf-profile (`log output`)
 
 Add a `LoadHandler` to termsurf-profile that detects when the page finishes
@@ -375,7 +381,7 @@ needed.
 | Phase | What                        | Test                              | Status |
 | ----- | --------------------------- | --------------------------------- | ------ |
 | 1     | `--benchmark` flag parsed   | `cargo check -p termsurf-profile` | Done   |
-| 2     | Flag threaded through chain | `cargo check` (full workspace)    |        |
+| 2     | Flag threaded through chain | `cargo check` (full workspace)    | Done   |
 | 3     | Page load detection         | Log shows `[LOAD]` message        |        |
 | 4     | Scroll simulation           | Log shows `[SCROLL]`, page moves  |        |
 | 5     | FrameStats + auto-quit      | Log shows `[PERF]` every 10s      |        |
