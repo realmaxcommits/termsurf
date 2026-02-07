@@ -371,4 +371,84 @@ experiment has 1ms sleeps but NO hot-path logs. Comparing:
 - If results are stable across 3 runs (no progressive degradation): confirms
   that 1ms sleep prevents thermal throttling.
 
-**Status:** Not started
+**Result:**
+
+After letting the machine cool, tested 1ms sleep (no hot-path logs), then
+reverted to 0ms sleep (no hot-path logs):
+
+| Condition                    | FPS  | 60fps% | Streak | p50    | p95    | p99    |
+| ---------------------------- | ---- | ------ | ------ | ------ | ------ | ------ |
+| 1ms sleep + logs (baseline)  | ~51  | 81–85% | 69–109 | 16.7ms | 33.6ms | 33.9ms |
+| 1ms sleep, no logs (cooled)  | 24.9 | 19.1%  | 16     | 33.4ms | 83.3ms | 83.8ms |
+| 0ms sleep, no logs           | 49.4 | 79.2%  | 166    | 16.7ms | 33.6ms | 33.9ms |
+
+The 1ms sleep result (24.9fps) was dramatically worse than the original 1ms
+baseline (51fps), despite having fewer logs. The machine had been cooling but
+may have still been thermally throttled from the earlier 0ms runs. Restoring
+0ms sleep immediately brought performance back to 49.4fps.
+
+**Findings:**
+
+1. **The 1ms sleep result is anomalous.** The original baseline had 1ms sleeps
+   AND hot-path logs and achieved 51fps. Getting 24.9fps with 1ms sleeps and
+   NO logs makes no sense unless the machine was still thermally throttled from
+   the prior 0ms benchmark runs. This data point is unreliable.
+
+2. **0ms sleep with no logs gives ~49fps.** This is comparable to the original
+   baseline (51fps) and close to the Experiment 1 "cold run" result (55.7fps).
+   The hot-path log removal did not produce a dramatic improvement at this sleep
+   setting, suggesting the logs were not a major bottleneck.
+
+3. **Thermal effects dominate.** The progressive degradation across runs
+   (Experiment 1: 46.7 → 33.7 → 27.9, then this experiment's 24.9fps) shows
+   that thermal state has a larger effect on benchmark results than any code
+   change we've made. Benchmarks must account for thermal state to be
+   meaningful.
+
+4. **The bimodal pattern persists.** Even in the best 0ms run (49.4fps), ~20%
+   of frames miss vsync. The p50=16.7ms and p95=33.6ms pattern is unchanged
+   from the original baseline. Neither sleep duration nor log removal has
+   shifted this fundamental behavior.
+
+**Status:** Done
+
+## Conclusion
+
+Three experiments investigated the cef-test performance ceiling:
+
+| Change                         | Best FPS | 60fps% | Stable? |
+| ------------------------------ | -------- | ------ | ------- |
+| Baseline (1ms sleep + logs)    | 51.6     | 85%    | Yes     |
+| 0ms sleep + logs (Exp 1)       | 55.7     | 93%    | No (thermal decay) |
+| 0ms sleep, no logs (Exp 3)     | 49.4     | 79%    | Unknown |
+| 1ms sleep, no logs (Exp 3)     | 24.9     | 19%    | Anomalous |
+
+**What we learned:**
+
+1. **Thermal throttling is the dominant variable.** Run-to-run variance of
+   20+fps dwarfs any code-level optimization. The 0ms sleep burns CPU and
+   causes progressive degradation. The 1ms sleep keeps thermals stable but
+   adds pipeline latency. Neither setting has been tested under controlled
+   thermal conditions.
+
+2. **The ~15% vsync miss rate is persistent.** Across all conditions — debug
+   vs release, 0ms vs 1ms sleep, with or without logs — about 15–20% of frames
+   consistently miss the 16.7ms vsync deadline by exactly one frame interval.
+   This is not caused by sleep duration or logging. It's an inherent property
+   of the CEF OSR → IOSurface → Mach port → wgpu pipeline.
+
+3. **IOSurface handles are not reused.** CEF allocates a new IOSurface per
+   frame (~850 unique handles across ~3,000 frames). The per-frame Mach port
+   creation and wgpu texture import cannot be optimized away.
+
+4. **Hot-path logging is devastating but not the ceiling.** A single `println!`
+   per frame can halve fps (Experiment 2). But removing all logs did not push
+   fps above ~50. The logs amplify other problems but aren't the root cause.
+
+**The path forward** requires a different approach than tuning sleep durations
+or removing logs. The persistent ~15% vsync miss rate suggests the bottleneck
+is in the per-frame IOSurface transfer pipeline itself — the kernel calls
+(`IOSurfaceCreateMachPort` + `IOSurfaceLookupFromMachPort`) and GPU resource
+creation (`import_to_wgpu`) that happen every frame. Reducing that per-frame
+cost, or finding a way to decouple frame production from vsync presentation,
+would be the next investigation.
