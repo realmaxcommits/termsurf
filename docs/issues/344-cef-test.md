@@ -1062,19 +1062,23 @@ Three things are now established:
    IOSurface transfer achieve ~50fps each with p50 = 16.7ms (exactly 60fps).
    The architecture is sound.
 
-2. **ts3 has integration overhead.** ts3's 38fps vs cef-test's 50fps means ~12fps
-   is lost in ts3's WezTerm integration — likely in how the GUI imports
-   textures, schedules redraws, or coordinates with the terminal renderer.
+2. **ts3's 38fps may be an input problem, not a rendering problem.** cef-test
+   sends scroll events at 125Hz directly inside the profile server. ts3's 38fps
+   was measured during manual scrolling, where input traverses macOS → winit →
+   WezTerm pane routing → XPC → profile server. If any stage drops or throttles
+   events, the effective input rate reaching CEF is lower, and CEF renders fewer
+   frames — not because it's slow, but because it's not being asked to render.
+   See [Issue 345](./345-benchmark.md) for the test that resolves this.
 
 3. **CEF's message pump has inherent jitter.** The p95 = 33.6ms (~30fps) spikes
    occur roughly every 80-139 frames and are visible in both cef-test and the
    cef-rs OSR example (though less frequently in-process). This is a CEF
    scheduling artifact, not an IPC issue.
 
-**Next steps for ts3:** Use cef-test as the performance reference (~50fps).
-Bisect ts3's integration to find where the extra 12fps is lost. The XPC and
-IOSurface layers are not the problem — look at the GUI-side texture import
-path, redraw scheduling, and interaction with WezTerm's render loop.
+**Next steps for ts3:** Build `web benchmark` ([Issue 345](./345-benchmark.md))
+to test whether ts3's profile server achieves ~50fps when input is simulated
+directly (bypassing the input routing pipeline). If it does, the 38fps was an
+input rate problem. If it doesn't, the problem is in the GUI rendering path.
 
 ## Conclusion
 
@@ -1122,10 +1126,13 @@ Three conclusions:
    The architecture is sound. Cross-process IPC and GPU texture sharing cost
    almost nothing.
 
-2. **ts3 loses ~12fps to integration overhead.** The gap from 50fps (cef-test) to
-   38fps (ts3) is caused by something in WezTerm's integration — likely how the
-   GUI imports textures, schedules redraws, or coordinates with the terminal
-   renderer. This is now the primary investigation target.
+2. **ts3's 38fps is likely an input rate problem.** The 38fps was measured during
+   manual scrolling, where input traverses a long pipeline (macOS → winit →
+   WezTerm → XPC → profile server). cef-test bypasses this entirely by
+   simulating scroll events at 125Hz directly in the profile server. The 12fps
+   gap between cef-test (50fps) and ts3 (38fps) may simply reflect fewer scroll
+   events reaching CEF, not slower rendering. [Issue
+   345](./345-benchmark.md) tests this hypothesis with `web benchmark`.
 
 3. **CEF's message pump has inherent jitter.** The p95 = 33.6ms spikes occur
    every 80-139 frames regardless of architecture. This is a CEF scheduling
@@ -1158,9 +1165,10 @@ server's message loop, XPC transport, or rendering pipeline.
 
 ### Next steps
 
-1. **Bisect ts3's 12fps gap.** Use cef-test as the reference. Progressively add
-   ts3 features (WezTerm renderer, pane management, web command flow) until
-   performance degrades, identifying the exact culprit.
+1. **Build `web benchmark` ([Issue 345](./345-benchmark.md)).** Add simulated
+   scrolling to ts3's profile server, bypassing the input pipeline entirely. If
+   ts3 matches cef-test's ~50fps, the 38fps was an input rate problem. If it
+   doesn't, the problem is in the GUI rendering path.
 
 2. **Try `external_message_pump: true` in cef-test.** The cef-rs OSR example
    uses this and achieves 60fps. ts3 hit a deadlock during CEF init (Issue 342
