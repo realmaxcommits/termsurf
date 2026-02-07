@@ -2096,6 +2096,70 @@ than ours — likely for embedders with their own compositor that need to
 synchronize CEF's rendering with an existing frame pipeline, not for headless
 processes trying to drive frame production from scratch.
 
+### Experiment 18: Revert to Pre-Performance-Work Baseline
+
+**Status:** Not started
+
+**Goal:** Revert the profile server code to its original state before any
+performance experiments (Issue 338 onward), establishing a clean foundation for
+a new line of investigation.
+
+**Rationale:** Seventeen experiments have been conducted since Issue 338. The
+changes accumulated in the profile server are:
+
+1. `external_message_pump: 1` added to CEF settings (Exp 4)
+2. `winit` dependency and hidden 1×1 window event loop (Exp 7/9)
+3. Various comment updates
+
+None of these changes produced an acceptable solution:
+- The hidden window achieves 60-70% at 60fps but **steals focus** (Exp 7/9)
+- Every attempt to fix focus stealing either broke vsync (Exp 11-14), broke
+  CEF (Exp 15), or caused a performance regression (Exp 16)
+- `external_begin_frame` was worse than the original code (Exp 17)
+
+The original code before performance work (commit `d3fc03161`) was:
+
+```rust
+// CEF settings — no external_message_pump
+let settings = cef::Settings {
+    windowless_rendering_enabled: 1,
+    no_sandbox: 1,
+    root_cache_path: ...,
+    browser_subprocess_path: ...,
+    persist_session_cookies: 1,
+    ..Default::default()
+};
+
+// Simple polling loop — no winit, no window, no event loop
+while !QUIT_FLAG.load(Ordering::Relaxed) {
+    cef::do_message_loop_work();
+    std::thread::sleep(Duration::from_millis(1));
+}
+```
+
+This ran at ~17-20fps, which prompted the investigation. Reverting to this
+state provides a clean baseline for future experiments that take a different
+approach entirely.
+
+#### Changes
+
+1. **Remove `winit`** from `Cargo.toml`
+2. **Remove `external_message_pump: 1`** from CEF settings
+3. **Replace the winit event loop** with the original simple polling loop
+4. **Restore original comments** on the quit flag and polling loop
+
+#### What This Preserves
+
+All non-performance changes made during Issues 325-337 remain intact:
+- Ctrl+C graceful shutdown via `QUIT_FLAG`
+- XPC communication and Mach port transfer
+- Multi-browser support
+- Resize handling
+- Input forwarding
+- All GUI-side code unchanged
+
+Only the message loop implementation and CEF settings revert.
+
 ## Related Issues
 
 - [Issue 338: Browser lag investigation](./338-lag.md) — Original performance
