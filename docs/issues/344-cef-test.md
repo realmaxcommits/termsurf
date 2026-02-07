@@ -920,29 +920,30 @@ Key implementation details:
 - Window size: 1600x800 logical (3200x1600 physical on Retina), with each
   profile rendering at 800x800 logical (1600x1600 physical).
 
-### Phase 8: Mouse Input
+### Phase 8: Simulated Mouse Input
 
-Route mouse events from the GUI to the correct profile server. This makes the
-browsers interactive — hover effects, clicking links, scrolling.
+Simulate mouse scroll events directly in the profile server to force continuous
+re-rendering. This removes the GUI from the input path entirely, making the test
+deterministic and reproducible — the same scroll pattern runs every time, with
+no human variance.
 
 **Steps:**
 
-1. Track cursor position in GUI
-2. On `CursorMoved`: determine target (left if x < half, right otherwise)
-3. Translate coordinates to profile-local space (right side: subtract half
-   width)
-4. Scale to logical coordinates (divide by scale factor)
-5. Send `mouse_move` via XPC to target profile
-6. On `MouseInput`: send `mouse_click` with button, up/down, click count
-7. On `MouseWheel`: convert line delta to pixels, send `mouse_wheel`
-8. Track modifier state (`ModifiersChanged`)
-9. Update `cef-test-profile`: receive `mouse_move`, `mouse_click`,
-   `mouse_wheel` messages, forward to CEF `BrowserHost`
+1. Change both profile URLs to Google search results pages
+   (`https://www.google.com/search?q=asdf+asdf`) so there is scrollable content
+2. After the page loads (use `on_loading_state_change` or a fixed delay), start
+   a scroll loop in the profile server
+3. Call `BrowserHost::send_mouse_wheel_event()` directly on a timer — no XPC
+   round-trip needed since the profile server owns the browser
+4. Alternate scroll direction (down then up) at a fixed interval to keep the
+   page in motion for the entire test duration
+5. Log frame rate during the scroll window to measure rendering throughput
 
-**Test:** Move the mouse over both browsers. Hover effects appear (link
-underlines, button highlights). Click links — navigation works. Scroll on both
-sides. Right-click does nothing (context menu suppressed). Verify input goes to
-the correct browser based on cursor position.
+**Test:** Run via app bundle. Both halves show Google search results. After a
+brief load delay, both browsers begin scrolling automatically — down then back
+up, in a repeating cycle. The `on_accelerated_paint` frame count during the
+scroll window gives the rendering throughput. Each run produces identical
+behavior with no manual interaction.
 
 ### Phase 9: Keyboard Input & Focus
 
