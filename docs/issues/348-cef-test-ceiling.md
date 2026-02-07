@@ -145,3 +145,68 @@ arrive in bursts.
    potential)
 3. **L2:** Instrument CFRunLoop sleep variance (diagnostic)
 4. **L5:** Try different wgpu presentation modes (easy toggle)
+
+## Experiments
+
+### Experiment 1: Eliminate the 1ms sleeps
+
+**Goal:** Determine whether the two 1ms sleeps (profile CFRunLoop + GUI winit
+pump) are responsible for the ~15% of frames that miss vsync.
+
+**Hypothesis:** Each sleep adds up to 1ms of idle wait. Together they can add up
+to 2ms per frame in the pipeline. At 60fps the entire frame budget is 16.7ms.
+If CEF finishes rendering at, say, 15ms into the frame, the profile sleep adds
+1ms (now 16ms), and the GUI sleep adds another 1ms (now 17ms) — past the
+16.7ms vsync deadline. Eliminating the sleeps should push these marginal frames
+back under the deadline.
+
+**What needs to change:**
+
+Two lines, one in each process:
+
+1. **Profile server** — `cef-test-profile/src/main.rs:249`:
+   ```rust
+   // Before:
+   cfrunloop::run_for(0.001);  // 1ms sleep
+   // After:
+   cfrunloop::run_for(0.0);    // no sleep, return immediately
+   ```
+   We keep the `cfrunloop::run_for` call (with 0 duration) rather than removing
+   it entirely, because CEF on macOS needs the CFRunLoop to be serviced for
+   internal event delivery. A zero-duration call still processes any pending
+   CFRunLoop sources — it just doesn't wait for new ones.
+
+2. **GUI** — `cef-test-gui/src/main.rs:859`:
+   ```rust
+   // Before:
+   let status = event_loop.pump_app_events(Some(Duration::from_millis(1)), &mut app);
+   // After:
+   let status = event_loop.pump_app_events(Some(Duration::ZERO), &mut app);
+   ```
+   Same rationale: process any pending events immediately, don't wait.
+
+**Risk:** Higher CPU usage. Without the 1ms sleeps, both processes will spin
+their loops as fast as possible. This is acceptable for a benchmark — we're
+measuring the ceiling, not optimizing power consumption. If fps improves, we
+can later find a smarter sleep strategy (e.g., sleep only when no frame is
+pending).
+
+**How to test:**
+
+1. Make the changes above
+2. `cd ts3 && ./cef-test-scripts/benchmark.sh --release`
+3. Run 3 times, record fps/p50/p95/60fps%
+4. Compare against baseline (50.3–51.6fps, p50=16.7ms, 81–85% at 60fps)
+5. Note CPU usage during the run (Activity Monitor or `top`)
+
+**What the results tell us:**
+
+- If fps reaches ~60 and 60fps% reaches ~95%+: the sleeps were the bottleneck.
+  The path forward is a smarter sleep strategy that doesn't add latency on the
+  hot path.
+- If fps stays at ~51: the sleeps aren't the problem. Move to L3/L4 (IOSurface
+  handle reuse).
+- If fps improves partially (e.g., ~55fps): the sleeps contribute but aren't
+  the only factor. Combine with other optimizations.
+
+**Status:** Not started
