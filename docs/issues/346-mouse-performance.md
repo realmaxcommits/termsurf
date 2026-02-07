@@ -301,4 +301,55 @@ overhead — potentially doubling XPC traffic (mouse_move in, cursor_change out)
 - If rate is near 0: H3 is ruled out. The per-event cost is elsewhere (H2 mutex
   contention or `post_task` overhead).
 
-**Status:** Not started
+**Result:**
+
+Four benchmark runs revealed two things: cursor change rate, and a variance
+problem.
+
+Cursor change rate during continuous mouse movement:
+
+```
+[CURSOR-RATE] 8-27 callbacks/sec, averaging ~17/sec
+[MOUSE-RATE]  ~60 events/sec (consistent with Experiment 1)
+Ratio: ~1 cursor change per 3-4 mouse moves
+```
+
+But the benchmark results themselves were highly variable:
+
+| Run | Condition | FPS  | p50    | p95    | 60fps% |
+| --- | --------- | ---- | ------ | ------ | ------ |
+| 1   | No mouse  | 35.5 | 33.1ms | 66.7ms | 38.2%  |
+| 2   | Mouse     | 45.7 | 16.7ms | 83.4ms | 69.1%  |
+| 3   | No mouse  | 41.6 | 19.2ms | 53.7ms | 38.8%  |
+| 4   | Mouse     | 40.0 | 17.2ms | 66.2ms | 43.2%  |
+
+The first no-mouse run was the **worst** (35.5fps). The first mouse run was the
+**best** (45.7fps). There is no consistent pattern of mouse movement hurting
+performance across these runs.
+
+**Findings:**
+
+1. **Cursor changes fire at ~17/sec, not ~60/sec.** Not 1:1 with mouse moves.
+   Cursor changes add ~30% extra XPC traffic, not 100%. H3 is a contributing
+   factor but not the dominant one.
+
+2. **Run-to-run variance dominates the signal.** The 35.5–45.7fps swing between
+   runs with identical conditions is larger than the mouse-vs-no-mouse difference
+   we were trying to measure. Something else — thermal state, system load, CEF
+   internal scheduling — is the primary source of variation.
+
+3. **The Issue 345 conclusion may have been premature.** The clean 51.5 vs 39.0
+   result that motivated this investigation may have been partly luck — one good
+   run vs one bad run, with mouse movement coincidentally correlating.
+
+**Hypothesis impact:**
+
+- H3 (cursor change round-trips): Partially weakened — ~17/sec, not ~60/sec
+- All hypotheses: Uncertain — run-to-run variance makes it hard to isolate any
+  single factor
+
+**New concern:** Before further mouse performance experiments, the benchmark
+itself needs better statistical reliability. Either run multiple iterations and
+average, or identify and control the source of variance.
+
+**Status:** Done

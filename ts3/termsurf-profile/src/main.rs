@@ -35,6 +35,9 @@ static PAGE_LOADED: AtomicBool = AtomicBool::new(false);
 // Issue 346, Experiment 1: Count mouse_move events received by the profile server
 static MOUSE_MOVE_COUNT: AtomicU64 = AtomicU64::new(0);
 
+// Issue 346, Experiment 2: Count cursor change callbacks from CEF
+static CURSOR_CHANGE_COUNT: AtomicU64 = AtomicU64::new(0);
+
 // Issue 330, Experiment 3: Track active connections by ID for idempotent cleanup
 // Replaces the old GUI_CONNECTION_COUNT counter which could be decremented multiple times
 static CONNECTION_ID: AtomicU64 = AtomicU64::new(0);
@@ -456,9 +459,10 @@ fn run_profile_server(args: Args) {
     let mut benchmark_start: Option<Instant> = None;
     let mut next_summary_time = Duration::from_secs(10);
 
-    // Issue 346, Experiment 1: Mouse event rate tracking
+    // Issue 346, Experiments 1 & 2: Event rate tracking
     let mut last_mouse_rate_time = Instant::now();
     let mut last_mouse_rate_count: u64 = 0;
+    let mut last_cursor_rate_count: u64 = 0;
 
     while !QUIT_FLAG.load(std::sync::atomic::Ordering::Relaxed) {
         let t0 = Instant::now();
@@ -547,6 +551,15 @@ fn run_profile_server(args: Args) {
                     println!("[MOUSE-RATE] {} mouse_move events in last second", events_this_second);
                 }
                 last_mouse_rate_count = current_count;
+
+                // Issue 346, Experiment 2: Cursor change rate
+                let current_cursor = CURSOR_CHANGE_COUNT.load(std::sync::atomic::Ordering::Relaxed);
+                let cursors_this_second = current_cursor - last_cursor_rate_count;
+                if cursors_this_second > 0 {
+                    println!("[CURSOR-RATE] {} cursor_change callbacks in last second", cursors_this_second);
+                }
+                last_cursor_rate_count = current_cursor;
+
                 last_mouse_rate_time = now;
             }
         }
@@ -870,6 +883,9 @@ mod cef_handlers {
                 type_: CursorType,
                 _custom_cursor_info: Option<&CursorInfo>,
             ) -> ::std::os::raw::c_int {
+                // Issue 346, Experiment 2: Count cursor change callbacks
+                crate::CURSOR_CHANGE_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
                 // Convert CursorType to i64 for XPC
                 let cef_type: cef::sys::cef_cursor_type_t = type_.into();
                 let cursor_type = cef_type as i64;
