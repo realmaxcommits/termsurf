@@ -1075,3 +1075,99 @@ Three things are now established:
 Bisect ts3's integration to find where the extra 12fps is lost. The XPC and
 IOSurface layers are not the problem — look at the GUI-side texture import
 path, redraw scheduling, and interaction with WezTerm's render loop.
+
+## Conclusion
+
+### Why we built cef-test
+
+Eight experiments in [Issue 343](./343-optimal-performance.md) failed to improve
+ts3's profile server frame rate (38fps vs the cef-rs OSR example's 60fps). The
+root cause was buried under 100k+ lines of WezTerm integration: terminal
+multiplexing, pane management, the web command flow, complex event loops. We
+needed to isolate the one architectural variable that separates ts3 from the
+working example — **multi-process CEF with cross-process IOSurface sharing** —
+and test it in a minimal environment where every variable is controlled.
+
+### What we built
+
+A standalone 3-process test harness (~2000 lines total):
+
+- **cef-test-gui** — winit window + wgpu, renders two browser textures side by
+  side. No CEF, no terminal emulator.
+- **cef-test-profile** — headless CEF process, one per browser profile. Sends
+  IOSurface Mach ports to the GUI via XPC. Simulates mouse scrolling at 125Hz
+  for deterministic, reproducible load.
+- **cef-test-launcher** — XPC bootstrap service. Forwards endpoints between GUI
+  and profile servers. ~150 lines of plumbing.
+
+The harness reproduces the exact ts3 architecture (XPC Mach port transfer,
+anonymous listeners, per-profile CEF processes, IOSurface GPU texture sharing)
+without any of the integration complexity.
+
+### What we learned
+
+The final benchmark (65 seconds, two profiles, continuous scrolling):
+
+| Source                  | fps  | 60fps % | Max streak | p50    | p95    |
+| ----------------------- | ---- | ------- | ---------- | ------ | ------ |
+| cef-rs OSR (in-process) | ~60  | ~95%    | ~400+      | ~16ms  | ~17ms  |
+| ts3 profile server      | 38.2 | 71%     | 424        | —      | —      |
+| cef-test (left)         | 50.0 | 80.8%   | 139        | 16.7ms | 33.6ms |
+| cef-test (right)        | 49.7 | 80.8%   | 80         | 16.7ms | 33.6ms |
+
+Three conclusions:
+
+1. **Multi-process CEF is not the bottleneck.** Two independent CEF processes
+   sharing a single window via Mach port IOSurface transfer achieve ~50fps each.
+   The architecture is sound. Cross-process IPC and GPU texture sharing cost
+   almost nothing.
+
+2. **ts3 loses ~12fps to integration overhead.** The gap from 50fps (cef-test) to
+   38fps (ts3) is caused by something in WezTerm's integration — likely how the
+   GUI imports textures, schedules redraws, or coordinates with the terminal
+   renderer. This is now the primary investigation target.
+
+3. **CEF's message pump has inherent jitter.** The p95 = 33.6ms spikes occur
+   every 80-139 frames regardless of architecture. This is a CEF scheduling
+   artifact in `do_message_loop_work()`, not an IPC issue. It accounts for the
+   gap from 50fps (cef-test) to 60fps (in-process cef-rs), and may be fixable
+   with `external_message_pump: true` (which cef-rs uses but ts3 could not due
+   to a deadlock — see Issue 342 Exp 4).
+
+### Bonus finding: XPC and the main queue
+
+Dispatching XPC callbacks on `dispatch_get_main_queue()` conflicts with winit's
+`pump_app_events` on macOS. The original design used `CFRunLoopRunInMode` to
+pump XPC callbacks on the main queue, but this consumed NSEvents (like close
+button clicks) before winit could process them. Moving XPC to a background
+dispatch queue (`xpc_connection_set_target_queue` with NULL) fixed both the
+window close bug and preserved full performance. The `Arc<Mutex<>>` on shared
+state makes this thread-safe. This finding applies directly to ts3's GUI.
+
+### Benchmark script
+
+Run a reproducible 70-second benchmark:
+
+```bash
+cd ts3 && ./cef-test-scripts/benchmark.sh
+```
+
+The script builds the app, launches it, waits 70 seconds, kills it, and prints
+a formatted summary. Use this to validate any future changes to the profile
+server's message loop, XPC transport, or rendering pipeline.
+
+### Next steps
+
+1. **Bisect ts3's 12fps gap.** Use cef-test as the reference. Progressively add
+   ts3 features (WezTerm renderer, pane management, web command flow) until
+   performance degrades, identifying the exact culprit.
+
+2. **Try `external_message_pump: true` in cef-test.** The cef-rs OSR example
+   uses this and achieves 60fps. ts3 hit a deadlock during CEF init (Issue 342
+   Exp 4), but cef-test's simpler init sequence may avoid it. If it works, the
+   p95 spikes should disappear.
+
+3. **Apply the background XPC queue pattern to ts3.** The
+   `set_target_queue_background()` fix discovered here should be applied to
+   ts3's `webview_xpc.rs` to prevent the same main queue conflict with
+   WezTerm's event loop.
