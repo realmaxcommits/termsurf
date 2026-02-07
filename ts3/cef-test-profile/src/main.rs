@@ -246,7 +246,7 @@ fn run(args: Args) {
         cef::do_message_loop_work();
         let t1 = Instant::now();
 
-        cfrunloop::run_for(0.001);
+        cfrunloop::run_for(0.0);
         let t2 = Instant::now();
 
         let mlw_us = (t1 - t0).as_micros();

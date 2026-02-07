@@ -209,4 +209,34 @@ pending).
 - If fps improves partially (e.g., ~55fps): the sleeps contribute but aren't
   the only factor. Combine with other optimizations.
 
-**Status:** Not started
+**Result:**
+
+| Condition       | FPS  | 60fps% | Streak | p50    | p95    | p99    |
+| --------------- | ---- | ------ | ------ | ------ | ------ | ------ |
+| Baseline LEFT   | ~51  | 81–85% | 69–109 | 16.7ms | 33.6ms | 33.9ms |
+| Baseline RIGHT  | ~51  | 81–85% | 69–109 | 16.7ms | 33.6ms | 33.9ms |
+| No sleep LEFT   | 55.7 | 93.2%  | 196    | 16.7ms | 33.3ms | 33.8ms |
+| No sleep RIGHT  | 53.2 | 87.9%  | 54     | 16.7ms | 33.6ms | 33.9ms |
+
+**Findings:**
+
+1. **The sleeps cost ~4–5fps.** Removing them pushes LEFT from ~51 to 55.7fps.
+   The 60fps hit rate jumps from ~83% to 93%. The longest streak of consecutive
+   60fps frames nearly doubled (196 vs 109).
+
+2. **Still not 60fps.** 7–13% of frames still miss vsync. The sleeps explain
+   about half the gap from ~51fps to 60fps, but something else accounts for the
+   rest.
+
+3. **p50 and p95 are unchanged.** Good frames are still 16.7ms, bad frames
+   still 33.3ms. The sleeps didn't change the latency of individual frames —
+   they just changed how many frames fell on each side of the vsync cliff.
+
+4. **LEFT outperforms RIGHT.** 93.2% vs 87.9% at 60fps. Processing order may
+   matter — LEFT gets imported first in `process_pending_surfaces()`.
+
+**Next step:** Investigate L3/L4 — per-frame IOSurface Mach port creation and
+wgpu texture import cost. The remaining ~5fps gap likely comes from per-frame
+kernel calls and GPU resource creation.
+
+**Status:** Done

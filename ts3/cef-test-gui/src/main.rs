@@ -856,7 +856,7 @@ fn main() {
     let summary_interval = Duration::from_secs(10);
 
     loop {
-        let status = event_loop.pump_app_events(Some(Duration::from_millis(1)), &mut app);
+        let status = event_loop.pump_app_events(Some(Duration::ZERO), &mut app);
 
         #[cfg(target_os = "macos")]
         app.process_pending_surfaces();
