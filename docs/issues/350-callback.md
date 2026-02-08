@@ -1108,3 +1108,107 @@ us exactly when work is needed, and calling more often just wastes time. The
 transfer per frame), CEF's internal rendering pipeline, or the GUI's frame
 presentation timing. Experiment 7's architecture should be restored as the best
 event-driven result.
+
+### Experiment 9: Immediate re-pump loop for delay=0
+
+**Goal:** Eliminate timer round-trip overhead between consecutive
+`do_message_loop_work()` calls within a single frame. Revert Experiment 8's 1ms
+repeating timer back to Experiment 7's on-demand architecture and add one
+targeted improvement.
+
+**Background:** The cef-rs reference implementation (`mod.rs:81-94`) calls
+`do_work()` immediately when `on_schedule_work(delay <= 0)` — no timer creation.
+After `do_work()`, if reentrancy was detected (CEF called
+`on_schedule_message_pump_work(0)` during execution), it re-pumps via
+`performSelector` which executes on the next run loop iteration — much faster
+than creating a new timer.
+
+Our Experiment 7 creates a new one-shot timer for every `schedule_work(0)` call.
+Each timer round-trip (create → register → run loop iteration → fire) adds ~10ms
+of overhead. A frame requiring 3-4 CEF pipeline stages takes 3-4 timer
+round-trips = 30-40ms per frame = ~31fps. This matches the observed results
+exactly.
+
+**Hypothesis:** The ~31fps cap in Experiment 7 comes from per-stage timer
+round-trip latency. CEF needs 3-4 `do_message_loop_work()` calls to push one
+frame through its internal pipeline. Each call goes through a separate timer
+fire. If we call them back-to-back inside the callback when CEF requests
+immediate work, a frame takes 3-4 × 2ms = 6-8ms instead of 30-40ms.
+
+**Architecture:** Revert to Experiment 7's on-demand timer-based scheduling,
+then add a re-pump loop inside the pump callback:
+
+1. After `do_message_loop_work()` returns, check if CEF called
+   `schedule_work(0)` during execution (tracked by an atomic flag).
+2. If so, clear the flag and call `do_message_loop_work()` again immediately —
+   no timer creation, no run loop iteration, no overhead.
+3. Repeat until CEF stops requesting immediate work or a cap of 10 iterations is
+   reached.
+4. After the loop exits, schedule a fallback timer or handle deferred work as
+   before.
+
+This gives busy-wait-like latency during the 3-4 pipeline stages of a frame,
+while remaining idle-friendly between frames (when CEF requests a non-zero
+delay). The key difference from Experiment 8: we only loop when CEF explicitly
+says "more work needed" (delay=0), not unconditionally.
+
+**What to change in `cef_pump`:**
+
+1. **Revert from Experiment 8 to Experiment 7.** Restore on-demand timer
+   scheduling where `schedule_work` creates one-shot timers. Remove the 1ms
+   repeating timer from the main loop.
+
+2. **Add `IMMEDIATE_REQUESTED: AtomicBool`.** Set by `schedule_work(0)`, checked
+   by the pump loop.
+
+3. **Add re-pump loop in `pump_callback`:**
+
+   ```rust
+   // Clear flag before pumping
+   IMMEDIATE_REQUESTED.store(false, Ordering::Release);
+
+   let mut iterations = 0;
+   loop {
+       cef::do_message_loop_work();
+       WORK_DONE.fetch_add(1, Ordering::Relaxed);
+       iterations += 1;
+
+       // Re-pump if CEF requested immediate work during the call
+       if iterations < 10 && IMMEDIATE_REQUESTED.swap(false, Ordering::Acquire) {
+           REPUMP.fetch_add(1, Ordering::Relaxed);
+           continue;
+       }
+       break;
+   }
+   ```
+
+4. **Skip timer creation when pump is active.** In `schedule_work(0)`, if
+   `IS_ACTIVE` is true, just set `IMMEDIATE_REQUESTED` — the loop will pick it
+   up. Only create a timer when the pump is idle (IS_ACTIVE is false).
+
+5. **Close the IS_ACTIVE race window.** After clearing `IS_ACTIVE`, re-check
+   `IMMEDIATE_REQUESTED`. If a `schedule_work(0)` arrived between the loop's
+   last check and IS_ACTIVE clearing (the thread didn't create a timer because
+   it saw IS_ACTIVE=true), create a 0ms timer to re-enter the pump.
+
+**Diagnostic log format:**
+
+```
+[PUMP] callbacks=150(imm=120 def=30) work=450 repump=320 idle=0
+```
+
+Where `repump` counts loop iterations beyond the first (i.e., times the re-pump
+loop fired instead of going through a timer). High `repump` relative to `work`
+means the loop is working — most pump calls happen without timer overhead.
+
+**Expected outcomes:**
+
+- **~50fps, work ~400/sec, repump ~300:** Timer round-trip overhead was the
+  bottleneck. The re-pump loop eliminates inter-stage latency. Frames complete
+  in 6-8ms instead of 30-40ms. This would match the busy-wait reference.
+- **~31fps, work ~100/sec, repump ~0:** `schedule_work(0)` is called from a
+  background thread after `do_message_loop_work()` returns, not during it. The
+  flag is never set when the loop checks it. The bottleneck is elsewhere.
+- **~26fps, work ~400+/sec, repump ~300:** Same problem as Experiment 8 — the
+  re-pump loop starves the scroll timer. The 10-iteration cap needs to be lower,
+  or the approach is fundamentally flawed.
