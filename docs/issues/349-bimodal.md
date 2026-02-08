@@ -570,3 +570,35 @@ untested, and we lack diagnostic data to distinguish between them.
    `CFRunLoopRun()` vs AppKit event loop is the gap.
 
 **Status:** Done — results inconclusive, further investigation needed
+
+## Conclusion
+
+This issue set out to investigate the bimodal frame timing pattern in ts3.
+Experiment 1 identified `PresentMode::Fifo` vs `AutoVsync` as the likely cause.
+Experiment 2 built a multi-trial benchmark to detect bimodality, but discovered
+that thermal throttling from the profile server's busy-wait loop
+(`cfrunloop::run_for(0.000)`) is the dominant confounding effect — consecutive
+benchmark runs degrade monotonically as the CPU heats up, masking any underlying
+bimodal signal. Experiment 3 attempted to fix the busy-wait by switching to
+CEF's event-driven `on_schedule_message_pump_work` callback, which eliminated
+CPU burn but halved fps from ~50 to ~29.
+
+**The bimodality investigation is blocked by the CPU problem.** The only way to
+get ~50fps today is a zero-delay busy-wait loop that pegs one core at 100%. This
+causes thermal throttling within minutes, making multi-run benchmarks unreliable.
+We cannot meaningfully test whether `PresentMode::AutoVsync` fixes bimodality
+until the profile server can sustain ~50fps without overheating.
+
+**The callback approach is the right path forward.** The busy-wait loop is not a
+viable long-term architecture — it wastes an entire CPU core to repeatedly call
+`do_message_loop_work()` millions of times per second, most of which are no-ops.
+CEF's `external_message_pump` + `on_schedule_message_pump_work` is the intended
+API for this. A working reference implementation exists in the cef-rs examples,
+and ts2 used the same pattern successfully at 60fps. The Experiment 3 attempt
+got the pump running but at degraded performance — the question is why, not
+whether the approach is viable.
+
+**What comes next:** Issue 350 will focus on debugging the callback pump to
+achieve parity with the busy-wait loop. Once the profile server can sustain
+~50fps without burning CPU, we return here to test the `AutoVsync` fix for
+bimodality with reliable, non-thermally-confounded benchmarks.
