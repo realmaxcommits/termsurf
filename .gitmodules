@@ -51,3 +51,6 @@
 [submodule "ts3/deps/freetype/freetype2"]
 	path = ts3/deps/freetype/freetype2
 	url = https://github.com/freetype/freetype2.git
+[submodule "ts4/termsurf-chromium/src"]
+	path = ts4/termsurf-chromium/src
+	url = /Users/ryan/dev/termsurf-chromium/src
