@@ -245,7 +245,7 @@ launcher also needed changes to pass `benchmark_duration` through the XPC chain.
   running and forwarded `create_browser` to a dead connection. Fix: send
   `unregister_profile` to the launcher explicitly before `cef::shutdown()`.
 
-**Results:**
+**Results (run 1 — fresh app launch, machine cool):**
 
 ```
 [BENCH] Trial 1/7: 43.4fps  66.2% @60fps  p50=16.7ms  p95=83.3ms
@@ -259,16 +259,86 @@ launcher also needed changes to pass `benchmark_duration` through the XPC chain.
 Summary: 6/7 good mode, 1/7 bad mode (bimodal: YES)
 ```
 
+**Results (run 2 — closed app, reopened, launched again):**
+
+```
+[BENCH] Trial 1/7: 35.5fps  51.0% @60fps  p50=17.1ms  p95=81.5ms
+[BENCH] Trial 2/7: 30.9fps  30.8% @60fps  p50=32.9ms  p95=83.3ms
+[BENCH] Trial 3/7: 30.9fps  32.3% @60fps  p50=32.8ms  p95=83.2ms
+[BENCH] Trial 4/7: 30.2fps  33.7% @60fps  p50=30.2ms  p95=83.1ms
+[BENCH] Trial 5/7: 29.4fps  29.3% @60fps  p50=33.1ms  p95=83.0ms
+[BENCH] Trial 6/7: 29.3fps  33.8% @60fps  p50=32.9ms  p95=83.1ms
+[BENCH] Trial 7/7: 25.8fps  28.9% @60fps  p50=33.2ms  p95=83.4ms
+
+Summary: 0/7 good mode, 7/7 bad mode (bimodal: NO)
+```
+
+**Results (run 3 — fresh app launch after cooling):**
+
+```
+[BENCH] Trial 1/7: 49.0fps  84.5% @60fps  p50=16.7ms  p95=33.7ms
+[BENCH] Trial 2/7: 49.0fps  80.5% @60fps  p50=18.7ms  p95=33.9ms
+[BENCH] Trial 3/7: 48.4fps  76.7% @60fps  p50=18.8ms  p95=33.9ms
+[BENCH] Trial 4/7: 49.7fps  78.4% @60fps  p50=18.7ms  p95=33.5ms
+[BENCH] Trial 5/7: 48.7fps  74.1% @60fps  p50=18.7ms  p95=33.5ms
+[BENCH] Trial 6/7: 50.7fps  76.1% @60fps  p50=18.7ms  p95=33.6ms
+[BENCH] Trial 7/7: 50.4fps  76.3% @60fps  p50=18.7ms  p95=33.7ms
+
+Summary: 7/7 good mode, 0/7 bad mode (bimodal: NO)
+```
+
+**Results (run 4 — same app, immediately re-ran):**
+
+```
+[BENCH] Trial 1/7: 51.9fps  83.1% @60fps  p50=18.7ms  p95=33.6ms
+[BENCH] Trial 2/7: 50.6fps  81.9% @60fps  p50=18.5ms  p95=33.5ms
+[BENCH] Trial 3/7: 50.6fps  79.0% @60fps  p50=18.7ms  p95=33.5ms
+[BENCH] Trial 4/7: 51.1fps  81.0% @60fps  p50=18.8ms  p95=33.6ms
+[BENCH] Trial 5/7: 51.1fps  80.0% @60fps  p50=18.8ms  p95=33.6ms
+[BENCH] Trial 6/7: 44.1fps  64.7% @60fps  p50=18.9ms  p95=61.3ms
+[BENCH] Trial 7/7: 41.4fps  61.2% @60fps  p50=19.1ms  p95=53.6ms
+
+Summary: 5/7 good mode, 2/7 bad mode (bimodal: YES)
+```
+
+**Results (run 5 — same app, immediately re-ran again):**
+
+```
+[BENCH] Trial 1/7: 36.0fps  40.9% @60fps  p50=20.0ms  p95=79.7ms
+[BENCH] Trial 2/7: 34.7fps  33.7% @60fps  p50=21.0ms  p95=80.2ms
+[BENCH] Trial 3/7: 37.9fps  42.3% @60fps  p50=19.7ms  p95=66.7ms
+[BENCH] Trial 4/7: 30.5fps  24.6% @60fps  p50=33.2ms  p95=80.9ms
+[BENCH] Trial 5/7: 31.0fps  24.9% @60fps  p50=33.1ms  p95=83.1ms
+[BENCH] Trial 6/7: 31.5fps  31.1% @60fps  p50=33.0ms  p95=83.1ms
+[BENCH] Trial 7/7: 29.5fps  33.4% @60fps  p50=33.0ms  p95=83.3ms
+
+Summary: 0/7 good mode, 7/7 bad mode (bimodal: NO)
+```
+
 **Analysis:**
 
-- Bimodal pattern confirmed: 1/7 trials entered bad mode.
-- Bad mode (trial 1): p50=16.7ms (perfect single vsync) but p95=83.3ms (5
-  vsync intervals). Most frames on time, but occasional cascading delays — fits
-  the FIFO queue hypothesis.
-- Good mode (trials 2-7): tightly clustered at 49.9–51.3fps, p50=18.1–18.8ms,
-  p95=33.2–33.6ms. Extremely stable once entered.
-- The p95 values quantize cleanly to vsync multiples: 33ms (2×), 83ms (5×).
-- This provides a clean baseline for testing the PresentMode fix in Experiment 3.
+The dominant effect across these runs is **thermal throttling**, not bimodality:
+
+- Run 1 (cool machine): 6/7 good. Run 2 (immediately after): 7/7 bad. The
+  machine was already warm from run 1.
+- Runs 3–5 show clear progressive degradation: 7/7 good → 5/7 good (thermal
+  transition visible in trials 6-7) → 0/7 good.
+- Within run 5, trials degrade monotonically (36→29fps) — not random mode
+  selection, but continuous thermal decay.
+- The "bimodal YES" in run 4 was actually capturing the thermal transition
+  mid-run, not a random coin flip.
+
+**Key finding:** The multi-trial benchmark within a single session mostly
+measures thermal throttling, not bimodality. The wgpu FIFO queue lives in the
+GUI process, which persists across all trials. Restarting the profile server
+does not reset the GUI's presentation pipeline phase. To properly isolate
+bimodality from thermal effects, each trial would need a full app relaunch with
+cooling time — impractical for an automated benchmark.
+
+The original bimodal observations (from the issue background) may still be real,
+but they are confounded by thermal state. Regardless, the PresentMode fix in
+Experiment 3 addresses both: AutoVsync absorbs late frames whether caused by
+phase misalignment or thermal-induced slowdowns.
 
 **Status:** Done
 
