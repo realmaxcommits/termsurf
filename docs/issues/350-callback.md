@@ -755,4 +755,130 @@ handled: the launcher spawns a new process (not forwarding), and the new process
 waits for the lock. The Experiment 4 dual-mode timers and NSApp get a full 7-trial
 benchmark.
 
+**Status:** Failed (`nsapp::stop()` is broken — process never exits)
+
+**Results (1 of 7 trials completed before hang):**
+
+```
+[BENCH] Trial 1/7: 31.4fps  17.3% @60fps  p50=24.0ms  p95=89.5ms
+```
+
+Trial 1 completed. Trial 2 spawned correctly (Experiment 5's fix worked), tried
+one CEF init retry, then hung. Required Ctrl+C to exit.
+
+**Root cause: trial 1's process never exits.**
+
+```
+$ ps aux | grep termsurf-profile
+ryan  44364  1.6  0.1  ...  termsurf-profile ... --benchmark --benchmark-duration 10
+```
+
+Trial 1 (pid 44364) is **still running** after reporting results. `nsapp::run()`
+never returned despite `nsapp::stop()` being called. The process is permanently
+stuck, holding the `SingletonLock` forever. Trial 2's retry loop can never
+succeed because the lock will never be released.
+
+**Why `nsapp::stop()` doesn't work:** `[NSApp stop:nil]` sets an internal flag
+that NSApp checks between events. But our headless process generates no AppKit
+events. Without an event to process, NSApp never checks the stop flag.
+`CFRunLoopStop` wakes the inner `CFRunLoopRunInMode`, but `NSApp.run()` has its
+own outer loop that re-enters the run loop before checking the stop flag.
+
+The standard fix is to post a dummy `NSEvent` after calling `stop:`, giving NSApp
+an event to dispatch so it notices the stop flag.
+
+**Why trial 1 "completed":** `tick_callback` printed `[BENCHMARK-DONE]` and the
+coordinator collected the result — but the profile process itself never exited.
+The benchmark data was communicated while the pump was still running.
+
+**Conclusion:** The retry loop is correct but useless — the lock is held forever
+because the old process never exits. The real fix must make `nsapp::stop()`
+actually terminate `nsapp::run()` by posting a dummy event.
+
+### Experiment 7: Fix `nsapp::stop()` with dummy NSEvent
+
+**Goal:** Make `nsapp::stop()` reliably cause `nsapp::run()` to return, so the
+profile process can reach `cef::shutdown()` (releasing the `SingletonLock`) and
+exit cleanly. This unblocks the retry loop from Experiment 6.
+
+**Why `stop:` alone doesn't work:** `NSApp.run()` internally loops:
+
+```
+while (!stopped) {
+    event = [self nextEventMatchingMask:... untilDate:distantFuture inMode:...];
+    [self sendEvent:event];
+    // check stopped flag HERE
+}
+```
+
+Calling `[app stop:nil]` sets `stopped = YES`, but the loop is blocked on
+`nextEventMatchingMask:` waiting for an event. `CFRunLoopStop` exits the inner
+run loop call, but `NSApp.run()` re-enters it immediately. The flag is only
+checked AFTER an event is dispatched.
+
+**Fix: post a dummy `NSEvent` after `stop:`.**
+
+The standard Cocoa pattern:
+
+```objc
+[NSApp stop:nil];
+NSEvent *event = [NSEvent otherEventWithType:NSEventTypeApplicationDefined
+                                    location:NSZeroPoint
+                               modifierFlags:0
+                                   timestamp:0
+                                windowNumber:0
+                                     context:nil
+                                     subtype:0
+                                       data1:0
+                                       data2:0];
+[NSApp postEvent:event atStart:YES];
+```
+
+In raw objc FFI, this requires a new `objc_msgSend` signature for the 10-argument
+`otherEventWithType:location:modifierFlags:timestamp:windowNumber:context:subtype:data1:data2:`
+class method. The `NSPoint` struct (two `f64` fields) is passed by value.
+
+**What to change in `nsapp::stop()`:**
+
+1. After `[app stop:nil]`, create a dummy `NSEvent` using
+   `[NSEvent otherEventWithType:...]` with `NSEventTypeApplicationDefined` (15)
+2. Post it with `[NSApp postEvent:event atStart:YES]`
+3. Remove the `CFRunLoopStop` call — the posted event will wake the loop naturally
+
+**New FFI needed:**
+
+```rust
+#[repr(C)]
+struct NSPoint { x: f64, y: f64 }
+
+// [NSEvent otherEventWithType:location:modifierFlags:timestamp:windowNumber:context:subtype:data1:data2:]
+// Returns NSEvent*
+type MsgSendEvent = unsafe extern "C" fn(
+    cls: *mut c_void,        // NSEvent class
+    sel: *mut c_void,        // otherEventWithType:...
+    event_type: isize,       // 15 = NSEventTypeApplicationDefined
+    location: NSPoint,       // NSZeroPoint
+    flags: usize,            // 0
+    timestamp: f64,          // 0.0
+    window_num: isize,       // 0
+    context: *const c_void,  // nil
+    subtype: i16,            // 0
+    data1: isize,            // 0
+    data2: isize,            // 0
+) -> *mut c_void;
+
+// [NSApp postEvent:event atStart:YES]
+type MsgSendPost = unsafe extern "C" fn(
+    app: *mut c_void,
+    sel: *mut c_void,
+    event: *mut c_void,
+    at_start: i8,  // BOOL = YES (1)
+);
+```
+
+**Expected outcome:** `nsapp::run()` returns immediately after `nsapp::stop()` is
+called. Trial 1's process reaches `cef::shutdown()`, releases the `SingletonLock`,
+and exits. Trial 2's retry loop succeeds on the first or second attempt. Full
+7-trial benchmark completes.
+
 **Status:** Not started

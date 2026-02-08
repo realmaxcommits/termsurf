@@ -855,14 +855,33 @@ fn run_profile_server(args: Args) {
 
     let mut app = cef_handlers::create_app(Arc::clone(&profile_state));
 
-    let init_result = cef::initialize(
-        Some(cef_args.as_main_args()),
-        Some(&settings),
-        Some(&mut app),
-        std::ptr::null_mut(),
-    );
+    // Issue 350, Experiment 6: Retry CEF init to handle SingletonLock contention.
+    // When benchmarking, the previous trial's process may still hold the lock
+    // while cef::shutdown() completes. Retry up to 15 times (3 seconds).
+    let mut init_result = 0;
+    for attempt in 0..15 {
+        init_result = cef::initialize(
+            Some(cef_args.as_main_args()),
+            Some(&settings),
+            Some(&mut app),
+            std::ptr::null_mut(),
+        );
+        if init_result == 1 {
+            break;
+        }
+        if attempt < 14 {
+            eprintln!(
+                "Profile: CEF init attempt {} failed, retrying in 200ms...",
+                attempt + 1
+            );
+            std::thread::sleep(std::time::Duration::from_millis(200));
+        }
+    }
     if init_result != 1 {
-        eprintln!("Profile: CEF initialize failed (returned {})", init_result);
+        eprintln!(
+            "Profile: CEF initialize failed after 15 attempts (returned {})",
+            init_result
+        );
         std::process::exit(1);
     }
     println!("Profile: CEF initialized");
