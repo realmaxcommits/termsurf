@@ -1,1 +1,3 @@
 target/
+termsurf-chromium/.gclient_entries
+termsurf-chromium/src/out/

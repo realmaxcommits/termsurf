@@ -181,17 +181,39 @@ in incognito — different string appears.
 
 ### Phase 2: Merge Chromium into the repo
 
-Fork Chromium into the termsurf monorepo, following the same pattern used for
-Ghostty (`ts1/`), WezTerm (`ts2/`, `ts3/`), and cef-rs (`cef-rs/`). The
-Chromium source lives at `ts4/termsurf-chromium/` and carries the full upstream
-git history.
+The Chromium source is added to the termsurf repo as a **git submodule**, not
+a subtree merge. Chromium's build tools (`gclient`, `gn`, `depot_tools`)
+require the source to be at the root of its own git repo. A subtree merge
+breaks this — `gclient sync` cannot run inside a subdirectory of another repo.
+A submodule preserves the repo boundary.
 
-**CRITICAL: Full history is required.** The merge into the termsurf monorepo
-uses `git merge --allow-unrelated-histories`, which requires real git history.
-A shallow clone (`--no-history`) produces a repo with grafted roots that git
-refuses to fetch or merge into another repo. Do NOT use `fetch --no-history`.
-Always use `fetch chromium` (with full history). This takes longer and uses
-more disk, but there is no shortcut — without full history, the merge fails.
+The upstream fork lives at `~/dev/termsurf-chromium/` (standard Chromium
+layout with `.gclient` + `src/`). The submodule in the termsurf repo points
+to this local path. When the software is ready, the fork will be pushed to
+`github.com/termsurf/termsurf-chromium` and the submodule URL updated.
+
+**Directory layout:**
+
+```
+~/dev/termsurf-chromium/              ← Chromium workspace (local upstream)
+~/dev/termsurf-chromium/.gclient      ← gclient config (name = "src")
+~/dev/termsurf-chromium/src/          ← Chromium source (git repo, full history)
+
+~/dev/termsurf/ts4/termsurf-chromium/          ← wrapper directory in termsurf repo
+~/dev/termsurf/ts4/termsurf-chromium/.gclient   ← gclient config (committed to termsurf)
+~/dev/termsurf/ts4/termsurf-chromium/src/       ← git submodule → ~/dev/termsurf-chromium/src
+```
+
+**Why `src/` cannot be renamed:** Chromium's DEPS file hardcodes `src/` as
+the path prefix for all dependencies. `gclient` resolves these paths relative
+to the `.gclient` file location, using the solution name as the directory
+name. The solution name must be `src` to match DEPS. This is a Chromium
+build system constraint.
+
+**CRITICAL: Full history is required.** The `fetch chromium` command must be
+used (not `fetch --no-history`). A shallow clone produces grafted roots that
+break `gclient sync` when the repo is moved or cloned. Full history also
+enables future upstream merges.
 
 **Step 1: Install depot_tools**
 
@@ -207,89 +229,72 @@ Chromium cannot be built from a plain `git clone` — it requires `depot_tools`
 and `gclient sync` to fetch hundreds of dependencies (V8, Skia, ICU, etc.).
 
 ```
-mkdir ~/dev/chromium-staging && cd ~/dev/chromium-staging
+mkdir ~/dev/termsurf-chromium && cd ~/dev/termsurf-chromium
 caffeinate fetch chromium
 ```
 
-This creates `~/dev/chromium-staging/src/` with the full source, all
-dependencies, and full git history. ~50+ GB. Takes hours. `caffeinate`
+This creates `~/dev/termsurf-chromium/src/` with the full source, all
+dependencies, and full git history. ~100+ GB. Takes hours. `caffeinate`
 prevents sleep.
 
-**Step 3: Move everything into `ts4/termsurf-chromium/`**
-
-Inside the Chromium repo, create a commit that moves the entire source tree
-into a subdirectory. Use `git mv` on top-level directories (not individual
-files — there are ~500K tracked files):
-
-```
-cd ~/dev/chromium-staging/src
-mkdir -p ts4/termsurf-chromium
-for item in $(ls -A | grep -v '\.git$' | grep -v '^ts4$'); do
-  git mv "$item" ts4/termsurf-chromium/
-done
-git add -A
-git commit -m "Move Chromium source into ts4/termsurf-chromium/"
-```
-
-This commit exists only in the staging repo. It rewrites all paths so that
-the subtree merge maps correctly. Untracked files (build artifacts, generated
-files) will fail to move — that is expected and harmless.
-
-**Step 4: Merge into termsurf with unrelated histories**
+**Step 3: Add the submodule to the termsurf repo**
 
 ```
 cd /Users/ryan/dev/termsurf
-git remote add chromium ~/dev/chromium-staging/src
-git fetch chromium
-git merge chromium/main --allow-unrelated-histories \
-  -m "Merge Chromium into ts4/termsurf-chromium"
+git submodule add ~/dev/termsurf-chromium/src ts4/termsurf-chromium/src
 ```
 
-The termsurf repo now contains the Chromium source at
-`ts4/termsurf-chromium/` with full upstream history. Future upstream merges
-use:
+This registers `ts4/termsurf-chromium/src/` as a submodule pointing to the
+local upstream. The submodule contains the full Chromium source and all
+`gclient`-managed dependencies.
+
+**Step 4: Create `.gclient` for the submodule workspace**
+
+Create `ts4/termsurf-chromium/.gclient` (committed to the termsurf repo, not
+the submodule) so that `gclient sync` and `gn gen` work from within the
+termsurf tree:
 
 ```
-git fetch chromium
-git merge -X subtree=ts4/termsurf-chromium chromium/main \
-  -m "Merge upstream Chromium"
+solutions = [
+  {
+    "name": "src",
+    "url": "~/dev/termsurf-chromium/src",
+    "managed": False,
+    "custom_deps": {},
+    "custom_vars": {},
+  },
+]
 ```
 
-**Step 5: Update merge-upstream documentation**
-
-Add Chromium to `docs/issues/002-merge-upstream.md`:
-
-| Project  | Directory                | Upstream                    | Remote     | Branch |
-| -------- | ------------------------ | --------------------------- | ---------- | ------ |
-| Chromium | `ts4/termsurf-chromium/` | chromium.googlesource.com   | `chromium` | main   |
-
-**Step 6: Verify the source is buildable**
+**Step 5: Verify the build system works**
 
 ```
-cd /Users/ryan/dev/termsurf/ts4/termsurf-chromium
-# gclient sync may be needed to fetch deps that aren't in git
+cd ts4/termsurf-chromium
 gclient sync
+cd src
+gn gen out/Default --args='is_debug=false symbol_level=0 enable_nacl=false is_component_build=true'
 ```
 
-**Note on `.gclient`:** The `gclient` configuration file and `depot_tools`
-integration may need adjustment since the source now lives inside a
-subdirectory of the termsurf repo rather than at the root of its own repo.
-This may require a `.gclient` file in `ts4/` or `ts4/termsurf-chromium/`
-that points to the correct paths.
+If `gn gen` succeeds, the source is buildable.
+
+**Note on GitHub:** The Chromium fork is too large to push to GitHub in one
+shot (pack exceeds GitHub's 2GB limit). Incremental pushing in batches of
+~500K commits is possible but not needed yet. The submodule URL will be
+updated from the local path to `github.com/termsurf/termsurf-chromium` when
+the software is ready for distribution.
 
 **Note on the existing shallow clone:** The existing
 `/Users/ryan/dev/termsurf/chromium/` directory is a shallow read-only clone
-from Issue 401 research. It is separate from `ts4/termsurf-chromium/` and
-can be removed after this phase.
+from Issue 401 research. It is separate from the fork and can be removed.
 
 ### Phase 3: Build Chromium from source
 
-Get `content_shell` building and running on macOS from the merged source.
+Get `content_shell` building and running on macOS.
 
-- [ ] Exclude `ts4/termsurf-chromium/` from Spotlight indexing
+- [ ] Exclude `ts4/termsurf-chromium/src/` from Spotlight indexing
 - [ ] Configure GN:
       ```
-      cd ts4/termsurf-chromium
+      cd ts4/termsurf-chromium/src
       gn gen out/Default --args='
         is_debug = false
         symbol_level = 0
@@ -299,10 +304,10 @@ Get `content_shell` building and running on macOS from the merged source.
       ```
 - [ ] Build content_shell: `autoninja -C out/Default content_shell` (1–7 hours
       depending on hardware)
-- [ ] Add `ts4/termsurf-chromium/out/` to `.gitignore`
+- [ ] Add `ts4/termsurf-chromium/src/out/` to `.gitignore`
 - [ ] Verify it runs:
       ```
-      ./ts4/termsurf-chromium/out/Default/Content\ Shell.app/Contents/MacOS/Content\ Shell \
+      ./ts4/termsurf-chromium/src/out/Default/Content\ Shell.app/Contents/MacOS/Content\ Shell \
         http://localhost:9407
       ```
       Start the Bun server first. Confirm the test page loads with spinning
@@ -356,7 +361,7 @@ std::unique_ptr<WebContents> web_contents_b_;
 **Step 4: Build and run**
 
 ```
-autoninja -C ts4/termsurf-chromium/out/Default content_shell
+autoninja -C ts4/termsurf-chromium/src/out/Default content_shell
 ```
 
 Incremental build after ~5 file changes: 1–5 minutes.
@@ -366,7 +371,7 @@ Incremental build after ~5 file changes: 1–5 minutes.
 cd /Users/ryan/dev/termsurf/ts4/box-demo && bun run server.ts
 
 # Terminal 2:
-./ts4/termsurf-chromium/out/Default/Content\ Shell.app/Contents/MacOS/Content\ Shell \
+./ts4/termsurf-chromium/src/out/Default/Content\ Shell.app/Contents/MacOS/Content\ Shell \
   --hide-toolbar
 ```
 
