@@ -342,42 +342,94 @@ phase misalignment or thermal-induced slowdowns.
 
 **Status:** Done
 
-### Experiment 3: Change WezTerm present mode to AutoVsync
+### Experiment 3: Event-driven CEF message pump via `on_schedule_message_pump_work`
 
-**Goal:** Test whether changing WezTerm's wgpu present mode from `Fifo` to
-`AutoVsync` eliminates the bimodal pattern.
+**Goal:** Replace the busy-wait `cfrunloop::run_for(0.000)` loop in the profile
+server with CEF's intended event-driven architecture using the
+`on_schedule_message_pump_work` callback. This eliminates 100% CPU usage that
+causes thermal throttling (Experiment 2's dominant effect), and may also improve
+frame timing precision.
 
-**Hypothesis:** `PresentMode::Fifo` creates a strict FIFO queue where one late
-frame desynchronizes all subsequent frames. `AutoVsync` (likely Mailbox on
-macOS) absorbs late frames without cascading. Switching should eliminate the
-bimodal pattern and stabilize ts3 at ~50fps, matching cef-test.
-
-**What needs to change:**
-
-One line in `wezterm-gui/src/termwindow/webgpu.rs`:
+**Background:** The current profile server main loop is a busy-wait:
 
 ```rust
-// Before:
-present_mode: wgpu::PresentMode::Fifo,
-
-// After:
-present_mode: wgpu::PresentMode::AutoVsync,
+while !QUIT_FLAG.load(Ordering::Relaxed) {
+    cef::do_message_loop_work();
+    cfrunloop::run_for(0.000);  // zero-second timeout = spin forever
+}
 ```
+
+This burns one full CPU core continuously, generating waste heat that degrades
+performance over time (Experiment 2 showed clear thermal decay across runs).
+
+CEF provides a proper alternative: `external_message_pump` mode with the
+`on_schedule_message_pump_work(delay_ms)` callback. When enabled, CEF calls this
+callback whenever it has work to do, telling you exactly how many milliseconds
+to wait before calling `do_message_loop_work()`. Between callbacks, the process
+can sleep — no busy-waiting.
+
+**Prior attempts and their mistakes:**
+
+This was tried three times before, each with identifiable mistakes:
+
+| Attempt       | Missing piece                                          |
+| ------------- | ------------------------------------------------------ |
+| Issue 325 E4  | Forgot `external_message_pump: 1` — callback never fired |
+| Issue 325 E5  | No fallback timer, no reentrancy guard — pump died after 3 frames |
+| Issue 342 E4  | Init deadlock — `CFRunLoopRun()` starts after `cef::initialize()`, but init needs the pump |
+
+None of these replicated the **working reference implementation** in
+`cef-rs/examples/tests_shared/src/browser/main_message_loop_external_pump/`,
+which has three critical features the ts3 attempts lacked:
+
+1. **Fallback timer (33ms):** After every `do_message_loop_work()`, if no new
+   callback has arrived, schedule a 33ms fallback timer. This ensures the pump
+   never dies — even if CEF forgets to call the callback.
+
+2. **Reentrancy guard:** `do_message_loop_work()` can trigger
+   `on_schedule_message_pump_work()` synchronously. The reference detects this
+   with an `is_active` flag and reschedules immediately after the outer call
+   returns, rather than nesting.
+
+3. **Thread-safe marshaling:** The callback can come from any thread. The
+   reference uses `performSelector:onThread:` to marshal to the main thread.
+
+The ts2 implementation (which worked at 60fps) also used this architecture,
+but benefited from WezTerm's existing AppKit event loop. The ts3 profile server
+is a headless process — it needs to run its own CFRunLoop.
+
+**What needs to change in `termsurf-profile/src/main.rs`:**
+
+1. Add `external_message_pump: 1` to CEF settings
+2. Implement `on_schedule_message_pump_work` in `ProfileBPH` with:
+   - Reentrancy guard (`is_active` / `reentrancy_detected` flags)
+   - CFRunLoop timer scheduling (cancel old timer, create new one)
+   - 33ms fallback timer after each `do_message_loop_work()`
+   - Thread marshaling (timer added to main run loop)
+3. Replace the busy-wait main loop with `CFRunLoopRun()` (blocking)
+4. Solve the init deadlock: use a two-phase approach:
+   - Phase 1: Poll with `do_message_loop_work()` + short sleep during
+     `cef::initialize()` and browser creation
+   - Phase 2: Switch to `CFRunLoopRun()` once `on_context_initialized` fires
+     (or after browser is created)
 
 **How to test:**
 
-1. Make the change
+1. Make the changes
 2. `cd ts3 && ./scripts/build-release.sh --open`
-3. Run `web benchmark` (multi-trial mode from Experiment 2)
-4. Check for bimodal pattern: are all trials in good mode, or still split?
+3. Run `web benchmark` — multiple consecutive runs to check for thermal decay
+4. Monitor CPU usage with Activity Monitor — should drop from ~100% to near-idle
+   between frames
 
 **What the results tell us:**
 
-- If results are stable (~50fps, no bimodal): Fifo was the cause. Ship with
-  AutoVsync.
-- If bimodal persists: the present mode isn't the cause. Investigate L2
-  (terminal rendering contention) next.
-- If fps changes but bimodal persists: the present mode affects performance
-  but doesn't explain the bistable behavior.
+- If CPU drops and fps stays ~50: event-driven pump works. Thermal throttling
+  was masking the true performance. Ship this.
+- If only 3 frames then halts: the fallback timer isn't working — debug the
+  timer scheduling.
+- If init deadlock: the two-phase approach needs adjustment — try polling longer
+  or using a different signal for the phase transition.
+- If fps drops below 50: the timer precision may be too coarse — check whether
+  CEF is requesting sub-millisecond delays that CFRunLoop can't deliver.
 
 **Status:** Not started
