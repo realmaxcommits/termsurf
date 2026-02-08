@@ -378,3 +378,195 @@ mechanism, and GPU texture sharing — the foundation everything else builds on.
 4. **Add pane management.** Split, resize, focus, multiple tabs.
 
 The colored rectangles are placeholders. The architecture is the product.
+
+## Implementation Plan
+
+Eight phases, each independently testable. A phase is complete when every
+checklist item is checked.
+
+### Phase 1: Create ts4 directory and package skeletons
+
+Create the `ts4/` directory at the repo root with three empty packages that
+build successfully. No functionality yet — just the scaffolding.
+
+- [ ] Create `ts4/` directory
+- [ ] Create `ts4/termsurf-window/` as a Swift package (Package.swift +
+      Sources/main.swift) that prints "hello from window" and exits
+- [ ] Create `ts4/termsurf-terminal/` as a Rust package (Cargo.toml +
+      src/main.rs) that prints "hello from terminal" and exits
+- [ ] Create `ts4/termsurf-browser/` as a C++/Obj-C++ package (Makefile +
+      src/main.cpp) that prints "hello from browser" and exits
+- [ ] Copy `ts3/termsurf-xpc/` to `ts4/termsurf-xpc/` for the Rust XPC bindings
+- [ ] Add `ts4/` build outputs to `.gitignore`
+
+**Test:** Run all three binaries and see their hello messages.
+
+```bash
+cd ts4/termsurf-window && swift build && .build/debug/termsurf-window
+cd ts4/termsurf-terminal && cargo build && ./target/debug/termsurf-terminal
+cd ts4/termsurf-browser && make && ./termsurf-browser
+```
+
+### Phase 2: Swift window with Metal rendering
+
+Create a macOS window with a CAMetalLayer that clears to a solid color each
+frame. This proves AppKit + Metal works before adding any IPC.
+
+- [ ] Create `NSApplication` and `NSWindow` in Swift (no storyboard, no XIB —
+      pure code)
+- [ ] Add an `NSView` subclass backed by `CAMetalLayer`
+- [ ] Create `MTLDevice` and `MTLCommandQueue`
+- [ ] Implement a render loop (CVDisplayLink or `MTKView`) that clears the
+      drawable to dark gray at 60fps
+- [ ] Window is resizable and handles resolution changes (Retina)
+
+**Test:** Run `termsurf-window`. A dark gray window appears. Resizing is smooth.
+Activity Monitor shows one process. Close the window and the process exits.
+
+### Phase 3: Rust IOSurface rendering
+
+The Rust process creates an IOSurface, renders blue to it via wgpu, and verifies
+the result. No XPC yet — just prove that wgpu can render to an IOSurface.
+
+- [ ] Add `wgpu` dependency to `termsurf-terminal/Cargo.toml`
+- [ ] Create an IOSurface via CoreFoundation C API (BGRA8, specified width and
+      height)
+- [ ] Create a Metal texture backed by the IOSurface (via wgpu's Metal HAL
+      unsafe API or via `objc`/`metal-rs` crate)
+- [ ] Create a wgpu device and queue (Metal backend)
+- [ ] Render a clear-to-blue pass targeting the IOSurface-backed texture
+- [ ] Read back pixels from the IOSurface and verify they are blue (lock, read,
+      unlock)
+- [ ] Create a Mach port from the IOSurface via `IOSurfaceCreateMachPort`
+- [ ] Print the Mach port number and IOSurface dimensions as confirmation
+
+**Test:** Run `termsurf-terminal`. Output shows the Mach port and confirms blue
+pixels were written. No window needed.
+
+```
+IOSurface created: 800x600
+Rendered blue (0, 0, 255, 255)
+Pixel at (0,0): (0, 0, 255, 255) ✓
+Mach port: 1234
+```
+
+### Phase 4: C++ IOSurface rendering
+
+Same as Phase 3 but in C++/Obj-C++ with raw Metal. No wgpu — the browser process
+will eventually use Chromium's GPU pipeline.
+
+- [ ] Create an IOSurface via `IOSurfaceCreate()` (BGRA8, specified width and
+      height)
+- [ ] Create `MTLDevice` and `MTLCommandQueue`
+- [ ] Create `MTLTexture` from the IOSurface via
+      `[device newTextureWithDescriptor:iosurface:plane:]`
+- [ ] Create a render pass descriptor that clears to green
+- [ ] Encode and commit the command buffer, wait for completion
+- [ ] Read back pixels from the IOSurface and verify they are green
+- [ ] Create a Mach port via `IOSurfaceCreateMachPort()`
+- [ ] Print the Mach port number and IOSurface dimensions as confirmation
+
+**Test:** Run `termsurf-browser`. Output confirms green pixels and a valid Mach
+port. No window needed.
+
+### Phase 5: XPC between Swift and Rust
+
+Connect the Swift window to the Rust process via XPC. The Rust process sends its
+blue IOSurface Mach port. The Swift window imports it and renders it full-screen
+(not split yet — that's Phase 7).
+
+- [ ] Swift registers a named Mach service (e.g., `com.termsurf.window.<pid>`)
+      or creates an XPC listener
+- [ ] Swift spawns `termsurf-terminal` as a child process, passing the service
+      name as a CLI argument
+- [ ] Rust connects to the named service via `termsurf-xpc`
+- [ ] Rust renders blue to IOSurface, creates Mach port, sends XPC message:
+      `{ action: "frame", iosurface_port: <port>, width: N, height: N }`
+- [ ] Swift receives the message, extracts the Mach port via
+      `xpc_dictionary_copy_mach_send`
+- [ ] Swift calls `IOSurfaceLookupFromMachPort` to import the IOSurface
+- [ ] Swift creates a `MTLTexture` from the imported IOSurface
+- [ ] Swift renders the texture as a full-screen quad in its Metal render pass
+
+**Test:** Run `termsurf-window`. A blue window appears. Activity Monitor shows
+two processes (`termsurf-window` and `termsurf-terminal`). Closing the window
+terminates both.
+
+### Phase 6: XPC between Swift and C++
+
+Same as Phase 5 but with the C++ process. After this phase, Swift can receive
+IOSurface from both Rust and C++ — but only one at a time. Split view comes in
+Phase 7.
+
+- [ ] Swift spawns `termsurf-browser` as a second child process with its own XPC
+      channel
+- [ ] C++ connects to the Swift window's XPC service using `libxpc` C API
+- [ ] C++ renders green to IOSurface, creates Mach port, sends XPC message:
+      `{ action: "frame", iosurface_port: <port>, width: N, height: N }`
+- [ ] Swift receives the message and imports the IOSurface as a Metal texture
+- [ ] Swift renders the C++ texture as a full-screen quad (temporarily replacing
+      the Rust texture, or displayed alongside — either confirms it works)
+
+**Test:** Run `termsurf-window`. A green window appears (or green replaces
+blue). Activity Monitor shows three processes. Closing the window terminates all
+three.
+
+### Phase 7: Two-pane compositor
+
+Composite both textures side by side in the Swift window. This is the target
+state described in the product requirements.
+
+- [ ] Swift Metal render pass draws two textured quads: left half (Rust/blue)
+      and right half (C++/green)
+- [ ] Vertex shader positions quads at `[-1, -1] to [0, 1]` (left) and
+      `[0, -1] to [1, 1]` (right)
+- [ ] Fragment shader samples from the correct IOSurface-backed texture for each
+      quad
+- [ ] Both child processes send frames; Swift composites them in the same render
+      pass
+- [ ] Frame timing: Swift renders at display refresh rate (CVDisplayLink), using
+      the latest IOSurface from each child
+- [ ] Measure and log compositing performance (time from IOSurface receive to
+      present, target: <2ms)
+
+**Test:** Run `termsurf-window`. Window shows blue on the left, green on the
+right. Three processes in Activity Monitor. No tearing, no flickering. Console
+logs show frame times.
+
+### Phase 8: Resize
+
+Swift sends resize events to children via XPC. Each child creates a new
+IOSurface at the new dimensions and sends the updated Mach port.
+
+- [ ] Swift detects `viewDidEndLiveResize` (or continuous resize via
+      `setFrameSize`) and calculates each pane's pixel dimensions
+- [ ] Swift sends XPC message to each child:
+      `{ action: "resize", width: N, height: N, scale: "2.0" }`
+- [ ] Rust receives resize, creates new IOSurface at new size, renders blue,
+      sends new Mach port
+- [ ] C++ receives resize, creates new IOSurface at new size, renders green,
+      sends new Mach port
+- [ ] Swift imports the new IOSurfaces and updates the Metal textures
+- [ ] Old IOSurfaces are released (no Mach port leak, no IOSurface leak)
+- [ ] Deallocate old Mach ports via `mach_port_deallocate`
+
+**Test:** Run `termsurf-window`. Drag the window edge to resize. Both panes
+resize proportionally. No stale textures, no black frames during resize. Mach
+port count in Activity Monitor stays stable (no leak).
+
+## Phase Completion Summary
+
+| Phase | Description           | Deliverable                               |
+| ----- | --------------------- | ----------------------------------------- |
+| 1     | Directory + skeletons | Three hello-world binaries that build     |
+| 2     | Swift Metal window    | A dark gray window at 60fps               |
+| 3     | Rust IOSurface        | Blue pixels in an IOSurface, verified     |
+| 4     | C++ IOSurface         | Green pixels in an IOSurface, verified    |
+| 5     | Swift ↔ Rust XPC      | Blue window from cross-process texture    |
+| 6     | Swift ↔ C++ XPC       | Green received from cross-process texture |
+| 7     | Two-pane compositor   | Blue left, green right, one window        |
+| 8     | Resize                | Panes resize with the window              |
+
+After Phase 8, the system described in Issue 403 is complete. The architecture
+is proven. The next step is replacing the colored rectangles with real content
+(terminal and browser).
