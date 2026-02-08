@@ -521,13 +521,52 @@ machinery that CEF's Chrome runtime may depend on. A headless process with bare
 AppKit event dispatching layer. The ts2 implementation worked because CEF ran
 in-process with WezTerm, which had a full NSApplication event loop.
 
-**Conclusion:** The `on_schedule_message_pump_work` callback approach does not
-work for 60fps rendering in a headless CEF process on macOS. The callback is
-unreliable after the initial burst, and bare `CFRunLoopRun()` lacks the AppKit
-event dispatching that CEF apparently needs. The busy-wait loop, despite its CPU
-cost, remains necessary for frame throughput. The fix for thermal throttling
-should instead focus on reducing the busy-wait frequency (e.g.,
-`cfrunloop::run_for(0.001)` instead of `0.000`) rather than eliminating the loop
-entirely.
+**Conclusion:** This first attempt at the event-driven pump halved fps from ~50
+to ~29. But the investigation is incomplete — several potential causes remain
+untested, and we lack diagnostic data to distinguish between them.
 
-**Status:** Done — reverted to busy-wait approach
+**What we don't know yet:**
+
+1. **Is the callback actually firing?** We assumed it stops being reliable, but
+   never logged it. The problem might be "callback fires fine but our response
+   is too slow" rather than "callback doesn't fire." These need different fixes.
+
+2. **Timer creation overhead for immediate work.** When CEF requests delay=0
+   ("work NOW"), we allocate a new `CFRunLoopTimer`, add it to the run loop, and
+   wait for CFRunLoop to process it on the next iteration. That's heavyweight.
+   A `CFRunLoopSource` would be much faster — signaling a source is just setting
+   a flag, and it triggers on the very next run loop iteration without timer
+   allocation. The reference uses `performSelector:onThread:` which is similarly
+   lighter than raw timer creation.
+
+3. **Benchmark timer contention.** The 8ms scroll timer runs on the main thread.
+   While its callback executes (mutex lock, scroll event, rate tracking), NO
+   other timer can fire — including the CEF pump timer. CFRunLoop processes one
+   callback at a time. If the scroll callback takes 1ms, that's 12.5% of every
+   8ms window where the pump is blocked.
+
+4. **Multiple pump calls per frame.** CEF may need several
+   `do_message_loop_work()` calls to push one frame through its internal
+   pipeline (compositor schedule → layer composite → paint → accelerated paint
+   callback). The busy-wait loop provides thousands of calls per second — plenty.
+   With the event-driven approach, each call requires timer fire → run loop
+   iteration → next timer fire. If a frame needs 5–10 calls and each iteration
+   takes 0.1–1ms, a single frame could take 1–10ms of scheduling overhead.
+
+5. **NSApp.run() vs bare CFRunLoopRun().** The reference uses `NSApp().run()`. A
+   headless process CAN create and run NSApplication (activation policy
+   `.prohibited` — no dock icon, no menu). CEF's Chrome runtime may depend on
+   AppKit event dispatching internally. We never tried this.
+
+**Next experiments to try (in priority order):**
+
+1. Add logging to `on_schedule_message_pump_work` — how often does it fire, with
+   what delay values? This tells us if the callback or the scheduling is broken.
+2. Reduce fallback timer from 33ms to 1ms — if frequency is the issue, this
+   narrows it down cheaply.
+3. Use `CFRunLoopSource` instead of `CFRunLoopTimer` for delay=0 work —
+   eliminates timer allocation overhead entirely.
+4. Try `NSApp().run()` in the headless process — definitively tests whether bare
+   `CFRunLoopRun()` vs AppKit event loop is the gap.
+
+**Status:** Done — results inconclusive, further investigation needed

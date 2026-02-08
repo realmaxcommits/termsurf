@@ -143,27 +143,343 @@ impl FrameStats {
     }
 }
 
-// Issue 342, Experiment 5: Minimal CFRunLoop FFI for servicing run loop sources.
+// Issue 349, Experiment 3: Expanded CFRunLoop FFI for event-driven message pump.
 #[cfg(target_os = "macos")]
 mod cfrunloop {
     use std::ffi::c_void;
 
+    pub type CFRunLoopTimerRef = *mut c_void;
     type CFStringRef = *const c_void;
     type CFTimeInterval = f64;
+    type CFAbsoluteTime = f64;
+    type CFRunLoopRef = *mut c_void;
+    type CFIndex = isize;
 
     extern "C" {
-        static kCFRunLoopDefaultMode: CFStringRef;
-        fn CFRunLoopRunInMode(
-            mode: CFStringRef,
-            seconds: CFTimeInterval,
-            return_after_source_handled: u8,
-        ) -> i32;
+        static kCFRunLoopCommonModes: CFStringRef;
+        fn CFRunLoopGetMain() -> CFRunLoopRef;
+        fn CFRunLoopRun();
+        fn CFRunLoopStop(rl: CFRunLoopRef);
+        fn CFRunLoopWakeUp(rl: CFRunLoopRef);
+        fn CFRunLoopAddTimer(rl: CFRunLoopRef, timer: CFRunLoopTimerRef, mode: CFStringRef);
+        fn CFRunLoopTimerCreate(
+            allocator: *const c_void,
+            fire_date: CFAbsoluteTime,
+            interval: CFTimeInterval,
+            flags: u64,
+            order: CFIndex,
+            callout: unsafe extern "C" fn(CFRunLoopTimerRef, *mut c_void),
+            context: *const c_void,
+        ) -> CFRunLoopTimerRef;
+        fn CFRunLoopTimerInvalidate(timer: CFRunLoopTimerRef);
+        fn CFAbsoluteTimeGetCurrent() -> CFAbsoluteTime;
     }
 
-    /// Run the main thread's CFRunLoop for up to `seconds`, returning after
-    /// one source is handled or the timeout expires.
-    pub fn run_for(seconds: f64) -> i32 {
-        unsafe { CFRunLoopRunInMode(kCFRunLoopDefaultMode, seconds, 1) }
+    /// Block on the main thread's CFRunLoop until stopped.
+    pub fn run() {
+        unsafe { CFRunLoopRun() }
+    }
+
+    /// Stop the main run loop (thread-safe).
+    pub fn stop() {
+        unsafe { CFRunLoopStop(CFRunLoopGetMain()) }
+    }
+
+    /// Wake the main run loop from another thread.
+    pub fn wake_up() {
+        unsafe { CFRunLoopWakeUp(CFRunLoopGetMain()) }
+    }
+
+    /// Create a one-shot timer that fires after `delay_secs` on the main run loop.
+    pub fn create_timer(
+        delay_secs: f64,
+        callback: unsafe extern "C" fn(CFRunLoopTimerRef, *mut c_void),
+    ) -> CFRunLoopTimerRef {
+        unsafe {
+            let fire_date = CFAbsoluteTimeGetCurrent() + delay_secs;
+            let timer = CFRunLoopTimerCreate(
+                std::ptr::null(),
+                fire_date,
+                0.0, // no repeat
+                0,
+                0,
+                callback,
+                std::ptr::null(),
+            );
+            CFRunLoopAddTimer(CFRunLoopGetMain(), timer, kCFRunLoopCommonModes);
+            timer
+        }
+    }
+
+    /// Create a repeating timer on the main run loop.
+    pub fn create_repeating_timer(
+        interval_secs: f64,
+        callback: unsafe extern "C" fn(CFRunLoopTimerRef, *mut c_void),
+    ) -> CFRunLoopTimerRef {
+        unsafe {
+            let fire_date = CFAbsoluteTimeGetCurrent() + interval_secs;
+            let timer = CFRunLoopTimerCreate(
+                std::ptr::null(),
+                fire_date,
+                interval_secs,
+                0,
+                0,
+                callback,
+                std::ptr::null(),
+            );
+            CFRunLoopAddTimer(CFRunLoopGetMain(), timer, kCFRunLoopCommonModes);
+            timer
+        }
+    }
+
+    /// Invalidate (cancel) a timer.
+    pub fn invalidate_timer(timer: CFRunLoopTimerRef) {
+        unsafe { CFRunLoopTimerInvalidate(timer) }
+    }
+}
+
+// Issue 349, Experiment 3: Event-driven CEF message pump.
+// Replaces the busy-wait loop with CFRunLoop timer-based scheduling.
+// CEF calls on_schedule_message_pump_work when it needs do_message_loop_work(),
+// we schedule a one-shot CFRunLoop timer, and the timer callback does the work.
+#[cfg(target_os = "macos")]
+mod cef_pump {
+    use std::ffi::c_void;
+    use std::sync::Mutex;
+
+    const MAX_TIMER_DELAY_MS: i64 = 33; // 30fps floor (matches reference impl)
+
+    struct PumpState {
+        timer: Option<SendableTimer>,
+        is_active: bool,
+        reentrancy_detected: bool,
+    }
+
+    struct SendableTimer(*mut c_void);
+    unsafe impl Send for SendableTimer {}
+
+    static PUMP: Mutex<PumpState> = Mutex::new(PumpState {
+        timer: None,
+        is_active: false,
+        reentrancy_detected: false,
+    });
+
+    /// Called from on_schedule_message_pump_work (any thread).
+    /// Schedules a CFRunLoop timer to call do_message_loop_work on the main thread.
+    pub fn schedule_work(delay_ms: i64) {
+        let mut pump = PUMP.lock().unwrap();
+
+        // Kill existing timer
+        if let Some(timer) = pump.timer.take() {
+            super::cfrunloop::invalidate_timer(timer.0);
+        }
+
+        // Cap delay at MAX_TIMER_DELAY_MS
+        let delay_ms = if delay_ms <= 0 {
+            0
+        } else {
+            delay_ms.min(MAX_TIMER_DELAY_MS)
+        };
+        let delay_secs = delay_ms as f64 / 1000.0;
+
+        // Create one-shot timer on main run loop
+        let timer = super::cfrunloop::create_timer(delay_secs, pump_timer_callback);
+        pump.timer = Some(SendableTimer(timer));
+    }
+
+    unsafe extern "C" fn pump_timer_callback(_timer: *mut c_void, _info: *mut c_void) {
+        let mut pump = PUMP.lock().unwrap();
+
+        // Clear the fired timer reference
+        pump.timer = None;
+
+        // Reentrancy guard
+        if pump.is_active {
+            pump.reentrancy_detected = true;
+            return;
+        }
+
+        pump.is_active = true;
+        pump.reentrancy_detected = false;
+
+        // Drop lock before do_message_loop_work — it may synchronously call
+        // on_schedule_message_pump_work which calls schedule_work (needs lock)
+        drop(pump);
+
+        cef::do_message_loop_work();
+
+        let mut pump = PUMP.lock().unwrap();
+        pump.is_active = false;
+        let was_reentrant = pump.reentrancy_detected;
+        let has_timer = pump.timer.is_some();
+        drop(pump);
+
+        if was_reentrant {
+            // Reentrant call detected — schedule immediate work
+            schedule_work(0);
+        } else if !has_timer {
+            // No new work requested — schedule fallback timer (30fps floor)
+            schedule_work(MAX_TIMER_DELAY_MS);
+        }
+
+        // Check quit flag after each pump cycle
+        if crate::QUIT_FLAG.load(std::sync::atomic::Ordering::Relaxed) {
+            super::cfrunloop::stop();
+        }
+    }
+}
+
+// Issue 349, Experiment 3: Benchmark timer callbacks for event-driven mode.
+// In the old busy-wait loop, scroll simulation and monitoring ran inline.
+// Now they run as CFRunLoop timer callbacks.
+#[cfg(target_os = "macos")]
+mod benchmark_timers {
+    use std::ffi::c_void;
+    use std::sync::{Arc, Mutex, OnceLock};
+    use std::time::{Duration, Instant};
+
+    use super::ProfileState;
+
+    pub struct BenchmarkContext {
+        pub profile_state: Arc<ProfileState>,
+        pub width: u32,
+        pub height: u32,
+        pub benchmark_duration: u64,
+        // Scroll state
+        pub scroll_direction: i32,
+        pub scroll_delta: i32,
+        pub direction_switch_every: u64,
+        pub events_since_switch: u64,
+        pub scroll_event_count: u64,
+        pub scroll_started: bool,
+        pub benchmark_start: Option<Instant>,
+        pub next_summary_time: Duration,
+        // Rate tracking
+        pub last_mouse_rate_time: Instant,
+        pub last_mouse_rate_count: u64,
+        pub last_cursor_rate_count: u64,
+    }
+
+    static BENCHMARK_CTX: OnceLock<Mutex<BenchmarkContext>> = OnceLock::new();
+
+    pub fn init(ctx: BenchmarkContext) {
+        BENCHMARK_CTX.set(Mutex::new(ctx)).ok();
+    }
+
+    /// 8ms repeating timer — handles scroll events, rate tracking, and benchmark timeout.
+    pub unsafe extern "C" fn tick_callback(
+        _timer: *mut c_void,
+        _info: *mut c_void,
+    ) {
+        let Some(ctx_lock) = BENCHMARK_CTX.get() else {
+            return;
+        };
+        let Ok(mut ctx) = ctx_lock.lock() else {
+            return;
+        };
+
+        if crate::QUIT_FLAG.load(std::sync::atomic::Ordering::Relaxed) {
+            return;
+        }
+
+        // Wait for page to load before starting scroll simulation
+        if !crate::PAGE_LOADED.load(std::sync::atomic::Ordering::Relaxed) {
+            return;
+        }
+
+        if !ctx.scroll_started {
+            println!("[SCROLL] Page loaded, starting simulated scroll at ~125Hz");
+            ctx.scroll_started = true;
+            ctx.benchmark_start = Some(Instant::now());
+        }
+
+        // Send scroll event
+        {
+            ctx.events_since_switch += 1;
+            if ctx.events_since_switch >= ctx.direction_switch_every {
+                ctx.scroll_direction *= -1;
+                ctx.events_since_switch = 0;
+            }
+
+            // Extract values before borrowing profile_state through ctx
+            let width = ctx.width;
+            let height = ctx.height;
+            let delta = ctx.scroll_delta * ctx.scroll_direction;
+            let profile_state = Arc::clone(&ctx.profile_state);
+
+            let browsers = profile_state.browsers.lock().unwrap();
+            if let Some((_, bs)) = browsers.iter().next() {
+                if let Some(browser) = bs.browser.lock().unwrap().as_ref() {
+                    use cef::{ImplBrowser, ImplBrowserHost};
+                    if let Some(host) = browser.host() {
+                        let mouse_event = cef::MouseEvent {
+                            x: (width / 2) as i32,
+                            y: (height / 2) as i32,
+                            modifiers: 0,
+                        };
+                        host.send_mouse_wheel_event(Some(&mouse_event), 0, delta);
+                        ctx.scroll_event_count += 1;
+                        if ctx.scroll_event_count % 125 == 0 {
+                            println!("[SCROLL] {} events sent", ctx.scroll_event_count);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Rate tracking (every 1s)
+        {
+            let now = Instant::now();
+            if now.duration_since(ctx.last_mouse_rate_time) >= Duration::from_secs(1) {
+                let current_count =
+                    crate::MOUSE_MOVE_COUNT.load(std::sync::atomic::Ordering::Relaxed);
+                let events_this_second = current_count - ctx.last_mouse_rate_count;
+                if events_this_second > 0 {
+                    println!(
+                        "[MOUSE-RATE] {} mouse_move events in last second",
+                        events_this_second
+                    );
+                }
+                ctx.last_mouse_rate_count = current_count;
+
+                let current_cursor =
+                    crate::CURSOR_CHANGE_COUNT.load(std::sync::atomic::Ordering::Relaxed);
+                let cursors_this_second = current_cursor - ctx.last_cursor_rate_count;
+                if cursors_this_second > 0 {
+                    println!(
+                        "[CURSOR-RATE] {} cursor_change callbacks in last second",
+                        cursors_this_second
+                    );
+                }
+                ctx.last_cursor_rate_count = current_cursor;
+
+                ctx.last_mouse_rate_time = now;
+            }
+        }
+
+        // Benchmark summary and auto-quit
+        if let Some(start) = ctx.benchmark_start {
+            let elapsed = start.elapsed();
+
+            if elapsed >= ctx.next_summary_time {
+                if let Some(stats) = crate::BENCHMARK_STATS.get() {
+                    stats.lock().unwrap().print_summary();
+                }
+                ctx.next_summary_time += Duration::from_secs(10);
+            }
+
+            if elapsed >= Duration::from_secs(ctx.benchmark_duration) {
+                println!(
+                    "[BENCHMARK-DONE] {} seconds elapsed",
+                    ctx.benchmark_duration
+                );
+                if let Some(stats) = crate::BENCHMARK_STATS.get() {
+                    stats.lock().unwrap().print_summary();
+                }
+                crate::QUIT_FLAG.store(true, std::sync::atomic::Ordering::Relaxed);
+                super::cfrunloop::stop();
+            }
+        }
     }
 }
 
@@ -362,6 +678,7 @@ fn run_profile_server(args: Args) {
     // Issue 342, Experiment 1: Enable CEF debug logging to diagnose frame scheduling.
     let settings = cef::Settings {
         windowless_rendering_enabled: 1,
+        external_message_pump: 1, // Issue 349, Experiment 3: event-driven pump
         no_sandbox: 1,
         log_severity: cef::LogSeverity::VERBOSE,
         log_file: cef::CefString::from("/tmp/cef-debug.log"),
@@ -437,139 +754,59 @@ fn run_profile_server(args: Args) {
     ctrlc::set_handler(move || {
         println!("Profile: Ctrl+C, setting quit flag...");
         QUIT_FLAG.store(true, std::sync::atomic::Ordering::Relaxed);
+        #[cfg(target_os = "macos")]
+        cfrunloop::stop(); // Wake the event-driven run loop
     })
     .expect("Failed to set Ctrl+C handler");
 
-    // 10. Run CEF message loop with high-frequency polling
-    // Issue 342, Experiment 5: Service the CFRunLoop instead of dead sleeping.
-    // Issue 343, Experiment 3: Instrumented with microsecond timing.
-    println!("Profile: Running message loop...");
-
-    // Issue 345: Scroll simulation state (benchmark mode)
-    let scroll_interval = Duration::from_millis(8); // ~125Hz, matching Apple mouse polling
-    let mut last_scroll_time = Instant::now();
-    let mut scroll_started = false;
-    let mut scroll_direction: i32 = -1; // -1 = down, +1 = up
-    let scroll_delta: i32 = 120; // standard scroll unit (one "notch")
-    let direction_switch_every: u64 = 25; // reverse every 25 events (~200ms)
-    let mut events_since_switch: u64 = 0;
-    let mut scroll_event_count: u64 = 0;
+    // 10. Run CEF message loop (event-driven)
+    // Issue 349, Experiment 3: Event-driven pump via on_schedule_message_pump_work.
+    // CEF calls the callback when it needs do_message_loop_work(), we schedule a
+    // CFRunLoop timer, and the timer callback does the work. No busy-waiting.
+    println!("Profile: Running message loop (event-driven)...");
 
     // Issue 345: Initialize benchmark stats and timing
     if args.benchmark {
         let _ = BENCHMARK_STATS.set(Mutex::new(FrameStats::new()));
-    }
-    let mut benchmark_start: Option<Instant> = None;
-    let mut next_summary_time = Duration::from_secs(10);
 
-    // Issue 346, Experiments 1 & 2: Event rate tracking
-    let mut last_mouse_rate_time = Instant::now();
-    let mut last_mouse_rate_count: u64 = 0;
-    let mut last_cursor_rate_count: u64 = 0;
-
-    while !QUIT_FLAG.load(std::sync::atomic::Ordering::Relaxed) {
-        cef::do_message_loop_work();
+        // Initialize benchmark context and start 8ms repeating timer for scroll
+        benchmark_timers::init(benchmark_timers::BenchmarkContext {
+            profile_state: Arc::clone(&profile_state),
+            width: args.width,
+            height: args.height,
+            benchmark_duration: args.benchmark_duration,
+            scroll_direction: -1,
+            scroll_delta: 120,
+            direction_switch_every: 25,
+            events_since_switch: 0,
+            scroll_event_count: 0,
+            scroll_started: false,
+            benchmark_start: None,
+            next_summary_time: Duration::from_secs(10),
+            last_mouse_rate_time: Instant::now(),
+            last_mouse_rate_count: 0,
+            last_cursor_rate_count: 0,
+        });
 
         #[cfg(target_os = "macos")]
-        cfrunloop::run_for(0.000);
-        #[cfg(not(target_os = "macos"))]
-        std::thread::sleep(std::time::Duration::from_millis(1));
+        let _scroll_timer =
+            cfrunloop::create_repeating_timer(0.008, benchmark_timers::tick_callback);
+    }
 
-        // Issue 345: Scroll simulation in benchmark mode
-        if args.benchmark && PAGE_LOADED.load(std::sync::atomic::Ordering::Relaxed) {
-            if !scroll_started {
-                println!("[SCROLL] Page loaded, starting simulated scroll at ~125Hz");
-                scroll_started = true;
-                last_scroll_time = Instant::now();
-                benchmark_start = Some(Instant::now());
-            }
+    // Kick-start the pump — CEF will call on_schedule_message_pump_work as needed
+    #[cfg(target_os = "macos")]
+    cef_pump::schedule_work(0);
 
-            let now = Instant::now();
-            if now.duration_since(last_scroll_time) >= scroll_interval {
-                last_scroll_time = now;
+    // Block on CFRunLoop — all work happens via timer callbacks
+    #[cfg(target_os = "macos")]
+    cfrunloop::run();
 
-                // Reverse direction every N events to oscillate without hitting page boundaries
-                events_since_switch += 1;
-                if events_since_switch >= direction_switch_every {
-                    scroll_direction *= -1;
-                    events_since_switch = 0;
-                }
-
-                // Get first browser and send scroll event directly
-                let browsers = profile_state.browsers.lock().unwrap();
-                if let Some((_, bs)) = browsers.iter().next() {
-                    if let Some(browser) = bs.browser.lock().unwrap().as_ref() {
-                        use cef::{ImplBrowser, ImplBrowserHost};
-                        if let Some(host) = browser.host() {
-                            let mouse_event = cef::MouseEvent {
-                                x: (args.width / 2) as i32,
-                                y: (args.height / 2) as i32,
-                                modifiers: 0,
-                            };
-                            host.send_mouse_wheel_event(
-                                Some(&mouse_event),
-                                0,
-                                scroll_delta * scroll_direction,
-                            );
-                            scroll_event_count += 1;
-                            if scroll_event_count % 125 == 0 {
-                                println!("[SCROLL] {} events sent", scroll_event_count);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // Issue 346, Experiment 1: Log mouse event rate every second
-        {
-            let now = Instant::now();
-            if now.duration_since(last_mouse_rate_time) >= Duration::from_secs(1) {
-                let current_count = MOUSE_MOVE_COUNT.load(std::sync::atomic::Ordering::Relaxed);
-                let events_this_second = current_count - last_mouse_rate_count;
-                if events_this_second > 0 {
-                    println!(
-                        "[MOUSE-RATE] {} mouse_move events in last second",
-                        events_this_second
-                    );
-                }
-                last_mouse_rate_count = current_count;
-
-                // Issue 346, Experiment 2: Cursor change rate
-                let current_cursor = CURSOR_CHANGE_COUNT.load(std::sync::atomic::Ordering::Relaxed);
-                let cursors_this_second = current_cursor - last_cursor_rate_count;
-                if cursors_this_second > 0 {
-                    println!(
-                        "[CURSOR-RATE] {} cursor_change callbacks in last second",
-                        cursors_this_second
-                    );
-                }
-                last_cursor_rate_count = current_cursor;
-
-                last_mouse_rate_time = now;
-            }
-        }
-
-        // Issue 345: Benchmark periodic summary and auto-quit
-        if let Some(start) = benchmark_start {
-            let elapsed = start.elapsed();
-
-            // Print summary every 10 seconds
-            if elapsed >= next_summary_time {
-                if let Some(stats) = BENCHMARK_STATS.get() {
-                    stats.lock().unwrap().print_summary();
-                }
-                next_summary_time += Duration::from_secs(10);
-            }
-
-            // Auto-quit after benchmark duration
-            if elapsed >= Duration::from_secs(args.benchmark_duration) {
-                println!("[BENCHMARK-DONE] {} seconds elapsed", args.benchmark_duration);
-                if let Some(stats) = BENCHMARK_STATS.get() {
-                    stats.lock().unwrap().print_summary();
-                }
-                QUIT_FLAG.store(true, std::sync::atomic::Ordering::Relaxed);
-            }
+    #[cfg(not(target_os = "macos"))]
+    {
+        // Non-macOS fallback: simple polling loop
+        while !QUIT_FLAG.load(std::sync::atomic::Ordering::Relaxed) {
+            cef::do_message_loop_work();
+            std::thread::sleep(std::time::Duration::from_millis(1));
         }
     }
 
@@ -978,6 +1215,13 @@ mod cef_handlers {
                 } else {
                     println!("Profile: No initial browser info (unexpected)");
                 }
+            }
+
+            // Issue 349, Experiment 3: Event-driven message pump.
+            // CEF calls this when it needs do_message_loop_work().
+            // We schedule a CFRunLoop timer instead of busy-waiting.
+            fn on_schedule_message_pump_work(&self, delay_ms: i64) {
+                crate::cef_pump::schedule_work(delay_ms);
             }
         }
     }
@@ -1434,6 +1678,8 @@ mod cef_handlers {
 
                                     crate::QUIT_FLAG
                                         .store(true, std::sync::atomic::Ordering::Relaxed);
+                                    #[cfg(target_os = "macos")]
+                                    crate::cfrunloop::stop();
                                 }
                             } else {
                                 // Already disconnected - ignore duplicate error
