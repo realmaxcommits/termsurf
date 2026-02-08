@@ -538,17 +538,17 @@ logs show frame times.
 Swift sends resize events to children via XPC. Each child creates a new
 IOSurface at the new dimensions and sends the updated Mach port.
 
-- [ ] Swift detects `viewDidEndLiveResize` (or continuous resize via
+- [x] Swift detects `viewDidEndLiveResize` (or continuous resize via
       `setFrameSize`) and calculates each pane's pixel dimensions
-- [ ] Swift sends XPC message to each child:
+- [x] Swift sends XPC message to each child:
       `{ action: "resize", width: N, height: N, scale: "2.0" }`
-- [ ] Rust receives resize, creates new IOSurface at new size, renders blue,
+- [x] Rust receives resize, creates new IOSurface at new size, renders blue,
       sends new Mach port
-- [ ] C++ receives resize, creates new IOSurface at new size, renders green,
+- [x] C++ receives resize, creates new IOSurface at new size, renders green,
       sends new Mach port
-- [ ] Swift imports the new IOSurfaces and updates the Metal textures
-- [ ] Old IOSurfaces are released (no Mach port leak, no IOSurface leak)
-- [ ] Deallocate old Mach ports via `mach_port_deallocate`
+- [x] Swift imports the new IOSurfaces and updates the Metal textures
+- [x] Old IOSurfaces are released (no Mach port leak, no IOSurface leak)
+- [x] Deallocate old Mach ports via `mach_port_deallocate`
 
 **Test:** Run `termsurf-window`. Drag the window edge to resize. Both panes
 resize proportionally. No stale textures, no black frames during resize. Mach
