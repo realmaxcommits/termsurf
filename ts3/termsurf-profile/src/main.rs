@@ -361,132 +361,49 @@ mod nsapp {
     }
 }
 
-// Issue 350, Experiment 4: Timer-only CEF message pump with dual-mode timers.
-// Reverted from source-based (Exp 2-3) to timer-only (Exp 1) architecture.
-// Key changes from Exp 1:
-//   - Timers registered in both CommonModes + EventTrackingMode (via cfrunloop)
-//   - NSApp().run() instead of CFRunLoopRun() (via nsapp)
-//   - nsapp::stop() instead of cfrunloop::stop() for clean shutdown
+// Issue 350, Experiment 8: Fixed-rate 1ms repeating timer for CEF pump.
+// Replaces on-demand timer scheduling with unconditional 1000Hz polling.
+// The on_schedule_message_pump_work callback is kept for diagnostic logging only.
+// This tests whether timer scheduling overhead is the ~31fps bottleneck.
 #[cfg(target_os = "macos")]
 mod cef_pump {
     use std::ffi::c_void;
-    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
     use std::sync::Mutex;
     use std::time::Instant;
 
-    const MAX_TIMER_DELAY_MS: i64 = 33; // 30fps floor (matches reference impl)
-
-    // Diagnostic counters (from Experiment 1)
+    // Diagnostic counters
     static SCHED_IMMEDIATE: AtomicU64 = AtomicU64::new(0);
     static SCHED_DEFERRED: AtomicU64 = AtomicU64::new(0);
-    static FIRE_CALLBACK: AtomicU64 = AtomicU64::new(0);
-    static FIRE_FALLBACK: AtomicU64 = AtomicU64::new(0);
-    static REENTRANT: AtomicU64 = AtomicU64::new(0);
     static WORK_DONE: AtomicU64 = AtomicU64::new(0);
+    static IDLE: AtomicU64 = AtomicU64::new(0);
     static LAST_LOG: Mutex<Option<Instant>> = Mutex::new(None);
 
-    struct PumpState {
-        timer: Option<SendablePtr>,
-        is_active: bool,
-        reentrancy_detected: bool,
-        is_fallback_timer: bool,
-    }
+    // Reentrancy guard — lightweight atomic instead of mutex
+    static IS_ACTIVE: AtomicBool = AtomicBool::new(false);
 
-    struct SendablePtr(*mut c_void);
-    unsafe impl Send for SendablePtr {}
-
-    static PUMP: Mutex<PumpState> = Mutex::new(PumpState {
-        timer: None,
-        is_active: false,
-        reentrancy_detected: false,
-        is_fallback_timer: false,
-    });
-
-    /// Called from on_schedule_message_pump_work (any thread) and initial kick-start.
-    /// Increments callback counters to track CEF's scheduling requests.
+    /// Called from on_schedule_message_pump_work (any thread).
+    /// Only increments diagnostic counters — no timers are created.
     pub fn schedule_work(delay_ms: i64) {
         if delay_ms <= 0 {
             SCHED_IMMEDIATE.fetch_add(1, Ordering::Relaxed);
         } else {
             SCHED_DEFERRED.fetch_add(1, Ordering::Relaxed);
         }
-        schedule_internal(delay_ms, false);
     }
 
-    /// Called internally from do_pump_work for fallback scheduling.
-    /// Does not increment callback counters — these are not CEF requests.
-    fn schedule_fallback() {
-        schedule_internal(MAX_TIMER_DELAY_MS, true);
-    }
-
-    fn schedule_internal(delay_ms: i64, is_fallback: bool) {
-        let mut pump = PUMP.lock().unwrap();
-
-        // Kill existing timer
-        if let Some(timer) = pump.timer.take() {
-            super::cfrunloop::invalidate_timer(timer.0);
-        }
-
-        // Cap delay at MAX_TIMER_DELAY_MS
-        let delay_ms = delay_ms.max(0).min(MAX_TIMER_DELAY_MS);
-        let delay_secs = delay_ms as f64 / 1000.0;
-
-        // Create one-shot timer on main run loop (dual-mode registration)
-        let timer = super::cfrunloop::create_timer(delay_secs, timer_callback);
-        pump.timer = Some(SendablePtr(timer));
-        pump.is_fallback_timer = is_fallback;
-    }
-
-    /// CFRunLoopTimer callback — fires for both immediate and deferred work.
-    unsafe extern "C" fn timer_callback(_timer: *mut c_void, _info: *mut c_void) {
-        let pump = PUMP.lock().unwrap();
-        if pump.is_fallback_timer {
-            FIRE_FALLBACK.fetch_add(1, Ordering::Relaxed);
-        } else {
-            FIRE_CALLBACK.fetch_add(1, Ordering::Relaxed);
-        }
-        drop(pump);
-        do_pump_work();
-    }
-
-    fn do_pump_work() {
-        let mut pump = PUMP.lock().unwrap();
-
-        // Invalidate any pending timer
-        if let Some(timer) = pump.timer.take() {
-            super::cfrunloop::invalidate_timer(timer.0);
-        }
-
-        // Reentrancy guard
-        if pump.is_active {
-            pump.reentrancy_detected = true;
-            REENTRANT.fetch_add(1, Ordering::Relaxed);
+    /// Called by the 1ms repeating timer. Does one pump cycle unconditionally.
+    pub unsafe extern "C" fn pump_callback(_timer: *mut c_void, _info: *mut c_void) {
+        // Reentrancy guard (atomic — no mutex needed)
+        if IS_ACTIVE.swap(true, Ordering::Acquire) {
+            IDLE.fetch_add(1, Ordering::Relaxed);
             return;
         }
-
-        pump.is_active = true;
-        pump.reentrancy_detected = false;
-
-        // Drop lock before do_message_loop_work — it may synchronously call
-        // on_schedule_message_pump_work which calls schedule_work (needs lock)
-        drop(pump);
 
         cef::do_message_loop_work();
         WORK_DONE.fetch_add(1, Ordering::Relaxed);
 
-        let mut pump = PUMP.lock().unwrap();
-        pump.is_active = false;
-        let was_reentrant = pump.reentrancy_detected;
-        let has_timer = pump.timer.is_some();
-        drop(pump);
-
-        if was_reentrant {
-            // Reentrant call detected — schedule immediate work
-            schedule_work(0);
-        } else if !has_timer {
-            // No new work requested — schedule fallback timer (30fps floor)
-            schedule_fallback();
-        }
+        IS_ACTIVE.store(false, Ordering::Release);
 
         // Per-second diagnostic summary
         log_summary();
@@ -516,13 +433,11 @@ mod cef_pump {
         if should_log {
             let imm = SCHED_IMMEDIATE.swap(0, Ordering::Relaxed);
             let def = SCHED_DEFERRED.swap(0, Ordering::Relaxed);
-            let cb = FIRE_CALLBACK.swap(0, Ordering::Relaxed);
-            let fb = FIRE_FALLBACK.swap(0, Ordering::Relaxed);
-            let re = REENTRANT.swap(0, Ordering::Relaxed);
             let work = WORK_DONE.swap(0, Ordering::Relaxed);
+            let idle = IDLE.swap(0, Ordering::Relaxed);
             eprintln!(
-                "[PUMP] callbacks={}(imm={} def={}) fires={}(src={} tmr=0 fb={}) reentrant={} work={}",
-                imm + def, imm, def, cb + fb, cb, fb, re, work
+                "[PUMP] callbacks={}(imm={} def={}) work={} idle={}",
+                imm + def, imm, def, work, idle
             );
         }
     }
@@ -1028,9 +943,10 @@ fn run_profile_server(args: Args) {
             cfrunloop::create_repeating_timer(0.008, benchmark_timers::tick_callback);
     }
 
-    // Kick-start the pump — CEF will call on_schedule_message_pump_work as needed
+    // Issue 350, Experiment 8: 1ms repeating timer drives the pump unconditionally.
+    // Replaces on-demand timer scheduling to test if timer overhead is the bottleneck.
     #[cfg(target_os = "macos")]
-    cef_pump::schedule_work(0);
+    let _pump_timer = cfrunloop::create_repeating_timer(0.001, cef_pump::pump_callback);
 
     // Run NSApplication event loop — all work happens via timer callbacks.
     // NSApp manages run loop modes and provides proper Cocoa integration.

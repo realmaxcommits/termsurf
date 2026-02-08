@@ -1030,4 +1030,81 @@ where the reentrancy guard triggered (pump already active).
   main thread during `do_message_loop_work()` for ~10ms, so only ~100 of 1000
   ticks actually execute. This would mean CEF itself is the bottleneck.
 
-**Status:** Not started
+**Status:** Complete
+
+**Results (all 7 trials completed):**
+
+```
+[BENCH] Trial 1/7: 24.2fps  21.7% @60fps  p50=21.4ms  p95=84.6ms
+[BENCH] Trial 2/7: 25.0fps  20.0% @60fps  p50=15.5ms  p95=86.3ms
+[BENCH] Trial 3/7: 27.7fps  26.0% @60fps  p50=14.0ms  p95=82.8ms
+[BENCH] Trial 4/7: 27.0fps  19.2% @60fps  p50=15.3ms  p95=82.3ms
+[BENCH] Trial 5/7: 28.4fps  37.5% @60fps  p50=13.8ms  p95=81.2ms
+[BENCH] Trial 6/7: 23.2fps  14.2% @60fps  p50=49.9ms  p95=81.1ms
+[BENCH] Trial 7/7: 26.4fps  35.7% @60fps  p50=15.9ms  p95=80.4ms
+```
+
+Average: ~26fps, p50 varies widely (13.8-49.9ms). **Worse than Experiment 7's
+~31.5fps.** 1000Hz polling reduced performance instead of improving it.
+
+**PUMP diagnostics (trial 7):**
+
+```
+[PUMP] callbacks=182(imm=182 def=0) work=377 idle=0
+[PUMP] callbacks=136(imm=101 def=35) work=439 idle=0
+[PUMP] callbacks=70(imm=70 def=0) work=458 idle=0
+[PUMP] callbacks=186(imm=71 def=115) work=489 idle=0
+[PUMP] callbacks=125(imm=58 def=67) work=477 idle=0
+[PUMP] callbacks=154(imm=54 def=100) work=450 idle=0
+[PUMP] callbacks=202(imm=81 def=121) work=489 idle=0
+[PUMP] callbacks=299(imm=61 def=238) work=493 idle=0
+[PUMP] callbacks=296(imm=60 def=236) work=479 idle=0
+[PUMP] callbacks=153(imm=68 def=85) work=453 idle=0
+```
+
+**Findings:**
+
+1. **Only ~450-490 work/sec out of 1000 ticks.** `do_message_loop_work()` takes
+   ~2ms on average, so roughly half the 1ms ticks are skipped (the timer fires
+   while the previous call is still running, but since `idle=0`, the calls don't
+   actually overlap — they just consume enough time to halve the effective rate).
+
+2. **Zero reentrancy (idle=0).** Every tick successfully enters
+   `do_message_loop_work()`. The calls don't overlap — they just take ~2ms each,
+   leaving no time for other run loop activity.
+
+3. **More pumping produced fewer frames.** ~470 work/sec → ~26fps vs Experiment
+   7's ~100 work/sec → ~31fps. Calling `do_message_loop_work()` 5x more often
+   made things worse.
+
+4. **Scroll timer starvation.** The pump consumes ~2ms per tick × 470 ticks =
+   ~940ms of every second. The 8ms scroll timer barely gets main thread time to
+   send input events. With fewer scroll events reaching CEF, fewer frames are
+   produced.
+
+5. **`do_message_loop_work()` is not free.** Even with no rendering work pending,
+   each call takes ~2ms (likely: checking internal queues, acquiring CEF locks,
+   processing IPC). Unnecessary calls waste time that could serve other timers.
+
+**None of the three predicted outcomes matched.** The actual result was a fourth
+scenario not anticipated: ~26fps at ~470 work/sec — fewer fps than the on-demand
+approach despite more work calls. The cause: excessive pumping starves the scroll
+timer, reducing input to CEF.
+
+**Comparison across all experiments:**
+
+| Experiment | Approach                          | fps   | p50   | work/sec |
+| ---------- | --------------------------------- | ----- | ----- | -------- |
+| 1          | Timer-only, CFRunLoopRun          | ~29   | 25ms  | ~100     |
+| 3          | Source (fixed)                    | ~22   | 44ms  | ~100-180 |
+| 7          | Timer-only, NSApp, dual-mode      | ~31.5 | 22ms  | ~100     |
+| 8          | 1ms repeating, 1000Hz             | ~26   | 15ms  | ~470     |
+| Reference  | Busy-wait (100% CPU)              | ~50   | 17ms  | ~∞       |
+
+**Conclusion:** Timer scheduling overhead is NOT the bottleneck. The on-demand
+approach (Experiment 7) was already optimal for pump timing — CEF's callback tells
+us exactly when work is needed, and calling more often just wastes time. The
+~31fps cap comes from somewhere downstream: IPC latency (IOSurface Mach port
+transfer per frame), CEF's internal rendering pipeline, or the GUI's frame
+presentation timing. Experiment 7's architecture should be restored as the best
+event-driven result.
