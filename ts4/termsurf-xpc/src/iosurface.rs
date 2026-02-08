@@ -171,6 +171,39 @@ pub fn lookup_from_mach_port(port: ffi::mach_port_t) -> Option<IOSurfaceRef> {
     }
 }
 
+/// Get the bytes-per-row stride of an IOSurface.
+pub fn get_bytes_per_row(surface: IOSurfaceRef) -> usize {
+    unsafe { ffi::IOSurfaceGetBytesPerRow(surface) }
+}
+
+/// Write raw pixel data into an IOSurface.
+///
+/// `data` contains rows of pixels. Each source row is `src_stride` bytes wide,
+/// but only `row_bytes` bytes per row are copied (the rest is padding).
+/// The IOSurface may have a different stride; this function handles the
+/// row-by-row copy correctly.
+pub fn write_pixels(surface: IOSurfaceRef, data: &[u8], row_bytes: usize, src_stride: usize) {
+    unsafe {
+        ffi::IOSurfaceLock(surface, 0, ptr::null_mut());
+
+        let base = ffi::IOSurfaceGetBaseAddress(surface) as *mut u8;
+        let height = ffi::IOSurfaceGetHeight(surface);
+        let dst_stride = ffi::IOSurfaceGetBytesPerRow(surface);
+
+        for y in 0..height {
+            let src_offset = y * src_stride;
+            let dst_offset = y * dst_stride;
+            ptr::copy_nonoverlapping(
+                data[src_offset..].as_ptr(),
+                base.add(dst_offset),
+                row_bytes,
+            );
+        }
+
+        ffi::IOSurfaceUnlock(surface, 0, ptr::null_mut());
+    }
+}
+
 /// Deallocate a Mach port send right.
 ///
 /// Call this after `lookup_from_mach_port()` — the IOSurface is referenced

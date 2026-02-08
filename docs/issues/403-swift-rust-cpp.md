@@ -428,17 +428,17 @@ Activity Monitor shows one process. Close the window and the process exits.
 The Rust process creates an IOSurface, renders blue to it via wgpu, and verifies
 the result. No XPC yet — just prove that wgpu can render to an IOSurface.
 
-- [ ] Add `wgpu` dependency to `termsurf-terminal/Cargo.toml`
-- [ ] Create an IOSurface via CoreFoundation C API (BGRA8, specified width and
+- [x] Add `wgpu` dependency to `termsurf-terminal/Cargo.toml`
+- [x] Create an IOSurface via CoreFoundation C API (BGRA8, specified width and
       height)
-- [ ] Create a Metal texture backed by the IOSurface (via wgpu's Metal HAL
+- [x] Create a Metal texture backed by the IOSurface (via wgpu's Metal HAL
       unsafe API or via `objc`/`metal-rs` crate)
-- [ ] Create a wgpu device and queue (Metal backend)
-- [ ] Render a clear-to-blue pass targeting the IOSurface-backed texture
-- [ ] Read back pixels from the IOSurface and verify they are blue (lock, read,
+- [x] Create a wgpu device and queue (Metal backend)
+- [x] Render a clear-to-blue pass targeting the IOSurface-backed texture
+- [x] Read back pixels from the IOSurface and verify they are blue (lock, read,
       unlock)
-- [ ] Create a Mach port from the IOSurface via `IOSurfaceCreateMachPort`
-- [ ] Print the Mach port number and IOSurface dimensions as confirmation
+- [x] Create a Mach port from the IOSurface via `IOSurfaceCreateMachPort`
+- [x] Print the Mach port number and IOSurface dimensions as confirmation
 
 **Test:** Run `termsurf-terminal`. Output shows the Mach port and confirms blue
 pixels were written. No window needed.

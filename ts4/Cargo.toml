@@ -1,0 +1,11 @@
+[workspace]
+members = [
+    "termsurf-terminal",
+    "termsurf-xpc",
+]
+resolver = "2"
+
+[workspace.dependencies]
+libc = "0.2"
+block2 = "0.6"
+clap = { version = "4.0", features = ["derive"] }
