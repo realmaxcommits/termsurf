@@ -570,3 +570,86 @@ port count in Activity Monitor stays stable (no leak).
 After Phase 8, the system described in Issue 403 is complete. The architecture
 is proven. The next step is replacing the colored rectangles with real content
 (terminal and browser).
+
+## Conclusion
+
+The prototype is complete. All eight phases passed. Three processes — Swift,
+Rust, and C++ — render GPU textures independently and composite them into a
+single window at 60fps with zero-copy IOSurface sharing.
+
+### What we built
+
+The Swift window process creates an `NSWindow` backed by a `CAMetalLayer` and
+drives rendering via `CVDisplayLink`. It connects to two child processes over
+XPC named Mach services registered with `launchd`. Each child is an XPC
+listener: the Rust process renders a blue rectangle via wgpu, the C++ process
+renders a green rectangle via Metal. Both create IOSurfaces, wrap them as Mach
+ports via `IOSurfaceCreateMachPort`, and send the ports to the window over XPC
+dictionaries. The window imports each IOSurface with
+`IOSurfaceLookupFromMachPort`, creates zero-copy `MTLTexture` handles, and
+composites them side by side using viewport-restricted draw calls in a single
+Metal render pass.
+
+On resize, the window sends `{ action: "resize", width, height, scale }` to
+each child. Each child creates a new IOSurface at the requested dimensions,
+re-renders, and sends the updated Mach port. The window imports the new
+textures and deallocates the old Mach ports to prevent kernel resource leaks.
+
+### What we proved
+
+| Question                                            | Result                                |
+| --------------------------------------------------- | ------------------------------------- |
+| Can Swift composite IOSurface from Rust and C++?    | Yes — zero-copy, same render pass     |
+| Does XPC Mach port transfer work across languages?  | Yes — libxpc is language-agnostic     |
+| Can wgpu (Rust) and Metal (C++) both target IOSurface? | Yes — both produce valid textures  |
+| Is 60fps achievable with cross-process compositing? | Yes — composite time ~0.04–0.12ms     |
+| Can SwiftPM, Cargo, and Make coexist?               | Yes — no cross-dependencies           |
+| Does resize work without leaking resources?         | Yes — Mach ports deallocated, IOSurfaces released |
+
+Composite time measured at 0.04–0.12ms per frame, well under the 2ms budget.
+The bottleneck is not IPC or compositing — it's the child render time, which
+will increase when real content replaces colored rectangles.
+
+### What we learned
+
+1. **XPC is the right IPC for macOS.** It handles Mach port transfer, connection
+   lifecycle, and process management. Raw Mach messaging is unnecessary.
+
+2. **IOSurface + Mach ports = zero-copy cross-process GPU textures.** The
+   IOSurface never leaves GPU memory. Only the Mach port (a kernel handle)
+   crosses the process boundary. No pixel copying.
+
+3. **`launchd` simplifies process management.** Registering XPC services via
+   plist files lets `launchd` start servers on demand when clients connect.
+   No manual process spawning or port lookup needed.
+
+4. **Metal's bytesPerRow must be 16-byte aligned for IOSurface-backed textures.**
+   Discovered when odd window widths caused C++ browser crashes. Fixed with
+   `(width * 4 + 15) & ~15`.
+
+5. **`xpc_dictionary_get_remote_connection` solves the response routing
+   problem.** In Rust's event handler closures, you don't own the peer
+   connection. Extracting the remote connection from the incoming dictionary
+   lets you send responses without ownership issues.
+
+6. **Swift is the right language for the window.** Metal, AppKit, XPC, and
+   IOSurface are all native APIs with zero bridging. The window is ~200 lines
+   of Swift. The equivalent Rust would require winit, wgpu, `block2`, `objc`,
+   and `termsurf-xpc` — overhead for no benefit.
+
+### What comes next
+
+The colored rectangles are placeholders. The architecture is the product.
+
+1. **Replace blue with terminal.** Integrate `wezterm-term`, `wezterm-font`,
+   and wgpu text rendering into the Rust process. Same IOSurface output, same
+   XPC protocol.
+
+2. **Replace green with browser.** Embed Chromium Content API in the C++
+   process for off-screen webpage rendering. Same IOSurface output, same XPC
+   protocol.
+
+3. **Add input forwarding.** Swift sends keyboard and mouse events to the
+   focused pane via XPC. Same channel, new message types.
+
+4. **Add pane management.** Splits, tabs, focus tracking, dynamic layout.
