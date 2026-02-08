@@ -103,7 +103,7 @@ Chromium's GN/Ninja build system.
 **Phases:**
 
 1. **Test page** — Bun app serving a blue spinning square with localStorage
-   identity and FPS counter (`ts4/public/index.html`, `ts4/server.ts`)
+   identity and FPS counter (`ts4/box-demo/public/index.html`, `ts4/box-demo/server.ts`)
 2. **Merge Chromium** — Fork Chromium into `ts4/termsurf-chromium/` following
    the merge-upstream pattern (depot_tools fetch, move to subdirectory, merge
    unrelated histories)
@@ -119,8 +119,8 @@ higher. No custom XPC/IPC protocol.
 
 ### Directory Structure
 
-- `ts4/public/index.html` — Test page (blue spinning square, localStorage, FPS)
-- `ts4/server.ts` — Bun HTTP server on port 9407
+- `ts4/box-demo/public/index.html` — Test page (blue spinning square, localStorage, FPS)
+- `ts4/box-demo/server.ts` — Bun HTTP server on port 9407
 - `ts4/termsurf-chromium/` — Chromium source tree (fork)
   - `content/shell/` — content_shell (the embedder we modify)
   - `out/Default/` — Build output (gitignored)
@@ -129,7 +129,7 @@ higher. No custom XPC/IPC protocol.
 
 ```bash
 # Test page server
-cd ts4 && bun run server.ts
+cd ts4/box-demo && bun run server.ts
 
 # Chromium (after depot_tools is installed and source is fetched)
 cd ts4/termsurf-chromium

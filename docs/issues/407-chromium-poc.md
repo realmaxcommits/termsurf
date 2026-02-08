@@ -28,7 +28,7 @@ This PoC validates three things that the entire ts4 architecture depends on:
 
 ## The Test Page
 
-A Bun application in `ts4/` serves a single HTML page:
+A Bun application in `ts4/box-demo/` serves a single HTML page:
 
 - **Blue spinning square.** A square rendered via WebGL (or Canvas 2D) that
   rotates 360 degrees per second (1 Hz). The rotation rate is chosen so that
@@ -121,8 +121,8 @@ browser panes side by side:
 
 The Bun app is minimal:
 
-- `ts4/server.ts` (or similar) — serves `ts4/public/index.html` on
-  `localhost:<port>`.
+- `ts4/box-demo/server.ts` — serves `ts4/box-demo/public/index.html` on
+  `localhost:9407`.
 - The Swift app loads `http://localhost:<port>` in both panes.
 - The server exists only because Chromium needs an HTTP origin for localStorage
   to work (file:// URLs have localStorage restrictions in some configurations).
@@ -157,7 +157,7 @@ integrate with the Ghostty fork (which has a Swift macOS shell).
 
 Write the spinning blue square page and its HTTP server.
 
-**`ts4/public/index.html`** — Self-contained HTML page:
+**`ts4/box-demo/public/index.html`** — Self-contained HTML page:
 
 - Blue spinning square via Canvas 2D, rotating 360 deg/sec (1 Hz)
 - Rotation angle computed from `performance.now()` (wall-clock time, not frame
@@ -168,10 +168,10 @@ Write the spinning blue square page and its HTTP server.
   buffer, display average FPS updated once per second
 - No external dependencies — all CSS, JS, and HTML in one file
 
-**`ts4/server.ts`** — Bun HTTP server:
+**`ts4/box-demo/server.ts`** — Bun HTTP server:
 
 - `Bun.serve()` on port 9407 (matching issue number)
-- Serves `ts4/public/index.html` on `GET /`
+- Serves `ts4/box-demo/public/index.html` on `GET /`
 - HTTP origin needed because `file://` URLs restrict localStorage in some
   Chromium configurations
 
@@ -364,7 +364,7 @@ Incremental build after ~5 file changes: 1–5 minutes.
 
 ```
 # Terminal 1:
-cd /Users/ryan/dev/termsurf/ts4 && bun run server.ts
+cd /Users/ryan/dev/termsurf/ts4/box-demo && bun run server.ts
 
 # Terminal 2:
 ./ts4/termsurf-chromium/out/Default/Content\ Shell.app/Contents/MacOS/Content\ Shell \
