@@ -6,9 +6,17 @@ let package = Package(
     name: "termsurf-window",
     platforms: [.macOS(.v13)],
     targets: [
+        .target(
+            name: "XIPC",
+            path: "Sources/XIPC",
+            linkerSettings: [
+                .linkedFramework("IOSurface"),
+            ]
+        ),
         .executableTarget(
             name: "termsurf-window",
-            path: "Sources"
+            dependencies: ["XIPC"],
+            path: "Sources/Window"
         ),
     ]
 )

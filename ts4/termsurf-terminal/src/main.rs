@@ -1,17 +1,76 @@
+use std::sync::{Arc, Mutex};
 use termsurf_xpc::iosurface;
+use termsurf_xpc::*;
 
 fn main() {
-    // Step 1: Create IOSurface
+    eprintln!("[Terminal] Starting...");
+
+    // Step 1: Create IOSurface + render blue UPFRONT (before entering dispatch loop).
+    // This happens while the listener is not yet active, so XPC events queue up
+    // on the main dispatch queue and are processed once dispatch_main() starts.
     let width: u32 = 800;
     let height: u32 = 600;
-    let surface = iosurface::create_iosurface(width, height).expect("Failed to create IOSurface");
-    println!(
-        "IOSurface created: {}x{}",
+    let surface_addr = render_blue(width, height) as usize;
+
+    // Step 2: Set up XPC listener
+    let service_name = "com.termsurf.ts4.terminal";
+    let listener =
+        XpcListener::new_mach_service(service_name).expect("Failed to create XPC listener");
+
+    let peers: Arc<Mutex<Vec<XpcConnection>>> = Arc::new(Mutex::new(Vec::new()));
+    let peers_clone = peers.clone();
+
+    set_new_connection_handler(&listener, move |peer| {
+        eprintln!("[Terminal] New client connected");
+
+        set_event_handler(&peer, |event| match event {
+            Ok(dict) => {
+                if let Some(action) = dict.get_string("action") {
+                    eprintln!("[Terminal] Received: {}", action);
+                }
+            }
+            Err(e) => eprintln!("[Terminal] Event error: {}", e),
+        });
+        peer.resume();
+
+        // Create a fresh Mach port for this client
+        let surface = surface_addr as iosurface::IOSurfaceRef;
+        let port = iosurface::create_mach_port(surface);
+        eprintln!("[Terminal] Created Mach port: {}", port);
+
+        // Send frame message
+        let msg = XpcDictionary::new();
+        msg.set_string("action", "frame");
+        msg.set_mach_send("iosurface_port", port);
+        msg.set_u64("width", width as u64);
+        msg.set_u64("height", height as u64);
+        peer.send(&msg);
+
+        eprintln!("[Terminal] Frame sent: {}x{}", width, height);
+
+        // Store peer to keep connection alive
+        peers_clone.lock().unwrap().push(peer);
+    });
+
+    listener.resume();
+    eprintln!("[Terminal] Listening on {}", service_name);
+
+    // Step 3: Block forever, processing XPC events on main dispatch queue.
+    // Queued events (from clients that connected during rendering) are now processed.
+    dispatch_main();
+}
+
+/// Create an IOSurface, render it blue via wgpu, and return the handle.
+fn render_blue(width: u32, height: u32) -> iosurface::IOSurfaceRef {
+    let surface =
+        iosurface::create_iosurface(width, height).expect("Failed to create IOSurface");
+    eprintln!(
+        "[Terminal] IOSurface created: {}x{}",
         iosurface::get_width(surface),
         iosurface::get_height(surface)
     );
 
-    // Step 2: Create wgpu device and queue
+    // Create wgpu device
     let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
         backends: wgpu::Backends::METAL,
         ..Default::default()
@@ -33,20 +92,11 @@ fn main() {
     ))
     .expect("Failed to create wgpu device");
 
-    println!("wgpu device created: {:?}", adapter.get_info().name);
+    eprintln!("[Terminal] wgpu device: {:?}", adapter.get_info().name);
 
-    // Step 3: Create a Metal texture backed by the IOSurface
-    //
-    // wgpu doesn't expose IOSurface texture creation directly, so we use
-    // Objective-C runtime to create the Metal texture, then render to a
-    // regular wgpu texture and copy to the IOSurface.
-    //
-    // In production, we'd use wgpu's HAL API for zero-copy. For this
-    // prototype, GPU render + CPU copy proves the pipeline works.
-
-    // Create a wgpu texture to render into
+    // Create render target
     let texture = device.create_texture(&wgpu::TextureDescriptor {
-        label: Some("blue-render-target"),
+        label: Some("blue-target"),
         size: wgpu::Extent3d {
             width,
             height,
@@ -60,9 +110,9 @@ fn main() {
         view_formats: &[],
     });
 
-    let texture_view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+    let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
 
-    // Step 4: Render a clear-to-blue pass
+    // Render blue
     let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
         label: Some("blue-render"),
     });
@@ -71,7 +121,7 @@ fn main() {
         let _pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("clear-blue"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: &texture_view,
+                view: &view,
                 resolve_target: None,
                 ops: wgpu::Operations {
                     load: wgpu::LoadOp::Clear(wgpu::Color {
@@ -87,15 +137,13 @@ fn main() {
             timestamp_writes: None,
             occlusion_query_set: None,
         });
-        // Empty pass — just clears to blue
     }
 
-    // Copy GPU texture to a buffer so we can write it to the IOSurface
+    // Copy GPU texture to readback buffer
     let bytes_per_row = width * 4;
-    // wgpu requires rows aligned to 256 bytes
     let padded_bytes_per_row = (bytes_per_row + 255) & !255;
 
-    let output_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+    let buffer = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("readback"),
         size: (padded_bytes_per_row * height) as u64,
         usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
@@ -110,7 +158,7 @@ fn main() {
             aspect: wgpu::TextureAspect::All,
         },
         wgpu::TexelCopyBufferInfo {
-            buffer: &output_buffer,
+            buffer: &buffer,
             layout: wgpu::TexelCopyBufferLayout {
                 offset: 0,
                 bytes_per_row: Some(padded_bytes_per_row),
@@ -126,19 +174,17 @@ fn main() {
 
     queue.submit(Some(encoder.finish()));
 
-    // Map the buffer and copy to IOSurface
-    let buffer_slice = output_buffer.slice(..);
+    // Map and copy to IOSurface
+    let slice = buffer.slice(..);
     let (tx, rx) = std::sync::mpsc::channel();
-    buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
-        tx.send(result).unwrap();
+    slice.map_async(wgpu::MapMode::Read, move |r| {
+        tx.send(r).unwrap();
     });
     device.poll(wgpu::Maintain::Wait);
     rx.recv().unwrap().expect("Failed to map buffer");
 
     {
-        let data = buffer_slice.get_mapped_range();
-
-        // Write to IOSurface
+        let data = slice.get_mapped_range();
         iosurface::write_pixels(
             surface,
             &data,
@@ -146,39 +192,15 @@ fn main() {
             padded_bytes_per_row as usize,
         );
     }
+    buffer.unmap();
 
-    output_buffer.unmap();
-
-    println!("Rendered blue (0, 0, 255, 255)");
-
-    // Step 5: Read back pixels from IOSurface and verify
+    // Verify
     let pixel = iosurface::read_pixel(surface, 0, 0);
     let r = (pixel >> 24) & 0xFF;
     let g = (pixel >> 16) & 0xFF;
     let b = (pixel >> 8) & 0xFF;
     let a = pixel & 0xFF;
+    eprintln!("[Terminal] Rendered blue, pixel (0,0): ({r}, {g}, {b}, {a})");
 
-    if r == 0 && g == 0 && b == 255 && a == 255 {
-        println!("Pixel at (0,0): ({}, {}, {}, {}) ✓", r, g, b, a);
-    } else {
-        println!("Pixel at (0,0): ({}, {}, {}, {}) ✗ (expected 0, 0, 255, 255)", r, g, b, a);
-    }
-
-    // Also check a pixel in the middle
-    let pixel_mid = iosurface::read_pixel(surface, 400, 300);
-    let mr = (pixel_mid >> 24) & 0xFF;
-    let mg = (pixel_mid >> 16) & 0xFF;
-    let mb = (pixel_mid >> 8) & 0xFF;
-    let ma = pixel_mid & 0xFF;
-    println!("Pixel at (400,300): ({}, {}, {}, {})", mr, mg, mb, ma);
-
-    // Step 6: Create Mach port
-    let port = iosurface::create_mach_port(surface);
-    println!("Mach port: {}", port);
-
-    if port != 0 {
-        println!("Phase 3 complete: IOSurface + wgpu + Mach port verified");
-    } else {
-        println!("ERROR: Mach port creation failed");
-    }
+    surface
 }
