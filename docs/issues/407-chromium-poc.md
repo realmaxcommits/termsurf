@@ -186,61 +186,60 @@ Ghostty (`ts1/`), WezTerm (`ts2/`, `ts3/`), and cef-rs (`cef-rs/`). The
 Chromium source lives at `ts4/termsurf-chromium/` and carries the full upstream
 git history.
 
-**Step 1: Fetch the Chromium source with depot_tools**
+**CRITICAL: Full history is required.** The merge into the termsurf monorepo
+uses `git merge --allow-unrelated-histories`, which requires real git history.
+A shallow clone (`--no-history`) produces a repo with grafted roots that git
+refuses to fetch or merge into another repo. Do NOT use `fetch --no-history`.
+Always use `fetch chromium` (with full history). This takes longer and uses
+more disk, but there is no shortcut — without full history, the merge fails.
+
+**Step 1: Install depot_tools**
+
+```
+git clone https://chromium.googlesource.com/chromium/tools/depot_tools.git \
+  ~/depot_tools
+export PATH="$HOME/depot_tools:$PATH"
+```
+
+**Step 2: Fetch the Chromium source with full history**
 
 Chromium cannot be built from a plain `git clone` — it requires `depot_tools`
 and `gclient sync` to fetch hundreds of dependencies (V8, Skia, ICU, etc.).
 
 ```
-# Install depot_tools
-git clone https://chromium.googlesource.com/chromium/tools/depot_tools.git \
-  ~/depot_tools
-export PATH="$HOME/depot_tools:$PATH"
-
-# Fetch Chromium into a staging directory
-mkdir /tmp/chromium-staging && cd /tmp/chromium-staging
-caffeinate fetch --no-history chromium
-```
-
-This creates `/tmp/chromium-staging/src/` with the full source and all
-dependencies. ~30–50 GB. Takes hours. `caffeinate` prevents sleep.
-`--no-history` skips git history to save disk (we will re-fetch with history
-for the merge).
-
-Alternatively, fetch with history for a proper merge:
-
-```
+mkdir ~/dev/chromium-staging && cd ~/dev/chromium-staging
 caffeinate fetch chromium
 ```
 
-This preserves upstream git history so that `git merge -X subtree` works for
-future upstream merges.
+This creates `~/dev/chromium-staging/src/` with the full source, all
+dependencies, and full git history. ~50+ GB. Takes hours. `caffeinate`
+prevents sleep.
 
-**Step 2: Move everything into `ts4/termsurf-chromium/`**
+**Step 3: Move everything into `ts4/termsurf-chromium/`**
 
 Inside the Chromium repo, create a commit that moves the entire source tree
-into a subdirectory:
+into a subdirectory. Use `git mv` on top-level directories (not individual
+files — there are ~500K tracked files):
 
 ```
-cd /tmp/chromium-staging/src
-git mv $(ls -A | grep -v '.git') ts4/termsurf-chromium/
-# Or use a script to handle the large number of files
-mkdir ts4/termsurf-chromium
-git ls-files | while read f; do
-  mkdir -p "ts4/termsurf-chromium/$(dirname "$f")"
-  git mv "$f" "ts4/termsurf-chromium/$f"
+cd ~/dev/chromium-staging/src
+mkdir -p ts4/termsurf-chromium
+for item in $(ls -A | grep -v '\.git$' | grep -v '^ts4$'); do
+  git mv "$item" ts4/termsurf-chromium/
 done
+git add -A
 git commit -m "Move Chromium source into ts4/termsurf-chromium/"
 ```
 
 This commit exists only in the staging repo. It rewrites all paths so that
-the subtree merge maps correctly.
+the subtree merge maps correctly. Untracked files (build artifacts, generated
+files) will fail to move — that is expected and harmless.
 
-**Step 3: Merge into termsurf with unrelated histories**
+**Step 4: Merge into termsurf with unrelated histories**
 
 ```
 cd /Users/ryan/dev/termsurf
-git remote add chromium /tmp/chromium-staging/src
+git remote add chromium ~/dev/chromium-staging/src
 git fetch chromium
 git merge chromium/main --allow-unrelated-histories \
   -m "Merge Chromium into ts4/termsurf-chromium"
@@ -256,7 +255,7 @@ git merge -X subtree=ts4/termsurf-chromium chromium/main \
   -m "Merge upstream Chromium"
 ```
 
-**Step 4: Update merge-upstream documentation**
+**Step 5: Update merge-upstream documentation**
 
 Add Chromium to `docs/issues/002-merge-upstream.md`:
 
@@ -264,7 +263,7 @@ Add Chromium to `docs/issues/002-merge-upstream.md`:
 | -------- | ------------------------ | --------------------------- | ---------- | ------ |
 | Chromium | `ts4/termsurf-chromium/` | chromium.googlesource.com   | `chromium` | main   |
 
-**Step 5: Verify the source is buildable**
+**Step 6: Verify the source is buildable**
 
 ```
 cd /Users/ryan/dev/termsurf/ts4/termsurf-chromium
