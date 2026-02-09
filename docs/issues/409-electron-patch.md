@@ -107,9 +107,9 @@ Delete the Two Profiles app from the fork. It was built before the decision to
 use the Electron patch set and will be rewritten from scratch using the new
 APIs. This returns the fork to a clean vanilla Chromium state.
 
-- [ ] Delete `content/two_profiles/` directory
-- [ ] Revert the `//content/two_profiles` line in `BUILD.gn`
-- [ ] Commit the deletion
+- [x] Delete `content/two_profiles/` directory
+- [x] Revert the `//content/two_profiles` line in `BUILD.gn`
+- [x] Commit the deletion
 
 ### Phase 2: Match Chromium version
 
