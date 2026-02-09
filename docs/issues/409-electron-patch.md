@@ -66,36 +66,40 @@ workflow any fork uses to stay current with upstream.
 
 ## Steps
 
-### Step 1: Verify Chromium version
+### Phase 1: Clean slate
 
-Check what version our fork is currently on and whether it matches Electron's
-target (146.0.7650.0). If not, check out the matching version first.
+Delete the Two Profiles app from the fork. It was built before the decision to
+use the Electron patch set and will be rewritten from scratch using the new
+APIs. This returns the fork to a clean vanilla Chromium state.
+
+- [ ] Delete `content/two_profiles/` directory
+- [ ] Revert the `//content/two_profiles` line in `BUILD.gn`
+- [ ] Commit the deletion
+
+### Phase 2: Match Chromium version
+
+Our fork was created with `fetch chromium`, which pulled whatever was HEAD at
+that time. Electron targets Chromium 146.0.7650.0. We need to verify our fork
+is on the same version, and check out the correct tag if it isn't.
 
 ```bash
 cd ts4/termsurf-chromium/src
-git log --oneline -1  # Check current HEAD
+git log --oneline -1  # What version are we on?
+git tag -l '146.0.7650.0'  # Does this tag exist?
 ```
 
-Electron's DEPS file pins `chromium_version: '146.0.7650.0'`. Our fork must be
-on the same version for the patches to apply cleanly.
-
-### Step 2: Create a branch for TermSurf's commits
-
-Save our existing modifications (from Issue 407) so they can be rebased later:
+If the version doesn't match, check out the correct one:
 
 ```bash
-# Tag the current state so we can cherry-pick/rebase later
-git tag termsurf-pre-electron HEAD
-
-# Reset to vanilla Chromium at the correct version
-git checkout <chromium-146.0.7650.0-commit>
-git checkout -b electron-patches
+git checkout 146.0.7650.0
 ```
 
-### Step 3: Apply the patch set
+If the tag doesn't exist, we may need to fetch it from upstream or use the
+commit hash that corresponds to Electron's pinned version.
 
-The patches are at `electron/patches/chromium/` and the ordered list is in
-`electron/patches/chromium/.patches`. Apply them in order:
+### Phase 3: Apply the Electron patch set
+
+Apply all 147 patches in order from the Electron repo:
 
 ```bash
 cd ts4/termsurf-chromium/src
@@ -108,71 +112,73 @@ while IFS= read -r patch; do
 done < ../../electron/patches/chromium/.patches
 ```
 
-If a patch fails, our Chromium version doesn't match Electron's. Fix by
-checking out the correct version.
+If a patch fails to apply, our Chromium version doesn't match Electron's.
+Fix by checking out the correct version in Phase 2.
 
-### Step 4: Tag the electron-base
+After all patches apply, tag the boundary:
 
 ```bash
 git tag electron-base HEAD
 ```
 
-### Step 5: Rebase TermSurf's commits on top
+### Phase 4: Verify Content Shell (baseline)
 
-```bash
-# Rebase our modifications onto the electron-base
-git rebase --onto electron-base <vanilla-chromium-commit> termsurf-pre-electron
-
-# Fast-forward main to the result
-git checkout main
-git reset --hard HEAD  # now at TermSurf commits on top of electron-base
-```
-
-Or more simply, since our changes don't overlap:
-
-```bash
-git cherry-pick termsurf-pre-electron
-```
-
-### Step 6: Rebuild and test
+Content Shell is our baseline — it must still build and run at 60fps after the
+Electron patches. If Content Shell breaks, the patches are the problem, not
+our code.
 
 ```bash
 gn gen out/Default --args='is_debug=false symbol_level=0 is_component_build=true'
+autoninja -C out/Default content_shell
+```
+
+Launch Content Shell with the test page:
+
+```bash
+cd /Users/ryan/dev/termsurf/ts4/box-demo && bun run server.ts &
+./out/Default/Content\ Shell.app/Contents/MacOS/Content\ Shell http://localhost:9407
+```
+
+Verify: spinning blue square at 60fps, localStorage string persists across
+restarts. This confirms the Electron patches don't break vanilla Chromium
+windowed rendering.
+
+### Phase 5: Rewrite Two Profiles
+
+Rebuild the Two Profiles app from scratch, this time using the APIs that the
+Electron patches provide:
+
+- Create `content/two_profiles/` with the same macOS bundle structure as before
+- Use the three-layer throttling bypass on each WebContents:
+  ```cpp
+  rwh_impl->disable_hidden_ = true;                                    // Layer 1
+  web_contents->GetRenderViewHost()->SetSchedulerThrottling(false);    // Layer 2
+  // Layer 3 handled by compositor patch automatically
+  ```
+- Consider using Chromium's `views` framework (`views::Widget` +
+  `views::WebView`) for view composition instead of raw NSView manipulation
+- Register the target in `BUILD.gn`
+
+### Phase 6: Verify Two Profiles at 60fps
+
+Launch the Two Profiles app with the test server. Both panes should render the
+spinning blue square at 60fps with different localStorage identity strings.
+
+```bash
 autoninja -C out/Default content/two_profiles:two_profiles
+./out/Default/Two\ Profiles.app/Contents/MacOS/Two\ Profiles
 ```
-
-### Step 7: Wire up the throttling bypass
-
-With the Electron patches applied, the three throttling bypass APIs are now
-available. Modify `two_profiles_main_parts.mm` to use them:
-
-```cpp
-// After creating each WebContents:
-auto* rwh = RenderWidgetHostImpl::From(
-    web_contents->GetRenderWidgetHostView()->GetRenderWidgetHost());
-rwh->disable_hidden_ = true;  // Layer 1: prevent WasHidden()
-
-// Layer 2: disable Blink scheduler throttling
-web_contents->GetRenderViewHost()->SetSchedulerThrottling(false);
-
-// Layer 3 is handled by the compositor patch automatically
-```
-
-### Step 8: Verify 60fps
-
-Launch the Two Profiles app with the Bun test server running. Both panes should
-now render the spinning blue square at 60fps with different localStorage
-identity strings.
 
 ## Success Criteria
 
-- All 147 Electron patches apply cleanly to our Chromium fork.
-- `electron-base` tag marks the boundary.
-- TermSurf's commits rebase cleanly on top.
-- The Two Profiles app builds and runs.
-- Both panes render at 60fps (up from 2-3fps).
-- Profile isolation still works (different localStorage strings).
-- content_shell still builds and runs independently.
+- [ ] Two Profiles deleted from the fork (clean slate).
+- [ ] Fork checked out at Chromium 146.0.7650.0.
+- [ ] All 147 Electron patches apply cleanly.
+- [ ] `electron-base` tag marks the boundary.
+- [ ] Content Shell builds and runs at 60fps (baseline holds).
+- [ ] Two Profiles rewritten with throttling bypass APIs.
+- [ ] Both panes render at 60fps (up from 2-3fps).
+- [ ] Profile isolation still works (different localStorage strings).
 
 ## Future: Staying in Sync with Electron
 
