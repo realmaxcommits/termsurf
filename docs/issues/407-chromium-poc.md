@@ -291,8 +291,8 @@ from Issue 401 research. It is separate from the fork and can be removed.
 
 Get `content_shell` building and running on macOS.
 
-- [ ] Exclude `ts4/termsurf-chromium/src/` from Spotlight indexing
-- [ ] Configure GN:
+- [x] Exclude `ts4/termsurf-chromium/src/` from Spotlight indexing
+- [x] Configure GN:
       ```
       cd ts4/termsurf-chromium/src
       gn gen out/Default --args='
@@ -302,82 +302,96 @@ Get `content_shell` building and running on macOS.
         is_component_build = true
       '
       ```
-- [ ] Build content_shell: `autoninja -C out/Default content_shell` (1–7 hours
-      depending on hardware)
-- [ ] Add `ts4/termsurf-chromium/src/out/` to `.gitignore`
-- [ ] Verify it runs:
-      ```
-      ./ts4/termsurf-chromium/src/out/Default/Content\ Shell.app/Contents/MacOS/Content\ Shell \
-        http://localhost:9407
-      ```
-      Start the Bun server first. Confirm the test page loads with spinning
-      square, FPS counter, and localStorage string.
+- [x] Build content_shell: `autoninja -C out/Default content_shell` (1h31m,
+      42,918 steps at 7.83/s)
+- [x] Add `ts4/termsurf-chromium/src/out/` to `.gitignore`
+- [x] Verify it runs: test page loads at 60fps with spinning square, FPS
+      counter, and localStorage string.
 
-### Phase 4: Modify content_shell for dual profiles
+### Phase 4: Create "Two Profiles" app
 
-Modify ~5 files inside the Chromium tree to create two `ShellBrowserContext`
-instances with different storage paths and display two `WebContents` side by
-side in one window.
+Create a new app called "Two Profiles" alongside content_shell — a separate
+build target that reuses content_shell's infrastructure (`content_shell_lib`)
+without modifying any existing content_shell files.
 
-**Step 1: Add custom-path constructor to ShellBrowserContext**
+The new app lives at `content/two_profiles/` inside the Chromium tree. It
+depends on `//content/shell:content_shell_lib` for all browser infrastructure
+(Shell, ShellPlatformDelegate, devtools, downloads, permissions, etc.) and only
+adds the minimal code needed for dual-profile behavior and side-by-side layout.
 
-`content/shell/browser/shell_browser_context.h` and `.cc` — Add a constructor
-that accepts a `base::FilePath` so two instances can have different storage
-directories:
+**New files (all in `content/two_profiles/`):**
 
+**`BUILD.gn`** — Build target for the Two Profiles app:
+
+- `two_profiles` target (mac\_app\_bundle on macOS, executable elsewhere)
+- Depends on `//content/shell:content_shell_lib` and
+  `//content/shell:content_shell_app`
+- Sources: the new files listed below
+- Same packaging structure as content_shell (framework, helpers, resources)
+
+**`two_profiles_main.cc`** — Entry point:
+
+- Same pattern as `content/shell/app/shell_main.cc`
+- Creates `ShellMainDelegate`, calls `content::ContentMain()`
+- No customization needed — all behavior comes from the BrowserMainParts
+  override
+
+**`two_profiles_main_mac.cc`** — macOS entry point:
+
+- Same pattern as `content/shell/app/shell_main_mac.cc`
+- Handles framework loading and helper process setup
+
+**`two_profiles_browser_context.h/.cc`** — Subclass of `ShellBrowserContext`:
+
+- Constructor accepts a `base::FilePath` for the profile directory
+- Overrides `GetPath()` to return the custom path instead of the default
 - Profile A: `~/.config/termsurf/poc/profile-a/`
 - Profile B: `~/.config/termsurf/poc/profile-b/`
 
-**Step 2: Create two BrowserContexts in ShellBrowserMainParts**
+**`two_profiles_main_parts.h/.cc`** — Subclass of `ShellBrowserMainParts`:
 
-`content/shell/browser/shell_browser_main_parts.h` — Add members:
+- Overrides `InitializeBrowserContexts()` to create two
+  `TwoProfilesBrowserContext` instances with different storage paths
+- Overrides `InitializeMessageLoopContext()` to create two Shell windows (or
+  one window with two WebContents), each using a different BrowserContext,
+  both loading `http://localhost:9407`
+- Overrides `PostMainMessageLoopRun()` to clean up the second context
 
-```cpp
-std::unique_ptr<ShellBrowserContext> browser_context_b_;
-std::unique_ptr<WebContents> web_contents_b_;
-```
+**`two_profiles_content_browser_client.h/.cc`** — Subclass of
+`ShellContentBrowserClient`:
 
-`content/shell/browser/shell_browser_main_parts.cc` — Modify:
+- Overrides `CreateBrowserMainParts()` to return `TwoProfilesMainParts`
+  instead of the default `ShellBrowserMainParts`
 
-- `InitializeBrowserContexts()`: Create `browser_context_` with profile-a path,
-  `browser_context_b_` with profile-b path
-- `InitializeMessageLoopContext()`: Create Shell A with `browser_context_`
-  loading `http://localhost:9407`. Create a second `WebContents` with
-  `browser_context_b_` loading the same URL. Add the second WebContents view to
-  Shell A's window (right half).
-- `PostMainMessageLoopRun()`: Clean up `web_contents_b_` and
-  `browser_context_b_`
+**`two_profiles_layout_mac.mm`** — Side-by-side layout on macOS:
 
-**Step 3: Side-by-side layout on macOS**
+- After both WebContents are created, arranges them side by side in one
+  NSWindow
+- Gets Shell A's NSWindow contentView
+- Sets Shell A's WebContents view frame to the left half
+- Sets Shell B's WebContents view frame to the right half
+- Adds both as subviews with `NSViewWidthSizable | NSViewHeightSizable`
 
-`content/shell/browser/shell_platform_delegate_mac.mm` or
-`shell_browser_main_parts_mac.mm` — After both WebContents are created:
-
-- Get Shell A's NSWindow contentView
-- Set Shell A's WebContents view frame to the left half of the window
-- Set Shell B's WebContents view frame to the right half
-- Add both as subviews with autoresizing masks
-
-**Step 4: Build and run**
+**Build and run:**
 
 ```
-autoninja -C ts4/termsurf-chromium/src/out/Default content_shell
+autoninja -C ts4/termsurf-chromium/src/out/Default two_profiles
 ```
 
-Incremental build after ~5 file changes: 1–5 minutes.
+Incremental build after new files: 1–5 minutes.
 
 ```
 # Terminal 1:
 cd /Users/ryan/dev/termsurf/ts4/box-demo && bun run server.ts
 
 # Terminal 2:
-./ts4/termsurf-chromium/src/out/Default/Content\ Shell.app/Contents/MacOS/Content\ Shell \
-  --hide-toolbar
+./ts4/termsurf-chromium/src/out/Default/Two\ Profiles.app/Contents/MacOS/Two\ Profiles
 ```
 
 **Expected result:** One window, two panes. Both show the blue spinning square.
 Left pane shows one localStorage string, right pane shows a different one. Both
-strings persist across app restarts.
+strings persist across app restarts. Content Shell remains unmodified and still
+builds and runs independently.
 
 ### Phase 5: Measure and document
 
