@@ -392,20 +392,49 @@ Security/permissions, crash reporting, media keys, spellcheck, desktop capture,
 process singleton, printing, notifications, USB, accelerators, service process.
 All Electron-specific features that TermSurf does not use.
 
-### Conclusion: which patches to apply
+## Conclusion
 
-**Must apply (7):** All visibility/throttling patches. These solve the core
-2-3fps problem.
+### What we learned
 
-**Should review (5-10):** macOS-specific fixes, resize performance, window
-creation hooks, per-window WebPreferences, Chrome dependency removal patterns.
+The 2-3fps throttling is not a single bug — it is three independent throttling
+systems in Chromium's rendering pipeline, each of which must be individually
+disabled. Our Experiment 2 (`WasShown()` only) addressed one layer and failed.
+Electron solved this years ago by patching all three layers:
 
-**Skip (~130):** Build system, Node.js, Windows/Linux, spellcheck, printing,
-media keys, desktop capture, and other Electron-specific features.
+1. `RenderWidgetHostImpl` — prevent `WasHidden()` from firing
+2. Blink `PageSchedulerImpl` — force the page to appear visible
+3. `ui::Compositor` / viz `DisplayScheduler` — keep vsync subscription active
 
-We do not need to apply Electron's full 147-patch set. A targeted subset of
-~10-15 patches should be sufficient. The three core throttling patches are the
-minimum viable set.
+These patches are small, surgical, and proven in production across millions of
+Electron installations.
+
+### Why we're adopting Electron's full patch set
+
+Rather than cherry-picking the 7 visibility patches and guessing which of the
+remaining 140 we might need later, we will apply Electron's entire 147-patch
+set to our Chromium fork. The reasoning:
+
+1. **Simplicity.** Analyzing 147 patches to decide which subset we need is more
+   work than just applying all of them. Patches we don't need are either inert
+   hooks (callback points that nothing calls) or gated behind flags we don't
+   set (`is_electron_build`, `is_mas_build`).
+
+2. **Tested combination.** Electron tests these 147 patches against Chromium
+   146.0.7650.0. Applying the full set to the same version is a known-good
+   configuration. A custom subset is untested.
+
+3. **Future-proofing.** Patches that seem irrelevant today (fullscreen
+   propagation, per-window WebPreferences, resize performance fixes) may become
+   necessary as TermSurf matures. Having them already applied means we
+   discover their value rather than their absence.
+
+4. **Patch-on-patch escape hatch.** If any Electron patch causes a problem, we
+   can apply our own patch on top to fix it. This is unlikely in the short term,
+   but the option exists.
+
+This approach means our `termsurf-chromium` submodule tracks the same Chromium
+version as Electron and applies the same patch set. Our own modifications
+(like `content/two_profiles/`) go on top. This is the subject of Issue 409.
 
 ## Relationship to Other Issues
 
@@ -415,4 +444,5 @@ minimum viable set.
 | 403     | Proved IOSurface compositing at 60fps with colored rectangles                     |
 | 406     | Proved multiple profiles work in one Chromium process                             |
 | 407     | Proved multi-profile in practice; identified visibility throttling as the blocker |
-| 408     | This issue -- solves the framerate problem for multi-profile rendering            |
+| 408     | This issue — researched the fix; decided to adopt Electron's patch set            |
+| 409     | Applies the Electron patch set to our Chromium fork                               |
