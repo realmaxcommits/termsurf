@@ -144,9 +144,9 @@ For each patch:
 4. If it has Electron-specific parts, extract only the relevant hunks and
    adapt as needed
 
-- [ ] Layer 1 patch applied (disable_hidden)
-- [ ] Layer 2 patch applied (scheduler throttling)
-- [ ] Layer 3 patch applied (compositor background throttling)
+- [x] Layer 1 patch applied (disable_hidden)
+- [x] Layer 2 patch applied (scheduler throttling)
+- [x] Layer 3 patch applied (compositor background throttling)
 
 ### Phase 3: Verify Content Shell still builds
 
@@ -158,8 +158,8 @@ gn gen out/Default --args='is_debug=false symbol_level=0 is_component_build=true
 autoninja -C out/Default content_shell
 ```
 
-- [ ] Content Shell builds successfully
-- [ ] Content Shell renders test page at 60fps
+- [x] Content Shell builds successfully
+- [x] Content Shell renders test page at 60fps
 
 ### Phase 4: Rewrite Two Profiles with throttling bypass
 
