@@ -429,8 +429,8 @@ but the compositor is shut down immediately afterward.
 #### Hypothesis
 
 Experiment 1 failed because `BrowserCompositorMac` transitions to
-`HasNoCompositor` independently of the `disable_hidden_` flag. But we don't
-know the exact sequence — whether `Hide()` is called before or after
+`HasNoCompositor` independently of the `disable_hidden_` flag. But we don't know
+the exact sequence — whether `Hide()` is called before or after
 `RenderFrameCreated`, whether it's called once or repeatedly, or what triggers
 it. This experiment adds logging to answer those questions, and simultaneously
 tries re-showing the view from the observer to restart the compositor.
@@ -449,7 +449,8 @@ Add logging to:
 - `RenderWidgetHostViewMac::WasOccluded()` — log whether `host()->IsHidden()`
 - `RenderWidgetHostViewMac::ShowWithVisibility()` — log when the view is shown
 - `RenderWidgetHostImpl::WasHidden()` — log whether `disable_hidden_` is set
-- `ThrottleBypassObserver::ApplyBypass()` — already has logging from Experiment 1
+- `ThrottleBypassObserver::ApplyBypass()` — already has logging from Experiment
+  1
 
 This reveals the ordering: does `Hide()` fire before or after
 `RenderFrameCreated`? Is it called once or many times? Does our observer's
@@ -494,3 +495,135 @@ the RenderWidgetHostImpl did not do.
   `WasHidden()`
 - `content/two_profiles/two_profiles_main_parts.mm` — add
   `ShowWithVisibility(kVisible)` call in `ApplyBypass()`
+
+#### Result: FAILED
+
+Both panes still render at 2fps.
+
+#### Conclusion
+
+The logging revealed a critical finding: **`Hide()`, `WasOccluded()`, and
+`WasHidden()` are never called on either view.** The only log lines that appear
+are from `ShowWithVisibility()` (our own bypass calls) — none of the hiding
+methods fire at all.
+
+This completely invalidates the hypothesis that throttling is caused by the
+`Hide() → WasOccluded() → WasHidden()` chain. The entire line of investigation
+from Experiments 1 and 2 — setting `disable_hidden_`, calling
+`SetSchedulerThrottling(false)`, calling `WasShown({})`, calling
+`ShowWithVisibility(kVisible)` — was targeting a code path that is not being
+triggered.
+
+The 2fps framerate is caused by something else entirely. 2fps is not a vsync
+divisor (not 30fps, not 15fps) — it looks like a timer-based fallback, such as
+`requestAnimationFrame` falling back to ~500ms intervals when the compositor is
+not driving frames via vsync/display link.
+
+#### Ideas for Experiment 3
+
+1. **Investigate the CADisplayLink / vsync connection.** On macOS, the
+   compositor drives frames via `CADisplayLink` (or `CVDisplayLink` on older
+   versions). The second WebContents is created via `WebContents::Create()` and
+   manually added as an NSView subview — it may never have been properly
+   connected to the window's display link. But Shell A (created via
+   `Shell::CreateNewWindow()`) is also at 2fps, so the issue is systemic, not
+   specific to the second view.
+
+2. **Check BrowserCompositorMac state directly.** Add logging to
+   `BrowserCompositorMac::UpdateState()` to see what state both compositors are
+   in. If they're in `HasNoCompositor`, frames can't be produced regardless of
+   renderer state — but we need to understand how they got there without
+   `Hide()`/`WasOccluded()` being called.
+
+3. **Compare with Content Shell (single profile).** Content Shell runs at 60fps
+   on the same Chromium build. Diff the initialization code paths to find what
+   Two Profiles does differently that causes both views to run at 2fps.
+
+4. **Check NSWindow/NSView visibility and occlusion.** macOS might be reporting
+   the window or views as occluded through a different path than
+   `RenderWidgetHostViewMac::Hide()`. Log `NSWindow.occlusionState` and the
+   NSView's `isHiddenOrHasHiddenAncestor` to see if macOS thinks the views are
+   invisible.
+
+5. **Try creating both WebContents via Shell::CreateNewWindow().** The current
+   approach creates Shell A normally and WebContents B manually. Try creating
+   two Shells instead, to see if the Shell infrastructure provides something
+   essential that the manual approach misses.
+
+## Conclusion
+
+### What we learned
+
+Experiments 1 and 2 targeted the wrong code path. The three Electron patches we
+applied (`disable_hidden_`, `SetSchedulerThrottling`, `SetBackgroundThrottling`)
+intercept `Hide()` / `WasOccluded()` / `WasHidden()` — but Experiment 2's
+logging proved **none of those methods are ever called** on either view. The
+throttling patches are irrelevant to our problem.
+
+The root cause is a **visibility race condition** in the compositor lifecycle.
+
+### The race condition
+
+When a `WebContents` is created and its `WebContentsViewCocoa` is added to a
+window, macOS fires `viewDidMoveToWindow`, which triggers
+`WebContentsImpl::UpdateWebContentsVisibility(VISIBLE)`. This calls
+`WasShown()`, which tries to call `ShowWithVisibility(kVisible)` on the
+`RenderWidgetHostViewMac` — the method that transitions the
+`BrowserCompositorMac` from `HasNoCompositor` (dead) to `HasOwnCompositor`
+(alive).
+
+But in our Two Profiles app, the view is added to the window **before the
+renderer process exists**. `GetRenderWidgetHostView()` returns null, so
+`ShowWithVisibility` is never called. The visibility signal is consumed
+(`did_first_set_visible_ = true`, `visibility_ = VISIBLE`), and when the
+renderer is later created, the `BrowserCompositorMac` starts in
+`HasNoCompositor` state and nothing transitions it out. No `BeginFrame` signals
+are sent, no frames are produced, and `requestAnimationFrame` falls back to a
+~2fps timer.
+
+Content Shell avoids this because `Shell::CreateNewWindow` creates the renderer
+and adds the view in the right order — by the time `viewDidMoveToWindow` fires,
+the `RenderWidgetHostView` exists and receives `ShowWithVisibility`.
+
+### Why the ThrottleBypassObserver can't fix it
+
+Our `ThrottleBypassObserver` calls `ShowWithVisibility(kVisible)` from
+`RenderFrameCreated`, which fires after the renderer exists. But
+`ShowWithVisibility` calls `OnShowWithPageVisibility`, which only calls
+`NotifyHostAndDelegateOnWasShown()` — the method that actually transitions the
+compositor — **if `host_->IsHidden()` is true**. Since `WasShown()` was already
+called on the `WebContentsImpl` (step consuming the signal), the host may not
+report as hidden, so the compositor transition is skipped.
+
+### Additional Electron patches
+
+Electron has at least two more relevant patches beyond the three we applied:
+
+1. **`disable_compositor_recycling.patch`** — Prevents `BrowserCompositorMac`
+   from transitioning to `HasNoCompositor` when the view is attached to a
+   window. Modifies `RenderWidgetHostViewMac::WasOccluded()` to only shut down
+   the compositor for unattached views.
+
+2. **`revert_code_health_clean_up_stale_macwebcontentsocclusion.patch`** —
+   Restores legacy macOS occlusion detection using `NSWindow.occlusionState`
+   directly, instead of Chromium's newer `WebContentsOcclusionCheckerMac`.
+
+Electron also explicitly manages visibility from its own `BrowserWindow::Show()`
+by calling `web_contents()->WasShown()` directly, rather than relying solely on
+macOS `viewDidMoveToWindow` notifications.
+
+### What needs to happen next
+
+The fix is not more throttling bypasses — it's ensuring the
+`BrowserCompositorMac` transitions to `HasOwnCompositor` for both views.
+Possible approaches:
+
+1. Reorder operations so the renderer exists before the view enters the window
+   hierarchy.
+2. Explicitly call `SetRenderWidgetHostIsHidden(false)` on the
+   `BrowserCompositorMac` after the renderer is created.
+3. Apply the `disable_compositor_recycling` patch and test whether it changes
+   the initial compositor state.
+4. Use `Shell::CreateNewWindow` for both profiles to get the correct lifecycle.
+5. Force a visibility re-notification after the renderer is ready, bypassing the
+   `did_first_set_visible_` guard.
