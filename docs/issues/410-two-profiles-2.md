@@ -371,3 +371,55 @@ is alive and the correct RenderWidgetHostImpl is active.
 
 Both panes at 60fps. If only one pane improves, or if fps increases but doesn't
 reach 60, the BrowserCompositorMac bypass is likely needed as a follow-up.
+
+#### Result: FAILED
+
+Both panes still render at 2-3fps. The `RenderFrameCreated` observer fires and
+sets the bypass flags, but the framerate does not improve.
+
+#### Conclusion
+
+Fixing the timing of `disable_hidden_` and `SetSchedulerThrottling(false)` is
+not sufficient. The throttling is not caused (only) by the RenderWidgetHostImpl
+being hidden — the `BrowserCompositorMac` is the likely bottleneck.
+
+On macOS, `RenderWidgetHostViewMac::Hide()` calls `WasOccluded()`, which does
+two things independently:
+
+1. `host()->WasHidden()` — blocked by `disable_hidden_` (Layer 1) ✓
+2. `browser_compositor_->SetRenderWidgetHostIsHidden(true)` — NOT blocked ✗
+
+Step 2 transitions the BrowserCompositorMac to `HasNoCompositor`, which detaches
+the DelegatedFrameHost and stops all frame production. Even though
+`disable_hidden_` prevents the renderer from being told it's hidden, the
+compositor on the browser side shuts down entirely. No BeginFrame signals are
+sent, so the renderer has nothing to respond to.
+
+The `WasShown({})` call on `RenderWidgetHostImpl` only reverses step 1 — it does
+not touch the BrowserCompositorMac. To reverse step 2, we need to call
+`ShowWithVisibility()` on the `RenderWidgetHostViewMac`, which calls
+`browser_compositor_->SetViewVisible(true)` and restarts the compositor.
+
+Alternatively, `Hide()` itself may be the wrong level to intervene. We still
+don't know who calls `Hide()` or when. It may be called before or after
+`RenderFrameCreated` fires — and if it's called after, our bypass flags get set
+but the compositor is shut down immediately afterward.
+
+#### Ideas for Experiment 2
+
+1. **Call `ShowWithVisibility()` on the RenderWidgetHostViewMac** from the
+   observer, after setting bypass flags. This directly re-shows the compositor.
+   The `RenderWidgetHostViewMac` is accessible via
+   `render_frame_host->GetView()` which returns a `RenderWidgetHostView*` — on
+   macOS this is a `RenderWidgetHostViewMac*`.
+
+2. **Add logging to trace the full sequence** — log when `Hide()`,
+   `WasOccluded()`, `WasHidden()`, `RenderFrameCreated`, and our `ApplyBypass`
+   are called, with timestamps. This reveals whether `Hide()` is called before
+   or after our observer fires, and whether it's called repeatedly.
+
+3. **Prevent `Hide()` from calling the compositor shutdown** — modify
+   `RenderWidgetHostViewMac::WasOccluded()` to skip
+   `browser_compositor_->SetRenderWidgetHostIsHidden(true)` when
+   `disable_hidden_` is set. This is a Chromium patch rather than an app-level
+   fix.
