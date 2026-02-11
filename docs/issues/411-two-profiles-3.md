@@ -247,8 +247,8 @@ ways:
 5. View hierarchy manipulation (adding view_b, resizing view_a)
 
 Any one of these could be the culprit. The storage service crash (profile-b's
-paths can't be made relative to profile-a's root) is a strong candidate since
-it affects utility processes that both profiles depend on.
+paths can't be made relative to profile-a's root) is a strong candidate since it
+affects utility processes that both profiles depend on.
 
 ### Next step: isolate the cause
 

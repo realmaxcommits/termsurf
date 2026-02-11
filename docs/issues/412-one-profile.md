@@ -245,3 +245,33 @@ were all mechanical (GN visibility, resource naming, web test collisions) and do
 not affect runtime behavior. We now have a known-good starting point from which
 to add changes incrementally toward two profiles. The next experiment adds the
 `SHELL_DIR_USER_DATA` override (Step 2).
+
+## Conclusion
+
+Issue 412 accomplished its first goal: establish a known-good baseline. One
+Profile is a fully independent clone of Content Shell — 218 files copied, six
+find-and-replace renames applied, three build issues resolved — that runs at
+60fps. This proves that the app scaffolding (BUILD.gn structure, bundle layout,
+renamed targets, independent libraries) does not cause any rendering
+degradation.
+
+The remaining steps (2–5) have not been executed yet. The isolation approach is
+sound — each step adds exactly one variable from the Two Profiles app — but the
+next issue will continue from this baseline rather than staying within
+Issue 412.
+
+### What we have
+
+- Branch `146.0.7650.0-issue-412` in the `termsurf-chromium` submodule with one
+  commit on top of the vanilla `146.0.7650.0` tag
+- `content/one_profile/` — a complete, buildable, 60fps Content Shell clone with
+  its own libraries, delegates, and app bundle
+- A proven recipe for cloning Content Shell: copy, rename, patch visibility
+  lists, fix resource collisions, strip web test support
+
+### What's next
+
+Continue the isolation from Step 2 onward using the One Profile app as the base.
+Each step modifies `content/one_profile/` to add one more element from the Two
+Profiles app until the fps drops. The step where it drops identifies the root
+cause of the 2fps degradation.
