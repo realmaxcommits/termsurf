@@ -131,56 +131,42 @@ For each step:
 
 ## Experiments
 
-### Experiment 1: Step 1 baseline
+### Experiment 1: Clone Content Shell
 
 #### Branch setup
 
 1. `cd ts4/termsurf-chromium/src`
 2. `git checkout -b 146.0.7650.0-issue-412 146.0.7650.0`
-3. Write the One Profile app from scratch in `content/one_profile/`:
-   - `BUILD.gn` — modeled on Content Shell's build target but for our app
-   - `one_profile_main_parts.h` and `one_profile_main_parts.mm` — the main parts
-     subclass
-   - Delegates, plists, and main entry point — minimal scaffolding to produce a
-     `.app` bundle
+3. Clone `content/shell/` to `content/one_profile/`. Rename classes, targets,
+   and bundle names from "Content Shell" / "content_shell" to "One Profile" /
+   "one_profile". The behavior is identical — same delegates, same `Shell` class,
+   same `ShellBrowserMainParts`, same window management. The only difference is
+   the name.
 4. Add `//content/one_profile` to the root `BUILD.gn` `gn_all` group.
 5. Build with `autoninja -C out/Default one_profile`.
 
 #### Hypothesis
 
-The One Profile app is a minimal Content API embedder written from scratch. It
-creates a single `WebContents` with one `ShellBrowserContext` and displays it in
-a window we control. The key difference from Content Shell is that we own the
-`NSWindow` — Content Shell's `Shell` class creates and manages its own window,
-but we need to control the window ourselves so that later steps can place
-multiple WebContents in it.
-
-If this baseline runs at 60fps, the app scaffolding is sound and we can proceed
-to add a second profile. If it runs at 2fps, then controlling the window
-ourselves (rather than letting `Shell` do it) is the problem, and we need to
-understand why.
+One Profile is a byte-for-byte clone of Content Shell with different names.
+Content Shell runs at 60fps. One Profile should too. This establishes that our
+build scaffolding, bundle structure, and renamed targets don't introduce any
+regressions. It gives us a known-good starting point to iterate from.
 
 #### Design
 
-`OneProfileMainParts` inherits from `ShellBrowserMainParts`.
+Copy the Content Shell source files into `content/one_profile/`. Do a
+find-and-replace rename:
 
-- Do NOT override `InitializeBrowserContexts`. The base class creates a single
-  `ShellBrowserContext` with the default path.
-- Override `InitializeMessageLoopContext`:
-  1. Create an `NSWindow` (1200x600, titled, `makeKeyAndOrderFront`).
-  2. Create a `WebContents` with `browser_context()`.
-  3. Navigate it to `http://localhost:9407`.
-  4. Get the `WebContentsViewCocoa` via `GetNativeView()`.
-  5. Add it as a subview of the window's `contentView`.
-  6. Set its frame to fill the window.
+- `content_shell` → `one_profile`
+- `ContentShell` → `OneProfile`
+- `Content Shell` → `One Profile`
+- `Shell` class references stay as-is (we still use the `Shell` class from
+  `content/shell/browser/`)
 
-No `Shell` is used. No second BrowserContext, no second WebContents, no
-`SHELL_DIR_USER_DATA` override. This is the minimal code needed to display a
-single WebContents in a window we control — the foundation that a second profile
-will eventually be added to.
+The One Profile app links against the same Content Shell browser/renderer
+libraries. It is Content Shell under a different name. No behavioral changes.
 
 #### Expected result
 
-60fps. If this is 2fps, controlling the window ourselves rather than using
-`Shell::CreateNewWindow` is the cause, and we need to understand what `Shell`
-does that we're missing.
+60fps. This must pass before any further steps. If this is not 60fps, something
+is wrong with the clone and we fix it before proceeding.
