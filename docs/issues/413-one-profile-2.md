@@ -769,19 +769,117 @@ Shell A down to 2fps.
 
 ### What's next
 
-The root cause is isolated to Step 4: creating and navigating a second
-WebContents. The next experiments should decompose this further:
+Experiment 4 proved that a second navigating WebContents causes the 2fps
+degradation. But the second WebContents used `browser_context_b_` — a different
+profile. We don't know whether the problem is:
 
-1. **Create WebContents without navigating.** Does `WebContents::Create(params)`
-   alone (no `LoadURLWithParams`) cause the drop? If not, the navigation or
-   renderer process creation is the trigger.
-2. **Navigate to about:blank instead of the test page.** Does a trivial page
-   still cause the drop? If not, the test page's `requestAnimationFrame` loop
-   may be competing for GPU time.
-3. **Check GPU process utilization.** Is the GPU process at 100%? Are both
-   renderers sharing a single GPU thread? Is the compositor scheduler giving
-   equal time to both and starving Shell A?
-4. **Check if this is a content_shell-specific limitation.** Run Chrome or
-   Electron with two tabs — they handle multiple WebContents at 60fps. What do
-   they do differently? Likely a proper compositor scheduler configuration or
-   GPU process thread pool that content_shell lacks.
+**(a)** Two navigating WebContents in one process (regardless of profile) — would
+mean content_shell fundamentally can't handle multiple active renderers.
+
+**(b)** Two navigating WebContents from different BrowserContexts — would mean
+multi-profile-in-one-process doesn't work, but same-profile multi-WebContents
+might be fine.
+
+Chrome handles (a) every day — multiple tabs, split view, DevTools panels — all
+within one profile. Chrome never puts two different profiles' WebContents in the
+same window. If the problem is (b), the architecture answer is one process per
+profile with IOSurface compositing: the ts3 pattern, but with Content API
+instead of CEF.
+
+Experiment 5 distinguishes between (a) and (b) by creating the second
+WebContents with the **same** BrowserContext as Shell A.
+
+### Experiment 5: Same profile, two WebContents (Step 4 variant)
+
+#### Hypothesis
+
+Experiment 4 showed that creating and navigating a second WebContents with
+`browser_context_b_` (profile B) drops Shell A to 2fps. But we don't know if
+the problem is two WebContents in general, or two different profiles
+specifically. Chrome successfully renders multiple WebContents within the same
+profile at 60fps.
+
+Creating a second WebContents with `browser_context_` (profile A — the same
+profile Shell A uses) should work at 60fps, because this is the normal operating
+mode for any Chromium-based browser: multiple tabs sharing one profile. If it
+does, the 2fps problem is caused by multi-profile contention (storage service,
+network context, or compositor serving two BrowserContexts), not by
+multi-WebContents contention.
+
+If this also drops to 2fps, content_shell's minimal embedder cannot handle two
+active WebContents regardless of profile — and the problem is likely a missing
+compositor scheduler configuration that Chrome sets up but content_shell omits.
+
+#### Design
+
+One-line change from Experiment 4: swap `browser_context_b_.get()` for
+`browser_context_.get()` in the `WebContents::CreateParams`. Everything else
+stays identical — the second WebContents is navigated to the test page and its
+view is never attached to any window. `browser_context_b_` is still created and
+held (Experiment 2 proved that's harmless), keeping the diff minimal for a clean
+comparison.
+
+The change to `InitializeMessageLoopContext()`:
+
+```cpp
+void ShellBrowserMainParts::InitializeMessageLoopContext() {
+  Shell* shell = Shell::CreateNewWindow(browser_context_.get(), GetStartupURL(),
+                                        nullptr, gfx::Size());
+#if BUILDFLAG(IS_MAC)
+  ReparentToCustomWindow(shell);
+#endif
+
+  // Create second WebContents with profile A (same profile), navigate but
+  // don't attach view.
+  WebContents::CreateParams params(browser_context_.get());  // was browser_context_b_
+  web_contents_b_ = WebContents::Create(params);
+  NavigationController::LoadURLParams load_params(GetStartupURL());
+  load_params.transition_type = ui::PageTransitionFromInt(
+      ui::PAGE_TRANSITION_TYPED | ui::PAGE_TRANSITION_FROM_ADDRESS_BAR);
+  web_contents_b_->GetController().LoadURLWithParams(load_params);
+}
+```
+
+#### Files to modify
+
+- `content/one_profile/browser/shell_browser_main_parts.cc` — change
+  `browser_context_b_.get()` to `browser_context_.get()` in the
+  `WebContents::CreateParams` constructor (one line)
+
+#### Build and run
+
+```bash
+autoninja -C out/Default one_profile
+cd /Users/ryan/dev/termsurf/ts4/box-demo && bun run server.ts &
+./out/Default/One\ Profile.app/Contents/MacOS/One\ Profile http://localhost:9407
+```
+
+#### What this tests
+
+- Whether two navigating WebContents from the **same** BrowserContext coexist
+  at 60fps in content_shell
+- Whether the Experiment 4 degradation is caused by multi-profile contention
+  or by multi-WebContents contention
+- Whether content_shell's compositor and GPU process can schedule frames for
+  two active renderers sharing one profile
+
+#### What determines success or failure
+
+- **60fps:** The problem is multi-profile, not multi-WebContents. Content Shell
+  handles two renderers within one profile. The architecture for TermSurf is
+  clear: one Content API process per profile, IOSurface compositing to the
+  Ghostty parent. Multiple WebContents within each profile share cookies and
+  sessions. This combines the ts3 pattern (process-per-profile) with ts4's
+  Content API (60fps instead of CEF's 31fps).
+- **2fps:** Content Shell cannot handle two active WebContents regardless of
+  profile. This points to a content_shell-specific limitation — missing
+  compositor scheduler configuration, GPU thread pool settings, or viz display
+  compositor setup that Chrome provides but content_shell omits. The next step
+  would be to investigate what Chrome or Electron configure differently.
+
+#### Expected result
+
+60fps. Chrome proves that multiple WebContents within one profile work fine.
+Content Shell is minimal but should inherit the same compositor scheduling.
+This is the most important experiment in the series — it determines the
+architecture of TermSurf.
