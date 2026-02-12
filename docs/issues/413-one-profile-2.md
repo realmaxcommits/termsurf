@@ -396,3 +396,24 @@ cd /Users/ryan/dev/termsurf/ts4/box-demo && bun run server.ts &
 effects. But this is the first experiment that introduces a second profile into
 the process, which is exactly what distinguishes the Two Profiles app from
 Content Shell — so a failure here would be a major finding.
+
+#### Result: PASSED
+
+60fps. Shell A renders the spinning blue square at full framerate with a second
+`ShellBrowserContext` (profile-b) created and held in memory.
+
+#### Conclusion
+
+A second `BrowserContext` with a different storage path has no effect on Shell
+A's rendering. The storage service handles two `BrowserContext` instances without
+crashing or degrading. `CreateBrowserContextServices()` for the second context
+has no observable side effects on the first. The global `SHELL_DIR_USER_DATA`
+being left pointing at profile-b after initialization does not matter — each
+context cached its path during construction.
+
+This eliminates the second `BrowserContext` as the cause of the 2fps
+degradation. Two suspects remain: the window ownership change (Step 3) and the
+second `WebContents` (Steps 4–5). The next experiment is the critical one — Step
+3 takes window ownership away from Chromium's `Shell` class and into our own
+NSWindow, which is the fundamental architectural change needed for side-by-side
+rendering.
