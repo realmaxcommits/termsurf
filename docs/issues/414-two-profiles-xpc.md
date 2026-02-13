@@ -43,6 +43,23 @@ compositing. The Content API should eliminate this ceiling entirely.
   `xpc_connection`, `xpc_dictionary`, Mach port transfer, IOSurface
   create/lookup.
 
+## Branch
+
+Create a new branch `146.0.7650.0-issue-414` in the `termsurf-chromium`
+submodule, forked from `146.0.7650.0-issue-412` (the One Profile app). This
+starts with a working Content Shell clone that renders at 60fps with a single
+profile — the baseline from Issue 412. Each experiment is a commit on top.
+
+```bash
+cd ts4/termsurf-chromium/src
+git checkout -b 146.0.7650.0-issue-414 146.0.7650.0-issue-412
+```
+
+We fork from Issue 412 (not Issue 413) because Issue 413 added multi-profile
+experiments (second `BrowserContext`, second `WebContents`, side-by-side layout)
+that we don't need here. Issue 414's experiments build new capture and XPC
+machinery on top of a clean single-profile app.
+
 ## Architecture
 
 ```
@@ -430,15 +447,15 @@ Key reference: `electron/shell/browser/osr/osr_video_consumer.{h,cc}`.
 
 #### Design
 
-Modify the One Profile app to attach a `FrameSinkVideoCapturer` to the first
+Working on the `146.0.7650.0-issue-414` branch (forked from Issue 412's One
+Profile app), modify the app to attach a `FrameSinkVideoCapturer` to the first
 `WebContents` and log every captured frame. The WebContents still renders
 normally in its window — we're just tapping the compositor output.
 
 ##### Step 1: Create a video consumer class
 
-Add a new file `shell_video_consumer.{h,cc}` in
-`content/one_profile/browser/`. It implements
-`viz::mojom::FrameSinkVideoConsumer`:
+Add a new file `shell_video_consumer.{h,cc}` in `content/one_profile/browser/`.
+It implements `viz::mojom::FrameSinkVideoConsumer`:
 
 ```cpp
 #include "components/viz/host/client_frame_sink_video_capturer.h"
@@ -483,8 +500,10 @@ In `Attach()`:
    `SetAutoThrottlingEnabled(false)`
 4. Get the `FrameSinkId` from the WebContents:
    `web_contents->GetRenderWidgetHostView()->GetRenderWidgetHost()->GetFrameSinkId()`
-5. Set target: `capturer_->ChangeTarget(viz::VideoCaptureTarget(frame_sink_id), 0)`
-6. Start: `capturer_->Start(this, viz::mojom::BufferFormatPreference::kPreferMappableSharedImage)`
+5. Set target:
+   `capturer_->ChangeTarget(viz::VideoCaptureTarget(frame_sink_id), 0)`
+6. Start:
+   `capturer_->Start(this, viz::mojom::BufferFormatPreference::kPreferMappableSharedImage)`
 
 The `kPreferMappableSharedImage` preference is what makes Chromium deliver
 IOSurfaces (GPU memory buffers) instead of shared memory bitmaps.
@@ -496,8 +515,8 @@ In `OnFrameCaptured()`:
 1. Check `data->is_gpu_memory_buffer_handle()` — if false, log a warning (means
    we got shared memory instead of an IOSurface)
 2. Extract the handle: `data->get_gpu_memory_buffer_handle()`
-3. On macOS, the handle contains an IOSurface:
-   `gmb_handle.io_surface().get()` returns an `IOSurfaceRef`
+3. On macOS, the handle contains an IOSurface: `gmb_handle.io_surface().get()`
+   returns an `IOSurfaceRef`
 4. Log the IOSurface dimensions via `IOSurfaceGetWidth()` /
    `IOSurfaceGetHeight()`
 5. Increment frame counter, log fps once per second
@@ -530,10 +549,10 @@ No changes to Chromium's own code. Everything uses public Content API +
 
 #### Expected result
 
-Log output showing 60 captured frames per second, each with an IOSurface of
-the correct dimensions (e.g., 1200×1200 physical pixels for a 600×600 logical
-view at 2x Retina). The window still displays normally — we're capturing
-alongside the regular rendering path.
+Log output showing 60 captured frames per second, each with an IOSurface of the
+correct dimensions (e.g., 1200×1200 physical pixels for a 600×600 logical view
+at 2x Retina). The window still displays normally — we're capturing alongside
+the regular rendering path.
 
 ```
 [INFO] Frame 1: 1200x1200 IOSurface (gpu_memory_buffer)
@@ -552,6 +571,6 @@ alongside the regular rendering path.
 - **< 60fps:** The `CopyOutputRequest` overhead is significant, or
   auto-throttling is still enabled. Try `SetAutoThrottlingEnabled(false)` and
   `SetMinCapturePeriod(base::TimeDelta())` (unlimited).
-- **Crash in `io_surface()`:** The `GpuMemoryBufferHandle` type on macOS
-  doesn't use IOSurface in this build configuration. Investigate the handle type
-  and platform-specific extraction.
+- **Crash in `io_surface()`:** The `GpuMemoryBufferHandle` type on macOS doesn't
+  use IOSurface in this build configuration. Investigate the handle type and
+  platform-specific extraction.
