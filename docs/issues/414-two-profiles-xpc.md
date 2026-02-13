@@ -270,24 +270,74 @@ transfer patterns, but the implementation will be native C++.
 
 ## Ideas for Experiments
 
-### Idea 1: IOSurface capture from Content API
+### Idea 1: FrameSinkVideoCapturer (Electron's primary path)
 
-**Goal:** Prove we can extract the composited output of a Content API
-`WebContents` as an IOSurface at 60fps.
+**Goal:** Capture composited frames as IOSurfaces at 60fps using Chromium's
+built-in video capture API.
 
-Modify the One Profile app to:
+Electron's off-screen rendering uses `ClientFrameSinkVideoCapturer`, which
+implements `viz::mojom::FrameSinkVideoConsumer`. This is a Chromium API designed
+for exactly this use case — capturing compositor output for headless rendering,
+screen sharing, and remote display. Chrome uses it for tab capture and WebRTC.
 
-1. Create a `WebContents` and navigate to the test page (as today)
-2. On every composited frame, capture the output as an IOSurface
-3. Log the IOSurface dimensions and frame rate
+How it works:
 
-No XPC yet — this experiment is purely about capture. The question is: can we
-get an IOSurface from the Content API compositor at 60fps?
+1. Call `CreateVideoCapturer()` on the `RenderWidgetHostView`
+2. Chromium's viz layer issues `CopyOutputRequest`s at the compositor level
+3. Frames arrive in `OnFrameCaptured()` as `GpuMemoryBufferHandle`s — which on
+   macOS are IOSurfaces
+4. A buffer pool of 10 pre-allocated GPU textures eliminates per-frame allocation
 
-Start with the CALayer backing store approach. If that doesn't work, try
-`CopyFromSurface()`.
+Advantages:
 
-### Idea 2: Single profile server with XPC frame delivery
+- **Supported API.** Designed for continuous capture, not a hook into internals.
+- **Buffer pooling.** 10-frame ring buffer, no allocation per frame.
+- **Frame rate control.** Built-in `SetMinCapturePeriod()`.
+- **Damage tracking.** Only dirty regions flagged.
+- **Cross-platform.** IOSurface on macOS, D3D11 on Windows, DMA-BUF on Linux.
+
+Tradeoff: involves a `CopyOutputRequest` (GPU-to-GPU copy), so not true
+zero-copy. But it's a GPU-side copy — fast enough for Chrome's real-time tab
+capture at 60fps.
+
+Reference: `electron/shell/browser/osr/osr_video_consumer.{h,cc}`.
+
+### Idea 2: CALayerParams intercept (Electron's macOS fallback)
+
+**Goal:** Capture composited frames as IOSurfaces at 60fps by intercepting the
+compositor's native macOS output.
+
+Chromium's macOS compositor already produces IOSurface Mach ports as part of its
+normal rendering pipeline. The `CALayerParams` structure carries either a
+`ca_context_id` (remote layer hosting) or an `io_surface_mach_port` (direct
+IOSurface transfer) from the GPU process to the browser process.
+
+Electron uses this in its macOS fallback path via
+`OffScreenHostDisplayClient::OnDisplayReceivedCALayerParams()`:
+
+```cpp
+IOSurfaceRef io_surface = IOSurfaceLookupFromMachPort(
+    ca_layer_params.io_surface_mach_port.get());
+```
+
+We would intercept at the same point — either by implementing a custom
+`HostDisplayClient` or by hooking into `DisplayCALayerTree::UpdateCALayerTree()`.
+
+Advantages:
+
+- **True zero-copy.** The IOSurface IS the compositor's actual output.
+- **No CopyOutputRequest overhead.** The IOSurface already exists.
+- **Direct Mach port.** Already in the format we need for XPC transfer.
+
+Tradeoff: macOS-only. Hooks into internal compositor code that may change across
+Chromium versions. Content_shell may use the `ca_context_id` path (remote
+layers) instead of the `io_surface_mach_port` path, requiring us to either force
+the IOSurface path or intercept earlier at `CALayerTreeCoordinator`.
+
+Reference: `electron/shell/browser/osr/osr_host_display_client_mac.mm`,
+`ui/accelerated_widget_mac/display_ca_layer_tree.{h,mm}`.
+
+### Idea 3: Single profile server with XPC frame delivery
 
 **Goal:** Prove IOSurface Mach port transfer from a Content API process to a
 separate GUI process works at 60fps.
@@ -303,7 +353,7 @@ Two components:
 This proves the full pipeline: Content API → IOSurface → Mach port → XPC → GPU
 texture → window. If this hits 60fps, the architecture is validated.
 
-### Idea 3: Two profile servers, one window
+### Idea 4: Two profile servers, one window
 
 **Goal:** Two profiles, two processes, one window, both at 60fps.
 
@@ -314,7 +364,7 @@ cef-test but with Content API instead of CEF.
 Success criteria: both panes rendering the spinning blue square at 60fps with
 different localStorage identities (proving profile isolation).
 
-### Idea 4: Stress test and benchmarking
+### Idea 5: Stress test and benchmarking
 
 **Goal:** Sustained 60fps under load, matching or exceeding cef-test's 50fps.
 
@@ -417,7 +467,7 @@ already produces.
 Modify the One Profile app to intercept frames at the
 `DisplayCALayerTree::UpdateCALayerTree()` call site and log what arrives.
 
-**Step 1: Determine which rendering path content_shell uses.**
+##### Step 1: Determine which rendering path content_shell uses
 
 Add logging to `DisplayCALayerTree::UpdateCALayerTree()` (or its equivalent in
 the One Profile app's rendering path) to check which `CALayerParams` field is
@@ -428,7 +478,7 @@ populated:
 
 This tells us which intercept strategy to use.
 
-**Step 2: Grab the IOSurface.**
+##### Step 2: Grab the IOSurface
 
 - **If IOSurface Mach port path:** Call
   `IOSurfaceLookupFromMachPort(ca_layer_params.io_surface_mach_port.get())` to
@@ -444,7 +494,7 @@ This tells us which intercept strategy to use.
   - (c) Intercept at the `CARendererLayerTree::ContentLayer` level where each
     layer holds an `io_surface_` member directly.
 
-**Step 3: Measure the rate.**
+##### Step 3: Measure the rate
 
 Add a frame counter and a periodic log (once per second) that reports:
 
