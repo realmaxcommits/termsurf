@@ -139,77 +139,6 @@ GUI → Profile server:
 4. Composite into window
 5. `mach_port_deallocate(port)` — release kernel resource
 
-## Key challenge: IOSurface output from Content API
-
-CEF provided IOSurface output directly via `on_accelerated_paint` with
-`shared_texture_enabled`. The Content API has no equivalent callback. We need to
-find a way to capture the composited output as an IOSurface.
-
-### Approaches (in order of complexity)
-
-**1. Offscreen `NSWindow` + `CALayer` IOSurface capture**
-
-Each profile server creates a real `NSWindow` (positioned off-screen or hidden).
-The Content API compositor renders normally to the window's view, which is
-backed by a `CALayer` whose backing store is an IOSurface. We access this
-IOSurface directly from the layer and create a Mach port.
-
-- Pros: No Chromium modifications. Uses the normal windowed rendering path that
-  we already know works at 60fps.
-- Cons: Requires accessing the `CALayer` backing IOSurface, which uses private
-  CoreAnimation APIs. May require the window to be on-screen for the compositor
-  to produce frames.
-- Risk: Hidden windows may not receive compositor frames (the visibility issue
-  from earlier experiments).
-
-**2. `CopyFromSurface()` to shared IOSurface**
-
-Use `WebContents::CopyFromSurface()` to asynchronously copy each composited
-frame to an IOSurface we own. This goes through Chromium's
-`viz::CopyOutputRequest` pipeline.
-
-- Pros: Public Content API. Well-documented.
-- Cons: Involves a GPU-to-GPU copy (not zero-copy). May add latency. Need to
-  call it every frame at 60Hz.
-- Risk: `CopyFromSurface()` may be designed for occasional screenshots, not
-  continuous 60fps capture. Latency may accumulate.
-
-**3. Custom `viz::OutputSurface` that writes to a shared IOSurface**
-
-Replace the compositor's output surface with a custom implementation that
-renders directly to an IOSurface we control. This is the zero-copy approach —
-the compositor writes to our IOSurface, we send the Mach port, done.
-
-- Pros: True zero-copy. Highest possible performance.
-- Cons: Deep Chromium modification. Requires understanding the viz compositor
-  pipeline. Fragile across Chromium versions.
-- Risk: Significant engineering effort. May require forking compositor code.
-
-**4. `CAContext` / `CALayerHost` cross-process layer hosting**
-
-macOS has a native mechanism for cross-process layer compositing. The profile
-server creates a `CAContext` containing the WebContents view's layer tree. The
-GUI creates a `CALayerHost` with the remote context ID. WindowServer composites
-the remote layers into the GUI's window automatically.
-
-- Pros: Zero-copy. No frame capture needed — macOS handles the compositing. This
-  is how Chromium's own GPU process works internally.
-- Cons: Uses private Apple APIs (`CAContext`, `CALayerHost`). Compositing is
-  handled by WindowServer, not us — less control.
-- Risk: Private APIs may change. Behavior with hidden windows unknown.
-
-### Recommended approach
-
-Start with **Approach 1** (off-screen window + CALayer IOSurface capture). It
-requires the least Chromium modification and builds directly on the One Profile
-app. If the hidden window doesn't receive compositor frames, keep the window
-visible but off-screen (positioned at e.g. -10000, -10000). If CALayer IOSurface
-access proves impractical, fall back to **Approach 2** (`CopyFromSurface`).
-
-**Approach 4** (CAContext/CALayerHost) is the most elegant long-term solution
-but requires investigation of the private APIs and their interaction with
-Chromium's compositor. Worth exploring in a later experiment.
-
 ## Prior art: what to reuse
 
 ### From cef-test
@@ -268,6 +197,112 @@ complexity, and matches Chromium's own codebase. The cef-test Rust code and
 termsurf-xpc crate are useful as reference for the XPC protocol and IOSurface
 transfer patterns, but the implementation will be native C++.
 
+## How Electron captures GPU textures
+
+Electron's off-screen rendering (OSR) solves the same problem we need to solve:
+capture the composited output of a `WebContents` as a GPU texture, without
+displaying it in a window. Studying Electron's approach reveals that Chromium
+already has a built-in API for this.
+
+### Two capture paths (GPU vs. software)
+
+Electron has two capture paths, selected by whether GPU acceleration is enabled:
+
+**GPU-accelerated (FrameSinkVideoCapturer):** When
+`HardwareAccelerationEnabled()` returns true (the normal case), Electron creates
+an `OffScreenVideoConsumer` backed by `ClientFrameSinkVideoCapturer`. This is
+Chromium's built-in video capture API — the same mechanism Chrome uses for tab
+capture, WebRTC screen sharing, and remote display. It issues
+`CopyOutputRequest`s at the compositor level and delivers frames as
+`GpuMemoryBufferHandle`s. On macOS, these handles are IOSurfaces.
+
+**Software rasterization (HostDisplayClient):** When GPU acceleration is
+disabled, Electron falls back to `OffScreenHostDisplayClient`. On macOS, this
+receives `OnDisplayReceivedCALayerParams()` callbacks from Chromium's
+compositor, which include `io_surface_mach_port`. This is the older, legacy
+path.
+
+The selection logic is straightforward (`osr_render_widget_host_view.cc`):
+
+```cpp
+if (content::GpuDataManager::GetInstance()->HardwareAccelerationEnabled()) {
+  video_consumer_ = std::make_unique<OffScreenVideoConsumer>(...);
+  video_consumer_->SetActive(is_painting());
+} else {
+  // Falls through to HostDisplayClient path
+}
+```
+
+Only one path is active at a time. They are never used simultaneously.
+
+### FrameSinkVideoCapturer: the GPU-accelerated path
+
+This is the path that matters for TermSurf. GPU acceleration is not optional —
+we need it for 60fps rendering.
+
+How it works:
+
+1. `CreateVideoCapturer()` on the `RenderWidgetHostView` creates a
+   `ClientFrameSinkVideoCapturer` (host side) linked to a
+   `FrameSinkVideoCapturerImpl` (renderer side)
+2. Chromium's viz layer monitors frame damage and issues `CopyOutputRequest`s
+3. Frames arrive in `OnFrameCaptured()` as `GpuMemoryBufferHandle`s
+4. On macOS, the handle contains an IOSurface pointer
+   (`OffscreenSharedTextureValue.shared_texture_handle`)
+5. A buffer pool of 10 pre-allocated GPU textures eliminates per-frame
+   allocation
+
+Key properties:
+
+- **Supported API.** Designed for continuous frame capture, not a hook into
+  compositor internals.
+- **Buffer pooling.** 10-frame ring buffer (`kFramePoolCapacity = 10`), no
+  allocation per frame.
+- **Frame rate control.** Built-in `SetMinCapturePeriod()`.
+- **Damage tracking.** Only dirty regions flagged via `content_rect`.
+- **Cross-platform.** IOSurface on macOS, D3D11 on Windows, DMA-BUF on Linux.
+
+The tradeoff is that `CopyOutputRequest` involves a GPU-to-GPU copy — not true
+zero-copy. But it's a GPU-side copy, fast enough for Chrome's real-time tab
+capture.
+
+### The `useSharedTexture` option
+
+Within the FrameSinkVideoCapturer path, a separate `useSharedTexture` preference
+controls the capture format:
+
+- `true` → GPU shared texture (IOSurface on macOS). This is what we want.
+- `false` → Shared memory bitmap (CPU-accessible pixels).
+
+This preference does NOT select between the two capture paths — it only controls
+the buffer format within the GPU-accelerated path.
+
+### Why the CALayerParams path is irrelevant
+
+The `OffScreenHostDisplayClient` / `OnDisplayReceivedCALayerParams()` path on
+macOS is only active when GPU acceleration is disabled. Since TermSurf requires
+GPU acceleration for 60fps rendering, this path is irrelevant to us. Early
+research (before studying Electron's source) considered intercepting at
+`DisplayCALayerTree::UpdateCALayerTree()` to grab
+`CALayerParams.io_surface_mach_port`, but this is the wrong approach — it's the
+software fallback, not the GPU-accelerated path.
+
+### What this means for TermSurf
+
+The profile server should use `FrameSinkVideoCapturer` to capture composited
+frames as IOSurfaces, then create Mach ports from those IOSurfaces and send them
+to the GUI via XPC. This is exactly what Electron does for its `paint` event
+with `useSharedTexture = true`, except instead of delivering the texture to
+JavaScript, we deliver the Mach port to a separate GUI process.
+
+Key reference files:
+
+- `electron/shell/browser/osr/osr_video_consumer.{h,cc}` — capture logic
+- `electron/shell/browser/osr/osr_render_widget_host_view.{h,cc}` — OSR widget
+- `electron/shell/browser/osr/osr_paint_event.h` — frame data structures
+- `electron/shell/browser/osr/osr_host_display_client_mac.mm` — legacy macOS
+  path (irrelevant but useful as reference)
+
 ## Ideas for Experiments
 
 ### Idea 1: FrameSinkVideoCapturer (Electron's primary path)
@@ -286,7 +321,8 @@ How it works:
 2. Chromium's viz layer issues `CopyOutputRequest`s at the compositor level
 3. Frames arrive in `OnFrameCaptured()` as `GpuMemoryBufferHandle`s — which on
    macOS are IOSurfaces
-4. A buffer pool of 10 pre-allocated GPU textures eliminates per-frame allocation
+4. A buffer pool of 10 pre-allocated GPU textures eliminates per-frame
+   allocation
 
 Advantages:
 
@@ -302,42 +338,7 @@ capture at 60fps.
 
 Reference: `electron/shell/browser/osr/osr_video_consumer.{h,cc}`.
 
-### Idea 2: CALayerParams intercept (Electron's macOS fallback)
-
-**Goal:** Capture composited frames as IOSurfaces at 60fps by intercepting the
-compositor's native macOS output.
-
-Chromium's macOS compositor already produces IOSurface Mach ports as part of its
-normal rendering pipeline. The `CALayerParams` structure carries either a
-`ca_context_id` (remote layer hosting) or an `io_surface_mach_port` (direct
-IOSurface transfer) from the GPU process to the browser process.
-
-Electron uses this in its macOS fallback path via
-`OffScreenHostDisplayClient::OnDisplayReceivedCALayerParams()`:
-
-```cpp
-IOSurfaceRef io_surface = IOSurfaceLookupFromMachPort(
-    ca_layer_params.io_surface_mach_port.get());
-```
-
-We would intercept at the same point — either by implementing a custom
-`HostDisplayClient` or by hooking into `DisplayCALayerTree::UpdateCALayerTree()`.
-
-Advantages:
-
-- **True zero-copy.** The IOSurface IS the compositor's actual output.
-- **No CopyOutputRequest overhead.** The IOSurface already exists.
-- **Direct Mach port.** Already in the format we need for XPC transfer.
-
-Tradeoff: macOS-only. Hooks into internal compositor code that may change across
-Chromium versions. Content_shell may use the `ca_context_id` path (remote
-layers) instead of the `io_surface_mach_port` path, requiring us to either force
-the IOSurface path or intercept earlier at `CALayerTreeCoordinator`.
-
-Reference: `electron/shell/browser/osr/osr_host_display_client_mac.mm`,
-`ui/accelerated_widget_mac/display_ca_layer_tree.{h,mm}`.
-
-### Idea 3: Single profile server with XPC frame delivery
+### Idea 2: Single profile server with XPC frame delivery
 
 **Goal:** Prove IOSurface Mach port transfer from a Content API process to a
 separate GUI process works at 60fps.
@@ -353,7 +354,7 @@ Two components:
 This proves the full pipeline: Content API → IOSurface → Mach port → XPC → GPU
 texture → window. If this hits 60fps, the architecture is validated.
 
-### Idea 4: Two profile servers, one window
+### Idea 3: Two profile servers, one window
 
 **Goal:** Two profiles, two processes, one window, both at 60fps.
 
@@ -364,7 +365,7 @@ cef-test but with Content API instead of CEF.
 Success criteria: both panes rendering the spinning blue square at 60fps with
 different localStorage identities (proving profile isolation).
 
-### Idea 5: Stress test and benchmarking
+### Idea 4: Stress test and benchmarking
 
 **Goal:** Sustained 60fps under load, matching or exceeding cef-test's 50fps.
 
