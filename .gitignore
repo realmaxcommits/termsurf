@@ -8,6 +8,9 @@
 .direnv/
 .envrc.local
 
+# Debug logs
+logs/
+
 # Build outputs (root level for future WezTerm)
 /target/
 build/
