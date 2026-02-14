@@ -474,3 +474,100 @@ No code changes needed in the test apps themselves.
 Stage all changes (`.gitmodules`, `.gitignore`, `ts4/.gitignore`, `CLAUDE.md`,
 `.claude/skills/build-chromium/SKILL.md`, `.claude/skills/git-poet/SKILL.md`,
 `docs/chromium.md`, removal of submodule index entry) and commit.
+
+### Change 2: Move vendored/analysis repos into `vendor/`
+
+#### Step 1: Create `vendor/` directory
+
+```bash
+mkdir -p vendor
+```
+
+#### Step 2: Move gitignored directories
+
+These directories are all gitignored (their own `.git` repos, not tracked by the
+main repo). Moving them is a filesystem operation only — no git history impact:
+
+```bash
+mv wezterm vendor/wezterm
+mv cef vendor/cef
+mv alacritty vendor/alacritty
+mv electron vendor/electron
+mv chromium vendor/chromium
+```
+
+If any of these directories don't exist on a given machine, skip them.
+
+#### Step 3: Move `cef-rs/`
+
+`cef-rs/` is the only vendored directory that is **committed** (tracked by git).
+It must be moved with `git mv` to preserve history:
+
+```bash
+git mv cef-rs vendor/cef-rs
+```
+
+#### Step 4: Update ts3 paths
+
+ts3 has 13+ references to `../../cef-rs/` in Cargo.toml files and build scripts.
+After moving to `vendor/cef-rs/`, the relative path from `ts3/` becomes
+`../vendor/cef-rs/`. Files to update:
+
+| File                              | Old path           | New path                  |
+| --------------------------------- | ------------------ | ------------------------- |
+| `ts3/termsurf-web/Cargo.toml`     | `../../cef-rs/cef` | `../../vendor/cef-rs/cef` |
+| `ts3/termsurf-profile/Cargo.toml` | `../../cef-rs/cef` | `../../vendor/cef-rs/cef` |
+| `ts3/cef-test-profile/Cargo.toml` | `../../cef-rs/cef` | `../../vendor/cef-rs/cef` |
+| `ts3/cef-test-gui/Cargo.toml`     | `../../cef-rs/cef` | `../../vendor/cef-rs/cef` |
+| `ts3/wezterm-gui/Cargo.toml`      | `../../cef-rs/cef` | `../../vendor/cef-rs/cef` |
+| `ts3/scripts/build-debug.sh`      | `cef-rs`           | `vendor/cef-rs`           |
+| `ts3/scripts/build-release.sh`    | `cef-rs`           | `vendor/cef-rs`           |
+| `ts3/cef-test-scripts/build.sh`   | `cef-rs`           | `vendor/cef-rs`           |
+| `ts3/cef-test-scripts/build-profile.sh` | `cef-rs`     | `vendor/cef-rs`           |
+
+#### Step 5: Update `.gitignore`
+
+Replace the analysis repos section:
+
+```
+# Analysis repos (not part of TermSurf)
+/wezterm/
+/electron/
+/alacritty/
+/cef/
+/chromium/
+```
+
+With:
+
+```
+# Vendored analysis repos (not committed)
+vendor/wezterm/
+vendor/electron/
+vendor/alacritty/
+vendor/cef/
+vendor/chromium/
+```
+
+Also update the cef-rs build output line:
+
+```
+# Old
+cef-rs/target/
+
+# New
+vendor/cef-rs/target/
+```
+
+#### Step 6: Update `CLAUDE.md`
+
+Update all references to `cef-rs/` to `vendor/cef-rs/`:
+
+- Directory structure listing (`cef-rs/` → `vendor/cef-rs/`)
+- Build commands (`cd cef-rs` → `cd vendor/cef-rs`)
+- Key files section (all `cef-rs/` paths)
+
+#### Step 7: Commit
+
+Stage all changes (`vendor/cef-rs/` move, ts3 path updates, `.gitignore`,
+`CLAUDE.md`) and commit.
