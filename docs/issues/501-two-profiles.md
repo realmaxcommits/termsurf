@@ -425,34 +425,3 @@ autoninja -C out/Default chromium_profile_server
 
 Test with the existing ts4/two-profiles-swift receiver to verify frames arrive
 at 60fps. Verify no Dock icon appears.
-
-### Experiment 2: Build Swift compositor
-
-#### Hypothesis
-
-Porting the ts4/two-profiles-swift receiver into ts5/two-profiles with updated
-names and paths will produce an identical working compositor. No new unknowns.
-
-#### Steps
-
-##### Step 1: Create project structure
-
-- `Package.swift` — macOS 14+, target `TwoProfiles`
-- `Sources/TwoProfiles/main.swift` — Port from ts4 with updated XPC service name
-  (`com.termsurf.two-profiles`)
-- `Sources/TwoProfiles/Shaders.metal` — Copy from ts4
-- `Makefile` — Compile shaders + `swift build`
-- `com.termsurf.two-profiles.plist` — Launchd agent
-
-##### Step 2: Build and verify
-
-```bash
-cd ts5/two-profiles
-make
-```
-
-##### Step 3: End-to-end test
-
-Load the launchd plist, start the test page server, launch two
-chromium-profile-server instances (from Experiment 1), and verify two panes at
-60fps with different localStorage identities.
