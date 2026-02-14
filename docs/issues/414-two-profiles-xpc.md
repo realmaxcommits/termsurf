@@ -1448,3 +1448,81 @@ without "XPC connection interrupted".
   mismatch. Try `MTLPixelFormatBGRA8Unorm_sRGB` instead of
   `MTLPixelFormatBGRA8Unorm` (cef-test had this exact sRGB double-correction
   bug).
+
+#### Result: PASSED
+
+The spinning blue square renders at 60fps in the receiver window. No sender
+window is visible. The full pipeline works: hidden Chromium process → IOSurface
+capture → Mach port → XPC → IOSurface reconstruction → Metal texture → screen.
+
+Receiver log:
+
+```
+[Receiver] Listening on com.termsurf.two-profiles...
+[Receiver] Profile server connected
+[Receiver] Window and Metal pipeline ready
+[Receiver] 72 frames in 1.00s (71.9 fps) | IOSurface 640x360
+[Receiver] 60 frames in 1.00s (60.0 fps) | IOSurface 640x360
+[Receiver] 61 frames in 1.02s (60.0 fps) | IOSurface 640x360
+[Receiver] 61 frames in 1.02s (60.0 fps) | IOSurface 640x360
+[Receiver] 60 frames in 1.00s (60.0 fps) | IOSurface 640x360
+[Receiver] 60 frames in 1.00s (60.0 fps) | IOSurface 640x360
+[Receiver] 61 frames in 1.02s (60.0 fps) | IOSurface 640x360
+[Receiver] 60 frames in 1.00s (60.0 fps) | IOSurface 640x360
+```
+
+Profile server log (hidden, no window):
+
+```
+[ShellVideoConsumer] Connected to XPC service: com.termsurf.two-profiles
+[ShellVideoConsumer] Attached to FrameSinkId FrameSinkId(5, 3), starting capture
+[ShellVideoConsumer] 61 frames in 1.00457s (60.7227 fps) | IOSurface 640x360
+[ShellVideoConsumer] 60 frames in 1.00015s (59.9909 fps) | IOSurface 640x360
+[ShellVideoConsumer] 61 frames in 1.01622s (60.0265 fps) | IOSurface 640x360
+[ShellVideoConsumer] 60 frames in 1.00049s (59.9709 fps) | IOSurface 640x360
+[ShellVideoConsumer] 61 frames in 1.01692s (59.9852 fps) | IOSurface 640x360
+```
+
+Key observations:
+
+- **60fps sustained in both processes.** Receiver and sender both report 60fps
+  across 60+ seconds with no drops.
+- **No "Connection closed".** The XPC connection stays alive for the entire run.
+  The static globals (`g_listener`, `g_peer`) prevent ARC from releasing the
+  connections.
+- **No "XPC connection interrupted" at startup.** The one "interrupted" message
+  at line 27 of the sender log occurred ~23 seconds in (during a plist reload,
+  not at startup) and had no effect on frame delivery — frames continued at
+  60fps before and after.
+- **Metal rendering works.** The IOSurface → MTLTexture →
+  `newTextureWithDescriptor:iosurface:plane:` path renders correctly. No color
+  issues — `MTLPixelFormatBGRA8Unorm` matches Chromium's IOSurface format.
+- **Reconnection works.** The receiver log shows two successful sessions (the
+  plist was reloaded mid-test). Both sessions established and sustained 60fps.
+- **XPC listener in `main()` works.** Starting the listener before `[NSApp run]`
+  means it's ready instantly when launchd delivers the connection. Frames queue
+  up in `g_pending_surface` until the Metal pipeline starts.
+- **Hidden sender confirmed again.** `[window orderOut:nil]` produces no visible
+  window and does not throttle capture. Consistent with Experiment 3's finding.
+
+#### Conclusion
+
+Experiment 4 fixes Experiment 3's failure and completes the proof that a hidden
+Chromium profile server can render to a separate Metal window at 60fps via XPC.
+
+The root cause of Experiment 3's failure was confirmed: ARC released the XPC
+listener and peer connections when `start_xpc_listener()` returned. The fix was
+two lines — store both in static globals. Moving the XPC listener to `main()`
+(before `[NSApp run]`) eliminated the initialization race as well.
+
+The full pipeline is now proven end-to-end:
+
+1. **Capture** (Experiment 1): `FrameSinkVideoCapturer` → IOSurface at 60fps
+2. **Transfer** (Experiment 2): IOSurface → Mach port → XPC → IOSurface at 60fps
+3. **Hidden sender** (Experiment 3 partial): `orderOut:nil` → 60fps, no
+   throttling
+4. **Visible receiver** (Experiment 4): IOSurface → MTLTexture → Metal render →
+   screen at 60fps
+
+What remains is running two profile servers simultaneously into one window with
+side-by-side compositing — the target architecture.
