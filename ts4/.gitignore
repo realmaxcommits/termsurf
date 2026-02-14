@@ -1,7 +1,1 @@
 target/
-termsurf-chromium/.cipd/
-termsurf-chromium/.gclient_entries
-termsurf-chromium/.gclient_previous_sync_commits
-termsurf-chromium/.gcs_entries
-termsurf-chromium/_bad_scm/
-termsurf-chromium/src/out/

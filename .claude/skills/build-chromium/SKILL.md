@@ -11,11 +11,11 @@ Build the Chromium fork for TermSurf. Everything stays inside the repo.
 
 | What | Path |
 |------|------|
-| depot_tools | `ts4/termsurf-chromium/depot_tools` |
-| Source root | `ts4/termsurf-chromium/src` |
-| Build output | `ts4/termsurf-chromium/src/out/Default/` |
-| Built app | `ts4/termsurf-chromium/src/out/Default/One Profile.app/` |
-| GN args | `ts4/termsurf-chromium/src/out/Default/args.gn` |
+| depot_tools | `termsurf-chromium/depot_tools` |
+| Source root | `termsurf-chromium/src` |
+| Build output | `termsurf-chromium/src/out/Default/` |
+| Built app | `termsurf-chromium/src/out/Default/One Profile.app/` |
+| GN args | `termsurf-chromium/src/out/Default/args.gn` |
 
 All paths are relative to `~/dev/termsurf`.
 
@@ -25,17 +25,17 @@ depot_tools must be on PATH before running any build tool (`autoninja`, `gn`,
 `gclient`, etc.):
 
 ```bash
-export PATH="$HOME/dev/termsurf/ts4/termsurf-chromium/depot_tools:$PATH"
+export PATH="$HOME/dev/termsurf/termsurf-chromium/depot_tools:$PATH"
 ```
 
 ## Build Commands
 
 ```bash
 # Navigate to source root
-cd ~/dev/termsurf/ts4/termsurf-chromium/src
+cd ~/dev/termsurf/termsurf-chromium/src
 
 # Add depot_tools to PATH
-export PATH="$HOME/dev/termsurf/ts4/termsurf-chromium/depot_tools:$PATH"
+export PATH="$HOME/dev/termsurf/termsurf-chromium/depot_tools:$PATH"
 
 # Generate build files (only needed once, or after changing args.gn)
 gn gen out/Default
@@ -72,9 +72,16 @@ All binaries, `.app` bundles, and build artifacts stay inside `~/dev/termsurf`.
 Nothing gets installed to `/usr/local`, `/usr/bin`, `~/Library`, or anywhere
 outside the repo without explicit user approval.
 
-## Submodule Branches
+## Branches
 
-The Chromium fork at `ts4/termsurf-chromium/src` uses branches named
+The Chromium fork at `termsurf-chromium/src` uses branches named
 `{version}-termsurf` or `{version}-issue-{N}` (e.g.,
 `146.0.7650.0-issue-414`). These are built as commits on top of the vanilla
 Chromium version tag.
+
+## Branch and Version Tracking
+
+`docs/chromium.md` tracks the current branch, commit, and a complete list of all
+branches with links to their issue docs. Any time this skill switches branches,
+updates the Chromium version, or creates a new branch, it must also update
+`docs/chromium.md` accordingly.

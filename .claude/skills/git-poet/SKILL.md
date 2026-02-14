@@ -74,16 +74,16 @@ Now npm audit says: "Well done!"
 4. **Compose the poem**: Pick a style that fits the change, make it fun
 5. **Stage and commit** using the poetic message
 
-## Submodule Workflow (Chromium Fork)
+## Chromium Fork Workflow
 
-The Chromium fork at `ts4/termsurf-chromium/src/` doesn't use `main`. Branches
-are named `{version}-termsurf` (e.g., `146.0.7650.0-termsurf`), built as a
-series of commits on top of the vanilla Chromium version tag. The branch name
-encodes the upstream version.
+The Chromium fork at `termsurf-chromium/src/` is a separate git repo (gitignored
+from the main TermSurf repo). It doesn't use `main`. Branches are named
+`{version}-termsurf` (e.g., `146.0.7650.0-termsurf`), built as a series of
+commits on top of the vanilla Chromium version tag. The branch name encodes the
+upstream version.
 
-**Git-poet applies to all TermSurf commits — both inside the submodule and in
-the main repo.** Our commits on the `{version}-termsurf` branch get poetic
-messages. The main repo commit that pins the submodule also gets one.
+**Git-poet applies to all TermSurf commits — both inside the Chromium fork and
+in the main repo.**
 
 **The only exception is `git am` patches.** Patches applied with `git am` (e.g.,
 from Electron) keep their original commit messages. We don't rewrite upstream
@@ -91,12 +91,14 @@ authorship.
 
 **Typical flow:**
 
-1. Work inside the submodule on the `{version}-termsurf` branch
+1. Work inside `termsurf-chromium/src/` on the `{version}-termsurf` branch
 2. Commit with git-poet
 3. Return to the main repo
-4. Stage the submodule pointer (`git add ts4/termsurf-chromium/src`) and any
-   related files (docs, etc.)
+4. Update `docs/chromium.md` if the branch or version changed
 5. Commit with git-poet — this records what TermSurf did at the project level
+
+**When creating a new Chromium branch**, add it to the Branches table in
+`docs/chromium.md` with a link to the corresponding issue doc.
 
 ## When NOT to use GitPoet
 

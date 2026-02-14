@@ -104,7 +104,7 @@ Chromium's GN/Ninja build system.
 
 1. **Test page** — Bun app serving a blue spinning square with localStorage
    identity and FPS counter (`ts4/box-demo/public/index.html`, `ts4/box-demo/server.ts`)
-2. **Merge Chromium** — Fork Chromium into `ts4/termsurf-chromium/` following
+2. **Merge Chromium** — Fork Chromium into `termsurf-chromium/` following
    the merge-upstream pattern (depot_tools fetch, move to subdirectory, merge
    unrelated histories)
 3. **Build Chromium** — Configure GN, build content_shell with
@@ -121,9 +121,11 @@ higher. No custom XPC/IPC protocol.
 
 - `ts4/box-demo/public/index.html` — Test page (blue spinning square, localStorage, FPS)
 - `ts4/box-demo/server.ts` — Bun HTTP server on port 9407
-- `ts4/termsurf-chromium/` — Chromium source tree (fork)
-  - `content/shell/` — content_shell (the embedder we modify)
-  - `out/Default/` — Build output (gitignored)
+- `termsurf-chromium/` — Chromium build workspace (gitignored, top level)
+  - `src/` — Chromium source tree (git repo)
+  - `src/content/shell/` — content_shell (the embedder we modify)
+  - `src/out/Default/` — Build output
+  - `depot_tools/` — Chromium build tools
 
 ### Build Commands
 
@@ -131,8 +133,8 @@ higher. No custom XPC/IPC protocol.
 # Test page server
 cd ts4/box-demo && bun run server.ts
 
-# Chromium (depot_tools lives at ts4/termsurf-chromium/depot_tools)
-cd ts4/termsurf-chromium/src
+# Chromium (depot_tools lives at termsurf-chromium/depot_tools)
+cd termsurf-chromium/src
 export PATH="$(cd ../depot_tools && pwd):$PATH"
 gn gen out/Default --args='is_debug=false symbol_level=0 enable_nacl=false is_component_build=true'
 autoninja -C out/Default content_shell
