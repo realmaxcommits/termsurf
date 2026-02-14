@@ -394,64 +394,33 @@ work beyond what the plan specified:
 Additionally changed `within Ghostty` → `within TermSurf` in all permission
 dialog strings in `project.pbxproj` (user-facing but not in the original plan).
 
-### Experiment 2: Fix the Icon
+### Experiment 2: Revert Icon Changes
 
 #### Hypothesis
 
-Two things are preventing the icon from changing:
-
-1. **Icon Composer overrides the asset catalog.** Upstream Ghostty uses a newer
-   Xcode icon format (`images/Ghostty.icon/`). The build setting
-   `ASSETCATALOG_COMPILER_APPICON_NAME = Ghostty` points to this `.icon` file,
-   not to a traditional `AppIcon.appiconset`. Our copied `AppIcon.appiconset` is
-   being ignored entirely.
-
-2. **Debug builds override the icon at runtime.** In `AppDelegate.swift:1001`,
-   debug builds explicitly set:
-   ```swift
-   NSApplication.shared.applicationIconImage = NSImage(named: "BlueprintImage")
-   ```
-   This forces the Ghostty blueprint icon in the Dock regardless of the asset
-   catalog. ts1 changed this to `"TermSurfDebugIcon"`.
-
-Fixing both will make the TermSurf icon appear in debug builds.
+The icon changes from experiment 1 didn't take effect because upstream Ghostty
+uses Icon Composer (`.icon` format), not `AppIcon.appiconset`. Rather than fight
+the icon system now, revert the icon-related additions from experiment 1 and
+keep the Ghostty icon until a proper icon replacement is tackled separately.
 
 #### Steps
 
-##### Step 1: Change `ASSETCATALOG_COMPILER_APPICON_NAME`
+##### Step 1: Remove copied icon assets
 
-In `ts5/macos/Ghostty.xcodeproj/project.pbxproj`, replace all instances of:
+Delete the icon files that were copied from ts1 in experiment 1:
 
-```
-ASSETCATALOG_COMPILER_APPICON_NAME = Ghostty;
-```
-
-with:
-
-```
-ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+```bash
+rm -rf ts5/macos/Assets.xcassets/AppIcon.appiconset
+rm -rf ts5/macos/Assets.xcassets/AppIconImage.imageset
+rm -rf ts5/macos/Assets.xcassets/TermSurfDebugIcon.imageset
+rm -rf ts5/macos/icon-source
 ```
 
-##### Step 2: Change debug icon override
-
-In `ts5/macos/Sources/App/macOS/AppDelegate.swift`, change:
-
-```swift
-NSApplication.shared.applicationIconImage = NSImage(named: "BlueprintImage")
-```
-
-to:
-
-```swift
-NSApplication.shared.applicationIconImage = NSImage(named: "TermSurfDebugIcon")
-```
-
-##### Step 3: Build and verify
+##### Step 2: Build and verify
 
 ```bash
 cd ts5 && zig build
-open ts5/zig-out/TermSurf.app
 ```
 
-Verify the app icon in the Dock is the TermSurf debug icon, not the Ghostty
-ghost or blueprint.
+Verify the app still builds cleanly. The icon will remain the upstream Ghostty
+icon for now.
