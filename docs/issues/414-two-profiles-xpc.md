@@ -1284,3 +1284,167 @@ timing overlap.
    from a dispatch source (e.g., `dispatch_source_create` with a timer) instead
    of CVDisplayLink + NSApplication. This matches the Experiment 2 receiver's
    architecture and avoids the NSApplication initialization race entirely.
+
+### Experiment 4: Fix receiver XPC retention
+
+#### Hypothesis
+
+Experiment 3 failed because ARC released the XPC listener and peer connections
+when their local variables went out of scope. Storing them as static globals and
+restructuring initialization order will fix the blank window.
+
+#### Background
+
+Comparing the working Experiment 2 receiver with the failing Experiment 3
+receiver reveals the exact root cause:
+
+**Experiment 2 (works):** Plain Objective-C (`main.m`). The `xpc_connection_t
+listener` is a local variable in `main()`. After setup, `main()` calls
+`dispatch_main()`, which never returns. The local variable lives forever on the
+stack. ARC never releases it. The listener stays alive, and all peer connections
+delivered through it stay alive.
+
+**Experiment 3 (fails):** Objective-C++ (`main.mm`, `-fobjc-arc`). The
+`xpc_connection_t listener` is a local variable in `start_xpc_listener()`. This
+function returns immediately after `xpc_connection_resume()`. ARC releases the
+listener when the local goes out of scope. The listener dies, which invalidates
+all peer connections — including the one that just connected. This is why the log
+shows "Profile server connected" → "Connection closed" in rapid succession.
+
+The peer connection has the same problem. In the listener's event handler block,
+the `peer` parameter is used (cast, configured, resumed) but never stored. The
+block captures it, but the block itself is ephemeral — it fires once per incoming
+connection and then the captured reference goes away.
+
+The fix is mechanical: store the listener and peer connection(s) as `static`
+globals so ARC cannot release them.
+
+#### Design
+
+Two changes to the Experiment 3 receiver (`ts4/two-profiles-receiver/main.mm`):
+
+##### Fix 1: Store the listener and peer as statics
+
+Add static globals for the XPC objects:
+
+```cpp
+static xpc_connection_t g_listener = nil;
+static xpc_connection_t g_peer = nil;  // single profile for now
+```
+
+In `start_xpc_listener()`, assign to `g_listener` instead of a local:
+
+```cpp
+g_listener = xpc_connection_create_mach_service(
+    "com.termsurf.two-profiles", queue,
+    XPC_CONNECTION_MACH_SERVICE_LISTENER);
+```
+
+In the listener's event handler, store the peer:
+
+```cpp
+xpc_connection_set_event_handler(g_listener, ^(xpc_object_t peer) {
+    if (xpc_get_type(peer) == XPC_TYPE_CONNECTION) {
+        g_peer = (xpc_connection_t)peer;  // ARC retains via static
+        xpc_connection_set_event_handler(g_peer, ^(xpc_object_t event) {
+            // ... same message handling as before ...
+        });
+        xpc_connection_resume(g_peer);
+    }
+});
+```
+
+This is the minimum change. The listener persists because `g_listener` holds a
+strong reference. The peer persists because `g_peer` holds a strong reference.
+ARC manages the retain/release automatically — we just need the globals to exist.
+
+##### Fix 2: Start XPC listener before `[NSApp run]`
+
+Move the `start_xpc_listener()` call from `applicationDidFinishLaunching:` to
+`main()`, before `[app run]`:
+
+```cpp
+int main(int argc, const char *argv[]) {
+    @autoreleasepool {
+        start_xpc_listener();  // Ready for connections immediately
+        NSApplication *app = [NSApplication sharedApplication];
+        // ... rest of setup ...
+        [app run];
+    }
+}
+```
+
+The XPC listener runs on its own serial dispatch queue — it doesn't need
+NSApplication. Starting it in `main()` means the listener is ready the instant
+launchd launches the process. The Metal window, CVDisplayLink, and everything
+else can initialize later in `applicationDidFinishLaunching:`. Frames will queue
+up in the mutex-protected `g_pending_surface` until the render loop starts.
+
+This also eliminates the timing issue from Experiment 3 where "Connection closed"
+fired before "Window and Metal pipeline ready". The connection can now be
+established and start receiving frames while Metal initializes on the main
+thread.
+
+#### What we're modifying
+
+- `ts4/two-profiles-receiver/main.mm` — Add static globals for XPC connections,
+  move `start_xpc_listener()` to `main()`. No other changes.
+
+No changes to the profile server, shaders, Makefile, or plist. The sender side
+worked perfectly in Experiment 3.
+
+#### Run and verify
+
+Same procedure as Experiment 3:
+
+1. `cd ts4/box-demo && bun run server.ts`
+2. Reload the launchd plist (kill any stale receiver):
+   ```bash
+   launchctl unload ~/dev/termsurf/ts4/two-profiles-receiver/com.termsurf.two-profiles.plist
+   cd ~/dev/termsurf/ts4/two-profiles-receiver && make
+   launchctl load ~/dev/termsurf/ts4/two-profiles-receiver/com.termsurf.two-profiles.plist
+   ```
+3. Start the hidden profile server:
+   ```bash
+   cd ~/dev/termsurf/ts4/termsurf-chromium/src
+   out/Default/One\ Profile.app/Contents/MacOS/One\ Profile \
+     --hidden --xpc-service=com.termsurf.two-profiles \
+     http://localhost:9407 2>&1
+   ```
+4. Verify:
+   - Receiver window shows the spinning blue square
+   - No profile server window visible
+   - `tail -f ~/dev/termsurf/logs/two-profiles-receiver.log` shows 60fps
+   - Profile server logs show 60fps capture and no "XPC connection interrupted"
+
+#### Expected result
+
+The receiver window shows the spinning blue square rendered from IOSurfaces
+received via XPC. Both processes sustain 60fps. The receiver log shows:
+
+```
+[Receiver] Listening on com.termsurf.two-profiles...
+[Receiver] Profile server connected
+[Receiver] 60 frames in 1.00s (60.0 fps) | IOSurface 640x360
+[Receiver] 61 frames in 1.02s (60.0 fps) | IOSurface 640x360
+...
+```
+
+No "Connection closed" message. The profile server log shows capture and send
+without "XPC connection interrupted".
+
+#### What a failure would mean
+
+- **Same "Connection closed" immediately:** The retention fix didn't help. The
+  issue might be deeper — e.g., launchd delivers the connection before
+  `xpc_connection_resume()` on the listener, and the connection is rejected.
+  Try adding a retry in the profile server: if the connection is interrupted,
+  wait 500ms and reconnect.
+- **Receiver gets frames but window is black:** The XPC fix worked but Metal
+  rendering has a bug. Check that `g_pending_surface` is being set (add a log
+  in `handle_message`), that `render_frame()` is being called (add a log in the
+  CVDisplayLink callback), and that the texture format matches.
+- **Receiver gets frames but image is garbled/wrong colors:** Pixel format
+  mismatch. Try `MTLPixelFormatBGRA8Unorm_sRGB` instead of
+  `MTLPixelFormatBGRA8Unorm` (cef-test had this exact sRGB double-correction
+  bug).
