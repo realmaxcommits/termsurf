@@ -506,6 +506,59 @@ out/Default/One\ Profile.app/Contents/MacOS/One\ Profile \
   file would be needed (which would violate the "pure Swift" goal — worth
   knowing early).
 
+#### Result: PASSED
+
+All five Swift-specific unknowns resolved. The Swift receiver renders a single
+pane at 60fps with pixel-perfect Retina quality, using `CADisplayLink` and the
+C XPC API.
+
+**Logs (excerpt):**
+
+```
+[Receiver] Listening on com.termsurf.two-profiles-swift...
+[Receiver] Profile server connected
+[Receiver] Loaded shaders from .build/debug/shaders.metallib
+[Receiver] Window and Metal pipeline ready
+[Receiver] 75 frames (74.0 fps) | IOSurface 1600x1200
+[Receiver] 60 frames (60.0 fps) | IOSurface 1600x1200
+[Receiver] 61 frames (60.0 fps) | IOSurface 1600x1200
+[Receiver] 60 frames (59.4 fps) | IOSurface 1600x1200
+...sustained 60fps for 75+ seconds...
+```
+
+**Findings:**
+
+1. **CFRetain/CFRelease unavailable in Swift.** Swift manages `IOSurfaceRef` via
+   ARC automatically. No manual retain/release needed — just assign to variables
+   and let ARC handle lifetimes.
+
+2. **Pixel format naming.** The Swift enum name is `.bgra8Unorm_srgb` (lowercase
+   `srgb`), not `.bgra8Unorm_sRGB` as in Objective-C.
+
+3. **Texture usage.** `MTLTextureUsage.shaderRead` requires the explicit type
+   prefix — Swift cannot infer the type from `.shaderRead` alone in this context.
+
+4. **SPM does not compile `.metal` files.** SPM warns about unhandled `.metal`
+   files and does not compile them. Fix: exclude from the target in
+   `Package.swift`, compile manually with `xcrun metal` / `xcrun metallib`, and
+   load via `device.makeLibrary(URL:)` from an executable-relative path.
+
+5. **XPC C API bridges cleanly.** `xpc_connection_create_mach_service()`,
+   `xpc_get_type()`, `xpc_dictionary_copy_mach_send()`, and the
+   `XPC_TYPE_CONNECTION` / `XPC_TYPE_DICTIONARY` / `XPC_TYPE_ERROR` constants all
+   work without issues. `XPC_CONNECTION_MACH_SERVICE_LISTENER` accepts
+   `UInt64()` cast.
+
+6. **CADisplayLink works at 60fps.** Created via
+   `window.screen!.displayLink(target:selector:)`, added to `.main` run loop
+   with `.common` mode. Fires on the main thread, simplifying Metal state access.
+
+7. **`mach_task_self_` works.** The global variable replaces the C macro
+   `mach_task_self()` as expected.
+
+8. **IOSurfaceLookupFromMachPort bridges automatically.** Returns `IOSurfaceRef?`
+   (ARC-managed), no C shim needed. Pure Swift throughout.
+
 ## What this unlocks
 
 A working Swift receiver proves that every API in the pipeline (XPC, IOSurface,
