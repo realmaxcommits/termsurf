@@ -896,3 +896,25 @@ Key observations:
 This proves the full pipeline: Content API → FrameSinkVideoCapturer → IOSurface
 → Mach port → XPC → IOSurface reconstruction in a separate process, all at
 60fps with zero frame drops.
+
+#### Conclusion
+
+Experiments 1 and 2 together prove the two hardest unknowns in the architecture:
+
+1. **Experiment 1** proved that Chromium's `FrameSinkVideoCapturer` delivers
+   composited frames as IOSurfaces at 60fps — solving the capture problem.
+2. **Experiment 2** proved that those IOSurfaces cross process boundaries via
+   XPC Mach port transfer at 60fps with no degradation — solving the delivery
+   problem.
+
+What remains is integration work, not research:
+
+- **Experiment 3** (Idea 3): Run two profile server processes simultaneously,
+  each with its own `BrowserContext`, both sending frames to a single GUI that
+  composites them side by side in one window. This is the target architecture.
+- **Experiment 4** (Idea 4): Stress test and benchmark the two-profile setup
+  against cef-test's results (50fps, 80.8% at 60fps).
+
+There are no more architectural risks. The Content API captures at 60fps, the
+IOSurfaces support Mach port creation, and XPC delivers them to another process
+without measurable overhead. Every component in the pipeline is proven.
