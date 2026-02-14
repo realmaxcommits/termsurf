@@ -468,17 +468,17 @@ ts3 has 13+ references to `../../cef-rs/` in Cargo.toml files and build scripts.
 After moving to `vendor/cef-rs/`, the relative path from `ts3/` becomes
 `../vendor/cef-rs/`. Files to update:
 
-| File                              | Old path           | New path                  |
-| --------------------------------- | ------------------ | ------------------------- |
-| `ts3/termsurf-web/Cargo.toml`     | `../../cef-rs/cef` | `../../vendor/cef-rs/cef` |
-| `ts3/termsurf-profile/Cargo.toml` | `../../cef-rs/cef` | `../../vendor/cef-rs/cef` |
-| `ts3/cef-test-profile/Cargo.toml` | `../../cef-rs/cef` | `../../vendor/cef-rs/cef` |
-| `ts3/cef-test-gui/Cargo.toml`     | `../../cef-rs/cef` | `../../vendor/cef-rs/cef` |
-| `ts3/wezterm-gui/Cargo.toml`      | `../../cef-rs/cef` | `../../vendor/cef-rs/cef` |
-| `ts3/scripts/build-debug.sh`      | `cef-rs`           | `vendor/cef-rs`           |
-| `ts3/scripts/build-release.sh`    | `cef-rs`           | `vendor/cef-rs`           |
-| `ts3/cef-test-scripts/build.sh`   | `cef-rs`           | `vendor/cef-rs`           |
-| `ts3/cef-test-scripts/build-profile.sh` | `cef-rs`     | `vendor/cef-rs`           |
+| File                                    | Old path           | New path                  |
+| --------------------------------------- | ------------------ | ------------------------- |
+| `ts3/termsurf-web/Cargo.toml`           | `../../cef-rs/cef` | `../../vendor/cef-rs/cef` |
+| `ts3/termsurf-profile/Cargo.toml`       | `../../cef-rs/cef` | `../../vendor/cef-rs/cef` |
+| `ts3/cef-test-profile/Cargo.toml`       | `../../cef-rs/cef` | `../../vendor/cef-rs/cef` |
+| `ts3/cef-test-gui/Cargo.toml`           | `../../cef-rs/cef` | `../../vendor/cef-rs/cef` |
+| `ts3/wezterm-gui/Cargo.toml`            | `../../cef-rs/cef` | `../../vendor/cef-rs/cef` |
+| `ts3/scripts/build-debug.sh`            | `cef-rs`           | `vendor/cef-rs`           |
+| `ts3/scripts/build-release.sh`          | `cef-rs`           | `vendor/cef-rs`           |
+| `ts3/cef-test-scripts/build.sh`         | `cef-rs`           | `vendor/cef-rs`           |
+| `ts3/cef-test-scripts/build-profile.sh` | `cef-rs`           | `vendor/cef-rs`           |
 
 #### Step 5: Update `.gitignore`
 
@@ -529,11 +529,10 @@ Stage all changes (`vendor/cef-rs/` move, ts3 path updates, `.gitignore`,
 
 ### Change 3: Merge Ghostty into `ts5/`
 
-Ghostty is already tracked via the `upstream` remote
-(`https://github.com/ghostty-org/ghostty.git`). ts1 was imported using
-`git merge -X subtree=ts1 upstream/main`. We use the same subtree merge approach
-for ts5 — the initial import uses `git merge -s ours` + `git read-tree` to
-establish the merge base, and future updates use `git merge -X subtree=ts5`.
+This repo was originally forked from Ghostty — Ghostty's full commit history is
+already part of our history. The files were subsequently moved into `ts1/`. We
+use the same subtree merge strategy to bring the latest upstream Ghostty into
+`ts5/`.
 
 **Why not copy ts1?** ts5 starts from a clean upstream Ghostty. The ts1
 modifications (WKWebView browser panes, `web` CLI command) are specific to ts1's
@@ -541,45 +540,50 @@ approach. ts5 will get different modifications (in-process Chromium via Content
 API). Starting clean avoids carrying ts1-specific code that would immediately be
 deleted.
 
+**How the subtree merge works.** Since our repo shares history with Ghostty, git
+can find the common ancestor (the Ghostty commit where we forked). From that
+ancestor, our side moved files to `ts1/` and upstream kept modifying files at
+`/`. The `-X subtree=ts5` option tells git to map upstream's `/` to our `ts5/`.
+Since `ts5/` doesn't exist on our side, all upstream files are clean additions —
+no conflicts.
+
 **Submodules.** Ghostty has vendor submodules (glslang, SPIRV-Cross, fontconfig,
 etc.). The subtree merge places Ghostty's `.gitmodules` at `ts5/.gitmodules`,
 but git only reads the root `.gitmodules`. We must manually add ts5 submodule
 entries to the root `.gitmodules` and initialize them. The entries mirror ts1's
 but with `ts5/` prefix instead of `ts1/`.
 
-#### Step 1: Fetch upstream
+#### Step 1: Fetch upstream and merge
 
 ```bash
 git fetch upstream
+git merge -X subtree=ts5 upstream/main --no-commit
 ```
 
-Note the target commit (e.g., the latest tag or `upstream/main` HEAD). We can
-choose either `main` or a tagged release. Using a tag is more predictable for
-the initial import.
-
-#### Step 2: Import Ghostty under `ts5/`
+This maps upstream's files to `ts5/` and stages them. Review the result before
+committing — verify that `ts5/` contains the full Ghostty source tree and that
+no files were accidentally placed at the root or in `ts1/`.
 
 ```bash
-# Create a merge commit that connects our history with upstream's,
-# but keeps our tree unchanged (ours strategy)
-git merge -s ours --no-commit upstream/main
+# Verify ts5/ looks right
+ls ts5/
+# Should see: build.zig, build.zig.zon, src/, macos/, pkg/, etc.
 
-# Place upstream's tree under ts5/
-git read-tree --prefix=ts5/ -u upstream/main
+# Verify nothing changed in ts1/
+git diff --cached --name-only | grep -v '^ts5/' | head -20
+# Should be empty (no files outside ts5/)
 
-# Commit the merge (two parents: our HEAD + upstream/main)
 git commit -m "Import Ghostty as ts5/"
 ```
 
-This preserves Ghostty's full commit history. `git log ts5/src/main.zig` traces
-back through Ghostty's history. Future merges use:
+Future upstream merges use the same command:
 
 ```bash
 git fetch upstream
-git merge -X subtree=ts5 upstream/main
+git merge -X subtree=ts5 upstream/main -m "Merge upstream Ghostty into ts5"
 ```
 
-#### Step 3: Add ts5 submodule entries
+#### Step 2: Add ts5 submodule entries
 
 Ghostty's submodules need entries in the root `.gitmodules`. Check what
 `ts5/.gitmodules` contains (it comes from upstream) and add corresponding
@@ -587,16 +591,16 @@ entries to the root `.gitmodules` with `ts5/` prefix paths.
 
 The current ts1 submodules are:
 
-| Submodule     | ts1 path                   | ts5 path                   |
-| ------------- | -------------------------- | -------------------------- |
-| mach_defs     | `ts1/vendor/mach_defs`     | `ts5/vendor/mach_defs`     |
-| glslang       | `ts1/vendor/glslang`       | `ts5/vendor/glslang`       |
-| SPIRV-Cross   | `ts1/vendor/SPIRV-Cross`   | `ts5/vendor/SPIRV-Cross`   |
-| fontconfig    | `ts1/vendor/fontconfig`    | `ts5/vendor/fontconfig`    |
-| utfcpp        | `ts1/vendor/utfcpp`        | `ts5/vendor/utfcpp`        |
-| zig-libcxx    | `ts1/vendor/zig-libcxx`    | `ts5/vendor/zig-libcxx`    |
-| zf            | `ts1/vendor/zf`            | `ts5/vendor/zf`            |
-| zig-libxml2   | `ts1/vendor/zig-libxml2`   | `ts5/vendor/zig-libxml2`   |
+| Submodule   | ts1 path                 | ts5 path                 |
+| ----------- | ------------------------ | ------------------------ |
+| mach_defs   | `ts1/vendor/mach_defs`   | `ts5/vendor/mach_defs`   |
+| glslang     | `ts1/vendor/glslang`     | `ts5/vendor/glslang`     |
+| SPIRV-Cross | `ts1/vendor/SPIRV-Cross` | `ts5/vendor/SPIRV-Cross` |
+| fontconfig  | `ts1/vendor/fontconfig`  | `ts5/vendor/fontconfig`  |
+| utfcpp      | `ts1/vendor/utfcpp`      | `ts5/vendor/utfcpp`      |
+| zig-libcxx  | `ts1/vendor/zig-libcxx`  | `ts5/vendor/zig-libcxx`  |
+| zf          | `ts1/vendor/zf`          | `ts5/vendor/zf`          |
+| zig-libxml2 | `ts1/vendor/zig-libxml2` | `ts5/vendor/zig-libxml2` |
 
 **Important:** The upstream Ghostty may have added or removed submodules since
 ts1 was created. Compare `ts5/.gitmodules` (from the import) with the ts1
@@ -607,7 +611,7 @@ entries above. Use whatever upstream has — do not copy ts1's entries blindly.
 git submodule update --init --recursive ts5/vendor/
 ```
 
-#### Step 4: Add ts5 `.gitignore` entries
+#### Step 3: Add ts5 `.gitignore` entries
 
 Add build output patterns for ts5 (mirroring ts1's patterns):
 
@@ -632,7 +636,7 @@ ts5/ghostty.qcow2
 ts5/vgcore.*
 ```
 
-#### Step 5: Update `docs/issues/002-merge-upstream.md`
+#### Step 4: Update `docs/issues/002-merge-upstream.md`
 
 Add a ts5 section mirroring the ts1 section. The merge command is:
 
@@ -646,7 +650,7 @@ resolution strategies.
 
 Also update the Overview table to add the ts5 row and mark ts1 as historical.
 
-#### Step 6: Update `.claude/skills/merge-upstream/SKILL.md`
+#### Step 5: Update `.claude/skills/merge-upstream/SKILL.md`
 
 Add `ts5` as a merge target for the `ghostty` argument. The skill should merge
 into ts5 (active development), not ts1 (historical). Update:
@@ -656,7 +660,7 @@ into ts5 (active development), not ts1 (historical). Update:
 - The merge command
 - The verify/test commands (`cd ts5 && zig build`)
 
-#### Step 7: Update `CLAUDE.md`
+#### Step 6: Update `CLAUDE.md`
 
 Add a "TermSurf 5.0 (ts5/)" section as the active development target. This
 section documents:
@@ -668,18 +672,19 @@ section documents:
 
 Mark ts1 as "Legacy (superseded by ts5)".
 
-#### Step 8: Verify build
+#### Step 7: Verify build
 
 ```bash
 cd ts5 && zig build
 ```
 
 If this fails, debug and fix before committing. Common issues:
+
 - Missing submodules (Step 3)
 - Zig version mismatch (check ts5's `.zigversion` or `build.zig.zon`)
 
-#### Step 9: Commit
+#### Step 8: Commit
 
 Stage all changes (`.gitmodules`, `.gitignore`, `CLAUDE.md`,
 `docs/issues/002-merge-upstream.md`, `.claude/skills/merge-upstream/SKILL.md`)
-and commit. The Ghostty import itself (Step 2) is already committed separately.
+and commit. The Ghostty import itself (Step 1) is already committed separately.
