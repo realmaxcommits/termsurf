@@ -34,6 +34,15 @@ termsurf-chromium/
 **Submodule → gitignored directory.** The `src/` subdirectory is currently
 registered as a git submodule (in `.gitmodules`, pointing to a local path
 `/Users/ryan/dev/termsurf-chromium/src`). Remove this submodule registration.
+
+The Chromium repo is so large that even a shallow clone makes `git status`,
+`git diff`, and other commands noticeably slow in the parent repo — git scans
+submodule state on every invocation. By extracting `termsurf-chromium/` as a
+completely separate, gitignored directory, git commands in the main TermSurf
+repo return instantly. Git commands inside `termsurf-chromium/` are still slow
+(unavoidable with a repo that size), but at least it no longer drags down
+day-to-day development in the main repo.
+
 Instead:
 
 - Add `/termsurf-chromium/` to `.gitignore`
