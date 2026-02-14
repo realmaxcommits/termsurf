@@ -253,9 +253,9 @@ profile data stored at `~/.config/termsurf/poc/profile-a`.
 
 #### Build note
 
-`autoninja` is at `/Users/ryan/depot_tools/autoninja` and is not in the default
-shell PATH. When building from a script or automation, prefix with
-`PATH="/Users/ryan/depot_tools:$PATH"`. The incremental build compiled only 8
+`autoninja` is at `ts4/termsurf-chromium/depot_tools/autoninja` and is not in the
+default shell PATH. When building from a script or automation, prefix with
+`PATH="/Users/ryan/dev/termsurf/ts4/termsurf-chromium/depot_tools:$PATH"`. The incremental build compiled only 8
 steps (~12 seconds) since the only change was `shell_browser_main_parts.cc`.
 
 #### Conclusion
@@ -1004,7 +1004,7 @@ void ReparentToCustomWindow(Shell* shell, WebContents* web_contents_b) {
 
 ```bash
 pkill -f "One Profile" 2>/dev/null; sleep 1
-PATH="/Users/ryan/depot_tools:$PATH" autoninja -C out/Default one_profile
+PATH="/Users/ryan/dev/termsurf/ts4/termsurf-chromium/depot_tools:$PATH" autoninja -C out/Default one_profile
 cd /Users/ryan/dev/termsurf/ts4/box-demo && bun run server.ts &
 open out/Default/One\ Profile.app --args http://localhost:9407
 ```

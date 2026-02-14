@@ -43,6 +43,9 @@ ts1/vgcore.*
 /cef/
 /chromium/
 
+# Chromium build tools (large, has its own .git)
+ts4/termsurf-chromium/depot_tools/
+
 # TermSurf 4.0 (ts4/) build outputs
 ts4/termsurf-window/.build/
 ts4/termsurf-terminal/target/

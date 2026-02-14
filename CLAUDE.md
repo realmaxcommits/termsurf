@@ -131,8 +131,9 @@ higher. No custom XPC/IPC protocol.
 # Test page server
 cd ts4/box-demo && bun run server.ts
 
-# Chromium (after depot_tools is installed and source is fetched)
-cd ts4/termsurf-chromium
+# Chromium (depot_tools lives at ts4/termsurf-chromium/depot_tools)
+cd ts4/termsurf-chromium/src
+export PATH="$(cd ../depot_tools && pwd):$PATH"
 gn gen out/Default --args='is_debug=false symbol_level=0 enable_nacl=false is_component_build=true'
 autoninja -C out/Default content_shell
 ```

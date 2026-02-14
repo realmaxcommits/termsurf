@@ -219,8 +219,8 @@ enables future upstream merges.
 
 ```
 git clone https://chromium.googlesource.com/chromium/tools/depot_tools.git \
-  ~/depot_tools
-export PATH="$HOME/depot_tools:$PATH"
+  ~/dev/termsurf/ts4/termsurf-chromium/depot_tools
+export PATH="$HOME/dev/termsurf/ts4/termsurf-chromium/depot_tools:$PATH"
 ```
 
 **Step 2: Fetch the Chromium source with full history**
