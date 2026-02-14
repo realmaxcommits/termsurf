@@ -766,3 +766,30 @@ files were placed (incorrectly into `ts1/`). Here, nothing was placed anywhere
 useful. The subtree merge strategy fundamentally cannot handle this repo's
 history — whether renames are detected or not, the `/ → ts1/` move poisons the
 merge.
+
+### Experiment 3: `git subtree add`
+
+**Hypothesis:** `git merge -X subtree` fails because the three-way merge uses
+the original fork point as the common ancestor, where the `/ → ts1/` move
+poisons the result. `git subtree add` avoids this entirely — it doesn't do a
+three-way merge against the fork point. Instead it creates a synthetic merge
+commit that maps upstream's tree under the prefix. Future merges use
+`git subtree pull`, which tracks changes since the last subtree operation
+independently of our repo's rename history.
+
+**Command:**
+
+```bash
+git fetch upstream
+git subtree add --prefix=ts5 upstream main
+```
+
+Future upstream merges:
+
+```bash
+git fetch upstream
+git subtree pull --prefix=ts5 upstream main
+```
+
+Steps 2–8 from Experiment 1 remain the same (submodules, `.gitignore`, docs,
+build verification, commit).
