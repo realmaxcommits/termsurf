@@ -993,3 +993,90 @@ out/Default/One\ Profile.app/Contents/MacOS/One\ Profile \
    than `Bgra8UnormSrgb`. The render pipeline's output format must match the
    surface's preferred format. Query with
    `surface.get_capabilities(&adapter).formats[0]`.
+
+#### Result: FAILED
+
+The receiver binary compiles and runs. The XPC listener starts, connections are
+accepted, and the winit window with wgpu pipeline initializes. However, the
+process crashes with `EXC_BAD_ACCESS` / `KERN_PROTECTION_FAILURE` when
+processing the first IOSurface message.
+
+##### What happened
+
+1. **Build phase succeeded after 8 compilation fixes.** wgpu 28 has many
+   breaking API changes vs. what the cef-rs code and wgpu examples expect:
+   `DeviceDescriptor` gained `experimental_features` and `trace` fields,
+   `push_constant_ranges` renamed to `immediate_size`, `multiview` renamed to
+   `multiview_mask` (type changed from integer to `Option<NonZero<u32>>`),
+   `RenderPassColorAttachment` and `RenderPassDescriptor` gained new required
+   fields. The `block` module in `termsurf-xpc` is private; had to use
+   re-exported `set_event_handler` / `set_new_connection_handler`.
+
+2. **Runtime crash in `deallocate_mach_port`.** The crash report showed
+   `KERN_PROTECTION_FAILURE` at the `mach_task_self_` symbol address
+   (0x1fb066ba8). Root cause: `termsurf-xpc/src/ffi.rs` declared
+   `mach_task_self_` as a **function** (`pub fn mach_task_self_() -> mach_port_t`)
+   when it is actually a **global variable** (`extern mach_port_t mach_task_self_;`
+   in `<mach/mach_init.h>`). The C macro `mach_task_self()` just reads the
+   variable — there is no function. When Rust called it as a function, the CPU
+   jumped to the data address (a port number, not executable code), causing a
+   protection fault. **This bug was fixed** (changed to `pub static`) and the
+   binary was rebuilt.
+
+3. **Sender did not connect after fixing the crash.** After reloading the launchd
+   plist and launching the Chromium profile server with
+   `--service com.termsurf.two-profiles-rust`, the receiver was never started by
+   launchd. The profile server's `--service` flag may use a different CLI
+   argument name than expected, or the Chromium sender may not support arbitrary
+   Mach service names. The exact sender invocation syntax was not verified against
+   the Chromium source code before testing. The experiment was abandoned at this
+   point.
+
+##### What we learned
+
+1. **`termsurf-xpc` had a critical FFI bug.** The `mach_task_self_` declaration
+   as a function instead of a static variable would crash any consumer that calls
+   `deallocate_mach_port`. This was fixed during the experiment (`pub static`
+   instead of `pub fn`). The fix is correct and should be committed.
+
+2. **wgpu 28 API churn is significant.** Eight breaking changes in struct fields
+   and method signatures compared to what was expected. Any Rust GPU code reusing
+   patterns from examples or older crates needs careful adaptation. The wgpu API
+   is not stable.
+
+3. **The Chromium sender CLI interface is not documented in the Rust receiver
+   context.** The `--service`, `--xpc-service`, `--session-id`, and other flags
+   need to be verified against the Chromium source code. The Issue 414 docs use
+   `--service` but the actual implementation may differ.
+
+4. **Launchd on-demand Mach services add debugging complexity.** The receiver
+   only starts when a client connects to the registered Mach service name. If the
+   sender uses a different name or connection method, the receiver never starts
+   and there is no error — just silence. A `RunAtLoad` key in the plist would
+   help during development.
+
+5. **The core Rust pipeline (XPC + IOSurface + wgpu) remains unvalidated.** We
+   got past compilation and the FFI crash, but never received an actual IOSurface
+   frame. The seven unknowns from the hypothesis are still open:
+   - Cargo workspace integration: **PASSED** (builds)
+   - XPC Mach service listener: **PASSED** (listener starts, accepts connections)
+   - IOSurface reconstruction: **UNTESTED** (never received a frame)
+   - IOSurface → Metal → wgpu texture: **UNTESTED**
+   - winit + wgpu rendering: **PASSED** (window and pipeline initialize)
+   - WGSL shader: **PASSED** (compiles)
+   - Cross-thread handoff: **UNTESTED**
+
+##### Files created
+
+- `ts4/two-profiles-rust/Cargo.toml` — Project manifest
+- `ts4/two-profiles-rust/src/main.rs` — Receiver (~577 lines)
+- `ts4/two-profiles-rust/src/shaders.wgsl` — WGSL fullscreen quad shader
+- `ts4/two-profiles-rust/com.termsurf.two-profiles-rust.plist` — Launchd plist
+- `ts4/two-profiles-rust/.gitignore` — `target/`
+- `ts4/Cargo.toml` — Updated workspace (added member + GPU dependencies)
+
+##### Bug fix
+
+- `ts4/termsurf-xpc/src/ffi.rs` — Changed `mach_task_self_` from `pub fn` to
+  `pub static`. This fixes a crash in `deallocate_mach_port` that would affect
+  any consumer of the crate.
