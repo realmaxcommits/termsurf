@@ -350,6 +350,11 @@ level.
 | `ts4/termsurf-chromium/src`              | `termsurf-chromium/src`              |
 | `ts4/termsurf-chromium/src/out/Default/` | `termsurf-chromium/src/out/Default/` |
 
+Add a note that `docs/chromium.md` tracks the current branch, commit, and a
+complete list of all branches with links to their issue docs. Any time the build
+skill switches branches, updates the Chromium version, or creates a new branch,
+it must also update `docs/chromium.md` accordingly.
+
 **`.claude/skills/git-poet/SKILL.md`** — Update the Submodule Workflow section:
 
 - `ts4/termsurf-chromium/src/` → `termsurf-chromium/src/`
@@ -357,6 +362,10 @@ level.
   submodule — Chromium is gitignored and tracked separately)
 - Update the workflow to reflect that Chromium commits happen in the
   `termsurf-chromium/` repo independently, not as submodule pointer updates
+- When committing a branch or version change in `termsurf-chromium/`, the
+  corresponding commit in the main repo should update `docs/chromium.md`
+- When creating a new Chromium branch, add it to the Branches table in
+  `docs/chromium.md` with a link to the corresponding issue doc
 
 #### Step 7: Update `CLAUDE.md`
 
@@ -389,6 +398,19 @@ in a dedicated file so it's easy to find:
 Track the same Chromium version as Electron. Branches are named
 `{version}-termsurf` for the main working branch and `{version}-issue-{N}` for
 issue-specific branches.
+
+## Branches
+
+| Branch                   | Issue                                       | Description                  |
+| ------------------------ | ------------------------------------------- | ---------------------------- |
+| `146.0.7650.0-termsurf`  | —                                           | Main working branch for v146 |
+| `146.0.7650.0-electron`  | —                                           | Electron's v146 base         |
+| `146.0.7650.0-issue-411` | [Issue 411](issues/411-two-profiles-3.md)   | Two profiles experiment 3    |
+| `146.0.7650.0-issue-412` | [Issue 412](issues/412-one-profile.md)      | One profile                  |
+| `146.0.7650.0-issue-413` | [Issue 413](issues/413-one-profile-2.md)    | One profile experiment 2     |
+| `146.0.7650.0-issue-414` | [Issue 414](issues/414-two-profiles-xpc.md) | Two profiles via XPC         |
+| `146.0.7650.0-issue-415` | [Issue 415](issues/415-swift-receiver.md)   | Swift receiver               |
+| `146.0.7650.0-issue-416` | [Issue 416](issues/416-rust-receiver.md)    | Rust receiver                |
 
 ## Local Setup
 
