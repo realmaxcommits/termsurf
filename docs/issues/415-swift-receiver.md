@@ -568,10 +568,10 @@ XPC API.
 
 #### Hypothesis
 
-Adding a second pane to the Swift receiver is mechanical — no new unknowns.
-The same XPC, IOSurface, and Metal patterns from Experiment 1 extend to two
-panes with viewport-based compositing. If this works, Issue 415 is complete:
-the Swift receiver matches Issue 414 Experiment 7 in every way.
+Adding a second pane to the Swift receiver is mechanical — no new unknowns. The
+same XPC, IOSurface, and Metal patterns from Experiment 1 extend to two panes
+with viewport-based compositing. If this works, Issue 415 is complete: the Swift
+receiver matches Issue 414 Experiment 7 in every way.
 
 #### Design
 
@@ -606,8 +606,8 @@ func paneForSession(_ sessionId: String?) -> Pane {
 }
 ```
 
-In `handleMessage`, extract `session_id` and route the IOSurface to the
-correct slot.
+In `handleMessage`, extract `session_id` and route the IOSurface to the correct
+slot.
 
 ##### 3. Multiple peer connections
 
@@ -734,3 +734,69 @@ Issue 415 is complete. All success criteria met:
 - Builds with `swift build` (SPM)
 - Uses `CADisplayLink` instead of deprecated `CVDisplayLink`
 - Same sender binary as Issue 414, same XPC protocol, same visual output
+
+## Conclusion
+
+Issue 415 is complete. The entire receiver side of the IOSurface pipeline — XPC
+Mach port reception, IOSurface reconstruction, Metal texture creation, and
+viewport compositing — works natively in Swift with zero performance overhead
+compared to the Objective-C++ implementation from Issue 414.
+
+### Experiment summary
+
+| # | Name                       | Result |
+| - | -------------------------- | ------ |
+| 1 | Single-pane Swift receiver | PASSED |
+| 2 | Two-pane Swift receiver    | PASSED |
+
+### Key findings
+
+1. **The C XPC API bridges to Swift without friction.** All functions —
+   `xpc_connection_create_mach_service()`, `xpc_dictionary_copy_mach_send()`,
+   `xpc_get_type()` — work identically. The `XPC_TYPE_*` constants and
+   `XPC_CONNECTION_MACH_SERVICE_LISTENER` flag are available via automatic
+   bridging. No shims, no bridging headers.
+
+2. **IOSurface is fully usable from Swift.** `IOSurfaceLookupFromMachPort()`
+   returns an ARC-managed `IOSurfaceRef?`. `IOSurfaceGetWidth()` /
+   `IOSurfaceGetHeight()` work as expected. `mach_task_self_` replaces the C
+   macro. No manual `CFRetain` / `CFRelease` — Swift's ARC handles everything.
+
+3. **Metal's Swift API is cleaner than Objective-C.** Creating textures from
+   IOSurfaces via `device.makeTexture(descriptor:iosurface:plane:)` is
+   straightforward. The main gotcha is naming: `.bgra8Unorm_srgb` (lowercase)
+   instead of `MTLPixelFormatBGRA8Unorm_sRGB`, and `MTLTextureUsage.shaderRead`
+   needs the explicit type prefix.
+
+4. **CADisplayLink is a better fit than CVDisplayLink.** It fires on the main
+   thread (simplifying Metal state access), uses target/selector instead of a C
+   callback, and is the non-deprecated replacement. Created via
+   `window.screen!.displayLink(target:selector:)`.
+
+5. **SPM does not compile Metal shaders.** This was the biggest surprise. SPM
+   warns about `.metal` files and ignores them. The workaround is simple:
+   exclude from the target in `Package.swift`, compile with `xcrun metal` /
+   `xcrun metallib`, and load via `device.makeLibrary(URL:)`. For Ghostty
+   integration this won't matter — Ghostty uses Zig's build system, not SPM.
+
+6. **Zero performance difference.** Both the Objective-C++ and Swift receivers
+   sustain 60fps with identical IOSurface sizes (1600x1200). The Swift receiver
+   introduces no measurable overhead.
+
+### What this means for Ghostty integration
+
+Every API in the browser-pane pipeline is proven to work in Swift:
+
+- **XPC** — Ghostty's Swift shell can create Mach service listeners and receive
+  IOSurface Mach ports from Chromium profile servers.
+- **IOSurface** — Ghostty can reconstruct IOSurfaces from Mach ports and read
+  their dimensions.
+- **Metal** — Ghostty can create textures from IOSurfaces and composite them
+  into its existing Metal render pipeline using viewports.
+- **CADisplayLink** — Ghostty already has a render loop, but if needed,
+  `CADisplayLink` provides vsync-driven callbacks on the main thread.
+
+The receiver code is ~330 lines of Swift in a single file. The patterns are
+simple enough to integrate into Ghostty's existing `MetalView` or equivalent
+without architectural changes. The last unknown before Ghostty integration is
+removed.
