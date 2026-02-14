@@ -134,55 +134,10 @@ All of these except `cef-rs/` are already in `.gitignore`. After moving, update
 `.gitignore` paths accordingly. `cef-rs/` is committed and used by ts3 — it
 moves as-is.
 
-### 3. Update `.gitignore`
+### 3–5. (Completed)
 
-Remove:
-
-```
-/wezterm/
-/electron/
-/alacritty/
-/cef/
-/chromium/
-ts4/termsurf-chromium/depot_tools/
-```
-
-Add:
-
-```
-# Chromium build workspace (gitignored; src/ requires directory named "src")
-/termsurf-chromium/
-
-# Vendored analysis repos (not committed)
-vendor/wezterm/
-vendor/electron/
-vendor/alacritty/
-vendor/cef/
-vendor/chromium/
-```
-
-### 4. Remove the `termsurf-chromium` submodule
-
-Remove the submodule entry from `.gitmodules`:
-
-```
-[submodule "ts4/termsurf-chromium/src"]
-    path = ts4/termsurf-chromium/src
-    url = /Users/ryan/dev/termsurf-chromium/src
-```
-
-Remove the submodule from `.git/config` and `.git/modules/`. Clean up the
-submodule tracking in the git index.
-
-### 5. Update `CLAUDE.md`
-
-Update the project overview and directory structure sections to reflect:
-
-- `termsurf-chromium/` at top level (gitignored build workspace)
-- `vendor/` directory for analysis repos and vendored code
-- Chromium remote configuration (upstream = official Google source)
-- Chromium branch strategy (track Electron's version)
-- Current tracked version and commit
+Changes 3 (`.gitignore`), 4 (remove submodule), and 5 (`CLAUDE.md`) were folded
+into the Change 1 and Change 2 implementations.
 
 ### 6. Merge Ghostty into `ts5/`
 
@@ -571,3 +526,160 @@ Update all references to `cef-rs/` to `vendor/cef-rs/`:
 
 Stage all changes (`vendor/cef-rs/` move, ts3 path updates, `.gitignore`,
 `CLAUDE.md`) and commit.
+
+### Change 3: Merge Ghostty into `ts5/`
+
+Ghostty is already tracked via the `upstream` remote
+(`https://github.com/ghostty-org/ghostty.git`). ts1 was imported using
+`git merge -X subtree=ts1 upstream/main`. We use the same subtree merge approach
+for ts5 — the initial import uses `git merge -s ours` + `git read-tree` to
+establish the merge base, and future updates use `git merge -X subtree=ts5`.
+
+**Why not copy ts1?** ts5 starts from a clean upstream Ghostty. The ts1
+modifications (WKWebView browser panes, `web` CLI command) are specific to ts1's
+approach. ts5 will get different modifications (in-process Chromium via Content
+API). Starting clean avoids carrying ts1-specific code that would immediately be
+deleted.
+
+**Submodules.** Ghostty has vendor submodules (glslang, SPIRV-Cross, fontconfig,
+etc.). The subtree merge places Ghostty's `.gitmodules` at `ts5/.gitmodules`,
+but git only reads the root `.gitmodules`. We must manually add ts5 submodule
+entries to the root `.gitmodules` and initialize them. The entries mirror ts1's
+but with `ts5/` prefix instead of `ts1/`.
+
+#### Step 1: Fetch upstream
+
+```bash
+git fetch upstream
+```
+
+Note the target commit (e.g., the latest tag or `upstream/main` HEAD). We can
+choose either `main` or a tagged release. Using a tag is more predictable for
+the initial import.
+
+#### Step 2: Import Ghostty under `ts5/`
+
+```bash
+# Create a merge commit that connects our history with upstream's,
+# but keeps our tree unchanged (ours strategy)
+git merge -s ours --no-commit upstream/main
+
+# Place upstream's tree under ts5/
+git read-tree --prefix=ts5/ -u upstream/main
+
+# Commit the merge (two parents: our HEAD + upstream/main)
+git commit -m "Import Ghostty as ts5/"
+```
+
+This preserves Ghostty's full commit history. `git log ts5/src/main.zig` traces
+back through Ghostty's history. Future merges use:
+
+```bash
+git fetch upstream
+git merge -X subtree=ts5 upstream/main
+```
+
+#### Step 3: Add ts5 submodule entries
+
+Ghostty's submodules need entries in the root `.gitmodules`. Check what
+`ts5/.gitmodules` contains (it comes from upstream) and add corresponding
+entries to the root `.gitmodules` with `ts5/` prefix paths.
+
+The current ts1 submodules are:
+
+| Submodule     | ts1 path                   | ts5 path                   |
+| ------------- | -------------------------- | -------------------------- |
+| mach_defs     | `ts1/vendor/mach_defs`     | `ts5/vendor/mach_defs`     |
+| glslang       | `ts1/vendor/glslang`       | `ts5/vendor/glslang`       |
+| SPIRV-Cross   | `ts1/vendor/SPIRV-Cross`   | `ts5/vendor/SPIRV-Cross`   |
+| fontconfig    | `ts1/vendor/fontconfig`    | `ts5/vendor/fontconfig`    |
+| utfcpp        | `ts1/vendor/utfcpp`        | `ts5/vendor/utfcpp`        |
+| zig-libcxx    | `ts1/vendor/zig-libcxx`    | `ts5/vendor/zig-libcxx`    |
+| zf            | `ts1/vendor/zf`            | `ts5/vendor/zf`            |
+| zig-libxml2   | `ts1/vendor/zig-libxml2`   | `ts5/vendor/zig-libxml2`   |
+
+**Important:** The upstream Ghostty may have added or removed submodules since
+ts1 was created. Compare `ts5/.gitmodules` (from the import) with the ts1
+entries above. Use whatever upstream has — do not copy ts1's entries blindly.
+
+```bash
+# Initialize ts5 submodules
+git submodule update --init --recursive ts5/vendor/
+```
+
+#### Step 4: Add ts5 `.gitignore` entries
+
+Add build output patterns for ts5 (mirroring ts1's patterns):
+
+```gitignore
+# TermSurf 5.0 / Ghostty (ts5/)
+ts5/zig-cache/
+ts5/.zig-cache/
+ts5/zig-out/
+ts5/build/
+ts5/.flatpak-builder/
+ts5/flatpak/builddir/
+ts5/flatpak/repo/
+ts5/result*
+ts5/.nixos-test-history
+ts5/example/*.wasm
+ts5/test/ghostty
+ts5/test/cases/**/*.actual.png
+ts5/glad.zip
+ts5/Box_test.ppm
+ts5/Box_test_diff.ppm
+ts5/ghostty.qcow2
+ts5/vgcore.*
+```
+
+#### Step 5: Update `docs/issues/002-merge-upstream.md`
+
+Add a ts5 section mirroring the ts1 section. The merge command is:
+
+```bash
+git merge -X subtree=ts5 upstream/main -m "Merge upstream Ghostty into ts5"
+```
+
+ts5 starts with no TermSurf modifications, so the conflict guide is initially
+empty. As we add browser pane support, document the modified files and conflict
+resolution strategies.
+
+Also update the Overview table to add the ts5 row and mark ts1 as historical.
+
+#### Step 6: Update `.claude/skills/merge-upstream/SKILL.md`
+
+Add `ts5` as a merge target for the `ghostty` argument. The skill should merge
+into ts5 (active development), not ts1 (historical). Update:
+
+- The usage section to note `ghostty` merges into `ts5/`
+- The Upstream Repositories table
+- The merge command
+- The verify/test commands (`cd ts5 && zig build`)
+
+#### Step 7: Update `CLAUDE.md`
+
+Add a "TermSurf 5.0 (ts5/)" section as the active development target. This
+section documents:
+
+- Architecture (Ghostty fork + in-process Chromium)
+- Directory structure (`ts5/src/`, `ts5/macos/`, `ts5/build.zig`, etc.)
+- Build commands (`cd ts5 && zig build`)
+- That ts5 starts as unmodified Ghostty, with browser pane integration TBD
+
+Mark ts1 as "Legacy (superseded by ts5)".
+
+#### Step 8: Verify build
+
+```bash
+cd ts5 && zig build
+```
+
+If this fails, debug and fix before committing. Common issues:
+- Missing submodules (Step 3)
+- Zig version mismatch (check ts5's `.zigversion` or `build.zig.zon`)
+
+#### Step 9: Commit
+
+Stage all changes (`.gitmodules`, `.gitignore`, `CLAUDE.md`,
+`docs/issues/002-merge-upstream.md`, `.claude/skills/merge-upstream/SKILL.md`)
+and commit. The Ghostty import itself (Step 2) is already committed separately.
