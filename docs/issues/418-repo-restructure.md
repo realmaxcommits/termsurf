@@ -250,4 +250,167 @@ historical reference.
 
 ### Change 1: Move `termsurf-chromium` to top level
 
-(To be filled out.)
+#### Step 1: Push local branches to origin
+
+The `termsurf-chromium/src/` repo currently has `origin` pointing to a local
+path (`/Users/ryan/dev/termsurf-chromium/src`). Seven local branches have never
+been pushed to `github.com/termsurf/termsurf-chromium`.
+
+```bash
+cd ts4/termsurf-chromium/src
+
+# Change origin to the GitHub fork
+git remote set-url origin git@github.com:termsurf/termsurf-chromium.git
+
+# Add upstream (official Chromium mirror)
+git remote add upstream https://github.com/chromium/chromium.git
+
+# Push all local branches to origin
+git push origin 146.0.7650.0-termsurf
+git push origin 146.0.7650.0-issue-411
+git push origin 146.0.7650.0-issue-412
+git push origin 146.0.7650.0-issue-413
+git push origin 146.0.7650.0-issue-414
+git push origin 146.0.7650.0-issue-415
+git push origin 146.0.7650.0-issue-416
+```
+
+Verify with `git branch -r` that all branches appear on origin.
+
+#### Step 2: Remove the submodule
+
+From the main repo root:
+
+```bash
+cd ~/dev/termsurf
+
+# Remove submodule entry from the git index
+git rm --cached ts4/termsurf-chromium/src
+
+# Remove submodule config from .git/config
+git config --remove-section submodule.ts4/termsurf-chromium/src
+
+# Remove submodule metadata
+rm -rf .git/modules/ts4/termsurf-chromium
+
+# Remove the submodule entry from .gitmodules
+# (edit .gitmodules to remove the [submodule "ts4/termsurf-chromium/src"] block)
+```
+
+The ts2 and ts3 submodules (freetype, harfbuzz, etc.) remain unchanged.
+
+#### Step 3: Move the directory
+
+```bash
+mv ts4/termsurf-chromium termsurf-chromium
+```
+
+The `.gclient` file inside `termsurf-chromium/` already has the correct URL
+(`git@github.com:termsurf/termsurf-chromium.git`) and does not need updating.
+
+#### Step 4: Update `.gitignore`
+
+Remove:
+
+```
+ts4/termsurf-chromium/depot_tools/
+```
+
+Add:
+
+```
+# Chromium fork (managed separately, shallow clone of termsurf/termsurf-chromium)
+/termsurf-chromium/
+```
+
+#### Step 5: Update `ts4/.gitignore`
+
+Remove all `termsurf-chromium/` entries:
+
+```
+termsurf-chromium/.cipd/
+termsurf-chromium/.gclient_entries
+termsurf-chromium/.gclient_previous_sync_commits
+termsurf-chromium/.gcs_entries
+termsurf-chromium/_bad_scm/
+termsurf-chromium/src/out/
+```
+
+These are no longer needed since the entire directory is gitignored at the top
+level.
+
+#### Step 6: Update `.claude/skills/build-chromium/SKILL.md`
+
+All paths change from `ts4/termsurf-chromium/` to `termsurf-chromium/`:
+
+| Old path                                 | New path                             |
+| ---------------------------------------- | ------------------------------------ |
+| `ts4/termsurf-chromium/depot_tools`      | `termsurf-chromium/depot_tools`      |
+| `ts4/termsurf-chromium/src`              | `termsurf-chromium/src`              |
+| `ts4/termsurf-chromium/src/out/Default/` | `termsurf-chromium/src/out/Default/` |
+
+#### Step 7: Update `CLAUDE.md`
+
+Update the ts4 directory structure and build commands sections to reference
+`termsurf-chromium/` at the top level instead of `ts4/termsurf-chromium/`.
+
+#### Step 8: Create `docs/chromium.md`
+
+Document the tracked branch, commit, remote configuration, and branch strategy
+in a dedicated file so it's easy to find:
+
+```markdown
+# Chromium Fork
+
+## Repository
+
+| Remote   | URL                                           |
+| -------- | --------------------------------------------- |
+| origin   | git@github.com:termsurf/termsurf-chromium.git |
+| upstream | https://github.com/chromium/chromium.git      |
+
+## Current State
+
+- Branch: `146.0.7650.0-termsurf`
+- Commit: `b2907d660628a`
+- Base version: `146.0.7650.0` (tracking Electron's Chromium version)
+
+## Branch Strategy
+
+Track the same Chromium version as Electron. Branches are named
+`{version}-termsurf` for the main working branch and `{version}-issue-{N}` for
+issue-specific branches.
+
+## Local Setup
+
+The `termsurf-chromium/` directory at the repo root is a shallow clone,
+gitignored from the main repo. To set up from scratch:
+
+    git clone --depth 1 --branch 146.0.7650.0-termsurf \
+      git@github.com:termsurf/termsurf-chromium.git termsurf-chromium/src
+```
+
+#### Step 9: Verify test apps
+
+The ts4 test apps (Issues 414–416) do **not** reference `ts4/termsurf-chromium/`
+in their own code or plists. The launchd plists reference
+`ts4/target/debug/receiver` (the Rust binary), not Chromium paths. The
+`content_shell` sender is launched manually from the command line by pointing to
+`termsurf-chromium/src/out/Default/Content Shell.app`. After the move, the only
+change is the path used when manually launching `content_shell`:
+
+```bash
+# Old
+ts4/termsurf-chromium/src/out/Default/Content\ Shell.app/Contents/MacOS/Content\ Shell
+
+# New
+termsurf-chromium/src/out/Default/Content\ Shell.app/Contents/MacOS/Content\ Shell
+```
+
+No code changes needed in the test apps themselves.
+
+#### Step 10: Commit
+
+Stage all changes (`.gitmodules`, `.gitignore`, `ts4/.gitignore`, `CLAUDE.md`,
+`.claude/skills/build-chromium/SKILL.md`, `docs/chromium.md`, removal of
+submodule index entry) and commit.
