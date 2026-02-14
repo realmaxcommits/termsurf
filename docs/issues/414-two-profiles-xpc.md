@@ -2436,3 +2436,117 @@ The path to TermSurf is now clear integration work:
    `web` commands for the same profile reuse the existing process.
 4. **Dynamic resize:** When a pane resizes, send new dimensions to the profile
    server, which adjusts `WebContents` size and capturer resolution constraints.
+
+## Conclusion
+
+Issue 414 set out to prove the architecture that TermSurf will ship: multiple
+browser profiles, each in its own process, rendering side by side in one window
+at 60fps via XPC IOSurface transfer. Seven experiments, conducted incrementally,
+proved every layer of the pipeline.
+
+### What we accomplished
+
+The final result — Experiment 7 — demonstrates two hidden Chromium processes,
+each running the Content API with an isolated `BrowserContext`, simultaneously
+capturing composited frames as IOSurfaces, transferring them via XPC Mach ports
+to a single Metal receiver process, which composites them side by side in one
+window at a sustained 60fps with pixel-perfect Retina quality. Profile isolation
+is proven by distinct `localStorage` identity strings persisting across
+restarts.
+
+### Experiment summary
+
+| #   | Goal                           | Result | Key finding                                                    |
+| --- | ------------------------------ | ------ | -------------------------------------------------------------- |
+| 1   | Capture frames as IOSurfaces   | PASS   | `FrameSinkVideoCapturer` delivers 60fps IOSurfaces             |
+| 2   | XPC transfer to another process| PASS   | `IOSurfaceCreateMachPort` works on Chromium's IOSurfaces       |
+| 3   | Hidden sender, visible receiver| FAIL   | ARC released XPC connections; `orderOut:nil` works at 60fps    |
+| 4   | Fix XPC retention              | PASS   | Static globals + listener before `[NSApp run]`                 |
+| 5   | Fix Retina capture resolution  | FAIL   | `SetResolutionConstraints` works; size mismatch still blurs    |
+| 6   | Match window sizes + sRGB      | PASS   | 1:1 pixel mapping + `MTLPixelFormatBGRA8Unorm_sRGB`           |
+| 7   | Two profiles side by side      | PASS   | Two processes, two profiles, one window, both 60fps            |
+
+The two failures (Experiments 3 and 5) were instructive, not blocking. Each
+failure isolated a specific problem — ARC lifetime semantics for XPC objects, and
+the distinction between capture resolution and display resolution — that was
+fixed in the subsequent experiment.
+
+### Key technical findings
+
+1. **`FrameSinkVideoCapturer` is the right API.** Chromium's built-in video
+   capture delivers IOSurfaces at a rock-solid 60fps with GPU-side copies. The
+   10-frame buffer pool eliminates allocation jitter. This is the same API
+   Electron uses for off-screen rendering.
+
+2. **IOSurface Mach port transfer adds no measurable overhead.** XPC message
+   delivery with embedded Mach ports is effectively zero-cost — sender and
+   receiver fps are identical. The kernel handles the port transfer in the
+   message send path.
+
+3. **Hidden windows don't throttle the compositor.** `[window orderOut:nil]`
+   hides the Chromium window completely (no dock icon, no screen presence) and
+   the compositor continues at 60fps. macOS does not throttle or pause rendering
+   for off-screen windows.
+
+4. **Retina rendering requires three fixes.** (a) `SetResolutionConstraints()`
+   on the capturer to force physical pixel resolution. (b) `contentsScale` and
+   `drawableSize` on the `CAMetalLayer` to render at the backing scale factor.
+   (c) Matching source and destination sizes for 1:1 pixel mapping. Any scaling
+   causes visible bilinear filtering blur.
+
+5. **sRGB format is required.** Chromium's IOSurfaces contain sRGB-encoded pixel
+   data. Using `MTLPixelFormatBGRA8Unorm_sRGB` for the Metal texture, pipeline,
+   and layer ensures correct color handling. This was previously discovered in
+   the cef-test project (Issue 200).
+
+6. **XPC connections under ARC need explicit retention.** On modern macOS SDKs,
+   `xpc_connection_t` is an Objective-C object managed by ARC. Storing
+   connections as local variables in functions that return causes immediate
+   deallocation. Static globals are the simplest fix.
+
+7. **Two Chromium processes coexist without conflict.** Separate
+   `--user-data-dir` paths prevent singleton lock conflicts. Each process spawns
+   its own GPU subprocess internally (Chromium's own multi-process architecture),
+   and these don't interfere with each other.
+
+8. **The Content API eliminates CEF's fps ceiling.** CEF's headless off-screen
+   rendering capped at ~50fps per profile (31fps with event-driven pumping) due
+   to `do_message_loop_work()` jitter. The Content API's `FrameSinkVideoCapturer`
+   sustains a perfect 60fps — the bottleneck that motivated the entire ts3→ts4
+   transition is gone.
+
+### What's next
+
+The PoC is complete. No architectural risks remain. The remaining work to ship
+TermSurf is integration, not research:
+
+1. **Ghostty integration.** Replace the PoC Metal receiver with Ghostty's
+   existing Metal renderer. Ghostty already composites terminal panes via
+   IOSurfaces — browser panes are just another texture source. The XPC listener
+   moves into Ghostty's event loop.
+
+2. **Input forwarding.** The XPC connection is bidirectional. Send keyboard,
+   mouse, and scroll events from Ghostty to profile servers. The profile server
+   dispatches them to the `WebContents` via `RenderWidgetHost::ForwardXxxEvent`.
+   The `display_surface` message already carries pane dimensions; input
+   coordinates need the same pane-to-physical-pixel mapping.
+
+3. **Dynamic resize.** When a Ghostty pane resizes, send the new dimensions to
+   the profile server via XPC. The server updates `WebContents` size and
+   `SetResolutionConstraints()`. The receiver updates its viewport and drawable
+   size. Use `std::ceil()` for logical-to-physical conversion (Issue 311).
+
+4. **Process lifecycle.** Ghostty spawns profile server processes as children.
+   Multiple `web` commands for the same profile reuse the existing process (send
+   a "create browser" command instead of spawning). Graceful shutdown when the
+   last tab in a profile closes.
+
+5. **Multiple WebContents per profile.** Issue 413 Experiment 6 proved that
+   multiple `WebContents` sharing one `BrowserContext` render at 60fps. Each
+   profile server can handle many tabs. The video capturer attaches per-
+   `WebContents` and the receiver maps each to a different pane.
+
+6. **Stress testing and benchmarking.** Run the two-profile setup for extended
+   periods under load. Measure frame interval distributions (p50, p95, p99),
+   CPU usage, memory growth, and compare against cef-test's benchmark results
+   (50fps, 80.8% at 60fps).
