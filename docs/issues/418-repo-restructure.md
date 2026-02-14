@@ -726,10 +726,11 @@ only works when there is no competing rename history.
 ### Experiment 2: Subtree merge with rename detection disabled
 
 **Hypothesis:** Experiment 1 failed because rename detection found the `/ →
-ts1/` renames and overrode the subtree mapping. The `-X no-renames` strategy
-option disables rename detection entirely. Without rename detection, git won't
-find the ts1/ renames and the `-X subtree=ts5` mapping should work cleanly —
-placing all upstream files into `ts5/` as new additions.
+ts1/`
+renames and overrode the subtree mapping. The `-X no-renames` strategy option
+disables rename detection entirely. Without rename detection, git won't find the
+ts1/ renames and the `-X subtree=ts5` mapping should work cleanly — placing all
+upstream files into `ts5/` as new additions.
 
 **Command:**
 
@@ -740,3 +741,28 @@ git merge -X subtree=ts5 -X no-renames upstream/main --no-commit
 
 The plan (Steps 1–8 from Experiment 1) remains the same — only the merge command
 in Step 1 changes.
+
+#### Result
+
+Complete failure. No `ts5/` directory was created. All files landed at the root
+as modify/delete conflicts. The `-X subtree=ts5` mapping was entirely ignored.
+
+Without rename detection, git sees our side as having _deleted_ every Ghostty
+file (the move to `ts1/` looks like a delete when renames aren't tracked). So
+the three-way merge becomes:
+
+- **Base:** files at `/`
+- **Ours:** files deleted
+- **Theirs:** files modified at `/`
+
+Git reports modify/delete conflicts for every file upstream touched. The subtree
+option doesn't apply to conflicted files — they stay at their upstream paths
+(root level, not `ts5/`).
+
+#### Conclusion
+
+Disabling rename detection made things worse. In Experiment 1, at least some
+files were placed (incorrectly into `ts1/`). Here, nothing was placed anywhere
+useful. The subtree merge strategy fundamentally cannot handle this repo's
+history — whether renames are detected or not, the `/ → ts1/` move poisons the
+merge.
