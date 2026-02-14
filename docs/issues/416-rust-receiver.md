@@ -1275,3 +1275,222 @@ All seven unknowns from the Experiment 1 hypothesis:
 5. **wgpu 28 is compatible with IOSurface import.** The `as_hal::<Metal>()` →
    `texture_from_raw()` → `create_texture_from_hal()` pipeline works with wgpu
    28 despite the API churn documented in Experiment 1.
+
+### Experiment 3: Two-pane side-by-side rendering
+
+#### Hypothesis
+
+Adding a second pane to the Experiment 2 receiver is mechanical. The C++ (Issue
+414) and Swift (Issue 415) receivers both use the same pattern: two texture
+slots, a `session_id → pane index` mapping, and two `setViewport` + draw calls
+per frame. The Rust/wgpu equivalent is `RenderPass::set_viewport()` — same
+concept, different API. No new unknowns; this is purely a code change.
+
+#### What changes from Experiment 2
+
+Six modifications to `main.rs`, no new files, no shader changes:
+
+##### 1. Window size: 1600x600 logical
+
+The C++ and Swift receivers both use a 1600x600 window (two 800x600 panes). On
+Retina (2x), this becomes 3200x1200 physical pixels.
+
+```rust
+// Before (Experiment 2):
+.with_inner_size(LogicalSize::new(800.0, 600.0))
+
+// After:
+.with_inner_size(LogicalSize::new(1600.0, 600.0))
+```
+
+##### 2. Pane mapping function
+
+Deterministic string-based mapping, identical to the C++ and Swift receivers:
+
+```rust
+fn pane_for_session(session_id: Option<&str>) -> usize {
+    if session_id == Some("profile-b") { 1 } else { 0 }
+}
+```
+
+`"profile-b"` → right pane (index 1). Everything else → left pane (index 0).
+
+##### 3. Two pending surface slots
+
+Convert single `PENDING_SURFACE` to a per-pane array:
+
+```rust
+// Before:
+static PENDING_SURFACE: Mutex<Option<SendPtr>> = Mutex::new(None);
+
+// After:
+static PENDING_SURFACE_LEFT: Mutex<Option<SendPtr>> = Mutex::new(None);
+static PENDING_SURFACE_RIGHT: Mutex<Option<SendPtr>> = Mutex::new(None);
+```
+
+Two separate statics because `[Mutex<Option<SendPtr>>; 2]` cannot be
+`const`-initialized in current Rust (Mutex::new is const but the array wrapping
+is not). Using named statics is simpler than `OnceLock` or `LazyLock`.
+
+##### 4. Message handler uses session_id
+
+```rust
+fn handle_message(dict: termsurf_xpc::XpcDictionary) {
+    // ... extract port, lookup IOSurface (unchanged) ...
+
+    let session_id = dict.get_string("session_id");
+    let pane = pane_for_session(session_id.as_deref());
+
+    let slot = if pane == 0 {
+        &PENDING_SURFACE_LEFT
+    } else {
+        &PENDING_SURFACE_RIGHT
+    };
+    let old = slot.lock().unwrap().replace(SendPtr(surface));
+    if let Some(SendPtr(old_ptr)) = old {
+        unsafe { CFRelease(old_ptr) };
+    }
+    // ... wake event loop (unchanged) ...
+}
+```
+
+##### 5. Two current texture slots
+
+```rust
+// Before:
+let mut current_texture: Option<wgpu::Texture> = None;
+
+// After:
+let mut current_texture: [Option<wgpu::Texture>; 2] = [None, None];
+```
+
+On each redraw, check both pending slots and import any new surfaces:
+
+```rust
+for (i, slot) in [&PENDING_SURFACE_LEFT, &PENDING_SURFACE_RIGHT]
+    .iter()
+    .enumerate()
+{
+    if let Some(SendPtr(ptr)) = slot.lock().unwrap().take() {
+        if let Some(tex) = import_iosurface(dev, ptr) {
+            current_texture[i] = Some(tex);
+        }
+        unsafe { CFRelease(ptr) };
+    }
+}
+```
+
+##### 6. Two viewport + draw calls per render pass
+
+The key rendering change. Same pattern as C++ and Swift — one render pass, two
+viewports, two draws:
+
+```rust
+let size = window.inner_size();
+let half_w = size.width as f32 / 2.0;
+let full_h = size.height as f32;
+
+for (i, tex) in current_texture.iter().enumerate() {
+    if let Some(ref tex) = tex {
+        let x = i as f32 * half_w;
+        pass.set_viewport(x, 0.0, half_w, full_h, 0.0, 1.0);
+
+        let tex_view = tex.create_view(&Default::default());
+        let bind_group = dev.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("bind_group"),
+            layout: bgl,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&tex_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(samp),
+                },
+            ],
+        });
+        pass.set_bind_group(0, &bind_group, &[]);
+        pass.draw(0..4, 0..1);
+    }
+}
+```
+
+The shader is unchanged — the fullscreen quad fills NDC space (-1 to +1), and the
+viewport clips it to the left or right half of the drawable. This is exactly how
+the C++ and Swift receivers work with `[encoder setViewport:]`.
+
+#### Shader
+
+No changes. The WGSL shader from Experiment 2 works unmodified. The viewport
+does the clipping — the shader doesn't know about pane layout.
+
+#### Build and run
+
+```bash
+# 0. Ensure box-demo server is running
+cd ~/dev/termsurf/ts4/box-demo && bun run server.ts &
+
+# 1. Build
+cd ~/dev/termsurf/ts4
+cargo build -p two-profiles-rust
+
+# 2. Load launchd plist
+launchctl load ~/dev/termsurf/ts4/two-profiles-rust/com.termsurf.two-profiles-rust.plist
+
+# 3. Start TWO profile servers
+cd ~/dev/termsurf/ts4/termsurf-chromium/src
+
+out/Default/One\ Profile.app/Contents/MacOS/One\ Profile \
+  --hidden \
+  --xpc-service=com.termsurf.two-profiles-rust \
+  --session-id=profile-a \
+  --user-data-dir=$HOME/.config/termsurf/poc/profile-a \
+  http://localhost:9407 2>&1 &
+
+out/Default/One\ Profile.app/Contents/MacOS/One\ Profile \
+  --hidden \
+  --xpc-service=com.termsurf.two-profiles-rust \
+  --session-id=profile-b \
+  --user-data-dir=$HOME/.config/termsurf/poc/profile-b \
+  http://localhost:9407 2>&1 &
+
+# 4. Watch logs
+tail -f ~/dev/termsurf/logs/two-profiles-rust.log
+```
+
+#### Success criteria
+
+The full Issue 416 goal:
+
+- Two panes in one window, each showing the spinning blue square
+- Different localStorage identity in each pane (profile isolation)
+- Both at 60fps sustained for 60+ seconds
+- Pixel-perfect Retina quality (1600x1200 IOSurface per pane)
+- Receiver written entirely in Rust
+- Builds with `cargo build`
+
+#### What could go wrong
+
+1. **`set_viewport` not resetting between draws.** If wgpu doesn't properly
+   scope the viewport to each draw call within a render pass, both draws may
+   render to the same viewport. Verify by checking that the left and right halves
+   show different content.
+
+2. **Bind group rebinding within a render pass.** The code creates a new bind
+   group per pane per frame. wgpu should allow `set_bind_group` to be called
+   multiple times within a single render pass, but if there's validation overhead
+   from creating bind groups every frame, consider caching them and only
+   recreating when the texture changes.
+
+3. **Two senders overwhelm the receiver.** With two profile servers sending at
+   60fps each, the receiver processes ~120 XPC messages per second. The
+   `Mutex<Option<SendPtr>>` per pane should handle this — each pane drops stale
+   frames independently. But if the event loop can't keep up, frames will be
+   dropped and FPS will dip.
+
+4. **Profile isolation not visible.** The box-demo test page writes a random
+   identity to localStorage on first load. If both profile servers share the
+   same `--user-data-dir`, they'll show the same identity. The commands above use
+   different paths (`profile-a` vs `profile-b`), but verify visually that the
+   displayed strings differ.
