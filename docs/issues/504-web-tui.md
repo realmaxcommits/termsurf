@@ -743,3 +743,55 @@ No renaming, no logic changes — just two color values bumped up.
 #### Result
 
 Builds with no warnings. Ready for interactive testing.
+
+### Experiment 13: Profile indicator
+
+#### Goal
+
+Display the current browser profile name in the top-right corner of the URL bar,
+with a Nerd Font person icon to its left. This highlights one of TermSurf's key
+differentiators: side-by-side browsing with different profiles in the same
+window. The profile defaults to `"default"` and can be set with
+`--profile <name>`.
+
+#### Layout
+
+The profile name appears as a right-aligned title in the URL bar's border:
+
+```
+┌─ URL ──────────────────────────  default ─┐
+│ https://google.com                         │
+└────────────────────────────────────────────┘
+```
+
+The `` is `nf-fa-user` (U+F007). The profile name uses `FG` color to stand out,
+while the icon uses `COMMENT` for subtle visual separation.
+
+#### Changes
+
+##### `web/src/main.rs`
+
+**CLI parsing:** After extracting the URL from args, scan for `--profile` and
+take the next argument as the profile name. Default to `"default"` if not
+provided. No need for `clap` — a simple manual parse is sufficient.
+
+```
+web <url>                    → profile = "default"
+web <url> --profile work     → profile = "work"
+web --profile work <url>     → profile = "work"
+```
+
+**URL bar block:** Add a second right-aligned title to the URL bar block using
+ratatui's `.title_bottom()` or `.title()` with `Position::Top` and
+`Alignment::Right`. The title text is `" {icon} {profile} "` with appropriate
+styling.
+
+**Pass profile to `ui()`:** Add a `profile: &str` parameter.
+
+#### Pass Criteria
+
+1. `web https://google.com` shows ` default` in the top-right of the URL bar
+   border.
+2. `web https://google.com --profile work` shows ` work` instead.
+3. The profile name uses `FG` color and the icon uses `COMMENT`.
+4. The profile indicator doesn't overlap with the URL text or `URL` title.
