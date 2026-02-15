@@ -985,3 +985,101 @@ One-profile compositor updated to the dynamic tab protocol with minimal changes
 (~15 lines modified). The protocol is backwards-compatible in the sense that the
 same Chromium Profile Server binary works with both one-profile and
 three-profiles compositors — the compositor decides how many tabs to create.
+
+### Experiment 5: Update Two Profiles for dynamic tab protocol
+
+#### Goal
+
+Update `ts5/two-profiles/` to speak the dynamic tab protocol. Same motivation as
+Experiment 4 — two-profiles is incompatible with the `146.0.7650.0-issue-503`
+Chromium branch because it routes frames by `session_id` (removed in Experiment
+3) instead of by connection identity.
+
+Two profiles, two panes, two profile servers — each profile server gets one
+`create_tab` command and opens one tab connection. Connection identity
+determines which pane receives frames. No Chromium changes.
+
+#### Changes
+
+##### `ts5/two-profiles/Sources/TwoProfiles/main.swift`
+
+**Remove `paneForSession`:** Delete the old `session_id`-based routing function.
+Replace with `paneForTabId` that maps `tab_id` strings to panes:
+
+```swift
+func paneForTabId(_ tabId: String?) -> Pane? {
+    switch tabId {
+    case "left": return .left
+    case "right": return .right
+    default: return nil
+    }
+}
+```
+
+**New globals:**
+
+```swift
+var gTabConnections: [(conn: xpc_connection_t, pane: Pane)] = []
+var gControlConnections: [xpc_connection_t] = []
+```
+
+**`handleMessage` signature:** Add `peer` parameter:
+
+```swift
+func handleMessage(_ msg: xpc_object_t, peer: xpc_connection_t)
+```
+
+Update the call site in `startXPCListener` to pass `peerConn`.
+
+**`register` handler:** When a profile server sends
+`{"action": "register", "profile": "..."}`:
+
+1. Store `peer` in `gControlConnections`.
+2. Send one `create_tab` command back. Map profile name to tab ID:
+   - `profile-a` → `tab_id: "left"`
+   - `profile-b` → `tab_id: "right"`
+3. Log the profile name.
+
+**New `tab_ready` handler:** When a profile server sends
+`{"action": "tab_ready", "tab_id": "..."}` on a new connection:
+
+1. Map `tab_id` to pane via `paneForTabId`.
+2. Append `(conn: peer, pane: pane)` to `gTabConnections`.
+3. Log the mapping.
+
+**`display_surface` handler:** Replace `session_id` lookup with connection
+identity lookup — iterate `gTabConnections` to find which pane this connection
+maps to (same pattern as three-profiles).
+
+#### Build and Run
+
+```bash
+# 1. Start test page server (if not already running)
+cd ts4/box-demo && bun run server.ts &
+
+# 2. Build two-profiles compositor
+cd ts5/two-profiles && make
+
+# 3. Register as launchd service
+launchctl bootstrap gui/$(id -u) \
+  ~/dev/termsurf/ts5/two-profiles/com.termsurf.two-profiles.plist
+
+# 4. Start two Chromium Profile Servers
+cd chromium/src
+out/Default/Chromium\ Profile\ Server.app/Contents/MacOS/Chromium\ Profile\ Server \
+  --hidden \
+  --xpc-service=com.termsurf.two-profiles \
+  --user-data-dir=$HOME/.config/termsurf/poc/profile-a &
+out/Default/Chromium\ Profile\ Server.app/Contents/MacOS/Chromium\ Profile\ Server \
+  --hidden \
+  --xpc-service=com.termsurf.two-profiles \
+  --user-data-dir=$HOME/.config/termsurf/poc/profile-b &
+```
+
+#### Pass Criteria
+
+1. Two-profiles compositor builds with `make`.
+2. Both profile servers connect and complete the handshake: `register` →
+   `create_tab` → `tab_ready` → streaming.
+3. Left pane renders profile-a, right pane renders profile-b, both at ~60fps.
+4. No Dock icons for the Chromium Profile Server processes.
