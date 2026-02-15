@@ -153,3 +153,92 @@ cargo build -p web
 ```
 
 ## Experiments
+
+### Experiment 1: Scaffold and basic chrome
+
+#### Goal
+
+Create the Rust project, add ratatui + crossterm dependencies, and render the
+basic TUI chrome layout: URL bar at the top, empty viewport in the middle,
+status bar at the bottom. The TUI runs in the alternate screen buffer and exits
+cleanly on `q` or `Ctrl+C`.
+
+No animations, no colors beyond basic styling, no interactivity beyond quit.
+Just prove the layout works and responds to terminal resize.
+
+#### Setup
+
+Create `web/` at the repo root:
+
+```
+web/
+├── Cargo.toml
+├── src/
+│   └── main.rs
+```
+
+**`Cargo.toml` dependencies:**
+
+- `ratatui` — TUI framework (widgets, layout, rendering)
+- `crossterm` — terminal backend (raw mode, alternate screen, event polling)
+
+**CLI:** `web <url>` takes a single positional argument (the URL). No flags, no
+subcommands. Use `std::env::args` — no need for `clap` yet.
+
+#### Layout
+
+Three vertical sections using ratatui's `Layout::vertical` with constraints:
+
+```
+┌─────────────────────────────────────────────┐
+│  https://google.com                         │  <- URL bar (1 line + border)
+├─────────────────────────────────────────────┤
+│                                             │
+│                                             │
+│              (viewport)                     │  <- Min(fill remaining space)
+│                                             │
+│                                             │
+├─────────────────────────────────────────────┤
+│  [q] quit                                   │  <- Status bar (1 line)
+└─────────────────────────────────────────────┘
+```
+
+- **URL bar:** A `Block` with a border, containing a `Paragraph` with the URL
+  from the CLI argument. Title: `" URL "`.
+- **Viewport:** A `Block` with a border, containing a centered `Paragraph` with
+  placeholder text like `"waiting for browser..."` in dark gray. Title:
+  `" Viewport "`. Takes all remaining vertical space.
+- **Status bar:** A single-line `Paragraph` with `"[q] quit"` in a muted style.
+  No border.
+
+#### Event Loop
+
+Use crossterm's `event::poll` with a 250ms timeout for a simple blocking loop:
+
+1. Enter raw mode, enable alternate screen.
+2. Loop:
+   - Poll for events (250ms timeout).
+   - On `KeyCode::Char('q')` or `Ctrl+C`: break.
+   - On `Resize`: redraw (ratatui handles this automatically on next `draw`).
+   - Draw the frame.
+3. On exit: leave alternate screen, disable raw mode.
+
+No tick-based rendering needed — ratatui only redraws when `draw()` is called.
+
+#### Build and Run
+
+```bash
+cd web && cargo run -- https://google.com
+```
+
+#### Pass Criteria
+
+1. `cargo build` succeeds with no warnings.
+2. `web https://google.com` enters alternate screen and shows the three-section
+   layout.
+3. The URL bar displays `https://google.com`.
+4. The viewport shows placeholder text centered in the available space.
+5. The status bar shows `[q] quit`.
+6. Pressing `q` exits cleanly, restoring the terminal.
+7. `Ctrl+C` also exits cleanly.
+8. Resizing the terminal redraws the layout correctly.
