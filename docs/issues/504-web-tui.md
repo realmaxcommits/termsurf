@@ -799,3 +799,25 @@ styling.
 #### Result
 
 Builds with no warnings. Ready for interactive testing.
+
+### Experiment 14: Brighten Viewport Text and Status Hints
+
+The viewport dimensions and the bottom-left key hints both use `COMMENT`
+(#737aa2), making them hard to read against the dark background. These are
+useful information, not decorative — they should use the normal text color.
+
+#### Changes
+
+##### `web/src/main.rs`
+
+1. **Viewport text:** Change `.fg(COMMENT)` to `.fg(FG)` on the viewport
+   `Paragraph` style (the `origin:` / `size:` lines).
+2. **Status hints:** Change `.fg(COMMENT)` to `.fg(FG)` on the `hints_widget`
+   `Paragraph` style.
+
+#### Pass Criteria
+
+1. Viewport dimensions render in `FG` (#c0caf5) — clearly readable.
+2. Key hints in the status bar render in `FG` — clearly readable.
+3. Mode label (right side of status bar) remains `FG` (unchanged).
+4. Profile icon in URL bar remains `COMMENT` (unchanged — it's decorative).
