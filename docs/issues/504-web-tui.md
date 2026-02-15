@@ -283,3 +283,88 @@ bar frame.
 #### Result
 
 Builds with no warnings. Ready for visual inspection.
+
+### Experiment 3: Control mode and browse mode
+
+#### Goal
+
+Add two input modes — **browse mode** and **control mode** — so the TUI can
+distinguish between keypresses intended for the browser and keypresses intended
+for the chrome. The current mode is displayed in the bottom-right of the status
+bar.
+
+This is the foundation for all future keyboard handling: in browse mode, keys go
+to the browser; in control mode, keys control the TUI (quit, navigate, edit URL,
+etc.).
+
+#### Modes
+
+**Browse mode** (default on launch):
+
+- All keypresses will eventually be forwarded to the browser (not implemented in
+  this experiment — there is no browser yet). For now, keypresses are simply
+  ignored.
+- `Esc` exits browse mode and enters control mode. In a future issue, `Esc` will
+  be sent to the browser first; only if the browser doesn't consume it will it
+  propagate to `web`. For this experiment, `Esc` always switches modes.
+- `Ctrl+Esc` always exits browse mode, unconditionally. The browser never sees
+  `Ctrl+Esc`. This is the guaranteed escape hatch for pages that trap `Esc`.
+
+**Control mode:**
+
+- `q` quits the application (same as before).
+- `Ctrl+C` quits the application (same as before).
+- `Enter` enters browse mode.
+- Other keys are ignored for now (future experiments will add navigation, URL
+  editing, etc.).
+
+#### Changes
+
+##### `web/src/main.rs`
+
+**Add mode enum:**
+
+```rust
+enum Mode {
+    Browse,
+    Control,
+}
+```
+
+**App state:** Track the current mode. Start in `Mode::Browse`.
+
+**Event handling:** Branch on the current mode:
+
+- In `Mode::Browse`:
+  - `Esc` or `Ctrl+Esc` → switch to `Mode::Control`.
+  - All other keys → ignore (future: forward to browser).
+- In `Mode::Control`:
+  - `q` → quit.
+  - `Ctrl+C` → quit (works in both modes for safety).
+  - `Enter` → switch to `Mode::Browse`.
+  - All other keys → ignore.
+
+Note: `Ctrl+C` should quit from **both** modes. It's the universal emergency
+exit. A user pressing `Ctrl+C` always expects the program to stop.
+
+**Status bar:** Split into left and right sections using a horizontal layout.
+Left side shows key hints (mode-dependent). Right side shows the current mode
+label.
+
+- Browse mode left: `[esc] control mode`
+- Browse mode right: `BROWSE`
+- Control mode left: `[q] quit  [enter] browse`
+- Control mode right: `CONTROL`
+
+The mode label uses the same `Color::Gray` as the rest of the status bar.
+
+#### Pass Criteria
+
+1. Launches in browse mode. Status bar shows `BROWSE` on the right.
+2. Pressing `q` in browse mode does NOT quit.
+3. `Esc` switches to control mode. Status bar shows `CONTROL` on the right.
+4. `Ctrl+Esc` also switches to control mode from browse mode.
+5. In control mode, `q` quits cleanly.
+6. In control mode, `Enter` switches back to browse mode.
+7. `Ctrl+C` quits from either mode.
+8. Status bar left side shows mode-appropriate key hints.
