@@ -150,43 +150,58 @@ viewport area contains terminal text too (the coordinates display). The pink
 overlay covers the viewport area, obscuring the terminal text beneath it — which
 is exactly what a real browser texture would do.
 
-### Positioning Strategy: Custom Escape Sequence
+### Positioning Strategy: XPC Channel
 
 The `web` TUI knows its viewport in **grid coordinates** (column, row, width in
-columns, height in rows). Ghostty knows how to convert grid coordinates to
-physical pixels (cell size × grid position + padding). The natural communication
-channel is the terminal itself — `web` writes to stdout, Ghostty parses it.
+columns, height in rows). The TermSurf compositor (Ghostty fork) knows how to
+convert grid coordinates to physical pixels (cell size × grid position +
+padding). They communicate over XPC — the same mechanism that will carry
+IOSurface Mach ports for real browser textures.
+
+**Pane identification:**
+
+Each terminal pane sets a `TERMSURF_PANE_ID` environment variable before
+spawning its shell. This is a unique identifier (e.g., a UUID or incrementing
+integer) that the compositor assigns when creating the pane. Any process running
+inside the pane — including `web` — inherits this env var and uses it to
+identify itself to the compositor.
+
+**XPC service:**
+
+The compositor registers as `com.termsurf.compositor`, an XPC Mach service. This
+is the same pattern ts3 used with `com.termsurf.launcher`. The compositor
+listens for connections from `web` processes running inside its panes.
 
 **Flow:**
 
 ```
-web TUI (ratatui)                          Ghostty (renderer)
-─────────────────                          ─────────────────
-Layout computes viewport
-  inner rect: col=1, row=3,
-  width=78, height=20
+web TUI (ratatui)                          TermSurf compositor
+─────────────────                          ────────────────────
+Reads TERMSURF_PANE_ID
+from environment
         │
         ▼
-Emit OSC escape sequence:
-  \x1b]133337;1,3,78,20\x07  ──stdout──▶  Parse OSC 133337
+Connects to
+  com.termsurf.compositor  ──XPC──▶  Accepts connection
+        │                                    │
+        ▼                                    ▼
+Sends: set_overlay                   Stores overlay rect
+  pane_id: <id>                      for pane <id>
+  col: 1, row: 3,                    in grid coordinates
+  width: 78, height: 20                     │
+        │                                    ▼
+        │                              drawFrame() converts
+        │                              grid → physical pixels:
+        │                                x = col × cell_w + pad_left
+        │                                y = row × cell_h + pad_top
+        │                                w = cols × cell_w
+        │                                h = rows × cell_h
         │                                    │
         │                                    ▼
-        │                                  Store overlay rect
-        │                                  in grid coordinates
-        │                                    │
-        │                                    ▼
-        │                                  drawFrame() converts
-        │                                  grid → physical pixels:
-        │                                    x = col × cell_w + pad_left
-        │                                    y = row × cell_h + pad_top
-        │                                    w = cols × cell_w
-        │                                    h = rows × cell_h
-        │                                    │
-        │                                    ▼
-        │                                  Render pink quad at
-        │                                  computed pixel rect
+        │                              Render pink quad at
+        │                              computed pixel rect
         │
-Terminal resizes
+Terminal resizes → SIGWINCH
         │
         ▼
 ratatui recomputes layout
@@ -194,52 +209,56 @@ ratatui recomputes layout
   width=118, height=40
         │
         ▼
-Emit new OSC:
-  \x1b]133337;1,3,118,40\x07 ──stdout──▶  Update overlay rect
-                                             │
-                                             ▼
-                                           Next drawFrame() uses
-                                           new coordinates
+Sends: set_overlay         ──XPC──▶  Update overlay rect
+  pane_id: <id>                              │
+  col: 1, row: 3,                           ▼
+  width: 118, height: 40            Next drawFrame() uses
+                                     new coordinates
+
+web exits or disconnects   ──XPC──▶  Connection closed →
+                                     clear overlay for pane
 ```
 
 **Why grid coordinates, not pixels:**
 
 - Grid coordinates are resolution-independent. No DPI/Retina math in `web`.
-- Ghostty already knows cell sizes, padding, and scale factor.
-- The conversion happens once per frame in `drawFrame()`, using values Ghostty
-  already has.
+- The compositor already knows cell sizes, padding, and scale factor.
+- The conversion happens once per frame in `drawFrame()`, using values the
+  compositor already has.
 - If the font size changes (which changes cell size), the overlay automatically
   adjusts without `web` needing to know.
 
-**Why OSC escape sequences:**
+**Why XPC:**
 
-- Terminal apps already communicate with their terminal via escape sequences.
-- No extra IPC channel needed (no Unix socket, no file, no XPC).
-- Ghostty already has an OSC parser — we just add a new code.
-- The sequence is emitted on every `web` TUI draw cycle (ratatui's event loop),
-  so coordinates stay in sync with the visible chrome.
+- **Two-way.** The compositor can send messages back to `web` (resize
+  notifications, focus changes, etc.). OSC escape sequences are one-way.
+- **Same channel for everything.** Viewport coordinates, IOSurface Mach ports,
+  input events, and navigation commands will all flow over one XPC connection.
+- **Proven in ts3.** The XPC patterns for Mach port transfer and structured
+  messaging are already established.
+- **Pane-aware.** The pane ID ties each `web` instance to its pane, so the
+  compositor knows exactly where to render.
 
-**OSC format:** `\x1b]133337;{col},{row},{width},{height}\x07`
+**Message format (XPC dictionary):**
 
-- `133337` is a private-use OSC code (well above any standard codes).
-- The four values are grid coordinates (0-indexed column, 0-indexed row, width
-  in columns, height in rows).
-- `\x07` (BEL) terminates the sequence (standard OSC terminator).
+- `action`: `"set_overlay"` — set or update the overlay rectangle.
+- `pane_id`: string — the pane this overlay belongs to.
+- `col`, `row`, `width`, `height`: integers — grid coordinates (0-indexed).
 
-To clear the overlay (e.g., when `web` exits): `\x1b]133337;\x07` (empty
-payload).
+To clear the overlay, `web` simply disconnects. The compositor detects the
+closed connection and removes the overlay for that pane.
 
 ## Experiments
 
-### Experiment 1: Dynamic Pink Quad via OSC
+### Experiment 1: Dynamic Pink Quad via XPC
 
 Add a new Metal shader pipeline (`pink_overlay`) that draws a solid pink
-rectangle. The rectangle's position and size come from an OSC escape sequence
-emitted by the `web` TUI. When the terminal resizes, `web` emits updated
-coordinates and the pink overlay follows.
+rectangle. The rectangle's position and size come from an XPC message sent by
+the `web` TUI. When the terminal resizes, `web` sends updated coordinates and
+the pink overlay follows.
 
-This experiment has three parts: the Metal shader, the OSC parser, and the `web`
-TUI integration.
+This experiment has three parts: the Metal shader, the XPC listener in the
+compositor, and the `web` TUI integration.
 
 #### Changes
 
@@ -297,55 +316,72 @@ shaders, add a new step:
 
 5. Add a render pass step with the `pink_overlay` pipeline.
 
-##### Part 2: OSC Parser
+##### Part 2: XPC Listener (Compositor)
 
-###### `ts5/src/terminal/osc.zig` (or equivalent)
+###### Pane ID Environment Variable
 
-Add handling for OSC code `133337`. When Ghostty receives
-`\x1b]133337;col,row,width,height\x07`:
+When creating a terminal pane, the compositor sets `TERMSURF_PANE_ID=<id>` in
+the pane's environment. This is inherited by the shell and all child processes.
+The ID must be unique across all panes in the compositor (a UUID or monotonic
+counter).
 
-1. Parse the four comma-separated integers.
-2. Store them in the terminal/surface state as the overlay grid rect.
-3. Mark the surface as needing redraw.
+###### XPC Mach Service (`com.termsurf.compositor`)
 
-When Ghostty receives `\x1b]133337;\x07` (empty payload):
+The compositor registers an XPC Mach service at startup. When a `web` process
+connects and sends a `set_overlay` message:
 
-1. Clear the overlay rect (set to zero/null).
-2. Mark the surface as needing redraw.
+1. Look up the pane by `pane_id`.
+2. Store the overlay grid rect (col, row, width, height) on the pane's state.
+3. Mark the pane's surface as needing redraw.
+
+When the XPC connection closes (because `web` exited or crashed):
+
+1. Clear the overlay rect for that pane.
+2. Mark the pane's surface as needing redraw.
 
 The overlay rect must be accessible from the renderer thread (where
 `drawFrame()` runs). Use the same thread-safe communication pattern Ghostty uses
 for other terminal state (e.g., the surface mailbox or shared state protected by
 the draw mutex).
 
+###### Implementation Location
+
+The XPC listener should live in the macOS Swift shell (`ts5/macos/`), since XPC
+is a macOS framework. The overlay rect is passed to the Zig renderer via the
+existing C API bridge (`ts5/include/`).
+
 ##### Part 3: `web` TUI Integration
 
 ###### `web/src/main.rs`
 
-After each `terminal.draw()` call, compute the viewport inner rect and emit the
-OSC escape sequence:
+On startup, read `TERMSURF_PANE_ID` from the environment and connect to
+`com.termsurf.compositor` via XPC. After each `terminal.draw()` call, compute
+the viewport inner rect and send the overlay coordinates:
 
 ```rust
+let pane_id = std::env::var("TERMSURF_PANE_ID")
+    .expect("TERMSURF_PANE_ID not set — not running inside TermSurf");
+
+let compositor = connect_to_compositor(); // XPC connection
+
 terminal.draw(|frame| ui(frame, &url, &profile, &mode))?;
 
-// Emit overlay coordinates to Ghostty.
+// Send overlay coordinates to compositor.
 // inner_rect is computed during ui() via Block::inner().
-print!("\x1b]133337;{},{},{},{}\x07",
+compositor.send_set_overlay(
+    &pane_id,
     inner_rect.x, inner_rect.y,
-    inner_rect.width, inner_rect.height);
+    inner_rect.width, inner_rect.height,
+);
 ```
 
 The `inner_rect` values are already computed by ratatui's layout engine. When
 the terminal resizes, ratatui automatically recomputes the layout on the next
-`draw()` call, and the new coordinates are emitted.
+`draw()` call, and the new coordinates are sent.
 
-On exit (after restoring the terminal), emit the clear sequence:
-
-```rust
-print!("\x1b]133337;\x07");
-```
-
-This tells Ghostty to stop rendering the overlay.
+On exit, the XPC connection closes automatically. The compositor detects the
+disconnection and clears the overlay for that pane — no explicit "clear" message
+needed.
 
 #### Pass Criteria
 
