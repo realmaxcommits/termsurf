@@ -116,3 +116,106 @@ race condition.
 `shell_video_consumer.cc`, `shell_browser_main_parts.cc`).
 
 ## Experiments
+
+### Experiment 1: WebContentsObserver with RenderViewReady
+
+#### Goal
+
+Replace the 2-second `PostDelayedTask` with an event-driven
+`WebContentsObserver` that calls `Attach()` when `RenderViewReady()` fires.
+
+#### Branch
+
+`146.0.7650.0-issue-502` (off `146.0.7650.0-issue-501`)
+
+#### Changes
+
+##### `shell_video_consumer.h`
+
+Add `WebContentsObserver` as a second base class alongside
+`viz::mojom::FrameSinkVideoConsumer`:
+
+```cpp
+#include "content/public/browser/web_contents_observer.h"
+
+class ShellVideoConsumer : public viz::mojom::FrameSinkVideoConsumer,
+                           public WebContentsObserver {
+ public:
+  ShellVideoConsumer();
+  ~ShellVideoConsumer() override;
+
+  // Begin observing a WebContents. When RenderViewReady() fires,
+  // Attach() is called automatically.
+  void ObserveContents(WebContents* web_contents);
+
+  // WebContentsObserver:
+  void RenderViewReady() override;
+
+  // ... rest unchanged ...
+```
+
+The existing `Attach(WebContents*)` method stays as-is — it still does the
+actual capturer setup. `ObserveContents()` is the new entry point that replaces
+the delayed `Attach()` call.
+
+##### `shell_video_consumer.cc`
+
+Add the two new methods:
+
+```cpp
+void ShellVideoConsumer::ObserveContents(WebContents* web_contents) {
+  Observe(web_contents);  // WebContentsObserver::Observe()
+}
+
+void ShellVideoConsumer::RenderViewReady() {
+  Attach(web_contents());  // WebContentsObserver::web_contents()
+}
+```
+
+`Observe()` is the protected `WebContentsObserver` method that starts
+observation. `web_contents()` is the accessor that returns the observed
+`WebContents*`.
+
+##### `shell_browser_main_parts.cc`
+
+Replace the `PostDelayedTask` block with a single `ObserveContents()` call:
+
+```cpp
+void ShellBrowserMainParts::InitializeMessageLoopContext() {
+  Shell* shell = Shell::CreateNewWindow(browser_context_.get(), GetStartupURL(),
+                                        nullptr, gfx::Size());
+
+  video_consumer_ = std::make_unique<ShellVideoConsumer>();
+
+#if BUILDFLAG(IS_MAC)
+  base::CommandLine* cmd = base::CommandLine::ForCurrentProcess();
+  if (cmd->HasSwitch(switches::kXpcService)) {
+    video_consumer_->ConnectToService(
+        cmd->GetSwitchValueASCII(switches::kXpcService));
+  }
+  if (cmd->HasSwitch(switches::kSessionId)) {
+    video_consumer_->SetSessionId(
+        cmd->GetSwitchValueASCII(switches::kSessionId));
+  }
+#endif
+
+  // Observe the WebContents and attach the capturer when the
+  // RenderWidgetHostView is ready (via RenderViewReady callback).
+  video_consumer_->ObserveContents(shell->web_contents());
+}
+```
+
+The `PostDelayedTask` / `base::Seconds(2)` block is deleted entirely.
+
+#### Pass Criteria
+
+1. Builds with zero errors.
+2. Both panes render at ~60fps (same as before).
+3. First frame arrives in under 1 second (not 2+ seconds).
+4. No Dock icon (LSUIElement still in effect from Issue 501).
+
+#### Test Command
+
+```bash
+cd ts4/two-profiles-receiver && swift run 2>/tmp/cps-a-stderr.log
+```
