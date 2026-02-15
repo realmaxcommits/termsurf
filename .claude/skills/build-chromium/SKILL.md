@@ -28,6 +28,32 @@ depot_tools must be on PATH before running any build tool (`autoninja`, `gn`,
 export PATH="$HOME/dev/termsurf/chromium/depot_tools:$PATH"
 ```
 
+## CRITICAL: Never Use `ninja` Directly
+
+**ALWAYS use `autoninja`.** NEVER run `ninja -C out/Default ...` or invoke
+`ninja` directly in any form.
+
+`autoninja` uses Siso (Chromium's Ninja replacement) to execute builds. If
+`ninja` is invoked directly even once, it creates `.ninja_deps` state files in
+the output directory. Once those files exist, `autoninja` detects them and falls
+back to Ninja for all subsequent builds — permanently downgrading the build
+system. The only recovery is `gn clean out/Default`, which **deletes the entire
+build cache** and forces a full rebuild (~42,000 steps, ~1.5 hours).
+
+**Wrong:**
+```bash
+ninja -C out/Default chromium_profile_server    # DO NOT DO THIS
+```
+
+**Right:**
+```bash
+autoninja -C out/Default chromium_profile_server  # Always use autoninja
+```
+
+If the build ever prints "You're still using Ninja", the directory is already
+contaminated. Run `gn clean out/Default` to fix it, then rebuild with
+`autoninja`.
+
 ## Build Commands
 
 ```bash
@@ -41,11 +67,11 @@ export PATH="$HOME/dev/termsurf/chromium/depot_tools:$PATH"
 gn gen out/Default
 
 # Build
-autoninja -C out/Default one_profile
+autoninja -C out/Default chromium_profile_server
 ```
 
-The current build target is `one_profile`. This builds the `One Profile.app`
-bundle in `out/Default/`.
+The current build target is `chromium_profile_server`. This builds the
+`Chromium Profile Server.app` bundle in `out/Default/`.
 
 ## GN Args
 

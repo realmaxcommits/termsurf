@@ -64,13 +64,42 @@ export PATH="$(cd ../depot_tools && pwd):$PATH"
 Configure the build (one time):
 
 ```bash
-gn gen out/Default --args='is_debug=false symbol_level=0 enable_nacl=false is_component_build=true'
+gn gen out/Default --args='is_debug=false symbol_level=0 is_component_build=true'
 ```
 
 Build a target:
 
 ```bash
-autoninja -C out/Default content_shell
+autoninja -C out/Default chromium_profile_server
 ```
 
 Build times: ~1.5 hours for a full build, 15–20 seconds incremental.
+
+### Never use `ninja` directly
+
+Always use `autoninja`, never `ninja`. Chromium's build system uses Siso (a
+Ninja replacement). `autoninja` routes builds through Siso automatically. If
+`ninja` is invoked directly — even once — it creates `.ninja_deps` state files
+that permanently downgrade the build directory to Ninja. Every subsequent
+`autoninja` invocation will detect the Ninja state and fall back to Ninja,
+printing:
+
+> You're still using Ninja. Please run 'gn clean out/Default' when convenient
+> to upgrade this output directory to Siso (Chromium's Ninja replacement).
+
+The only recovery is `gn clean out/Default`, which deletes the entire build
+cache (preserving only `args.gn`) and forces a full rebuild (~1.5 hours).
+
+### Recovery
+
+If the build directory is contaminated with Ninja state:
+
+```bash
+cd chromium/src
+export PATH="$(cd ../depot_tools && pwd):$PATH"
+gn clean out/Default
+autoninja -C out/Default chromium_profile_server
+```
+
+This cleans the directory, and `autoninja` will use Siso from that point
+forward.
