@@ -592,3 +592,7 @@ So:
    theme-appropriate.
 3. Works in both dark and light terminal themes.
 4. Switching modes immediately updates the border colors.
+
+#### Result
+
+Builds with no warnings. Ready for interactive testing.

@@ -74,8 +74,8 @@ fn ui(frame: &mut Frame, url: &str, mode: &Mode) {
 
     // Border colors based on mode.
     let (url_border, viewport_border) = match mode {
-        Mode::Browse => (Color::DarkGray, Color::White),
-        Mode::Control => (Color::White, Color::DarkGray),
+        Mode::Browse => (Color::Reset, Color::Cyan),
+        Mode::Control => (Color::Cyan, Color::Reset),
     };
 
     // URL bar.
