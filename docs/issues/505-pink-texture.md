@@ -753,3 +753,40 @@ This confirms whether the listener actually starts when the app launches.
 2. The `web` TUI prints separate diagnostic lines for env var and XPC status.
 3. If the env var is set but XPC fails, the diagnostic identifies that clearly.
 4. If both work, the pink overlay appears (Experiment 1 pass criteria apply).
+
+#### Result: PASS
+
+The env var was set correctly all along — the hypothesis was confirmed. The
+diagnostics revealed that the real failure was the XPC Mach service
+registration:
+
+1. The launchd plist pointed to `zig-out/bin/ghostty` (nonexistent). Updated to
+   `zig-out/TermSurf.app/Contents/MacOS/ghostty`.
+2. Launching the app via `open` gives it a different launchd identity
+   (`application.com.termsurf.debug...`) than the plist's job
+   (`com.termsurf.compositor`). The app cannot claim a Mach service owned by a
+   different launchd job. Fix: launch via `launchctl kickstart` so the process
+   identity matches the plist.
+
+With both fixes, all Experiment 1 pass criteria are met:
+
+- Pink rectangle covers the viewport area exactly.
+- Resizing the terminal causes the pink rectangle to follow the viewport with no
+  lag or stale positioning.
+- URL bar, border, and status bar render normally around it.
+- Quitting `web` clears the pink overlay.
+- No flicker or tearing during resize.
+
+**Launch commands:**
+
+```bash
+# Register (once):
+launchctl bootstrap gui/$(id -u) ts5/macos/com.termsurf.compositor.plist
+
+# Launch:
+launchctl kickstart gui/$(id -u)/com.termsurf.compositor
+
+# Restart after rebuild:
+launchctl kill SIGTERM gui/$(id -u)/com.termsurf.compositor
+launchctl kickstart gui/$(id -u)/com.termsurf.compositor
+```
