@@ -870,3 +870,14 @@ Two lines removed (the `padding` variable and its addition to `origin`).
    symmetric on both sides (top and bottom).
 3. Resizing the terminal preserves the symmetric gap at all window sizes.
 4. All other Experiment 1 pass criteria still hold.
+
+#### Result: PASS
+
+Removing the `grid_padding` addition fixed the asymmetry. The pink overlay
+shifted slightly to the left — confirming that the padding had been
+double-counted. The projection matrix already maps world `(0, 0)` to the grid
+origin; adding `grid_padding` on top pushed the overlay rightward by the total
+padding amount (configured + blank).
+
+The gap between the pink overlay and the viewport border is now symmetric on all
+four sides. Resizing preserves the symmetry at all window sizes.

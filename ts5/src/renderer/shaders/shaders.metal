@@ -868,9 +868,7 @@ vertex float4 pink_overlay_vertex(
   constant PinkOverlayIn& params [[buffer(0)]],
   constant Uniforms& uniforms [[buffer(1)]]
 ) {
-  // grid_padding order: top, right, bottom, left
-  float2 padding = float2(uniforms.grid_padding[3], uniforms.grid_padding[0]);
-  float2 origin = float2(params.grid_col, params.grid_row) * uniforms.cell_size + padding;
+  float2 origin = float2(params.grid_col, params.grid_row) * uniforms.cell_size;
   float2 size = float2(params.grid_width, params.grid_height) * uniforms.cell_size;
 
   float2 corner;
