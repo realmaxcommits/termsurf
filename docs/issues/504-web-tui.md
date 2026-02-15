@@ -477,3 +477,43 @@ to:
 #### Result
 
 Builds with no warnings. Ready for interactive testing.
+
+### Experiment 7: Display viewport dimensions
+
+#### Goal
+
+Replace the "waiting for browser..." placeholder with the viewport's actual
+inner coordinates and dimensions (in rows and columns). This proves `web` knows
+exactly where the browser content region is, which is the foundation for telling
+TermSurf where to composite the Chromium texture.
+
+#### Changes
+
+##### `web/src/main.rs`
+
+After computing `layout[1]` (the viewport rect), calculate the inner area by
+subtracting the border. The inner rect is the area inside `Borders::ALL` — 1
+row/col inset on each side.
+
+Use ratatui's `Block::inner()` to get the inner `Rect`, then format the
+coordinates and dimensions as the viewport paragraph text:
+
+```
+origin: (col, row)
+size: cols x rows
+```
+
+Both lines centered in the viewport. Keep the `Color::DarkGray` style — this is
+debug/informational text that will eventually be replaced by browser content.
+
+Update on every draw, so resizing the terminal immediately shows the new
+dimensions.
+
+#### Pass Criteria
+
+1. Viewport displays its inner origin and size (e.g., `origin: (1, 3)` and
+   `size: 78 x 20`).
+2. Resizing the terminal updates the displayed dimensions immediately.
+3. The displayed dimensions can be verified by counting — the inner width
+   matches the number of columns available inside the border, and the inner
+   height matches the number of rows.
