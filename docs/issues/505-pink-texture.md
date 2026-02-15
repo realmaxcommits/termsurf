@@ -790,3 +790,83 @@ launchctl kickstart gui/$(id -u)/com.termsurf.compositor
 launchctl kill SIGTERM gui/$(id -u)/com.termsurf.compositor
 launchctl kickstart gui/$(id -u)/com.termsurf.compositor
 ```
+
+### Experiment 3: Fix Right-Edge Overshoot
+
+The pink overlay extends roughly half a cell too far to the right. On the left,
+there is a clean gap between the viewport border glyph and the pink rectangle.
+On the right, the pink extends almost exactly to the border stroke — visibly
+asymmetric.
+
+#### Analysis
+
+The pink overlay vertex shader adds `grid_padding` to the world-space origin:
+
+```metal
+float2 padding = float2(uniforms.grid_padding[3], uniforms.grid_padding[0]);
+float2 origin = float2(params.grid_col, params.grid_row) * uniforms.cell_size + padding;
+```
+
+But the existing shaders (`cell_text_vertex`, `image_vertex`) do NOT add
+`grid_padding`. They position at `grid_pos * cell_size` and let the projection
+matrix handle the offset:
+
+```metal
+// cell_text_vertex (line 563):
+float2 cell_pos = uniforms.cell_size * float2(in.grid_pos);
+
+// image_vertex (line 823):
+float2 image_pos = (uniforms.cell_size * in.grid_pos) + in.cell_offset;
+```
+
+The projection matrix maps world `(0, 0)` to the grid origin. Adding
+`grid_padding` shifts the overlay to the right by
+`padding.left +
+blank_padding.left` pixels in world space — double-counting the
+offset.
+
+The visual effect depends on the value of `grid_padding.left`, which equals
+`configured_padding + blank_padding`. The blank padding is the leftover pixels
+when the terminal width isn't an exact multiple of cell width. If
+`grid_padding.left ≈ 0.5 × cell_width`, the overlay shifts half a cell right:
+
+- **Left side:** The gap between the border stroke (center of the border cell)
+  and the pink left edge grows by half a cell. Looks like a clean boundary.
+- **Right side:** The gap between the pink right edge and the border stroke
+  shrinks by half a cell. The pink nearly touches the border.
+
+#### Changes
+
+##### `ts5/src/renderer/shaders/shaders.metal`
+
+Remove the `grid_padding` addition from `pink_overlay_vertex`. Match the
+`image_vertex` pattern — position at `grid_pos * cell_size` only:
+
+```metal
+vertex float4 pink_overlay_vertex(
+  uint vid [[vertex_id]],
+  constant PinkOverlayIn& params [[buffer(0)]],
+  constant Uniforms& uniforms [[buffer(1)]]
+) {
+  float2 origin = float2(params.grid_col, params.grid_row) * uniforms.cell_size;
+  float2 size = float2(params.grid_width, params.grid_height) * uniforms.cell_size;
+
+  float2 corner;
+  corner.x = float(vid == 1 || vid == 3);
+  corner.y = float(vid == 2 || vid == 3);
+
+  float2 pos = origin + size * corner;
+  return uniforms.projection_matrix * float4(pos, 0.0f, 1.0f);
+}
+```
+
+Two lines removed (the `padding` variable and its addition to `origin`).
+
+#### Pass Criteria
+
+1. The gap between the pink overlay and the viewport border is visually
+   symmetric on both sides (left and right).
+2. The gap between the pink overlay and the viewport border is visually
+   symmetric on both sides (top and bottom).
+3. Resizing the terminal preserves the symmetric gap at all window sizes.
+4. All other Experiment 1 pass criteria still hold.
