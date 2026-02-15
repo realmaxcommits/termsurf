@@ -908,3 +908,44 @@ Builds and renders correctly. The icon appears in `COMMENT` to the left of the
 URL. However, decided not to keep it for now — the refresh icon adds visual
 clutter without functionality. Reverted the code change. May revisit when
 keybindings or mouse support are implemented.
+
+## Conclusion
+
+Issue 504 established the `web` TUI chrome — the terminal-native frame that
+wraps the browser viewport. Over 15 experiments, the `web` binary evolved from a
+bare scaffold into a polished, modal interface.
+
+### What was built
+
+- **Standalone Rust CLI** (`web/`) using ratatui + crossterm. Runs in the
+  terminal's alternate screen buffer, restores cleanly on exit.
+- **Three-panel layout:** URL bar (top), viewport (center, fills remaining
+  space), status bar (bottom).
+- **Browse / Control mode system.** Browse mode is the default — keys will
+  eventually pass through to the browser. Esc switches to Control mode for
+  chrome interaction (quit, navigate). Ctrl+C quits from either mode.
+  Ctrl+Esc is reserved as a guaranteed escape hatch from Browse mode.
+- **Mode-dependent border highlighting.** The active panel (viewport in Browse,
+  URL bar in Control) gets a cyan border; the inactive panel gets a muted border.
+  This gives immediate visual feedback about which mode you're in.
+- **Tokyo Night color theme** with explicit RGB values, so the TUI looks
+  consistent regardless of the user's terminal theme.
+- **Profile indicator** in the URL bar border — shows the browser profile name
+  with a Nerd Font user icon. Defaults to "default", configurable with
+  `--profile <name>`.
+- **Nerd Font icons** for mode labels (browse = 󰖟, control = ) and the
+  profile indicator ( icon).
+- **Viewport dimension reporting.** The viewport displays its own inner
+  coordinates and size (in terminal cells). This is the information `web` will
+  communicate to TermSurf so it knows exactly where to composite the browser
+  texture.
+
+### What comes next
+
+- **IPC with TermSurf** — `web` needs to tell TermSurf the viewport coordinates
+  so it can composite the Chromium texture into the right region.
+- **URL editing** — making the URL bar interactive (type a URL, press Enter to
+  navigate).
+- **Navigation commands** — back, forward, reload keybindings in Control mode.
+- **Mouse support** — clickable controls (refresh, back/forward, URL bar focus).
+- **Dynamic resize** — updating viewport dimensions when the terminal resizes.
