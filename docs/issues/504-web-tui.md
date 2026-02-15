@@ -693,3 +693,7 @@ default colors bleed through.
 5. Status bar hints are muted (`#565f89`), mode label is bright (`#c0caf5`).
 6. Viewport coordinates use the muted comment color.
 7. No terminal default colors bleed through anywhere.
+
+#### Result
+
+Builds with no warnings. Ready for interactive testing.

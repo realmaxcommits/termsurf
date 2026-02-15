@@ -9,6 +9,13 @@ use crossterm::terminal::{
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, Paragraph};
 
+// Tokyo Night palette.
+const BG: Color = Color::Rgb(0x1a, 0x1b, 0x26);
+const FG: Color = Color::Rgb(0xc0, 0xca, 0xf5);
+const COMMENT: Color = Color::Rgb(0x56, 0x5f, 0x89);
+const CYAN: Color = Color::Rgb(0x7d, 0xcf, 0xff);
+const BORDER: Color = Color::Rgb(0x3b, 0x42, 0x61);
+
 #[derive(PartialEq)]
 enum Mode {
     Browse,
@@ -65,6 +72,9 @@ fn main() -> io::Result<()> {
 }
 
 fn ui(frame: &mut Frame, url: &str, mode: &Mode) {
+    // Paint full background.
+    frame.render_widget(Block::default().style(Style::default().bg(BG)), frame.area());
+
     let layout = Layout::vertical([
         Constraint::Length(3), // URL bar (1 line + top/bottom border)
         Constraint::Min(1),   // Viewport (fill remaining)
@@ -74,26 +84,30 @@ fn ui(frame: &mut Frame, url: &str, mode: &Mode) {
 
     // Border colors based on mode.
     let (url_border, viewport_border) = match mode {
-        Mode::Browse => (Color::Reset, Color::Cyan),
-        Mode::Control => (Color::Cyan, Color::Reset),
+        Mode::Browse => (BORDER, CYAN),
+        Mode::Control => (CYAN, BORDER),
     };
 
     // URL bar.
-    let url_bar = Paragraph::new(url).block(
-        Block::default()
-            .borders(Borders::ALL)
-            .title(" URL ")
-            .border_style(Style::default().fg(url_border))
-            .title_style(Style::default().fg(url_border)),
-    );
+    let url_bar = Paragraph::new(url)
+        .style(Style::default().fg(FG))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" URL ")
+                .border_style(Style::default().fg(url_border).bg(BG))
+                .title_style(Style::default().fg(url_border))
+                .style(Style::default().bg(BG)),
+        );
     frame.render_widget(url_bar, layout[0]);
 
     // Viewport.
     let viewport_block = Block::default()
         .borders(Borders::ALL)
         .title(" Viewport ")
-        .border_style(Style::default().fg(viewport_border))
-        .title_style(Style::default().fg(viewport_border));
+        .border_style(Style::default().fg(viewport_border).bg(BG))
+        .title_style(Style::default().fg(viewport_border))
+        .style(Style::default().bg(BG));
     let inner = viewport_block.inner(layout[1]);
     let viewport_text = format!(
         "origin: ({}, {})\nsize: {} x {}",
@@ -101,7 +115,7 @@ fn ui(frame: &mut Frame, url: &str, mode: &Mode) {
     );
     let viewport = Paragraph::new(viewport_text)
         .alignment(Alignment::Center)
-        .style(Style::default().fg(Color::Reset))
+        .style(Style::default().fg(COMMENT).bg(BG))
         .block(viewport_block);
     frame.render_widget(viewport, layout[1]);
 
@@ -118,11 +132,11 @@ fn ui(frame: &mut Frame, url: &str, mode: &Mode) {
     };
 
     let hints_widget = Paragraph::new(hints)
-        .style(Style::default().fg(Color::Gray));
+        .style(Style::default().fg(COMMENT).bg(BG));
     frame.render_widget(hints_widget, status_layout[0]);
 
     let label_widget = Paragraph::new(label)
         .alignment(Alignment::Right)
-        .style(Style::default().fg(Color::Gray));
+        .style(Style::default().fg(FG).bg(BG));
     frame.render_widget(label_widget, status_layout[1]);
 }
