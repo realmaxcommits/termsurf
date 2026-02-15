@@ -810,3 +810,135 @@ icon without affecting `IsBackgroundOnlyProcess()`, path resolution, or
 compositor frame rates. This sidesteps the `LSUIElement` / `paths_apple.mm`
 collision that killed Experiment 1 — no plist changes needed, no path logic to
 fix.
+
+However, the Dock icon briefly flashes on launch before the runtime policy takes
+effect. Experiment 4 fixes this with `LSUIElement` in the plist instead.
+
+### Experiment 4: LSUIElement in plist + fix paths_apple.mm
+
+#### Hypothesis
+
+Setting `LSUIElement=true` in `app-Info.plist` will prevent the Dock icon from
+ever appearing (no flash). The `paths_apple.mm` crash from Experiment 1 can be
+fixed by replacing `IsBackgroundOnlyProcess()` with a check for
+`switches::kProcessType` — the standard Chromium flag that identifies child
+processes.
+
+#### Background
+
+Experiment 3 proved that hiding from the Dock doesn't affect compositor frame
+rates. But the runtime `setActivationPolicy` approach causes the Dock icon to
+briefly flash on launch before disappearing. `LSUIElement=true` in the plist
+prevents this entirely — macOS never creates the Dock icon in the first place.
+
+Experiment 1 failed because `LSUIElement=true` makes
+`base::apple::IsBackgroundOnlyProcess()` return true, which causes
+`GetContentsPath()` in `paths_apple.mm` to use the 9-level helper path walk
+instead of the 2-level main app walk. But `IsBackgroundOnlyProcess()` is a proxy
+for "is this a child process?" — and a bad one, since it conflates `LSUIElement`
+apps with helper processes.
+
+The direct way to check is `switches::kProcessType`: Chromium sets `--type=` on
+all child processes (renderer, GPU, utility). If the flag is present, it's a
+child process. If absent, it's the main browser process. This is the same check
+already used by `EnsureCorrectResolutionSettings()` in
+`shell_main_delegate_mac.mm:25`.
+
+#### Approach
+
+Three changes:
+
+1. **`paths_apple.mm`** — Replace `base::apple::IsBackgroundOnlyProcess()` with
+   `base::CommandLine::ForCurrentProcess()->HasSwitch(switches::kProcessType)`.
+   Add the necessary includes for `base/command_line.h` and
+   `content/public/common/content_switches.h`.
+
+2. **`app-Info.plist`** — Add `LSUIElement=true`. This tells macOS the app is a
+   background-only UI element: no Dock icon, no menu bar, ever.
+
+3. **`shell_main_delegate_mac.mm`** — Remove the runtime
+   `setActivationPolicy:NSApplicationActivationPolicyAccessory` call from
+   `RegisterShellCrApp()`. It's no longer needed since the plist handles it.
+
+#### Steps
+
+##### Step 1: Fix paths_apple.mm
+
+In `content/one_profile/app/paths_apple.mm`, replace the
+`IsBackgroundOnlyProcess()` check:
+
+```cpp
+#include "base/command_line.h"
+#include "content/public/common/content_switches.h"
+
+// ...
+
+base::FilePath GetContentsPath() {
+  base::FilePath path;
+  base::PathService::Get(base::FILE_EXE, &path);
+
+  // Child processes (renderer, GPU, utility) have --type= set by Chromium.
+  // They are nested deep inside the framework bundle and need 9 levels up.
+  // The main browser process has no --type= flag and needs only 2 levels.
+  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
+          switches::kProcessType)) {
+    path = path.DirName()
+               .DirName()
+               .DirName()
+               .DirName()
+               .DirName()
+               .DirName()
+               .DirName()
+               .DirName()
+               .DirName();
+  } else {
+    path = path.DirName().DirName();
+  }
+  DCHECK_EQ("Contents", path.BaseName().value());
+
+  return path;
+}
+```
+
+##### Step 2: Add LSUIElement to app-Info.plist
+
+```xml
+<key>LSUIElement</key>
+<true/>
+```
+
+##### Step 3: Remove runtime setActivationPolicy
+
+In `shell_main_delegate_mac.mm`, remove the `setActivationPolicy` call and its
+comment from `RegisterShellCrApp()`.
+
+##### Step 4: Build
+
+```bash
+cd chromium/src
+export PATH="$(cd ../depot_tools && pwd):$PATH"
+autoninja -C out/Default one_profile
+```
+
+##### Step 5: Test
+
+Same two-profile test as Experiments 2 and 3. Additionally, watch the Dock
+carefully during launch to confirm no icon flash.
+
+#### Success criteria
+
+- No Dock icon at any point — not even a brief flash during launch
+- Both panes at 60fps sustained for 30+ seconds
+- No crashes, no DCHECK failures in `paths_apple.mm`
+- Helper processes (renderer, GPU) still resolve paths correctly
+
+#### What a failure would mean
+
+- **DCHECK crash:** `switches::kProcessType` might not be set on the command
+  line early enough for `GetContentsPath()`. Check when `paths_apple.mm` is
+  first called in the startup sequence relative to command line parsing.
+- **Helper process crash:** The `--type=` flag might not be present for all
+  helper types that go through `GetContentsPath()`. Check which process types
+  call path resolution functions.
+- **Dock icon still flashes:** Would mean `LSUIElement` is not being read from
+  the plist correctly. Verify the plist key spelling and value format.
