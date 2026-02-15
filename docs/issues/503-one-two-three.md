@@ -506,63 +506,92 @@ Validate that a single Chromium Profile Server process can dynamically create
 `FrameSinkVideoCapturer` delivering an independent IOSurface stream. This is the
 multi-tab case — the core question of Issue 503.
 
-This experiment also reverses the XPC connection direction to match the target
-architecture. The profile server becomes an XPC Mach service (listener). The
-compositor becomes the XPC client, opening connections on demand. Each
-connection = one tab. Connection close = tab close.
+This experiment also introduces the dynamic tab protocol. The compositor stays
+as the Mach service (listener). Profile servers connect as clients, just like
+Experiments 1–2. The difference: instead of creating WebContents at startup, the
+profile server opens a **control connection**, and the compositor sends
+`create_tab` commands back on it. For each tab, the profile server opens a
+**dedicated tab connection** for bidirectional per-tab communication (frames
+out, keyboard/mouse in).
 
 Two profile server processes:
 
-- **Profile server A** (`com.termsurf.cps.profile-a`): Mach service listening
-  for connections. The compositor opens **two** connections to it, each
-  triggering the creation of a WebContents + capturer.
-- **Profile server B** (`com.termsurf.cps.profile-b`): Mach service listening
-  for connections. The compositor opens **one** connection.
+- **Profile server A** (profile-a data dir): connects to the compositor,
+  receives **two** `create_tab` commands, opens two tab connections.
+- **Profile server B** (profile-b data dir): connects to the compositor,
+  receives **one** `create_tab` command, opens one tab connection.
 
 The compositor renders three panes. The left and center panes (profile-a) should
 show the **same** localStorage identity. The right pane (profile-b) should show
 a **different** identity.
 
-#### Connection direction reversal
+#### Two connection types
 
-In Experiments 1 and 2, the compositor was the Mach service (listener) and
-profile servers connected to it as clients. The profile server used
-`--xpc-service` and `--session-id` to tag frames. This made the number of tabs
-static — baked into command-line arguments at launch.
-
-In Experiment 3, the roles reverse:
+The compositor is the Mach service. Profile servers connect to it. Each profile
+server opens 1 + N connections (1 control + N tab connections):
 
 ```
-Before (Experiments 1–2):
-  Compositor (Mach service, listener) ← Profile server (client)
-  Profile server decides what to send at startup.
+Profile Server A ──control──▶ Compositor (Mach service)
+                  ──tab-1───▶
+                  ──tab-2───▶
 
-After (Experiment 3):
-  Profile server (Mach service, listener) ← Compositor (client)
-  Compositor decides when to open/close tabs dynamically.
+Profile Server B ──control──▶ Compositor (Mach service)
+                  ──tab-1───▶
 ```
 
-The compositor drives the lifecycle. Opening a connection creates a tab. Closing
-a connection destroys it. The profile server is a passive service that responds
-to incoming connections.
+The **control connection** is opened first. The profile server sends a
+`register` message identifying itself. The compositor sends `create_tab`
+commands back on this channel. The control connection is a command channel — no
+frame data flows on it.
+
+Each **tab connection** is opened by the profile server in response to a
+`create_tab` command. It sends a `tab_ready` message correlating it with the
+`create_tab` request. After that, frames flow profile-server → compositor and
+(eventually) input events flow compositor → profile-server on this connection.
+Each tab connection maps to one pane.
 
 #### XPC protocol
 
-Compositor → Profile server (per connection):
+##### Control connection (one per profile server)
+
+Profile server → Compositor:
 
 ```
-{"action": "navigate", "url": "http://localhost:9407"}
+{"action": "register", "profile": "profile-a"}
 ```
 
-Profile server → Compositor (per connection, 60fps):
+Compositor → Profile server:
+
+```
+{"action": "create_tab", "url": "http://localhost:9407", "tab_id": "left"}
+{"action": "create_tab", "url": "http://localhost:9407", "tab_id": "center"}
+```
+
+##### Tab connection (one per tab)
+
+Profile server → Compositor (first message):
+
+```
+{"action": "tab_ready", "tab_id": "left"}
+```
+
+Profile server → Compositor (60fps):
 
 ```
 {"action": "display_surface", "iosurface_port": <mach_port>, "width": N, "height": N}
 ```
 
-No `session_id` field — the connection itself is the identity. The compositor
-knows which pane each connection maps to because it created the connection for
-that pane.
+The compositor maps `tab_id` to a pane when it receives `tab_ready`. All
+subsequent `display_surface` messages on that connection route to that pane.
+
+No `session_id` field on frame messages. The connection itself is the identity.
+
+##### Lifecycle
+
+- Compositor closes a tab connection → profile server tears down that tab's
+  WebContents + capturer.
+- Compositor closes the control connection → profile server shuts down (no
+  reason to live without a compositor).
 
 #### Branch
 
@@ -571,133 +600,128 @@ that pane.
 #### Chromium changes
 
 The profile server currently creates one WebContents at startup and connects to
-an external Mach service as an XPC client. It needs to become an XPC Mach
-service listener that dynamically creates WebContents when connections arrive.
+an external Mach service as an XPC client. For dynamic mode, it connects with a
+control channel, waits for `create_tab` commands, and opens additional
+connections for each tab.
 
-##### `content/chromium_profile_server/common/shell_switches.h`
+##### Cleanup
 
-Add one new switch:
-
-```cpp
-// Mach service name to listen on for incoming tab connections.
-inline constexpr char kServiceName[] = "service-name";
-```
-
-The existing `--xpc-service` and `--session-id` switches remain for backward
-compatibility with Experiments 1–2 but are not used in this experiment.
+The old single-tab startup path is removed entirely. `GetStartupURL()` is
+deleted. The `--session-id` switch is deleted (no longer needed — connections
+are the identity). `InitializeMessageLoopContext()` always enters dynamic mode.
+Experiments 1–2 have their own Chromium branches if they need to be re-run.
 
 ##### `content/chromium_profile_server/browser/shell_browser_main_parts.h`
 
-Replace the single `video_consumer_` with per-connection state:
+Replace the single `video_consumer_` with per-tab state:
 
 ```cpp
 struct TabState {
   raw_ptr<Shell> shell;
   std::unique_ptr<ShellVideoConsumer> video_consumer;
+  xpc_connection_t tab_connection;
 };
 
-// Per-connection tab state, keyed by xpc_connection_t.
-std::vector<std::pair<xpc_connection_t, std::unique_ptr<TabState>>> tabs_;
-
-// XPC listener (retained to prevent ARC release).
-xpc_connection_t xpc_listener_ = nullptr;
+std::vector<std::unique_ptr<TabState>> tabs_;
+xpc_connection_t control_connection_ = nullptr;
 ```
 
 Add methods:
 
 ```cpp
-void StartXPCListener(const std::string& service_name);
-void HandleNewConnection(xpc_connection_t peer);
-void CreateTab(xpc_connection_t peer, const GURL& url);
-void CloseTab(xpc_connection_t peer);
+void StartDynamicMode(const std::string& service_name);
+void HandleControlMessage(xpc_object_t msg);
+void CreateTab(const GURL& url, const std::string& tab_id);
+void CloseTab(xpc_connection_t conn);
 ```
 
 ##### `content/chromium_profile_server/browser/shell_browser_main_parts.cc`
 
-`InitializeMessageLoopContext()` checks for `--service-name`. If present, it
-starts the XPC listener instead of creating a WebContents at startup. If absent,
-the existing single-tab startup path runs unchanged (backward compatible).
+`InitializeMessageLoopContext()` calls `StartDynamicMode()` with the
+`--xpc-service` value.
 
-`StartXPCListener()` calls `xpc_connection_create_mach_service()` with the
-listener flag. Each incoming peer gets an event handler that watches for
-`"navigate"` messages and connection errors.
+`StartDynamicMode()`:
 
-`HandleNewConnection()` sets up per-peer event handling. On a `"navigate"`
-dictionary, it extracts the URL and PostTasks `CreateTab()` to the UI thread. On
-XPC error (connection close), it PostTasks `CloseTab()` to the UI thread.
+1. Opens a control connection to the compositor's Mach service via
+   `xpc_connection_create_mach_service()` (client mode, no listener flag).
+2. Sets up an event handler for incoming messages (`create_tab` commands).
+3. Sends a `register` message with the profile name (derived from the basename
+   of `--user-data-dir`).
+4. Does NOT create any WebContents.
 
-`CreateTab()` creates a Shell + WebContents via `Shell::CreateNewWindow()`,
-creates a ShellVideoConsumer, hands it the peer connection via
-`SetConnection()`, and calls `ObserveContents()`. Stores the TabState.
+`HandleControlMessage()` on receiving a `create_tab` dictionary:
 
-`CloseTab()` finds the TabState for the peer, stops the capturer, closes the
-Shell, and removes the entry.
+1. Extracts `url` and `tab_id`.
+2. PostTasks `CreateTab()` to the UI thread.
 
-`PostMainMessageLoopRun()` clears `tabs_` and releases the listener.
+`CreateTab()`:
+
+1. Creates a Shell + WebContents via `Shell::CreateNewWindow()`.
+2. Creates a ShellVideoConsumer.
+3. Opens a NEW connection to the compositor's Mach service.
+4. Sends `{"action": "tab_ready", "tab_id": "..."}` on the new connection.
+5. Hands the new connection to the ShellVideoConsumer via `SetConnection()`.
+6. Calls `ObserveContents()` → `RenderViewReady()` → `Attach()` → frames start
+   flowing.
+7. Sets up an error handler on the new connection — on close, PostTasks
+   `CloseTab()` to tear down the tab.
+8. Stores the TabState.
+
+`CloseTab()` finds the TabState for the connection, stops the capturer, closes
+the Shell, and removes the entry.
+
+`PostMainMessageLoopRun()` clears `tabs_` and releases connections.
 
 ##### `content/chromium_profile_server/browser/shell_video_consumer.h`
 
-Add a new method alongside the existing `ConnectToService()`:
+Replace `ConnectToService()` and `SetSessionId()` with `SetConnection()`:
 
 ```cpp
-// Use an existing XPC connection (for listener mode — the connection was
-// accepted by the profile server's XPC listener, not created by us).
+// Use an XPC connection opened by the caller.
 void SetConnection(xpc_connection_t conn);
 ```
 
+Remove `session_id_` field entirely.
+
 ##### `content/chromium_profile_server/browser/shell_video_consumer.cc`
 
-`SetConnection()` stores the connection (with `xpc_retain`) without creating a
-new one. `OnFrameCaptured()` sends frames on whichever connection is set — the
-existing code works unchanged since it just uses `xpc_connection_`.
-
-The `session_id_` field is no longer set in listener mode. Frame messages omit
-it. The compositor identifies panes by connection, not by session-id.
+`SetConnection()` stores the connection (with `xpc_retain`). `OnFrameCaptured()`
+sends frames on it. Remove `ConnectToService()`, `SetSessionId()`, and
+session-id tagging from frame messages.
 
 #### Swift compositor: `ts5/three-profiles/`
 
-A three-pane compositor. Unlike Experiments 1–2, this is a **regular app** (not
-a launchd Mach service). It opens XPC client connections to profile servers.
+A three-pane compositor. Like Experiments 1–2, it's a Mach service (listener).
+Profile servers connect to it. The difference: it now handles two connection
+types (control and tab) and sends `create_tab` commands.
 
 - `Package.swift` — SwiftPM manifest, target name `ThreeProfiles`
-- `Sources/ThreeProfiles/main.swift` — XPC client connections, Metal pipeline,
-  three-pane rendering
+- `Sources/ThreeProfiles/main.swift` — XPC listener, control/tab protocol, Metal
+  pipeline, three-pane rendering
 - `Sources/ThreeProfiles/Shaders.metal` — Vertex + fragment shaders (copy)
+- `com.termsurf.three-profiles.plist` — Launchd agent definition
 - `Makefile` — Compile Metal shaders + `swift build`
 
-No launchd plist for the compositor — it's launched directly.
+##### Connection handling
 
-##### Connection setup
+The compositor's XPC listener accepts all incoming connections. The first
+message on each connection determines its type:
 
-The compositor opens three XPC client connections, each bound to a pane:
+- `{"action": "register", ...}` → control connection. Store it, send
+  `create_tab` commands.
+- `{"action": "tab_ready", "tab_id": "..."}` → tab connection. Map the tab_id to
+  a pane. All subsequent `display_surface` messages on this connection route to
+  that pane.
 
-```swift
-func connectToProfile(serviceName: String, pane: Pane, url: String) {
-    let conn = xpc_connection_create_mach_service(serviceName, queue, 0)
-    xpc_connection_set_event_handler(conn) { event in
-        if xpc_get_type(event) == XPC_TYPE_DICTIONARY {
-            handleFrame(event, pane: pane)
-        }
-    }
-    xpc_connection_resume(conn)
+For the experiment, the compositor has hardcoded topology:
 
-    // Send navigate command.
-    let msg = xpc_dictionary_create(nil, nil, 0)
-    xpc_dictionary_set_string(msg, "action", "navigate")
-    xpc_dictionary_set_string(msg, "url", url)
-    xpc_connection_send_message(conn, msg)
-}
+- Profile `"profile-a"` registers → send two `create_tab` commands with tab_ids
+  `"left"` and `"center"`.
+- Profile `"profile-b"` registers → send one `create_tab` command with tab_id
+  `"right"`.
 
-// Two connections to profile-a (two tabs, same profile):
-connectToProfile("com.termsurf.cps.profile-a", pane: .left, url: boxDemoURL)
-connectToProfile("com.termsurf.cps.profile-a", pane: .center, url: boxDemoURL)
-
-// One connection to profile-b (one tab, different profile):
-connectToProfile("com.termsurf.cps.profile-b", pane: .right, url: boxDemoURL)
-```
-
-Each closure captures its pane, so frame routing is implicit — no session-id
-parsing needed.
+Tab-id to pane mapping: `"left"` → `.left`, `"center"` → `.center`, `"right"` →
+`.right`.
 
 ##### Rendering
 
@@ -707,39 +731,6 @@ Viewports split into thirds. Otherwise identical to two-profiles.
 - Window: 2400x600
 - Three textures, three surfaces, three frame counters
 - FPS logging: `L: N (fps) C: N (fps) R: N (fps)`
-
-#### Launchd plists for profile servers
-
-Each profile server registers as a Mach service via a launchd plist. These live
-in `ts5/three-profiles/` alongside the compositor.
-
-##### `com.termsurf.cps.profile-a.plist`
-
-```xml
-<key>Label</key>
-<string>com.termsurf.cps.profile-a</string>
-<key>MachServices</key>
-<dict>
-    <key>com.termsurf.cps.profile-a</key>
-    <true/>
-</dict>
-<key>ProgramArguments</key>
-<array>
-    <string>.../Chromium Profile Server</string>
-    <string>--service-name=com.termsurf.cps.profile-a</string>
-    <string>--user-data-dir=~/.config/termsurf/poc/profile-a</string>
-    <string>--hidden</string>
-</array>
-```
-
-##### `com.termsurf.cps.profile-b.plist`
-
-Same structure, different service name and data dir.
-
-When the compositor opens a connection to `com.termsurf.cps.profile-a`, launchd
-launches the profile server process. Chromium initializes, the XPC listener
-starts in `InitializeMessageLoopContext()`, and queued connections are
-delivered.
 
 #### Build and Run
 
@@ -755,29 +746,39 @@ autoninja -C out/Default one_profile
 # 3. Build three-profiles compositor
 cd ts5/three-profiles && make
 
-# 4. Register profile servers as launchd services
+# 4. Register compositor as launchd service
 launchctl bootstrap gui/$(id -u) \
-  ~/dev/termsurf/ts5/three-profiles/com.termsurf.cps.profile-a.plist
-launchctl bootstrap gui/$(id -u) \
-  ~/dev/termsurf/ts5/three-profiles/com.termsurf.cps.profile-b.plist
+  ~/dev/termsurf/ts5/three-profiles/com.termsurf.three-profiles.plist
 
-# 5. Launch compositor (opens connections, triggers profile server launch)
-ts5/three-profiles/.build/debug/ThreeProfiles
+# 5. Start profile server A (connects to compositor, waits for create_tab)
+cd chromium/src
+out/Default/Chromium\ Profile\ Server.app/Contents/MacOS/Chromium\ Profile\ Server \
+  --hidden \
+  --xpc-service=com.termsurf.three-profiles \
+  --user-data-dir=$HOME/.config/termsurf/poc/profile-a &
+
+# 6. Start profile server B
+out/Default/Chromium\ Profile\ Server.app/Contents/MacOS/Chromium\ Profile\ Server \
+  --hidden \
+  --xpc-service=com.termsurf.three-profiles \
+  --user-data-dir=$HOME/.config/termsurf/poc/profile-b
 ```
 
-No manual profile server launch needed — launchd starts them on first connection
-from the compositor.
+Profile servers connect to the compositor and wait. The compositor sends
+`create_tab` commands, profile servers open tab connections and start streaming
+frames.
 
 #### Pass Criteria
 
 1. Chromium builds with dynamic tab changes (autoninja).
 2. Three-profiles compositor builds with `make`.
-3. Running the compositor triggers launchd to launch both profile servers.
+3. Profile servers connect and register. Compositor sends `create_tab` commands.
+   Profile servers open tab connections and start streaming.
 4. Compositor window shows three side-by-side panes at ~60fps.
 5. Left and center panes show the **same** localStorage identity (same profile,
    same `BrowserContext`).
 6. Right pane shows a **different** localStorage identity (different profile).
 7. No Dock icon for either Chromium Profile Server process.
 8. Both profile servers log ~60fps per WebContents on the sender side.
-9. Closing the compositor window closes all XPC connections, causing both
-   profile servers to tear down their WebContents.
+9. Profile server A logs two attached capturers (two WebContents from one
+   `BrowserContext`).
