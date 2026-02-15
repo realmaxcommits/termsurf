@@ -825,3 +825,79 @@ useful information, not decorative — they should use the normal text color.
 #### Result
 
 Builds with no warnings. Ready for interactive testing.
+
+### Experiment 15: Refresh Icon Placeholder
+
+Add a refresh icon to the left of the URL text inside the URL bar. This previews
+the intended design — eventually the icon will trigger a page reload (via
+keybinding or mouse click), but for now it's a static placeholder.
+
+The icon is `nf-md-refresh` (U+F0450).
+
+#### Layout
+
+```
+┌─ URL ──────────────────────────  default ─┐
+│ 󰑐 https://google.com                      │
+└───────────────────────────────────────────┘
+```
+
+The icon renders in `COMMENT` to look like a clickable control rather than part
+of the URL text. A single space separates it from the URL.
+
+#### Changes
+
+##### `web/src/main.rs`
+
+**URL bar text:** Change the `Paragraph` content from the raw URL string to a
+`Line` with two spans:
+
+1. `Span::raw("{icon} ")` styled with `.fg(COMMENT)` — the refresh icon + space.
+2. `Span::raw(url)` styled with `.fg(FG)` — the URL text.
+
+Where `{icon}` is the literal Unicode character U+F0450 (nf-md-refresh).
+
+#### Nerd Font Icon Safety
+
+The Write and Edit tools may silently strip or corrupt Nerd Font characters
+(codepoints in the Private Use Area like U+F0450). After any edit to
+`web/src/main.rs`, verify all icons are intact:
+
+```bash
+python3 -c "
+import re
+src = open('web/src/main.rs').read()
+icons = {
+    'nf-md-refresh (U+F0450)': '\U000F0450',
+    'nf-md-web (U+F059F)': '\U000F059F',
+    'nf-fa-keyboard_o (U+F11C)': '\uF11C',
+    'nf-fa-user (U+F007)': '\uF007',
+}
+for name, char in icons.items():
+    if char in src:
+        print(f'  OK  {name}')
+    else:
+        print(f'  MISSING  {name}')
+"
+```
+
+If any icon is missing, re-embed it with Python:
+
+```bash
+python3 -c "
+src = open('web/src/main.rs').read()
+# Example: fix nf-md-refresh
+src = src.replace('PLACEHOLDER_REFRESH', '\U000F0450')
+open('web/src/main.rs', 'w').write(src)
+"
+```
+
+Use a unique ASCII placeholder string (e.g., `PLACEHOLDER_REFRESH`) in the Edit
+tool, then replace it with the real Unicode character via Python.
+
+#### Pass Criteria
+
+1. The refresh icon (󰑐) appears to the left of the URL inside the URL bar.
+2. The icon uses `COMMENT` color; the URL uses `FG`.
+3. All four Nerd Font icons pass the verification script.
+4. The icon is non-functional (no click/key handler) — purely visual.
