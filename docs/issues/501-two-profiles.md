@@ -473,3 +473,126 @@ Shell is not a viable path for a background-mode embedder.
    `const_cast`.
 5. `ShellMainDelegate` lives in `content_shell_app` (a separate static library
    from `content_shell_lib`) — had to add both as deps.
+
+### Experiment 2: Verify One Profile baseline from Issue 414
+
+#### Hypothesis
+
+The One Profile app from Issue 414 (`146.0.7650.0-issue-414`) still builds and
+runs correctly with the ts4 Swift receiver (`ts4/two-profiles-swift/`). If it
+does, this branch becomes the starting point for subsequent experiments that
+rename and improve the One Profile fork into chromium-profile-server.
+
+Experiment 1 failed because linking against `content_shell_lib` as a library
+introduced tight coupling to Content Shell's bundle layout assumptions. The
+alternative is the fork approach: take the full Content Shell copy from Issue
+414 (the 218-file `content/one_profile/` directory) and modify it directly.
+Before building on this foundation, we must verify the baseline still works —
+the One Profile app hasn't been tested since Issue 414/415/416, and the build
+environment may have changed.
+
+#### Approach
+
+**Zero code changes.** This experiment changes nothing. It creates a new
+Chromium branch from `146.0.7650.0-issue-414`, builds the existing One Profile
+app, and runs it against the existing Swift receiver to verify 60fps IOSurface
+delivery.
+
+#### Steps
+
+##### Step 1: Create Chromium branch
+
+Delete the failed Experiment 1 branch and create a new one from Issue 414:
+
+```bash
+cd chromium/src
+git checkout 146.0.7650.0-issue-414
+git branch -D 146.0.7650.0-issue-501
+git checkout -b 146.0.7650.0-issue-501
+```
+
+This starts with the complete, proven One Profile app at `content/one_profile/`
+— the same code that ran at 60fps in Issues 414, 415, and 416.
+
+##### Step 2: Build One Profile
+
+```bash
+cd chromium/src
+export PATH="$(cd ../depot_tools && pwd):$PATH"
+autoninja -C out/Default one_profile
+```
+
+The `one_profile` target should already exist in the root `BUILD.gn` from
+Issue 414. If the build environment has changed (new SDK, updated deps), fix any
+build errors.
+
+##### Step 3: Start the Swift receiver
+
+The Swift receiver from Issue 415 (`ts4/two-profiles-swift/`) uses the XPC
+service name `com.termsurf.two-profiles-swift`.
+
+```bash
+# Build the Swift receiver (if not already built)
+cd ts4/two-profiles-swift
+swift build
+
+# Load the launchd plist
+launchctl bootstrap gui/$(id -u) \
+  ~/dev/termsurf/ts4/two-profiles-swift/com.termsurf.two-profiles-swift.plist
+```
+
+##### Step 4: Start test page server
+
+```bash
+cd ts4/box-demo && bun run server.ts &
+```
+
+##### Step 5: Launch One Profile with XPC
+
+```bash
+cd chromium/src
+
+out/Default/One\ Profile.app/Contents/MacOS/One\ Profile \
+  --hidden \
+  --xpc-service=com.termsurf.two-profiles-swift \
+  --session-id=profile-a \
+  --user-data-dir=$HOME/.config/termsurf/poc/profile-a \
+  http://localhost:9407 2>&1
+```
+
+##### Step 6: Verify
+
+Check the Swift receiver log for 60fps:
+
+```bash
+tail -f ~/dev/termsurf/logs/two-profiles-swift.log
+```
+
+Expected output:
+
+```
+[Receiver] Profile server connected
+[Receiver] 60 frames (60.0 fps) | IOSurface 1600x1200
+[Receiver] 60 frames (60.0 fps) | IOSurface 1600x1200
+...
+```
+
+#### Success criteria
+
+- One Profile app builds without errors on the current Chromium checkout
+- One Profile app launches with `--hidden` (no visible window)
+- Swift receiver receives IOSurface Mach ports at 60fps
+- IOSurfaces are correct dimensions (Retina, e.g. 1600x1200)
+- No crashes, no frame drops over 30+ seconds
+
+#### What a failure would mean
+
+- **Build failure:** The build environment has changed since Issue 414. Fix
+  build errors and document them.
+- **0fps in receiver:** The `--xpc-service` flag or XPC protocol may have
+  changed. Verify CLI flags against the source in
+  `content/one_profile/common/shell_switches.h`.
+- **Low fps:** The `FrameSinkVideoCapturer` configuration may need updating.
+  Check that `SetAutoThrottlingEnabled(false)` and
+  `SetMinCapturePeriod(base::Milliseconds(16))` are still set.
+- **Crash:** Document the crash and investigate before proceeding.
