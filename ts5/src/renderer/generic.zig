@@ -185,6 +185,11 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
         /// of the background image buffer whenever we change it.
         bg_image_buffer_modified: usize = 0,
 
+        /// Pink overlay rectangle in grid coordinates (Issue 505).
+        /// Set via the C API from the Swift XPC listener.
+        /// Zero width means no overlay.
+        pink_overlay: shaderpkg.PinkOverlay = .{},
+
         /// Graphics API state.
         api: GraphicsAPI,
 
@@ -1650,6 +1655,29 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                     &pass,
                     .overlay,
                 );
+
+                // Pink overlay (Issue 505).
+                if (self.pink_overlay.grid_width > 0 and
+                    self.pink_overlay.grid_height > 0)
+                {
+                    if (Buffer(shaderpkg.PinkOverlay).initFill(
+                        self.api.imageBufferOptions(),
+                        &.{self.pink_overlay},
+                    )) |*buf| {
+                        defer buf.deinit();
+                        pass.step(.{
+                            .pipeline = self.shaders.pipelines.pink_overlay,
+                            .uniforms = frame.uniforms.buffer,
+                            .buffers = &.{buf.buffer},
+                            .draw = .{
+                                .type = .triangle_strip,
+                                .vertex_count = 4,
+                            },
+                        });
+                    } else |err| {
+                        log.warn("error creating pink overlay buffer err={}", .{err});
+                    }
+                }
             }
 
             // If we have custom shaders, then we render them.

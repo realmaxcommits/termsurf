@@ -376,7 +376,10 @@ extension Ghostty {
             ) { [weak self] event in self?.localEventHandler(event) }
 
             // Setup our surface. This will also initialize all the terminal IO.
-            let surface_cfg = baseConfig ?? SurfaceConfiguration()
+            var surface_cfg = baseConfig ?? SurfaceConfiguration()
+            // Issue 505: Set pane ID so child processes can identify themselves
+            // to the compositor via XPC.
+            surface_cfg.environmentVariables["TERMSURF_PANE_ID"] = self.id.uuidString
             let surface = surface_cfg.withCValue(view: self) { surface_cfg_c in
                 ghostty_surface_new(app, &surface_cfg_c)
             }

@@ -42,6 +42,11 @@ const pipeline_descs: []const struct { [:0]const u8, PipelineDescription } =
             .step_fn = .per_instance,
             .blending_enabled = true,
         } },
+        .{ "pink_overlay", .{
+            .vertex_fn = "pink_overlay_vertex",
+            .fragment_fn = "pink_overlay_fragment",
+            .blending_enabled = false,
+        } },
     };
 
 /// All the comptime-known info about a pipeline, so that
@@ -296,6 +301,16 @@ pub const Image = extern struct {
     cell_offset: [2]f32,
     source_rect: [4]f32,
     dest_size: [2]f32,
+};
+
+/// Parameters for the pink overlay shader (Issue 505).
+/// Grid coordinates are converted to physical pixels in the vertex shader
+/// using cell_size and grid_padding from the Uniforms buffer.
+pub const PinkOverlay = extern struct {
+    grid_col: f32 = 0,
+    grid_row: f32 = 0,
+    grid_width: f32 = 0,
+    grid_height: f32 = 0,
 };
 
 /// Single parameter for the bg image shader.

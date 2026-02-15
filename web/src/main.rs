@@ -1,3 +1,5 @@
+mod xpc;
+
 use std::io;
 use std::time::Duration;
 
@@ -46,6 +48,20 @@ fn main() -> io::Result<()> {
         std::process::exit(1);
     });
 
+    // Connect to the TermSurf compositor via XPC (Issue 505).
+    let pane_id = std::env::var("TERMSURF_PANE_ID").ok();
+    match &pane_id {
+        Some(id) => eprintln!("[web] TERMSURF_PANE_ID = {}", id),
+        None => eprintln!("[web] TERMSURF_PANE_ID not set (not running inside TermSurf)"),
+    }
+
+    let compositor = pane_id.as_ref().and_then(|_| xpc::CompositorConnection::connect());
+    match &compositor {
+        Some(_) => eprintln!("[web] Connected to compositor"),
+        None if pane_id.is_some() => eprintln!("[web] XPC service unavailable (is launchd plist loaded?)"),
+        _ => {}
+    }
+
     // Enter raw mode and alternate screen.
     enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -56,7 +72,21 @@ fn main() -> io::Result<()> {
 
     // Event loop.
     loop {
-        terminal.draw(|frame| ui(frame, &url, &profile, &mode))?;
+        let mut viewport_rect = Rect::default();
+        terminal.draw(|frame| {
+            viewport_rect = ui(frame, &url, &profile, &mode);
+        })?;
+
+        // Send overlay coordinates to compositor.
+        if let (Some(ref conn), Some(ref pid)) = (&compositor, &pane_id) {
+            conn.send_set_overlay(
+                pid,
+                viewport_rect.x,
+                viewport_rect.y,
+                viewport_rect.width,
+                viewport_rect.height,
+            );
+        }
 
         if event::poll(Duration::from_millis(250))? {
             if let Event::Key(key) = event::read()? {
@@ -83,13 +113,15 @@ fn main() -> io::Result<()> {
         }
     }
 
-    // Restore terminal.
+    // Restore terminal. The compositor connection drops here, which closes
+    // the XPC connection and triggers overlay cleanup.
     disable_raw_mode()?;
     execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
     Ok(())
 }
 
-fn ui(frame: &mut Frame, url: &str, profile: &str, mode: &Mode) {
+/// Render the UI and return the viewport inner rect (grid coordinates).
+fn ui(frame: &mut Frame, url: &str, profile: &str, mode: &Mode) -> Rect {
     // Paint full background.
     frame.render_widget(Block::default().style(Style::default().bg(BG)), frame.area());
 
@@ -108,7 +140,7 @@ fn ui(frame: &mut Frame, url: &str, profile: &str, mode: &Mode) {
 
     // URL bar.
     let profile_title = Line::from(vec![
-        Span::raw("  ")
+        Span::raw("  ")
             .style(Style::default().fg(COMMENT)),
         Span::raw(profile)
             .style(Style::default().fg(FG)),
@@ -165,4 +197,6 @@ fn ui(frame: &mut Frame, url: &str, profile: &str, mode: &Mode) {
         .alignment(Alignment::Right)
         .style(Style::default().fg(FG).bg(BG));
     frame.render_widget(label_widget, status_layout[1]);
+
+    inner
 }

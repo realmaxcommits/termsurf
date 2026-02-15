@@ -851,3 +851,37 @@ fragment float4 image_fragment(
   return rgba;
 }
 
+//-------------------------------------------------------------------
+// Pink Overlay (Issue 505)
+//-------------------------------------------------------------------
+#pragma mark - Pink Overlay
+
+struct PinkOverlayIn {
+  float grid_col;
+  float grid_row;
+  float grid_width;
+  float grid_height;
+};
+
+vertex float4 pink_overlay_vertex(
+  uint vid [[vertex_id]],
+  constant PinkOverlayIn& params [[buffer(0)]],
+  constant Uniforms& uniforms [[buffer(1)]]
+) {
+  // grid_padding order: top, right, bottom, left
+  float2 padding = float2(uniforms.grid_padding[3], uniforms.grid_padding[0]);
+  float2 origin = float2(params.grid_col, params.grid_row) * uniforms.cell_size + padding;
+  float2 size = float2(params.grid_width, params.grid_height) * uniforms.cell_size;
+
+  float2 corner;
+  corner.x = float(vid == 1 || vid == 3);
+  corner.y = float(vid == 2 || vid == 3);
+
+  float2 pos = origin + size * corner;
+  return uniforms.projection_matrix * float4(pos, 0.0f, 1.0f);
+}
+
+fragment float4 pink_overlay_fragment() {
+  return float4(1.0, 0.41, 0.71, 1.0);
+}
+

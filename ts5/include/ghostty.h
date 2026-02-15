@@ -1070,6 +1070,9 @@ void ghostty_surface_set_focus(ghostty_surface_t, bool);
 void ghostty_surface_set_occlusion(ghostty_surface_t, bool);
 void ghostty_surface_set_size(ghostty_surface_t, uint32_t, uint32_t);
 ghostty_surface_size_s ghostty_surface_size(ghostty_surface_t);
+void ghostty_surface_set_overlay(ghostty_surface_t, uint32_t, uint32_t,
+                                  uint32_t, uint32_t);
+void ghostty_surface_clear_overlay(ghostty_surface_t);
 void ghostty_surface_set_color_scheme(ghostty_surface_t,
                                       ghostty_color_scheme_e);
 ghostty_input_mods_e ghostty_surface_key_translation_mods(ghostty_surface_t,

@@ -1672,6 +1672,22 @@ pub const CAPI = struct {
         surface.updateSize(w, h);
     }
 
+    /// Set the pink overlay rectangle in grid coordinates (Issue 505).
+    export fn ghostty_surface_set_overlay(
+        surface: *Surface,
+        col: u32,
+        row: u32,
+        width: u32,
+        height: u32,
+    ) void {
+        surface.core_surface.setOverlay(col, row, width, height);
+    }
+
+    /// Clear the pink overlay rectangle (Issue 505).
+    export fn ghostty_surface_clear_overlay(surface: *Surface) void {
+        surface.core_surface.clearOverlay();
+    }
+
     /// Return the size information a surface has.
     export fn ghostty_surface_size(surface: *Surface) SurfaceSize {
         const grid_size = surface.core_surface.size.grid();

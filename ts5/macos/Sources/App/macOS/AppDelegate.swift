@@ -206,6 +206,9 @@ class AppDelegate: NSObject,
         // Start our update checker.
         updateController.startUpdater()
 
+        // Start the compositor XPC listener (Issue 505).
+        CompositorXPC.shared.start(appDelegate: self)
+
         // Register our service provider. This must happen after everything is initialized.
         NSApp.servicesProvider = ServiceProvider()
 
