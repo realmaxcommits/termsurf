@@ -596,3 +596,48 @@ Expected output:
   Check that `SetAutoThrottlingEnabled(false)` and
   `SetMinCapturePeriod(base::Milliseconds(16))` are still set.
 - **Crash:** Document the crash and investigate before proceeding.
+
+#### Result: Passed
+
+The One Profile app from Issue 414 builds and runs correctly on the current
+build environment. Two profile server instances running simultaneously deliver
+IOSurface Mach ports to the Swift receiver at 60fps per pane.
+
+##### Build
+
+197 targets, zero errors. The branch switch from vanilla `146.0.7650.0` (used by
+Experiment 1) to `146.0.7650.0-issue-414` triggered a rebuild of the
+one_profile-specific targets. No source changes were needed.
+
+##### Test output
+
+```
+[Receiver] L: 60 (60.0 fps) R: 60 (60.0 fps) | IOSurface 1600x1200
+[Receiver] L: 61 (60.0 fps) R: 61 (60.0 fps) | IOSurface 1600x1200
+[Receiver] L: 60 (60.0 fps) R: 60 (60.0 fps) | IOSurface 1600x1200
+[Receiver] L: 61 (60.0 fps) R: 61 (59.0 fps) | IOSurface 1600x1200
+```
+
+Both panes sustained 60fps with 1600x1200 Retina IOSurfaces for 30+ seconds.
+
+##### Success criteria checklist
+
+- [x] One Profile app builds without errors
+- [x] One Profile app launches with `--hidden` (no visible window)
+- [x] Swift receiver receives IOSurface Mach ports at 60fps — both panes
+- [x] IOSurfaces are 1600x1200 (Retina)
+- [x] No crashes, no frame drops over 30+ seconds
+
+#### Conclusion
+
+The fork approach works. The `146.0.7650.0-issue-501` branch (forked from
+`146.0.7650.0-issue-414`) is a proven two-profile baseline. The One Profile app
+at `content/one_profile/` — a full Content Shell fork with
+FrameSinkVideoCapturer, XPC IOSurface transfer, `--hidden` window,
+`--session-id`, and Retina capture — builds and runs identically to when it was
+first created in Issues 414–416.
+
+This validates the fork approach as the path forward. Subsequent experiments
+will rename `content/one_profile/` to `content/chromium_profile_server/`, add
+`LSUIElement` support, and replace the hardcoded 2-second capturer attachment
+delay with a `WebContentsObserver`.
