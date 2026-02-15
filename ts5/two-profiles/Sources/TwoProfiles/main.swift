@@ -1,6 +1,6 @@
 // Copyright 2025 TermSurf
 // Swift Metal receiver: receives IOSurface Mach ports via XPC and renders them.
-// Part of Issue 503 Experiment 2: two-pane two-profiles compositor.
+// Part of Issue 503 Experiment 5: two-pane two-profiles with dynamic tab protocol.
 
 import Cocoa
 import Metal
@@ -15,15 +15,20 @@ enum Pane: Int {
     static let count = 2
 }
 
-func paneForSession(_ sessionId: String?) -> Pane {
-    if sessionId == "profile-b" { return .right }
-    return .left
+func paneForTabId(_ tabId: String?) -> Pane? {
+    switch tabId {
+    case "left": return .left
+    case "right": return .right
+    default: return nil
+    }
 }
 
 // MARK: - XPC state (strong globals to prevent ARC release)
 
 var gListener: xpc_connection_t?
 var gPeers: [xpc_connection_t] = []
+var gTabConnections: [(conn: xpc_connection_t, pane: Pane)] = []
+var gControlConnections: [xpc_connection_t] = []
 
 // MARK: - Shared state between XPC queue and main thread
 
@@ -43,11 +48,56 @@ var gCurrentTexture: [MTLTexture?] = [nil, nil]
 
 // MARK: - XPC message handler
 
-func handleMessage(_ msg: xpc_object_t) {
+func handleMessage(_ msg: xpc_object_t, peer: xpc_connection_t) {
     guard let action = xpc_dictionary_get_string(msg, "action") else { return }
     let actionStr = String(cString: action)
 
-    if actionStr == "display_surface" {
+    if actionStr == "register" {
+        gControlConnections.append(peer)
+        let profilePtr = xpc_dictionary_get_string(msg, "profile")
+        let profile = profilePtr != nil ? String(cString: profilePtr!) : "(unknown)"
+        fputs("[TwoProfiles] Profile server registered: \(profile)\n", stderr)
+
+        // Send create_tab command. Map profile name to tab ID.
+        let tabId: String
+        switch profile {
+        case "profile-a": tabId = "left"
+        case "profile-b": tabId = "right"
+        default:
+            fputs("[TwoProfiles] Unknown profile: \(profile)\n", stderr)
+            return
+        }
+        let reply = xpc_dictionary_create(nil, nil, 0)
+        xpc_dictionary_set_string(reply, "action", "create_tab")
+        xpc_dictionary_set_string(reply, "url", "http://localhost:9407")
+        xpc_dictionary_set_string(reply, "tab_id", tabId)
+        xpc_connection_send_message(peer, reply)
+        fputs("[TwoProfiles] Sent create_tab (tab_id=\(tabId))\n", stderr)
+
+    } else if actionStr == "tab_ready" {
+        let tabIdPtr = xpc_dictionary_get_string(msg, "tab_id")
+        let tabId = tabIdPtr != nil ? String(cString: tabIdPtr!) : nil
+        if let pane = paneForTabId(tabId) {
+            gTabConnections.append((conn: peer, pane: pane))
+            fputs("[TwoProfiles] Tab ready: tab_id=\(tabId ?? "nil") -> pane \(pane)\n", stderr)
+        } else {
+            fputs("[TwoProfiles] Tab ready with unknown tab_id: \(tabId ?? "nil")\n", stderr)
+        }
+
+    } else if actionStr == "display_surface" {
+        // Find pane by connection identity.
+        var targetPane: Pane? = nil
+        for entry in gTabConnections {
+            if entry.conn === peer {
+                targetPane = entry.pane
+                break
+            }
+        }
+        guard let pane = targetPane else {
+            fputs("[TwoProfiles] display_surface from unknown connection\n", stderr)
+            return
+        }
+
         let port = xpc_dictionary_copy_mach_send(msg, "iosurface_port")
         guard port != MACH_PORT_NULL else {
             fputs("[TwoProfiles] null Mach port\n", stderr)
@@ -60,11 +110,6 @@ func handleMessage(_ msg: xpc_object_t) {
             return
         }
         mach_port_deallocate(mach_task_self_, port)
-
-        // Map session_id to pane.
-        let sessionIdPtr = xpc_dictionary_get_string(msg, "session_id")
-        let sessionId = sessionIdPtr != nil ? String(cString: sessionIdPtr!) : nil
-        let pane = paneForSession(sessionId)
 
         // Swap in the new surface for this pane.
         gSurfaceLock.lock()
@@ -93,10 +138,6 @@ func handleMessage(_ msg: xpc_object_t) {
             gFrameCount[Pane.right.rawValue] = 0
             gLastLogTime = now
         }
-    } else if actionStr == "register" {
-        let sessionId = xpc_dictionary_get_string(msg, "session_id")
-        let sid = sessionId != nil ? String(cString: sessionId!) : "(no session_id)"
-        fputs("[TwoProfiles] Profile server registered: \(sid)\n", stderr)
     }
 }
 
@@ -119,7 +160,7 @@ func startXPCListener() {
 
             xpc_connection_set_event_handler(peerConn) { event in
                 if xpc_get_type(event) == XPC_TYPE_DICTIONARY {
-                    handleMessage(event)
+                    handleMessage(event, peer: peerConn)
                 } else if xpc_get_type(event) == XPC_TYPE_ERROR {
                     if event === XPC_ERROR_CONNECTION_INVALID {
                         fputs("[TwoProfiles] Connection closed\n", stderr)

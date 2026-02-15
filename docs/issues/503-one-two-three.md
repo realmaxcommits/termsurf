@@ -1083,3 +1083,23 @@ out/Default/Chromium\ Profile\ Server.app/Contents/MacOS/Chromium\ Profile\ Serv
    `create_tab` → `tab_ready` → streaming.
 3. Left pane renders profile-a, right pane renders profile-b, both at ~60fps.
 4. No Dock icons for the Chromium Profile Server processes.
+
+#### Result
+
+All pass criteria met:
+
+1. `make` builds clean (0.92s).
+2. Both profile servers complete the full handshake:
+   - profile-a: register → create_tab (tab_id=left) → tab_ready → streaming
+   - profile-b: register → create_tab (tab_id=right) → tab_ready → streaming
+3. Both panes render at ~60fps (59–61fps observed on both).
+4. Both profile servers run headless with `--hidden`, no Dock icons.
+
+#### Conclusion
+
+Two-profiles compositor updated to the dynamic tab protocol. Same pattern as
+Experiment 4 (one-profile) but with connection-identity routing: each tab
+connection maps to a pane via `gTabConnections`, replacing the old
+`session_id`-based `paneForSession` function. All three compositors
+(one-profile, two-profiles, three-profiles) now speak the same dynamic tab
+protocol.
