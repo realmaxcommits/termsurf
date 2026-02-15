@@ -609,7 +609,11 @@ connections for each tab.
 The old single-tab startup path is removed entirely. `GetStartupURL()` is
 deleted. The `--session-id` switch is deleted (no longer needed — connections
 are the identity). `InitializeMessageLoopContext()` always enters dynamic mode.
-Experiments 1–2 have their own Chromium branches if they need to be re-run.
+This makes the new Chromium branch (`146.0.7650.0-issue-503`) incompatible with
+the `ts5/one-profile/` and `ts5/two-profiles/` apps. The profile server will
+connect and send `register` instead of immediately streaming frames, and those
+compositors don't speak the new protocol. To re-run Experiments 1–2, use the
+`146.0.7650.0-issue-502` branch.
 
 ##### `content/chromium_profile_server/browser/shell_browser_main_parts.h`
 
