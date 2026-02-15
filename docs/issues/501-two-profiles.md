@@ -1163,3 +1163,64 @@ out/Default/Chromium\ Profile\ Server.app/Contents/MacOS/Chromium\ Profile\ Serv
   paths.
 - **Dock icon appears:** The plist rename broke LSUIElement. Check
   `app-Info.plist`.
+
+#### Result: Passed
+
+The rename is complete. `Chromium Profile Server.app` builds and runs
+identically to the old `One Profile.app` — 60fps on both panes, no Dock icon, no
+crashes.
+
+##### Changes
+
+**Directory rename:**
+
+- `git mv content/one_profile content/chromium_profile_server`
+
+**Bulk string replacements** (6 patterns across 110+ files):
+
+1. `CONTENT_ONE_PROFILE` → `CONTENT_CHROMIUM_PROFILE_SERVER`
+2. `org.chromium.OneProfile` → `com.termsurf.chromium-profile-server`
+3. `One Profile` → `Chromium Profile Server`
+4. `OneProfile` → `ChromiumProfileServer`
+5. `one_profile` → `chromium_profile_server`
+6. `one-profile` → `chromium-profile-server`
+
+**External files updated** (not discovered until build failed):
+
+- `BUILD.gn` — target reference in `gn_all`
+- `components/cdm/renderer/BUILD.gn` — visibility list
+- `components/cdm/browser/BUILD.gn` — visibility list
+- `components/cdm/common/BUILD.gn` — visibility list
+- `net/dns/BUILD.gn` — dep reference
+- `tools/gritsettings/resource_ids.spec` — GRIT resource ID mapping
+
+##### Build
+
+194 targets, zero errors. Full rebuild required due to directory rename.
+
+##### Test output
+
+```
+Profile A: 60 frames in 1.00009s (59.9944 fps) | IOSurface 1600x1200
+Profile B: 60 frames in 1.00003s (59.9982 fps) | IOSurface 1600x1200
+```
+
+Both panes sustained 60fps for 30+ seconds. No Dock icon appeared.
+
+##### Success criteria checklist
+
+- [x] `autoninja -C out/Default chromium_profile_server` builds with zero errors
+- [x] App bundle is `Chromium Profile Server.app`
+- [x] No references to "one_profile" or "One Profile" remain in
+      `content/chromium_profile_server/`
+- [x] Both panes at 60fps sustained for 30+ seconds
+- [x] No Dock icon (LSUIElement still works after rename)
+
+#### Conclusion
+
+The rename from "One Profile" to "Chromium Profile Server" is purely mechanical
+and introduces no regressions. The only surprises were external references: 4
+visibility lists in `components/cdm/` and `net/dns/` BUILD.gn files, plus a GRIT
+resource ID mapping in `tools/gritsettings/resource_ids.spec`. These were added
+by Issue 414 when the One Profile fork was created and needed updating alongside
+the directory rename.
