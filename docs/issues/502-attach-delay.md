@@ -232,11 +232,11 @@ Build: 21 targets, zero errors.
 
 Timing comparison:
 
-| Metric | Before (Issue 501) | After (Issue 502) |
-|--------|-------------------|-------------------|
-| Launch timestamp | `060800.723` | `073448.144` |
-| Attach timestamp | `060802.798` | `073448.826` |
-| **Delay** | **2.07s** | **0.68s** |
+| Metric           | Before (Issue 501) | After (Issue 502) |
+| ---------------- | ------------------ | ----------------- |
+| Launch timestamp | `060800.723`       | `073448.144`      |
+| Attach timestamp | `060802.798`       | `073448.826`      |
+| **Delay**        | **2.07s**          | **0.68s**         |
 
 The `RenderViewReady()` callback fired 0.68 seconds after launch — as soon as
 the RWHV was actually ready. The capturer attached immediately and began
@@ -255,9 +255,29 @@ No Dock icon. No timer. No race condition.
 
 #### Conclusion
 
-The `WebContentsObserver` approach works exactly as designed. Three small changes
-across three files replaced a fragile 2-second `PostDelayedTask` with an
+The `WebContentsObserver` approach works exactly as designed. Three small
+changes across three files replaced a fragile 2-second `PostDelayedTask` with an
 event-driven `RenderViewReady()` callback. The capturer now attaches ~1.4
 seconds earlier — as soon as the RWHV exists rather than after an arbitrary
 timeout. The 0.68-second remaining delay is genuine startup time (process init,
 renderer spawn, navigation start), not wasted waiting.
+
+## Conclusion
+
+Issue 502 replaced a hardcoded 2-second `PostDelayedTask` with a
+`WebContentsObserver` that attaches the `FrameSinkVideoCapturer` the instant the
+`RenderWidgetHostView` is ready. One experiment, first-try pass.
+
+The fix was 10 net lines across 3 files: add `WebContentsObserver` as a base
+class on `ShellVideoConsumer`, override `RenderViewReady()` to call `Attach()`,
+and replace the timer in `shell_browser_main_parts.cc` with `ObserveContents()`.
+Capturer attachment dropped from 2.07 seconds to 0.68 seconds — a 67% reduction,
+with the remaining time being genuine Chromium startup (process init, renderer
+spawn, navigation).
+
+The key insight came from Electron. Electron's `OffScreenRenderWidgetHostView`
+avoids the timing problem entirely by owning the RWHV and creating the capturer
+in its constructor. We don't need that level of control — we use Chromium's
+default rendering pipeline — but studying Electron's approach revealed that the
+right answer is always event-driven observation, never arbitrary delays.
+Chromium's `WebContentsObserver` provides exactly the hook we needed.
