@@ -473,3 +473,7 @@ to:
 1. Browse mode status bar shows only `[ctrl+esc] force exit browse mode`.
 2. `Esc` still switches to control mode (behavior unchanged).
 3. Control mode hints are unchanged.
+
+#### Result
+
+Builds with no warnings. Ready for interactive testing.
