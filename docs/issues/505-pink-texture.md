@@ -322,6 +322,118 @@ web exits or disconnects   ──XPC──▶  Connection closed →
 To clear the overlay, `web` simply disconnects. The compositor detects the
 closed connection and removes the overlay for that pane.
 
+## Sizing and Resize Lessons (Reference)
+
+From four generations of texture overlay experiments, these are the rules. Each
+was learned the hard way.
+
+### Coordinate Systems
+
+1. **Always work in physical pixels in the renderer.** Multiply logical
+   coordinates by `backingScaleFactor` (typically 2.0 on Retina Macs). Ghostty's
+   renderer already operates in physical pixels — the projection matrix and all
+   coordinates in `drawFrame()` use physical pixel units.
+
+2. **Use the existing projection matrix.** Ghostty creates an orthographic 2D
+   projection in `generic.zig` (`math.ortho2d`). The matrix maps pixel
+   coordinates to normalized device coordinates. All existing shaders
+   (cell_text, image) follow the pattern:
+   `position = projection × float4(pixel_x, pixel_y,
+   0, 1)`. The pink overlay
+   must do the same.
+
+3. **Grid → pixel conversion is simple.** Ghostty uses one formula everywhere:
+   `pixel = grid_pos × cell_size + padding`. Cell size comes from font metrics
+   and does not change on terminal resize. Padding changes when the terminal
+   resizes (balanced padding centers the grid). The conversion must use current
+   values from the renderer's `Size` struct, never cached or stale values.
+
+4. **The image shader is the model.** Kitty images are the closest existing
+   analog to the pink overlay. They are positioned at grid coordinates with a
+   pixel offset, sized in pixels, and rendered as textured quads. The image
+   shader parameters are:
+   ```
+   grid_pos: [2]f32       // top-left cell
+   cell_offset: [2]f32    // pixel offset from cell corner
+   dest_size: [2]f32      // rendered size in pixels
+   ```
+   The pink overlay follows this same pattern.
+
+### Resize
+
+5. **Invalidate on new data.** When new coordinates arrive via XPC, the
+   compositor must trigger a redraw immediately. ts3 Issue 309 showed that
+   without explicit invalidation, a new texture sat in a buffer for up to 887ms.
+   The render loop only ran when an incidental event (mouse move, keystroke)
+   happened to trigger it. Fix: call `invalidate()` in the XPC handler.
+
+6. **No debounce for coordinate updates.** ts3's 30ms debounce caused the
+   bouncing problem — the timer reset every frame during continuous drag, so
+   resize didn't fire until the user stopped dragging. Removing the debounce
+   fixed it. For the pink overlay, every `set_overlay` message from `web` should
+   be applied immediately. There is no expensive operation to debounce (unlike
+   CEF re-rendering).
+
+7. **Use current cell size, never stale values.** ts3 Issue 311 found that
+   global static cell size variables lagged behind actual font metrics. The fix:
+   always read `cell_size` from the renderer's current `Size` struct in
+   `drawFrame()`, which is guaranteed fresh. Ghostty's `drawFrame()` already
+   calls `api.surfaceSize()` and detects size changes per-frame — the overlay
+   conversion piggybacks on this.
+
+8. **Cell size does not change on terminal resize.** Cell size is determined by
+   font metrics, not terminal dimensions. When the terminal window resizes, the
+   grid dimensions (columns, rows) and padding change, but cell width and height
+   stay constant. This means the overlay position (derived from grid position ×
+   cell size) stays correct during the gap between resize and updated
+   coordinates. Only the overlay width/height are stale for a few frames.
+
+9. **Atomic replacement, not incremental update.** ts4 replaced IOSurface
+   textures atomically — the new texture replaced the old one in a single
+   assignment. No frame ever mixed old and new data. The pink overlay should
+   follow the same pattern: when new grid coordinates arrive via XPC, replace
+   the entire overlay rect in one write.
+
+### Future (Browser Texture)
+
+These lessons don't apply to the pink overlay but will matter when we replace it
+with a real browser IOSurface:
+
+10. **IOSurface bytesPerRow must be 16-byte aligned.** Formula:
+    `(width * 4 + 15) & ~15`. Discovered in ts4 when odd window widths caused
+    Metal texture creation failures.
+
+11. **sRGB double-correction.** Chromium outputs sRGB pixel data. If the texture
+    view is declared as linear (`Bgra8Unorm`), the GPU applies gamma correction
+    again, washing out colors. Fix: declare the texture view as `Bgra8UnormSrgb`
+    (or the equivalent in Ghostty's Display P3 color space).
+
+12. **Retina rendering requires three coordinated fixes (Issue 414).** All three
+    must be present:
+    - Capture at physical pixel resolution.
+    - Set `contentsScale = backingScaleFactor` on the Metal layer.
+    - Match `drawableSize` to physical pixel dimensions. Without all three,
+      output is blurry.
+
+13. **Stale frames during resize.** When the browser hasn't re-rendered at the
+    new size yet, the old IOSurface doesn't match the new viewport. Options:
+    - **Scale to fit:** Stretch the old texture into the new viewport
+      (introduces blur but avoids black flash). ts3 used this.
+    - **Discard mismatched frames:** Show terminal content until a correctly
+      sized frame arrives. Ghostty's `IOSurfaceLayer.setSurface()` already
+      validates dimensions and discards mismatches.
+    - **Hide overlay:** Clear the overlay until new coordinates and a matching
+      texture arrive. The right choice depends on the visual tradeoff. For the
+      pink overlay this doesn't apply — the shader draws at whatever size it's
+      told.
+
+14. **Send physical pixels across IPC, not logical.** ts3 Issue 311 found that
+    converting physical → logical on the sender side introduced truncation
+    errors. Send physical dimensions and let the receiver convert. For the pink
+    overlay this doesn't apply (we send grid coordinates, and the compositor
+    converts to physical internally), but it will matter for browser resize
+    messages.
+
 ## Experiments
 
 ### Experiment 1: Dynamic Pink Quad via XPC
@@ -494,16 +606,16 @@ be overwritten/ignored during the `withCValue` serialization to the C API.
 
 **What needs investigation for Experiment 2:**
 
-1. **How does Ghostty propagate environment variables to child processes?** Trace
-   the path from `SurfaceConfiguration.environmentVariables` through `withCValue`
-   → `ghostty_surface_config_s` → Zig `Surface.init()` → shell spawn. Identify
-   where the env var is lost.
+1. **How does Ghostty propagate environment variables to child processes?**
+   Trace the path from `SurfaceConfiguration.environmentVariables` through
+   `withCValue` → `ghostty_surface_config_s` → Zig `Surface.init()` → shell
+   spawn. Identify where the env var is lost.
 
 2. **Is the XPC Mach service reachable?** Even if `TERMSURF_PANE_ID` were set,
-   the `com.termsurf.compositor` Mach service may not be registered with launchd.
-   The current plist launches a separate Ghostty binary as the service, but the
-   XPC listener (`CompositorXPC.swift`) runs inside the app process. The app
-   would need to register the Mach service itself (via
+   the `com.termsurf.compositor` Mach service may not be registered with
+   launchd. The current plist launches a separate Ghostty binary as the service,
+   but the XPC listener (`CompositorXPC.swift`) runs inside the app process. The
+   app would need to register the Mach service itself (via
    `xpc_connection_create_mach_service` with the listener flag) rather than
    relying on launchd to launch a separate process.
 
@@ -513,114 +625,131 @@ be overwritten/ignored during the `withCValue` serialization to the C API.
    in the plist. Alternatively, skip launchd entirely and use an XPC anonymous
    connection or a different IPC mechanism (Unix socket, named pipe).
 
-## Sizing and Resize Lessons (Reference)
+### Experiment 2: Diagnose and Fix Env Var Propagation
 
-From four generations of texture overlay experiments, these are the rules. Each
-was learned the hard way.
+Experiment 1 failed with `TERMSURF_PANE_ID not set or service unavailable`. But
+that error message conflates two independent failures — the env var and the XPC
+service. This experiment separates them, diagnoses the actual failure, and fixes
+it.
 
-### Coordinate Systems
+#### Analysis
 
-1. **Always work in physical pixels in the renderer.** Multiply logical
-   coordinates by `backingScaleFactor` (typically 2.0 on Retina Macs). Ghostty's
-   renderer already operates in physical pixels — the projection matrix and all
-   coordinates in `drawFrame()` use physical pixel units.
+Code review shows the env var propagation chain is **complete** in ts5:
 
-2. **Use the existing projection matrix.** Ghostty creates an orthographic 2D
-   projection in `generic.zig` (`math.ortho2d`). The matrix maps pixel
-   coordinates to normalized device coordinates. All existing shaders
-   (cell_text, image) follow the pattern:
-   `position = projection × float4(pixel_x, pixel_y,
-   0, 1)`. The pink overlay
-   must do the same.
+1. **Swift:** `surface_cfg.environmentVariables["TERMSURF_PANE_ID"]` is set
+   before `withCValue` in `SurfaceView_AppKit.swift:382`.
+2. **Swift → C:** `withCValue` serializes the dictionary to
+   `ghostty_surface_config_s.env_vars` / `.env_var_count` via `withCStrings` →
+   `ghostty_env_var_s` array (`SurfaceView.swift:736–751`).
+3. **C → Zig:** `embedded.zig:529–540` reads `opts.env_vars` and merges each
+   key-value pair into `config.env.map` (a `RepeatableStringMap`).
+4. **Zig → PTY:** `Surface.zig:632` passes `config.env` as `.env_override` to
+   `termio.Exec.init`. `Exec.zig:801–808` iterates `.env_override` and merges
+   entries into the child process environment.
 
-3. **Grid → pixel conversion is simple.** Ghostty uses one formula everywhere:
-   `pixel = grid_pos × cell_size + padding`. Cell size comes from font metrics
-   and does not change on terminal resize. Padding changes when the terminal
-   resizes (balanced padding centers the grid). The conversion must use current
-   values from the renderer's `Size` struct, never cached or stale values.
+This is the **exact same chain** that works in ts1, which successfully
+propagated `TERMSURF_PANE_ID` and `TERMSURF_SOCKET` to child shells. The ts5
+code is identical at every stage.
 
-4. **The image shader is the model.** Kitty images are the closest existing
-   analog to the pink overlay. They are positioned at grid coordinates with a
-   pixel offset, sized in pixels, and rendered as textured quads. The image
-   shader parameters are:
+**Hypothesis:** The env var IS being set correctly, but the `web` TUI's error
+message doesn't distinguish between "env var missing" and "XPC service
+unreachable". The real failure is likely the XPC Mach service, which requires
+launchd registration and was not properly tested in Experiment 1.
+
+#### Changes
+
+##### Part 1: Better Diagnostics in `web` TUI
+
+###### `web/src/main.rs`
+
+Split the error message into two distinct checks:
+
+```rust
+let pane_id = std::env::var("TERMSURF_PANE_ID").ok();
+match &pane_id {
+    Some(id) => eprintln!("[web] TERMSURF_PANE_ID = {}", id),
+    None => eprintln!("[web] TERMSURF_PANE_ID not set (not running inside TermSurf)"),
+}
+
+let compositor = pane_id.as_ref().and_then(|_| xpc::CompositorConnection::connect());
+match &compositor {
+    Some(_) => eprintln!("[web] Connected to compositor"),
+    None if pane_id.is_some() => eprintln!("[web] XPC service unavailable (is launchd plist loaded?)"),
+    _ => {}
+}
+```
+
+This tells us exactly which half fails.
+
+##### Part 2: Ensure Launchd Plist Is Loaded
+
+The XPC Mach service `com.termsurf.compositor` must be registered with launchd
+before clients can connect. The `CompositorXPC.swift` listener calls
+`xpc_connection_create_mach_service` with
+`XPC_CONNECTION_MACH_SERVICE_LISTENER`, which only works if launchd knows about
+the service name.
+
+**Verification:** Check if the service is loaded:
+
+```bash
+launchctl print gui/$(id -u)/com.termsurf.compositor
+```
+
+If not loaded:
+
+```bash
+launchctl bootstrap gui/$(id -u) ts5/macos/com.termsurf.compositor.plist
+```
+
+**Note:** The plist's `ProgramArguments` points to the Ghostty binary. When a
+client connects and the service isn't running, launchd will try to launch this
+binary. If the app is already running, this creates a conflict. The `KeepAlive`
+key is intentionally absent so launchd doesn't auto-launch.
+
+##### Part 3: Add Startup Log in CompositorXPC
+
+###### `ts5/macos/Sources/Ghostty/CompositorXPC.swift`
+
+The `start()` method already prints to stderr, but the app may not be running
+with stderr visible. Add an `os_log` call so the message appears in Console.app:
+
+```swift
+import os.log
+
+private let logger = Logger(subsystem: "com.termsurf.compositor", category: "xpc")
+
+// In start():
+logger.info("Compositor XPC listener starting on com.termsurf.compositor")
+// ... after resume:
+logger.info("Compositor XPC listener active")
+```
+
+This confirms whether the listener actually starts when the app launches.
+
+#### Test Procedure
+
+1. Build ts5: `cd ts5 && zig build`
+2. Quit any running TermSurf/Ghostty instance.
+3. Ensure the launchd plist is loaded:
+   ```bash
+   launchctl bootstrap gui/$(id -u) ts5/macos/com.termsurf.compositor.plist
    ```
-   grid_pos: [2]f32       // top-left cell
-   cell_offset: [2]f32    // pixel offset from cell corner
-   dest_size: [2]f32      // rendered size in pixels
+4. Launch the app: `open ts5/zig-out/Ghostty.app`
+5. In the TermSurf terminal pane, verify the env var:
+   ```bash
+   echo $TERMSURF_PANE_ID
    ```
-   The pink overlay follows this same pattern.
+   Expected: a UUID string (e.g., `A1B2C3D4-E5F6-...`).
+6. Run the web TUI:
+   ```bash
+   cd web && cargo run -- https://example.com
+   ```
+7. Check the diagnostic output — it will now show exactly which step fails.
+8. Check Console.app for `com.termsurf.compositor` log messages.
 
-### Resize
+#### Pass Criteria
 
-5. **Invalidate on new data.** When new coordinates arrive via XPC, the
-   compositor must trigger a redraw immediately. ts3 Issue 309 showed that
-   without explicit invalidation, a new texture sat in a buffer for up to 887ms.
-   The render loop only ran when an incidental event (mouse move, keystroke)
-   happened to trigger it. Fix: call `invalidate()` in the XPC handler.
-
-6. **No debounce for coordinate updates.** ts3's 30ms debounce caused the
-   bouncing problem — the timer reset every frame during continuous drag, so
-   resize didn't fire until the user stopped dragging. Removing the debounce
-   fixed it. For the pink overlay, every `set_overlay` message from `web` should
-   be applied immediately. There is no expensive operation to debounce (unlike
-   CEF re-rendering).
-
-7. **Use current cell size, never stale values.** ts3 Issue 311 found that
-   global static cell size variables lagged behind actual font metrics. The fix:
-   always read `cell_size` from the renderer's current `Size` struct in
-   `drawFrame()`, which is guaranteed fresh. Ghostty's `drawFrame()` already
-   calls `api.surfaceSize()` and detects size changes per-frame — the overlay
-   conversion piggybacks on this.
-
-8. **Cell size does not change on terminal resize.** Cell size is determined by
-   font metrics, not terminal dimensions. When the terminal window resizes, the
-   grid dimensions (columns, rows) and padding change, but cell width and height
-   stay constant. This means the overlay position (derived from grid position ×
-   cell size) stays correct during the gap between resize and updated
-   coordinates. Only the overlay width/height are stale for a few frames.
-
-9. **Atomic replacement, not incremental update.** ts4 replaced IOSurface
-   textures atomically — the new texture replaced the old one in a single
-   assignment. No frame ever mixed old and new data. The pink overlay should
-   follow the same pattern: when new grid coordinates arrive via XPC, replace
-   the entire overlay rect in one write.
-
-### Future (Browser Texture)
-
-These lessons don't apply to the pink overlay but will matter when we replace it
-with a real browser IOSurface:
-
-10. **IOSurface bytesPerRow must be 16-byte aligned.** Formula:
-    `(width * 4 + 15) & ~15`. Discovered in ts4 when odd window widths caused
-    Metal texture creation failures.
-
-11. **sRGB double-correction.** Chromium outputs sRGB pixel data. If the texture
-    view is declared as linear (`Bgra8Unorm`), the GPU applies gamma correction
-    again, washing out colors. Fix: declare the texture view as `Bgra8UnormSrgb`
-    (or the equivalent in Ghostty's Display P3 color space).
-
-12. **Retina rendering requires three coordinated fixes (Issue 414).** All three
-    must be present:
-    - Capture at physical pixel resolution.
-    - Set `contentsScale = backingScaleFactor` on the Metal layer.
-    - Match `drawableSize` to physical pixel dimensions. Without all three,
-      output is blurry.
-
-13. **Stale frames during resize.** When the browser hasn't re-rendered at the
-    new size yet, the old IOSurface doesn't match the new viewport. Options:
-    - **Scale to fit:** Stretch the old texture into the new viewport
-      (introduces blur but avoids black flash). ts3 used this.
-    - **Discard mismatched frames:** Show terminal content until a correctly
-      sized frame arrives. Ghostty's `IOSurfaceLayer.setSurface()` already
-      validates dimensions and discards mismatches.
-    - **Hide overlay:** Clear the overlay until new coordinates and a matching
-      texture arrive. The right choice depends on the visual tradeoff. For the
-      pink overlay this doesn't apply — the shader draws at whatever size it's
-      told.
-
-14. **Send physical pixels across IPC, not logical.** ts3 Issue 311 found that
-    converting physical → logical on the sender side introduced truncation
-    errors. Send physical dimensions and let the receiver convert. For the pink
-    overlay this doesn't apply (we send grid coordinates, and the compositor
-    converts to physical internally), but it will matter for browser resize
-    messages.
+1. `echo $TERMSURF_PANE_ID` prints a UUID inside a TermSurf pane.
+2. The `web` TUI prints separate diagnostic lines for env var and XPC status.
+3. If the env var is set but XPC fails, the diagnostic identifies that clearly.
+4. If both work, the pink overlay appears (Experiment 1 pass criteria apply).
