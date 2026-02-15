@@ -517,3 +517,7 @@ dimensions.
 3. The displayed dimensions can be verified by counting — the inner width
    matches the number of columns available inside the border, and the inner
    height matches the number of rows.
+
+#### Result
+
+Builds with no warnings. Ready for interactive testing.

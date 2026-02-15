@@ -83,17 +83,20 @@ fn ui(frame: &mut Frame, url: &str, mode: &Mode) {
     frame.render_widget(url_bar, layout[0]);
 
     // Viewport.
-    let viewport_text = "waiting for browser...";
+    let viewport_block = Block::default()
+        .borders(Borders::ALL)
+        .title(" Viewport ")
+        .border_style(Style::default().fg(Color::Gray))
+        .title_style(Style::default().fg(Color::Gray));
+    let inner = viewport_block.inner(layout[1]);
+    let viewport_text = format!(
+        "origin: ({}, {})\nsize: {} x {}",
+        inner.x, inner.y, inner.width, inner.height
+    );
     let viewport = Paragraph::new(viewport_text)
         .alignment(Alignment::Center)
         .style(Style::default().fg(Color::DarkGray))
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(" Viewport ")
-                .border_style(Style::default().fg(Color::Gray))
-                .title_style(Style::default().fg(Color::Gray)),
-        );
+        .block(viewport_block);
     frame.render_widget(viewport, layout[1]);
 
     // Status bar.
