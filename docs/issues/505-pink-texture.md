@@ -53,8 +53,8 @@ panes. Key lessons:
   forced a render. Fix: call `window.invalidate()` immediately when a new XPC
   message arrives, so the render loop picks up the new data.
 - **Scale factor source mismatch.** Initial spawn used pane DPI; resize used
-  window DPI. If these differed, the logical dimensions were wrong. Fix: use
-  the same DPI source for both (Issue 309).
+  window DPI. If these differed, the logical dimensions were wrong. Fix: use the
+  same DPI source for both (Issue 309).
 - **Stale cell size during resize.** Global static cell size values could lag
   behind actual font rendering (Issue 311). Fix: always use current
   `render_metrics.cell_size`, never cached globals.
@@ -74,20 +74,19 @@ ts4 proved in-process Chromium rendering at 60fps. Key lessons:
   together for crisp output:
   1. Capture at physical pixel resolution (not logical).
   2. Set `CAMetalLayer.contentsScale = backingScaleFactor`.
-  3. Match `drawableSize` to physical pixel dimensions.
-  Without all three, textures are blurry. Issue 414 Experiment 5 produced a
-  640×360 IOSurface on a Retina screen instead of 1280×720 — the logical size
-  leaked through.
+  3. Match `drawableSize` to physical pixel dimensions. Without all three,
+     textures are blurry. Issue 414 Experiment 5 produced a 640×360 IOSurface on
+     a Retina screen instead of 1280×720 — the logical size leaked through.
 - **Metal bytesPerRow alignment.** IOSurface-backed textures require 16-byte row
   alignment: `(width * 4 + 15) & ~15`. Odd widths crash without this.
 - **Resize was immediate, no debounce.** `windowDidEndLiveResize` sent physical
   dimensions via XPC. Child processes created a new IOSurface at the new size
   and sent it back. Old IOSurface released atomically when the new one replaced
   it — no flicker between frames.
-- **Texture creation validates dimensions.** `MTLTexture` descriptor width/height
-  must match the IOSurface. If they don't, Metal returns nil. This acts as
-  implicit mismatch detection — the old texture stays visible until a correctly
-  sized one arrives.
+- **Texture creation validates dimensions.** `MTLTexture` descriptor
+  width/height must match the IOSurface. If they don't, Metal returns nil. This
+  acts as implicit mismatch detection — the old texture stays visible until a
+  correctly sized one arrives.
 
 ### Ghostty's Renderer (ts5)
 
@@ -213,7 +212,7 @@ or too wide for a few frames).
   stretched into a new viewport).
 
 **Lesson from ts3:** The bouncing problem in ts3 was far worse because the old
-*texture* (with wrong pixel dimensions) was stretched into the new viewport.
+_texture_ (with wrong pixel dimensions) was stretched into the new viewport.
 Here, we're re-deriving pixel coordinates from grid coordinates every frame, so
 the position is always consistent with the current cell size and padding. The
 only stale data is the grid width/height from `web`, which updates within
@@ -489,9 +488,11 @@ was learned the hard way.
 
 2. **Use the existing projection matrix.** Ghostty creates an orthographic 2D
    projection in `generic.zig` (`math.ortho2d`). The matrix maps pixel
-   coordinates to normalized device coordinates. All existing shaders (cell_text,
-   image) follow the pattern: `position = projection × float4(pixel_x, pixel_y,
-   0, 1)`. The pink overlay must do the same.
+   coordinates to normalized device coordinates. All existing shaders
+   (cell_text, image) follow the pattern:
+   `position = projection × float4(pixel_x, pixel_y,
+   0, 1)`. The pink overlay
+   must do the same.
 
 3. **Grid → pixel conversion is simple.** Ghostty uses one formula everywhere:
    `pixel = grid_pos × cell_size + padding`. Cell size comes from font metrics
@@ -547,8 +548,8 @@ was learned the hard way.
 
 ### Future (Browser Texture)
 
-These lessons don't apply to the pink overlay but will matter when we replace
-it with a real browser IOSurface:
+These lessons don't apply to the pink overlay but will matter when we replace it
+with a real browser IOSurface:
 
 10. **IOSurface bytesPerRow must be 16-byte aligned.** Formula:
     `(width * 4 + 15) & ~15`. Discovered in ts4 when odd window widths caused
@@ -563,20 +564,20 @@ it with a real browser IOSurface:
     must be present:
     - Capture at physical pixel resolution.
     - Set `contentsScale = backingScaleFactor` on the Metal layer.
-    - Match `drawableSize` to physical pixel dimensions.
-    Without all three, output is blurry.
+    - Match `drawableSize` to physical pixel dimensions. Without all three,
+      output is blurry.
 
 13. **Stale frames during resize.** When the browser hasn't re-rendered at the
     new size yet, the old IOSurface doesn't match the new viewport. Options:
-    - **Scale to fit:** Stretch the old texture into the new viewport (introduces
-      blur but avoids black flash). ts3 used this.
+    - **Scale to fit:** Stretch the old texture into the new viewport
+      (introduces blur but avoids black flash). ts3 used this.
     - **Discard mismatched frames:** Show terminal content until a correctly
       sized frame arrives. Ghostty's `IOSurfaceLayer.setSurface()` already
       validates dimensions and discards mismatches.
     - **Hide overlay:** Clear the overlay until new coordinates and a matching
-      texture arrive.
-    The right choice depends on the visual tradeoff. For the pink overlay this
-    doesn't apply — the shader draws at whatever size it's told.
+      texture arrive. The right choice depends on the visual tradeoff. For the
+      pink overlay this doesn't apply — the shader draws at whatever size it's
+      told.
 
 14. **Send physical pixels across IPC, not logical.** ts3 Issue 311 found that
     converting physical → logical on the sender side introduced truncation
