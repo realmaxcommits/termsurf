@@ -99,13 +99,13 @@ fn ui(frame: &mut Frame, url: &str, mode: &Mode) {
     // Status bar.
     let status_layout = Layout::horizontal([
         Constraint::Fill(1),   // Key hints (left)
-        Constraint::Length(10), // Mode label (right)
+        Constraint::Length(12), // Mode label (right)
     ])
     .split(layout[2]);
 
     let (hints, label) = match mode {
-        Mode::Browse => ("[esc] control mode  [ctrl+esc] force exit browse mode", "BROWSE"),
-        Mode::Control => ("[q] quit  [enter] browse", "CONTROL"),
+        Mode::Browse => ("[esc] control mode  [ctrl+esc] force exit browse mode", "󰖟 BROWSE"),
+        Mode::Control => ("[q] quit  [enter] browse", " CONTROL"),
     };
 
     let hints_widget = Paragraph::new(hints)

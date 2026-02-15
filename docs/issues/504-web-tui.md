@@ -437,3 +437,7 @@ accommodate the icon + space.
 1. Browse mode shows `󰖟 BROWSE` on the right of the status bar.
 2. Control mode shows `CONTROL` on the right of the status bar.
 3. Labels are not clipped — icon and text are fully visible.
+
+#### Result
+
+Builds with no warnings. Ready for interactive testing.
