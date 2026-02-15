@@ -7,6 +7,25 @@ A file for [guiding coding agents](https://agents.md/).
 Never under any circumstances change the code unless explicitly asked by the
 user. When in doubt, ask the user before making any changes.
 
+## Settled Architectural Decisions
+
+Do NOT suggest alternatives to these. They were chosen after extensive
+experimentation across five generations (ts1–ts5) and hundreds of experiments.
+
+### XPC is the only IPC mechanism on macOS
+
+All inter-process communication on macOS MUST use XPC. There are no exceptions.
+Do not suggest Unix domain sockets, named pipes, shared memory, or any other IPC
+mechanism as an alternative.
+
+IOSurface textures can only be transferred between processes via Mach ports, and
+Mach ports can only be transferred via XPC. This is not a preference — it is a
+hard macOS kernel constraint. Every IPC channel in TermSurf uses XPC because the
+texture channel requires it, and using a second IPC mechanism for non-texture
+messages would add complexity for zero benefit.
+
+This was proven in ts3 (Issues 303, 325–350) and ts4 (Issues 403, 407).
+
 ## Project Overview
 
 TermSurf is a terminal emulator with an integrated web browser. Users type
@@ -111,21 +130,21 @@ application.
   supports multiple instances with different storage paths. Each gets isolated
   cookies, localStorage, and cache. The one-profile-per-process constraint was a
   CEF limitation, not a Chromium limitation (Issue 406).
-- **No CEF.** CEF's headless off-screen rendering caps at ~31fps on macOS.
-  The Content API eliminates every CEF limitation.
+- **No CEF.** CEF's headless off-screen rendering caps at ~31fps on macOS. The
+  Content API eliminates every CEF limitation.
 
 ### How We Got Here
 
-| Issue | Finding |
-| ----- | ------- |
-| 400   | Original ts4 vision: own everything, use Content API directly |
-| 401   | Content API feasibility study; ~2000 lines of OSR code needed |
-| 402   | WezTerm vs Alacritty for terminal (superseded by Issue 404) |
-| 403   | Proved multi-process IOSurface compositing works at 60fps |
-| 404   | Selected Ghostty as terminal emulator (Metal renderer, IOSurface) |
-| 405   | Fork Ghostty with browser out-of-process (Option B selected) |
+| Issue | Finding                                                                              |
+| ----- | ------------------------------------------------------------------------------------ |
+| 400   | Original ts4 vision: own everything, use Content API directly                        |
+| 401   | Content API feasibility study; ~2000 lines of OSR code needed                        |
+| 402   | WezTerm vs Alacritty for terminal (superseded by Issue 404)                          |
+| 403   | Proved multi-process IOSurface compositing works at 60fps                            |
+| 404   | Selected Ghostty as terminal emulator (Metal renderer, IOSurface)                    |
+| 405   | Fork Ghostty with browser out-of-process (Option B selected)                         |
 | 406   | Profile isolation is CEF-only; Content API supports multiple profiles; CEF ruled out |
-| 407   | In-process Chromium PoC: two profiles, side by side, high framerate |
+| 407   | In-process Chromium PoC: two profiles, side by side, high framerate                  |
 
 ### Issue 407 PoC (Completed)
 
@@ -136,7 +155,8 @@ implemented in ts5.
 
 ### Directory Structure
 
-- `ts4/box-demo/public/index.html` — Test page (blue spinning square, localStorage, FPS)
+- `ts4/box-demo/public/index.html` — Test page (blue spinning square,
+  localStorage, FPS)
 - `ts4/box-demo/server.ts` — Bun HTTP server on port 9407
 - `chromium/` — Chromium build workspace (gitignored, top level)
   - `src/` — Chromium source tree (git repo)
@@ -286,7 +306,8 @@ Logs are written to `/tmp/`:
 
 - `~/dev/termsurf/logs/termsurf-gui.log` — GUI process output
 - `~/dev/termsurf/logs/termsurf-launcher.log` — Launcher output
-- `~/dev/termsurf/logs/termsurf-profile-{session_id}.log` — Per-session profile server output
+- `~/dev/termsurf/logs/termsurf-profile-{session_id}.log` — Per-session profile
+  server output
 
 ### Directory Structure and Key Files
 
@@ -372,7 +393,8 @@ rendering.
 
 ### TermSurf Modifications to the Library
 
-These are changes to `vendor/cef-rs/cef/src/` (the library itself, not examples):
+These are changes to `vendor/cef-rs/cef/src/` (the library itself, not
+examples):
 
 1. **IOSurface Metal API crash fix** — The original code used
    `std::mem::transmute` to cast raw pointers to Metal API references, causing
@@ -396,8 +418,8 @@ These are changes to `vendor/cef-rs/cef/src/` (the library itself, not examples)
 
 ### OSR Example Validation
 
-The OSR (off-screen rendering) example in `vendor/cef-rs/examples/osr/` was used as a
-testbed before ts1 integration. Changes made to the example:
+The OSR (off-screen rendering) example in `vendor/cef-rs/examples/osr/` was used
+as a testbed before ts1 integration. Changes made to the example:
 
 | Feature                    | Status     | Notes                                       |
 | -------------------------- | ---------- | ------------------------------------------- |
@@ -425,15 +447,17 @@ testbed before ts1 integration. Changes made to the example:
 ### Key Files
 
 - `vendor/cef-rs/cef/` — Main CEF wrapper crate
-- `vendor/cef-rs/cef/src/osr_texture_import/` — Texture import (IOSurface on macOS,
-  DMA-BUF on Linux, D3D11 on Windows)
-- `vendor/cef-rs/cef/src/osr_texture_import/iosurface.rs` — IOSurface import + Mach
-  port creation/lookup (modified for TermSurf)
+- `vendor/cef-rs/cef/src/osr_texture_import/` — Texture import (IOSurface on
+  macOS, DMA-BUF on Linux, D3D11 on Windows)
+- `vendor/cef-rs/cef/src/osr_texture_import/iosurface.rs` — IOSurface import +
+  Mach port creation/lookup (modified for TermSurf)
 - `vendor/cef-rs/cef/src/osr_texture_import/common.rs` — Shared texture handling
   (modified for sRGB fix)
-- `vendor/cef-rs/examples/osr/` — Off-screen rendering example (validation testbed)
+- `vendor/cef-rs/examples/osr/` — Off-screen rendering example (validation
+  testbed)
 - `vendor/cef-rs/sys/` — Low-level CEF C API bindings (unmodified)
-- `vendor/cef-rs/update-bindings/` — Tool to regenerate bindings from CEF headers
+- `vendor/cef-rs/update-bindings/` — Tool to regenerate bindings from CEF
+  headers
 
 ### Notes
 
@@ -444,7 +468,8 @@ testbed before ts1 integration. Changes made to the example:
 
 ### TermSurf 5.0 (active)
 
-- `docs/issues/417-ghostty-vs-wezterm.md` — Terminal emulator selection (Ghostty)
+- `docs/issues/417-ghostty-vs-wezterm.md` — Terminal emulator selection
+  (Ghostty)
 - `docs/issues/418-repo-restructure.md` — Repo restructure and Ghostty import
 
 ### TermSurf 4.0
@@ -476,7 +501,8 @@ testbed before ts1 integration. Changes made to the example:
 - `docs/issues/200-architecture.md` — Technical decisions and design rationale
 - `docs/issues/201-cef.md` — CEF integration via cef-rs
 - `docs/issues/207-cef-wezterm.md` — CEF + WezTerm integration details
-- `docs/issues/202-cef-mvp.md` through `206-cef-mvp5.md` — MVP iteration experiments
+- `docs/issues/202-cef-mvp.md` through `206-cef-mvp5.md` — MVP iteration
+  experiments
 - `docs/issues/208-profile.md` — CEF browser profile research
 - `docs/issues/209-web.md` — Web command experiments
 - `docs/issues/210-wezterm-analysis.md` — WezTerm + cef-rs architecture analysis
