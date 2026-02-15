@@ -521,3 +521,35 @@ dimensions.
 #### Result
 
 Builds with no warnings. Ready for interactive testing.
+
+### Experiment 8: Mode-dependent border highlighting
+
+#### Goal
+
+Use border brightness to show which region is active. In browse mode, the
+viewport is the focus — its border should be highlighted. In control mode, the
+URL bar is the focus (future: editable URL) — its border should be highlighted.
+The inactive region's border dims. This gives an immediate visual cue for which
+mode you're in.
+
+#### Changes
+
+##### `web/src/main.rs`
+
+Pass `mode` into the border style logic for both the URL bar and viewport
+blocks:
+
+- **Browse mode:** Viewport border/title → `Color::White`. URL bar border/title
+  → `Color::DarkGray`.
+- **Control mode:** URL bar border/title → `Color::White`. Viewport border/title
+  → `Color::DarkGray`.
+
+The current `Color::Gray` is replaced — borders are now either bright (active)
+or dim (inactive), never in between.
+
+#### Pass Criteria
+
+1. In browse mode, the viewport border is bright and the URL bar border is dim.
+2. In control mode, the URL bar border is bright and the viewport border is dim.
+3. Switching modes with `Esc`/`Enter` immediately updates the border brightness.
+4. The active border is clearly distinguishable from the inactive border.
