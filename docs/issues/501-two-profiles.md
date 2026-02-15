@@ -1224,3 +1224,79 @@ visibility lists in `components/cdm/` and `net/dns/` BUILD.gn files, plus a GRIT
 resource ID mapping in `tools/gritsettings/resource_ids.spec`. These were added
 by Issue 414 when the One Profile fork was created and needed updating alongside
 the directory rename.
+
+## Conclusion
+
+Issue 501 set out to solve four problems with the ts4 proof-of-concept: the
+218-file Content Shell copy, the bad naming, the Dock icon, and the fragile
+capturer attachment. Five experiments addressed the first three. The fourth
+(replacing the hardcoded 2-second delay with `WebContentsObserver`) remains for
+a future experiment.
+
+### What was accomplished
+
+**Chromium Profile Server** (`content/chromium_profile_server/`) is a properly
+named, Dock-invisible Content Shell fork that delivers IOSurface frames at 60fps
+via XPC. It lives on the `146.0.7650.0-issue-501` branch in the Chromium repo,
+built as 4 commits on top of the Issue 414 baseline:
+
+1. Hide from Dock via runtime `setActivationPolicy` (Experiment 3)
+2. Replace runtime policy with `LSUIElement` in plist + fix `paths_apple.mm`
+   (Experiment 4)
+3. Rename from "One Profile" to "Chromium Profile Server" (Experiment 5)
+
+### What was learned
+
+**The library approach doesn't work.** Experiment 1 tried to build a minimal
+12-file embedder that links against `content_shell_lib`. This failed because
+Content Shell's startup code makes assumptions about bundle layout that conflict
+with `LSUIElement=true`. The tight coupling is fundamental — Content Shell was
+never designed to be used as a library by background processes.
+
+**The fork approach works.** Experiments 2–5 proved that forking Content Shell
+and modifying it directly gives full control over startup behavior, path
+resolution, and naming. The 218-file fork carries unused code (DevTools, web
+test infrastructure, platform code for Linux/Windows/Android), but that baggage
+is inert and the features it provides (DevTools, downloads, context menus) will
+be needed as TermSurf becomes a real browser.
+
+**Three approaches to hiding the Dock icon, only one is correct:**
+
+| Approach                                          | Result                                                                     |
+| ------------------------------------------------- | -------------------------------------------------------------------------- |
+| `LSUIElement=true` in plist (Exp 1)               | Crashed — `IsBackgroundOnlyProcess()` misidentifies main process as helper |
+| Runtime `setActivationPolicy` (Exp 3)             | Works but Dock icon flashes briefly on launch                              |
+| `LSUIElement=true` + fix `paths_apple.mm` (Exp 4) | Correct — no flash, no crash                                               |
+
+The `paths_apple.mm` fix checks for `/Helpers/` in the executable path instead
+of using `IsBackgroundOnlyProcess()` (which conflates `LSUIElement` with helper
+processes) or `CommandLine` (which isn't initialized yet at that point in
+startup).
+
+### What remains
+
+The original Issue 501 design included two parts: the Chromium embedder (Part 1)
+and the Swift compositor (Part 2). Only Part 1 has been addressed — the
+experiments used the existing ts4 Swift receiver (`ts4/two-profiles-swift/`)
+rather than building a new one at `ts5/two-profiles/`.
+
+Outstanding work:
+
+1. **Swift compositor** (`ts5/two-profiles/`) — Port from
+   `ts4/two-profiles-swift/` with updated XPC service name
+   (`com.termsurf.two-profiles`).
+2. **WebContentsObserver for capturer attachment** — Replace the hardcoded
+   2-second `PostDelayedTask` with a proper lifecycle hook that attaches the
+   `FrameSinkVideoCapturer` when the `RenderWidgetHostView` is ready.
+3. **Strip unused code** — Remove Android, iOS, Fuchsia, and Windows platform
+   code from `content/chromium_profile_server/`. The fork carries 218 files but
+   only ~30 are relevant to macOS.
+
+### Chromium branch state
+
+- **Branch:** `146.0.7650.0-issue-501`
+- **Parent:** `146.0.7650.0-issue-414`
+- **Commits:** 4 (runtime policy, LSUIElement fix, rename — Experiment 3's
+  runtime policy commit is superseded by Experiment 4 but preserved in history)
+- **Build target:** `chromium_profile_server`
+- **App bundle:** `Chromium Profile Server.app`
