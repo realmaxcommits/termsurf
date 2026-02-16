@@ -993,28 +993,30 @@ inline constexpr char kPaneId[] = "pane-id";
 
 **D. Chromium Profile Server — `shell_browser_main_parts.h`**
 
-Replace the Issue 503 multi-tab state with single-tab + gateway connect:
+Keep the Issue 503 multi-tab infrastructure (`TabState`, `CreateTab`,
+`CloseTab`, `tabs_`). Only change the connection mechanism — store the gateway
+endpoint for creating per-tab connections:
 
 ```cpp
 private:
 #if BUILDFLAG(IS_MAC)
   void StartDynamicMode(const std::string& gateway_name,
                         const std::string& pane_id);
-  void Navigate(const GURL& url);
+  void CreateTab(const GURL& url, const std::string& tab_id);
+  void CloseTab(xpc_connection_t conn);
 
-  xpc_connection_t app_connection_ = nullptr;
+  xpc_connection_t control_connection_ = nullptr;
+  xpc_endpoint_t app_endpoint_ = nullptr;  // stored for per-tab connections
   std::string pane_id_;
-  raw_ptr<Shell> shell_ = nullptr;
-  std::unique_ptr<ShellVideoConsumer> video_consumer_;
 #endif
 ```
 
-Remove: `TabState` struct, `tabs_` vector, `control_connection_`,
-`xpc_service_name_`, `CreateTab()`, `CloseTab()`.
-
 **E. Chromium Profile Server — `shell_browser_main_parts.cc`**
 
-Replace `StartDynamicMode` with two-step gateway connect:
+Change `StartDynamicMode` to two-step gateway connect. Keep `CreateTab` and
+`CloseTab` intact — only the connection creation changes. The endpoint is stored
+so `CreateTab` can open per-tab connections from it (instead of from a Mach
+service name).
 
 ```cpp
 void ShellBrowserMainParts::InitializeMessageLoopContext() {
@@ -1061,33 +1063,38 @@ void ShellBrowserMainParts::StartDynamicMode(
     return;
   }
 
-  // Step 3: Connect directly to app via endpoint.
-  app_connection_ = xpc_connection_create_from_endpoint(
-      reinterpret_cast<xpc_endpoint_t>(endpoint));
+  // Store endpoint for per-tab connections (CreateTab reuses it).
+  app_endpoint_ = reinterpret_cast<xpc_endpoint_t>(endpoint);
+  xpc_retain(reinterpret_cast<xpc_object_t>(app_endpoint_));
+
+  // Step 3: Create control connection from endpoint.
+  control_connection_ = xpc_connection_create_from_endpoint(app_endpoint_);
 
   ShellBrowserMainParts* self = this;
-  xpc_connection_set_event_handler(app_connection_, ^(xpc_object_t event) {
+  xpc_connection_set_event_handler(control_connection_, ^(xpc_object_t event) {
     if (xpc_get_type(event) == XPC_TYPE_DICTIONARY) {
       const char* action = xpc_dictionary_get_string(event, "action");
-      if (action && std::string_view(action) == "navigate") {
+      if (action && std::string_view(action) == "create_tab") {
         const char* url_str = xpc_dictionary_get_string(event, "url");
+        const char* tab_id_str = xpc_dictionary_get_string(event, "tab_id");
         std::string url(url_str ? url_str : "about:blank");
+        std::string tab_id(tab_id_str ? tab_id_str : "");
         content::GetUIThreadTaskRunner({})->PostTask(
             FROM_HERE,
-            base::BindOnce(&ShellBrowserMainParts::Navigate,
-                           base::Unretained(self), GURL(url)));
+            base::BindOnce(&ShellBrowserMainParts::CreateTab,
+                           base::Unretained(self), GURL(url), tab_id));
       }
     } else if (xpc_get_type(event) == XPC_TYPE_ERROR) {
-      LOG(ERROR) << "[ProfileServer] App connection error";
+      LOG(ERROR) << "[ProfileServer] Control connection error";
     }
   });
-  xpc_connection_resume(app_connection_);
+  xpc_connection_resume(control_connection_);
 
   // Step 4: Register with the app.
   xpc_object_t reg = xpc_dictionary_create(NULL, NULL, 0);
   xpc_dictionary_set_string(reg, "action", "server_register");
   xpc_dictionary_set_string(reg, "pane_id", pane_id_.c_str());
-  xpc_connection_send_message(app_connection_, reg);
+  xpc_connection_send_message(control_connection_, reg);
   xpc_release(reg);
 
   // Done with gateway.
@@ -1098,28 +1105,18 @@ void ShellBrowserMainParts::StartDynamicMode(
 }
 ```
 
-The `navigate` handler creates the Shell on first call, navigates on subsequent:
+In `CreateTab`, change connection creation from Mach service to endpoint:
 
 ```cpp
-void ShellBrowserMainParts::Navigate(const GURL& url) {
-  DCHECK_CURRENTLY_ON(BrowserThread::UI);
+// Before (Issue 503):
+xpc_connection_t tab_conn = xpc_connection_create_mach_service(
+    xpc_service_name_.c_str(), nullptr, 0);
 
-  if (!shell_) {
-    shell_ = Shell::CreateNewWindow(browser_context_.get(), url,
-                                    nullptr, gfx::Size(800, 600));
-    video_consumer_ = std::make_unique<ShellVideoConsumer>();
-    video_consumer_->SetConnection(app_connection_);
-    video_consumer_->SetPaneId(pane_id_);
-    video_consumer_->ObserveContents(shell_->web_contents());
-    LOG(INFO) << "[ProfileServer] Created shell for: " << url.spec();
-  } else {
-    shell_->LoadURLForDocument(url);
-    LOG(INFO) << "[ProfileServer] Navigated to: " << url.spec();
-  }
-}
+// After:
+xpc_connection_t tab_conn = xpc_connection_create_from_endpoint(app_endpoint_);
 ```
 
-Remove: `CreateTab()`, `CloseTab()` methods.
+Everything else in `CreateTab` and `CloseTab` stays the same.
 
 **F. Chromium Profile Server — `shell_video_consumer.h`**
 
@@ -1256,7 +1253,8 @@ private func spawnServer(paneId: UUID, url: String) {
 ```
 
 4. **Handle `server_register` from Chromium Profile Server.** When the server
-   connects via the anonymous listener and sends `server_register`:
+   connects via the anonymous listener and sends `server_register`, this is the
+   control connection. Store it and send the pending URL as `create_tab`:
 
 ```swift
 case "server_register":
@@ -1267,13 +1265,15 @@ case "server_register":
     serverConnections[uuid] = peer
     fputs("[Compositor] Server registered for pane \(paneIdStr)\n", stderr)
 
-    // Send pending URL.
+    // Send pending URL as create_tab (the server keeps the Issue 503
+    // multi-tab protocol — it creates a Shell + per-tab connection).
     if let url = pendingURLs.removeValue(forKey: uuid) {
-        let nav = xpc_dictionary_create(nil, nil, 0)
-        xpc_dictionary_set_string(nav, "action", "navigate")
-        url.withCString { xpc_dictionary_set_string(nav, "url", $0) }
-        xpc_connection_send_message(peer, nav)
-        fputs("[Compositor] Sent navigate to server: \(url)\n", stderr)
+        let msg = xpc_dictionary_create(nil, nil, 0)
+        xpc_dictionary_set_string(msg, "action", "create_tab")
+        url.withCString { xpc_dictionary_set_string(msg, "url", $0) }
+        paneIdStr.withCString { xpc_dictionary_set_string(msg, "tab_id", $0) }
+        xpc_connection_send_message(peer, msg)
+        fputs("[Compositor] Sent create_tab to server: \(url)\n", stderr)
     }
 ```
 
@@ -1365,8 +1365,8 @@ private func handleDisconnect(_ peer: xpc_connection_t) {
 | `web/src/xpc.rs`                                | Add `url` parameter to `send_set_overlay`                                                           |
 | `web/src/main.rs`                               | Pass URL to `send_set_overlay`                                                                      |
 | `chromium/src/.../shell_switches.h`             | Add `--pane-id` flag                                                                                |
-| `chromium/src/.../shell_browser_main_parts.h`   | Replace multi-tab with single-tab + gateway                                                         |
-| `chromium/src/.../shell_browser_main_parts.cc`  | Two-step gateway connect, `navigate` handler                                                        |
+| `chromium/src/.../shell_browser_main_parts.h`   | Add `app_endpoint_`, `pane_id_`; keep multi-tab                                                     |
+| `chromium/src/.../shell_browser_main_parts.cc`  | Two-step gateway connect; `CreateTab` uses endpoint instead of Mach service                         |
 | `chromium/src/.../shell_video_consumer.h`       | Add `SetPaneId()`, `pane_id_` field                                                                 |
 | `chromium/src/.../shell_video_consumer.cc`      | Include `pane_id` in `display_surface` messages                                                     |
 | `docs/chromium.md`                              | Add `146.0.7650.0-issue-507` branch                                                                 |
