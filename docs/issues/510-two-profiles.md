@@ -478,4 +478,6 @@ cargo run -p web -- http://localhost:9407 --profile personal
 
 ### Result
 
-_Not yet run._
+**Pass.** Two profiles streamed at 60fps simultaneously without crashing. Both
+server processes spawned with separate data directories and terminated cleanly
+on exit.
