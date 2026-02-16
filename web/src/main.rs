@@ -145,7 +145,7 @@ fn ui(frame: &mut Frame, url: &str, profile: &str, mode: &Mode) -> Rect {
 
     // URL bar.
     let profile_title = Line::from(vec![
-        Span::raw("  ")
+        Span::raw("   ")
             .style(Style::default().fg(COMMENT)),
         Span::raw(profile)
             .style(Style::default().fg(FG)),
