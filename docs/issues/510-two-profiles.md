@@ -354,4 +354,128 @@ cargo run -p web -- http://localhost:9407 --profile personal
 
 ### Result
 
+**Partial.** Two profiles spawned correctly (PID 28886 and PID 28940), both
+streaming at ~60fps with separate `--user-data-dir` paths. The URL bar showed
+the correct profile name in each pane. After ~4 seconds of dual streaming, the
+app crashed:
+
+```
+*** Terminating app due to uncaught exception 'NSInvalidArgumentException',
+reason: '-[NSTaggedPointerString count]: unrecognized selector sent to
+instance 0x8000000000000000'
+```
+
+Stack trace shows the crash in `handleDisplaySurface` → Swift Dictionary
+subscript setter (`currentSurfaces[uuid] = ioSurface`). Root cause: concurrent
+access to shared state from multiple XPC peer connections. See Experiment 2.
+
+## Experiment 2: Serialize peer connections on the XPC queue
+
+### Goal
+
+Fix the concurrency crash from Experiment 1. Two profiles stream at 60fps
+without crashing.
+
+### Problem
+
+The anonymous listener is created with a serial queue:
+
+```swift
+let queue = DispatchQueue(label: "com.termsurf.compositor.xpc")
+let listener = xpc_connection_create(nil, queue)
+```
+
+But incoming peer connections never have their target queue set:
+
+```swift
+xpc_connection_set_event_handler(peerConn) { ... }
+xpc_connection_resume(peerConn)
+// No xpc_connection_set_target_queue!
+```
+
+In C-level XPC, peer connections do not inherit the listener's queue — they
+default to the global concurrent queue. With two servers streaming
+`display_surface` at 60fps each (120 messages/second combined), their event
+handlers run concurrently on arbitrary threads. Both handlers mutate
+`currentSurfaces`, `cachedCSurfaces`, and other shared dictionaries without
+synchronization. The crash — `[NSTaggedPointerString count]` on a Dictionary
+subscript setter — is a classic symptom of concurrent Swift Dictionary mutation.
+
+With only one server (Issue 509), this never manifested because there was only
+one display_surface stream. Two servers exposed the race immediately.
+
+### Changes
+
+One file, one line.
+
+#### 1. `ts5/macos/Sources/Ghostty/CompositorXPC.swift`
+
+Add `xpc_connection_set_target_queue` before `xpc_connection_resume` for each
+peer. In the listener's event handler (line ~108), change:
+
+```swift
+xpc_connection_resume(peerConn)
+```
+
+to:
+
+```swift
+xpc_connection_set_target_queue(peerConn, queue)
+xpc_connection_resume(peerConn)
+```
+
+This requires capturing `queue` in the closure. The `queue` variable is already
+a local in `start()` — it just needs to be captured by the listener's event
+handler.
+
+This ensures all peer event handlers — web processes, server control
+connections, and server tab connections — execute on the same serial queue.
+Shared state mutations are automatically serialized. No locks needed.
+
+#### 2. Clean log file
+
+Truncate `logs/overlay.log` before testing so the log only contains this
+experiment's output.
+
+```bash
+> ~/dev/termsurf/logs/overlay.log
+```
+
+### Build
+
+```bash
+cd ts5 && zig build
+# No web or Chromium changes.
+```
+
+### Test
+
+```bash
+# Clean logs.
+> ~/dev/termsurf/logs/overlay.log
+
+# Start test page.
+cd ts4/box-demo && bun run server.ts &
+
+# Launch app.
+open ts5/zig-out/TermSurf.app --stderr ~/dev/termsurf/logs/overlay.log
+
+# In one pane:
+cargo run -p web -- http://localhost:9407 --profile work
+
+# Split pane, in the other:
+cargo run -p web -- http://localhost:9407 --profile personal
+
+# Let both run for at least 30 seconds.
+```
+
+### Pass criteria
+
+1. Both profiles render at 60fps for >30 seconds without crashing.
+2. Logs show two separate server PIDs, each streaming independently.
+3. Clean exit: closing both `web` processes terminates both servers.
+4. No `NSInvalidArgumentException` or other crashes in the log.
+
+### Result
+
 _Not yet run._
