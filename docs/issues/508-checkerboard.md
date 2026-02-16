@@ -697,3 +697,54 @@ on disk.
 instrumentation is correct but the output channel is wrong. The next experiment
 must route logs to a file on disk (e.g. `~/dev/termsurf/logs/`) so they survive
 the crash and are readable afterward.
+
+### Experiment 3: Redirect stderr to file
+
+The Experiment 2 instrumentation is correct — `log.warn` (Zig) and
+`fputs(..., stderr)` (Swift) both write to stderr. The problem is that `open`
+discards stderr. The simplest fix: redirect stderr to a file at app startup with
+`freopen`. One line of Swift. All existing logging automatically goes to disk.
+
+#### Changes
+
+**1. Redirect stderr — `ts5/macos/Sources/App/macOS/AppDelegate.swift`**
+
+At the top of `applicationDidFinishLaunching`, before any other code:
+
+```swift
+freopen("/Users/ryan/dev/termsurf/logs/overlay.log", "a", stderr)
+```
+
+This redirects ALL stderr output — Zig `log.warn`, Swift `fputs`, Metal
+warnings, everything — to `~/dev/termsurf/logs/overlay.log` in append mode. The
+`"a"` flag means it appends (doesn't truncate on launch). Since `write()` is a
+syscall that completes before returning, output is preserved even if the process
+crashes immediately after.
+
+No other changes. All Experiment 2 logging instrumentation remains as-is.
+
+#### Files
+
+| File                                            | Change                                                  |
+| ----------------------------------------------- | ------------------------------------------------------- |
+| `ts5/macos/Sources/App/macOS/AppDelegate.swift` | Add `freopen` at top of `applicationDidFinishLaunching` |
+
+#### Build & Reproduce
+
+```bash
+cd ts5 && zig build
+open ts5/zig-out/TermSurf.app
+
+# In a TermSurf pane:
+cargo run -p web -- http://example.com
+
+# 1. Verify checkerboard appears
+# 2. Resize the terminal window
+# 3. After crash, read the log:
+tail -50 ~/dev/termsurf/logs/overlay.log
+```
+
+#### Pass Criteria
+
+Same as Experiment 2: this passes if we can **read the `[overlay]` log lines**
+after the crash and identify what was happening when it died.
