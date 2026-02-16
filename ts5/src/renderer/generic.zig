@@ -1677,18 +1677,22 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                         @as(?usize, if (self.overlay_iosurface) |p| @intFromPtr(p) else null),
                     });
 
-                    if (Buffer(shaderpkg.PinkOverlay).initFill(
-                        self.api.imageBufferOptions(),
-                        &.{self.pink_overlay},
-                    )) |*buf| {
-                        defer buf.deinit();
-                        if (self.overlay_iosurface) |iosurface| {
-                            // IOSurface texture path (Issue 508).
-                            const tex_result = Texture.fromIOSurface(self.api.device, iosurface);
-                            log.warn("[overlay] fromIOSurface: success={}", .{tex_result != null});
-                            if (tex_result) |tex| {
-                                defer tex.deinit();
-                                log.warn("[overlay] texture: {d}x{d}", .{ tex.width, tex.height });
+                    if (self.overlay_iosurface) |iosurface| {
+                        // IOSurface texture path (Issue 508 / Issue 509).
+                        const tex_result = Texture.fromIOSurface(self.api.device, iosurface);
+                        log.warn("[overlay] fromIOSurface: success={}", .{tex_result != null});
+                        if (tex_result) |tex| {
+                            defer tex.deinit();
+                            log.warn("[overlay] texture: {d}x{d}", .{ tex.width, tex.height });
+                            // Write pixel dimensions from the IOSurface (never stretch).
+                            var overlay_params = self.pink_overlay;
+                            overlay_params.pixel_width = @floatFromInt(tex.width);
+                            overlay_params.pixel_height = @floatFromInt(tex.height);
+                            if (Buffer(shaderpkg.PinkOverlay).initFill(
+                                self.api.imageBufferOptions(),
+                                &.{overlay_params},
+                            )) |*buf| {
+                                defer buf.deinit();
                                 pass.step(.{
                                     .pipeline = self.shaders.pipelines.overlay,
                                     .uniforms = frame.uniforms.buffer,
@@ -1700,10 +1704,18 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                                     },
                                 });
                                 log.warn("[overlay] step submitted", .{});
+                            } else |err| {
+                                log.warn("[overlay] buffer error: {}", .{err});
                             }
-                        } else {
-                            // Pink fallback (no IOSurface).
-                            log.warn("[overlay] pink fallback", .{});
+                        }
+                    } else {
+                        // Pink fallback (no IOSurface).
+                        log.warn("[overlay] pink fallback", .{});
+                        if (Buffer(shaderpkg.PinkOverlay).initFill(
+                            self.api.imageBufferOptions(),
+                            &.{self.pink_overlay},
+                        )) |*buf| {
+                            defer buf.deinit();
                             pass.step(.{
                                 .pipeline = self.shaders.pipelines.pink_overlay,
                                 .uniforms = frame.uniforms.buffer,
@@ -1713,9 +1725,9 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                                     .vertex_count = 4,
                                 },
                             });
+                        } else |err| {
+                            log.warn("[overlay] buffer error: {}", .{err});
                         }
-                    } else |err| {
-                        log.warn("[overlay] buffer error: {}", .{err});
                     }
                 }
             }

@@ -316,6 +316,8 @@ pub const PinkOverlay = extern struct {
     grid_row: f32 = 0,
     grid_width: f32 = 0,
     grid_height: f32 = 0,
+    pixel_width: f32 = 0,
+    pixel_height: f32 = 0,
 };
 
 /// Single parameter for the bg image shader.

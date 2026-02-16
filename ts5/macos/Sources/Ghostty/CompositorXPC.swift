@@ -48,6 +48,9 @@ class CompositorXPC {
     /// Maps pane UUID → cached C surface pointer (for display_surface handler).
     private var cachedCSurfaces: [UUID: ghostty_surface_t] = [:]
 
+    /// Maps pane UUID → pending pixel size for create_tab (Issue 509 Experiment 4).
+    private var pendingPixelSizes: [UUID: (UInt64, UInt64)] = [:]
+
     private init() {}
 
     /// Connect to the xpc-gateway and register our anonymous listener endpoint.
@@ -192,9 +195,25 @@ class CompositorXPC {
 
             // Skip if server already running for this pane.
             if serverProcesses[uuid] != nil {
-                // Update grid coordinates only (server already running).
                 if let cSurface = cachedCSurfaces[uuid] {
+                    // Update grid coordinates.
                     ghostty_surface_set_overlay(cSurface, col, row, width, height)
+
+                    // Send resize to server with new pixel dimensions.
+                    var cellWidth: UInt32 = 0
+                    var cellHeight: UInt32 = 0
+                    ghostty_surface_get_cell_size(cSurface, &cellWidth, &cellHeight)
+                    let pixelWidth = UInt64(width) * UInt64(cellWidth)
+                    let pixelHeight = UInt64(height) * UInt64(cellHeight)
+
+                    if let controlConn = serverControlConnections[uuid] {
+                        let msg = xpc_dictionary_create(nil, nil, 0)
+                        xpc_dictionary_set_string(msg, "action", "resize")
+                        xpc_dictionary_set_uint64(msg, "pixel_width", pixelWidth)
+                        xpc_dictionary_set_uint64(msg, "pixel_height", pixelHeight)
+                        xpc_connection_send_message(controlConn, msg)
+                        fputs("[Compositor] resize \(pixelWidth)x\(pixelHeight) for pane \(paneIdStr)\n", stderr)
+                    }
                 }
                 return
             }
@@ -219,6 +238,14 @@ class CompositorXPC {
 
             // Set overlay grid coordinates (thread-safe via draw_mutex).
             ghostty_surface_set_overlay(cSurface, col, row, width, height)
+
+            // Compute and store pixel dimensions for create_tab.
+            var cellWidth: UInt32 = 0
+            var cellHeight: UInt32 = 0
+            ghostty_surface_get_cell_size(cSurface, &cellWidth, &cellHeight)
+            let pixelWidth = UInt64(width) * UInt64(cellWidth)
+            let pixelHeight = UInt64(height) * UInt64(cellHeight)
+            pendingPixelSizes[uuid] = (pixelWidth, pixelHeight)
 
             // Spawn Chromium Profile Server.
             spawnServer(forPane: uuid)
@@ -313,13 +340,19 @@ class CompositorXPC {
         }
 
         let tabId = UUID().uuidString
+        let pixelSize = pendingPixelSizes.removeValue(forKey: uuid)
+
         let reply = xpc_dictionary_create(nil, nil, 0)
         xpc_dictionary_set_string(reply, "action", "create_tab")
         xpc_dictionary_set_string(reply, "url", url)
         xpc_dictionary_set_string(reply, "tab_id", tabId)
+        if let (pw, ph) = pixelSize {
+            xpc_dictionary_set_uint64(reply, "pixel_width", pw)
+            xpc_dictionary_set_uint64(reply, "pixel_height", ph)
+        }
         xpc_connection_send_message(peer, reply)
 
-        fputs("[Compositor] Sending create_tab url=\(url) tab_id=\(tabId)\n", stderr)
+        fputs("[Compositor] Sending create_tab url=\(url) tab_id=\(tabId) pixel=\(pixelSize?.0 ?? 0)x\(pixelSize?.1 ?? 0)\n", stderr)
     }
 
     // MARK: - tab_ready (from Chromium Profile Server per-tab connection)
@@ -418,6 +451,7 @@ class CompositorXPC {
             // Clean up all state for this pane.
             serverControlConnections.removeValue(forKey: uuid)
             pendingURLs.removeValue(forKey: uuid)
+            pendingPixelSizes.removeValue(forKey: uuid)
             currentSurfaces.removeValue(forKey: uuid)
 
             // Clear the overlay using cached C surface pointer.

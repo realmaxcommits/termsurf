@@ -861,6 +861,8 @@ struct PinkOverlayIn {
   float grid_row;
   float grid_width;
   float grid_height;
+  float pixel_width;
+  float pixel_height;
 };
 
 vertex float4 pink_overlay_vertex(
@@ -899,7 +901,7 @@ vertex OverlayVertexOut overlay_vertex(
   constant Uniforms& uniforms [[buffer(1)]]
 ) {
   float2 origin = float2(params.grid_col, params.grid_row) * uniforms.cell_size;
-  float2 size = float2(params.grid_width, params.grid_height) * uniforms.cell_size;
+  float2 size = float2(params.pixel_width, params.pixel_height);
 
   float2 corner;
   corner.x = float(vid == 1 || vid == 3);

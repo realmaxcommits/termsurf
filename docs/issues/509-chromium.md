@@ -1343,4 +1343,8 @@ cd ts5 && zig build
 
 ### Result
 
-_Not yet run._
+**Pass.** The overlay renders at the viewport's exact physical pixel dimensions
+on launch — text is crisp at Retina resolution with no blur or stretching. On
+terminal resize, the overlay updates to the new resolution smoothly. The texture
+is never stretched; during the ~16ms transition the old frame renders at its
+actual pixel dimensions, then the next frame arrives at the correct new size.
