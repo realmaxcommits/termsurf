@@ -1,8 +1,10 @@
 //! Minimal XPC client for sending overlay coordinates to the TermSurf compositor.
 //!
-//! This is a stripped-down XPC client that only supports connecting to a Mach
-//! service and sending dictionary messages. It does not need the full
-//! termsurf-xpc crate (which lives in the ts4 workspace).
+//! Issue 506: Two-step connection via the xpc-gateway daemon.
+//! 1. Connect to com.termsurf.xpc-gateway (the gateway daemon)
+//! 2. Send { action: "connect" } and receive the app's anonymous endpoint
+//! 3. Connect directly to the app via the endpoint
+//! 4. Send set_overlay messages on the direct connection
 
 use std::ffi::{c_char, c_void, CString};
 
@@ -20,7 +22,12 @@ extern "C" {
     fn xpc_connection_set_event_handler(conn: XpcConnectionT, handler: *mut c_void);
     fn xpc_connection_resume(conn: XpcConnectionT);
     fn xpc_connection_send_message(conn: XpcConnectionT, message: XpcObjectT);
+    fn xpc_connection_send_message_with_reply_sync(
+        conn: XpcConnectionT,
+        message: XpcObjectT,
+    ) -> XpcObjectT;
     fn xpc_connection_cancel(conn: XpcConnectionT);
+    fn xpc_connection_create_from_endpoint(endpoint: XpcObjectT) -> XpcConnectionT;
     fn xpc_release(object: XpcObjectT);
     fn xpc_dictionary_create(
         keys: *const *const c_char,
@@ -29,11 +36,20 @@ extern "C" {
     ) -> XpcObjectT;
     fn xpc_dictionary_set_string(dict: XpcObjectT, key: *const c_char, value: *const c_char);
     fn xpc_dictionary_set_uint64(dict: XpcObjectT, key: *const c_char, value: u64);
+    fn xpc_dictionary_get_value(dict: XpcObjectT, key: *const c_char) -> XpcObjectT;
+    fn xpc_dictionary_get_string(dict: XpcObjectT, key: *const c_char) -> *const c_char;
+    fn xpc_get_type(object: XpcObjectT) -> *const c_void;
+}
+
+// XPC type constants — resolved at link time.
+extern "C" {
+    #[link_name = "_xpc_type_dictionary"]
+    static XPC_TYPE_DICTIONARY: c_void;
 }
 
 // --- Public API ---
 
-/// A connection to the TermSurf compositor XPC Mach service.
+/// A direct connection to the TermSurf app via its anonymous XPC listener.
 pub struct CompositorConnection {
     raw: XpcConnectionT,
 }
@@ -41,35 +57,115 @@ pub struct CompositorConnection {
 unsafe impl Send for CompositorConnection {}
 
 impl CompositorConnection {
-    /// Connect to `com.termsurf.compositor`.
+    /// Connect to the TermSurf app via the xpc-gateway.
     ///
-    /// Returns `None` if the Mach service is not registered (not running inside TermSurf).
+    /// 1. Connect to `com.termsurf.xpc-gateway` (the gateway daemon)
+    /// 2. Send `{ action: "connect" }` and receive the app's endpoint
+    /// 3. Connect directly to the app via the endpoint
     pub fn connect() -> Option<Self> {
-        let name = CString::new("com.termsurf.compositor").unwrap();
-        let raw = unsafe {
-            xpc_connection_create_mach_service(name.as_ptr(), std::ptr::null_mut(), 0)
+        // Step 1: Connect to the gateway.
+        let gateway_name = CString::new("com.termsurf.xpc-gateway").unwrap();
+        let gateway = unsafe {
+            xpc_connection_create_mach_service(gateway_name.as_ptr(), std::ptr::null_mut(), 0)
         };
-        if raw.is_null() {
+        if gateway.is_null() {
             return None;
         }
 
         // Set a minimal event handler (required before resume).
-        // We use block2 to create an Obj-C block from a Rust closure.
-        let block = block2::RcBlock::new(|_event: XpcObjectT| {
-            // We don't process replies for now.
-        });
+        let block = block2::RcBlock::new(|_event: XpcObjectT| {});
         unsafe {
             xpc_connection_set_event_handler(
-                raw,
+                gateway,
                 &*block as *const _ as *mut c_void,
             );
         }
+        unsafe { xpc_connection_resume(gateway) };
 
-        unsafe { xpc_connection_resume(raw) };
-        Some(Self { raw })
+        // Step 2: Send "connect" and get the app's endpoint.
+        let msg = unsafe {
+            xpc_dictionary_create(std::ptr::null(), std::ptr::null(), 0)
+        };
+        if msg.is_null() {
+            unsafe { xpc_release(gateway) };
+            return None;
+        }
+
+        let action_key = CString::new("action").unwrap();
+        let action_val = CString::new("connect").unwrap();
+        unsafe {
+            xpc_dictionary_set_string(msg, action_key.as_ptr(), action_val.as_ptr());
+        }
+
+        let reply = unsafe {
+            xpc_connection_send_message_with_reply_sync(gateway, msg)
+        };
+        unsafe { xpc_release(msg) };
+
+        if reply.is_null() {
+            eprintln!("[web] Gateway returned null reply");
+            unsafe { xpc_connection_cancel(gateway); xpc_release(gateway) };
+            return None;
+        }
+
+        // Check if the reply is a dictionary (not an error).
+        let reply_type = unsafe { xpc_get_type(reply) };
+        let dict_type = unsafe { &XPC_TYPE_DICTIONARY as *const c_void };
+        if reply_type != dict_type {
+            eprintln!("[web] Gateway reply is not a dictionary (connection error?)");
+            unsafe { xpc_release(reply) };
+            unsafe { xpc_connection_cancel(gateway); xpc_release(gateway) };
+            return None;
+        }
+
+        // Check for error field.
+        let error_key = CString::new("error").unwrap();
+        let error_ptr = unsafe { xpc_dictionary_get_string(reply, error_key.as_ptr()) };
+        if !error_ptr.is_null() {
+            let error_str = unsafe { std::ffi::CStr::from_ptr(error_ptr) };
+            eprintln!("[web] Gateway error: {:?}", error_str);
+            unsafe { xpc_release(reply) };
+            unsafe { xpc_connection_cancel(gateway); xpc_release(gateway) };
+            return None;
+        }
+
+        // Extract the endpoint.
+        let endpoint_key = CString::new("endpoint").unwrap();
+        let endpoint = unsafe { xpc_dictionary_get_value(reply, endpoint_key.as_ptr()) };
+        if endpoint.is_null() {
+            eprintln!("[web] Gateway reply missing endpoint");
+            unsafe { xpc_release(reply) };
+            unsafe { xpc_connection_cancel(gateway); xpc_release(gateway) };
+            return None;
+        }
+
+        // Step 3: Connect directly to the app via the endpoint.
+        let app_conn = unsafe { xpc_connection_create_from_endpoint(endpoint) };
+        unsafe { xpc_release(reply) };
+
+        if app_conn.is_null() {
+            eprintln!("[web] Failed to create connection from endpoint");
+            unsafe { xpc_connection_cancel(gateway); xpc_release(gateway) };
+            return None;
+        }
+
+        // Set event handler and resume the direct connection.
+        let block2 = block2::RcBlock::new(|_event: XpcObjectT| {});
+        unsafe {
+            xpc_connection_set_event_handler(
+                app_conn,
+                &*block2 as *const _ as *mut c_void,
+            );
+        }
+        unsafe { xpc_connection_resume(app_conn) };
+
+        // Done with the gateway connection.
+        unsafe { xpc_connection_cancel(gateway); xpc_release(gateway) };
+
+        Some(Self { raw: app_conn })
     }
 
-    /// Send a `set_overlay` message to the compositor.
+    /// Send a `set_overlay` message to the app (direct connection).
     pub fn send_set_overlay(&self, pane_id: &str, col: u16, row: u16, width: u16, height: u16) {
         let dict = unsafe {
             xpc_dictionary_create(std::ptr::null(), std::ptr::null(), 0)

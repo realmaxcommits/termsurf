@@ -1,24 +1,22 @@
 // Copyright 2025 TermSurf
-// Issue 505: XPC Mach service listener for the compositor.
-// Receives overlay coordinates from `web` processes running in terminal panes.
+// Issue 506: XPC client that connects to the xpc-gateway daemon.
+// Creates an anonymous listener and registers its endpoint so `web` processes
+// can connect directly to the app for overlay messages.
 
 import Foundation
 import GhosttyKit
 import os.log
 
-/// Manages the XPC Mach service listener for the TermSurf compositor.
-///
-/// `web` processes connect to `com.termsurf.compositor` and send `set_overlay`
-/// messages containing grid coordinates. The compositor looks up the
-/// corresponding pane by UUID and passes the coordinates to the Zig renderer
-/// via the C API.
-private let logger = Logger(subsystem: "com.termsurf.compositor", category: "xpc")
+private let logger = Logger(subsystem: "com.termsurf.xpc-gateway", category: "xpc")
 
 class CompositorXPC {
     static let shared = CompositorXPC()
 
-    /// The XPC listener connection (must be retained).
-    private var listener: xpc_connection_t?
+    /// Connection to the xpc-gateway daemon (must be retained).
+    private var gatewayConn: xpc_connection_t?
+
+    /// Anonymous listener that accepts direct connections from `web` processes.
+    private var anonymousListener: xpc_connection_t?
 
     /// Active peer connections (must be retained to prevent ARC release).
     private var peers: [xpc_connection_t] = []
@@ -31,28 +29,25 @@ class CompositorXPC {
 
     private init() {}
 
-    /// Start the XPC Mach service listener.
+    /// Connect to the xpc-gateway and register our anonymous listener endpoint.
     ///
     /// Call this once during app startup (e.g., in applicationDidFinishLaunching).
-    /// The service name must be registered with launchd via a LaunchAgent plist.
     func start(appDelegate: GhosttyAppDelegate) {
         self.appDelegate = appDelegate
-        logger.info("Compositor XPC listener starting on com.termsurf.compositor")
+        logger.info("Connecting to xpc-gateway")
 
         let queue = DispatchQueue(label: "com.termsurf.compositor.xpc")
-        let conn = xpc_connection_create_mach_service(
-            "com.termsurf.compositor",
-            queue,
-            UInt64(XPC_CONNECTION_MACH_SERVICE_LISTENER))
 
-        listener = conn
+        // Step 1: Create anonymous listener for direct web connections.
+        let listener = xpc_connection_create(nil, queue)
+        anonymousListener = listener
 
-        xpc_connection_set_event_handler(conn) { [weak self] peer in
+        xpc_connection_set_event_handler(listener) { [weak self] peer in
             guard let self = self else { return }
             if xpc_get_type(peer) == XPC_TYPE_CONNECTION {
                 let peerConn = peer as xpc_connection_t
                 self.peers.append(peerConn)
-                fputs("[Compositor] Client connected (\(self.peers.count) total)\n", stderr)
+                fputs("[Compositor] Web process connected (\(self.peers.count) total)\n", stderr)
 
                 xpc_connection_set_event_handler(peerConn) { [weak self] event in
                     guard let self = self else { return }
@@ -68,13 +63,39 @@ class CompositorXPC {
                 }
                 xpc_connection_resume(peerConn)
             } else if xpc_get_type(peer) == XPC_TYPE_ERROR {
-                fputs("[Compositor] Listener error\n", stderr)
+                fputs("[Compositor] Anonymous listener error\n", stderr)
             }
         }
+        xpc_connection_resume(listener)
 
-        xpc_connection_resume(conn)
-        logger.info("Compositor XPC listener active")
-        fputs("[Compositor] Listening on com.termsurf.compositor...\n", stderr)
+        // Step 2: Connect to the gateway daemon as a client.
+        let gateway = xpc_connection_create_mach_service(
+            "com.termsurf.xpc-gateway",
+            queue,
+            0)  // no LISTENER flag — we're a client
+
+        gatewayConn = gateway
+
+        xpc_connection_set_event_handler(gateway) { event in
+            if xpc_get_type(event) == XPC_TYPE_ERROR {
+                if event === XPC_ERROR_CONNECTION_INTERRUPTED {
+                    fputs("[Compositor] Gateway connection interrupted\n", stderr)
+                } else if event === XPC_ERROR_CONNECTION_INVALID {
+                    fputs("[Compositor] Gateway connection invalid\n", stderr)
+                }
+            }
+        }
+        xpc_connection_resume(gateway)
+
+        // Step 3: Register our anonymous listener endpoint with the gateway.
+        let endpoint = xpc_endpoint_create(listener)
+        let msg = xpc_dictionary_create(nil, nil, 0)
+        xpc_dictionary_set_string(msg, "action", "register_app")
+        xpc_dictionary_set_value(msg, "endpoint", endpoint)
+        xpc_connection_send_message(gateway, msg)
+
+        logger.info("Registered endpoint with xpc-gateway")
+        fputs("[Compositor] Registered anonymous listener endpoint with xpc-gateway\n", stderr)
     }
 
     // MARK: - Message handling
@@ -121,7 +142,7 @@ class CompositorXPC {
     }
 
     private func handleDisconnect(_ peer: xpc_connection_t) {
-        fputs("[Compositor] Client disconnected\n", stderr)
+        fputs("[Compositor] Web process disconnected\n", stderr)
 
         // Remove from peers list.
         peers.removeAll { $0 === peer }
