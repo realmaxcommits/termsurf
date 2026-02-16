@@ -1542,3 +1542,69 @@ vanishes.
 **Diagnosis:** The XPC and Chromium integration work. The crash is on the
 rendering consumption side — how the app holds and swaps IOSurface references
 across the Swift/Zig boundary at 60fps.
+
+## Conclusion
+
+Four experiments, two crashes, one clear finding: **the full pipeline works.**
+Chromium renders a webpage, captures frames via `FrameSinkVideoCapturer`, sends
+IOSurface Mach ports over XPC through the xpc-gateway, and the TermSurf app
+receives them and displays them in a terminal pane at 60fps. The blue spinning
+box from box-demo was visible in the viewport. The architecture is proven.
+
+### What works
+
+- **Chromium Profile Server** connects to the app via xpc-gateway's two-step
+  endpoint handoff (connect → get endpoint → direct connection).
+- **`FrameSinkVideoCapturer`** captures at 1600x1200 (Retina) with 58–60fps
+  sustained throughput.
+- **IOSurface Mach port transfer** via XPC delivers frames from the server to
+  the app without copies.
+- **Metal overlay pipeline** renders the IOSurface texture at exact grid
+  coordinates inside a Ghostty pane.
+- **`web` TUI** sends viewport coordinates and URL to the app, which spawns the
+  server and forwards `create_tab`.
+- **Cleanup** works: quitting `web` disconnects the XPC peer, the app kills the
+  server process and clears the overlay.
+
+### What crashes
+
+Both crashes are the same underlying bug: **IOSurface use-after-free across the
+Swift/Zig boundary.**
+
+**Crash 1: Resize with checkerboard (Experiment 2).** Resizing the terminal
+window recreates the test IOSurface on the main thread. ARC releases the old
+`IOSurface` object, but the Zig renderer still holds a raw pointer
+(`overlay_iosurface`) from `Unmanaged.passUnretained().toOpaque()`. The
+`draw_mutex` protects the pointer assignment but not the IOSurface lifetime —
+the old surface is freed while the renderer is mid-frame.
+
+**Crash 2: Live Chromium frames (Experiment 4).** At 60fps, `display_surface`
+fires every 16ms. Each call replaces `currentSurfaces[uuid]` with a new
+IOSurface. ARC releases the previous one. The Zig renderer, which runs on its
+own thread, may still be reading the old surface's backing memory. Same
+use-after-free, just triggered by frame throughput instead of resize.
+
+Both crashes manifest as `SIGKILL (Code Signature Invalid)` /
+`Namespace CODESIGNING, Code 2, Invalid Page` or similar memory corruption
+symptoms. The `nu` (nushell) crash seen in diagnostic reports is a consequence —
+the shell panics when its parent terminal vanishes.
+
+### The fix needed
+
+The IOSurface must stay alive as long as the renderer holds a reference to it.
+Options:
+
+1. **Double-buffer with swap.** Keep two IOSurface slots. The renderer reads
+   from slot A while Swift writes to slot B. Swap atomically under the
+   `draw_mutex`. The old surface is released only after the renderer has moved
+   to the new one.
+2. **Retain on the Zig side.** Call `CFRetain` on the IOSurface when the
+   renderer receives it, `CFRelease` when done. This requires the Zig code to
+   participate in ARC-like lifetime management.
+3. **Copy the Mach port, not the pointer.** Store the Mach port in the renderer
+   and call `IOSurfaceLookupFromMachPort` on the render thread. Each lookup
+   returns a new reference. Simpler ownership but adds per-frame lookup cost.
+
+This is the only remaining obstacle. The XPC pipeline, Chromium integration, and
+Metal rendering all work. Code has been reverted to the pink texture overlay
+(Issue 505) until the IOSurface lifetime issue is resolved.
