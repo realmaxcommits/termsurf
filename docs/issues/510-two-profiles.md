@@ -481,3 +481,52 @@ cargo run -p web -- http://localhost:9407 --profile personal
 **Pass.** Two profiles streamed at 60fps simultaneously without crashing. Both
 server processes spawned with separate data directories and terminated cleanly
 on exit.
+
+## Conclusion
+
+### How we got here
+
+This was the fastest issue in the project's history. The architecture built
+across Issues 507–509 — XPC gateway, server lifecycle, IOSurface streaming,
+pixel-perfect rendering — turned out to be almost entirely reusable. The changes
+were minimal: add `profile` to one XPC message, swap a hardcoded path for a
+variable, and fix a concurrency bug that only appeared with two simultaneous
+streams.
+
+Experiment 1 added profile name validation to the `web` CLI, propagated the
+profile name through the XPC `set_overlay` message, and used it to construct
+per-profile data directories. Two profiles spawned and streamed correctly, but
+crashed after ~4 seconds — a concurrency bug in the XPC event handling.
+
+Experiment 2 fixed the crash with one line: `xpc_connection_set_target_queue`.
+In C-level XPC, peer connections default to the global concurrent queue, not the
+listener's serial queue. With two servers streaming `display_surface` at 60fps
+each, their event handlers raced on shared Swift dictionaries. Pinning all peers
+to the same serial queue serialized all mutations. The fix applies retroactively
+to Issue 509 — it was always latent, just never triggered with a single server.
+
+### What we accomplished
+
+Two browser profiles rendering side by side in the same terminal window at
+60fps, each with fully isolated browser sessions (separate cookies,
+localStorage, and cache). This is the core product capability that motivated the
+entire TermSurf project.
+
+| Experiment | Goal                               | Result                      |
+| ---------- | ---------------------------------- | --------------------------- |
+| 1          | Profile propagation + two profiles | Partial (concurrency crash) |
+| 2          | Serialize XPC peer connections     | Pass                        |
+
+### What's next
+
+The two-profile demo validates the architecture. Remaining work:
+
+- **Session isolation verification.** Load pages that write to localStorage in
+  both profiles and confirm data isolation persists across restarts.
+- **Input forwarding.** Keyboard and mouse events to Chromium WebContents —
+  without this, webpages are view-only.
+- **Server reuse.** Two panes with the same `--profile` should share one server
+  process. Currently each pane spawns its own server regardless of profile name.
+- **In-process Chromium.** The endgame: embed Chromium directly via the Content
+  API instead of streaming over XPC. The streaming architecture is a stepping
+  stone that validated every other piece of the pipeline.
