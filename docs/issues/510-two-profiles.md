@@ -167,7 +167,180 @@ profile-per-server are equivalent — each profile has exactly one pane. Server
 reuse (pane C scenario) is a future optimization. The demo should still be
 designed with this in mind, but it's not required to pass.
 
-## Ideas for experiments
+## Experiment 1: Profile propagation + two profiles side by side
+
+### Goal
+
+Two split panes in the same window, each running `web` with a different
+`--profile` flag, render independent Chromium sessions at 60fps. Each profile
+gets its own server process with its own data directory. Profile names are
+validated before use.
+
+### Changes
+
+Four files, all small.
+
+#### 1. `web/src/main.rs` — Validate profile name
+
+After parsing `--profile`, validate before proceeding. Add after line 45 (after
+the `while` loop, before the `url` unwrap):
+
+```rust
+// Validate profile name: lowercase alphanumeric, starts with a letter.
+if profile.is_empty()
+    || !profile.bytes().next().unwrap().is_ascii_lowercase()
+    || !profile.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
+{
+    eprintln!("Error: profile name must be lowercase alphanumeric, starting with a letter");
+    std::process::exit(1);
+}
+```
+
+Pass `&profile` to `send_set_overlay` (line 84–91):
+
+```rust
+conn.send_set_overlay(
+    pid,
+    viewport_rect.x,
+    viewport_rect.y,
+    viewport_rect.width,
+    viewport_rect.height,
+    &url,
+    &profile,
+);
+```
+
+#### 2. `web/src/xpc.rs` — Add `profile` to `send_set_overlay`
+
+Update signature (line 169):
+
+```rust
+pub fn send_set_overlay(&self, pane_id: &str, col: u16, row: u16, width: u16, height: u16, url: &str, profile: &str) {
+```
+
+Add after the `url` lines (after line 196):
+
+```rust
+let profile_key = CString::new("profile").unwrap();
+let profile_c = CString::new(profile).unwrap();
+xpc_dictionary_set_string(dict, profile_key.as_ptr(), profile_c.as_ptr());
+```
+
+#### 3. `ts5/macos/Sources/Ghostty/CompositorXPC.swift` — Extract profile, use for data dir
+
+**In `handleSetOverlay`**, extract the profile name from the message. Add after
+the URL extraction (after line 194):
+
+```swift
+let profilePtr = xpc_dictionary_get_string(msg, "profile")
+let profile = profilePtr.map { String(cString: $0) } ?? "default"
+```
+
+Pass `profile` to `spawnServer`. Change line 251 from:
+
+```swift
+spawnServer(forPane: uuid)
+```
+
+to:
+
+```swift
+spawnServer(forPane: uuid, profile: profile)
+```
+
+**In `spawnServer`**, accept the profile parameter and use it for the data
+directory path. Change signature from:
+
+```swift
+private func spawnServer(forPane uuid: UUID) {
+```
+
+to:
+
+```swift
+private func spawnServer(forPane uuid: UUID, profile: String) {
+```
+
+Change line 407 from:
+
+```swift
+let profilePath = "\(home)/.config/termsurf/profiles/default"
+```
+
+to:
+
+```swift
+let profilePath = "\(home)/.config/termsurf/chromium-profiles/\(profile)"
+```
+
+#### 4. No Chromium changes
+
+The Chromium Profile Server already accepts `--user-data-dir` as a flag. Each
+process is fully isolated. No source changes needed.
+
+### XPC message (updated)
+
+**`set_overlay`** — now includes `profile`:
+
+```
+{ action: "set_overlay",
+  pane_id: "<uuid>",
+  col: N,
+  row: N,
+  width: N,
+  height: N,
+  url: "http://...",
+  profile: "work" }
+```
+
+All other messages unchanged.
+
+### Build
+
+```bash
+# Build web TUI
+cd web && cargo build
+
+# Build TermSurf
+cd ts5 && zig build
+
+# No Chromium build needed.
+```
+
+### Test
+
+```bash
+# Start test page server
+cd ts4/box-demo && bun run server.ts &
+
+# Open TermSurf
+open ts5/zig-out/TermSurf.app --stderr ~/dev/termsurf/logs/overlay.log
+
+# In one pane:
+cargo run -p web -- http://localhost:9407 --profile work
+
+# Split pane, in the other:
+cargo run -p web -- http://localhost:9407 --profile personal
+```
+
+### Pass criteria
+
+1. Both panes render the box-demo at 60fps simultaneously.
+2. Two separate `Chromium Profile Server` processes are running (one per
+   profile).
+3. Profile data directories exist at
+   `~/.config/termsurf/chromium-profiles/work/` and
+   `~/.config/termsurf/chromium-profiles/personal/`.
+4. The URL bar shows the correct profile name in each pane.
+5. Closing both `web` processes terminates both server processes cleanly.
+6. Invalid profile names (e.g., `Work`, `123`, `work!`) are rejected by the
+   `web` CLI.
+
+### Result
+
+_Not yet run._
+
+## Ideas for future experiments
 
 1. **Profile name validation + XPC propagation.** Add validation to `web`,
    include `profile` in `set_overlay`, and update `CompositorXPC.swift` to
