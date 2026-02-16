@@ -929,3 +929,481 @@ the main thread while the renderer may be mid-frame reading the old
 assignment but not the IOSurface lifetime (ARC releases the old surface while
 the renderer still holds a raw pointer to it). This needs proper lifetime
 management before resize can work, but it's out of scope for this experiment.
+
+### Experiment 3: Live Chromium Frames
+
+Stream the box-demo (blue spinning square, `http://localhost:9407`) through the
+full pipeline: Chromium Profile Server → IOSurface → Mach port → XPC →
+xpc-gateway → TermSurf app → Metal renderer.
+
+Also adds app stderr logging so crashes can be diagnosed.
+
+#### Scope
+
+This experiment connects all existing pieces end-to-end. It does NOT address:
+
+- **Resize** — Will crash (same IOSurface lifetime race as Experiment 2).
+- **IOSurface lifetime management** — Uses `passUnretained`, same as Experiments
+  1-2. The race exists at 60fps but logging will capture what happens.
+- **Retina size matching** — Server captures at a fixed 800x600. The overlay
+  stretches to fit.
+- **URL change** — First URL only. No re-navigation.
+
+#### Changes
+
+**A. App logging — `ts5/macos/Sources/App/macOS/AppDelegate.swift`**
+
+Add `freopen` at the top of `applicationDidFinishLaunching` to redirect stderr
+to a log file:
+
+```swift
+// Redirect stderr to log file for crash diagnostics (Issue 507).
+let logDir = FileManager.default.homeDirectoryForCurrentUser
+    .appendingPathComponent("dev/termsurf/logs")
+try? FileManager.default.createDirectory(at: logDir, withIntermediateDirectories: true)
+let logPath = logDir.appendingPathComponent("termsurf-app.log").path
+freopen(logPath, "a", stderr)
+fputs("\n[TermSurf] === App started at \(Date()) ===\n", stderr)
+```
+
+All existing `fputs("[Compositor]...", stderr)` calls in `CompositorXPC.swift`
+will now go to `~/dev/termsurf/logs/termsurf-app.log`.
+
+**B. Chromium branch**
+
+Create `146.0.7650.0-issue-507` from `146.0.7650.0-issue-503`:
+
+```bash
+cd chromium/src
+git checkout 146.0.7650.0-issue-503
+git checkout -b 146.0.7650.0-issue-507
+```
+
+Update `docs/chromium.md` with the new branch.
+
+**C. Chromium Profile Server — `shell_switches.h`**
+
+Add `--pane-id` flag:
+
+```cpp
+// Pane UUID — identifies which TermSurf pane this server renders into.
+// Included in every display_surface frame so the app knows where to composite.
+inline constexpr char kPaneId[] = "pane-id";
+```
+
+**D. Chromium Profile Server — `shell_browser_main_parts.h`**
+
+Replace the Issue 503 multi-tab state with single-tab + gateway connect:
+
+```cpp
+private:
+#if BUILDFLAG(IS_MAC)
+  void StartDynamicMode(const std::string& gateway_name,
+                        const std::string& pane_id);
+  void Navigate(const GURL& url);
+
+  xpc_connection_t app_connection_ = nullptr;
+  std::string pane_id_;
+  raw_ptr<Shell> shell_ = nullptr;
+  std::unique_ptr<ShellVideoConsumer> video_consumer_;
+#endif
+```
+
+Remove: `TabState` struct, `tabs_` vector, `control_connection_`,
+`xpc_service_name_`, `CreateTab()`, `CloseTab()`.
+
+**E. Chromium Profile Server — `shell_browser_main_parts.cc`**
+
+Replace `StartDynamicMode` with two-step gateway connect:
+
+```cpp
+void ShellBrowserMainParts::InitializeMessageLoopContext() {
+#if BUILDFLAG(IS_MAC)
+  base::CommandLine* cmd = base::CommandLine::ForCurrentProcess();
+  if (cmd->HasSwitch(switches::kXpcService)) {
+    std::string pane_id;
+    if (cmd->HasSwitch(switches::kPaneId))
+      pane_id = cmd->GetSwitchValueASCII(switches::kPaneId);
+    StartDynamicMode(cmd->GetSwitchValueASCII(switches::kXpcService), pane_id);
+    return;
+  }
+#endif
+  LOG(WARNING) << "[ProfileServer] No --xpc-service specified, idling.";
+}
+
+void ShellBrowserMainParts::StartDynamicMode(
+    const std::string& gateway_name,
+    const std::string& pane_id) {
+  pane_id_ = pane_id;
+
+  // Step 1: Connect to xpc-gateway.
+  xpc_connection_t gateway = xpc_connection_create_mach_service(
+      gateway_name.c_str(), nullptr, 0);
+  xpc_connection_set_event_handler(gateway, ^(xpc_object_t event) {
+    if (xpc_get_type(event) == XPC_TYPE_ERROR)
+      LOG(ERROR) << "[ProfileServer] Gateway error";
+  });
+  xpc_connection_resume(gateway);
+
+  // Step 2: Request app endpoint (synchronous).
+  xpc_object_t req = xpc_dictionary_create(NULL, NULL, 0);
+  xpc_dictionary_set_string(req, "action", "connect");
+  xpc_object_t reply = xpc_connection_send_message_with_reply_sync(gateway, req);
+  xpc_release(req);
+
+  if (!reply || xpc_get_type(reply) == XPC_TYPE_ERROR) {
+    LOG(ERROR) << "[ProfileServer] Gateway returned error";
+    return;
+  }
+  xpc_object_t endpoint = xpc_dictionary_get_value(reply, "endpoint");
+  if (!endpoint || xpc_get_type(endpoint) != XPC_TYPE_ENDPOINT) {
+    LOG(ERROR) << "[ProfileServer] No endpoint from gateway";
+    return;
+  }
+
+  // Step 3: Connect directly to app via endpoint.
+  app_connection_ = xpc_connection_create_from_endpoint(
+      reinterpret_cast<xpc_endpoint_t>(endpoint));
+
+  ShellBrowserMainParts* self = this;
+  xpc_connection_set_event_handler(app_connection_, ^(xpc_object_t event) {
+    if (xpc_get_type(event) == XPC_TYPE_DICTIONARY) {
+      const char* action = xpc_dictionary_get_string(event, "action");
+      if (action && std::string_view(action) == "navigate") {
+        const char* url_str = xpc_dictionary_get_string(event, "url");
+        std::string url(url_str ? url_str : "about:blank");
+        content::GetUIThreadTaskRunner({})->PostTask(
+            FROM_HERE,
+            base::BindOnce(&ShellBrowserMainParts::Navigate,
+                           base::Unretained(self), GURL(url)));
+      }
+    } else if (xpc_get_type(event) == XPC_TYPE_ERROR) {
+      LOG(ERROR) << "[ProfileServer] App connection error";
+    }
+  });
+  xpc_connection_resume(app_connection_);
+
+  // Step 4: Register with the app.
+  xpc_object_t reg = xpc_dictionary_create(NULL, NULL, 0);
+  xpc_dictionary_set_string(reg, "action", "server_register");
+  xpc_dictionary_set_string(reg, "pane_id", pane_id_.c_str());
+  xpc_connection_send_message(app_connection_, reg);
+  xpc_release(reg);
+
+  // Done with gateway.
+  xpc_connection_cancel(gateway);
+
+  LOG(INFO) << "[ProfileServer] Connected to app via gateway, pane="
+            << pane_id_;
+}
+```
+
+The `navigate` handler creates the Shell on first call, navigates on subsequent:
+
+```cpp
+void ShellBrowserMainParts::Navigate(const GURL& url) {
+  DCHECK_CURRENTLY_ON(BrowserThread::UI);
+
+  if (!shell_) {
+    shell_ = Shell::CreateNewWindow(browser_context_.get(), url,
+                                    nullptr, gfx::Size(800, 600));
+    video_consumer_ = std::make_unique<ShellVideoConsumer>();
+    video_consumer_->SetConnection(app_connection_);
+    video_consumer_->SetPaneId(pane_id_);
+    video_consumer_->ObserveContents(shell_->web_contents());
+    LOG(INFO) << "[ProfileServer] Created shell for: " << url.spec();
+  } else {
+    shell_->LoadURLForDocument(url);
+    LOG(INFO) << "[ProfileServer] Navigated to: " << url.spec();
+  }
+}
+```
+
+Remove: `CreateTab()`, `CloseTab()` methods.
+
+**F. Chromium Profile Server — `shell_video_consumer.h`**
+
+Add `pane_id` support:
+
+```cpp
+void SetPaneId(const std::string& pane_id);
+// ...
+private:
+  std::string pane_id_;
+```
+
+**G. Chromium Profile Server — `shell_video_consumer.cc`**
+
+Add `pane_id` to `display_surface` messages:
+
+```cpp
+void ShellVideoConsumer::SetPaneId(const std::string& pane_id) {
+  pane_id_ = pane_id;
+}
+```
+
+In `OnFrameCaptured`, add after `xpc_dictionary_set_string(msg, "action", ...)`:
+
+```cpp
+if (!pane_id_.empty()) {
+  xpc_dictionary_set_string(msg, "pane_id", pane_id_.c_str());
+}
+```
+
+**H. web TUI — `web/src/xpc.rs`**
+
+Add `url` parameter to `send_set_overlay`:
+
+```rust
+pub fn send_set_overlay(&self, pane_id: &str, col: u16, row: u16,
+                        width: u16, height: u16, url: &str) {
+    // ... existing dict creation ...
+    let url_key = CString::new("url").unwrap();
+    let url_val = CString::new(url).unwrap();
+    unsafe {
+        // ... existing fields ...
+        xpc_dictionary_set_string(dict, url_key.as_ptr(), url_val.as_ptr());
+    }
+}
+```
+
+**I. web TUI — `web/src/main.rs`**
+
+Pass `url` to `send_set_overlay`:
+
+```rust
+conn.send_set_overlay(
+    pid,
+    viewport_rect.x,
+    viewport_rect.y,
+    viewport_rect.width,
+    viewport_rect.height,
+    &url,
+);
+```
+
+**J. CompositorXPC.swift — Major changes**
+
+This is the central hub. New responsibilities:
+
+1. **Track server state per pane.** New fields:
+
+```swift
+/// Maps pane UUID → server process (for cleanup on disconnect).
+private var serverProcesses: [UUID: Process] = [:]
+
+/// Maps pane UUID → server's XPC peer connection (for forwarding navigate).
+private var serverConnections: [UUID: xpc_connection_t] = [:]
+
+/// Maps pane UUID → pending URL (queued before server registers).
+private var pendingURLs: [UUID: String] = [:]
+
+/// Maps pane UUID → current IOSurface (must retain to prevent ARC release).
+private var currentSurfaces: [UUID: IOSurface] = [:]
+```
+
+2. **Handle `set_overlay` with URL.** When `set_overlay` includes a `url` field
+   and no server is running for this pane, spawn one:
+
+```swift
+case "set_overlay":
+    // ... existing pane_id, col, row, width, height parsing ...
+
+    // Set overlay grid coordinates (existing).
+    ghostty_surface_set_overlay(cSurface, col, row, width, height)
+
+    // Spawn Chromium Profile Server if URL present and no server running.
+    if let urlPtr = xpc_dictionary_get_string(msg, "url") {
+        let urlStr = String(cString: urlPtr)
+        if self.serverProcesses[uuid] == nil {
+            self.spawnServer(paneId: uuid, url: urlStr)
+        }
+    }
+```
+
+3. **Spawn server.** New method:
+
+```swift
+private func spawnServer(paneId: UUID, url: String) {
+    let serverPath = ProcessInfo.processInfo.environment["TERMSURF_CHROMIUM_SERVER"]
+        ?? "\(FileManager.default.homeDirectoryForCurrentUser.path)/dev/termsurf/chromium/src/out/Default/Chromium Profile Server.app/Contents/MacOS/Chromium Profile Server"
+
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: serverPath)
+    process.arguments = [
+        "--xpc-service", "com.termsurf.xpc-gateway",
+        "--pane-id", paneId.uuidString,
+        "--hidden",
+        "--user-data-dir",
+        "\(FileManager.default.homeDirectoryForCurrentUser.path)/.config/termsurf/profiles/default",
+        "--content-shell-host-window-size", "800x600"
+    ]
+
+    // Redirect server stderr to log file.
+    let logPath = FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent("dev/termsurf/logs/chromium-server.log")
+    process.standardError = try? FileHandle(forWritingTo: logPath)
+
+    do {
+        try process.run()
+        serverProcesses[paneId] = process
+        pendingURLs[paneId] = url
+        fputs("[Compositor] Spawned server for pane \(paneId), pid=\(process.processIdentifier)\n", stderr)
+    } catch {
+        fputs("[Compositor] Failed to spawn server: \(error)\n", stderr)
+    }
+}
+```
+
+4. **Handle `server_register` from Chromium Profile Server.** When the server
+   connects via the anonymous listener and sends `server_register`:
+
+```swift
+case "server_register":
+    guard let paneIdPtr = xpc_dictionary_get_string(msg, "pane_id") else { return }
+    let paneIdStr = String(cString: paneIdPtr)
+    guard let uuid = UUID(uuidString: paneIdStr) else { return }
+
+    serverConnections[uuid] = peer
+    fputs("[Compositor] Server registered for pane \(paneIdStr)\n", stderr)
+
+    // Send pending URL.
+    if let url = pendingURLs.removeValue(forKey: uuid) {
+        let nav = xpc_dictionary_create(nil, nil, 0)
+        xpc_dictionary_set_string(nav, "action", "navigate")
+        url.withCString { xpc_dictionary_set_string(nav, "url", $0) }
+        xpc_connection_send_message(peer, nav)
+        fputs("[Compositor] Sent navigate to server: \(url)\n", stderr)
+    }
+```
+
+5. **Handle `display_surface` from Chromium Profile Server.** Import the
+   IOSurface from the Mach port and pass it to the renderer:
+
+```swift
+case "display_surface":
+    guard let paneIdPtr = xpc_dictionary_get_string(msg, "pane_id") else {
+        fputs("[Compositor] display_surface missing pane_id\n", stderr)
+        return
+    }
+    let paneIdStr = String(cString: paneIdPtr)
+    guard let uuid = UUID(uuidString: paneIdStr) else { return }
+
+    let port = xpc_dictionary_copy_mach_send(msg, "iosurface_port")
+    guard port != UInt32(MACH_PORT_NULL) else {
+        fputs("[Compositor] display_surface: null port\n", stderr)
+        return
+    }
+
+    guard let ioSurface = IOSurfaceLookupFromMachPort(port) else {
+        fputs("[Compositor] IOSurfaceLookupFromMachPort failed\n", stderr)
+        mach_port_deallocate(mach_task_self(), port)
+        return
+    }
+    mach_port_deallocate(mach_task_self(), port)
+
+    // Store surface to keep it alive (ARC retains it).
+    self.currentSurfaces[uuid] = ioSurface
+
+    // Pass to renderer (on main queue for surface lookup).
+    DispatchQueue.main.async { [weak self] in
+        guard let self = self,
+              let surface = self.appDelegate?.findSurface(forUUID: uuid),
+              let cSurface = surface.surface else { return }
+        let ptr = Unmanaged.passUnretained(ioSurface).toOpaque()
+        ghostty_surface_set_overlay_iosurface(cSurface, ptr)
+    }
+```
+
+6. **Kill server on web disconnect.** Update `handleDisconnect`:
+
+```swift
+private func handleDisconnect(_ peer: xpc_connection_t) {
+    // ... existing peer cleanup ...
+
+    if let uuid = peerPaneIds.removeValue(forKey: peerId) {
+        // Kill server.
+        if let process = serverProcesses.removeValue(forKey: uuid) {
+            process.terminate()
+            fputs("[Compositor] Killed server for pane \(uuid)\n", stderr)
+        }
+        serverConnections.removeValue(forKey: uuid)
+        pendingURLs.removeValue(forKey: uuid)
+        currentSurfaces.removeValue(forKey: uuid)
+
+        // Clear overlay.
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self,
+                  let surface = self.appDelegate?.findSurface(forUUID: uuid),
+                  let cSurface = surface.surface else { return }
+            ghostty_surface_clear_overlay(cSurface)
+        }
+    }
+}
+```
+
+7. **Remove checkerboard code.** Delete `testSurface`, `overlayGridWidth`,
+   `overlayGridHeight`, `createCheckerboardSurface()`, and the checkerboard
+   creation block in `set_overlay`.
+
+#### Pass Criteria
+
+1. `cargo run -p web -- http://localhost:9407` shows the box-demo's blue
+   spinning square in the viewport area.
+2. The FPS counter on the page is visible and shows ~60fps.
+3. Quitting `web` (Ctrl+C or q) clears the overlay and kills the server.
+4. All diagnostic output is captured in `~/dev/termsurf/logs/termsurf-app.log`
+   and `~/dev/termsurf/logs/chromium-server.log`.
+5. No crash during normal operation (no resize).
+
+#### Files
+
+| File                                            | Change                                                                                              |
+| ----------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `ts5/macos/Sources/App/macOS/AppDelegate.swift` | `freopen` stderr to log file                                                                        |
+| `ts5/macos/Sources/Ghostty/CompositorXPC.swift` | Spawn server, handle `server_register` + `display_surface`, kill on disconnect, remove checkerboard |
+| `web/src/xpc.rs`                                | Add `url` parameter to `send_set_overlay`                                                           |
+| `web/src/main.rs`                               | Pass URL to `send_set_overlay`                                                                      |
+| `chromium/src/.../shell_switches.h`             | Add `--pane-id` flag                                                                                |
+| `chromium/src/.../shell_browser_main_parts.h`   | Replace multi-tab with single-tab + gateway                                                         |
+| `chromium/src/.../shell_browser_main_parts.cc`  | Two-step gateway connect, `navigate` handler                                                        |
+| `chromium/src/.../shell_video_consumer.h`       | Add `SetPaneId()`, `pane_id_` field                                                                 |
+| `chromium/src/.../shell_video_consumer.cc`      | Include `pane_id` in `display_surface` messages                                                     |
+| `docs/chromium.md`                              | Add `146.0.7650.0-issue-507` branch                                                                 |
+
+#### Build & Verify
+
+```bash
+# 1. Create Chromium branch and build
+cd chromium/src
+git checkout 146.0.7650.0-issue-503
+git checkout -b 146.0.7650.0-issue-507
+# ... make changes ...
+export PATH="$HOME/dev/termsurf/chromium/depot_tools:$PATH"
+autoninja -C out/Default chromium_profile_server
+
+# 2. Build TermSurf
+cd ts5/xpc-gateway && swift build
+cd ts5 && zig build
+
+# 3. Build web
+cd web && cargo build
+
+# 4. Start box-demo
+cd ts4/box-demo && bun run server.ts &
+
+# 5. Launch
+open ts5/zig-out/TermSurf.app
+
+# 6. In a TermSurf pane:
+cargo run -p web -- http://localhost:9407
+
+# 7. Verify:
+#    - Blue spinning square visible in viewport
+#    - FPS counter shows ~60fps
+#    - Quit web → overlay clears, server killed
+#    - tail -f ~/dev/termsurf/logs/termsurf-app.log   (app diagnostics)
+#    - tail -f ~/dev/termsurf/logs/chromium-server.log (server fps logs)
+#
+# 8. DO NOT RESIZE the terminal (will crash, known issue).
+```
