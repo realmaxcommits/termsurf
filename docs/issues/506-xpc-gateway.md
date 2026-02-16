@@ -489,3 +489,188 @@ needed.
 - **Chromium texture swap.** The pink overlay will be replaced with a real
   IOSurface texture from Chromium. The direct connection established here is the
   same channel that will carry IOSurface Mach ports at 60fps.
+
+### Experiment 2: Automatic Plist Registration via SMAppService
+
+Eliminate manual `launchctl bootstrap` by using Apple's `SMAppService` API. The
+gateway plist and binary ship inside the app bundle. The app registers the
+LaunchAgent on startup — zero user setup.
+
+#### Background
+
+`SMAppService` (macOS 13+) lets an app register LaunchAgents from within its own
+bundle. The plist lives at `Contents/Library/LaunchAgents/` and references the
+agent binary via `BundleProgram` — a bundle-relative path. No absolute paths, no
+`launchctl` commands, no copying files to `~/Library/LaunchAgents/`.
+
+Key behaviors:
+
+- `register()` is **not** idempotent — throws if already registered. Must check
+  `.status` first.
+- The binary referenced by `BundleProgram` must be inside the app bundle
+  (typically `Contents/MacOS/`).
+- No special entitlements needed for non-sandboxed apps (TermSurf is not
+  sandboxed).
+- The agent appears in System Settings > General > Login Items, giving users
+  control.
+
+#### Changes
+
+##### Part 1: Move Gateway Binary into App Bundle
+
+The `xpc-gateway` binary must live inside `TermSurf.app/Contents/MacOS/`. The
+simplest approach: add a post-build copy step in `GhosttyXcodebuild.zig` that
+copies the pre-built binary into the bundle after xcodebuild finishes.
+
+###### `ts5/src/build/GhosttyXcodebuild.zig`
+
+After the existing `copy` step (line 176), add a new step that copies the
+gateway binary into the app bundle's `Contents/MacOS/` directory:
+
+```zig
+const copy_gateway = RunStep.create(b, "copy xpc-gateway into bundle");
+copy_gateway.addArgs(&.{
+    "cp",
+    b.pathFromRoot("xpc-gateway/.build/debug/xpc-gateway"),
+    b.fmt("{s}/Contents/MacOS/xpc-gateway", .{app_path}),
+});
+copy_gateway.step.dependOn(&build.step);
+```
+
+Make the `copy` step depend on `copy_gateway` so the final bundle includes the
+binary.
+
+This requires `swift build` to have been run in `ts5/xpc-gateway/` beforehand.
+The Zig build does not build Swift packages — that's a manual step for now (same
+as the Zig build doesn't build `web/`).
+
+##### Part 2: Bundle the LaunchAgent Plist
+
+###### `ts5/macos/com.termsurf.xpc-gateway.bundle.plist`
+
+New plist designed for SMAppService. Uses `BundleProgram` instead of
+`ProgramArguments`:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.termsurf.xpc-gateway</string>
+    <key>BundleProgram</key>
+    <string>Contents/MacOS/xpc-gateway</string>
+    <key>MachServices</key>
+    <dict>
+        <key>com.termsurf.xpc-gateway</key>
+        <true/>
+    </dict>
+</dict>
+</plist>
+```
+
+Key differences from the Experiment 1 plist:
+
+- **`BundleProgram`** replaces `ProgramArguments`. The path is relative to the
+  app bundle root — no hardcoded absolute paths. The app bundle can live
+  anywhere on disk.
+- **No `StandardOutPath`/`StandardErrorPath`.** These used hardcoded paths into
+  the repo. For bundled agents, logging should use `os_log` or stderr (which
+  launchd captures to the unified log). We can add log paths back later if
+  needed for debugging.
+
+Add a post-build step in `GhosttyXcodebuild.zig` to copy this plist into the
+bundle:
+
+```zig
+const mkdir_la = RunStep.create(b, "mkdir LaunchAgents in bundle");
+mkdir_la.addArgs(&.{
+    "mkdir", "-p",
+    b.fmt("{s}/Contents/Library/LaunchAgents", .{app_path}),
+});
+mkdir_la.step.dependOn(&build.step);
+
+const copy_plist = RunStep.create(b, "copy xpc-gateway plist into bundle");
+copy_plist.addArgs(&.{
+    "cp",
+    b.pathFromRoot("macos/com.termsurf.xpc-gateway.bundle.plist"),
+    b.fmt("{s}/Contents/Library/LaunchAgents/com.termsurf.xpc-gateway.plist",
+          .{app_path}),
+});
+copy_plist.step.dependOn(&mkdir_la.step);
+```
+
+##### Part 3: Register on App Startup
+
+###### `ts5/macos/Sources/Ghostty/CompositorXPC.swift`
+
+Before connecting to the gateway, register the LaunchAgent via SMAppService. Add
+this at the top of `start()`:
+
+```swift
+import ServiceManagement
+
+// Register the xpc-gateway LaunchAgent if not already registered.
+let gatewayService = SMAppService.agent(
+    plistName: "com.termsurf.xpc-gateway.plist")
+switch gatewayService.status {
+case .notRegistered, .notFound:
+    do {
+        try gatewayService.register()
+        fputs("[Compositor] Registered xpc-gateway LaunchAgent\n", stderr)
+    } catch {
+        fputs("[Compositor] Failed to register xpc-gateway: \(error)\n", stderr)
+    }
+case .enabled:
+    fputs("[Compositor] xpc-gateway LaunchAgent already registered\n", stderr)
+case .requiresApproval:
+    fputs("[Compositor] xpc-gateway requires user approval in System Settings\n",
+          stderr)
+@unknown default:
+    break
+}
+```
+
+The `register()` call tells launchd about the agent. When the app then calls
+`xpc_connection_create_mach_service("com.termsurf.xpc-gateway", ...)`, launchd
+auto-starts the gateway if it isn't already running.
+
+##### Part 4: Keep Development Plist for Convenience
+
+The existing `com.termsurf.xpc-gateway.plist` (with absolute paths) stays for
+development — it's useful when running the gateway standalone outside the app
+bundle. The new `com.termsurf.xpc-gateway.bundle.plist` is the bundled version.
+
+#### Build & Test
+
+```bash
+# Build the gateway (must be done before zig build)
+cd ts5/xpc-gateway && swift build
+
+# Build ts5 (copies gateway binary + plist into bundle)
+cd ts5 && zig build
+
+# Unregister old launchd services (one-time cleanup)
+launchctl bootout gui/$(id -u)/com.termsurf.xpc-gateway 2>/dev/null
+launchctl bootout gui/$(id -u)/com.termsurf.compositor 2>/dev/null
+
+# Launch the app — no launchctl bootstrap needed!
+open ts5/zig-out/TermSurf.app
+
+# In a TermSurf pane:
+cargo run -p web -- https://example.com
+```
+
+#### Pass Criteria
+
+1. `open ts5/zig-out/TermSurf.app` launches the app with zero prior setup — no
+   `launchctl bootstrap` needed.
+2. The xpc-gateway LaunchAgent registers automatically on first launch.
+3. The pink overlay works: appears, resizes, clears on `web` exit.
+4. Quitting and relaunching the app works — the gateway stays registered and
+   auto-starts.
+5. The gateway binary inside the bundle is found correctly via `BundleProgram`
+   (no absolute paths).
+6. `xpc-gateway` appears in System Settings > General > Login Items under
+   TermSurf.
