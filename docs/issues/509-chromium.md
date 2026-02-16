@@ -201,8 +201,7 @@ xpc-gateway (com.termsurf.xpc-gateway)
 
 ```
 { action: "display_surface", pane_id: "<uuid>",
-  iosurface_port: <mach_send_right>,
-  width: N, height: N }
+  iosurface_port: <mach_send_right> }
 ```
 
 ## Components to Change
@@ -949,14 +948,13 @@ setup:
   tab_id: "<uuid>" }
 ```
 
-**`display_surface`** — unchanged (already includes dimensions):
+**`display_surface`** — size fields removed (redundant, IOSurface is
+self-describing via `IOSurfaceGetWidth`/`IOSurfaceGetHeight`):
 
 ```
 { action: "display_surface",
   pane_id: "<uuid>",
-  iosurface_port: <mach_send_right>,
-  width: N,         // physical pixels (from IOSurface)
-  height: N }
+  iosurface_port: <mach_send_right> }
 ```
 
 ### Changes
@@ -1211,6 +1209,17 @@ void ResizeCapture(int pixel_width, int pixel_height);
 ```
 
 #### 7. `chromium/.../shell_video_consumer.cc`
+
+**Remove redundant `width`/`height` from `display_surface` message** in
+`OnFrameCaptured`. The IOSurface is self-describing — the app reads dimensions
+via `IOSurfaceGetWidth`/`IOSurfaceGetHeight` on the imported surface. Remove
+these two lines:
+
+```cpp
+// DELETE:
+xpc_dictionary_set_int64(msg, "width", (int64_t)width);
+xpc_dictionary_set_int64(msg, "height", (int64_t)height);
+```
 
 **Add `SetInitialSize` — stores dimensions for use in `Attach`:**
 
