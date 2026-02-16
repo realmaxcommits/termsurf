@@ -43,7 +43,7 @@ must be validated before use.
 Each profile maps to a separate Chromium `--user-data-dir`:
 
 ```
-~/.config/termsurf/profiles/<name>/
+~/.config/termsurf/chromium-profiles/<name>/
 ```
 
 Two panes with `--profile work` share the same server process and browser
@@ -157,9 +157,9 @@ The current code spawns one server per pane. The two-profile demo needs one
 server per profile. This means:
 
 - Pane A (`--profile work`) → spawns server with
-  `--user-data-dir=~/.config/termsurf/profiles/work`
+  `--user-data-dir=~/.config/termsurf/chromium-profiles/work`
 - Pane B (`--profile personal`) → spawns server with
-  `--user-data-dir=~/.config/termsurf/profiles/personal`
+  `--user-data-dir=~/.config/termsurf/chromium-profiles/personal`
 - Pane C (`--profile work`) → reuses server from pane A, sends `create_tab`
 
 For the initial demo (two profiles, one pane each), pane-per-server and
@@ -173,7 +173,7 @@ designed with this in mind, but it's not required to pass.
    include `profile` in `set_overlay`, and update `CompositorXPC.swift` to
    extract it and use it for the `--user-data-dir` path. Test with a single pane
    using `--profile work` and verify the data goes to
-   `~/.config/termsurf/profiles/work/`.
+   `~/.config/termsurf/chromium-profiles/work/`.
 
 2. **Two profiles side by side.** Open two split panes, run `web` with different
    `--profile` flags in each, verify two separate server processes spawn with
