@@ -310,3 +310,713 @@ The flow for a shared server:
 
 5. **Three panes, two profiles.** The full demo: panes A and C with `work`, pane
    B with `personal`. Two server processes, three frame streams, all at 60fps.
+
+## Experiments
+
+### Experiment 1: Server reuse + three panes
+
+#### Goal
+
+Three split panes in the same window — two with `--profile work`, one with
+`--profile personal` — render independent Chromium sessions at 60fps. The two
+`work` panes share a single server process. Closing one `work` pane keeps the
+other alive. Closing the last pane for a profile terminates that server.
+
+#### Chromium branch
+
+Create a new branch from the current Issue 509 branch:
+
+```bash
+cd ~/dev/termsurf/chromium/src
+git checkout -b 146.0.7650.0-issue-511 146.0.7650.0-issue-509
+```
+
+After committing the Chromium changes, update `docs/chromium.md` to add the new
+branch to the Branches table.
+
+#### Changes
+
+Five files in the Chromium fork, one file in the app. No changes to `web` or
+xpc-gateway.
+
+##### 1. `shell_switches.h` — Remove `kPaneId`
+
+Delete the `kPaneId` constant (line 69):
+
+```cpp
+// Remove:
+inline constexpr char kPaneId[] = "pane-id";
+```
+
+The server no longer receives `--pane-id` from the command line. Each tab gets
+its `pane_id` from the `create_tab` message instead.
+
+##### 2. `shell_browser_main_parts.h` — Update signatures, add `pane_id` to TabState
+
+Remove `pane_id_` member. Add `pane_id` to `TabState`. Update method signatures:
+
+Change `TabState` from:
+
+```cpp
+struct TabState {
+    TabState();
+    ~TabState();
+    raw_ptr<Shell> shell;
+    std::unique_ptr<ShellVideoConsumer> video_consumer;
+    xpc_connection_t tab_connection = nullptr;
+};
+```
+
+to:
+
+```cpp
+struct TabState {
+    TabState();
+    ~TabState();
+    raw_ptr<Shell> shell;
+    std::unique_ptr<ShellVideoConsumer> video_consumer;
+    xpc_connection_t tab_connection = nullptr;
+    std::string pane_id;
+};
+```
+
+Change `StartDynamicMode` signature from:
+
+```cpp
+void StartDynamicMode(const std::string& gateway_name,
+                      const std::string& pane_id);
+```
+
+to:
+
+```cpp
+void StartDynamicMode(const std::string& gateway_name);
+```
+
+Change `CreateTab` signature from:
+
+```cpp
+void CreateTab(const GURL& url, const std::string& tab_id,
+               int pixel_width, int pixel_height);
+```
+
+to:
+
+```cpp
+void CreateTab(const GURL& url, const std::string& pane_id,
+               int pixel_width, int pixel_height);
+```
+
+Change `ResizeCapture` signature from:
+
+```cpp
+void ResizeCapture(int pixel_width, int pixel_height);
+```
+
+to:
+
+```cpp
+void ResizeCapture(const std::string& pane_id,
+                   int pixel_width, int pixel_height);
+```
+
+Remove `pane_id_` member:
+
+```cpp
+// Remove:
+std::string pane_id_;
+```
+
+##### 3. `shell_browser_main_parts.cc` — Per-tab pane_id, per-tab resize, auto-exit
+
+**`InitializeMessageLoopContext`** — Stop passing `pane_id`:
+
+Change:
+
+```cpp
+std::string pane_id;
+if (cmd->HasSwitch(switches::kPaneId))
+  pane_id = cmd->GetSwitchValueASCII(switches::kPaneId);
+StartDynamicMode(cmd->GetSwitchValueASCII(switches::kXpcService), pane_id);
+```
+
+to:
+
+```cpp
+StartDynamicMode(cmd->GetSwitchValueASCII(switches::kXpcService));
+```
+
+**`StartDynamicMode`** — Remove `pane_id` parameter, derive profile from
+`--user-data-dir`, send profile in `server_register`:
+
+Change signature from:
+
+```cpp
+void ShellBrowserMainParts::StartDynamicMode(
+    const std::string& gateway_name,
+    const std::string& pane_id) {
+  pane_id_ = pane_id;
+```
+
+to:
+
+```cpp
+void ShellBrowserMainParts::StartDynamicMode(
+    const std::string& gateway_name) {
+```
+
+Change `server_register` message from:
+
+```cpp
+xpc_dictionary_set_string(reg, "action", "server_register");
+xpc_dictionary_set_string(reg, "pane_id", pane_id_.c_str());
+```
+
+to:
+
+```cpp
+// Derive profile name from --user-data-dir basename.
+std::string profile;
+base::CommandLine* cmd = base::CommandLine::ForCurrentProcess();
+if (cmd->HasSwitch(switches::kContentShellUserDataDir)) {
+  base::FilePath data_dir = cmd->GetSwitchValuePath(switches::kContentShellUserDataDir);
+  profile = data_dir.BaseName().value();
+}
+
+xpc_dictionary_set_string(reg, "action", "server_register");
+xpc_dictionary_set_string(reg, "profile", profile.c_str());
+```
+
+Change the log line from:
+
+```cpp
+LOG(INFO) << "[ProfileServer] Connected to app via gateway, pane="
+          << pane_id_;
+```
+
+to:
+
+```cpp
+LOG(INFO) << "[ProfileServer] Connected to app via gateway, profile="
+          << profile;
+```
+
+**Control connection handler** — Extract `pane_id` from `create_tab`, pass to
+`ResizeCapture`:
+
+Change `create_tab` extraction from:
+
+```cpp
+const char* tab_id_str = xpc_dictionary_get_string(event, "tab_id");
+std::string url(url_str ? url_str : "about:blank");
+std::string tab_id(tab_id_str ? tab_id_str : "");
+```
+
+to:
+
+```cpp
+const char* pane_id_str = xpc_dictionary_get_string(event, "pane_id");
+std::string url(url_str ? url_str : "about:blank");
+std::string pane_id(pane_id_str ? pane_id_str : "");
+```
+
+Change `CreateTab` binding from:
+
+```cpp
+base::BindOnce(&ShellBrowserMainParts::CreateTab,
+               base::Unretained(self), GURL(url), tab_id,
+               pw, ph));
+```
+
+to:
+
+```cpp
+base::BindOnce(&ShellBrowserMainParts::CreateTab,
+               base::Unretained(self), GURL(url), pane_id,
+               pw, ph));
+```
+
+Change `resize` handling from:
+
+```cpp
+} else if (action && std::string_view(action) == "resize") {
+  int pw = (int)xpc_dictionary_get_uint64(event, "pixel_width");
+  int ph = (int)xpc_dictionary_get_uint64(event, "pixel_height");
+  content::GetUIThreadTaskRunner({})->PostTask(
+      FROM_HERE,
+      base::BindOnce(&ShellBrowserMainParts::ResizeCapture,
+                     base::Unretained(self), pw, ph));
+}
+```
+
+to:
+
+```cpp
+} else if (action && std::string_view(action) == "resize") {
+  const char* rpane = xpc_dictionary_get_string(event, "pane_id");
+  std::string resize_pane(rpane ? rpane : "");
+  int pw = (int)xpc_dictionary_get_uint64(event, "pixel_width");
+  int ph = (int)xpc_dictionary_get_uint64(event, "pixel_height");
+  content::GetUIThreadTaskRunner({})->PostTask(
+      FROM_HERE,
+      base::BindOnce(&ShellBrowserMainParts::ResizeCapture,
+                     base::Unretained(self), resize_pane, pw, ph));
+}
+```
+
+**`CreateTab`** — Use per-tab `pane_id`, store in TabState:
+
+Change signature and body. Replace `tab_id` with `pane_id` throughout:
+
+```cpp
+void ShellBrowserMainParts::CreateTab(const GURL& url,
+                                      const std::string& pane_id,
+                                      int pixel_width,
+                                      int pixel_height) {
+```
+
+Change `SetPaneId` from:
+
+```cpp
+video_consumer->SetPaneId(pane_id_);
+```
+
+to:
+
+```cpp
+video_consumer->SetPaneId(pane_id);
+```
+
+Change `tab_ready` message from:
+
+```cpp
+xpc_dictionary_set_string(msg, "action", "tab_ready");
+xpc_dictionary_set_string(msg, "tab_id", tab_id.c_str());
+```
+
+to:
+
+```cpp
+xpc_dictionary_set_string(msg, "action", "tab_ready");
+xpc_dictionary_set_string(msg, "pane_id", pane_id.c_str());
+```
+
+Change TabState storage from:
+
+```cpp
+auto tab = std::make_unique<TabState>();
+tab->shell = shell;
+tab->video_consumer = std::move(video_consumer);
+tab->tab_connection = tab_conn;
+tabs_.push_back(std::move(tab));
+
+LOG(INFO) << "[ProfileServer] Tab '" << tab_id << "' ready, "
+          << tabs_.size() << " tab(s) active";
+```
+
+to:
+
+```cpp
+auto tab = std::make_unique<TabState>();
+tab->shell = shell;
+tab->video_consumer = std::move(video_consumer);
+tab->tab_connection = tab_conn;
+tab->pane_id = pane_id;
+tabs_.push_back(std::move(tab));
+
+LOG(INFO) << "[ProfileServer] Tab for pane " << pane_id << " ready, "
+          << tabs_.size() << " tab(s) active";
+```
+
+Also update the create log line from:
+
+```cpp
+LOG(INFO) << "[ProfileServer] Created tab '" << tab_id
+          << "' for URL: " << url.spec();
+```
+
+to:
+
+```cpp
+LOG(INFO) << "[ProfileServer] Created tab for pane " << pane_id
+          << ", URL: " << url.spec();
+```
+
+**`ResizeCapture`** — Route by `pane_id` instead of hardcoding `tabs_[0]`:
+
+Change from:
+
+```cpp
+void ShellBrowserMainParts::ResizeCapture(int pixel_width, int pixel_height) {
+  DCHECK_CURRENTLY_ON(BrowserThread::UI);
+
+  if (tabs_.empty() || pixel_width <= 0 || pixel_height <= 0)
+    return;
+
+  auto& tab = tabs_[0];
+```
+
+to:
+
+```cpp
+void ShellBrowserMainParts::ResizeCapture(const std::string& pane_id,
+                                          int pixel_width,
+                                          int pixel_height) {
+  DCHECK_CURRENTLY_ON(BrowserThread::UI);
+
+  if (pane_id.empty() || pixel_width <= 0 || pixel_height <= 0)
+    return;
+
+  // Find the tab for this pane.
+  TabState* tab = nullptr;
+  for (auto& t : tabs_) {
+    if (t->pane_id == pane_id) {
+      tab = t.get();
+      break;
+    }
+  }
+  if (!tab)
+    return;
+```
+
+Update the rest of `ResizeCapture` to use `tab->` instead of `tab->` (already a
+pointer, just remove the `auto&` dereference — the field accesses remain the
+same: `tab->shell`, `tab->video_consumer`).
+
+**`CloseTab`** — Add auto-exit when last tab closes:
+
+After the existing `tabs_.erase(it)` and `return`, add a check. Change:
+
+```cpp
+      tabs_.erase(it);
+      return;
+    }
+  }
+}
+```
+
+to:
+
+```cpp
+      tabs_.erase(it);
+
+      // Auto-exit when last tab closes.
+      if (tabs_.empty()) {
+        LOG(INFO) << "[ProfileServer] No tabs remaining, exiting";
+        Shell::Shutdown();
+      }
+      return;
+    }
+  }
+}
+```
+
+##### 4. `CompositorXPC.swift` — Profile-keyed server tracking + server reuse
+
+This is the bulk of the Swift changes.
+
+**Replace pane-keyed server dictionaries with profile-keyed ones.** Change:
+
+```swift
+/// Maps pane UUID → Chromium Profile Server process (Issue 509).
+private var serverProcesses: [UUID: Process] = [:]
+
+/// Maps pane UUID → server control connection (for sending create_tab).
+private var serverControlConnections: [UUID: xpc_connection_t] = [:]
+
+/// Maps pane UUID → URL to load (stored until server registers).
+private var pendingURLs: [UUID: String] = [:]
+```
+
+to:
+
+```swift
+/// Maps profile name → Chromium Profile Server process.
+private var serverProcesses: [String: Process] = [:]
+
+/// Maps profile name → server control connection (for sending create_tab).
+private var serverControlConnections: [String: xpc_connection_t] = [:]
+
+/// Maps pane UUID → (profile, url) pending server registration.
+private var pendingTabs: [UUID: (profile: String, url: String)] = [:]
+
+/// Maps pane UUID → profile name (for disconnect cleanup).
+private var paneProfiles: [UUID: String] = [:]
+```
+
+**Replace `pendingPixelSizes` type** — unchanged in type, just keep as-is:
+
+```swift
+/// Maps pane UUID → pending pixel size for create_tab (Issue 509 Experiment 4).
+private var pendingPixelSizes: [UUID: (UInt64, UInt64)] = [:]
+```
+
+**`handleSetOverlay`** — Rewrite the URL branch. When a `set_overlay` with URL
+arrives:
+
+1. Store `paneProfiles[uuid] = profile`.
+2. Cache the C surface, compute pixel dims (same as before).
+3. If `serverControlConnections[profile]` exists → server is already running and
+   registered. Send `create_tab` immediately.
+4. Else if `serverProcesses[profile]` exists → server is spawned but hasn't
+   registered yet. Store in `pendingTabs` (will be sent when `server_register`
+   arrives).
+5. Else → no server for this profile. Spawn one, store in `pendingTabs`.
+
+Replace the existing URL branch (from `if let urlPtr = urlPtr {` through the
+`spawnServer` call) with:
+
+```swift
+if let urlPtr = urlPtr {
+    let url = String(cString: urlPtr)
+    let profilePtr = xpc_dictionary_get_string(msg, "profile")
+    let profile = profilePtr.map { String(cString: $0) } ?? "default"
+
+    // Track which profile this pane belongs to.
+    paneProfiles[uuid] = profile
+
+    // If this pane already has a server (resize case), just update.
+    if cachedCSurfaces[uuid] != nil {
+        if let cSurface = cachedCSurfaces[uuid] {
+            ghostty_surface_set_overlay(cSurface, col, row, width, height)
+
+            var cellWidth: UInt32 = 0
+            var cellHeight: UInt32 = 0
+            ghostty_surface_get_cell_size(cSurface, &cellWidth, &cellHeight)
+            let pixelWidth = UInt64(width) * UInt64(cellWidth)
+            let pixelHeight = UInt64(height) * UInt64(cellHeight)
+
+            if let controlConn = serverControlConnections[profile] {
+                let msg = xpc_dictionary_create(nil, nil, 0)
+                xpc_dictionary_set_string(msg, "action", "resize")
+                xpc_dictionary_set_string(msg, "pane_id", paneIdStr)
+                xpc_dictionary_set_uint64(msg, "pixel_width", pixelWidth)
+                xpc_dictionary_set_uint64(msg, "pixel_height", pixelHeight)
+                xpc_connection_send_message(controlConn, msg)
+            }
+        }
+        return
+    }
+
+    fputs("[Compositor] set_overlay with URL \(url) for pane \(paneIdStr) profile \(profile)\n", stderr)
+
+    // Get the C surface pointer.
+    var cSurfaceOpt: ghostty_surface_t? = nil
+    DispatchQueue.main.sync { [weak self] in
+        cSurfaceOpt = self?.appDelegate?.findSurface(forUUID: uuid)?.surface
+    }
+    guard let cSurface = cSurfaceOpt else {
+        fputs("[Compositor] surface not found for pane \(paneIdStr)\n", stderr)
+        return
+    }
+    cachedCSurfaces[uuid] = cSurface
+    ghostty_surface_set_overlay(cSurface, col, row, width, height)
+
+    // Compute pixel dimensions.
+    var cellWidth: UInt32 = 0
+    var cellHeight: UInt32 = 0
+    ghostty_surface_get_cell_size(cSurface, &cellWidth, &cellHeight)
+    let pixelWidth = UInt64(width) * UInt64(cellWidth)
+    let pixelHeight = UInt64(height) * UInt64(cellHeight)
+    pendingPixelSizes[uuid] = (pixelWidth, pixelHeight)
+
+    if let controlConn = serverControlConnections[profile] {
+        // Server already registered — send create_tab immediately.
+        sendCreateTab(controlConn, paneId: paneIdStr, url: url, uuid: uuid)
+    } else {
+        // Store as pending (sent when server_register arrives).
+        pendingTabs[uuid] = (profile: profile, url: url)
+
+        if serverProcesses[profile] == nil {
+            // No server for this profile — spawn one.
+            spawnServer(forProfile: profile)
+        }
+        // Else: server spawned but not yet registered. pendingTabs will be
+        // consumed when server_register arrives.
+    }
+```
+
+**Add `sendCreateTab` helper:**
+
+```swift
+private func sendCreateTab(_ controlConn: xpc_connection_t, paneId: String, url: String, uuid: UUID) {
+    let pixelSize = pendingPixelSizes.removeValue(forKey: uuid)
+    let msg = xpc_dictionary_create(nil, nil, 0)
+    xpc_dictionary_set_string(msg, "action", "create_tab")
+    xpc_dictionary_set_string(msg, "url", url)
+    xpc_dictionary_set_string(msg, "pane_id", paneId)
+    if let (pw, ph) = pixelSize {
+        xpc_dictionary_set_uint64(msg, "pixel_width", pw)
+        xpc_dictionary_set_uint64(msg, "pixel_height", ph)
+    }
+    xpc_connection_send_message(controlConn, msg)
+    fputs("[Compositor] Sending create_tab url=\(url) pane_id=\(paneId) pixel=\(pixelSize?.0 ?? 0)x\(pixelSize?.1 ?? 0)\n", stderr)
+}
+```
+
+**`handleServerRegister`** — Key by profile, flush all pending tabs for that
+profile:
+
+Replace the entire method with:
+
+```swift
+private func handleServerRegister(_ msg: xpc_object_t, from peer: xpc_connection_t) {
+    guard let profilePtr = xpc_dictionary_get_string(msg, "profile") else {
+        fputs("[Compositor] server_register missing profile\n", stderr)
+        return
+    }
+    let profile = String(cString: profilePtr)
+
+    fputs("[Compositor] server_register from profile \(profile)\n", stderr)
+
+    // Store the control connection keyed by profile.
+    serverControlConnections[profile] = peer
+
+    // Flush all pending tabs for this profile.
+    for (uuid, pending) in pendingTabs {
+        if pending.profile == profile {
+            sendCreateTab(peer, paneId: uuid.uuidString, url: pending.url, uuid: uuid)
+        }
+    }
+    pendingTabs = pendingTabs.filter { $0.value.profile != profile }
+}
+```
+
+**`spawnServer`** — Key by profile, remove `--pane-id`:
+
+Change signature from:
+
+```swift
+private func spawnServer(forPane uuid: UUID, profile: String) {
+```
+
+to:
+
+```swift
+private func spawnServer(forProfile profile: String) {
+```
+
+Remove `--pane-id` from the arguments. Change:
+
+```swift
+process.arguments = [
+    "--xpc-service=com.termsurf.xpc-gateway",
+    "--pane-id=\(uuid.uuidString)",
+    "--user-data-dir=\(profilePath)",
+    "--hidden"
+]
+```
+
+to:
+
+```swift
+process.arguments = [
+    "--xpc-service=com.termsurf.xpc-gateway",
+    "--user-data-dir=\(profilePath)",
+    "--hidden"
+]
+```
+
+Change storage from `serverProcesses[uuid]` to `serverProcesses[profile]`:
+
+```swift
+serverProcesses[profile] = process
+fputs("[Compositor] Spawned server PID \(process.processIdentifier) for profile \(profile)\n", stderr)
+```
+
+**`handleDisconnect`** — Remove one pane, only kill server when it's the last
+pane for that profile:
+
+Replace the web peer branch with:
+
+```swift
+if let uuid = peerPaneIds.removeValue(forKey: peerId) {
+    fputs("[Compositor] Web process disconnected for pane \(uuid.uuidString)\n", stderr)
+
+    let profile = paneProfiles.removeValue(forKey: uuid)
+
+    // Clear the overlay.
+    currentSurfaces.removeValue(forKey: uuid)
+    pendingPixelSizes.removeValue(forKey: uuid)
+    pendingTabs.removeValue(forKey: uuid)
+    if let cSurface = cachedCSurfaces.removeValue(forKey: uuid) {
+        ghostty_surface_clear_overlay(cSurface)
+    }
+
+    // If no other panes use this profile, kill the server.
+    if let profile = profile {
+        let otherPanesForProfile = paneProfiles.values.contains(where: { $0 == profile })
+        if !otherPanesForProfile {
+            if let process = serverProcesses.removeValue(forKey: profile) {
+                process.terminate()
+                fputs("[Compositor] Terminated server PID \(process.processIdentifier) for profile \(profile)\n", stderr)
+            }
+            serverControlConnections.removeValue(forKey: profile)
+        }
+    }
+```
+
+##### 5. `docs/chromium.md` — Add branch
+
+Add a row to the Branches table:
+
+```
+| `146.0.7650.0-issue-511` | [Issue 511](issues/511-three-profiles.md) | Per-tab pane routing        |
+```
+
+#### Build
+
+```bash
+# Build Chromium (after committing changes on the new branch)
+cd ~/dev/termsurf/chromium/src
+export PATH="$HOME/dev/termsurf/chromium/depot_tools:$PATH"
+autoninja -C out/Default chromium_profile_server
+
+# Build TermSurf
+cd ~/dev/termsurf/ts5 && zig build
+
+# No web changes needed.
+```
+
+#### Test
+
+```bash
+# Clean logs.
+> ~/dev/termsurf/logs/overlay.log
+
+# Start test page server.
+cd ~/dev/termsurf/ts4/box-demo && bun run server.ts &
+
+# Open TermSurf.
+open ~/dev/termsurf/ts5/zig-out/TermSurf.app --stderr ~/dev/termsurf/logs/overlay.log
+
+# Pane A:
+cargo run -p web -- http://localhost:9407 --profile work
+
+# Split pane. Pane B:
+cargo run -p web -- http://localhost:9407 --profile personal
+
+# Split pane. Pane C:
+cargo run -p web -- http://localhost:9407 --profile work
+
+# Let all three run for at least 30 seconds.
+
+# Then close Pane A (ctrl-c). Verify Pane C keeps rendering.
+# Then close Pane C. Verify the work server exits.
+# Then close Pane B. Verify the personal server exits.
+```
+
+#### Pass criteria
+
+1. All three panes render the box-demo at 60fps simultaneously.
+2. Exactly two `Chromium Profile Server` processes are running (one for `work`,
+   one for `personal`).
+3. Panes A and C share the same server process (same PID in logs).
+4. Profile data directories exist at
+   `~/.config/termsurf/chromium-profiles/work/` and
+   `~/.config/termsurf/chromium-profiles/personal/`.
+5. The URL bar shows the correct profile name in each pane.
+6. Closing Pane A does not affect Pane C — it keeps rendering at 60fps.
+7. Closing Pane C (the last `work` pane) terminates the `work` server process.
+8. Closing Pane B terminates the `personal` server process.
+9. No crashes in the log.
