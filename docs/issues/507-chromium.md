@@ -1451,3 +1451,69 @@ new CompositorXPC code.
 ```
 
 Boolean flags like `--hidden` (no value) are unaffected.
+
+### Experiment 4: Fix Switch Syntax
+
+Identical to Experiment 3 but with `=`-joined command-line arguments. This is
+the only change — everything else (gateway connect, server lifecycle,
+display_surface handler, logging) is already implemented and waiting.
+
+#### Change
+
+**`ts5/macos/Sources/Ghostty/CompositorXPC.swift` — `spawnServer()`**
+
+Replace:
+
+```swift
+process.arguments = [
+    "--xpc-service", "com.termsurf.xpc-gateway",
+    "--pane-id", paneId.uuidString,
+    "--hidden",
+    "--user-data-dir",
+    "\(home)/.config/termsurf/profiles/default",
+    "--content-shell-host-window-size", "800x600"
+]
+```
+
+With:
+
+```swift
+let profileDir = "\(home)/.config/termsurf/profiles/default"
+process.arguments = [
+    "--xpc-service=com.termsurf.xpc-gateway",
+    "--pane-id=\(paneId.uuidString)",
+    "--hidden",
+    "--user-data-dir=\(profileDir)",
+    "--content-shell-host-window-size=800x600"
+]
+```
+
+No other files change.
+
+#### Pass Criteria
+
+Same as Experiment 3:
+
+1. `cargo run -p web -- http://localhost:9407` shows the box-demo's blue
+   spinning square in the viewport area.
+2. The FPS counter on the page is visible and shows ~60fps.
+3. Quitting `web` (Ctrl+C or q) clears the overlay and kills the server.
+4. All diagnostic output is captured in `~/dev/termsurf/logs/termsurf-app.log`
+   and `~/dev/termsurf/logs/chromium-server.log`.
+5. No crash during normal operation (no resize).
+
+#### Files
+
+| File                                            | Change                   |
+| ----------------------------------------------- | ------------------------ |
+| `ts5/macos/Sources/Ghostty/CompositorXPC.swift` | `=`-joined switch values |
+
+#### Build & Verify
+
+```bash
+cd ts5 && zig build
+open ts5/zig-out/TermSurf.app
+
+# In a TermSurf pane:
+cargo run -p web -- http://localhost:9407
+```
