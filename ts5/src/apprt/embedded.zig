@@ -1683,7 +1683,24 @@ pub const CAPI = struct {
         surface.core_surface.setOverlay(col, row, width, height);
     }
 
-    /// Clear the pink overlay rectangle (Issue 505).
+    /// Set the overlay IOSurface (Issue 508).
+    export fn ghostty_surface_set_overlay_iosurface(
+        surface: *Surface,
+        iosurface: ?*anyopaque,
+    ) void {
+        surface.core_surface.setOverlayIOSurface(iosurface);
+    }
+
+    /// Query cell size in physical pixels (Issue 508).
+    export fn ghostty_surface_get_cell_size(
+        surface: *Surface,
+        width: *u32,
+        height: *u32,
+    ) void {
+        surface.core_surface.getCellSize(width, height);
+    }
+
+    /// Clear the overlay (Issue 505 / Issue 508).
     export fn ghostty_surface_clear_overlay(surface: *Surface) void {
         surface.core_surface.clearOverlay();
     }

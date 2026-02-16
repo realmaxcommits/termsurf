@@ -190,6 +190,12 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
         /// Zero width means no overlay.
         pink_overlay: shaderpkg.PinkOverlay = .{},
 
+        /// IOSurfaceRef for the overlay texture (Issue 508).
+        /// Retained via CFRetain — caller must pair with CFRelease.
+        /// When non-null, drawFrame() creates an MTLTexture from it and
+        /// renders with the overlay pipeline instead of pink_overlay.
+        overlay_iosurface: ?*anyopaque = null,
+
         /// Graphics API state.
         api: GraphicsAPI,
 
@@ -790,6 +796,9 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
         }
 
         pub fn deinit(self: *Self) void {
+            if (self.overlay_iosurface) |ptr| {
+                log.warn("[overlay] deinit: leaked IOSurface ptr={}", .{@intFromPtr(ptr)});
+            }
             if (self.overlay) |*overlay| overlay.deinit(self.alloc);
             self.terminal_state.deinit(self.alloc);
             if (self.search_selected_match) |*m| m.arena.deinit();
@@ -1656,26 +1665,57 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                     .overlay,
                 );
 
-                // Pink overlay (Issue 505).
+                // Overlay (Issue 508 / Issue 505 fallback).
                 if (self.pink_overlay.grid_width > 0 and
                     self.pink_overlay.grid_height > 0)
                 {
+                    log.warn("[overlay] frame: grid=({d},{d} {d}x{d}) iosurface={?}", .{
+                        @as(u32, @intFromFloat(self.pink_overlay.grid_col)),
+                        @as(u32, @intFromFloat(self.pink_overlay.grid_row)),
+                        @as(u32, @intFromFloat(self.pink_overlay.grid_width)),
+                        @as(u32, @intFromFloat(self.pink_overlay.grid_height)),
+                        @as(?usize, if (self.overlay_iosurface) |p| @intFromPtr(p) else null),
+                    });
+
                     if (Buffer(shaderpkg.PinkOverlay).initFill(
                         self.api.imageBufferOptions(),
                         &.{self.pink_overlay},
                     )) |*buf| {
                         defer buf.deinit();
-                        pass.step(.{
-                            .pipeline = self.shaders.pipelines.pink_overlay,
-                            .uniforms = frame.uniforms.buffer,
-                            .buffers = &.{buf.buffer},
-                            .draw = .{
-                                .type = .triangle_strip,
-                                .vertex_count = 4,
-                            },
-                        });
+                        if (self.overlay_iosurface) |iosurface| {
+                            // IOSurface texture path (Issue 508).
+                            const tex_result = Texture.fromIOSurface(self.api.device, iosurface);
+                            log.warn("[overlay] fromIOSurface: success={}", .{tex_result != null});
+                            if (tex_result) |tex| {
+                                defer tex.deinit();
+                                log.warn("[overlay] texture: {d}x{d}", .{ tex.width, tex.height });
+                                pass.step(.{
+                                    .pipeline = self.shaders.pipelines.overlay,
+                                    .uniforms = frame.uniforms.buffer,
+                                    .buffers = &.{buf.buffer},
+                                    .textures = &.{tex},
+                                    .draw = .{
+                                        .type = .triangle_strip,
+                                        .vertex_count = 4,
+                                    },
+                                });
+                                log.warn("[overlay] step submitted", .{});
+                            }
+                        } else {
+                            // Pink fallback (no IOSurface).
+                            log.warn("[overlay] pink fallback", .{});
+                            pass.step(.{
+                                .pipeline = self.shaders.pipelines.pink_overlay,
+                                .uniforms = frame.uniforms.buffer,
+                                .buffers = &.{buf.buffer},
+                                .draw = .{
+                                    .type = .triangle_strip,
+                                    .vertex_count = 4,
+                                },
+                            });
+                        }
                     } else |err| {
-                        log.warn("error creating pink overlay buffer err={}", .{err});
+                        log.warn("[overlay] buffer error: {}", .{err});
                     }
                 }
             }

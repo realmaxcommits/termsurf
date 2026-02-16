@@ -5,6 +5,7 @@
 
 import Foundation
 import GhosttyKit
+import IOSurface
 import os.log
 import ServiceManagement
 
@@ -27,6 +28,9 @@ class CompositorXPC {
 
     /// Weak reference to the app delegate for surface lookup.
     private weak var appDelegate: GhosttyAppDelegate?
+
+    /// Maps pane UUID → current IOSurface (must retain to prevent ARC release).
+    private var currentSurfaces: [UUID: IOSurface] = [:]
 
     private init() {}
 
@@ -146,7 +150,7 @@ class CompositorXPC {
             let peerId = ObjectIdentifier(peer as AnyObject)
             peerPaneIds[peerId] = uuid
 
-            // Look up the surface and set the overlay.
+            // Look up the surface and set the overlay + checkerboard.
             DispatchQueue.main.async { [weak self] in
                 guard let self = self,
                       let surface = self.appDelegate?.findSurface(forUUID: uuid),
@@ -155,6 +159,64 @@ class CompositorXPC {
                     return
                 }
                 ghostty_surface_set_overlay(cSurface, col, row, width, height)
+
+                // Query cell size to compute physical pixel dimensions.
+                var cellWidth: UInt32 = 0
+                var cellHeight: UInt32 = 0
+                ghostty_surface_get_cell_size(cSurface, &cellWidth, &cellHeight)
+
+                let pixelWidth = Int(width) * Int(cellWidth)
+                let pixelHeight = Int(height) * Int(cellHeight)
+
+                guard pixelWidth > 0 && pixelHeight > 0 else { return }
+
+                // Skip if dimensions unchanged.
+                if let existing = self.currentSurfaces[uuid],
+                   IOSurfaceGetWidth(existing) == pixelWidth,
+                   IOSurfaceGetHeight(existing) == pixelHeight {
+                    fputs("[Compositor] Dimension cache hit, skipping rebuild\n", stderr)
+                    return
+                }
+
+                // Create IOSurface at exact Retina pixel dimensions.
+                guard let testSurface = IOSurface(properties: [
+                    .width: pixelWidth,
+                    .height: pixelHeight,
+                    .bytesPerElement: 4,
+                    .bytesPerRow: (pixelWidth * 4 + 15) & ~15,
+                    .pixelFormat: 0x42475241  // 'BGRA'
+                ] as [IOSurfacePropertyKey: Any]) else {
+                    fputs("[Compositor] Failed to create IOSurface \(pixelWidth)x\(pixelHeight)\n", stderr)
+                    return
+                }
+
+                // Fill with blue/dark checkerboard (one checker = one terminal cell).
+                testSurface.lock(options: [], seed: nil)
+                let base = testSurface.baseAddress
+                let bpr = testSurface.bytesPerRow
+                let cw = Int(cellWidth)
+                let ch = Int(cellHeight)
+                for y in 0..<pixelHeight {
+                    for x in 0..<pixelWidth {
+                        let cellX = x / cw
+                        let cellY = y / ch
+                        let isLight = (cellX + cellY) % 2 == 0
+                        let offset = y * bpr + x * 4
+                        if isLight {
+                            // BGRA: blue #4488FF
+                            base.storeBytes(of: UInt32(0xFF_44_88_FF), toByteOffset: offset, as: UInt32.self)
+                        } else {
+                            // BGRA: #222222
+                            base.storeBytes(of: UInt32(0xFF_22_22_22), toByteOffset: offset, as: UInt32.self)
+                        }
+                    }
+                }
+                testSurface.unlock(options: [], seed: nil)
+
+                self.currentSurfaces[uuid] = testSurface
+                let ptr = Unmanaged.passUnretained(testSurface).toOpaque()
+                ghostty_surface_set_overlay_iosurface(cSurface, ptr)
+                fputs("[Compositor] Checkerboard \(pixelWidth)x\(pixelHeight) for pane \(paneIdStr)\n", stderr)
             }
 
         default:
@@ -168,9 +230,10 @@ class CompositorXPC {
         // Remove from peers list.
         peers.removeAll { $0 === peer }
 
-        // Clear overlay for the pane this peer was controlling.
+        // Clear overlay and release IOSurface for the pane this peer was controlling.
         let peerId = ObjectIdentifier(peer as AnyObject)
         if let uuid = peerPaneIds.removeValue(forKey: peerId) {
+            currentSurfaces.removeValue(forKey: uuid)
             DispatchQueue.main.async { [weak self] in
                 guard let self = self,
                       let surface = self.appDelegate?.findSurface(forUUID: uuid),

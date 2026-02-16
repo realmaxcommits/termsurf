@@ -1072,6 +1072,9 @@ void ghostty_surface_set_size(ghostty_surface_t, uint32_t, uint32_t);
 ghostty_surface_size_s ghostty_surface_size(ghostty_surface_t);
 void ghostty_surface_set_overlay(ghostty_surface_t, uint32_t, uint32_t,
                                   uint32_t, uint32_t);
+void ghostty_surface_set_overlay_iosurface(ghostty_surface_t, void*);
+void ghostty_surface_get_cell_size(ghostty_surface_t,
+                                    uint32_t*, uint32_t*);
 void ghostty_surface_clear_overlay(ghostty_surface_t);
 void ghostty_surface_set_color_scheme(ghostty_surface_t,
                                       ghostty_color_scheme_e);

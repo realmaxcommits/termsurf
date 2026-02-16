@@ -917,3 +917,50 @@ cargo run -p web -- http://example.com
    different directions all survive.
 3. Quitting `web` clears the overlay.
 4. No Metal validation assertions in the log file.
+
+#### Result: Pass
+
+All four criteria met. The blue/dark checkerboard renders at Retina resolution,
+resizing works without crashing, quitting `web` clears the overlay, and no Metal
+validation assertions appear in the logs.
+
+**Resize is noticeably slower than the pink texture.** The checkerboard is
+recreated on every resize — the Swift handler creates a new IOSurface, fills
+every pixel in a CPU loop, and passes it to the renderer. The pink overlay is
+just four floats updated instantly. For the eventual Chromium integration,
+resize performance will need to be faster than this — but that's a Chromium-side
+concern (the browser renders to its own IOSurface, we just display it).
+
+## Conclusion
+
+The checkerboard IOSurface overlay works with proper lifetime management and
+correct Metal alignment. The five experiments traced a path from misdiagnosis to
+root cause:
+
+| Experiment | Goal                    | Result                                         |
+| ---------- | ----------------------- | ---------------------------------------------- |
+| 1          | CFRetain/CFRelease fix  | Fail — wrong diagnosis (blamed race condition) |
+| 2          | Diagnostic logging      | Fail — stderr discarded by `open`              |
+| 3          | freopen stderr to file  | Pass — found Metal bytesPerRow alignment crash |
+| 4          | `open --stderr` flag    | Pass — confirmed root cause, no code changes   |
+| 5          | Align bytesPerRow to 16 | Pass — resize works, no crash                  |
+
+**Root cause:** Metal requires `bytesPerRow` to be a multiple of 16 for
+IOSurface-backed textures. The fix was one line: `(pixelWidth * 4 + 15) & ~15`.
+
+**What works now:**
+
+- IOSurface overlay pipeline (vertex shader, fragment shader with texture
+  sampling, `Texture.fromIOSurface`)
+- CFRetain/CFRelease lifetime management across Swift/Zig boundary
+- Retina-resolution checkerboard with correct cell alignment
+- Resize without crash
+- Clean overlay teardown on disconnect
+
+**What's left for Chromium (Issue 507):**
+
+- Replace the checkerboard IOSurface with live Chromium frames
+- Resize performance (CPU-filled checkerboard is slow; Chromium GPU rendering
+  should be faster)
+- The CFRetain/CFRelease and `bytesPerRow` alignment patterns established here
+  apply directly to Chromium IOSurfaces

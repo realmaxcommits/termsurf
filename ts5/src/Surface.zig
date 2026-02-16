@@ -2434,10 +2434,58 @@ pub fn setOverlay(self: *Surface, col: u32, row: u32, width: u32, height: u32) v
     self.queueRender() catch {};
 }
 
-/// Clear the pink overlay (Issue 505).
+extern "c" fn CFRetain(*anyopaque) void;
+extern "c" fn CFRelease(*anyopaque) void;
+
+/// Set the overlay IOSurface (Issue 508).
+/// CFRetains the new surface and CFReleases the old one.
+/// Thread-safe via draw_mutex.
+pub fn setOverlayIOSurface(self: *Surface, iosurface: ?*anyopaque) void {
+    self.renderer.draw_mutex.lock();
+    defer self.renderer.draw_mutex.unlock();
+
+    const old_ptr: ?usize = if (self.renderer.overlay_iosurface) |p| @intFromPtr(p) else null;
+    const new_ptr: ?usize = if (iosurface) |p| @intFromPtr(p) else null;
+    log.warn("[overlay] setIOSurface: old={?} new={?}", .{ old_ptr, new_ptr });
+
+    // Release old surface (Zig's retain).
+    if (self.renderer.overlay_iosurface) |old| {
+        CFRelease(old);
+    }
+
+    // Retain new surface (Zig takes ownership stake).
+    if (iosurface) |new| {
+        CFRetain(new);
+    }
+
+    self.renderer.overlay_iosurface = iosurface;
+    self.queueRender() catch {};
+}
+
+/// Query cell size in physical pixels (Issue 508).
+/// Returns cell_width and cell_height from font metrics.
+pub fn getCellSize(self: *Surface, width: *u32, height: *u32) void {
+    self.renderer.draw_mutex.lock();
+    defer self.renderer.draw_mutex.unlock();
+    width.* = self.renderer.grid_metrics.cell_width;
+    height.* = self.renderer.grid_metrics.cell_height;
+    log.warn("[overlay] getCellSize: {d}x{d}", .{ width.*, height.* });
+}
+
+/// Clear the overlay (Issue 505 / Issue 508).
+/// Releases the IOSurface if one is held.
 pub fn clearOverlay(self: *Surface) void {
     self.renderer.draw_mutex.lock();
     defer self.renderer.draw_mutex.unlock();
+
+    const ptr: ?usize = if (self.renderer.overlay_iosurface) |p| @intFromPtr(p) else null;
+    log.warn("[overlay] clearOverlay: ptr={?}", .{ptr});
+
+    // Release Zig's retain on the IOSurface.
+    if (self.renderer.overlay_iosurface) |old| {
+        CFRelease(old);
+    }
+    self.renderer.overlay_iosurface = null;
     self.renderer.pink_overlay = .{};
     self.queueRender() catch {};
 }
