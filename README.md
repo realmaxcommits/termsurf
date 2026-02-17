@@ -86,14 +86,14 @@ The `web` TUI has two modes:
 | Mode        | Behavior                                     |
 | ----------- | -------------------------------------------- |
 | **Browse**  | Keyboard/mouse goes to the browser (default) |
-| **Control** | Terminal keybindings active                   |
+| **Control** | Terminal keybindings active                  |
 
-| Key              | Action                 |
-| ---------------- | ---------------------- |
-| Esc (Browse)     | Switch to Control mode |
-| Enter (Control)  | Switch to Browse mode  |
-| q (Control)      | Quit                   |
-| Ctrl+C (any)     | Force quit             |
+| Key             | Action                 |
+| --------------- | ---------------------- |
+| Esc (Browse)    | Switch to Control mode |
+| Enter (Control) | Switch to Browse mode  |
+| q (Control)     | Quit                   |
+| Ctrl+C (any)    | Force quit             |
 
 ## Status
 
@@ -106,14 +106,17 @@ via the Content API.
 
 - Terminal emulator (full Ghostty, native Metal rendering)
 - `web` TUI chrome (URL bar, viewport border, status bar via ratatui)
-- GPU overlay pipeline (Metal shader renders at exact grid coordinates)
+- Chromium streaming (real webpages render in terminal panes at 120fps)
+- IOSurface overlay pipeline (zero-copy GPU texture compositing via Metal)
+- Retina resolution and dynamic resize
+- Multi-profile server reuse (one Chromium server per browser profile)
+- Vsync-matched smoothness (120fps oversampling, visually identical to Chrome)
 - XPC gateway daemon (auto-registered LaunchAgent for compositor rendezvous)
-- XPC overlay pipeline (`web` connects to app via gateway, sends coordinates)
 - Pane identification (each pane sets `TERMSURF_PANE_ID` in the environment)
 
 **Not yet started:**
 
-- Chromium Content API embedding (proven feasible in ts4's PoC)
+- In-process Chromium embedding (currently out-of-process streaming over XPC)
 - Browser input forwarding (keyboard, mouse)
 - Navigation (back, forward, reload)
 

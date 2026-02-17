@@ -75,26 +75,34 @@ approach (Ghostty as the app) with the ts4 finding (in-process Chromium works).
 ```
 Ghostty Fork (Zig + Swift macOS shell)
 ├── Terminal panes (in-process, native Ghostty rendering)
-├── Browser panes (in-process Chromium via Content API) [TBD]
-│   ├── BrowserContext "work" (Profile 1)
-│   ├── BrowserContext "personal" (Profile 2)
-│   └── BrowserContext "guest" (Profile N)
-├── XPC client (connects to xpc-gateway, registers anonymous listener)
-│   └── Receives overlay coordinates from `web` processes via direct connection
+├── Browser panes (out-of-process Chromium streaming, in-process is the endgame)
+│   └── IOSurface overlay pipeline — Metal texture from Chromium at 120fps
+├── CompositorXPC (connects to xpc-gateway, manages Chromium servers)
+│   ├── Receives overlay coordinates and URLs from `web` processes
+│   ├── Spawns/reuses Chromium Profile Servers (one per browser profile)
+│   ├── Receives IOSurface Mach ports at 120fps from servers
+│   └── Passes IOSurface + coordinates to renderer via C API
 ├── Metal renderer (inherited from Ghostty)
-│   └── pink_overlay pipeline (Issue 505) — GPU quad at grid coordinates
+│   └── overlay pipeline — composites IOSurface texture at grid coordinates
 ├── Pane/tab/split management (inherited from Ghostty)
 └── Keybindings, configuration (inherited from Ghostty)
+
+Chromium Profile Server (one process per browser profile)
+├── Chromium fork built via Content API (not CEF)
+├── Accepts create_tab/close_tab/resize commands via XPC
+├── Runs FrameSinkVideoCapturer at 120fps (Issue 512 vsync fix)
+├── Sends IOSurface Mach ports to app at 120fps per tab
+└── Auto-exits when last tab closes
 
 xpc-gateway daemon (com.termsurf.xpc-gateway Mach service)
 ├── Tiny Swift binary (~80 lines), auto-registered via SMAppService
 ├── Stores app's anonymous listener endpoint
-└── Returns endpoint to `web` processes (rendezvous only, no ongoing traffic)
+└── Returns endpoint to `web` and Chromium server processes (rendezvous only)
 
 web TUI (Rust/ratatui, runs inside a terminal pane)
 ├── Draws browser chrome (URL bar, viewport border, status bar)
 ├── Connects to xpc-gateway, claims app endpoint, then connects directly to app
-├── Sends viewport grid coordinates on the direct connection
+├── Sends viewport grid coordinates + URL on the direct connection
 └── TERMSURF_PANE_ID env var identifies which pane it's in
 ```
 
@@ -105,23 +113,41 @@ TermSurf additions:
 
 - **XPC gateway** (`xpc-gateway/`) — Tiny Swift daemon that owns the
   `com.termsurf.xpc-gateway` Mach service. The app registers an anonymous
-  listener endpoint here; `web` processes claim it to connect directly to the
-  app. Auto-registered via SMAppService (Issue 506).
-- **XPC client** (`CompositorXPC.swift`) — Connects to the xpc-gateway as a
-  client, creates an anonymous listener, and registers its endpoint. Receives
-  overlay coordinates from `web` processes on the direct connection and passes
-  them to the renderer via the C API.
-- **Pink overlay pipeline** (`pink_overlay` in `shaders.zig` / `shaders.metal`)
-  — Metal shader that renders a solid-color quad at grid coordinates. Proven
-  working with correct alignment (Issue 505, Experiments 1–3).
-- **C API bridge** (`ghostty_surface_set_overlay` / `clear_overlay`) — Lets
-  Swift XPC code set overlay coordinates on the Zig renderer thread-safely via
-  `draw_mutex`.
+  listener endpoint here; `web` and Chromium server processes claim it to
+  connect directly to the app. Auto-registered via SMAppService (Issue 506).
+- **CompositorXPC** (`CompositorXPC.swift`) — Connects to the xpc-gateway,
+  creates an anonymous listener, and registers its endpoint. Manages the full
+  Chromium streaming lifecycle: receives overlay coordinates and URLs from `web`
+  processes, spawns/reuses Chromium Profile Servers (one per browser profile),
+  receives IOSurface Mach ports at 120fps, and passes them to the renderer via
+  the C API (Issues 509–512).
+- **IOSurface overlay pipeline** (`overlay` in `shaders.zig` / `shaders.metal`)
+  — Metal shader that composites a Chromium IOSurface texture at grid
+  coordinates. Zero-copy GPU memory — the texture is a view into the same
+  IOSurface that Chromium rendered into (Issue 508).
+- **120fps vsync oversampling** — The Chromium capturer runs at 120fps (2x the
+  display rate) so there is always a fresh frame at every 60Hz vsync. Combined
+  with the `overlay_surface_changed` flag that ensures every new IOSurface
+  triggers a redraw (Issue 512). See `docs/vsync.md`.
+- **Multi-profile server reuse** — Multiple panes sharing the same browser
+  profile share one Chromium Profile Server process. Panes with different
+  profiles get separate servers. Server auto-exits when its last tab closes
+  (Issue 511).
+- **Dynamic resize** — Pane resize propagates through XPC to the Chromium
+  capturer, which adjusts IOSurface resolution in real time (Issue 510).
+- **Retina resolution** — IOSurface capture at physical pixel dimensions. Cell
+  size queries use font metrics for pixel-perfect grid alignment (Issue 509).
+- **C API bridge** (`ghostty_surface_set_overlay` / `set_overlay_iosurface` /
+  `clear_overlay`) — Lets Swift XPC code set overlay coordinates and IOSurface
+  textures on the Zig renderer thread-safely via `draw_mutex`.
 - **Pane ID propagation** — Each surface sets `TERMSURF_PANE_ID` (UUID) in the
   shell environment, inherited by child processes including `web`.
 
-**Not yet started:** Chromium Content API embedding (proven in ts4's PoC). The
-pink overlay will be replaced with a real IOSurface texture from Chromium.
+**Not yet started:** In-process Chromium embedding via the Content API (proven
+in ts4's PoC). Currently Chromium runs out-of-process as the Chromium Profile
+Server, streaming IOSurface frames over XPC. In-process embedding will eliminate
+XPC overhead and enable single-clock vsync. Also not started: keyboard/mouse
+input forwarding, navigation, and other browser interaction features.
 
 ### Directory Structure
 
@@ -136,11 +162,16 @@ pink overlay will be replaced with a real IOSurface texture from Chromium.
 - `ts5/include/ghostty.h` — libghostty C API headers
 - `ts5/macos/` — Ghostty macOS app (Swift + Xcode)
 - `ts5/xpc-gateway/` — XPC gateway daemon (Swift, ~80 lines)
-- `ts5/xpc-gateway/Sources/main.swift` — Gateway: owns Mach service, stores/returns app endpoint
-- `ts5/macos/Sources/Ghostty/CompositorXPC.swift` — XPC client (connects to gateway, registers endpoint)
-- `ts5/macos/Sources/App/macOS/AppDelegate.swift` — Starts compositor XPC on launch
-- `ts5/macos/com.termsurf.xpc-gateway.plist` — launchd plist (dev, absolute paths)
-- `ts5/macos/com.termsurf.xpc-gateway.bundle.plist` — launchd plist (bundled, BundleProgram)
+- `ts5/xpc-gateway/Sources/main.swift` — Gateway: owns Mach service,
+  stores/returns app endpoint
+- `ts5/macos/Sources/Ghostty/CompositorXPC.swift` — XPC client (connects to
+  gateway, registers endpoint)
+- `ts5/macos/Sources/App/macOS/AppDelegate.swift` — Starts compositor XPC on
+  launch
+- `ts5/macos/com.termsurf.xpc-gateway.plist` — launchd plist (dev, absolute
+  paths)
+- `ts5/macos/com.termsurf.xpc-gateway.bundle.plist` — launchd plist (bundled,
+  BundleProgram)
 - `ts5/build.zig` — Ghostty build system
 - `ts5/build.zig.zon` — Ghostty dependencies
 - `ts5/pkg/` — Platform packages (Linux, macOS, etc.)
@@ -553,6 +584,16 @@ as a testbed before ts1 integration. Changes made to the example:
   per profile)
 - `docs/issues/504-web-tui.md` — `web` TUI chrome (ratatui terminal app)
 - `docs/issues/505-pink-texture.md` — Pink texture overlay (GPU quad via XPC)
+- `docs/issues/506-smappservice.md` — SMAppService for xpc-gateway registration
+- `docs/issues/507-chromium.md` — First Chromium streaming attempt (IOSurface
+  crashes)
+- `docs/issues/508-iosurface-overlay.md` — IOSurface overlay pipeline (Metal
+  texture from IOSurface)
+- `docs/issues/509-chromium.md` — Chromium streaming (retry), Retina resolution
+- `docs/issues/510-two-profiles.md` — Two-profile streaming, dynamic resize
+- `docs/issues/511-three-profiles.md` — Three profiles, server reuse per profile
+- `docs/issues/512-vsync.md` — Vsync desynchronization, 120fps oversampling fix
+- `docs/vsync.md` — Top-level vsync overview and future improvement plan
 
 ### TermSurf 4.0
 
