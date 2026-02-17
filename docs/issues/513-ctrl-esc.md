@@ -530,7 +530,7 @@ Bidirectional mode sync works: bare Esc in browse mode sends `browsing: false`
 to the window, Enter in control mode sends `browsing: true`, and Ctrl+Esc sends
 `browsing: false` from the window back to `web`. Both sides stay in agreement.
 
-#### Conclusion
+## Conclusion
 
 Experiment 1 resolves the issue. Ctrl+Esc works reliably in TermSurf by
 intercepting it at the NSEvent level — before the lossy PTY encoding that caused
