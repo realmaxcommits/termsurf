@@ -248,11 +248,13 @@ NSEvent.addLocalMonitorForEvents(matching: [.keyDown]) { [weak self] event in
 
 The `xpcQueue.sync` dispatch is safe: main → XPC queue, no deadlock risk.
 
-**Set initial mode in `handleSetOverlay`** (when URL is present, after storing
-`peerPaneIds`):
+**Read initial mode from `set_overlay`** (when URL is present, after storing
+`peerPaneIds`). The `browsing` field is included in the `set_overlay` message
+itself — no separate mode message needed on startup:
 
 ```swift
-paneBrowsing[uuid] = true
+let browsing = xpc_dictionary_get_bool(msg, "browsing")
+paneBrowsing[uuid] = browsing
 webPeersForPane[uuid] = peer
 ```
 
@@ -295,11 +297,27 @@ paneBrowsing.removeValue(forKey: uuid)
 webPeersForPane.removeValue(forKey: uuid)
 ```
 
-#### Change 2: web/src/xpc.rs — receive messages from compositor
+#### Change 2: web/src/xpc.rs — initial mode in set_overlay, receive messages
 
-The `web` XPC connection currently uses a no-op event handler. Replace it with
-one that parses incoming `mode_changed` messages and sends them through an
-`mpsc` channel to the event loop.
+**Add `browsing` to `send_set_overlay`.** The initial mode is sent as part of
+the existing `set_overlay` message, not as a separate message. Add a `browsing`
+parameter and set it in the dictionary:
+
+```rust
+pub fn send_set_overlay(&self, pane_id: &str, col: u16, row: u16,
+                        width: u16, height: u16, url: &str, profile: &str,
+                        browsing: bool) {
+    // ... existing dictionary setup ...
+
+    let browsing_key = CString::new("browsing").unwrap();
+    xpc_dictionary_set_bool(dict, browsing_key.as_ptr(), browsing);
+
+    // ... send message ...
+}
+```
+
+**Replace the no-op event handler** with one that parses incoming `mode_changed`
+messages and sends them through an `mpsc` channel to the event loop.
 
 **Add message enum and channel receiver to the struct:**
 
@@ -393,7 +411,20 @@ Add `xpc_dictionary_set_bool` to the FFI declarations:
 fn xpc_dictionary_set_bool(dict: XpcObjectT, key: *const c_char, value: bool);
 ```
 
-#### Change 3: web/src/main.rs — send and receive mode changes
+#### Change 3: web/src/main.rs — initial mode and mode changes
+
+**Pass initial mode in `send_set_overlay`.** The existing call site (line 93)
+adds `true` for `browsing` since `web` starts in browse mode:
+
+```rust
+conn.send_set_overlay(
+    pid,
+    viewport_rect.x, viewport_rect.y,
+    viewport_rect.width, viewport_rect.height,
+    &url, &profile,
+    mode == Mode::Browse,
+);
+```
 
 **Send mode changes to compositor when `web` changes mode locally.** Any
 transition out of browse mode sends `browsing: false`. Any transition into
@@ -444,13 +475,15 @@ if let Some(ref conn) = compositor {
 
 #### Initial mode agreement
 
-Both sides start in browse mode without explicit communication:
+The initial mode is explicit in the `set_overlay` message:
 
-- `web` initializes `mode = Mode::Browse` (line 80 of main.rs)
-- CompositorXPC sets `paneBrowsing[uuid] = true` when it receives `set_overlay`
-  with a URL
+- `web` sends `browsing: true` in `set_overlay` (derived from
+  `mode ==
+  Mode::Browse`)
+- CompositorXPC reads `browsing` from the message and sets `paneBrowsing[uuid]`
 
-No initial sync message needed.
+No separate sync message needed. The initial state is part of the same message
+that establishes the overlay.
 
 #### Thread safety
 
