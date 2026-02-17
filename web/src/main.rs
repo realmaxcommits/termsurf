@@ -98,6 +98,7 @@ fn main() -> io::Result<()> {
                     viewport_rect.height,
                     &url,
                     &profile,
+                    mode == Mode::Browse,
                 );
             }
             last_viewport = viewport_rect;
@@ -116,13 +117,32 @@ fn main() -> io::Result<()> {
                     Mode::Browse => {
                         if key.code == KeyCode::Esc {
                             mode = Mode::Control;
+                            if let (Some(ref conn), Some(ref pid)) = (&compositor, &pane_id) {
+                                conn.send_mode_changed(pid, false);
+                            }
                         }
                     }
                     Mode::Control => match key.code {
                         KeyCode::Char('q') => break,
-                        KeyCode::Enter => mode = Mode::Browse,
+                        KeyCode::Enter => {
+                            mode = Mode::Browse;
+                            if let (Some(ref conn), Some(ref pid)) = (&compositor, &pane_id) {
+                                conn.send_mode_changed(pid, true);
+                            }
+                        }
                         _ => {}
                     },
+                }
+            }
+        }
+
+        // Drain incoming messages from compositor (Issue 513).
+        if let Some(ref conn) = compositor {
+            while let Some(msg) = conn.try_recv() {
+                match msg {
+                    xpc::CompositorMessage::ModeChanged { browsing } => {
+                        mode = if browsing { Mode::Browse } else { Mode::Control };
+                    }
                 }
             }
         }

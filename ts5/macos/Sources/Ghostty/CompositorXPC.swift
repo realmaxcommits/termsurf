@@ -7,6 +7,7 @@
 // Spawns servers, handles server_register/tab_ready/display_surface messages,
 // imports IOSurface from Mach ports at 60fps.
 
+import AppKit
 import Foundation
 import GhosttyKit
 import IOSurface
@@ -54,6 +55,16 @@ class CompositorXPC {
     /// Maps pane UUID → pending pixel size for create_tab (Issue 509 Experiment 4).
     private var pendingPixelSizes: [UUID: (UInt64, UInt64)] = [:]
 
+    /// Panes currently in browse mode (window intercepts keys).
+    /// Absent or false = not browsing (keys pass through to terminal).
+    private var paneBrowsing: [UUID: Bool] = [:]
+
+    /// Maps pane UUID → web peer connection (for sending mode_changed back).
+    private var webPeersForPane: [UUID: xpc_connection_t] = [:]
+
+    /// Serial queue for all XPC state.
+    private let xpcQueue = DispatchQueue(label: "com.termsurf.compositor.xpc")
+
     private init() {}
 
     /// Connect to the xpc-gateway and register our anonymous listener endpoint.
@@ -83,10 +94,37 @@ class CompositorXPC {
 
         logger.info("Connecting to xpc-gateway")
 
-        let queue = DispatchQueue(label: "com.termsurf.compositor.xpc")
+        // Register local event monitor for Ctrl+Esc interception (Issue 513).
+        // Must be registered before AppDelegate's monitor so it fires first.
+        NSEvent.addLocalMonitorForEvents(matching: [.keyDown]) { [weak self] event in
+            guard let self = self else { return event }
+
+            // Only intercept Ctrl+Esc.
+            guard event.keyCode == 0x35,
+                  event.modifierFlags.contains(.control) else { return event }
+
+            // Two-level focus check (from ts1 Issue 104):
+            // 1. Our window must be the key window (covers inactive tabs too).
+            guard let window = NSApp.keyWindow, window.isKeyWindow else { return event }
+            // 2. The first responder must be a SurfaceView (the focused pane).
+            guard let surfaceView = window.firstResponder
+                    as? Ghostty.SurfaceView else { return event }
+            let uuid = surfaceView.id
+
+            // Check and update mode on the XPC queue (where all state lives).
+            let consumed = self.xpcQueue.sync { () -> Bool in
+                guard self.paneBrowsing[uuid] == true else { return false }
+                self.paneBrowsing[uuid] = false
+                self.sendModeChanged(paneUUID: uuid, browsing: false)
+                fputs("[Compositor] Ctrl+Esc: exit browse for pane \(uuid)\n", stderr)
+                return true
+            }
+
+            return consumed ? nil : event
+        }
 
         // Step 1: Create anonymous listener for direct web connections.
-        let listener = xpc_connection_create(nil, queue)
+        let listener = xpc_connection_create(nil, xpcQueue)
         anonymousListener = listener
 
         xpc_connection_set_event_handler(listener) { [weak self] peer in
@@ -108,7 +146,7 @@ class CompositorXPC {
                         }
                     }
                 }
-                xpc_connection_set_target_queue(peerConn, queue)
+                xpc_connection_set_target_queue(peerConn, xpcQueue)
                 xpc_connection_resume(peerConn)
             } else if xpc_get_type(peer) == XPC_TYPE_ERROR {
                 fputs("[Compositor] Anonymous listener error\n", stderr)
@@ -119,7 +157,7 @@ class CompositorXPC {
         // Step 2: Connect to the gateway daemon as a client.
         let gateway = xpc_connection_create_mach_service(
             "com.termsurf.xpc-gateway",
-            queue,
+            xpcQueue,
             0)  // no LISTENER flag — we're a client
 
         gatewayConn = gateway
@@ -165,6 +203,9 @@ class CompositorXPC {
         case "display_surface":
             handleDisplaySurface(msg, from: peer)
 
+        case "mode_changed":
+            handleModeChanged(msg, from: peer)
+
         default:
             fputs("[Compositor] unknown action: \(action)\n", stderr)
         }
@@ -191,6 +232,11 @@ class CompositorXPC {
         // Remember which pane this peer controls (for cleanup on disconnect).
         let peerId = ObjectIdentifier(peer as AnyObject)
         peerPaneIds[peerId] = uuid
+
+        // Read initial browse mode and store web peer (Issue 513).
+        let browsing = xpc_dictionary_get_bool(msg, "browsing")
+        paneBrowsing[uuid] = browsing
+        webPeersForPane[uuid] = peer
 
         // Check for URL field — if present, spawn or reuse Chromium server.
         let urlPtr = xpc_dictionary_get_string(msg, "url")
@@ -414,6 +460,26 @@ class CompositorXPC {
         ghostty_surface_set_overlay_iosurface(cSurface, ptr)
     }
 
+    // MARK: - Mode synchronization (Issue 513)
+
+    private func handleModeChanged(_ msg: xpc_object_t, from peer: xpc_connection_t) {
+        guard let paneIdPtr = xpc_dictionary_get_string(msg, "pane_id") else { return }
+        let paneIdStr = String(cString: paneIdPtr)
+        let browsing = xpc_dictionary_get_bool(msg, "browsing")
+        guard let uuid = UUID(uuidString: paneIdStr) else { return }
+
+        paneBrowsing[uuid] = browsing
+        fputs("[Compositor] mode_changed from web: browsing=\(browsing) for pane \(paneIdStr)\n", stderr)
+    }
+
+    private func sendModeChanged(paneUUID: UUID, browsing: Bool) {
+        guard let peer = webPeersForPane[paneUUID] else { return }
+        let msg = xpc_dictionary_create(nil, nil, 0)
+        xpc_dictionary_set_string(msg, "action", "mode_changed")
+        xpc_dictionary_set_bool(msg, "browsing", browsing)
+        xpc_connection_send_message(peer, msg)
+    }
+
     // MARK: - Server spawning
 
     private func spawnServer(forProfile profile: String) {
@@ -462,6 +528,8 @@ class CompositorXPC {
             currentSurfaces.removeValue(forKey: uuid)
             pendingPixelSizes.removeValue(forKey: uuid)
             pendingTabs.removeValue(forKey: uuid)
+            paneBrowsing.removeValue(forKey: uuid)
+            webPeersForPane.removeValue(forKey: uuid)
             if let cSurface = cachedCSurfaces.removeValue(forKey: uuid) {
                 ghostty_surface_clear_overlay(cSurface)
             }

@@ -38,6 +38,8 @@ extern "C" {
     fn xpc_dictionary_set_uint64(dict: XpcObjectT, key: *const c_char, value: u64);
     fn xpc_dictionary_get_value(dict: XpcObjectT, key: *const c_char) -> XpcObjectT;
     fn xpc_dictionary_get_string(dict: XpcObjectT, key: *const c_char) -> *const c_char;
+    fn xpc_dictionary_get_bool(dict: XpcObjectT, key: *const c_char) -> bool;
+    fn xpc_dictionary_set_bool(dict: XpcObjectT, key: *const c_char, value: bool);
     fn xpc_get_type(object: XpcObjectT) -> *const c_void;
 }
 
@@ -49,9 +51,15 @@ extern "C" {
 
 // --- Public API ---
 
+/// Messages received from the compositor.
+pub enum CompositorMessage {
+    ModeChanged { browsing: bool },
+}
+
 /// A direct connection to the TermSurf app via its anonymous XPC listener.
 pub struct CompositorConnection {
     raw: XpcConnectionT,
+    rx: std::sync::mpsc::Receiver<CompositorMessage>,
 }
 
 unsafe impl Send for CompositorConnection {}
@@ -149,12 +157,31 @@ impl CompositorConnection {
             return None;
         }
 
-        // Set event handler and resume the direct connection.
-        let block2 = block2::RcBlock::new(|_event: XpcObjectT| {});
+        // Set event handler that parses incoming messages (Issue 513).
+        let (tx, rx) = std::sync::mpsc::channel();
+        let handler_block = block2::RcBlock::new(move |event: XpcObjectT| {
+            if event.is_null() { return; }
+            let event_type = unsafe { xpc_get_type(event) };
+            let dict_type = unsafe { &XPC_TYPE_DICTIONARY as *const c_void };
+            if event_type != dict_type { return; }
+
+            let action_key = CString::new("action").unwrap();
+            let action_ptr = unsafe { xpc_dictionary_get_string(event, action_key.as_ptr()) };
+            if action_ptr.is_null() { return; }
+            let action = unsafe { std::ffi::CStr::from_ptr(action_ptr) }
+                .to_str()
+                .unwrap_or("");
+
+            if action == "mode_changed" {
+                let browsing_key = CString::new("browsing").unwrap();
+                let browsing = unsafe { xpc_dictionary_get_bool(event, browsing_key.as_ptr()) };
+                let _ = tx.send(CompositorMessage::ModeChanged { browsing });
+            }
+        });
         unsafe {
             xpc_connection_set_event_handler(
                 app_conn,
-                &*block2 as *const _ as *mut c_void,
+                &*handler_block as *const _ as *mut c_void,
             );
         }
         unsafe { xpc_connection_resume(app_conn) };
@@ -162,11 +189,11 @@ impl CompositorConnection {
         // Done with the gateway connection.
         unsafe { xpc_connection_cancel(gateway); xpc_release(gateway) };
 
-        Some(Self { raw: app_conn })
+        Some(Self { raw: app_conn, rx })
     }
 
     /// Send a `set_overlay` message to the app (direct connection).
-    pub fn send_set_overlay(&self, pane_id: &str, col: u16, row: u16, width: u16, height: u16, url: &str, profile: &str) {
+    pub fn send_set_overlay(&self, pane_id: &str, col: u16, row: u16, width: u16, height: u16, url: &str, profile: &str, browsing: bool) {
         let dict = unsafe {
             xpc_dictionary_create(std::ptr::null(), std::ptr::null(), 0)
         };
@@ -198,6 +225,38 @@ impl CompositorConnection {
             let profile_key = CString::new("profile").unwrap();
             let profile_c = CString::new(profile).unwrap();
             xpc_dictionary_set_string(dict, profile_key.as_ptr(), profile_c.as_ptr());
+
+            let browsing_key = CString::new("browsing").unwrap();
+            xpc_dictionary_set_bool(dict, browsing_key.as_ptr(), browsing);
+
+            xpc_connection_send_message(self.raw, dict);
+            xpc_release(dict);
+        }
+    }
+
+    /// Poll for an incoming message from the compositor (non-blocking).
+    pub fn try_recv(&self) -> Option<CompositorMessage> {
+        self.rx.try_recv().ok()
+    }
+
+    /// Notify the compositor of a mode change.
+    pub fn send_mode_changed(&self, pane_id: &str, browsing: bool) {
+        let dict = unsafe {
+            xpc_dictionary_create(std::ptr::null(), std::ptr::null(), 0)
+        };
+        if dict.is_null() { return; }
+
+        unsafe {
+            let action_key = CString::new("action").unwrap();
+            let action_val = CString::new("mode_changed").unwrap();
+            xpc_dictionary_set_string(dict, action_key.as_ptr(), action_val.as_ptr());
+
+            let pane_key = CString::new("pane_id").unwrap();
+            let pane_val = CString::new(pane_id).unwrap();
+            xpc_dictionary_set_string(dict, pane_key.as_ptr(), pane_val.as_ptr());
+
+            let browsing_key = CString::new("browsing").unwrap();
+            xpc_dictionary_set_bool(dict, browsing_key.as_ptr(), browsing);
 
             xpc_connection_send_message(self.raw, dict);
             xpc_release(dict);
