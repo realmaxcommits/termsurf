@@ -140,3 +140,315 @@ The `web` TUI remains responsible for browser chrome (URL bar, status bar,
 viewport border) and control mode keybindings (`q` to quit, Enter to browse).
 The window is responsible for browser input (all keypresses and mouse events in
 browse mode).
+
+## Experiments
+
+### Experiment 1: Ctrl+Esc and bidirectional mode sync
+
+Make Ctrl+Esc work by intercepting it at the window level. Establish
+bidirectional mode synchronization between CompositorXPC and `web` so both sides
+always agree on the current mode.
+
+#### Key event flow
+
+macOS dispatches key events through local event monitors before the normal
+responder chain (performKeyEquivalent → keyDown). AppDelegate already registers
+a local event monitor for app-level shortcuts. CompositorXPC will register its
+own monitor **first** (it runs before AppDelegate's registration in
+`applicationDidFinishLaunching`). When the monitor returns `nil`, the event is
+consumed — subsequent monitors and the responder chain never see it.
+
+```
+NSEvent (Ctrl+Esc)
+    ↓
+CompositorXPC local event monitor (registered first)
+    ├─ Ctrl+Esc + focused pane in browse mode → consume (return nil)
+    └─ Anything else → pass through (return event)
+    ↓
+AppDelegate local event monitor (registered second)
+    ↓
+SurfaceView.performKeyEquivalent() → keyDown() → PTY
+```
+
+When CompositorXPC consumes Ctrl+Esc, it never reaches the PTY. The terminal
+encoding problem from the Problem section is bypassed entirely — `NSEvent` gives
+us `keyCode == 0x35` (Escape) and `modifierFlags.contains(.control)` directly.
+
+#### Change 1: CompositorXPC.swift — mode tracking and Ctrl+Esc interception
+
+**New state properties** (after `pendingPixelSizes`):
+
+```swift
+/// Maps pane UUID → mode ("browse" or "control").
+private var paneModes: [UUID: String] = [:]
+
+/// Maps pane UUID → web peer connection (for sending mode_changed back).
+private var webPeersForPane: [UUID: xpc_connection_t] = [:]
+```
+
+**Store the XPC queue as a property** (replace the local `let queue` in
+`start()`):
+
+```swift
+private let xpcQueue = DispatchQueue(label: "com.termsurf.compositor.xpc")
+```
+
+Use `xpcQueue` everywhere `queue` was used in `start()`.
+
+**Register the local event monitor** in `start()`, before the anonymous listener
+setup:
+
+```swift
+NSEvent.addLocalMonitorForEvents(matching: [.keyDown]) { [weak self] event in
+    guard let self = self else { return event }
+
+    // Only intercept Ctrl+Esc.
+    guard event.keyCode == 0x35,
+          event.modifierFlags.contains(.control) else { return event }
+
+    // Get the focused surface UUID (main thread — safe here).
+    guard let surfaceView = NSApp.keyWindow?.firstResponder
+            as? Ghostty.SurfaceView else { return event }
+    let uuid = surfaceView.id
+
+    // Check and update mode on the XPC queue (where all state lives).
+    let consumed = self.xpcQueue.sync { () -> Bool in
+        guard self.paneModes[uuid] == "browse" else { return false }
+        self.paneModes[uuid] = "control"
+        self.sendModeChanged(paneUUID: uuid, mode: "control")
+        fputs("[Compositor] Ctrl+Esc: browse → control for pane \(uuid)\n", stderr)
+        return true
+    }
+
+    return consumed ? nil : event
+}
+```
+
+The `xpcQueue.sync` dispatch is safe: main → XPC queue, no deadlock risk.
+
+**Set initial mode in `handleSetOverlay`** (when URL is present, after storing
+`peerPaneIds`):
+
+```swift
+paneModes[uuid] = "browse"
+webPeersForPane[uuid] = peer
+```
+
+**Handle `mode_changed` from `web`** (add case to `handleMessage` switch):
+
+```swift
+case "mode_changed":
+    handleModeChanged(msg, from: peer)
+```
+
+```swift
+private func handleModeChanged(_ msg: xpc_object_t, from peer: xpc_connection_t) {
+    guard let paneIdPtr = xpc_dictionary_get_string(msg, "pane_id"),
+          let modePtr = xpc_dictionary_get_string(msg, "mode") else { return }
+    let paneIdStr = String(cString: paneIdPtr)
+    let mode = String(cString: modePtr)
+    guard let uuid = UUID(uuidString: paneIdStr) else { return }
+
+    paneModes[uuid] = mode
+    fputs("[Compositor] mode_changed from web: \(mode) for pane \(paneIdStr)\n", stderr)
+}
+```
+
+**Send mode_changed to `web`** (new helper):
+
+```swift
+private func sendModeChanged(paneUUID: UUID, mode: String) {
+    guard let peer = webPeersForPane[paneUUID] else { return }
+    let msg = xpc_dictionary_create(nil, nil, 0)
+    xpc_dictionary_set_string(msg, "action", "mode_changed")
+    xpc_dictionary_set_string(msg, "mode", mode)
+    xpc_connection_send_message(peer, msg)
+}
+```
+
+**Clean up on disconnect** (add to the `if let uuid` block in
+`handleDisconnect`):
+
+```swift
+paneModes.removeValue(forKey: uuid)
+webPeersForPane.removeValue(forKey: uuid)
+```
+
+#### Change 2: web/src/xpc.rs — receive messages from compositor
+
+The `web` XPC connection currently uses a no-op event handler. Replace it with
+one that parses incoming `mode_changed` messages and sends them through an
+`mpsc` channel to the event loop.
+
+**Add message enum and channel receiver to the struct:**
+
+```rust
+pub enum CompositorMessage {
+    ModeChanged(String), // "browse" or "control"
+}
+
+pub struct CompositorConnection {
+    raw: XpcConnectionT,
+    rx: std::sync::mpsc::Receiver<CompositorMessage>,
+}
+```
+
+**In `connect()`, create the channel and wire up the event handler:**
+
+```rust
+let (tx, rx) = std::sync::mpsc::channel();
+
+let block2 = block2::RcBlock::new(move |event: XpcObjectT| {
+    if event.is_null() { return; }
+    let event_type = unsafe { xpc_get_type(event) };
+    let dict_type = unsafe { &XPC_TYPE_DICTIONARY as *const c_void };
+    if event_type != dict_type { return; }
+
+    let action_key = CString::new("action").unwrap();
+    let action_ptr = unsafe { xpc_dictionary_get_string(event, action_key.as_ptr()) };
+    if action_ptr.is_null() { return; }
+    let action = unsafe { std::ffi::CStr::from_ptr(action_ptr) }
+        .to_str()
+        .unwrap_or("");
+
+    if action == "mode_changed" {
+        let mode_key = CString::new("mode").unwrap();
+        let mode_ptr = unsafe { xpc_dictionary_get_string(event, mode_key.as_ptr()) };
+        if !mode_ptr.is_null() {
+            let mode = unsafe { std::ffi::CStr::from_ptr(mode_ptr) }
+                .to_str()
+                .unwrap_or("")
+                .to_string();
+            let _ = tx.send(CompositorMessage::ModeChanged(mode));
+        }
+    }
+});
+```
+
+Replace the existing no-op `block2` with this. Store `rx` in the struct:
+
+```rust
+Some(Self { raw: app_conn, rx })
+```
+
+**Add `try_recv` method:**
+
+```rust
+pub fn try_recv(&self) -> Option<CompositorMessage> {
+    self.rx.try_recv().ok()
+}
+```
+
+**Add `send_mode_changed` method:**
+
+```rust
+pub fn send_mode_changed(&self, pane_id: &str, mode: &str) {
+    let dict = unsafe {
+        xpc_dictionary_create(std::ptr::null(), std::ptr::null(), 0)
+    };
+    if dict.is_null() { return; }
+
+    unsafe {
+        let action_key = CString::new("action").unwrap();
+        let action_val = CString::new("mode_changed").unwrap();
+        xpc_dictionary_set_string(dict, action_key.as_ptr(), action_val.as_ptr());
+
+        let pane_key = CString::new("pane_id").unwrap();
+        let pane_val = CString::new(pane_id).unwrap();
+        xpc_dictionary_set_string(dict, pane_key.as_ptr(), pane_val.as_ptr());
+
+        let mode_key = CString::new("mode").unwrap();
+        let mode_val = CString::new(mode).unwrap();
+        xpc_dictionary_set_string(dict, mode_key.as_ptr(), mode_val.as_ptr());
+
+        xpc_connection_send_message(self.raw, dict);
+        xpc_release(dict);
+    }
+}
+```
+
+#### Change 3: web/src/main.rs — send and receive mode changes
+
+**Send mode changes to compositor when `web` changes mode locally.** In the
+`Mode::Browse` match arm:
+
+```rust
+Mode::Browse => {
+    if key.code == KeyCode::Esc {
+        mode = Mode::Control;
+        if let (Some(ref conn), Some(ref pid)) = (&compositor, &pane_id) {
+            conn.send_mode_changed(pid, "control");
+        }
+    }
+}
+```
+
+In the `Mode::Control` match arm:
+
+```rust
+KeyCode::Enter => {
+    mode = Mode::Browse;
+    if let (Some(ref conn), Some(ref pid)) = (&compositor, &pane_id) {
+        conn.send_mode_changed(pid, "browse");
+    }
+}
+```
+
+**Receive mode changes from compositor.** After the `event::poll` block, drain
+incoming messages:
+
+```rust
+if let Some(ref conn) = compositor {
+    while let Some(msg) = conn.try_recv() {
+        match msg {
+            xpc::CompositorMessage::ModeChanged(m) => {
+                mode = if m == "browse" { Mode::Browse } else { Mode::Control };
+            }
+        }
+    }
+}
+```
+
+#### Initial mode agreement
+
+Both sides start in browse mode without explicit communication:
+
+- `web` initializes `mode = Mode::Browse` (line 80 of main.rs)
+- CompositorXPC sets `paneModes[uuid] = "browse"` when it receives `set_overlay`
+  with a URL
+
+No initial sync message needed.
+
+#### Thread safety
+
+- **CompositorXPC state** lives on the `xpcQueue` serial queue. All XPC handlers
+  fire there. The local event monitor (main thread) dispatches to
+  `xpcQueue.sync` for reads and writes.
+- **`web` state** lives on the main thread (single-threaded event loop). The
+  `mpsc::Receiver` is polled synchronously each iteration. The `mpsc::Sender` is
+  called from the XPC connection's callback queue — this is safe because
+  `mpsc::Sender` is `Send`.
+
+#### Verification
+
+```bash
+cd ts4/box-demo && bun run server.ts &
+open ts5/zig-out/TermSurf.app --stderr ~/dev/termsurf/logs/overlay.log
+# In a TermSurf pane:
+cargo run -p web -- http://localhost:9407
+```
+
+Test matrix:
+
+| Action                           | Expected                                                                                                        |
+| -------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| Press Ctrl+Esc in browse mode    | Mode switches to control. `web` status bar updates. Log: `Ctrl+Esc: browse → control`.                          |
+| Press Ctrl+Esc in control mode   | No effect (passes through to terminal).                                                                         |
+| Press bare Esc in browse mode    | Mode switches to control (handled by `web`). CompositorXPC receives `mode_changed`.                             |
+| Press Enter in control mode      | Mode switches to browse. CompositorXPC receives `mode_changed`.                                                 |
+| Press Ctrl+Esc again after Enter | Mode switches back to control (window intercepts it).                                                           |
+| Run `web` in WezTerm             | Bare Esc and Enter still work. Ctrl+Esc depends on WezTerm's encoding (may or may not work — not a regression). |
+| Quit `web` with `q`              | Clean disconnect. Mode state cleaned up. No crash.                                                              |
+
+Pass: Ctrl+Esc switches from browse to control in TermSurf, and mode stays
+synchronized between window and TUI across all transitions.
