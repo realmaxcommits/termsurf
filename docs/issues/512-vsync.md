@@ -262,3 +262,95 @@ When Chromium is embedded directly via the Content API, the renderer can use the
 same display link to drive both terminal and browser rendering. No XPC latency,
 no independent clocks, no wasted frames. The streaming architecture was always a
 stepping stone — this is what eliminates the vsync problem permanently.
+
+## Experiments
+
+### Experiment 1: 120fps oversampling
+
+Combine fixes #1 and #2: ensure every IOSurface change triggers a redraw, then
+double the capture rate so there is always a fresh frame at every vsync. Goal:
+visually indistinguishable from native Chromium.
+
+#### Change 1: `overlay_surface_changed` flag (generic.zig)
+
+Add a boolean field to the renderer state:
+
+```zig
+/// Set when a new overlay IOSurface arrives. Cleared after each drawFrame.
+overlay_surface_changed: bool = false,
+```
+
+Add it after the existing `overlay_iosurface` field (line 197 of `generic.zig`).
+
+In `setOverlayIOSurface` (line 2443 of `Surface.zig`), set the flag before
+calling `queueRender`:
+
+```zig
+self.renderer.overlay_iosurface = iosurface;
+self.renderer.overlay_surface_changed = true;
+self.queueRender() catch {};
+```
+
+In `drawFrame` (line 1454 of `generic.zig`), include the flag in `needs_redraw`
+and clear it:
+
+```zig
+const overlay_changed = self.overlay_surface_changed;
+self.overlay_surface_changed = false;
+
+const needs_redraw =
+    size_changed or
+    self.cells_rebuilt or
+    self.hasAnimations() or
+    overlay_changed or
+    sync;
+```
+
+Read the flag and clear it before the `needs_redraw` check, so it is always
+consumed regardless of whether other conditions are true. The field is protected
+by `draw_mutex` (the same lock that guards `setOverlayIOSurface`).
+
+#### Change 2: 120fps capture (shell_video_consumer.cc)
+
+In `Attach()` (line 87 of `shell_video_consumer.cc`), change:
+
+```cpp
+capturer_->SetMinCapturePeriod(base::Milliseconds(16));
+```
+
+to:
+
+```cpp
+capturer_->SetMinCapturePeriod(base::Milliseconds(8));
+```
+
+This doubles the capture rate from 60fps to 120fps. At 2x the display rate,
+there is always a frame no older than ~8ms at every vsync.
+
+#### Chromium branch
+
+Create `146.0.7650.0-issue-512` from `146.0.7650.0-issue-511` (inherits per-tab
+pane routing and auto-exit). The only Chromium change is the one-line capture
+period.
+
+```bash
+cd chromium/src
+git checkout -b 146.0.7650.0-issue-512 146.0.7650.0-issue-511
+# Edit shell_video_consumer.cc
+autoninja -C out/Default chromium_profile_server
+```
+
+#### Verification
+
+```bash
+cd ts4/box-demo && bun run server.ts &
+open ts5/zig-out/TermSurf.app --stderr ~/dev/termsurf/logs/overlay.log
+# In a TermSurf pane:
+cargo run -p web -- http://localhost:9407
+```
+
+Open native Chromium side by side with TermSurf, both showing the box-demo
+spinning square. Compare visual smoothness for 30+ seconds.
+
+Pass: TermSurf looks visually indistinguishable from native Chromium. No
+perceptible micro-stutter or uneven cadence.
