@@ -171,3 +171,90 @@ This should be done regardless of which drag approach (A or B) is used.
    it. If not, explore Approach B with the knowledge gained from logging.
 
 ## Experiments
+
+### Experiment 1: Focus state for input feedback
+
+Tell Chromium the page is focused and active so Blink renders selection
+highlights, blinking carets, and focus rings. Verify with google.com — the
+search input auto-focuses on load; when the page is "active" it shows a blue
+focus ring and blinking cursor.
+
+#### Root cause
+
+The Chromium Profile Server never tells the renderer it has focus. On Mac,
+`Shell::ActivateContents` normally does three things:
+
+```cpp
+top_contents->Focus();                        // focus the RenderWidgetHost
+[window makeKeyAndOrderFront:nil];            // make window key (active)
+[NSApp activateIgnoringOtherApps:YES];        // make app active
+```
+
+Steps 2 and 3 drive `RenderWidgetHostViewMac::SetActive(true)`, which calls
+`UpdateActiveState(true)` → `host()->delegate()->SendActiveState(true)` →
+`RenderWidgetHostImpl::SetActive(true)` → Blink's `FocusController::SetActive`.
+Without this, `FocusController::IsActive()` returns false and Blink skips
+painting selection highlights and disables the caret.
+
+In headless mode (no NSWindow), `RenderWidgetHostViewMac` has special handling:
+calling `Focus()` triggers `OnFirstResponderChanged(true)` asynchronously, which
+calls `host()->GotFocus()` when `IsHeadless()` is true. But `GotFocus` only sets
+the focused frame — it doesn't set the page active. We need both.
+
+#### Changes
+
+##### shell_browser_main_parts.cc
+
+In `CreateTab`, after the cursor callback registration (line ~367), add:
+
+```cpp
+// Tell the renderer this page is focused and active so Blink renders
+// selection highlights, blinking carets, and focus rings.
+if (auto* view = shell->web_contents()->GetRenderWidgetHostView()) {
+    view->Focus();
+    view->SetActive(true);
+}
+```
+
+`Focus()` makes the main frame the focused frame (headless mode handles the
+missing NSWindow). `SetActive(true)` sets `FocusController::IsActive()` to true
+so Blink paints interactive feedback.
+
+No Swift or Rust changes needed. Single file, two lines.
+
+#### Verification
+
+```bash
+open ts5/zig-out/TermSurf.app --stderr ~/dev/termsurf/logs/overlay.log
+# In a TermSurf pane:
+cargo run -p web -- https://google.com
+```
+
+1. Enter browse mode. The Google search input should show a blue focus ring and
+   blinking text cursor — proving the page is active and focused.
+2. Click inside the search input — focus ring should remain, cursor should be at
+   the click position.
+3. Move mouse over "Gmail" or "Images" links — they should show hover highlights
+   (already working from Issue 514, but confirms focus didn't break anything).
+
+Pass: Google search input shows focus ring and blinking cursor on page load.
+
+#### Result: Partial pass
+
+The Google search input shows a blinking cursor on page load — proving
+`Focus()` + `SetActive(true)` correctly propagate through `FocusController` to
+enable carets and focus rings. Blink now considers the page active and focused.
+
+However, when pressing Esc to exit browse mode, the blinking cursor persists.
+The page stays focused because we only set focus once at tab creation and never
+send unfocus. The focus lifecycle needs to track mode changes:
+
+- **Enter browse mode** (or focus a pane already in browse mode) → tell
+  Chromium the view is focused and active.
+- **Exit browse mode** (or focus a different pane) → tell Chromium the view
+  lost focus and is inactive.
+
+This requires a new XPC message (`focus_changed`) from CompositorXPC to the
+Chromium server, triggered by mode transitions and pane focus changes. The
+`CreateTab` focus call should be removed — focus should only be set when the
+user is actually interacting with the page, not unconditionally at creation.
