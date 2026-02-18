@@ -1713,3 +1713,82 @@ Two issues noted for future experiments:
    work — the blinking cursor and focus ring are rendered by Chromium, which
    needs to know the input is active. This is likely a keyboard input issue
    (Issue 515+), not a mouse issue.
+
+### Experiment 10: Fix drag button for text selection
+
+Text selection doesn't work because `HandleMouseMove` hardcodes the button to
+`kNoButton`. Chromium's selection controller needs `kMouseMove` events with
+`button == kLeft` during a drag for `HandleMouseDraggedEvent()` to fire and
+extend the selection.
+
+#### Root cause
+
+The app side is correct. CompositorXPC sends `.leftMouseDragged` as `mouse_move`
+with `kLeftButtonDown` (32) in the modifiers — exactly what Chromium expects.
+But `HandleMouseMove` ignores the button state:
+
+```cpp
+blink::WebMouseEvent mouse_event(
+    blink::WebInputEvent::Type::kMouseMove,
+    gfx::PointF(x, y),
+    gfx::PointF(x, y),
+    blink::WebPointerProperties::Button::kNoButton,  // ← always kNoButton
+    0,  // click_count
+    web_modifiers,
+    base::TimeTicks::Now());
+```
+
+Chromium's text selection requires all three to be true during a drag:
+
+1. Event type is `kMouseMove`
+2. Modifiers include `kLeftButtonDown` (present — modifiers are passed
+   correctly)
+3. Button field is `kLeft` (broken — hardcoded to `kNoButton`)
+
+Without #3, `mouse_down_may_start_select_` is set by the preceding `kMouseDown`
+but `HandleMouseDraggedEvent()` sees `kNoButton` and doesn't extend the
+selection.
+
+#### Changes
+
+##### shell_browser_main_parts.cc
+
+In `HandleMouseMove`, derive the button from the modifier bits instead of
+hardcoding `kNoButton`:
+
+```cpp
+// Derive button from modifier bits (drag events include button-down flags).
+auto btn = blink::WebPointerProperties::Button::kNoButton;
+if (web_modifiers & blink::WebInputEvent::kLeftButtonDown)
+  btn = blink::WebPointerProperties::Button::kLeft;
+else if (web_modifiers & blink::WebInputEvent::kRightButtonDown)
+  btn = blink::WebPointerProperties::Button::kRight;
+
+blink::WebMouseEvent mouse_event(
+    blink::WebInputEvent::Type::kMouseMove,
+    gfx::PointF(x, y),
+    gfx::PointF(x, y),
+    btn,
+    0,  // click_count
+    web_modifiers,
+    base::TimeTicks::Now());
+```
+
+No app-side changes needed. Single file, single function.
+
+#### Verification
+
+```bash
+cd html && python3 -m http.server 9408 &
+open ts5/zig-out/TermSurf.app --stderr ~/dev/termsurf/logs/overlay.log
+# In a TermSurf pane:
+cargo run -p web -- http://localhost:9408/test-mouse.html
+```
+
+1. Enter browse mode, click and drag over the "Mouse Event Test" heading — text
+   should highlight as you drag.
+2. Release — selection should persist.
+3. Double-click a word — should select the whole word.
+4. Click and drag over the event log text — should select across elements.
+
+Pass: text selection works via click-and-drag.
