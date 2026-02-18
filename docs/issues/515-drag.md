@@ -835,3 +835,104 @@ Fix for next experiment: remove the broken early `sendFocusChanged` from
 `sendCreateTab` (both the direct path in `handleSetOverlay` and the deferred
 path in `handleServerRegister`). This sends focus only after the tab exists,
 with proper single-pane enforcement.
+
+### Experiment 5: Fix focus after create_tab
+
+#### Problem
+
+The `sendFocusChanged` + `chromiumFocusedPane` assignment in `handleSetOverlay`
+fires before `paneProfiles` is set, so the focus message always silently fails.
+The Experiment 4 fix only covered the `handleServerRegister` path (first tab on
+a new server). When subsequent tabs use an already-registered server, the direct
+`sendCreateTab` path in `handleSetOverlay` has no deferred focus. This corrupts
+the `chromiumFocusedPane` state and causes multi-pane focus bugs.
+
+#### Changes
+
+##### CompositorXPC.swift
+
+**1. Remove the broken early focus from `handleSetOverlay`.**
+
+Replace:
+
+```swift
+// If already in browse mode at connection time, tell Chromium to focus.
+if browsing {
+    sendFocusChanged(paneUUID: uuid, focused: true)
+    chromiumFocusedPane = uuid
+}
+```
+
+With nothing — delete these lines entirely. Focus will be sent after
+`create_tab` instead.
+
+**2. Add `updatePaneFocus` after the direct `sendCreateTab` in
+`handleSetOverlay`.**
+
+```swift
+if let controlConn = serverControlConnections[profile] {
+    // Server already registered — send create_tab immediately.
+    sendCreateTab(controlConn, paneId: paneIdStr, url: url, uuid: uuid)
+    // Focus after tab exists, with proper single-pane enforcement.
+    if paneBrowsing[uuid] == true {
+        updatePaneFocus(paneUUID: uuid, focused: true)
+    }
+}
+```
+
+**3. Replace the raw `sendFocusChanged` in `handleServerRegister` with
+`updatePaneFocus`.**
+
+```swift
+for (uuid, pending) in pendingTabs {
+    if pending.profile == profile {
+        sendCreateTab(peer, paneId: uuid.uuidString, url: pending.url, uuid: uuid)
+        // Focus after tab exists, with proper single-pane enforcement.
+        if paneBrowsing[uuid] == true {
+            updatePaneFocus(paneUUID: uuid, focused: true)
+        }
+    }
+}
+```
+
+This replaces the `chromiumFocusedPane == uuid` check with
+`paneBrowsing[uuid]
+== true`, which is the actual source of truth for whether a
+pane should be focused. `updatePaneFocus` handles unfocusing the old pane and
+setting `chromiumFocusedPane`.
+
+No Chromium changes needed.
+
+#### Verification
+
+```bash
+open ts5/zig-out/TermSurf.app --stderr ~/dev/termsurf/logs/overlay.log
+# Open two panes side by side (Cmd+D), both running:
+cargo run -p web -- https://google.com
+```
+
+1. Pane A opens — blinking cursor appears immediately (no toggle needed).
+2. Pane B opens — pane A's cursor stops, pane B's cursor starts.
+3. Switch panes via Ctrl+H/L — focus transfers correctly.
+4. Close pane A — pane B blinks at normal speed.
+5. Esc/Enter in remaining pane — focus toggles correctly.
+
+Pass: focus is correctly sent after `create_tab`, with proper single-pane
+enforcement, for both new-server and existing-server paths.
+
+#### Result: Pass
+
+Focus now works correctly for multi-pane scenarios. Pane A receives focus
+immediately on open, pane B steals focus from A when it opens, pane switches
+transfer focus, closing a pane leaves the remaining one at normal blink speed,
+and Esc/Enter toggles work as expected.
+
+The fix was moving focus delivery from the broken pre-`paneProfiles` location in
+`handleSetOverlay` to after `sendCreateTab` in both code paths, using
+`updatePaneFocus` for proper single-pane enforcement. Combined with Experiments
+1–4, the full focus lifecycle is now complete:
+
+- **Tab creation** (new server or existing): `updatePaneFocus` after
+  `sendCreateTab`
+- **Mode transitions** (enter/exit browse): `handleModeChanged` + Ctrl+Esc
+- **Pane switches** (any mechanism): NSNotification from `focusDidChange`

@@ -435,12 +435,6 @@ class CompositorXPC {
         paneBrowsing[uuid] = browsing
         webPeersForPane[uuid] = peer
 
-        // If already in browse mode at connection time, tell Chromium to focus.
-        if browsing {
-            sendFocusChanged(paneUUID: uuid, focused: true)
-            chromiumFocusedPane = uuid
-        }
-
         // Check for URL field — if present, spawn or reuse Chromium server.
         let urlPtr = xpc_dictionary_get_string(msg, "url")
         if let urlPtr = urlPtr {
@@ -518,6 +512,10 @@ class CompositorXPC {
             if let controlConn = serverControlConnections[profile] {
                 // Server already registered — send create_tab immediately.
                 sendCreateTab(controlConn, paneId: paneIdStr, url: url, uuid: uuid)
+                // Focus after tab exists, with proper single-pane enforcement.
+                if paneBrowsing[uuid] == true {
+                    updatePaneFocus(paneUUID: uuid, focused: true)
+                }
             } else {
                 // Store as pending (sent when server_register arrives).
                 pendingTabs[uuid] = (profile: profile, url: url)
@@ -613,9 +611,9 @@ class CompositorXPC {
         for (uuid, pending) in pendingTabs {
             if pending.profile == profile {
                 sendCreateTab(peer, paneId: uuid.uuidString, url: pending.url, uuid: uuid)
-                // Send deferred focus if this pane was supposed to be focused.
-                if chromiumFocusedPane == uuid {
-                    sendFocusChanged(paneUUID: uuid, focused: true)
+                // Focus after tab exists, with proper single-pane enforcement.
+                if paneBrowsing[uuid] == true {
+                    updatePaneFocus(paneUUID: uuid, focused: true)
                 }
             }
         }
