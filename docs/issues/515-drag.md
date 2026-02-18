@@ -731,3 +731,24 @@ cargo run -p web -- https://google.com
 
 Pass: focus tracks pane switches via keyboard shortcuts, mouse clicks, and all
 other mechanisms. At most one pane has Chromium focus at a time.
+
+#### Result: Pass
+
+Focus now correctly tracks pane switches across all mechanisms — keyboard
+shortcuts (Ctrl+H/J/K/L), mouse clicks, splits, and tab switches. The blinking
+cursor appears when entering browse mode, disappears when exiting, and transfers
+correctly between panes. At most one pane has Chromium focus at any time.
+
+The key insight was hooking into Ghostty's existing `focusDidChange` via
+NSNotification rather than trying to independently detect pane switches. This
+covers every possible focus change path with just two lines of Ghostty
+modification.
+
+Combined with Experiments 1–2, the full focus lifecycle is now:
+
+- **Mode transitions** (enter/exit browse): `handleModeChanged` + Ctrl+Esc
+- **Pane switches** (any mechanism): NSNotification from `focusDidChange`
+- **Initial connection** (already browsing): `handleSetOverlay`
+
+All three feed into `updatePaneFocus`, which enforces single-pane-at-a-time
+Chromium focus via the `chromiumFocusedPane` state variable.

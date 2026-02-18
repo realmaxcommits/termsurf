@@ -5,6 +5,10 @@ import CoreText
 import UserNotifications
 import GhosttyKit
 
+extension Notification.Name {
+    static let surfaceFocusDidChange = Notification.Name("SurfaceFocusDidChange")
+}
+
 extension Ghostty {
     /// The NSView implementation for a terminal surface.
     class SurfaceView: OSView, ObservableObject, Codable, Identifiable {
@@ -432,6 +436,12 @@ extension Ghostty {
             guard self.focused != focused else { return }
             self.focused = focused
             ghostty_surface_set_focus(surface, focused)
+
+            // Notify observers (e.g. CompositorXPC) of pane focus changes.
+            NotificationCenter.default.post(
+                name: .surfaceFocusDidChange,
+                object: self,
+                userInfo: ["focused": focused])
 
             // Update our secure input state if we are a password input
             if (passwordInput) {

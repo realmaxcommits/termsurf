@@ -75,6 +75,9 @@ class CompositorXPC {
     /// The pane UUID currently under the mouse (set by mouse move monitor).
     private var lastHitPaneUUID: UUID? = nil
 
+    /// The pane that currently has Chromium focus (at most one at a time).
+    private var chromiumFocusedPane: UUID? = nil
+
     /// Serial queue for all XPC state.
     private let xpcQueue = DispatchQueue(label: "com.termsurf.compositor.xpc")
 
@@ -130,6 +133,7 @@ class CompositorXPC {
                 self.paneBrowsing[uuid] = false
                 self.sendModeChanged(paneUUID: uuid, browsing: false)
                 self.sendFocusChanged(paneUUID: uuid, focused: false)
+                self.chromiumFocusedPane = nil
                 fputs("[Compositor] Ctrl+Esc: exit browse for pane \(uuid)\n", stderr)
                 return true
             }
@@ -292,6 +296,24 @@ class CompositorXPC {
             return nil
         }
 
+        // Observe pane focus changes from Ghostty's SurfaceView (Issue 515 Experiment 3).
+        NotificationCenter.default.addObserver(
+            forName: .surfaceFocusDidChange,
+            object: nil,
+            queue: nil
+        ) { [weak self] notification in
+            guard let self = self else { return }
+            guard let surfaceView = notification.object as? Ghostty.SurfaceView,
+                  let focused = notification.userInfo?["focused"] as? Bool
+            else { return }
+
+            let uuid = surfaceView.id
+            self.xpcQueue.async {
+                guard self.paneBrowsing[uuid] != nil else { return }
+                self.updatePaneFocus(paneUUID: uuid, focused: focused)
+            }
+        }
+
         // Step 1: Create anonymous listener for direct web connections.
         let listener = xpc_connection_create(nil, xpcQueue)
         anonymousListener = listener
@@ -416,6 +438,7 @@ class CompositorXPC {
         // If already in browse mode at connection time, tell Chromium to focus.
         if browsing {
             sendFocusChanged(paneUUID: uuid, focused: true)
+            chromiumFocusedPane = uuid
         }
 
         // Check for URL field — if present, spawn or reuse Chromium server.
@@ -663,6 +686,7 @@ class CompositorXPC {
 
         paneBrowsing[uuid] = browsing
         sendFocusChanged(paneUUID: uuid, focused: browsing)
+        chromiumFocusedPane = browsing ? uuid : nil
         fputs("[Compositor] mode_changed from web: browsing=\(browsing) for pane \(paneIdStr)\n", stderr)
     }
 
@@ -682,6 +706,30 @@ class CompositorXPC {
         xpc_dictionary_set_string(msg, "pane_id", paneUUID.uuidString)
         xpc_dictionary_set_bool(msg, "focused", focused)
         xpc_connection_send_message(controlConn, msg)
+    }
+
+    /// Manage single-pane-at-a-time Chromium focus (Issue 515 Experiment 3).
+    /// Must be called on xpcQueue.
+    private func updatePaneFocus(paneUUID: UUID, focused: Bool) {
+        if focused {
+            // Unfocus the old pane first (at most one at a time).
+            if let old = chromiumFocusedPane, old != paneUUID {
+                sendFocusChanged(paneUUID: old, focused: false)
+            }
+            // Only focus if the pane is actually in browse mode.
+            if paneBrowsing[paneUUID] == true {
+                sendFocusChanged(paneUUID: paneUUID, focused: true)
+                chromiumFocusedPane = paneUUID
+            } else {
+                chromiumFocusedPane = nil
+            }
+        } else {
+            // Pane lost focus — unfocus if it was the active one.
+            if chromiumFocusedPane == paneUUID {
+                sendFocusChanged(paneUUID: paneUUID, focused: false)
+                chromiumFocusedPane = nil
+            }
+        }
     }
 
     // MARK: - URL synchronization (Issue 514)
@@ -849,6 +897,7 @@ class CompositorXPC {
             paneSurfaceViews.removeValue(forKey: uuid)
             paneCursorTypes.removeValue(forKey: uuid)
             if lastHitPaneUUID == uuid { lastHitPaneUUID = nil }
+            if chromiumFocusedPane == uuid { chromiumFocusedPane = nil }
             if let cSurface = cachedCSurfaces.removeValue(forKey: uuid) {
                 ghostty_surface_clear_overlay(cSurface)
             }
