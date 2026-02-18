@@ -214,6 +214,9 @@ extension Ghostty {
         private var markedText: NSMutableAttributedString
         private(set) var focused: Bool = true
         private var prevPressureStage: Int = 0
+        /// Set by CompositorXPC when a mouse event targets the browser overlay.
+        /// Suppresses terminal mouse handling so the event can drive drag tracking.
+        var suppressMouseForOverlay: Bool = false
         private var appearanceObserver: NSKeyValueObservation? = nil
 
         // This is set to non-null during keyDown to accumulate insertText contents
@@ -854,12 +857,18 @@ extension Ghostty {
         }
 
         override func mouseDown(with event: NSEvent) {
+            guard !suppressMouseForOverlay else { return }
             guard let surface = self.surface else { return }
             let mods = Ghostty.ghosttyMods(event.modifierFlags)
             ghostty_surface_mouse_button(surface, GHOSTTY_MOUSE_PRESS, GHOSTTY_MOUSE_LEFT, mods)
         }
 
         override func mouseUp(with event: NSEvent) {
+            if suppressMouseForOverlay {
+                suppressMouseForOverlay = false
+                return
+            }
+
             // Always reset our pressure when the mouse goes up
             prevPressureStage = 0
 
@@ -985,6 +994,7 @@ extension Ghostty {
         }
 
         override func mouseDragged(with event: NSEvent) {
+            guard !suppressMouseForOverlay else { return }
             self.mouseMoved(with: event)
         }
 

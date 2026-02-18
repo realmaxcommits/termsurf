@@ -143,6 +143,8 @@ class CompositorXPC {
 
         // Register local event monitor for mouse clicks (Issue 514).
         // Routes clicks to the correct browsing pane via hit-testing.
+        // Left mouse: return event (preserve drag tracking), suppress terminal via flag.
+        // Right mouse: consume (no drag tracking needed).
         NSEvent.addLocalMonitorForEvents(matching: [
             .leftMouseDown, .leftMouseUp,
             .rightMouseDown, .rightMouseUp
@@ -150,7 +152,11 @@ class CompositorXPC {
             guard let self = self else { return event }
             guard event.window != nil else { return event }
 
-            let hit = self.xpcQueue.sync { self.hitTestOverlay(event: event) }
+            let (hit, surfaceView) = self.xpcQueue.sync {
+                let h = self.hitTestOverlay(event: event)
+                let sv = h.flatMap { self.paneSurfaceViews[$0.uuid] }
+                return (h, sv)
+            }
             guard let hit = hit else { return event }
 
             // Determine event type and button.
@@ -193,7 +199,15 @@ class CompositorXPC {
                 xpc_connection_send_message(controlConn, msg)
             }
 
-            // Consume the event (prevent terminal from receiving it).
+            // Left mouse: set flag and return event (preserve drag tracking).
+            if event.type == .leftMouseDown || event.type == .leftMouseUp {
+                if event.type == .leftMouseDown {
+                    surfaceView?.suppressMouseForOverlay = true
+                }
+                return event
+            }
+
+            // Right mouse: consume as before.
             return nil
         }
 
@@ -274,9 +288,9 @@ class CompositorXPC {
             if event.modifierFlags.contains(.control)  { mods |= 2 }
             if event.modifierFlags.contains(.option)   { mods |= 4 }
             if event.modifierFlags.contains(.command)  { mods |= 8 }
-            // Add button-down flags for drag events.
-            if event.type == .leftMouseDragged  { mods |= 32 }   // kLeftButtonDown
-            if event.type == .rightMouseDragged { mods |= 512 }   // kRightButtonDown
+            // Add button-down flags for drag events (blink::WebInputEvent::Modifiers).
+            if event.type == .leftMouseDragged  { mods |= 64 }    // kLeftButtonDown (1 << 6)
+            if event.type == .rightMouseDragged { mods |= 256 }   // kRightButtonDown (1 << 8)
 
             // Send mouse_move via XPC to the Chromium server.
             self.xpcQueue.async {
