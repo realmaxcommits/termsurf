@@ -69,6 +69,12 @@ class CompositorXPC {
     /// Maps pane UUID → SurfaceView (for mouse hit-testing).
     private var paneSurfaceViews: [UUID: Ghostty.SurfaceView] = [:]
 
+    /// Maps pane UUID → last cursor type from Chromium (Issue 514 Experiment 5).
+    private var paneCursorTypes: [UUID: Int64] = [:]
+
+    /// The pane UUID currently under the mouse (set by mouse move monitor).
+    private var lastHitPaneUUID: UUID? = nil
+
     /// Serial queue for all XPC state.
     private let xpcQueue = DispatchQueue(label: "com.termsurf.compositor.xpc")
 
@@ -233,7 +239,21 @@ class CompositorXPC {
             guard let self = self else { return event }
 
             let hit = self.xpcQueue.sync { self.hitTestOverlay(event: event) }
-            guard let hit = hit else { return event }
+
+            guard let hit = hit else {
+                // Mouse left the overlay — clear tracking state.
+                self.xpcQueue.async { self.lastHitPaneUUID = nil }
+                return event
+            }
+
+            // Track which pane is under the mouse and apply stored cursor.
+            let cursorType: Int64? = self.xpcQueue.sync {
+                self.lastHitPaneUUID = hit.uuid
+                return self.paneCursorTypes[hit.uuid]
+            }
+            if let ct = cursorType {
+                DispatchQueue.main.async { Self.applyCursor(ct) }
+            }
 
             // Map modifier flags (shift=1, ctrl=2, alt=4, cmd=8).
             var mods: UInt64 = 0
@@ -348,6 +368,9 @@ class CompositorXPC {
 
         case "url_changed":
             handleUrlChanged(msg, from: peer)
+
+        case "cursor_changed":
+            handleCursorChanged(msg, from: peer)
 
         default:
             fputs("[Compositor] unknown action: \(action)\n", stderr)
@@ -656,6 +679,43 @@ class CompositorXPC {
         xpc_connection_send_message(webPeer, fwd)
     }
 
+    // MARK: - Cursor synchronization (Issue 514 Experiment 5)
+
+    private func handleCursorChanged(_ msg: xpc_object_t, from peer: xpc_connection_t) {
+        guard let paneIdPtr = xpc_dictionary_get_string(msg, "pane_id") else { return }
+        let paneIdStr = String(cString: paneIdPtr)
+        guard let uuid = UUID(uuidString: paneIdStr) else { return }
+
+        let cursorType = xpc_dictionary_get_int64(msg, "cursor_type")
+        paneCursorTypes[uuid] = cursorType
+
+        // If this pane is currently under the mouse, apply immediately.
+        if lastHitPaneUUID == uuid {
+            DispatchQueue.main.async {
+                Self.applyCursor(cursorType)
+            }
+        }
+    }
+
+    /// Map Chromium cursor type (ui::mojom::CursorType) to NSCursor and apply.
+    private static func applyCursor(_ cursorType: Int64) {
+        let cursor: NSCursor
+        switch cursorType {
+        case 0:  cursor = .arrow              // kPointer
+        case 1:  cursor = .crosshair          // kCross
+        case 2:  cursor = .pointingHand       // kHand
+        case 3:  cursor = .iBeam              // kIBeam
+        case 31: cursor = .openHand           // kMove
+        case 39: NSCursor.hide(); return      // kNone
+        case 40: cursor = .operationNotAllowed // kNotAllowed
+        case 43: cursor = .openHand           // kGrab
+        case 44: cursor = .closedHand         // kGrabbing
+        default: cursor = .arrow
+        }
+        NSCursor.unhide()
+        cursor.set()
+    }
+
     // MARK: - Hit-testing (Issue 514)
 
     /// Result of a successful overlay hit-test.
@@ -762,6 +822,8 @@ class CompositorXPC {
             webPeersForPane.removeValue(forKey: uuid)
             overlayGeometry.removeValue(forKey: uuid)
             paneSurfaceViews.removeValue(forKey: uuid)
+            paneCursorTypes.removeValue(forKey: uuid)
+            if lastHitPaneUUID == uuid { lastHitPaneUUID = nil }
             if let cSurface = cachedCSurfaces.removeValue(forKey: uuid) {
                 ghostty_surface_clear_overlay(cSurface)
             }
