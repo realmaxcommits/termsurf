@@ -1588,3 +1588,103 @@ Arrow cursor shows over the TUI in control mode. Enabling mouse capture sends
 with Experiment 7's `invalidateCursorRects`, the cursor now flows correctly
 across all transitions: arrow over TUI, Chromium cursor over viewport in browse
 mode, arrow again when leaving.
+
+### Experiment 9: Verify full click cycle with test page
+
+Experiment 1 already forwards both mouseDown and mouseUp (left and right). The
+Chromium handler maps `"up"` → `kMouseUp`. But we never verified that web
+buttons, checkboxes, text selection, and other mouseUp-dependent interactions
+actually work. This experiment adds a test page and verifies.
+
+#### Test page: `html/test-mouse.html`
+
+Self-contained HTML page with:
+
+1. **Click counter button** — `<button>` with `onclick` handler that increments
+   a visible counter. If the count goes up, the full mouseDown → mouseUp → click
+   cycle works.
+2. **Checkbox** — toggles on click. Another mouseUp-dependent interaction.
+3. **Text input** — `<input type="text">` to verify focus on click.
+4. **Event log** — listens for `mousedown`, `mouseup`, `click` on the document
+   and appends each to a visible log. Shows exactly which events arrive and
+   their coordinates.
+
+```html
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Mouse Event Test</title>
+  <style>
+    body { font-family: system-ui; padding: 20px; background: #1a1b26; color: #c0caf5; }
+    button { font-size: 18px; padding: 10px 24px; cursor: pointer; }
+    #counter { font-size: 48px; font-weight: bold; color: #7aa2f7; margin: 20px 0; }
+    #log { font-family: monospace; font-size: 12px; background: #16161e;
+           padding: 10px; height: 200px; overflow-y: auto; border: 1px solid #3b4261; }
+    .section { margin: 20px 0; }
+    label { font-size: 16px; cursor: pointer; }
+    input[type="text"] { font-size: 16px; padding: 8px; width: 300px; }
+  </style>
+</head>
+<body>
+  <h1>Mouse Event Test</h1>
+
+  <div class="section">
+    <button id="btn" onclick="count++; counter.textContent = count;">Click Me</button>
+    <div id="counter">0</div>
+  </div>
+
+  <div class="section">
+    <label><input type="checkbox" id="check"> Toggle this checkbox</label>
+  </div>
+
+  <div class="section">
+    <input type="text" placeholder="Click to focus, then type...">
+  </div>
+
+  <h3>Event Log</h3>
+  <div id="log"></div>
+
+  <script>
+    let count = 0;
+    const counter = document.getElementById('counter');
+    const log = document.getElementById('log');
+
+    for (const type of ['mousedown', 'mouseup', 'click']) {
+      document.addEventListener(type, e => {
+        const tag = e.target.tagName;
+        const line = document.createElement('div');
+        line.textContent = `${type} (${e.clientX}, ${e.clientY}) button=${e.button} target=${tag}`;
+        log.appendChild(line);
+        log.scrollTop = log.scrollHeight;
+      });
+    }
+  </script>
+</body>
+</html>
+```
+
+#### Changes
+
+Create `html/test-mouse.html` with the content above. No code changes expected —
+this is a verification experiment.
+
+#### Verification
+
+```bash
+# Serve the test page (or use file://)
+cd html && python3 -m http.server 9408 &
+
+open ts5/zig-out/TermSurf.app --stderr ~/dev/termsurf/logs/overlay.log
+# In a TermSurf pane:
+cargo run -p web -- http://localhost:9408/test-mouse.html
+```
+
+1. Enter browse mode, click the "Click Me" button — counter should increment.
+2. Click the checkbox — should toggle.
+3. Click the text input — should gain focus (blinking cursor).
+4. Event log should show mousedown, mouseup, and click for each interaction.
+5. Double-click to select a word in the heading — verify `click_count` works.
+
+Pass: all five interactions work. The full mouseDown → mouseUp → click cycle is
+confirmed end-to-end.
