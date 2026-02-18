@@ -1579,3 +1579,12 @@ arrow (not I-beam, because the TUI has mouse capture enabled).
 
 Pass: cursor is arrow over the TUI in control mode, Chromium cursors work in
 browse mode, and cursor reverts to arrow (not I-beam) when leaving the overlay.
+
+#### Result: Pass
+
+Arrow cursor shows over the TUI in control mode. Enabling mouse capture sends
+`\e[?1000h;1002h;1003h;1006h`, Ghostty detects the mode and calls
+`setCursorShape(.default)`, which sets `documentCursor` to `.arrow`. Combined
+with Experiment 7's `invalidateCursorRects`, the cursor now flows correctly
+across all transitions: arrow over TUI, Chromium cursor over viewport in browse
+mode, arrow again when leaving.
