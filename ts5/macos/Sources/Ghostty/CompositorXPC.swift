@@ -188,8 +188,14 @@ class CompositorXPC {
                 xpc_connection_send_message(controlConn, msg)
             }
 
-            // Consume the event (prevent terminal from receiving it).
-            return nil
+            // Let mouseDown propagate so macOS generates .leftMouseDragged events.
+            // Consume mouseUp to prevent the terminal from processing the release.
+            switch event.type {
+            case .leftMouseDown, .rightMouseDown:
+                return event
+            default:
+                return nil
+            }
         }
 
         // Register local event monitor for scroll wheel (Issue 514 Experiment 3).

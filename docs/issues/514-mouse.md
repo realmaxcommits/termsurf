@@ -1891,3 +1891,26 @@ cargo run -p web -- http://localhost:9408/test-mouse.html
 
 Pass: text selection works via click-and-drag, buttons still fire, no terminal
 side effects.
+
+#### Result: Fail
+
+Text selection still doesn't work. Letting mouseDown propagate was necessary but
+not sufficient.
+
+The move monitor (line ~297) returns `nil` for ALL events including
+`.leftMouseDragged`. This consumes the drag events before they reach the
+SurfaceView. The SurfaceView started drag tracking when it received mouseDown,
+but it never sees the subsequent drag events — they're swallowed by the monitor.
+macOS may also stop generating further `.leftMouseDragged` events if the
+tracking session breaks.
+
+The same pattern that broke Experiment 10 (consuming mouseDown killed drag
+generation) is repeated here: consuming mouseDragged kills the drag tracking
+session.
+
+**Fix for next experiment:** Return `event` instead of `nil` for
+`.leftMouseDragged` and `.rightMouseDragged` in the move monitor, just as we did
+for mouseDown in the click monitor. This lets the drag events flow through the
+responder chain while still being forwarded to Chromium. The SurfaceView sees
+the drags and mouse capture forwards them harmlessly to the TUI as escape
+sequences.
