@@ -293,8 +293,14 @@ class CompositorXPC {
                 xpc_connection_send_message(controlConn, msg)
             }
 
-            // Consume the event (prevent terminal from receiving it).
-            return nil
+            // Let drag events propagate so macOS maintains drag tracking.
+            // Consume mouseMoved to prevent terminal hover interference.
+            switch event.type {
+            case .leftMouseDragged, .rightMouseDragged:
+                return event
+            default:
+                return nil
+            }
         }
 
         // Step 1: Create anonymous listener for direct web connections.
