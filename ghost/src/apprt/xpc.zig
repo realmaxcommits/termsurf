@@ -10,6 +10,7 @@
 const std = @import("std");
 const objc = @import("objc");
 const CoreApp = @import("../App.zig");
+const CoreSurface = @import("../Surface.zig");
 
 const log = std.log.scoped(.xpc);
 
@@ -51,6 +52,7 @@ var app: *CoreApp = undefined;
 var gateway: xpc_object_t = null;
 var listener: xpc_object_t = null;
 var web_peer: xpc_object_t = null;
+var overlay_surface: ?*CoreSurface = null;
 
 // -- Block type --
 //
@@ -127,6 +129,10 @@ fn peerHandler(_: *const EventBlock.Context, event: xpc_object_t) callconv(.c) v
         handleMessage(event);
     } else if (xpc_get_type(event) == xpcPtr(&_xpc_type_error)) {
         if (event == xpcPtr(&_xpc_error_connection_invalid)) {
+            if (overlay_surface) |surface| {
+                surface.clearOverlay();
+                overlay_surface = null;
+            }
             if (web_peer) |peer| {
                 xpc_release(peer);
                 web_peer = null;
@@ -166,9 +172,16 @@ fn handleSetOverlay(msg: xpc_object_t) void {
         pane_id, col, row, width, height, url, profile, browsing,
     });
 
-    // Look up the surface by pane ID.
-    if (app.findSurfaceByPaneId(pane_id)) |_| {
-        log.info("surface found for pane={s}", .{pane_id});
+    // Look up the surface by pane ID and set the overlay.
+    if (app.findSurfaceByPaneId(pane_id)) |surface| {
+        overlay_surface = surface.core();
+        surface.core().setOverlay(
+            @intCast(col),
+            @intCast(row),
+            @intCast(width),
+            @intCast(height),
+        );
+        log.info("overlay set for pane={s}", .{pane_id});
     } else {
         log.warn("no surface found for pane={s}", .{pane_id});
     }

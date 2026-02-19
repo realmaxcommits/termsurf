@@ -533,3 +533,39 @@ Pass: A hot pink rectangle appears at the viewport coordinates (col=1, row=4,
 filling the viewport area). The rectangle position matches the `web` TUI's
 viewport border. Exiting `web` clears the rectangle. Resizing the terminal
 causes `web` to send updated coordinates and the rectangle adjusts.
+
+#### Result
+
+Pass. Pink overlay renders at correct grid coordinates, tracks resize, and
+clears on disconnect:
+
+```
+info(xpc): overlay set for pane=AE187CA0-A0AD-497F-A883-0F5999C475D5
+info(xpc): set_overlay pane=AE187CA0-... col=1 row=4 width=168 height=42 ...
+info(xpc): overlay set for pane=AE187CA0-...
+info(xpc): set_overlay pane=AE187CA0-... col=1 row=4 width=120 height=35 ...
+info(xpc): overlay set for pane=AE187CA0-...
+info(xpc): mode_changed pane=AE187CA0-... browsing=false
+info(xpc): peer disconnected
+```
+
+Resize produced six `set_overlay` messages as the terminal width changed
+(168→201→198→137→121→120). Each update repositioned the pink quad correctly.
+Disconnect cleared the overlay.
+
+Both key unknowns resolved:
+
+1. **`Buffer(PinkOverlay).initFill` works with a non-vertex-attribute struct** —
+   the shader reads it as `constant PinkOverlayIn&` at buffer index 0. Same
+   pattern as bg_image.
+2. **Pipeline auto-initializes without `vertex_attributes`** — same as bg_color.
+
+#### Files changed
+
+| File                                          | Change                                     |
+| --------------------------------------------- | ------------------------------------------ |
+| `ghost/src/renderer/shaders/shaders.metal`    | Pink overlay vertex + fragment shaders     |
+| `ghost/src/renderer/metal/shaders.zig`        | Pipeline definition + PinkOverlay struct   |
+| `ghost/src/renderer/generic.zig`              | Renderer field + render step in drawFrame  |
+| `ghost/src/Surface.zig`                       | `setOverlay()` / `clearOverlay()` methods  |
+| `ghost/src/apprt/xpc.zig`                     | Wire XPC to surface, clear on disconnect   |

@@ -2429,6 +2429,28 @@ fn queueRender(self: *Surface) !void {
     try self.renderer_thread.wakeup.notify();
 }
 
+/// Set the pink overlay rectangle in grid coordinates (Issue 602).
+/// Called from XPC on a background queue. Thread-safe via draw_mutex.
+pub fn setOverlay(self: *Surface, col: u32, row: u32, width: u32, height: u32) void {
+    self.renderer.draw_mutex.lock();
+    defer self.renderer.draw_mutex.unlock();
+    self.renderer.pink_overlay = .{
+        .grid_col = @floatFromInt(col),
+        .grid_row = @floatFromInt(row),
+        .grid_width = @floatFromInt(width),
+        .grid_height = @floatFromInt(height),
+    };
+    self.queueRender() catch {};
+}
+
+/// Clear the overlay (Issue 602). Called on peer disconnect.
+pub fn clearOverlay(self: *Surface) void {
+    self.renderer.draw_mutex.lock();
+    defer self.renderer.draw_mutex.unlock();
+    self.renderer.pink_overlay = .{};
+    self.queueRender() catch {};
+}
+
 pub fn sizeCallback(self: *Surface, size: apprt.SurfaceSize) !void {
     // Crash metadata in case we crash in here
     crash.sentry.thread_state = self.crashThreadState();

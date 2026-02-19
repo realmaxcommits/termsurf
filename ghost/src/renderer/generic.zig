@@ -146,6 +146,10 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
         /// cells for the draw call.
         cells_rebuilt: bool = false,
 
+        /// Pink overlay rectangle in grid coordinates (Issue 602).
+        /// Zero width means no overlay.
+        pink_overlay: shaderpkg.PinkOverlay = .{},
+
         /// The current GPU uniform values.
         uniforms: shaderpkg.Uniforms,
 
@@ -1641,6 +1645,27 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                     &pass,
                     .kitty_above_text,
                 );
+
+                // Pink overlay (Issue 602).
+                if (self.pink_overlay.grid_width > 0 and
+                    self.pink_overlay.grid_height > 0)
+                {
+                    if (Buffer(shaderpkg.PinkOverlay).initFill(
+                        self.api.imageBufferOptions(),
+                        &.{self.pink_overlay},
+                    )) |*buf| {
+                        defer buf.deinit();
+                        pass.step(.{
+                            .pipeline = self.shaders.pipelines.pink_overlay,
+                            .uniforms = frame.uniforms.buffer,
+                            .buffers = &.{buf.buffer},
+                            .draw = .{
+                                .type = .triangle_strip,
+                                .vertex_count = 4,
+                            },
+                        });
+                    } else |_| {}
+                }
 
                 // Debug overlay. We do this before any custom shader state
                 // because our debug overlay is aligned with the grid.
