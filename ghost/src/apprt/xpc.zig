@@ -9,6 +9,7 @@
 
 const std = @import("std");
 const objc = @import("objc");
+const CoreApp = @import("../App.zig");
 
 const log = std.log.scoped(.xpc);
 
@@ -46,6 +47,7 @@ inline fn xpcPtr(ptr: *const anyopaque) xpc_object_t {
 
 // -- Module state --
 
+var app: *CoreApp = undefined;
 var gateway: xpc_object_t = null;
 var listener: xpc_object_t = null;
 var web_peer: xpc_object_t = null;
@@ -58,7 +60,8 @@ const EventBlock = objc.Block(struct {}, .{xpc_object_t}, void);
 
 // -- Public API --
 
-pub fn init() void {
+pub fn init(core_app: *CoreApp) void {
+    app = core_app;
     log.info("connecting to xpc-gateway", .{});
 
     // Connect to the xpc-gateway Mach service.
@@ -162,6 +165,13 @@ fn handleSetOverlay(msg: xpc_object_t) void {
     log.info("set_overlay pane={s} col={} row={} width={} height={} url={s} profile={s} browsing={}", .{
         pane_id, col, row, width, height, url, profile, browsing,
     });
+
+    // Look up the surface by pane ID.
+    if (app.findSurfaceByPaneId(pane_id)) |_| {
+        log.info("surface found for pane={s}", .{pane_id});
+    } else {
+        log.warn("no surface found for pane={s}", .{pane_id});
+    }
 }
 
 fn handleModeChanged(msg: xpc_object_t) void {

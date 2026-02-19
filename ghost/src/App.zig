@@ -161,6 +161,18 @@ pub fn updateConfig(self: *App, rt_app: *apprt.App, config: *const Config) !void
     );
 }
 
+/// Find a surface by its pane ID (UUID string). Returns null if no match.
+pub fn findSurfaceByPaneId(
+    self: *App,
+    pane_id: []const u8,
+) ?*apprt.Surface {
+    for (self.surfaces.items) |surface| {
+        if (std.mem.eql(u8, std.mem.span(@as([*:0]const u8, &surface.core().pane_id)), pane_id))
+            return surface;
+    }
+    return null;
+}
+
 /// Add an initialized surface. This is really only for the runtime
 /// implementations to call and should NOT be called by general app users.
 /// The surface must be from the pool.

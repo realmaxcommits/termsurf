@@ -302,3 +302,29 @@ cargo run -p web -- https://example.com
 Pass: Ghost logs show `surface found for pane=<UUID>` where the UUID matches
 `$TERMSURF_PANE_ID` from the shell. `echo $TERMSURF_PANE_ID` prints a valid UUID
 in every new pane.
+
+#### Result
+
+Pass. Surface lookup works end-to-end:
+
+```
+info(xpc): set_overlay pane=83CA54D2-BBA2-4B7B-A703-12FAE6A59888 col=1 row=4 width=120 height=32 url=https://example.com profile=default browsing=true
+info(xpc): surface found for pane=83CA54D2-BBA2-4B7B-A703-12FAE6A59888
+```
+
+Both key unknowns resolved:
+
+1. **`uuid_generate` / `uuid_unparse_upper` link automatically** — no framework
+   flags needed. They're in libSystem on macOS.
+2. **`env.put` needs explicit coercion** — `*[36:0]u8` doesn't coerce directly
+   to `[]const u8`. Used `std.mem.span(@as([*:0]const u8, &self.pane_id))` to
+   convert the sentinel-terminated array to a slice.
+
+#### Files changed
+
+| File                           | Change                                       |
+| ------------------------------ | -------------------------------------------- |
+| `ghost/src/Surface.zig`        | UUID field, generation, env propagation       |
+| `ghost/src/App.zig`            | `findSurfaceByPaneId()` lookup method         |
+| `ghost/src/apprt/xpc.zig`      | Accept `*CoreApp`, look up surface on overlay |
+| `ghost/src/apprt/embedded.zig` | Pass `core_app` to `xpc.init()`               |

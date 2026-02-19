@@ -53,11 +53,19 @@ const min_window_height_cells: u32 = 4;
 /// given time. `activate_key_table` calls after this are ignored.
 const max_active_key_tables = 8;
 
+// macOS libc UUID functions.
+const uuid_t = [16]u8;
+extern "c" fn uuid_generate(out: *uuid_t) void;
+extern "c" fn uuid_unparse_upper(uu: *const uuid_t, out: *[37]u8) void;
+
 /// Allocator
 alloc: Allocator,
 
 /// The app that this surface is attached to.
 app: *App,
+
+/// Unique pane identifier, propagated as TERMSURF_PANE_ID to child processes.
+pane_id: [36:0]u8 = undefined,
 
 /// The windowing system surface and app.
 rt_app: *apprt.runtime.App,
@@ -610,6 +618,11 @@ pub fn init(
     else
         config.command;
 
+    // Generate a unique pane ID for this surface.
+    var uuid: uuid_t = undefined;
+    uuid_generate(&uuid);
+    uuid_unparse_upper(&uuid, @ptrCast(&self.pane_id));
+
     // Start our IO implementation
     // This separate block ({}) is important because our errdefers must
     // be scoped here to be valid.
@@ -624,6 +637,9 @@ pub fn init(
 
         // don't leak GHOSTTY_LOG to any subprocesses
         env.remove("GHOSTTY_LOG");
+
+        // Propagate pane ID so child processes (e.g. `web`) can identify this surface.
+        try env.put("TERMSURF_PANE_ID", std.mem.span(@as([*:0]const u8, &self.pane_id)));
 
         // Initialize our IO backend
         var io_exec = try termio.Exec.init(alloc, .{

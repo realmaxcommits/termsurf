@@ -145,7 +145,7 @@ pub const App = struct {
             .keymap = keymap,
         };
 
-        xpc.init();
+        xpc.init(core_app);
     }
 
     pub fn terminate(self: *App) void {
