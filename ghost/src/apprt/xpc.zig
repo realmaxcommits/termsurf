@@ -30,6 +30,8 @@ extern "c" fn xpc_dictionary_get_string(xdict: xpc_object_t, key: [*:0]const u8)
 extern "c" fn xpc_dictionary_get_uint64(xdict: xpc_object_t, key: [*:0]const u8) u64;
 extern "c" fn xpc_dictionary_get_bool(xdict: xpc_object_t, key: [*:0]const u8) bool;
 extern "c" fn xpc_get_type(object: xpc_object_t) xpc_object_t;
+extern "c" fn xpc_retain(object: xpc_object_t) xpc_object_t;
+extern "c" fn xpc_release(object: xpc_object_t) void;
 
 // XPC type/error constants (compared by address identity).
 extern const _xpc_type_connection: anyopaque;
@@ -46,6 +48,7 @@ inline fn xpcPtr(ptr: *const anyopaque) xpc_object_t {
 
 var gateway: xpc_object_t = null;
 var listener: xpc_object_t = null;
+var web_peer: xpc_object_t = null;
 
 // -- Block type --
 //
@@ -81,6 +84,10 @@ pub fn init() void {
 }
 
 pub fn deinit() void {
+    if (web_peer) |peer| {
+        xpc_release(peer);
+        web_peer = null;
+    }
     if (listener != null) {
         xpc_connection_cancel(listener);
         listener = null;
@@ -104,6 +111,8 @@ fn listenerHandler(_: *const EventBlock.Context, event: xpc_object_t) callconv(.
     if (xpc_get_type(event) == xpcPtr(&_xpc_type_connection)) {
         log.info("peer connected", .{});
 
+        web_peer = xpc_retain(event);
+
         var peer_block = EventBlock.init(.{}, &peerHandler);
         xpc_connection_set_event_handler(event, @ptrCast(&peer_block));
         xpc_connection_resume(event);
@@ -115,6 +124,10 @@ fn peerHandler(_: *const EventBlock.Context, event: xpc_object_t) callconv(.c) v
         handleMessage(event);
     } else if (xpc_get_type(event) == xpcPtr(&_xpc_type_error)) {
         if (event == xpcPtr(&_xpc_error_connection_invalid)) {
+            if (web_peer) |peer| {
+                xpc_release(peer);
+                web_peer = null;
+            }
             log.info("peer disconnected", .{});
         }
     }
@@ -149,6 +162,17 @@ fn handleSetOverlay(msg: xpc_object_t) void {
     log.info("set_overlay pane={s} col={} row={} width={} height={} url={s} profile={s} browsing={}", .{
         pane_id, col, row, width, height, url, profile, browsing,
     });
+
+    // Send url_changed back to web to confirm the round trip.
+    if (web_peer) |peer| {
+        var buf: [512]u8 = undefined;
+        const modified_url = std.fmt.bufPrintZ(&buf, "{s} [ghost]", .{url}) catch return;
+        const reply = xpc_dictionary_create(null, null, 0);
+        xpc_dictionary_set_string(reply, "action", "url_changed");
+        xpc_dictionary_set_string(reply, "url", modified_url);
+        xpc_connection_send_message(peer, reply);
+        log.info("sent url_changed: {s}", .{modified_url});
+    }
 }
 
 fn handleModeChanged(msg: xpc_object_t) void {

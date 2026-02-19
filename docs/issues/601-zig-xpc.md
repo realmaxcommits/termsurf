@@ -379,3 +379,23 @@ cargo run -p web -- https://example.com
 Pass: The `web` TUI's URL bar changes from `https://example.com` to
 `https://example.com [ghost]` after connecting. Ghost logs show the outgoing
 message.
+
+#### Result
+
+Pass. The `web` URL bar updated to `https://example.com [ghost]`, confirming
+bidirectional XPC communication from Zig. Ghost log:
+
+```
+info(xpc): set_overlay pane=5BFBF112-... col=1 row=4 width=120 height=32 url=https://example.com profile=default browsing=true
+info(xpc): sent url_changed: https://example.com [ghost]
+```
+
+`xpc_retain` / `xpc_release` work correctly for storing peer connections beyond
+the event handler callback. `std.fmt.bufPrintZ` produces null-terminated strings
+suitable for `xpc_dictionary_set_string`.
+
+#### Files changed
+
+| File                      | Change                                         |
+| ------------------------- | ---------------------------------------------- |
+| `ghost/src/apprt/xpc.zig` | Store peer, send url_changed back to web       |
