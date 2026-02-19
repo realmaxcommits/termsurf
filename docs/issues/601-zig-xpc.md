@@ -86,3 +86,111 @@ determined in Experiment 1.
 
 3. **Send messages to `web`** — Ghost sends `mode_changed` and `url_changed`
    back to `web`. Proves bidirectional communication.
+
+## Experiments
+
+### Experiment 1: Gateway connection and anonymous listener
+
+#### Goal
+
+Ghost connects to the xpc-gateway on startup, creates an anonymous XPC listener,
+registers its endpoint, and accepts connections from `web`. Ghost logs peer
+connect/disconnect events. No message parsing — just proving XPC plumbing works
+from Zig using `objc.Block`.
+
+#### Changes
+
+##### `ghost/src/apprt/xpc.zig` (new file)
+
+A new module that handles all XPC communication. Uses `@cImport` for the XPC C
+API and `objc.Block` for event handlers.
+
+```zig
+const xpc = @cImport({
+    @cInclude("xpc/xpc.h");
+});
+```
+
+Public interface:
+
+```zig
+pub fn init() void    // Connect to gateway, create listener, register endpoint
+pub fn deinit() void  // Clean up connections
+```
+
+`init()` does:
+
+1. Create a named XPC connection to `com.termsurf.xpc-gateway`:
+   ```zig
+   const gateway = xpc.xpc_connection_create_mach_service(
+       "com.termsurf.xpc-gateway", null, 0);
+   ```
+
+2. Set an event handler on the gateway using `objc.Block`. The block type needs
+   no captures and one argument (`xpc.xpc_object_t`):
+   ```zig
+   const EventBlock = objc.Block(struct {}, .{xpc.xpc_object_t}, void);
+   var block = EventBlock.init(.{}, gatewayEventHandler);
+   ```
+   The handler just logs errors.
+
+3. Resume the gateway connection.
+
+4. Create an anonymous listener:
+   ```zig
+   const listener = xpc.xpc_connection_create(null, null);
+   ```
+
+5. Set an event handler on the listener. When a peer connects
+   (`xpc_get_type(event) == xpc.XPC_TYPE_CONNECTION`):
+   - Set an event handler on the peer connection (for messages and disconnect).
+   - Resume the peer connection.
+   - Log "Peer connected". On peer disconnect, log "Peer disconnected".
+
+6. Resume the listener.
+
+7. Create an endpoint from the listener and send `register_app` to the gateway:
+   ```zig
+   const endpoint = xpc.xpc_endpoint_create(listener);
+   const msg = xpc.xpc_dictionary_create(null, null, 0);
+   xpc.xpc_dictionary_set_string(msg, "action", "register_app");
+   xpc.xpc_dictionary_set_value(msg, "endpoint", endpoint);
+   xpc.xpc_connection_send_message(gateway, msg);
+   ```
+
+##### `ghost/src/apprt/embedded.zig`
+
+In `App.init()`, after the existing initialization, call `xpc.init()`. In
+`App.terminate()`, call `xpc.deinit()`.
+
+##### `ghost/src/build/SharedDeps.zig`
+
+May need to link the XPC framework. Check if `@cImport("xpc/xpc.h")` works
+without explicit linking (XPC is part of libSystem on macOS, so it likely does).
+
+#### Key unknowns
+
+1. Does `@cImport` handle `<xpc/xpc.h>` cleanly? The header uses C blocks in
+   function signatures — Zig may ignore or error on these.
+2. Does `objc.Block` work with XPC's `xpc_connection_set_event_handler`? The
+   function expects an `xpc_handler_t` block, not an Objective-C block. They use
+   the same runtime, but the type signature may differ.
+3. Can we compare `xpc_get_type(event)` with `XPC_TYPE_CONNECTION` from Zig?
+   These are extern pointer constants.
+
+If any of these fail, we'll need workarounds (C shim, different API, etc.).
+
+#### Verification
+
+```bash
+cd ghost && zig build
+open ghost/zig-out/Ghostty.app --stderr ~/dev/termsurf/logs/ghost.log
+
+# In another terminal:
+export TERMSURF_PANE_ID=$(uuidgen)
+cargo run -p web -- https://example.com
+```
+
+Pass: Ghost logs show "Peer connected" when `web` starts and "Peer disconnected"
+when `web` exits. No crashes, no block-related errors. The `web` TUI renders
+normally.
