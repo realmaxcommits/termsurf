@@ -172,3 +172,133 @@ stays correct because it's derived from cell size (stable) and grid position
 
 3. **Resize and cleanup** — Verify resize updates the rectangle dimensions and
    disconnect clears it.
+
+## Experiments
+
+### Experiment 1: Pane ID and surface lookup
+
+#### Goal
+
+Each Surface gets a UUID pane ID. The shell inherits it as `TERMSURF_PANE_ID`.
+When `web` sends `set_overlay` with a `pane_id`, Ghost looks up the matching
+surface and logs success. Proves the full lookup path works end-to-end before
+adding any rendering.
+
+#### Changes
+
+##### `ghost/src/Surface.zig`
+
+Add a `pane_id` field — a 36-byte null-terminated UUID string (e.g.
+`"9F96D529-1234-5678-ABCD-EF0123456789"`).
+
+macOS ships `uuid_generate` and `uuid_unparse_upper` in `<uuid/uuid.h>`. Declare
+them as `extern "c"`:
+
+```zig
+const uuid_t = [16]u8;
+extern "c" fn uuid_generate(out: *uuid_t) void;
+extern "c" fn uuid_unparse_upper(uu: *const uuid_t, out: *[37]u8) void;
+```
+
+Add the field to the Surface struct:
+
+```zig
+pane_id: [36:0]u8 = undefined,
+```
+
+In `init()`, generate the UUID early (before the env block at line 616):
+
+```zig
+var uuid: uuid_t = undefined;
+uuid_generate(&uuid);
+uuid_unparse_upper(&uuid, &self.pane_id);
+```
+
+Then inside the env block (after line 626, `env.remove("GHOSTTY_LOG")`), inject
+the pane ID into the environment so the shell inherits it:
+
+```zig
+env.put("TERMSURF_PANE_ID", &self.pane_id);
+```
+
+`env` is a `std.process.EnvMap`. The `put` method copies the value, so the stack
+reference is fine.
+
+##### `ghost/src/App.zig`
+
+Add a public lookup method:
+
+```zig
+pub fn findSurfaceByPaneId(
+    self: *App,
+    pane_id: []const u8,
+) ?*apprt.Surface {
+    for (self.surfaces.items) |surface| {
+        if (std.mem.eql(u8, &surface.core().pane_id, pane_id))
+            return surface;
+    }
+    return null;
+}
+```
+
+This iterates the flat `surfaces` list and compares the `pane_id` field. With a
+handful of surfaces this is fine — no hash map needed.
+
+##### `ghost/src/apprt/xpc.zig`
+
+Accept a `*CoreApp` in `init()` and store it as module-level state:
+
+```zig
+const CoreApp = @import("../App.zig");
+var app: *CoreApp = undefined;
+
+pub fn init(core_app: *CoreApp) void {
+    app = core_app;
+    // ... rest of init
+}
+```
+
+In `handleSetOverlay`, after logging, look up the surface:
+
+```zig
+if (app.findSurfaceByPaneId(pane_id)) |surface| {
+    _ = surface;
+    log.info("surface found for pane={s}", .{pane_id});
+} else {
+    log.warn("no surface found for pane={s}", .{pane_id});
+}
+```
+
+##### `ghost/src/apprt/embedded.zig`
+
+Update the `xpc.init()` call in `App.init()` to pass `core_app`:
+
+```zig
+xpc.init(core_app);
+```
+
+#### Key unknowns
+
+1. Does `uuid_generate` / `uuid_unparse_upper` link without explicit framework
+   flags? These are in libSystem on macOS, so they should be available
+   automatically.
+2. Does `env.put` accept a `*[36:0]u8`? It expects `[]const u8` — the sentinel
+   array should coerce. If not, use `std.mem.span(&self.pane_id)`.
+
+#### Verification
+
+```bash
+cd ghost && zig build
+GHOSTTY_LOG=stderr open ghost/zig-out/Ghostty.app --stderr ~/dev/termsurf/logs/ghost.log
+```
+
+In a Ghost pane:
+
+```bash
+echo $TERMSURF_PANE_ID   # Should print a UUID
+cargo run -p web -- https://example.com
+```
+
+Pass: Ghost logs show `surface found for pane=<UUID>` where the UUID matches
+`$TERMSURF_PANE_ID` from the shell. `echo $TERMSURF_PANE_ID` prints a valid UUID
+in every new pane.
