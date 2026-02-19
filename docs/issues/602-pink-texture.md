@@ -562,10 +562,54 @@ Both key unknowns resolved:
 
 #### Files changed
 
-| File                                          | Change                                     |
-| --------------------------------------------- | ------------------------------------------ |
-| `ghost/src/renderer/shaders/shaders.metal`    | Pink overlay vertex + fragment shaders     |
-| `ghost/src/renderer/metal/shaders.zig`        | Pipeline definition + PinkOverlay struct   |
-| `ghost/src/renderer/generic.zig`              | Renderer field + render step in drawFrame  |
-| `ghost/src/Surface.zig`                       | `setOverlay()` / `clearOverlay()` methods  |
-| `ghost/src/apprt/xpc.zig`                     | Wire XPC to surface, clear on disconnect   |
+| File                                       | Change                                    |
+| ------------------------------------------ | ----------------------------------------- |
+| `ghost/src/renderer/shaders/shaders.metal` | Pink overlay vertex + fragment shaders    |
+| `ghost/src/renderer/metal/shaders.zig`     | Pipeline definition + PinkOverlay struct  |
+| `ghost/src/renderer/generic.zig`           | Renderer field + render step in drawFrame |
+| `ghost/src/Surface.zig`                    | `setOverlay()` / `clearOverlay()` methods |
+| `ghost/src/apprt/xpc.zig`                  | Wire XPC to surface, clear on disconnect  |
+
+## Conclusion
+
+Pink overlay works end-to-end in Zig. A hot pink GPU quad renders at the grid
+coordinates specified by `web`, survives terminal resize, and clears on
+disconnect — all without any Swift involvement.
+
+The implementation required two experiments across nine files:
+
+1. **Pane ID and surface lookup** (Experiment 1) — UUID on each Surface,
+   propagated as `TERMSURF_PANE_ID` to the shell, looked up by the XPC handler
+   when `web` sends `set_overlay`.
+
+2. **Pink overlay rendering** (Experiment 2) — Metal vertex/fragment shaders,
+   pipeline definition, renderer state, `drawFrame()` render step, and
+   thread-safe `setOverlay()` / `clearOverlay()` methods on Surface.
+
+Key patterns established for future overlay work:
+
+- **Grid-to-pixel conversion** happens in the vertex shader:
+  `grid_coord * uniforms.cell_size`. The projection matrix handles padding.
+- **Per-frame buffer creation** via `Buffer(T).initFill` passes params to the
+  shader without vertex attributes. Created and released each frame.
+- **Thread safety** via `draw_mutex` — XPC callbacks lock it before writing
+  overlay state, `drawFrame()` holds it during rendering.
+- **Resize** is automatic — `web` sends new grid coordinates on terminal resize,
+  and the vertex shader recomputes pixel positions from the updated values.
+
+### Files changed
+
+| File                                       | Change                                    |
+| ------------------------------------------ | ----------------------------------------- |
+| `ghost/src/Surface.zig`                    | UUID field, `setOverlay`, `clearOverlay`  |
+| `ghost/src/App.zig`                        | `findSurfaceByPaneId()` lookup            |
+| `ghost/src/apprt/xpc.zig`                  | App ref, surface lookup, overlay wiring   |
+| `ghost/src/apprt/embedded.zig`             | Pass `core_app` to `xpc.init()`           |
+| `ghost/src/renderer/shaders/shaders.metal` | Pink overlay vertex + fragment shaders    |
+| `ghost/src/renderer/metal/shaders.zig`     | Pipeline definition + PinkOverlay struct  |
+| `ghost/src/renderer/generic.zig`           | Renderer field + render step in drawFrame |
+
+### What's next
+
+Issue 603+ will add the IOSurface overlay pipeline — replacing the pink quad
+with live Chromium frames streamed via Mach port transfer over XPC.
