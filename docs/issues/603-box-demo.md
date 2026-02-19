@@ -607,14 +607,90 @@ multi-webview: replace `var pane: Pane` with a `HashMap(UUID, *Pane)`.
 
 Files changed:
 
-- `ghost/src/apprt/xpc.zig` — Full Chromium server lifecycle
-  (`server_register`, `create_tab`, `display_surface`), Mach port transfer,
-  server spawning via `std.process.Child`, per-pane mutex for thread safety
+- `ghost/src/apprt/xpc.zig` — Full Chromium server lifecycle (`server_register`,
+  `create_tab`, `display_surface`), Mach port transfer, server spawning via
+  `std.process.Child`, per-pane mutex for thread safety
 - `ghost/src/Surface.zig` — `getCellSize()` for pixel dimension computation
 - `docs/chromium.md` — Added `146.0.7650.0-issue-603` branch
 - `box-demo/` — Copied from `ts4/box-demo/` (spinning blue square test page)
 
+## Experiment 3: Dynamic resize
+
+### Goal
+
+Resize the terminal window while Chromium is streaming. Ghost sends `resize` to
+the server, the server adjusts capture resolution, and frames continue at the
+new size. The overlay quad resizes automatically because the vertex shader
+already reads pixel dimensions from each IOSurface.
+
+### Background
+
+`web` already sends updated `set_overlay` messages on resize — the logs from
+Experiment 2 show the same pane receiving progressively larger grid dimensions
+as the window is dragged. Ghost already recomputes pixel dimensions in
+`handleSetOverlay`. The Chromium server already handles `resize` messages
+(`shell_browser_main_parts.cc:211`), calling `ResizeCapture` with new pixel
+dimensions.
+
+The only missing piece: Ghost never sends the `resize` message to the server.
+
+### Changes
+
+**One file: `ghost/src/apprt/xpc.zig`**
+
+In `handleSetOverlay`, after recomputing `pending_pixel_w` and
+`pending_pixel_h`, check if the server is already running and the pixel
+dimensions changed. If so, send a `resize` message:
+
+```zig
+// If the server is already running and dimensions changed, send resize.
+if (pane.server_peer != null) {
+    if (new_pixel_w != old_pixel_w or new_pixel_h != old_pixel_h) {
+        sendResize(&pane);
+    }
+}
+```
+
+New helper (caller holds `p.mutex`):
+
+```zig
+fn sendResize(p: *Pane) void {
+    const msg = xpc_dictionary_create(null, null, 0);
+    xpc_dictionary_set_string(msg, "action", "resize");
+
+    var pane_z: [37]u8 = undefined;
+    @memcpy(pane_z[0..36], &p.pending_pane_id);
+    pane_z[36] = 0;
+    xpc_dictionary_set_string(msg, "pane_id", @ptrCast(&pane_z));
+
+    xpc_dictionary_set_uint64(msg, "pixel_width", p.pending_pixel_w);
+    xpc_dictionary_set_uint64(msg, "pixel_height", p.pending_pixel_h);
+
+    xpc_connection_send_message(p.server_peer, msg);
+    log.info("sent resize pixel={d}x{d}", .{ p.pending_pixel_w, p.pending_pixel_h });
+}
+```
+
+No other files change. The overlay vertex shader already reads
+`pixel_width`/`pixel_height` from each IOSurface via `Texture.fromIOSurface`, so
+the quad automatically resizes when new frames arrive at the new resolution.
+
+### Verification
+
+```bash
+cd box-demo && bun run server.ts &
+cd ghost && zig build
+open ghost/zig-out/Ghostty.app --stderr ~/dev/termsurf/logs/overlay.log
+# In a Ghost pane:
+cargo run -p web -- http://localhost:9407
+# Drag the window edge to resize
+```
+
+Pass: Box demo continues rendering during and after resize. The overlay fills
+the new viewport dimensions. Logs show `sent resize` messages.
+
 ## Ideas for future experiments
 
-3. **Resize** — Resize the terminal, Ghost sends `resize` to the server, the
-   server adjusts capture resolution, frames continue at the new size.
+4. **Mouse forwarding** — Click and scroll events forwarded to Chromium via XPC.
+5. **Keyboard forwarding** — Key events forwarded to Chromium via XPC.
+6. **Navigation** — URL bar in `web` TUI navigates the Chromium tab.
