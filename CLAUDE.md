@@ -33,7 +33,7 @@ TermSurf is a terminal emulator with an integrated web browser. Users type
 terminal pane, sharing cookies and sessions across tabs within the same browser
 profile.
 
-The project has evolved through five generations:
+The project has evolved through six generations:
 
 - **ts1** (Ghostty + WKWebView) — macOS-only. WKWebView had limited API and no
   cross-platform path. Abandoned in favor of CEF.
@@ -48,14 +48,20 @@ The project has evolved through five generations:
 - **ts4** (Chromium Content API experiments) — Proved in-process Chromium works:
   multiple browser profiles coexisting in one process, 60fps rendering. PoC only
   — used content_shell inside the Chromium source tree. Superseded by ts5.
-- **ts5** (Ghostty fork + in-process Chromium) — **Active development.** Forks
-  Ghostty as the application (terminal panes are native, in-process). Will embed
-  Chromium directly via the Content API for browser panes.
+- **ts5** (Ghostty fork + out-of-process Chromium) — Proved end-to-end Chromium
+  streaming works: IOSurface overlay pipeline, XPC communication, mouse/keyboard
+  forwarding, focus lifecycle, text selection. All logic lived in Swift
+  (CompositorXPC). Superseded by Ghost.
+- **ghost** (Ghostty fork, Zig-first) — **Active development.** Fresh Ghostty
+  fork with all browser integration logic in Zig instead of Swift. XPC
+  communication, IOSurface textures, keyboard/mouse forwarding — all in Zig,
+  matching Ghostty's architecture where Swift is a thin macOS wrapper.
 
 **Directory structure:**
 
-- `ts5/` — TermSurf 5.0 (Ghostty fork + in-process Chromium). Active work.
+- `ghost/` — TermSurf Ghost (Ghostty fork, Zig-first). **Active development.**
 - `web/` — `web` TUI (Rust/ratatui). Browser chrome in the terminal pane.
+- `ts5/` — TermSurf 5.0 (Ghostty fork + out-of-process Chromium). Superseded.
 - `ts4/` — TermSurf 4.0 (Chromium Content API experiments). Superseded.
 - `ts3/` — TermSurf 3.0 (WezTerm fork + out-of-process CEF). Superseded.
 - `ts2/` — TermSurf 2.0 (WezTerm fork + in-process CEF). Superseded.
@@ -63,7 +69,66 @@ The project has evolved through five generations:
 - `vendor/cef-rs/` — CEF Rust bindings. Used by `ts3/termsurf-profile/`.
 - `docs/issues/` — All documentation across all generations.
 
-## TermSurf 5.0 (ts5/) — Active Development
+## TermSurf Ghost (ghost/) — Active Development
+
+### Architecture
+
+Ghost forks Ghostty with all browser integration logic in Zig. Swift remains a
+thin macOS wrapper — window creation, menu bar, application lifecycle — matching
+Ghostty's own architecture. This is a clean break from ts5, where browser
+integration lived in Swift (CompositorXPC.swift).
+
+Key architectural decisions:
+
+- **XPC in Zig.** XPC is a C API (`<xpc/xpc.h>`). Zig calls it directly via
+  `@cImport`. No Swift intermediary needed.
+- **IOSurface in Zig.** The Metal renderer already lives in Zig. IOSurface Mach
+  ports arrive via XPC and go straight to the renderer. No Swift middleman.
+- **Input routing in Zig.** Zig already receives all keyboard/mouse events
+  through `Surface.keyCallback()` and `mouseButtonCallback()`. In browse mode,
+  these route to Chromium via XPC instead of to the terminal.
+- **Single source of truth.** Browse mode, focus state, pane profiles, overlay
+  coordinates — all live in Zig's Surface struct.
+
+### Current State
+
+Ghost is a clean Ghostty fork with no TermSurf modifications yet. Browser
+integration will be built incrementally across Issues 601+.
+
+### Directory Structure
+
+- `ghost/src/` — Shared Zig core (libghostty)
+- `ghost/src/Surface.zig` — Core surface (will hold browser state)
+- `ghost/src/renderer/Metal.zig` — Metal renderer
+- `ghost/src/renderer/metal/` — Metal pipeline, shaders, IOSurface layer
+- `ghost/src/apprt/embedded.zig` — C API exports
+- `ghost/include/ghostty.h` — libghostty C API headers
+- `ghost/macos/` — macOS app (Swift, thin wrapper)
+- `ghost/build.zig` — Build system
+- `ghost/build.zig.zon` — Dependencies
+
+### Build Commands
+
+```bash
+cd ghost && zig build
+```
+
+### Launching
+
+```bash
+open ghost/zig-out/Ghostty.app
+```
+
+### Upstream Merges
+
+Same approach as ts5 (Issue 418 Experiment 3):
+
+```bash
+git fetch upstream
+git subtree pull --prefix=ghost upstream main -m "Merge upstream Ghostty into ghost"
+```
+
+## TermSurf 5.0 (ts5/) — Superseded by Ghost
 
 ### Architecture
 
@@ -458,7 +523,7 @@ to separate processes — one per profile. That's ts3.
 
 Historical docs: `docs/issues/ts2-*.md`
 
-## TermSurf 1.x (ts1/) — Legacy (superseded by ts5)
+## TermSurf 1.x (ts1/) — Legacy
 
 Ghostty fork with WKWebView for browser panes. macOS-only. Superseded by ts5
 which starts from a clean upstream Ghostty and will use Chromium instead of
@@ -572,7 +637,12 @@ as a testbed before ts1 integration. Changes made to the example:
 
 ## Documentation
 
-### TermSurf 5.0 (active)
+### TermSurf Ghost (active)
+
+- `docs/issues/600-termsurf-ghost.md` — Ghost vision, Zig-first architecture,
+  Ghostty fork
+
+### TermSurf 5.0
 
 - `docs/issues/417-ghostty-vs-wezterm.md` — Terminal emulator selection
   (Ghostty)
