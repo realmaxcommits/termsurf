@@ -212,15 +212,14 @@ right_button_down = 256 (1 << 8)
 ### Verification
 
 ```bash
-cd ts4/box-demo && bun run server.ts &
 cd ghost && zig build
 open ghost/zig-out/Ghostty.app --stderr ~/dev/termsurf/logs/ghost.log
-cargo run -p web -- http://localhost:9407
+cargo run -p web -- https://news.ycombinator.com
 ```
 
 Pass criteria:
 
-- Clicking a link in the box demo navigates to the target page
+- Clicking a Hacker News story link navigates to the target page
 - Click position is accurate (correct link is hit, not neighbors)
 - Right click works (context menu or right-click handler fires)
 - Clicks outside the overlay go to the terminal as normal
