@@ -987,3 +987,26 @@ Pass criteria:
 - Clicking on the control panel while in browse mode triggers mode change →
   unfocus
 - Only one Chromium tab is focused at a time (multi-pane test)
+
+### Result: Partial pass
+
+Keyboard-driven focus works correctly:
+
+- Enter/Esc toggles browse mode → `focus_changed` sent correctly
+- Keyboard pane switching transfers focus (unfocuses old, refocuses new if
+  browsing)
+- Multi-pane single-focus enforcement works
+
+Mouse-driven focus does not work:
+
+- Clicking on the overlay while in control mode does not switch to browse mode
+  or focus Chromium
+- Clicking on the control panel while in browse mode does not switch to control
+  mode or unfocus Chromium
+
+Root cause: the design assumed the `web` TUI already sends `mode_changed` on
+mouse clicks, but it doesn't. Overlay clicks are intercepted by Ghost's
+`mouseButtonCallback` and forwarded directly to Chromium — the `web` TUI never
+sees them. Control panel clicks go to the terminal but the `web` TUI doesn't
+handle mouse clicks for mode switching. Mouse-driven mode switching needs
+additional work in a follow-up experiment.

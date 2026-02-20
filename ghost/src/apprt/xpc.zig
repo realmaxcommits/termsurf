@@ -52,6 +52,7 @@ extern const _xpc_error_connection_invalid: anyopaque;
 // -- Dispatch queue C API --
 
 extern "c" fn dispatch_queue_create(label: [*:0]const u8, attr: ?*anyopaque) ?*anyopaque;
+extern "c" fn dispatch_async_f(queue: ?*anyopaque, context: ?*anyopaque, work: *const fn (?*anyopaque) callconv(.c) void) void;
 extern "c" fn xpc_connection_set_target_queue(connection: xpc_object_t, queue: ?*anyopaque) void;
 
 // -- Mach port / IOSurface C API --
@@ -80,6 +81,7 @@ const Pane = struct {
     pending_pixel_w: u64 = 0,
     pending_pixel_h: u64 = 0,
     tab_sent: bool = false,
+    browsing: bool = false,
 };
 
 /// Per-profile server state. Shared by all panes on the same profile.
@@ -111,6 +113,9 @@ var peer_to_profile: std.AutoHashMap(usize, []const u8) = undefined;
 
 /// Reverse lookup: CoreSurface pointer address → pane UUID string (Issue 606).
 var surface_to_pane: std.AutoHashMap(usize, []const u8) = undefined;
+
+/// The pane UUID that currently has Chromium focus (at most one). Issue 606.
+var focused_pane: ?[]const u8 = null;
 
 // -- Block types --
 
@@ -294,6 +299,7 @@ fn handleSetOverlay(msg: xpc_object_t) void {
         const old_h = p.pending_pixel_h;
         p.pending_pixel_w = new_pixel_w;
         p.pending_pixel_h = new_pixel_h;
+        p.browsing = browsing;
 
         if (url.len > 0 and url.len <= p.pending_url_buf.len) {
             @memcpy(p.pending_url_buf[0..url.len], url);
@@ -335,6 +341,7 @@ fn handleSetOverlay(msg: xpc_object_t) void {
         p.overlay_surface = surface.core();
         p.pending_pixel_w = new_pixel_w;
         p.pending_pixel_h = new_pixel_h;
+        p.browsing = browsing;
 
         // Register surface → pane reverse lookup (Issue 606, mouse input).
         surface_to_pane.put(@intFromPtr(surface.core()), pane_id_key) catch {};
@@ -364,6 +371,9 @@ fn handleSetOverlay(msg: xpc_object_t) void {
             if (server.peer != null) {
                 // Server already registered — send create_tab now.
                 sendCreateTab(p, server);
+                if (p.browsing) {
+                    sendFocusChanged(p.pane_id_key, true);
+                }
             }
         }
     }
@@ -391,6 +401,9 @@ fn handleServerRegister(msg: xpc_object_t) void {
         const p = entry.value_ptr.*;
         if (p.server == server and !p.tab_sent and p.pending_url_len > 0) {
             sendCreateTab(p, server);
+            if (p.browsing) {
+                sendFocusChanged(p.pane_id_key, true);
+            }
         }
     }
 }
@@ -428,6 +441,11 @@ fn handleModeChanged(msg: xpc_object_t) void {
     const browsing = xpc_dictionary_get_bool(msg, "browsing");
 
     log.info("mode_changed pane={s} browsing={}", .{ pane_id, browsing });
+
+    if (panes.get(pane_id)) |p| {
+        p.browsing = browsing;
+        sendFocusChanged(pane_id, browsing);
+    }
 }
 
 fn handleCursorChanged(msg: xpc_object_t) void {
@@ -439,6 +457,79 @@ fn handleCursorChanged(msg: xpc_object_t) void {
             surface.overlay_cursor_type = cursor_type;
         }
     }
+}
+
+// -- Focus lifecycle (Issue 606 Experiment 5) --
+
+/// Send focus_changed to Chromium, enforcing single-pane focus.
+fn sendFocusChanged(pane_id: []const u8, focused: bool) void {
+    const p = panes.get(pane_id) orelse return;
+    const server = p.server orelse return;
+    if (server.peer == null) return;
+
+    // Single-pane enforcement: unfocus previous pane.
+    if (focused) {
+        if (focused_pane) |prev| {
+            if (!std.mem.eql(u8, prev, pane_id)) {
+                sendFocusMessage(prev, false);
+            }
+        }
+        focused_pane = pane_id;
+    } else {
+        if (focused_pane) |prev| {
+            if (std.mem.eql(u8, prev, pane_id)) {
+                focused_pane = null;
+            }
+        }
+    }
+
+    sendFocusMessage(pane_id, focused);
+}
+
+fn sendFocusMessage(pane_id: []const u8, focused: bool) void {
+    const p = panes.get(pane_id) orelse return;
+    const server = p.server orelse return;
+    if (server.peer == null) return;
+
+    const msg = xpc_dictionary_create(null, null, 0);
+    xpc_dictionary_set_string(msg, "action", "focus_changed");
+
+    if (pane_id.len > 0 and pane_id.len <= 36) {
+        var pane_z: [37]u8 = undefined;
+        @memcpy(pane_z[0..pane_id.len], pane_id);
+        pane_z[pane_id.len] = 0;
+        xpc_dictionary_set_string(msg, "pane_id", @ptrCast(&pane_z));
+    }
+
+    xpc_dictionary_set_bool(msg, "focused", focused);
+    xpc_connection_send_message(server.peer, msg);
+    log.info("focus_changed pane={s} focused={}", .{ pane_id, focused });
+}
+
+/// Called from Surface.paneFocusChanged (main thread). Dispatches to XPC queue.
+pub fn handlePaneFocusChanged(surface: *CoreSurface, focused: bool) void {
+    const ptr_val = @intFromPtr(surface);
+    const dispatch_fn = struct {
+        fn f(ctx: ?*anyopaque) callconv(.c) void {
+            const addr = @intFromPtr(ctx);
+            // focused encoded in low bit
+            const surf_addr = addr & ~@as(usize, 1);
+            const is_focused = (addr & 1) != 0;
+            const pane_id = surface_to_pane.get(surf_addr) orelse return;
+            const p = panes.get(pane_id) orelse return;
+            if (is_focused) {
+                // Only focus if the web TUI is in browse mode.
+                if (p.browsing) {
+                    sendFocusChanged(pane_id, true);
+                }
+            } else {
+                sendFocusChanged(pane_id, false);
+            }
+        }
+    }.f;
+    // Encode focused state in low bit of pointer (Surface is aligned).
+    const encoded = ptr_val | @as(usize, if (focused) 1 else 0);
+    dispatch_async_f(xpc_queue, @ptrFromInt(encoded), dispatch_fn);
 }
 
 // -- Server lifecycle --
@@ -747,6 +838,13 @@ fn handleDisconnect(peer_addr: usize) void {
             if (p.overlay_surface) |surface| {
                 surface.clearOverlay();
                 _ = surface_to_pane.remove(@intFromPtr(surface));
+            }
+
+            // Clear focused_pane if this pane had focus (Issue 606).
+            if (focused_pane) |fp| {
+                if (std.mem.eql(u8, fp, pane_id_key)) {
+                    focused_pane = null;
+                }
             }
 
             // Decrement server pane count; kill if last.

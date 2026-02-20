@@ -1713,6 +1713,11 @@ pub const CAPI = struct {
         surface.focusCallback(focused);
     }
 
+    /// Notify XPC of pane focus change for Chromium focus lifecycle (Issue 606).
+    export fn ghostty_surface_pane_focus_changed(surface: *Surface, focused: bool) void {
+        surface.core_surface.paneFocusChanged(focused);
+    }
+
     /// Update the occlusion state of a surface.
     export fn ghostty_surface_set_occlusion(surface: *Surface, visible: bool) void {
         surface.occlusionCallback(visible);

@@ -429,6 +429,7 @@ extension Ghostty {
             guard self.focused != focused else { return }
             self.focused = focused
             ghostty_surface_set_focus(surface, focused)
+            ghostty_surface_pane_focus_changed(surface, focused)  // Issue 606
 
             // Update our secure input state if we are a password input
             if (passwordInput) {

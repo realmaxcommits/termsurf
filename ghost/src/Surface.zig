@@ -3464,6 +3464,13 @@ pub fn focusCallback(self: *Surface, focused: bool) !void {
     }
 }
 
+/// Called when this surface gains or loses pane focus (Issue 606).
+/// Notifies XPC to update Chromium focus state.
+pub fn paneFocusChanged(self: *Surface, focused: bool) void {
+    const xpc = @import("apprt/xpc.zig");
+    xpc.handlePaneFocusChanged(self, focused);
+}
+
 pub fn refreshCallback(self: *Surface) !void {
     // Crash metadata in case we crash in here
     crash.sentry.thread_state = self.crashThreadState();
