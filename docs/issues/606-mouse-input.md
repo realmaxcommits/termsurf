@@ -717,150 +717,255 @@ instant with no flicker. The `performAction(.mouse_shape)` pipeline works
 through Ghostty's existing `documentCursor` system — no `NSCursor.set()` hack,
 no `invalidateCursorRects` needed. Three ts5 experiments collapsed into one.
 
-## Experiment 5: Text selection
+## Experiment 5: Focus lifecycle
 
 ### Goal
 
-Click and drag to select text in the Chromium overlay. Double-click to select a
-word. Triple-click to select a line. Shift+click to extend a selection. The
-selection highlight renders in real time as the user drags.
+Chromium receives focus/unfocus signals that match the user's intent. Entering
+browse mode focuses the Chromium tab. Exiting browse mode unfocuses it.
+Switching panes with the keyboard transfers focus. Clicking on a webview that
+isn't focused focuses it. Clicking on the control panel (URL bar) when the
+webview is focused unfocuses it.
 
 ### Background
 
-Text selection was ts5's white whale — Experiments 10, 11, and 12 of Issue 514
-all failed. The root cause was architectural: ts5 used an NSEvent local monitor
-(before the responder chain) that consumed events by returning nil. Consuming
-the mouseDown event prevented AppKit from starting drag tracking, so
-mouseDragged events never fired. Three attempts to work around this all failed.
+Chromium's Blink renderer requires `FocusController::IsActive() == true` to
+paint selection highlights, show blinking carets in text inputs, and apply
+`:focus` CSS styles. The Chromium Profile Server exposes this via a
+`focus_changed` XPC message — `HandleFocusChanged` calls `view->Focus()` +
+`view->SetActive(true)` on focus, `view->SetActive(false)` on blur. But Ghost
+never sends this message. `CreateTab` doesn't set focus either. So Chromium tabs
+are permanently unfocused — text selection won't render, input fields won't show
+carets.
 
-Ghost's architecture avoids this entirely. Mouse events go through the responder
-chain to SurfaceView, which calls Zig's `mouseButtonCallback` and
-`cursorPosCallback`. The callbacks intercept overlay hits and forward via XPC,
-but the NSEvents propagate normally through AppKit — nothing is consumed at the
-NSEvent level. `mouseDragged` events arrive as `cursorPosCallback` calls with
-the left button held, exactly as they would for terminal text selection.
+ts5 needed five experiments (Issue 515 Experiments 1–5) to get focus right. The
+complexity came from Swift-side NSNotification observers, firstResponder
+tracking, deferred focus after server registration, and two code paths
+(new-server vs existing-server). Ghost's Zig-first architecture simplifies this
+significantly because all the state lives in xpc.zig's Pane struct on a single
+serial queue.
 
-The forwarding pieces are already in place:
+Three focus triggers need to work:
 
-- mouseDown → `sendMouseEvent` with type "down" (Experiment 1)
-- mouseDragged → `sendMouseMove` with leftButtonDown=64 modifier (Experiment 3)
-- mouseUp → `sendMouseEvent` with type "up" (Experiment 1)
+1. **Mode change (keyboard).** The `web` TUI sends `mode_changed` with
+   `browsing: true/false` when the user presses Enter (browse) or Esc (control).
+   Ghost's `handleModeChanged` currently just logs this. It should send
+   `focus_changed` to the Chromium server.
 
-Chromium's `HandleMouseEvent` and `HandleMouseMove` both accept the full
-modifier bitmask and construct `blink::WebMouseEvent` objects that the renderer
-processes. Selection highlight is rendered by Chromium's compositor and appears
-in the IOSurface frames we already receive at 120fps.
+2. **Pane switch (keyboard).** Ghostty's `focusDidChange` fires on every pane
+   focus transition — keyboard shortcuts, mouse clicks on different panes,
+   splits, focus-follows-mouse. When a pane loses focus, its Chromium tab should
+   lose focus too. When a pane with an active overlay gains focus, its tab
+   should regain focus (but only if the `web` TUI is in browse mode).
 
-Two gaps exist in the current forwarding that could affect selection quality:
+3. **Mouse click (overlay vs control panel).** Clicking on the overlay while in
+   control mode should switch to browse mode and focus Chromium. Clicking on the
+   control panel (terminal area above the overlay) while in browse mode should
+   switch to control mode and unfocus Chromium. The `web` TUI already sends
+   `mode_changed` on these transitions — Ghost just needs to handle them.
 
-1. **Keyboard modifiers on mouse move.** `sendMouseMove` only sends button-down
-   flags (leftButtonDown=64, rightButtonDown=256). It doesn't forward
-   shift/ctrl/alt/cmd. This means Shift+drag to extend a selection won't work.
-   Chromium's `HandleMouseMove` casts the modifier bitmask straight through to
-   `web_modifiers`, so adding keyboard mods is trivial.
-
-2. **Click count.** `sendMouseEvent` hardcodes `click_count` to 1. Chromium uses
-   click count to distinguish single-click (caret), double-click (word select),
-   and triple-click (line select). Ghostty already tracks `left_click_count`
-   (1–3) in the Mouse struct with proper timing and distance thresholds. We just
-   need to forward it.
+The single-pane enforcement rule from ts5 still applies: only one Chromium tab
+can be focused at a time. Focusing one pane must unfocus any previously focused
+pane.
 
 ### Design
 
-**Phase 1: Add keyboard modifiers to `sendMouseMove`.**
+**Phase 1: Add focus state to Pane and tracking to xpc.zig.**
 
-Add `mods: input.Mods` parameter to `sendMouseMove` in xpc.zig. Encode keyboard
-modifiers the same way `sendMouseEvent` does:
+Add `browsing` and track the currently focused pane:
 
 ```zig
-pub fn sendMouseMove(
-    surface: *CoreSurface,
-    mods: input.Mods,
-    overlay_x: f64,
-    overlay_y: f64,
-) void {
+const Pane = struct {
     ...
-    var modifiers: i64 = 0;
-    if (mods.shift) modifiers |= 1;
-    if (mods.ctrl) modifiers |= 2;
-    if (mods.alt) modifiers |= 4;
-    if (mods.super) modifiers |= 8;
-    const left_idx = @intFromEnum(input.MouseButton.left);
-    const right_idx = @intFromEnum(input.MouseButton.right);
-    if (surface.mouse.click_state[left_idx] == .press) modifiers |= 64;
-    if (surface.mouse.click_state[right_idx] == .press) modifiers |= 256;
-    xpc_dictionary_set_int64(msg, "modifiers", modifiers);
-    ...
-}
+    browsing: bool = false,
+};
+
+/// The pane UUID that currently has Chromium focus (at most one).
+var focused_pane: ?[]const u8 = null;
 ```
 
-Update the call site in `cursorPosCallback` to pass mods. `cursorPosCallback`
-receives `mods: ?input.Mods` — use `mods orelse self.mouse.mods` to fall back to
-the last known modifiers when the apprt doesn't provide them (same pattern
-Ghostty uses elsewhere in the function):
+New helper that enforces single-pane focus:
 
 ```zig
-xpc.sendMouseMove(self, mods orelse self.mouse.mods, overlay_pos.x, overlay_pos.y);
-```
+fn sendFocusChanged(pane_id: []const u8, focused: bool) void {
+    const p = panes.get(pane_id) orelse return;
+    const server = p.server orelse return;
+    if (server.peer == null) return;
 
-**Phase 2: Forward click count.**
-
-Replace the hardcoded `click_count` of 1 in `sendMouseEvent`. Add a
-`click_count` parameter:
-
-```zig
-pub fn sendMouseEvent(
-    surface: *CoreSurface,
-    action: input.MouseButtonState,
-    button: input.MouseButton,
-    mods: input.Mods,
-    click_count: u8,
-    overlay_x: f64,
-    overlay_y: f64,
-) void {
-    ...
-    xpc_dictionary_set_int64(msg, "click_count", @intCast(click_count));
-    ...
-}
-```
-
-Update the call site in `mouseButtonCallback`. For left button press, use
-`self.mouse.left_click_count`. But there's a subtlety: Ghostty updates
-`left_click_count` _after_ the overlay check returns. We need to compute the
-click count before forwarding.
-
-Move the click count logic (timing check, increment, cap at 3) to happen before
-the overlay check. The existing code at lines 4220–4235 computes click count
-based on time elapsed since last click and distance moved. Extract this into a
-helper or inline it before the overlay block:
-
-```zig
-// Compute click count for left button press (before overlay check,
-// so the count is available for Chromium forwarding — Issue 606).
-if (button == .left and action == .press) {
-    if (std.time.Instant.now()) |now| {
-        if (self.mouse.left_click_count > 0) {
-            const since = now.since(self.mouse.left_click_time);
-            if (since > self.config.mouse_interval) {
-                self.mouse.left_click_count = 0;
+    // Single-pane enforcement: unfocus previous pane.
+    if (focused) {
+        if (focused_pane) |prev| {
+            if (!std.mem.eql(u8, prev, pane_id)) {
+                sendFocusMessage(prev, false);
             }
         }
-        self.mouse.left_click_time = now;
-        self.mouse.left_click_count += 1;
-        if (self.mouse.left_click_count > 3) self.mouse.left_click_count = 1;
-    } else |_| {
-        self.mouse.left_click_count = 1;
+        focused_pane = pane_id;
+    } else {
+        if (focused_pane) |prev| {
+            if (std.mem.eql(u8, prev, pane_id)) {
+                focused_pane = null;
+            }
+        }
+    }
+
+    sendFocusMessage(pane_id, focused);
+}
+
+fn sendFocusMessage(pane_id: []const u8, focused: bool) void {
+    const p = panes.get(pane_id) orelse return;
+    const server = p.server orelse return;
+    if (server.peer == null) return;
+
+    const msg = xpc_dictionary_create(null, null, 0);
+    xpc_dictionary_set_string(msg, "action", "focus_changed");
+
+    if (pane_id.len > 0 and pane_id.len <= 36) {
+        var pane_z: [37]u8 = undefined;
+        @memcpy(pane_z[0..pane_id.len], pane_id);
+        pane_z[pane_id.len] = 0;
+        xpc_dictionary_set_string(msg, "pane_id", @ptrCast(&pane_z));
+    }
+
+    xpc_dictionary_set_bool(msg, "focused", focused);
+    xpc_connection_send_message(server.peer, msg);
+    log.info("focus_changed pane={s} focused={}", .{ pane_id, focused });
+}
+```
+
+**Phase 2: Handle `mode_changed` properly.**
+
+Replace the current stub:
+
+```zig
+fn handleModeChanged(msg: xpc_object_t) void {
+    const pane_id = str(xpc_dictionary_get_string(msg, "pane_id"));
+    const browsing = xpc_dictionary_get_bool(msg, "browsing");
+
+    log.info("mode_changed pane={s} browsing={}", .{ pane_id, browsing });
+
+    if (panes.get(pane_id)) |p| {
+        p.browsing = browsing;
+        sendFocusChanged(pane_id, browsing);
     }
 }
 ```
 
-Then pass `self.mouse.left_click_count` (or 1 for non-left buttons) as the
-click_count argument. For release events, pass the same count as the press
-(Chromium expects matching press/release counts).
+When the `web` TUI sends `browsing: true` (Enter), focus the tab. When it sends
+`browsing: false` (Esc), unfocus it.
 
-Note: the existing terminal click-count code below the overlay check will still
-run for terminal clicks. For overlay clicks we return early, so there's no
-double-counting.
+**Phase 3: Handle pane focus changes from Ghostty.**
+
+Ghostty's `focusDidChange` fires on every pane switch. Ghost needs to observe
+this at the Zig level. Add a new C API export that the Swift `focusDidChange`
+will call:
+
+In `Surface.zig`, add a public method:
+
+```zig
+/// Called when this surface gains or loses pane focus (Issue 606).
+/// Notifies XPC to update Chromium focus state.
+pub fn paneFocusChanged(self: *Surface, focused: bool) void {
+    const xpc = @import("apprt/xpc.zig");
+    xpc.handlePaneFocusChanged(self, focused);
+}
+```
+
+In `embedded.zig`, add the C API export:
+
+```zig
+export fn ghostty_surface_pane_focus_changed(surface: *Surface, focused: bool) void {
+    surface.core_surface.paneFocusChanged(focused);
+}
+```
+
+In `SurfaceView_AppKit.swift`, add a call in `focusDidChange`:
+
+```swift
+func focusDidChange(_ focused: Bool) {
+    guard let surface = self.surface else { return }
+    guard self.focused != focused else { return }
+    self.focused = focused
+    ghostty_surface_set_focus(surface, focused)
+    ghostty_surface_pane_focus_changed(surface, focused)  // Issue 606
+    ...
+}
+```
+
+In `xpc.zig`, the handler dispatches on the serial queue:
+
+```zig
+pub fn handlePaneFocusChanged(surface: *CoreSurface, focused: bool) void {
+    const ptr_val = @intFromPtr(surface);
+    const dispatch_fn = struct {
+        fn f(ctx: ?*anyopaque) callconv(.c) void {
+            const addr = @intFromPtr(ctx);
+            // focused encoded in low bit
+            const surf_addr = addr & ~@as(usize, 1);
+            const is_focused = (addr & 1) != 0;
+            const pane_id = surface_to_pane.get(surf_addr) orelse return;
+            const p = panes.get(pane_id) orelse return;
+            if (is_focused) {
+                // Only focus if the web TUI is in browse mode.
+                if (p.browsing) {
+                    sendFocusChanged(pane_id, true);
+                }
+            } else {
+                sendFocusChanged(pane_id, false);
+            }
+        }
+    }.f;
+    // Encode focused state in low bit of pointer (Surface is aligned).
+    const encoded = ptr_val | @as(usize, if (focused) 1 else 0);
+    dispatch_async_f(xpc_queue, @ptrFromInt(encoded), dispatch_fn);
+}
+```
+
+This encodes the focused boolean in the low bit of the surface pointer (which is
+always aligned, so the low bit is free). The dispatch function runs on the XPC
+serial queue where all pane state lives.
+
+The logic: when a pane gains Ghostty focus, only send Chromium focus if the
+`web` TUI is in browse mode (`p.browsing`). When a pane loses focus, always
+unfocus the Chromium tab. This matches ts5's behavior.
+
+**Phase 4: Focus on initial tab creation.**
+
+ts5 learned (Issue 515 Experiments 4–5) that focus must be sent after the tab is
+created, not before. In Ghost, `sendCreateTab` runs either from
+`handleSetOverlay` (server already registered) or `handleServerRegister` (server
+just appeared). In both cases, the tab hasn't started rendering yet.
+
+Send initial focus after `sendCreateTab` if the pane is in browse mode:
+
+```zig
+// In handleSetOverlay, after sendCreateTab:
+sendCreateTab(p, server);
+if (p.browsing) {
+    sendFocusChanged(p.pane_id_key, true);
+}
+
+// In handleServerRegister, after the flush loop:
+if (p.browsing) {
+    sendFocusChanged(p.pane_id_key, true);
+}
+```
+
+The `set_overlay` message from `web` includes `browsing: true/false`. Store it
+on the Pane in `handleSetOverlay`:
+
+```zig
+// In handleSetOverlay, new pane creation:
+p.browsing = browsing;
+
+// In handleSetOverlay, existing pane update:
+p.browsing = browsing;
+```
+
+Need to add `dispatch_async_f` extern declaration:
+
+```zig
+extern "c" fn dispatch_async_f(queue: ?*anyopaque, context: ?*anyopaque, work: *const fn (?*anyopaque) callconv(.c) void) void;
+```
 
 ### Verification
 
@@ -872,10 +977,13 @@ cargo run -p web -- https://en.wikipedia.org/wiki/Terminal_emulator
 
 Pass criteria:
 
-- Click and drag selects text (blue highlight visible in overlay)
-- Releasing the mouse button ends selection (highlight stays)
-- Double-click selects a word
-- Triple-click selects a line/paragraph
-- Shift+click extends an existing selection
-- Selection highlight updates in real time during drag (no lag or flicker)
-- Clicking elsewhere clears the selection
+- Entering browse mode (Enter) sends `focus_changed focused=true` (visible in
+  log)
+- Exiting browse mode (Esc) sends `focus_changed focused=false`
+- Text input on a focused page shows blinking caret (e.g., Wikipedia search box)
+- Switching to another pane with keyboard unfocuses the Chromium tab
+- Switching back refocuses it (if still in browse mode)
+- Clicking on the overlay while in control mode triggers mode change → focus
+- Clicking on the control panel while in browse mode triggers mode change →
+  unfocus
+- Only one Chromium tab is focused at a time (multi-pane test)
