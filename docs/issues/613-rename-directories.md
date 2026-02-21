@@ -72,3 +72,73 @@ the time. Two options:
 
 Option 2 is simpler and preserves the historical record. Issue docs are closed —
 they won't be used as instructions for future work.
+
+## Experiments
+
+### Experiment 1: Rename directories and update living documents
+
+#### Goal
+
+`ghost/` is renamed to `gui/`, `web/` is renamed to `tui/`. `cd gui && zig
+build`
+succeeds. All living documents (CLAUDE.md, .gitignore, keybindings.md, Claude
+skills) reference the new paths. Historical issue docs (600–612) are left
+unchanged.
+
+#### Steps
+
+##### Step 1: Rename directories
+
+```bash
+git mv ghost gui
+git mv web tui
+```
+
+##### Step 2: Update `.gitignore`
+
+Replace all `ghost/` references with `gui/` (~20 lines). Replace `web/target/`
+with `tui/target/`. Update the section comment from `# TermSurf Ghost (ghost/)`
+to `# TermSurf GUI (gui/)`.
+
+##### Step 3: Update `CLAUDE.md`
+
+Replace references to `ghost/` and `web/` paths with `gui/` and `tui/`. This
+includes:
+
+- Directory listing (lines 62–63): `ghost/` → `gui/`, `web/` → `tui/`
+- Section header: `## TermSurf Ghost (ghost/)` → `## TermSurf GUI (gui/)`
+- Directory structure listing (~10 paths): `ghost/src/`, `ghost/macos/`, etc.
+- Build command: `cd ghost && zig build` → `cd gui && zig build`
+- Launch command: `open ghost/zig-out/Ghostty.app` →
+  `open gui/zig-out/TermSurf.app`
+- Upstream merge: `--prefix=ghost` → `--prefix=gui`
+- ts5 section: `web/` paths → `tui/` paths, `cargo build -p web` →
+  `cargo build -p web` (package name unchanged)
+
+##### Step 4: Update `docs/keybindings.md`
+
+- `web/src/main.rs` → `tui/src/main.rs`
+- `ghost/src/Surface.zig` → `gui/src/Surface.zig`
+
+##### Step 5: Update Claude skills
+
+- `.claude/skills/keybindings/SKILL.md` — `web/src/main.rs` → `tui/src/main.rs`
+- `.claude/skills/fix-nerd-fonts/SKILL.md` — `web/src/main.rs` →
+  `tui/src/main.rs`
+
+##### Step 6: Build and verify
+
+```bash
+cd gui && zig build
+```
+
+#### Verification
+
+1. **Build succeeds:** `cd gui && zig build` completes without errors
+2. **No stale references in living docs:**
+   `grep -r 'ghost/' CLAUDE.md .gitignore docs/keybindings.md .claude/skills/`
+   returns no matches (excluding references to "Ghostty" the upstream project,
+   `ghostty` the binary, and `Ghostty.*` internal identifiers)
+3. **Historical docs unchanged:**
+   `git diff docs/issues/6{00,01,02,03,04,05,06,07,08,09,10,11,12}*` shows no
+   changes
