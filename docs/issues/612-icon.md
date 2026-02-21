@@ -290,3 +290,45 @@ cd ghost && zig build
 4. **No `Ghostty.icns` in bundle:**
    `ls ghost/zig-out/TermSurf.app/Contents/Resources/` does not contain
    `Ghostty.icns`
+
+**Result:** Pass
+
+The fresh build at `ghost/macos/build/Debug/TermSurf.app` has the correct icon.
+The bundle contains `AppIcon.icns` (TermSurf surfing ghost) with no
+`Ghostty.icns`. The dock shows the green wave debug icon with no old Ghostty
+icon flash. Finder shows the cyan wave release icon.
+
+The `zig-out/` copy initially appeared broken because it retained a stale
+`Ghostty.icns` from a previous build — `GhosttyXcodebuild.zig` uses `cp -R`
+which overlays without deleting old files. Deleting `zig-out/` before building
+resolves this.
+
+#### Conclusion
+
+Removing the 6 `Ghostty.icon` references from `project.pbxproj` was the fix.
+With the Icon Composer document gone from the build, `actool` compiles only the
+`AppIcon.appiconset` into `Assets.car` and generates `AppIcon.icns`. The
+generated `Info.plist` has `CFBundleIconName = AppIcon` and
+`CFBundleIconFile = AppIcon`, so macOS reads the TermSurf icon correctly.
+
+The `zig-out/` stale file issue is a pre-existing quirk of the build system's
+`cp -R` step — not specific to this change. Cleaning `zig-out/` before building
+avoids it.
+
+## Conclusion
+
+TermSurf now has its own icon. The release icon shows a surfing ghost on a cyan
+wave, and debug builds show a green wave variant in the dock. The icon comes
+from a traditional `AppIcon.appiconset/` with pre-rendered PNGs at all standard
+macOS sizes, copied from ts1. The Icon Composer document (`Ghostty.icon`) is no
+longer part of the build.
+
+Changes across both experiments:
+
+1. `AppIcon.appiconset/` — 7 PNGs + `Contents.json` copied from ts1
+2. `TermSurfDebugIcon.imageset/` — Debug icon copied from ts1
+3. `AppIconImage.imageset/` — PNGs replaced with TermSurf icon
+4. `project.pbxproj` — `ASSETCATALOG_COMPILER_APPICON_NAME` changed to
+   `AppIcon`, `Ghostty.icon` references removed
+5. `AppDelegate.swift` — Debug icon changed from `"BlueprintImage"` to
+   `"TermSurfDebugIcon"`
