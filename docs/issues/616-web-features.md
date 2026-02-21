@@ -946,3 +946,49 @@ many. The heuristic is designed for typical web pages that load in under a
 second, not for 10-second artificial delays. This is not a bug we can fix — it's
 how Chromium works. The progress bar works well for real-world browsing (where
 pages load quickly and progress jumps to 100%), and that's sufficient.
+
+### Experiment 8: Use indeterminate pulse for all loading
+
+#### Goal
+
+Replace the determinate progress bar (which stalls due to Chromium's heuristic)
+with an indeterminate pulse for the entire loading cycle. The bouncing blue bar
+provides a better UX than a bar frozen at 10%.
+
+#### Background
+
+Experiments 3 and 7 showed that Chromium's `LoadProgressChanged` doesn't produce
+useful percentages for slow-loading pages. The heuristic front-loads progress
+for connection and document parsing, then stalls. This happens with both
+single-stream and multi-resource pages.
+
+The TUI already emits OSC 9;4;3 (indeterminate pulse) on `"loading"`, but
+`"progress"` messages immediately switch it to OSC 9;4;1 (determinate mode),
+which then freezes at whatever percentage Chromium reported.
+
+The fix: ignore `"progress"` messages entirely. The loading cycle becomes:
+`"loading"` → indeterminate pulse → `"done"` → clear.
+
+#### Changes
+
+##### TUI (`tui/src/main.rs`)
+
+Remove the `"progress"` arm from the `LoadingState` match. The only states that
+matter are:
+
+- `"loading"` → emit OSC 9;4;3 (indeterminate pulse), set `loading_bar_active`
+- `"done"` → emit OSC 9;4;0 (clear), unset `loading_bar_active`
+- `"error"` → emit OSC 9;4;2 (error), unset `loading_bar_active`
+
+The `"progress"` arm becomes a no-op (or is removed entirely).
+
+##### No GUI or Chromium changes
+
+#### Verification
+
+1. Launch TermSurf, run `web http://localhost:9616`
+2. The blue bar should pulse (bounce) during loading, then disappear
+3. Navigate to `/slow?seconds=10` — the bar should pulse continuously for ~10
+   seconds, never stalling at a fixed percentage
+4. Back navigation — the bar should pulse briefly and clear (Experiment 6 fix)
+5. Cold start — the bar should pulse from the moment the TUI starts
