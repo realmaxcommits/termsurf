@@ -83,3 +83,49 @@ Cmd+C and Cmd+V require clipboard access. Two possibilities:
 
 Create `146.0.7650.0-issue-609` from `146.0.7650.0-issue-608`. The 609 branch
 builds on 608's capturer re-attach fix and 607's keyboard forwarding code.
+
+## Experiment 1: Test matrix
+
+### Goal
+
+Determine which keys work and which don't, now that the navigation freeze is
+resolved. No code changes — just test and record.
+
+### Design
+
+No code changes. The keyboard pipeline from Issue 607 is already in place. Issue
+608 fixed the navigation freeze that blocked testing. This experiment
+systematically tests every key behavior from the issue goal.
+
+### Verification
+
+```bash
+open ghost/zig-out/Ghostty.app --stderr ~/dev/termsurf/logs/ghost.log
+cargo run -p web -- https://lite.duckduckgo.com
+```
+
+Click the search box to enter browse mode and focus the text field. Run through
+each test and record pass/fail:
+
+| #  | Test                       | Steps                                              | Expected                             | Result |
+| -- | -------------------------- | -------------------------------------------------- | ------------------------------------ | ------ |
+| 1  | Character typing           | Type "hello"                                       | "hello" appears in text field        |        |
+| 2  | Enter submits              | Type "test", press Enter                           | Search results page loads            |        |
+| 3  | Backspace deletes          | Type "helloo", press Backspace                     | Last "o" deleted, "hello" remains    |        |
+| 4  | Tab moves focus            | Press Tab from search box                          | Focus moves to next element          |        |
+| 5  | Arrow left/right           | Type "hello", press Left 3x, type "X"              | "heXllo" — cursor moved, then insert |        |
+| 6  | Arrow up/down              | In a multi-line textarea, press Up/Down            | Cursor moves between lines           |        |
+| 7  | Home / End                 | Type "hello", press Home, type "X"                 | "Xhello" — cursor at start           |        |
+| 8  | Shift+arrow selects        | Type "hello", Shift+Left 3x, type "X"              | "heX" — selection replaced           |        |
+| 9  | Cmd+A selects all          | Type "hello", Cmd+A, type "X"                      | "X" — all text replaced              |        |
+| 10 | Cmd+C / Cmd+V              | Type "hello", Cmd+A, Cmd+C, click new field, Cmd+V | "hello" pasted into new field        |        |
+| 11 | Cmd+X cuts                 | Type "hello", Cmd+A, Cmd+X                         | Text field empty, clipboard has text |        |
+| 12 | Cmd+Z undoes               | Type "hello", Cmd+A, type "X", Cmd+Z               | "hello" restored                     |        |
+| 13 | Ctrl+Esc exits browse mode | Press Ctrl+Esc                                     | Exits browse mode (regression check) |        |
+
+For tests 6 and 10, if lite.duckduckgo.com doesn't have a suitable multi-line
+textarea or second field, use a different site (e.g., a form test page or
+Wikipedia's search).
+
+Record each result as Pass, Fail, or N/A (if the site doesn't support that
+test). For any Fail, note the observed behavior.
