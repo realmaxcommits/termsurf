@@ -170,6 +170,18 @@ Type characters in a text field on a Chromium overlay. Press Enter to submit.
 Press Backspace to delete. Press Tab to change focus. Arrow keys navigate within
 text.
 
+### Chromium branch
+
+Create `146.0.7650.0-issue-607` off `146.0.7650.0-issue-603` (the box demo
+branch, which has all mouse/scroll/focus handlers). Add `HandleKeyEvent` and the
+`key_event` XPC dispatch on this branch. Update `docs/chromium.md` with the new
+branch row.
+
+```bash
+cd ~/dev/termsurf/chromium/src
+git checkout -b 146.0.7650.0-issue-607 146.0.7650.0-issue-603
+```
+
 ### Background
 
 The keyboard pipeline needs three pieces:
