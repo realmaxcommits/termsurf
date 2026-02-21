@@ -767,7 +767,7 @@ pub fn sendMouseEvent(
 
     // Modifier bitmask: shift=1, ctrl=2, alt=4, cmd=8.
     // For mouse down, also set button-down flags: left=64, right=256.
-    var modifiers: i64 = 0;
+    var modifiers: u64 = 0;
     if (mods.shift) modifiers |= 1;
     if (mods.ctrl) modifiers |= 2;
     if (mods.alt) modifiers |= 4;
@@ -776,7 +776,7 @@ pub fn sendMouseEvent(
         if (button == .left) modifiers |= 64; // 1 << 6
         if (button == .right) modifiers |= 256; // 1 << 8
     }
-    xpc_dictionary_set_int64(msg, "modifiers", modifiers);
+    xpc_dictionary_set_uint64(msg, "modifiers", modifiers);
 
     xpc_connection_send_message(server.peer, msg);
 }
@@ -862,12 +862,12 @@ pub fn sendMouseMove(
     xpc_dictionary_set_double(msg, "y", overlay_y);
 
     // Button-down flags from click_state (for drag vs hover distinction).
-    var modifiers: i64 = 0;
+    var modifiers: u64 = 0;
     const left_idx = @intFromEnum(input.MouseButton.left);
     const right_idx = @intFromEnum(input.MouseButton.right);
     if (surface.mouse.click_state[left_idx] == .press) modifiers |= 64; // kLeftButtonDown (1 << 6)
     if (surface.mouse.click_state[right_idx] == .press) modifiers |= 256; // kRightButtonDown (1 << 8)
-    xpc_dictionary_set_int64(msg, "modifiers", modifiers);
+    xpc_dictionary_set_uint64(msg, "modifiers", modifiers);
 
     xpc_connection_send_message(server.peer, msg);
 }

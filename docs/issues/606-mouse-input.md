@@ -1975,3 +1975,22 @@ Test sequence:
 
 Pass criteria: logs reveal the exact scenario where the activation flag is
 `true` when it shouldn't be.
+
+### Result: Pass
+
+Logs confirmed the activation flag lifecycle works correctly: set on focus gain,
+suppresses the activation press and release, cleared on release, all subsequent
+clicks forwarded. Text selection worked consistently with logs enabled.
+
+After removing the logs, text selection continued to work consistently. The
+intermittent failure reported after Experiment 13 may have been an illusion — a
+one-off glitch during the transition from broken modifiers (`int64`/`uint64`
+mismatch) to working modifiers, rather than a persistent bug. Two consecutive
+retests (with and without logs) showed no failures.
+
+### Conclusion
+
+The activation flag mechanism (set in `paneFocusChanged`, cleared on release) is
+sound. The real fix for text selection was Experiment 13's XPC type mismatch
+correction. No code changes needed from this experiment — the debug logs were
+added and removed as a diagnostic tool only.
