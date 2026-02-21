@@ -1029,9 +1029,9 @@ switches transfer focus. But mouse-driven mode switching failed because:
    via `sendMouseEvent`. The `web` TUI never sees these clicks, so it can't
    trigger `mode_changed`.
 
-2. **Control panel clicks don't trigger mode changes.** Clicks outside the
-   overlay reach the terminal and the `web` TUI, but the TUI doesn't handle
-   mouse events for mode switching — it only uses Enter/Esc.
+2. **Non-overlay clicks don't trigger mode changes.** Clicks outside the
+   overlay fall through to normal terminal handling, but Ghost doesn't detect
+   them as a signal to exit browse mode and unfocus Chromium.
 
 The solution: Ghost drives mode switching on mouse clicks and notifies the `web`
 TUI by sending `mode_changed` messages back on `p.web_peer`. The `web` TUI
