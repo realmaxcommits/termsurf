@@ -1644,3 +1644,20 @@ Pass criteria:
 - Mouse moves and scroll still gated (no regression from Exp 7)
 - Keyboard mode switching (Enter/Esc) still works
 - No debug log noise in ghost.log
+
+### Result: Pass
+
+Activation clicks are fully suppressed. Clicking on an inactive pane's overlay
+activates the pane (switches to browse mode, focuses Chromium) without passing
+the click through to Chromium. The link only navigates on the next click.
+
+Combined with Experiment 7's `isOverlayForwarding` gate, all mouse events —
+clicks, moves, scroll, and cursor changes — are now correctly gated on two
+conditions: the pane must be the focused Ghostty pane AND in browse mode. Events
+only forward when both hold. Activation clicks are consumed. Mouse moves over
+unfocused or control-mode overlays don't trigger Chromium hover effects.
+
+The key insight across Experiments 7-10: `focusDidChange` fires before
+`mouseButtonCallback` on macOS (confirmed by Experiment 9 logs, 1-4ms gap). The
+activation flag must be set in `paneFocusChanged`, not in the mouse callback,
+because by the time the callback runs the pane is already focused.

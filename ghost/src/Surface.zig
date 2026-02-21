@@ -276,6 +276,12 @@ const Mouse = struct {
     /// True if the mouse is currently over a browser overlay (Issue 606).
     over_overlay: bool = false,
 
+    /// True while consuming an activation click on the overlay. Set on
+    /// the press that triggers notifyOverlayClicked, cleared on the
+    /// corresponding release. Prevents the mouseup from forwarding to
+    /// Chromium. (Issue 606 Experiment 8.)
+    overlay_activation: bool = false,
+
     /// The last x/y in the cursor position for links. We use this to
     /// only process link hover events when the mouse actually moves cells.
     link_point: ?terminal.point.Coordinate = null,
@@ -3467,6 +3473,9 @@ pub fn focusCallback(self: *Surface, focused: bool) !void {
 /// Called when this surface gains or loses pane focus (Issue 606).
 /// Notifies XPC to update Chromium focus state.
 pub fn paneFocusChanged(self: *Surface, focused: bool) void {
+    if (focused) {
+        self.mouse.overlay_activation = true;
+    }
     const xpc = @import("apprt/xpc.zig");
     xpc.handlePaneFocusChanged(self, focused);
 }
@@ -4025,8 +4034,15 @@ pub fn mouseButtonCallback(
         if (self.hitTestOverlay(@floatCast(cursor.x), @floatCast(cursor.y))) |overlay_pos| {
             const xpc = @import("apprt/xpc.zig");
             if (xpc.isOverlayForwarding(self)) {
-                // Active + browsing: forward click to Chromium.
-                xpc.sendMouseEvent(self, action, button, mods, overlay_pos.x, overlay_pos.y);
+                // Suppress activation click — press and release (Exp 10).
+                if (self.mouse.overlay_activation) {
+                    if (action == .release) {
+                        self.mouse.overlay_activation = false;
+                    }
+                } else {
+                    // Active + browsing: forward click to Chromium.
+                    xpc.sendMouseEvent(self, action, button, mods, overlay_pos.x, overlay_pos.y);
+                }
             } else if (button == .left and action == .press) {
                 // Not forwarding: activate on left-click, consume the click.
                 xpc.notifyOverlayClicked(self);
@@ -4038,6 +4054,8 @@ pub fn mouseButtonCallback(
             const xpc = @import("apprt/xpc.zig");
             xpc.notifyNonOverlayClicked(self);
         }
+        // Clear activation flag — click landed outside overlay (Exp 10).
+        self.mouse.overlay_activation = false;
     }
 
     // If we have an inspector, we always queue a render
