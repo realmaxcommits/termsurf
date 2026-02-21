@@ -1661,3 +1661,54 @@ The key insight across Experiments 7-10: `focusDidChange` fires before
 `mouseButtonCallback` on macOS (confirmed by Experiment 9 logs, 1-4ms gap). The
 activation flag must be set in `paneFocusChanged`, not in the mouse callback,
 because by the time the callback runs the pane is already focused.
+
+## Experiment 11: Text selection via mouse drag
+
+### Goal
+
+Select text in a Chromium overlay by clicking and dragging. The selection
+highlight should paint in real time as the mouse moves.
+
+### Background
+
+The full drag pipeline may already be wired:
+
+1. macOS `mouseDragged` → calls `mouseMoved` → triggers `cursorPosCallback`
+2. `cursorPosCallback` → overlay hit test → `sendMouseMove` with
+   `kLeftButtonDown` flag from `click_state` (line 868 of xpc.zig)
+3. Chromium `HandleMouseMove` → detects `kLeftButtonDown` in modifiers, sets
+   button to `kLeft`, creates `kMouseMove` event
+4. `ForwardMouseEvent` → Blink processes the drag, paints selection
+
+The press/release are already forwarded via `sendMouseEvent`. The drag events
+flow through `sendMouseMove` with button-down flags. Chromium's
+`HandleMouseMove` already derives the button from modifier bits and creates a
+proper `WebMouseEvent` with `kMouseMove` type.
+
+Focus state is confirmed working (Experiments 5-6, 10). Blink's
+`FocusController::IsActive()` is true, so selection highlights should paint.
+
+This experiment is a verification — it may already work with no code changes. If
+it doesn't, the failure will reveal what's missing.
+
+### Design
+
+No code changes. Test the existing pipeline.
+
+### Verification
+
+```bash
+cd ghost && zig build
+open ghost/zig-out/Ghostty.app --stderr ~/dev/termsurf/logs/ghost.log
+cargo run -p web -- https://en.wikipedia.org/wiki/Terminal_emulator
+```
+
+In browse mode, click and drag across text on the Wikipedia page.
+
+Pass criteria:
+
+- Text highlights in real time as the mouse drags
+- Selection starts at mousedown position, extends to current cursor position
+- Releasing the mouse finalizes the selection (highlight stays)
+- Cursor changes to text cursor (I-beam) over selectable text
+- Dragging past the edge of the overlay doesn't crash
