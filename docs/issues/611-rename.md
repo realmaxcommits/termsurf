@@ -1,10 +1,10 @@
-# Issue 611: Rename Ghostty to TermSurf Ghost
+# Issue 611: Rename Ghostty to TermSurf
 
 ## Goal
 
-Rename the app from "Ghostty" to "TermSurf Ghost". The bundle identifier,
-display name, product name, CLI text, config paths, and About view all reflect
-the new name. Internal identifiers (`GhosttyKit`, `Ghostty.*` Swift namespaces,
+Rename the app from "Ghostty" to "TermSurf". The bundle identifier, display
+name, product name, CLI text, config paths, and About view all reflect the new
+name. Internal identifiers (`GhosttyKit`, `Ghostty.*` Swift namespaces,
 `ghostty_*` C API, `Ghostty.xcodeproj`) stay unchanged for upstream merge
 safety.
 
@@ -19,7 +19,7 @@ This causes real problems:
    inherits Ghostty's icon regardless of what's in our app bundle.
 2. **Config collision.** Both apps read from `~/.config/ghostty/`. Changes to
    one affect the other.
-3. **Identity.** Users and developers need to distinguish Ghost from upstream
+3. **Identity.** Users and developers need to distinguish TermSurf from upstream
    Ghostty at a glance — in the dock, menu bar, Finder, and CLI.
 
 ### Prior art
@@ -34,23 +34,23 @@ This rename was done twice before:
   identifiers stayed unchanged. The icon was left as Ghostty's — the same
   problem we're solving now in Issue 610.
 
-Ghost follows ts5's approach: modify `ghost/macos/` directly. The name is
-"TermSurf Ghost" (not just "TermSurf") to give this generation its own identity
-within the TermSurf family.
+Ghost follows ts5's approach: modify `ghost/macos/` directly. "Ghost" is just
+the directory name for this generation's Ghostty fork — the user-facing app name
+is simply "TermSurf".
 
 ### Naming convention
 
 | Context                   | Value                                               |
 | ------------------------- | --------------------------------------------------- |
-| App name                  | TermSurf Ghost                                      |
+| App name                  | TermSurf                                            |
 | Bundle identifier         | com.termsurf.ghost                                  |
 | Bundle identifier (debug) | com.termsurf.ghost.debug                            |
 | Config directory          | `~/.config/termsurf/`                               |
 | Config fallback (macOS)   | `~/Library/Application Support/com.termsurf.ghost/` |
 | CLI binary name           | `ghostty` (unchanged)                               |
-| CLI usage text            | `termsurf-ghost`                                    |
-| CLI version output        | `TermSurf Ghost {version}`                          |
-| Custom icon path          | `~/.config/termsurf/Ghost.icns`                     |
+| CLI usage text            | `termsurf`                                          |
+| CLI version output        | `TermSurf {version}`                                |
+| Custom icon path          | `~/.config/termsurf/TermSurf.icns`                  |
 
 The CLI binary stays `ghostty` because renaming it requires changes to the Zig
 build system, shell completions, and the `ghostty` symlink in the app bundle. A
@@ -66,15 +66,15 @@ In `ghost/macos/Ghostty.xcodeproj/project.pbxproj`:
 | ------------------------------------------- | ---------------------------------------- | -------------------------- |
 | `PRODUCT_BUNDLE_IDENTIFIER`                 | `com.mitchellh.ghostty`                  | `com.termsurf.ghost`       |
 | `PRODUCT_BUNDLE_IDENTIFIER` (debug)         | `com.mitchellh.ghostty.debug`            | `com.termsurf.ghost.debug` |
-| `INFOPLIST_KEY_CFBundleDisplayName`         | `Ghostty`                                | `TermSurf Ghost`           |
-| `INFOPLIST_KEY_CFBundleDisplayName` (debug) | `Ghostty[DEBUG]`                         | `TermSurf Ghost[DEBUG]`    |
-| `PRODUCT_NAME`                              | `$(TARGET_NAME)` → resolves to `Ghostty` | `TermSurf Ghost`           |
-| Permission dialog strings                   | `within Ghostty`                         | `within TermSurf Ghost`    |
+| `INFOPLIST_KEY_CFBundleDisplayName`         | `Ghostty`                                | `TermSurf`                 |
+| `INFOPLIST_KEY_CFBundleDisplayName` (debug) | `Ghostty[DEBUG]`                         | `TermSurf[DEBUG]`          |
+| `PRODUCT_NAME`                              | `$(TARGET_NAME)` → resolves to `Ghostty` | `TermSurf`                 |
+| Permission dialog strings                   | `within Ghostty`                         | `within TermSurf`          |
 
 Rename files in `ghost/macos/`:
 
-- `Ghostty-Info.plist` → `Ghost-Info.plist`
-- `Ghostty.entitlements` → `Ghost.entitlements`
+- `Ghostty-Info.plist` → `TermSurf-Info.plist`
+- `Ghostty.entitlements` → `TermSurf.entitlements`
 - `GhosttyDebug.entitlements` → `GhosttyDebug.entitlements` (unchanged —
   internal)
 - `GhosttyReleaseLocal.entitlements` → `GhosttyReleaseLocal.entitlements`
@@ -92,12 +92,12 @@ Do NOT rename:
 
 ### 2. Info.plist
 
-In `ghost/macos/Ghost-Info.plist` (after rename):
+In `ghost/macos/TermSurf-Info.plist` (after rename):
 
 - Change UTType description: `"Ghostty Surface Identifier"` →
-  `"TermSurf Ghost Surface Identifier"`
+  `"TermSurf Surface Identifier"`
 - Menu items already use `$(INFOPLIST_KEY_CFBundleDisplayName)` — they'll
-  automatically read "New TermSurf Ghost Tab Here" etc.
+  automatically read "New TermSurf Tab Here" etc.
 - Keep `GHOSTTY_MAC_LAUNCH_SOURCE` and `com.mitchellh.ghosttySurfaceId` as-is
   (internal compatibility)
 
@@ -105,11 +105,11 @@ In `ghost/macos/Ghost-Info.plist` (after rename):
 
 In `ghost/src/`:
 
-- `src/cli/help.zig` — `"ghostty"` → `"termsurf-ghost"`, `"Ghostty"` →
-  `"TermSurf Ghost"`, example commands updated
-- `src/cli/version.zig` — `"Ghostty {version}"` → `"TermSurf Ghost {version}"`
+- `src/cli/help.zig` — `"ghostty"` → `"termsurf"`, `"Ghostty"` → `"TermSurf"`,
+  example commands updated
+- `src/cli/version.zig` — `"Ghostty {version}"` → `"TermSurf {version}"`
 - `src/cli/list_themes.zig` — `"👻 Ghostty Theme Preview 👻"` →
-  `"🏄 TermSurf Ghost Theme Preview 🏄"`
+  `"🏄 TermSurf Theme Preview 🏄"`
 
 ### 4. Config paths
 
@@ -130,16 +130,15 @@ In `ghost/src/`:
 In `ghost/macos/Sources/`:
 
 - `Ghostty/Ghostty.Config.swift:335` — Custom icon path →
-  `~/.config/termsurf/Ghost.icns`
+  `~/.config/termsurf/TermSurf.icns`
 - `Features/Settings/SettingsView.swift:17` — Config path and app name in
-  instructions: `$HOME/.config/termsurf/config.ghostty` and
-  `restart TermSurf Ghost`
+  instructions: `$HOME/.config/termsurf/config.ghostty` and `restart TermSurf`
 
 ### 5. About view
 
 In `ghost/macos/Sources/Features/About/AboutView.swift`:
 
-- Title: `"Ghostty"` → `"TermSurf Ghost"`
+- Title: `"Ghostty"` → `"TermSurf"`
 - Subtitle: `"Terminal emulator with integrated browser,\nbuilt on Ghostty."`
 - GitHub URL → `https://github.com/termsurf/termsurf`
 
@@ -147,7 +146,7 @@ In `ghost/macos/Sources/Features/About/AboutView.swift`:
 
 In `ghost/src/build/GhosttyXcodebuild.zig`:
 
-- App path: `Ghostty.app` → `TermSurf Ghost.app`
+- App path: `Ghostty.app` → `TermSurf.app`
 
 ### 7. Icon (from Issue 610)
 
@@ -186,11 +185,11 @@ changes manually if upstream restructures build settings.
 
 #### Goal
 
-`cd ghost && zig build` produces `TermSurf Ghost.app`. The menu bar reads
-"TermSurf Ghost", the About view shows "TermSurf Ghost", the CLI prints
-"TermSurf Ghost {version}", config loads from `~/.config/termsurf/`, and the
-bundle identifier is `com.termsurf.ghost`. The surfing ghost icon (from Issue
-610) displays correctly.
+`cd ghost && zig build` produces `TermSurf.app`. The menu bar reads "TermSurf",
+the About view shows "TermSurf", the CLI prints "TermSurf {version}", config
+loads from `~/.config/termsurf/`, and the bundle identifier is
+`com.termsurf.ghost`. The surfing ghost icon (from Issue 610) displays
+correctly.
 
 #### Approach
 
@@ -242,8 +241,8 @@ Theme directory becomes `~/.config/termsurf/themes/`.
 
 ```bash
 cd ghost/macos
-git mv Ghostty-Info.plist Ghost-Info.plist
-git mv Ghostty.entitlements Ghost.entitlements
+git mv Ghostty-Info.plist TermSurf-Info.plist
+git mv Ghostty.entitlements TermSurf.entitlements
 ```
 
 `GhosttyDebug.entitlements` and `GhosttyReleaseLocal.entitlements` stay as-is
@@ -255,8 +254,8 @@ In `ghost/macos/Ghostty.xcodeproj/project.pbxproj`:
 
 **File references** (update paths for renamed files):
 
-- `Ghostty-Info.plist` → `Ghost-Info.plist`
-- `Ghostty.entitlements` → `Ghost.entitlements`
+- `Ghostty-Info.plist` → `TermSurf-Info.plist`
+- `Ghostty.entitlements` → `TermSurf.entitlements`
 
 **Bundle identifiers:**
 
@@ -265,23 +264,21 @@ In `ghost/macos/Ghostty.xcodeproj/project.pbxproj`:
 
 **Display names:**
 
-- `INFOPLIST_KEY_CFBundleDisplayName = Ghostty` → `"TermSurf Ghost"` (3 release
-  configs)
-- `INFOPLIST_KEY_CFBundleDisplayName = "Ghostty[DEBUG]"` →
-  `"TermSurf Ghost[DEBUG]"`
+- `INFOPLIST_KEY_CFBundleDisplayName = Ghostty` → `TermSurf` (3 release configs)
+- `INFOPLIST_KEY_CFBundleDisplayName = "Ghostty[DEBUG]"` → `"TermSurf[DEBUG]"`
 
 **Product name:**
 
-- `PRODUCT_NAME = "$(TARGET_NAME)"` → `PRODUCT_NAME = "TermSurf Ghost"` (all 3
-  main app configs: Debug, Release, ReleaseLocal)
+- `PRODUCT_NAME = "$(TARGET_NAME)"` → `PRODUCT_NAME = TermSurf` (all 3 main app
+  configs: Debug, Release, ReleaseLocal)
 
-**Permission dialog strings** (all `within Ghostty` → `within TermSurf Ghost`):
+**Permission dialog strings** (all `within Ghostty` → `within TermSurf`):
 
 There are ~14 permission strings per config (3 configs: Debug, Release,
 ReleaseLocal), all following the pattern
 `"A program running within Ghostty
 would like to..."`. Replace `within Ghostty`
-with `within TermSurf Ghost` in all of them.
+with `within TermSurf` in all of them.
 
 **Do NOT change:**
 
@@ -291,11 +288,11 @@ with `within TermSurf Ghost` in all of them.
 - `-target "Ghostty"` in xcodebuild — that's the Xcode target name, internal
 - iOS bundle identifiers (`com.mitchellh.ghostty-ios`) — not our platform
 
-##### Step 4: Update `Ghost-Info.plist`
+##### Step 4: Update `TermSurf-Info.plist`
 
-In `ghost/macos/Ghost-Info.plist` (after rename in step 2):
+In `ghost/macos/TermSurf-Info.plist` (after rename in step 2):
 
-- `"Ghostty Surface Identifier"` → `"TermSurf Ghost Surface Identifier"`
+- `"Ghostty Surface Identifier"` → `"TermSurf Surface Identifier"`
 
 Keep `GHOSTTY_MAC_LAUNCH_SOURCE` and `com.mitchellh.ghosttySurfaceId` as-is
 (internal).
@@ -304,21 +301,20 @@ Keep `GHOSTTY_MAC_LAUNCH_SOURCE` and `com.mitchellh.ghosttySurfaceId` as-is
 
 **`ghost/src/cli/help.zig`:**
 
-- Line 37: `"ghostty"` → `"termsurf-ghost"` in usage line
-- Line 39: `"Ghostty"` → `"TermSurf Ghost"` in description
-- Line 41: `"Ghostty"` → `"TermSurf Ghost"`
-- Line 53: `"ghostty"` → `"termsurf-ghost"` in example command
-- Line 56: `"Ghostty.app"` → `"TermSurf Ghost.app"`
-- Line 57: `"ghostty.app"` → `"termsurf ghost.app"` (lowercase for `open`)
+- Line 37: `"ghostty"` → `"termsurf"` in usage line
+- Line 39: `"Ghostty"` → `"TermSurf"` in description
+- Line 41: `"Ghostty"` → `"TermSurf"`
+- Line 53: `"ghostty"` → `"termsurf"` in example command
+- Line 56: `"Ghostty.app"` → `"TermSurf.app"`
+- Line 57: `"ghostty.app"` → `"termsurf.app"` (lowercase for `open`)
 
 **`ghost/src/cli/version.zig`:**
 
-- Line 31: `"Ghostty {s}"` → `"TermSurf Ghost {s}"`
+- Line 31: `"Ghostty {s}"` → `"TermSurf {s}"`
 
 **`ghost/src/cli/list_themes.zig`:**
 
-- Line 303: `"👻 Ghostty Theme Preview 👻"` →
-  `"🏄 TermSurf Ghost Theme Preview 🏄"`
+- Line 303: `"👻 Ghostty Theme Preview 👻"` → `"🏄 TermSurf Theme Preview 🏄"`
 
 Leave doc comments and path references in `list_themes.zig` that refer to
 `ghostty` config directories and resource paths — those are upstream paths that
@@ -328,7 +324,7 @@ still exist in the binary. Only change user-visible output strings.
 
 **`ghost/macos/Sources/Ghostty/Ghostty.Config.swift:335`:**
 
-- `"~/.config/ghostty/Ghostty.icns"` → `"~/.config/termsurf/Ghost.icns"`
+- `"~/.config/ghostty/Ghostty.icns"` → `"~/.config/termsurf/TermSurf.icns"`
 
 No change needed on line 70 — `ghostty_config_load_default_files(cfg)` already
 loads from the correct paths after step 1.
@@ -336,20 +332,20 @@ loads from the correct paths after step 1.
 **`ghost/macos/Sources/Features/Settings/SettingsView.swift:17`:**
 
 - `"$HOME/.config/ghostty/config.ghostty and restart Ghostty"` →
-  `"$HOME/.config/termsurf/config.ghostty and restart TermSurf Ghost"`
+  `"$HOME/.config/termsurf/config.ghostty and restart TermSurf"`
 
 ##### Step 7: Update About view
 
 **`ghost/macos/Sources/Features/About/AboutView.swift`:**
 
 - Line 6: GitHub URL → `"https://github.com/termsurf/termsurf"`
-- Line 51: `"Ghostty"` → `"TermSurf Ghost"`
+- Line 51: `"Ghostty"` → `"TermSurf"`
 
 ##### Step 8: Update build system
 
 **`ghost/src/build/GhosttyXcodebuild.zig`:**
 
-- Line 52: `"Ghostty.app"` → `"TermSurf Ghost.app"`
+- Line 52: `"Ghostty.app"` → `"TermSurf.app"`
 
 ##### Step 9: Build and verify
 
@@ -361,17 +357,16 @@ cd ghost && zig build
 
 #### Verification
 
-1. **App name:** `ls ghost/zig-out/` shows `TermSurf Ghost.app`
-2. **Menu bar:** Launch the app — menu bar reads "TermSurf Ghost"
-3. **About view:** Help → About shows "TermSurf Ghost" and links to the TermSurf
+1. **App name:** `ls ghost/zig-out/` shows `TermSurf.app`
+2. **Menu bar:** Launch the app — menu bar reads "TermSurf"
+3. **About view:** Help → About shows "TermSurf" and links to the TermSurf
    GitHub repo
 4. **Bundle identifier:**
-   `defaults read ghost/zig-out/TermSurf\ Ghost.app/Contents/Info.plist CFBundleIdentifier`
+   `defaults read ghost/zig-out/TermSurf.app/Contents/Info.plist CFBundleIdentifier`
    returns `com.termsurf.ghost`
 5. **Icon:** The surfing ghost icon appears in the dock (no cached old icon,
    since the bundle identifier is new)
-6. **CLI version:**
-   `ghost/zig-out/TermSurf\ Ghost.app/Contents/MacOS/ghostty +version` prints
-   `TermSurf Ghost {version}`
+6. **CLI version:** `ghost/zig-out/TermSurf.app/Contents/MacOS/ghostty +version`
+   prints `TermSurf {version}`
 
 **Result:** (pending)
