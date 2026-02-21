@@ -2092,3 +2092,16 @@ Pass criteria:
 - Triple-click: the entire line/paragraph highlights
 - Single click still works (places caret, no selection)
 - Click and drag still works (text selection)
+
+### Result: Pass
+
+Double-click word selection and triple-click line selection both work.
+
+### Conclusion
+
+The overlay block returns early before Ghostty's own multi-click detection runs,
+so we replicated the timing + distance logic inline. The existing
+`left_click_count`, `left_click_time`, and position fields on `mouse` are reused
+since the overlay path and the terminal path are mutually exclusive. The click
+count is passed through `sendMouseEvent` → XPC `click_count` field → Chromium's
+`WebMouseEvent`, where Chromium handles word/line selection natively.

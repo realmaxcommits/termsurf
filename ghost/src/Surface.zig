@@ -4040,8 +4040,38 @@ pub fn mouseButtonCallback(
                         self.mouse.overlay_activation = false;
                     }
                 } else {
+                    // Compute click count for overlay (mirrors logic at line 4258).
+                    var click_count: u8 = 1;
+                    if (button == .left and action == .press) {
+                        // Distance check — reset if cursor moved too far.
+                        if (self.mouse.left_click_count > 0) {
+                            const max_distance: f64 = @floatFromInt(self.size.cell.width);
+                            const distance = @sqrt(
+                                std.math.pow(f64, cursor.x - self.mouse.left_click_xpos, 2) +
+                                    std.math.pow(f64, cursor.y - self.mouse.left_click_ypos, 2),
+                            );
+                            if (distance > max_distance) self.mouse.left_click_count = 0;
+                        }
+                        // Timing check — reset if too slow.
+                        if (std.time.Instant.now()) |now| {
+                            if (self.mouse.left_click_count > 0) {
+                                const since = now.since(self.mouse.left_click_time);
+                                if (since > self.config.mouse_interval) {
+                                    self.mouse.left_click_count = 0;
+                                }
+                            }
+                            self.mouse.left_click_time = now;
+                            self.mouse.left_click_count += 1;
+                            if (self.mouse.left_click_count > 3) self.mouse.left_click_count = 1;
+                        } else |_| {
+                            self.mouse.left_click_count = 1;
+                        }
+                        self.mouse.left_click_xpos = cursor.x;
+                        self.mouse.left_click_ypos = cursor.y;
+                        click_count = self.mouse.left_click_count;
+                    }
                     // Active + browsing: forward click to Chromium.
-                    xpc.sendMouseEvent(self, action, button, mods, overlay_pos.x, overlay_pos.y);
+                    xpc.sendMouseEvent(self, action, button, mods, overlay_pos.x, overlay_pos.y, click_count);
                 }
             } else if (button == .left and action == .press) {
                 // Not forwarding: activate on left-click, consume the click.

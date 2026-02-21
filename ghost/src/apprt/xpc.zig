@@ -724,6 +724,7 @@ pub fn sendMouseEvent(
     mods: input.Mods,
     overlay_x: f64,
     overlay_y: f64,
+    click_count: u8,
 ) void {
     const pane_id_key = surface_to_pane.get(@intFromPtr(surface)) orelse {
         log.warn("sendMouseEvent: no pane for surface", .{});
@@ -762,8 +763,8 @@ pub fn sendMouseEvent(
     xpc_dictionary_set_double(msg, "x", overlay_x);
     xpc_dictionary_set_double(msg, "y", overlay_y);
 
-    // Click count (1 for now — double-click support in a later experiment).
-    xpc_dictionary_set_int64(msg, "click_count", 1);
+    // Click count (1=single, 2=double/word select, 3=triple/line select).
+    xpc_dictionary_set_int64(msg, "click_count", @intCast(click_count));
 
     // Modifier bitmask: shift=1, ctrl=2, alt=4, cmd=8.
     // For mouse down, also set button-down flags: left=64, right=256.
