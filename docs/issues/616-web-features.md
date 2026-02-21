@@ -1431,3 +1431,52 @@ to `sendFocusChanged` instead of the transient XPC message string.
 Use-after-free fixed. `focused_pane` now always points to stable owned memory.
 Experiment 11 dead code (synthetic Ctrl key-up, control_left/right VK mappings)
 removed since the real cause was the dangling pointer, not stuck modifiers.
+
+## Conclusion
+
+This issue inventoried 20 missing web features and implemented improvements
+across 13 experiments. The work fell into three areas:
+
+### What was accomplished
+
+**Test infrastructure** (Experiments 1–4): Unified test pages under `test-html/`
+with a Bun server, index page linking all demos, and dedicated pages for loading
+states, slow resources, and file uploads. Verified existing demos work in the
+gui/ + Chromium pipeline.
+
+**Loading progress bar** (Experiments 5–8): Integrated Ghostty's OSC 9;4
+progress bar with Chromium's loading lifecycle. Solved the straggler
+`progress 100` race (suppressed in Chromium's `LoadProgressChanged`), and
+switched from unreliable percentage-based progress to an indeterminate pulse —
+Chromium's progress heuristic is not accurate enough for real-world pages.
+
+**Context menu removal** (Experiment 9): Removed the inherited Content Shell
+context menu, which stole focus via NSMenu's modal event loop and didn't fit the
+TermSurf architecture.
+
+**Browser navigation** (Experiment 10): Added Cmd+[ (back), Cmd+] (forward), and
+Cmd+R (reload) keybindings, intercepted in Chromium's `HandleKeyEvent` before
+reaching the renderer.
+
+**Use-after-free fix** (Experiments 11–13): Diagnosed and fixed a dangling
+pointer bug where `handleModeChanged` stored a transient XPC message string in
+`focused_pane`. After the XPC handler returned, the freed memory was overwritten
+(with spaces), causing `isOverlayForwarding` to fail. Fixed by using the stable
+`p.pane_id_key` owned copy.
+
+### What remains
+
+The full feature inventory (items 1–20 in the Background section) is still
+mostly unimplemented. The highest-impact items for future work:
+
+1. **target="_blank" handling** — OAuth flows and "open in new tab" links fail
+2. **JavaScript dialogs** — alert/confirm/prompt needed for many sites
+3. **Downloads** — file download links do nothing
+4. **File uploads** — `<input type="file">` does nothing
+5. **Page zoom** — Cmd+=/-/0 not implemented
+6. **HTTP Basic Auth** — password-protected pages fail
+7. **URL normalization** — users type `google.com`, not `https://google.com`
+
+All of these require Chromium-side changes (new XPC messages, Content API calls)
+except URL normalization (TUI-only) and possibly page zoom (GUI keybinding to
+Chromium command).
