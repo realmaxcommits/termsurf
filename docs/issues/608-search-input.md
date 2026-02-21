@@ -140,3 +140,124 @@ freeze:
   — `HandleFocusChanged()`, tab management
 - `chromium/src/content/public/browser/web_contents_observer.h` — Available
   lifecycle callbacks
+
+## Experiment 1: Diagnostic logging
+
+### Goal
+
+Make the Chromium Profile Server's logs visible and add diagnostic logging to
+understand what happens during the freeze. Compare a working case (clicking a
+link on Wikipedia) vs a frozen case (submitting a search on Google).
+
+### Design
+
+**Phase 1: Route server logs to `~/dev/termsurf/logs/chromium-server.log`.**
+
+The server is spawned with `std.process.Child` in `xpc.zig`. Currently its
+stderr is not redirected — all `LOG()` output is lost. Add Chromium's
+`--enable-logging=stderr` and `--log-file=<path>` flags as command-line
+arguments when spawning the server. This requires no Zig stdio changes — just
+additional args in the argv array.
+
+In `spawnServerProcess()`, add two new arguments:
+
+```zig
+var logging_buf: [64]u8 = undefined;
+const logging_arg = std.fmt.bufPrintZ(
+    &logging_buf,
+    "--enable-logging=stderr",
+    .{},
+) catch return;
+
+var logfile_buf: [256]u8 = undefined;
+const logfile_arg = std.fmt.bufPrintZ(
+    &logfile_buf,
+    "--log-file={s}/dev/termsurf/logs/chromium-server.log",
+    .{home},
+) catch return;
+```
+
+Add them to the argv array:
+
+```zig
+var child = std.process.Child.init(
+    &.{ server_path, xpc_arg, data_arg, hidden_arg, logging_arg, logfile_arg },
+    alloc,
+);
+```
+
+**Phase 2: Add navigation diagnostics to `DidFinishNavigation`.**
+
+In `shell_video_consumer.cc`, expand the `DidFinishNavigation` handler to log
+navigation properties that differ between working and frozen cases:
+
+```cpp
+LOG(INFO) << "[ShellVideoConsumer] Navigation committed:"
+          << " url=" << navigation_handle->GetURL().spec()
+          << " is_post=" << navigation_handle->IsPost()
+          << " is_same_document=" << navigation_handle->IsSameDocument()
+          << " is_error_page=" << navigation_handle->IsErrorPage()
+          << " is_download=" << navigation_handle->IsDownload()
+          << " is_served_from_bfcache="
+          << navigation_handle->IsServedFromBackForwardCache()
+          << " redirect_chain_size="
+          << navigation_handle->GetRedirectChain().size()
+          << " net_error=" << navigation_handle->GetNetErrorCode()
+          << " pane=" << pane_id_;
+```
+
+Also log the `FrameSinkId` and view pointer so we can see if they change:
+
+```cpp
+RenderWidgetHostView* view = web_contents()->GetRenderWidgetHostView();
+if (view) {
+  auto fsid = view->GetRenderWidgetHost()->GetFrameSinkId();
+  LOG(INFO) << "[ShellVideoConsumer] Post-nav view=" << view
+            << " FrameSinkId=" << fsid.ToString();
+}
+```
+
+**Phase 3: Log null view in input handlers.**
+
+In `HandleMouseEvent` and `HandleKeyEvent` in `shell_browser_main_parts.cc`, add
+a log when the view is null (currently we silently return):
+
+```cpp
+auto* view = tab->shell->web_contents()->GetRenderWidgetHostView();
+if (!view) {
+  LOG(WARNING) << "[ProfileServer] view is null for pane=" << pane_id;
+  return;
+}
+```
+
+### Verification
+
+```bash
+cd ghost && zig build
+cd ~/dev/termsurf/chromium/src && export PATH="$HOME/dev/termsurf/chromium/depot_tools:$PATH" && autoninja -C out/Default chromium_profile_server
+open ghost/zig-out/Ghostty.app --stderr ~/dev/termsurf/logs/ghost.log
+```
+
+Test 1 — working case:
+
+```bash
+cargo run -p web -- https://en.wikipedia.org/wiki/Terminal_emulator
+# Click a link on the page (e.g., a Wikipedia article link)
+# Observe: page navigates, overlay updates, input continues
+```
+
+Test 2 — frozen case:
+
+```bash
+cargo run -p web -- https://www.google.com
+# Click the search box, type "hello", click the Search button
+# Observe: overlay freezes
+```
+
+After both tests, check `~/dev/termsurf/logs/chromium-server.log` and compare:
+
+1. Does `DidFinishNavigation` fire for both cases?
+2. Do the navigation properties differ (IsPost, redirect chain, etc.)?
+3. Do frames stop arriving (fps log stops printing)?
+4. Is the view null when input events are forwarded during the freeze?
+5. Does the `FrameSinkId` change?
