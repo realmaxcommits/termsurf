@@ -1004,3 +1004,56 @@ Chromium's `LoadProgressChanged` percentages are unreliable for user-facing
 progress indication. The indeterminate pulse is the correct approach — it
 communicates "loading" without making false promises about how far along we are.
 The `"progress"` arm is now a no-op in the TUI.
+
+### Experiment 9: Remove Content Shell context menu
+
+#### Goal
+
+Remove the inherited Content Shell right-click context menu from the Chromium
+Profile Server. It doesn't fit the TermSurf architecture — the server is
+headless and has no real window. The context menu steals focus and causes the
+first click after any menu action to be swallowed. Back, forward, reload, and
+inspect will be implemented as TUI keybindings in a future experiment.
+
+#### Background
+
+The Chromium Profile Server inherits `ShellWebContentsViewDelegate` from Content
+Shell, which provides a primitive `NSMenu` context menu with Back, Forward,
+Reload, and Inspect items. This menu pops up on a phantom `NSView` in a headless
+process. When it dismisses, Chromium's `RenderWidgetHostView` loses focus, and
+the first subsequent click is consumed as a re-focus event rather than reaching
+page content.
+
+The context menu was useful as a hack during early development but is now a
+liability. TermSurf's architecture routes all user input through the TUI and GUI
+via XPC — native macOS menus on the headless server don't belong.
+
+#### Changes
+
+##### Chromium Profile Server (`shell_web_contents_view_delegate_mac.mm`)
+
+**Branch: `146.0.7650.0-issue-616`**
+
+Suppress the context menu by returning early at the top of `ShowContextMenu`:
+
+```cpp
+void ShellWebContentsViewDelegate::ShowContextMenu(
+    RenderFrameHost& render_frame_host,
+    const ContextMenuParams& params) {
+  return;  // Context menu disabled — input routed via TUI/XPC.
+}
+```
+
+The rest of the file (menu construction, `ActionPerformed`, etc.) becomes dead
+code. Leave it in place for now — it's harmless and can be cleaned up later if
+we never need it.
+
+##### No GUI or TUI changes
+
+#### Verification
+
+1. Launch TermSurf, run `web http://localhost:9616`
+2. Right-click on the page — **no context menu should appear**
+3. Click a link — it should work on the first click
+4. Right-click, then click a link — still works on the first click (no focus
+   stealing)
