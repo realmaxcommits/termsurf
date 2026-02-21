@@ -3473,10 +3473,12 @@ pub fn focusCallback(self: *Surface, focused: bool) !void {
 /// Called when this surface gains or loses pane focus (Issue 606).
 /// Notifies XPC to update Chromium focus state.
 pub fn paneFocusChanged(self: *Surface, focused: bool) void {
-    if (focused) {
-        self.mouse.overlay_activation = true;
-    }
     const xpc = @import("apprt/xpc.zig");
+    if (focused) {
+        if (xpc.isOverlayBrowsing(self)) {
+            self.mouse.overlay_activation = true;
+        }
+    }
     xpc.handlePaneFocusChanged(self, focused);
 }
 

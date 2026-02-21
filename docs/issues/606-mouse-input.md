@@ -2218,3 +2218,19 @@ Pass criteria:
 - Switching panes by clicking an already-browsing overlay still suppresses the
   activation click (no accidental link navigation)
 - Keyboard pane switch (Cmd+]) followed by a click works on the first try
+
+### Result: Pass
+
+First click after app launch navigates immediately.
+
+### Conclusion
+
+The `overlay_activation` flag was being set unconditionally in
+`paneFocusChanged(true)`, including at app startup when no overlay exists. The
+flag persisted until a mouse release on the overlay cleared it, causing the
+first real click to be suppressed. The fix gates the flag on `isOverlayBrowsing`
+— a new query that checks `p.browsing` without requiring focus. This correctly
+distinguishes three cases: (1) app launch / no overlay → flag not set → first
+click works, (2) keyboard pane switch to non-browsing pane → flag not set →
+first click works, (3) mouse click on a browsing overlay in an inactive pane →
+flag set → activation click suppressed as intended.

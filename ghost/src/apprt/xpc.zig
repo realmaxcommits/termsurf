@@ -543,6 +543,14 @@ pub fn isOverlayForwarding(surface: *CoreSurface) bool {
     return std.mem.eql(u8, fp, pane_id);
 }
 
+/// Returns true if the surface has an overlay in browse mode.
+/// Unlike isOverlayForwarding, this does not check pane focus.
+pub fn isOverlayBrowsing(surface: *CoreSurface) bool {
+    const pane_id = surface_to_pane.get(@intFromPtr(surface)) orelse return false;
+    const p = panes.get(pane_id) orelse return false;
+    return p.browsing;
+}
+
 // -- Mouse-driven mode switching (Issue 606 Experiment 6) --
 
 fn sendModeToWeb(p: *Pane, browsing: bool) void {
