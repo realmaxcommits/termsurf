@@ -672,3 +672,19 @@ Check logs from all three processes:
 
 The experiment succeeds when we can identify which hop drops the "done" message
 on back navigation.
+
+**Result:** Fail
+
+The TUI logging used `eprintln!` which writes to stderr. In a terminal, stderr
+goes to the same PTY as stdout, so the debug output appeared in the alternate
+screen and corrupted ratatui's display — the TUI vanished and colors broke.
+
+The GUI logging compiled after fixing a Zig type error (`[]const u8` vs
+`[*:0]const u8`) but was reverted along with the TUI changes.
+
+#### Conclusion
+
+`eprintln!` cannot be used for debug logging while ratatui owns the alternate
+screen. The next attempt must write to a log file at `~/dev/termsurf/logs/web.log`
+instead. The GUI logging approach (Zig `log.info`/`log.warn`) is correct and
+can be reapplied as-is.
