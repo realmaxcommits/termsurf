@@ -2234,3 +2234,57 @@ distinguishes three cases: (1) app launch / no overlay → flag not set → firs
 click works, (2) keyboard pane switch to non-browsing pane → flag not set →
 first click works, (3) mouse click on a browsing overlay in an inactive pane →
 flag set → activation click suppressed as intended.
+
+## Conclusion
+
+Issue 606 is complete. All mouse input goals are met: clicking links and
+buttons, scrolling pages, selecting text by drag/double-click/triple-click,
+cursor shape sync, focus lifecycle, and activation gating.
+
+### What we built
+
+Sixteen experiments across three layers (Surface.zig, xpc.zig, Chromium server):
+
+**Click forwarding (Experiments 1, 7, 10, 15, 16).** `mouseButtonCallback` hit-
+tests the overlay, computes multi-click count (timing + distance, mirroring
+Ghostty's own logic), and sends press/release events via XPC. An
+`overlay_activation` flag suppresses the click that caused a pane switch — set
+in `paneFocusChanged` only when the overlay is already in browse mode
+(`isOverlayBrowsing`), cleared on release.
+
+**Mouse move (Experiments 2, 12, 13).** `cursorPosCallback` forwards position to
+Chromium with button-down modifier bits for drag detection. Fixed an XPC type
+mismatch (`set_int64` vs `get_uint64`) that silently zeroed modifiers, breaking
+text selection.
+
+**Scroll (Experiment 3).** `scrollCallback` forwards delta x/y to Chromium when
+the cursor is over the overlay and forwarding is active.
+
+**Cursor sync (Experiment 4).** Chromium sends cursor type changes via XPC.
+Ghost maps Chromium's `ui::mojom::CursorType` integers to Ghostty's `MouseShape`
+enum and applies them via `performAction(.mouse_shape)`.
+
+**Focus lifecycle (Experiments 5, 6).** `paneFocusChanged` dispatches to XPC to
+send `focus_changed` to Chromium. Clicking the overlay activates browse mode
+(`notifyOverlayClicked`), clicking outside deactivates it
+(`notifyNonOverlayClicked`). Mode changes are sent to the `web` TUI so it can
+update its chrome.
+
+**Event gating (Experiments 7, 10, 16).** `isOverlayForwarding` checks both
+`p.browsing` and `focused_pane == pane_id`. All mouse events (clicks, moves,
+scroll) are gated on this. Prevents mouse input from leaking to inactive or
+non-browsing overlays.
+
+### Key files modified
+
+- `ghost/src/Surface.zig` — overlay hit-testing, click/move/scroll gating,
+  multi-click detection, activation flag, `paneFocusChanged`
+- `ghost/src/apprt/xpc.zig` — `sendMouseEvent`, `sendMouseMove`,
+  `sendScrollEvent`, `isOverlayForwarding`, `isOverlayBrowsing`,
+  `notifyOverlayClicked`, `notifyNonOverlayClicked`, `handlePaneFocusChanged`
+
+### Next steps
+
+- **Issue 607: Keyboard input.** Typing in text fields, Cmd+C to copy selected
+  text, Cmd+V to paste, Cmd+A to select all, Tab to move between form fields,
+  Enter to submit. The biggest remaining gap for browser usability.
