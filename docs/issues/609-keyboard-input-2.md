@@ -524,3 +524,183 @@ editing command system, but we never provide editing commands because we use
 The fix is to use `ForwardKeyboardEventWithCommands` and attach the correct
 editing commands for each Cmd+key combination. This matches how Chromium's own
 Mac input path works (`render_widget_host_view_cocoa.mm` lines 1430-1431).
+
+### Experiment 4: Forward editing commands with Cmd+key events
+
+#### Goal
+
+Cmd+A, Cmd+C, Cmd+V, Cmd+X, and Cmd+Z work in Chromium overlays.
+
+#### Description
+
+Experiments 2 and 3 proved that: (a) Cmd+key events reach Chromium with the
+correct VK codes and modifier bits, and (b) populating `is_system_key`,
+`dom_code`, and `dom_key` on the raw keyboard event is not sufficient. The
+renderer doesn't re-interpret raw keyboard events to determine editing commands.
+
+Chromium's Mac input path
+(`render_widget_host_view_cocoa.mm:doCommandBySelector:`) explicitly maps Cocoa
+selectors to editing command strings and attaches them to the keyboard event via
+`ForwardKeyboardEventWithCommands`. The renderer applies these commands directly
+without interpreting the key combination.
+
+Since we don't have an NSEvent to pass through `interpretKeyEvents`, we manually
+map Cmd+key VK codes to the same editing command strings that Chromium's
+`RenderWidgetHostViewMacEditCommandHelper` produces. We also keep Experiment 3's
+`dom_code`/`dom_key` fields (they're correct to set) but remove `is_system_key`
+— it causes Blink to defer to the browser's command system, which is unnecessary
+when we're providing commands explicitly.
+
+The public `RenderWidgetHost` API only exposes `ForwardKeyboardEvent`.
+`ForwardKeyboardEventWithCommands` is on `RenderWidgetHostImpl`, which is
+already included in our file
+(`content/browser/renderer_host/
+render_widget_host_impl.h`). We static_cast to
+access it.
+
+#### Chromium branch
+
+Continue on `146.0.7650.0-issue-609`.
+
+#### Changes
+
+**`chromium/src/content/chromium_profile_server/browser/shell_browser_main_parts.cc`**
+
+Add includes (in the `#if BUILDFLAG(IS_MAC)` block):
+
+```cpp
+#include "third_party/blink/public/mojom/input/input_handler.mojom.h"
+#include "ui/latency/latency_info.h"
+```
+
+Replace the `HandleKeyEvent` body. The key changes from Experiment 3:
+
+1. Remove `is_system_key` — we're providing commands explicitly.
+2. For Cmd+key down events, build an editing command and use
+   `ForwardKeyboardEventWithCommands` instead of `ForwardKeyboardEvent`.
+3. For all other events (key up, non-Cmd keys), use
+   `ForwardKeyboardEventWithCommands` with an empty command vector (matching
+   Chromium's normal behavior of always using this method for key events).
+4. Keep `dom_code` and `dom_key` population from Experiment 3.
+5. Keep skipping `kChar` for Cmd+key from Experiment 3.
+
+```cpp
+void ShellBrowserMainParts::HandleKeyEvent(
+    const std::string& pane_id, const std::string& type,
+    int windows_key_code, const std::string& utf8_text,
+    uint64_t modifiers) {
+  DCHECK_CURRENTLY_ON(BrowserThread::UI);
+
+  TabState* tab = nullptr;
+  for (auto& t : tabs_) {
+    if (t->pane_id == pane_id) { tab = t.get(); break; }
+  }
+  if (!tab) return;
+
+  int web_modifiers = static_cast<int>(modifiers & 0xF);
+  bool has_meta = (web_modifiers & blink::WebInputEvent::kMetaKey) != 0;
+
+  auto event_type = blink::WebInputEvent::Type::kRawKeyDown;
+  if (type == "up")
+    event_type = blink::WebInputEvent::Type::kKeyUp;
+
+  input::NativeWebKeyboardEvent key_event(
+      event_type, web_modifiers, base::TimeTicks::Now());
+  key_event.windows_key_code = windows_key_code;
+
+  // Populate dom_code from VK code (assumes US layout).
+  key_event.dom_code = static_cast<int>(
+      ui::UsLayoutKeyboardCodeToDomCode(
+          static_cast<ui::KeyboardCode>(windows_key_code)));
+
+  // Populate dom_key from dom_code.
+  ui::DomKey dom_key;
+  ui::KeyboardCode dummy_vkey;
+  if (ui::DomCodeToUsLayoutDomKey(
+          static_cast<ui::DomCode>(key_event.dom_code),
+          web_modifiers, &dom_key, &dummy_vkey)) {
+    key_event.dom_key = static_cast<int>(
+        static_cast<ui::DomKey::Base>(dom_key));
+  }
+
+  auto* view = tab->shell->web_contents()->GetRenderWidgetHostView();
+  if (!view) {
+    LOG(WARNING) << "[ProfileServer] Key view is null for pane=" << pane_id;
+    return;
+  }
+
+  auto* rwhi = static_cast<RenderWidgetHostImpl*>(
+      view->GetRenderWidgetHost());
+
+  // Build editing commands for Cmd+key shortcuts (key down only).
+  std::vector<blink::mojom::EditCommandPtr> commands;
+  if (has_meta && type != "up") {
+    std::string cmd;
+    switch (windows_key_code) {
+      case ui::VKEY_A: cmd = "selectAll"; break;
+      case ui::VKEY_C: cmd = "copy"; break;
+      case ui::VKEY_V: cmd = "paste"; break;
+      case ui::VKEY_X: cmd = "cut"; break;
+      case ui::VKEY_Z: cmd = "undo"; break;
+      default: break;
+    }
+    if (!cmd.empty()) {
+      commands.push_back(
+          blink::mojom::EditCommand::New(cmd, ""));
+    }
+  }
+
+  ui::LatencyInfo latency;
+  rwhi->ForwardKeyboardEventWithCommands(
+      key_event, latency, std::move(commands));
+
+  // For key down with text, send a Char event — but NOT for Cmd+key shortcuts.
+  if (type != "up" && !utf8_text.empty() && !has_meta) {
+    input::NativeWebKeyboardEvent char_event(
+        blink::WebInputEvent::Type::kChar, web_modifiers,
+        base::TimeTicks::Now());
+    char_event.windows_key_code = windows_key_code;
+
+    std::u16string text16 = base::UTF8ToUTF16(utf8_text);
+    if (!text16.empty()) {
+      char_event.text[0] = text16[0];
+      char_event.unmodified_text[0] = text16[0];
+    }
+
+    std::vector<blink::mojom::EditCommandPtr> no_commands;
+    rwhi->ForwardKeyboardEventWithCommands(
+        char_event, latency, std::move(no_commands));
+  }
+
+  LOG(INFO) << "[ProfileServer] Key " << type << " vk=0x" << std::hex
+            << windows_key_code << std::dec
+            << " mods=" << web_modifiers
+            << " cmds=" << (commands.empty() ? 0 : 1)
+            << " pane=" << pane_id;
+}
+```
+
+No Ghost-side changes — Experiment 2's `performKeyEquivalent` bypass remains.
+
+#### Verification
+
+```bash
+cd chromium/src
+export PATH="$HOME/dev/termsurf/chromium/depot_tools:$PATH"
+autoninja -C out/Default chromium_profile_server
+
+open ghost/zig-out/Ghostty.app --stderr ~/dev/termsurf/logs/ghost.log
+cargo run -p web -- https://lite.duckduckgo.com
+```
+
+Click the search box to enter browse mode and focus the text field. Test:
+
+| # | Test                       | Steps                                              | Expected                       |
+| - | -------------------------- | -------------------------------------------------- | ------------------------------ |
+| 1 | Cmd+A selects all          | Type "hello", Cmd+A, type "X"                      | "X" — all text replaced        |
+| 2 | Cmd+C / Cmd+V              | Type "hello", Cmd+A, Cmd+C, click new field, Cmd+V | "hello" pasted into new field  |
+| 3 | Cmd+X cuts                 | Type "hello", Cmd+A, Cmd+X                         | Text field empty               |
+| 4 | Cmd+Z undoes               | Type "hello", Cmd+A, type "X", Cmd+Z               | "hello" restored               |
+| 5 | Regular typing still works | Type "hello"                                       | "hello" appears                |
+| 6 | Ctrl+Esc still works       | Press Ctrl+Esc                                     | Exits browse mode              |
+| 7 | Cmd+A outside browse mode  | Exit browse mode, press Cmd+A                      | Selects terminal text (normal) |
