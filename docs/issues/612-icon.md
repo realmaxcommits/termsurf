@@ -224,3 +224,69 @@ The next experiment should remove the `Ghostty.icon` reference from the Xcode
 project so it stops being compiled into the app bundle. With only
 `AppIcon.appiconset` remaining, `ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon`
 should control the bundle icon.
+
+### Experiment 2: Remove Ghostty.icon from Xcode project
+
+#### Goal
+
+The bundle icon shows the TermSurf surfing ghost (cyan wave). No old Ghostty
+icon flash before the debug override.
+
+#### Approach
+
+Remove all references to `Ghostty.icon` from `project.pbxproj`. The file stays
+on disk at `ghost/images/Ghostty.icon/` (upstream Ghostty asset), but the Xcode
+project no longer includes it as a build resource. With the Icon Composer
+document gone from the build, `ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon`
+becomes the sole icon source.
+
+#### Steps
+
+##### Step 1: Remove `Ghostty.icon` from `project.pbxproj`
+
+Remove these 6 lines from `ghost/macos/Ghostty.xcodeproj/project.pbxproj`:
+
+**PBXBuildFile entries (lines 18–19):**
+
+```
+A553F4132E06EB1600257779 /* Ghostty.icon in Resources */ = {isa = PBXBuildFile; ...};
+A553F4142E06EB1600257779 /* Ghostty.icon in Resources */ = {isa = PBXBuildFile; ...};
+```
+
+**PBXFileReference (line 57):**
+
+```
+A553F4122E06EB1600257779 /* Ghostty.icon */ = {isa = PBXFileReference; ...};
+```
+
+**PBXGroup entry (line 272):**
+
+```
+A553F4122E06EB1600257779 /* Ghostty.icon */,
+```
+
+**PBXResourcesBuildPhase entries (lines 468, 487):**
+
+```
+A553F4142E06EB1600257779 /* Ghostty.icon in Resources */,
+A553F4132E06EB1600257779 /* Ghostty.icon in Resources */,
+```
+
+##### Step 2: Build and verify
+
+```bash
+rm -rf ~/Library/Developer/Xcode/DerivedData/Ghostty-*
+rm -rf ghost/macos/build/
+cd ghost && zig build
+```
+
+#### Verification
+
+1. **Build succeeds:** No Xcode errors about missing `Ghostty.icon`
+2. **Bundle icon:** `ghost/zig-out/TermSurf.app` shows the TermSurf surfing
+   ghost (cyan wave) in Finder — not the old Ghostty icon
+3. **Dock icon (debug):** The green wave debug icon appears without any old
+   Ghostty icon flash before it
+4. **No `Ghostty.icns` in bundle:**
+   `ls ghost/zig-out/TermSurf.app/Contents/Resources/` does not contain
+   `Ghostty.icns`
