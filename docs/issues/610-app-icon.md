@@ -269,3 +269,145 @@ definitions) even for a single flat layer. Without documentation on the exact
 required schema, guessing at the format is unreliable. A different approach is
 needed — either reverse-engineering a working minimal `.icon` document or
 bypassing Icon Composer entirely by generating the `.icns` file directly.
+
+### Experiment 3: Replace ghost layer in existing Icon Composer document
+
+#### Goal
+
+The release icon shows the TermSurf surfing ghost centered on the existing
+Ghostty screen background, using the original Icon Composer layered structure.
+
+#### Description
+
+Experiments 1 and 2 failed because we either replaced the wrong files or gutted
+the `icon.json` too aggressively. This experiment takes a surgical approach:
+keep the working `icon.json` structure intact, and only change what's necessary.
+
+The original `Ghostty.icon` has 4 groups with 5 PNGs. Two layers in Group 2
+reference `Ghostty.png` — the main ghost and a blue glass blur behind it. Both
+have `position.translation-in-points` that offset the ghost to the top-left.
+
+This experiment:
+
+1. Restores the original `icon.json` and all original assets (undoing Experiment
+   2's changes).
+2. Adds `surfing-ghost.png` to `Assets/`.
+3. Updates both `Ghostty.png` references in `icon.json` to point to
+   `surfing-ghost.png`.
+4. Removes the `position` blocks from both layers so the image is centered.
+5. Deletes the old `Ghostty.png` from `Assets/`.
+
+Everything else stays: `Screen.png`, `gloss.png`, `Inner Bevel 6px.png`,
+`Screen Effects.png`, all blend modes, glass effects, shadows, gradients, and
+lighting. The icon will look like the original Ghostty icon but with a surfing
+ghost in the center instead of the `>_` ghost in the top-left.
+
+#### Changes
+
+**Step 1: Restore original state.** Discard all uncommitted changes in
+`ghost/images/Ghostty.icon/`:
+
+```bash
+cd ghost
+git checkout -- images/Ghostty.icon/
+```
+
+**Step 2: Add new ghost image:**
+
+```bash
+cp assets/surfing-ghost.png ghost/images/Ghostty.icon/Assets/surfing-ghost.png
+```
+
+**Step 3: Update `icon.json`.** In the "Ghostty" layer (Group 2, first layer),
+change `image-name` and remove `position`:
+
+Before:
+
+```json
+{
+  "blend-mode" : "normal",
+  "fill" : "automatic",
+  "hidden" : false,
+  "image-name" : "Ghostty.png",
+  "name" : "Ghostty",
+  "position" : {
+    "scale" : 1,
+    "translation-in-points" : [
+      -185.015625,
+      -143.8359375
+    ]
+  }
+}
+```
+
+After:
+
+```json
+{
+  "blend-mode" : "normal",
+  "fill" : "automatic",
+  "hidden" : false,
+  "image-name" : "surfing-ghost.png",
+  "name" : "Ghostty"
+}
+```
+
+In the "GhosttyBlur" layer (Group 2, second layer), same changes:
+
+Before:
+
+```json
+{
+  "blend-mode" : "normal",
+  "fill" : {
+    "solid" : "extended-srgb:0.00000,0.47843,1.00000,1.00000"
+  },
+  "glass" : true,
+  "hidden" : false,
+  "image-name" : "Ghostty.png",
+  "name" : "GhosttyBlur",
+  "position" : {
+    "scale" : 1,
+    "translation-in-points" : [
+      -186.59375,
+      -143.8359375
+    ]
+  }
+}
+```
+
+After:
+
+```json
+{
+  "blend-mode" : "normal",
+  "fill" : {
+    "solid" : "extended-srgb:0.00000,0.47843,1.00000,1.00000"
+  },
+  "glass" : true,
+  "hidden" : false,
+  "image-name" : "surfing-ghost.png",
+  "name" : "GhosttyBlur"
+}
+```
+
+**Step 4: Delete old ghost image:**
+
+```bash
+rm ghost/images/Ghostty.icon/Assets/Ghostty.png
+```
+
+#### Verification
+
+```bash
+cd ghost && zig build
+open ghost/zig-out/Ghostty.app
+```
+
+1. **Dock icon (before debug override):** The surfing ghost appears centered on
+   the dark blue screen background, with the original gloss, bevel, and screen
+   effects intact.
+2. **Finder:** `ghost/zig-out/Ghostty.app` shows the new icon.
+3. **Debug build dock icon:** The green wave debug icon still appears (runtime
+   override from Experiment 1).
+4. **No old Ghostty ghost visible:** The `>_` ghost silhouette does not appear.
