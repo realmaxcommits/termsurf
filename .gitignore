@@ -83,12 +83,6 @@ gui/vgcore.*
 gui/*/.build/
 gui/*/Sources/*/*.metallib
 
-# Vendored analysis repos (not committed)
-vendor/wezterm/
-vendor/electron/
-vendor/alacritty/
-vendor/cef/
-
 # Chromium build workspace (gitignored; src/ requires directory named "src")
 /chromium/
 
@@ -104,5 +98,3 @@ ts4/two-profiles-receiver/shaders.metallib
 # TUI build outputs
 tui/target/
 
-# cef-rs build outputs
-vendor/cef-rs/target/
