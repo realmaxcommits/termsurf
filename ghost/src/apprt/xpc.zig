@@ -645,10 +645,24 @@ fn spawnServerProcess(server: *Server) void {
     var hidden_buf: [16]u8 = undefined;
     const hidden_arg = std.fmt.bufPrintZ(&hidden_buf, "--hidden", .{}) catch return;
 
+    var logging_buf: [64]u8 = undefined;
+    const logging_arg = std.fmt.bufPrintZ(
+        &logging_buf,
+        "--enable-logging",
+        .{},
+    ) catch return;
+
+    var logfile_buf: [256]u8 = undefined;
+    const logfile_arg = std.fmt.bufPrintZ(
+        &logfile_buf,
+        "--log-file={s}/dev/termsurf/logs/chromium-server.log",
+        .{home},
+    ) catch return;
+
     log.info("spawning server profile={s}", .{server.profile_key});
 
     var child = std.process.Child.init(
-        &.{ server_path, xpc_arg, data_arg, hidden_arg },
+        &.{ server_path, xpc_arg, data_arg, hidden_arg, logging_arg, logfile_arg },
         alloc,
     );
     child.spawn() catch |err| {

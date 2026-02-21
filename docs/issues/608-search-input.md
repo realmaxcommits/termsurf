@@ -266,3 +266,50 @@ After both tests, check `~/dev/termsurf/logs/chromium-server.log` and compare:
 3. Do frames stop arriving (fps log stops printing)?
 4. Is the view null when input events are forwarded during the freeze?
 5. Does the `FrameSinkId` change?
+
+**Result:** Pass
+
+Wikipedia search worked without issues — typing, clicking Search, and navigating
+all functioned normally. Lite DuckDuckGo reproduced the freeze: typing worked,
+but clicking Search froze the overlay completely for ~30 seconds until the
+session was closed.
+
+The logs revealed the root cause. Comparing before and after the POST form
+submission on lite.duckduckgo.com:
+
+| Property     | Before navigation | After navigation       |
+| ------------ | ----------------- | ---------------------- |
+| View pointer | `0xae6404000`     | `0xae6449800`          |
+| FrameSinkId  | `(5, 3)`          | `(5, 10)`              |
+| `is_post`    | —                 | `1`                    |
+| Frames after | 3-6 fps (normal)  | **Zero** — no fps logs |
+| View null?   | No                | No                     |
+
+The `RenderWidgetHostView` and `FrameSinkId` both changed during the POST
+navigation. The `FrameSinkVideoCapturer` was still targeting the old
+`FrameSinkId(5, 3)`, so no frames arrived from the new `FrameSinkId(5, 10)`. The
+overlay froze because it was displaying the last frame from the old target.
+
+No null view warnings appeared — the view exists post-navigation, it's just a
+different view object with a different frame sink.
+
+**Why POST but not link clicks:** POST form submissions trigger a renderer
+process swap in Chromium (POST navigations cannot safely reuse the previous
+renderer). Same-origin link clicks reuse the same renderer process, keeping the
+same FrameSinkId.
+
+**Note:** Phase 1 required a fix during implementation. The original design
+specified `--enable-logging=stderr`, but Chromium's `InitLogging` in
+`shell_main_delegate.cc` ignores `--log-file` when `dest == kStderr`. Changed to
+`--enable-logging` (without `=stderr`) so file logging is used and `--log-file`
+is respected.
+
+#### Conclusion
+
+The freeze is caused by a stale capturer target. The `FrameSinkVideoCapturer` is
+created once in `RenderViewReady` targeting the initial `FrameSinkId`, but POST
+form submissions swap the `RenderWidgetHostView` and assign a new `FrameSinkId`.
+The capturer continues watching the old frame sink and receives no frames.
+
+The fix is to re-target the capturer in `DidFinishNavigation` when the
+`FrameSinkId` changes. This should be Experiment 2.
