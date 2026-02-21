@@ -1793,3 +1793,81 @@ The logs should reveal one of:
 - `sendMouseMove` called with modifiers=0 → `click_state` not set
 - `sendMouseMove` called with modifiers=64 → Chromium receives drags but doesn't
   select (Blink issue, focus issue, or XPC type mismatch)
+
+### Result: Pass (diagnostic)
+
+The Ghost-side pipeline works correctly. Every drag move is forwarded with
+`modifiers=64` (`kLeftButtonDown`). The bug is an XPC type mismatch:
+`sendMouseMove` uses `xpc_dictionary_set_int64` but Chromium reads with
+`xpc_dictionary_get_uint64`. XPC returns 0 when the types don't match, so
+Chromium sees `modifiers=0` and treats every drag move as a hover.
+
+The same mismatch exists in `sendMouseEvent` (line 779) — keyboard modifiers
+(shift, ctrl, alt, cmd) and button-down flags on clicks are also silently
+dropped.
+
+## Experiment 13: Fix XPC modifier type mismatch
+
+### Goal
+
+Fix the `int64` vs `uint64` type mismatch in modifier fields so Chromium
+receives button-down flags during drags. Remove Experiment 12 debug logs.
+
+### Background
+
+XPC is typed. `xpc_dictionary_set_int64` stores as `XPC_TYPE_INT64`.
+`xpc_dictionary_get_uint64` expects `XPC_TYPE_UINT64`. When types don't match,
+XPC returns 0. Two call sites in xpc.zig use `set_int64` for modifiers while all
+three Chromium readers use `get_uint64`:
+
+| Function          | Line | Uses         | Should use   |
+| ----------------- | ---- | ------------ | ------------ |
+| `sendMouseEvent`  | 779  | `set_int64`  | `set_uint64` |
+| `sendScrollEvent` | 829  | `set_uint64` | correct      |
+| `sendMouseMove`   | 873  | `set_int64`  | `set_uint64` |
+
+### Design
+
+**Phase 1: Fix `sendMouseEvent` modifiers (xpc.zig).**
+
+Change the modifier variable type from `i64` to `u64` and use
+`xpc_dictionary_set_uint64`:
+
+```zig
+var modifiers: u64 = 0;
+// ... same bitmask logic ...
+xpc_dictionary_set_uint64(msg, "modifiers", modifiers);
+```
+
+**Phase 2: Fix `sendMouseMove` modifiers (xpc.zig).**
+
+Same change — `i64` to `u64` and `set_int64` to `set_uint64`:
+
+```zig
+var modifiers: u64 = 0;
+// ... same bitmask logic ...
+xpc_dictionary_set_uint64(msg, "modifiers", modifiers);
+```
+
+**Phase 3: Remove Experiment 12 debug logs.**
+
+Remove all `log.info` calls added in Experiment 12 from:
+
+- `cursorPosCallback` overlay hit in Surface.zig
+- `mouseButtonCallback` overlay hit in Surface.zig
+- `sendMouseMove` in xpc.zig
+
+### Verification
+
+```bash
+cd ghost && zig build
+GHOSTTY_LOG=stderr open ghost/zig-out/Ghostty.app --stdout ~/dev/termsurf/logs/ghost.log --stderr ~/dev/termsurf/logs/ghost.log
+cargo run -p web -- https://en.wikipedia.org/wiki/Terminal_emulator
+```
+
+Pass criteria:
+
+- Click and drag across text selects it (blue highlight appears)
+- Selection extends in real time as the mouse moves
+- Releasing the mouse finalizes the selection
+- No debug log noise
