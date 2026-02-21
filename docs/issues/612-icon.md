@@ -383,3 +383,24 @@ The icon generation pipeline works end-to-end: source image in `assets/`, script
 in `ghost/scripts/`, generated PNGs in the asset catalog, correct icon in the
 built app. Changing the release icon is now a one-command operation:
 `ghost/scripts/generate-icons.sh`.
+
+## Conclusion
+
+TermSurf has its own icon and a pipeline to change it. The release icon comes
+from a traditional `AppIcon.appiconset/` with pre-rendered PNGs at all standard
+macOS sizes (16–1024px). Debug builds show a distinct green wave icon in the
+dock via a runtime `#if DEBUG` override. The Icon Composer document
+(`Ghostty.icon`) is no longer part of the build.
+
+To change the release icon: replace `assets/termsurf-2-black.png` with a new
+1024x1024 source image and run `ghost/scripts/generate-icons.sh`.
+
+Key changes:
+
+- `ghost/macos/Assets.xcassets/AppIcon.appiconset/` — Release icon at 7 sizes
+- `ghost/macos/Assets.xcassets/TermSurfDebugIcon.imageset/` — Debug dock icon
+- `ghost/macos/Assets.xcassets/AppIconImage.imageset/` — Runtime icon-switching
+- `ghost/macos/Ghostty.xcodeproj/project.pbxproj` —
+  `ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon`, `Ghostty.icon` removed
+- `ghost/macos/Sources/App/macOS/AppDelegate.swift` — Debug icon override
+- `ghost/scripts/generate-icons.sh` — Icon generation from source image
