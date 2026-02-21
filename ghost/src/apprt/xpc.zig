@@ -532,6 +532,40 @@ pub fn handlePaneFocusChanged(surface: *CoreSurface, focused: bool) void {
     dispatch_async_f(xpc_queue, @ptrFromInt(encoded), dispatch_fn);
 }
 
+// -- Mouse-driven mode switching (Issue 606 Experiment 6) --
+
+fn sendModeToWeb(p: *Pane, browsing: bool) void {
+    if (p.web_peer == null) return;
+    const msg = xpc_dictionary_create(null, null, 0);
+    xpc_dictionary_set_string(msg, "action", "mode_changed");
+    xpc_dictionary_set_bool(msg, "browsing", browsing);
+    xpc_connection_send_message(p.web_peer, msg);
+}
+
+/// Called from mouseButtonCallback when a left-click hits the overlay.
+/// If the pane is in control mode, switches to browse mode and focuses.
+pub fn notifyOverlayClicked(surface: *CoreSurface) void {
+    const pane_id_key = surface_to_pane.get(@intFromPtr(surface)) orelse return;
+    const p = panes.get(pane_id_key) orelse return;
+    if (p.browsing) return;
+
+    p.browsing = true;
+    sendModeToWeb(p, true);
+    sendFocusChanged(pane_id_key, true);
+}
+
+/// Called from mouseButtonCallback when a left-click misses the overlay.
+/// If the pane is in browse mode, switches to control mode and unfocuses.
+pub fn notifyNonOverlayClicked(surface: *CoreSurface) void {
+    const pane_id_key = surface_to_pane.get(@intFromPtr(surface)) orelse return;
+    const p = panes.get(pane_id_key) orelse return;
+    if (!p.browsing) return;
+
+    p.browsing = false;
+    sendModeToWeb(p, false);
+    sendFocusChanged(pane_id_key, false);
+}
+
 // -- Server lifecycle --
 
 fn getOrCreateServer(profile: []const u8) ?*Server {

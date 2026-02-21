@@ -4022,8 +4022,17 @@ pub fn mouseButtonCallback(
         const cursor = try self.rt_surface.getCursorPos();
         if (self.hitTestOverlay(@floatCast(cursor.x), @floatCast(cursor.y))) |overlay_pos| {
             const xpc = @import("apprt/xpc.zig");
+            // Switch to browse mode on overlay click if in control mode (Exp 6).
+            if (button == .left and action == .press) {
+                xpc.notifyOverlayClicked(self);
+            }
             xpc.sendMouseEvent(self, action, button, mods, overlay_pos.x, overlay_pos.y);
             return true;
+        }
+        // Click missed overlay — switch to control if browsing (Exp 6).
+        if (button == .left and action == .press) {
+            const xpc = @import("apprt/xpc.zig");
+            xpc.notifyNonOverlayClicked(self);
         }
     }
 
