@@ -87,3 +87,95 @@ dynamic tab titles.
 
 **GUI-side only** changes: target="_blank" (if we load in same tab), page zoom,
 URL normalization.
+
+## Experiments
+
+### Experiment 1: Unify test pages and audit existing demos
+
+#### Goal
+
+Replace `html/` and `box-demo/` with a single `test-html/` directory containing
+a Bun server that serves all test pages. A main index page links to every demo.
+Each existing demo is tested in the current gui/ + Chromium pipeline to identify
+which features work and which are broken.
+
+#### Background
+
+The repo currently has test HTML scattered across two top-level directories:
+
+- `html/` — 4 standalone HTML files (dialogs, downloads, mouse, uploads)
+- `box-demo/` — Bun server + spinning square demo (FPS, localStorage)
+
+These were created ad-hoc during different experiments. They need a single home
+with a proper server so we can systematically test browser features.
+
+`ts4/box-demo/` and `ts5/box-demo/` are identical historical copies and are left
+as-is.
+
+#### Steps
+
+##### Step 1: Create `test-html/` with Bun server
+
+Create `test-html/server.ts` — a Bun HTTP server that:
+
+- Serves static files from `test-html/public/`
+- Runs on port 9616 (Issue 616)
+- Has a root route (`/`) that serves an index page with links to all demos
+
+##### Step 2: Create the index page
+
+Create `test-html/public/index.html` — a main page listing all test demos with
+links. Organized by feature category matching the inventory in this issue.
+
+##### Step 3: Move existing test pages
+
+Move the existing test pages into `test-html/public/`:
+
+- `html/test-dialogs.html` → `test-html/public/test-dialogs.html`
+- `html/test-download.html` → `test-html/public/test-download.html`
+- `html/test-mouse.html` → `test-html/public/test-mouse.html`
+- `html/test-upload.html` → `test-html/public/test-upload.html`
+- `box-demo/public/index.html` → `test-html/public/test-box-demo.html`
+
+##### Step 4: Add new test pages for untested features
+
+Create minimal test pages for features that don't have test pages yet:
+
+- `test-html/public/test-target-blank.html` — Links with `target="_blank"` and
+  `window.open()`
+- `test-html/public/test-zoom.html` — Text at various sizes to verify zoom
+  behavior
+- `test-html/public/test-auth.html` — Link to an HTTP Basic Auth endpoint (can
+  use httpbin.org or similar)
+
+##### Step 5: Delete old directories
+
+```bash
+git rm -r html/
+git rm -r box-demo/
+```
+
+##### Step 6: Test each demo
+
+Launch TermSurf, run `web http://localhost:9616`, and systematically test each
+demo page. Record pass/fail for each:
+
+| Demo              | Feature tested                      | Expected behavior                           | Result |
+| ----------------- | ----------------------------------- | ------------------------------------------- | ------ |
+| test-box-demo     | Canvas rendering, FPS, localStorage | Spinning square at 60fps, identity persists |        |
+| test-mouse        | Mouse events                        | Click counter increments, events logged     |        |
+| test-dialogs      | alert/confirm/prompt                | Native dialogs appear                       |        |
+| test-download     | File downloads                      | Save dialog appears                         |        |
+| test-upload       | File uploads                        | File picker opens                           |        |
+| test-target-blank | target="_blank" links               | Link loads (in same or new view)            |        |
+| test-zoom         | Page zoom                           | Cmd+=/-/0 changes text size                 |        |
+| test-auth         | HTTP Basic Auth                     | Login dialog appears                        |        |
+
+#### Verification
+
+1. `bun run test-html/server.ts` starts and serves the index page at
+   `http://localhost:9616`
+2. All demo pages are accessible from the index
+3. `html/` and `box-demo/` are deleted from the repo
+4. `ts4/box-demo/` and `ts5/box-demo/` are unchanged
+5. Each demo has a pass/fail result recorded in the table above
