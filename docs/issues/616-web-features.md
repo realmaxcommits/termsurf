@@ -685,6 +685,80 @@ The GUI logging compiled after fixing a Zig type error (`[]const u8` vs
 #### Conclusion
 
 `eprintln!` cannot be used for debug logging while ratatui owns the alternate
-screen. The next attempt must write to a log file at `~/dev/termsurf/logs/web.log`
-instead. The GUI logging approach (Zig `log.info`/`log.warn`) is correct and
-can be reapplied as-is.
+screen. The next attempt must write to a log file at
+`~/dev/termsurf/logs/web.log` instead. The GUI logging approach (Zig
+`log.info`/`log.warn`) is correct and can be reapplied as-is.
+
+### Experiment 5: Debug back-navigation stuck bar (file logging)
+
+#### Goal
+
+Same as Experiment 4: add diagnostic logging across all three processes to
+determine where the "done" message gets lost during back navigation. This time,
+TUI logging writes to a file instead of stderr.
+
+#### Background
+
+Experiment 4 failed because `eprintln!` writes to the same PTY as stdout,
+corrupting ratatui's alternate screen. The fix is simple: write to
+`/Users/ryan/dev/termsurf/logs/web.log` instead. This is the hard-coded absolute
+path to the repo's `logs/` directory, which is gitignored.
+
+#### Changes
+
+##### TUI (`tui/src/main.rs`)
+
+Open `/Users/ryan/dev/termsurf/logs/web.log` in append mode before the event
+loop. Store the file handle as `Option<std::fs::File>`. On each `LoadingState`
+message, write a timestamped line to the file using `writeln!`. No `eprintln!`
+anywhere — nothing touches stderr during the event loop.
+
+```rust
+// Before the event loop, after enable_raw_mode:
+let mut debug_log = std::fs::OpenOptions::new()
+    .create(true)
+    .append(true)
+    .open("/Users/ryan/dev/termsurf/logs/web.log")
+    .ok();
+```
+
+```rust
+// In the LoadingState handler:
+if let Some(ref mut log) = debug_log {
+    let _ = writeln!(log, "[web] loading_state: state={} progress={}", state, progress);
+}
+```
+
+##### GUI (`gui/src/apprt/xpc.zig`)
+
+Same changes as Experiment 4 (which compiled correctly after the type fix).
+Rewrite `handleLoadingState` to:
+
+1. Extract `state_raw` (the `[*:0]const u8` C pointer) and `state_str` (a
+   `[]const u8` slice via `std.mem.span`) separately
+2. Log `warn` on unknown pane or null `web_peer` (with pane ID and state)
+3. Log `info` on successful forward (with pane ID, state, and progress)
+4. Pass `state_raw` (not `state_str`) to `xpc_dictionary_set_string`
+
+GUI logging uses Zig's `log.info`/`log.warn` which goes to the TermSurf
+process's stderr — visible in the terminal where TermSurf was launched, not in
+any PTY pane.
+
+##### No Chromium changes
+
+Chromium already logs `DidStartLoading` and `DidStopLoading` via `LOG(INFO)`.
+
+#### Verification
+
+1. Launch TermSurf: `gui/zig-out/TermSurf.app/Contents/MacOS/TermSurf`
+2. Run `web http://localhost:9616`
+3. Wait for the page to load
+4. Click a link to navigate to a subpage
+5. Right-click and select "Back"
+6. Observe the bar — does it get stuck at 100%?
+7. Check `/Users/ryan/dev/termsurf/logs/web.log` for TUI-received messages
+8. Check TermSurf's terminal output for GUI `loading_state` log lines
+9. Check Chromium logs for `DidStartLoading`/`DidStopLoading`
+
+The TUI must not be visually affected by the logging. The experiment succeeds
+when we can identify which hop drops the "done" message on back navigation.
