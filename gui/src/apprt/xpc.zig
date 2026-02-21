@@ -615,6 +615,17 @@ fn spawnServerProcess(server: *Server) void {
         return;
     };
 
+    // XDG_DATA_HOME for browser profile data (default: ~/.local/share)
+    var data_home_buf: [512]u8 = undefined;
+    const data_home = std.posix.getenv("XDG_DATA_HOME") orelse std.fmt.bufPrintZ(
+        &data_home_buf,
+        "{s}/.local/share",
+        .{home},
+    ) catch {
+        log.err("data home path too long", .{});
+        return;
+    };
+
     var path_buf: [512]u8 = undefined;
     const server_path = std.fmt.bufPrintZ(
         &path_buf,
@@ -635,8 +646,8 @@ fn spawnServerProcess(server: *Server) void {
     var data_arg_buf: [512]u8 = undefined;
     const data_arg = std.fmt.bufPrintZ(
         &data_arg_buf,
-        "--user-data-dir={s}/.config/termsurf/chromium-profiles/{s}",
-        .{ home, server.profile_key },
+        "--user-data-dir={s}/termsurf/chromium-profiles/{s}",
+        .{ data_home, server.profile_key },
     ) catch {
         log.err("data dir path too long", .{});
         return;
