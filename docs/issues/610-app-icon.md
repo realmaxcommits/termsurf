@@ -517,3 +517,64 @@ a layer beyond the build system. The old icon is cached by macOS against the
 app's bundle identifier (`com.mitchellh.ghostty`), and no combination of build
 cache clearing has forced macOS to re-read the actual `.icns` file from the app
 bundle.
+
+### Experiment 5: Release build
+
+#### Goal
+
+The surfing ghost icon appears in the dock when the app launches — no old
+Ghostty icon flash.
+
+#### Description
+
+Experiments 3 and 4 both ran debug builds (`zig build` defaults to Debug). Debug
+builds output to `macos/build/Debug/Ghostty.app`. Release builds output to
+`macos/build/ReleaseLocal/Ghostty.app` — a different path that macOS has never
+seen before, so there should be no cached icon for it.
+
+Additionally, release builds skip the `#if DEBUG` runtime icon override, so the
+`.icns` is the only icon source. This eliminates the debug override as a
+variable and gives a clean read on whether the `.icns` displays correctly.
+
+To build in release mode, pass `-Doptimize=ReleaseFast` to `zig build`. This
+maps to the `ReleaseLocal` Xcode configuration (`GhosttyXcodebuild.zig:31-34`).
+
+#### Steps
+
+1. Delete Xcode DerivedData and local build directory (clean slate):
+
+```bash
+rm -rf ~/Library/Developer/Xcode/DerivedData/Ghostty-*
+rm -rf ghost/macos/build/
+```
+
+2. Build in release mode:
+
+```bash
+cd ghost && zig build -Doptimize=ReleaseFast
+```
+
+3. Verify the built `.icns` contains the surfing ghost:
+
+```bash
+mkdir -p /tmp/icon-check
+cp ghost/zig-out/Ghostty.app/Contents/Resources/Ghostty.icns /tmp/icon-check/
+cd /tmp/icon-check && iconutil -c iconset Ghostty.icns
+open Ghostty.iconset/icon_128x128@2x.png
+```
+
+4. Launch the app:
+
+```bash
+open ghost/zig-out/Ghostty.app
+```
+
+#### Verification
+
+1. **Extracted `.icns`:** The surfing ghost on the dark blue screen background.
+2. **Dock icon:** The surfing ghost icon appears immediately — no old Ghostty
+   icon flash, no debug override.
+3. **Finder:** `ghost/zig-out/Ghostty.app` shows the surfing ghost icon.
+4. **App switcher (Cmd+Tab):** Shows the surfing ghost icon.
+
+**Result:** (pending)
