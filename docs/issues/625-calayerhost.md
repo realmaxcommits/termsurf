@@ -518,3 +518,147 @@ The Chromium side needs: delete `ShellVideoConsumer`, add a `CALayerParams`
 callback, move `WebContentsObserver` notifications to a simpler class. The GUI
 side needs: delete the entire Metal overlay pipeline, add `CALayerHost` creation
 and positioning in Zig via Objective-C runtime calls.
+
+### Experiment 2: Implement CALayerHost
+
+Replace the `FrameSinkVideoCapturer` pipeline with `CALayerHost`. Two sides:
+Chromium Profile Server sends `ca_context_id` instead of IOSurface Mach ports,
+GUI creates a `CALayerHost` sublayer instead of Metal-compositing an IOSurface
+texture.
+
+#### Step 1: Chromium — intercept CALayerParams and send ca_context_id
+
+**In `shell_browser_main_parts.cc`:**
+
+1. Add a `CALayerParams` callback on `RenderWidgetHostViewMac`. Follow the
+   existing `SetCursorChangedCallback` pattern (line 394). When
+   `AcceleratedWidgetCALayerParamsUpdated()` fires, extract `ca_context_id` from
+   `GetLastCALayerParams()`. If it differs from the last sent value, send an XPC
+   message:
+
+   ```
+   { "action": "ca_context", "ca_context_id": <uint32>, "pane_id": "<uuid>" }
+   ```
+
+2. In `CreateTab()`, replace the `ShellVideoConsumer` creation (lines 354-405)
+   with the new callback registration. Keep the per-tab XPC connection and
+   `tab_ready` message — those are still needed.
+
+3. Remove the `resize` XPC handler (lines 219-227) and `ResizeCapture()` (lines
+   411-446). Resize is handled automatically — the compositor produces new
+   `CALayerParams` at the new size, and the GUI updates the `CALayerHost` frame
+   when `set_overlay` arrives with new grid coordinates.
+
+**Move `WebContentsObserver` notifications out of `ShellVideoConsumer`:**
+
+4. Create a lightweight `ShellTabObserver` class (or add observer methods
+   directly to `ShellBrowserMainParts`) that observes the `WebContents` for:
+   - `DidFinishNavigation` → send `url_changed` over XPC
+   - `DidStartLoading` / `DidStopLoading` / `LoadProgressChanged` → send
+     `loading_state` over XPC
+   - `DidFailLoad` → send `loading_state` with error
+
+   The cursor change callback (`SetCursorChangedCallback`) stays on
+   `RenderWidgetHostImpl` — it's independent of the video consumer.
+
+**Delete `ShellVideoConsumer`:**
+
+5. Delete `shell_video_consumer.cc` (347 lines) and `shell_video_consumer.h`
+   (113 lines). Remove their entries from `BUILD.gn` (lines 201-202). Remove the
+   `#include` and forward declaration from `shell_browser_main_parts`.
+
+#### Step 2: GUI — receive ca_context_id and create CALayerHost
+
+**In `xpc.zig`:**
+
+6. Add a `handleCAContext()` handler for the `"ca_context"` action. Extract
+   `ca_context_id` (uint32) from the XPC message. Look up the pane by `pane_id`.
+   Call a new method on the surface to set the CALayerHost.
+
+**In `Surface.zig`:**
+
+7. Add `setCAContextId(context_id: u32)` method. This replaces
+   `setOverlayIOSurface()`. Behind `draw_mutex`:
+   - Store the `context_id` on the renderer
+   - Call into the renderer to create/update the `CALayerHost`
+
+**In `Metal.zig` or a new `CALayerHost.zig`:**
+
+8. Create the `CALayerHost` via Objective-C runtime calls:
+   ```
+   objc_getClass("CALayerHost")
+   objc_msgSend(class, "alloc")
+   objc_msgSend(instance, "init")
+   objc_msgSend(instance, "setContextId:", context_id)
+   ```
+   Add it as a sublayer of the IOSurfaceLayer:
+   ```
+   objc_msgSend(iosurface_layer, "addSublayer:", ca_layer_host)
+   ```
+
+9. Set the `CALayerHost` frame to the browser pane pixel coordinates:
+   ```
+   frame.origin.x = grid_col * cell_width
+   frame.origin.y = grid_row * cell_height
+   frame.size.width = pixel_width
+   frame.size.height = pixel_height
+   ```
+   This frame updates whenever `set_overlay` arrives with new grid coordinates.
+
+#### Step 3: GUI — delete the Metal overlay pipeline
+
+10. Delete from `shaders.metal`: `PinkOverlayIn` struct, `OverlayVertexOut`
+    struct, `pink_overlay_vertex`, `pink_overlay_fragment`, `overlay_vertex`,
+    `overlay_fragment`.
+
+11. Delete from `metal/shaders.zig`: `pink_overlay` and `overlay` pipeline
+    definitions, `PinkOverlay` struct.
+
+12. Delete from `metal/Texture.zig`: `fromIOSurface()` and IOSurface extern
+    declarations.
+
+13. Delete from `generic.zig`: the IOSurface overlay draw call block (lines
+    1661-1688), fields `pink_overlay`, `overlay_iosurface`,
+    `overlay_surface_changed`.
+
+14. Delete from `Surface.zig`: `setOverlay()`, `setOverlayIOSurface()`,
+    `clearOverlay()`, `hitTestOverlay()`, `mapChromiumCursor()`,
+    `overlay_cursor_type` field.
+
+15. Delete from `xpc.zig`: `handleDisplaySurface()`, IOSurface externs.
+
+16. Delete from `embedded.zig`: `ghostty_surface_is_overlay_forwarding`.
+
+#### Step 4: GUI — update overlay positioning for CALayerHost
+
+17. Modify `handleSetOverlay()` in `xpc.zig` to update the `CALayerHost` frame
+    instead of storing `PinkOverlay` grid coordinates on the renderer. The
+    conversion is the same (grid × cell_size = pixels), but the target is
+    `CALayerHost.frame` instead of a shader uniform buffer.
+
+18. Update `hitTestOverlay()` replacement — hit testing against the
+    `CALayerHost` frame rect instead of the `PinkOverlay` grid coordinates. The
+    logic is the same, just reading from the layer frame.
+
+19. Update `clearOverlay()` replacement — remove the `CALayerHost` sublayer when
+    the browser pane closes.
+
+#### Verification
+
+1. Build Chromium Profile Server
+   (`autoninja -C out/Default
+   chromium_profile_server`).
+2. Build TermSurf GUI (`cd gui && zig build`).
+3. Launch the app, open a terminal, type `web google.com`.
+4. **Pass criteria:**
+   - Web page renders in the browser pane at the correct position
+   - No visible lag increase compared to the capturer path (should be noticeably
+     better)
+   - Text selection tracks the cursor without visible delay
+   - Scrolling feels responsive
+   - Pane resize works — browser content resizes with the pane
+   - Multiple panes with different profiles work
+   - Closing a browser pane cleans up the CALayerHost
+5. **Bonus verification:**
+   - Compare text selection latency side-by-side with native Chrome
+   - Verify no per-frame XPC messages in Console.app / log stream
