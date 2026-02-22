@@ -2159,3 +2159,33 @@ thread, or renderer process scheduling).
 The next experiment should reverse the URL order (duckduckgo first, google
 second) to confirm the order-dependence hypothesis. If duckduckgo becomes the
 slow one, the problem is definitively about creation order, not page complexity.
+
+### Experiment 15: Reverse URL order to confirm order-dependence
+
+Identical to Experiment 14 (same instrumentation, same Experiment 13 fix) but
+with the URL assignment reversed: Profile A loads lite.duckduckgo.com (opened
+first), Profile B loads google.com (opened second).
+
+#### Changes
+
+**`content_api_shim.mm`** — swap URLs:
+
+```cpp
+const char* kProfileAUrl = "https://lite.duckduckgo.com";
+const char* kProfileBUrl = "https://google.com";
+```
+
+No other changes. All Experiment 14 instrumentation remains in place.
+
+#### Verification
+
+1. Build and launch — two Shell windows appear
+2. Focus the duckduckgo window (Profile A, opened first), type into it
+3. Focus the google.com window (Profile B, opened second), type into it
+4. Compare visual responsiveness:
+   - If duckduckgo (first) is now 2fps and google (second) is 60fps: **order-
+     dependent** — the first profile is always throttled regardless of page
+     content
+   - If google (second) is 2fps and duckduckgo (first) is 60fps: **page-
+     dependent** — google.com specifically triggers the throttle
+   - If both are 2fps: something else changed
