@@ -1218,3 +1218,34 @@ default context, `ts_main.mm` launcher).
 If 2fps: the regression is in the Experiment 3 framework itself (custom
 `TsBrowserMainParts` subclass with hardcoded profiles). The next experiment
 strips even further back to Experiment 1 or 2.
+
+#### Result: Pass
+
+Rendering was ~2fps — identical to Experiments 5, 6, and 7. The stock
+`shell_main_mac.cc` launcher made no difference. The 2fps throttle is present in
+the Experiment 3 framework itself.
+
+This means the regression was **never** in the Experiment 4 changes (callback
+API, `WillRunMainMessageLoop`, quit closure, `ts_main.mm` launcher). It has been
+present since at least Experiment 3 — the first experiment that introduced
+`TsBrowserMainParts` with custom `InitializeBrowserContexts()` and multiple
+profiles. Experiments 1–3 were all marked as passing based on page loading and
+interactivity; FPS was never explicitly tested.
+
+#### Conclusion
+
+The 2fps throttle has been present since the very first experiment that used a
+custom `TsBrowserMainParts` subclass. The key suspects are now:
+
+1. **The `TsBrowserMainParts` subclass itself** — overriding
+   `InitializeBrowserContexts()` and `PostMainMessageLoopRun()` may break
+   assumptions in the parent `ShellBrowserMainParts`.
+2. **The `TsMainDelegate` / `TsContentBrowserClient` chain** — subclassing
+   `ShellMainDelegate` and `ShellContentBrowserClient` to inject our
+   `TsBrowserMainParts` may interfere with initialization order.
+3. **Something unrelated to our code** — the vanilla `content_shell` target
+   itself may render at 2fps on this system. This has never been tested.
+
+The next experiment should test the unmodified `content_shell` to establish a
+true baseline. If `content_shell` also renders at 2fps, the problem is systemic
+(build flags, macOS settings, GPU configuration) — not our code.
