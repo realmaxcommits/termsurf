@@ -1087,3 +1087,43 @@ views — it is something Shell does during creation or lifecycle management tha
 our direct path omits. The next experiment should focus on what Shell provides
 that we don't: likely `WebContentsDelegate`, `RenderWidgetHostView` visibility,
 or the `ShellPlatformDelegate` setup.
+
+### Experiment 7: Replay Experiment 4 to verify baseline FPS
+
+Before investigating the 2fps cause, confirm that Experiment 4's
+`Shell::CreateNewWindow` path actually renders at full speed. Experiments 1–4
+were marked as passing based on page loading and interactivity, but FPS was
+never explicitly tested. If Experiment 4 also runs at 2fps, the problem predates
+Experiment 5 and the diagnosis changes entirely.
+
+#### Changes
+
+**`ts_main.mm`** only — revert to using `ts_create_tab` (which calls
+`Shell::CreateNewWindow`) instead of `ts_create_web_contents`:
+
+1. Restore `ctx_b`, `wc_b` removal — use `ts_create_tab` for both profiles.
+2. Remove dlsym of `ts_create_web_contents`, `ts_get_native_view`,
+   `ts_destroy_web_contents`, `ts_quit` — not needed.
+3. Remove NSWindow creation, `TsWindowDelegate`, `create_window` helper,
+   `<Cocoa/Cocoa.h>` import — Shell creates its own windows.
+4. `on_initialized`: create two contexts via `ts_create_browser_context`, then
+   call `ts_create_tab` for each (google.com + example.com).
+5. `on_shutdown`: destroy both contexts.
+
+This is effectively the Experiment 4 launcher with the Experiment 5 framework
+(which has the extra exports but doesn't use them). The Shell path is exercised.
+
+No changes to the framework (`content_api_shim.h`, `content_api_shim.mm`,
+`BUILD.gn`).
+
+#### Verification
+
+1. Two Content Shell windows appear (with toolbar, URL bar, navigation buttons)
+2. Check rendering speed — smooth or ~2fps?
+3. Both pages interactive
+
+If smooth: Experiment 4's Shell path is fine, confirming that the 2fps is caused
+by the direct `WebContents::Create` path in Experiment 5.
+
+If 2fps: the problem predates Experiment 5 and may be in the framework changes
+(callback wiring, default context, `WillRunMainMessageLoop` override, etc.).
