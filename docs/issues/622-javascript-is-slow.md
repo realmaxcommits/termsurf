@@ -354,3 +354,101 @@ Part A is complete when the process count is known. Part B is complete when the
 commit-blocking behavior is understood with file paths and line numbers.
 Together they determine whether Experiment 3 should fix the process model, fix a
 commit bottleneck, or investigate the Viz process further.
+
+#### Part A result: Multi-process confirmed (8 processes)
+
+```
+PID    Type              Notes
+72083  Browser           Zig Content Shell (main process)
+72136  GPU               --type=gpu-process
+72138  Network utility   --type=utility (network.mojom.NetworkService)
+72140  Renderer          --type=renderer, client-id=5
+72142  Renderer          --type=renderer, client-id=7
+72146  Renderer          --type=renderer, client-id=11
+72147  Renderer          --type=renderer, client-id=12
+72151  Storage utility   --type=utility (storage.mojom.StorageService)
+```
+
+**4 renderer processes** for 2 tabs. 2 are active (client IDs 5 and 7, one per
+BrowserContext). 2 are spare/prewarmed renderers created by Chromium's
+`SpareRenderProcessHostManager` (`content/common/features.cc:479` —
+`kMultipleSpareRPHs` enabled by default). Spares are created proactively after
+tabs load and when the browser goes idle.
+
+Multi-process is confirmed. Each BrowserContext has its own renderer process
+with its own Blink main thread and compositor thread. The code analysis from
+Experiment 1 matches reality.
+
+Notable flag on all renderers: `--enable-main-frame-before-activation`.
+
+#### Part B result: Root cause identified
+
+**The scheduler state machine blocks BeginMainFrame while a pending tree
+exists.**
+
+The critical code is in `scheduler_state_machine.cc:627-633`
+(`ShouldSendBeginMainFrame()`):
+
+```cpp
+bool can_send_main_frame_with_pending_tree =
+    settings_.main_frame_before_activation_enabled ||
+    current_pending_tree_is_impl_side_;
+if (has_pending_tree_ && !can_send_main_frame_with_pending_tree)
+  return false;
+```
+
+When JS rAF fires, the main thread commits a new layer tree. This sets
+`has_pending_tree_ = true` (`scheduler_state_machine.cc:1042`). Until the
+pending tree activates, the scheduler **blocks the next BeginMainFrame**. This
+means the compositor cannot start a new frame cycle — it must wait for the
+current commit to fully activate before requesting main thread work again.
+
+**CSS animations bypass this entirely.** They run in the compositor thread via
+property trees (`cc::AnimationTimeline`). No BeginMainFrame is sent, no commit
+is created, no pending tree exists. The compositor produces new CompositorFrames
+directly from the active tree on each BeginFrame.
+
+**The `--enable-main-frame-before-activation` flag** is the pipelining control:
+
+- `content/browser/gpu/compositor_util.cc` —
+  `IsMainFrameBeforeActivationEnabled()` checks
+  `base::SysInfo::NumberOfProcessors() < 4` and returns `false` on machines with
+  fewer than 4 cores
+- When enabled (≥4 processors), `main_frame_before_activation_enabled = true`
+  allows the scheduler to send BeginMainFrame while a pending tree exists
+- When disabled, each context can only process every _other_ BeginFrame
+
+**But wait — `--enable-main-frame-before-activation` IS present on all renderer
+processes.** The flag is on the command line. This means
+`main_frame_before_activation_enabled` should be `true`, and the check at line
+632 should pass. If pipelining is active, the pending tree should not block the
+next BeginMainFrame.
+
+This means the scheduler state machine is NOT the blocking point — the flag is
+enabled. The bottleneck is elsewhere. But the research identified the exact
+architecture: JS rAF creates pending trees and CSS animations don't. Something
+downstream of the pending tree — the activation step, the draw step, or the
+frame submission to Viz — is where the contention lies.
+
+#### Conclusion
+
+Multi-process confirmed. The `--enable-main-frame-before-activation` flag is
+active, so the scheduler state machine should allow pipelined commits. Yet 2fps
+persists. The pending tree / activation pipeline is the right area but the
+blocking point is not the `ShouldSendBeginMainFrame()` gate.
+
+The remaining suspects:
+
+1. **Activation itself** — even with pipelining enabled, activation may be slow
+   when the Viz process is shared. The pending tree activates only after the
+   previous frame is drawn and the Viz process acknowledges it.
+2. **Draw throttling** — `SchedulerStateMachine::ShouldDraw()` or
+   `ShouldAbortCurrentFrame()` may block draws when pending swaps accumulate
+   across two renderers sharing one GPU process.
+3. **The `has_pending_tree_` flag may still be true despite the pipelining
+   flag** — if `current_pending_tree_is_impl_side_` is true, it bypasses the
+   check differently. Need to verify the actual runtime state.
+
+The next experiment should instrument the scheduler state machine to trace why
+frames are being dropped — specifically `ShouldSendBeginMainFrame()`,
+`ShouldDraw()`, and `has_pending_tree_` state at each BeginFrame.
