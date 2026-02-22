@@ -360,3 +360,113 @@ Run the app, trigger a browser overlay, and read the logs. If
 `padding.top / scale ≈ 10` and `padding.left / scale ≈ 3`, the padding is the
 cause and the fix is to add padding to the frame calculation. If not, the
 Chromium-side logs will show whether the content view has a non-zero origin.
+
+#### Results
+
+**GUI side:**
+
+```
+padding_top=4 padding_left=4 padding_top_pts=2.0 padding_left_pts=2.0
+scale=2.0 grid=(1,4,120,32) cell=(13,29) frame=(6.5,58.0,780.0,464.0)
+```
+
+- Padding is only 2.0 pts in each direction — far too small to explain a ~10px Y
+  or ~3px X offset.
+
+**Chromium side:**
+
+```
+web_view.frame: (0, 0, 800, 600)
+contentView.bounds: (0, 0, 800, 600)
+```
+
+- The web content view starts at exactly (0, 0) and fills the entire borderless
+  window. No inset, no offset.
+
+#### Conclusion
+
+Both hypotheses are ruled out:
+
+- **Grid padding** is only 2pt — not the cause.
+- **Chromium view inset** is zero — not the cause.
+
+The remaining explanation is the coordinate system mismatch identified in
+Experiment 1. The IOSurfaceLayer uses standard CALayer coordinates (Y=0 at
+bottom). We set `frame.origin.y = 58.0` as if Y=0 is at the top, but the
+CALayerHost is positioned 58pt from the _bottom_ of the IOSurfaceLayer, not from
+the top. The `geometryFlipped = YES` on the CALayerHost only flips its sublayer
+coordinate system — it does not change how the CALayerHost itself is positioned
+in its parent. The fix requires restructuring the layer tree to match Chromium's
+`DisplayCALayerTree` pattern: add an intermediate layer with
+`geometryFlipped = YES` so that Y=0-at-top applies to the CALayerHost's
+position.
+
+### Experiment 3: Add intermediate flipped layer
+
+Match Chromium's `DisplayCALayerTree` layer tree architecture. Instead of
+putting `geometryFlipped` on the CALayerHost, create an intermediate CALayer
+between the IOSurfaceLayer and the CALayerHost that handles the coordinate flip.
+
+**Current layer tree:**
+
+```
+IOSurfaceLayer (Y=0 at bottom, contentsScale=2.0)
+└─ CALayerHost (geometryFlipped=YES, anchorPoint=zero, frame set explicitly)
+```
+
+**Target layer tree:**
+
+```
+IOSurfaceLayer (Y=0 at bottom, contentsScale=2.0)
+└─ flipped_layer (geometryFlipped=YES, anchorPoint=zero,
+│                  autoresizingMask=widthSizable|heightSizable)
+   └─ CALayerHost (anchorPoint=zero,
+                    autoresizingMask=maxXMargin|maxYMargin)
+```
+
+This matches Chromium's `root_layer_ → maybe_flipped_layer_ → remote_layer_`
+pattern exactly. The `flipped_layer` auto-resizes to fill the IOSurfaceLayer and
+provides a top-left-origin coordinate system. The CALayerHost sits at (0, 0)
+inside it, pinned to the top-left.
+
+#### Changes
+
+**`gui/src/renderer/Metal.zig`:**
+
+- In `setCALayerHostContextId`: Create the intermediate `flipped_layer` as a
+  sublayer of `self.layer.layer`. Set `geometryFlipped = YES`,
+  `anchorPoint = CGPointZero`,
+  `autoresizingMask = kCALayerWidthSizable | kCALayerHeightSizable` on it.
+  Create the CALayerHost as a sublayer of `flipped_layer` (not IOSurfaceLayer
+  directly). Set `anchorPoint = CGPointZero`,
+  `autoresizingMask = kCALayerMaxXMargin | kCALayerMaxYMargin` on the
+  CALayerHost. Do NOT set `geometryFlipped` on the CALayerHost.
+- In `updateCALayerHostFrame`: Set the frame on the `flipped_layer`, not the
+  CALayerHost. The flipped layer is sized and positioned at the overlay grid
+  rectangle (in the flipped coordinate system, so Y=0 is at top). The
+  CALayerHost stays at (0, 0) inside it with no explicit frame.
+- In `removeCALayerHost`: Remove the `flipped_layer` (which removes the
+  CALayerHost with it).
+- Store the `flipped_layer` pointer alongside (or instead of) the CALayerHost
+  pointer, or store both.
+- Remove diagnostic logging from Experiment 2.
+
+**`gui/src/renderer/generic.zig`:**
+
+- Add a `ca_layer_flipped: ?*anyopaque = null` field to store the intermediate
+  layer pointer.
+- Pass it to `Metal.setCALayerHostContextId` and `Metal.removeCALayerHost`.
+- Keep passing padding to `updateCALayerHostFrame` — the padding should be added
+  to the frame position so the overlay aligns with the grid, not the surface
+  edge.
+
+**`chromium/src/content/chromium_profile_server/browser/shell_platform_delegate_mac.mm`:**
+
+- Remove diagnostic logging from Experiment 2.
+
+#### Verification
+
+Run the app. The web content should align pixel-perfectly with the TUI viewport
+border — no visible gap at the top or left edge. Compare the top-left corner of
+the web content with the TUI viewport border drawn by ratatui. If the offset is
+gone, proceed to test scrolling, text selection, and pane resize.
