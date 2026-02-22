@@ -1438,3 +1438,26 @@ reproduce 413.4.
 
 If 2fps: the subclass chain or path overrides break multi-window even within one
 profile — investigate.
+
+#### Result: Pass
+
+Both windows rendered at **60fps** — flawless, smooth, fully interactive. Two
+Shell windows sharing the same BrowserContext have no contention.
+
+#### Conclusion
+
+Same-profile multi-window works perfectly at 60fps, exactly matching Issue 413
+Experiments 5–6. This confirms that the 2fps throttle seen in Experiments 2–9 is
+exclusively caused by multi-profile contention — two different BrowserContexts
+with navigating WebContents in one process.
+
+The findings so far:
+
+| Configuration         | FPS   | Experiment |
+| --------------------- | ----- | ---------- |
+| 1 profile, 1 window   | 60fps | 10         |
+| 1 profile, 2 windows  | 60fps | 11         |
+| 2 profiles, 2 windows | 2fps  | 2–9        |
+
+This reproduces the Issue 413 finding in the Zig Content Shell framework. The
+multi-profile contention is the sole cause of the 2fps throttle in this issue.
