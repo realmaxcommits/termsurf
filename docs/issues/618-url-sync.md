@@ -54,6 +54,12 @@ Three changes are needed across three processes:
 3. **TUI** (`tui/src/`): Already implemented — `UrlChanged` message handler
    updates the URL bar and redraws.
 
+## Chromium branch
+
+`146.0.7650.0-issue-616` — the `url_changed` message is already sent from
+`ShellVideoConsumer::DidFinishNavigation()` in this branch. No new Chromium
+branch is needed for this issue.
+
 ## Experiments
 
 ### Experiment 1: Forward url_changed from Chromium to TUI
