@@ -759,3 +759,21 @@ Same as Experiment 2:
 4. **Bonus verification:**
    - Compare text selection latency side-by-side with native Chrome
    - Verify no per-frame XPC messages in Console.app / log stream
+
+**Result:** Fail
+
+The Y flip (`flipped_y = screen_height - y - h`) had zero visible effect — the
+CALayerHost is in the exact same wrong position as Experiment 2. The
+`screen_height` value from the renderer may not match the parent layer's actual
+bounds height, or the coordinate system assumption is wrong in a different way
+than expected. The problem needs deeper investigation — either by logging the
+actual values being set, inspecting the layer hierarchy with Xcode's view
+debugger, or testing with hardcoded frame values to understand how the parent
+layer's coordinate system actually works.
+
+#### Conclusion
+
+The naive Y flip doesn't work. The coordinate system issue is not a simple
+top-vs-bottom inversion, or the values being passed are incorrect. Experiment 4
+should add diagnostic logging and/or use a different approach to understand what
+coordinates the CALayerHost actually needs.
