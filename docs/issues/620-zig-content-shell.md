@@ -624,3 +624,44 @@ Same as Experiment 2:
 The key difference is architectural: all profile and tab creation goes through
 the exported C functions declared in `content_api_shim.h`. A future experiment
 calls these same functions from Zig.
+
+#### Implementation notes
+
+The initial attempt overrode `PreMainMessageLoopRun()` entirely (skipping the
+parent's implementation). This crashed at `StoragePartitionImpl::GetStorageService()`
+because the parent's `PreMainMessageLoopRun()` sets up infrastructure that
+`WebContents` creation depends on (DevTools, resource provider, etc.).
+
+The fix: don't override `PreMainMessageLoopRun()`. Override
+`InitializeBrowserContexts()` and `InitializeMessageLoopContext()` instead —
+the parent handles all infrastructure setup.
+
+Ownership model: `ts_create_browser_context` returns a caller-owned handle (raw
+`new`). Profile A is transferred to the parent via `set_browser_context()` (the
+parent's `unique_ptr` owns it and destroys it in `PostMainMessageLoopRun`).
+Profile B stays caller-owned and is destroyed via `ts_destroy_browser_context`
+before the parent cleans up.
+
+The header uses `#ifdef __cplusplus` / `extern "C"` guards so it's valid as
+both a C and C++ header — Zig can include it directly.
+
+#### Result
+
+**Pass.**
+
+Two windows appeared (google.com + example.com), both interactive, both with
+isolated profile storage. 8 processes running (main + GPU + network + storage +
+4 renderers). Profile directories freshly created:
+
+```
+~/.config/termsurf/zig-content-shell/profile-a/   (13 entries)
+~/.config/termsurf/zig-content-shell/profile-b/   (10 entries)
+```
+
+#### Conclusion
+
+The C API works: `ts_create_browser_context(path)` creates profiles,
+`ts_create_tab(ctx, url)` opens windows, `ts_destroy_browser_context(ctx)`
+cleans up. The functions are exported with `extern "C"` and default visibility
+— callable from Zig via `@cImport`. The header is a valid C header (no C++
+types in the public API, only opaque `void*` handles).
