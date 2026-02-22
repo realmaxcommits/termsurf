@@ -1150,3 +1150,71 @@ Experiment 4 framework changes: the `TsBrowserMainParts` subclass (custom
 override, or the callback wiring itself. The next experiment should bisect these
 changes by reverting to the original `ShellBrowserMainParts` behavior as closely
 as possible while still supporting multiple profiles.
+
+### Experiment 8: Replay Experiment 3 to bisect the regression
+
+Experiment 7 proved the 2fps throttle exists even with Shell::CreateNewWindow.
+Experiment 3 was the last experiment that used the stock `shell_main_mac.cc`
+launcher and had no callback infrastructure. If Experiment 3's configuration
+renders at full speed, the regression is in the Experiment 4 changes (callback
+API, `WillRunMainMessageLoop` override, `GetQuitClosure()`, default context
+creation, `ts_main.mm` launcher). If it also shows 2fps, the regression is in
+the Experiment 3 framework itself (custom `TsBrowserMainParts` subclass).
+
+This rewinds both the framework and the launcher to Experiment 3's exact state.
+
+#### Changes
+
+**`content_api_shim.h`** — strip back to Experiment 3's API surface:
+
+1. Remove `ts_callback_t`, `ts_set_on_initialized`, `ts_set_on_shutdown`.
+2. Remove `ts_web_contents_t`, `ts_create_web_contents`, `ts_get_native_view`,
+   `ts_destroy_web_contents`, `ts_quit`.
+3. Keep only: `ContentMain`, `ts_browser_context_t`,
+   `ts_create_browser_context`, `ts_destroy_browser_context`, `ts_create_tab`.
+
+**`content_api_shim.mm`** — revert to Experiment 3's implementation:
+
+1. Remove `g_on_initialized`, `g_on_shutdown` globals.
+2. Remove `GetQuitClosure()` and `#include "base/no_destructor.h"`.
+3. Remove `#include "base/run_loop.h"`.
+4. Remove `#include "content/public/browser/navigation_controller.h"`,
+   `#include "content/public/browser/web_contents.h"`,
+   `#include "ui/base/page_transition_types.h"`.
+5. `TsBrowserMainParts`: remove `WillRunMainMessageLoop` override entirely.
+6. `InitializeBrowserContexts()`: hardcode profile creation (profile-a via
+   `set_browser_context`, profile-b stored as member) — no default context, no
+   callback.
+7. `InitializeMessageLoopContext()`: hardcode `ts_create_tab` calls for both
+   profiles.
+8. `PostMainMessageLoopRun()`: destroy profile-b, let parent destroy profile-a.
+9. Add `ctx_a_`/`ctx_b_` member variables to `TsBrowserMainParts`.
+10. Remove `ts_set_on_initialized`, `ts_set_on_shutdown`,
+    `ts_create_web_contents`, `ts_get_native_view`, `ts_destroy_web_contents`,
+    `ts_quit` implementations.
+
+**`BUILD.gn`** — revert the app bundle to use `shell_main_mac.cc`:
+
+1. Change `sources` from `[ "ts_main.mm" ]` to
+   `[ "//content/shell/app/shell_main_mac.cc" ]`.
+2. Add `defines = [ "SHELL_PRODUCT_NAME=\"$zig_content_shell_product_name\"" ]`.
+3. Add deps: `"//base/allocator:early_zone_registration_apple"`,
+   `"//sandbox/mac:seatbelt"`.
+4. Add `data_deps = [ "//content/shell:content_shell_app" ]`.
+5. Remove `frameworks = [ "Cocoa.framework" ]`.
+
+**`ts_main.mm`** — not used (still exists in the tree but is not compiled).
+
+#### Verification
+
+1. Two Content Shell windows appear (google.com + example.com)
+2. Check rendering speed — smooth or ~2fps?
+3. Both pages interactive
+
+If smooth: the regression is confirmed in the Experiment 4 changes. The next
+experiment bisects within Experiment 4 (callback API, `WillRunMainMessageLoop`,
+default context, `ts_main.mm` launcher).
+
+If 2fps: the regression is in the Experiment 3 framework itself (custom
+`TsBrowserMainParts` subclass with hardcoded profiles). The next experiment
+strips even further back to Experiment 1 or 2.
