@@ -1261,3 +1261,41 @@ The `ca_context_id` works across processes — that's the entire point of
 `CAContext`. The GPU process and the browser process are different processes in
 Chrome too, and `CALayerHost` bridges them via Window Server. Adding one more
 process boundary (Chromium server → TermSurf GUI) should work identically.
+
+## Conclusion
+
+Issue 624 set out to understand Chromium's IPC architecture and find a way to
+eliminate the latency in TermSurf's current frame delivery pipeline. Three
+experiments mapped the full picture:
+
+**Experiment 1** traced every process, IPC mechanism, and data path in
+Chromium's rendering pipeline. The key finding: Chrome's input path uses Mojo
+messages (not shared memory), and Chrome's frame path uses zero-copy GPU
+references (not pixel copies). The latency gap between TermSurf and Chrome is
+not about shared memory vs message passing — it's about the
+`FrameSinkVideoCapturer` adding ~5-7ms per frame and the per-frame Mach port
+transfer overhead.
+
+**Experiment 2** confirmed that `CALayerParams` — Chrome's normal display output
+— are already being produced in our Chromium Profile Server every frame. The
+capturer is purely observational; we've been ignoring the display path's output.
+Two approaches emerged: CALayerHost (send `ca_context_id` once, Window Server
+composites) or IOSurface from the display path (send Mach port per frame, no
+capturer overhead). CALayerHost is architecturally superior — zero per-frame
+IPC, zero application-side compositing.
+
+**Experiment 3** studied Electron's approach. Electron's normal `BrowserWindow`
+uses stock Chromium — CALayerHost, unmodified, zero custom display code.
+Electron's OSR uses the same `FrameSinkVideoCapturer` that TermSurf uses, with
+the same latency penalty. This validates CALayerHost as the correct path and
+confirms that TermSurf's current approach is architecturally equivalent to
+Electron's off-screen rendering mode.
+
+**The plan:** Replace the `FrameSinkVideoCapturer` with `CALayerHost`. The
+Chromium Profile Server will intercept `CALayerParams` at
+`RenderWidgetHostViewMac::AcceleratedWidgetCALayerParamsUpdated()`, extract the
+`ca_context_id`, and send it once over XPC. The GUI will create a `CALayerHost`
+as a sublayer positioned at the browser pane coordinates. Window Server
+composites directly from GPU VRAM. This eliminates the capturer (~460 lines
+deleted), removes per-frame IPC for frame delivery, and matches how Chrome
+itself displays content.
