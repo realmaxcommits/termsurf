@@ -3,7 +3,9 @@ mod xpc;
 use std::io::{self, Write};
 use std::time::{Duration, Instant};
 
-use crossterm::event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers};
+use crossterm::event::{
+    self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers,
+};
 use crossterm::execute;
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
@@ -17,6 +19,7 @@ const FG: Color = Color::Rgb(0xc0, 0xca, 0xf5);
 const COMMENT: Color = Color::Rgb(0x73, 0x7a, 0xa2);
 const CYAN: Color = Color::Rgb(0x7d, 0xcf, 0xff);
 const BORDER: Color = Color::Rgb(0x56, 0x5f, 0x89);
+const DIM: Color = Color::Rgb(0x90, 0x9a, 0xb8);
 
 #[derive(PartialEq)]
 enum Mode {
@@ -167,7 +170,7 @@ fn main() -> io::Result<()> {
                     xpc::CompositorMessage::UrlChanged { url: new_url } => {
                         url = new_url;
                     }
-                    xpc::CompositorMessage::LoadingState { state, progress: _ } => {
+                    xpc::CompositorMessage::LoadingState { state, _progress: _ } => {
                         let mut stdout = io::stdout();
                         let _ = match state.as_str() {
                             "loading" => {
@@ -221,7 +224,11 @@ fn main() -> io::Result<()> {
     // Restore terminal. The compositor connection drops here, which closes
     // the XPC connection and triggers overlay cleanup.
     disable_raw_mode()?;
-    execute!(terminal.backend_mut(), DisableMouseCapture, LeaveAlternateScreen)?;
+    execute!(
+        terminal.backend_mut(),
+        DisableMouseCapture,
+        LeaveAlternateScreen
+    )?;
     Ok(())
 }
 
@@ -248,7 +255,7 @@ fn ui(frame: &mut Frame, url: &str, profile: &str, mode: &Mode) -> Rect {
 
     // URL bar.
     let profile_title = Line::from(vec![
-        Span::raw("  ").style(Style::default().fg(COMMENT)),
+        Span::raw("  ").style(Style::default().fg(COMMENT)),
         Span::raw(profile).style(Style::default().fg(FG)),
         Span::raw(" "),
     ]);
@@ -288,12 +295,46 @@ fn ui(frame: &mut Frame, url: &str, profile: &str, mode: &Mode) -> Rect {
     ])
     .split(layout[2]);
 
-    let (hints, label) = match mode {
-        Mode::Browse => ("[cmd+[] back  [cmd+]] fwd  [cmd+r] reload  [ctrl+esc] exit", "󰖟 BROWSE"),
-        Mode::Control => ("[q] quit  [enter] browse", " CONTROL"),
+    let d = Style::default().fg(DIM).bg(BG);
+    let f = Style::default().fg(FG).bg(BG);
+
+    let hints = match mode {
+        Mode::Browse => Line::from(vec![
+            Span::styled("<", d),
+            Span::styled("cmd+[", f),
+            Span::styled("> ", d),
+            Span::styled("back  ", f),
+            Span::styled("<", d),
+            Span::styled("cmd+]", f),
+            Span::styled("> ", d),
+            Span::styled("fwd  ", f),
+            Span::styled("<", d),
+            Span::styled("cmd+r", f),
+            Span::styled("> ", d),
+            Span::styled("reload  ", f),
+            Span::styled("<", d),
+            Span::styled("ctrl+esc", f),
+            Span::styled("> ", d),
+            Span::styled("control", f),
+        ]),
+        Mode::Control => Line::from(vec![
+            Span::styled("<", d),
+            Span::styled("q", f),
+            Span::styled("> ", d),
+            Span::styled("quit  ", f),
+            Span::styled("<", d),
+            Span::styled("enter", f),
+            Span::styled("> ", d),
+            Span::styled("browse", f),
+        ]),
     };
 
-    let hints_widget = Paragraph::new(hints).style(Style::default().fg(FG).bg(BG));
+    let label = match mode {
+        Mode::Browse => "󰖟 BROWSE",
+        Mode::Control => " CONTROL",
+    };
+
+    let hints_widget = Paragraph::new(hints);
     frame.render_widget(hints_widget, status_layout[0]);
 
     let label_widget = Paragraph::new(label)

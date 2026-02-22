@@ -56,7 +56,7 @@ extern "C" {
 pub enum CompositorMessage {
     ModeChanged { browsing: bool },
     UrlChanged { url: String },
-    LoadingState { state: String, progress: u8 },
+    LoadingState { state: String, _progress: u8 },
 }
 
 /// A direct connection to the TermSurf app via its anonymous XPC listener.
@@ -199,7 +199,7 @@ impl CompositorConnection {
                         .to_string();
                     let progress_key = CString::new("progress").unwrap();
                     let progress = unsafe { xpc_dictionary_get_uint64(event, progress_key.as_ptr()) } as u8;
-                    let _ = tx.send(CompositorMessage::LoadingState { state, progress });
+                    let _ = tx.send(CompositorMessage::LoadingState { state, _progress: progress });
                 }
             }
         });
