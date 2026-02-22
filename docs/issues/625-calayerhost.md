@@ -955,15 +955,15 @@ where these offsets come from.
 
 In normal Chrome, the GPU process creates a CAContext for the entire window. The
 web content is not at (0, 0) in that CAContext — it's offset below the browser
-chrome (tab strip ~36px, toolbar ~40px, bookmarks bar ~28px, etc.). The
-CALayerHost fills the entire NSView, so these internal offsets are correct
-because the NSView IS the window.
+chrome (tab strip 36px, toolbar 40px, bookmarks bar 28px, etc.). The CALayerHost
+fills the entire NSView, so these internal offsets are correct because the
+NSView IS the window.
 
 The Chromium Profile Server uses content_shell, which creates its own NSWindow
 with a shell toolbar (URL bar). Even though we don't display this window to the
 user, the GPU process still creates a CAContext with the full window geometry.
 The web content sits below the shell toolbar and window title bar within the
-CAContext's layer tree. That's the ~400px offset.
+CAContext's layer tree. That's the 400px offset.
 
 The X offset is likely from window padding or the shell's view insets.
 
@@ -1019,3 +1019,159 @@ Research is complete when we can answer:
    their frames?
 3. Where in the code are these views and offsets created?
 4. Which of the R5 options is the most practical fix?
+
+#### Results
+
+##### R1: Shell window creation
+
+**File:**
+`chromium/src/content/chromium_profile_server/browser/shell_platform_delegate_mac.mm`
+(lines 134–214)
+
+The shell creates a standard macOS window with title bar and toolbar:
+
+```objc
+NSUInteger style_mask = NSWindowStyleMaskTitled | NSWindowStyleMaskClosable |
+                        NSWindowStyleMaskMiniaturizable |
+                        NSWindowStyleMaskResizable;
+NSWindow* window =
+    [[NSWindow alloc] initWithContentRect:content_rect
+                                styleMask:style_mask
+                                  backing:NSBackingStoreBuffered
+                                    defer:NO];
+```
+
+- **Title:** `"Chromium Profile Server"` (line 86)
+- **Title bar:** Yes (`NSWindowStyleMaskTitled`) — adds ~28px
+- **Toolbar:** 24px (`kURLBarHeight`) with Back/Forward/Reload/Stop buttons and
+  a URL text field (lines 177–204). Only hidden if
+  `--chromium-profile-server-hide-toolbar` switch is set.
+- **Default size:** 800×600 content area + 24px toolbar = 800×624 total content
+  view
+- **Visibility:** Hidden if `--hidden` flag is set (lines 207–210), otherwise
+  made key and ordered front
+
+##### R2: Shell view hierarchy
+
+```
+NSWindow (800×624, titled)
+  └── contentView (NSView, auto-created by NSWindow)
+       ├── NSButton (Back, 72×24)
+       ├── NSButton (Forward, 72×24)
+       ├── NSButton (Reload, 72×24)
+       ├── NSButton (Stop, 72×24)
+       ├── NSTextField (URL bar, remaining width × 24)
+       └── web_contents view (800×600, added in SetContents())
+```
+
+**File:** `shell_platform_delegate_mac.mm`, `SetContents()` (lines 228–244):
+
+```objc
+NSView* web_view = shell->web_contents()->GetNativeView().GetNativeNSView();
+web_view.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
+NSRect frame = window.contentView.bounds;
+if (!Shell::ShouldHideToolbar()) {
+    frame.size.height -= kURLBarHeight;  // 24px subtracted
+}
+web_view.frame = frame;
+```
+
+The web content view sits at origin `(0, 0)` in the contentView (bottom-left in
+AppKit coordinates), with the toolbar 24px above it. The title bar adds another
+~28px above that.
+
+##### R3: RenderWidgetHostViewMac positioning
+
+The `RenderWidgetHostViewMac` is the web content view (`web_view` above). Its
+frame is set to `contentView.bounds` minus the 24px toolbar height. It's
+positioned at `(0, 0)` in the contentView — the bottom of the window in AppKit's
+bottom-left coordinate system.
+
+The GPU process receives the view's bounds through the compositor pipeline. The
+quads rendered by the compositor use **render-target-relative coordinates**, not
+window-relative. But the render target's size includes the full window geometry
+that the compositor is aware of.
+
+##### R4: CAContext layer tree structure
+
+**File:** `chromium/src/ui/accelerated_widget_mac/ca_layer_tree_coordinator.mm`
+(lines 40–67)
+
+The GPU process creates the CAContext with a `geometryFlipped` root layer:
+
+```objc
+root_ca_layer_ = [[CALayer alloc] init];
+root_ca_layer_.geometryFlipped = YES;  // Key: Y=0 at top
+root_ca_layer_.opaque = YES;
+
+CGSConnectionID connection_id = CGSMainConnectionID();
+ca_context_ = [CAContext contextWithCGSConnection:connection_id options:@{}];
+ca_context_.layer = root_ca_layer_;
+```
+
+The `geometryFlipped = YES` means the CAContext's coordinate system has Y=0 at
+the **top**, matching standard display coordinates. Content layers are
+positioned using pixel coordinates converted to DIPs (divided by scale factor).
+
+**File:** `chromium/src/ui/accelerated_widget_mac/ca_renderer_layer_tree.mm`
+(lines 1220–1225)
+
+Content layers are positioned in DIPs:
+
+```cpp
+gfx::RectF dip_rect = gfx::RectF(rect_);
+dip_rect.Scale(1 / tree()->scale_factor_);
+ca_layer_.position = CGPointMake(dip_rect.x(), dip_rect.y());
+ca_layer_.bounds = CGRectMake(0, 0, dip_rect.width(), dip_rect.height());
+```
+
+**Chromium's browser process also hosts the CALayerHost in a `geometryFlipped`
+layer.** From `display_ca_layer_tree.mm` (lines 123–153):
+
+```objc
+CALayerHost* new_remote_layer = [[CALayerHost alloc] init];
+new_remote_layer.anchorPoint = CGPointZero;
+new_remote_layer.contextId = ca_context_id;
+[maybe_flipped_layer_ addSublayer:new_remote_layer];
+```
+
+The `maybe_flipped_layer_` has `geometryFlipped = YES`. So in normal Chrome, the
+full chain is: GPU process (`geometryFlipped` root) → CAContext → browser
+process (`geometryFlipped` host layer) → CALayerHost. Both sides agree on Y=0 at
+top.
+
+##### R5: Source of the offset
+
+**Two causes identified:**
+
+1. **Missing `geometryFlipped`.** Our IOSurfaceLayer does NOT have
+   `geometryFlipped = YES`. Chromium's CAContext root layer has
+   `geometryFlipped = YES` (Y=0 at top). In normal Chrome, the browser-side host
+   layer also has `geometryFlipped = YES`, so both sides agree. In TermSurf, the
+   CALayerHost sits in a non-flipped parent (Y=0 at bottom), causing the entire
+   content to render with inverted Y positioning. This is the dominant cause of
+   the ~400px offset.
+
+2. **Shell window chrome.** The title bar (~28px) and toolbar (24px) push the
+   web content view down by ~52px in the window. The GPU process's compositor
+   includes this offset in the CAContext layer tree. Even after fixing the
+   `geometryFlipped` issue, there will be a residual ~52px offset from the
+   phantom window chrome.
+
+3. **Physical pixels vs logical points.** Cell dimensions and screen height are
+   passed in physical pixels but CALayer frames use points. This is a 2x error
+   on Retina displays, separate from the offset issue.
+
+**Chromium's own CALayerHost setup also sets `anchorPoint = CGPointZero`** — we
+should do the same to match their behavior.
+
+#### Conclusion
+
+The ~400px Y offset has two root causes: (1) our parent layer lacks
+`geometryFlipped = YES`, causing a full Y-axis inversion relative to what
+Chromium expects, and (2) the shell window's title bar + toolbar add ~52px of
+phantom offset in the CAContext. The X offset is likely from the window frame or
+content view padding. The fix is: set `geometryFlipped = YES` on the parent
+layer (or the CALayerHost), hide or eliminate the shell toolbar, set
+`anchorPoint = CGPointZero` on the CALayerHost, and convert pixel values to
+points by dividing by the scale factor.
