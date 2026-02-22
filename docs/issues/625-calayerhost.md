@@ -878,3 +878,68 @@ As a parallel diagnostic, temporarily hardcode a known-good frame value:
    - Is `updateCALayerHostFrame` called at all? (Tests #2)
 5. Once the root cause is identified, fix it and verify the CALayerHost appears
    at the correct position.
+
+**Result:** Fail
+
+Diagnostic logging eliminated hypotheses #1 and #2, but did not identify the
+root cause of the ~400px Y offset.
+
+**What the logs showed:**
+
+```
+set_overlay: col=1 row=4 w=120 h=35
+setCALayerHostContextId=3551625741 grid=(1.0,4.0,120.0,35.0) host=null
+created CALayerHost contextId=3551625741
+CALayerHost frame after setContextId: x=0.0 y=0.0 w=0.0 h=0.0
+updateCALayerHostFrame inputs: grid=(1.0,4.0,120.0,35.0) cell=(13,29) screen_h=1200
+computed frame: x=13.0 y=116.0 flipped_y=69.0 w=1560.0 h=1015.0
+parent IOSurfaceLayer bounds: x=0.0 y=0.0 w=800.0 h=600.0
+parent IOSurfaceLayer frame: x=0.0 y=0.0 w=800.0 h=600.0 scale=2.0
+CALayerHost frame readback: x=50.0 y=50.0 w=400.0 h=300.0
+```
+
+**Hypotheses eliminated:**
+
+- **#1 (`setProperty` fails for CGRect):** Eliminated. The frame readback
+  matches what was set. `setProperty("frame", frame)` works correctly for CGRect
+  structs.
+- **#2 (function not called / values zero):** Eliminated. The function is called
+  with valid grid coordinates `(1, 4, 120, 35)` and non-null host pointer. The
+  first `updateCALayerHostFrame` call (from `set_overlay`) has
+  `ca_layer_host=
+  null` because `ca_context_id` hasn't arrived yet, but the
+  second call (from `setCALayerHostContextId`) succeeds with valid data.
+
+**Key finding: the frame DOES control positioning, but there's a ~400px
+unexplained Y offset.** Adding 500 to the Y value pushed the content up by
+approximately that amount. So the `frame` property works — the computed values
+just don't account for a large offset introduced by the remote CAContext's layer
+tree. The Chromium GPU process positions its layers within the CAContext at some
+offset (likely from the "window" geometry it thinks it's rendering to), and the
+CALayerHost frame is relative to the parent IOSurfaceLayer, not to the remote
+content's coordinate space.
+
+**Additional issue: physical pixels vs logical points.** The cell dimensions
+(`cell_width=13`, `cell_height=29`) and `screen_height=1200` are in physical
+pixels, but CALayer frames use logical points. The parent IOSurfaceLayer is
+800x600 points with `contentsScale=2.0` (so 1600x1200 physical). The computed
+frame of 1560x1015 is nearly 2x the parent's 800x600 point dimensions. This
+needs to be divided by the scale factor.
+
+**What remains unsolved:** The ~400px Y offset. This is far larger than a 2x
+scale factor error. The remote CAContext's layer tree has a built-in offset that
+we don't understand yet. Changing the Y value on the host frame does move the
+content, proving the frame works, but we don't know what offset to apply or
+where it comes from.
+
+#### Conclusion
+
+The diagnostic confirmed that `setProperty("frame", frame)` works and that the
+function is called with valid data. The frame does control positioning — adding
+Y offset moves the content. But there are two problems: (1) physical pixel
+values are being used where logical points are needed (2x error), and (2) an
+unexplained ~400px Y offset from the remote CAContext that dwarfs the scale
+issue. The pixel/point fix is straightforward. The ~400px offset needs further
+investigation — either on the Chromium side (why the GPU process positions
+content at that offset) or by probing the remote layer tree's geometry from the
+GUI side.
