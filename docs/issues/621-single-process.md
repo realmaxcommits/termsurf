@@ -860,3 +860,83 @@ across BrowserContexts, not in the compositor or GPU pipeline. The next
 experiment should test whether a single BrowserContext with two windows (same
 profile) also degrades — this would distinguish BrowserContext-level contention
 from renderer-process-level contention.
+
+## Conclusion
+
+### What we proved
+
+Five experiments isolated the 2fps multi-BrowserContext degradation to a single
+cause: **JavaScript execution on the Blink main thread.**
+
+| Profile A           | Profile B           | A fps | B fps | Experiment |
+| ------------------- | ------------------- | ----- | ----- | ---------- |
+| google.com          | —                   | 60    | —     | 621.1      |
+| google.com          | google.com          | 2     | 2     | 621.2      |
+| lite.duckduckgo.com | lite.duckduckgo.com | 60    | 60    | 621.3      |
+| CSS animation       | CSS animation       | 60    | 60    | 621.4      |
+| JS box demo (rAF)   | JS box demo (rAF)   | 2     | 2     | 621.5      |
+| google.com          | lite.duckduckgo.com | 2     | 60    | 620.14     |
+| lite.duckduckgo.com | google.com          | 60    | 2     | 620.15     |
+
+The critical pair is Experiments 4 and 5:
+
+- **CSS `@keyframes` animations** run in the compositor thread, generate
+  continuous compositor damage every vsync, and render at **60fps** across two
+  BrowserContexts.
+- **`requestAnimationFrame`** runs on the Blink main thread, and even a trivial
+  30-line loop drawing one rectangle on a 300x300 canvas degrades both profiles
+  to **2fps**.
+
+The bottleneck is not page complexity, DOM size, network activity, GPU command
+serialization, compositor damage frequency, or paint layer count.
+
+### What Issue 620 eliminated
+
+Issue 620's Chromium source code research (Experiments 12–15) instrumented the
+entire viz/compositor pipeline and proved it is not the bottleneck:
+
+| Mechanism                     | File                                 | Finding                                             |
+| ----------------------------- | ------------------------------------ | --------------------------------------------------- |
+| StopObservingBeginFrames      | `display_scheduler.cc:603`           | Fixed in Exp 13; was a symptom, not root cause      |
+| ShouldDraw() gate             | `display_scheduler.cc:448–453`       | All conditions healthy except `needs_draw_`         |
+| CVDisplayLink thrashing       | `cv_display_link_mac.mm`             | Register/unregister cycles observed but not causal  |
+| OnNeedsBeginFrames thrashing  | `external_begin_frame_source_mac.cc` | Chromium devs' own TODO acknowledges as known issue |
+| BeginFrameTracker throttle    | `begin_frame_tracker.cc`             | Never triggered (threshold: outstanding ≥ 10)       |
+| kUndrawnFrameLimit            | `compositor_frame_sink_support.cc`   | Never triggered (threshold: undrawn > 3)            |
+| SetIsGpuBusy backpressure     | `begin_frame_source.cc:152`          | Not investigated                                    |
+| root_frame_missing() deadlock | `display_damage_tracker.cc:250`      | Reinforces ShouldDraw()=false but not root cause    |
+
+The key finding from Experiment 14's instrumentation: **BeginFrames arrive at
+60fps** via `CompositorFrameSinkSupport::OnBeginFrame()`, but the renderer only
+produces CompositorFrames at ~3fps for complex pages. The viz pipeline is clean.
+The renderer is the bottleneck.
+
+### Where the bottleneck is
+
+Issue 621 narrows the renderer-side bottleneck to the Blink main thread. The
+compositor thread (which drives CSS animations) is unaffected. The contention is
+in how Chromium schedules main-thread work — specifically
+`requestAnimationFrame` callbacks — when two BrowserContexts coexist in the same
+process.
+
+The unexplored layer is:
+
+- **Blink's main thread scheduler**
+  (`third_party/blink/renderer/platform/scheduler/`) — how it prioritizes and
+  dispatches tasks across multiple renderer contexts
+- **BeginMainFrame dispatch** — the interface between the compositor thread and
+  the Blink main thread that triggers rAF callbacks and style/layout/paint
+- **Renderer process allocation** — whether two BrowserContexts share a renderer
+  process or get separate ones, and how that affects main thread scheduling
+
+### Next steps
+
+1. **Same profile, two windows with rAF** — determine if the contention is
+   BrowserContext-level or renderer-process-level
+2. **Instrument the Blink main thread scheduler** — trace BeginMainFrame
+   dispatch, rAF callback scheduling, and task queue contention across contexts
+3. **Check renderer process allocation** — verify whether two BrowserContexts
+   get separate renderer processes via
+   `RenderProcessHostImpl::GetProcessHostForSiteInstance()`
+4. **Profile with Chrome tracing** — `--trace-startup=cc,viz,blink` to see
+   exactly where main-thread time is spent per frame per context
