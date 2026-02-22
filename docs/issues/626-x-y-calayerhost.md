@@ -167,3 +167,148 @@ Research is complete when we can draw a side-by-side comparison:
    CALayerHost, with the same properties documented.
 3. A concrete list of differences that could explain the ~10px Y / ~3px X
    offset.
+
+#### Results
+
+##### R1: Electron's NSView hierarchy
+
+Electron does NOT create or manage CALayerHost directly. It relies entirely on
+Chromium's `DisplayCALayerTree` for layer hosting. The view hierarchy:
+
+```
+NSWindow (ElectronNSWindow)
+└─ contentView (layer-backed via setWantsLayer:YES)
+   └─ RootViewMac (views::View)
+      └─ Content View (web content, Chromium's render view)
+```
+
+In `AddContentViewLayers()` (`native_window_mac.mm:1776–1792`), Electron sets:
+
+- `setWantsLayer:YES` on the contentView
+- For framed windows: creates an explicit `CALayer` with
+  `autoresizingMask = kCALayerWidthSizable | kCALayerHeightSizable`
+
+Electron sets no `geometryFlipped`, no `anchorPoint`, no `contentsScale` — all
+of that is handled by Chromium's `DisplayCALayerTree`.
+
+##### R2: Electron's CALayerHost setup
+
+No CALayerHost references exist in the Electron source. Electron inherits
+Chromium's default `DisplayCALayerTree` behavior entirely.
+
+##### R3: Chromium's `DisplayCALayerTree`
+
+This is the key finding. From `display_ca_layer_tree.mm` (lines 33–52):
+
+```
+RenderWidgetHostViewCocoa (NSView, layer-hosting)
+└─ background_layer_ (root CALayer, NSView.layer)
+   └─ maybe_flipped_layer_ (CALayer)
+      └─ remote_layer_ (CALayerHost)
+```
+
+**`maybe_flipped_layer_` properties:**
+
+| Property           | Value                                           |
+| ------------------ | ----------------------------------------------- |
+| `geometryFlipped`  | `YES` (macOS only)                              |
+| `autoresizingMask` | `kCALayerWidthSizable \| kCALayerHeightSizable` |
+| `anchorPoint`      | `CGPointZero`                                   |
+
+**`remote_layer_` (CALayerHost) properties:**
+
+| Property           | Value                                      |
+| ------------------ | ------------------------------------------ |
+| `anchorPoint`      | `CGPointZero`                              |
+| `contextId`        | GPU process ca_context_id                  |
+| `autoresizingMask` | `kCALayerMaxXMargin \| kCALayerMaxYMargin` |
+
+The critical pattern: Chromium uses a **two-layer setup**. The
+`maybe_flipped_layer_` handles the coordinate flip and auto-resizes to fill the
+parent. The CALayerHost sits inside it at origin with margins that keep it
+pinned to the top-left.
+
+The NSView connection happens in `RenderWidgetHostNSViewBridge` (line 41–60):
+
+```cpp
+background_layer_ = [[CALayer alloc] init];
+display_ca_layer_tree_ = new DisplayCALayerTree(background_layer_);
+cocoa_view_.layer = background_layer_;
+cocoa_view_.wantsLayer = YES;
+```
+
+##### R4: Size agreement
+
+The CALayerHost frame is NEVER explicitly set. Instead:
+
+- `maybe_flipped_layer_` auto-resizes to fill `background_layer_` (via
+  `kCALayerWidthSizable | kCALayerHeightSizable`)
+- The CALayerHost has
+  `autoresizingMask = kCALayerMaxXMargin |
+  kCALayerMaxYMargin` — it stays at
+  origin, does NOT resize with parent
+- The remote CAContext content renders at its own intrinsic size
+- Size agreement happens because both the NSView and the Chromium compositor are
+  told the same window size
+
+##### R5: Differences that explain the offset
+
+**Chromium/Electron layer tree:**
+
+```
+NSView.layer (background_layer_, no special properties)
+└─ maybe_flipped_layer_ (geometryFlipped=YES, anchorPoint=zero, auto-resizes)
+   └─ CALayerHost (anchorPoint=zero, pinned to top-left)
+```
+
+**TermSurf layer tree:**
+
+```
+IOSurfaceLayer (no geometryFlipped, has contentsScale=2.0)
+└─ CALayerHost (geometryFlipped=YES, anchorPoint=zero, frame set explicitly)
+```
+
+**Key differences:**
+
+1. **Missing intermediate layer.** Chromium uses a dedicated
+   `maybe_flipped_layer_` between the root and the CALayerHost. We put the
+   CALayerHost directly on the IOSurfaceLayer. The `geometryFlipped` should be
+   on the intermediate layer, not on the CALayerHost itself.
+
+2. **We set `geometryFlipped` on the wrong layer.** Chromium sets
+   `geometryFlipped = YES` on `maybe_flipped_layer_` (the parent of the
+   CALayerHost). We set it on the CALayerHost itself. `geometryFlipped` affects
+   **sublayer** geometry, not the layer's own position. Setting it on the
+   CALayerHost flips its sublayers (the remote content's internal layers), but
+   does NOT flip where the CALayerHost itself sits in the parent.
+
+3. **We explicitly set frame; Chromium never does.** Chromium relies on
+   autoresizing masks to position the CALayerHost. The CALayerHost has no
+   explicit frame — it sits at (0, 0) in the `maybe_flipped_layer_`, which
+   itself fills the root layer. We set an explicit `frame` with computed grid
+   coordinates.
+
+4. **`autoresizingMask` mismatch.** Chromium's CALayerHost uses
+   `kCALayerMaxXMargin | kCALayerMaxYMargin` (pin to top-left). We don't set any
+   autoresizing mask.
+
+5. **The ~10px/~3px offset** is likely from `geometryFlipped` being on the wrong
+   layer. When `geometryFlipped = YES` is on the CALayerHost, it doesn't affect
+   the CALayerHost's own position in the parent IOSurfaceLayer. The
+   IOSurfaceLayer uses default CALayer coordinates (Y=0 at bottom). Our explicit
+   frame positions the CALayerHost in those un-flipped coordinates, but the
+   remote content inside is rendered in flipped coordinates. This mismatch
+   creates a small offset that depends on the difference between the CALayerHost
+   frame and the remote content size.
+
+#### Conclusion
+
+The root cause is architectural: we're missing the intermediate flipped layer
+that Chromium uses. Chromium's pattern is
+`root → maybe_flipped_layer_
+(geometryFlipped) → CALayerHost`, not
+`root → CALayerHost (geometryFlipped)`. The fix should either: (a) add an
+intermediate layer matching Chromium's pattern, or (b) move `geometryFlipped` to
+the IOSurfaceLayer (risky — could break terminal rendering) and position the
+CALayerHost without explicit frame math. The `geometryFlipped` on the wrong
+layer explains the residual offset.
