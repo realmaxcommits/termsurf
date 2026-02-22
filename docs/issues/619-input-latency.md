@@ -572,3 +572,38 @@ out-of-process as an option:
 
 But these would be choices, not constraints. The multi-process architecture
 would exist because we want it, not because CEF forces it.
+
+## Conclusion
+
+Input latency in TermSurf comes from three sources: the FrameSinkVideoCapturer
+(a recording API running on its own timer, not the display path), asynchronous
+XPC message-passing (paid twice per frame), and a double-vsync penalty inherent
+to out-of-process streaming. Together these add 15–25ms of latency versus native
+Chrome.
+
+Research into Chromium's internals revealed that Chrome achieves low latency
+across its own process boundaries using shared memory and the native display
+path — not message-passing. Content Shell uses the exact same pipeline as
+Chrome: CALayerHost, zero-copy GPU compositing, compositor-thread input
+handling. Our FrameSinkVideoCapturer bypasses all of this. It is a recording API
+bolted onto the side of the display compositor — not the display path itself.
+
+Further research showed that the entire multi-process architecture (xpc-gateway,
+profile server spawning, per-server XPC connections, IOSurface Mach port
+transfer, frame capture, 120fps oversampling) exists to work around a CEF
+limitation that no longer applies. CEF required one process per profile. The
+Content API does not — ts4 proved that multiple `BrowserContext` instances
+coexist in one process with full isolation (Issues 406–413).
+
+The path forward is to build a Zig Content Shell: a minimal Chromium embedder
+using a thin C++ shim (forwarding calls to the Content API) and Zig logic (tab
+management, input routing, profile lifecycle). This replaces the 14,000-line
+Content Shell fork with about 1,400 lines. The critical experiment is whether
+two different browser profiles can run in the same Zig process. If they can, the
+in-process architecture is the answer — zero IPC, zero frame capture, native
+Chrome performance. If they can't, the Zig Content Shell still serves as a
+cleaner out-of-process server, replacing the current hodgepodge with a minimal,
+understandable codebase.
+
+Either way, the Zig Content Shell is the next step. This will be tracked in a
+new issue.
