@@ -1327,5 +1327,50 @@ Content Shell build). It is not caused by:
 
 The only remaining hypothesis is that the vanilla `content_shell` target itself
 renders at 2fps with these build flags (`is_debug=false`, `symbol_level=0`,
-`is_component_build=true`). The next experiment must build and run the unmodified
-`content_shell` to establish a true baseline.
+`is_component_build=true`). The next experiment must build and run the
+unmodified `content_shell` to establish a true baseline.
+
+### Experiment 10: Replay Experiment 1 — single profile, minimal overrides
+
+Experiment 9 replayed Experiment 2 (two profiles, three overrides). Experiment 1
+is the absolute minimum: single profile, single window, only
+`InitializeMessageLoopContext` overridden. The parent's default
+`InitializeBrowserContexts` and `PostMainMessageLoopRun` run unmodified. This
+eliminates the multi-profile path and the `PostMainMessageLoopRun` override as
+suspects.
+
+If this also shows 2fps, only the subclass chain itself remains — or the vanilla
+`content_shell` target.
+
+#### Changes
+
+**`content_api_shim.h`** — no change (already minimal from Experiment 9).
+
+**`content_api_shim.mm`** — revert to Experiment 1's implementation:
+
+1. Remove `#include "content/shell/browser/shell_browser_context.h"`,
+   `#include "content/shell/common/shell_paths.h"`.
+2. Remove `kProfileAUrl` / `kProfileBUrl` constants. Add
+   `kInitialUrl = "https://google.com"`.
+3. `TsBrowserMainParts`: remove `InitializeBrowserContexts()` override entirely
+   (parent creates the default profile). Remove `PostMainMessageLoopRun()`
+   override entirely (parent handles cleanup).
+4. `InitializeMessageLoopContext()`: single `Shell::CreateNewWindow` call with
+   `browser_context()` and `kInitialUrl`.
+5. Remove `browser_context_b_` member.
+
+No changes to `BUILD.gn` (already using `shell_main_mac.cc` from Experiment 8).
+
+#### Verification
+
+1. One Content Shell window appears (google.com)
+2. Check rendering speed — smooth or ~2fps?
+3. Page interactive
+
+If 2fps: the subclass chain (`TsMainDelegate` → `TsContentBrowserClient` →
+`TsBrowserMainParts`) with even a single trivial override causes the throttle,
+or the vanilla `content_shell` itself has the same problem. The next experiment
+tests vanilla `content_shell`.
+
+If smooth: the `InitializeBrowserContexts` / `PostMainMessageLoopRun` overrides
+in Experiment 2 are the cause.
