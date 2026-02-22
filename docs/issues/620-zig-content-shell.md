@@ -204,3 +204,148 @@ Shell's normal display path:
 
 No frame capture. No IOSurface Mach port transfer. No recording API. The same
 display path Chrome uses.
+
+## Experiments
+
+### Experiment 1: C shim with C main, one profile, one page
+
+Prove that the Content API can be driven through a C function boundary. Write a
+C++ shim that wraps `ContentMain()` as a C function, and a `main.c` that calls
+it. If a web page loads in a window, the C API architecture works.
+
+For this first experiment, the shim reuses Content Shell's existing classes
+internally (`Shell`, `ShellBrowserContext`, `ShellPlatformDelegate`,
+`ShellContentBrowserClient`). The caller sees only C functions. Later
+experiments replace Content Shell's classes with minimal custom implementations.
+
+#### Files
+
+**`chromium/src/content/zig_content_shell/content_api_shim.h`** — C header:
+
+```c
+#ifndef CONTENT_ZIG_CONTENT_SHELL_CONTENT_API_SHIM_H_
+#define CONTENT_ZIG_CONTENT_SHELL_CONTENT_API_SHIM_H_
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+// Initialize the Content API, create a browser window, load the URL, and run
+// the message loop. Blocks until the window is closed. Returns exit code.
+int ts_content_main(int argc, const char** argv, const char* url);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif  // CONTENT_ZIG_CONTENT_SHELL_CONTENT_API_SHIM_H_
+```
+
+**`chromium/src/content/zig_content_shell/content_api_shim.cc`** — C++
+implementation:
+
+The shim defines three classes that override Content Shell's defaults:
+
+1. `TsBrowserMainParts` — Inherits from `ShellBrowserMainParts`. Overrides
+   `InitializeMessageLoopContext()` to create a `Shell` window with the URL
+   passed to `ts_content_main()` (stored in a global). Skips Content Shell's
+   default behavior (which reads the URL from command-line flags).
+
+2. `TsContentBrowserClient` — Inherits from `ShellContentBrowserClient`.
+   Overrides `CreateBrowserMainParts()` to return `TsBrowserMainParts` instead
+   of `ShellBrowserMainParts`.
+
+3. `TsMainDelegate` — Inherits from `ShellMainDelegate`. Overrides
+   `CreateContentBrowserClient()` to return `TsContentBrowserClient`.
+
+The `ts_content_main()` function stores the URL, creates `TsMainDelegate`,
+populates `ContentMainParams`, and calls `ContentMain()`.
+
+Key implementation details:
+
+```cpp
+static std::string g_initial_url;
+
+class TsBrowserMainParts : public content::ShellBrowserMainParts {
+ protected:
+  void InitializeMessageLoopContext() override {
+    content::Shell::CreateNewWindow(browser_context(),
+                                    GURL(g_initial_url),
+                                    nullptr, gfx::Size());
+  }
+};
+
+class TsContentBrowserClient : public content::ShellContentBrowserClient {
+ public:
+  std::unique_ptr<content::BrowserMainParts> CreateBrowserMainParts(
+      bool is_integration_test) override {
+    auto parts = std::make_unique<TsBrowserMainParts>();
+    set_browser_main_parts(parts.get());
+    return parts;
+  }
+};
+
+class TsMainDelegate : public content::ShellMainDelegate {
+ protected:
+  content::ContentBrowserClient* CreateContentBrowserClient() override {
+    browser_client_ = std::make_unique<TsContentBrowserClient>();
+    return browser_client_.get();
+  }
+ private:
+  std::unique_ptr<TsContentBrowserClient> browser_client_;
+};
+
+extern "C" int ts_content_main(int argc, const char** argv, const char* url) {
+  g_initial_url = url ? url : "about:blank";
+  TsMainDelegate delegate;
+  content::ContentMainParams params(&delegate);
+  params.argc = argc;
+  params.argv = argv;
+  return content::ContentMain(std::move(params));
+}
+```
+
+**`chromium/src/content/zig_content_shell/main.c`** — Pure C entry point:
+
+```c
+#include "content/zig_content_shell/content_api_shim.h"
+
+int main(int argc, const char** argv) {
+  return ts_content_main(argc, argv, "https://google.com");
+}
+```
+
+This file is pure C — no C++ includes. It proves the C function boundary works.
+
+**`chromium/src/content/zig_content_shell/BUILD.gn`** — Build target:
+
+Follows the `chromium_profile_server` pattern. The executable depends on
+`//content/shell:content_shell_lib` (for `Shell`, `ShellBrowserContext`,
+`ShellPlatformDelegate`, etc.) and the Content API public targets. On macOS,
+uses `mac_app_bundle()` to produce a `.app` bundle (required for `NSApplication`
+lifecycle).
+
+Sources: `main.c` and `content_api_shim.cc`.
+
+#### Build
+
+```bash
+cd ~/dev/termsurf/chromium/src
+export PATH="$HOME/dev/termsurf/chromium/depot_tools:$PATH"
+gn gen out/Default
+autoninja -C out/Default zig_content_shell
+```
+
+#### Verification
+
+1. Run the built app:
+   ```bash
+   open chromium/src/out/Default/Zig\ Content\ Shell.app
+   ```
+2. A window appears showing google.com
+3. The page is interactive — links are clickable, text is selectable, scrolling
+   works
+4. Closing the window exits the process
+
+If the page loads and is interactive, the C API boundary works. The Content API
+is successfully driven from a C `main()` through the shim.
