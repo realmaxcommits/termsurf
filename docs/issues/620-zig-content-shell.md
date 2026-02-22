@@ -1127,3 +1127,26 @@ by the direct `WebContents::Create` path in Experiment 5.
 
 If 2fps: the problem predates Experiment 5 and may be in the framework changes
 (callback wiring, default context, `WillRunMainMessageLoop` override, etc.).
+
+#### Result: Pass
+
+Both Shell windows appeared with toolbars and navigation, pages loaded and were
+interactive — but rendering was ~2fps, identical to Experiments 5 and 6.
+
+This is the critical finding: the 2fps throttle is **not** caused by the direct
+`WebContents::Create` path introduced in Experiment 5. The
+Shell::CreateNewWindow path exhibits the same problem. Since Experiments 1–3
+used `content_shell`'s original `shell_main_mac.cc` launcher (with no callback
+infrastructure), the regression was introduced in Experiment 4 when we replaced
+the launcher with `ts_main.mm` and added the callback/lifecycle machinery in the
+framework.
+
+#### Conclusion
+
+The 2fps throttle predates Experiment 5. It was introduced somewhere in the
+Experiment 4 framework changes: the `TsBrowserMainParts` subclass (custom
+`InitializeBrowserContexts`, `InitializeMessageLoopContext`,
+`WillRunMainMessageLoop`, `PostMainMessageLoopRun`), the default browser context
+override, or the callback wiring itself. The next experiment should bisect these
+changes by reverting to the original `ShellBrowserMainParts` behavior as closely
+as possible while still supporting multiple profiles.
