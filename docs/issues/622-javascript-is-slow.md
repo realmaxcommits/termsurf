@@ -578,3 +578,98 @@ the scheduler state machine (same behavior in both cases). It must be in
 single-BrowserContext and multi-BrowserContext — something in how the browser
 process manages frame scheduling, BeginFrame distribution, or compositor frame
 sink setup when multiple BrowserContexts exist.
+
+### Experiment 4: Research browser-process BrowserContext coordination
+
+A source code research experiment — no code changes, no builds. Experiment 3
+proved the bottleneck is in the browser process: same-profile rAF is 60fps,
+multi-profile rAF is 2fps, yet both configurations share the same GPU/Viz
+process and both have separate renderer processes. Something in the browser
+process treats multiple BrowserContexts differently from one.
+
+This experiment searches the Chromium source for browser-process code paths that
+diverge based on BrowserContext count or identity — specifically in frame
+scheduling, BeginFrame distribution, and compositor frame sink management.
+
+#### Question 1: How does the browser process distribute BeginFrames?
+
+The Viz process generates BeginFrame signals at vsync. These reach renderer
+processes through the browser process. If the browser process serializes or
+throttles BeginFrame delivery per BrowserContext, JS-heavy renderers (which need
+the full BeginMainFrame → commit → activate → draw cycle) would stall while
+CSS-only renderers (which draw immediately on BeginFrame) would be unaffected.
+
+**Where to look:**
+
+- `components/viz/host/host_frame_sink_manager.cc` — the browser-process
+  interface to the Viz frame sink system. Does it track BrowserContext?
+- `content/browser/compositor/viz_process_transport_factory.cc` — how the
+  browser creates and configures frame sinks
+- `content/browser/renderer_host/render_widget_host_impl.cc` — the browser-side
+  proxy for each renderer's compositor. Does it throttle BeginFrames?
+- `content/browser/renderer_host/render_widget_host_view_mac.mm` — macOS
+  platform layer. Does it manage its own display link per view?
+- `components/viz/service/frame_sinks/frame_sink_manager_impl.cc` — the Viz-side
+  frame sink manager. Search for anything keyed by client/context identity
+
+**Key signal:** Look for any code that groups, batches, or serializes frame
+sinks by BrowserContext or StoragePartition. If frame sinks from different
+BrowserContexts are processed in separate batches while same-BrowserContext
+sinks are processed together, that would explain the asymmetry.
+
+#### Question 2: Does RenderWidgetHostImpl throttle pending frames per BrowserContext?
+
+`RenderWidgetHostImpl` sits between the renderer and the Viz process in the
+browser. It may limit the number of in-flight (pending) frames per renderer.
+When JS rAF is active, each frame requires a full main-thread round-trip — the
+renderer is slower to acknowledge frames. If `RenderWidgetHostImpl` has a
+per-BrowserContext pending frame limit, two slow renderers from different
+BrowserContexts could starve each other in a way that two renderers from the
+same BrowserContext do not.
+
+**Where to look:**
+
+- `content/browser/renderer_host/render_widget_host_impl.cc` — search for
+  `pending`, `throttle`, `max_pending`, `DidReceiveCompositorFrame`,
+  `SubmitCompositorFrame`
+- `content/browser/renderer_host/render_widget_host_delegate.cc` — delegation
+  that might differ per BrowserContext
+- `content/browser/renderer_host/frame_token_message_queue.cc` — frame token
+  management and acknowledgment flow
+
+#### Question 3: What browser-process infrastructure is per-BrowserContext vs global?
+
+Map out which browser-process objects are created per BrowserContext vs shared
+globally. This is the structural question — if something that should be
+per-context is actually global (or vice versa), that's a candidate for the
+contention point.
+
+**Where to look:**
+
+- `content/browser/browser_context.cc` — what does BrowserContext own?
+- `content/browser/storage_partition_impl.cc` — StoragePartition is
+  per-BrowserContext; does it own any compositor infrastructure?
+- `content/browser/gpu/gpu_process_host.cc` — is the GPU process host global or
+  per-context? How are GPU channels allocated?
+- `content/browser/gpu/compositor_util.cc` — compositor configuration that might
+  differ per context
+- Search for `GetBrowserContext()` calls in `renderer_host/` — any code that
+  branches on BrowserContext identity in the frame submission path
+
+**Key signal:** Find any frame-related resource that is allocated per
+BrowserContext in multi-context but shared in single-context. That structural
+difference is likely the bottleneck.
+
+#### Verification
+
+Research is complete when all three questions have answers with file paths and
+line numbers. The answers should identify either:
+
+1. A specific throttling mechanism in the browser process that activates with
+   multiple BrowserContexts — leading to Experiment 5 that disables or fixes it
+2. A structural difference in how frame sinks or BeginFrame sources are
+   allocated per BrowserContext — leading to Experiment 5 that changes the
+   allocation
+3. No BrowserContext-specific logic found — meaning the contention is in the Viz
+   process itself (not the browser process), and Experiment 5 should instrument
+   Viz frame scheduling
