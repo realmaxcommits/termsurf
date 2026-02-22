@@ -618,30 +618,68 @@ bottleneck is JavaScript-driven.
 
 #### Changes
 
-**`content_api_shim.mm`** — replace both URLs with a `data:` URL containing a
-CSS-animation-only page. The page has:
+**`test-html/css-animation/index.html`** — new test page with:
 
 - A spinning box (`transform: rotate`, continuous)
 - A color-cycling background (`background-color` transition, continuous)
 - No `<script>` tags, no JavaScript, no event handlers
 
-```cpp
-const char* kAnimationPage =
-    "data:text/html,"
-    "<!DOCTYPE html>"
-    "<style>"
-    "body{margin:0;overflow:hidden;background:#111}"
-    "@keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}"
-    "@keyframes pulse{0%{background:#e44}33%{background:#4e4}66%{background:#44e}100%{background:#e44}}"
-    ".box{width:200px;height:200px;margin:100px auto;animation:spin 2s linear infinite,pulse 3s linear infinite;border-radius:20px}"
-    "</style>"
-    "<div class='box'></div>";
-
-const char* kProfileAUrl = kAnimationPage;
-const char* kProfileBUrl = kAnimationPage;
+```html
+<!DOCTYPE html>
+<html>
+<head>
+<style>
+body { margin: 0; overflow: hidden; background: #111; }
+@keyframes spin {
+  from { transform: rotate(0deg) }
+  to { transform: rotate(360deg) }
+}
+@keyframes pulse {
+  0% { background: #e44 }
+  33% { background: #4e4 }
+  66% { background: #44e }
+  100% { background: #e44 }
+}
+.box {
+  width: 200px;
+  height: 200px;
+  margin: 100px auto;
+  animation: spin 2s linear infinite, pulse 3s linear infinite;
+  border-radius: 20px;
+}
+</style>
+</head>
+<body>
+<div class="box"></div>
+</body>
+</html>
 ```
 
-No other changes. Same two-profile structure as Experiments 2–3.
+**`test-html/css-animation/server.ts`** — Bun server on port 9621:
+
+```typescript
+const file = Bun.file(import.meta.dir + "/index.html");
+
+Bun.serve({
+  port: 9621,
+  fetch() {
+    return new Response(file, {
+      headers: { "Content-Type": "text/html" },
+    });
+  },
+});
+
+console.log("http://localhost:9621");
+```
+
+**`content_api_shim.mm`** — point both URLs to localhost:
+
+```cpp
+const char* kProfileAUrl = "http://localhost:9621";
+const char* kProfileBUrl = "http://localhost:9621";
+```
+
+Same two-profile structure as Experiments 2–3.
 
 #### Build
 
@@ -653,17 +691,22 @@ autoninja -C out/Default zig_content_shell
 
 #### Verification
 
-1. Launch the app:
+1. Start the Bun server:
+   ```bash
+   cd ~/dev/termsurf/test-html/css-animation && bun run server.ts
+   ```
+2. Launch the app:
    ```bash
    open out/Default/Zig\ Content\ Shell.app
    ```
-2. Two Content Shell windows appear, each showing a spinning color-cycling box
+3. Two Content Shell windows appear, each showing a spinning color-cycling box
    on a dark background
-3. Observe the animation in each window:
+4. Observe the animation in each window:
    - Are both spinning smoothly (60fps)?
    - Are both stuttering (~2fps)?
    - Is one smooth and the other stuttering?
-4. Close both windows — process exits cleanly
+5. Close both windows — process exits cleanly
+6. Stop the Bun server (Ctrl+C)
 
 If both 60fps: CSS animations alone don't trigger the contention. The bottleneck
 is JavaScript-driven (Blink main thread work, not compositor work).
