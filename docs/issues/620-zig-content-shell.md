@@ -1249,3 +1249,56 @@ custom `TsBrowserMainParts` subclass. The key suspects are now:
 The next experiment should test the unmodified `content_shell` to establish a
 true baseline. If `content_shell` also renders at 2fps, the problem is systemic
 (build flags, macOS settings, GPU configuration) — not our code.
+
+### Experiment 9: Replay Experiment 2 to continue bisecting
+
+Experiment 8 showed 2fps with Experiment 3's code. Experiment 2 is nearly
+identical in structure — same subclass chain (`TsMainDelegate` →
+`TsContentBrowserClient` → `TsBrowserMainParts`), same overrides
+(`InitializeBrowserContexts`, `InitializeMessageLoopContext`,
+`PostMainMessageLoopRun`) — but without the C API wrapper functions
+(`ts_create_browser_context`, `ts_destroy_browser_context`, `ts_create_tab`).
+Profiles are created directly with `PathService::Override` +
+`new
+ShellBrowserContext`.
+
+The purpose is to continue the bisection. If Experiment 2 also shows 2fps, the
+problem is in the subclass chain or the build itself. If it's smooth, the C API
+wrappers somehow introduce the throttle (unlikely but must be eliminated).
+
+#### Changes
+
+**`content_api_shim.h`** — strip to Experiment 2's minimal header:
+
+1. Remove all `ts_*` declarations (`ts_browser_context_t`,
+   `ts_create_browser_context`, `ts_destroy_browser_context`, `ts_create_tab`).
+2. Remove `#ifdef __cplusplus` guards (Experiment 2 didn't have them — the
+   header was C++-only with a bare `extern "C"`).
+3. Keep only `ContentMain`.
+
+**`content_api_shim.mm`** — revert to Experiment 2's implementation:
+
+1. Remove all `ts_*` C API function implementations.
+2. `TsBrowserMainParts::InitializeBrowserContexts()`: create profiles directly
+   with `PathService::Override` + `new ShellBrowserContext` +
+   `set_browser_context`. Profile B stored as
+   `std::unique_ptr<ShellBrowserContext> browser_context_b_`.
+3. `TsBrowserMainParts::InitializeMessageLoopContext()`: call
+   `Shell::CreateNewWindow` directly (not through `ts_create_tab`).
+4. `TsBrowserMainParts::PostMainMessageLoopRun()`: `browser_context_b_.reset()`,
+   then call parent.
+5. Add `kProfileAUrl` / `kProfileBUrl` constants.
+
+No changes to `BUILD.gn` (already using `shell_main_mac.cc` from Experiment 8).
+
+#### Verification
+
+1. Two Content Shell windows appear (google.com + example.com)
+2. Check rendering speed — smooth or ~2fps?
+3. Both pages interactive
+
+If 2fps: the C API wrappers are irrelevant. The problem is in the subclass chain
+or the build environment. The next experiment tests vanilla `content_shell`.
+
+If smooth: the C API wrappers somehow cause the throttle (investigate
+`PathService::Override` interaction with `ts_create_browser_context`).
