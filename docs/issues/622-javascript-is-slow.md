@@ -192,3 +192,91 @@ what Experiment 2 should be:
   enables threaded compositing
 - If processes are separate and compositing is threaded → the contention is
   deeper and Experiment 2 instruments the Blink scheduler
+
+**Result:** All three questions answered. The architecture is fully isolated —
+and the bottleneck is not where we expected.
+
+#### Answer 1: Separate renderer processes (guaranteed)
+
+Two BrowserContexts **always** get separate renderer processes. This is a hard
+architectural constraint, not a configuration option.
+
+`IsSuitableHost()` in `render_process_host_impl.cc:4696-4697` performs the
+BrowserContext check as the **first** filter:
+
+```cpp
+if (host->GetBrowserContext() != browser_context)
+    return false;
+```
+
+If the BrowserContexts don't match, the process is immediately unsuitable. All
+process tracking data structures (`SiteProcessCountTracker`,
+`GetSiteProcessMapForBrowserContext()`) are keyed per-BrowserContext. Content
+Shell does not override this. Every reuse path — `kProcessPerSite`, reusable
+subframe, empty background host, embedder preference — checks BrowserContext
+first.
+
+This means each profile has its own Blink main thread. Two rAF loops are NOT
+fighting for one thread.
+
+#### Answer 2: BeginMainFrame dispatch is per-process, no cross-process serialization
+
+The BeginMainFrame path:
+
+1. `Scheduler` fires on the compositor thread
+2. `ProxyImpl::ScheduledActionSendBeginMainFrame` (`cc/trees/proxy_impl.cc:741`)
+   builds a `BeginMainFrameAndCommitState` and PostTasks to the main thread
+3. `ProxyMain::BeginMainFrame` (`cc/trees/proxy_main.cc:139`) runs on the main
+   thread, calls `LayerTreeHost::BeginMainFrame`
+4. `Page::Animate` (`page.cc:1532`) → `PageAnimator::ServiceScriptedAnimations`
+   (`page_animator.cc:66`) → rAF callbacks execute
+
+Architecture: one compositor thread per renderer process
+(`render_thread_impl.cc:736`). Each WebContents gets its own `LayerTreeHost`
+with its own `Scheduler`. Within a renderer process, multiple schedulers post to
+the same main thread task queue (FIFO). But since two BrowserContexts get
+separate renderer processes, this intra-process serialization is irrelevant.
+
+There is no cross-process serialization in the BeginMainFrame path.
+
+#### Answer 3: Content Shell uses full multi-process, threaded compositing
+
+Content Shell uses:
+
+- **Multi-process** — no `--single-process` flag, default process model
+- **Out-of-process compositing** via the Viz process
+  (`viz_process_transport_factory.cc`)
+- **GPU-accelerated compositing** with dedicated compositor threads
+- **Threaded compositing** — `LayerTreeHost::CreateThreaded()` in production
+  (`layer_tree_view.cc:114-120`)
+
+Content Shell does not override `ShouldUseProcessPerSite()`, does not disable
+GPU compositing, does not enable single-threaded compositing. It inherits full
+Chromium defaults.
+
+#### Conclusion
+
+The architecture is fully isolated:
+
+| Resource          | Shared? | Evidence                                 |
+| ----------------- | ------- | ---------------------------------------- |
+| Renderer process  | No      | `IsSuitableHost()` checks BrowserContext |
+| Blink main thread | No      | One per renderer process                 |
+| Compositor thread | No      | One per renderer process                 |
+| Scheduler         | No      | One per LayerTreeHost                    |
+| BeginMainFrame    | No      | PostTask within each renderer process    |
+| GPU/Viz process   | **Yes** | Single Viz process for all compositors   |
+
+Two BrowserContexts get separate renderer processes, separate main threads,
+separate compositor threads, separate schedulers. Yet a trivial rAF loop in both
+degrades to 2fps. **The contention is in a shared resource outside the renderer
+processes** — most likely the GPU/Viz process, which is the only shared
+component in the pipeline.
+
+This changes the investigation direction. The Blink main thread scheduler is not
+the culprit. The next experiment should investigate the GPU/Viz process: how it
+serializes frame submissions from multiple renderer processes, and whether GPU
+command buffer contention or swap chain scheduling explains the 2fps
+degradation. The key question is why CSS animations (which also go through the
+Viz process) are unaffected while JavaScript animations are not — the difference
+must be in what the renderer submits, not how the Viz process handles it.
