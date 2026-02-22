@@ -2189,3 +2189,37 @@ No other changes. All Experiment 14 instrumentation remains in place.
    - If google (second) is 2fps and duckduckgo (first) is 60fps: **page-
      dependent** — google.com specifically triggers the throttle
    - If both are 2fps: something else changed
+
+**Result:** Page-dependent
+
+Tested 5 consecutive runs with the reversed URL order (DDG first, google
+second). Every run produced the same result: **lite.duckduckgo.com was fast
+(60fps), google.com was slow (2fps)**. The order hypothesis is disproven — it is
+not about which profile is created first.
+
+| Run | DDG (Profile A, first) | Google (Profile B, second) |
+| --- | ---------------------- | -------------------------- |
+| 1   | 60fps                  | 2fps                       |
+| 2   | 60fps                  | 2fps                       |
+| 3   | 60fps                  | 2fps                       |
+| 4   | 60fps                  | 2fps                       |
+| 5   | 60fps                  | 2fps                       |
+
+Combined with Experiment 14 (google first, DDG second — same result: google
+2fps, DDG 60fps), the conclusion is clear: **google.com specifically triggers
+the 2fps throttle when a second BrowserContext exists**. DDG is unaffected
+regardless of order.
+
+#### Conclusion
+
+The 2fps problem is page-dependent, not order-dependent. google.com is throttled
+to 2fps in the presence of a second BrowserContext while lite.duckduckgo.com
+runs at 60fps. This is consistent across all 5 runs in both orderings. The
+difference is likely page complexity — google.com's heavier JS, larger DOM, or
+specific rendering behavior interacts badly with whatever multi-BrowserContext
+contention exists. lite.duckduckgo.com is lightweight enough to avoid the
+bottleneck.
+
+The next experiment should test with two heavyweight pages (e.g., google.com on
+both profiles, or google.com + another complex site) to determine whether the
+problem is google.com-specific or whether any heavy page triggers it.
