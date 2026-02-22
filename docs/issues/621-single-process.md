@@ -400,3 +400,14 @@ If 60fps: baseline established. Proceed to Experiment 2 (add second profile).
 
 If 2fps: something is different about this branch. Compare with Issue 620's
 branch to find the discrepancy.
+
+**Result:** Pass
+
+google.com rendered at 60fps — smooth, interactive, no stuttering. Baseline
+established on the fresh `146.0.7650.0-issue-621` branch with zero
+instrumentation.
+
+#### Conclusion
+
+The clean branch works. Single profile, single window, full speed. Ready for
+Experiment 2.
