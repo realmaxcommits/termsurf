@@ -94,3 +94,16 @@ Only `origin` (github.com/termsurf/termsurf) is affected. The `upstream`
 3. `website/src/components/Header.tsx` has no version badge
 4. `bun run build:data` in `website/` succeeds (only builds commits)
 5. Tags on `upstream`, `wezterm`, and `cef-rs` remotes are unaffected
+
+**Result:** Pass
+
+All 344 local tags deleted. All 26 remote tags on `origin` deleted. Version
+badge, build script, and data file removed from the website. The `build:data`
+pipeline now only builds commits.
+
+## Conclusion
+
+TermSurf is alpha software. The legacy version tags (`v0.1.0` through `v1.2.3`)
+and inherited upstream tags (WezTerm, cef-rs) have been purged — 344 local and
+26 remote. The website no longer displays a version number. When TermSurf is
+ready for a real release, new tags will be created from scratch.
