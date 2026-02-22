@@ -357,3 +357,41 @@ autoninja -C out/Default zig_content_shell
 
 If the page loads and is interactive, the C API boundary works. The Content API
 is successfully driven from a C `main()` through the shim.
+
+#### Implementation notes
+
+The macOS framework architecture requires the dlopen/dlsym pattern — a plain
+`main.c` cannot work. The actual implementation:
+
+- Reuses `shell_main_mac.cc` for the app and helper entry points (identical to
+  Content Shell's launcher — it dlopen's the framework and dlsym's
+  `ContentMain`)
+- The framework contains `content_api_shim.mm` (Objective-C++ for NSBundle
+  access) which exports `ContentMain()` as `extern "C"`
+- Path override functions use `Ts` prefix (`TsOverrideFrameworkBundlePath`,
+  etc.) to avoid symbol conflicts with Content Shell's identically-structured
+  functions compiled into `content_shell_app`
+- The URL is hardcoded as a constant (`kInitialUrl = "https://google.com"`)
+  rather than passed as a parameter, since this experiment only needs to prove
+  the C boundary works
+
+The C function boundary is proven by the dlsym call — `shell_main_mac.cc` loads
+the framework at runtime and calls `ContentMain` through a C function pointer.
+
+#### Result
+
+**Pass.**
+
+The app launched successfully with the full Chromium multi-process architecture:
+main browser process, GPU process, network service, storage service, and two
+renderer processes. Google.com loaded in a Content Shell window. The page is
+interactive — links clickable, text selectable, scrolling works.
+
+#### Conclusion
+
+The Content API can be driven through a C function boundary. The dlopen/dlsym
+pattern (inherited from Content Shell's macOS architecture) is itself the C
+boundary — the framework exports `ContentMain` as `extern "C"`, and the launcher
+calls it via `dlsym`. The three-class subclassing pattern (`TsMainDelegate` →
+`TsContentBrowserClient` → `TsBrowserMainParts`) cleanly overrides the
+initialization chain while reusing all of Content Shell's infrastructure.
