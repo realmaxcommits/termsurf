@@ -411,3 +411,67 @@ instrumentation.
 
 The clean branch works. Single profile, single window, full speed. Ready for
 Experiment 2.
+
+### Experiment 2: Two profiles, both google.com
+
+Add a second BrowserContext loading google.com. Both profiles load the same
+page. This eliminates page complexity as a variable — if one profile degrades to
+2fps while the other stays at 60fps, the problem is purely multi-BrowserContext
+contention, not page-specific behavior.
+
+Issue 620 Experiments 14–15 used google.com + lite.duckduckgo.com and found that
+google.com was always the slow one. That left open the question: is google.com
+specifically triggering the throttle, or does any complex page trigger it? By
+loading the same page on both profiles, we answer that question.
+
+Possible outcomes:
+
+- **Both 60fps**: The problem was specific to the google.com + DDG combination
+  (unlikely but would change the investigation direction entirely)
+- **Both 2fps**: Both profiles degrade equally — the contention is symmetric and
+  page complexity is not a factor
+- **One 60fps, one 2fps**: The contention is asymmetric — one profile "wins"
+  regardless of page content. This would confirm that the problem is in
+  BrowserContext resource ordering, not page behavior
+
+#### Changes
+
+**`content_api_shim.mm`** — add second BrowserContext with same URL:
+
+1. Add includes for `shell_browser_context.h` and `shell_paths.h`
+2. Replace `kInitialUrl` with two URL constants (both google.com):
+   ```cpp
+   const char* kProfileAUrl = "https://google.com";
+   const char* kProfileBUrl = "https://google.com";
+   ```
+3. Override `InitializeBrowserContexts()` to create two profiles with separate
+   storage paths (`profile-a/`, `profile-b/`)
+4. Override `InitializeMessageLoopContext()` to open two windows
+5. Override `PostMainMessageLoopRun()` to destroy profile B before parent
+   cleanup
+6. Add `browser_context_b_` member
+
+This is the same two-profile pattern from Issue 620 Experiment 2/9, but with
+both URLs set to google.com.
+
+#### Build
+
+```bash
+cd ~/dev/termsurf/chromium/src
+export PATH="$HOME/dev/termsurf/chromium/depot_tools:$PATH"
+autoninja -C out/Default zig_content_shell
+```
+
+#### Verification
+
+1. Launch the app:
+   ```bash
+   open out/Default/Zig\ Content\ Shell.app
+   ```
+2. Two Content Shell windows appear, both showing google.com
+3. Focus each window individually and type into the search box
+4. Observe rendering performance in each window:
+   - Are both smooth (60fps)?
+   - Are both sluggish (2fps)?
+   - Is one smooth and the other sluggish?
+5. Close both windows — process exits cleanly
