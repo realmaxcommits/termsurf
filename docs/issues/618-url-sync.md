@@ -53,3 +53,52 @@ Three changes are needed across three processes:
    the message to that pane's XPC connection.
 3. **TUI** (`tui/src/`): Already implemented — `UrlChanged` message handler
    updates the URL bar and redraws.
+
+## Experiments
+
+### Experiment 1: Forward url_changed from Chromium to TUI
+
+The Chromium server already sends `url_changed` XPC messages from
+`ShellVideoConsumer::DidFinishNavigation()` (`shell_video_consumer.cc:90-143`).
+The TUI already handles them (`xpc.rs:182-190`, `main.rs:170-171`). The only
+missing piece is the GUI relay in `xpc.zig`.
+
+#### Changes
+
+**`gui/src/apprt/xpc.zig`:**
+
+1. Add dispatch in `handleMessage()` (after the `loading_state` branch at line
+   258-259):
+
+   ```zig
+   } else if (std.mem.eql(u8, action_str, "url_changed")) {
+       handleUrlChanged(msg);
+   ```
+
+2. Add `handleUrlChanged()` function (after `handleLoadingState` at line 477),
+   following the same forwarding pattern:
+
+   ```zig
+   fn handleUrlChanged(msg: xpc_object_t) void {
+       const pane_id = str(xpc_dictionary_get_string(msg, "pane_id"));
+       const p = panes.get(pane_id) orelse return;
+       if (p.web_peer == null) return;
+
+       const url = xpc_dictionary_get_string(msg, "url") orelse return;
+
+       const fwd = xpc_dictionary_create(null, null, 0);
+       xpc_dictionary_set_string(fwd, "action", "url_changed");
+       xpc_dictionary_set_string(fwd, "url", url);
+       xpc_connection_send_message(p.web_peer, fwd);
+   }
+   ```
+
+No Chromium or TUI changes needed — both ends already exist.
+
+#### Verification
+
+1. Launch TermSurf, run `web google.com`
+2. Click a link on the page (e.g., a search result)
+3. The URL bar in the TUI should update to the new page's URL
+4. Press Cmd+[ (back) — URL bar should revert to the previous URL
+5. Press Cmd+] (forward) — URL bar should show the navigated URL again
