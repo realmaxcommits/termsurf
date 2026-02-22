@@ -1252,3 +1252,35 @@ In `Metal.zig` — `updateCALayerHostFrame()`:
    - Pane resize works — browser content resizes with the pane
    - Multiple panes with different profiles work
    - Closing a browser pane cleans up the CALayerHost
+
+**Result:** Fail (partial success)
+
+The three fixes dramatically improved positioning. The ~400px Y offset and the
+large X offset are gone. The web content now renders near the correct position —
+close enough that the browser is usable. However, a small residual offset
+remains: approximately **10px too high** (Y) and **3px too far left** (X).
+
+**What worked:**
+
+- `geometryFlipped = YES` on the CALayerHost fixed the dominant Y offset. The
+  content is now right-side-up and near the top of the surface where it belongs.
+- `NSWindowStyleMaskBorderless` eliminated the ~28px title bar offset.
+- `ShouldHideToolbar() = true` eliminated the 24px toolbar offset.
+- Dividing by `contentsScale` fixed the 2x pixel-vs-point scaling error.
+- `anchorPoint = CGPointZero` matches Chromium's own pattern.
+
+**What remains:**
+
+A small residual offset: ~10px too high, ~3px too far left. This is likely from
+padding, border, or inset values in either the terminal grid coordinate system
+or the Chromium compositor's view positioning. The grid coordinates from the TUI
+(`col=1, row=4`) may not account for some padding between the surface edge and
+the first grid cell, or the Chromium content view may have a small inset within
+the borderless window.
+
+#### Conclusion
+
+The major positioning bugs are fixed. The CALayerHost content renders near the
+correct position — a massive improvement from the ~400px offset. A small ~10px Y
+and ~3px X residual offset remains, likely from grid padding or view insets.
+Experiment 7 should fine-tune this last offset.
