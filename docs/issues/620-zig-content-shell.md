@@ -1374,3 +1374,31 @@ tests vanilla `content_shell`.
 
 If smooth: the `InitializeBrowserContexts` / `PostMainMessageLoopRun` overrides
 in Experiment 2 are the cause.
+
+#### Result: Pass
+
+Rendering was **flawless** — smooth, full-speed, no stuttering. This is the
+first experiment since the FPS investigation began (Experiment 5) that renders
+at full speed.
+
+#### Conclusion
+
+The regression is between Experiment 1 and Experiment 2. Experiment 1 (single
+profile, only `InitializeMessageLoopContext` overridden, parent handles
+everything else) renders perfectly. Experiment 2 (two profiles,
+`InitializeBrowserContexts` + `PostMainMessageLoopRun` overridden) renders at
+2fps.
+
+The diff between Experiment 1 and Experiment 2 is:
+
+1. **`InitializeBrowserContexts()` override** — creates two profiles via
+   `PathService::Override` + `new ShellBrowserContext`, calls
+   `set_browser_context()` for profile A.
+2. **`PostMainMessageLoopRun()` override** — destroys profile B, calls parent.
+3. **`InitializeMessageLoopContext()`** — opens two windows instead of one.
+4. Two extra includes (`shell_browser_context.h`, `shell_paths.h`).
+
+The next experiment should bisect within this diff: try Experiment 1's code but
+with the `InitializeBrowserContexts` override (single profile created
+explicitly) to determine whether it's the override itself or the second profile
+that causes the throttle.
