@@ -1461,3 +1461,83 @@ The findings so far:
 
 This reproduces the Issue 413 finding in the Zig Content Shell framework. The
 multi-profile contention is the sole cause of the 2fps throttle in this issue.
+
+### Experiment 12: Instrument CVDisplayLink and compositor to find the 2fps cause
+
+The multi-profile 2fps throttle has been reproduced (Experiments 2–9) and the
+boundary identified (Experiment 10 vs 11). Code review of the Chromium source
+identified a primary suspect: the `CVDisplayLinkMac` vsync lifecycle in
+`ui/display/mac/cv_display_link_mac.mm`.
+
+On macOS, vsync is driven by `CVDisplayLink`. Chromium caches one
+`CVDisplayLinkMac` per (display_id, thread_id) pair in a global
+`DisplayLinkGlobals` singleton. Multiple `ExternalBeginFrameSourceMac` instances
+(one per compositor/Display) share the same `CVDisplayLinkMac` by registering
+callbacks. When all callbacks are unregistered, `StopDisplayLinkIfNeeded()`
+stops the entire `CVDisplayLink` after 12 empty vsyncs.
+
+The hypothesis: when two BrowserContexts create separate compositor chains,
+their `ExternalBeginFrameSourceMac` instances toggle `OnNeedsBeginFrames` on/off
+independently. If one unregisters while the other needs frames, the shared
+`CVDisplayLinkMac`'s callback set shrinks, potentially triggering a stop/restart
+cycle that degrades both to ~2fps.
+
+However, the `DelayBasedTimeSource` fallback timer uses `preferred_interval_`
+(set to ~16.6ms for 60Hz), so a clean fallback to the timer would still produce
+~60fps. The 2fps suggests something more fundamental: either the display link is
+repeatedly starting/stopping (thrashing), the begin frame source is stuck in a
+bad state, or the contention is elsewhere entirely (e.g., GPU process
+scheduling, `HostFrameSinkManager`).
+
+This experiment adds logging to trace the exact flow and find where frames are
+lost.
+
+#### Changes
+
+**`ui/display/mac/cv_display_link_mac.mm`** — add logging to lifecycle events:
+
+1. `EnsureDisplayLinkRunning()`: log when CVDisplayLink starts
+   (`LOG(ERROR) << "CVDisplayLink START ..."`)
+2. `StopDisplayLinkIfNeeded()`: log when CVDisplayLink stops, and log each vsync
+   with empty callbacks (`LOG(ERROR) << "CVDisplayLink STOP ..."` and
+   `LOG(ERROR) << "CVDisplayLink empty callbacks ..."`)
+3. `RegisterCallback()`: log callback registration with callback count
+4. `UnregisterCallback()` (in destructor of `VSyncCallbackMac`): log callback
+   removal with remaining count
+5. `RunCallbacks()`: log callback count on each vsync tick (use `VLOG(1)` to
+   avoid flooding — can enable with `--v=1`)
+
+**`components/viz/service/frame_sinks/external_begin_frame_source_mac.cc`** —
+add logging to begin frame lifecycle:
+
+1. `OnNeedsBeginFrames()`: log when begin frames are requested/stopped, with the
+   `ExternalBeginFrameSourceMac` pointer as identifier
+2. `StartBeginFrame()`: log whether using display link or timer fallback
+3. `StopBeginFrame()`: log which path (display link unregister or timer stop)
+4. `OnDisplayLinkCallback()`: log at `VLOG(1)` level each callback with frame
+   time
+
+Use `LOG(ERROR)` for infrequent lifecycle events (start/stop/register) so they
+appear in stderr without flags. Use `VLOG(1)` for per-frame events to avoid
+flooding.
+
+**`content_api_shim.mm`** — revert to Experiment 2 (two profiles, two windows)
+to trigger the 2fps condition. Use the Experiment 9 code (direct C++, no C API
+wrappers).
+
+No changes to `content_api_shim.h` or `BUILD.gn`.
+
+#### Verification
+
+1. Build and launch — two Shell windows appear (2fps expected)
+2. Capture stderr output (launch from terminal or redirect)
+3. Look for:
+   - How many `CVDisplayLinkMac` instances are created (one or two?)
+   - How many `ExternalBeginFrameSourceMac` callbacks register
+   - Whether `StopDisplayLinkIfNeeded` fires and stops the display link
+   - Whether `OnNeedsBeginFrames(false)` is called repeatedly (thrashing)
+   - The pattern of register/unregister cycles
+4. Compare with single-profile launch (Experiment 11) to see the difference
+
+The logs will reveal whether the CVDisplayLink theory is correct or the
+contention is elsewhere.
