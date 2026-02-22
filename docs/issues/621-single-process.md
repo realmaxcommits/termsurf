@@ -817,3 +817,46 @@ scale).
 If both ~2fps: any continuous JavaScript execution triggers the contention when
 two BrowserContexts are active. This would definitively confirm the Blink main
 thread as the shared resource.
+
+**Result:** Both 2fps
+
+Both windows started slightly above 2fps then rapidly settled to a solid 2fps.
+The box demo is a minimal `requestAnimationFrame` loop — roughly 30 lines of
+JavaScript drawing one rectangle on a 300x300 canvas. This is orders of
+magnitude simpler than google.com, yet it triggers the exact same degradation.
+
+Updated results table:
+
+| Profile A           | Profile B           | A fps | B fps | Experiment |
+| ------------------- | ------------------- | ----- | ----- | ---------- |
+| google.com          | —                   | 60    | —     | 621.1      |
+| google.com          | google.com          | 2     | 2     | 621.2      |
+| lite.duckduckgo.com | lite.duckduckgo.com | 60    | 60    | 621.3      |
+| CSS animation       | CSS animation       | 60    | 60    | 621.4      |
+| JS box demo (rAF)   | JS box demo (rAF)   | 2     | 2     | 621.5      |
+| google.com          | lite.duckduckgo.com | 2     | 60    | 620.14     |
+| lite.duckduckgo.com | google.com          | 60    | 2     | 620.15     |
+
+Combined with Experiment 4, this is definitive:
+
+- **CSS animations (compositor thread):** 60fps — no contention
+- **JavaScript animations (Blink main thread):** 2fps — immediate contention
+
+The bottleneck is not page complexity, DOM size, network activity, or GPU load.
+It is specifically **any continuous JavaScript execution** across two
+BrowserContexts. Even a trivial `requestAnimationFrame` loop with one canvas
+draw call is enough to trigger it.
+
+This narrows the investigation to the Blink main thread scheduling or the
+interface between the Blink main thread and the compositor. Something in
+Chromium's architecture serializes or throttles `requestAnimationFrame`
+callbacks when two BrowserContexts both have active rAF loops.
+
+#### Conclusion
+
+JavaScript is the trigger. A 30-line rAF loop reproduces the same 2fps as
+google.com. The contention is in how Chromium schedules JavaScript execution
+across BrowserContexts, not in the compositor or GPU pipeline. The next
+experiment should test whether a single BrowserContext with two windows (same
+profile) also degrades — this would distinguish BrowserContext-level contention
+from renderer-process-level contention.
