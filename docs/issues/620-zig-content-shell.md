@@ -205,6 +205,14 @@ Shell's normal display path:
 No frame capture. No IOSurface Mach port transfer. No recording API. The same
 display path Chrome uses.
 
+## Chromium branch
+
+`146.0.7650.0-issue-620` — branched from the vanilla `146.0.7650.0` tag. This
+experiment only adds new files and depends on unmodified Content Shell classes
+(`Shell`, `ShellBrowserContext`, `ShellPlatformDelegate`,
+`ShellContentBrowserClient`), so no TermSurf-specific Chromium modifications are
+needed.
+
 ## Experiments
 
 ### Experiment 1: C shim with C main, one profile, one page

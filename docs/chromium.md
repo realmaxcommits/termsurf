@@ -21,29 +21,30 @@ issue-specific branches.
 
 ## Branches
 
-| Branch                   | Issue                                       | Description                  |
-| ------------------------ | ------------------------------------------- | ---------------------------- |
-| `146.0.7650.0-termsurf`  | —                                           | Main working branch for v146 |
-| `146.0.7650.0-electron`  | —                                           | Electron's v146 base         |
-| `146.0.7650.0-issue-411` | [Issue 411](issues/411-two-profiles-3.md)   | Two profiles experiment 3    |
-| `146.0.7650.0-issue-412` | [Issue 412](issues/412-one-profile.md)      | One profile                  |
-| `146.0.7650.0-issue-413` | [Issue 413](issues/413-one-profile-2.md)    | One profile experiment 2     |
-| `146.0.7650.0-issue-414` | [Issue 414](issues/414-two-profiles-xpc.md) | Two profiles via XPC         |
-| `146.0.7650.0-issue-415` | [Issue 415](issues/415-swift-receiver.md)   | Swift receiver               |
-| `146.0.7650.0-issue-416` | [Issue 416](issues/416-rust-receiver.md)    | Rust receiver                |
-| `146.0.7650.0-issue-501` | [Issue 501](issues/501-two-profiles-ts5.md) | Two profiles in ts5          |
-| `146.0.7650.0-issue-502` | [Issue 502](issues/502-attach-delay.md)     | Attach delay fix             |
-| `146.0.7650.0-issue-503` | [Issue 503](issues/503-one-two-three.md)    | Dynamic multi-tab protocol   |
-| `146.0.7650.0-issue-509` | [Issue 509](issues/509-chromium.md)         | Chromium streaming (retry)   |
-| `146.0.7650.0-issue-511` | [Issue 511](issues/511-three-profiles.md)   | Per-tab pane routing         |
-| `146.0.7650.0-issue-512` | [Issue 512](issues/512-vsync.md)            | 120fps oversampling          |
-| `146.0.7650.0-issue-514` | [Issue 514](issues/514-mouse.md)            | Mouse clicks + URL sync      |
-| `146.0.7650.0-issue-515` | [Issue 515](issues/515-drag.md)             | Focus state + text selection |
-| `146.0.7650.0-issue-603` | [Issue 603](issues/603-box-demo.md)         | Box demo                     |
-| `146.0.7650.0-issue-607` | [Issue 607](issues/607-keyboard-input.md)   | Keyboard input               |
-| `146.0.7650.0-issue-608` | [Issue 608](issues/608-search-input.md)     | Search input                 |
-| `146.0.7650.0-issue-609` | [Issue 609](issues/609-keyboard-input-2.md) | Keyboard input (continued)   |
-| `146.0.7650.0-issue-616` | [Issue 616](issues/616-web-features.md)     | Web features (loading, nav, context menu) |
+| Branch                   | Issue                                        | Description                               |
+| ------------------------ | -------------------------------------------- | ----------------------------------------- |
+| `146.0.7650.0-termsurf`  | —                                            | Main working branch for v146              |
+| `146.0.7650.0-electron`  | —                                            | Electron's v146 base                      |
+| `146.0.7650.0-issue-411` | [Issue 411](issues/411-two-profiles-3.md)    | Two profiles experiment 3                 |
+| `146.0.7650.0-issue-412` | [Issue 412](issues/412-one-profile.md)       | One profile                               |
+| `146.0.7650.0-issue-413` | [Issue 413](issues/413-one-profile-2.md)     | One profile experiment 2                  |
+| `146.0.7650.0-issue-414` | [Issue 414](issues/414-two-profiles-xpc.md)  | Two profiles via XPC                      |
+| `146.0.7650.0-issue-415` | [Issue 415](issues/415-swift-receiver.md)    | Swift receiver                            |
+| `146.0.7650.0-issue-416` | [Issue 416](issues/416-rust-receiver.md)     | Rust receiver                             |
+| `146.0.7650.0-issue-501` | [Issue 501](issues/501-two-profiles-ts5.md)  | Two profiles in ts5                       |
+| `146.0.7650.0-issue-502` | [Issue 502](issues/502-attach-delay.md)      | Attach delay fix                          |
+| `146.0.7650.0-issue-503` | [Issue 503](issues/503-one-two-three.md)     | Dynamic multi-tab protocol                |
+| `146.0.7650.0-issue-509` | [Issue 509](issues/509-chromium.md)          | Chromium streaming (retry)                |
+| `146.0.7650.0-issue-511` | [Issue 511](issues/511-three-profiles.md)    | Per-tab pane routing                      |
+| `146.0.7650.0-issue-512` | [Issue 512](issues/512-vsync.md)             | 120fps oversampling                       |
+| `146.0.7650.0-issue-514` | [Issue 514](issues/514-mouse.md)             | Mouse clicks + URL sync                   |
+| `146.0.7650.0-issue-515` | [Issue 515](issues/515-drag.md)              | Focus state + text selection              |
+| `146.0.7650.0-issue-603` | [Issue 603](issues/603-box-demo.md)          | Box demo                                  |
+| `146.0.7650.0-issue-607` | [Issue 607](issues/607-keyboard-input.md)    | Keyboard input                            |
+| `146.0.7650.0-issue-608` | [Issue 608](issues/608-search-input.md)      | Search input                              |
+| `146.0.7650.0-issue-609` | [Issue 609](issues/609-keyboard-input-2.md)  | Keyboard input (continued)                |
+| `146.0.7650.0-issue-616` | [Issue 616](issues/616-web-features.md)      | Web features (loading, nav, context menu) |
+| `146.0.7650.0-issue-620` | [Issue 620](issues/620-zig-content-shell.md) | Zig Content Shell                         |
 
 ## Local Setup
 
@@ -94,8 +95,8 @@ that permanently downgrade the build directory to Ninja. Every subsequent
 `autoninja` invocation will detect the Ninja state and fall back to Ninja,
 printing:
 
-> You're still using Ninja. Please run 'gn clean out/Default' when convenient
-> to upgrade this output directory to Siso (Chromium's Ninja replacement).
+> You're still using Ninja. Please run 'gn clean out/Default' when convenient to
+> upgrade this output directory to Siso (Chromium's Ninja replacement).
 
 The only recovery is `gn clean out/Default`, which deletes the entire build
 cache (preserving only `args.gn`) and forces a full rebuild (~1.5 hours).
