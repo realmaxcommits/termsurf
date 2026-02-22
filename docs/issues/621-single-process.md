@@ -304,3 +304,99 @@ Load the trace in `chrome://tracing` or Perfetto UI. The trace will show exactly
 where time is spent per frame for each compositor, revealing whether the
 bottleneck is in cc scheduling, GPU command submission, or Blink main thread
 work.
+
+## Experiments
+
+### Experiment 1: Reproduce the baseline — single profile, google.com
+
+Establish the baseline on a fresh Chromium branch. Copy the Zig Content Shell
+files from Issue 620's branch (`146.0.7650.0-issue-620`, commit `e69a931` — the
+clean single-profile state from Experiment 10). Load google.com in a single
+profile. Verify 60fps rendering.
+
+This confirms the build works on the fresh branch with zero Issue 620
+instrumentation (no `[TS-DIAG]` logging in display_scheduler.cc,
+begin_frame_tracker.cc, compositor_frame_sink_support.cc, or
+external_begin_frame_source_mac.cc).
+
+#### Setup
+
+1. Create the new branch from the vanilla tag:
+
+   ```bash
+   cd ~/dev/termsurf/chromium/src
+   git checkout -b 146.0.7650.0-issue-621 146.0.7650.0
+   ```
+
+2. Copy the `content/zig_content_shell/` directory from Issue 620's Experiment
+   10 commit. The directory contains 7 files:
+
+   - `BUILD.gn` — GN build target (app bundle + framework + helpers)
+   - `content_api_shim.h` — C header exporting `ContentMain`
+   - `content_api_shim.mm` — C++ shim with three subclasses
+   - `app-Info.plist` — App bundle plist
+   - `framework-Info.plist` — Framework plist
+   - `helper-Info.plist` — Helper app plist
+   - `ts_main.mm` — Custom launcher (not compiled in this experiment, but
+     present in the tree from Issue 620)
+
+   ```bash
+   git checkout 146.0.7650.0-issue-620 -- content/zig_content_shell/
+   ```
+
+3. The `content_api_shim.mm` from commit `e69a931` is the clean single-profile
+   version. It may need to be restored to that state since the 620 branch HEAD
+   has the two-profile Experiment 15 code:
+
+   ```bash
+   git show e69a931:content/zig_content_shell/content_api_shim.mm \
+     > content/zig_content_shell/content_api_shim.mm
+   ```
+
+   Update the comment block at the top to reference Issue 621 instead of 620.
+
+#### content_api_shim.mm (expected state)
+
+Single profile, single window, only `InitializeMessageLoopContext` overridden.
+Parent `ShellBrowserMainParts` handles `InitializeBrowserContexts` and
+`PostMainMessageLoopRun` — no profile path override, no second BrowserContext.
+
+```cpp
+const char* kInitialUrl = "https://google.com";
+
+class TsBrowserMainParts : public content::ShellBrowserMainParts {
+ protected:
+  void InitializeMessageLoopContext() override {
+    content::Shell::CreateNewWindow(browser_context(), GURL(kInitialUrl),
+                                    nullptr, gfx::Size());
+  }
+};
+```
+
+The three-class chain (`TsMainDelegate` → `TsContentBrowserClient` →
+`TsBrowserMainParts`) is identical to Issue 620 Experiment 1/10.
+
+#### Build
+
+```bash
+cd ~/dev/termsurf/chromium/src
+export PATH="$HOME/dev/termsurf/chromium/depot_tools:$PATH"
+gn gen out/Default
+autoninja -C out/Default zig_content_shell
+```
+
+#### Verification
+
+1. Launch the app:
+   ```bash
+   open out/Default/Zig\ Content\ Shell.app
+   ```
+2. One Content Shell window appears showing google.com
+3. Page is interactive — type into the search box, scroll, click links
+4. Rendering is smooth (60fps) — no stuttering or freezing
+5. Close the window — process exits cleanly
+
+If 60fps: baseline established. Proceed to Experiment 2 (add second profile).
+
+If 2fps: something is different about this branch. Compare with Issue 620's
+branch to find the discrepancy.
