@@ -152,3 +152,169 @@ Source code research only — no code changes, no builds. Read the Chromium sour
 in `chromium/src/` to trace the actual code paths. The goal is a detailed map of
 the IPC architecture that we can use to design TermSurf's replacement for XPC
 message-passing.
+
+## Experiments
+
+### Experiment 1: Map Chromium's IPC architecture
+
+A source code research experiment — no code changes, no builds. Read the
+Chromium source in `chromium/src/` to answer all six research questions. The
+goal is a concrete, code-referenced map of every process, IPC mechanism, and
+data path involved in rendering a web page.
+
+#### Q1: What processes exist?
+
+Trace how Content Shell spawns its process tree.
+
+**Where to look:**
+
+- `content/browser/browser_main_loop.cc` — browser process initialization. What
+  child processes does it launch?
+- `content/browser/gpu/gpu_process_host.cc` — GPU/Viz process launch. Is it
+  always out-of-process? What flags control in-process GPU?
+- `content/browser/renderer_host/render_process_host_impl.cc` — renderer process
+  creation. How does `GetProcessHostForSiteInstance()` decide whether to create
+  a new process or reuse one?
+- `content/browser/utility_process_host.cc` — utility processes. Is the network
+  service a utility process?
+- `content/public/common/content_switches.h` — flags like `--single-process`,
+  `--in-process-gpu`, `--no-sandbox`. What do they control?
+
+**Deliverable:** A process tree diagram showing exactly what processes exist for
+a Content Shell instance with one tab loading a page with JavaScript.
+
+#### Q2: How do they communicate?
+
+Map the IPC stack from OS primitives up to application-level interfaces.
+
+**Where to look:**
+
+- `mojo/public/cpp/system/` — Mojo primitives. What are message pipes, data
+  pipes, shared buffers, and platform handles? How do they map to kernel
+  objects?
+- `mojo/core/` — Mojo core implementation. How does a Mojo message pipe become
+  an actual OS-level transport?
+- `mojo/public/cpp/platform/platform_channel.cc` — how channels are created.
+  What OS primitive is used on macOS?
+- `mojo/core/channel_mac.cc` — macOS channel implementation. How does it use
+  `mach_msg`? How are Mach ports bootstrapped between processes?
+- `ipc/ipc_channel_mojo.cc` — the legacy IPC layer on top of Mojo. Is this still
+  used for anything rendering-critical?
+- `content/browser/child_process_launcher.cc` — how the browser process creates
+  a child and establishes the initial Mojo connection.
+
+**Deliverable:** A layered diagram: OS primitives (Mach ports, shared memory) →
+Mojo transport → Mojo interfaces → application-level calls.
+
+#### Q3: What Mojo interfaces carry rendering traffic?
+
+Identify the specific `.mojom` interfaces on the rendering-critical path.
+
+**Where to look:**
+
+- `services/viz/public/mojom/compositing/compositor_frame_sink.mojom` — the
+  interface between renderer and Viz. What methods does it have? How are
+  CompositorFrames submitted?
+- `third_party/blink/public/mojom/widget/platform_widget.mojom` — or whatever
+  carries input events from browser to renderer.
+- `content/common/renderer.mojom` — renderer-side Mojo interface. What
+  rendering-relevant methods exist?
+- `services/viz/privileged/mojom/compositing/` — privileged Viz interfaces used
+  by the browser process.
+- `content/browser/renderer_host/input/input_router_impl.cc` — how input events
+  are routed. What Mojo interface do they travel on?
+
+**Deliverable:** A list of the Mojo interfaces on the hot path for input and
+frame submission, with their method signatures.
+
+#### Q4: Where is shared memory used?
+
+Find every place shared memory is used in the rendering pipeline.
+
+**Where to look:**
+
+- `gpu/command_buffer/common/cmd_buffer_common.h` — the GPU command buffer ring.
+  How is the shared memory region created and mapped?
+- `gpu/command_buffer/client/cmd_buffer_helper.h` — client-side command buffer.
+  How does the renderer write commands without IPC per call?
+- `gpu/command_buffer/service/command_buffer_service.cc` — GPU-side command
+  buffer. How does the GPU process consume commands?
+- `base/memory/shared_memory_region.h` — Chromium's shared memory abstraction.
+  How are regions created, duplicated across processes, and mapped?
+- `base/memory/platform_shared_memory_region.h` — platform-specific
+  implementation. What macOS API does it use? (`mach_vm_allocate`? `shm_open`?
+  `mmap`?)
+- `components/viz/common/resources/transferable_resource.h` — how GPU textures
+  are referenced across processes. Are they shared memory or GPU handles?
+- `gpu/ipc/common/gpu_memory_buffer_impl_io_surface.cc` — IOSurface as shared
+  GPU memory. How is this created and shared?
+
+**Deliverable:** A catalog of shared memory uses in the rendering pipeline: what
+data lives in shared memory, how regions are created, and how they're shared
+between processes.
+
+#### Q5: How does user input reach the renderer?
+
+Trace a mouse click from the OS event to the renderer's compositor thread.
+
+**Where to look:**
+
+- `content/browser/renderer_host/render_widget_host_view_mac.mm` — where macOS
+  delivers NSEvents. How does `mouseDown:` get processed?
+- `content/browser/renderer_host/render_widget_host_input_event_router.cc` — how
+  the browser process routes events to the correct renderer.
+- `content/browser/renderer_host/input/input_router_impl.cc` — the input router.
+  What Mojo interface sends events to the renderer?
+- `content/renderer/input/widget_input_handler_impl.cc` — renderer-side input
+  handling. How does the event reach the compositor thread?
+- `cc/input/input_handler.cc` — compositor-thread input handling. How does
+  scroll get handled without the main thread?
+- `third_party/blink/renderer/platform/widget/input/widget_input_handler_manager.cc`
+  — how input is dispatched between compositor and main threads in the renderer.
+
+**Deliverable:** A sequence diagram from `NSEvent` to compositor thread action,
+with every process boundary and IPC hop labeled.
+
+#### Q6: How does the rendered frame reach the display?
+
+Trace a rendered pixel from rasterization to the screen on macOS.
+
+**Where to look:**
+
+- `cc/trees/layer_tree_host_impl.cc` — how the compositor produces a
+  CompositorFrame. What does `SubmitCompositorFrame()` do?
+- `services/viz/public/mojom/compositing/compositor_frame_sink.mojom` — the Mojo
+  interface for frame submission. Is the CompositorFrame serialized or
+  referenced?
+- `components/viz/service/display/display.cc` — how the Display aggregates
+  frames and draws. What is the output?
+- `components/viz/service/display_embedder/output_surface_provider_impl.cc` —
+  how the output surface is created on macOS.
+- `ui/accelerated_widget_mac/accelerated_widget_mac.mm` — how `CALayerParams`
+  are produced and delivered.
+- `ui/accelerated_widget_mac/display_ca_layer_tree.mm` — how `CALayerHost` is
+  created from a `ca_context_id`.
+- `ui/gfx/ca_layer_params.h` — the struct that carries the display result. What
+  fields does it have?
+- `gpu/ipc/service/gpu_memory_buffer_factory_io_surface.cc` — how IOSurface
+  buffers are created in the GPU process.
+
+**Deliverable:** A sequence diagram from `SubmitCompositorFrame()` to pixels on
+screen, with every process boundary, GPU operation, and macOS Window Server
+interaction labeled.
+
+#### Verification
+
+Research is complete when we can draw two end-to-end diagrams:
+
+1. **Input path:** OS event → browser process → renderer process → compositor
+   thread, with every IPC mechanism (Mojo message pipe, shared memory, Mach
+   port) labeled at each hop.
+2. **Frame path:** Renderer rasterization → CompositorFrame submission → Viz
+   aggregation → display output → macOS screen, with every IPC mechanism and GPU
+   memory sharing technique labeled.
+
+Both diagrams should reference specific source files and line numbers. The
+diagrams should make it clear which steps use message passing (and could be
+replaced with shared memory) and which already use shared memory or zero-copy
+GPU textures.
