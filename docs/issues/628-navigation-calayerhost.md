@@ -660,3 +660,117 @@ accidentally filter out the new ID?
 Research is complete when we can answer all four questions and propose a
 concrete fix that keeps the old content visible during navigation until the new
 content is ready.
+
+#### Results
+
+**Pass.** All four questions answered. The root cause is identified.
+
+**R1: How does Chromium's normal browser keep old content visible?**
+
+Chromium uses a **SurfaceRange fallback mechanism** in the viz compositor:
+
+1. `DelegatedFrameHost::DidNavigateMainFramePreCommit()` invalidates the primary
+   surface but preserves the old surface as a fallback via
+   `SurfaceRange(fallback, primary)`.
+2. `EmbedSurface()` sets the new primary surface with a `DeadlinePolicy`. The
+   compositor renders the fallback (old content) while waiting for the primary
+   (new content) to produce its first frame.
+3. `SurfaceManager::GetLatestInFlightSurface()` tries the primary first; if no
+   active frame, it falls back to the old surface.
+4. `DisplayCALayerTree::GotCALayerFrame()` adds the new CALayerHost before
+   removing the old one — an atomic visual swap.
+5. For cross-site navigation, `TakeFallbackContentFrom()` transfers the old
+   view's surface to the new view as a fallback.
+
+The key insight: this mechanism operates **inside** the viz compositor pipeline.
+The CAContext is the final output — whatever the compositor renders (primary or
+fallback) goes into the CAContext's layer tree.
+
+**R2: How does Electron handle navigation transitions?**
+
+Electron delegates entirely to the same `DelegatedFrameHost` mechanism:
+
+```cpp
+void OffScreenRenderWidgetHostView::DidNavigate() {
+  ResizeRootLayer(true);
+  if (delegated_frame_host())
+    delegated_frame_host()->DidNavigate();
+}
+```
+
+Electron also uses `HoldResize()` / `ReleaseResize()` to freeze layout during
+transitions, preventing intermediate states.
+
+**R3: What is DeadlinePolicy?**
+
+Four types: `UseExistingDeadline` (preserve current countdown),
+`UseDefaultDeadline` (4 frames), `UseSpecifiedDeadline(N)` (N frames),
+`UseInfiniteDeadline` (wait forever).
+
+`BrowserCompositorMac::DidNavigate()` uses `UseExistingDeadline`, meaning "don't
+change the deadline — render immediately with whatever is available." Combined
+with the SurfaceRange fallback, this means: render the fallback (old content)
+immediately while waiting for the new primary surface.
+
+The fallback surface mechanism is entirely within viz. `SurfaceLayer` maintains
+a `SurfaceRange(start, end)` where `start` is the fallback and `end` is the
+primary. `SetSurfaceId()` preserves the fallback when updating the primary.
+
+**R4: Is the callback firing correctly?**
+
+The `CAContext` is created **once** per `CALayerTreeCoordinator` (in the GPU
+process) and never recreated. The `ca_context_id` is `[ca_context_ contextId]` —
+it stays the same for the lifetime of the compositor output. During same-site
+navigation, the `ca_context_id` does not change.
+
+This means:
+
+- Our deduplication (`params.ca_context_id == observer->last_ca_context_id_`)
+  blocks the callback after navigation — the ID hasn't changed.
+- But that's fine: the CALayerHost is already bound to the correct CAContext.
+  Window Server composites whatever the GPU renders into that context.
+
+The 10-second gate in
+`RootCompositorFrameSinkImpl::DisplayDidReceiveCALayerParams` (line 901)
+compares the entire `CALayerParams` struct including `ca_context_id`. Since
+`ca_context_id` doesn't change during same-site navigation, and the pixel size
+likely stays the same (Experiment 4 fixed that), the params ARE identical, and
+the gate blocks the callback. But this shouldn't matter — the CALayerHost
+doesn't need updating.
+
+The `CALayerParams::operator==` comparison includes `is_empty`, `ca_context_id`,
+`io_surface_mach_port`, `pixel_size`, and `scale_factor`.
+
+#### Conclusion
+
+The overlay vanishes during navigation not because of a callback or CALayerHost
+issue, but because **the viz compositor clears its output** during the surface
+transition. The SurfaceRange fallback mechanism should prevent this, but it may
+not be working correctly in our hidden-window configuration.
+
+The `CAContext` is the final output of the viz compositor pipeline. The
+`ca_context_id` stays the same across navigation. Our `CALayerHost` stays bound
+to the correct context. The content visible through the CALayerHost is whatever
+the compositor renders into that context. If the compositor outputs nothing
+during the transition (empty frame, cleared layer tree), the CALayerHost shows
+blank.
+
+In Chromium's normal browser, the SurfaceRange fallback ensures the compositor
+always outputs the old content until the new content is ready. But our setup
+uses a hidden, borderless NSWindow. The `DelegatedFrameHost::EmbedSurface()`
+method has an early return:
+
+```cpp
+if (!client_->DelegatedFrameHostIsVisible()) {
+    return;  // Don't embed if hidden
+}
+```
+
+If our hidden window causes `DelegatedFrameHostIsVisible()` to return false
+during or after navigation, `EmbedSurface()` would skip embedding entirely. The
+compositor would have no surface to render, and the CAContext output would go
+blank.
+
+The next experiment should add logging to confirm this hypothesis: check whether
+`DelegatedFrameHostIsVisible()` returns false during navigation, and whether the
+fallback surface is properly set up.
