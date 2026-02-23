@@ -945,3 +945,140 @@ Run the app, open a browser overlay, click a link. Examine the logs for the
 timeline between navigation start and the overlay reappearing. The logs should
 reveal the exact gap — when the compositor stops delivering params, whether the
 callback is still registered, and what triggers the resumption.
+
+#### Results
+
+**Pass.** The logs reveal the root cause.
+
+**Timeline of the navigation event:**
+
+```
+04:25:30.552  AcceleratedWidgetCALayerParamsUpdated: ca_context_id=3867294868
+              → NEW, sent to GUI → GUI creates CALayerHost → visible ✓
+04:25:30.593  DidNavigate: hidden=0 state=0 first_nav=1 (initial load)
+04:25:30.723  DidStopLoading (initial page loaded)
+
+04:25:34.128  Mouse down (user clicks link)
+04:25:34.192  DidStartLoading
+04:25:34.241  RenderViewHostChanged → new RWHV → new callback registered
+04:25:34.242  DidNavigate: hidden=0 state=0 first_nav=1 (new compositor)
+04:25:34.264  DidStopLoading (new page loaded in 70ms!)
+04:25:34.284  AcceleratedWidgetCALayerParamsUpdated: ca_context_id=9392910
+              → NEW, sent to GUI → GUI replaces CALayerHost → BLANK
+
+              ~~~ 13.5 seconds of ZERO AcceleratedWidgetCALayerParamsUpdated ~~~
+
+04:25:47.808  Key down (user gives up, exits)
+```
+
+**Key findings:**
+
+1. **Chromium is fast.** The new `ca_context_id` (9392910) is sent 100ms after
+   the click. The page loads in 70ms. There is no server-side delay.
+
+2. **The ca_context_id changes** from 3867294868 to 9392910 because
+   `RenderViewHostChanged` creates a new RWHV → new `BrowserCompositorMac` → new
+   `CALayerTreeCoordinator` → new `CAContext`.
+
+3. **The GUI receives and replaces the CALayerHost immediately.** The log shows
+   `replaced CALayerHost contextId=9392910` right after the XPC message.
+
+4. **After the single callback at 34.284, there are ZERO more
+   `AcceleratedWidgetCALayerParamsUpdated` calls for 13.5 seconds.** This is the
+   10-second dedup gate in `RootCompositorFrameSinkImpl`.
+
+#### Conclusion
+
+The 10-second dedup gate in
+`RootCompositorFrameSinkImpl::DisplayDidReceiveCALayerParams()` starves the new
+CAContext of frame updates.
+
+The sequence:
+
+1. New RWHV creates a new `CALayerTreeCoordinator` with a new `CAContext`.
+2. The GPU process reports the new `ca_context_id` via `CALayerParams`.
+3. `DisplayDidReceiveCALayerParams` passes the dedup gate (new ID ≠ old ID).
+4. `AcceleratedWidgetCALayerParamsUpdated` fires → `SetCALayerParams` is called
+   on the NSView → our callback sends the new ID to the GUI via XPC.
+5. The GUI receives the XPC message and creates a new `CALayerHost` with the new
+   `contextId`.
+6. But `SetCALayerParams` was called on the NSView **before** the GUI's
+   `CALayerHost` was connected to the new `CAContext`. The Window Server
+   composited the new `CAContext`'s content at step 4, but no `CALayerHost` was
+   watching yet.
+7. Subsequent compositor frames produce identical `CALayerParams` (same
+   `ca_context_id`, same `pixel_size`). The dedup gate blocks them all for 10
+   seconds.
+8. Without `SetCALayerParams` being called again, no new composite cycle is
+   triggered. The Window Server doesn't know to re-composite the CAContext for
+   the newly-connected `CALayerHost`.
+9. After 10 seconds, the gate expires, `SetCALayerParams` is called, a
+   recomposite occurs, and the content appears.
+
+The fix: reduce the dedup gate duration so `SetCALayerParams` is called again
+soon after the GUI connects the `CALayerHost`.
+
+### Experiment 8: Reduce the 10-second dedup gate
+
+#### Problem
+
+`RootCompositorFrameSinkImpl::DisplayDidReceiveCALayerParams()` has a 10-second
+dedup gate that blocks identical `CALayerParams` from being forwarded for 10
+seconds after the last unique update. After navigation produces a new
+`ca_context_id`, the first callback fires and the GUI creates a new
+`CALayerHost`. But the `SetCALayerParams` call (which triggers a Window Server
+recomposite) happened _before_ the `CALayerHost` was connected — the XPC
+round-trip to the GUI is asynchronous. The dedup gate then blocks all subsequent
+`SetCALayerParams` calls for 10 seconds, preventing the Window Server from
+re-compositing the new `CAContext` for the newly-connected `CALayerHost`.
+
+The gate exists to avoid redundant vsync parameter updates. The comment says:
+
+```cpp
+// OnDisplayReceivedCALayerParams() is ultimately responsible for triggering
+// updates to vsync. VSync may change dynamically. To ensure the value is
+// updated correctly, OnDisplayReceivedCALayerParams() is periodically called,
+// even if the params haven't changed. The value here matches that of
+// DisplayLinkMac, which is responsible for querying for vsync updates.
+next_forced_ca_layer_params_update_time_ =
+    base::TimeTicks::Now() + base::Seconds(10);
+```
+
+10 seconds is far too long. At 100ms, the blank would be imperceptible —
+`SetCALayerParams` would be called again within 100ms of the GUI connecting the
+`CALayerHost`, triggering the Window Server to recomposite.
+
+#### Changes
+
+**`chromium/src/components/viz/service/frame_sinks/root_compositor_frame_sink_impl.cc`:**
+
+Change the dedup gate duration from 10 seconds to 100ms:
+
+```cpp
+next_forced_ca_layer_params_update_time_ =
+    base::TimeTicks::Now() + base::Milliseconds(100);
+```
+
+Also remove the Experiment 7 verbose logging from all three files (the
+diagnostic task is complete):
+
+**`chromium/.../shell_tab_observer.cc`:**
+
+Remove the `LOG(INFO) << "[CALayerParams]"` diagnostic logging from the callback
+lambda. Keep the existing `LOG(INFO) << "[ShellTabObserver] Sent ca_context_id"`
+log that was there before Experiment 7.
+
+**`chromium/.../browser_compositor_view_mac.mm`:**
+
+Remove the `LOG(INFO) << "[BrowserCompositorMac::DidNavigate]"` line.
+
+**`chromium/.../render_widget_host_view_mac.mm`:**
+
+Remove the `LOG(INFO) << "[AcceleratedWidgetCALayerParamsUpdated]"` block.
+
+#### Verification
+
+Run the app, open a browser overlay at `news.ycombinator.com`, click a link. The
+new page should appear within ~200ms — no visible blank gap. Test multiple
+navigations in sequence. Test cross-site navigation (e.g., a link from HN to an
+external site).
