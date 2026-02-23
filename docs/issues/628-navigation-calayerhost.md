@@ -1100,3 +1100,100 @@ The blank persists for ~10 seconds regardless of how frequently
 possibly in the Window Server's handling of cross-process CAContext/CALayerHost
 connections, or in how the hidden NSWindow's layer tree interacts with the
 compositor output.
+
+## Conclusion
+
+Issue 628 is **unresolved**. Eight experiments failed to fix the ~10-second
+blank that appears when clicking a link. None of the code changes had any
+observable effect on the problem. All changes from this issue should be
+reverted.
+
+### What we learned
+
+The overlay vanishes for ~10 seconds when clicking a link. Diagnostic logging
+(Experiment 7) confirmed that Chromium sends the new `ca_context_id` within
+100ms of the click and the page loads in ~70ms. The GUI receives the ID and
+replaces the `CALayerHost` immediately. Yet the `CALayerHost` shows nothing for
+~10 seconds.
+
+The problem is not in the callback lifecycle, not in the compositor surface
+fallback mechanism, and not in the dedup gate timing. All eight experiments
+targeted the Chromium-side pipeline, and all failed. The root cause is likely
+outside Chromium — in the Window Server's handling of cross-process
+CAContext/CALayerHost connections.
+
+### Experiment summary
+
+| Exp | Approach                                               | Result                       |
+| --- | ------------------------------------------------------ | ---------------------------- |
+| 1   | Re-register callback on view swap, replace CALayerHost | Partial (no effect on blank) |
+| 2   | Re-apply size in `RenderViewHostChanged`               | Fail                         |
+| 3   | Research: Electron/Chromium sizing                     | Pass (research only)         |
+| 4   | Resize NSWindow instead of `view->SetSize()`           | Pass (no effect on blank)    |
+| 5   | Research: navigation transitions, dedup gate           | Pass (research only)         |
+| 6   | Set fallback surface before navigation                 | Fail                         |
+| 7   | Diagnostic logging                                     | Pass (research only)         |
+| 8   | Reduce dedup gate to 100ms                             | Fail                         |
+
+### Ideas for the next issue
+
+The problem is likely in the **Window Server's handling of cross-process
+CAContext/CALayerHost connections** when the CAContext belongs to a hidden
+window. Possible directions:
+
+1. **Test with a visible window.** Does the blank disappear if the Chromium
+   Profile Server's NSWindow is visible (remove `[window orderOut:nil]`)? If so,
+   the hidden window is interfering with CAContext compositing. The Window
+   Server may deprioritize or defer compositing for off-screen windows.
+
+2. **Keep the old CALayerHost alive longer.** Currently the GUI destroys the old
+   `CALayerHost` immediately when the new `ca_context_id` arrives. If the old
+   `CALayerHost` were kept alive (behind the new one) until the new one has
+   visible content, the transition might appear smoother. This is a GUI-side
+   change.
+
+3. **Force a Window Server recomposite.** After creating the new `CALayerHost`,
+   explicitly trigger a display update — e.g., `setNeedsDisplay` on the layer,
+   or toggling a property. The Window Server may not know it needs to fetch
+   content from the new remote CAContext.
+
+4. **Use `CATransaction` to batch the swap.** Chromium's
+   `DisplayCALayerTree::GotCALayerFrame()` adds the new `CALayerHost` before
+   removing the old one. Wrapping the swap in a `CATransaction` might make it
+   atomic from the Window Server's perspective.
+
+5. **Investigate whether the 10-second delay is actually a macOS CARemoteLayer
+   timeout.** The delay is suspiciously consistent. macOS may have an internal
+   timeout for establishing cross-process CAContext connections. Research
+   `CARemoteLayerServer` / `CARemoteLayerClient` behavior.
+
+### Code changes (all should be reverted)
+
+None of the code changes from this issue had any effect on the blank. All should
+be reverted.
+
+#### Chromium (`chromium/src/`, branch `146.0.7650.0-issue-628`)
+
+5 commits on top of `146.0.7650.0-issue-627`:
+
+| Commit    | Experiment | Files                                                           |
+| --------- | ---------- | --------------------------------------------------------------- |
+| `25fab61` | Exp 1      | `shell_tab_observer.cc/h`, `shell_browser_main_parts.cc`        |
+| `f056024` | Exp 2      | `shell_tab_observer.cc/h`, `shell_browser_main_parts.cc`        |
+| `66d2b51` | Exp 4      | `shell_platform_delegate_mac.mm`, `shell_browser_main_parts.cc` |
+| `7b14b21` | Exp 6      | `browser_compositor_view_mac.mm`                                |
+| `a3947ae` | Exp 8      | `root_compositor_frame_sink_impl.cc`                            |
+
+**To revert:** Start the next issue's Chromium branch from
+`146.0.7650.0-issue-627`, discarding this branch entirely.
+
+#### GUI (`gui/`, main repo)
+
+| Commit    | Experiment | Files                        |
+| --------- | ---------- | ---------------------------- |
+| `a73f3e1` | Exp 1      | `gui/src/renderer/Metal.zig` |
+
+This commit changed `Metal.zig` to replace the `CALayerHost` (destroy old,
+create new) when the `ca_context_id` changes.
+
+**To revert:** `git revert a73f3e1`
