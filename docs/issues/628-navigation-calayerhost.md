@@ -132,3 +132,90 @@ independent of the `ca_context_id`. Only the `CALayerHost` needs to be replaced.
 ### Chromium branch
 
 `146.0.7650.0-issue-628`, branched from `146.0.7650.0-issue-627`.
+
+## Experiments
+
+### Experiment 1: Re-register callback on view swap, replace CALayerHost on context change
+
+Fix both failure points identified in the analysis.
+
+#### Chromium side: re-register callback after navigation
+
+The `SetCALayerParamsCallbackOnView` callback is registered once in
+`CreateTab()` on the initial `RenderWidgetHostView`. If navigation causes a
+renderer process swap, the old view is destroyed and the callback is lost.
+
+`ShellTabObserver` already extends `WebContentsObserver` and has
+`xpc_connection_` and `pane_id_`. `WebContentsObserver` provides
+`RenderViewHostChanged(old_host,
+new_host)`, which fires when the `WebContents`
+swaps its `RenderViewHost` — exactly when the `RenderWidgetHostView` changes.
+
+Move the CALayerParams callback registration into `ShellTabObserver` so it can
+re-register after a view swap:
+
+1. Add a `RegisterCALayerParamsCallback()` method to `ShellTabObserver` that
+   gets the current `RenderWidgetHostView` from `web_contents()`, and calls
+   `SetCALayerParamsCallbackOnView` with the same callback logic currently in
+   `CreateTab()`. Track the `last_id` as a member variable (not `base::Owned`)
+   so it persists across re-registrations.
+2. Override `RenderViewHostChanged()` in `ShellTabObserver`. In the override,
+   call `RegisterCALayerParamsCallback()` to re-register on the new view.
+3. In `CreateTab()`, replace the inline callback registration with a call to
+   `tab_observer->RegisterCALayerParamsCallback()`.
+
+#### GUI side: replace CALayerHost instead of updating contextId
+
+Match Chromium's `DisplayCALayerTree::GotCALayerFrame()` pattern. When the
+`ca_context_id` changes on an existing overlay, destroy the old `CALayerHost`
+and create a new one inside the existing `positioning_layer`.
+
+In `Metal.setCALayerHostContextId`, change the existing-host branch: instead of
+`host.setProperty("contextId", context_id)`, remove the old `CALayerHost` from
+its superlayer and release it, then create a new `CALayerHost` with the new
+`contextId`, set `anchorPoint = zero` and
+`autoresizingMask = kCALayerMaxXMargin | kCALayerMaxYMargin`, add it as a
+sublayer of the `positioning_layer`, and update `ca_layer_host_ptr`.
+
+The `positioning_layer` pointer is needed in `setCALayerHostContextId` for this.
+Pass it as a parameter (it's already stored in `generic.zig`).
+
+#### Changes
+
+**`chromium/.../shell_tab_observer.h`:**
+
+- Add `void RegisterCALayerParamsCallback()` declaration.
+- Add `void RenderViewHostChanged(RenderViewHost*, RenderViewHost*)` override.
+- Add `uint32_t last_ca_context_id_ = 0` member.
+
+**`chromium/.../shell_tab_observer.cc`:**
+
+- Implement `RegisterCALayerParamsCallback()`: get
+  `web_contents()->GetRenderWidgetHostView()`, guard on null, call
+  `SetCALayerParamsCallbackOnView` with a lambda that sends the `"ca_context"`
+  XPC message. Use `&last_ca_context_id_` for deduplication (member, not owned).
+- Implement `RenderViewHostChanged()`: log the swap, call
+  `RegisterCALayerParamsCallback()`.
+- Add `#include "shell_ca_layer_bridge_mac.h"` for the bridge function.
+
+**`chromium/.../shell_browser_main_parts.cc`:**
+
+- In `CreateTab()`, remove the inline `SetCALayerParamsCallbackOnView` block.
+  Replace with `tab_observer->RegisterCALayerParamsCallback()`.
+
+**`gui/src/renderer/Metal.zig`:**
+
+- Change `setCALayerHostContextId` to accept the `positioning_layer` pointer.
+- In the existing-host branch: remove old CALayerHost from superlayer, release
+  it, create a new one, add to `positioning_layer`, update `ca_layer_host_ptr`.
+
+**`gui/src/renderer/generic.zig`:**
+
+- Pass `self.ca_layer_positioning` to `setCALayerHostContextId`.
+
+#### Verification
+
+Run the app, open a browser overlay at `google.com`, search for something. The
+search results page should render — the overlay should not vanish. Test clicking
+links on the results page. Test navigating back with Cmd+[. Test cross-site
+navigation (e.g., clicking a link from Google to Wikipedia).
