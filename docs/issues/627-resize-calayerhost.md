@@ -285,3 +285,38 @@ to the bottom of the IOSurfaceLayer, so during resize the layer stayed fixed
 relative to the bottom edge. With the 3-layer architecture, the positioning
 layer is placed relative to the top of the flipped layer, which tracks the top
 of the window automatically.
+
+## Conclusion
+
+Issue 627 restored resize behavior that was broken during the CALayerHost
+migration (Issue 625). Two problems were fixed across two experiments.
+
+**Experiment 1** restored the resize pipeline. The Issue 625 commit accidentally
+removed `sendResize()` from the GUI and the `"resize"` XPC handler from
+Chromium. Without these, Chromium never learned about size changes — the
+WebContents stayed at its initial dimensions. Restoring `sendResize()` (now
+dispatching to `ResizeTab()` instead of `ResizeCapture()`, since there is no
+capturer) and adding `updateCALayerHostFrame()` to the `size_changed` path in
+`drawFrame()` got resize working again.
+
+**Experiment 2** fixed bottom-anchored sliding during resize. The Y-flip formula
+from Issue 626 (`y = parent_height - y_from_top - h`) positioned the overlay
+relative to the bottom of the IOSurfaceLayer. During a drag-resize,
+`parent_height` changes every frame, so the overlay slid with the bottom edge.
+The fix introduced a 3-layer architecture:
+
+```
+IOSurfaceLayer (Y=0 at bottom)
+└─ flipped_layer (geometryFlipped=YES, auto-fills parent)
+   └─ positioning_layer (explicit frame, top-origin Y)
+      └─ CALayerHost (at origin)
+```
+
+The `flipped_layer` auto-resizes with the window and provides a top-origin
+coordinate system. The `positioning_layer` uses simple top-origin Y — no flip
+formula, no dependency on parent height. The overlay stays pinned to the
+top-left and grows downward on resize.
+
+The CALayerHost integration is now functionally complete: pixel-perfect
+positioning (Issue 626), resize tracking (Issue 627), and zero per-frame IPC
+(Issue 625).
