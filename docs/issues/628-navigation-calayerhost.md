@@ -128,3 +128,7 @@ IOSurfaceLayer (Y=0 at bottom)
 
 The `flipped_layer` and `positioning_layer` should survive navigation — they are
 independent of the `ca_context_id`. Only the `CALayerHost` needs to be replaced.
+
+### Chromium branch
+
+`146.0.7650.0-issue-628`, branched from `146.0.7650.0-issue-627`.
