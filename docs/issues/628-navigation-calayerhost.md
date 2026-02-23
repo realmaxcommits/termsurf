@@ -561,3 +561,102 @@ Resizing the NSWindow via `[window setContentSize:]` lets the standard
 autoresizing chain propagate the size through the entire view hierarchy. The
 `dfh_size_dip_` in `BrowserCompositorMac` stays correct across navigations
 because it derives from the actual NSView bounds, which follow the window.
+
+### Experiment 5: Research the vanishing overlay during navigation
+
+#### Problem
+
+When the user clicks a link, the overlay vanishes immediately and stays blank
+for ~10 seconds before the new page appears. This is far longer than the actual
+page load time. A normal browser keeps the old page visible until the new one is
+ready — the transition should be nearly seamless.
+
+The current code replaces the `CALayerHost` when a new `ca_context_id` arrives
+(Experiment 1). But there are two timing issues:
+
+1. **The old CALayerHost is destroyed too early.** The old `ca_context_id` may
+   become invalid as soon as the GPU process tears down the old compositor
+   surface, which happens before the new page has rendered. The overlay goes
+   blank.
+
+2. **The new `ca_context_id` arrives late.** The CALayerParams callback fires
+   only when the GPU process has a fully composited frame for the new page. If
+   the page takes time to load/render, the callback is delayed.
+
+The result: the old content vanishes immediately, and there's a long gap before
+the new content appears. The ~10 second delay suggests something beyond normal
+page load — possibly the new `ca_context_id` is not being sent at all until some
+timeout or fallback triggers.
+
+#### Research questions
+
+**R1: How does Chromium's normal browser handle the transition between old and
+new content during navigation?**
+
+In stock Chromium (not content_shell), when the user clicks a link, the old page
+stays visible until the new page is ready. How is this achieved? Is there a
+"deadline" mechanism where the old surface is kept alive until the new one
+produces its first frame?
+
+Look at:
+
+- `BrowserCompositorMac::DidNavigate()` — the `DeadlinePolicy` parameter in
+  `EmbedSurface()`.
+- `DelegatedFrameHost` — how it manages the transition between old and new
+  surfaces.
+- `DisplayCALayerTree::GotCALayerFrame()` — does it keep the old remote layer
+  until the new one has content?
+
+**R2: How does Electron handle navigation transitions in off-screen rendering?**
+
+Electron renders off-screen like we do. When navigating, does Electron show the
+old frame until the new one arrives? Does it have a "hold" mechanism?
+
+Look at:
+
+- `vendor/electron/shell/browser/osr/osr_render_widget_host_view.cc` — search
+  for `DidNavigate`, `DidNavigateMainFrame`, `SurfaceId`, `EmbedSurface`,
+  `deadline`, or `fallback`.
+- `vendor/electron/shell/browser/osr/osr_video_consumer.cc` — does the video
+  consumer handle navigation transitions?
+
+**R3: What is the `DeadlinePolicy` in `EmbedSurface`, and how does it control
+the old-to-new surface transition?**
+
+`BrowserCompositorMac::DidNavigate()` calls:
+
+```cpp
+delegated_frame_host_->EmbedSurface(
+    ..., dfh_size_dip_, cc::DeadlinePolicy::UseExistingDeadline());
+```
+
+What does `UseExistingDeadline` mean? What other policies are available? Does
+the deadline control how long the old surface stays visible? If the deadline
+expires before the new surface produces a frame, does the compositor show a
+blank?
+
+Look at:
+
+- `chromium/src/cc/trees/deadline_policy.h`
+- `chromium/src/components/viz/common/surfaces/` — surface lifecycle
+- `DelegatedFrameHost::EmbedSurface()` — how it applies the deadline
+
+**R4: Is our CALayerParams callback firing correctly during navigation?**
+
+The ~10 second delay suggests the callback may not be firing when expected. Add
+logging to understand the timeline:
+
+- When does the old `ca_context_id` become invalid?
+- When does the new `ca_context_id` arrive?
+- Is there a gap where no callback fires at all?
+
+Check the `RegisterCALayerParamsCallback` implementation: is the callback still
+registered on the correct view after navigation? Does same-site navigation
+preserve the callback? Does the deduplication logic (`last_ca_context_id_`)
+accidentally filter out the new ID?
+
+#### Verification
+
+Research is complete when we can answer all four questions and propose a
+concrete fix that keeps the old content visible during navigation until the new
+content is ready.
