@@ -258,3 +258,30 @@ bottom-anchored sliding.
 Run the app, open a browser overlay, drag the bottom edge of the window down.
 The web content should stay pinned to the top-left and grow downward — no
 sliding. Test dragging all four edges and corners.
+
+#### Results
+
+**Pass.** The overlay stays pinned to the top-left on resize. Dragging the
+bottom edge grows the content downward — no sliding, no bottom-anchoring.
+
+The initial implementation failed because `flipped_layer` had no explicit frame
+and `autoresizingMask` does not set the initial size — the layer started at zero
+size, making the overlay invisible. The fix was to set the initial frame on
+`flipped_layer` to the parent's bounds at creation time. After that,
+`autoresizingMask` handles all subsequent resizes.
+
+#### Conclusion
+
+The 3-layer architecture works:
+`IOSurfaceLayer → flipped_layer → positioning_layer → CALayerHost`. The
+`flipped_layer` auto-fills the parent and provides a top-left-origin coordinate
+system via `geometryFlipped=YES`. The `positioning_layer` holds the explicit
+frame at the overlay grid rectangle using simple top-origin Y — no Y-flip
+formula needed. The CALayerHost sits at origin inside the positioning layer.
+
+This eliminates the bottom-anchored sliding from Experiment 1. The Y-flip
+formula (`y = parent_height - y_from_top - h`) positioned the overlay relative
+to the bottom of the IOSurfaceLayer, so during resize the layer stayed fixed
+relative to the bottom edge. With the 3-layer architecture, the positioning
+layer is placed relative to the top of the flipped layer, which tracks the top
+of the window automatically.

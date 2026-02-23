@@ -161,17 +161,20 @@ pub fn deinit(self: *Metal) void {
     self.layer.release();
 }
 
-/// Create or update a CALayerHost for browser overlay (Issue 625/626).
+/// Create or update a CALayerHost for browser overlay (Issue 625/626/627).
 /// The CALayerHost displays the remote CAContext from Chromium's GPU process.
 /// Window Server composites directly from GPU VRAM — zero per-frame IPC.
 ///
-/// Layer tree matches Chromium's DisplayCALayerTree pattern (Issue 626):
-///   IOSurfaceLayer → flipped_layer (geometryFlipped) → CALayerHost
+/// Layer tree (Issue 627 Experiment 2):
+///   IOSurfaceLayer → flipped_layer (geometryFlipped, auto-fills parent)
+///     → positioning_layer (explicit frame, top-origin Y)
+///       → CALayerHost (at origin)
 pub fn setCALayerHostContextId(
     self: *Metal,
     context_id: u32,
     ca_layer_host_ptr: *?*anyopaque,
     ca_layer_flipped_ptr: *?*anyopaque,
+    ca_layer_positioning_ptr: *?*anyopaque,
 ) void {
     const CALayerHost = objc.getClass("CALayerHost") orelse {
         log.warn("CALayerHost class not found", .{});
@@ -195,36 +198,50 @@ pub fn setCALayerHostContextId(
         const kCALayerMaxYMargin: c_uint = 1 << 5; // 32
 
         // Create intermediate flipped layer (matches Chromium's maybe_flipped_layer_).
-        // This layer provides a top-left-origin coordinate system for the CALayerHost.
+        // Auto-fills the parent IOSurfaceLayer. geometryFlipped=YES gives
+        // sublayers a top-left-origin coordinate system.
         const flipped_id = CALayer.msgSend(objc.c.id, objc.sel("layer"), .{});
         const flipped = objc.Object.fromId(flipped_id).retain();
         flipped.setProperty("geometryFlipped", true);
         flipped.setProperty("anchorPoint", macos.graphics.Point{ .x = 0, .y = 0 });
+        // Set initial frame to parent bounds — autoresizingMask only handles
+        // subsequent size changes, not initial sizing.
+        const parent_bounds = self.layer.layer.getProperty(macos.graphics.Rect, "bounds");
+        flipped.setProperty("frame", parent_bounds);
         flipped.setProperty("autoresizingMask", kCALayerWidthSizable | kCALayerHeightSizable);
         self.layer.layer.msgSend(void, objc.sel("addSublayer:"), .{flipped.value});
         ca_layer_flipped_ptr.* = flipped.value;
 
-        // Create CALayerHost as sublayer of the flipped layer.
+        // Create positioning layer inside the flipped layer.
+        // This layer gets the explicit frame at the overlay grid rectangle.
+        // Its Y coordinate is top-origin (because the parent is flipped).
+        const pos_id = CALayer.msgSend(objc.c.id, objc.sel("layer"), .{});
+        const pos = objc.Object.fromId(pos_id).retain();
+        pos.setProperty("anchorPoint", macos.graphics.Point{ .x = 0, .y = 0 });
+        flipped.msgSend(void, objc.sel("addSublayer:"), .{pos.value});
+        ca_layer_positioning_ptr.* = pos.value;
+
+        // Create CALayerHost as sublayer of the positioning layer.
         const host_id = CALayerHost.msgSend(objc.c.id, objc.sel("layer"), .{});
         const host = objc.Object.fromId(host_id).retain();
         host.setProperty("contextId", @as(u32, context_id));
         host.setProperty("anchorPoint", macos.graphics.Point{ .x = 0, .y = 0 });
         host.setProperty("autoresizingMask", kCALayerMaxXMargin | kCALayerMaxYMargin);
-        flipped.msgSend(void, objc.sel("addSublayer:"), .{host.value});
+        pos.msgSend(void, objc.sel("addSublayer:"), .{host.value});
         ca_layer_host_ptr.* = host.value;
 
-        log.info("created CALayerHost contextId={} with flipped intermediate layer", .{context_id});
+        log.info("created CALayerHost contextId={} with flipped + positioning layers", .{context_id});
     }
 }
 
-/// Update the flipped layer frame to match overlay grid coordinates (Issue 626).
+/// Update the positioning layer frame to match overlay grid coordinates.
 /// Cell dimensions and padding are in physical pixels; CALayer frames use
-/// logical points. The flipped layer has geometryFlipped = YES, so Y=0 is at
-/// the top — matching the terminal grid. No Y flip needed.
+/// logical points. The positioning layer sits inside the flipped layer
+/// (geometryFlipped=YES), so Y=0 is at the top — no Y flip needed.
 /// Padding is added so the overlay aligns with the grid, not the surface edge.
 pub fn updateCALayerHostFrame(
     self: *Metal,
-    flipped_ptr: *anyopaque,
+    positioning_ptr: *anyopaque,
     grid_col: f32,
     grid_row: f32,
     grid_width: f32,
@@ -234,7 +251,7 @@ pub fn updateCALayerHostFrame(
     padding_top: u32,
     padding_left: u32,
 ) void {
-    const flipped = objc.Object.fromId(flipped_ptr);
+    const positioning = objc.Object.fromId(positioning_ptr);
     const scale = self.layer.layer.getProperty(f64, "contentsScale");
     const cw: f64 = @floatFromInt(cell_width);
     const ch: f64 = @floatFromInt(cell_height);
@@ -243,30 +260,31 @@ pub fn updateCALayerHostFrame(
 
     // Convert physical pixels to logical points. Add padding so the overlay
     // aligns with the terminal grid (which starts at padding offset).
+    // Y is top-origin — the parent flipped_layer has geometryFlipped=YES.
     const x: f64 = @as(f64, grid_col) * cw / scale + pl / scale;
-    const y_from_top: f64 = @as(f64, grid_row) * ch / scale + pt / scale;
+    const y: f64 = @as(f64, grid_row) * ch / scale + pt / scale;
     const w: f64 = @as(f64, grid_width) * cw / scale;
     const h: f64 = @as(f64, grid_height) * ch / scale;
-
-    // The IOSurfaceLayer has geometryFlipped=false (Y=0 at bottom).
-    // Flip Y so the flipped_layer is positioned from the bottom.
-    const parent_bounds = self.layer.layer.getProperty(macos.graphics.Rect, "bounds");
-    const y: f64 = parent_bounds.size.height - y_from_top - h;
 
     const frame = macos.graphics.Rect{
         .origin = .{ .x = x, .y = y },
         .size = .{ .width = w, .height = h },
     };
-    flipped.setProperty("frame", frame);
+    positioning.setProperty("frame", frame);
 }
 
-/// Remove and release the CALayerHost and flipped layer (Issue 625/626).
-pub fn removeCALayerHost(self: *Metal, host_ptr: ?*anyopaque, flipped_ptr: ?*anyopaque) void {
+/// Remove and release the CALayerHost, positioning layer, and flipped layer.
+pub fn removeCALayerHost(self: *Metal, host_ptr: ?*anyopaque, positioning_ptr: ?*anyopaque, flipped_ptr: ?*anyopaque) void {
     _ = self;
     if (host_ptr) |ptr| {
         const host = objc.Object.fromId(ptr);
         host.msgSend(void, objc.sel("removeFromSuperlayer"), .{});
         host.release();
+    }
+    if (positioning_ptr) |ptr| {
+        const pos = objc.Object.fromId(ptr);
+        pos.msgSend(void, objc.sel("removeFromSuperlayer"), .{});
+        pos.release();
     }
     if (flipped_ptr) |ptr| {
         const flipped = objc.Object.fromId(ptr);
