@@ -640,3 +640,25 @@ takes over.
 3. Click a link on the page.
 4. **Pass:** The new page appears within ~1 second (no 10-second blank).
 5. **Fail:** The ~10-second blank persists — the dual-host hypothesis is wrong.
+
+**Result:** Fail
+
+The navigated page never appears at all. Worse than the original ~10-second
+blank — now the overlay stays permanently blank after clicking a link. The
+initial page loads fine, but after navigation, nothing renders.
+
+`DisableDisplay()` destroys the `DisplayCALayerTree` and sets
+`display_disabled_ = true`, which causes `SetCALayerParams()` to return early.
+But this also means the `AcceleratedWidgetCALayerParamsUpdated()` callback path
+may be disrupted — the compositor may depend on `SetCALayerParams()` completing
+to continue producing frames. By disabling it, we may have broken the
+compositor's feedback loop, not just the hidden window's `CALayerHost`.
+
+#### Conclusion
+
+The dual-host hypothesis is wrong, or at least `DisableDisplay()` is not the
+right way to test it. Disabling the `DisplayCALayerTree` made things worse — the
+navigated page never appears instead of appearing after 10 seconds. This
+suggests the hidden window's `DisplayCALayerTree` may be necessary for the
+compositor pipeline to function, not just a redundant consumer of the
+`CAContext`. The code changes from this experiment should be reverted.
