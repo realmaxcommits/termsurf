@@ -392,3 +392,196 @@ Navigation is a separate feature that requires changes at three levels: a
 `navigate` action in the Chromium server (`shell_browser_main_parts.cc`), a
 `handleNavigate` handler in the GUI (`xpc.zig`), and a `send_navigate` method in
 the TUI (`xpc.rs`).
+
+## Experiment 2: Navigate XPC action
+
+### Hypothesis
+
+Adding a `navigate` action that flows from the TUI through the GUI to the
+Chromium server will make the editable URL bar actually navigate the browser
+when Enter is pressed.
+
+### Changes
+
+#### 1. Chromium server: add `navigate` action (`shell_browser_main_parts.cc`)
+
+The server already navigates in three places:
+
+- `CreateTab` loads the initial URL via `Shell::CreateNewWindow(ctx, url, ...)`
+- `HandleKeyEvent` intercepts Cmd+[ / Cmd+] / Cmd+R and calls
+  `GetController().GoBack()`, `GoForward()`, `Reload()`
+
+For explicit URL navigation, use `GetController().LoadURLWithParams()`. This is
+the standard Chromium API for programmatic navigation — it's what the omnibox
+uses internally.
+
+Add to the XPC message dispatch (after `key_event`):
+
+```cpp
+} else if (action && std::string_view(action) == "navigate") {
+  const char* pane = xpc_dictionary_get_string(event, "pane_id");
+  const char* url_str = xpc_dictionary_get_string(event, "url");
+  std::string s_pane(pane ? pane : "");
+  std::string s_url(url_str ? url_str : "");
+  content::GetUIThreadTaskRunner({})->PostTask(
+      FROM_HERE,
+      base::BindOnce(&ShellBrowserMainParts::NavigateTab,
+                     base::Unretained(self), s_pane, GURL(s_url)));
+}
+```
+
+Add the method declaration to the header:
+
+```cpp
+void NavigateTab(const std::string& pane_id, const GURL& url);
+```
+
+Implement `NavigateTab`:
+
+```cpp
+void ShellBrowserMainParts::NavigateTab(const std::string& pane_id,
+                                        const GURL& url) {
+  DCHECK_CURRENTLY_ON(BrowserThread::UI);
+  for (auto& tab : tabs_) {
+    if (tab->pane_id == pane_id) {
+      content::NavigationController::LoadURLParams params(url);
+      params.transition_type = ui::PAGE_TRANSITION_TYPED;
+      tab->shell->web_contents()->GetController().LoadURLWithParams(params);
+      LOG(INFO) << "[ProfileServer] Navigate pane " << pane_id
+                << " to " << url.spec();
+      return;
+    }
+  }
+  LOG(WARNING) << "[ProfileServer] Navigate: no tab for pane " << pane_id;
+}
+```
+
+`PAGE_TRANSITION_TYPED` matches the semantics — the user typed a URL in the
+address bar.
+
+#### 2. GUI: add `handleNavigate` (`gui/src/apprt/xpc.zig`)
+
+The GUI receives `navigate` from the TUI and forwards it to the Chromium server
+for the matching pane. This follows the same pattern as `sendFocusChanged` —
+look up the pane, get the server peer, send an XPC message.
+
+Add to `handleMessage` dispatch:
+
+```zig
+} else if (std.mem.eql(u8, action_str, "navigate")) {
+    handleNavigate(msg);
+}
+```
+
+Implement `handleNavigate`:
+
+```zig
+fn handleNavigate(msg: xpc_object_t) void {
+    const pane_id = str(xpc_dictionary_get_string(msg, "pane_id"));
+    const url = str(xpc_dictionary_get_string(msg, "url"));
+
+    log.info("navigate pane={s} url={s}", .{ pane_id, url });
+
+    const p = panes.get(pane_id) orelse {
+        log.warn("navigate: no pane for {s}", .{pane_id});
+        return;
+    };
+    const server = p.server orelse return;
+    if (server.peer == null) return;
+
+    const fwd = xpc_dictionary_create(null, null, 0);
+    xpc_dictionary_set_string(fwd, "action", "navigate");
+
+    // Null-terminate pane_id.
+    var pane_z: [37]u8 = undefined;
+    if (p.pane_id_key.len > 0 and p.pane_id_key.len <= 36) {
+        @memcpy(pane_z[0..p.pane_id_key.len], p.pane_id_key);
+        pane_z[p.pane_id_key.len] = 0;
+        xpc_dictionary_set_string(fwd, "pane_id", @ptrCast(&pane_z));
+    }
+
+    // Null-terminate URL.
+    var url_z: [2049]u8 = undefined;
+    if (url.len > 0 and url.len < url_z.len) {
+        @memcpy(url_z[0..url.len], url);
+        url_z[url.len] = 0;
+        xpc_dictionary_set_string(fwd, "url", @ptrCast(&url_z));
+    }
+
+    xpc_connection_send_message(server.peer, fwd);
+}
+```
+
+#### 3. TUI: add `send_navigate` (`tui/src/xpc.rs`)
+
+Add a new method to `CompositorConnection`:
+
+```rust
+/// Tell the compositor to navigate to a new URL.
+pub fn send_navigate(&self, pane_id: &str, url: &str) {
+    let dict = unsafe { xpc_dictionary_create(std::ptr::null(), std::ptr::null(), 0) };
+    if dict.is_null() {
+        return;
+    }
+
+    unsafe {
+        let action_key = CString::new("action").unwrap();
+        let action_val = CString::new("navigate").unwrap();
+        xpc_dictionary_set_string(dict, action_key.as_ptr(), action_val.as_ptr());
+
+        let pane_key = CString::new("pane_id").unwrap();
+        let pane_val = CString::new(pane_id).unwrap();
+        xpc_dictionary_set_string(dict, pane_key.as_ptr(), pane_val.as_ptr());
+
+        let url_key = CString::new("url").unwrap();
+        let url_val = CString::new(url).unwrap();
+        xpc_dictionary_set_string(dict, url_key.as_ptr(), url_val.as_ptr());
+
+        xpc_connection_send_message(self.raw, dict);
+        xpc_release(dict);
+    }
+}
+```
+
+#### 4. TUI: call `send_navigate` on Enter (`tui/src/main.rs`)
+
+Replace the `last_viewport` reset workaround with an explicit navigate call:
+
+```rust
+Mode::UrlEdit => match key.code {
+    KeyCode::Enter => {
+        let new_url: String = editor_state
+            .lines
+            .get(RowIndex::new(0))
+            .map(|line| line.iter().collect())
+            .unwrap_or_default();
+        url = new_url;
+        mode = Mode::Browse;
+        if let (Some(ref conn), Some(ref pid)) = (&compositor, &pane_id) {
+            conn.send_navigate(pid, &url);
+            conn.send_mode_changed(pid, true);
+        }
+    }
+    // ...
+}
+```
+
+Remove the `last_viewport = Rect::default()` line — it was the workaround that
+didn't work.
+
+### Verification
+
+1. `cd tui && cargo build` — TUI compiles
+2. Build Chromium (`autoninja -C out/Default chromium_profile_server`)
+3. Build GUI (`cd gui && zig build`)
+4. Launch TermSurf, open a `web` pane with any URL
+5. Ctrl+Esc → `e` → clear URL → type a new URL → Enter
+6. Browser navigates to the new URL
+7. URL bar updates when Chromium reports the final URL via `url_changed`
+
+### Success criteria
+
+- Enter in UrlEdit sends `navigate` action through all three levels
+- Browser navigates to the edited URL
+- Loading indicator appears during navigation
+- URL bar updates to the final URL (after redirects, etc.)
