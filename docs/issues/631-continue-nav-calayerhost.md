@@ -660,18 +660,23 @@ CALayerHost swap when the context ID is unchanged had no effect on the flicker.
 
 #### Conclusion
 
-The hypothesis was wrong. The flicker is not caused by the GUI-side CALayerHost
-swap. Even when the swap is skipped entirely (because the `ca_context_id` is
-unchanged), the overlay still briefly goes blank during navigation. This means
-the flicker originates inside Chromium — the CAContext's content tree is being
-torn down and rebuilt during navigation, and the CALayerHost faithfully reflects
-that gap. The GUI is an innocent bystander.
+The flicker persists, but the experiment is inconclusive. The code added an
+early return when the incoming `ca_context_id` matched the existing host's
+`contextId`. However, Zig logs currently go nowhere — we never confirmed whether
+the "skipping swap" path actually executed. If same-site navigations produce a
+new `ca_context_id` (because the `CALayerTreeCoordinator` is recreated), the
+early return never triggered, and this experiment tested nothing.
 
-This rules out smells #1, #6, #7, #13, and #14 as the primary cause. The flicker
-is Chromium-side: likely smell #2 (CAContext content gap during compositor
-surface transition) or #8 (`DidNavigate` surface ID churn). The next experiment
-should investigate the Chromium compositor's behavior during navigation —
-specifically what happens to the `CALayerTreeCoordinator`'s content tree between
-the old page's last frame and the new page's first frame.
+Two possibilities remain:
+
+1. **Same-site navigations keep the same ID.** The skip path fired, but the
+   flicker is Chromium-side — the CAContext's content tree goes blank during
+   navigation regardless of what the GUI does.
+2. **Same-site navigations produce a new ID.** The skip path never fired. The
+   GUI still did a full host swap. Smell #1 was never actually tested.
+
+The next experiment needs observability first. We need to see the actual
+`ca_context_id` values during navigation — whether they change or stay the same
+— before we can draw conclusions about which side owns the flicker.
 
 Code changes reverted.
