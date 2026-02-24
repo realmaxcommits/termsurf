@@ -781,3 +781,39 @@ already available via Zig's C import).
      when navigation begins, so the old host also goes blank immediately.
 5. Test multiple navigations in sequence to confirm no layer tree corruption
    (leaked hosts, double-free, etc.).
+
+**Result:** Fail
+
+The flicker persists. The old page content was not visible during the transition
+despite the old CALayerHost remaining in the layer tree.
+
+Note: the initial implementation used `dispatch_after` (block-based) instead of
+`dispatch_after_f` (function-pointer-based), which crashed the app. After fixing
+to `dispatch_after_f`, the delayed removal worked mechanically but had no effect
+on the flicker.
+
+#### Conclusion
+
+The approach is fundamentally flawed. Chromium destroys the old
+`CALayerTreeCoordinator` (and its `CAContext`) when navigation creates the new
+one. The old CALayerHost remains in the layer tree but points at a dead context
+— it has nothing to display. Keeping it around longer cannot help because the
+content it referenced is already gone.
+
+This confirms smell #2: the content gap is Chromium-side. The old CAContext's
+content tree is torn down before the new CAContext has content. No GUI-side
+trick — skipping the swap (Experiment 2) or delaying old host removal
+(Experiment 3) — can mask this gap because the source content is destroyed by
+Chromium itself.
+
+The fix must be Chromium-side. Either:
+
+1. **Prevent Chromium from destroying the old CAContext before the new one has
+   content** — delay the old coordinator's teardown until the first frame is
+   submitted on the new surface.
+2. **Capture a snapshot before navigation** — render the current page to a
+   static image and hold it as a fallback layer while the new CAContext
+   initializes. This would need to happen Chromium-side (e.g., via
+   `CopyFromCompositingSurface`) before navigation commits.
+
+Code changes reverted.
