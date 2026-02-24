@@ -1,5 +1,5 @@
 ---
-name: git-poet
+name: commit
 description: "Write entertaining commit messages as poetry"
 ---
 
