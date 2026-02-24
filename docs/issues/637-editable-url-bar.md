@@ -121,7 +121,11 @@ bar will scroll left/right as the cursor moves. This works out of the box.
 ### Theme
 
 edtui's `EditorView` accepts a `theme()` to match the Tokyo Night palette used
-by the TUI.
+by the TUI. Set `base`, `cursor_style`, and `selection_style`:
+
+- **Base**: `fg(FG)` / `bg(BG)` — matches the TUI's text/background
+- **Cursor**: `fg(BG)` / `bg(FG)` — inverted block cursor
+- **Selection**: `fg(FG)` / `bg(#283457)` — Tokyo Night visual selection blue
 
 ## Rendering
 
@@ -291,9 +295,11 @@ fn ui(
     };
 
     if *mode == Mode::UrlEdit {
+        const SELECTION: Color = Color::Rgb(0x28, 0x34, 0x57);
         let theme = EditorTheme::default()
             .base(Style::default().fg(FG).bg(BG))
             .cursor_style(Style::default().fg(BG).bg(FG))
+            .selection_style(Style::default().fg(FG).bg(SELECTION))
             .block(
                 Block::default()
                     .borders(Borders::ALL)
