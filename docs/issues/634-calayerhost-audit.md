@@ -59,20 +59,32 @@ Issues 625–633 replaced the `FrameSinkVideoCapturer` pipeline with zero-copy
 
 Each test is manual. Mark PASS or FAIL with notes.
 
+Build: release (`./build-release.sh`)
+
 ### T1: Basic page load
 
 Open TermSurf, run `web`, navigate to a URL. Content renders in the browser
 pane.
+
+**Result: PASS**
 
 ### T2: Link navigation
 
 Click a link on a page. Content transitions without flicker. New page renders
 correctly.
 
+**Result: PASS**
+
+Bug: refocusing the window eats the first click even though the browser pane is
+already focused. The focus-eating logic incorrectly treats a window-refocus click
+as a pane-focus click. Link navigation itself works correctly with no flicker.
+
 ### T3: Back/forward navigation
 
 Use browser navigation keybindings (Cmd+[ and Cmd+]) to go back and forward.
 Pages render without flicker.
+
+**Result: PASS**
 
 ### T4: Page reload
 
@@ -83,15 +95,21 @@ Reload the current page (Cmd+R). Content re-renders without blank frame.
 Drag the window edge to resize. Browser overlay tracks the TUI viewport
 correctly. No misalignment, no stale frame.
 
+**Result: PASS**
+
 ### T6: Resize (pane split)
 
 With multiple panes, drag the split divider. Browser overlay resizes to match
 the new pane dimensions.
 
+**Result: PASS**
+
 ### T7: Multi-pane
 
 Open two or more browser panes in splits. Each renders independently. Both
 display content simultaneously.
+
+**Result: PASS**
 
 ### T8: Multi-profile
 
@@ -103,20 +121,28 @@ Server process. Content renders independently in each.
 Click on links, buttons, and form fields in web content. Events reach Chromium
 and trigger expected behavior.
 
+**Result: PASS**
+
 ### T10: Mouse drag and text selection
 
 Click and drag to select text on a web page. Selection highlighting appears.
 Cmd+C copies selected text.
+
+**Result: PASS**
 
 ### T11: Mouse scroll
 
 Scroll a page with the trackpad or mouse wheel. Page scrolls smoothly. Scroll
 events reach Chromium.
 
+**Result: PASS**
+
 ### T12: Cursor changes
 
 Hover over links (should show pointer cursor), text (should show I-beam), and
 default areas. Cursor changes correctly.
+
+**Result: PASS**
 
 ### T13: Keyboard input (typing)
 
@@ -124,8 +150,8 @@ Click a text input or search field. Type characters. Text appears in the field.
 
 ### T14: Keyboard input (Cmd+key bypass)
 
-Cmd+C, Cmd+V, Cmd+A, Cmd+X bypass the browser and work as expected (copy, paste,
-select all, cut).
+Cmd+C, Cmd+V, Cmd+A, Cmd+X bypass the browser and work as expected (copy,
+paste, select all, cut).
 
 ### T15: Keyboard input (Tab)
 
@@ -164,5 +190,3 @@ Text is sharp. Compare with native Chrome side-by-side if needed.
 
 Compare the browser overlay position with the TUI viewport border. Content
 should align to the pixel — no gap, no overlap, no offset.
-
-## Results
