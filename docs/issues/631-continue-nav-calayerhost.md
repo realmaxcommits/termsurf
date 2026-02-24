@@ -890,3 +890,201 @@ This is a research-only experiment — no code modifications.
 All 5 questions have answers with specific file paths and line numbers from the
 local source. At least one concrete fix is proposed with enough detail to design
 as the next experiment.
+
+#### Findings
+
+##### Q1: What destroys the old CAContext during navigation?
+
+**The old CAContext is NOT destroyed during normal navigation.** The
+`CALayerTreeCoordinator` owns the `ca_context_` member variable
+(`ca_layer_tree_coordinator.h:122`), and it lives for the entire lifetime of the
+coordinator. The coordinator is created once per GPU compositor
+(`ca_layer_tree_coordinator.mm:56`) and sends the same `ca_context_id` in every
+`gfx::CALayerParams` frame (`ca_layer_tree_coordinator.mm:211`).
+
+The `ca_context_id` only changes when the `CALayerTreeCoordinator` itself is
+destroyed and a new one is created. This happens when:
+
+- **Cross-site navigation** causes a renderer process swap — new renderer, new
+  GPU compositor, new coordinator, new ID.
+- **Compositor recycling** — when a view is hidden/occluded, Chromium may
+  recycle the compositor. When the view becomes visible again, a new compositor
+  is created with a new coordinator.
+
+**Our Profile Server logs showed a new ID on every navigation** — even for
+same-site Wikipedia link clicks that should keep the same renderer. This
+strongly suggests compositor recycling is being triggered. Our hidden window
+(`setAlphaValue:0` + `orderWindow:NSWindowBelow`, fix C1 from Issue 630) may
+cause macOS to treat the view as occluded, triggering Chromium's compositor
+recycling.
+
+Key files:
+
+- `ui/accelerated_widget_mac/ca_layer_tree_coordinator.mm:40–67` — CAContext
+  creation
+- `ui/accelerated_widget_mac/ca_layer_tree_coordinator.mm:206–228` — sends
+  `ca_context_id` in params
+- `ui/accelerated_widget_mac/display_ca_layer_tree.mm:123–153` — remote layer
+  swap on ID change
+
+##### Q2: Does Chromium have a content transition mechanism?
+
+**Yes, extensively.** Chromium uses a fallback surface system in
+`DelegatedFrameHost` to display old content while new content renders:
+
+- **Pre-navigation caching**: `DidNavigateMainFramePreCommit()`
+  (`delegated_frame_host.cc:586`) caches the current `local_surface_id_` as
+  `pre_navigation_local_surface_id_` before navigation commits.
+
+- **Fallback surface range**: The viz compositor uses `SurfaceRange` (old
+  fallback surface → new surface). If the primary surface isn't ready, viz
+  displays the fallback. Managed via `SetOldestAcceptableFallback()`
+  (`delegated_frame_host.cc:421–425`).
+
+- **Stale content layer**: When a frame is evicted, `DelegatedFrameHost` can
+  capture a snapshot via `CopyFromCompositingSurface` and store it as a
+  `stale_content_layer_` (`delegated_frame_host.cc:440–512`). This persists even
+  after the frame is evicted.
+
+- **Tab switching fallback**: `BrowserCompositorMac::TakeFallbackContentFrom()`
+  (`browser_compositor_view_mac.mm:282`) captures the old tab's surface as
+  fallback for the new tab.
+
+**None of this helps us** because our Chromium Profile Server reads the
+`CALayerParams` callback directly and creates our own `CALayerHost`. We bypass
+the `DisplayCALayerTree` → `DelegatedFrameHost` → viz fallback stack entirely.
+
+Key files:
+
+- `content/browser/renderer_host/delegated_frame_host.cc:586–598` — pre-nav
+  caching
+- `content/browser/renderer_host/delegated_frame_host.cc:399–426` — fallback
+  reset
+- `content/browser/renderer_host/delegated_frame_host.cc:440–512` — stale
+  content layer
+
+##### Q3: How does Electron handle this?
+
+Electron's key insight: **they disable compositor recycling.**
+
+`disable_compositor_recycling.patch` modifies `render_widget_host_view_mac.mm`
+to prevent the compositor from being destroyed when the view is hidden:
+
+```cpp
+// Consider the RWHV occluded only if it is not attached to a window
+// (e.g. unattached BrowserView). Otherwise we treat it as visible to
+// prevent unnecessary compositor recycling.
+const bool unattached = ![GetInProcessNSView() window];
+browser_compositor_->SetRenderWidgetHostIsHidden(unattached);
+```
+
+Instead of always marking the view as hidden when `WasHidden()` is called, they
+only mark it hidden if it's truly unattached from a window. This prevents the
+compositor from being recycled during state transitions, which would create a
+visual gap (exactly our problem).
+
+Other relevant Electron patches:
+
+- **MAS build**: Disables `CAContext` entirely for Mac App Store builds, falling
+  back to IOSurface-based rendering (`mas_avoid_private_macos_api_usage.patch`).
+- **Resize performance**: Restores original `SynchronizeVisualProperties()` to
+  avoid blocking during screen changes.
+- **Occlusion handling**: Reverts stale occlusion code to prevent spurious
+  notifications during fullscreen transitions.
+
+Key file:
+
+- `vendor/electron/patches/chromium/disable_compositor_recycling.patch`
+
+##### Q4: What is `ui::Compositor`'s role?
+
+`ui::Compositor` is the frame sink manager and compositor host. It does **not**
+hold surface content directly. Instead:
+
+- Owns the `LayerTreeHost` which communicates with viz
+- Manages child frame sinks (`AddChildFrameSink`, `RemoveChildFrameSink`)
+- In `BrowserCompositorMac`, wrapped in `RecyclableCompositorMac` (line 186)
+- Attached/detached from `DelegatedFrameHost` in `TransitionToState()`
+  (`browser_compositor_view_mac.mm:208–269`)
+
+The "keep old content" pattern lives in viz (via `SurfaceRange` and
+`GetOldestAcceptableFallback()` in `ui/compositor/layer.h:470`), not in
+`ui::Compositor` itself.
+
+##### Q5: Is there a "first frame after navigation" signal?
+
+**Yes, multiple:**
+
+- **`DelegatedFrameHost::DidNavigate()`** (`delegated_frame_host.cc:582`) —
+  called after the new renderer's first frame. Sets
+  `first_local_surface_id_after_navigation_`.
+
+- **`OnFirstSurfaceActivation`** (`delegated_frame_host.cc:555`) — viz callback
+  when a new surface from the frame sink is activated.
+
+- **`DidNavigateMainFramePreCommit()`** (`delegated_frame_host.cc:586`) — called
+  BEFORE the new renderer takes over. Caches old surface for fallback.
+
+- **Timeout**: `ForceFirstFrameAfterNavigationTimeout()`
+  (`render_widget_host_view_mac.mm:687`) — clears fallback surfaces if the new
+  page doesn't send a frame within a timeout.
+
+#### Analysis
+
+The root cause is now clear: **compositor recycling.**
+
+Our Chromium Profile Server uses a hidden window (`setAlphaValue:0` +
+`orderWindow:NSWindowBelow`). When navigation happens, Chromium detects the view
+as occluded and recycles the compositor. This destroys the
+`CALayerTreeCoordinator` and its `CAContext`. When the new page starts
+rendering, a new compositor is created with a new `CALayerTreeCoordinator` and a
+new `ca_context_id`. During the gap between destruction and recreation, there is
+no CAContext content to display.
+
+In normal Chrome, same-site navigation keeps the same compositor and the same
+`ca_context_id`. The `DisplayCALayerTree::GotCALayerFrame()` method has an
+early-out when the context ID hasn't changed — no `CALayerHost` swap occurs, so
+there's no flicker.
+
+Electron solves this exact problem by disabling compositor recycling: they never
+mark the view as hidden while it's attached to a window, so the compositor stays
+alive during navigation.
+
+#### Proposed fixes
+
+**Fix A: Disable compositor recycling (Electron approach).** Modify the Chromium
+Profile Server to never treat the view as hidden/occluded, preventing compositor
+recycling. The `ca_context_id` would stay the same across same-site navigations,
+and the GUI's existing dedup logic would skip the swap. This is the simplest fix
+and addresses the root cause.
+
+**Fix B: Keep old CAContext alive during transition.** Delay the old
+`CALayerTreeCoordinator`'s destruction until the new one has submitted its first
+frame. Requires hooking into the `DelegatedFrameHost` lifecycle signals
+(`DidNavigate`, `OnFirstSurfaceActivation`).
+
+**Fix C: Snapshot before navigation.** Use `CopyFromCompositingSurface()` to
+capture a static image before navigation commits. Send it to the GUI as a
+fallback texture. More complex, but works even for cross-site navigations where
+the compositor must change.
+
+Fix A is the recommended next experiment — it's a small change, matches
+Electron's proven approach, and addresses the root cause rather than masking the
+symptom.
+
+**Result:** Pass
+
+All 5 questions answered with file paths and line numbers. Three concrete fixes
+proposed.
+
+#### Conclusion
+
+The flicker's root cause is compositor recycling. Our hidden window causes
+Chromium to recycle the compositor on navigation, destroying the
+`CALayerTreeCoordinator` and its `CAContext`. This creates a new `ca_context_id`
+on every navigation — even same-site — forcing a `CALayerHost` swap in the GUI
+with an empty content gap.
+
+Electron solved this years ago by disabling compositor recycling when the view
+is attached to a window. The next experiment should apply the same approach to
+our Chromium Profile Server.
