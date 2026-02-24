@@ -646,3 +646,15 @@ remain in place harmlessly — it won't fire.
   size, etc.). May need `ui::Layer` configuration.
 - **Crash in SetNSView:** `SetNSView` DCHECKs that view is not already set. Must
   only be called once.
+
+### Result: PASS
+
+The persistent compositor bridge works. The
+`AcceleratedWidgetCALayerParamsUpdated` callback fires, the `ca_context_id` is
+sent to the GUI via XPC, and it remains stable across navigations. No flicker on
+navigation. Page content renders correctly.
+
+The `UseParentLayerCompositor` mode with a persistent `ui::Compositor` and
+`PersistentCompositorBridge` implementing `AcceleratedWidgetMacNSView` is the
+correct architecture. The per-view `SetCALayerParamsCallback` is now dead code
+(harmless — it never fires in this mode).
