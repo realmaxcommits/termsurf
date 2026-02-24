@@ -375,3 +375,20 @@ let label = match mode {
 - No newlines can be inserted (Enter and o/O removed)
 - Horizontal scrolling works for long URLs
 - Status bar shows correct hints and mode label
+
+### Result: Success
+
+The editable URL bar works. All success criteria pass except "Enter extracts the
+URL and navigates" — the URL is extracted and the mode switches to Browse, but
+the browser does not navigate to the new URL. This is not a bug in the URL bar
+itself. The URL bar correctly edits, extracts, and hands off the URL. The
+problem is that no `navigate` XPC action exists anywhere in the stack — the GUI,
+Chromium server, and TUI have never implemented "go to a URL." The
+`send_set_overlay()` workaround (resetting `last_viewport` to force an overlay
+update with the new URL) does not trigger navigation because `set_overlay` only
+stores the URL for existing panes — it never forwards it to Chromium.
+
+Navigation is a separate feature that requires changes at three levels: a
+`navigate` action in the Chromium server (`shell_browser_main_parts.cc`), a
+`handleNavigate` handler in the GUI (`xpc.zig`), and a `send_navigate` method in
+the TUI (`xpc.rs`).

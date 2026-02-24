@@ -10,6 +10,8 @@ use crossterm::execute;
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
 };
+use edtui::events::{KeyEventHandler, KeyEventRegister, KeyInput};
+use edtui::{EditorEventHandler, EditorState, EditorTheme, EditorView, Lines, RowIndex};
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, Paragraph};
 
@@ -20,11 +22,13 @@ const COMMENT: Color = Color::Rgb(0x73, 0x7a, 0xa2);
 const CYAN: Color = Color::Rgb(0x7d, 0xcf, 0xff);
 const BORDER: Color = Color::Rgb(0x56, 0x5f, 0x89);
 const DIM: Color = Color::Rgb(0x90, 0x9a, 0xb8);
+const SELECTION: Color = Color::Rgb(0x28, 0x34, 0x57);
 
 #[derive(PartialEq)]
 enum Mode {
     Browse,
     Control,
+    UrlEdit,
 }
 
 fn main() -> io::Result<()> {
@@ -92,11 +96,22 @@ fn main() -> io::Result<()> {
     let mut loading_bar_start: Option<Instant> = None;
     const LOADING_TIMEOUT: Duration = Duration::from_secs(30);
 
+    // edtui state (Issue 637).
+    let mut editor_state = EditorState::new(Lines::from(url.as_str()));
+    let mut editor_handler = {
+        let mut kh = KeyEventHandler::vim_mode();
+        // Remove newline keybindings for single-line mode.
+        kh.remove(&KeyEventRegister::i(vec![KeyInput::new(KeyCode::Enter)]));
+        kh.remove(&KeyEventRegister::n(vec![KeyInput::new('o')]));
+        kh.remove(&KeyEventRegister::n(vec![KeyInput::shift('O')]));
+        EditorEventHandler::new(kh)
+    };
+
     // Event loop.
     loop {
         let mut viewport_rect = Rect::default();
         terminal.draw(|frame| {
-            viewport_rect = ui(frame, &url, &profile, &mode);
+            viewport_rect = ui(frame, &url, &profile, &mode, &mut editor_state);
         })?;
 
         // Send overlay coordinates to compositor (only when changed).
@@ -144,6 +159,16 @@ fn main() -> io::Result<()> {
                     }
                     Mode::Control => match key.code {
                         KeyCode::Char('q') => break,
+                        KeyCode::Char('e') => {
+                            // Initialize editor with current URL, cursor at end (Issue 637).
+                            editor_state = EditorState::new(Lines::from(url.as_str()));
+                            let len = url.len();
+                            editor_state.cursor = edtui::Index2::new(0, len.saturating_sub(1));
+                            mode = Mode::UrlEdit;
+                            if let (Some(ref conn), Some(ref pid)) = (&compositor, &pane_id) {
+                                conn.send_mode_changed(pid, false);
+                            }
+                        }
                         KeyCode::Enter => {
                             mode = Mode::Browse;
                             if let (Some(ref conn), Some(ref pid)) = (&compositor, &pane_id) {
@@ -151,6 +176,27 @@ fn main() -> io::Result<()> {
                             }
                         }
                         _ => {}
+                    },
+                    Mode::UrlEdit => match key.code {
+                        KeyCode::Enter => {
+                            // Extract URL from editor, navigate, switch to Browse.
+                            let new_url: String = editor_state
+                                .lines
+                                .get(RowIndex::new(0))
+                                .map(|line| line.iter().collect())
+                                .unwrap_or_default();
+                            url = new_url;
+                            mode = Mode::Browse;
+                            if let (Some(ref conn), Some(ref pid)) = (&compositor, &pane_id) {
+                                conn.send_mode_changed(pid, true);
+                            }
+                            // Force viewport update to send new URL.
+                            last_viewport = Rect::default();
+                        }
+                        _ => {
+                            // Pass everything else to edtui (including Escape).
+                            editor_handler.on_key_event(key, &mut editor_state);
+                        }
                     },
                 }
             }
@@ -236,7 +282,13 @@ fn main() -> io::Result<()> {
 }
 
 /// Render the UI and return the viewport inner rect (grid coordinates).
-fn ui(frame: &mut Frame, url: &str, profile: &str, mode: &Mode) -> Rect {
+fn ui(
+    frame: &mut Frame,
+    url: &str,
+    profile: &str,
+    mode: &Mode,
+    editor_state: &mut EditorState,
+) -> Rect {
     // Paint full background.
     frame.render_widget(
         Block::default().style(Style::default().bg(BG)),
@@ -253,7 +305,7 @@ fn ui(frame: &mut Frame, url: &str, profile: &str, mode: &Mode) -> Rect {
     // Border colors based on mode.
     let (url_border, viewport_border) = match mode {
         Mode::Browse => (BORDER, CYAN),
-        Mode::Control => (CYAN, BORDER),
+        Mode::Control | Mode::UrlEdit => (CYAN, BORDER),
     };
 
     // URL bar.
@@ -262,16 +314,38 @@ fn ui(frame: &mut Frame, url: &str, profile: &str, mode: &Mode) -> Rect {
         Span::raw(profile).style(Style::default().fg(FG)),
         Span::raw(" "),
     ]);
-    let url_bar = Paragraph::new(url).style(Style::default().fg(FG)).block(
-        Block::default()
-            .borders(Borders::ALL)
-            .title(" Chromium ")
-            .title_top(profile_title.alignment(Alignment::Right))
-            .border_style(Style::default().fg(url_border).bg(BG))
-            .title_style(Style::default().fg(url_border))
-            .style(Style::default().bg(BG)),
-    );
-    frame.render_widget(url_bar, layout[0]);
+
+    if *mode == Mode::UrlEdit {
+        let theme = EditorTheme::default()
+            .base(Style::default().fg(FG).bg(BG))
+            .cursor_style(Style::default().fg(BG).bg(FG))
+            .selection_style(Style::default().fg(FG).bg(SELECTION))
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title(" Chromium ")
+                    .title_top(profile_title.alignment(Alignment::Right))
+                    .border_style(Style::default().fg(url_border).bg(BG))
+                    .title_style(Style::default().fg(url_border))
+                    .style(Style::default().bg(BG)),
+            )
+            .hide_status_line();
+        frame.render_widget(
+            EditorView::new(editor_state).theme(theme).wrap(false),
+            layout[0],
+        );
+    } else {
+        let url_bar = Paragraph::new(url).style(Style::default().fg(FG)).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" Chromium ")
+                .title_top(profile_title.alignment(Alignment::Right))
+                .border_style(Style::default().fg(url_border).bg(BG))
+                .title_style(Style::default().fg(url_border))
+                .style(Style::default().bg(BG)),
+        );
+        frame.render_widget(url_bar, layout[0]);
+    }
 
     // Viewport.
     let viewport_block = Block::default()
@@ -326,15 +400,30 @@ fn ui(frame: &mut Frame, url: &str, profile: &str, mode: &Mode) -> Rect {
             Span::styled("> ", d),
             Span::styled("quit  ", f),
             Span::styled("<", d),
+            Span::styled("e", f),
+            Span::styled("> ", d),
+            Span::styled("edit url  ", f),
+            Span::styled("<", d),
             Span::styled("enter", f),
             Span::styled("> ", d),
             Span::styled("browse", f),
+        ]),
+        Mode::UrlEdit => Line::from(vec![
+            Span::styled("<", d),
+            Span::styled("enter", f),
+            Span::styled("> ", d),
+            Span::styled("navigate  ", f),
+            Span::styled("<", d),
+            Span::styled("ctrl+esc", f),
+            Span::styled("> ", d),
+            Span::styled("control", f),
         ]),
     };
 
     let label = match mode {
         Mode::Browse => "\u{F059F} BROWSE",
         Mode::Control => "\u{F11C} CONTROL",
+        Mode::UrlEdit => "\u{F040} EDIT",
     };
 
     let hints_widget = Paragraph::new(hints);

@@ -86,17 +86,12 @@ impl CompositorConnection {
         // Set a minimal event handler (required before resume).
         let block = block2::RcBlock::new(|_event: XpcObjectT| {});
         unsafe {
-            xpc_connection_set_event_handler(
-                gateway,
-                &*block as *const _ as *mut c_void,
-            );
+            xpc_connection_set_event_handler(gateway, &*block as *const _ as *mut c_void);
         }
         unsafe { xpc_connection_resume(gateway) };
 
         // Step 2: Send "connect" and get the app's endpoint.
-        let msg = unsafe {
-            xpc_dictionary_create(std::ptr::null(), std::ptr::null(), 0)
-        };
+        let msg = unsafe { xpc_dictionary_create(std::ptr::null(), std::ptr::null(), 0) };
         if msg.is_null() {
             unsafe { xpc_release(gateway) };
             return None;
@@ -108,14 +103,15 @@ impl CompositorConnection {
             xpc_dictionary_set_string(msg, action_key.as_ptr(), action_val.as_ptr());
         }
 
-        let reply = unsafe {
-            xpc_connection_send_message_with_reply_sync(gateway, msg)
-        };
+        let reply = unsafe { xpc_connection_send_message_with_reply_sync(gateway, msg) };
         unsafe { xpc_release(msg) };
 
         if reply.is_null() {
             eprintln!("[web] Gateway returned null reply");
-            unsafe { xpc_connection_cancel(gateway); xpc_release(gateway) };
+            unsafe {
+                xpc_connection_cancel(gateway);
+                xpc_release(gateway)
+            };
             return None;
         }
 
@@ -125,7 +121,10 @@ impl CompositorConnection {
         if reply_type != dict_type {
             eprintln!("[web] Gateway reply is not a dictionary (connection error?)");
             unsafe { xpc_release(reply) };
-            unsafe { xpc_connection_cancel(gateway); xpc_release(gateway) };
+            unsafe {
+                xpc_connection_cancel(gateway);
+                xpc_release(gateway)
+            };
             return None;
         }
 
@@ -136,7 +135,10 @@ impl CompositorConnection {
             let error_str = unsafe { std::ffi::CStr::from_ptr(error_ptr) };
             eprintln!("[web] Gateway error: {:?}", error_str);
             unsafe { xpc_release(reply) };
-            unsafe { xpc_connection_cancel(gateway); xpc_release(gateway) };
+            unsafe {
+                xpc_connection_cancel(gateway);
+                xpc_release(gateway)
+            };
             return None;
         }
 
@@ -146,7 +148,10 @@ impl CompositorConnection {
         if endpoint.is_null() {
             eprintln!("[web] Gateway reply missing endpoint");
             unsafe { xpc_release(reply) };
-            unsafe { xpc_connection_cancel(gateway); xpc_release(gateway) };
+            unsafe {
+                xpc_connection_cancel(gateway);
+                xpc_release(gateway)
+            };
             return None;
         }
 
@@ -156,21 +161,30 @@ impl CompositorConnection {
 
         if app_conn.is_null() {
             eprintln!("[web] Failed to create connection from endpoint");
-            unsafe { xpc_connection_cancel(gateway); xpc_release(gateway) };
+            unsafe {
+                xpc_connection_cancel(gateway);
+                xpc_release(gateway)
+            };
             return None;
         }
 
         // Set event handler that parses incoming messages (Issue 513).
         let (tx, rx) = std::sync::mpsc::channel();
         let handler_block = block2::RcBlock::new(move |event: XpcObjectT| {
-            if event.is_null() { return; }
+            if event.is_null() {
+                return;
+            }
             let event_type = unsafe { xpc_get_type(event) };
             let dict_type = unsafe { &XPC_TYPE_DICTIONARY as *const c_void };
-            if event_type != dict_type { return; }
+            if event_type != dict_type {
+                return;
+            }
 
             let action_key = CString::new("action").unwrap();
             let action_ptr = unsafe { xpc_dictionary_get_string(event, action_key.as_ptr()) };
-            if action_ptr.is_null() { return; }
+            if action_ptr.is_null() {
+                return;
+            }
             let action = unsafe { std::ffi::CStr::from_ptr(action_ptr) }
                 .to_str()
                 .unwrap_or("");
@@ -198,30 +212,42 @@ impl CompositorConnection {
                         .unwrap_or("done")
                         .to_string();
                     let progress_key = CString::new("progress").unwrap();
-                    let progress = unsafe { xpc_dictionary_get_uint64(event, progress_key.as_ptr()) } as u8;
-                    let _ = tx.send(CompositorMessage::LoadingState { state, _progress: progress });
+                    let progress =
+                        unsafe { xpc_dictionary_get_uint64(event, progress_key.as_ptr()) } as u8;
+                    let _ = tx.send(CompositorMessage::LoadingState {
+                        state,
+                        _progress: progress,
+                    });
                 }
             }
         });
         unsafe {
-            xpc_connection_set_event_handler(
-                app_conn,
-                &*handler_block as *const _ as *mut c_void,
-            );
+            xpc_connection_set_event_handler(app_conn, &*handler_block as *const _ as *mut c_void);
         }
         unsafe { xpc_connection_resume(app_conn) };
 
         // Done with the gateway connection.
-        unsafe { xpc_connection_cancel(gateway); xpc_release(gateway) };
+        unsafe {
+            xpc_connection_cancel(gateway);
+            xpc_release(gateway)
+        };
 
         Some(Self { raw: app_conn, rx })
     }
 
     /// Send a `set_overlay` message to the app (direct connection).
-    pub fn send_set_overlay(&self, pane_id: &str, col: u16, row: u16, width: u16, height: u16, url: &str, profile: &str, browsing: bool) {
-        let dict = unsafe {
-            xpc_dictionary_create(std::ptr::null(), std::ptr::null(), 0)
-        };
+    pub fn send_set_overlay(
+        &self,
+        pane_id: &str,
+        col: u16,
+        row: u16,
+        width: u16,
+        height: u16,
+        url: &str,
+        profile: &str,
+        browsing: bool,
+    ) {
+        let dict = unsafe { xpc_dictionary_create(std::ptr::null(), std::ptr::null(), 0) };
         if dict.is_null() {
             return;
         }
@@ -266,10 +292,10 @@ impl CompositorConnection {
 
     /// Notify the compositor of a mode change.
     pub fn send_mode_changed(&self, pane_id: &str, browsing: bool) {
-        let dict = unsafe {
-            xpc_dictionary_create(std::ptr::null(), std::ptr::null(), 0)
-        };
-        if dict.is_null() { return; }
+        let dict = unsafe { xpc_dictionary_create(std::ptr::null(), std::ptr::null(), 0) };
+        if dict.is_null() {
+            return;
+        }
 
         unsafe {
             let action_key = CString::new("action").unwrap();
