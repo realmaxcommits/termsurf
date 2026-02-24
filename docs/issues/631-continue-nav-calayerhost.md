@@ -101,3 +101,163 @@ Continue from `146.0.7650.0-issue-630`.
   the new one, so the old content remains visible until the new host composites.
 - **Debug logging.** Add timestamps at every stage (XPC arrival, host swap,
   Chromium callback) to confirm whether the gap is GUI-side or Chromium-side.
+
+## Experiments
+
+### Experiment 1: Audit code for navigation flicker smells
+
+#### Purpose
+
+Identify what causes the ~100ms blank frame during every page navigation. The
+permanent blank is fixed (Issue 630), but a brief flicker remains. This audit
+searches both the GUI (Zig) and Chromium Profile Server (C++) code for patterns
+that could cause a momentary gap in content during navigation.
+
+This is a research-only audit — no code modifications.
+
+#### Code smells
+
+**Flicker-specific smells (1–10):**
+
+1. **Unnecessary CALayerHost swap on same ID.** The dedup gate reset (C3) forces
+   `*last_ca_context_id_ = 0` on every navigation. If the `ca_context_id`
+   doesn't actually change during same-site navigation, this causes the callback
+   to fire with the same ID, triggering a full CALayerHost destroy-and-recreate
+   in the GUI — a swap that produces a blank frame for no reason.
+
+2. **CAContext content gap during compositor surface transition.** When the
+   Chromium compositor processes a navigation, it may invalidate the old
+   `LocalSurfaceId` and allocate a new one. During the transition, the
+   `CAContext` exists but has no submitted frame — the CALayerHost renders as
+   transparent. This is a Chromium-side gap that no GUI-side fix can address.
+
+3. **Async main-thread dispatch adds latency to host swap.** The `ca_context`
+   XPC message arrives on the XPC queue, then `dispatch_async_f` to the main
+   queue adds scheduling latency. If the old host was already torn down
+   Chromium-side but the new host isn't created until the main queue drains,
+   there is a visible gap.
+
+4. **draw_mutex contention during swap.** `setCAContextId()` acquires
+   `draw_mutex` on the main thread. If the renderer thread holds it (mid-frame),
+   the main thread blocks. The CALayerHost replacement is delayed until the
+   frame completes, extending the blank window.
+
+5. **No content readiness signal.** The GUI swaps the CALayerHost as soon as the
+   new `ca_context_id` arrives. But the new CAContext may not have a submitted
+   frame yet. The new host is added to the layer tree pointing at an empty
+   context. A "content ready" signal from Chromium (e.g., after the first
+   `SubmitCompositorFrame`) would allow delaying the swap until content exists.
+
+6. **Old host removed too early in atomic swap.** The atomic swap (G2) adds the
+   new host before removing the old one, but both happen in the same
+   CATransaction. If the new host's CAContext has no content yet, removing the
+   old host (which may still have stale content from the old page) eliminates
+   the only visible content. The old host should stay until the new one has
+   rendered.
+
+7. **CATransaction commit flushes both add and remove simultaneously.** The
+   single CATransaction wrapping the entire swap means Window Server sees "add
+   new + remove old" as one atomic operation. If the new host's context is
+   empty, Window Server transitions from "old content" to "nothing" in one
+   commit.
+
+8. **Chromium `DidNavigate()` surface ID churn.** During navigation,
+   `BrowserCompositorMac::DidNavigate()` calls
+   `InvalidateLocalSurfaceIdAndAllocationGroup()` which invalidates the current
+   surface, then allocates a new one via `GetRendererLocalSurfaceId()`. Between
+   invalidation and the first frame on the new surface, the CAContext has
+   nothing to display.
+
+9. **No fallback content during transition.** Unlike the old
+   `FrameSinkVideoCapturer` pipeline (which always had the last captured frame
+   as a texture), the CALayerHost pipeline has no fallback. When the CAContext
+   goes empty, there is nothing to show — just transparency.
+
+10. **RenderViewHostChanged re-registration triggers redundant swap.** If
+    `RenderViewHostChanged` fires AND the CALayerParams callback also fires with
+    a new ID, two host swaps happen in quick succession. The first swap may
+    create a host pointing at a stale context, immediately replaced by the
+    second.
+
+**Structural smells (11–15):**
+
+11. **No timestamp logging at swap boundaries.** We have log lines for "replaced
+    CALayerHost" and "Sent ca_context_id" but no microsecond timestamps showing
+    the gap between: (a) Chromium navigation commit, (b) CALayerParams callback
+    fire, (c) XPC message send, (d) XPC message receive, (e) main-thread
+    dispatch, (f) CALayerHost swap, (g) first visible frame. Without these, we
+    cannot distinguish GUI-side from Chromium-side flicker.
+
+12. **Dedup reset timing vs callback timing.** The dedup gate is reset in
+    `DidFinishNavigation()`, which fires when the navigation commits. The
+    CALayerParams callback fires when the compositor produces new params. If the
+    compositor fires BEFORE `DidFinishNavigation` resets the gate, the callback
+    is still blocked by the old dedup value and the new context ID is missed.
+
+13. **No distinction between same-site and cross-site navigation.** The code
+    treats all navigations identically — full dedup reset, potential host swap.
+    Same-site navigations (where the CAContext survives) and cross-site
+    navigations (where the RenderViewHost changes) may need different handling.
+
+14. **CALayerHost replacement vs contextId update.** The code always destroys
+    and recreates the CALayerHost when the context ID changes. Chromium's
+    `DisplayCALayerTree::GotCALayerFrame()` does the same, but an alternative is
+    to update the `contextId` property on the existing host. This avoids the
+    remove/add cycle entirely. Issue 628 noted this "may not rebind Window
+    Server compositing" but this was never tested in the post-630 codebase.
+
+15. **Overlay visibility during loading state.** The `DidStartLoading` /
+    `DidStopLoading` XPC messages are sent to the GUI, but the GUI does not use
+    them to manage CALayerHost visibility. If the GUI knew a navigation was in
+    progress, it could hold the old content visible until the new page's first
+    frame arrives.
+
+#### Files to audit
+
+**GUI (Zig):**
+
+- `gui/src/renderer/Metal.zig` — `setCALayerHostContextId()` swap logic,
+  CATransaction wrapping, layer creation
+- `gui/src/Surface.zig` — `setCAContextId()`, `draw_mutex` acquisition
+- `gui/src/apprt/xpc.zig` — `handleCAContext()`, main-thread dispatch,
+  `handleLoadingState()`
+
+**Chromium (C++):**
+
+- `content/chromium_profile_server/browser/shell_browser_main_parts.cc` —
+  CALayerParams callback, dedup gate, `CreateTab()`
+- `content/chromium_profile_server/browser/shell_tab_observer.cc` —
+  `DidFinishNavigation()` dedup reset, `RenderViewHostChanged()` re-registration
+- `content/chromium_profile_server/browser/shell_tab_observer.h` — observer
+  interface, stored state
+
+#### Steps
+
+For each of the 6 files above:
+
+1. Read the file in full.
+2. Check each of the 15 code smells.
+3. Record a verdict: **clean** (not present), **suspect** (possible but
+   unconfirmed), or **confirmed** (definitely present).
+4. Add a one-line note explaining the verdict.
+
+#### Output format
+
+A findings table per file:
+
+```
+#### File: `path/to/file.zig`
+
+| # | Smell | Verdict | Note |
+|---|-------|---------|------|
+| 1 | Unnecessary swap on same ID | confirmed | Dedup reset forces swap even when ID unchanged |
+| … | … | … | … |
+```
+
+After all files, a summary section listing every confirmed and suspect finding
+with file path and line number.
+
+#### Verification
+
+Every confirmed and suspect finding has a file path, line number, and one-line
+explanation. No smell is left unchecked for any file.
