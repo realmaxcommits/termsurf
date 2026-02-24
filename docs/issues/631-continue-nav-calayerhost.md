@@ -652,3 +652,26 @@ ID hasn't changed.
    - **Fail**: Overlay goes blank or breaks after cross-site navigation.
 6. Check the TermSurf log for "skipping swap" messages during same-site
    navigation and "replaced CALayerHost" messages during cross-site navigation.
+
+**Result:** Fail
+
+The exact same ~100ms flicker persists on every navigation. Skipping the
+CALayerHost swap when the context ID is unchanged had no effect on the flicker.
+
+#### Conclusion
+
+The hypothesis was wrong. The flicker is not caused by the GUI-side CALayerHost
+swap. Even when the swap is skipped entirely (because the `ca_context_id` is
+unchanged), the overlay still briefly goes blank during navigation. This means
+the flicker originates inside Chromium — the CAContext's content tree is being
+torn down and rebuilt during navigation, and the CALayerHost faithfully reflects
+that gap. The GUI is an innocent bystander.
+
+This rules out smells #1, #6, #7, #13, and #14 as the primary cause. The flicker
+is Chromium-side: likely smell #2 (CAContext content gap during compositor
+surface transition) or #8 (`DidNavigate` surface ID churn). The next experiment
+should investigate the Chromium compositor's behavior during navigation —
+specifically what happens to the `CALayerTreeCoordinator`'s content tree between
+the old page's last frame and the new page's first frame.
+
+Code changes reverted.
