@@ -615,3 +615,250 @@ The research should produce:
 The research answers all three questions with enough specificity to either (a)
 design an implementation experiment, or (b) conclusively rule out the approach
 and redirect to a GUI-side workaround.
+
+### Results
+
+#### Question 1: Why is the CALayerTreeCoordinator destroyed on navigation?
+
+**Root cause: BackForwardCache proactive BrowsingInstance swapping.**
+
+When BackForwardCache is enabled (the default), Chromium proactively swaps
+`BrowsingInstance` even for **same-site** navigations to preserve the old page
+in BFCache for potential back-navigation (`render_frame_host_manager.cc` line
+3017). This creates a new `SiteInstance`, new `RenderViewHost`, and new
+`RenderWidgetHostViewMac` for every navigation — including same-site. This
+explains why Issue 631 Experiment 2 saw `ca_context_id` changes for same-site
+Wikipedia navigations.
+
+**The full destruction chain:**
+
+```
+Navigation (even same-site, if BFCache-eligible)
+  → BFCache proactive BrowsingInstance swap
+    (render_frame_host_manager.cc:3017)
+  → New speculative RenderFrameHost in new SiteInstance
+  → CreateRenderWidgetHostViewForRenderManager
+    (web_contents_impl.cc:10519)
+  → new RenderWidgetHostViewMac
+    (web_contents_view_mac.mm:405)
+  → new BrowserCompositorMac
+    (render_widget_host_view_mac.mm:236)
+  → TransitionToState(HasOwnCompositor)
+    (browser_compositor_view_mac.mm:252)
+  → new RecyclableCompositorMac with new FrameSinkId
+    (recyclable_compositor_mac.cc:42)
+  → GPU: new Display → new ImageTransportSurfaceOverlayMacEGL
+    (image_transport_surface_mac.mm:23)
+  → new CALayerTreeCoordinator
+    (image_transport_surface_overlay_mac.mm:123)
+  → new CAContext with new ca_context_id
+    (ca_layer_tree_coordinator.mm:56)
+
+CommitPending (render_frame_host_manager.cc:5040)
+  → TakeFallbackContentFrom copies old ca_context_id to new NSView
+    (render_frame_host_manager.cc:5364)
+  → old RenderWidgetHostViewMac::Destroy()
+    (render_widget_host_view_mac.mm:845)
+  → browser_compositor_.reset()
+    (render_widget_host_view_mac.mm:866)
+  → BrowserCompositorMac::~BrowserCompositorMac()
+    (browser_compositor_view_mac.mm:69)
+  → TransitionToState(HasNoCompositor)
+    → recyclable_compositor_.reset()
+      (browser_compositor_view_mac.mm:231)
+  → GPU: Display destroyed
+    → ImageTransportSurfaceOverlayMacEGL destroyed
+      → ca_layer_tree_coordinator_.reset()
+        (image_transport_surface_overlay_mac.mm:163)
+      → CAContext released → ca_context_id invalid
+```
+
+Every object in the chain — `RenderWidgetHostViewMac`, `BrowserCompositorMac`,
+`RecyclableCompositorMac`, `ui::Compositor`, `FrameSinkId`, output surface,
+`CALayerTreeCoordinator`, `CAContext` — is recreated per navigation. The
+`BrowserCompositorMac` is a `std::unique_ptr` member of
+`RenderWidgetHostViewMac` and dies with it.
+
+**This is standard Chromium behavior, not something the profile server
+introduced.** Unmodified content_shell does the same thing.
+
+#### Question 2: Can we adopt the normal Chromium approach?
+
+**No — because normal Chromium also recreates the CAContext.** The research
+revealed that Chromium has two display modes on macOS:
+
+1. **Chrome browser (`UseParentLayerCompositor`):** The window has a persistent
+   `ui::Compositor` owned by the window's views hierarchy. The CAContext lives
+   in this persistent compositor and outlives navigation. But this mode requires
+   Chrome's full views framework — not available to content_shell embedders.
+
+2. **content_shell (`HasOwnCompositor`):** Each `BrowserCompositorMac` creates
+   its own `RecyclableCompositorMac` with its own `CAContext`. The CAContext is
+   destroyed and recreated on every cross-process navigation. **This is the mode
+   both content_shell and our profile server use.**
+
+In content_shell mode, Chromium does NOT keep the CAContext alive across
+navigations. Instead, it masks the transition with `TakeFallbackContentFrom`:
+
+1. The new `RenderWidgetHostViewMac`'s NSView copies the old view's
+   `CALayerParams` (including the old `ca_context_id`), so the new NSView's
+   `DisplayCALayerTree` creates a `CALayerHost` pointing at the **old**
+   CAContext.
+2. The old CAContext stays alive until the old view is destroyed.
+3. When the new renderer produces its first frame with a new `ca_context_id`,
+   the new NSView's `DisplayCALayerTree` swaps to the new `CALayerHost`.
+
+This works in Chrome/content_shell because the user sees the NSView directly.
+The fallback content bridges the gap **in-process**. But in TermSurf, the user
+sees a `CALayerHost` in a separate GUI process. `TakeFallbackContentFrom`
+updates the profile server's hidden NSView — which nobody sees. The GUI's
+`CALayerHost` points at the old `ca_context_id`, which dies when the old view is
+destroyed.
+
+#### Question 3: Can we make it persist? What are the concrete options?
+
+**Making the CAContext persist is not feasible without Chrome's views
+framework.** The `UseParentLayerCompositor` path (where a single persistent
+compositor owns the CAContext) requires Chrome's `ui::Layer` hierarchy, which
+content_shell/profile server doesn't have. Issue 631 Experiment 5 tried
+Electron's compositor recycling patch (which keeps the same
+`RecyclableCompositorMac` across navigations) — it caused white screen on back
+navigation.
+
+**The real problem is the absence of a cross-process fallback mechanism.**
+Chrome's `TakeFallbackContentFrom` works in-process via NSView layer tree
+manipulation. TermSurf needs the equivalent over XPC:
+
+- **Option A: Send the old `ca_context_id` to the GUI during the transition.**
+  When `TakeFallbackContentFrom` fires, the new view has the old `ca_context_id`
+  temporarily. If we sent this to the GUI (as a "fallback" message), the GUI
+  could keep showing the old content until the new `ca_context_id` arrives. But
+  the old CAContext is destroyed shortly after, so the timing is tight.
+
+- **Option B: Snapshot the old content on the GUI side before the swap.** Before
+  removing the old `CALayerHost`, capture its visible content as a bitmap (e.g.,
+  `CALayer.contents` or `renderInContext:`). Display the bitmap as a static
+  layer while waiting for the new `ca_context_id`. This is a GUI-side workaround
+  that doesn't depend on Chromium internals.
+
+- **Option C: Snapshot on the Chromium side.** Before navigation, capture the
+  current `CAContext`'s content and send it to the GUI as a fallback texture.
+  The GUI displays this texture while the new CAContext is created. More complex
+  but more reliable.
+
+- **Option D: Keep the old output surface alive longer.** Delay the destruction
+  of the old `RecyclableCompositorMac` (and thus the old
+  `CALayerTreeCoordinator` and `CAContext`) until the new compositor has
+  produced its first frame. The old `ca_context_id` would remain valid during
+  the transition. This is essentially what `TakeFallbackContentFrom` achieves
+  in-process — the old view's CAContext stays alive because the new NSView
+  points its `CALayerHost` at it. We would need a Chromium-side change to delay
+  the old view's destruction.
+
+### Conclusion
+
+The CAContext recreation is standard Chromium behavior triggered by
+BackForwardCache proactive BrowsingInstance swapping. Normal Chromium masks the
+transition with `TakeFallbackContentFrom`, which works in-process but does not
+help TermSurf's cross-process `CALayerHost`. Making the CAContext persist is not
+feasible without Chrome's views framework. The fix must be a cross-process
+fallback mechanism — either a GUI-side snapshot (Option B) or a Chromium-side
+delay of old view destruction (Option D).
+
+**Update:** Confirmed by testing that unmodified content_shell has the same
+flicker. Chrome does not. The difference is that Chrome uses
+`UseParentLayerCompositor` (persistent CAContext) while content_shell uses
+`HasOwnCompositor` (new CAContext per navigation).
+
+## Experiment 4: Research how to adopt UseParentLayerCompositor
+
+### Goal
+
+Chrome avoids the flicker because it uses `UseParentLayerCompositor` mode, where
+a single persistent `ui::Compositor` (owned by the window's views hierarchy)
+outlives navigation. The `CAContext` lives in this compositor and never changes.
+Content_shell uses `HasOwnCompositor` mode, where each `BrowserCompositorMac`
+creates its own `RecyclableCompositorMac` with a new `CAContext` per navigation.
+
+We want the profile server to use `UseParentLayerCompositor` (or achieve the
+same effect) so that the `ca_context_id` persists across navigations. The
+profile server already has an NSWindow with an NSView — even though the window
+is hidden, the layer tree exists. The question is what it takes to switch from
+`HasOwnCompositor` to `UseParentLayerCompositor`.
+
+### Questions
+
+1. **What triggers `UseParentLayerCompositor` vs `HasOwnCompositor`?** What
+   condition does `BrowserCompositorMac` check to decide which mode to use?
+   Identify the exact code path and what needs to be true for
+   `UseParentLayerCompositor`.
+
+2. **What is `parent_ui_layer_`?** `BrowserCompositorMac` takes a
+   `parent_ui_layer` parameter. In Chrome, this comes from the window's views
+   hierarchy. What exactly is it? Who creates it? What does it provide — a
+   persistent `ui::Compositor` and a persistent `AcceleratedWidgetMac`?
+
+3. **What does the Chrome window's views hierarchy look like?** Trace the
+   ownership from the `BrowserView` (or equivalent) down to the
+   `ui::Compositor`. What classes are involved? Which one owns the persistent
+   compositor?
+
+4. **Can we create a minimal `parent_ui_layer_` in the profile server?** The
+   profile server has a hidden NSWindow. Can we create a `ui::Compositor` and
+   `ui::Layer` hierarchy on that window so that `BrowserCompositorMac` enters
+   `UseParentLayerCompositor` mode? What is the minimum setup required?
+
+5. **What changes when `UseParentLayerCompositor` is active?** In this mode,
+   `BrowserCompositorMac` does not create a `RecyclableCompositorMac`. Instead
+   it attaches its `root_layer_` to the parent layer. What does the compositor
+   lifecycle look like during navigation in this mode? Confirm that the
+   `CAContext` persists.
+
+6. **Where does the `CALayerParams` callback fire in this mode?** In
+   `HasOwnCompositor`, the callback fires on the `AcceleratedWidgetMac` owned by
+   `RecyclableCompositorMac`. In `UseParentLayerCompositor`, where does it fire?
+   Is it on a different `AcceleratedWidgetMac` owned by the persistent
+   compositor? We need to know where to register our XPC callback.
+
+### Method
+
+Research the Chromium source at `chromium/src/`. Trace the following:
+
+**Mode selection:**
+
+- Find the condition in `BrowserCompositorMac` that selects
+  `UseParentLayerCompositor` vs `HasOwnCompositor`
+- Trace where `parent_ui_layer_` is set, from `RenderWidgetHostViewMac`
+  constructor back to whoever provides it
+
+**Chrome's persistent compositor:**
+
+- Find how Chrome's `BrowserView` or `NativeWidgetMac` sets up the
+  `ui::Compositor` and `ui::Layer` that becomes `parent_ui_layer_`
+- Trace the ownership: who creates the `ui::Compositor`, who owns the
+  `AcceleratedWidgetMac`, and how does the `CAContext` end up persistent
+
+**Minimal reproduction:**
+
+- Determine the minimum code needed to create a `ui::Layer` with a
+  `ui::Compositor` that can serve as `parent_ui_layer_` for
+  `BrowserCompositorMac`
+- Check if this requires Chrome's full views framework or if it can be done with
+  just `ui::Compositor` and `ui::Layer` (which are part of the content layer,
+  not Chrome-specific)
+
+### Deliverables
+
+1. The exact condition that selects `UseParentLayerCompositor`
+2. The ownership chain for Chrome's persistent compositor
+3. A concrete assessment: can the profile server create a minimal
+   `parent_ui_layer_` without Chrome's views framework?
+4. If yes: the specific classes and initialization code needed
+5. If no: the exact dependency that prevents it and whether it can be worked
+   around
+
+### Success criteria
+
+The research determines whether adopting `UseParentLayerCompositor` in the
+profile server is feasible, and if so, provides enough detail to design an
+implementation experiment.
