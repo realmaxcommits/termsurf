@@ -470,3 +470,179 @@ on it to receive the `AcceleratedWidgetCALayerParamsUpdated()` callback.
 **Fix:** Implement `AcceleratedWidgetMacNSView` on a bridge class, register it
 with `persistent_widget_mac_->SetNSView(bridge)`, and extract the
 `ca_context_id` from `GetCALayerParams()` in the callback. This is Experiment 2.
+
+## Experiment 2: Implement AcceleratedWidgetMacNSView callback
+
+### Hypothesis
+
+Experiment 1 proved the persistent compositor works — `BrowserCompositorMac`
+enters `UseParentLayerCompositor` mode. The only missing piece is a callback on
+the persistent `AcceleratedWidgetMac` to extract the `ca_context_id`.
+
+`AcceleratedWidgetMacNSView` is a one-method interface:
+
+```cpp
+class AcceleratedWidgetMacNSView {
+  virtual void AcceleratedWidgetCALayerParamsUpdated() = 0;
+};
+```
+
+When the GPU process renders a frame,
+`AcceleratedWidgetMac::UpdateCALayerTree()` stores the `CALayerParams` and calls
+`AcceleratedWidgetCALayerParamsUpdated()` on the registered NSView. The NSView
+calls `widget->GetCALayerParams()` to read the `ca_context_id`.
+
+If we implement this interface, register it on the persistent widget, and send
+the `ca_context_id` via XPC, the GUI will receive a stable ID that never changes
+across navigations.
+
+### Chromium branch
+
+`146.0.7650.0-issue-633` (continues from Experiment 1)
+
+### Code changes
+
+#### 1. Add PersistentCompositorBridge class
+
+**File:**
+`content/chromium_profile_server/browser/shell_compositor_bridge_mac.h`
+
+Expand the existing header to declare the bridge class:
+
+```cpp
+#include "base/functional/callback.h"
+#include "ui/accelerated_widget_mac/accelerated_widget_mac.h"
+#include "ui/gfx/ca_layer_params.h"
+
+class PersistentCompositorBridge : public ui::AcceleratedWidgetMacNSView {
+ public:
+  using CALayerParamsCallback =
+      base::RepeatingCallback<void(const gfx::CALayerParams&)>;
+
+  explicit PersistentCompositorBridge(ui::AcceleratedWidgetMac* widget);
+  ~PersistentCompositorBridge() override;
+
+  void SetCallback(CALayerParamsCallback callback);
+
+  // ui::AcceleratedWidgetMacNSView:
+  void AcceleratedWidgetCALayerParamsUpdated() override;
+
+ private:
+  raw_ptr<ui::AcceleratedWidgetMac> widget_;
+  CALayerParamsCallback callback_;
+};
+```
+
+#### 2. Implement PersistentCompositorBridge
+
+**File:**
+`content/chromium_profile_server/browser/shell_compositor_bridge_mac.mm`
+
+Add the implementation after the existing `SetParentUiLayerOnView`:
+
+```objcpp
+PersistentCompositorBridge::PersistentCompositorBridge(
+    ui::AcceleratedWidgetMac* widget)
+    : widget_(widget) {
+  widget_->SetNSView(this);
+}
+
+PersistentCompositorBridge::~PersistentCompositorBridge() {
+  widget_->ResetNSView();
+}
+
+void PersistentCompositorBridge::SetCallback(CALayerParamsCallback callback) {
+  callback_ = std::move(callback);
+}
+
+void PersistentCompositorBridge::AcceleratedWidgetCALayerParamsUpdated() {
+  const auto* params = widget_->GetCALayerParams();
+  if (params && callback_)
+    callback_.Run(*params);
+}
+```
+
+#### 3. Create bridge and wire up XPC callback in CreateTab()
+
+**File:** `content/chromium_profile_server/browser/shell_browser_main_parts.h`
+
+Add member:
+
+```cpp
+std::unique_ptr<PersistentCompositorBridge> persistent_bridge_;
+```
+
+Add forward declaration or include for the bridge class.
+
+**File:** `content/chromium_profile_server/browser/shell_browser_main_parts.cc`
+
+In `CreateTab()`, after `persistent_compositor_->SetVisible(true)`, create the
+bridge and set the callback. The callback sends `ca_context_id` via XPC using
+the tab connection — same pattern as the existing per-view callback, but now on
+the persistent widget:
+
+```cpp
+persistent_bridge_ = std::make_unique<PersistentCompositorBridge>(
+    persistent_widget_mac_.get());
+```
+
+After the tab connection is created and `tab_ready` is sent, set the callback on
+the bridge:
+
+```cpp
+persistent_bridge_->SetCallback(base::BindRepeating(
+    [](const std::string& pane_id, xpc_connection_t conn,
+       uint32_t* last_id, const gfx::CALayerParams& params) {
+      if (params.ca_context_id == 0 || params.ca_context_id == *last_id)
+        return;
+      *last_id = params.ca_context_id;
+      xpc_object_t msg = xpc_dictionary_create(NULL, NULL, 0);
+      xpc_dictionary_set_string(msg, "action", "ca_context");
+      xpc_dictionary_set_uint64(msg, "ca_context_id", params.ca_context_id);
+      xpc_dictionary_set_string(msg, "pane_id", pane_id.c_str());
+      xpc_dictionary_set_uint64(msg, "pixel_width",
+                                params.pixel_size.width());
+      xpc_dictionary_set_uint64(msg, "pixel_height",
+                                params.pixel_size.height());
+      xpc_connection_send_message(conn, msg);
+      xpc_release(msg);
+      LOG(INFO) << "[ProfileServer] Persistent compositor ca_context_id="
+                << params.ca_context_id << " for pane " << pane_id;
+    },
+    cb_pane_id, cb_conn, base::Owned(last_id)));
+```
+
+**Note:** The bridge callback uses the same dedup gate (`last_id`) and XPC
+connection as the old per-view callback. Since the persistent bridge replaces
+the per-view callback, the existing per-view `SetCALayerParamsCallback` can
+remain in place harmlessly — it won't fire.
+
+### Test
+
+1. Build: `autoninja -C out/Default chromium_profile_server`
+2. Build GUI: `cd gui && zig build`
+3. Launch: `open gui/zig-out/TermSurf.app`
+4. Open `web` TUI, navigate to any page
+5. Check logs for "Persistent compositor ca_context_id=" — confirms callback
+   fires
+6. Navigate multiple times — verify `ca_context_id` is the same value every time
+7. Click links — verify no flicker
+
+### Success criteria
+
+- The `ca_context_id` appears in logs and is sent to the GUI
+- The same `ca_context_id` persists across all navigations
+- Page content renders correctly
+- No visible flicker on navigation
+
+### Failure modes
+
+- **Callback never fires:** The persistent compositor's
+  `AcceleratedWidgetMac::UpdateCALayerTree()` is never called because the GPU
+  process doesn't know about this compositor's `FrameSinkId`. The persistent
+  compositor may need additional registration with the viz host.
+- **Content renders in wrong compositor:** The per-view content renders into the
+  persistent compositor's CAContext but the layer tree is wrong (blank, wrong
+  size, etc.). May need `ui::Layer` configuration.
+- **Crash in SetNSView:** `SetNSView` DCHECKs that view is not already set. Must
+  only be called once.
