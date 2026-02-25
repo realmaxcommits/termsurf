@@ -835,3 +835,123 @@ This signs just the executable (replacing its linker signature with an adhoc
 signature that has correct page hashes) without touching the framework or
 sealing bundle resources. The framework retains its original `autoninja`
 signature.
+
+### Experiment 5: `zig build` Assembles the App Bundle
+
+Experiment 4 showed the code signing crash was caused by Frankensteining two
+build systems' outputs together — copying the Zig binary into a Chromium-built
+`.app` bundle, then re-signing with `codesign --deep`, which sealed mismatched
+resources and corrupted the framework's signature.
+
+The fix: `zig build` assembles the complete `.app` bundle itself. The Chromium
+build (`autoninja`) produces only the framework. `zig build` takes the framework
+and wraps it in a proper app bundle with the Zig executable. No post-build copy,
+no `codesign`. The Zig linker produces a valid `linker-signed` binary, and the
+framework keeps its `autoninja` signature.
+
+#### Current app bundle structure
+
+```
+Zig Profile Server.app/
+├── Contents/
+│   ├── Info.plist
+│   ├── PkgInfo
+│   ├── MacOS/
+│   │   └── Zig Profile Server          ← Zig binary (replace this)
+│   ├── Frameworks/
+│   │   └── Zig Profile Server Framework.framework/  ← 120MB, from autoninja
+│   │       ├── Zig Profile Server Framework         ← main dylib
+│   │       ├── Helpers/                             ← GPU, Renderer, Plugin
+│   │       ├── Libraries/                           ← component dylibs
+│   │       └── Resources/                           ← pak files, locales, etc.
+│   └── Resources/
+│       └── app.icns
+```
+
+`autoninja` builds the entire bundle today. We only need it to build the
+framework. The outer `.app` shell (Info.plist, PkgInfo, MacOS/) comes from
+`zig build`.
+
+#### What to change
+
+**`browser/build.zig`:**
+
+After building the `zig_profile_server` executable, add install steps that
+assemble the `.app` bundle:
+
+1. Install the Zig executable to
+   `Zig Profile Server.app/Contents/MacOS/Zig Profile Server`
+2. Write `Info.plist` (hardcoded — it's 18 keys, rarely changes)
+3. Write `PkgInfo` (literally `APPL????`)
+4. Symlink the framework from `chromium/src/out/Default/` into
+   `Zig Profile Server.app/Contents/Frameworks/`
+
+The framework symlink avoids copying 120MB on every build. The framework only
+changes when the C++ shim changes (rare). The symlink also means `autoninja`
+output is used in-place — no signature invalidation.
+
+**Key detail — framework path:** The Zig binary resolves the framework at
+runtime via `@executable_path/../Frameworks/`. The rpath is already set in
+`build.zig` (`@executable_path/../Frameworks`). The symlink makes this work.
+
+**`browser/src/main.zig`:** No changes needed. The binary already uses
+`_NSGetExecutablePath` + `dirname` to find `../Frameworks/`.
+
+**`gui/src/apprt/xpc.zig`:** Update `spawnServerProcess` to point at the new
+bundle location. The bundle now lives at `browser/zig-out/` instead of
+`chromium/src/out/Default/`.
+
+#### Info.plist contents
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleDevelopmentRegion</key><string>en</string>
+  <key>CFBundleDisplayName</key><string>Zig Profile Server</string>
+  <key>CFBundleExecutable</key><string>Zig Profile Server</string>
+  <key>CFBundleIdentifier</key><string>com.termsurf.zig-profile-server</string>
+  <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
+  <key>CFBundleName</key><string>Zig Profile Server</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleShortVersionString</key><string>1.0.0</string>
+  <key>CFBundleVersion</key><string>1</string>
+  <key>LSUIElement</key><true/>
+  <key>NSPrincipalClass</key><string>NSApplication</string>
+  <key>NSSupportsAutomaticGraphicsSwitching</key><true/>
+</dict>
+</plist>
+```
+
+Note: `LSUIElement=true` hides the Dock icon (the original Chromium-built app
+had this; the Zig app was missing it — that's why the Dock icon appeared in
+Experiment 3).
+
+#### Build workflow
+
+```bash
+# Once (or after C++ shim changes):
+cd chromium/src && autoninja -C out/Default zig_profile_server
+
+# Every time Zig code changes:
+cd browser && zig build
+
+# Launch:
+cd gui && zig build && open zig-out/TermSurf.app
+# Then type: web google.com
+```
+
+No `cp`. No `codesign`. `zig build` produces a complete, launchable `.app`.
+
+#### Verification
+
+Same as Experiment 3, plus:
+
+1. No code signing crash — server stays alive
+2. No Dock icon (LSUIElement=true)
+3. `codesign -dvvv` on the main binary shows `linker-signed` (Zig's linker)
+4. `codesign -dvvv` on the framework shows the original `autoninja` signature
+
+#### Result:
