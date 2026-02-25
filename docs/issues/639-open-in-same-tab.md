@@ -114,3 +114,72 @@ Required includes (check if already present):
 - No new Chromium windows are created
 - Back/forward navigation still works after redirected navigations
 - Page title and URL bar update correctly after redirected navigations
+
+### Result: Failure
+
+The TUI became completely unresponsive after clicking a `target="_blank"` link.
+The old page disappeared, but the new page never appeared, and all keybindings
+stopped working, and the app had to be force-closed. The naive approach of
+redirecting `OpenURLFromTab` and discarding the pre-created `WebContents` in
+`AddNewContents` likely caused Chromium internal state corruption or a deadlock.
+More research into how Chromium and Electron handle this is needed before the
+next experiment.
+
+## Experiment 2: Research new-tab interception patterns
+
+### Hypothesis
+
+Understanding how Chromium's new-tab lifecycle works internally, how Electron
+intercepts it, and how our own app's CALayerHost pipeline reacts to WebContents
+changes will reveal the correct interception point.
+
+### Research questions
+
+#### 1. Chromium internals
+
+- What is the full call chain when a `target="_blank"` link is clicked? Which
+  methods fire in what order (`OpenURLFromTab`, `AddNewContents`,
+  `CreateNewWindow`, `WebContentsCreated`, etc.)?
+- What happens to the original `WebContents` when a new one is created? Does
+  Chromium expect the caller to adopt the new `WebContents`, and what breaks if
+  it's discarded?
+- Is there a delegate method that fires _before_ the new `WebContents` is
+  created (e.g. `IsWebContentsCreationOverridden`) that could suppress creation
+  entirely?
+- What is `ShouldAllowRendererInitiatedCrossProcessNavigation`? Is it relevant?
+
+#### 2. Electron
+
+- How does Electron handle `window.open()` and `target="_blank"`? Look at
+  Electron's `WebContentsDelegate` overrides in `vendor/electron/`.
+- Does Electron suppress new-window creation, redirect it, or intercept before
+  creation?
+- Does Electron use `IsWebContentsCreationOverridden`, `SetAutoResizeMode`,
+  `did-create-window`, or a different mechanism?
+- What events does Electron emit (`new-window`, `will-navigate`,
+  `did-create-window`) and where are they triggered from?
+
+#### 3. Our app (TermSurf)
+
+- When `Shell::CreateNewWindow` is called, what happens to the CALayerHost
+  pipeline? Does the new Shell get a new `CAContext` / `CAContextID`?
+- When the original Shell's `WebContents` navigates, what triggers the
+  CALayerHost update? Is the issue that navigation to a new `WebContents`
+  detaches the `RenderWidgetHostView` from the original `CAContext`?
+- In the Experiment 1 failure, did the old page disappearing suggest the
+  original `WebContents` was destroyed or detached? Or did the navigation start
+  but the compositor never received the new frame?
+- Look at `ShellTabObserver::RenderViewHostChanged` — does it fire during this
+  scenario? Is it possible the observer lost its connection?
+
+### Deliverable
+
+A written summary of findings for each section above, with specific file paths,
+method names, and line numbers. The summary should conclude with a recommended
+approach for Experiment 3.
+
+### Success criteria
+
+- All three research areas answered with code references
+- Root cause of Experiment 1 failure identified or narrowed down
+- Clear recommendation for the next implementation experiment
