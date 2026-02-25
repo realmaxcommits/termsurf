@@ -4,26 +4,13 @@
 
 This repo is a fork of [Ghostty](https://github.com/ghostty-org/ghostty). The
 original Ghostty commit history is part of our git history — we forked, then
-began modifying files in place. Later, all Ghostty files were moved into `ts1/`
-to make room for other components (WezTerm forks, CEF experiments, docs, etc.).
+began modifying files in place.
 
-There are now three copies of Ghostty in this repo:
+The active Ghostty fork is `gui/`. All browser integration logic is in Zig,
+matching Ghostty's architecture. gui/ receives upstream Ghostty merges.
 
-| Directory | Generation     | Status     | Description                                                            |
-| --------- | -------------- | ---------- | ---------------------------------------------------------------------- |
-| `gui/`    | TermSurf GUI   | Active     | Ghostty fork with browser integration in Zig. Receives upstream merges.|
-| `ts5/`    | TermSurf 5.0   | Superseded | Ghostty fork with browser integration in Swift. Superseded by gui/.    |
-| `ts1/`    | TermSurf 1.x   | Frozen     | Ghostty + WKWebView browser panes. No longer receives upstream merges. |
-
-**gui/ is active development.** All browser integration logic is in Zig, matching
-Ghostty's architecture. gui/ receives upstream Ghostty merges.
-
-**ts5 is superseded.** Its browser integration lived in Swift (CompositorXPC).
-gui/ rewrites this in Zig. ts5 is kept for reference.
-
-**ts1 is permanently frozen.** It contains TermSurf-specific modifications
-(WKWebView integration, `web` CLI command, branding) that are specific to the
-ts1 approach. It will not receive upstream Ghostty updates.
+Two earlier Ghostty forks (`ts1/` and `ts5/`) have been archived from the
+working tree. See [early-prototypes.md](early-prototypes.md) for their history.
 
 ## Remote
 
@@ -33,28 +20,6 @@ ts1 approach. It will not receive upstream Ghostty updates.
 
 The `upstream` remote is shared across all Ghostty copies — they all came from
 the same repo.
-
-## How ts1 was created
-
-The repo was forked from Ghostty. All files were then moved into `ts1/` with a
-directory rename. Upstream merges used `git merge -X subtree=ts1 upstream/main`,
-which tells git to map upstream's `/` to our `ts1/`. This worked because the
-subtree merge strategy could follow the rename history.
-
-ts1 is now frozen and will not be merged again.
-
-## How ts5 was created
-
-ts5 was imported with `git subtree add`:
-
-```bash
-git subtree add --prefix=ts5 upstream main
-```
-
-This could not use `git merge -X subtree=ts5` because git's rename detection
-found the original `/ → ts1/` move and tried to merge upstream changes into
-`ts1/` instead of `ts5/`. Three experiments were attempted before finding the
-working approach (see Issue 418 Experiments 1–3 for details).
 
 ## How gui/ was created
 
