@@ -201,3 +201,13 @@ let viewport_block = Block::default()
 - Viewport title updates to the page title after load
 - Title updates on navigation (link click, URL bar, back/forward)
 - Long titles are truncated by ratatui's block rendering (no crash)
+
+### Result: Success
+
+All success criteria pass. The page title flows from Chromium's `TitleWasSet`
+through XPC to the TUI viewport border.
+
+## Conclusion
+
+Issue 638 is closed. The viewport border displays the current page title,
+falling back to "Viewport" when no title is available.
