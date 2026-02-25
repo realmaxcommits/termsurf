@@ -710,3 +710,78 @@ entitlements and designated requirements).
 - Check whether the Helper app bundles inside `Zig Profile Server.app` have
   designated requirements that conflict with the ad-hoc-signed main executable
 - Try signing with the same entitlements as the original Chromium build
+
+### Experiment 4: Code Signing Research
+
+Experiment 3 failed because macOS killed the Zig binary with
+`SIGKILL (Code Signature Invalid)` when spawned by the GUI, even though the same
+binary works from the terminal. This experiment is pure research — compare the
+code signing properties of the working Chromium-built binary against the failing
+Zig replacement to identify what's different.
+
+#### Steps
+
+1. **Dump full code signing details for both main executables:**
+
+   ```bash
+   codesign -dvvv "chromium/src/out/Default/Chromium Profile Server.app/Contents/MacOS/Chromium Profile Server" 2>&1
+   codesign -dvvv "chromium/src/out/Default/Zig Profile Server.app/Contents/MacOS/Zig Profile Server" 2>&1
+   ```
+
+   Compare: `Identifier`, `Format`, `CodeDirectory` flags, `Hash type`,
+   `Signature` type (adhoc vs real), `Sealed Resources`,
+   `Internal requirements`.
+
+2. **Dump entitlements for both main executables:**
+
+   ```bash
+   codesign --display --entitlements - "chromium/src/out/Default/Chromium Profile Server.app/Contents/MacOS/Chromium Profile Server" 2>&1
+   codesign --display --entitlements - "chromium/src/out/Default/Zig Profile Server.app/Contents/MacOS/Zig Profile Server" 2>&1
+   ```
+
+   Key entitlements to look for:
+   `com.apple.security.cs.disable-library-validation`,
+   `com.apple.security.cs.allow-unsigned-executable-memory`,
+   `com.apple.security.cs.allow-jit`,
+   `com.apple.security.cs.allow-dyld-environment-variables`.
+
+3. **Check the Info.plist for both apps:**
+
+   ```bash
+   diff <(plutil -p "chromium/src/out/Default/Chromium Profile Server.app/Contents/Info.plist") \
+        <(plutil -p "chromium/src/out/Default/Zig Profile Server.app/Contents/Info.plist")
+   ```
+
+   The `Zig Profile Server.app` Info.plist was created by `autoninja` for the
+   original Chromium binary. Check if it references the original binary name or
+   has signing-related keys.
+
+4. **Check Helper app designated requirements:**
+
+   ```bash
+   codesign -d --requirements - "chromium/src/out/Default/Zig Profile Server.app/Contents/Frameworks/Zig Profile Server Helper.app" 2>&1
+   codesign -d --requirements - "chromium/src/out/Default/Zig Profile Server.app/Contents/Frameworks/Zig Profile Server Helper (GPU).app" 2>&1
+   ```
+
+   Helper apps may have designated requirements that reference the main
+   executable's signing identity. If the main binary's signature doesn't match,
+   macOS may reject the entire bundle.
+
+5. **Check whether Chromium's build signs with `--options runtime`:**
+
+   The Hardened Runtime flag (`runtime`) enables stricter code signing
+   enforcement. If the original was signed with it and our re-signing doesn't
+   include it, or vice versa, that could explain the difference.
+
+   ```bash
+   codesign -dvvv "chromium/src/out/Default/Chromium Profile Server.app" 2>&1 | grep -i flag
+   codesign -dvvv "chromium/src/out/Default/Zig Profile Server.app" 2>&1 | grep -i flag
+   ```
+
+#### Expected outcome
+
+A clear list of differences between the two signing profiles. From that, we can
+determine exactly which flags/entitlements to use when re-signing the Zig binary
+in Experiment 5.
+
+#### Result:
