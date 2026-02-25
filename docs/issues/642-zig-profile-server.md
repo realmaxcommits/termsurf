@@ -954,4 +954,46 @@ Same as Experiment 3, plus:
 3. `codesign -dvvv` on the main binary shows `linker-signed` (Zig's linker)
 4. `codesign -dvvv` on the framework shows the original `autoninja` signature
 
-#### Result:
+#### Result: Fail
+
+Two separate failures encountered:
+
+**Failure 1: Symlink approach — `GetContentsPath` DCHECK.**
+
+The initial implementation used a symlink for the framework. Chromium's
+`content/shell/app/paths_apple.mm:GetContentsPath()` calls `realpath()` on the
+executable path, which resolves symlinks to the actual filesystem location.
+After navigating up 2 directory levels, the basename wasn't "Contents" — it was
+somewhere in the chromium build tree.
+`DCHECK_EQ("Contents", path.BaseName().value())` fired, causing `SIGABRT`.
+
+Fixed by copying the framework instead of symlinking. The 120MB copy is
+acceptable since it only happens when the C++ shim changes.
+
+**Failure 2: Copy approach — server crashes or hangs, GUI unresponsive.**
+
+After switching to a real framework copy, the code signing crash was resolved
+(no more `SIGKILL`). But the server still failed to work end-to-end. Typing
+`web google.com` in the terminal pane produced no web page, all keybindings were
+lost, and the app had to be force-killed.
+
+The crash reports show `SIGABRT` from `GetContentsPath()` — the same DCHECK. The
+framework copy preserves the internal directory structure, but Chromium's path
+resolution still doesn't find "Contents" at the expected level. The `realpath()`
+call resolves the executable path through the copied framework's internal
+structure rather than the outer app bundle's `Contents/` directory.
+
+**Root cause:** Chromium's `GetContentsPath()` assumes a specific bundle layout
+where the executable lives at `*.app/Contents/MacOS/<name>` and navigating up 2
+levels from the executable reaches `Contents/`. This works for the
+Chromium-built bundle because `autoninja` creates the entire bundle structure
+consistently. When `zig build` assembles the bundle with a copied framework, the
+internal paths are correct, but the crash report suggests the DCHECK is still
+failing — possibly because the framework's Helper apps resolve their own paths
+relative to the framework's original location.
+
+**Conclusion:** Assembling the app bundle from `zig build` requires deeper
+understanding of Chromium's bundle path expectations. The next experiment should
+investigate whether the issue is in the main process or the Helper subprocess
+launch, and whether the Chromium-built outer `.app` shell (from `autoninja`)
+needs to be preserved while only replacing the main executable.
