@@ -1092,14 +1092,15 @@ to getting the Zig binary into a launchable Chromium app bundle all hit
 different walls: code signing invalidation, symlink resolution via `realpath()`,
 and Chromium's hardcoded bundle path assertions.
 
-The issue is paused, not abandoned. The architecture is proven (Experiments
-1–2), the XPC code is written and tested (runs correctly from the terminal), and
-the failure mode is understood. The path forward is clear: use the
-autoninja-built app bundle as-is, replace only the main executable, and sign
-only that binary with `codesign --force -s -` (not `--deep`). This was
-identified in Experiment 4 but never tested because Experiment 5 diverged into
-building the bundle from scratch.
+Issue 643 continued the effort with a new approach: move the Zig code into
+`chromium/src/` and build it with `autoninja` via a GN `action()`. This solved
+the deployment problem — Experiment 643-1 produced a working standalone app
+bundle in a single build command, with correct `linker-signed` code signing. But
+Experiment 643-2 (XPC gateway) still failed. The server spawns, Chromium
+initializes, but no web page renders.
 
-When this issue resumes, start with a single focused experiment: copy the
-Experiment 2 Zig binary into the autoninja bundle, sign only the binary, and
-verify it launches when spawned by the GUI. One variable at a time.
+Across both issues: 7 experiments, and the Zig Profile Server never achieved
+end-to-end XPC integration. Standalone Chromium works every time (642-1, 642-2,
+643-1), but the XPC pipeline from GUI → Zig server → web content in the terminal
+pane has never worked. The existing C++ profile server handles all of this
+correctly. A different approach is needed.

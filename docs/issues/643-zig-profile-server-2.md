@@ -401,4 +401,73 @@ Chromium → GPU → CAContext → XPC → GUI → CALayerHost → display.
 Not tested in this experiment: input forwarding, resize, navigation, title/URL
 sync, destroy_tab. The page renders but is not interactive.
 
-#### Result:
+#### Result: Fail
+
+The server process spawns correctly — `ps aux` confirms it running with the
+right arguments (`--xpc-service=com.termsurf.xpc-gateway`,
+`--user-data-dir=...`). The full Chromium process tree starts (GPU, Network
+helpers). But no web page renders in the terminal pane.
+
+The standalone mode (no `--xpc-service`) still works — Experiment 1's
+`ca_context_id` output is verified. The failure is in the XPC path. Possible
+causes:
+
+1. The inline ObjC block ABI doesn't work — the XPC event handler never fires
+2. The XPC connection to the gateway fails silently
+3. `create_tab` is received but WebContents creation fails
+4. `ca_context` is sent back but the GUI doesn't process it
+
+No stderr output was captured — the GUI spawns the server via
+`std.process.Child` which doesn't capture stderr, and Zig's `std.debug.print`
+doesn't go to Chromium's `--log-file`. Root cause unknown without further
+debugging.
+
+## Conclusion
+
+Issue 643 solved the deployment problem from Issue 642. Experiment 1 proved that
+`autoninja` can compile Zig source via a GN `action()` and produce a correct,
+launchable app bundle in a single command. The Zig binary gets `linker-signed`
+code signing natively — no `codesign` step, no manual copying, no bundle
+surgery. The standalone mode works: `ca_context_id` is returned, the full
+Chromium process tree starts.
+
+But Experiment 2 (XPC gateway) failed. The server spawns with the right
+arguments, Chromium initializes, but no web page renders in the terminal pane.
+The failure is somewhere in the XPC pipeline — the inline ObjC block ABI, the
+gateway connection, the message dispatch, or the GUI's handling of the response.
+Without stderr visibility from the spawned process, the root cause is unknown.
+
+### What worked
+
+- **GN `action()` builds Zig code.** The pattern — Python wrapper invoking
+  `zig build-exe`, a second action swapping the binary into the app bundle — is
+  proven and reusable.
+- **Standalone mode.** The Zig binary creates WebContents, gets CAContext IDs,
+  and runs the full Chromium stack. The Zig-to-Chromium bridge works.
+- **Code signing.** The Zig compiler produces `linker-signed` binaries that
+  macOS accepts without re-signing. This was the root cause of all Issue 642
+  failures.
+
+### What didn't work
+
+- **XPC gateway.** The same XPC code that worked in Issue 642 (when launched
+  manually from the terminal) doesn't work when built by `autoninja` and spawned
+  by the GUI. The inline ObjC block ABI is untested — it may not match what
+  `xpc_connection_set_event_handler` expects. Or the failure may be elsewhere in
+  the pipeline.
+
+### Across Issues 642 and 643
+
+Two issues, 7 experiments, and the Zig Profile Server still doesn't work
+end-to-end. The pattern is consistent: standalone Chromium works (Experiments
+642-1, 642-2, 643-1), but XPC integration fails (642-3, 643-2) or deployment
+fails (642-4, 642-5). The XPC code was only ever verified working once — from a
+manually-launched terminal process in Issue 642 Experiment 3 — and that test was
+partial (the server connected and sent `server_register`, but `create_tab` was
+never received because the GUI wasn't involved).
+
+The fundamental problem may be that rewriting the profile server in Zig is
+solving the wrong problem. The existing C++ profile server works. The
+Zig-to-Chromium bridge adds complexity (dlopen, function pointers, ObjC blocks,
+build system integration) without clear user-facing benefit. A different
+approach may be more productive.
