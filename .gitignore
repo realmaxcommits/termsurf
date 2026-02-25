@@ -83,6 +83,11 @@ gui/vgcore.*
 gui/*/.build/
 gui/*/Sources/*/*.metallib
 
+# Browser (browser/)
+browser/zig-cache/
+browser/.zig-cache/
+browser/zig-out/
+
 # Chromium build workspace (src/, depot_tools, gclient state all ignored)
 /chromium/*
 !/chromium/patches/
