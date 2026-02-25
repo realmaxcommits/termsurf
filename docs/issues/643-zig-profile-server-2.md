@@ -289,3 +289,116 @@ Network, Storage, and Renderer helpers).
 
 This solves the root cause of all Issue 642 deployment failures: the binary is
 built and bundled by `autoninja`, so the app bundle is correct by construction.
+
+### Experiment 2: XPC Gateway
+
+Connect the Zig profile server to the GUI via XPC. The GUI spawns the server,
+sends `create_tab`, the server creates WebContents and sends back
+`ca_context_id`. Web content renders in the terminal pane.
+
+The XPC code was already written and tested in Issue 642 Experiment 3 — it
+worked when launched manually from the terminal. The only failure was
+deployment, which Experiment 1 solved. This experiment ports that XPC code into
+the `autoninja`-built binary.
+
+#### The `zig_objc` problem
+
+XPC event handlers require ObjC blocks. The 642 code used
+`objc.Block(struct{}, .{xpc_object_t}, void)` from the `zig_objc` package. But
+inside the Chromium tree there's no `build.zig.zon` — `zig build-exe` via the GN
+`action()` can't use the Zig package manager.
+
+**Solution: inline the block implementation.** The ObjC block ABI is small and
+stable. A block is an extern struct with 5 fields (`isa`, `flags`, `reserved`,
+`invoke`, `descriptor`) plus any captures. The runtime functions are
+`_Block_copy` and `_Block_release`. For our use case (one block type, no
+captures, stack-allocated, passed to `xpc_connection_set_event_handler` which
+copies it internally), we need:
+
+1. A `BlockLiteral` extern struct matching the ObjC block layout
+2. A `BlockDescriptor` extern struct with `reserved`, `size`, and optionally
+   `copy_helper`/`dispose_helper`
+3. The `_NSConcreteStackBlock` extern symbol (block ISA for stack blocks)
+4. An invoke function with `callconv(.c)` whose first argument is
+   `*const BlockLiteral`
+
+No `_Block_copy`/`_Block_release` calls needed — the XPC runtime copies the
+block when we pass it to `xpc_connection_set_event_handler`.
+
+This is ~30 lines of Zig, replacing the entire `zig_objc` dependency.
+
+#### Changes
+
+**`chromium/src/content/zig_profile_server/main.zig`** — Replace the Experiment
+1 standalone code with the full XPC gateway version. Specifically:
+
+1. Remove `const objc = @import("objc")` and the `EventBlock` type
+2. Add inline block implementation (~30 lines):
+   - `BlockDescriptor` extern struct
+   - `BlockLiteral` extern struct
+   - `extern const _NSConcreteStackBlock: anyopaque`
+   - `makeEventBlock(invoke_fn)` helper that returns a `BlockLiteral`
+3. Add XPC extern declarations (same as 642 Experiment 3):
+   `xpc_connection_create_mach_service`, `xpc_connection_set_event_handler`,
+   `xpc_connection_resume`, `xpc_connection_send_message`,
+   `xpc_dictionary_create`, `xpc_dictionary_set_string`,
+   `xpc_dictionary_set_uint64`, `xpc_dictionary_get_string`,
+   `xpc_dictionary_get_uint64`, `xpc_get_type`, `dispatch_queue_create`,
+   `_xpc_type_dictionary`, `_xpc_type_error`
+4. Add arg parsing (`--xpc-service`, `--user-data-dir`)
+5. Add XPC state globals (`g_gateway`, `g_browser_ctx`, `g_xpc_service`,
+   `g_user_data_dir`)
+6. Add tab mapping (`TabEntry`, `wc_to_pane`, `findTabByWc`, `findFreeTab`)
+7. Rewrite `onInitialized`: if `--xpc-service` is set, create BrowserContext,
+   connect to gateway, send `server_register`. Otherwise fall back to standalone
+   mode.
+8. Rewrite `onCAContextChanged`: look up pane_id from tab map, send `ca_context`
+   XPC message to GUI.
+9. Add `xpcEventHandler` dispatch: handle `create_tab`, log-and-ignore
+   everything else.
+10. Rewrite `onShutdown`: destroy all tracked WebContents.
+
+The logic is identical to `browser/src/main.zig` from 642 Experiment 3 — only
+the block type changes from `objc.Block(...)` to the inlined `BlockLiteral`.
+
+**`gui/src/apprt/xpc.zig`** — Change the server path (line 719) to point at the
+`autoninja` output:
+
+```
+"{s}/dev/termsurf/chromium/src/out/Default/Zig Profile Server.app/Contents/MacOS/Zig Profile Server"
+```
+
+**No other files change.** The GN targets, `build_zig.py`, `swap_executable.py`,
+C++ shim, framework, and app bundle structure are all unchanged from Experiment
+
+1.
+
+#### Build
+
+```bash
+cd chromium/src
+export PATH="$(cd ../depot_tools && pwd):$PATH"
+autoninja -C out/Default zig_profile_server
+
+cd ../../gui && zig build
+```
+
+#### Verification
+
+1. `open gui/zig-out/TermSurf.app`
+2. Type `web google.com` in a terminal pane
+3. GUI spawns Zig Profile Server (check `ps aux | grep "Zig Profile"`)
+4. Server logs: `XPC mode: connecting to com.termsurf.xpc-gateway`
+5. Server logs: `server_register sent profile=default`
+6. Server logs: `create_tab url=https://google.com`
+7. Server logs: `ca_context_id=<nonzero>`
+8. **Google.com renders in the terminal pane**
+
+Pass criteria: web content renders in the terminal pane via the Zig profile
+server built by `autoninja`. Full pipeline: GUI → XPC → Zig → C++ shim →
+Chromium → GPU → CAContext → XPC → GUI → CALayerHost → display.
+
+Not tested in this experiment: input forwarding, resize, navigation, title/URL
+sync, destroy_tab. The page renders but is not interactive.
+
+#### Result:
