@@ -86,3 +86,80 @@ let viewport_title = if page_title.is_empty() {
 
 4. **Viewport inner rect.** `viewport_block.inner(layout[...])` must use the
    correct index so the overlay coordinates sent to the compositor are accurate.
+
+## Experiments
+
+### Experiment 1: Rearrange layout and move profile name
+
+**Goal:** Move the URL bar below the viewport and relocate the profile name to
+the viewport's top-right title.
+
+#### Changes
+
+All changes in `tui/src/main.rs`:
+
+**1. Reorder the vertical layout (line 303-307).** Change from:
+
+```rust
+let layout = Layout::vertical([
+    Constraint::Length(3), // URL bar (1 line + top/bottom border)
+    Constraint::Min(1),    // Viewport (fill remaining)
+    Constraint::Length(1), // Status bar
+])
+```
+
+To:
+
+```rust
+let layout = Layout::vertical([
+    Constraint::Min(1),    // Viewport (fill remaining)
+    Constraint::Length(3), // URL bar (1 line + top/bottom border)
+    Constraint::Length(1), // Status bar
+])
+```
+
+**2. Move profile title from URL bar to viewport (lines 317-374).** Remove
+`profile_title` from both URL bar blocks (UrlEdit theme block and static
+Paragraph block). Add it as a right-aligned title on the viewport block. The
+viewport block gets two titles: page title on the left, profile on the right.
+
+The viewport block (line 359-364) changes from:
+
+```rust
+let viewport_block = Block::default()
+    .borders(Borders::ALL)
+    .title(viewport_title)
+    .border_style(...)
+    .title_style(...)
+    .style(...);
+```
+
+To:
+
+```rust
+let viewport_block = Block::default()
+    .borders(Borders::ALL)
+    .title(viewport_title)
+    .title_top(profile_title.alignment(Alignment::Right))
+    .border_style(...)
+    .title_style(...)
+    .style(...);
+```
+
+**3. Update layout indices.** All render calls must use the new slot order:
+
+- Viewport renders to `layout[0]` (was `layout[1]`)
+- URL bar renders to `layout[1]` (was `layout[0]`)
+- Status bar uses `layout[2]` (unchanged)
+- `viewport_block.inner(layout[0])` (was `layout[1]`)
+
+#### Verification
+
+Run the TUI. Confirm:
+
+- Viewport is at the top with page title left, profile name right.
+- URL bar is below the viewport with borders.
+- Status bar is at the bottom.
+- Entering UrlEdit mode shows the editor in the bottom URL bar slot.
+- Overlay coordinates are correct (viewport debug text shows expected origin and
+  size).
