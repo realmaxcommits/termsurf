@@ -200,3 +200,55 @@ fine — it's consistent and harmless.
 combination doesn't trigger a crossterm `KeyCode::Esc` with
 `KeyModifiers::CONTROL`. The code is correct but the terminal never delivers the
 event. Need to investigate how Ctrl+Esc is encoded by the terminal emulator.
+
+### Experiment 3: Fix Ctrl+Esc in the GUI
+
+**Goal:** Make Ctrl+Esc return to Control mode from UrlEdit (insert or normal).
+
+#### Why Experiment 2 failed
+
+Ctrl+Esc never reaches the TUI because the GUI intercepts it in
+`gui/src/Surface.zig:2740-2747`:
+
+```zig
+// Ctrl+Esc exits browse mode (Issue 607 Experiment 1).
+if (event.key == .escape and event.mods.ctrl and event.action == .press) {
+    const xpc = @import("apprt/xpc.zig");
+    if (xpc.isOverlayForwarding(self)) {
+        xpc.notifyNonOverlayClicked(self);
+        return .consumed;
+    }
+}
+```
+
+`isOverlayForwarding` (`xpc.zig:625-631`) returns `true` only when
+`p.browsing == true`. When the TUI is in UrlEdit mode, it already sent
+`mode_changed(browsing: false)`, so `isOverlayForwarding` returns `false`. The
+Ctrl+Esc check falls through, and the key continues down the normal Ghostty key
+processing pipeline — it never reaches the TUI as a terminal key event.
+
+#### The fix
+
+The Ctrl+Esc check should not be gated on `isOverlayForwarding`. It should fire
+whenever there is an overlay pane, regardless of the browsing state. When
+`browsing` is already `false` (UrlEdit mode), Ctrl+Esc should still send
+`mode_changed(browsing: false)` to the TUI so it can reset to Control mode.
+
+Two changes in `gui/src/Surface.zig:2740-2747`:
+
+1. Replace the `isOverlayForwarding` check with a check that just verifies the
+   surface has an overlay pane (use `surface_to_pane` lookup, not
+   `isOverlayForwarding`).
+2. Always send the mode change to the TUI and consume the key.
+
+`notifyNonOverlayClicked` (`xpc.zig:665-673`) won't work as-is because it
+early-returns when `p.browsing` is already `false`. We need a new function or
+inline logic that:
+
+- If `p.browsing` is `true`: set it to `false`, send `mode_changed(false)` to
+  TUI, send `focus_changed(false)` to Chromium (same as today).
+- If `p.browsing` is `false`: just send `mode_changed(false)` to TUI (so the TUI
+  resets from UrlEdit to Control). No need to send `focus_changed` to Chromium
+  since it's already unfocused.
+
+In both cases, return `.consumed` so the key doesn't continue down the pipeline.
