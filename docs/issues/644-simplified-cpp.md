@@ -144,4 +144,8 @@ The C++ profile server works end-to-end with all previously-working features:
 web rendering, mouse input, keyboard input, resize, navigation, URL sync, page
 title sync.
 
-#### Result:
+#### Result: Pass
+
+The C++ profile server works end-to-end. Web rendering, mouse input, keyboard
+input, resize, navigation, URL sync, and page title sync all function correctly.
+We are back to a known-good baseline.
