@@ -630,6 +630,11 @@ pub fn isOverlayForwarding(surface: *CoreSurface) bool {
     return std.mem.eql(u8, fp, pane_id);
 }
 
+/// Returns true if the surface has an overlay pane registered.
+pub fn hasOverlayPane(surface: *CoreSurface) bool {
+    return surface_to_pane.get(@intFromPtr(surface)) != null;
+}
+
 /// Returns true if the surface has an overlay in browse mode.
 /// Unlike isOverlayForwarding, this does not check pane focus.
 pub fn isOverlayBrowsing(surface: *CoreSurface) bool {
@@ -658,6 +663,19 @@ pub fn notifyOverlayClicked(surface: *CoreSurface) void {
     p.browsing = true;
     sendModeToWeb(p, true);
     sendFocusChanged(pane_id_key, true);
+}
+
+/// Called when Ctrl+Esc is pressed. Always returns to control mode,
+/// regardless of the current browsing state (Issue 646).
+pub fn notifyCtrlEsc(surface: *CoreSurface) void {
+    const pane_id_key = surface_to_pane.get(@intFromPtr(surface)) orelse return;
+    const p = panes.get(pane_id_key) orelse return;
+
+    if (p.browsing) {
+        p.browsing = false;
+        sendFocusChanged(pane_id_key, false);
+    }
+    sendModeToWeb(p, false);
 }
 
 /// Called from mouseButtonCallback when a left-click misses the overlay.

@@ -2737,11 +2737,11 @@ pub fn keyCallback(
         event.mods = self.config.key_remaps.apply(event_orig.mods);
     }
 
-    // Ctrl+Esc exits browse mode (Issue 607 Experiment 1).
+    // Ctrl+Esc always returns to control mode (Issue 646 Experiment 4).
     if (event.key == .escape and event.mods.ctrl and event.action == .press) {
         const xpc = @import("apprt/xpc.zig");
-        if (xpc.isOverlayForwarding(self)) {
-            xpc.notifyNonOverlayClicked(self);
+        if (xpc.hasOverlayPane(self)) {
+            xpc.notifyCtrlEsc(self);
             return .consumed;
         }
     }
