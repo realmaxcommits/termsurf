@@ -12,6 +12,7 @@ events received through the terminal PTY.
 | ------ | ------- | ----------------- | -------------------------------------------- |
 | Esc    | Browse  | Switch to Control | Sends `mode_changed(browsing: false)` to GUI |
 | Enter  | Control | Switch to Browse  | Sends `mode_changed(browsing: true)` to GUI  |
+| i      | Control | Switch to UrlEdit | Opens editor in insert mode (Issue 646)      |
 | q      | Control | Quit              |                                              |
 | Ctrl+C | Any     | Force quit        |                                              |
 
@@ -37,16 +38,17 @@ Chromium handles them internally via its default keybinding logic.
 
 ## Modes
 
-The `web` TUI has two modes. The GUI only tracks a boolean (`browsing` or not).
+The `web` TUI has three modes. The GUI only tracks a boolean (`browsing` or
+not).
 
 | Mode        | GUI sees | Behavior                                                |
 | ----------- | -------- | ------------------------------------------------------- |
 | **Browse**  | `true`   | Keyboard/mouse goes to the browser (default on startup) |
 | **Control** | `false`  | Terminal keybindings active, browser input paused       |
+| **UrlEdit** | `false`  | URL bar editable with Vim keybindings (edtui)           |
 
-The GUI does not distinguish between non-browse modes. If `web` adds more modes
-in the future (insert, search, etc.), they all map to `browsing: false` from the
-GUI's perspective.
+The GUI does not distinguish between non-browse modes. Control and UrlEdit both
+map to `browsing: false` from the GUI's perspective.
 
 ## Mode synchronization
 
