@@ -356,3 +356,6 @@ if (xpc.hasOverlayPane(self)) {
     return .consumed;
 }
 ```
+
+**Result: Pass.** Ctrl+Esc now returns to Control mode from both insert and
+normal mode.
