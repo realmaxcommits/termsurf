@@ -56,7 +56,6 @@ extern "c" fn dispatch_async_f(queue: ?*anyopaque, context: ?*anyopaque, work: *
 extern const _dispatch_main_q: anyopaque;
 extern "c" fn xpc_connection_set_target_queue(connection: xpc_object_t, queue: ?*anyopaque) void;
 
-
 /// Cast a const extern symbol address to xpc_object_t for identity comparison.
 inline fn xpcPtr(ptr: *const anyopaque) xpc_object_t {
     return @constCast(ptr);
@@ -320,7 +319,6 @@ fn handleSetOverlay(msg: xpc_object_t) void {
                 }
             }
         }
-
     } else {
         // New pane.
         const p = alloc.create(Pane) catch {
@@ -731,12 +729,42 @@ fn spawnServerProcess(server: *Server) void {
         return;
     };
 
-    var path_buf: [512]u8 = undefined;
-    const server_path = std.fmt.bufPrintZ(
-        &path_buf,
-        "{s}/dev/termsurf/chromium/src/out/Default/Chromium Profile Server.app/Contents/MacOS/Chromium Profile Server",
-        .{home},
-    ) catch {
+    // Resolution order: bundle → env var → dev fallback.
+    var path_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const server_path = blk: {
+        // 1. Check inside app bundle (release/install builds).
+        var exe_buf: [std.fs.max_path_bytes]u8 = undefined;
+        if (std.fs.selfExePath(&exe_buf)) |exe| {
+            // Walk up 3 components: termsurf → MacOS → Contents → bundle root.
+            var dir: []const u8 = exe;
+            var i: usize = 0;
+            while (i < 3) : (i += 1) {
+                dir = std.fs.path.dirname(dir) orelse break;
+            }
+            if (i == 3) {
+                const helpers_path = std.fmt.bufPrintZ(
+                    &path_buf,
+                    "{s}/Contents/Helpers/Chromium Profile Server.app/Contents/MacOS/Chromium Profile Server",
+                    .{dir},
+                ) catch null;
+                if (helpers_path) |p| {
+                    if (std.fs.accessAbsolute(p[0..p.len], .{})) {
+                        break :blk helpers_path;
+                    } else |_| {}
+                }
+            }
+        } else |_| {}
+        // 2. Check environment variable override.
+        if (std.posix.getenv("TERMSURF_CHROMIUM_SERVER")) |p| {
+            break :blk std.fmt.bufPrintZ(&path_buf, "{s}", .{p}) catch null;
+        }
+        // 3. Dev fallback.
+        break :blk std.fmt.bufPrintZ(
+            &path_buf,
+            "{s}/dev/termsurf/chromium/src/out/Default/Chromium Profile Server.app/Contents/MacOS/Chromium Profile Server",
+            .{home},
+        ) catch null;
+    } orelse {
         log.err("server path too long", .{});
         return;
     };
@@ -768,11 +796,33 @@ fn spawnServerProcess(server: *Server) void {
         .{},
     ) catch return;
 
+    // XDG_STATE_HOME for logs (default: ~/.local/state)
+    var state_home_buf: [512]u8 = undefined;
+    const state_home = std.posix.getenv("XDG_STATE_HOME") orelse std.fmt.bufPrintZ(
+        &state_home_buf,
+        "{s}/.local/state",
+        .{home},
+    ) catch {
+        log.err("state home path too long", .{});
+        return;
+    };
+
+    // Ensure log directory exists.
+    var logdir_buf: [256]u8 = undefined;
+    const logdir = std.fmt.bufPrintZ(
+        &logdir_buf,
+        "{s}/termsurf",
+        .{state_home},
+    ) catch null;
+    if (logdir) |d| {
+        std.fs.cwd().makePath(d) catch {};
+    }
+
     var logfile_buf: [256]u8 = undefined;
     const logfile_arg = std.fmt.bufPrintZ(
         &logfile_buf,
-        "--log-file={s}/dev/termsurf/logs/chromium-server.log",
-        .{home},
+        "--log-file={s}/termsurf/chromium-server.log",
+        .{state_home},
     ) catch return;
 
     log.info("spawning server profile={s}", .{server.profile_key});
@@ -1016,33 +1066,79 @@ pub fn sendMouseMove(
 /// Map Ghostty input.Key to Windows virtual key code for Chromium.
 fn keyToWindowsVK(key: input.Key) u32 {
     return switch (key) {
-        .key_a => 0x41, .key_b => 0x42, .key_c => 0x43,
-        .key_d => 0x44, .key_e => 0x45, .key_f => 0x46,
-        .key_g => 0x47, .key_h => 0x48, .key_i => 0x49,
-        .key_j => 0x4A, .key_k => 0x4B, .key_l => 0x4C,
-        .key_m => 0x4D, .key_n => 0x4E, .key_o => 0x4F,
-        .key_p => 0x50, .key_q => 0x51, .key_r => 0x52,
-        .key_s => 0x53, .key_t => 0x54, .key_u => 0x55,
-        .key_v => 0x56, .key_w => 0x57, .key_x => 0x58,
-        .key_y => 0x59, .key_z => 0x5A,
-        .digit_0 => 0x30, .digit_1 => 0x31, .digit_2 => 0x32,
-        .digit_3 => 0x33, .digit_4 => 0x34, .digit_5 => 0x35,
-        .digit_6 => 0x36, .digit_7 => 0x37, .digit_8 => 0x38,
+        .key_a => 0x41,
+        .key_b => 0x42,
+        .key_c => 0x43,
+        .key_d => 0x44,
+        .key_e => 0x45,
+        .key_f => 0x46,
+        .key_g => 0x47,
+        .key_h => 0x48,
+        .key_i => 0x49,
+        .key_j => 0x4A,
+        .key_k => 0x4B,
+        .key_l => 0x4C,
+        .key_m => 0x4D,
+        .key_n => 0x4E,
+        .key_o => 0x4F,
+        .key_p => 0x50,
+        .key_q => 0x51,
+        .key_r => 0x52,
+        .key_s => 0x53,
+        .key_t => 0x54,
+        .key_u => 0x55,
+        .key_v => 0x56,
+        .key_w => 0x57,
+        .key_x => 0x58,
+        .key_y => 0x59,
+        .key_z => 0x5A,
+        .digit_0 => 0x30,
+        .digit_1 => 0x31,
+        .digit_2 => 0x32,
+        .digit_3 => 0x33,
+        .digit_4 => 0x34,
+        .digit_5 => 0x35,
+        .digit_6 => 0x36,
+        .digit_7 => 0x37,
+        .digit_8 => 0x38,
         .digit_9 => 0x39,
-        .enter => 0x0D, .tab => 0x09, .backspace => 0x08,
-        .escape => 0x1B, .space => 0x20, .delete => 0x2E,
-        .arrow_up => 0x26, .arrow_down => 0x28,
-        .arrow_left => 0x25, .arrow_right => 0x27,
-        .home => 0x24, .end => 0x23,
-        .page_up => 0x21, .page_down => 0x22,
+        .enter => 0x0D,
+        .tab => 0x09,
+        .backspace => 0x08,
+        .escape => 0x1B,
+        .space => 0x20,
+        .delete => 0x2E,
+        .arrow_up => 0x26,
+        .arrow_down => 0x28,
+        .arrow_left => 0x25,
+        .arrow_right => 0x27,
+        .home => 0x24,
+        .end => 0x23,
+        .page_up => 0x21,
+        .page_down => 0x22,
         .insert => 0x2D,
-        .f1 => 0x70, .f2 => 0x71, .f3 => 0x72, .f4 => 0x73,
-        .f5 => 0x74, .f6 => 0x75, .f7 => 0x76, .f8 => 0x77,
-        .f9 => 0x78, .f10 => 0x79, .f11 => 0x7A, .f12 => 0x7B,
-        .semicolon => 0xBA, .equal => 0xBB, .comma => 0xBC,
-        .minus => 0xBD, .period => 0xBE, .slash => 0xBF,
-        .backquote => 0xC0, .bracket_left => 0xDB,
-        .backslash => 0xDC, .bracket_right => 0xDD,
+        .f1 => 0x70,
+        .f2 => 0x71,
+        .f3 => 0x72,
+        .f4 => 0x73,
+        .f5 => 0x74,
+        .f6 => 0x75,
+        .f7 => 0x76,
+        .f8 => 0x77,
+        .f9 => 0x78,
+        .f10 => 0x79,
+        .f11 => 0x7A,
+        .f12 => 0x7B,
+        .semicolon => 0xBA,
+        .equal => 0xBB,
+        .comma => 0xBC,
+        .minus => 0xBD,
+        .period => 0xBE,
+        .slash => 0xBF,
+        .backquote => 0xC0,
+        .bracket_left => 0xDB,
+        .backslash => 0xDC,
+        .bracket_right => 0xDD,
         .quote => 0xDE,
         else => 0,
     };
