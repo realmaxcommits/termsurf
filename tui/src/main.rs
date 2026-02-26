@@ -11,7 +11,7 @@ use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
 };
 use edtui::events::{KeyEventHandler, KeyEventRegister, KeyInput};
-use edtui::{EditorEventHandler, EditorState, EditorTheme, EditorView, Lines, RowIndex};
+use edtui::{EditorEventHandler, EditorMode, EditorState, EditorTheme, EditorView, Lines, RowIndex};
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, Paragraph};
 
@@ -160,11 +160,12 @@ fn main() -> io::Result<()> {
                     }
                     Mode::Control => match key.code {
                         KeyCode::Char('q') => break,
-                        KeyCode::Char('e') => {
+                        KeyCode::Char('i') => {
                             // Initialize editor with current URL, cursor at end (Issue 637).
                             editor_state = EditorState::new(Lines::from(url.as_str()));
                             let len = url.len();
                             editor_state.cursor = edtui::Index2::new(0, len.saturating_sub(1));
+                            editor_state.mode = EditorMode::Insert;
                             mode = Mode::UrlEdit;
                             if let (Some(ref conn), Some(ref pid)) = (&compositor, &pane_id) {
                                 conn.send_mode_changed(pid, false);
@@ -407,7 +408,7 @@ fn ui(
             Span::styled("> ", d),
             Span::styled("quit  ", f),
             Span::styled("<", d),
-            Span::styled("e", f),
+            Span::styled("i", f),
             Span::styled("> ", d),
             Span::styled("edit url  ", f),
             Span::styled("<", d),
