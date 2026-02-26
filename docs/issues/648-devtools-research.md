@@ -1,0 +1,202 @@
+# Issue 648: DevTools Research
+
+## Goal
+
+Scope out our options for implementing Chrome DevTools in TermSurf. DevTools is
+essential for web developers — inspecting DOM, debugging JavaScript, viewing
+network requests, profiling performance. We need to understand how DevTools
+works in our Chromium fork and decide the best way to expose it.
+
+## How DevTools works in our fork
+
+### The DevTools HTTP server
+
+Every Chromium profile server already starts a DevTools HTTP server on an
+ephemeral localhost port (`shell_devtools_manager_delegate.cc:116-155,167-177`):
+
+```cpp
+DevToolsAgentHost::StartRemoteDebuggingServer(
+    CreateSocketFactory(), browser_context->GetPath(), base::FilePath());
+```
+
+The port is queryable via `ShellDevToolsManagerDelegate::GetHttpHandlerPort()`.
+The DevTools frontend is bundled in the Chromium build and served at:
+
+```
+http://127.0.0.1:{port}/devtools/devtools_app.html?targetType=tab
+```
+
+This server is already running for every profile. We just don't expose it.
+
+### Shell::ShowDevTools()
+
+`shell.cc:411-418` opens DevTools by creating a new native Shell window:
+
+```cpp
+void Shell::ShowDevTools() {
+    if (!devtools_frontend_) {
+        auto* devtools_frontend = ShellDevToolsFrontend::Show(web_contents());
+        devtools_frontend_ = devtools_frontend->GetWeakPtr();
+    }
+    devtools_frontend_->Activate();
+}
+```
+
+### ShellDevToolsFrontend::Show()
+
+`shell_devtools_frontend.cc:39-46` creates a new Shell window and loads the
+frontend URL:
+
+```cpp
+Shell* shell = Shell::CreateNewWindow(
+    inspected_contents->GetBrowserContext(), GURL(), nullptr, gfx::Size());
+ShellDevToolsFrontend* devtools_frontend =
+    new ShellDevToolsFrontend(shell, inspected_contents);
+shell->LoadURL(GetFrontendURL());
+```
+
+The frontend connects to the inspected page via `ShellDevToolsBindings`, which
+implements the Chrome DevTools Protocol (CDP) over an internal message pipe.
+
+### Keyboard shortcut infrastructure
+
+`shell_browser_main_parts.cc:776-798` already intercepts Cmd+key shortcuts
+before forwarding to the renderer:
+
+```cpp
+if (has_meta && type != "up") {
+    bool handled = true;
+    switch (windows_key_code) {
+        case ui::VKEY_OEM_4: /* Cmd+[ — back */
+        case ui::VKEY_OEM_6: /* Cmd+] — forward */
+        case ui::VKEY_R:     /* Cmd+R — reload */
+        default: handled = false;
+    }
+    if (handled) return;
+}
+```
+
+Adding `VKEY_I` for Cmd+I follows the same pattern.
+
+## Options
+
+### Option A: Native window
+
+Call `Shell::ShowDevTools()` as-is. DevTools opens in a regular macOS window
+outside the terminal.
+
+**Pros:**
+
+- Zero new code. One line in the `HandleKeyEvent` switch.
+- Full DevTools experience — resizable, dockable panels, all features work.
+- Doesn't interfere with the overlay pipeline.
+
+**Cons:**
+
+- Breaks the "never leave the terminal" promise. DevTools floats as a separate
+  window.
+- No keyboard shortcut to return focus to the terminal. User must click.
+
+### Option B: Second overlay
+
+Create DevTools as a second CALayerHost overlay in the same terminal pane. Split
+the viewport vertically (content top, DevTools bottom) or horizontally.
+
+**Pros:**
+
+- DevTools stays inside the terminal pane. True integration.
+- Could share the existing overlay architecture.
+
+**Cons:**
+
+- Major new infrastructure: split layout management, input routing between two
+  overlays, resize coordination.
+- The GUI currently assumes one overlay per pane. Significant refactoring.
+- DevTools panels (Elements, Console, Network, etc.) need full keyboard/mouse
+  interaction — all of which must be forwarded separately to the DevTools
+  WebContents.
+
+### Option C: Separate terminal pane
+
+Open DevTools in a new Ghostty split pane. The DevTools frontend is already
+served via HTTP — just navigate a second `web` TUI to the DevTools URL.
+
+**Pros:**
+
+- Reuses all existing infrastructure: `web` TUI, overlay pipeline, XPC, input
+  forwarding.
+- Ghostty handles the split layout natively. No new layout management code.
+- DevTools stays in the terminal. User can resize splits with Ghostty
+  keybindings.
+- Each pane is independent. No input routing complexity.
+
+**Cons:**
+
+- Requires a way to discover the DevTools HTTP port. The Chromium server knows
+  it, but the TUI and GUI don't. Need an XPC message to query it.
+- The DevTools URL includes a `?ws=` parameter targeting a specific page. Need
+  to construct the full URL with the correct WebSocket debugger endpoint.
+- Two `web` TUIs means two overlays, two Chromium profile server connections.
+  The DevTools frontend runs in the same Chromium process (same profile server)
+  but as a separate tab.
+
+### Option D: Remote DevTools in external browser
+
+Expose the DevTools HTTP server port and let the user open `chrome://inspect` or
+`http://localhost:{port}` in their regular browser.
+
+**Pros:**
+
+- Zero GUI/TUI changes. Just document how to connect.
+- Full DevTools experience in a real browser.
+- Works today if the user passes `--remote-debugging-port=9222` to the Chromium
+  server.
+
+**Cons:**
+
+- Requires leaving the terminal (defeats the purpose).
+- Manual setup. Not discoverable.
+- Useful as a fallback, not as the primary experience.
+
+## Testing DevTools locally
+
+Content Shell is already built and can be used to see how DevTools works with
+our Chromium fork.
+
+### Launch Content Shell with remote debugging
+
+```bash
+"/Users/ryan/dev/termsurf/chromium/src/out/Default/Content Shell.app/Contents/MacOS/Content Shell" \
+  --remote-debugging-port=9222 \
+  https://example.com
+```
+
+This opens a Content Shell window with a URL bar and the webpage.
+
+### Open DevTools
+
+In your regular browser, navigate to:
+
+```
+http://127.0.0.1:9222
+```
+
+This lists inspectable targets. Click one to open the full DevTools frontend for
+that page.
+
+**Note:** The Chromium Profile Server (`Chromium Profile Server.app`) is
+headless — it starts a server with no UI and idles until it receives XPC
+messages. Use Content Shell for manual DevTools testing.
+
+## Key files
+
+| File                                                      | Purpose                              |
+| --------------------------------------------------------- | ------------------------------------ |
+| `chromium/.../shell_browser_main_parts.cc:761-876`        | `HandleKeyEvent()` — Cmd+key switch  |
+| `chromium/.../shell_devtools_frontend.h`                  | DevTools window creation             |
+| `chromium/.../shell_devtools_frontend.cc:39-46`           | `Show()` — creates Shell + loads URL |
+| `chromium/.../shell_devtools_manager_delegate.cc:116-177` | HTTP server setup, port query        |
+| `chromium/.../shell.cc:411-418`                           | `ShowDevTools()` / `CloseDevTools()` |
+| `chromium/.../shell_devtools_bindings.h`                  | CDP bindings (frontend ↔ inspected)  |
+| `gui/src/apprt/xpc.zig:1051-1108`                         | `sendKeyEvent()` — key forwarding    |
+| `gui/src/Surface.zig:2740-2747`                           | Ctrl+Esc interception                |
