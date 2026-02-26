@@ -200,3 +200,35 @@ messages. Use Content Shell for manual DevTools testing.
 | `chromium/.../shell_devtools_bindings.h`                  | CDP bindings (frontend ↔ inspected)  |
 | `gui/src/apprt/xpc.zig:1051-1108`                         | `sendKeyEvent()` — key forwarding    |
 | `gui/src/Surface.zig:2740-2747`                           | Ctrl+Esc interception                |
+
+## Conclusion
+
+The most likely approach is a second webview overlay for DevTools, rendered
+alongside the browser content in the same terminal pane. This avoids leaving the
+terminal and reuses our existing Chromium rendering pipeline. But it raises
+several open questions that need more thought:
+
+- **Layout and sizing.** How do we split the viewport between the page and
+  DevTools? Fixed ratio? Draggable divider? What's the default split — 50/50,
+  60/40?
+- **Dock position.** DevTools should support docking to the bottom, right, left,
+  or top of the viewport — matching Chrome's own DevTools positions. How does
+  the user switch between them? A keybinding? A TUI menu?
+- **Port discovery.** The DevTools HTTP server runs on an ephemeral port inside
+  the Chromium profile server. The GUI needs to learn this port to construct the
+  DevTools frontend URL. This requires a new XPC message from Chromium to the
+  GUI.
+- **WebSocket targeting.** The DevTools frontend URL includes a `?ws=` parameter
+  that targets a specific inspected page. We need to construct the correct
+  WebSocket debugger URL for the active tab.
+- **Two overlays per pane.** The GUI currently assumes one CALayerHost overlay
+  per pane. A second overlay for DevTools means managing two layers, two sets of
+  coordinates, and routing mouse/keyboard input to the correct one.
+- **Resize coordination.** When the terminal resizes or the user changes the
+  dock position, both overlays need to be resized and repositioned atomically.
+- **Toggle keybinding.** Cmd+I (or Cmd+Option+I) should toggle DevTools open and
+  closed. This needs to be intercepted in the GUI before reaching the terminal,
+  similar to how Ctrl+Esc is handled.
+
+Shelving this issue to ruminate on the correct answers. The infrastructure is
+understood — now we need the right UX design before writing code.
