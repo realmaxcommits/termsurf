@@ -291,3 +291,8 @@ In `tui/src/main.rs`:
 2. Key sequences are bright, descriptions are dim
 3. Control mode shows `:q↵ quit` (full key sequence including Enter)
 4. All four modes display correctly with the new style
+
+### Result
+
+Pass. Clean hint style with bright keys and dim descriptions. `:q⏎ quit` shows
+the full key sequence. No `<>` wrappers. All four modes render correctly.
