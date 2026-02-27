@@ -624,3 +624,77 @@ One or more of these checks will reveal the break. The most likely candidates:
   the release service name instead of debug.
 - The gateway binary or plist wasn't bundled (step 5) → SMAppService has nothing
   to register.
+
+**Result: Pass.** Root cause identified.
+
+#### Findings
+
+**Step 1 (env var):** Not directly testable without the debug app running
+interactively. Source confirms `xpc.zig` sets `TERMSURF_XPC_SERVICE` at comptime
+for Debug builds.
+
+**Step 2 (launchd registration):** The debug gateway IS registered with launchd,
+but launchd **cannot start it**:
+
+```
+state = spawn scheduled
+job state = spawn failed
+last exit code = 78: EX_CONFIG
+runs = 33
+properties = partial import | resolve program | has LWCR
+```
+
+Launchd has tried to spawn the gateway 33 times. Every attempt exits with code
+78 (`EX_CONFIG` — configuration error). The `resolve program` property means
+launchd is failing to resolve the `BundleProgram` path to an executable.
+
+**Step 3 (BTM state):** BTM entry looks correct — parent is
+`com.termsurf.debug`, URL points to the debug app bundle. However, there is a
+**UUID mismatch**: launchd has `BTM uuid = 79002B4D-...` while `sfltool dumpbtm`
+shows `UUID: A0FFA4F9-...` for the same agent. This stale UUID may be left over
+from the Experiment 2 debugging sessions where the debug app accidentally
+registered the release plist name.
+
+**Step 4 (stderr):** Not captured — requires relaunching the debug app.
+
+**Step 5 (bundle contents):** Both present and correct:
+
+- `Contents/MacOS/xpc-gateway` — 83168 bytes, valid code signature
+- `Contents/Library/LaunchAgents/com.termsurf.debug.xpc-gateway.plist` — correct
+
+**Step 6 (ProgramArguments):** Correct — two entries: `xpc-gateway` (argv[0])
+and `com.termsurf.debug.xpc-gateway` (argv[1]).
+
+**Step 7 (release gateway):** Release gateway is running (pid 76212, from
+`/Applications/TermSurf.app`). Debug gateway is NOT running.
+
+**Additional tests:**
+
+- The gateway binary runs fine when executed manually:
+  `"TermSurf Debug.app/Contents/MacOS/xpc-gateway" com.termsurf.test.manual`
+  prints `Listening on com.termsurf.test.manual`.
+- Code signing is valid on both the debug app and the gateway binary.
+- System log shows `service inactive: com.termsurf.debug.xpc-gateway` every 10
+  seconds — launchd's retry loop.
+
+#### Root cause
+
+Launchd cannot resolve the `BundleProgram` path for the debug gateway. The
+`last exit code = 78 (EX_CONFIG)` and `resolve program` property confirm this.
+Two factors may be contributing:
+
+1. **Space in bundle path.** The debug app lives at `TermSurf Debug.app` (with a
+   space). The BTM URL is `file:///...TermSurf%20Debug.app/`. The release app at
+   `/Applications/TermSurf.app` (no space) works. launchd's `BundleProgram`
+   resolution may fail when the parent bundle path contains spaces.
+
+2. **Stale BTM entry.** The UUID mismatch (`79002B4D` in launchd vs `A0FFA4F9`
+   in BTM) suggests the BTM database has a stale record from earlier debugging.
+   Running `sfltool resetbtm` and re-registering may fix this.
+
+#### Next step
+
+Experiment 4 should test both hypotheses: reset the BTM database to clear stale
+entries, and if the space is the problem, either rename the debug app to remove
+the space or switch from `BundleProgram` to absolute `ProgramArguments` for
+debug builds.
