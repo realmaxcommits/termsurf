@@ -228,3 +228,21 @@ Removing the menu-first block from `performKeyEquivalent()` restores v1.2.3
 behavior. User keybindings now take priority over menu shortcuts. Cmd+H creates
 a split when configured, and the "Hide TermSurf" menu item retains its Cmd+H
 shortcut for users who don't override it.
+
+## Conclusion
+
+User keybindings now take priority over macOS menu shortcuts. The fix was a
+single change to `performKeyEquivalent()` in `SurfaceView_AppKit.swift`: remove
+the menu-first block that was added between Ghostty v1.2.3 and `tip`.
+
+The menu-first block tried `NSApp.mainMenu.performKeyEquivalent(with: event)`
+before dispatching to `keyDown()`. This let system menu items like "Hide"
+(Cmd+H) intercept user-configured keybindings. Removing it restores v1.2.3
+behavior — bindings go straight to `keyDown()`, which routes to Zig's
+`maybeHandleBinding()`.
+
+All menu shortcuts still work for users who don't override them, because unbound
+Cmd+key events fall through `performKeyEquivalent()` to the standard AppKit
+responder chain, which delivers them to the menu system as before. The only
+behavioral change is that the menu item no longer "flashes" when a user binding
+overrides its shortcut — a cosmetic loss.
