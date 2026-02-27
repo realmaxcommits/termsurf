@@ -888,3 +888,61 @@ Step 2 will narrow the problem to either "Chromium doesn't start" or "Chromium
 starts but can't render." Step 3 will reveal the path resolution logic. Step 7
 will isolate whether `install.sh` modifications cause the failure or the
 `/Applications/` location itself is the problem.
+
+**Result: Pass.** Root cause identified.
+
+#### Findings
+
+**Step 2 (Chromium processes):** No TermSurf Chromium processes were running
+after the installed app launched and `web` timed out. The bundled Chromium
+server either didn't start or exited immediately.
+
+**Step 3 (path resolution):** The Zig code at `xpc.zig:745-779` resolves the
+Chromium server path in three steps:
+
+1. **Bundle path** — Walk up 3 dirs from the executable to the bundle root,
+   check
+   `Contents/Helpers/Chromium Profile Server.app/Contents/MacOS/Chromium Profile Server`.
+   Used by installed builds (Helpers exists).
+2. **Env var** — `TERMSURF_CHROMIUM_SERVER` override.
+3. **Dev fallback** — `$HOME/dev/termsurf/chromium/src/out/Default/...`. Used by
+   repo builds (no Helpers directory).
+
+The installed build hits path #1 (bundled Chromium). Repo builds hit path #3
+(dev fallback). This is the key difference.
+
+**Step 4 (Chromium log):** A stale log at
+`Chromium Profile Server.app/Contents/MacOS/chromium_profile_server.log` showed:
+`No --xpc-service specified, idling.` — from an earlier launch, not the current
+test. Confirms the binary can start from the bundled location, but something is
+wrong with how it's invoked or what resources it can find.
+
+**Step 7 (minimal install):** Copied the bare release build to
+`/Applications/TermSurf.app` WITHOUT Chromium helpers or the web binary. Ran
+`web` via `cargo run` from the repo. **Pages loaded successfully.** This
+confirms:
+
+- The `/Applications/` location is fine.
+- The app binary works correctly from `/Applications/`.
+- The failure is caused by `install.sh` bundling Chromium helpers, which makes
+  the path resolution use the bundled copy instead of the dev fallback.
+
+#### Root cause
+
+`install.sh` copies the Chromium `.app` bundles into `Contents/Helpers/` but the
+bundled Chromium server doesn't work from that location. The `xpc.zig` path
+resolution prefers the bundle path over the dev fallback, so the installed build
+uses the broken bundled copy while repo builds use the working dev copy.
+
+This is a pre-existing `install.sh` issue unrelated to the XPC gateway isolation
+changes in this issue. The bundled Chromium likely fails because it's a
+component build (`is_component_build = true`) that needs shared libraries and
+resource files (`.pak`, `icudtl.dat`, `v8_context_snapshot.bin`) that are in
+`chromium/src/out/Default/` but not copied into `Contents/Helpers/`.
+
+#### Next step
+
+The immediate fix for Issue 653 is to stop bundling Chromium helpers in
+`install.sh`, since they don't work and the dev fallback path handles it. The
+broader problem of making Chromium work from inside the app bundle is a separate
+issue for the alpha release (Issue 617).
