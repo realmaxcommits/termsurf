@@ -523,3 +523,104 @@ The SMAppService approach works for gateway auto-registration, but the installed
 release build has a page loading regression that blocks verification. This needs
 to be investigated separately — it may be a pre-existing `install.sh` issue
 rather than a consequence of the gateway isolation changes.
+
+### Experiment 3: Diagnose debug build gateway failure
+
+**Goal:** Determine why `web` hangs after printing the pane ID in the debug
+build. It never prints "Connected to compositor", which means it fails to
+connect to the XPC gateway Mach service. The release build from the repo
+(`gui/zig-out/TermSurf.app`) works, so the gateway code is functional —
+something specific to the debug configuration is broken.
+
+#### Symptom
+
+```
+ryan: web https://google.com
+[web] TERMSURF_PANE_ID = D69A0E44-CCDA-4C64-B3DE-82EC3C5E432E
+```
+
+No "Connected to compositor" line. The TUI hangs indefinitely.
+
+#### Diagnostic steps
+
+1. **Check `TERMSURF_XPC_SERVICE` in the debug terminal.** Run
+   `echo $TERMSURF_XPC_SERVICE` inside the debug app's terminal pane. It should
+   print `com.termsurf.debug.xpc-gateway`. If it's empty, the env var isn't
+   being set by xpc.zig and `web` is trying the release gateway name.
+
+2. **Check if the debug gateway is registered with launchd.** Run:
+
+   ```
+   launchctl print gui/$(id -u)/com.termsurf.debug.xpc-gateway
+   ```
+
+   If it shows the service, note whether `state = running` or `state = waiting`.
+   If it errors ("Could not find service"), SMAppService registration failed.
+
+3. **Check BTM state for the debug agent.** Run:
+
+   ```
+   sfltool dumpbtm | grep -A 15 "com.termsurf.debug"
+   ```
+
+   Look for the parent bundle identifier and URL. Confirm it points to the debug
+   app bundle (`com.termsurf.debug`), not the release app.
+
+4. **Check the debug app's stderr for SMAppService output.** The AppDelegate
+   code prints `[TermSurf] Registered xpc-gateway (status: ...)` or
+   `[TermSurf] xpc-gateway register error ...` to stderr. Launch the debug app
+   from the terminal to see this output:
+
+   ```
+   gui/macos/build/Debug/TermSurf\ Debug.app/Contents/MacOS/termsurf 2>&1 | grep TermSurf
+   ```
+
+5. **Check the debug bundle contents.** Verify the gateway binary and plist were
+   bundled correctly by `zig build`:
+
+   ```
+   ls -la "gui/macos/build/Debug/TermSurf Debug.app/Contents/MacOS/xpc-gateway"
+   ls -la "gui/macos/build/Debug/TermSurf Debug.app/Contents/Library/LaunchAgents/"
+   ```
+
+   The plist should be `com.termsurf.debug.xpc-gateway.plist`. Read it and
+   verify the `Label`, `MachServices` key, and `ProgramArguments` all use
+   `com.termsurf.debug.xpc-gateway`.
+
+6. **Check the bundle plist's ProgramArguments.** The Experiment 2 fix added a
+   dummy `xpc-gateway` as argv[0] so the service name lands at argv[1]. Verify
+   the bundled plist has two entries in `ProgramArguments`:
+
+   ```xml
+   <array>
+       <string>xpc-gateway</string>
+       <string>com.termsurf.debug.xpc-gateway</string>
+   </array>
+   ```
+
+   If it only has one entry, the gateway falls back to the release service name.
+
+7. **Check if the release gateway is also running.** Run:
+   ```
+   ps aux | grep xpc-gateway | grep -v grep
+   ```
+   and:
+   ```
+   launchctl print gui/$(id -u)/com.termsurf.xpc-gateway
+   ```
+   If the release gateway is running and the debug one isn't, `web` (with
+   `TERMSURF_XPC_SERVICE=com.termsurf.debug.xpc-gateway`) would try to connect
+   to a nonexistent Mach service and hang.
+
+#### Expected outcome
+
+One or more of these checks will reveal the break. The most likely candidates:
+
+- The env var isn't set (step 1) → `web` connects to the release gateway, which
+  may not have an endpoint registered by the debug app.
+- SMAppService registration failed (steps 2, 4) → the debug gateway never
+  started.
+- The bundle plist has wrong ProgramArguments (step 6) → the gateway listens on
+  the release service name instead of debug.
+- The gateway binary or plist wasn't bundled (step 5) → SMAppService has nothing
+  to register.
