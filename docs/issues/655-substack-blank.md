@@ -172,8 +172,35 @@ the renderer process is terminated. This is not Substack-specific — any page
 using the Badging API would trigger the same crash. Substack happens to use it
 for notification badge counts on their PWA.
 
+#### Conclusion
+
+This experiment exposed three separate problems:
+
+1. **Missing Mojo interface binder (immediate fix).** Our Content API build
+   doesn't register a handler for `blink.mojom.BadgeService`. When Substack's JS
+   calls the Badging API, Chromium kills the renderer. The immediate fix is to
+   register a stub/no-op handler so the renderer survives. But this is almost
+   certainly not the only missing interface — any unhandled Mojo interface will
+   cause the same fatal crash.
+
+2. **Systematic Mojo interface audit (future work).** We need to review ALL Mojo
+   interfaces that a full Chrome browser registers but our Content API build
+   does not. Every missing binder is a ticking time bomb — the renderer will
+   crash the moment any page's JavaScript calls that API. Rather than fixing
+   these one-by-one as users discover them, we should do a systematic audit and
+   register stub handlers for all unbound interfaces. This is a separate issue.
+
+3. **Renderer crash UX (future work).** When the renderer dies, the user sees a
+   blank white screen with no indication of what happened. The progress bar
+   continues as if the page is still loading, then times out. We need to:
+   - Detect renderer termination and display an error page (like Chrome's "Aw,
+     Snap!" page).
+   - Clear the progress bar immediately when the renderer dies.
+   - Ideally show what went wrong so the user (or a developer) can diagnose the
+     issue. This is also a separate issue.
+
 #### Next step
 
-Register a stub/no-op handler for `blink.mojom.BadgeService` in the Chromium
-fork so the renderer is not killed. This likely requires adding a binder in the
-browser process's `ContentBrowserClient` or the frame host's interface registry.
+Fix the immediate problem: register a stub handler for
+`blink.mojom.BadgeService` so Substack pages render without killing the
+renderer.
