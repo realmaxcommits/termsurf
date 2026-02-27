@@ -475,3 +475,51 @@ copies the whole app bundle, so it comes along for free).
    `launchctl print gui/$(id -u)/com.termsurf.xpc-gateway` shows the release
    service. `web https://google.com` works.
 6. **Both simultaneously**: Both apps running, `web` works in each.
+
+**Result: Fail.**
+
+#### What happened
+
+SMAppService auto-registration works. Both debug and release gateways register
+and start on demand — `launchctl print` confirms the services are running and
+`web` successfully connects to the compositor ("Connected to compositor" in TUI
+output). The gateway isolation from Experiment 1 is also intact.
+
+But the installed release build at `/Applications/TermSurf.app` can't load
+pages. `web` connects to the compositor, then times out waiting for the page to
+render. The same release build running from the repo directory
+(`gui/zig-out/TermSurf.app`) loads pages fine.
+
+We investigated code signing: `install.sh` adds Chromium helpers and the `web`
+binary to the app bundle after the build system signs it, which invalidates the
+code seal (`codesign -vvv` reports "a sealed resource is missing or invalid").
+Adding `codesign --force --deep --sign -` to `install.sh` made the signature
+valid again but did not fix the page loading timeout.
+
+#### What we know
+
+- The XPC gateway is running from
+  `/Applications/TermSurf.app/Contents/MacOS/xpc-gateway` (confirmed via
+  `lsof -p`).
+- BTM shows the agent registered to `file:///Applications/TermSurf.app/` with
+  correct label and executable path.
+- `web` connects to the compositor — the gateway brokering step works.
+- Pages time out only when running the installed copy at `/Applications/`.
+- The repo build (`gui/zig-out/TermSurf.app`) works despite not having Chromium
+  helpers bundled, meaning Chromium is found via an absolute path, not from the
+  app bundle.
+
+#### What we don't know
+
+Why the installed release build times out loading pages when the identical
+binary at the repo path doesn't. The XPC gateway changes are not the cause — the
+gateway works correctly. The page loading failure is likely a separate issue
+with how the installed app interacts with Chromium (path resolution, sandboxing,
+code signing side effects) that predates or is orthogonal to this issue.
+
+#### Conclusion
+
+The SMAppService approach works for gateway auto-registration, but the installed
+release build has a page loading regression that blocks verification. This needs
+to be investigated separately — it may be a pre-existing `install.sh` issue
+rather than a consequence of the gateway isolation changes.

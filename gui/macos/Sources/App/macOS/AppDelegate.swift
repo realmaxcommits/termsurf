@@ -4,6 +4,7 @@ import UserNotifications
 import OSLog
 import Sparkle
 import GhosttyKit
+import ServiceManagement
 
 class AppDelegate: NSObject,
                     ObservableObject,
@@ -156,6 +157,23 @@ class AppDelegate: NSObject,
     @Published private(set) var appIcon: NSImage? = nil
 
     override init() {
+        // Register the xpc-gateway LaunchAgent before Ghostty.App() connects
+        // to it. SMAppService tells launchd about the bundled agent plist so
+        // the gateway auto-starts on demand (Issue 653).
+#if DEBUG
+        let gatewayService = SMAppService.agent(
+            plistName: "com.termsurf.debug.xpc-gateway.plist")
+#else
+        let gatewayService = SMAppService.agent(
+            plistName: "com.termsurf.xpc-gateway.plist")
+#endif
+        do {
+            try gatewayService.register()
+            fputs("[TermSurf] Registered xpc-gateway (status: \(gatewayService.status))\n", stderr)
+        } catch {
+            fputs("[TermSurf] xpc-gateway register error (status: \(gatewayService.status)): \(error)\n", stderr)
+        }
+
 #if DEBUG
         ghostty = Ghostty.App(configPath: ProcessInfo.processInfo.environment["GHOSTTY_CONFIG_PATH"])
 #else
