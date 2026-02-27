@@ -757,7 +757,7 @@ fn spawnServerProcess(server: *Server) void {
             if (i == 3) {
                 const helpers_path = std.fmt.bufPrintZ(
                     &path_buf,
-                    "{s}/Contents/Helpers/Chromium Profile Server.app/Contents/MacOS/Chromium Profile Server",
+                    "{s}/Contents/Chromium/Chromium Profile Server.app/Contents/MacOS/Chromium Profile Server",
                     .{dir},
                 ) catch null;
                 if (helpers_path) |p| {

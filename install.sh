@@ -19,14 +19,22 @@ echo "==> Installing to $APP..."
 rm -rf "$APP"
 cp -R "$SRC" "$APP"
 
-# Bundle Chromium server + helpers.
+# Bundle Chromium server + helpers into Contents/Chromium/ (NOT Contents/Helpers/
+# because Chromium's paths_apple.mm uses "/Helpers/" to detect helper processes).
 echo "==> Bundling Chromium Profile Server..."
-mkdir -p "$APP/Contents/Helpers"
-cp -R "$CHROMIUM/Chromium Profile Server.app" "$APP/Contents/Helpers/"
-cp -R "$CHROMIUM/Chromium Profile Server Helper.app" "$APP/Contents/Helpers/"
-cp -R "$CHROMIUM/Chromium Profile Server Helper (GPU).app" "$APP/Contents/Helpers/"
-cp -R "$CHROMIUM/Chromium Profile Server Helper (Renderer).app" "$APP/Contents/Helpers/"
-cp -R "$CHROMIUM/Chromium Profile Server Helper (Plugin).app" "$APP/Contents/Helpers/"
+mkdir -p "$APP/Contents/Chromium"
+cp -R "$CHROMIUM/Chromium Profile Server.app" "$APP/Contents/Chromium/"
+cp -R "$CHROMIUM/Chromium Profile Server Helper.app" "$APP/Contents/Chromium/"
+cp -R "$CHROMIUM/Chromium Profile Server Helper (GPU).app" "$APP/Contents/Chromium/"
+cp -R "$CHROMIUM/Chromium Profile Server Helper (Renderer).app" "$APP/Contents/Chromium/"
+cp -R "$CHROMIUM/Chromium Profile Server Helper (Plugin).app" "$APP/Contents/Chromium/"
+
+# Bundle Chromium resources (component build needs these alongside .app bundles).
+echo "==> Bundling Chromium resources..."
+cp "$CHROMIUM"/*.pak "$APP/Contents/Chromium/"
+cp "$CHROMIUM/icudtl.dat" "$APP/Contents/Chromium/"
+cp "$CHROMIUM"/v8_context_snapshot*.bin "$APP/Contents/Chromium/"
+cp "$CHROMIUM"/*.dylib "$APP/Contents/Chromium/"
 
 # Bundle web TUI.
 if [ -f "$WEB" ]; then
