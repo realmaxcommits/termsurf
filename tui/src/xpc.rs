@@ -76,7 +76,10 @@ impl CompositorConnection {
     /// 3. Connect directly to the app via the endpoint
     pub fn connect() -> Option<Self> {
         // Step 1: Connect to the gateway.
-        let gateway_name = CString::new("com.termsurf.xpc-gateway").unwrap();
+        // Debug builds set TERMSURF_XPC_SERVICE to the debug gateway name (Issue 653).
+        let service_name = std::env::var("TERMSURF_XPC_SERVICE")
+            .unwrap_or_else(|_| "com.termsurf.xpc-gateway".to_string());
+        let gateway_name = CString::new(service_name).unwrap();
         let gateway = unsafe {
             xpc_connection_create_mach_service(gateway_name.as_ptr(), std::ptr::null_mut(), 0)
         };

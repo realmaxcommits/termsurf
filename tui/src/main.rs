@@ -11,7 +11,9 @@ use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
 };
 use edtui::events::{KeyEventHandler, KeyEventRegister, KeyInput};
-use edtui::{EditorEventHandler, EditorMode, EditorState, EditorTheme, EditorView, Lines, RowIndex};
+use edtui::{
+    EditorEventHandler, EditorMode, EditorState, EditorTheme, EditorView, Lines, RowIndex,
+};
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, Paragraph};
 

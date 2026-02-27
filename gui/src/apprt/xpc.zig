@@ -14,6 +14,7 @@ const CoreApp = @import("../App.zig");
 const CoreSurface = @import("../Surface.zig");
 const input = @import("../input.zig");
 
+const internal_os = @import("../os/main.zig");
 const log = std.log.scoped(.xpc);
 const alloc = std.heap.page_allocator;
 
@@ -137,7 +138,12 @@ pub fn init(core_app: *CoreApp) void {
     surface_to_pane = std.AutoHashMap(usize, []const u8).init(alloc);
 
     // Connect to the xpc-gateway Mach service.
-    gateway = xpc_connection_create_mach_service("com.termsurf.xpc-gateway", null, 0);
+    // Debug and release builds use separate gateways so they don't interfere (Issue 653).
+    const xpc_service_name = if (comptime builtin.mode == .Debug)
+        "com.termsurf.debug.xpc-gateway"
+    else
+        "com.termsurf.xpc-gateway";
+    gateway = xpc_connection_create_mach_service(xpc_service_name, null, 0);
     xpc_connection_set_target_queue(gateway, xpc_queue);
     var gw_block = EventBlock.init(.{}, &gatewayHandler);
     xpc_connection_set_event_handler(gateway, @ptrCast(&gw_block));
@@ -158,6 +164,12 @@ pub fn init(core_app: *CoreApp) void {
     xpc_connection_send_message(gateway, msg);
 
     log.info("registered endpoint with xpc-gateway (serial queue)", .{});
+
+    // Debug builds set TERMSURF_XPC_SERVICE so child terminal sessions
+    // (and the `web` TUI) know which gateway to connect to (Issue 653).
+    if (comptime builtin.mode == .Debug) {
+        _ = internal_os.setenv("TERMSURF_XPC_SERVICE", "com.termsurf.debug.xpc-gateway");
+    }
 }
 
 pub fn deinit() void {
@@ -773,7 +785,7 @@ fn spawnServerProcess(server: *Server) void {
     var xpc_arg_buf: [128]u8 = undefined;
     const xpc_arg = std.fmt.bufPrintZ(
         &xpc_arg_buf,
-        "--xpc-service=com.termsurf.xpc-gateway",
+        "--xpc-service=" ++ (if (comptime builtin.mode == .Debug) "com.termsurf.debug.xpc-gateway" else "com.termsurf.xpc-gateway"),
         .{},
     ) catch return;
 

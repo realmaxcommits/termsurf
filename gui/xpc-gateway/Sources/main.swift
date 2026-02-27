@@ -6,13 +6,18 @@
 
 import Foundation
 
-let serviceName = "com.termsurf.xpc-gateway"
+let serviceName: String
+if CommandLine.arguments.count > 1 {
+    serviceName = CommandLine.arguments[1]
+} else {
+    serviceName = "com.termsurf.xpc-gateway"
+}
 
 // Global state — must be retained to prevent ARC release.
 var peers: [xpc_connection_t] = []
 var appEndpoint: xpc_object_t? = nil
 
-let queue = DispatchQueue(label: "com.termsurf.xpc-gateway")
+let queue = DispatchQueue(label: serviceName)
 
 let listener = xpc_connection_create_mach_service(
     serviceName,

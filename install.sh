@@ -28,6 +28,15 @@ cp -R "$CHROMIUM/Chromium Profile Server Helper (GPU).app" "$APP/Contents/Helper
 cp -R "$CHROMIUM/Chromium Profile Server Helper (Renderer).app" "$APP/Contents/Helpers/"
 cp -R "$CHROMIUM/Chromium Profile Server Helper (Plugin).app" "$APP/Contents/Helpers/"
 
+# Bundle xpc-gateway.
+GATEWAY="$REPO_DIR/gui/xpc-gateway/.build/debug/xpc-gateway"
+if [ -f "$GATEWAY" ]; then
+  echo "==> Bundling xpc-gateway..."
+  cp "$GATEWAY" "$APP/Contents/MacOS/xpc-gateway"
+else
+  echo "Warning: xpc-gateway not found at $GATEWAY (skipping)"
+fi
+
 # Bundle web TUI.
 if [ -f "$WEB" ]; then
   echo "==> Bundling web TUI..."
@@ -42,6 +51,14 @@ LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Versions/A/Framewo
 "$LSREGISTER" -u "$REPO_DIR/gui/macos/build/Debug/TermSurf Debug.app" 2>/dev/null || true
 "$LSREGISTER" -u "$REPO_DIR/gui/macos/build/Debug/TermSurf.app" 2>/dev/null || true
 "$LSREGISTER" -u "$REPO_DIR/gui/macos/build/ReleaseLocal/TermSurf.app" 2>/dev/null || true
+
+# Load release xpc-gateway launchd service.
+echo "==> Loading xpc-gateway launchd service..."
+launchctl bootout "gui/$(id -u)/com.termsurf.xpc-gateway" 2>/dev/null || true
+cp "$REPO_DIR/gui/macos/com.termsurf.xpc-gateway.plist" \
+  "$HOME/Library/LaunchAgents/com.termsurf.xpc-gateway.plist"
+launchctl bootstrap "gui/$(id -u)" \
+  "$HOME/Library/LaunchAgents/com.termsurf.xpc-gateway.plist"
 
 # Symlink CLI tools.
 echo "==> Symlinking CLI tools to /usr/local/bin/..."

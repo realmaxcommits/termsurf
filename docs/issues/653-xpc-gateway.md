@@ -300,3 +300,178 @@ Experiment 2 should port the SMAppService auto-registration from ts5 (Issue 506
 Experiment 2) to gui/. The gateway binary and plist must be bundled inside the
 app during `zig build`, and the app must call `SMAppService.register()` on
 startup before connecting to the gateway.
+
+### Experiment 2: Auto-register gateway via SMAppService
+
+**Goal:** The app registers the XPC gateway with launchd on startup via
+`SMAppService`. No manual `launchctl` commands needed — just `open` the app and
+everything works.
+
+#### Background
+
+ts5 solved this in Issue 506 Experiment 2. Three pieces:
+
+1. **Bundle plist** — A plist using `BundleProgram` (bundle-relative path)
+   instead of `ProgramArguments` (absolute path) lives at
+   `Contents/Library/LaunchAgents/` inside the app bundle.
+2. **Bundle binary** — The gateway binary is copied into
+   `Contents/MacOS/xpc-gateway` during `zig build`.
+3. **SMAppService registration** — On startup, the app calls
+   `SMAppService.agent(plistName:).register()`. This tells launchd about the
+   agent. When any process connects to the Mach service name, launchd
+   auto-starts the gateway.
+
+The gui/ generation moved all XPC logic from Swift to Zig but never ported the
+SMAppService registration. The stale launchd registration from the `ghost/` era
+(manually loaded via `launchctl bootstrap`) has been keeping things working by
+accident.
+
+#### Changes
+
+**1. `gui/macos/com.termsurf.xpc-gateway.bundle.plist`** — New bundle plist for
+the release gateway. Uses `BundleProgram` instead of absolute paths:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.termsurf.xpc-gateway</string>
+    <key>BundleProgram</key>
+    <string>Contents/MacOS/xpc-gateway</string>
+    <key>MachServices</key>
+    <dict>
+        <key>com.termsurf.xpc-gateway</key>
+        <true/>
+    </dict>
+    <key>ProgramArguments</key>
+    <array>
+        <string>com.termsurf.xpc-gateway</string>
+    </array>
+</dict>
+</plist>
+```
+
+`BundleProgram` tells launchd the binary path is relative to the app bundle.
+`ProgramArguments` passes the service name as the first argument (which the
+gateway reads from Experiment 1's change 1).
+
+**2. `gui/macos/com.termsurf.debug.xpc-gateway.bundle.plist`** — Same but for
+the debug gateway:
+
+```xml
+<key>Label</key>
+<string>com.termsurf.debug.xpc-gateway</string>
+<key>BundleProgram</key>
+<string>Contents/MacOS/xpc-gateway</string>
+<key>MachServices</key>
+<dict>
+    <key>com.termsurf.debug.xpc-gateway</key>
+    <true/>
+</dict>
+<key>ProgramArguments</key>
+<array>
+    <string>com.termsurf.debug.xpc-gateway</string>
+</array>
+```
+
+**3. `gui/src/build/GhosttyXcodebuild.zig`** — Add post-build steps to bundle
+the gateway binary and the correct plist into the app. Ported directly from ts5:
+
+```zig
+// Bundle xpc-gateway binary and LaunchAgent plist (Issue 653).
+const copy_gateway = copy_gw: {
+    const step = RunStep.create(b, "copy xpc-gateway into bundle");
+    step.addArgs(&.{"cp"});
+    step.addFileArg(b.path("xpc-gateway/.build/debug/xpc-gateway"));
+    step.addArg(b.fmt("{s}/Contents/MacOS/xpc-gateway", .{app_path}));
+    step.step.dependOn(&build.step);
+    break :copy_gw step;
+};
+
+const mkdir_la = mkdir_la: {
+    const step = RunStep.create(b, "mkdir LaunchAgents in bundle");
+    step.addArgs(&.{ "mkdir", "-p",
+        b.fmt("{s}/Contents/Library/LaunchAgents", .{app_path}) });
+    step.step.dependOn(&build.step);
+    break :mkdir_la step;
+};
+
+const plist_name = if (config.optimize == .Debug)
+    "com.termsurf.debug.xpc-gateway" else "com.termsurf.xpc-gateway";
+const copy_plist = copy_pl: {
+    const step = RunStep.create(b, "copy xpc-gateway plist into bundle");
+    step.addArgs(&.{"cp"});
+    step.addFileArg(b.path(
+        b.fmt("macos/{s}.bundle.plist", .{plist_name})));
+    step.addArg(b.fmt(
+        "{s}/Contents/Library/LaunchAgents/{s}.plist",
+        .{ app_path, plist_name }));
+    step.step.dependOn(&mkdir_la.step);
+    break :copy_pl step;
+};
+
+// Copy must wait for gateway files to be in the bundle.
+copy.step.dependOn(&copy_gateway.step);
+copy.step.dependOn(&copy_plist.step);
+```
+
+**4. `gui/macos/Sources/App/macOS/AppDelegate.swift`** — Register the gateway
+LaunchAgent on startup, before the Zig-side `xpc.init` connects to it. Add this
+at the top of `init()`, before `ghostty = Ghostty.App(...)`:
+
+```swift
+import ServiceManagement
+
+// Register the xpc-gateway LaunchAgent (Issue 653).
+#if DEBUG
+let gatewayService = SMAppService.agent(
+    plistName: "com.termsurf.debug.xpc-gateway.plist")
+#else
+let gatewayService = SMAppService.agent(
+    plistName: "com.termsurf.xpc-gateway.plist")
+#endif
+switch gatewayService.status {
+case .notRegistered, .notFound:
+    do {
+        try gatewayService.register()
+    } catch {
+        fputs("[TermSurf] Failed to register xpc-gateway: \(error)\n",
+              stderr)
+    }
+case .enabled, .requiresApproval:
+    break
+@unknown default:
+    break
+}
+```
+
+This runs before `Ghostty.App()` calls `xpc.init`, ensuring the gateway is
+registered with launchd before the app tries to connect to it.
+
+**5. `install.sh`** — Remove the `launchctl` commands added in Experiment 1. The
+app handles registration via SMAppService — no manual plist loading needed. Keep
+the gateway binary bundling (it's now done by `zig build`, but `install.sh`
+copies the whole app bundle, so it comes along for free).
+
+#### Verification
+
+1. **Clean slate**: Unregister any stale gateway registrations:
+   ```bash
+   launchctl bootout gui/$(id -u)/com.termsurf.xpc-gateway 2>/dev/null
+   launchctl bootout gui/$(id -u)/com.termsurf.debug.xpc-gateway 2>/dev/null
+   ```
+2. **Build**: `cd gui/xpc-gateway && swift build && cd .. && zig build`.
+3. **Debug app**: `open "gui/macos/build/Debug/TermSurf Debug.app"`. The gateway
+   should auto-register. Check:
+   `launchctl print gui/$(id -u)/com.termsurf.debug.xpc-gateway` shows the
+   service.
+4. **Debug `web`**: In the debug app's terminal, run `web https://google.com`.
+   It connects and renders.
+5. **Install + release**: Run `install.sh`, then
+   `open /Applications/TermSurf.app`. Check:
+   `launchctl print gui/$(id -u)/com.termsurf.xpc-gateway` shows the release
+   service. `web https://google.com` works.
+6. **Both simultaneously**: Both apps running, `web` works in each.
