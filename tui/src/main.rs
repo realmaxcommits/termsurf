@@ -625,13 +625,13 @@ fn ui(
 
     let hints = match mode {
         Mode::Browse => Line::from(vec![
-            Span::styled("cmd+[ ", f),
+            Span::styled("\u{2318}[ ", f),
             Span::styled("back  ", d),
-            Span::styled("cmd+] ", f),
+            Span::styled("\u{2318}] ", f),
             Span::styled("fwd  ", d),
-            Span::styled("cmd+r ", f),
+            Span::styled("\u{2318}r ", f),
             Span::styled("reload  ", d),
-            Span::styled("ctrl+esc ", f),
+            Span::styled("\u{2303}esc ", f),
             Span::styled("control", d),
         ]),
         Mode::Control => Line::from(vec![
@@ -645,13 +645,13 @@ fn ui(
         Mode::Edit => Line::from(vec![
             Span::styled("\u{23CE} ", f),
             Span::styled("navigate  ", d),
-            Span::styled("ctrl+esc ", f),
+            Span::styled("\u{2303}esc ", f),
             Span::styled("control", d),
         ]),
         Mode::Command => Line::from(vec![
             Span::styled("\u{23CE} ", f),
             Span::styled("execute  ", d),
-            Span::styled("ctrl+esc ", f),
+            Span::styled("\u{2303}esc ", f),
             Span::styled("control", d),
         ]),
     };
