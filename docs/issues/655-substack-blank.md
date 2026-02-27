@@ -204,3 +204,116 @@ This experiment exposed three separate problems:
 Fix the immediate problem: register a stub handler for
 `blink.mojom.BadgeService` so Substack pages render without killing the
 renderer.
+
+### Experiment 2: Register a no-op BadgeService binder
+
+**Goal:** Register a stub handler for `blink.mojom.BadgeService` so the renderer
+is not killed when a page calls the Badging API. Substack pages should render
+and stay visible.
+
+#### Background
+
+Chromium's headless browser has the exact same problem and solves it with a
+`StubBadgeService` class — a minimal implementation of
+`blink::mojom::BadgeService` that accepts connections and ignores all calls.
+We'll copy this pattern.
+
+The relevant code lives in:
+
+- `headless/lib/browser/headless_content_browser_client.h:138-158` —
+  `StubBadgeService` inner class definition
+- `headless/lib/browser/headless_content_browser_client.cc:210-218` —
+  registration in `RegisterBrowserInterfaceBindersForFrame()`
+- `headless/lib/browser/headless_content_browser_client.cc:446-453` —
+  `BindBadgeService()` implementation
+
+Our Content API build registers frame-scoped binders in
+`content/chromium_profile_server/browser/shell_content_browser_client.cc:604-615`.
+
+#### Chromium branch
+
+- New branch: `146.0.7650.0-issue-655`
+- Forked from: `146.0.7650.0-issue-644` (latest branch with all TermSurf
+  modifications)
+
+#### Changes
+
+**1. `content/chromium_profile_server/browser/shell_content_browser_client.h`**
+— Add the `StubBadgeService` inner class, `BindBadgeService()` method
+declaration, and member variable:
+
+```cpp
+// After the existing public method declarations, add:
+ private:
+  // Stub BadgeService that accepts and ignores Badging API calls.
+  // Without this, the renderer is killed when any page calls
+  // navigator.setAppBadge() — an unbound Mojo interface is treated
+  // as a security violation. See Issue 655.
+  class StubBadgeService;
+
+  void BindBadgeService(
+      RenderFrameHost* render_frame_host,
+      mojo::PendingReceiver<blink::mojom::BadgeService> receiver);
+
+  std::unique_ptr<StubBadgeService> stub_badge_service_;
+```
+
+Add the include at the top of the file:
+
+```cpp
+#include "third_party/blink/public/mojom/badging/badging.mojom.h"
+```
+
+**2. `content/chromium_profile_server/browser/shell_content_browser_client.cc`**
+— Define the `StubBadgeService` class and register the binder:
+
+```cpp
+// Add includes at the top:
+#include "mojo/public/cpp/bindings/receiver_set.h"
+#include "third_party/blink/public/mojom/badging/badging.mojom.h"
+
+// Define StubBadgeService (before any method definitions):
+class ShellContentBrowserClient::StubBadgeService
+    : public blink::mojom::BadgeService {
+ public:
+  StubBadgeService() = default;
+  ~StubBadgeService() override = default;
+
+  void Bind(mojo::PendingReceiver<blink::mojom::BadgeService> receiver) {
+    receivers_.Add(this, std::move(receiver));
+  }
+
+  // blink::mojom::BadgeService:
+  void SetBadge(blink::mojom::BadgeValuePtr value) override {}
+  void ClearBadge() override {}
+
+ private:
+  mojo::ReceiverSet<blink::mojom::BadgeService> receivers_;
+};
+
+// Add BindBadgeService method:
+void ShellContentBrowserClient::BindBadgeService(
+    RenderFrameHost* render_frame_host,
+    mojo::PendingReceiver<blink::mojom::BadgeService> receiver) {
+  if (!stub_badge_service_)
+    stub_badge_service_ = std::make_unique<StubBadgeService>();
+  stub_badge_service_->Bind(std::move(receiver));
+}
+
+// In RegisterBrowserInterfaceBindersForFrame(), add:
+  map->Add<blink::mojom::BadgeService>(base::BindRepeating(
+      &ShellContentBrowserClient::BindBadgeService, base::Unretained(this)));
+```
+
+#### Verification
+
+1. Create branch `146.0.7650.0-issue-655` from `146.0.7650.0-issue-644`
+2. Make the changes above
+3. Build: `autoninja -C out/Default chromium_profile_server`
+4. Rebuild TermSurf: `cd gui && zig build`
+5. Launch `TermSurf-Debug.app`
+6. Navigate to `https://themasonic.substack.com/p/the-investigation`
+7. The page should render and **stay visible** — no blank white screen
+8. Check `~/.local/state/termsurf/chromium-server.log` — no "Terminating render
+   process" or "bad Mojo message" errors
+9. Test `https://kirschsubstack.com/` — should also render without crashing
