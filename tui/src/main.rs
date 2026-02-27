@@ -11,6 +11,7 @@ use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
 };
 use edtui::actions::{Execute, SelectLine, SwitchMode};
+use edtui::clipboard::ClipboardTrait;
 use edtui::events::{KeyEventHandler, KeyEventRegister, KeyInput};
 use edtui::{
     EditorEventHandler, EditorMode, EditorState, EditorTheme, EditorView, Lines, RowIndex,
@@ -33,6 +34,27 @@ enum Mode {
     Browse,
     Control,
     Edit,
+}
+
+/// Clipboard wrapper that strips leading newlines from edtui's line-mode yanks
+/// (Issue 658).
+struct UrlClipboard(arboard::Clipboard);
+
+impl UrlClipboard {
+    fn new() -> Self {
+        Self(arboard::Clipboard::new().expect("failed to open system clipboard"))
+    }
+}
+
+impl ClipboardTrait for UrlClipboard {
+    fn set_text(&mut self, text: String) {
+        let clean = text.trim_start_matches('\n').to_string();
+        let _ = self.0.set_text(clean);
+    }
+
+    fn get_text(&mut self) -> String {
+        self.0.get_text().unwrap_or_default()
+    }
 }
 
 fn main() -> io::Result<()> {
@@ -103,6 +125,7 @@ fn main() -> io::Result<()> {
 
     // edtui state (Issue 637, 658).
     let mut editor_state = EditorState::new(Lines::from(url.as_str()));
+    editor_state.set_clipboard(UrlClipboard::new());
     let mut editor_url = url.clone(); // Track which URL the editor has.
     let mut editor_handler = {
         let mut kh = KeyEventHandler::vim_mode();
@@ -172,6 +195,7 @@ fn main() -> io::Result<()> {
                              mode: &mut Mode| {
                                 if *editor_url != url {
                                     *editor_state = EditorState::new(Lines::from(url));
+                                    editor_state.set_clipboard(UrlClipboard::new());
                                     let len = url.len();
                                     editor_state.cursor =
                                         edtui::Index2::new(0, len.saturating_sub(1));

@@ -191,3 +191,9 @@ In `tui/src/main.rs`:
 5. Paste into an external application — no leading newline
 6. Press `v`, select part of the URL, press `y`
 7. Paste — no leading newline, only selected text
+
+### Result
+
+Pass. Custom `UrlClipboard` strips leading newlines from edtui's line-mode
+yanks. All three copy methods (`yy`, `Vy`, `v` selection `y`) paste cleanly
+without phantom newlines. No changes to vendored edtui source.
