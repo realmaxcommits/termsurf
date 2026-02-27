@@ -1051,32 +1051,3 @@ were: (1) copy all Chromium resource files alongside the `.app` bundles, and (2)
 avoid the `Contents/Helpers/` directory name because Chromium's path detection
 uses `/Helpers/` as a substring match to identify helper processes.
 
-## Conclusion
-
-XPC gateway isolation is complete. Debug and release builds use separate
-gateways (`com.termsurf.debug.xpc-gateway` and `com.termsurf.xpc-gateway`) that
-run simultaneously without conflict. All three deployment modes work:
-
-- **Debug build** (`gui/macos/build/Debug/TermSurf-Debug.app`) — uses
-  `com.termsurf.debug.xpc-gateway`, pages load.
-- **Release build** (`gui/zig-out/TermSurf.app`) — uses
-  `com.termsurf.xpc-gateway`, pages load.
-- **Installed build** (`/Applications/TermSurf.app`) — uses
-  `com.termsurf.xpc-gateway`, pages load.
-
-Key findings across six experiments:
-
-1. **SMAppService works for XPC gateway registration** (Exp 2). The gateway
-   binary and LaunchAgent plist live inside the app bundle, and `SMAppService`
-   registers them with launchd on launch. No manual `launchctl` commands needed.
-2. **Spaces in bundle names break `BundleProgram`** (Exp 3–4). launchd's
-   `BundleProgram` path resolution fails with `EX_CONFIG` when the parent bundle
-   path contains spaces. Renaming `TermSurf Debug.app` to `TermSurf-Debug.app`
-   fixed the debug build.
-3. **Chromium needs all sibling resources** (Exp 5–6). The component build
-   (`is_component_build = true`) splits Chromium into 472 shared libraries plus
-   resource packs. All must be copied alongside the `.app` bundles.
-4. **Avoid `Contents/Helpers/` as a directory name** (Exp 6). Chromium's
-   `paths_apple.mm` uses `/Helpers/` as a substring match to detect helper
-   processes. Placing the main server under `Contents/Helpers/` causes a fatal
-   path resolution error. Using `Contents/Chromium/` avoids this.
