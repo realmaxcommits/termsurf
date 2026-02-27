@@ -1051,3 +1051,58 @@ were: (1) copy all Chromium resource files alongside the `.app` bundles, and (2)
 avoid the `Contents/Helpers/` directory name because Chromium's path detection
 uses `/Helpers/` as a substring match to identify helper processes.
 
+## Conclusion
+
+XPC gateway isolation is complete. Debug and release builds use separate
+gateways (`com.termsurf.debug.xpc-gateway` and `com.termsurf.xpc-gateway`) that
+run simultaneously without conflict. All three deployment modes work:
+
+- **Debug build** (`gui/macos/build/Debug/TermSurf-Debug.app`) — uses
+  `com.termsurf.debug.xpc-gateway`, pages load.
+- **Release build** (`gui/zig-out/TermSurf.app`) — uses
+  `com.termsurf.xpc-gateway`, pages load.
+- **Installed build** (`/Applications/TermSurf.app`) — uses
+  `com.termsurf.xpc-gateway`, pages load.
+
+### What changed
+
+- **Experiment 1:** Made the gateway binary accept its Mach service name as a
+  command-line argument instead of hardcoding it. Created separate LaunchAgent
+  plists for debug (`com.termsurf.debug.xpc-gateway`) and release
+  (`com.termsurf.xpc-gateway`). Set `TERMSURF_XPC_SERVICE` at comptime in
+  `xpc.zig` so the TUI connects to the right gateway.
+- **Experiment 2:** Switched from manual `launchctl` registration to
+  `SMAppService.agent()`. The gateway binary and plist live inside the app
+  bundle at `Contents/MacOS/xpc-gateway` and `Contents/Library/LaunchAgents/`.
+  The app registers them on launch — no manual plist loading needed.
+- **Experiment 4:** Renamed the debug app from `TermSurf Debug.app` to
+  `TermSurf-Debug.app`. Spaces in the bundle path broke launchd's
+  `BundleProgram` resolution (`EX_CONFIG` exit code 78). Switched SMAppService
+  logging from `fputs` to `os_log` `Logger`.
+- **Experiment 6:** Made `install.sh` copy all Chromium resources (`.pak`,
+  `icudtl.dat`, `v8_context_snapshot*.bin`, 472 `.dylib` shared libraries) into
+  the app bundle. Renamed the bundling directory from `Contents/Helpers/` to
+  `Contents/Chromium/` because Chromium's `paths_apple.mm` uses `/Helpers/` as a
+  substring match to detect helper processes.
+
+### Caveats
+
+The release repo build and the installed build share the same gateway name
+(`com.termsurf.xpc-gateway`). SMAppService binds the gateway to whichever app
+registered it last. If you switch between them, the old registration points to
+the wrong bundle. Run `deregister.sh` to clear stale registrations before
+launching the other build.
+
+### Key findings
+
+1. **SMAppService works for XPC gateway auto-registration.** No manual
+   `launchctl` commands needed. The gateway starts on demand when a client
+   connects to the Mach port.
+2. **Spaces in bundle names break `BundleProgram`.** launchd fails with
+   `EX_CONFIG` when the parent bundle path contains spaces.
+3. **Chromium component builds need all sibling resources.** The 472 shared
+   libraries, resource packs, ICU data, and V8 snapshot must all be copied
+   alongside the `.app` bundles.
+4. **Never use `Contents/Helpers/` as a directory name.** Chromium's path
+   detection uses `/Helpers/` as a substring match. The main server gets
+   misidentified as a helper process, causing a fatal path resolution error.
