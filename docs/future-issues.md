@@ -3,7 +3,7 @@
 Issues that need their own issue doc when we're ready to work on them. Each
 entry is a problem we've identified but haven't started solving yet.
 
-## Renderer crash UX
+## 1. [ ] Renderer crash UX
 
 When the Chromium renderer process dies, the user sees a blank white screen with
 no indication of what happened. The progress bar continues as if the page is
@@ -16,7 +16,7 @@ still loading, then times out. We need to:
 
 Discovered in Issue 655 Experiment 1.
 
-## Mojo interface audit
+## 2. [ ] Mojo interface audit
 
 Our Content API build is missing handlers for Mojo interfaces that a full Chrome
 browser registers. Every missing binder is a ticking time bomb — the renderer
