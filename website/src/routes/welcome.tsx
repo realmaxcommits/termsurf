@@ -18,7 +18,102 @@ function WelcomePage() {
 
     // Scene setup
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x0a0a0a);
+
+    // Nebula background — fullscreen shader quad using fbm noise.
+    const nebulaVertexShader = `
+      varying vec2 vUv;
+      void main() {
+        vUv = uv;
+        gl_Position = vec4(position, 1.0);
+      }
+    `;
+    const nebulaFragmentShader = `
+      uniform float uTime;
+      varying vec2 vUv;
+
+      // Simplex-style hash
+      vec3 hash3(vec3 p) {
+        p = vec3(
+          dot(p, vec3(127.1, 311.7, 74.7)),
+          dot(p, vec3(269.5, 183.3, 246.1)),
+          dot(p, vec3(113.5, 271.9, 124.6))
+        );
+        return -1.0 + 2.0 * fract(sin(p) * 43758.5453123);
+      }
+
+      // 3D gradient noise
+      float noise(vec3 p) {
+        vec3 i = floor(p);
+        vec3 f = fract(p);
+        vec3 u = f * f * (3.0 - 2.0 * f);
+
+        return mix(mix(mix(dot(hash3(i + vec3(0,0,0)), f - vec3(0,0,0)),
+                           dot(hash3(i + vec3(1,0,0)), f - vec3(1,0,0)), u.x),
+                       mix(dot(hash3(i + vec3(0,1,0)), f - vec3(0,1,0)),
+                           dot(hash3(i + vec3(1,1,0)), f - vec3(1,1,0)), u.x), u.y),
+                   mix(mix(dot(hash3(i + vec3(0,0,1)), f - vec3(0,0,1)),
+                           dot(hash3(i + vec3(1,0,1)), f - vec3(1,0,1)), u.x),
+                       mix(dot(hash3(i + vec3(0,1,1)), f - vec3(0,1,1)),
+                           dot(hash3(i + vec3(1,1,1)), f - vec3(1,1,1)), u.x), u.y), u.z);
+      }
+
+      // Fractal Brownian motion
+      float fbm(vec3 p) {
+        float value = 0.0;
+        float amplitude = 0.5;
+        for (int i = 0; i < 6; i++) {
+          value += amplitude * noise(p);
+          p *= 2.0;
+          amplitude *= 0.5;
+        }
+        return value;
+      }
+
+      void main() {
+        vec2 uv = vUv;
+        float t = uTime * 0.02;
+
+        // Sample position in 3D noise space
+        vec3 p = vec3(uv * 3.0, t);
+
+        // Layer multiple fbm calls for cloud-like structure
+        float n1 = fbm(p);
+        float n2 = fbm(p + vec3(5.2, 1.3, 2.8) + n1 * 0.5);
+        float n3 = fbm(p + vec3(1.7, 9.2, 3.4) + n2 * 0.5);
+
+        // Color channels — deep purple/blue nebula
+        vec3 col = vec3(0.03, 0.03, 0.06); // dark base
+        col += vec3(0.15, 0.04, 0.25) * smoothstep(-0.2, 0.6, n2); // purple clouds
+        col += vec3(0.03, 0.10, 0.25) * smoothstep(-0.1, 0.5, n3); // blue wisps
+        col += vec3(0.20, 0.05, 0.15) * smoothstep(0.1, 0.8, n1 * n2); // magenta highlights
+
+        // Subtle vignette
+        float vig = 1.0 - 0.4 * length(uv - 0.5);
+        col *= vig;
+
+        gl_FragColor = vec4(col, 1.0);
+      }
+    `;
+
+    const nebulaUniforms = { uTime: { value: 0.0 } };
+    const nebulaMaterial = new THREE.ShaderMaterial({
+      vertexShader: nebulaVertexShader,
+      fragmentShader: nebulaFragmentShader,
+      uniforms: nebulaUniforms,
+      depthWrite: false,
+    });
+    const nebulaQuad = new THREE.Mesh(
+      new THREE.PlaneGeometry(2, 2),
+      nebulaMaterial,
+    );
+    nebulaQuad.frustumCulled = false;
+
+    // Render nebula to a separate scene so it sits behind everything.
+    const nebulaScene = new THREE.Scene();
+    const nebulaCamera = new THREE.Camera();
+    nebulaScene.add(nebulaQuad);
+
+    scene.background = null;
 
     const camera = new THREE.PerspectiveCamera(
       50,
@@ -172,7 +267,15 @@ function WelcomePage() {
       stars.rotation.y = t * 0.02;
       stars.rotation.x = t * 0.01;
 
+      // Update nebula time uniform
+      nebulaUniforms.uTime.value = t;
+
+      // Render nebula background first, then main scene on top
+      renderer.autoClear = false;
+      renderer.clear();
+      renderer.render(nebulaScene, nebulaCamera);
       renderer.render(scene, camera);
+      renderer.autoClear = true;
     }
     animate();
 
