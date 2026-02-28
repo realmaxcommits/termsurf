@@ -192,9 +192,41 @@ function WelcomePage() {
   }, []);
 
   return (
-    <div
-      ref={containerRef}
-      style={{ width: "100vw", height: "100vh", overflow: "hidden" }}
-    />
+    <div style={{ position: "relative", width: "100vw", height: "100vh", overflow: "hidden" }}>
+      <div ref={containerRef} style={{ width: "100%", height: "100%" }} />
+      <a
+        href="https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+        style={{
+          position: "absolute",
+          bottom: "12%",
+          left: "50%",
+          transform: "translateX(-50%)",
+          padding: "14px 40px",
+          fontSize: "16px",
+          fontFamily: "Helvetica, Arial, sans-serif",
+          letterSpacing: "2px",
+          textTransform: "uppercase",
+          color: "#fff",
+          background: "rgba(0, 229, 255, 0.15)",
+          border: "1px solid rgba(0, 229, 255, 0.5)",
+          borderRadius: "4px",
+          textDecoration: "none",
+          cursor: "pointer",
+          transition: "all 0.3s ease",
+        }}
+        onMouseEnter={(e) => {
+          e.currentTarget.style.background = "rgba(0, 229, 255, 0.3)";
+          e.currentTarget.style.borderColor = "rgba(0, 229, 255, 0.8)";
+          e.currentTarget.style.boxShadow = "0 0 20px rgba(0, 229, 255, 0.3)";
+        }}
+        onMouseLeave={(e) => {
+          e.currentTarget.style.background = "rgba(0, 229, 255, 0.15)";
+          e.currentTarget.style.borderColor = "rgba(0, 229, 255, 0.5)";
+          e.currentTarget.style.boxShadow = "none";
+        }}
+      >
+        Begin Your Journey
+      </a>
+    </div>
   );
 }
