@@ -74,7 +74,7 @@ function WelcomePage() {
         welcomeGeo.center();
 
         const welcomeMat = new THREE.MeshStandardMaterial({
-          color: 0x888888,
+          color: 0xcccccc,
           metalness: 0.3,
           roughness: 0.7,
         });
@@ -97,9 +97,11 @@ function WelcomePage() {
         internetGeo.center();
 
         const internetMat = new THREE.MeshStandardMaterial({
-          color: 0x00e5ff,
-          metalness: 0.9,
-          roughness: 0.1,
+          color: 0x66f5ff,
+          metalness: 0.5,
+          roughness: 0.3,
+          emissive: 0x00aacc,
+          emissiveIntensity: 0.3,
           envMapIntensity: 1.0,
         });
         internetMesh = new THREE.Mesh(internetGeo, internetMat);
@@ -120,7 +122,7 @@ function WelcomePage() {
         subtitleGeo.center();
 
         const subtitleMat = new THREE.MeshStandardMaterial({
-          color: 0xaaaaaa,
+          color: 0xdddddd,
           metalness: 0.3,
           roughness: 0.7,
         });
