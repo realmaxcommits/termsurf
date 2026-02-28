@@ -282,6 +282,10 @@ const Mouse = struct {
     /// Chromium. (Issue 606 Experiment 8.)
     overlay_activation: bool = false,
 
+    /// Set when this surface just gained focus. The next press+release
+    /// is consumed (click-to-focus without pass-through). Issue 670.
+    pane_activation: bool = false,
+
     /// The last x/y in the cursor position for links. We use this to
     /// only process link hover events when the mouse actually moves cells.
     link_point: ?terminal.point.Coordinate = null,
@@ -3405,6 +3409,11 @@ pub fn focusCallback(self: *Surface, focused: bool) !void {
     if (self.focused == focused) return;
     self.focused = focused;
 
+    // Set activation flag so the next click is consumed (Issue 670).
+    if (focused) {
+        self.mouse.pane_activation = true;
+    }
+
     // Notify our render thread of the new state
     _ = self.renderer_thread.mailbox.push(.{
         .focus = focused,
@@ -4042,6 +4051,14 @@ pub fn mouseButtonCallback(
     // Always record our latest mouse state (moved up for overlay tracking,
     // so cursorPosCallback can read button-down state during drag — Issue 606).
     self.mouse.click_state[@intCast(@intFromEnum(button))] = action;
+
+    // Suppress activation click — click-to-focus without pass-through (Issue 670).
+    if (self.mouse.pane_activation) {
+        if (action == .release) {
+            self.mouse.pane_activation = false;
+        }
+        return true;
+    }
 
     // Check if click is in a browser overlay (Issue 606).
     {

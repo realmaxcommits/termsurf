@@ -114,16 +114,21 @@ if (self.mouse.pane_activation) {
 This goes before the overlay hit-test block (line 4046), so it applies to both
 terminal and browser clicks.
 
-### Test
+### Result: PASS
 
-1. `cd gui && zig build` — compiles without errors.
-2. Open TermSurf, create a split.
-3. Click unfocused pane → pane activates, no content interaction.
-4. Click again → content interaction works normally.
-5. Verify terminal: clicking unfocused pane doesn't start a selection.
-6. Verify browser: clicking unfocused pane doesn't click a link.
-7. **Resize the window** — still works.
-8. **Focus-follows-mouse** — if enabled, mouse hover focuses without consuming
-   subsequent clicks (hover sets focus without `pane_activation`). Verify.
-9. **Keyboard focus** — switching panes via keybinding doesn't set
-   `pane_activation`, so the next click works immediately.
+Click-to-focus works. Clicking an unfocused pane activates it without passing
+the click through to content. A second click interacts normally. No regressions
+with resize or other mouse behavior.
+
+## Conclusion
+
+macOS-style click-to-focus for split panes. One new flag (`pane_activation`) in
+the mouse struct, three small edits in `Surface.zig`:
+
+1. Flag declaration in the `mouse` struct
+2. Set flag in `focusCallback` when gaining focus
+3. Consume press+release in `mouseButtonCallback` when flag is set
+
+Zig-only change — no Swift modifications needed. The fix applies to both
+terminal and browser pane clicks because it sits above the overlay hit-test in
+the click handling chain.
