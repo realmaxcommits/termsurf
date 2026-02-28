@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 use clap::{Parser, Subcommand};
 
 use crossterm::event::{
-    self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyModifiers,
+    self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers,
 };
 use crossterm::execute;
 use crossterm::terminal::{
@@ -52,7 +52,7 @@ enum Mode {
 }
 
 enum LoopEvent {
-    Key(KeyEvent),
+    Terminal(Event),
     Xpc(xpc::CompositorMessage),
 }
 
@@ -184,13 +184,19 @@ fn main() -> io::Result<()> {
     execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
     let mut terminal = Terminal::new(CrosstermBackend::new(stdout))?;
 
-    // Crossterm reader thread — sends key events to the unified channel (Issue 666).
+    // Crossterm reader thread — forwards relevant terminal events (Issue 668).
+    // Key, Resize, and Paste wake the main loop. Mouse and Focus are dropped
+    // to avoid redrawing on every pixel of mouse movement.
     let key_tx = tx;
     std::thread::spawn(move || loop {
-        if let Ok(Event::Key(key)) = event::read() {
-            if key_tx.send(LoopEvent::Key(key)).is_err() {
-                break;
+        match event::read() {
+            Ok(ev @ (Event::Key(_) | Event::Resize(_, _) | Event::Paste(_))) => {
+                if key_tx.send(LoopEvent::Terminal(ev)).is_err() {
+                    break;
+                }
             }
+            Ok(_) => {} // Mouse, FocusGained, FocusLost — drop silently.
+            Err(_) => break,
         }
     });
 
@@ -262,9 +268,9 @@ fn main() -> io::Result<()> {
             }
         }
 
-        // Unified event channel — blocks until a key or XPC event arrives (Issue 666).
+        // Unified event channel — blocks until a terminal or XPC event arrives (Issue 668).
         match rx.recv() {
-            Ok(LoopEvent::Key(key)) => {
+            Ok(LoopEvent::Terminal(Event::Key(key))) => {
                 // Ctrl+C quits from any mode.
                 if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
                     break;
@@ -413,6 +419,9 @@ fn main() -> io::Result<()> {
                         }
                     }
                 }
+            }
+            Ok(LoopEvent::Terminal(_)) => {
+                // Resize, mouse, focus, paste, etc. — just redraw.
             }
             Ok(LoopEvent::Xpc(msg)) => {
                 match msg {

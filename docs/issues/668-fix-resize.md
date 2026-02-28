@@ -141,12 +141,45 @@ No other changes needed. The existing key handling code is untouched — only th
 outer match arm pattern changes from `LoopEvent::Key(key)` to
 `LoopEvent::Terminal(Event::Key(key))`.
 
-### Test
+### Refinement: filter mouse events
 
-1. `cd tui && cargo build` — compiles without errors.
-2. Open TermSurf, run `web google.com`.
-3. Resize the window — TUI redraws immediately at the new size.
-4. Open a split pane — TUI in the original pane resizes correctly.
-5. Verify keyboard input still works (all modes: Control, Browse, Edit,
-   Command).
-6. Verify XPC messages (mode changes, URL updates, loading state) still work.
+The initial implementation forwarded all crossterm events, which would cause a
+full redraw on every pixel of mouse movement. The reader thread now filters by
+event type — only `Key`, `Resize`, and `Paste` are forwarded. `Mouse`,
+`FocusGained`, and `FocusLost` are dropped silently.
+
+```rust
+Ok(ev @ (Event::Key(_) | Event::Resize(_, _) | Event::Paste(_))) => {
+    if key_tx.send(LoopEvent::Terminal(ev)).is_err() {
+        break;
+    }
+}
+Ok(_) => {} // Mouse, FocusGained, FocusLost — drop silently.
+```
+
+### Result: PASS
+
+Resize works immediately on window drag and split pane creation. Keyboard input
+and XPC messages are unaffected.
+
+## Conclusion
+
+Issue 666 moved crossterm event reading into a dedicated thread but only
+forwarded `Event::Key`, silently dropping `Event::Resize` and all other event
+types. The TUI never saw resize signals and only redrew when a keystroke
+happened to arrive.
+
+The fix widens `LoopEvent` from `Key(KeyEvent)` to `Terminal(Event)` and
+forwards `Key`, `Resize`, and `Paste` from the reader thread. Mouse and focus
+events are filtered out to avoid unnecessary redraws. The main loop's key
+handling is unchanged — only the outer match arm pattern changed from
+`LoopEvent::Key(key)` to `LoopEvent::Terminal(Event::Key(key))`.
+
+Changes in `tui/src/main.rs`:
+
+- `LoopEvent` enum: `Key(KeyEvent)` → `Terminal(Event)`
+- Reader thread: `if let Ok(Event::Key(key))` → filtered `match` forwarding
+  `Key`, `Resize`, `Paste`
+- Main loop: `Ok(LoopEvent::Key(key))` →
+  `Ok(LoopEvent::Terminal(Event::Key(key)))`, plus `Ok(LoopEvent::Terminal(_))`
+  catch-all for resize/paste
