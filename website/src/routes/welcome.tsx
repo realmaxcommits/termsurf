@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import { TextGeometry } from "three/addons/geometries/TextGeometry.js";
 import { FontLoader } from "three/addons/loaders/FontLoader.js";
@@ -10,6 +10,7 @@ export const Route = createFileRoute("/welcome")({
 
 function WelcomePage() {
   const containerRef = useRef<HTMLDivElement>(null);
+  const [showModal, setShowModal] = useState(false);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -192,10 +193,17 @@ function WelcomePage() {
   }, []);
 
   return (
-    <div style={{ position: "relative", width: "100vw", height: "100vh", overflow: "hidden" }}>
+    <div
+      style={{
+        position: "relative",
+        width: "100vw",
+        height: "100vh",
+        overflow: "hidden",
+      }}
+    >
       <div ref={containerRef} style={{ width: "100%", height: "100%" }} />
-      <a
-        href="https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+      <button
+        onClick={() => setShowModal(true)}
         style={{
           position: "absolute",
           bottom: "12%",
@@ -210,7 +218,6 @@ function WelcomePage() {
           background: "rgba(0, 229, 255, 0.15)",
           border: "1px solid rgba(0, 229, 255, 0.5)",
           borderRadius: "4px",
-          textDecoration: "none",
           cursor: "pointer",
           transition: "all 0.3s ease",
         }}
@@ -226,7 +233,115 @@ function WelcomePage() {
         }}
       >
         Begin Your Journey
-      </a>
+      </button>
+
+      {showModal && (
+        <div
+          style={{
+            position: "absolute",
+            inset: 0,
+            background: "rgba(0, 0, 0, 0.85)",
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 10,
+            fontFamily: "Helvetica, Arial, sans-serif",
+          }}
+          onClick={() => setShowModal(false)}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              gap: "24px",
+              maxWidth: "640px",
+              width: "90%",
+            }}
+          >
+            <iframe
+              width="560"
+              height="315"
+              src="https://www.youtube.com/embed/dQw4w9WgXcQ?autoplay=1"
+              title="Welcome to the Internet"
+              frameBorder="0"
+              allow="autoplay; encrypted-media"
+              allowFullScreen
+              style={{
+                borderRadius: "8px",
+                border: "1px solid rgba(0, 229, 255, 0.3)",
+                maxWidth: "100%",
+              }}
+            />
+
+            <p
+              style={{
+                color: "#ccc",
+                fontSize: "18px",
+                textAlign: "center",
+                lineHeight: 1.6,
+                margin: 0,
+              }}
+            >
+              You have been Rick Rolled.
+              <br />
+              Everybody gets Rick Rolled.
+              <br />
+              <span style={{ color: "#00e5ff" }}>Welcome to the Internet.</span>
+            </p>
+
+            <div
+              style={{
+                display: "flex",
+                gap: "16px",
+                flexWrap: "wrap",
+                justifyContent: "center",
+              }}
+            >
+              <a
+                href="https://github.com/termsurf/termsurf"
+                style={linkStyle}
+                onMouseEnter={linkHover}
+                onMouseLeave={linkUnhover}
+              >
+                GitHub
+              </a>
+              <a
+                href="https://termsurf.com"
+                style={linkStyle}
+                onMouseEnter={linkHover}
+                onMouseLeave={linkUnhover}
+              >
+                termsurf.com
+              </a>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
+
+const linkStyle: React.CSSProperties = {
+  color: "#00e5ff",
+  textDecoration: "none",
+  padding: "8px 20px",
+  border: "1px solid rgba(0, 229, 255, 0.3)",
+  borderRadius: "4px",
+  fontSize: "14px",
+  fontFamily: "Helvetica, Arial, sans-serif",
+  letterSpacing: "1px",
+  transition: "all 0.3s ease",
+};
+
+const linkHover = (e: React.MouseEvent<HTMLAnchorElement>) => {
+  e.currentTarget.style.background = "rgba(0, 229, 255, 0.15)";
+  e.currentTarget.style.borderColor = "rgba(0, 229, 255, 0.6)";
+};
+
+const linkUnhover = (e: React.MouseEvent<HTMLAnchorElement>) => {
+  e.currentTarget.style.background = "transparent";
+  e.currentTarget.style.borderColor = "rgba(0, 229, 255, 0.3)";
+};
