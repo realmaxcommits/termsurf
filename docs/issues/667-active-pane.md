@@ -683,3 +683,74 @@ scroll view's frame, or moving to the Metal renderer.
 6. **Open a new split** — existing pane resizes correctly.
 7. Set `split-border-width = 0` — no borders (backward compatible).
 8. Verify existing `unfocused-split-opacity` still works.
+
+### Result: FAILED
+
+Same resize regression as Experiment 2. Opening a split or resizing the window
+does not resize the browser pane. Typing a key (e.g., `:`) triggers the resize.
+
+**What was implemented:**
+
+1. **Config.zig** — 3 new fields (`focused-split-border-color`,
+   `unfocused-split-border-color`, `split-border-width`) with clamping.
+
+2. **TermSurf.Config.swift** — 3 matching Swift property accessors.
+
+3. **SurfaceView.swift** — Two changes:
+   - `borderWidth` and `borderColor` properties added to `SurfaceRepresentable`.
+   - `updateOSView` sets `scrollView.layer?.borderWidth`/`borderColor`.
+
+**Root cause — any non-empty `updateOSView` breaks resize:**
+
+The hypothesis that `CALayer.borderWidth`/`borderColor` are "purely decorative"
+was correct in isolation — they don't affect layout. But the problem is
+upstream: **making `updateOSView` non-empty at all changes the timing of
+SwiftUI's view update cycle.**
+
+`SurfaceRepresentable` previously had an empty `updateOSView`. SwiftUI knew
+there was nothing to update and could optimize the representable's lifecycle.
+With a non-empty `updateOSView`, SwiftUI now calls it on every state change
+(focus, border color, border width), and the call to
+`scrollView.wantsLayer =
+true` plus layer property mutations may be triggering an
+`NSView.needsLayout` cycle that conflicts with the automatic frame propagation
+the scroll view relies on.
+
+The "typing triggers resize" symptom is the key clue: typing causes a
+`surfaceView` state change (observable via `@ObservedObject`), which triggers a
+SwiftUI re-render, which updates the `SurfaceRepresentable` with the current
+`geo.size`, which triggers `updateOSView`, which now touches the layer — and as
+a side effect the frame finally propagates. But during a window drag resize,
+there's no state change to trigger `updateOSView`, so the frame update never
+reaches the scroll view.
+
+This confirms that Experiment 2's partial fix failure was not caused by
+`CALayer.filters` specifically — it was caused by making `updateOSView`
+non-empty, period.
+
+**Code preserved** (not reverted) for reference.
+
+**Lessons for next experiment:**
+
+1. **`updateOSView` must remain empty.** The `SurfaceRepresentable` resize
+   contract depends on it. Any work in `updateOSView` — even trivial layer
+   property changes — breaks window drag resize.
+
+2. **The border must be applied outside `SurfaceRepresentable` entirely.**
+   Options:
+   - A sibling `NSView` in the ZStack (like the existing unfocused overlay
+     `Rectangle()`, which works because it's a separate SwiftUI view that
+     doesn't touch the representable).
+   - A `CALayer` sublayer added in `makeOSView` (runs once, not on updates) with
+     a separate observation mechanism for focus changes (e.g.,
+     `NotificationCenter`).
+   - The Metal renderer — render border quads in Zig, bypassing SwiftUI and
+     AppKit entirely.
+
+3. **SwiftUI overlays in the ZStack DO work** — the existing unfocused opacity
+   overlay (`Rectangle().fill().allowsHitTesting(false).opacity()`) proves this.
+   Experiment 2's border overlay (`Rectangle().strokeBorder()`) was inside the
+   ZStack too, but it failed because it was combined with `.saturation()` and
+   `.shadow()`. A standalone `Rectangle().strokeBorder()` in the ZStack —
+   without any modifiers on the representable or the ZStack itself — might
+   actually work. This was not tested in isolation.
