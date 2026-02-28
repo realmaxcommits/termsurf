@@ -28,6 +28,11 @@ fn normalize_url(input: &str) -> String {
     if trimmed.contains("://") {
         return trimmed.to_string();
     }
+    // Extract the host portion (before any path/query).
+    let host = trimmed.split('/').next().unwrap_or(trimmed);
+    if host.ends_with("localhost") || host.contains("localhost:") {
+        return format!("http://{trimmed}");
+    }
     if trimmed.contains('.') {
         return format!("https://{trimmed}");
     }
@@ -38,7 +43,9 @@ fn normalize_url(input: &str) -> String {
 The heuristic:
 
 - Already has a scheme (`://`) — pass through (`https://google.com`,
-  `file:///tmp/foo.html`)
+  `http://localhost:3000`, `file:///tmp/foo.html`)
+- Host is or contains `localhost` — prepend `http://` (`localhost:3000`,
+  `myapp.localhost:3000`, `localhost/path`)
 - Contains a dot — treat as domain, prepend `https://` (`google.com` →
   `https://google.com`)
 - No dot, no scheme — pass through as-is (could be a search query in the future)
@@ -63,6 +70,9 @@ url = normalize_url(&new_url);
 2. `web google.com` → navigates to `https://google.com`
 3. `web https://google.com` → still works (scheme preserved)
 4. `web http://localhost:3000` → still works (http preserved)
-5. `web file:///tmp/test.html` → still works (file scheme preserved)
-6. Type `github.com` in URL bar, press Enter → `https://github.com`
-7. `web` (no args) → homepage unchanged (already has scheme)
+5. `web localhost:3000` → `http://localhost:3000`
+6. `web localhost` → `http://localhost`
+7. `web myapp.localhost:3000` → `http://myapp.localhost:3000`
+8. `web file:///tmp/test.html` → still works (file scheme preserved)
+9. Type `github.com` in URL bar, press Enter → `https://github.com`
+10. `web` (no args) → homepage unchanged (already has scheme)
