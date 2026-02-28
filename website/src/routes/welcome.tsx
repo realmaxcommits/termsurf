@@ -306,7 +306,7 @@ function WelcomePage() {
                 onMouseEnter={linkHover}
                 onMouseLeave={linkUnhover}
               >
-                GitHub
+                github.com
               </a>
               <a
                 href="https://termsurf.com"
