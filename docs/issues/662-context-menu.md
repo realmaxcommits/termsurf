@@ -234,15 +234,21 @@ intercept right-clicks at the Swift/Zig level (before forwarding to Chromium)
 rather than round-tripping through Chromium's `HandleContextMenu` → XPC → Swift.
 This avoids C++ changes and coordinate transform complexity entirely.
 
-## Experiment 2: Browser context menu in Swift
+## Experiment 2: Browser context menu via Zig
 
 ### Hypothesis
 
-AppKit calls `menu(for:)` on the SurfaceView before mouse events reach Zig. By
-checking `termsurf_surface_is_overlay_forwarding()` inside `menu(for:)`, we can
-return a browser-specific NSMenu (Back, Forward, Reload) instead of the terminal
-context menu. No Zig changes needed. No coordinate mapping needed — AppKit
-positions the menu from the original NSEvent automatically.
+`menu(for:)` is NOT the right intercept point. When the browser overlay is
+active, `rightMouseDown` calls `termsurf_surface_mouse_button()`, Zig's
+`mouseButtonCallback` hits the overlay, forwards to Chromium via XPC, and
+returns `true`. Swift never calls `super.rightMouseDown()`, so AppKit never
+calls `menu(for:)`. This is the same mechanism that lets neovim suppress the
+terminal context menu — the event is consumed before AppKit's menu machinery
+activates.
+
+To show a browser context menu, we need to intercept the right-click in Zig's
+overlay hit-test path (where the event is already consumed) and trigger a native
+NSMenu from there via a new C API export.
 
 Navigation actions won't work yet (Back/Forward/Reload need new XPC message
 types and C++ handlers). This experiment proves the menu appears correctly.
@@ -250,21 +256,30 @@ Wiring up the actions is a follow-up experiment.
 
 ### Changes
 
-In `gui/macos/Sources/TermSurf/Surface View/SurfaceView_AppKit.swift`:
+1. **Zig: intercept right-click in overlay path** — in `Surface.zig`
+   `mouseButtonCallback()`, inside the overlay hit-test block (line ~4047), when
+   `button == .right` and `action == .press`, instead of forwarding to Chromium
+   via `xpc.sendMouseEvent()`, call a new C API export to show the browser
+   context menu. Still return `true` to suppress the terminal menu.
 
-1. **Check browse state in `menu(for:)`** — at the top of the `.rightMouseDown`
-   case, after the existing guard, check
-   `termsurf_surface_is_overlay_forwarding(surface)`. If true, return a
-   browser-specific menu instead of the terminal menu.
+2. **Zig: add C API export** — in `embedded.zig`, add a new export function
+   (e.g., `termsurf_surface_show_browser_context_menu`) that Swift implements.
+   Pass the surface pointer so Swift can find the correct view.
 
-2. **Build browser NSMenu** — create a new menu with three items:
+3. **C header** — declare the new function in `termsurf.h`.
+
+4. **Swift: implement the C API callback** — in `SurfaceView_AppKit.swift`, add
+   a method that builds and displays an NSMenu with three items:
    - Back (SF Symbol: `chevron.left`)
    - Forward (SF Symbol: `chevron.right`)
-   - Reload (SF Symbol: `arrow.clockwise`)
+   - Reload (SF Symbol: `arrow.clockwise`) Use
+     `NSMenu.popUp(positioning:at:in:)` or post a synthetic right-click event to
+     trigger AppKit's menu display at the correct position.
 
-3. **Add placeholder action handlers** — `@objc` methods on SurfaceView that log
-   the action for now (e.g., `browserBack`, `browserForward`, `browserReload`).
-   These will be wired to XPC navigation commands in a later experiment.
+5. **Swift: add placeholder action handlers** — `@objc` methods on SurfaceView
+   that log the action for now (e.g., `browserBack`, `browserForward`,
+   `browserReload`). These will be wired to XPC navigation commands in a later
+   experiment.
 
 ### Test
 
@@ -273,4 +288,4 @@ In `gui/macos/Sources/TermSurf/Surface View/SurfaceView_AppKit.swift`:
    terminal Copy/Paste/Split menu)
 3. Right-click in the terminal pane — see the normal terminal context menu
 4. Select a menu item — no crash, action logs to console
-5. Menu appears at the cursor position (AppKit handles this automatically)
+5. Menu appears at the cursor position
