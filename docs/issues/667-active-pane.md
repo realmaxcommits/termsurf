@@ -486,3 +486,83 @@ unfocused-split-saturation = 0.4
 6. Set `split-border-style = solid` — solid border renders correctly.
 7. Verify existing `unfocused-split-opacity` still works alongside new options.
 8. Verify `split-divider-color` (the inter-pane line) is unaffected.
+
+### Result: FAILED
+
+All three features (borders, desaturation, glow) broke pane/window resize.
+
+**What was implemented:**
+
+1. **Config.zig** — 7 new fields (`focused-split-border-color`,
+   `unfocused-split-border-color`, `split-border-width`,
+   `focused-split-glow-color`, `focused-split-glow-radius`,
+   `focused-split-glow-opacity`, `unfocused-split-saturation`) with clamping in
+   `finalize()`. Compiled fine.
+
+2. **TermSurf.Config.swift** — 7 matching Swift property accessors. No issues.
+
+3. **SurfaceView.swift** — Three changes:
+   - `.saturation()` SwiftUI modifier on `SurfaceRepresentable`
+   - `Rectangle().strokeBorder()` overlay for pane borders
+   - `.shadow()` modifier on the ZStack for glow
+
+**What broke:**
+
+Window resize and split resize stopped working. Panes would not resize when
+dragging the window edge or when opening a new split pane. Content only
+re-rendered after a keyboard input (typing).
+
+**Root cause — SwiftUI modifiers on NSViewRepresentable break frame
+propagation:**
+
+`SurfaceRepresentable` is an `NSViewRepresentable` wrapping `SurfaceScrollView`.
+On macOS, its `updateOSView` is intentionally empty — it relies on SwiftUI
+automatically propagating frame changes to the underlying `NSView`. This is
+fragile. Any SwiftUI modifier that wraps the representable in an intermediate
+effect layer breaks this automatic frame propagation.
+
+The `.saturation()` modifier was the first suspect. Even `.saturation(1.0)` (the
+identity value) wraps the NSView in an effect layer. Removing it and moving
+desaturation to `CALayer.filters` in `updateOSView` partially fixed the problem
+— resize worked when opening splits, but window drag resize still required a
+keystroke to trigger re-render. This means the `.shadow()` on the ZStack or the
+border overlay were also interfering with SwiftUI's layout propagation.
+
+The fundamental problem: **any SwiftUI visual modifier anywhere in the view
+hierarchy containing this NSViewRepresentable can break its resize behavior.**
+The existing code works because it's carefully constructed to avoid this — the
+unfocused overlay is a separate `Rectangle()` in the ZStack that doesn't modify
+the representable's view tree. Our changes violated this constraint in three
+places.
+
+**What was reverted:**
+
+All changes to `Config.zig`, `TermSurf.Config.swift`, and `SurfaceView.swift`
+were reverted. The codebase is back to its pre-experiment state.
+
+**Lessons for next experiment:**
+
+1. **Don't use SwiftUI visual modifiers on or near the SurfaceRepresentable.**
+   `.saturation()`, `.shadow()`, `.blur()`, etc. all insert wrapper layers that
+   break NSView frame propagation. Even modifiers on parent views (like
+   `.shadow()` on the ZStack) can interfere.
+
+2. **CALayer.filters in updateOSView partially works** but makes `updateOSView`
+   non-empty, which changes the contract the representable relies on. This needs
+   deeper investigation — the "typing triggers resize" symptom suggests
+   `updateOSView` is called on state change but the frame propagation path is
+   still disrupted.
+
+3. **Borders and glow must use CALayer properties directly**, not SwiftUI
+   overlays inside the same ZStack. Options:
+   - Apply `CALayer.borderColor`/`borderWidth`/`shadowColor`/`shadowRadius` on
+     the `SurfaceScrollView`'s layer in `updateOSView` or in a separate NSView
+     subclass.
+   - Use a dedicated `NSView` overlay managed outside SwiftUI's layout system.
+   - Apply effects in the Metal renderer itself (most robust, most work).
+
+4. **The safest path may be Metal-level effects.** The Metal renderer
+   (`Metal.zig`) already has full control over the render pipeline. Adding a
+   border quad and a desaturation post-process shader would bypass SwiftUI
+   entirely. This is more work but eliminates the fragile NSViewRepresentable
+   interaction.
