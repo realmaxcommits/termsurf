@@ -19,13 +19,13 @@ if (rootElement.innerHTML.trim() && rootElement.innerHTML !== "<!--ssr-outlet-->
     rootElement,
     <StrictMode>
       <RouterProvider router={router} />
-    </StrictMode>
+    </StrictMode>,
   );
 } else {
   // Fresh client-side render (development or fallback)
   createRoot(rootElement).render(
     <StrictMode>
       <RouterProvider router={router} />
-    </StrictMode>
+    </StrictMode>,
   );
 }

@@ -33,7 +33,7 @@ async function getCommits(): Promise<Commit[]> {
     {
       cwd: REPO_PATH,
       stdout: "pipe",
-    }
+    },
   );
 
   const output = await new Response(proc.stdout).text();

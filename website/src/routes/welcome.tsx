@@ -102,10 +102,7 @@ function WelcomePage() {
       uniforms: nebulaUniforms,
       depthWrite: false,
     });
-    const nebulaQuad = new THREE.Mesh(
-      new THREE.PlaneGeometry(2, 2),
-      nebulaMaterial,
-    );
+    const nebulaQuad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), nebulaMaterial);
     nebulaQuad.frustumCulled = false;
 
     // Render nebula to a separate scene so it sits behind everything.
@@ -202,15 +199,12 @@ function WelcomePage() {
       scene.add(internetMesh);
 
       // Subtitle — small, below
-      const subtitleGeo = new TextGeometry(
-        "ADVANCED COMMUNICATIONS NETWORK FOR PLANET EARTH",
-        {
-          font,
-          size: 0.22,
-          depth: 0.02,
-          curveSegments: 12,
-        },
-      );
+      const subtitleGeo = new TextGeometry("ADVANCED COMMUNICATIONS NETWORK FOR PLANET EARTH", {
+        font,
+        size: 0.22,
+        depth: 0.02,
+        curveSegments: 12,
+      });
       subtitleGeo.computeBoundingBox();
       subtitleGeo.center();
 
@@ -230,10 +224,7 @@ function WelcomePage() {
     for (let i = 0; i < 3000; i++) {
       starPositions[i] = (Math.random() - 0.5) * 100;
     }
-    starsGeo.setAttribute(
-      "position",
-      new THREE.BufferAttribute(starPositions, 3),
-    );
+    starsGeo.setAttribute("position", new THREE.BufferAttribute(starPositions, 3));
     const starsMat = new THREE.PointsMaterial({
       color: 0xffffff,
       size: 0.05,

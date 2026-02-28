@@ -14,7 +14,12 @@ function TestMediaPage() {
       setStatus("Requesting permission...");
       const mediaStream = await navigator.mediaDevices.getUserMedia(constraints);
       setStream(mediaStream);
-      setStatus(`Access granted! Tracks: ${mediaStream.getTracks().map(t => t.kind).join(", ")}`);
+      setStatus(
+        `Access granted! Tracks: ${mediaStream
+          .getTracks()
+          .map((t) => t.kind)
+          .join(", ")}`,
+      );
     } catch (err) {
       const error = err as Error;
       setStatus(`Error: ${error.name} - ${error.message}`);
@@ -23,7 +28,7 @@ function TestMediaPage() {
 
   const stopMedia = () => {
     if (stream) {
-      stream.getTracks().forEach(track => track.stop());
+      stream.getTracks().forEach((track) => track.stop());
       setStream(null);
       setStatus("Stopped");
     }
@@ -35,9 +40,7 @@ function TestMediaPage() {
 
       <section className="mb-6 p-4 bg-gray-100 rounded">
         <h2 className="font-semibold mb-2">Camera Only</h2>
-        <p className="text-sm text-gray-600 mb-2">
-          Request camera access (video only):
-        </p>
+        <p className="text-sm text-gray-600 mb-2">Request camera access (video only):</p>
         <button
           onClick={() => requestMedia({ video: true })}
           className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
@@ -48,9 +51,7 @@ function TestMediaPage() {
 
       <section className="mb-6 p-4 bg-gray-100 rounded">
         <h2 className="font-semibold mb-2">Microphone Only</h2>
-        <p className="text-sm text-gray-600 mb-2">
-          Request microphone access (audio only):
-        </p>
+        <p className="text-sm text-gray-600 mb-2">Request microphone access (audio only):</p>
         <button
           onClick={() => requestMedia({ audio: true })}
           className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
@@ -61,9 +62,7 @@ function TestMediaPage() {
 
       <section className="mb-6 p-4 bg-gray-100 rounded">
         <h2 className="font-semibold mb-2">Camera + Microphone</h2>
-        <p className="text-sm text-gray-600 mb-2">
-          Request both camera and microphone:
-        </p>
+        <p className="text-sm text-gray-600 mb-2">Request both camera and microphone:</p>
         <button
           onClick={() => requestMedia({ video: true, audio: true })}
           className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"

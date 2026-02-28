@@ -51,3 +51,23 @@ errors and format all files.
 1. `bun run lint` — no errors
 2. `bun run fmt:check` — all files formatted
 3. `bun run build` — still compiles after formatting
+
+### Result: PASS
+
+Both tools installed and configured. One lint warning fixed (unused `isDev`
+variable in `server.tsx`). Formatter reformatted one file (`server.tsx`). All
+three checks pass: lint clean, format clean, build succeeds.
+
+## Conclusion
+
+Website now has linting and formatting via oxc:
+
+- `bun run lint` / `bun run lint:fix` — oxlint (93 rules, 17 files, 4ms)
+- `bun run fmt` / `bun run fmt:check` — oxfmt (26 files, 143ms)
+
+Files changed:
+
+- `website/package.json` — added oxlint, oxfmt, and 4 scripts
+- `website/.oxlintrc.json` — generated default config
+- `website/.oxfmtrc.json` — generated default config
+- `website/server.tsx` — fixed unused variable, reformatted

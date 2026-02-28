@@ -6,7 +6,7 @@ import { getRouter } from "./src/router";
 
 const PORT = process.env.PORT || 3000;
 const CLIENT_DIR = join(import.meta.dir, "dist/client");
-const isDev = process.env.NODE_ENV !== "production";
+const _isDev = process.env.NODE_ENV !== "production";
 
 // Read the built index.html template
 let indexHtml: string;
@@ -64,9 +64,7 @@ Bun.serve({
       await router.load();
 
       // Render the app to a stream
-      const stream = await renderToReadableStream(
-        <RouterProvider router={router} />
-      );
+      const stream = await renderToReadableStream(<RouterProvider router={router} />);
 
       // Convert stream to string for injection into template
       const appHtml = await new Response(stream).text();

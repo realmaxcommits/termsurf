@@ -21,27 +21,17 @@ function TestDownloadPage() {
 
       <section className="mb-6 p-4 bg-gray-100 rounded">
         <h2 className="font-semibold mb-2">Same-Origin Download</h2>
-        <p className="text-sm text-gray-600 mb-2">
-          Test download attribute with same-origin file:
-        </p>
-        <a
-          href="/test-logo.png"
-          download="my-logo.png"
-          className="text-blue-600 underline"
-        >
+        <p className="text-sm text-gray-600 mb-2">Test download attribute with same-origin file:</p>
+        <a href="/test-logo.png" download="my-logo.png" className="text-blue-600 underline">
           Download Image
         </a>
       </section>
 
       <section className="mb-6 p-4 bg-gray-100 rounded">
         <h2 className="font-semibold mb-2">Blob Downloads</h2>
-        <p className="text-sm text-gray-600 mb-2">
-          Test JavaScript-generated downloads:
-        </p>
+        <p className="text-sm text-gray-600 mb-2">Test JavaScript-generated downloads:</p>
         <button
-          onClick={() =>
-            downloadBlob("Hello from TermSurf!", "test.txt", "text/plain")
-          }
+          onClick={() => downloadBlob("Hello from TermSurf!", "test.txt", "text/plain")}
           className="mr-2 px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
         >
           Download Text
@@ -51,7 +41,7 @@ function TestDownloadPage() {
             downloadBlob(
               JSON.stringify({ test: true, source: "TermSurf" }, null, 2),
               "test.json",
-              "application/json"
+              "application/json",
             )
           }
           className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"

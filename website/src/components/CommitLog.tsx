@@ -66,7 +66,9 @@ function CommitRow({ commit }: { commit: Commit }) {
         <div className="pl-8 pr-4 pb-4 space-y-3">
           <div className="bg-background-dark rounded p-3 text-sm">
             {hasBody ? (
-              <pre className="whitespace-pre-wrap font-sans text-foreground-dark">{commit.body}</pre>
+              <pre className="whitespace-pre-wrap font-sans text-foreground-dark">
+                {commit.body}
+              </pre>
             ) : (
               <span className="text-muted italic">No commit message</span>
             )}
@@ -91,9 +93,7 @@ function CommitRow({ commit }: { commit: Commit }) {
 export function CommitLog({ commits }: CommitLogProps) {
   return (
     <section>
-      <h2 className="text-xl font-semibold text-foreground mb-4">
-        Recent Commits
-      </h2>
+      <h2 className="text-xl font-semibold text-foreground mb-4">Recent Commits</h2>
       <ul className="space-y-0">
         {commits.map((commit) => (
           <CommitRow key={commit.hash} commit={commit} />

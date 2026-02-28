@@ -16,10 +16,7 @@ async function main() {
   // Ensure public directory exists
   mkdirSync(OUTPUT_DIR, { recursive: true });
 
-  await sharp(SOURCE)
-    .resize({ height: HEIGHT })
-    .png({ quality: 90 })
-    .toFile(OUTPUT);
+  await sharp(SOURCE).resize({ height: HEIGHT }).png({ quality: 90 }).toFile(OUTPUT);
 
   console.log(`Resized logo to ${HEIGHT}px height: ${OUTPUT}`);
 }
