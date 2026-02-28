@@ -82,12 +82,29 @@ This gives three levels of precedence:
 2. `web <url>` — positional argument
 3. `web` — falls back to `TERMSURF_HOMEPAGE` env var, then hardcoded default
 
-### Test
+### Result: PASS
 
-1. `cd gui && zig build` — compiles without errors.
-2. `cd tui && cargo build` — compiles without errors.
-3. Type `web` with no arguments — opens `https://termsurf.com/welcome`.
-4. Type `web google.com` — opens Google (env var ignored).
-5. Set `homepage = https://example.com` in config, restart terminal.
-6. Type `web` — opens `https://example.com`.
-7. Outside TermSurf (no env var), `web` still opens the hardcoded default.
+Both GUI and TUI build successfully. `web` without arguments opens the
+configured homepage. `web google.com` still works (CLI arg takes precedence).
+Outside TermSurf (no env var), `web` falls back to the hardcoded default.
+
+Note: `Surface` uses `DerivedConfig` (a subset of config fields), not the raw
+`Config` directly. The `homepage` field had to be added to both `DerivedConfig`
+and its `init` method, not just `Config.zig`.
+
+## Conclusion
+
+`web` now opens a configurable homepage when run without arguments. Three levels
+of precedence:
+
+1. `web <url>` — explicit URL wins
+2. `web` inside TermSurf — uses `TERMSURF_HOMEPAGE` env var (from config)
+3. `web` outside TermSurf — hardcoded `https://termsurf.com/welcome`
+
+Changes across 3 files:
+
+- `gui/src/config/Config.zig` — `homepage` field (default
+  `https://termsurf.com/welcome`)
+- `gui/src/Surface.zig` — `homepage` in `DerivedConfig` + `env.put` next to
+  existing `TERMSURF_PANE_ID`
+- `tui/src/main.rs` — fallback chain replaces the old usage error
