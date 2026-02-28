@@ -193,126 +193,52 @@ function WelcomePage() {
   }, []);
 
   return (
-    <div
-      style={{
-        position: "relative",
-        width: "100vw",
-        height: "100vh",
-        overflow: "hidden",
-      }}
-    >
-      <div ref={containerRef} style={{ width: "100%", height: "100%" }} />
+    <div className="relative w-screen h-screen overflow-hidden">
+      <div ref={containerRef} className="w-full h-full" />
       <button
         onClick={() => setShowModal(true)}
-        style={{
-          position: "absolute",
-          bottom: "12%",
-          left: "50%",
-          transform: "translateX(-50%)",
-          padding: "14px 40px",
-          fontSize: "16px",
-          fontFamily: "Helvetica, Arial, sans-serif",
-          letterSpacing: "2px",
-          textTransform: "uppercase",
-          color: "#fff",
-          background: "rgba(0, 229, 255, 0.15)",
-          border: "1px solid rgba(0, 229, 255, 0.5)",
-          borderRadius: "4px",
-          cursor: "pointer",
-          transition: "all 0.3s ease",
-        }}
-        onMouseEnter={(e) => {
-          e.currentTarget.style.background = "rgba(0, 229, 255, 0.3)";
-          e.currentTarget.style.borderColor = "rgba(0, 229, 255, 0.8)";
-          e.currentTarget.style.boxShadow = "0 0 20px rgba(0, 229, 255, 0.3)";
-        }}
-        onMouseLeave={(e) => {
-          e.currentTarget.style.background = "rgba(0, 229, 255, 0.15)";
-          e.currentTarget.style.borderColor = "rgba(0, 229, 255, 0.5)";
-          e.currentTarget.style.boxShadow = "none";
-        }}
+        className="absolute bottom-[12%] left-1/2 -translate-x-1/2 px-10 py-3.5 text-base font-sans tracking-widest uppercase text-white bg-accent/15 border border-accent/50 rounded cursor-pointer transition-all duration-300 hover:bg-accent/30 hover:border-accent/80 hover:shadow-[0_0_20px_rgba(125,207,255,0.3)]"
       >
         Begin Your Journey
       </button>
 
       {showModal && (
         <div
-          style={{
-            position: "absolute",
-            inset: 0,
-            background: "rgba(0, 0, 0, 0.85)",
-            display: "flex",
-            flexDirection: "column",
-            alignItems: "center",
-            justifyContent: "center",
-            zIndex: 10,
-            fontFamily: "Helvetica, Arial, sans-serif",
-          }}
+          className="absolute inset-0 bg-black/85 flex flex-col items-center justify-center z-10 font-sans"
           onClick={() => setShowModal(false)}
         >
           <div
             onClick={(e) => e.stopPropagation()}
-            style={{
-              display: "flex",
-              flexDirection: "column",
-              alignItems: "center",
-              gap: "24px",
-              maxWidth: "640px",
-              width: "90%",
-            }}
+            className="flex flex-col items-center gap-6 max-w-[640px] w-[90%]"
           >
             <iframe
               width="560"
               height="315"
               src="https://www.youtube.com/embed/dQw4w9WgXcQ?autoplay=1"
               title="Welcome to the Internet"
-              frameBorder="0"
               allow="autoplay; encrypted-media"
               allowFullScreen
-              style={{
-                borderRadius: "8px",
-                border: "1px solid rgba(0, 229, 255, 0.3)",
-                maxWidth: "100%",
-              }}
+              className="rounded-lg border border-accent/30 max-w-full"
             />
 
-            <p
-              style={{
-                color: "#ccc",
-                fontSize: "18px",
-                textAlign: "center",
-                lineHeight: 1.6,
-                margin: 0,
-              }}
-            >
+            <p className="text-foreground-dark text-lg text-center leading-relaxed m-0">
               You have been Rick Rolled.
               <br />
               Everybody gets Rick Rolled.
               <br />
-              <span style={{ color: "#00e5ff" }}>Welcome to the Internet.</span>
+              <span className="text-accent">Welcome to the Internet.</span>
             </p>
 
-            <div
-              style={{
-                display: "flex",
-                gap: "16px",
-                flexWrap: "wrap",
-                justifyContent: "center",
-              }}
-            >
+            <div className="flex gap-4 flex-wrap justify-center">
               <a
                 href="https://github.com/termsurf/termsurf"
-                style={linkStyle}
-                onMouseEnter={linkHover}
-                onMouseLeave={linkUnhover}
+                className="text-accent no-underline px-5 py-2 border border-accent/30 rounded text-sm font-sans tracking-wide transition-all duration-300 hover:bg-accent/15 hover:border-accent/60"
               >
                 github.com
               </a>
               <a
                 href="https://termsurf.com"
-                style={linkStyle}
-                onMouseEnter={linkHover}
-                onMouseLeave={linkUnhover}
+                className="text-accent no-underline px-5 py-2 border border-accent/30 rounded text-sm font-sans tracking-wide transition-all duration-300 hover:bg-accent/15 hover:border-accent/60"
               >
                 termsurf.com
               </a>
@@ -323,25 +249,3 @@ function WelcomePage() {
     </div>
   );
 }
-
-const linkStyle: React.CSSProperties = {
-  color: "#00e5ff",
-  textDecoration: "none",
-  padding: "8px 20px",
-  border: "1px solid rgba(0, 229, 255, 0.3)",
-  borderRadius: "4px",
-  fontSize: "14px",
-  fontFamily: "Helvetica, Arial, sans-serif",
-  letterSpacing: "1px",
-  transition: "all 0.3s ease",
-};
-
-const linkHover = (e: React.MouseEvent<HTMLAnchorElement>) => {
-  e.currentTarget.style.background = "rgba(0, 229, 255, 0.15)";
-  e.currentTarget.style.borderColor = "rgba(0, 229, 255, 0.6)";
-};
-
-const linkUnhover = (e: React.MouseEvent<HTMLAnchorElement>) => {
-  e.currentTarget.style.background = "transparent";
-  e.currentTarget.style.borderColor = "rgba(0, 229, 255, 0.3)";
-};
