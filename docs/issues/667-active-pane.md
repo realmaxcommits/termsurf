@@ -566,3 +566,120 @@ were reverted. The codebase is back to its pre-experiment state.
    border quad and a desaturation post-process shader would bypass SwiftUI
    entirely. This is more work but eliminates the fragile NSViewRepresentable
    interaction.
+
+## Experiment 3: CALayer borders (no SwiftUI modifiers)
+
+### Hypothesis
+
+Applying border colors via `CALayer.borderColor`/`borderWidth` on the
+`SurfaceScrollView`'s layer in `updateOSView` will render pane borders without
+breaking resize. CALayer border properties are purely visual decorations drawn
+inside the existing bounds — they don't insert wrapper layers, don't change the
+view hierarchy, and don't affect layout.
+
+Saturation and glow are dropped from this experiment. Borders only.
+
+### Config design
+
+Three new config options:
+
+```
+focused-split-border-color = 7dcfff
+unfocused-split-border-color = 565f89
+split-border-width = 2
+```
+
+All default to off (no border). Backward compatible.
+
+### Changes
+
+#### 1. Config.zig — 3 new fields after `split-divider-color`
+
+```zig
+@"focused-split-border-color": ?Color = null,
+@"unfocused-split-border-color": ?Color = null,
+@"split-border-width": f64 = 0,
+```
+
+Clamp in `finalize()`:
+
+```zig
+self.@"split-border-width" = @min(10.0, @max(0, self.@"split-border-width"));
+```
+
+#### 2. TermSurf.Config.swift — 3 new properties after `splitDividerColor`
+
+```swift
+var focusedSplitBorderColor: Color? { ... }      // ?Color → nil if unset
+var unfocusedSplitBorderColor: Color? { ... }     // ?Color → nil if unset
+var splitBorderWidth: Double { ... }               // f64, default 0
+```
+
+Same `termsurf_config_get` pattern as existing properties.
+
+#### 3. SurfaceRepresentable — pass border state, apply via CALayer
+
+Add three properties to `SurfaceRepresentable`:
+
+```swift
+let borderWidth: CGFloat
+let borderColor: CGColor?
+```
+
+Compute these at the call site from config + focus state:
+
+```swift
+SurfaceRepresentable(
+    view: surfaceView,
+    size: geo.size,
+    borderWidth: isSplit ? termsurf.config.splitBorderWidth : 0,
+    borderColor: {
+        if !isSplit { return nil }
+        let c = surfaceFocus
+            ? termsurf.config.focusedSplitBorderColor
+            : termsurf.config.unfocusedSplitBorderColor
+        return c.flatMap { OSColor($0).cgColor }
+    }()
+)
+```
+
+Apply in `updateOSView`:
+
+```swift
+func updateOSView(_ scrollView: SurfaceScrollView, context: Context) {
+    scrollView.wantsLayer = true
+    if borderWidth > 0, let borderColor = borderColor {
+        scrollView.layer?.borderWidth = borderWidth
+        scrollView.layer?.borderColor = borderColor
+    } else {
+        scrollView.layer?.borderWidth = 0
+    }
+}
+```
+
+This is the critical difference from Experiment 2: no SwiftUI visual modifiers
+(`.saturation()`, `.shadow()`, `.strokeBorder()`). Only CALayer properties set
+in `updateOSView`, which are purely decorative and don't affect layout.
+
+**Risk:** Experiment 2 showed that making `updateOSView` non-empty _with
+CALayer.filters_ caused partial resize issues. But `CALayer.filters` involves
+compositing pipeline changes. `borderWidth`/`borderColor` are simple drawing
+properties — they should not affect frame propagation. If they do, the next
+fallback is applying borders in `makeOSView` via a one-time KVO observer on the
+scroll view's frame, or moving to the Metal renderer.
+
+### Test
+
+1. `cd gui && zig build` — compiles without errors.
+2. Open TermSurf, create a split, set config:
+   ```
+   focused-split-border-color = 7dcfff
+   unfocused-split-border-color = 565f89
+   split-border-width = 2
+   ```
+3. Focused pane shows cyan border, unfocused shows dim border.
+4. Switch focus — borders swap colors immediately.
+5. **Resize the window** — panes resize correctly (the Experiment 2 failure).
+6. **Open a new split** — existing pane resizes correctly.
+7. Set `split-border-width = 0` — no borders (backward compatible).
+8. Verify existing `unfocused-split-opacity` still works.
