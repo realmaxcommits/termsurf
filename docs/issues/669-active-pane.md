@@ -201,19 +201,43 @@ No ZStack overlay needed — this is a direct modifier on the representable.
 
 **No changes to `updateOSView`.** It stays empty.
 
-### Test
+### Result: PASS
 
-1. `cd gui && zig build` — compiles without errors.
-2. Open TermSurf, create a split, set config:
-   ```
-   unfocused-split-saturation = 0.5
-   ```
-3. Unfocused pane appears desaturated (washed out colors).
-4. Focused pane stays full color.
-5. Switch focus — saturation swaps immediately.
-6. **Resize the window** — panes resize correctly.
-7. **Open a new split** — existing pane resizes correctly.
-8. Set `unfocused-split-saturation = 1.0` — no desaturation (backward
-   compatible).
-9. Set `unfocused-split-saturation = 0.0` — full grayscale.
-10. Verify existing borders (Experiment 1) still work alongside desaturation.
+Desaturation works correctly. Unfocused panes appear washed out, focused pane
+stays full color. Switching focus swaps saturation immediately. Resize works —
+no regression. Borders from Experiment 1 work alongside desaturation.
+
+This definitively proves that Issue 667's conclusion — that `.saturation()` on
+`SurfaceRepresentable` breaks resize — was wrong. The resize regression was
+caused by Issue 666 (dropped `Event::Resize` in the TUI reader thread), not by
+SwiftUI modifiers.
+
+## Conclusion
+
+Two new visual indicators for active pane identification, both working
+correctly:
+
+1. **Configurable pane borders** (Experiment 1) — `Rectangle().strokeBorder()`
+   overlay in the ZStack, same pattern as Ghostty's existing unfocused dimming.
+   Three config options: `focused-split-border-color`,
+   `unfocused-split-border-color`, `split-border-width`.
+
+2. **Unfocused pane desaturation** (Experiment 2) — `.saturation()` modifier on
+   `SurfaceRepresentable`. One config option: `unfocused-split-saturation` (1.0
+   = full color, 0.0 = grayscale).
+
+Both features default to off (no border, full saturation) and are backward
+compatible. Neither breaks resize.
+
+The key insight across Issues 667–669: all three Issue 667 experiments were
+tested against a broken baseline (Issue 666 had silently dropped
+`Event::Resize`). Once Issue 668 fixed the resize regression, both SwiftUI
+overlays and `.saturation()` modifiers worked on the first try.
+
+Changes across 3 files:
+
+- `gui/src/config/Config.zig` — 4 new config fields + clamping in `finalize()`
+- `gui/macos/Sources/TermSurf/TermSurf.Config.swift` — 4 new Swift property
+  accessors
+- `gui/macos/Sources/TermSurf/Surface View/SurfaceView.swift` — border overlay
+  in ZStack + `.saturation()` modifier on representable

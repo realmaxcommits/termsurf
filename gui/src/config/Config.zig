@@ -1071,6 +1071,10 @@ palette: Palette = .{},
 /// The width of the split pane border in points. Set to 0 to disable borders.
 @"split-border-width": f64 = 0,
 
+/// The color saturation of unfocused split panes. 1.0 is full color, 0.0 is
+/// full grayscale. Only applies when in a split layout.
+@"unfocused-split-saturation": f64 = 1.0,
+
 /// Control when TermSurf preserves a zoomed split. Under normal circumstances,
 /// any operation that changes focus or layout of the split tree in a window
 /// will unzoom any zoomed split. This configuration allows you to control
@@ -4568,6 +4572,9 @@ pub fn finalize(self: *Config) !void {
 
     // Clamp our split border width
     self.@"split-border-width" = @min(10.0, @max(0, self.@"split-border-width"));
+
+    // Clamp our split saturation
+    self.@"unfocused-split-saturation" = @min(1.0, @max(0, self.@"unfocused-split-saturation"));
 
     // Clamp our contrast
     self.@"minimum-contrast" = @min(21, @max(1, self.@"minimum-contrast"));

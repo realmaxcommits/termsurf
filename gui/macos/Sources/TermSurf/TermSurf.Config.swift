@@ -509,6 +509,14 @@ extension TermSurf {
             return value
         }
 
+        var unfocusedSplitSaturation: Double {
+            guard let config = self.config else { return 1.0 }
+            var value: Double = 0
+            let key = "unfocused-split-saturation"
+            _ = termsurf_config_get(config, &value, key, UInt(key.lengthOfBytes(using: .utf8)))
+            return value
+        }
+
         #if canImport(AppKit)
         var quickTerminalPosition: QuickTerminalPosition {
             guard let config = self.config else { return .top }

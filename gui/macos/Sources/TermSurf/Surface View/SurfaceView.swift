@@ -72,6 +72,8 @@ extension TermSurf {
 
                     SurfaceRepresentable(view: surfaceView, size: geo.size)
                         .focused($surfaceFocus)
+                        .saturation(isSplit && !surfaceFocus
+                            ? termsurf.config.unfocusedSplitSaturation : 1.0)
                         .focusedValue(\.termsurfSurfacePwd, surfaceView.pwd)
                         .focusedValue(\.termsurfSurfaceView, surfaceView)
                         .focusedValue(\.termsurfSurfaceCellSize, surfaceView.cellSize)
