@@ -155,77 +155,74 @@ function WelcomePage() {
     const loader = new FontLoader();
     let internetMesh: THREE.Mesh | null = null;
 
-    loader.load(
-      "/helvetiker_bold.typeface.json",
-      (font) => {
-        // "welcome to" — flat, above
-        const welcomeGeo = new TextGeometry("welcome to", {
+    loader.load("/helvetiker_bold.typeface.json", (font) => {
+      // "welcome to" — flat, above
+      const welcomeGeo = new TextGeometry("WELCOME TO", {
+        font,
+        size: 0.4,
+        depth: 0.05,
+        curveSegments: 12,
+      });
+      welcomeGeo.computeBoundingBox();
+      welcomeGeo.center();
+
+      const welcomeMat = new THREE.MeshStandardMaterial({
+        color: 0xcccccc,
+        metalness: 0.3,
+        roughness: 0.7,
+      });
+      const welcomeMesh = new THREE.Mesh(welcomeGeo, welcomeMat);
+      welcomeMesh.position.y = 2.5;
+      scene.add(welcomeMesh);
+
+      // "THE INTERNET" — big, 3D, spinning
+      const internetGeo = new TextGeometry("THE INTERNET", {
+        font,
+        size: 1.2,
+        depth: 0.6,
+        curveSegments: 16,
+        bevelEnabled: true,
+        bevelThickness: 0.08,
+        bevelSize: 0.04,
+        bevelSegments: 8,
+      });
+      internetGeo.computeBoundingBox();
+      internetGeo.center();
+
+      const internetMat = new THREE.MeshStandardMaterial({
+        color: 0x66f5ff,
+        metalness: 0.5,
+        roughness: 0.3,
+        emissive: 0x00aacc,
+        emissiveIntensity: 0.3,
+        envMapIntensity: 1.0,
+      });
+      internetMesh = new THREE.Mesh(internetGeo, internetMat);
+      internetMesh.position.y = 0;
+      scene.add(internetMesh);
+
+      // Subtitle — small, below
+      const subtitleGeo = new TextGeometry(
+        "ADVANCED COMMUNICATIONS NETWORK FOR PLANET EARTH",
+        {
           font,
-          size: 0.4,
-          depth: 0.05,
+          size: 0.22,
+          depth: 0.02,
           curveSegments: 12,
-        });
-        welcomeGeo.computeBoundingBox();
-        welcomeGeo.center();
+        },
+      );
+      subtitleGeo.computeBoundingBox();
+      subtitleGeo.center();
 
-        const welcomeMat = new THREE.MeshStandardMaterial({
-          color: 0xcccccc,
-          metalness: 0.3,
-          roughness: 0.7,
-        });
-        const welcomeMesh = new THREE.Mesh(welcomeGeo, welcomeMat);
-        welcomeMesh.position.y = 2.5;
-        scene.add(welcomeMesh);
-
-        // "THE INTERNET" — big, 3D, spinning
-        const internetGeo = new TextGeometry("THE INTERNET", {
-          font,
-          size: 1.2,
-          depth: 0.6,
-          curveSegments: 16,
-          bevelEnabled: true,
-          bevelThickness: 0.08,
-          bevelSize: 0.04,
-          bevelSegments: 8,
-        });
-        internetGeo.computeBoundingBox();
-        internetGeo.center();
-
-        const internetMat = new THREE.MeshStandardMaterial({
-          color: 0x66f5ff,
-          metalness: 0.5,
-          roughness: 0.3,
-          emissive: 0x00aacc,
-          emissiveIntensity: 0.3,
-          envMapIntensity: 1.0,
-        });
-        internetMesh = new THREE.Mesh(internetGeo, internetMat);
-        internetMesh.position.y = 0;
-        scene.add(internetMesh);
-
-        // Subtitle — small, below
-        const subtitleGeo = new TextGeometry(
-          "advanced communications network for planet earth",
-          {
-            font,
-            size: 0.22,
-            depth: 0.02,
-            curveSegments: 12,
-          },
-        );
-        subtitleGeo.computeBoundingBox();
-        subtitleGeo.center();
-
-        const subtitleMat = new THREE.MeshStandardMaterial({
-          color: 0xdddddd,
-          metalness: 0.3,
-          roughness: 0.7,
-        });
-        const subtitleMesh = new THREE.Mesh(subtitleGeo, subtitleMat);
-        subtitleMesh.position.y = -2;
-        scene.add(subtitleMesh);
-      },
-    );
+      const subtitleMat = new THREE.MeshStandardMaterial({
+        color: 0xdddddd,
+        metalness: 0.3,
+        roughness: 0.7,
+      });
+      const subtitleMesh = new THREE.Mesh(subtitleGeo, subtitleMat);
+      subtitleMesh.position.y = -2;
+      scene.add(subtitleMesh);
+    });
 
     // Stars
     const starsGeo = new THREE.BufferGeometry();
