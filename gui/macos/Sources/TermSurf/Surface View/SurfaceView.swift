@@ -70,7 +70,17 @@ extension TermSurf {
                     let pubResign = center.publisher(for: NSWindow.didResignKeyNotification)
                     #endif
 
-                    SurfaceRepresentable(view: surfaceView, size: geo.size)
+                    // Inset content by border width so the border doesn't cover
+                    // terminal text (Issue 672).
+                    let borderInset = isSplit ? termsurf.config.splitBorderWidth : 0
+                    let insetSize = CGSize(
+                        width: max(10, geo.size.width - borderInset * 2),
+                        height: max(10, geo.size.height - borderInset * 2)
+                    )
+
+                    SurfaceRepresentable(view: surfaceView, size: insetSize)
+                        .frame(width: insetSize.width, height: insetSize.height)
+                        .offset(x: borderInset, y: borderInset)
                         .focused($surfaceFocus)
                         .saturation(isSplit && !surfaceFocus
                             ? termsurf.config.unfocusedSplitSaturation : 1.0)
@@ -108,10 +118,12 @@ extension TermSurf {
                 
                 // Progress report
                 if let progressReport = surfaceView.progressReport, progressReport.state != .remove {
+                    let borderInset = isSplit ? termsurf.config.splitBorderWidth : 0
                     VStack(spacing: 0) {
                         SurfaceProgressBar(report: progressReport)
                         Spacer()
                     }
+                    .padding(borderInset)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                     .allowsHitTesting(false)
                     .transition(.opacity)

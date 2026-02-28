@@ -82,15 +82,20 @@ if let progressReport = surfaceView.progressReport, progressReport.state != .rem
 }
 ```
 
-### Test
+### Result: PASS
 
-1. `cd gui && zig build` — compiles without errors.
-2. Open TermSurf, create a split, set `split-border-width = 2`.
-3. Terminal content is fully visible — no text clipped by the border.
-4. The border frames the content with no gap.
-5. Navigate to a URL — progress bar renders inside the border, not behind it.
-6. **Resize the window** — panes resize correctly.
-7. **Open a new split** — existing pane resizes correctly.
-8. Set `split-border-width = 0` — no padding, no border (backward compatible).
-9. Set `split-border-width = 4` — larger padding, content still fully visible.
-10. Verify unfocused dimming and saturation still work alongside padding.
+Content insets correctly by the border width. Terminal text is fully visible
+with no clipping. The progress bar renders inside the border. Resize works — no
+regression. Unfocused dimming and saturation work alongside padding.
+
+## Conclusion
+
+Pane content now insets automatically to compensate for the border width. Two
+edits in `SurfaceView.swift`:
+
+1. **SurfaceRepresentable** — compute `borderInset` from `splitBorderWidth`,
+   pass reduced size via `insetSize`, position with `.frame()` and `.offset()`.
+2. **Progress bar** — add `.padding(borderInset)` to its container.
+
+No new config options — `split-border-width` drives the padding automatically.
+When `split-border-width = 0`, there's no inset (backward compatible).
