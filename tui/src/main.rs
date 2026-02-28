@@ -29,6 +29,17 @@ const DIM: Color = Color::Rgb(0x90, 0x9a, 0xb8);
 const SELECTION: Color = Color::Rgb(0x28, 0x34, 0x57);
 const PURPLE: Color = Color::Rgb(0xbb, 0x9a, 0xf7);
 const YELLOW: Color = Color::Rgb(0xe0, 0xaf, 0x68);
+const BLUE: Color = Color::Rgb(0x7a, 0xa2, 0xf7);
+const GREEN: Color = Color::Rgb(0x9e, 0xce, 0x6a);
+
+fn submode_color(mode: &EditorMode) -> Color {
+    match mode {
+        EditorMode::Normal => BLUE,
+        EditorMode::Insert => GREEN,
+        EditorMode::Visual => PURPLE,
+        EditorMode::Search => YELLOW,
+    }
+}
 
 #[derive(PartialEq)]
 enum Mode {
@@ -501,9 +512,10 @@ fn ui(
             EditorMode::Visual => "\u{F14A} VISUAL",
             EditorMode::Search => "\u{F002} SEARCH",
         };
+        let sc = submode_color(&cmd_state.mode);
         let submode_label = Line::from(vec![
-            Span::raw(" ").style(Style::default().fg(YELLOW)),
-            Span::raw(submode_text).style(Style::default().fg(YELLOW)),
+            Span::raw(" ").style(Style::default().fg(sc)),
+            Span::raw(submode_text).style(Style::default().fg(sc)),
             Span::raw(" "),
         ]);
         let cmd_title = Line::from(vec![
@@ -543,9 +555,10 @@ fn ui(
             EditorMode::Visual => "\u{F14A} VISUAL",
             EditorMode::Search => "\u{F002} SEARCH",
         };
+        let sc = submode_color(&editor_state.mode);
         let submode_label = Line::from(vec![
-            Span::raw(" ").style(Style::default().fg(PURPLE)),
-            Span::raw(submode_text).style(Style::default().fg(PURPLE)),
+            Span::raw(" ").style(Style::default().fg(sc)),
+            Span::raw(submode_text).style(Style::default().fg(sc)),
             Span::raw(" "),
         ]);
         let url_title = Line::from(vec![

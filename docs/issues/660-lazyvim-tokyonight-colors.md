@@ -92,3 +92,17 @@ In `tui/src/main.rs`:
    **green**
 6. Press `Esc` — command bar submode says NORMAL in **blue**
 7. Each mode has a distinct, recognizable color matching LazyVim's convention
+
+### Result
+
+Pass. Each editor submode has its own distinct color in both the URL bar and
+command bar: Normal (blue), Insert (green), Visual (purple), Search (yellow).
+Colors match LazyVim's Tokyo Night lualine palette.
+
+## Conclusion
+
+One experiment delivered per-mode submode colors matching LazyVim's Tokyo Night
+lualine palette. Two new palette constants (BLUE `#7aa2f7`, GREEN `#9ece6a`) and
+a `submode_color` helper function color each submode indicator by editor mode in
+both the URL bar and command bar. Normal is blue, Insert is green, Visual is
+purple, Search is yellow — recognizable at a glance.
