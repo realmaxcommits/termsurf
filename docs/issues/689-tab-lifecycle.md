@@ -1149,3 +1149,24 @@ Experiment 6 combines the DidCloseLastWindow no-op (Exp 3) with synchronous
 Shell deletion (`delete` instead of `Close()`), and ensures the Shell is
 destroyed BEFORE the TabState. This is the first experiment to get the teardown
 order right.
+
+### Result: SUCCESS
+
+Closing one pane correctly closes its Chromium tab without affecting other tabs.
+
+```
+web status  →  1 tab, 1 pane     (opened first tab)
+web status  →  2 tabs, 2 panes   (opened second tab)
+web status  →  1 tab, 1 pane     (closed first tab — tab id=1 gone, id=2 alive)
+```
+
+The surviving tab (id=2) continued working normally. The profile server stayed
+alive with 1 tab remaining.
+
+Two things made this work:
+
+1. **DidCloseLastWindow no-op** — prevents `Shell::Shutdown()` from killing all
+   tabs when any Shell destructor runs and `windows_` happens to be empty.
+2. **`delete shell` before `tabs_.erase()`** — destroys WebContents → RWHV
+   first, disconnecting the rendering pipeline from the compositor, so the
+   TabState destructor can safely tear down compositor resources.
