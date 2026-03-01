@@ -1143,3 +1143,53 @@ The `last_browser_pane` tracker now works correctly. It updates on tab creation
 `handlePaneFocusChanged` without the `p.browsing` gate, for non-DevTools panes
 with `tab_id > 0`). This is the foundation for `web devtools` auto-targeting in
 the next experiment.
+
+## Experiment 5: Cleanup debug scaffolding
+
+### Goal
+
+Strip diagnostic artifacts added during Experiments 3–4 debugging. The core
+features (auto-targeting, `web last`, `last_browser_pane` tracker) all work.
+What remains is debug noise that shouldn't ship.
+
+### Changes
+
+#### 1. GUI (`xpc.zig`): Remove `tab_ready_count`
+
+Delete the global variable (line 122), the increment in `handleTabReady` (line
+618), and the `tab_ready_count` field in the `handleQueryLast` failure reply
+(line 847). Also remove `found_pane` (line 621) and simplify the log back to:
+
+```zig
+log.info("tab_ready pane={s} tab_id={d}", .{ pane_id, tab_id });
+```
+
+#### 2. GUI (`xpc.zig`): Simplify `handleQueryLast` failure reply
+
+The failure path (lines 842–867) dumps `pane_count`, `has_last`, `last_pane`,
+`tab_ready_count`, `first_pane_tab_id`, and `first_pane_id`. Replace with a
+minimal failure reply — just an empty dict (no `pane_id` key). The TUI already
+checks for `pane_id` being null to detect failure. Remove lines 844–867 entirely
+(keep the log line).
+
+#### 3. TUI (`xpc.rs`): Simplify `send_query_last` failure path
+
+The failure branch (lines 431–461) reads and prints six diagnostic fields.
+Replace with a simple `return None` — no `eprintln!`. The `web last` command
+already prints "No active browser tab found." in `main.rs`.
+
+#### 4. TUI (`main.rs`): Rename `Last` → `Status`
+
+Rename the subcommand from `Last` to `Status`. The command becomes `web status`.
+It reports the current state of the most recent browser pane — "status" is more
+descriptive than "last". Update the enum variant, the match arms, and the doc
+comment.
+
+### Test
+
+1. `cd gui && zig build` — compiles
+2. `cd tui && cargo build` — compiles
+3. `web google.com` in a pane, then `web status` in a split — prints profile,
+   pane_id, tab_id
+4. `web status` with no browser open — prints "No active browser tab found."
+5. `web devtools` still works (auto-targeting unaffected)
