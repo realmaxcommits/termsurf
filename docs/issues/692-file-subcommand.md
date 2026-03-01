@@ -96,3 +96,88 @@ explicitly relative). A bare `index.html` in the URL bar still goes to
 8. In Edit mode, type `index.html` and press Enter — still goes to
    `https://index.html` (no ambiguity)
 9. `web file:///tmp/test.html` — existing behavior still works (not broken)
+
+## Experiment 1: Add `File` subcommand and `normalize_url` file detection
+
+### Hypothesis
+
+If we add a `File` variant to the `Commands` enum, resolve the path with
+`std::fs::canonicalize` in the URL matching block, and add file path detection
+to `normalize_url`, then `web file index.html` opens local files and Edit mode
+paths like `./index.html` resolve correctly — all in one file (`main.rs`).
+
+### Changes
+
+Three changes in `tui/src/main.rs`. No other files.
+
+#### 1. Add `File` variant to `Commands` enum (line 192)
+
+After `Status`:
+
+```rust
+/// Open a local file in the browser pane
+File {
+    /// Path to the file (relative or absolute)
+    path: String,
+},
+```
+
+#### 2. Handle `File` in the URL resolution match (line 269)
+
+Add a new arm before `None`:
+
+```rust
+let raw_url = match cli.command {
+    Some(Commands::Url { url }) => url,
+    Some(Commands::File { path }) => {
+        let absolute = std::fs::canonicalize(&path).unwrap_or_else(|e| {
+            eprintln!("Error: {}: {}", path, e);
+            std::process::exit(1);
+        });
+        format!("file://{}", absolute.display())
+    }
+    Some(Commands::Last) | Some(Commands::Status) => unreachable!(),
+    None => cli.url.unwrap_or_else(|| {
+        hello_homepage.unwrap_or_else(|| "https://termsurf.com/welcome".to_string())
+    }),
+};
+```
+
+`canonicalize` resolves relative paths against `$PWD`, follows symlinks, and
+errors if the file doesn't exist.
+
+#### 3. Add file path detection to `normalize_url` (line 694)
+
+After the `://` check, before the localhost check:
+
+```rust
+// File paths: absolute or explicitly relative (Issue 692).
+if trimmed.starts_with('/')
+    || trimmed.starts_with("./")
+    || trimmed.starts_with("../")
+{
+    if let Ok(absolute) = std::fs::canonicalize(trimmed) {
+        return format!("file://{}", absolute.display());
+    }
+}
+```
+
+This handles Edit mode — typing `./index.html` or `/tmp/test.html` in the URL
+bar resolves to a `file:///` URL. Bare filenames like `index.html` are not
+matched (ambiguous with hostnames), so the user types `./index.html` to be
+explicit. If `canonicalize` fails (file doesn't exist), it falls through to the
+existing URL logic.
+
+### Test
+
+Same as the issue-level test plan:
+
+1. `web file index.html` — opens `file:///absolute/path/to/index.html`
+2. `web file ./src/page.html` — relative path with `./`
+3. `web file ../other/file.html` — parent-relative path
+4. `web file /tmp/test.html` — absolute path
+5. `web file nonexistent.html` — prints error and exits
+6. Edit mode: `./index.html` → navigates to file URL
+7. Edit mode: `/tmp/test.html` → navigates to file URL
+8. Edit mode: `index.html` → still goes to `https://index.html`
+9. `web file:///tmp/test.html` → existing behavior unchanged
