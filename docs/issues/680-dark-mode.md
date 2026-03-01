@@ -288,3 +288,43 @@ from Experiment 1.
 
 `:colorscheme dark`, `:col l`, and `:col s` all work. The browser pane switches
 color scheme immediately via TUI → GUI → Chromium XPC chain.
+
+## Conclusion
+
+Dark mode now works end-to-end across the full TermSurf stack.
+
+**Experiment 1** bridged the last gap in the color scheme chain — from the GUI's
+Zig core through XPC to Chromium. The Chromium fork stores a per-tab
+`preferred_color_scheme`, receives it via the `dark` field on `create_tab`
+(initial state) and the `set_color_scheme` action (dynamic updates), and applies
+it through `OverrideWebPreferences`. On the GUI side,
+`Surface.colorSchemeCallback` now forwards system appearance changes to Chromium
+automatically. Default is dark, because this is a terminal.
+
+**Experiment 2** gave users direct control via the `:colorscheme` command in the
+TUI's vim-style command mode. `:col d`, `:col l`, and `:col s` override the
+browser pane's color scheme to dark, light, or current system setting. The
+command flows TUI → GUI → Chromium through the same XPC `set_color_scheme`
+message that Experiment 1 established.
+
+### Files changed
+
+**Chromium** (branch `146.0.7650.0-issue-680`):
+
+- `shell_browser_main_parts.h` — per-tab `preferred_color_scheme` state,
+  `SetColorScheme` and `GetColorSchemeForWebContents` methods
+- `shell_browser_main_parts.cc` — `dark` field in `create_tab`,
+  `set_color_scheme` XPC handler, color scheme lookup by WebContents
+- `shell_content_browser_client.cc` — `OverrideWebPreferences` reads per-tab
+  state instead of command-line flag
+
+**GUI** (`gui/`):
+
+- `src/apprt/xpc.zig` — `dark` in `sendCreateTab`, `handleColorSchemeChanged`
+  for system changes, `handleSetColorScheme` for TUI commands
+- `src/Surface.zig` — XPC forwarding in `colorSchemeCallback`
+
+**TUI** (`tui/`):
+
+- `src/main.rs` — `colorscheme` command with `dark`/`light`/`system` args
+- `src/xpc.rs` — `send_set_color_scheme` XPC method
