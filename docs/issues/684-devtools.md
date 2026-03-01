@@ -153,6 +153,10 @@ A `CreateDevToolsTab` reuses ~90% of this. The new pieces:
 5. **Load DevTools frontend URL** — instead of the user's URL, load
    `http://127.0.0.1:{port}/devtools/devtools_app.html?targetType=tab` using
    `ShellDevToolsManagerDelegate::GetHttpHandlerPort()`
+6. **Synthetic URL in `ShellTabObserver`** — DevTools tabs store
+   `inspected_tab_id` in their `TabState`. The `ShellTabObserver` checks this
+   field in `DidFinishNavigation()` and sends `devtools://N` instead of the
+   internal HTTP URL, so the TUI always displays the correct synthetic URI
 
 Everything else — compositor, CALayerParams callback, cursor callback, XPC tab
 connection, `tab_ready` message — is identical to `CreateTab`. Estimated new
@@ -224,6 +228,8 @@ C++: ~40–60 lines.
 | `shell_devtools_bindings.cc:171-182`  | Bindings constructor (two WebContents) |
 | `shell_devtools_bindings.cc:216-238`  | `Attach()` — connects DevTools agent   |
 | `shell_devtools_manager_delegate.cc`  | HTTP server setup, port query          |
+| `shell_tab_observer.h`                | Observer with XPC URL/title/cursor     |
+| `shell_tab_observer.cc:99-128`        | `DidFinishNavigation()` — URL updates  |
 | `shell.cc:411-418`                    | `ShowDevTools()` / `CloseDevTools()`   |
 
 All Chromium paths relative to
@@ -497,11 +503,77 @@ key differences:
 - Creates the Shell with this HTTP URL (standard GURL, no issues)
 - Creates `ShellDevToolsFrontend(shell, inspected_contents)` for bindings
 - Does NOT assign an auto-incrementing tab ID (DevTools tabs get `tab_id=0`)
+- Stores `inspected_tab_id` in the `TabState` (see below)
+- Passes `inspected_tab_id` to the `ShellTabObserver` for URL override
 
 The compositor, CALayerParams callback, cursor callback, XPC tab connection, and
 `tab_ready` message are identical to `CreateTab`.
 
-#### 3. GUI: Forward `create_devtools_tab` XPC action
+**`TabState` addition:**
+
+```cpp
+struct TabState {
+  int tab_id = 0;          // Auto-incrementing, 1-based. 0 = DevTools tab.
+  int inspected_tab_id = 0; // Nonzero = this is a DevTools tab inspecting this ID.
+  // ... existing fields ...
+};
+```
+
+In `CreateDevToolsTab`, after creating the tab:
+
+```cpp
+tab->inspected_tab_id = inspected_tab_id;
+tab->tab_observer->SetInspectedTabId(inspected_tab_id);
+```
+
+#### 3. Chromium: URL override in `ShellTabObserver`
+
+The `ShellTabObserver` sends `url_changed` XPC messages whenever Chromium
+navigates (in `DidFinishNavigation`). For DevTools tabs, the real URL is the
+internal DevTools frontend HTTP URL
+(`http://127.0.0.1:{port}/devtools/devtools_app.html?targetType=tab`), which is
+meaningless to the user — it contains no pane ID or tab ID and cannot be used as
+a navigable address.
+
+The fix: `ShellTabObserver` gets an `inspected_tab_id_` field. When nonzero,
+`DidFinishNavigation` sends `devtools://N` (where N is the inspected tab ID)
+instead of the real URL. This ensures the TUI always displays the correct
+synthetic URI.
+
+**Header (`shell_tab_observer.h`):**
+
+```cpp
+void SetInspectedTabId(int id);
+
+// In private:
+int inspected_tab_id_ = 0;  // Nonzero = DevTools tab; send synthetic URL.
+```
+
+**Implementation (`shell_tab_observer.cc`):**
+
+```cpp
+void ShellTabObserver::SetInspectedTabId(int id) {
+  inspected_tab_id_ = id;
+}
+```
+
+**In `DidFinishNavigation`**, replace the URL extraction:
+
+```cpp
+// For DevTools tabs, send the synthetic devtools://N URL instead of the
+// internal HTTP URL (Issue 684).
+std::string url;
+if (inspected_tab_id_ > 0) {
+  url = base::StringPrintf("devtools://%d", inspected_tab_id_);
+} else {
+  url = navigation_handle->GetURL().spec();
+}
+```
+
+This also suppresses any internal DevTools sub-navigations (panel switches,
+resource loads) from leaking through — the TUI always sees `devtools://N`.
+
+#### 4. GUI: Forward `create_devtools_tab` XPC action
 
 In `gui/src/apprt/xpc.zig`, add handling for `create_devtools_tab` from the TUI.
 This is identical to the existing `set_overlay` → `create_tab` flow, but sends a
@@ -516,7 +588,7 @@ This requires the GUI to know the tab ID for a given pane. The profile server
 already sends `tab_ready` — add a `tab_id` field to this message. The GUI stores
 it per-pane.
 
-#### 4. TUI: Detect `devtools://` and send different XPC action
+#### 5. TUI: Detect `devtools://` and send different XPC action
 
 In `tui/src/main.rs`, detect when the URL starts with `devtools://`:
 
