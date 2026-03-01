@@ -165,3 +165,34 @@ DCHECK, same call chain. Every one is preceded by resize events in the log.
 - `logs/chromium-server.log` — Chromium profile server only
 - `logs/termsurf.log` — TermSurf app output
 - `logs/xpc-gateway.log` — XPC gateway (empty)
+
+## Conclusion
+
+The crash is caused by opening two DevTools sessions for the same inspected
+page. Chromium's `InspectorOverlayAgent` paints a foreign layer overlay on the
+inspected renderer. Two overlays on the same renderer produce duplicate
+`DisplayItem::Id` entries in the `PaintController`'s index map, which triggers a
+DCHECK on the next repaint (reliably caused by a resize).
+
+This is not a bug in our fork code — it's an upstream Chromium invariant. Chrome
+enforces one DevTools frontend per inspected page; TermSurf bypasses that by
+creating independent `ShellDevToolsFrontend` instances for each pane. The fix is
+to enforce the same one-DevTools-per-tab constraint.
+
+The earlier log errors (breakpad crash, Mach port rendezvous failure, orphaned
+surfaces) may or may not be the same root cause. They could be consequences of
+renderer crashes caused by this same duplicate overlay issue, or they could be
+independent. With the one-DevTools-per-tab fix in place, we can observe whether
+those errors stop appearing.
+
+### What was accomplished
+
+- Identified the crash: `PaintController::AddToIdIndexMap` DCHECK in
+  `paint_controller.cc:662`
+- Traced the full call chain from `InspectorOverlayAgent::PageLayoutInvalidated`
+  through to the duplicate display item registration
+- Found a 100% reliable 3-step repro: open page, open two DevTools for it,
+  resize
+- Determined the root cause: two `InspectorOverlayAgent` instances painting
+  overlays on the same renderer
+- Identified the fix: enforce one DevTools session per inspected tab (Issue 687)
