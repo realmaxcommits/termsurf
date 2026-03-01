@@ -82,10 +82,16 @@ native window required — just two WebContents pointers and a delegate with a
 
 ### Tab IDs
 
-Each profile server assigns an auto-incrementing integer ID to every tab it
-creates. The ID is stable for the lifetime of the tab — it never changes and is
-never reused during the server's lifetime. This gives users a human-readable
+Each profile server assigns an auto-incrementing integer ID to every browser tab
+it creates. The ID is stable for the lifetime of the tab — it never changes and
+is never reused during the server's lifetime. This gives users a human-readable
 identifier for targeting DevTools instead of a UUID.
+
+**DevTools tabs do not get tab IDs.** Only browser tabs (pages the user
+navigates to) receive IDs. DevTools is an inspection tool, not a browsable tab.
+This prevents recursive DevTools-for-DevTools, which would add complexity for no
+benefit. Since DevTools tabs have no ID, they cannot be targeted by
+`web devtools://[id]`.
 
 Tab IDs are scoped to a profile server. Tab 3 in the `default` profile is
 unrelated to tab 3 in the `work` profile. The profile is selected by the
@@ -93,9 +99,14 @@ existing `--profile` flag on the `web` CLI, not embedded in the URL. This avoids
 redundancy and conflict — there is one way to select a profile (`--profile`) and
 one way to select a tab (the integer ID).
 
-The TUI displays the tab ID in the viewport border alongside the profile name:
-`[avatar][profileName]/[tabId]`. For example, `default/1` or `work/3`. This
-makes tab IDs always discoverable without a separate command.
+### TUI Display
+
+Both browser tabs and their DevTools tabs show the same
+`[avatar][profileName]/[tabId]` label in the viewport border, using the browser
+tab's ID. This makes it easy to visually pair them on screen — both panes show
+`default/1`, confirming they're linked. The DevTools pane is distinguished by
+its URL bar showing `devtools://[tabId]` (e.g. `devtools://1`) instead of a page
+URL.
 
 ### URL Scheme
 
@@ -154,9 +165,8 @@ C++: ~40–60 lines.
 │ Ghostty (terminal emulator)                          │
 │                                                      │
 │  ┌────────────────────┐  ┌────────────────────────┐  │
-│  │ Pane 1             │  │ Pane 2                 │  │
-│  │ web foo.com        │  │ web devtools://1       │  │
-│  │          default/1 │  │              default/2 │  │
+│  │ foo.com            │  │ devtools://1           │  │
+│  │          default/1 │  │              default/1 │  │
 │  │ [webpage]          │  │ [DevTools frontend]    │  │
 │  └─────────┬──────────┘  └─────────────┬──────────┘  │
 │            │                           │             │
@@ -182,10 +192,11 @@ C++: ~40–60 lines.
    omitted for most recent)
 5. GUI forwards to profile server
 6. Profile server finds inspected tab's WebContents (by ID or most recent),
-   creates DevTools WebContents, wires up `ShellDevToolsBindings`, assigns a new
-   tab ID, sends back CAContext ID + tab ID in `tab_ready`
+   creates DevTools WebContents (no tab ID assigned), wires up
+   `ShellDevToolsBindings`, sends back CAContext ID in `tab_ready`
 7. DevTools renders as a normal CALayerHost overlay in the new pane
-8. TUI displays `default/2` (or `work/2`) in the viewport border
+8. TUI displays `devtools://1` in the URL bar and `default/1` in the viewport
+   border (matching the inspected tab's label)
 9. User inspects elements, debugs JS, views network — full DevTools experience
 
 ### Open Questions
@@ -199,8 +210,9 @@ C++: ~40–60 lines.
    terminal pane programmatically — possible but a new capability.
 
 3. **Tab ID in `tab_ready`.** The profile server must include the integer tab ID
-   in the `tab_ready` XPC reply so the TUI can display it in the viewport
-   border. This is a small change to the existing `tab_ready` message.
+   in the `tab_ready` XPC reply for browser tabs so the TUI can display it in
+   the viewport border. DevTools tabs omit this field (or send 0) since they
+   don't have tab IDs.
 
 ### Key Source Files
 
