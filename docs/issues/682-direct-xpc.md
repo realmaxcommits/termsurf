@@ -151,20 +151,21 @@ lifecycle.
    architectural benefit is cleaner separation of concerns, but the cost is a
    second XPC connection to manage and new synchronization requirements.
 
-## Experiment 1: Research and decide
+## Experiment 1: Code analysis
 
 ### Hypothesis
 
-Analyzing the trade-offs in detail will reveal whether a direct connection is
-worth the added complexity, or whether the relay pattern is good enough.
+A static analysis of the relay code paths will reveal how much work the GUI
+actually does per forwarded message, whether a direct connection is feasible,
+and what the simplest migration path would be.
 
 ### Plan
 
-1. Measure the actual relay latency (timestamp before TUI send, after Chromium
-   receive) to quantify the cost
-2. Prototype the simplest direct path: GUI forwards the Chromium server's XPC
-   endpoint to the TUI after `server_register`
-3. Evaluate whether the synchronization complexity (tab readiness, system theme
-   resolution) outweighs the relay elimination
-4. Decide: direct connection, hybrid (some direct, some relayed), or keep
-   current architecture
+1. For each pass-through message, read the GUI handler and document exactly what
+   it does beyond forwarding (field transformation, state reads, side effects)
+2. For each Chromium→TUI relay, check whether Chromium could send directly to
+   the TUI with its current XPC connection model
+3. Identify which messages could move to a direct connection with zero changes
+   to Chromium, which would need Chromium changes, and which are blocked by
+   architectural constraints
+4. Recommend: direct connection, hybrid, or keep current architecture
