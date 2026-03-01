@@ -744,3 +744,171 @@ window lifecycle is skipped. If that path is stable, the fix is to replace
 
 **Code reverted** — all three files (Chromium platform delegate, Chromium main
 parts, GUI xpc.zig).
+
+## Experiment 4: Orphan the Shell (don't close it)
+
+### Hypothesis
+
+Three experiments have called `Shell::Close()` and all cascaded. But we don't
+know WHERE in the destruction chain the cascade originates. This experiment
+isolates the question by skipping Shell destruction entirely.
+
+If we remove `shell->Close()` from `CloseTabByPaneId` and just orphan the Shell
+(leave it alive in `windows_` with its WebContents intact), then closing one tab
+should NOT cascade. The orphaned Shell leaks its resources (NSWindow,
+WebContents, renderer), but the remaining tabs survive.
+
+- **If this works** (count goes from 2 to 1): the cascade is confirmed to be
+  inside `Shell::Close()` / Shell destruction. The next step is to narrow down
+  whether the crash is in `performClose:nil`, the Shell destructor, or
+  `web_contents_.reset()`.
+- **If this fails** (count drops to 0): the cascade is NOT in Shell destruction.
+  Something else kills the profile server — the XPC message itself, a GUI-side
+  bug, or an observer triggered by erasing from `tabs_`.
+
+### Design
+
+Three changes: Chromium close_tab handler (without Shell::Close()), Chromium
+CloseTabByPaneId (orphans instead of closes), GUI disconnect signal.
+
+#### 1. Chromium: add `CloseTabByPaneId` — orphan only (`shell_browser_main_parts.cc`)
+
+Same as Experiments 2/3 but with `shell->Close()` removed. The Shell stays alive
+in `windows_`:
+
+```cpp
+void ShellBrowserMainParts::CloseTabByPaneId(const std::string& pane_id) {
+  DCHECK_CURRENTLY_ON(BrowserThread::UI);
+  for (auto it = tabs_.begin(); it != tabs_.end(); ++it) {
+    if ((*it)->pane_id == pane_id) {
+      LOG(INFO) << "[ProfileServer] CloseTabByPaneId (orphan) pane=" << pane_id
+                << ", " << (tabs_.size() - 1) << " tab(s) remaining";
+      (*it)->tab_observer.reset();
+      // NOTE: Intentionally NOT calling shell->Close().
+      // The Shell and its WebContents leak. This is a diagnostic
+      // experiment to confirm the cascade is inside Shell destruction.
+      if ((*it)->tab_connection) {
+        xpc_connection_cancel((*it)->tab_connection);
+        xpc_release((*it)->tab_connection);
+      }
+      tabs_.erase(it);
+      if (tabs_.empty()) {
+        LOG(INFO) << "[ProfileServer] No tabs remaining, exiting";
+        Shell::Shutdown();
+      }
+      return;
+    }
+  }
+  LOG(WARNING) << "[ProfileServer] CloseTabByPaneId: no tab for pane="
+               << pane_id;
+}
+```
+
+The Shell's raw*ptr in TabState is not freed. The Shell stays in `windows*`as an
+orphan.`web*contents*` is intact. The NSWindow stays alive (hidden). This leaks,
+but it's a diagnostic experiment — we need to know if the cascade is inside
+Shell destruction.
+
+#### 2. Chromium: add `close_tab` action handler (`shell_browser_main_parts.cc`)
+
+Same as Experiment 2/3 — unchanged:
+
+```cpp
+} else if (action && std::string_view(action) == "close_tab") {
+    const char* pane_id_str = xpc_dictionary_get_string(event, "pane_id");
+    std::string pane_id(pane_id_str ? pane_id_str : "");
+    content::GetUIThreadTaskRunner({})->PostTask(
+        FROM_HERE,
+        base::BindOnce(&ShellBrowserMainParts::CloseTabByPaneId,
+                       base::Unretained(self), pane_id));
+}
+```
+
+#### 3. Chromium: declare in header (`shell_browser_main_parts.h`)
+
+```cpp
+void CloseTabByPaneId(const std::string& pane_id);
+```
+
+#### 4. GUI: send `close_tab` in `handleDisconnect` (`xpc.zig`)
+
+Same as Experiment 2/3 — unchanged.
+
+### Verification
+
+1. Build Chromium and GUI.
+2. Open one tab. `web status` — expect 1 tab, 1 pane.
+3. Open a second tab. `web status` — expect 2 tabs, 2 panes.
+4. Close one pane. `web status` — expect **2 tabs** (orphan stays), **1 pane**.
+   The key test: the remaining tab and pane must still be alive.
+5. If step 4 shows 1 tab, 1 pane — even better, means `tabs_` cleanup worked and
+   Shell didn't cascade.
+6. If step 4 shows 0 — the cascade is NOT in Shell destruction. Need to
+   investigate the XPC message path and GUI-side cleanup.
+
+### Why not `DidCloseLastWindow` no-op?
+
+Not needed for this experiment. We never call `Shell::Close()`, so no Shell
+destructor runs, so `DidCloseLastWindow` never fires. If this experiment
+succeeds and we later add proper Shell destruction, we'll re-add the no-op.
+
+### Result: FAILURE
+
+Opened one tab (count=1), opened a second (count=2), closed one pane — count
+dropped to 0. Closing one tab still kills all tabs, even though we never called
+`Shell::Close()`.
+
+**Root cause:** The cascade is NOT inside `Shell::Close()`. We never called it.
+We never destroyed the Shell, never destroyed its WebContents, never touched the
+NSWindow. The Shell was intentionally orphaned — left alive and leaking. Yet the
+entire profile server still died.
+
+The only operations `CloseTabByPaneId` performed were:
+
+1. `(*it)->tab_observer.reset()` — destroy the ShellTabObserver
+2. `xpc_connection_cancel((*it)->tab_connection)` — cancel the per-tab XPC
+   connection
+3. `tabs_.erase(it)` — erase the TabState from the vector
+
+Erasing the TabState triggers its destructor, which destroys:
+
+- `std::unique_ptr<PersistentCompositorBridge> bridge`
+- `std::unique_ptr<ui::Layer> root_layer`
+- `std::unique_ptr<ui::Compositor> compositor`
+- `std::unique_ptr<ui::AcceleratedWidgetMac> widget_mac`
+
+The most likely crash point is **compositor destruction**. The Shell's
+`RenderWidgetHostView` is still alive and still connected to the compositor
+pipeline. Destroying the compositor (AcceleratedWidgetMac + Compositor + Layer +
+Bridge) while the rendering pipeline is active likely triggers a crash — a
+dangling pointer, a DCHECK, or a use-after-free in the GPU process. The crash
+kills the entire profile server, taking all tabs with it.
+
+This reframes the entire problem. The cascade was never in `Shell::Close()` (Exp
+2/3) or `DidCloseLastWindow()` (Exp 3). It's in the **TabState destructor** —
+specifically, the compositor teardown. The per-tab compositor is tightly coupled
+to the Shell's rendering pipeline and cannot be destroyed while the Shell is
+alive.
+
+**Correct teardown order:**
+
+1. Destroy the Shell first (which destroys WebContents, which disconnects the
+   RenderWidgetHostView from the compositor pipeline)
+2. THEN destroy the compositor
+3. THEN clean up XPC connections
+
+But `Shell::Close()` also cascades (Exp 2/3). So the full fix requires:
+
+1. Make `DidCloseLastWindow` a no-op (Exp 3 — still needed)
+2. Call `Shell::Close()` or `delete shell` to destroy WebContents first
+3. THEN let TabState destructor clean up the compositor
+4. Handle the fact that the Shell may not synchronously delete (macOS window
+   lifecycle is async)
+
+The next experiment should try: keep the DidCloseLastWindow no-op from Exp 3,
+call `shell->Close()`, and then DEFER the TabState erasure (via PostTask) to
+give the Shell destruction time to complete before the compositor is torn down.
+Alternatively: `delete shell` directly (bypass `performClose:nil`), which is
+synchronous, then immediately erase TabState.
+
+**Code reverted** — Chromium shell_browser_main_parts.cc/.h and GUI xpc.zig.
