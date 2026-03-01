@@ -1783,6 +1783,23 @@ fn handleDisconnect(peer_addr: usize) void {
                 }
             }
 
+            // Close the Chromium tab (Issue 689 Exp 5).
+            if (p.server) |server| {
+                if (p.tab_sent and server.peer != null) {
+                    const close_msg = xpc_dictionary_create(null, null, 0);
+                    defer xpc_release(close_msg);
+                    xpc_dictionary_set_string(close_msg, "action", "close_tab");
+                    var pane_z: [37]u8 = undefined;
+                    if (pane_id_key.len > 0 and pane_id_key.len <= 36) {
+                        @memcpy(pane_z[0..pane_id_key.len], pane_id_key);
+                        pane_z[pane_id_key.len] = 0;
+                        xpc_dictionary_set_string(close_msg, "pane_id", @ptrCast(&pane_z));
+                        xpc_connection_send_message(server.peer, close_msg);
+                        log.info("sent close_tab pane={s}", .{pane_id_key});
+                    }
+                }
+            }
+
             // Decrement server pane count; kill if last.
             if (p.server) |server| {
                 if (server.pane_count > 0) server.pane_count -= 1;

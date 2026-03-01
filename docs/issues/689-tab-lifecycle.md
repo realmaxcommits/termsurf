@@ -989,3 +989,163 @@ Same as Experiments 2–4.
    `handleDisconnect` kill the server? Does `xpc_connection_send_message` on
    `server.peer` have a side effect? Does the pane_count decrement path have a
    bug?
+
+### Result: SUCCESS
+
+No crash. The remaining tab survived. `web status` showed 2 Chromium tabs, 1 GUI
+pane — exactly the expected orphan state.
+
+Log confirms the message was received and processed:
+
+```
+CloseTabByPaneId (log-only) pane=B33107D4-..., tabs=2
+query_tabs: 2 tabs (2 browser, 0 devtools)
+```
+
+**Conclusion:** The crash in Experiments 2–4 was inside our teardown code, not
+in the XPC message delivery or GUI-side cleanup. The profile server can receive
+`close_tab` and survive — as long as `CloseTabByPaneId` doesn't destroy
+anything.
+
+The three operations that Exp 2–4 performed (and that crashed) were:
+
+1. `tab_observer.reset()` — destroy ShellTabObserver
+2. `xpc_connection_cancel(tab_connection)` — cancel per-tab XPC
+3. `tabs_.erase(it)` — destroy TabState (compositor, bridge, layer, widget)
+
+The next experiment should identify which operation crashes, and test the
+correct teardown order: destroy the Shell/WebContents first (to disconnect the
+rendering pipeline from the compositor), then destroy the TabState.
+
+## Experiment 6: Correct teardown order
+
+### Hypothesis
+
+Experiments 2–4 crashed because they destroyed TabState resources (compositor,
+bridge, layer) while the Shell's RenderWidgetHostView was still connected to
+them. The compositor pipeline expects its layers and compositor to outlive the
+RWHV, or at least to be disconnected before destruction.
+
+The correct teardown order is:
+
+1. Destroy the Shell (which destroys WebContents → RenderWidgetHostView,
+   disconnecting the rendering pipeline from the compositor)
+2. THEN destroy the TabState (compositor, bridge, layer, widget — now safe
+   because nothing references them)
+3. Clean up XPC connections
+
+But `Shell::Close()` goes through `performClose:nil` (macOS window lifecycle),
+which may be async or have side effects. `delete shell` bypasses the macOS
+lifecycle and runs the destructor synchronously:
+
+```
+delete shell
+  → ~Shell()
+    → g_platform->CleanUp(this)     (erases from shell_data_map_)
+    → remove from windows_
+    → web_contents_.reset()          (destroys WebContents → RWHV)
+    → if windows_.empty()
+      → DidCloseLastWindow()         → Shell::Shutdown() ← MUST BE NO-OP
+```
+
+This requires the `DidCloseLastWindow` no-op from Experiment 3. Without it,
+deleting the last Shell would call `Shutdown()` and kill the process before our
+`tabs_.empty()` check runs.
+
+### Design
+
+Three changes in Chromium, one in GUI (same as Exp 2–4).
+
+#### 1. Chromium: make `DidCloseLastWindow` a no-op (`shell_platform_delegate.cc`)
+
+Same as Experiment 3:
+
+```cpp
+void ShellPlatformDelegate::DidCloseLastWindow() {
+  // No-op (Issue 689). Our CloseTabByPaneId calls Shell::Shutdown()
+  // explicitly when tabs_ is empty.
+}
+```
+
+#### 2. Chromium: `CloseTabByPaneId` with correct order (`shell_browser_main_parts.cc`)
+
+Key difference from Experiments 2–4: `delete shell` BEFORE `tabs_.erase()`.
+
+```cpp
+void ShellBrowserMainParts::CloseTabByPaneId(const std::string& pane_id) {
+  DCHECK_CURRENTLY_ON(BrowserThread::UI);
+  for (auto it = tabs_.begin(); it != tabs_.end(); ++it) {
+    if ((*it)->pane_id == pane_id) {
+      LOG(INFO) << "[ProfileServer] CloseTabByPaneId pane=" << pane_id
+                << ", " << (tabs_.size() - 1) << " tab(s) remaining";
+
+      // Step 1: Disconnect rendering pipeline.
+      // Reset observer first (stops WebContents callbacks).
+      (*it)->tab_observer.reset();
+      // Delete the Shell synchronously. This destroys WebContents,
+      // which destroys RenderWidgetHostView, disconnecting it from
+      // our compositor. Bypasses performClose:nil (macOS window
+      // lifecycle) — the destructor runs immediately.
+      delete (*it)->shell.get();
+      (*it)->shell = nullptr;
+
+      // Step 2: Cancel per-tab XPC connection.
+      if ((*it)->tab_connection) {
+        xpc_connection_cancel((*it)->tab_connection);
+        xpc_release((*it)->tab_connection);
+        (*it)->tab_connection = nullptr;
+      }
+
+      // Step 3: Erase TabState. Compositor, bridge, layer, widget
+      // are now safe to destroy — nothing references them.
+      tabs_.erase(it);
+
+      if (tabs_.empty()) {
+        LOG(INFO) << "[ProfileServer] No tabs remaining, exiting";
+        Shell::Shutdown();
+      }
+      return;
+    }
+  }
+  LOG(WARNING) << "[ProfileServer] CloseTabByPaneId: no tab for pane="
+               << pane_id;
+}
+```
+
+#### 3. Chromium: `close_tab` action handler + header declaration
+
+Same as Experiments 2–5 (unchanged).
+
+#### 4. GUI: send `close_tab` in `handleDisconnect` (`xpc.zig`)
+
+Same as Experiments 2–5 (unchanged). Already present from Experiment 5.
+
+### Verification
+
+1. Clear the log: `> ~/.local/state/termsurf/chromium-server.log`
+2. Build Chromium and GUI.
+3. Open one tab. `web status` — 1 tab, 1 pane.
+4. Open a second tab. `web status` — 2 tabs, 2 panes.
+5. Close one pane. `web status` — expect **1 tab, 1 pane**. The closed tab
+   should be gone, the remaining tab should be alive.
+6. Check the log for `CloseTabByPaneId pane=... 1 tab(s) remaining` — confirms
+   the Shell was deleted and the TabState was erased without crashing.
+7. Open DevTools (`web devtools`). `web status` — 2 tabs, 2 panes.
+8. Close DevTools pane. `web status` — 1 tab, 1 pane.
+9. Reopen DevTools — should work without crash (no duplicate
+   InspectorOverlayAgent).
+
+### What's different from prior experiments
+
+| Experiment | Shell destruction  | TabState destruction    | DidCloseLastWindow |
+| ---------- | ------------------ | ----------------------- | ------------------ |
+| 2          | `shell->Close()`   | `tabs_.erase` after     | Default (Shutdown) |
+| 3          | `shell->Close()`   | `tabs_.erase` after     | No-op              |
+| 4          | None (orphan)      | `tabs_.erase`           | Default            |
+| 5          | None               | None (log only)         | Default            |
+| **6**      | **`delete shell`** | **`tabs_.erase` after** | **No-op**          |
+
+Experiment 6 combines the DidCloseLastWindow no-op (Exp 3) with synchronous
+Shell deletion (`delete` instead of `Close()`), and ensures the Shell is
+destroyed BEFORE the TabState. This is the first experiment to get the teardown
+order right.
