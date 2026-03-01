@@ -206,3 +206,303 @@ Issue 688 failed for three reasons, all now resolved:
   `newSplit()`, `SurfaceConfiguration`
 - `gui/macos/Sources/TermSurf/Surface View/SurfaceView.swift` —
   `SurfaceConfiguration` struct with `command` and `initialInput` fields
+
+## Experiment 1: End-to-end `:devtools` command
+
+### Hypothesis
+
+If the TUI parses `:devtools [direction]`, validates the request, sends an
+`open_split` XPC message, and the GUI creates a split with `initialInput` set to
+the `web devtools` command, then DevTools opens in a new split with one command.
+With Issue 689's tab lifecycle fix in place, closing and reopening DevTools
+should work without crashing.
+
+### Changes
+
+Seven files across TUI and GUI. No Chromium changes needed.
+
+#### 1. TUI: Add `CommandResult` variants and `devtools` command (`main.rs`)
+
+Add two new variants to the `CommandResult` enum (line 60):
+
+```rust
+enum CommandResult {
+    Quit,
+    SetColorScheme(String),
+    DevTools(String),   // direction: "right", "down", "left", "up"
+    Error(String),      // error message to display in command bar
+    None,
+}
+```
+
+Add `devtools` command to the `COMMANDS` array (after `colorscheme`, line 89):
+
+```rust
+Command {
+    name: "devtools",
+    exec: |args| match args.first().copied() {
+        Some("right" | "r") | None => CommandResult::DevTools("right".into()),
+        Some("down" | "d") => CommandResult::DevTools("down".into()),
+        Some("left" | "l") => CommandResult::DevTools("left".into()),
+        Some("up" | "u") => CommandResult::DevTools("up".into()),
+        Some(other) => CommandResult::Error(
+            format!("Unknown direction: {}", other),
+        ),
+    },
+},
+```
+
+#### 2. TUI: Capture executable path (`main.rs`)
+
+Early in `main()`, before the event loop (near the other `let mut` declarations
+around line 230):
+
+```rust
+let current_exe = std::env::current_exe()
+    .ok()
+    .and_then(|p| p.to_str().map(String::from))
+    .unwrap_or_else(|| "web".to_string());
+```
+
+#### 3. TUI: Command error state and handling (`main.rs`)
+
+Add state variable near other mode state (around line 230):
+
+```rust
+let mut command_error: Option<String> = None;
+```
+
+In the Mode::Command Enter handler (line 533), expand the match to handle
+`DevTools` and `Error`:
+
+```rust
+match dispatch(&cmd_text) {
+    CommandResult::Quit => break,
+    CommandResult::SetColorScheme(scheme) => {
+        if let (Some(ref conn), Some(ref pid)) = (&compositor, &pane_id) {
+            conn.send_set_color_scheme(pid, &scheme);
+        }
+    }
+    CommandResult::DevTools(direction) => {
+        if is_devtools {
+            command_error = Some("Cannot open DevTools from a DevTools pane".into());
+        } else if let (Some(ref conn), Some(ref pid)) = (&compositor, &pane_id) {
+            match conn.send_query_devtools(pid, 0, &profile) {
+                Err(msg) => {
+                    command_error = Some(msg);
+                }
+                Ok(_) => {
+                    // Tab doesn't have DevTools yet — open the split.
+                    let cmd = format!("{} devtools", current_exe);
+                    conn.send_open_split(pid, &direction, &cmd);
+                }
+            }
+        }
+    }
+    CommandResult::Error(msg) => {
+        command_error = Some(msg);
+    }
+    CommandResult::None => {}
+}
+// Only return to Control mode if no error.
+if command_error.is_none() {
+    mode = Mode::Control;
+}
+```
+
+Note: `send_query_devtools` with `inspected_tab_id=0` (auto-target) returns
+`Err(msg)` if the tab already has DevTools open (Issue 687). We reuse that
+validation.
+
+In the Mode::Command key handler, clear the error on any non-Enter keystroke:
+
+```rust
+// Clear command error on any keystroke (before passing to edtui).
+command_error = None;
+```
+
+#### 4. TUI: Error display in command bar (`main.rs`)
+
+Add `command_error: &Option<String>` parameter to `ui()` (line 663).
+
+In the command bar rendering (around line 696), when `*mode == Mode::Command`:
+
+- If `command_error.is_some()`, use `RED` border color instead of `YELLOW`
+- Add `.title_bottom()` with the error text styled red
+
+```rust
+let border_color = if command_error.is_some() { RED } else { YELLOW };
+let mut block = Block::default()
+    .borders(Borders::ALL)
+    .border_style(Style::default().fg(border_color))
+    .title(/* existing COMMAND title */);
+if let Some(ref err) = command_error {
+    block = block.title_bottom(
+        Line::from(err.as_str()).style(Style::default().fg(RED))
+    );
+}
+```
+
+Update all `ui()` call sites to pass `&command_error`.
+
+#### 5. TUI: `send_open_split` function (`xpc.rs`)
+
+Add a fire-and-forget XPC send function following the same pattern as
+`send_navigate` (line 598):
+
+```rust
+pub fn send_open_split(&self, pane_id: &str, direction: &str, command: &str) {
+    unsafe {
+        let msg = xpc_dictionary_create(std::ptr::null(), std::ptr::null_mut(), 0);
+        let action = CString::new("open_split").unwrap();
+        xpc_dictionary_set_string(msg, c"action".as_ptr(), action.as_ptr());
+        let pid = CString::new(pane_id).unwrap();
+        xpc_dictionary_set_string(msg, c"pane_id".as_ptr(), pid.as_ptr());
+        let dir = CString::new(direction).unwrap();
+        xpc_dictionary_set_string(msg, c"direction".as_ptr(), dir.as_ptr());
+        let cmd = CString::new(command).unwrap();
+        xpc_dictionary_set_string(msg, c"command".as_ptr(), cmd.as_ptr());
+        xpc_connection_send_message(self.raw, msg);
+        xpc_release(msg);
+    }
+}
+```
+
+#### 6. GUI: `open_split` action handler (`xpc.zig`)
+
+Add to `handleMessage` (line 290, in the else-if chain):
+
+```zig
+} else if (std.mem.eql(u8, action_str, "open_split")) {
+    handleOpenSplit(msg);
+}
+```
+
+New handler function:
+
+```zig
+fn handleOpenSplit(msg: xpc_object_t) void {
+    const pane_id = std.mem.span(
+        xpc_dictionary_get_string(msg, "pane_id") orelse return);
+    const direction_str = std.mem.span(
+        xpc_dictionary_get_string(msg, "direction") orelse return);
+    const command = std.mem.span(
+        xpc_dictionary_get_string(msg, "command") orelse return);
+
+    const p = panes.get(pane_id) orelse {
+        log.warn("open_split: no pane for {s}", .{pane_id});
+        return;
+    };
+    const surface = p.overlay_surface orelse {
+        log.warn("open_split: no surface for {s}", .{pane_id});
+        return;
+    };
+
+    const direction: apprt.action.SplitDirection = if (std.mem.eql(u8, direction_str, "right"))
+        .right
+    else if (std.mem.eql(u8, direction_str, "down"))
+        .down
+    else if (std.mem.eql(u8, direction_str, "left"))
+        .left
+    else if (std.mem.eql(u8, direction_str, "up"))
+        .up
+    else {
+        log.warn("open_split: unknown direction {s}", .{direction_str});
+        return;
+    };
+
+    log.info("open_split pane={s} dir={s} cmd={s}", .{
+        pane_id, direction_str, command,
+    });
+
+    termsurf_surface_split_with_input(surface, direction, command.ptr);
+}
+```
+
+#### 7. GUI: `termsurf_surface_split_with_input` C API (`embedded.zig`)
+
+Add a module-level variable and two new exports:
+
+```zig
+var pending_initial_input: ?[*:0]const u8 = null;
+
+export fn termsurf_surface_split_with_input(
+    ptr: *Surface,
+    direction: apprt.action.SplitDirection,
+    input: [*:0]const u8,
+) void {
+    // Duplicate the input string so it survives until Swift reads it.
+    const len = std.mem.len(input);
+    const buf = alloc.alloc(u8, len + 1) catch return;
+    @memcpy(buf[0..len], input[0..len]);
+    buf[len] = 0;
+    pending_initial_input = @ptrCast(buf.ptr);
+
+    termsurf_surface_split(ptr, direction);
+}
+
+export fn termsurf_surface_get_pending_input() ?[*:0]const u8 {
+    const result = pending_initial_input;
+    pending_initial_input = null;
+    return result;
+}
+
+export fn termsurf_surface_free_pending_input(ptr: [*:0]const u8) void {
+    const len = std.mem.len(ptr);
+    alloc.free(@constCast(ptr[0..len + 1]));
+}
+```
+
+Three exports: `split_with_input` stores the input and calls normal split,
+`get_pending_input` returns and clears it (one-shot), `free_pending_input` frees
+the allocated string.
+
+#### 8. Swift: Read pending initial input (`TermSurf.App.swift`)
+
+In the `newSplit` function (line 828), after creating the `SurfaceConfiguration`
+from inherited config (line 847):
+
+```swift
+var config = SurfaceConfiguration(
+    from: termsurf_surface_inherited_config(surface, TERMSURF_SURFACE_CONTEXT_SPLIT))
+
+// Check for pending initial input from open_split (Issue 690).
+if let pendingInput = termsurf_surface_get_pending_input() {
+    config.initialInput = String(cString: pendingInput) + "\n"
+    termsurf_surface_free_pending_input(pendingInput)
+}
+```
+
+The `\n` triggers execution — the shell receives the command text followed by a
+newline, just as if the user typed it and pressed Enter.
+
+### Why `initialInput` over `command`
+
+Using `initialInput` (typing into the shell) rather than `command` (replacing
+the shell):
+
+- The new pane has a real shell. If `web devtools` exits (user quits DevTools),
+  the pane stays open with a shell prompt.
+- With `command`, the pane would close when `web devtools` exits.
+- `initialInput` is typed after the shell starts, so shell configuration
+  (.zshrc, aliases, etc.) is fully loaded.
+- Ghostty's existing `initialInput` infrastructure buffers input until the PTY
+  is ready, so timing is not a concern.
+
+### Test
+
+1. Open a browser: `web google.com`
+2. Press `:`, type `devtools right`, press Enter
+3. A split should open to the right, running `web devtools`
+4. The DevTools pane should auto-target the google.com tab
+5. Close DevTools pane (`:q`)
+6. `:devtools left` → DevTools reopens without crash (Issue 689 fix)
+7. Close and reopen 3 times → stable
+8. In the DevTools pane, `:devtools right` → red command bar:
+   `"Cannot open DevTools from a DevTools pane"`
+9. `:devtools` (no direction) → defaults to right
+10. `:devtools banana` → red command bar: `"Unknown direction: banana"`
+11. Type any character after seeing error → error clears, bar returns to yellow
+12. `:devtools down` → split below
+13. `:devtools right` when DevTools already open → red command bar with
+    duplicate error from `query_devtools`
