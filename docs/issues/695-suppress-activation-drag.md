@@ -27,13 +27,17 @@ click.
 
 The move in step 3 has no `pane_activation` guard, so it slips through.
 
-## Design
+## Experiment 1: Guard cursorPosCallback with pane_activation
 
-Add a `pane_activation` check at the top of `cursorPosCallback`, after crash
-metadata but before the overlay hit-test. When `pane_activation` is true, return
-early — no mouse-move forwarding to Chromium or terminal content.
+### Hypothesis
+
+If we add a `pane_activation` early-return to `cursorPosCallback`, mouse moves
+during the activation click will be suppressed — preventing accidental drags
+from reaching Chromium or the terminal.
 
 ### Changes
+
+One file, one line.
 
 #### Surface.zig — guard `cursorPosCallback`
 
@@ -44,8 +48,8 @@ After the crash metadata setup (~line 4864), before the overlay hit-test:
 if (self.mouse.pane_activation) return;
 ```
 
-No new flags, no new structs. One line reusing the existing `pane_activation`
-flag.
+No new flags, no new structs. Reuses the existing `pane_activation` flag from
+Issue 670.
 
 ### What stays the same
 
@@ -53,7 +57,7 @@ flag.
 - `overlay_activation` suppression logic (Issue 606) — unchanged
 - All mouse behavior after the activation click+release — unchanged
 
-## Test
+### Test
 
 1. Open two split panes, both with browser overlays
 2. Click the unfocused pane quickly with slight mouse movement
