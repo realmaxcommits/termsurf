@@ -66,3 +66,14 @@ Issue 670.
 4. Second click interacts normally — clicks, drags, selections all work
 5. Terminal panes: same behavior, no accidental terminal text selection on focus
    click
+
+### Result: Success
+
+All tests pass. Clicking an unfocused pane with slight mouse movement no longer
+sends accidental drags to Chromium. Second click interacts normally.
+
+## Conclusion
+
+One-line fix. `cursorPosCallback` now checks `pane_activation` and returns
+early, matching the existing suppression in `mouseButtonCallback` (Issue 670).
+No new flags — reuses the same `pane_activation` bool that already gates clicks.

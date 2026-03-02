@@ -4865,6 +4865,9 @@ pub fn cursorPosCallback(
 
     // log.debug("cursor pos x={} y={} mods={?}", .{ pos.x, pos.y, mods });
 
+    // Suppress drag during activation — same as click suppression (Issue 670).
+    if (self.mouse.pane_activation) return;
+
     // Check if mouse is in a browser overlay (Issue 606).
     if (self.hitTestOverlay(@floatCast(pos.x), @floatCast(pos.y))) |overlay_pos| {
         const xpc = @import("apprt/xpc.zig");
