@@ -54,7 +54,55 @@ The other place `overlay_activation` is set — in `notifyOverlayClicked()` for
 control→browse mode transitions — is correct and unrelated. That path handles
 activating browse mode, not refocusing.
 
-## Test
+## Experiment 1: Remove overlay_activation from paneFocusChanged
+
+### Hypothesis
+
+If we remove the `overlay_activation = true` set in `paneFocusChanged`, the
+double-suppression disappears. `pane_activation` (set in `focusCallback`)
+already handles focus-change click suppression for all cases. The
+`overlay_activation` set in `notifyOverlayClicked()` remains — that covers the
+separate control→browse activation path.
+
+### Changes
+
+One file, one deletion.
+
+#### Surface.zig — remove overlay_activation from paneFocusChanged
+
+Current code (line 3499):
+
+```zig
+pub fn paneFocusChanged(self: *Surface, focused: bool) void {
+    const xpc = @import("apprt/xpc.zig");
+    if (focused) {
+        if (xpc.isOverlayBrowsing(self)) {
+            self.mouse.overlay_activation = true;
+        }
+    }
+    xpc.handlePaneFocusChanged(self, focused);
+}
+```
+
+After:
+
+```zig
+pub fn paneFocusChanged(self: *Surface, focused: bool) void {
+    const xpc = @import("apprt/xpc.zig");
+    xpc.handlePaneFocusChanged(self, focused);
+}
+```
+
+The `if (focused)` block is removed entirely. `pane_activation` (set in
+`focusCallback` on the line above) already suppresses the activation click.
+
+### What stays the same
+
+- `pane_activation` in `focusCallback` (Issue 670) — unchanged
+- `overlay_activation` in `notifyOverlayClicked` (Issue 606) — unchanged
+- `cursorPosCallback` drag suppression (Issue 695) — unchanged
+
+### Test
 
 1. Open two split panes, both with browser overlays in browse mode
 2. Click the unfocused pane → focuses (first click consumed, correct)
