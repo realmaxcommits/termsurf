@@ -10,7 +10,7 @@ No `origin` remote for now. Remote hosting TBD (likely patch set distribution).
 
 ## Current State
 
-- Branch: `146.0.7650.0-issue-684`
+- Branch: `146.0.7650.0-issue-694`
 - Base version: `146.0.7650.0` (tracking Electron's Chromium version)
 
 ## Branch Strategy
@@ -68,6 +68,8 @@ find the most relevant recent branch, create a new branch from it
 | `146.0.7650.0-issue-655` | [Issue 655](issues/655-substack-blank.md)             | Stub BadgeService binder                    |
 | `146.0.7650.0-issue-680` | [Issue 680](issues/680-dark-mode.md)                  | Dark mode via XPC                           |
 | `146.0.7650.0-issue-684` | [Issue 684](issues/684-devtools.md)                   | DevTools via devtools:// URL                |
+| `146.0.7650.0-issue-689-exp3` | [Issue 689](issues/689-close-tab.md)             | Close tab teardown order                    |
+| `146.0.7650.0-issue-694` | [Issue 694](issues/694-tab-id-chromium.md)            | Replace pane_id with tab_id                 |
 
 ## Patches
 

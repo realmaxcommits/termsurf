@@ -122,6 +122,9 @@ var focused_pane: ?[]const u8 = null;
 /// The most recently active browser pane — updated on tab creation and focus (Issue 684).
 var last_browser_pane: ?[]const u8 = null;
 
+/// Reverse lookup: Chromium tab_id → pane UUID string (Issue 694).
+var tab_to_pane: std.AutoHashMap(i64, []const u8) = undefined;
+
 // -- Block types --
 
 /// Block with no captures (gateway, listener handlers).
@@ -146,6 +149,7 @@ pub fn init(core_app: *CoreApp) void {
     peer_to_pane = std.AutoHashMap(usize, []const u8).init(alloc);
     peer_to_profile = std.AutoHashMap(usize, []const u8).init(alloc);
     surface_to_pane = std.AutoHashMap(usize, []const u8).init(alloc);
+    tab_to_pane = std.AutoHashMap(i64, []const u8).init(alloc);
 
     // Connect to the xpc-gateway Mach service.
     // Debug and release builds use separate gateways so they don't interfere (Issue 653).
@@ -208,6 +212,7 @@ pub fn deinit() void {
     peer_to_pane.deinit();
     peer_to_profile.deinit();
     surface_to_pane.deinit();
+    tab_to_pane.deinit();
 
     if (listener != null) {
         xpc_connection_cancel(listener);
@@ -591,14 +596,15 @@ fn handleServerRegister(msg: xpc_object_t) void {
 }
 
 fn handleCAContext(msg: xpc_object_t) void {
-    const pane_id = str(xpc_dictionary_get_string(msg, "pane_id"));
+    const tab_id = xpc_dictionary_get_int64(msg, "tab_id");
     const context_id: u32 = @intCast(xpc_dictionary_get_uint64(msg, "ca_context_id"));
 
-    log.info("ca_context pane={s} context_id={}", .{ pane_id, context_id });
+    log.info("ca_context tab={d} context_id={}", .{ tab_id, context_id });
 
     // Guard against zero context ID (Issue 630, fix G3).
     if (context_id == 0) return;
 
+    const pane_id = tab_to_pane.get(tab_id) orelse return;
     if (panes.get(pane_id)) |p| {
         if (p.overlay_surface) |surface| {
             // Dispatch CALayerHost creation to the main thread (Issue 630,
@@ -627,9 +633,11 @@ fn handleTabReady(msg: xpc_object_t) void {
 
     if (panes.get(pane_id)) |p| {
         p.tab_id = tab_id;
-        if (tab_id > 0) {
+        if (p.inspected_tab_id == 0) {
             last_browser_pane = p.pane_id_key; // heap-allocated, stable
         }
+        // Register reverse lookup (Issue 694).
+        tab_to_pane.put(tab_id, p.pane_id_key) catch {};
     }
 
     log.info("tab_ready pane={s} tab_id={d}", .{ pane_id, tab_id });
@@ -648,9 +656,10 @@ fn handleModeChanged(msg: xpc_object_t) void {
 }
 
 fn handleCursorChanged(msg: xpc_object_t) void {
-    const pane_id = str(xpc_dictionary_get_string(msg, "pane_id"));
+    const tab_id = xpc_dictionary_get_int64(msg, "tab_id");
     const cursor_type = xpc_dictionary_get_int64(msg, "cursor_type");
 
+    const pane_id = tab_to_pane.get(tab_id) orelse return;
     if (panes.get(pane_id)) |p| {
         if (p.overlay_surface) |surface| {
             surface.overlay_cursor_type = cursor_type;
@@ -659,7 +668,8 @@ fn handleCursorChanged(msg: xpc_object_t) void {
 }
 
 fn handleLoadingState(msg: xpc_object_t) void {
-    const pane_id = str(xpc_dictionary_get_string(msg, "pane_id"));
+    const tab_id = xpc_dictionary_get_int64(msg, "tab_id");
+    const pane_id = tab_to_pane.get(tab_id) orelse return;
     const p = panes.get(pane_id) orelse return;
     if (p.web_peer == null) return;
 
@@ -674,7 +684,8 @@ fn handleLoadingState(msg: xpc_object_t) void {
 }
 
 fn handleUrlChanged(msg: xpc_object_t) void {
-    const pane_id = str(xpc_dictionary_get_string(msg, "pane_id"));
+    const tab_id = xpc_dictionary_get_int64(msg, "tab_id");
+    const pane_id = tab_to_pane.get(tab_id) orelse return;
     const p = panes.get(pane_id) orelse return;
     if (p.web_peer == null) return;
 
@@ -687,7 +698,8 @@ fn handleUrlChanged(msg: xpc_object_t) void {
 }
 
 fn handleTitleChanged(msg: xpc_object_t) void {
-    const pane_id = str(xpc_dictionary_get_string(msg, "pane_id"));
+    const tab_id = xpc_dictionary_get_int64(msg, "tab_id");
+    const pane_id = tab_to_pane.get(tab_id) orelse return;
     const p = panes.get(pane_id) orelse return;
     if (p.web_peer == null) return;
 
@@ -714,14 +726,7 @@ fn handleNavigate(msg: xpc_object_t) void {
 
     const fwd = xpc_dictionary_create(null, null, 0);
     xpc_dictionary_set_string(fwd, "action", "navigate");
-
-    // Null-terminate pane_id.
-    var pane_z: [37]u8 = undefined;
-    if (p.pane_id_key.len > 0 and p.pane_id_key.len <= 36) {
-        @memcpy(pane_z[0..p.pane_id_key.len], p.pane_id_key);
-        pane_z[p.pane_id_key.len] = 0;
-        xpc_dictionary_set_string(fwd, "pane_id", @ptrCast(&pane_z));
-    }
+    xpc_dictionary_set_int64(fwd, "tab_id", p.tab_id);
 
     // Null-terminate URL.
     var url_z: [2049]u8 = undefined;
@@ -765,14 +770,7 @@ fn handleSetColorScheme(msg: xpc_object_t) void {
     // Forward to Chromium.
     const fwd = xpc_dictionary_create(null, null, 0);
     xpc_dictionary_set_string(fwd, "action", "set_color_scheme");
-
-    var pane_z: [37]u8 = undefined;
-    if (p.pane_id_key.len > 0 and p.pane_id_key.len <= 36) {
-        @memcpy(pane_z[0..p.pane_id_key.len], p.pane_id_key);
-        pane_z[p.pane_id_key.len] = 0;
-        xpc_dictionary_set_string(fwd, "pane_id", @ptrCast(&pane_z));
-    }
-
+    xpc_dictionary_set_int64(fwd, "tab_id", p.tab_id);
     xpc_dictionary_set_bool(fwd, "dark", dark);
     xpc_connection_send_message(server.peer, fwd);
     log.info("forwarded set_color_scheme pane={s} dark={}", .{ pane_id, dark });
@@ -1041,14 +1039,7 @@ fn sendFocusMessage(pane_id: []const u8, focused: bool) void {
 
     const msg = xpc_dictionary_create(null, null, 0);
     xpc_dictionary_set_string(msg, "action", "focus_changed");
-
-    if (pane_id.len > 0 and pane_id.len <= 36) {
-        var pane_z: [37]u8 = undefined;
-        @memcpy(pane_z[0..pane_id.len], pane_id);
-        pane_z[pane_id.len] = 0;
-        xpc_dictionary_set_string(msg, "pane_id", @ptrCast(&pane_z));
-    }
-
+    xpc_dictionary_set_int64(msg, "tab_id", p.tab_id);
     xpc_dictionary_set_bool(msg, "focused", focused);
     xpc_connection_send_message(server.peer, msg);
     log.info("focus_changed pane={s} focused={}", .{ pane_id, focused });
@@ -1388,14 +1379,7 @@ fn sendCreateDevToolsTab(p: *Pane, server: *Server) void {
 fn sendResize(p: *Pane, server: *Server) void {
     const msg = xpc_dictionary_create(null, null, 0);
     xpc_dictionary_set_string(msg, "action", "resize");
-
-    if (p.pane_id_key.len > 0 and p.pane_id_key.len <= 36) {
-        var pane_z: [37]u8 = undefined;
-        @memcpy(pane_z[0..p.pane_id_key.len], p.pane_id_key);
-        pane_z[p.pane_id_key.len] = 0;
-        xpc_dictionary_set_string(msg, "pane_id", @ptrCast(&pane_z));
-    }
-
+    xpc_dictionary_set_int64(msg, "tab_id", p.tab_id);
     xpc_dictionary_set_uint64(msg, "pixel_width", p.pending_pixel_w);
     xpc_dictionary_set_uint64(msg, "pixel_height", p.pending_pixel_h);
 
@@ -1423,14 +1407,7 @@ pub fn handleColorSchemeChanged(surface: *CoreSurface, dark: bool) void {
 
             const msg = xpc_dictionary_create(null, null, 0);
             xpc_dictionary_set_string(msg, "action", "set_color_scheme");
-
-            var pane_z: [37]u8 = undefined;
-            if (p.pane_id_key.len > 0 and p.pane_id_key.len <= 36) {
-                @memcpy(pane_z[0..p.pane_id_key.len], p.pane_id_key);
-                pane_z[p.pane_id_key.len] = 0;
-                xpc_dictionary_set_string(msg, "pane_id", @ptrCast(&pane_z));
-            }
-
+            xpc_dictionary_set_int64(msg, "tab_id", p.tab_id);
             xpc_dictionary_set_bool(msg, "dark", is_dark);
             xpc_connection_send_message(server.peer, msg);
             log.info("sent set_color_scheme pane={s} dark={}", .{ pane_id, is_dark });
@@ -1465,14 +1442,7 @@ pub fn sendMouseEvent(
 
     const msg = xpc_dictionary_create(null, null, 0);
     xpc_dictionary_set_string(msg, "action", "mouse_event");
-
-    // Pane ID (null-terminated).
-    if (pane_id_key.len > 0 and pane_id_key.len <= 36) {
-        var pane_z: [37]u8 = undefined;
-        @memcpy(pane_z[0..pane_id_key.len], pane_id_key);
-        pane_z[pane_id_key.len] = 0;
-        xpc_dictionary_set_string(msg, "pane_id", @ptrCast(&pane_z));
-    }
+    xpc_dictionary_set_int64(msg, "tab_id", p.tab_id);
 
     // Event type: down or up.
     xpc_dictionary_set_string(msg, "type", switch (action) {
@@ -1531,14 +1501,7 @@ pub fn sendScrollEvent(
 
     const msg = xpc_dictionary_create(null, null, 0);
     xpc_dictionary_set_string(msg, "action", "scroll_event");
-
-    // Pane ID (null-terminated).
-    if (pane_id_key.len > 0 and pane_id_key.len <= 36) {
-        var pane_z: [37]u8 = undefined;
-        @memcpy(pane_z[0..pane_id_key.len], pane_id_key);
-        pane_z[pane_id_key.len] = 0;
-        xpc_dictionary_set_string(msg, "pane_id", @ptrCast(&pane_z));
-    }
+    xpc_dictionary_set_int64(msg, "tab_id", p.tab_id);
 
     // Overlay-relative logical coordinates.
     xpc_dictionary_set_double(msg, "x", overlay_x);
@@ -1578,14 +1541,7 @@ pub fn sendMouseMove(
 
     const msg = xpc_dictionary_create(null, null, 0);
     xpc_dictionary_set_string(msg, "action", "mouse_move");
-
-    // Pane ID (null-terminated).
-    if (pane_id_key.len > 0 and pane_id_key.len <= 36) {
-        var pane_z: [37]u8 = undefined;
-        @memcpy(pane_z[0..pane_id_key.len], pane_id_key);
-        pane_z[pane_id_key.len] = 0;
-        xpc_dictionary_set_string(msg, "pane_id", @ptrCast(&pane_z));
-    }
+    xpc_dictionary_set_int64(msg, "tab_id", p.tab_id);
 
     // Overlay-relative logical coordinates.
     xpc_dictionary_set_double(msg, "x", overlay_x);
@@ -1704,14 +1660,7 @@ pub fn sendKeyEvent(
 
     const msg = xpc_dictionary_create(null, null, 0);
     xpc_dictionary_set_string(msg, "action", "key_event");
-
-    // Pane ID (null-terminated).
-    if (pane_id_key.len > 0 and pane_id_key.len <= 36) {
-        var pane_z: [37]u8 = undefined;
-        @memcpy(pane_z[0..pane_id_key.len], pane_id_key);
-        pane_z[pane_id_key.len] = 0;
-        xpc_dictionary_set_string(msg, "pane_id", @ptrCast(&pane_z));
-    }
+    xpc_dictionary_set_int64(msg, "tab_id", p.tab_id);
 
     // Key action type.
     xpc_dictionary_set_string(msg, "type", switch (action) {
@@ -1856,20 +1805,20 @@ fn handleDisconnect(peer_addr: usize) void {
                 }
             }
 
+            // Clean up tab_to_pane reverse map (Issue 694).
+            if (p.tab_id != 0) {
+                _ = tab_to_pane.remove(p.tab_id);
+            }
+
             // Close the Chromium tab (Issue 689 Exp 5).
             if (p.server) |server| {
                 if (p.tab_sent and server.peer != null) {
                     const close_msg = xpc_dictionary_create(null, null, 0);
                     defer xpc_release(close_msg);
                     xpc_dictionary_set_string(close_msg, "action", "close_tab");
-                    var pane_z: [37]u8 = undefined;
-                    if (pane_id_key.len > 0 and pane_id_key.len <= 36) {
-                        @memcpy(pane_z[0..pane_id_key.len], pane_id_key);
-                        pane_z[pane_id_key.len] = 0;
-                        xpc_dictionary_set_string(close_msg, "pane_id", @ptrCast(&pane_z));
-                        xpc_connection_send_message(server.peer, close_msg);
-                        log.info("sent close_tab pane={s}", .{pane_id_key});
-                    }
+                    xpc_dictionary_set_int64(close_msg, "tab_id", p.tab_id);
+                    xpc_connection_send_message(server.peer, close_msg);
+                    log.info("sent close_tab tab={d}", .{p.tab_id});
                 }
             }
 

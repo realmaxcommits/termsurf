@@ -494,3 +494,30 @@ Same as issue-level test plan:
 9. Different profiles → each profile's Chromium process handles its tabs
 10. Close a pane → tab cleaned up, other panes unaffected
 11. `web status` → shows tab inventory with tab_ids
+
+### Result: Success
+
+All tests pass. Chromium build (13 steps) and GUI build both compile cleanly.
+Runtime testing confirms all browser features work with tab_id routing:
+navigation, mouse/keyboard input, DevTools, multi-pane, resize, focus, cursor
+changes, loading state, URL/title updates, and pane close/cleanup.
+
+Key implementation detail not in the original design: DevTools tabs now also get
+auto-incrementing tab_ids (previously they stayed at 0). This was necessary
+because tab_id is the primary identifier in all outbound messages — multiple
+DevTools tabs at tab_id=0 would be indistinguishable. Browser vs DevTools
+detection changed from `tab_id > 0` to `inspected_tab_id > 0`.
+
+## Conclusion
+
+Experiment 1 succeeded. Chromium no longer depends on `pane_id` for tab routing.
+The only remaining `pane_id` usage is in `create_tab`/`create_devtools_tab`
+(correlation) and `tab_ready` (echo). All other messages use `tab_id` (int64).
+
+The GUI maintains a `tab_to_pane` reverse map to translate Chromium's tab_id
+back to pane_id for internal routing. This cleanly separates concerns: Chromium
+knows tabs, the GUI knows panes, and the boundary is explicit.
+
+This unblocks future multi-tab-per-pane features (tab stacking, split views,
+inline webviews) since Chromium can now have multiple tabs without requiring
+multiple pane_ids.
