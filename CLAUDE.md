@@ -135,7 +135,9 @@ config (Issue 675), URL normalization (Issue 676), website deps and linting
 tracking fix (Issue 685), tab lifecycle — close tabs when panes close (Issue
 689), `web file` subcommand (Issue 692), smart input resolution (Issue 693),
 replace pane_id with tab_id in Chromium (Issue 694), activation drag suppression
-(Issue 695), double click suppression fix (Issue 696).
+(Issue 695), double click suppression fix (Issue 696), Unix socket research
+(Issue 698), protobuf-c build integration (Issue 699), TUI↔GUI socket
+replacement (Issue 700).
 
 ### Source Layout
 
@@ -290,6 +292,10 @@ git subtree pull --prefix=gui upstream main -m "Merge upstream Ghostty into gui"
 - `docs/issues/696-double-click-suppression.md` — Double click suppression fix
 - `docs/issues/697-update-docs.md` — Documentation update
 - `docs/issues/698-unix-sockets.md` — Replace XPC with Unix domain sockets
+- `docs/issues/699-protobuf-build.md` — Build protobuf-c into the GUI
+- `docs/issues/700-tui-gui-sockets.md` — Replace TUI↔GUI XPC with Unix sockets
+- `docs/issues/701-chromium-sockets.md` — Replace GUI↔Chromium XPC with Unix
+  sockets
 - `docs/xdg.md` — XDG directory pattern and conventions
 
 ### Early Prototypes (ts1–ts5)
