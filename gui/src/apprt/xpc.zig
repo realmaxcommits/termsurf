@@ -1,21 +1,21 @@
-// XPC communication for TermSurf Ghost (Issues 601–604).
+// IPC communication for TermSurf (Issues 601–604, 698–701).
 //
-// All XPC event handlers run on a serial dispatch queue (`xpc_queue`).
-// No mutexes needed for XPC state — serialization is guaranteed by GCD.
+// All IPC event handlers run on a serial dispatch queue (`ipc_queue`).
+// No mutexes needed for IPC state — serialization is guaranteed by GCD.
 // The renderer's `draw_mutex` is separate and protects renderer state.
 //
-// Manual extern declarations instead of @cImport because the XPC header uses
-// C block types that Zig's translate-c may not handle.
+// Socket adapters build XPC dictionaries to reuse existing handleMessage()
+// dispatch. Manual extern declarations for XPC dict API because @cImport
+// may not handle the XPC header's C block types.
 
 const std = @import("std");
 const builtin = @import("builtin");
-const objc = @import("objc");
 const CoreApp = @import("../App.zig");
 const CoreSurface = @import("../Surface.zig");
 const input = @import("../input.zig");
 
 const internal_os = @import("../os/main.zig");
-const log = std.log.scoped(.xpc);
+const log = std.log.scoped(.ipc);
 const alloc = std.heap.page_allocator;
 
 // Protobuf-c (Issue 699). Import generated types to force linking.
@@ -27,17 +27,8 @@ const pb = @cImport({
 
 const xpc_object_t = ?*anyopaque;
 
-extern "c" fn xpc_connection_create_mach_service(name: [*:0]const u8, targetq: xpc_object_t, flags: u64) xpc_object_t;
-extern "c" fn xpc_connection_set_event_handler(connection: xpc_object_t, handler: xpc_object_t) void;
-extern "c" fn xpc_connection_resume(connection: xpc_object_t) void;
-extern "c" fn xpc_connection_cancel(connection: xpc_object_t) void;
-extern "c" fn xpc_connection_send_message(connection: xpc_object_t, message: xpc_object_t) void;
-extern "c" fn xpc_connection_send_message_with_reply_sync(connection: xpc_object_t, message: xpc_object_t) xpc_object_t;
-extern "c" fn xpc_connection_create(name: ?[*:0]const u8, targetq: xpc_object_t) xpc_object_t;
-extern "c" fn xpc_endpoint_create(connection: xpc_object_t) xpc_object_t;
 extern "c" fn xpc_dictionary_create(keys: xpc_object_t, values: xpc_object_t, count: usize) xpc_object_t;
 extern "c" fn xpc_dictionary_set_string(xdict: xpc_object_t, key: [*:0]const u8, string: [*:0]const u8) void;
-extern "c" fn xpc_dictionary_set_value(xdict: xpc_object_t, key: [*:0]const u8, value: xpc_object_t) void;
 extern "c" fn xpc_dictionary_get_string(xdict: xpc_object_t, key: [*:0]const u8) ?[*:0]const u8;
 extern "c" fn xpc_dictionary_get_uint64(xdict: xpc_object_t, key: [*:0]const u8) u64;
 extern "c" fn xpc_dictionary_get_bool(xdict: xpc_object_t, key: [*:0]const u8) bool;
@@ -46,25 +37,12 @@ extern "c" fn xpc_dictionary_set_int64(xdict: xpc_object_t, key: [*:0]const u8, 
 extern "c" fn xpc_dictionary_get_int64(xdict: xpc_object_t, key: [*:0]const u8) i64;
 extern "c" fn xpc_dictionary_set_double(xdict: xpc_object_t, key: [*:0]const u8, value: f64) void;
 extern "c" fn xpc_dictionary_set_bool(xdict: xpc_object_t, key: [*:0]const u8, value: bool) void;
-extern "c" fn xpc_dictionary_get_remote_connection(msg: xpc_object_t) xpc_object_t;
-extern "c" fn xpc_dictionary_create_reply(original: xpc_object_t) xpc_object_t;
-extern "c" fn xpc_get_type(object: xpc_object_t) xpc_object_t;
-extern "c" fn xpc_retain(object: xpc_object_t) xpc_object_t;
-extern "c" fn xpc_release(object: xpc_object_t) void;
-
-// XPC type/error constants (compared by address identity).
-extern const _xpc_type_connection: anyopaque;
-extern const _xpc_type_error: anyopaque;
-extern const _xpc_type_dictionary: anyopaque;
-extern const _xpc_error_connection_invalid: anyopaque;
 
 // -- Dispatch queue C API --
 
 extern "c" fn dispatch_queue_create(label: [*:0]const u8, attr: ?*anyopaque) ?*anyopaque;
 extern "c" fn dispatch_async_f(queue: ?*anyopaque, context: ?*anyopaque, work: *const fn (?*anyopaque) callconv(.c) void) void;
 extern const _dispatch_main_q: anyopaque;
-extern "c" fn xpc_connection_set_target_queue(connection: xpc_object_t, queue: ?*anyopaque) void;
-
 // -- Dispatch source C API (Issue 700) --
 
 extern "c" fn dispatch_source_create(source_type: *const anyopaque, handle: usize, mask: usize, queue: ?*anyopaque) ?*anyopaque;
@@ -77,16 +55,10 @@ extern const _dispatch_source_type_read: anyopaque;
 // Embedded C API exports (Issue 690).
 extern "c" fn termsurf_surface_split_with_input(ptr: *anyopaque, direction: c_int, input_ptr: [*:0]const u8) void;
 
-/// Cast a const extern symbol address to xpc_object_t for identity comparison.
-inline fn xpcPtr(ptr: *const anyopaque) xpc_object_t {
-    return @constCast(ptr);
-}
-
 // -- Data structures --
 
-/// Per-pane state. No mutex — all access is on the serial `xpc_queue`.
+/// Per-pane state. No mutex — all access is on the serial `ipc_queue`.
 const Pane = struct {
-    web_peer: xpc_object_t = null,
     overlay_surface: ?*CoreSurface = null,
     server: ?*Server = null,
     pane_id_key: []const u8 = "", // heap-allocated, also the key in `panes`
@@ -104,8 +76,7 @@ const Pane = struct {
 /// Per-profile server state. Shared by all panes on the same profile.
 const Server = struct {
     process: ?std.process.Child = null,
-    peer: xpc_object_t = null,
-    fd: std.posix.fd_t = -1, // Issue 701: socket fd (coexists with peer during transition).
+    fd: std.posix.fd_t = -1, // Issue 701: socket fd.
     profile_key: []const u8 = "", // heap-allocated, also the key in `servers`
     pane_count: usize = 0,
 };
@@ -113,21 +84,13 @@ const Server = struct {
 // -- Module state --
 
 var app: *CoreApp = undefined;
-var gateway: xpc_object_t = null;
-var listener: xpc_object_t = null;
-var xpc_queue: ?*anyopaque = null;
+var ipc_queue: ?*anyopaque = null;
 
 /// Active panes, keyed by pane UUID string.
 var panes: std.StringHashMap(*Pane) = undefined;
 
 /// Active servers, keyed by profile name.
 var servers: std.StringHashMap(*Server) = undefined;
-
-/// Reverse lookup: connection address (usize) → pane UUID string.
-var peer_to_pane: std.AutoHashMap(usize, []const u8) = undefined;
-
-/// Reverse lookup: connection address (usize) → profile name.
-var peer_to_profile: std.AutoHashMap(usize, []const u8) = undefined;
 
 /// Reverse lookup: CoreSurface pointer address → pane UUID string (Issue 606).
 var surface_to_pane: std.AutoHashMap(usize, []const u8) = undefined;
@@ -162,61 +125,21 @@ var sock_source: ?*anyopaque = null;
 var sock_path_buf: [256]u8 = undefined;
 var sock_path_len: usize = 0;
 
-// -- Block types --
-
-/// Block with no captures (gateway, listener handlers).
-const EventBlock = objc.Block(struct {}, .{xpc_object_t}, void);
-
-/// Block with captured peer address (per-peer handler for disconnect ID).
-const PeerContext = struct { peer_addr: usize };
-const PeerBlock = objc.Block(PeerContext, .{xpc_object_t}, void);
-
 // -- Public API --
 
 pub fn init(core_app: *CoreApp) void {
     app = core_app;
-    log.info("connecting to xpc-gateway", .{});
 
-    // Serial dispatch queue — all XPC handlers run here, no mutexes needed.
-    xpc_queue = dispatch_queue_create("com.termsurf.ghost.xpc", null);
+    // Serial dispatch queue — all IPC handlers run here, no mutexes needed.
+    ipc_queue = dispatch_queue_create("com.termsurf.ghost.ipc", null);
 
     // Initialize maps.
     panes = std.StringHashMap(*Pane).init(alloc);
     servers = std.StringHashMap(*Server).init(alloc);
-    peer_to_pane = std.AutoHashMap(usize, []const u8).init(alloc);
-    peer_to_profile = std.AutoHashMap(usize, []const u8).init(alloc);
     surface_to_pane = std.AutoHashMap(usize, []const u8).init(alloc);
     tab_to_pane = std.AutoHashMap(i64, []const u8).init(alloc);
 
-    // Connect to the xpc-gateway Mach service.
-    // Debug and release builds use separate gateways so they don't interfere (Issue 653).
-    const xpc_service_name = if (comptime builtin.mode == .Debug)
-        "com.termsurf.debug.xpc-gateway"
-    else
-        "com.termsurf.xpc-gateway";
-    gateway = xpc_connection_create_mach_service(xpc_service_name, null, 0);
-    xpc_connection_set_target_queue(gateway, xpc_queue);
-    var gw_block = EventBlock.init(.{}, &gatewayHandler);
-    xpc_connection_set_event_handler(gateway, @ptrCast(&gw_block));
-    xpc_connection_resume(gateway);
-
-    // Create anonymous listener for direct peer connections.
-    listener = xpc_connection_create(null, null);
-    xpc_connection_set_target_queue(listener, xpc_queue);
-    var listener_block = EventBlock.init(.{}, &listenerHandler);
-    xpc_connection_set_event_handler(listener, @ptrCast(&listener_block));
-    xpc_connection_resume(listener);
-
-    // Register endpoint with the gateway.
-    const endpoint = xpc_endpoint_create(listener);
-    const msg = xpc_dictionary_create(null, null, 0);
-    xpc_dictionary_set_string(msg, "action", "register_app");
-    xpc_dictionary_set_value(msg, "endpoint", endpoint);
-    xpc_connection_send_message(gateway, msg);
-
-    log.info("registered endpoint with xpc-gateway (serial queue)", .{});
-
-    // Unix socket listener for TUI connections (Issue 700).
+    // Unix socket listener for TUI/Chromium connections (Issue 700/701).
     initSocket();
 
     // Tell child processes (the `web` TUI) where to find our socket.
@@ -224,11 +147,7 @@ pub fn init(core_app: *CoreApp) void {
         _ = internal_os.setenv("TERMSURF_SOCKET", sock_path_buf[0..sock_path_len :0]);
     }
 
-    // Debug builds set TERMSURF_XPC_SERVICE so child terminal sessions
-    // (and the `web` TUI) know which gateway to connect to (Issue 653).
-    if (comptime builtin.mode == .Debug) {
-        _ = internal_os.setenv("TERMSURF_XPC_SERVICE", "com.termsurf.debug.xpc-gateway");
-    }
+    log.info("ipc initialized", .{});
 }
 
 pub fn deinit() void {
@@ -237,7 +156,6 @@ pub fn deinit() void {
     while (pane_it.next()) |entry| {
         const p = entry.value_ptr.*;
         if (p.overlay_surface) |surface| surface.clearOverlay();
-        if (p.web_peer) |peer| xpc_release(peer);
         freeKey(p.pane_id_key);
         alloc.destroy(p);
     }
@@ -248,14 +166,11 @@ pub fn deinit() void {
     while (server_it.next()) |entry| {
         const s = entry.value_ptr.*;
         killServer(s);
-        if (s.peer) |peer| xpc_release(peer);
         freeKey(s.profile_key);
         alloc.destroy(s);
     }
     servers.deinit();
 
-    peer_to_pane.deinit();
-    peer_to_profile.deinit();
     surface_to_pane.deinit();
     tab_to_pane.deinit();
 
@@ -278,48 +193,10 @@ pub fn deinit() void {
         sock_path_len = 0;
     }
 
-    if (listener != null) {
-        xpc_connection_cancel(listener);
-        listener = null;
-    }
-    if (gateway != null) {
-        xpc_connection_cancel(gateway);
-        gateway = null;
-    }
-    log.info("xpc connections closed", .{});
+    log.info("ipc connections closed", .{});
 }
 
 // -- Event handlers --
-
-fn gatewayHandler(_: *const EventBlock.Context, event: xpc_object_t) callconv(.c) void {
-    if (xpc_get_type(event) == xpcPtr(&_xpc_type_error)) {
-        log.err("gateway connection error", .{});
-    }
-}
-
-fn listenerHandler(_: *const EventBlock.Context, event: xpc_object_t) callconv(.c) void {
-    if (xpc_get_type(event) == xpcPtr(&_xpc_type_connection)) {
-        log.info("peer connected", .{});
-
-        // Each peer gets a block that captures its connection address,
-        // so handleDisconnect can identify which peer disconnected.
-        const peer_addr = @intFromPtr(event.?);
-        var peer_block = PeerBlock.init(.{ .peer_addr = peer_addr }, &peerHandler);
-        xpc_connection_set_event_handler(event, @ptrCast(&peer_block));
-        xpc_connection_set_target_queue(event, xpc_queue);
-        xpc_connection_resume(event);
-    }
-}
-
-fn peerHandler(ctx: *const PeerBlock.Context, event: xpc_object_t) callconv(.c) void {
-    if (xpc_get_type(event) == xpcPtr(&_xpc_type_dictionary)) {
-        handleMessage(event);
-    } else if (xpc_get_type(event) == xpcPtr(&_xpc_type_error)) {
-        if (event == xpcPtr(&_xpc_error_connection_invalid)) {
-            handleDisconnect(ctx.peer_addr);
-        }
-    }
-}
 
 fn handleMessage(msg: xpc_object_t) void {
     const action = xpc_dictionary_get_string(msg, "action") orelse {
@@ -332,8 +209,6 @@ fn handleMessage(msg: xpc_object_t) void {
         handleSetOverlay(msg);
     } else if (std.mem.eql(u8, action_str, "set_devtools_overlay")) {
         handleSetDevtoolsOverlay(msg);
-    } else if (std.mem.eql(u8, action_str, "server_register")) {
-        handleServerRegister(msg);
     } else if (std.mem.eql(u8, action_str, "tab_ready")) {
         handleTabReady(msg);
     } else if (std.mem.eql(u8, action_str, "mode_changed")) {
@@ -352,14 +227,6 @@ fn handleMessage(msg: xpc_object_t) void {
         handleNavigate(msg);
     } else if (std.mem.eql(u8, action_str, "set_color_scheme")) {
         handleSetColorScheme(msg);
-    } else if (std.mem.eql(u8, action_str, "hello")) {
-        handleHello(msg);
-    } else if (std.mem.eql(u8, action_str, "query_last")) {
-        handleQueryLast(msg);
-    } else if (std.mem.eql(u8, action_str, "query_devtools")) {
-        handleQueryDevtools(msg);
-    } else if (std.mem.eql(u8, action_str, "query_tabs")) {
-        handleQueryTabs(msg);
     } else if (std.mem.eql(u8, action_str, "open_split")) {
         handleOpenSplit(msg);
     } else {
@@ -420,7 +287,7 @@ fn handleSetOverlay(msg: xpc_object_t) void {
         // Send resize if tab is active and dimensions changed.
         if (p.tab_sent) {
             if (p.server) |server| {
-                if ((server.peer != null or server.fd >= 0) and (new_pixel_w != old_w or new_pixel_h != old_h)) {
+                if (server.fd >= 0 and (new_pixel_w != old_w or new_pixel_h != old_h)) {
                     sendResize(p, server);
                 }
             }
@@ -459,13 +326,6 @@ fn handleSetOverlay(msg: xpc_object_t) void {
             p.pending_url_len = url.len;
         }
 
-        // Retain and register web peer for disconnect identification.
-        const conn = xpc_dictionary_get_remote_connection(msg);
-        if (conn != null) {
-            p.web_peer = xpc_retain(conn);
-            peer_to_pane.put(@intFromPtr(conn.?), pane_id_key) catch {};
-        }
-
         log.info("new pane={s} pixel={d}x{d}", .{
             pane_id, new_pixel_w, new_pixel_h,
         });
@@ -475,7 +335,7 @@ fn handleSetOverlay(msg: xpc_object_t) void {
             p.server = server;
             server.pane_count += 1;
 
-            if (server.peer != null or server.fd >= 0) {
+            if (server.fd >= 0) {
                 // Server already registered — send create_tab now.
                 sendCreateTab(p, server);
                 if (p.browsing) {
@@ -528,7 +388,7 @@ fn handleSetDevtoolsOverlay(msg: xpc_object_t) void {
 
         if (p.tab_sent) {
             if (p.server) |server| {
-                if ((server.peer != null or server.fd >= 0) and (new_pixel_w != old_w or new_pixel_h != old_h)) {
+                if (server.fd >= 0 and (new_pixel_w != old_w or new_pixel_h != old_h)) {
                     sendResize(p, server);
                 }
             }
@@ -559,12 +419,6 @@ fn handleSetDevtoolsOverlay(msg: xpc_object_t) void {
         p.inspected_tab_id = inspected_tab_id;
 
         surface_to_pane.put(@intFromPtr(surface.core()), pane_id_key) catch {};
-
-        const conn = xpc_dictionary_get_remote_connection(msg);
-        if (conn != null) {
-            p.web_peer = xpc_retain(conn);
-            peer_to_pane.put(@intFromPtr(conn.?), pane_id_key) catch {};
-        }
 
         // Auto-target: resolve inspected_tab_id from last focused browser pane (Issue 684 Exp 3).
         if (p.inspected_tab_id == 0) {
@@ -602,7 +456,7 @@ fn handleSetDevtoolsOverlay(msg: xpc_object_t) void {
                 p.server = target_server;
                 target_server.pane_count += 1;
 
-                if (target_server.peer != null or target_server.fd >= 0) {
+                if (target_server.fd >= 0) {
                     sendCreateDevToolsTab(p, target_server);
                     if (p.browsing) {
                         sendFocusChanged(p.pane_id_key, true);
@@ -613,47 +467,11 @@ fn handleSetDevtoolsOverlay(msg: xpc_object_t) void {
             p.server = server;
             server.pane_count += 1;
 
-            if (server.peer != null or server.fd >= 0) {
+            if (server.fd >= 0) {
                 sendCreateDevToolsTab(p, server);
                 if (p.browsing) {
                     sendFocusChanged(p.pane_id_key, true);
                 }
-            }
-        }
-    }
-}
-
-fn handleServerRegister(msg: xpc_object_t) void {
-    const profile = str(xpc_dictionary_get_string(msg, "profile"));
-    log.info("server_register profile={s}", .{profile});
-
-    const server = servers.get(profile) orelse {
-        log.warn("server_register for unknown profile={s}", .{profile});
-        return;
-    };
-
-    // Retain and store server peer.
-    const conn = xpc_dictionary_get_remote_connection(msg);
-    if (conn != null) {
-        server.peer = xpc_retain(conn);
-        peer_to_profile.put(@intFromPtr(conn.?), server.profile_key) catch {};
-    }
-
-    // Flush all pending tabs for this server.
-    var it = panes.iterator();
-    while (it.next()) |entry| {
-        const p = entry.value_ptr.*;
-        if (p.server == server and !p.tab_sent) {
-            if (p.inspected_tab_id > 0) {
-                // DevTools pane (Issue 684).
-                sendCreateDevToolsTab(p, server);
-            } else if (p.pending_url_len > 0) {
-                sendCreateTab(p, server);
-            } else {
-                continue;
-            }
-            if (p.browsing) {
-                sendFocusChanged(p.pane_id_key, true);
             }
         }
     }
@@ -735,97 +553,56 @@ fn handleLoadingState(msg: xpc_object_t) void {
     const tab_id = xpc_dictionary_get_int64(msg, "tab_id");
     const pane_id = tab_to_pane.get(tab_id) orelse return;
     const p = panes.get(pane_id) orelse return;
+    if (p.web_fd < 0) return;
 
-    // Socket path (Issue 700).
-    if (p.web_fd >= 0) {
-        const state_str = xpc_dictionary_get_string(msg, "state") orelse return;
-        const progress = xpc_dictionary_get_uint64(msg, "progress");
-        var ls: pb.Termsurf__LoadingState = undefined;
-        pb.termsurf__loading_state__init(&ls);
-        ls.tab_id = tab_id;
-        ls.state = @ptrCast(@constCast(state_str));
-        ls.progress = progress;
-        var wrapper: pb.Termsurf__TermSurfMessage = undefined;
-        pb.termsurf__term_surf_message__init(&wrapper);
-        wrapper.msg_case = @intCast(16); // LOADING_STATE
-        wrapper.unnamed_0.loading_state = &ls;
-        sendProtobuf(p.web_fd, &wrapper);
-        return;
-    }
-
-    // XPC path.
-    if (p.web_peer == null) return;
-
-    const state = xpc_dictionary_get_string(msg, "state") orelse return;
+    const state_str = xpc_dictionary_get_string(msg, "state") orelse return;
     const progress = xpc_dictionary_get_uint64(msg, "progress");
-
-    const fwd = xpc_dictionary_create(null, null, 0);
-    xpc_dictionary_set_string(fwd, "action", "loading_state");
-    xpc_dictionary_set_string(fwd, "state", state);
-    xpc_dictionary_set_uint64(fwd, "progress", progress);
-    xpc_connection_send_message(p.web_peer, fwd);
+    var ls: pb.Termsurf__LoadingState = undefined;
+    pb.termsurf__loading_state__init(&ls);
+    ls.tab_id = tab_id;
+    ls.state = @ptrCast(@constCast(state_str));
+    ls.progress = progress;
+    var wrapper: pb.Termsurf__TermSurfMessage = undefined;
+    pb.termsurf__term_surf_message__init(&wrapper);
+    wrapper.msg_case = @intCast(16); // LOADING_STATE
+    wrapper.unnamed_0.loading_state = &ls;
+    sendProtobuf(p.web_fd, &wrapper);
 }
 
 fn handleUrlChanged(msg: xpc_object_t) void {
     const tab_id = xpc_dictionary_get_int64(msg, "tab_id");
     const pane_id = tab_to_pane.get(tab_id) orelse return;
     const p = panes.get(pane_id) orelse return;
+    if (p.web_fd < 0) return;
 
-    // Socket path (Issue 700).
-    if (p.web_fd >= 0) {
-        const url_str = xpc_dictionary_get_string(msg, "url") orelse return;
-        var uc: pb.Termsurf__UrlChanged = undefined;
-        pb.termsurf__url_changed__init(&uc);
-        uc.tab_id = tab_id;
-        uc.url = @ptrCast(@constCast(url_str));
-        var wrapper: pb.Termsurf__TermSurfMessage = undefined;
-        pb.termsurf__term_surf_message__init(&wrapper);
-        wrapper.msg_case = @intCast(15); // URL_CHANGED
-        wrapper.unnamed_0.url_changed = &uc;
-        sendProtobuf(p.web_fd, &wrapper);
-        return;
-    }
-
-    // XPC path.
-    if (p.web_peer == null) return;
-
-    const url = xpc_dictionary_get_string(msg, "url") orelse return;
-
-    const fwd = xpc_dictionary_create(null, null, 0);
-    xpc_dictionary_set_string(fwd, "action", "url_changed");
-    xpc_dictionary_set_string(fwd, "url", url);
-    xpc_connection_send_message(p.web_peer, fwd);
+    const url_str = xpc_dictionary_get_string(msg, "url") orelse return;
+    var uc: pb.Termsurf__UrlChanged = undefined;
+    pb.termsurf__url_changed__init(&uc);
+    uc.tab_id = tab_id;
+    uc.url = @ptrCast(@constCast(url_str));
+    var wrapper: pb.Termsurf__TermSurfMessage = undefined;
+    pb.termsurf__term_surf_message__init(&wrapper);
+    wrapper.msg_case = @intCast(15); // URL_CHANGED
+    wrapper.unnamed_0.url_changed = &uc;
+    sendProtobuf(p.web_fd, &wrapper);
 }
 
 fn handleTitleChanged(msg: xpc_object_t) void {
     const tab_id = xpc_dictionary_get_int64(msg, "tab_id");
     const pane_id = tab_to_pane.get(tab_id) orelse return;
     const p = panes.get(pane_id) orelse return;
+    if (p.web_fd < 0) return;
 
-    // Socket path (Issue 700).
-    if (p.web_fd >= 0) {
-        const title_str = xpc_dictionary_get_string(msg, "title") orelse return;
-        var tc: pb.Termsurf__TitleChanged = undefined;
-        pb.termsurf__title_changed__init(&tc);
-        tc.tab_id = tab_id;
-        tc.title = @ptrCast(@constCast(title_str));
-        var wrapper: pb.Termsurf__TermSurfMessage = undefined;
-        pb.termsurf__term_surf_message__init(&wrapper);
-        wrapper.msg_case = @intCast(17); // TITLE_CHANGED
-        wrapper.unnamed_0.title_changed = &tc;
-        sendProtobuf(p.web_fd, &wrapper);
-        return;
-    }
-
-    // XPC path.
-    if (p.web_peer == null) return;
-
-    const title = xpc_dictionary_get_string(msg, "title") orelse return;
-
-    const fwd = xpc_dictionary_create(null, null, 0);
-    xpc_dictionary_set_string(fwd, "action", "title_changed");
-    xpc_dictionary_set_string(fwd, "title", title);
-    xpc_connection_send_message(p.web_peer, fwd);
+    const title_str = xpc_dictionary_get_string(msg, "title") orelse return;
+    var tc: pb.Termsurf__TitleChanged = undefined;
+    pb.termsurf__title_changed__init(&tc);
+    tc.tab_id = tab_id;
+    tc.title = @ptrCast(@constCast(title_str));
+    var wrapper: pb.Termsurf__TermSurfMessage = undefined;
+    pb.termsurf__term_surf_message__init(&wrapper);
+    wrapper.msg_case = @intCast(17); // TITLE_CHANGED
+    wrapper.unnamed_0.title_changed = &tc;
+    sendProtobuf(p.web_fd, &wrapper);
 }
 
 fn handleNavigate(msg: xpc_object_t) void {
@@ -839,39 +616,24 @@ fn handleNavigate(msg: xpc_object_t) void {
         return;
     };
     const server = p.server orelse return;
-    if (server.peer == null and server.fd < 0) return;
+    if (server.fd < 0) return;
 
-    if (server.fd >= 0) {
-        var nav: pb.Termsurf__Navigate = undefined;
-        pb.termsurf__navigate__init(&nav);
-        nav.tab_id = p.tab_id;
+    var nav: pb.Termsurf__Navigate = undefined;
+    pb.termsurf__navigate__init(&nav);
+    nav.tab_id = p.tab_id;
 
-        var url_z: [2049]u8 = undefined;
-        if (url.len > 0 and url.len < url_z.len) {
-            @memcpy(url_z[0..url.len], url);
-            url_z[url.len] = 0;
-            nav.url = @ptrCast(&url_z);
-        }
-
-        var wrapper: pb.Termsurf__TermSurfMessage = undefined;
-        pb.termsurf__term_surf_message__init(&wrapper);
-        wrapper.msg_case = 5; // NAVIGATE
-        wrapper.unnamed_0.navigate = &nav;
-        sendProtobuf(server.fd, &wrapper);
-    } else {
-        const fwd = xpc_dictionary_create(null, null, 0);
-        xpc_dictionary_set_string(fwd, "action", "navigate");
-        xpc_dictionary_set_int64(fwd, "tab_id", p.tab_id);
-
-        var url_z: [2049]u8 = undefined;
-        if (url.len > 0 and url.len < url_z.len) {
-            @memcpy(url_z[0..url.len], url);
-            url_z[url.len] = 0;
-            xpc_dictionary_set_string(fwd, "url", @ptrCast(&url_z));
-        }
-
-        xpc_connection_send_message(server.peer, fwd);
+    var url_z: [2049]u8 = undefined;
+    if (url.len > 0 and url.len < url_z.len) {
+        @memcpy(url_z[0..url.len], url);
+        url_z[url.len] = 0;
+        nav.url = @ptrCast(&url_z);
     }
+
+    var wrapper: pb.Termsurf__TermSurfMessage = undefined;
+    pb.termsurf__term_surf_message__init(&wrapper);
+    wrapper.msg_case = 5; // NAVIGATE
+    wrapper.unnamed_0.navigate = &nav;
+    sendProtobuf(server.fd, &wrapper);
 }
 
 fn handleSetColorScheme(msg: xpc_object_t) void {
@@ -886,7 +648,7 @@ fn handleSetColorScheme(msg: xpc_object_t) void {
     };
     if (!p.tab_sent) return;
     const server = p.server orelse return;
-    if (server.peer == null and server.fd < 0) return;
+    if (server.fd < 0) return;
 
     // Resolve scheme to dark bool.
     const dark: bool = if (std.mem.eql(u8, scheme, "dark"))
@@ -902,250 +664,17 @@ fn handleSetColorScheme(msg: xpc_object_t) void {
     else
         return; // unknown scheme, ignore
 
-    // Forward to Chromium.
-    if (server.fd >= 0) {
-        var sc: pb.Termsurf__SetColorScheme = undefined;
-        pb.termsurf__set_color_scheme__init(&sc);
-        sc.tab_id = p.tab_id;
-        sc.dark = @intFromBool(dark);
+    var sc: pb.Termsurf__SetColorScheme = undefined;
+    pb.termsurf__set_color_scheme__init(&sc);
+    sc.tab_id = p.tab_id;
+    sc.dark = @intFromBool(dark);
 
-        var wrapper: pb.Termsurf__TermSurfMessage = undefined;
-        pb.termsurf__term_surf_message__init(&wrapper);
-        wrapper.msg_case = 11; // SET_COLOR_SCHEME
-        wrapper.unnamed_0.set_color_scheme = &sc;
-        sendProtobuf(server.fd, &wrapper);
-    } else {
-        const fwd = xpc_dictionary_create(null, null, 0);
-        xpc_dictionary_set_string(fwd, "action", "set_color_scheme");
-        xpc_dictionary_set_int64(fwd, "tab_id", p.tab_id);
-        xpc_dictionary_set_bool(fwd, "dark", dark);
-        xpc_connection_send_message(server.peer, fwd);
-    }
+    var wrapper: pb.Termsurf__TermSurfMessage = undefined;
+    pb.termsurf__term_surf_message__init(&wrapper);
+    wrapper.msg_case = 11; // SET_COLOR_SCHEME
+    wrapper.unnamed_0.set_color_scheme = &sc;
+    sendProtobuf(server.fd, &wrapper);
     log.info("forwarded set_color_scheme pane={s} dark={}", .{ pane_id, dark });
-}
-
-fn handleHello(msg: xpc_object_t) void {
-    const pane_id = str(xpc_dictionary_get_string(msg, "pane_id"));
-    log.info("hello pane={s}", .{pane_id});
-
-    const reply = xpc_dictionary_create_reply(msg);
-    if (reply == null) return;
-
-    // Look up surface to read its config.
-    if (app.findSurfaceByPaneId(pane_id)) |surface| {
-        const homepage = surface.core().config.homepage;
-        xpc_dictionary_set_string(reply, "homepage", homepage);
-    }
-
-    const conn = xpc_dictionary_get_remote_connection(msg);
-    if (conn != null) {
-        xpc_connection_send_message(conn, reply);
-    }
-}
-
-fn handleQueryLast(msg: xpc_object_t) void {
-    const profile_filter = str(xpc_dictionary_get_string(msg, "profile"));
-    log.info("query_last profile_filter={s}", .{profile_filter});
-
-    const reply = xpc_dictionary_create_reply(msg);
-    if (reply == null) return;
-
-    // If a profile filter is given, check that last_browser_pane matches.
-    // Otherwise use the global last_browser_pane.
-    var target_pane: ?*Pane = null;
-    var target_pane_id: []const u8 = "";
-
-    if (last_browser_pane) |lpid| {
-        if (panes.get(lpid)) |p| {
-            if (profile_filter.len > 0 and !std.mem.eql(u8, profile_filter, "(null)")) {
-                // Profile-filtered: check the pane's server matches.
-                if (p.server) |s| {
-                    if (std.mem.eql(u8, s.profile_key, profile_filter)) {
-                        target_pane = p;
-                        target_pane_id = lpid;
-                    }
-                }
-            } else {
-                target_pane = p;
-                target_pane_id = lpid;
-            }
-        }
-    }
-
-    if (target_pane) |p| {
-        // Null-terminate the pane_id and profile for XPC string fields.
-        var pane_id_z: [128]u8 = undefined;
-        if (target_pane_id.len < pane_id_z.len) {
-            @memcpy(pane_id_z[0..target_pane_id.len], target_pane_id);
-            pane_id_z[target_pane_id.len] = 0;
-            xpc_dictionary_set_string(reply, "pane_id", @ptrCast(&pane_id_z));
-        }
-        xpc_dictionary_set_int64(reply, "tab_id", p.tab_id);
-        if (p.server) |s| {
-            var prof_z: [128]u8 = undefined;
-            if (s.profile_key.len < prof_z.len) {
-                @memcpy(prof_z[0..s.profile_key.len], s.profile_key);
-                prof_z[s.profile_key.len] = 0;
-                xpc_dictionary_set_string(reply, "profile", @ptrCast(&prof_z));
-            }
-        }
-        log.info("query_last result: pane={s} tab_id={d}", .{ target_pane_id, p.tab_id });
-    } else {
-        log.info("query_last result: no matching browser pane", .{});
-    }
-
-    const conn = xpc_dictionary_get_remote_connection(msg);
-    if (conn != null) {
-        xpc_connection_send_message(conn, reply);
-    }
-}
-
-/// Synchronous query: validate a DevTools request before the TUI launches (Issue 687).
-/// Resolves auto-target, checks for duplicate DevTools on the same tab, and
-/// replies with the resolved tab_id or an error string.
-fn handleQueryDevtools(msg: xpc_object_t) void {
-    const inspected_tab_id = xpc_dictionary_get_int64(msg, "inspected_tab_id");
-    const profile_str = str(xpc_dictionary_get_string(msg, "profile"));
-    log.info("query_devtools inspected_tab_id={d} profile={s}", .{ inspected_tab_id, profile_str });
-
-    const reply = xpc_dictionary_create_reply(msg);
-    if (reply == null) return;
-
-    var resolved_tab_id: i64 = inspected_tab_id;
-
-    // Resolve auto-target (inspected_tab_id == 0).
-    if (resolved_tab_id == 0) {
-        const target_pane_id = last_browser_pane orelse {
-            xpc_dictionary_set_string(reply, "error", "No browser tab found");
-            const conn = xpc_dictionary_get_remote_connection(msg);
-            if (conn != null) xpc_connection_send_message(conn, reply);
-            log.info("query_devtools: no last_browser_pane", .{});
-            return;
-        };
-        const target = panes.get(target_pane_id) orelse {
-            xpc_dictionary_set_string(reply, "error", "No browser tab found");
-            const conn = xpc_dictionary_get_remote_connection(msg);
-            if (conn != null) xpc_connection_send_message(conn, reply);
-            log.info("query_devtools: target pane not found", .{});
-            return;
-        };
-        if (target.tab_id == 0) {
-            xpc_dictionary_set_string(reply, "error", "No browser tab found");
-            const conn = xpc_dictionary_get_remote_connection(msg);
-            if (conn != null) xpc_connection_send_message(conn, reply);
-            log.info("query_devtools: target pane has no tab_id", .{});
-            return;
-        }
-        resolved_tab_id = target.tab_id;
-    }
-
-    // Check for duplicate: any existing pane already inspecting this tab?
-    var it = panes.iterator();
-    while (it.next()) |entry| {
-        const p = entry.value_ptr.*;
-        if (p.inspected_tab_id == resolved_tab_id) {
-            // Format error message with the tab ID.
-            var err_buf: [64]u8 = undefined;
-            const err_msg = std.fmt.bufPrint(&err_buf, "Tab {d} already has DevTools open", .{resolved_tab_id}) catch "DevTools already open for this tab";
-            // Null-terminate for XPC.
-            var err_z: [128]u8 = undefined;
-            if (err_msg.len < err_z.len) {
-                @memcpy(err_z[0..err_msg.len], err_msg);
-                err_z[err_msg.len] = 0;
-                xpc_dictionary_set_string(reply, "error", @ptrCast(&err_z));
-            }
-            const conn = xpc_dictionary_get_remote_connection(msg);
-            if (conn != null) xpc_connection_send_message(conn, reply);
-            log.info("query_devtools: duplicate — tab {d} already has devtools", .{resolved_tab_id});
-            return;
-        }
-    }
-
-    // Success: reply with resolved tab_id.
-    xpc_dictionary_set_int64(reply, "tab_id", resolved_tab_id);
-    const conn = xpc_dictionary_get_remote_connection(msg);
-    if (conn != null) xpc_connection_send_message(conn, reply);
-    log.info("query_devtools: ok tab_id={d}", .{resolved_tab_id});
-}
-
-/// Synchronous query: return Chromium tab inventory for a profile (Issue 689).
-/// Counts GUI panes, forwards query to the Chromium profile server, and
-/// combines both into the reply sent back to the TUI.
-fn handleQueryTabs(msg: xpc_object_t) void {
-    const profile_str = str(xpc_dictionary_get_string(msg, "profile"));
-    log.info("query_tabs profile={s}", .{profile_str});
-
-    const reply = xpc_dictionary_create_reply(msg);
-    if (reply == null) return;
-
-    // Count GUI panes for this profile.
-    var gui_pane_count: i64 = 0;
-    {
-        var it = panes.iterator();
-        while (it.next()) |entry| {
-            const p = entry.value_ptr.*;
-            if (p.server) |s| {
-                if (std.mem.eql(u8, s.profile_key, profile_str)) {
-                    gui_pane_count += 1;
-                }
-            }
-        }
-    }
-    xpc_dictionary_set_int64(reply, "gui_panes", gui_pane_count);
-
-    // Look up the profile server.
-    const server = servers.get(profile_str);
-    if (server == null or server.?.peer == null) {
-        // No server running for this profile — return zeros.
-        xpc_dictionary_set_int64(reply, "chromium_tabs", 0);
-        xpc_dictionary_set_int64(reply, "chromium_browser", 0);
-        xpc_dictionary_set_int64(reply, "chromium_devtools", 0);
-        const conn = xpc_dictionary_get_remote_connection(msg);
-        if (conn != null) xpc_connection_send_message(conn, reply);
-        log.info("query_tabs: no server for profile={s}", .{profile_str});
-        return;
-    }
-
-    // Forward synchronous query to Chromium.
-    const fwd = xpc_dictionary_create(null, null, 0);
-    xpc_dictionary_set_string(fwd, "action", "query_tabs");
-    const chromium_reply = xpc_connection_send_message_with_reply_sync(server.?.peer, fwd);
-    xpc_release(fwd);
-
-    if (chromium_reply != null) {
-        // Copy Chromium's reply fields into the TUI reply.
-        const chromium_tabs = xpc_dictionary_get_int64(chromium_reply, "chromium_tabs");
-        const chromium_browser = xpc_dictionary_get_int64(chromium_reply, "chromium_browser");
-        const chromium_devtools = xpc_dictionary_get_int64(chromium_reply, "chromium_devtools");
-        xpc_dictionary_set_int64(reply, "chromium_tabs", chromium_tabs);
-        xpc_dictionary_set_int64(reply, "chromium_browser", chromium_browser);
-        xpc_dictionary_set_int64(reply, "chromium_devtools", chromium_devtools);
-
-        // Copy per-tab summary strings (tab_0, tab_1, ...).
-        var i: i64 = 0;
-        while (i < chromium_tabs) : (i += 1) {
-            var key_buf: [16]u8 = undefined;
-            const key = std.fmt.bufPrint(&key_buf, "tab_{d}", .{i}) catch continue;
-            // Null-terminate the key.
-            if (key.len < key_buf.len) {
-                key_buf[key.len] = 0;
-                const key_z: [*:0]const u8 = @ptrCast(&key_buf);
-                const val = xpc_dictionary_get_string(chromium_reply, key_z);
-                if (val != null) {
-                    xpc_dictionary_set_string(reply, key_z, val.?);
-                }
-            }
-        }
-        xpc_release(chromium_reply);
-    } else {
-        xpc_dictionary_set_int64(reply, "chromium_tabs", 0);
-        xpc_dictionary_set_int64(reply, "chromium_browser", 0);
-        xpc_dictionary_set_int64(reply, "chromium_devtools", 0);
-    }
-
-    const conn = xpc_dictionary_get_remote_connection(msg);
-    if (conn != null) xpc_connection_send_message(conn, reply);
-    log.info("query_tabs: replied gui_panes={d}", .{gui_pane_count});
 }
 
 // -- Focus lifecycle (Issue 606 Experiment 5) --
@@ -1154,7 +683,7 @@ fn handleQueryTabs(msg: xpc_object_t) void {
 fn sendFocusChanged(pane_id: []const u8, focused: bool) void {
     const p = panes.get(pane_id) orelse return;
     const server = p.server orelse return;
-    if (server.peer == null and server.fd < 0) return;
+    if (server.fd < 0) return;
 
     // Single-pane enforcement: unfocus previous pane.
     if (focused) {
@@ -1183,26 +712,18 @@ fn sendFocusChanged(pane_id: []const u8, focused: bool) void {
 fn sendFocusMessage(pane_id: []const u8, focused: bool) void {
     const p = panes.get(pane_id) orelse return;
     const server = p.server orelse return;
-    if (server.peer == null and server.fd < 0) return;
+    if (server.fd < 0) return;
 
-    if (server.fd >= 0) {
-        var fc: pb.Termsurf__FocusChanged = undefined;
-        pb.termsurf__focus_changed__init(&fc);
-        fc.tab_id = p.tab_id;
-        fc.focused = @intFromBool(focused);
+    var fc: pb.Termsurf__FocusChanged = undefined;
+    pb.termsurf__focus_changed__init(&fc);
+    fc.tab_id = p.tab_id;
+    fc.focused = @intFromBool(focused);
 
-        var wrapper: pb.Termsurf__TermSurfMessage = undefined;
-        pb.termsurf__term_surf_message__init(&wrapper);
-        wrapper.msg_case = 10; // FOCUS_CHANGED
-        wrapper.unnamed_0.focus_changed = &fc;
-        sendProtobuf(server.fd, &wrapper);
-    } else {
-        const msg = xpc_dictionary_create(null, null, 0);
-        xpc_dictionary_set_string(msg, "action", "focus_changed");
-        xpc_dictionary_set_int64(msg, "tab_id", p.tab_id);
-        xpc_dictionary_set_bool(msg, "focused", focused);
-        xpc_connection_send_message(server.peer, msg);
-    }
+    var wrapper: pb.Termsurf__TermSurfMessage = undefined;
+    pb.termsurf__term_surf_message__init(&wrapper);
+    wrapper.msg_case = 10; // FOCUS_CHANGED
+    wrapper.unnamed_0.focus_changed = &fc;
+    sendProtobuf(server.fd, &wrapper);
     log.info("focus_changed pane={s} focused={}", .{ pane_id, focused });
 }
 
@@ -1233,7 +754,7 @@ pub fn handlePaneFocusChanged(surface: *CoreSurface, focused: bool) void {
     }.f;
     // Encode focused state in low bit of pointer (Surface is aligned).
     const encoded = ptr_val | @as(usize, if (focused) 1 else 0);
-    dispatch_async_f(xpc_queue, @ptrFromInt(encoded), dispatch_fn);
+    dispatch_async_f(ipc_queue, @ptrFromInt(encoded), dispatch_fn);
 }
 
 /// Returns true if the surface's pane is in browse mode AND is the
@@ -1263,25 +784,16 @@ pub fn isOverlayBrowsing(surface: *CoreSurface) bool {
 // -- Mouse-driven mode switching (Issue 606 Experiment 6) --
 
 fn sendModeToWeb(p: *Pane, browsing: bool) void {
-    // Socket path (Issue 700).
-    if (p.web_fd >= 0) {
-        var mc: pb.Termsurf__ModeChanged = undefined;
-        pb.termsurf__mode_changed__init(&mc);
-        mc.browsing = @intFromBool(browsing);
-        var wrapper: pb.Termsurf__TermSurfMessage = undefined;
-        pb.termsurf__term_surf_message__init(&wrapper);
-        wrapper.msg_case = @intCast(22); // MODE_CHANGED
-        wrapper.unnamed_0.mode_changed = &mc;
-        sendProtobuf(p.web_fd, &wrapper);
-        return;
-    }
+    if (p.web_fd < 0) return;
 
-    // XPC path.
-    if (p.web_peer == null) return;
-    const msg = xpc_dictionary_create(null, null, 0);
-    xpc_dictionary_set_string(msg, "action", "mode_changed");
-    xpc_dictionary_set_bool(msg, "browsing", browsing);
-    xpc_connection_send_message(p.web_peer, msg);
+    var mc: pb.Termsurf__ModeChanged = undefined;
+    pb.termsurf__mode_changed__init(&mc);
+    mc.browsing = @intFromBool(browsing);
+    var wrapper: pb.Termsurf__TermSurfMessage = undefined;
+    pb.termsurf__term_surf_message__init(&wrapper);
+    wrapper.msg_case = @intCast(22); // MODE_CHANGED
+    wrapper.unnamed_0.mode_changed = &mc;
+    sendProtobuf(p.web_fd, &wrapper);
 }
 
 /// Called from mouseButtonCallback when a left-click hits the overlay.
@@ -1489,58 +1001,32 @@ fn sendCreateTab(p: *Pane, server: *Server) void {
     else
         true; // default to dark
 
-    if (server.fd >= 0) {
-        // Socket mode (Issue 701).
-        var ct: pb.Termsurf__CreateTab = undefined;
-        pb.termsurf__create_tab__init(&ct);
+    var ct: pb.Termsurf__CreateTab = undefined;
+    pb.termsurf__create_tab__init(&ct);
 
-        var url_z: [2049]u8 = undefined;
-        if (p.pending_url_len > 0 and p.pending_url_len < url_z.len) {
-            @memcpy(url_z[0..p.pending_url_len], p.pending_url_buf[0..p.pending_url_len]);
-            url_z[p.pending_url_len] = 0;
-            ct.url = @ptrCast(&url_z);
-        }
-
-        var pane_z: [37]u8 = undefined;
-        if (p.pane_id_key.len > 0 and p.pane_id_key.len <= 36) {
-            @memcpy(pane_z[0..p.pane_id_key.len], p.pane_id_key);
-            pane_z[p.pane_id_key.len] = 0;
-            ct.pane_id = @ptrCast(&pane_z);
-        }
-
-        ct.pixel_width = p.pending_pixel_w;
-        ct.pixel_height = p.pending_pixel_h;
-        ct.dark = @intFromBool(dark);
-
-        var wrapper: pb.Termsurf__TermSurfMessage = undefined;
-        pb.termsurf__term_surf_message__init(&wrapper);
-        wrapper.msg_case = 1; // CREATE_TAB
-        wrapper.unnamed_0.create_tab = &ct;
-        sendProtobuf(server.fd, &wrapper);
-    } else {
-        // XPC mode.
-        const msg = xpc_dictionary_create(null, null, 0);
-        xpc_dictionary_set_string(msg, "action", "create_tab");
-
-        var url_z: [2049]u8 = undefined;
-        if (p.pending_url_len > 0 and p.pending_url_len < url_z.len) {
-            @memcpy(url_z[0..p.pending_url_len], p.pending_url_buf[0..p.pending_url_len]);
-            url_z[p.pending_url_len] = 0;
-            xpc_dictionary_set_string(msg, "url", @ptrCast(&url_z));
-        }
-
-        if (p.pane_id_key.len > 0 and p.pane_id_key.len <= 36) {
-            var pane_z: [37]u8 = undefined;
-            @memcpy(pane_z[0..p.pane_id_key.len], p.pane_id_key);
-            pane_z[p.pane_id_key.len] = 0;
-            xpc_dictionary_set_string(msg, "pane_id", @ptrCast(&pane_z));
-        }
-
-        xpc_dictionary_set_uint64(msg, "pixel_width", p.pending_pixel_w);
-        xpc_dictionary_set_uint64(msg, "pixel_height", p.pending_pixel_h);
-        xpc_dictionary_set_bool(msg, "dark", dark);
-        xpc_connection_send_message(server.peer, msg);
+    var url_z: [2049]u8 = undefined;
+    if (p.pending_url_len > 0 and p.pending_url_len < url_z.len) {
+        @memcpy(url_z[0..p.pending_url_len], p.pending_url_buf[0..p.pending_url_len]);
+        url_z[p.pending_url_len] = 0;
+        ct.url = @ptrCast(&url_z);
     }
+
+    var pane_z: [37]u8 = undefined;
+    if (p.pane_id_key.len > 0 and p.pane_id_key.len <= 36) {
+        @memcpy(pane_z[0..p.pane_id_key.len], p.pane_id_key);
+        pane_z[p.pane_id_key.len] = 0;
+        ct.pane_id = @ptrCast(&pane_z);
+    }
+
+    ct.pixel_width = p.pending_pixel_w;
+    ct.pixel_height = p.pending_pixel_h;
+    ct.dark = @intFromBool(dark);
+
+    var wrapper: pb.Termsurf__TermSurfMessage = undefined;
+    pb.termsurf__term_surf_message__init(&wrapper);
+    wrapper.msg_case = 1; // CREATE_TAB
+    wrapper.unnamed_0.create_tab = &ct;
+    sendProtobuf(server.fd, &wrapper);
 
     p.tab_sent = true;
     log.info("sent create_tab pane={s} pixel={d}x{d} dark={}", .{
@@ -1554,46 +1040,26 @@ fn sendCreateDevToolsTab(p: *Pane, server: *Server) void {
     else
         true; // default to dark
 
-    if (server.fd >= 0) {
-        // Socket mode (Issue 701).
-        var dt: pb.Termsurf__CreateDevtoolsTab = undefined;
-        pb.termsurf__create_devtools_tab__init(&dt);
+    var dt: pb.Termsurf__CreateDevtoolsTab = undefined;
+    pb.termsurf__create_devtools_tab__init(&dt);
 
-        var pane_z: [37]u8 = undefined;
-        if (p.pane_id_key.len > 0 and p.pane_id_key.len <= 36) {
-            @memcpy(pane_z[0..p.pane_id_key.len], p.pane_id_key);
-            pane_z[p.pane_id_key.len] = 0;
-            dt.pane_id = @ptrCast(&pane_z);
-        }
-
-        dt.inspected_tab_id = p.inspected_tab_id;
-        dt.pixel_width = p.pending_pixel_w;
-        dt.pixel_height = p.pending_pixel_h;
-        dt.dark = @intFromBool(dark);
-
-        var wrapper: pb.Termsurf__TermSurfMessage = undefined;
-        pb.termsurf__term_surf_message__init(&wrapper);
-        wrapper.msg_case = 2; // CREATE_DEVTOOLS_TAB
-        wrapper.unnamed_0.create_devtools_tab = &dt;
-        sendProtobuf(server.fd, &wrapper);
-    } else {
-        // XPC mode.
-        const msg = xpc_dictionary_create(null, null, 0);
-        xpc_dictionary_set_string(msg, "action", "create_devtools_tab");
-
-        if (p.pane_id_key.len > 0 and p.pane_id_key.len <= 36) {
-            var pane_z: [37]u8 = undefined;
-            @memcpy(pane_z[0..p.pane_id_key.len], p.pane_id_key);
-            pane_z[p.pane_id_key.len] = 0;
-            xpc_dictionary_set_string(msg, "pane_id", @ptrCast(&pane_z));
-        }
-
-        xpc_dictionary_set_int64(msg, "inspected_tab_id", p.inspected_tab_id);
-        xpc_dictionary_set_uint64(msg, "pixel_width", p.pending_pixel_w);
-        xpc_dictionary_set_uint64(msg, "pixel_height", p.pending_pixel_h);
-        xpc_dictionary_set_bool(msg, "dark", dark);
-        xpc_connection_send_message(server.peer, msg);
+    var pane_z: [37]u8 = undefined;
+    if (p.pane_id_key.len > 0 and p.pane_id_key.len <= 36) {
+        @memcpy(pane_z[0..p.pane_id_key.len], p.pane_id_key);
+        pane_z[p.pane_id_key.len] = 0;
+        dt.pane_id = @ptrCast(&pane_z);
     }
+
+    dt.inspected_tab_id = p.inspected_tab_id;
+    dt.pixel_width = p.pending_pixel_w;
+    dt.pixel_height = p.pending_pixel_h;
+    dt.dark = @intFromBool(dark);
+
+    var wrapper: pb.Termsurf__TermSurfMessage = undefined;
+    pb.termsurf__term_surf_message__init(&wrapper);
+    wrapper.msg_case = 2; // CREATE_DEVTOOLS_TAB
+    wrapper.unnamed_0.create_devtools_tab = &dt;
+    sendProtobuf(server.fd, &wrapper);
 
     p.tab_sent = true;
     log.info("sent create_devtools_tab pane={s} inspected_tab_id={d} dark={}", .{
@@ -1602,26 +1068,17 @@ fn sendCreateDevToolsTab(p: *Pane, server: *Server) void {
 }
 
 fn sendResize(p: *Pane, server: *Server) void {
-    if (server.fd >= 0) {
-        var r: pb.Termsurf__Resize = undefined;
-        pb.termsurf__resize__init(&r);
-        r.tab_id = p.tab_id;
-        r.pixel_width = p.pending_pixel_w;
-        r.pixel_height = p.pending_pixel_h;
+    var r: pb.Termsurf__Resize = undefined;
+    pb.termsurf__resize__init(&r);
+    r.tab_id = p.tab_id;
+    r.pixel_width = p.pending_pixel_w;
+    r.pixel_height = p.pending_pixel_h;
 
-        var wrapper: pb.Termsurf__TermSurfMessage = undefined;
-        pb.termsurf__term_surf_message__init(&wrapper);
-        wrapper.msg_case = 3; // RESIZE
-        wrapper.unnamed_0.resize = &r;
-        sendProtobuf(server.fd, &wrapper);
-    } else {
-        const msg = xpc_dictionary_create(null, null, 0);
-        xpc_dictionary_set_string(msg, "action", "resize");
-        xpc_dictionary_set_int64(msg, "tab_id", p.tab_id);
-        xpc_dictionary_set_uint64(msg, "pixel_width", p.pending_pixel_w);
-        xpc_dictionary_set_uint64(msg, "pixel_height", p.pending_pixel_h);
-        xpc_connection_send_message(server.peer, msg);
-    }
+    var wrapper: pb.Termsurf__TermSurfMessage = undefined;
+    pb.termsurf__term_surf_message__init(&wrapper);
+    wrapper.msg_case = 3; // RESIZE
+    wrapper.unnamed_0.resize = &r;
+    sendProtobuf(server.fd, &wrapper);
     log.info("sent resize pane={s} pixel={d}x{d}", .{
         p.pane_id_key, p.pending_pixel_w, p.pending_pixel_h,
     });
@@ -1641,32 +1098,24 @@ pub fn handleColorSchemeChanged(surface: *CoreSurface, dark: bool) void {
             const p = panes.get(pane_id) orelse return;
             if (!p.tab_sent) return;
             const server = p.server orelse return;
-            if (server.peer == null and server.fd < 0) return;
+            if (server.fd < 0) return;
 
-            if (server.fd >= 0) {
-                var sc: pb.Termsurf__SetColorScheme = undefined;
-                pb.termsurf__set_color_scheme__init(&sc);
-                sc.tab_id = p.tab_id;
-                sc.dark = @intFromBool(is_dark);
+            var sc: pb.Termsurf__SetColorScheme = undefined;
+            pb.termsurf__set_color_scheme__init(&sc);
+            sc.tab_id = p.tab_id;
+            sc.dark = @intFromBool(is_dark);
 
-                var wrapper: pb.Termsurf__TermSurfMessage = undefined;
-                pb.termsurf__term_surf_message__init(&wrapper);
-                wrapper.msg_case = 11; // SET_COLOR_SCHEME
-                wrapper.unnamed_0.set_color_scheme = &sc;
-                sendProtobuf(server.fd, &wrapper);
-            } else {
-                const msg = xpc_dictionary_create(null, null, 0);
-                xpc_dictionary_set_string(msg, "action", "set_color_scheme");
-                xpc_dictionary_set_int64(msg, "tab_id", p.tab_id);
-                xpc_dictionary_set_bool(msg, "dark", is_dark);
-                xpc_connection_send_message(server.peer, msg);
-            }
+            var wrapper: pb.Termsurf__TermSurfMessage = undefined;
+            pb.termsurf__term_surf_message__init(&wrapper);
+            wrapper.msg_case = 11; // SET_COLOR_SCHEME
+            wrapper.unnamed_0.set_color_scheme = &sc;
+            sendProtobuf(server.fd, &wrapper);
             log.info("sent set_color_scheme pane={s} dark={}", .{ pane_id, is_dark });
         }
     }.f;
     // Encode dark state in low bit of pointer (Surface is aligned).
     const encoded = ptr_val | @as(usize, if (dark) 1 else 0);
-    dispatch_async_f(xpc_queue, @ptrFromInt(encoded), dispatch_fn);
+    dispatch_async_f(ipc_queue, @ptrFromInt(encoded), dispatch_fn);
 }
 
 // -- Mouse input (Issue 606) --
@@ -1689,7 +1138,7 @@ pub fn sendMouseEvent(
     };
     const p = panes.get(pane_id_key) orelse return;
     const server = p.server orelse return;
-    if (server.peer == null and server.fd < 0) return;
+    if (server.fd < 0) return;
 
     // Modifier bitmask: shift=1, ctrl=2, alt=4, cmd=8.
     var modifiers: u64 = 0;
@@ -1702,50 +1151,29 @@ pub fn sendMouseEvent(
         if (button == .right) modifiers |= 256; // 1 << 8
     }
 
-    if (server.fd >= 0) {
-        var me: pb.Termsurf__MouseEvent = undefined;
-        pb.termsurf__mouse_event__init(&me);
-        me.tab_id = p.tab_id;
-        me.type = @ptrCast(@constCast(switch (action) {
-            .press => @as([*:0]const u8, "down"),
-            .release => @as([*:0]const u8, "up"),
-        }));
-        me.button = @ptrCast(@constCast(switch (button) {
-            .left => @as([*:0]const u8, "left"),
-            .right => @as([*:0]const u8, "right"),
-            .middle => @as([*:0]const u8, "middle"),
-            else => @as([*:0]const u8, "left"),
-        }));
-        me.x = overlay_x;
-        me.y = overlay_y;
-        me.click_count = @intCast(click_count);
-        me.modifiers = modifiers;
+    var me: pb.Termsurf__MouseEvent = undefined;
+    pb.termsurf__mouse_event__init(&me);
+    me.tab_id = p.tab_id;
+    me.type = @ptrCast(@constCast(switch (action) {
+        .press => @as([*:0]const u8, "down"),
+        .release => @as([*:0]const u8, "up"),
+    }));
+    me.button = @ptrCast(@constCast(switch (button) {
+        .left => @as([*:0]const u8, "left"),
+        .right => @as([*:0]const u8, "right"),
+        .middle => @as([*:0]const u8, "middle"),
+        else => @as([*:0]const u8, "left"),
+    }));
+    me.x = overlay_x;
+    me.y = overlay_y;
+    me.click_count = @intCast(click_count);
+    me.modifiers = modifiers;
 
-        var wrapper: pb.Termsurf__TermSurfMessage = undefined;
-        pb.termsurf__term_surf_message__init(&wrapper);
-        wrapper.msg_case = 6; // MOUSE_EVENT
-        wrapper.unnamed_0.mouse_event = &me;
-        sendProtobuf(server.fd, &wrapper);
-    } else {
-        const msg = xpc_dictionary_create(null, null, 0);
-        xpc_dictionary_set_string(msg, "action", "mouse_event");
-        xpc_dictionary_set_int64(msg, "tab_id", p.tab_id);
-        xpc_dictionary_set_string(msg, "type", switch (action) {
-            .press => "down",
-            .release => "up",
-        });
-        xpc_dictionary_set_string(msg, "button", switch (button) {
-            .left => "left",
-            .right => "right",
-            .middle => "middle",
-            else => "left",
-        });
-        xpc_dictionary_set_double(msg, "x", overlay_x);
-        xpc_dictionary_set_double(msg, "y", overlay_y);
-        xpc_dictionary_set_int64(msg, "click_count", @intCast(click_count));
-        xpc_dictionary_set_uint64(msg, "modifiers", modifiers);
-        xpc_connection_send_message(server.peer, msg);
-    }
+    var wrapper: pb.Termsurf__TermSurfMessage = undefined;
+    pb.termsurf__term_surf_message__init(&wrapper);
+    wrapper.msg_case = 6; // MOUSE_EVENT
+    wrapper.unnamed_0.mouse_event = &me;
+    sendProtobuf(server.fd, &wrapper);
 }
 
 /// Called from Surface.scrollCallback when a scroll hits the overlay.
@@ -1762,42 +1190,27 @@ pub fn sendScrollEvent(
     };
     const p = panes.get(pane_id_key) orelse return;
     const server = p.server orelse return;
-    if (server.peer == null and server.fd < 0) return;
+    if (server.fd < 0) return;
 
     const raw = surface.raw_scroll;
 
-    if (server.fd >= 0) {
-        var se: pb.Termsurf__ScrollEvent = undefined;
-        pb.termsurf__scroll_event__init(&se);
-        se.tab_id = p.tab_id;
-        se.x = overlay_x;
-        se.y = overlay_y;
-        se.delta_x = raw.delta_x;
-        se.delta_y = raw.delta_y;
-        se.phase = raw.phase;
-        se.momentum_phase = raw.momentum_phase;
-        se.precise = @intFromBool(raw.precise);
-        se.modifiers = 0;
+    var se: pb.Termsurf__ScrollEvent = undefined;
+    pb.termsurf__scroll_event__init(&se);
+    se.tab_id = p.tab_id;
+    se.x = overlay_x;
+    se.y = overlay_y;
+    se.delta_x = raw.delta_x;
+    se.delta_y = raw.delta_y;
+    se.phase = raw.phase;
+    se.momentum_phase = raw.momentum_phase;
+    se.precise = @intFromBool(raw.precise);
+    se.modifiers = 0;
 
-        var wrapper: pb.Termsurf__TermSurfMessage = undefined;
-        pb.termsurf__term_surf_message__init(&wrapper);
-        wrapper.msg_case = 8; // SCROLL_EVENT
-        wrapper.unnamed_0.scroll_event = &se;
-        sendProtobuf(server.fd, &wrapper);
-    } else {
-        const msg = xpc_dictionary_create(null, null, 0);
-        xpc_dictionary_set_string(msg, "action", "scroll_event");
-        xpc_dictionary_set_int64(msg, "tab_id", p.tab_id);
-        xpc_dictionary_set_double(msg, "x", overlay_x);
-        xpc_dictionary_set_double(msg, "y", overlay_y);
-        xpc_dictionary_set_double(msg, "delta_x", raw.delta_x);
-        xpc_dictionary_set_double(msg, "delta_y", raw.delta_y);
-        xpc_dictionary_set_uint64(msg, "phase", raw.phase);
-        xpc_dictionary_set_uint64(msg, "momentum_phase", raw.momentum_phase);
-        xpc_dictionary_set_bool(msg, "precise", raw.precise);
-        xpc_dictionary_set_uint64(msg, "modifiers", 0);
-        xpc_connection_send_message(server.peer, msg);
-    }
+    var wrapper: pb.Termsurf__TermSurfMessage = undefined;
+    pb.termsurf__term_surf_message__init(&wrapper);
+    wrapper.msg_case = 8; // SCROLL_EVENT
+    wrapper.unnamed_0.scroll_event = &se;
+    sendProtobuf(server.fd, &wrapper);
 }
 
 /// Called from Surface.cursorPosCallback when the mouse is over the overlay.
@@ -1813,7 +1226,7 @@ pub fn sendMouseMove(
     };
     const p = panes.get(pane_id_key) orelse return;
     const server = p.server orelse return;
-    if (server.peer == null and server.fd < 0) return;
+    if (server.fd < 0) return;
 
     // Button-down flags from click_state (for drag vs hover distinction).
     var modifiers: u64 = 0;
@@ -1822,28 +1235,18 @@ pub fn sendMouseMove(
     if (surface.mouse.click_state[left_idx] == .press) modifiers |= 64;
     if (surface.mouse.click_state[right_idx] == .press) modifiers |= 256;
 
-    if (server.fd >= 0) {
-        var mm: pb.Termsurf__MouseMove = undefined;
-        pb.termsurf__mouse_move__init(&mm);
-        mm.tab_id = p.tab_id;
-        mm.x = overlay_x;
-        mm.y = overlay_y;
-        mm.modifiers = modifiers;
+    var mm: pb.Termsurf__MouseMove = undefined;
+    pb.termsurf__mouse_move__init(&mm);
+    mm.tab_id = p.tab_id;
+    mm.x = overlay_x;
+    mm.y = overlay_y;
+    mm.modifiers = modifiers;
 
-        var wrapper: pb.Termsurf__TermSurfMessage = undefined;
-        pb.termsurf__term_surf_message__init(&wrapper);
-        wrapper.msg_case = 7; // MOUSE_MOVE
-        wrapper.unnamed_0.mouse_move = &mm;
-        sendProtobuf(server.fd, &wrapper);
-    } else {
-        const msg = xpc_dictionary_create(null, null, 0);
-        xpc_dictionary_set_string(msg, "action", "mouse_move");
-        xpc_dictionary_set_int64(msg, "tab_id", p.tab_id);
-        xpc_dictionary_set_double(msg, "x", overlay_x);
-        xpc_dictionary_set_double(msg, "y", overlay_y);
-        xpc_dictionary_set_uint64(msg, "modifiers", modifiers);
-        xpc_connection_send_message(server.peer, msg);
-    }
+    var wrapper: pb.Termsurf__TermSurfMessage = undefined;
+    pb.termsurf__term_surf_message__init(&wrapper);
+    wrapper.msg_case = 7; // MOUSE_MOVE
+    wrapper.unnamed_0.mouse_move = &mm;
+    sendProtobuf(server.fd, &wrapper);
 }
 
 // -- Keyboard input (Issue 607) --
@@ -1944,7 +1347,7 @@ pub fn sendKeyEvent(
     };
     const p = panes.get(pane_id_key) orelse return;
     const server = p.server orelse return;
-    if (server.peer == null and server.fd < 0) return;
+    if (server.fd < 0) return;
 
     var modifiers: u64 = 0;
     if (mods.shift) modifiers |= 1;
@@ -1952,51 +1355,29 @@ pub fn sendKeyEvent(
     if (mods.alt) modifiers |= 4;
     if (mods.super) modifiers |= 8;
 
-    if (server.fd >= 0) {
-        var ke: pb.Termsurf__KeyEvent = undefined;
-        pb.termsurf__key_event__init(&ke);
-        ke.tab_id = p.tab_id;
-        ke.type = @ptrCast(@constCast(switch (action) {
-            .press => @as([*:0]const u8, "down"),
-            .release => @as([*:0]const u8, "up"),
-            .repeat => @as([*:0]const u8, "repeat"),
-        }));
-        ke.windows_key_code = @intCast(keyToWindowsVK(key));
-        ke.modifiers = modifiers;
+    var ke: pb.Termsurf__KeyEvent = undefined;
+    pb.termsurf__key_event__init(&ke);
+    ke.tab_id = p.tab_id;
+    ke.type = @ptrCast(@constCast(switch (action) {
+        .press => @as([*:0]const u8, "down"),
+        .release => @as([*:0]const u8, "up"),
+        .repeat => @as([*:0]const u8, "repeat"),
+    }));
+    ke.windows_key_code = @intCast(keyToWindowsVK(key));
+    ke.modifiers = modifiers;
 
-        var utf8_z: [33]u8 = undefined;
-        if (utf8.len > 0 and utf8.len <= 32) {
-            @memcpy(utf8_z[0..utf8.len], utf8);
-            utf8_z[utf8.len] = 0;
-            ke.utf8 = @ptrCast(&utf8_z);
-        }
-
-        var wrapper: pb.Termsurf__TermSurfMessage = undefined;
-        pb.termsurf__term_surf_message__init(&wrapper);
-        wrapper.msg_case = 9; // KEY_EVENT
-        wrapper.unnamed_0.key_event = &ke;
-        sendProtobuf(server.fd, &wrapper);
-    } else {
-        const msg = xpc_dictionary_create(null, null, 0);
-        xpc_dictionary_set_string(msg, "action", "key_event");
-        xpc_dictionary_set_int64(msg, "tab_id", p.tab_id);
-        xpc_dictionary_set_string(msg, "type", switch (action) {
-            .press => "down",
-            .release => "up",
-            .repeat => "repeat",
-        });
-        xpc_dictionary_set_int64(msg, "windows_key_code", @intCast(keyToWindowsVK(key)));
-        if (utf8.len > 0 and utf8.len <= 32) {
-            var utf8_z: [33]u8 = undefined;
-            @memcpy(utf8_z[0..utf8.len], utf8);
-            utf8_z[utf8.len] = 0;
-            xpc_dictionary_set_string(msg, "utf8", @ptrCast(&utf8_z));
-        } else {
-            xpc_dictionary_set_string(msg, "utf8", "");
-        }
-        xpc_dictionary_set_uint64(msg, "modifiers", modifiers);
-        xpc_connection_send_message(server.peer, msg);
+    var utf8_z: [33]u8 = undefined;
+    if (utf8.len > 0 and utf8.len <= 32) {
+        @memcpy(utf8_z[0..utf8.len], utf8);
+        utf8_z[utf8.len] = 0;
+        ke.utf8 = @ptrCast(&utf8_z);
     }
+
+    var wrapper: pb.Termsurf__TermSurfMessage = undefined;
+    pb.termsurf__term_surf_message__init(&wrapper);
+    wrapper.msg_case = 9; // KEY_EVENT
+    wrapper.unnamed_0.key_event = &ke;
+    sendProtobuf(server.fd, &wrapper);
 }
 
 /// Handle open_split: create a split with initial input (Issue 690).
@@ -2074,163 +1455,10 @@ fn cleanupPane(pane_id_key: []const u8) void {
             surface.clearOverlay();
             _ = surface_to_pane.remove(@intFromPtr(surface));
         }
-        if (p.web_peer) |peer| {
-            _ = peer_to_pane.remove(@intFromPtr(peer));
-            xpc_release(peer);
-        }
         _ = panes.remove(pane_id_key);
         alloc.destroy(p);
         alloc.free(pane_id_key);
     }
-}
-
-// -- Disconnect handling --
-
-fn handleDisconnect(peer_addr: usize) void {
-    // Check if this is a web peer.
-    if (peer_to_pane.get(peer_addr)) |pane_id_key| {
-        log.info("web peer disconnected pane={s}", .{pane_id_key});
-
-        if (panes.get(pane_id_key)) |p| {
-            if (p.overlay_surface) |surface| {
-                surface.clearOverlay();
-                _ = surface_to_pane.remove(@intFromPtr(surface));
-            }
-
-            // Clear focused_pane if this pane had focus (Issue 606).
-            if (focused_pane) |fp| {
-                if (std.mem.eql(u8, fp, pane_id_key)) {
-                    focused_pane = null;
-                }
-            }
-
-            // Clear last_browser_pane if this pane was it (Issue 684).
-            if (last_browser_pane) |lp| {
-                if (std.mem.eql(u8, lp, pane_id_key)) {
-                    last_browser_pane = null;
-                }
-            }
-
-            // Clean up tab_to_pane reverse map (Issue 694).
-            if (p.tab_id != 0) {
-                _ = tab_to_pane.remove(p.tab_id);
-            }
-
-            // Close the Chromium tab (Issue 689 Exp 5).
-            if (p.server) |server| {
-                if (p.tab_sent and (server.peer != null or server.fd >= 0)) {
-                    if (server.fd >= 0) {
-                        var ct: pb.Termsurf__CloseTab = undefined;
-                        pb.termsurf__close_tab__init(&ct);
-                        ct.tab_id = p.tab_id;
-
-                        var wrapper: pb.Termsurf__TermSurfMessage = undefined;
-                        pb.termsurf__term_surf_message__init(&wrapper);
-                        wrapper.msg_case = 4; // CLOSE_TAB
-                        wrapper.unnamed_0.close_tab = &ct;
-                        sendProtobuf(server.fd, &wrapper);
-                    } else {
-                        const close_msg = xpc_dictionary_create(null, null, 0);
-                        defer xpc_release(close_msg);
-                        xpc_dictionary_set_string(close_msg, "action", "close_tab");
-                        xpc_dictionary_set_int64(close_msg, "tab_id", p.tab_id);
-                        xpc_connection_send_message(server.peer, close_msg);
-                    }
-                    log.info("sent close_tab tab={d}", .{p.tab_id});
-                }
-            }
-
-            // Decrement server pane count; kill if last.
-            if (p.server) |server| {
-                if (server.pane_count > 0) server.pane_count -= 1;
-
-                if (server.pane_count == 0) {
-                    killServer(server);
-
-                    // Cancel the Chromium ClientConn's dispatch source
-                    // before freeing the server to prevent use-after-free.
-                    for (&clients) |*c| {
-                        if (c.conn_type == .chromium and c.server == server) {
-                            if (c.source) |src| {
-                                dispatch_source_cancel(src);
-                                c.source = null;
-                            }
-                            if (c.fd >= 0) {
-                                std.posix.close(c.fd);
-                                c.fd = -1;
-                            }
-                            c.conn_type = .unknown;
-                            c.server = null;
-                            c.buf_len = 0;
-                            break;
-                        }
-                    }
-
-                    if (server.peer) |sp| {
-                        _ = peer_to_profile.remove(@intFromPtr(sp));
-                        xpc_release(sp);
-                    }
-                    _ = servers.remove(server.profile_key);
-                    freeKey(server.profile_key);
-                    alloc.destroy(server);
-                }
-            }
-
-            if (p.web_peer) |peer| xpc_release(peer);
-            _ = panes.remove(pane_id_key);
-            _ = peer_to_pane.remove(peer_addr);
-            freeKey(p.pane_id_key);
-            alloc.destroy(p);
-        } else {
-            _ = peer_to_pane.remove(peer_addr);
-        }
-        return;
-    }
-
-    // Check if this is a server peer.
-    if (peer_to_profile.get(peer_addr)) |profile_key| {
-        log.info("server peer disconnected profile={s}", .{profile_key});
-
-        if (servers.get(profile_key)) |server| {
-            // Collect pane keys to remove (can't mutate map during iteration).
-            var keys_buf: [64][]const u8 = undefined;
-            var addrs_buf: [64]usize = undefined;
-            var count: usize = 0;
-
-            var it = panes.iterator();
-            while (it.next()) |entry| {
-                const p = entry.value_ptr.*;
-                if (p.server == server and count < keys_buf.len) {
-                    if (p.overlay_surface) |surface| {
-                        surface.clearOverlay();
-                        _ = surface_to_pane.remove(@intFromPtr(surface));
-                    }
-                    addrs_buf[count] = if (p.web_peer) |wp| @intFromPtr(wp) else 0;
-                    if (p.web_peer) |wp| xpc_release(wp);
-                    keys_buf[count] = entry.key_ptr.*;
-                    count += 1;
-                    alloc.destroy(p);
-                }
-            }
-
-            for (0..count) |i| {
-                _ = panes.remove(keys_buf[i]);
-                if (addrs_buf[i] != 0) _ = peer_to_pane.remove(addrs_buf[i]);
-                freeKey(keys_buf[i]);
-            }
-
-            if (server.peer) |sp| xpc_release(sp);
-            _ = servers.remove(profile_key);
-            _ = peer_to_profile.remove(peer_addr);
-            freeKey(server.profile_key);
-            alloc.destroy(server);
-        } else {
-            _ = peer_to_profile.remove(peer_addr);
-        }
-        return;
-    }
-
-    log.info("unknown peer disconnected", .{});
 }
 
 // -- Helpers --
@@ -2301,12 +1529,12 @@ fn initSocket() void {
         return;
     };
 
-    // dispatch_source for accept on xpc_queue.
+    // dispatch_source for accept on ipc_queue.
     sock_source = dispatch_source_create(
         @ptrCast(&_dispatch_source_type_read),
         @intCast(sock_fd),
         0,
-        xpc_queue,
+        ipc_queue,
     );
     if (sock_source) |src| {
         dispatch_source_set_event_handler_f(src, &socketAcceptHandler);
@@ -2347,7 +1575,7 @@ fn socketAcceptHandler(_: ?*anyopaque) callconv(.c) void {
         @ptrCast(&_dispatch_source_type_read),
         @intCast(client_fd),
         0,
-        xpc_queue,
+        ipc_queue,
     );
     if (conn.source) |src| {
         dispatch_set_context(src, conn);
@@ -2440,23 +1668,16 @@ fn handleClientDisconnect(conn: *ClientConn) void {
 
                 // Close Chromium tab.
                 if (p.server) |server| {
-                    if (p.tab_sent and (server.peer != null or server.fd >= 0)) {
-                        if (server.fd >= 0) {
-                            var ct: pb.Termsurf__CloseTab = undefined;
-                            pb.termsurf__close_tab__init(&ct);
-                            ct.tab_id = p.tab_id;
+                    if (p.tab_sent and server.fd >= 0) {
+                        var ct: pb.Termsurf__CloseTab = undefined;
+                        pb.termsurf__close_tab__init(&ct);
+                        ct.tab_id = p.tab_id;
 
-                            var wrapper: pb.Termsurf__TermSurfMessage = undefined;
-                            pb.termsurf__term_surf_message__init(&wrapper);
-                            wrapper.msg_case = 4; // CLOSE_TAB
-                            wrapper.unnamed_0.close_tab = &ct;
-                            sendProtobuf(server.fd, &wrapper);
-                        } else {
-                            const close_msg = xpc_dictionary_create(null, null, 0);
-                            xpc_dictionary_set_string(close_msg, "action", "close_tab");
-                            xpc_dictionary_set_int64(close_msg, "tab_id", p.tab_id);
-                            xpc_connection_send_message(server.peer, close_msg);
-                        }
+                        var wrapper: pb.Termsurf__TermSurfMessage = undefined;
+                        pb.termsurf__term_surf_message__init(&wrapper);
+                        wrapper.msg_case = 4; // CLOSE_TAB
+                        wrapper.unnamed_0.close_tab = &ct;
+                        sendProtobuf(server.fd, &wrapper);
                     }
 
                     if (server.pane_count > 0) server.pane_count -= 1;
@@ -2483,10 +1704,6 @@ fn handleClientDisconnect(conn: *ClientConn) void {
                             }
                         }
 
-                        if (server.peer) |sp| {
-                            _ = peer_to_profile.remove(@intFromPtr(sp));
-                            xpc_release(sp);
-                        }
                         _ = servers.remove(server.profile_key);
                         freeKey(server.profile_key);
                         alloc.destroy(server);
@@ -2893,22 +2110,6 @@ fn handleSocketQueryTabs(client_fd: std.posix.fd_t, pb_msg: *pb.Termsurf__TermSu
         }
     }
     reply.gui_panes = gui_pane_count;
-
-    // Forward to Chromium server via XPC.
-    const server = servers.get(profile_str);
-    if (server != null and server.?.peer != null) {
-        const fwd = xpc_dictionary_create(null, null, 0);
-        xpc_dictionary_set_string(fwd, "action", "query_tabs");
-        const chromium_reply = xpc_connection_send_message_with_reply_sync(server.?.peer, fwd);
-        xpc_release(fwd);
-
-        if (chromium_reply != null) {
-            reply.chromium_tabs = xpc_dictionary_get_int64(chromium_reply, "chromium_tabs");
-            reply.chromium_browser = xpc_dictionary_get_int64(chromium_reply, "chromium_browser");
-            reply.chromium_devtools = xpc_dictionary_get_int64(chromium_reply, "chromium_devtools");
-            xpc_release(chromium_reply);
-        }
-    }
 
     var wrapper: pb.Termsurf__TermSurfMessage = undefined;
     pb.termsurf__term_surf_message__init(&wrapper);
