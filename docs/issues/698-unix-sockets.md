@@ -873,3 +873,36 @@ Rust client: pass
 sends back a length-prefixed `HelloReply`, and the client deserializes the reply
 with all fields intact. This proves the full stack: socket transport +
 length-prefix framing + protobuf serialization across Zig and Rust.
+
+**Result:** Pass
+
+```
+Zig server: listening
+Rust client: pass
+Zig server: pass
+```
+
+The Rust client connected to the Zig server over a Unix domain socket at
+`$TMPDIR/termsurf-test.sock`. A `HelloRequest` (pane_id="pane-1") was serialized
+with prost, framed with a 4-byte LE length prefix, and sent over the socket. The
+Zig server deserialized it with protobuf-c, verified the fields, constructed a
+`HelloReply` (homepage="https://termsurf.com"), and sent it back with the same
+framing. The Rust client deserialized the reply and verified the homepage field.
+
+Key implementation details:
+
+- **Zig server:** Uses C POSIX socket API (`socket()`, `bind()`, `listen()`,
+  `accept()`) via `@cImport` and protobuf-c for serialization. Socket path built
+  from `$TMPDIR` at runtime. Stale socket files removed before binding.
+- **Rust client:** Uses `std::os::unix::net::UnixStream` (pure Rust, no FFI) and
+  prost for serialization. Includes a retry loop (up to 20 attempts, 100ms
+  apart) to handle the race between server startup and client connection.
+- **Framing:** 4-byte little-endian length prefix before each protobuf message.
+  Both sides implement `readExact`/`writeAll` to handle partial reads/writes.
+
+#### Conclusion
+
+Unix domain sockets + protobuf work end-to-end across Zig and Rust. The full
+stack is proven: socket transport, length-prefix framing, and protobuf
+serialization. This is the exact pattern TUI (Rust) → GUI (Zig) will use in
+production. Ready to begin replacing XPC.
