@@ -545,3 +545,100 @@ over the socket. Mouse, keyboard, scroll input working.
 
 **Fail criteria:** Build errors, runtime failures (blank pane, no input, missing
 events), crashes on connect/disconnect.
+
+**Result: PASS**
+
+All XPC between GUI and Chromium has been replaced with bidirectional
+socket+protobuf. Both builds clean. Runtime test: browser renders, navigation
+works, input works, TUI exits cleanly.
+
+**Chromium changes** (`146.0.7650.0-issue-701` branch, 5 files, +605/−189):
+
+- `shell_switches.h`: Added `kIpcSocket = "ipc-socket"` switch.
+- `shell_browser_main_parts.h`: Declared `StartSocketMode`, `SendProtobuf`,
+  `SocketReaderLoop`, `HandleSocketMsg`, `HandleQueryTabsSocket`,
+  `socket_fd_ = -1`.
+- `shell_browser_main_parts.cc`: Added `StartSocketMode()` (connect, send
+  `ServerRegister`, start reader thread), `SendProtobuf()` (4-byte LE prefix +
+  serialize), `SocketReaderLoop()` (length-prefixed framing, dispatch to UI
+  thread), `HandleSocketMsg()` (11-case dispatch). Modified `CreateTab()` and
+  `CreateDevToolsTab()` with socket/XPC branching — socket sends `TabReady` and
+  `CaContext` protobuf, CALayerParams callbacks post to UI thread via
+  `GetUIThreadTaskRunner`. Modified `CloseTabById()` to skip XPC cleanup when
+  `socket_fd_ >= 0`. Used `UNSAFE_BUFFERS()` for pointer arithmetic per
+  Chromium's `-Wunsafe-buffer-usage`.
+- `shell_tab_observer.cc`/`.h`: Added `SetSocketFd(int fd)` and `socket_fd_`.
+  All 6 observer callbacks (`OnCursorChanged`, `DidFinishNavigation`,
+  `SendLoadingState`, `TitleWasSet`, etc.) branch on `socket_fd_ >= 0` to send
+  protobuf instead of XPC dicts.
+
+**GUI changes** (`xpc.zig`, +474/−197):
+
+- `spawnServerProcess`: passes `--ipc-socket=<sock_path>` instead of
+  `--xpc-service=...`.
+- All 10 GUI→Chromium send functions (`sendCreateTab`, `sendCreateDevToolsTab`,
+  `sendResize`, `sendFocusMessage`, `sendMouseEvent`, `sendScrollEvent`,
+  `sendMouseMove`, `sendKeyEvent`, `handleNavigate`, `handleSetColorScheme`)
+  branch on `server.fd >= 0` to send protobuf instead of XPC dicts.
+- All readiness checks updated from `server.peer != null` to
+  `(server.peer != null or server.fd >= 0)`.
+- 6 new Chromium→GUI socket handlers (`handleSocketTabReady`,
+  `handleSocketCaContext`, `handleSocketUrlChanged`, `handleSocketLoadingState`,
+  `handleSocketTitleChanged`, `handleSocketCursorChanged`) using XPC-dict
+  adapter pattern (build dict → call `handleMessage`) for zero handler
+  duplication.
+- Close-tab sends in `handleDisconnect` and `handleClientDisconnect` branch on
+  socket vs XPC.
+- Fixed use-after-free: when killing a server, cancel the Chromium ClientConn's
+  dispatch source and close its fd before freeing the server, preventing a
+  dangling pointer crash when the dead socket's dispatch source fires.
+
+**Adjustments from design:**
+
+1. **CALayerParams thread safety** — The CALayerParams callback fires on the
+   compositor thread, not the UI thread. Socket writes must be posted to the UI
+   thread via `content::GetUIThreadTaskRunner({})->PostTask()`. XPC was
+   thread-safe by design; sockets are not.
+2. **`UNSAFE_BUFFERS()` macro** — Chromium's `-Wunsafe-buffer-usage` flag
+   rejects raw pointer arithmetic (`buf.data() + 4`, `memset`, `strncpy`).
+   Required `#include "base/compiler_specific.h"` and `UNSAFE_BUFFERS()`
+   wrappers for `SocketReaderLoop` and `strncpy`.
+3. **Use-after-free on disconnect** — When the TUI disconnects and `pane_count`
+   hits 0, `killServer` kills the Chromium process and `alloc.destroy(server)`
+   frees the server. But the Chromium `ClientConn`'s dispatch source was still
+   active — when the dead socket's source fired, it accessed freed memory. Fixed
+   by cancelling the dispatch source and closing the fd before freeing.
+4. **QueryTabs** — Left as a temporary gap per design point 11. When
+   `server.peer == null` (socket mode), QueryTabs returns GUI-side counts only;
+   the XPC forwarding to Chromium is skipped.
+
+## Conclusion
+
+GUI↔Chromium IPC now runs entirely over Unix domain sockets with protobuf
+serialization. Three experiments got us here:
+
+1. **Experiment 1** proved protobuf compiles in Chromium's build system with
+   `proto_library.gni` and `LITE_RUNTIME`.
+2. **Experiment 2** refactored the GUI's socket listener from single-client to a
+   16-slot connection pool with per-connection dispatch sources and type
+   tagging.
+3. **Experiment 3** replaced all 19 message types (12 GUI→Chromium, 7
+   Chromium→GUI) with socket+protobuf, eliminated per-tab XPC connections, and
+   fixed a use-after-free in the disconnect path.
+
+Combined with Issue 700 (TUI↔GUI sockets), the entire TermSurf IPC stack now
+uses Unix sockets + protobuf. No XPC messages flow at runtime. The XPC gateway
+daemon and all XPC client code remain in the codebase but are dead code —
+cleanup is a separate issue.
+
+### What remains
+
+- **Remove the XPC gateway.** Delete the gateway daemon, gateway connection,
+  endpoint registration, and `TERMSURF_XPC_SERVICE` env var. Dead code now.
+- **Remove XPC fallback branches.** All send functions have
+  `if (server.fd >= 0) { ... } else { xpc... }` branches. The XPC branches are
+  dead code.
+- **QueryTabs via socket.** Currently returns GUI-side counts only in socket
+  mode. Needs a request/reply protocol over the socket.
+- **`server.peer` field.** Still present in the `Server` struct but unused when
+  `server.fd >= 0`. Can be removed after XPC cleanup.

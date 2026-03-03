@@ -2146,6 +2146,26 @@ fn handleDisconnect(peer_addr: usize) void {
 
                 if (server.pane_count == 0) {
                     killServer(server);
+
+                    // Cancel the Chromium ClientConn's dispatch source
+                    // before freeing the server to prevent use-after-free.
+                    for (&clients) |*c| {
+                        if (c.conn_type == .chromium and c.server == server) {
+                            if (c.source) |src| {
+                                dispatch_source_cancel(src);
+                                c.source = null;
+                            }
+                            if (c.fd >= 0) {
+                                std.posix.close(c.fd);
+                                c.fd = -1;
+                            }
+                            c.conn_type = .unknown;
+                            c.server = null;
+                            c.buf_len = 0;
+                            break;
+                        }
+                    }
+
                     if (server.peer) |sp| {
                         _ = peer_to_profile.remove(@intFromPtr(sp));
                         xpc_release(sp);
@@ -2442,6 +2462,27 @@ fn handleClientDisconnect(conn: *ClientConn) void {
                     if (server.pane_count > 0) server.pane_count -= 1;
                     if (server.pane_count == 0) {
                         killServer(server);
+
+                        // Cancel the Chromium ClientConn's dispatch source
+                        // before freeing the server to prevent use-after-free
+                        // when the dead socket's dispatch source fires.
+                        for (&clients) |*c| {
+                            if (c.conn_type == .chromium and c.server == server) {
+                                if (c.source) |src| {
+                                    dispatch_source_cancel(src);
+                                    c.source = null;
+                                }
+                                if (c.fd >= 0) {
+                                    std.posix.close(c.fd);
+                                    c.fd = -1;
+                                }
+                                c.conn_type = .unknown;
+                                c.server = null;
+                                c.buf_len = 0;
+                                break;
+                            }
+                        }
+
                         if (server.peer) |sp| {
                             _ = peer_to_profile.remove(@intFromPtr(sp));
                             xpc_release(sp);

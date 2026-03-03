@@ -137,7 +137,7 @@ tracking fix (Issue 685), tab lifecycle — close tabs when panes close (Issue
 replace pane_id with tab_id in Chromium (Issue 694), activation drag suppression
 (Issue 695), double click suppression fix (Issue 696), Unix socket research
 (Issue 698), protobuf-c build integration (Issue 699), TUI↔GUI socket
-replacement (Issue 700).
+replacement (Issue 700), GUI↔Chromium socket replacement (Issue 701).
 
 ### Source Layout
 
@@ -296,6 +296,8 @@ git subtree pull --prefix=gui upstream main -m "Merge upstream Ghostty into gui"
 - `docs/issues/700-tui-gui-sockets.md` — Replace TUI↔GUI XPC with Unix sockets
 - `docs/issues/701-chromium-sockets.md` — Replace GUI↔Chromium XPC with Unix
   sockets
+- `docs/issues/702-socket-cleanup.md` — Dead XPC removal and unlimited client
+  connections
 - `docs/xdg.md` — XDG directory pattern and conventions
 
 ### Early Prototypes (ts1–ts5)
