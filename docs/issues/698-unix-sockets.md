@@ -206,12 +206,16 @@ dependency for IPC.
 
 ### Cross-platform implications
 
-Unix domain sockets work identically on macOS and Linux. This means:
+Unix domain sockets work on macOS, Linux, and Windows. This means:
 
-- The IPC layer is platform-agnostic from day one
+- The IPC layer is platform-agnostic from day one — one codebase for all three
+  platforms
 - On Linux, the same socket-based IPC works without any adaptation
-- The GPU compositing layer (CALayerHost vs Wayland subsurfaces) remains
-  platform-specific, but IPC is shared
+- On Windows, AF_UNIX has been supported since Windows 10 build 17063 (2017) via
+  Winsock. Only `SOCK_STREAM` is supported (no `SOCK_DGRAM`), but TermSurf uses
+  stream connections anyway. Windows 11 supports it too.
+- The GPU compositing layer remains platform-specific (CALayerHost on macOS,
+  Wayland subsurfaces on Linux, TBD on Windows), but IPC is shared
 
 ### GPU compositing on Linux
 
@@ -281,65 +285,43 @@ changes.
 
 ## Experiments
 
-### Experiment 1: Protobuf schema and code generation
+### Experiment 1: Protobuf proof-of-concept in all three languages
 
-Define all 30 IPC messages in a `.proto` file and verify that code generation
-produces compilable output for all three languages (Rust, Zig, C++). This
-validates the serialization layer before touching any transport code.
+Prove that protobuf works in Rust, Zig, and C++ with a minimal example. One
+trivial `.proto` file, code generation for each language, and a round-trip test
+(serialize → bytes → deserialize) in each. No real messages yet — just proof
+that the toolchain works end to end.
 
 #### Changes
 
-**1. Create `proto/termsurf.proto`**
+**1. Create `proto/hello.proto`**
 
-Define a proto3 schema with all 30 current message types. Use a wrapper `oneof`
-pattern so every IPC message is a single `TermSurfMessage` type:
+A minimal schema with one message containing each data type we need (string,
+int64, uint64, double, bool):
 
 ```protobuf
 syntax = "proto3";
 package termsurf;
 
-message TermSurfMessage {
-  oneof msg {
-    CreateTab create_tab = 1;
-    CreateDevtoolsTab create_devtools_tab = 2;
-    TabReady tab_ready = 3;
-    Resize resize = 4;
-    CloseTab close_tab = 5;
-    Navigate navigate = 6;
-    CaContext ca_context = 7;
-    UrlChanged url_changed = 8;
-    LoadingState loading_state = 9;
-    TitleChanged title_changed = 10;
-    MouseEvent mouse_event = 11;
-    MouseMove mouse_move = 12;
-    ScrollEvent scroll_event = 13;
-    KeyEvent key_event = 14;
-    FocusChanged focus_changed = 15;
-    SetColorScheme set_color_scheme = 16;
-    ModeChanged mode_changed = 17;
-    CursorChanged cursor_changed = 18;
-    SetOverlay set_overlay = 19;
-    SetDevtoolsOverlay set_devtools_overlay = 20;
-    ServerRegister server_register = 21;
-    HelloRequest hello_request = 22;
-    HelloReply hello_reply = 23;
-    QueryLastRequest query_last_request = 24;
-    QueryLastReply query_last_reply = 25;
-    QueryDevtoolsRequest query_devtools_request = 26;
-    QueryDevtoolsReply query_devtools_reply = 27;
-    QueryTabsRequest query_tabs_request = 28;
-    QueryTabsReply query_tabs_reply = 29;
-    OpenSplit open_split = 30;
-  }
+message Hello {
+  string name = 1;
+  int64 id = 2;
+  uint64 size = 3;
+  double x = 4;
+  bool active = 5;
 }
 ```
 
-Each inner message type has fields matching the current XPC dictionary keys.
-Request/reply pairs are separate message types (no XPC reply mechanism needed).
+**2. Rust — standalone test binary**
 
-**2. Rust — add prost to `tui/Cargo.toml` and create `tui/build.rs`**
+Create `proto/test-rust/` with its own `Cargo.toml` and `build.rs`. This is
+separate from the TUI — a throwaway PoC, not integrated into the real app.
 
 ```toml
+[package]
+name = "proto-test"
+edition = "2021"
+
 [dependencies]
 prost = "0.14"
 
@@ -347,50 +329,55 @@ prost = "0.14"
 prost-build = "0.14"
 ```
 
-`tui/build.rs` runs `prost_build::compile_protos(&["../proto/termsurf.proto"])`.
-The generated Rust code lands in `target/` and is included via
-`include!(concat!(env!("OUT_DIR"), "/termsurf.rs"))` in a new `tui/src/proto.rs`
-module.
+`build.rs` compiles `../../hello.proto`. `main.rs` creates a `Hello`, encodes it
+to bytes with `prost::Message::encode`, decodes it back, asserts all fields
+match, and prints "Rust: pass".
 
-**3. C++ — run `protoc` manually and check in the generated code**
+**3. Zig — standalone test program**
 
-```bash
-protoc --cpp_out=chromium/src/content/chromium_profile_server/proto \
-  proto/termsurf.proto
-```
+Create `proto/test-zig/` with a `build.zig` that compiles the protobuf-c
+generated files and a `main.zig` that calls the C serialization functions.
 
-This generates `termsurf.pb.h` and `termsurf.pb.cc`. Check them into the
-Chromium fork so the Chromium build doesn't need a `protoc` step (it already has
-`libprotobuf` at `third_party/protobuf/`). Add the generated files to the
-profile server's `BUILD.gn` sources list.
-
-**4. Zig — evaluate protobuf-c via C interop**
-
-Zig can call C directly. Use the
-[protobuf-c](https://github.com/allyourcodebase/protobuf-c) library:
+Generate the C code:
 
 ```bash
-protoc --c_out=gui/src/apprt/proto proto/termsurf.proto
+protoc --c_out=proto/test-zig proto/hello.proto
 ```
 
-This generates `termsurf.pb-c.h` and `termsurf.pb-c.c`. Add them to the Zig
-build via `addCSourceFile()` and link against `libprotobuf-c`. The Zig code
-calls the C serialization functions directly — no Zig-native protobuf library
-needed.
+`main.zig` creates a `Termsurf__Hello` struct, calls `termsurf__hello__pack()`
+to serialize, `termsurf__hello__unpack()` to deserialize, asserts fields match,
+and prints "Zig: pass".
 
-If protobuf-c integration proves difficult (build system conflicts with
-Ghostty's build.zig), fall back to
-[zig-protobuf](https://github.com/Arwalk/zig-protobuf) which is a pure Zig
-implementation.
+This requires `libprotobuf-c` installed (`brew install protobuf-c`). The
+`build.zig` adds the generated `.c` file and links against `protobuf-c`.
+
+If protobuf-c integration proves difficult (linking issues, build.zig
+conflicts), fall back to [zig-protobuf](https://github.com/Arwalk/zig-protobuf)
+which is pure Zig and uses `build.zig.zon`.
+
+**4. C++ — standalone test program**
+
+Create `proto/test-cpp/` with a `Makefile` or direct compiler invocation.
+
+Generate the C++ code:
+
+```bash
+protoc --cpp_out=proto/test-cpp proto/hello.proto
+```
+
+`main.cc` creates a `termsurf::Hello`, calls `SerializeToString()`, calls
+`ParseFromString()`, asserts fields match, and prints "C++: pass". Link against
+`-lprotobuf` (`brew install protobuf` — already installed, `protoc` is on PATH).
 
 #### Verification
 
-1. `cd tui && cargo build` — compiles with prost-generated Rust code, no errors.
-2. Zig build (`cd gui && zig build`) — compiles with protobuf-c generated C
-   code, no errors.
-3. Write a minimal round-trip test in Rust: create a `TermSurfMessage` with a
-   `CreateTab` payload, serialize to bytes, deserialize back, assert fields
-   match. Run with `cargo test`.
-4. Verify the `.proto` schema covers all 30 current XPC message types by
-   cross-referencing against the XPC message inventory in `xpc.zig` and
-   `xpc.rs`.
+Run all three tests:
+
+1. `cd proto/test-rust && cargo run` — prints "Rust: pass"
+2. `cd proto/test-zig && zig build run` — prints "Zig: pass"
+3. `cd proto/test-cpp && make && ./test` — prints "C++: pass"
+
+**Pass criterion:** All three languages can serialize a `Hello` message to bytes
+and deserialize it back with all fields intact. This proves the protobuf
+toolchain works for Rust (prost), Zig (protobuf-c), and C++ (libprotobuf) before
+we commit to defining the full 30-message schema.
