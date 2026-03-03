@@ -422,4 +422,126 @@ Changes to `xpc.zig`:
 - `deinit`: iterates `clients` array instead of single `tui_fd`.
 - Listen backlog: 1 → 8.
 
-Runtime test pending — user will verify TUI still works.
+Runtime test: TUI still works — overlay renders, URL syncs, mode changes. The
+refactor is transparent to TUI clients.
+
+### Experiment 3: Bidirectional socket IPC
+
+**Goal:** Replace all XPC between GUI and Chromium with bidirectional
+socket+protobuf. After this experiment, the only remaining XPC code is the
+gateway connection and listener (cleanup in a later experiment). This combines
+ideas 3–5 from the ideas list because the two directions are tightly coupled — a
+half-XPC half-socket hybrid would be more complex than a clean swap.
+
+**Context:**
+
+The current Chromium profile server uses a two-tier XPC model:
+
+1. **Control connection** (one per profile server) — receives all 12
+   GUI→Chromium commands via `xpc_connection_create_from_endpoint`. Event
+   handler dispatches by `action` string to `CreateTab`, `HandleMouseEvent`,
+   etc.
+2. **Per-tab connections** (one per tab) — also from the stored endpoint. Send
+   events back to GUI: `tab_ready`, `ca_context`, `url_changed`,
+   `loading_state`, `title_changed`, `cursor_changed`.
+
+The gateway handshake is 4 steps: connect → request endpoint → create control
+connection from endpoint → send server_register → cancel gateway. Per-tab
+connections are created during `CreateTab()` and destroyed during tab close.
+
+The new model: one socket per server process, bidirectional. No gateway, no
+endpoint, no per-tab connections. The `tab_id` field in every message identifies
+the tab.
+
+**Chromium side changes (`shell_browser_main_parts.cc/.h`):**
+
+1. **Add `--ipc-socket` switch.** In `shell_switches.h`, add
+   `kIpcSocket = "ipc-socket"`. In `InitializeMessageLoopContext`, check for
+   `--ipc-socket` before `--xpc-service`. If present, call
+   `StartSocketMode(path)` instead of `StartDynamicMode(gateway_name)`.
+
+2. **`StartSocketMode(path)`.** New function:
+   - `connect()` to the Unix socket at `path`
+   - Send `ServerRegister { profile }` protobuf (4-byte LE prefix + serialized)
+   - Store the socket fd as `socket_fd_`
+   - Derive profile from `--user-data-dir` basename (same as current code)
+   - Start a socket reader on a background thread
+
+3. **Socket reader thread.** Reads length-prefixed protobuf messages and posts
+   tasks to the UI thread. Same framing as the GUI: 4-byte LE length + payload.
+   Dispatches by `msg.msg_case()`:
+   - `kCreateTab` (1) → `CreateTab()`
+   - `kCreateDevtoolsTab` (2) → `CreateDevToolsTab()`
+   - `kResize` (3) → `ResizeTab()`
+   - `kCloseTab` (4) → `CloseTabById()`
+   - `kNavigate` (5) → `NavigateTab()`
+   - `kMouseEvent` (6) → `HandleMouseEvent()`
+   - `kMouseMove` (7) → `HandleMouseMove()`
+   - `kScrollEvent` (8) → `HandleScrollEvent()`
+   - `kKeyEvent` (9) → `HandleKeyEvent()`
+   - `kFocusChanged` (10) → `HandleFocusChanged()`
+   - `kSetColorScheme` (11) → `SetColorScheme()`
+   - `kQueryTabsRequest` (29) → `HandleQueryTabs()` (reply via socket)
+
+4. **`SendProtobuf(msg)` helper.** Serializes a `TermSurfMessage` with 4-byte LE
+   prefix and writes to `socket_fd_`. Thread-safe (UI thread only, or
+   mutex-protected for observer callbacks).
+
+5. **Replace per-tab XPC sends in `CreateTab()`.** Instead of creating a per-tab
+   `xpc_connection_create_from_endpoint`, send `TabReady` and `CaContext`
+   protobuf messages over the shared `socket_fd_`. The CALayerParams callback
+   captures `socket_fd_` instead of `tab_conn`.
+
+6. **Replace ShellTabObserver XPC sends.** `ShellTabObserver` stores
+   `socket_fd_` instead of `xpc_connection_t`. `OnCursorChanged`,
+   `DidFinishNavigation`, `SendLoadingState`, `TitleWasSet` send protobuf
+   instead of XPC dictionaries.
+
+7. **No per-tab connections.** `TabState::tab_connection` becomes unused. No
+   `xpc_connection_create_from_endpoint` calls. No `app_endpoint_` storage.
+
+**GUI side changes (`xpc.zig`):**
+
+8. **Pass `--ipc-socket` to Chromium.** In `spawnServerProcess`, replace
+   `--xpc-service=...` with `--ipc-socket=<sock_path>`. The socket path comes
+   from `sock_path_buf[0..sock_path_len]`.
+
+9. **GUI→Chromium: send via protobuf.** In `sendCreateTab`, `sendResize`,
+   `sendMouseEvent`, `sendKeyEvent`, etc.: if `server.fd >= 0`, build a protobuf
+   `TermSurfMessage` and call `sendProtobuf(server.fd, &wrapper)` instead of
+   constructing XPC dicts and calling
+   `xpc_connection_send_message(server.peer, ...)`. Keep XPC fallback when
+   `server.fd == -1` (graceful transition).
+
+10. **Chromium→GUI: handle socket messages.** In `handleSocketMessage`, add
+    cases for Chromium events received via socket (these arrive on the Chromium
+    `ClientConn`):
+    - `tab_ready` (13) → XPC-dict adapter → `handleMessage`
+    - `ca_context` (14) → XPC-dict adapter → `handleMessage`
+    - `url_changed` (15) → XPC-dict adapter → `handleMessage`
+    - `loading_state` (16) → XPC-dict adapter → `handleMessage`
+    - `title_changed` (17) → XPC-dict adapter → `handleMessage`
+    - `cursor_changed` (18) → XPC-dict adapter → `handleMessage` Uses the same
+      adapter pattern as TUI messages: build an XPC dict and call
+      `handleMessage()` to reuse existing handler logic.
+
+11. **QueryTabs reply via socket.** `handleSocketQueryTabs` currently forwards
+    to Chromium via `xpc_connection_send_message_with_reply_sync`. When
+    `server.fd >= 0`, send `QueryTabsRequest` protobuf to `server.fd` and read
+    the reply. (Or defer this — query_tabs can stay on XPC as a temporary gap.)
+
+**What does NOT change (yet):**
+
+- The XPC gateway connection and listener in `xpc.zig` — still needed for the
+  app launch flow. Cleanup is a separate experiment.
+- `control_connection_` and `app_endpoint_` declarations in the header — removed
+  in cleanup.
+- `server.peer` field — still present, just not used when `server.fd >= 0`.
+
+**Pass criteria:** Build clean (both GUI and Chromium). Runtime test: launch
+GUI, type `web google.com`, browser renders via socket-only IPC. Tab ready, CA
+context, URL changes, loading state, title changes, cursor changes — all flowing
+over the socket. Mouse, keyboard, scroll input working.
+
+**Fail criteria:** Build errors, runtime failures (blank pane, no input, missing
+events), crashes on connect/disconnect.
