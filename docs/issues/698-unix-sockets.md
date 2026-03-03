@@ -1069,3 +1069,70 @@ the TUI-facing handlers and forwarding code change.
 **Pass criterion:** All TUI↔GUI communication works over Unix sockets +
 protobuf. The XPC gateway is no longer needed for TUI connections. No
 regressions in any existing functionality.
+
+**Result:** Fail
+
+The TUI side compiled cleanly — `ipc.rs` (replacing `xpc.rs`) builds with prost
+and pure Rust Unix sockets, no FFI needed. The GUI side hit a cascade of build
+system problems integrating protobuf-c into the Zig/Xcode/xcframework pipeline:
+
+1. **Zig 0.15 API changes.** `std.ArrayList(u8)` resolved to the unmanaged
+   `Aligned` variant which requires the allocator passed to every method
+   (`deinit(alloc)`, `appendSlice(alloc, ...)`) rather than storing it
+   internally. Fixed, but burned time.
+
+2. **Zig keyword escaping.** Protobuf-c generates a struct field named `error`,
+   which is a Zig keyword. Required `reply.@"error"` (4 occurrences). Fixed.
+
+3. **`[:0]const u8` vs `[*c]u8`.** Zig string literals and config fields are
+   sentinel-terminated const slices, but protobuf-c expects mutable C pointers.
+   Required `@constCast()`. Fixed.
+
+4. **protobuf-c runtime linking — the fatal blocker.** The generated
+   `termsurf.pb-c.c` references runtime symbols like `protobuf_c_empty_string`
+   from the protobuf-c library. The Zig build compiled the generated code and
+   the runtime source into per-architecture `.a` files correctly (verified with
+   `nm`), but the xcframework `libtool` step that creates the final fat library
+   for Xcode did not include the protobuf-c object files. The Xcode linker then
+   failed with undefined symbols on both arm64 and x86_64.
+
+   Attempted fixes:
+   - `linkSystemLibrary2("libprotobuf-c")` — links dynamically, but Xcode
+     doesn't know about the dynamic lib
+   - `addCSourceFile` for both `termsurf.pb-c.c` and `protobuf-c.c` (runtime
+     source downloaded from GitHub) — Zig compiled the objects, but the
+     xcframework pipeline dropped them during the libtool → xcframework step
+   - Created `protobuf-c/protobuf-c.h` subdirectory to satisfy
+     `#include <protobuf-c/protobuf-c.h>` — fixed the include error but the
+     linker issue persisted
+
+   The root cause is that the Zig build system's xcframework pipeline
+   (`LibtoolStep.zig` → `XCFrameworkStep.zig`) combines Zig-compiled static
+   libraries, but the C source files added via `addCSourceFile` are compiled
+   into intermediate objects that don't survive the multi-step archive process.
+   Fixing this requires understanding and modifying Ghostty's build pipeline —
+   `TermSurfLib.zig`, `LibtoolStep.zig`, `SharedDeps.zig` — which is deep
+   infrastructure work.
+
+#### Conclusion
+
+The experiment proved that the TUI side is straightforward — pure Rust sockets
+and prost are cleaner than the XPC FFI they replace. But the GUI side
+integration exposed a hard build system problem: getting a third-party C library
+(protobuf-c) through Ghostty's multi-architecture Zig → libtool → xcframework →
+Xcode pipeline. The objects compile correctly but get lost in the archive chain.
+
+This doesn't invalidate the Unix socket approach. It means the protobuf-c
+integration needs to be solved at the build system level before the socket code
+can link. Options for a future attempt:
+
+1. **Fix the xcframework pipeline** — understand why `addCSourceFile` objects
+   don't survive libtool and patch the build scripts.
+2. **Use a pure Zig protobuf library** (like zig-protobuf) instead of
+   protobuf-c, avoiding the C library linking problem entirely.
+3. **Use a simpler wire format** — JSON or a hand-rolled binary format that
+   doesn't require a third-party C library. Less elegant but zero build
+   dependencies.
+4. **Add protobuf-c to the Xcode project** — link it directly in Xcode's build
+   settings alongside the Zig static library, sidestepping the xcframework
+   issue.
