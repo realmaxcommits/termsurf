@@ -464,3 +464,73 @@ Zig ↔ protobuf-c quirks resolved during build:
 3. `msg_case` is `c_uint`, not an enum → use directly, no `@intFromEnum`.
 4. Union field pointers are `[*c]T` → add explicit `*T` type annotation on
    `orelse` unwrap to enable `.field` access.
+
+### Experiment 3: End-to-end integration
+
+Both sides compile (Experiments 1–2). Now wire them together and verify the full
+round-trip at runtime: TUI connects via socket, browser overlay appears, events
+flow back.
+
+#### Problem: socket path mismatch in debug
+
+The GUI creates `gui-debug.sock` in debug builds, but the TUI always connects to
+`gui.sock`. The same pattern as `TERMSURF_XPC_SERVICE` (Issue 653) — debug
+builds need an env var so child processes discover the correct socket path.
+
+#### Changes
+
+**1. GUI: set `TERMSURF_SOCKET` in debug builds (`xpc.zig`)**
+
+In `init()`, after `initSocket()`, set the env var pointing to the actual socket
+path. Debug and release both benefit — the TUI gets the exact path the GUI
+created.
+
+```zig
+// After initSocket():
+if (sock_fd >= 0) {
+    _ = internal_os.setenv("TERMSURF_SOCKET", sock_path_buf[0..sock_path_len :0]);
+}
+```
+
+This runs for all builds (not just debug). The TUI checks the env var first,
+falls back to the default path. Release builds get the same path either way, so
+no behavior change. Debug builds get the correct `gui-debug.sock` path.
+
+**2. TUI: check `TERMSURF_SOCKET` env var (`ipc.rs`)**
+
+In `CompositorConnection::connect()`, check `TERMSURF_SOCKET` first. If not set,
+build the default path from `$TMPDIR`.
+
+```rust
+let sock_path = std::env::var("TERMSURF_SOCKET").unwrap_or_else(|_| {
+    let tmpdir = std::env::var("TMPDIR").unwrap_or_else(|_| "/tmp".to_string());
+    format!("{}/termsurf/gui.sock", tmpdir.trim_end_matches('/'))
+});
+```
+
+**3. TUI: rebuild with `cargo build`**
+
+Verify Rust side still compiles after the path change.
+
+**4. GUI: rebuild with `zig build`**
+
+Verify Zig side still compiles after adding the env var.
+
+#### Verification
+
+1. Build both:
+   ```bash
+   cd gui && zig build
+   cd tui && cargo build
+   ```
+2. Launch the GUI: `open gui/zig-out/TermSurf.app`
+3. Open a terminal pane in TermSurf
+4. Verify the socket exists: `ls $TMPDIR/termsurf/gui-debug.sock`
+5. Run `web google.com` in the terminal pane
+6. Check GUI logs for `socket accept` and `socket set_overlay` messages
+7. Verify: browser overlay appears, page loads, URL bar updates
+
+**Pass criterion:** The TUI connects to the GUI via Unix socket, sends
+`SetOverlay`, and a Chromium browser overlay renders in the terminal pane.
+Events (LoadingState, UrlChanged, TitleChanged) flow back to the TUI and update
+the status bar. If runtime bugs surface, fix them and document.
