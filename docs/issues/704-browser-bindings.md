@@ -229,5 +229,14 @@ the previous one is complete.
 7. **Make Roamium the default** — Once all three work, switch the default from
    Chromium Profile Server to Roamium.
 
-8. **Retire the old profile server** — Remove `chromium_profile_server/` once
-   Plusium fully replaces it.
+8. **Retire the old profile server** — Delete `chromium_profile_server/` from
+   the active Chromium branch once all three bindings are verified equivalent.
+
+## End state
+
+When this issue is complete, the Chromium Profile Server (a Content Shell fork)
+is deleted from the active codebase. It will remain in historical branches and
+patches for reference, but it is no longer actively maintained. The three
+binding packages — Roamium, Zoomium, and Plusium — fully replace it.
+`libtermsurf_content` becomes the single maintained Chromium integration layer,
+and all browser binaries are thin wrappers around it.
