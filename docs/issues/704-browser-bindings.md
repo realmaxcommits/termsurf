@@ -837,39 +837,22 @@ extract the basename of `--user-data-dir` as the profile name for
 
 ```
 chromium/src/content/plusium/
-├── BUILD.gn         # Executable target linking libtermsurf_content
-└── plusium_main.cc   # ~400 lines: main, socket, dispatch, callbacks
+├── BUILD.gn          # Executable target linking libtermsurf_content
+├── plusium_main.cc    # ~400 lines: main, socket, dispatch, callbacks
+└── termsurf.proto     # Copied from proto/termsurf.proto
 ```
 
-Single file. All logic in `plusium_main.cc`. No headers needed — the only
-external interface is `libtermsurf_content.h`.
+`plusium_main.cc` is the only source file. `termsurf.proto` is copied from the
+canonical `proto/termsurf.proto` in the main repo so Plusium has zero profile
+server references.
 
 #### BUILD.gn
-
-```gn
-executable("plusium") {
-  testonly = true
-  sources = [ "plusium_main.cc" ]
-  deps = [
-    "//content/libtermsurf_content",
-    "//third_party/protobuf:protobuf_lite",
-  ]
-}
-```
-
-The protobuf dependency is for `termsurf.proto` message parsing/serialization.
-We need to add a `proto_library` target or compile `termsurf.pb.cc` directly.
-
-Actually, since the Chromium Profile Server already has `termsurf.proto`
-compiled via GN's `proto_library()`, Plusium can depend on that target. But to
-stay independent of the profile server, we create our own `proto_library`
-target:
 
 ```gn
 import("//third_party/protobuf/proto_library.gni")
 
 proto_library("termsurf_proto") {
-  sources = [ "//content/chromium_profile_server/browser/termsurf.proto" ]
+  sources = [ "termsurf.proto" ]
 }
 
 executable("plusium") {
@@ -881,10 +864,6 @@ executable("plusium") {
   ]
 }
 ```
-
-Or better — copy `termsurf.proto` into the `plusium/` directory so it has zero
-profile server references. The canonical proto is in the main repo at
-`proto/termsurf.proto`; we can copy it or symlink it.
 
 #### `plusium_main.cc` outline
 
