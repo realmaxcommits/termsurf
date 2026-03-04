@@ -201,3 +201,18 @@ Chromium, and forward scrolls regardless of mode.
 5. While in control mode, click the browser pane — should switch to browse mode
    AND the click should land on the page.
 6. Drag on the browser pane from control mode — should select text.
+
+#### Results
+
+**Result: Success.** Net -35 lines.
+
+Deleted both `pane_activation` and `overlay_activation` flags and all their
+guards from `mouseButtonCallback()`, `cursorPosCallback()`, `focusCallback()`,
+and `keyCallback()`. Restructured overlay click handling to always forward
+clicks to Chromium — if in control mode, switches to browse mode first, then
+forwards. Changed `scrollCallback()` to use `hasOverlayPane()` instead of
+`isOverlayForwarding()`, so scrolls reach the webview regardless of mode or
+focus.
+
+All six verification steps pass. Clicks, drags, and scrolls propagate
+immediately — no activation click needed.
