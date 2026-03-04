@@ -53,6 +53,13 @@ fi
 
 # --- Web TUI (Rust) ---
 
+# prost_build needs protoc. Use Chromium's built copy if available,
+# so users don't need a system-installed protoc.
+CHROMIUM_PROTOC="$REPO_DIR/chromium/src/out/Default/protoc"
+if [ -x "$CHROMIUM_PROTOC" ]; then
+  export PROTOC="$CHROMIUM_PROTOC"
+fi
+
 cd "$REPO_DIR/tui"
 
 if $CLEAN; then
