@@ -216,3 +216,12 @@ focus.
 
 All six verification steps pass. Clicks, drags, and scrolls propagate
 immediately — no activation click needed.
+
+## Conclusion
+
+Removed the click-to-activate suppression system built across Issues 670, 695,
+and 696. Deleted both `pane_activation` and `overlay_activation` flags and all
+their guards. Mouse clicks, drags, and scrolls now propagate to content
+immediately — no activation click required. Scrolls forward to the webview
+regardless of mode or focus. Clicking a browser pane in control mode switches to
+browse mode and forwards the click in the same action. Net -35 lines.
