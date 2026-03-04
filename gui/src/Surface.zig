@@ -276,16 +276,6 @@ const Mouse = struct {
     /// True if the mouse is currently over a browser overlay (Issue 606).
     over_overlay: bool = false,
 
-    /// True while consuming an activation click on the overlay. Set on
-    /// the press that triggers notifyOverlayClicked, cleared on the
-    /// corresponding release. Prevents the mouseup from forwarding to
-    /// Chromium. (Issue 606 Experiment 8.)
-    overlay_activation: bool = false,
-
-    /// Set when this surface just gained focus. The next press+release
-    /// is consumed (click-to-focus without pass-through). Issue 670.
-    pane_activation: bool = false,
-
     /// The last x/y in the cursor position for links. We use this to
     /// only process link hover events when the mouse actually moves cells.
     link_point: ?terminal.point.Coordinate = null,
@@ -2736,9 +2726,6 @@ pub fn keyCallback(
 ) !InputEffect {
     // log.warn("text keyCallback event={}", .{event_orig});
 
-    // Any keypress proves intentional engagement — cancel click suppression (Issue 696).
-    self.mouse.pane_activation = false;
-
     // Apply key remappings to transform modifiers before any processing.
     // This allows users to remap modifier keys at the app level.
     var event = event_orig;
@@ -3414,11 +3401,6 @@ pub fn focusCallback(self: *Surface, focused: bool) !void {
     if (self.focused == focused) return;
     self.focused = focused;
 
-    // Set activation flag so the next click is consumed (Issue 670).
-    if (focused) {
-        self.mouse.pane_activation = true;
-    }
-
     // Notify our render thread of the new state
     _ = self.renderer_thread.mailbox.push(.{
         .focus = focused,
@@ -3546,12 +3528,12 @@ pub fn scrollCallback(
     crash.sentry.thread_state = self.crashThreadState();
     defer crash.sentry.thread_state = null;
 
-    // Check if scroll is in a browser overlay (Issue 606).
+    // Forward scroll to browser overlay regardless of mode (Issue 703).
     {
         const cursor = try self.rt_surface.getCursorPos();
         if (self.hitTestOverlay(@floatCast(cursor.x), @floatCast(cursor.y))) |overlay_pos| {
             const xpc = @import("apprt/xpc.zig");
-            if (xpc.isOverlayForwarding(self)) {
+            if (xpc.hasOverlayPane(self)) {
                 xpc.sendScrollEvent(self, overlay_pos.x, overlay_pos.y);
                 return;
             }
@@ -4052,62 +4034,50 @@ pub fn mouseButtonCallback(
     // so cursorPosCallback can read button-down state during drag — Issue 606).
     self.mouse.click_state[@intCast(@intFromEnum(button))] = action;
 
-    // Suppress activation click — click-to-focus without pass-through (Issue 670).
-    if (self.mouse.pane_activation) {
-        if (action == .release) {
-            self.mouse.pane_activation = false;
-        }
-        return true;
-    }
-
     // Check if click is in a browser overlay (Issue 606).
     {
         const cursor = try self.rt_surface.getCursorPos();
         if (self.hitTestOverlay(@floatCast(cursor.x), @floatCast(cursor.y))) |overlay_pos| {
             const xpc = @import("apprt/xpc.zig");
-            if (xpc.isOverlayForwarding(self)) {
-                // Suppress activation click — press and release (Exp 10).
-                if (self.mouse.overlay_activation) {
-                    if (action == .release) {
-                        self.mouse.overlay_activation = false;
-                    }
-                } else {
-                    // Compute click count for overlay (mirrors logic at line 4258).
-                    var click_count: u8 = 1;
-                    if (button == .left and action == .press) {
-                        // Distance check — reset if cursor moved too far.
-                        if (self.mouse.left_click_count > 0) {
-                            const max_distance: f64 = @floatFromInt(self.size.cell.width);
-                            const distance = @sqrt(
-                                std.math.pow(f64, cursor.x - self.mouse.left_click_xpos, 2) +
-                                    std.math.pow(f64, cursor.y - self.mouse.left_click_ypos, 2),
-                            );
-                            if (distance > max_distance) self.mouse.left_click_count = 0;
-                        }
-                        // Timing check — reset if too slow.
-                        if (std.time.Instant.now()) |now| {
-                            if (self.mouse.left_click_count > 0) {
-                                const since = now.since(self.mouse.left_click_time);
-                                if (since > self.config.mouse_interval) {
-                                    self.mouse.left_click_count = 0;
-                                }
-                            }
-                            self.mouse.left_click_time = now;
-                            self.mouse.left_click_count += 1;
-                            if (self.mouse.left_click_count > 3) self.mouse.left_click_count = 1;
-                        } else |_| {
-                            self.mouse.left_click_count = 1;
-                        }
-                        self.mouse.left_click_xpos = cursor.x;
-                        self.mouse.left_click_ypos = cursor.y;
-                        click_count = self.mouse.left_click_count;
-                    }
-                    // Active + browsing: forward click to Chromium.
-                    xpc.sendMouseEvent(self, action, button, mods, overlay_pos.x, overlay_pos.y, click_count);
-                }
-            } else if (button == .left and action == .press) {
-                // Not forwarding: activate on left-click, consume the click.
+
+            // Switch to browse mode if needed (Issue 703).
+            if (button == .left and action == .press) {
                 xpc.notifyOverlayClicked(self);
+            }
+
+            // Always forward click to Chromium (Issue 703).
+            if (xpc.hasOverlayPane(self)) {
+                // Compute click count for overlay (mirrors logic at line 4258).
+                var click_count: u8 = 1;
+                if (button == .left and action == .press) {
+                    // Distance check — reset if cursor moved too far.
+                    if (self.mouse.left_click_count > 0) {
+                        const max_distance: f64 = @floatFromInt(self.size.cell.width);
+                        const distance = @sqrt(
+                            std.math.pow(f64, cursor.x - self.mouse.left_click_xpos, 2) +
+                                std.math.pow(f64, cursor.y - self.mouse.left_click_ypos, 2),
+                        );
+                        if (distance > max_distance) self.mouse.left_click_count = 0;
+                    }
+                    // Timing check — reset if too slow.
+                    if (std.time.Instant.now()) |now| {
+                        if (self.mouse.left_click_count > 0) {
+                            const since = now.since(self.mouse.left_click_time);
+                            if (since > self.config.mouse_interval) {
+                                self.mouse.left_click_count = 0;
+                            }
+                        }
+                        self.mouse.left_click_time = now;
+                        self.mouse.left_click_count += 1;
+                        if (self.mouse.left_click_count > 3) self.mouse.left_click_count = 1;
+                    } else |_| {
+                        self.mouse.left_click_count = 1;
+                    }
+                    self.mouse.left_click_xpos = cursor.x;
+                    self.mouse.left_click_ypos = cursor.y;
+                    click_count = self.mouse.left_click_count;
+                }
+                xpc.sendMouseEvent(self, action, button, mods, overlay_pos.x, overlay_pos.y, click_count);
             }
             return true;
         }
@@ -4116,8 +4086,6 @@ pub fn mouseButtonCallback(
             const xpc = @import("apprt/xpc.zig");
             xpc.notifyNonOverlayClicked(self);
         }
-        // Clear activation flag — click landed outside overlay (Exp 10).
-        self.mouse.overlay_activation = false;
     }
 
     // If we have an inspector, we always queue a render
@@ -4862,9 +4830,6 @@ pub fn cursorPosCallback(
     defer crash.sentry.thread_state = null;
 
     // log.debug("cursor pos x={} y={} mods={?}", .{ pos.x, pos.y, mods });
-
-    // Suppress drag during activation — same as click suppression (Issue 670).
-    if (self.mouse.pane_activation) return;
 
     // Check if mouse is in a browser overlay (Issue 606).
     if (self.hitTestOverlay(@floatCast(pos.x), @floatCast(pos.y))) |overlay_pos| {
