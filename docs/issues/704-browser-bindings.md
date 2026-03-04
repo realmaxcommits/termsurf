@@ -769,3 +769,259 @@ chromium/src/content/libtermsurf_content/
 **Status: SUCCESS.** The C library is now fully independent of the Chromium
 Profile Server. It subclasses vanilla Content Shell directly with zero patches
 to Content Shell files.
+
+### Experiment 3: Plusium — C++ browser binary
+
+Build Plusium, a C++ binary that links `libtermsurf_content` and provides all
+the socket IPC + protobuf logic needed to replace the current Chromium Profile
+Server. Plusium lives inside `chromium/src/` and builds with GN/autoninja.
+
+This is the simplest of the three bindings because it stays in the Chromium
+build system — no cross-build-system linking. It validates that the C library
+API is complete enough to drive a fully functional browser binary.
+
+#### Architecture
+
+Plusium is a thin C++ binary (~400 lines) that:
+
+1. Parses `--ipc-socket` and `--user-data-dir` from the command line
+2. Registers all C callbacks before calling `ts_content_main()`
+3. On `on_initialized`: connects to the GUI's Unix socket, sends
+   `ServerRegister`, spawns a socket reader thread
+4. Reader thread: reads length-prefixed protobuf, posts tasks via
+   `ts_post_task()` for dispatch on the UI thread
+5. Dispatch: switches on `msg_case()`, calls the appropriate `ts_*()` C function
+6. Callbacks: builds protobuf responses, writes them back to the socket
+
+The binary is functionally equivalent to the current Chromium Profile Server.
+The GUI cannot tell the difference.
+
+#### Key design decisions
+
+**Tab registry.** The C API uses opaque `ts_web_contents_t` handles. The
+protobuf protocol uses integer `tab_id` and string `pane_id`. Plusium maintains
+a `std::vector<TabEntry>` mapping between them:
+
+```cpp
+struct TabEntry {
+  ts_web_contents_t handle;
+  int tab_id;
+  std::string pane_id;
+  int inspected_tab_id;  // 0 for normal tabs
+};
+```
+
+On `CreateTab`, Plusium stores the `pane_id` before calling
+`ts_create_web_contents()`. The `on_tab_ready` callback provides the `tab_id`
+and the handle, completing the entry. All other callbacks receive the handle and
+look up `tab_id` in the registry.
+
+**Cursor type passthrough.** The C API's `on_cursor_changed` returns an `int`
+(Chromium enum value). The protobuf `CursorChanged.cursor_type` is `int64`.
+Direct passthrough — no string mapping needed.
+
+**QueryTabs from local registry.** The C API doesn't expose a query function.
+Plusium answers `QueryTabsRequest` from its own tab registry — it knows every
+tab's `tab_id`, `pane_id`, `inspected_tab_id`, and can get the URL from the last
+`on_url_changed` callback.
+
+**Socket write mutex.** The reader thread posts tasks to the UI thread
+(one-way). Callbacks on the UI thread write protobuf responses to the socket.
+Since callbacks are all on the UI thread, no mutex is needed for socket writes.
+
+**`--user-data-dir` for profile name.** Same as the current profile server:
+extract the basename of `--user-data-dir` as the profile name for
+`ServerRegister`.
+
+#### File structure
+
+```
+chromium/src/content/plusium/
+├── BUILD.gn         # Executable target linking libtermsurf_content
+└── plusium_main.cc   # ~400 lines: main, socket, dispatch, callbacks
+```
+
+Single file. All logic in `plusium_main.cc`. No headers needed — the only
+external interface is `libtermsurf_content.h`.
+
+#### BUILD.gn
+
+```gn
+executable("plusium") {
+  testonly = true
+  sources = [ "plusium_main.cc" ]
+  deps = [
+    "//content/libtermsurf_content",
+    "//third_party/protobuf:protobuf_lite",
+  ]
+}
+```
+
+The protobuf dependency is for `termsurf.proto` message parsing/serialization.
+We need to add a `proto_library` target or compile `termsurf.pb.cc` directly.
+
+Actually, since the Chromium Profile Server already has `termsurf.proto`
+compiled via GN's `proto_library()`, Plusium can depend on that target. But to
+stay independent of the profile server, we create our own `proto_library`
+target:
+
+```gn
+import("//third_party/protobuf/proto_library.gni")
+
+proto_library("termsurf_proto") {
+  sources = [ "//content/chromium_profile_server/browser/termsurf.proto" ]
+}
+
+executable("plusium") {
+  testonly = true
+  sources = [ "plusium_main.cc" ]
+  deps = [
+    ":termsurf_proto",
+    "//content/libtermsurf_content",
+  ]
+}
+```
+
+Or better — copy `termsurf.proto` into the `plusium/` directory so it has zero
+profile server references. The canonical proto is in the main repo at
+`proto/termsurf.proto`; we can copy it or symlink it.
+
+#### `plusium_main.cc` outline
+
+```cpp
+#include "content/libtermsurf_content/libtermsurf_content.h"
+#include "content/plusium/termsurf.pb.h"
+
+#include <sys/socket.h>
+#include <sys/un.h>
+#include <unistd.h>
+#include <thread>
+#include <vector>
+#include <string>
+#include <cstring>
+
+// --- Tab registry ---
+
+struct TabEntry {
+  ts_web_contents_t handle = nullptr;
+  int tab_id = 0;
+  std::string pane_id;
+  int inspected_tab_id = 0;
+  std::string last_url;
+};
+
+static std::vector<TabEntry> g_tabs;
+static int g_socket_fd = -1;
+static std::string g_profile_name;
+static std::string g_socket_path;
+static std::string g_user_data_dir;
+
+// --- Tab registry helpers ---
+
+TabEntry* FindByHandle(ts_web_contents_t h);
+TabEntry* FindByTabId(int tab_id);
+TabEntry* FindByPaneId(const std::string& pane_id);
+
+// --- Socket I/O ---
+
+void SendProtobuf(const termsurf::TermSurfMessage& msg);
+void SocketReaderLoop();
+
+// --- Protobuf dispatch (called on UI thread via ts_post_task) ---
+
+void HandleMessage(termsurf::TermSurfMessage* msg);
+
+// --- C API callbacks ---
+
+void OnInitialized(void*);
+void OnTabReady(ts_web_contents_t wc, int tab_id, void*);
+void OnCaContextId(ts_web_contents_t wc, uint32_t id, int w, int h, void*);
+void OnUrlChanged(ts_web_contents_t wc, const char* url, void*);
+void OnLoadingState(ts_web_contents_t wc, const char* state, int progress, void*);
+void OnTitleChanged(ts_web_contents_t wc, const char* title, void*);
+void OnCursorChanged(ts_web_contents_t wc, int cursor_type, void*);
+
+// --- main ---
+
+int main(int argc, const char** argv) {
+  // Parse --ipc-socket and --user-data-dir from argv
+  // Derive profile name from user-data-dir basename
+
+  // Register all callbacks
+  ts_set_on_initialized(OnInitialized, nullptr);
+  ts_set_on_tab_ready(OnTabReady, nullptr);
+  ts_set_on_ca_context_id(OnCaContextId, nullptr);
+  ts_set_on_url_changed(OnUrlChanged, nullptr);
+  ts_set_on_loading_state(OnLoadingState, nullptr);
+  ts_set_on_title_changed(OnTitleChanged, nullptr);
+  ts_set_on_cursor_changed(OnCursorChanged, nullptr);
+
+  // Enter Chromium's message loop (blocks until shutdown)
+  return ts_content_main(argc, argv);
+}
+```
+
+#### Message dispatch
+
+Maps each protobuf `msg_case()` to the corresponding `ts_*()` C call:
+
+| Protobuf message    | C API call                          | Notes                                 |
+| ------------------- | ----------------------------------- | ------------------------------------- |
+| `CreateTab`         | `ts_create_web_contents()`          | Store pane_id in registry before call |
+| `CreateDevtoolsTab` | `ts_create_devtools_web_contents()` | Look up inspected handle by tab_id    |
+| `Resize`            | `ts_set_view_size()`                | Look up handle by tab_id              |
+| `CloseTab`          | `ts_destroy_web_contents()`         | Remove from registry after call       |
+| `Navigate`          | `ts_load_url()`                     | Look up handle by tab_id              |
+| `MouseEvent`        | `ts_forward_mouse_event()`          | Map string type/button to int         |
+| `MouseMove`         | `ts_forward_mouse_move()`           | Straight passthrough                  |
+| `ScrollEvent`       | `ts_forward_scroll_event()`         | Straight passthrough                  |
+| `KeyEvent`          | `ts_forward_key_event()`            | Map string type to int                |
+| `FocusChanged`      | `ts_set_focus()`                    | Straight passthrough                  |
+| `SetColorScheme`    | `ts_set_color_scheme()`             | Straight passthrough                  |
+| `QueryTabsRequest`  | (local registry)                    | Build reply from g_tabs               |
+
+#### Callback → protobuf mapping
+
+| C callback          | Protobuf response | Notes                               |
+| ------------------- | ----------------- | ----------------------------------- |
+| `on_tab_ready`      | `TabReady`        | Look up pane_id from registry       |
+| `on_ca_context_id`  | `CaContext`       | Look up tab_id from handle          |
+| `on_url_changed`    | `UrlChanged`      | Store URL in registry for QueryTabs |
+| `on_loading_state`  | `LoadingState`    | Straight passthrough                |
+| `on_title_changed`  | `TitleChanged`    | Straight passthrough                |
+| `on_cursor_changed` | `CursorChanged`   | Straight passthrough (int → int64)  |
+
+#### C API gap: `pane_id` tracking
+
+The C library doesn't know about `pane_id` — it's a protocol-level concept. The
+profile server stores `pane_id` in its `TabState`. Plusium does the same: when
+`CreateTab` arrives, Plusium stores the `pane_id` in the registry entry and
+associates it with the `ts_web_contents_t` handle returned by the C API.
+
+The `on_tab_ready` callback fires with `(handle, tab_id)`. Plusium finds the
+registry entry by handle, fills in the `tab_id`, and sends
+`TabReady(pane_id, tab_id)`.
+
+#### C API gap: mouse/key type mapping
+
+The protobuf uses string types (`"down"`, `"up"`, `"left"`, `"right"`). The C
+API uses integers. Plusium maps:
+
+- Mouse type: `"down"` → 0, `"up"` → 1
+- Mouse button: `"left"` → 0, `"right"` → 1, `"middle"` → 2
+- Key type: `"down"` → 0, `"up"` → 1, `"repeat"` → 2
+
+#### Verification
+
+1. `autoninja -C out/Default content/plusium:plusium` — compiles and links
+   clean.
+2. Replace the Chromium Profile Server binary in the app bundle with Plusium.
+   Launch TermSurf, type `web google.com`. Page loads, mouse works, keyboard
+   works, resize works, navigation works.
+3. Test DevTools: `:devtools` command opens DevTools in a split pane.
+4. Test multi-profile: open tabs in different profiles, verify isolation.
+5. Test tab close: close a pane, verify the tab is destroyed.
+
+Criterion 1 (builds) is the gate for this experiment. Criteria 2–5 are stretch
+goals — if the library's API has gaps that prevent end-to-end functionality, we
+document them and fix the C library in a follow-up experiment.
