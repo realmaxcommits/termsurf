@@ -1281,3 +1281,61 @@ one of several failure points in the pipeline.
    `--enable-logging`, `--log-file` which are Content Shell flags. Plusium
    passes these through to `ts_content_main(argc, argv)` but verify they don't
    cause issues.
+
+**Diagnosis (from `logs/gui.log`):** Plusium crashes immediately on startup with
+a DCHECK in `content/shell/app/paths_apple.mm:41`:
+
+```
+DCHECK failed: "Contents" == path.BaseName().value() (Contents vs. out)
+```
+
+`GetContentsPath()` walks up from the binary path expecting a `.app` bundle
+layout (`Contents/MacOS/binary`). Plusium is a bare executable at
+`out/Default/plusium`, so `BaseName()` is `out` instead of `Contents`.
+
+The call chain: `ShellMainDelegate::BasicStartupComplete()` →
+`EnsureCorrectResolutionSettings()` → `GetInfoPlistPath()` → `GetContentsPath()`
+→ DCHECK crash.
+
+`EnsureCorrectResolutionSettings()` reads `NSHighResolutionCapable` from
+`Info.plist` and toggles it for web tests (`--run-web-tests`). For normal
+browser usage it's a no-op (early return). Retina display support comes from the
+Chromium compositor and Window Server, not from this function.
+
+### Experiment 5: Skip bundle path check for non-bundle binaries
+
+Override `BasicStartupComplete()` in `TsMainDelegate` to skip the
+`EnsureCorrectResolutionSettings()` call. This is a macOS-specific Content Shell
+assumption that doesn't apply to TermSurf's browser binaries. The override
+reproduces everything the parent does except the resolution settings call.
+
+#### What to change
+
+**`content/libtermsurf_content/ts_main_delegate.h`** — Add override:
+
+```cpp
+std::optional<int> BasicStartupComplete() override;
+```
+
+**`content/libtermsurf_content/ts_main_delegate.cc`** — Implement override. Copy
+the body of `ShellMainDelegate::BasicStartupComplete()` but remove the
+`#if BUILDFLAG(IS_MAC)` / `EnsureCorrectResolutionSettings()` block. The
+remaining code handles:
+
+- `--run-layout-test` → `--run-web-tests` flag migration (harmless, keep)
+- Android compositor init (not applicable, keep for cross-platform)
+- Windows ETW/crashpad/handle checks (not applicable, keep for cross-platform)
+- `InitLogging()` (needed)
+- Web test `OsSettingsProvider` setup (harmless, keep)
+- `InitializeResourceBundle()` (needed)
+
+Everything except the one macOS bundle path call.
+
+#### Verification
+
+1. `autoninja -C out/Default plusium` — compiles.
+2. Run Plusium manually:
+   `./out/Default/plusium --ipc-socket=/tmp/test.sock --user-data-dir=/tmp/test`
+   — no DCHECK crash, process starts and connects.
+3. Full end-to-end: `web google.com --browser plusium` — page loads.
+4. Retina: page renders at native resolution (not blurry/1x).
