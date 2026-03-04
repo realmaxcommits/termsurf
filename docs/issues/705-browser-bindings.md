@@ -96,6 +96,34 @@ DCHECK fix). This issue continues on a new branch created from it.
   `initBrowserRegistry()`, `spawnServerProcess()` with dynamic binary path
 - `gui/src/protobuf/termsurf.pb-c.{h,c}` — Regenerated for new proto fields
 
+## Ideas for future experiments
+
+These are rough ideas for after Plusium is working end-to-end. Each will be
+designed when the previous one is complete.
+
+1. **End-to-end Plusium verification** — Once `--hidden` is fixed, run the full
+   test matrix: browse, navigate, resize, mouse input, keyboard input, scroll,
+   DevTools, dark mode, multiple profiles. Verify Plusium is functionally
+   equivalent to the Chromium Profile Server.
+
+2. **Build Roamium (Rust)** — Create a Rust crate that links
+   `libtermsurf_content` via FFI (`bindgen` or manual declarations). The main
+   challenge is build system integration: Cargo needs to find the Chromium-built
+   static library and headers. Verify equivalence.
+
+3. **Build Zoomium (Zig)** — Create a Zig package that links
+   `libtermsurf_content` via `@cImport`. Same build system challenge as Roamium
+   but for Zig. Verify equivalence.
+
+4. **Make Roamium the default** — Once all three work, switch the default from
+   Chromium Profile Server to Roamium. Update the GUI's `initBrowserRegistry()`
+   to list Roamium first.
+
+5. **Retire the Chromium Profile Server** — Delete `chromium_profile_server/`
+   from the active Chromium branch once all three bindings are verified
+   equivalent. This removes ~100 forked files and ~1050 lines of
+   TermSurf-specific code.
+
 ## Experiments
 
 ### Experiment 1: Add `--hidden` support to stock Content Shell
@@ -134,31 +162,3 @@ already present.
 2. Run `web google.com --browser plusium` — no Content Shell window appears on
    screen, page loads in the terminal.
 3. Verify default browser (no `--browser` flag) still works.
-
-## Ideas for future experiments
-
-These are rough ideas for after Plusium is working end-to-end. Each will be
-designed when the previous one is complete.
-
-1. **End-to-end Plusium verification** — Once `--hidden` is fixed, run the full
-   test matrix: browse, navigate, resize, mouse input, keyboard input, scroll,
-   DevTools, dark mode, multiple profiles. Verify Plusium is functionally
-   equivalent to the Chromium Profile Server.
-
-2. **Build Roamium (Rust)** — Create a Rust crate that links
-   `libtermsurf_content` via FFI (`bindgen` or manual declarations). The main
-   challenge is build system integration: Cargo needs to find the Chromium-built
-   static library and headers. Verify equivalence.
-
-3. **Build Zoomium (Zig)** — Create a Zig package that links
-   `libtermsurf_content` via `@cImport`. Same build system challenge as Roamium
-   but for Zig. Verify equivalence.
-
-4. **Make Roamium the default** — Once all three work, switch the default from
-   Chromium Profile Server to Roamium. Update the GUI's `initBrowserRegistry()`
-   to list Roamium first.
-
-5. **Retire the Chromium Profile Server** — Delete `chromium_profile_server/`
-   from the active Chromium branch once all three bindings are verified
-   equivalent. This removes ~100 forked files and ~1050 lines of
-   TermSurf-specific code.
