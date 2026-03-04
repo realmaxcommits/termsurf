@@ -1339,3 +1339,91 @@ Everything except the one macOS bundle path call.
    — no DCHECK crash, process starts and connects.
 3. Full end-to-end: `web google.com --browser plusium` — page loads.
 4. Retina: page renders at native resolution (not blurry/1x).
+
+#### Result: Failure
+
+The DCHECK crash is fixed — Plusium no longer crashes on startup. But a Content
+Shell window now pops up on screen and immediately vanishes. No page loads in
+the terminal.
+
+**Root cause:** Plusium links against stock `content/shell:content_shell_lib`,
+which includes the stock `shell_platform_delegate_mac.mm`. When
+`Shell::CreateNewWindow()` is called (from `TsBrowserMainParts::CreateTab()`),
+the stock platform delegate calls `[window makeKeyAndOrderFront:nil]` — creating
+a visible macOS window.
+
+The existing Chromium Profile Server solved this with a **forked**
+`shell_platform_delegate_mac.mm` in `content/chromium_profile_server/browser/`
+that checks for a `--hidden` flag:
+
+```objc
+if (base::CommandLine::ForCurrentProcess()->HasSwitch(switches::kHidden)) {
+    [window setAlphaValue:0.0];
+    [window orderWindow:NSWindowBelow relativeTo:0];
+} else {
+    [window makeKeyAndOrderFront:nil];
+}
+```
+
+This makes the window fully transparent and orders it behind all other windows.
+Using `orderOut:` would detach the compositor (it triggers
+`NSWindowDidChangeOcclusionStateNotification` which sets
+`render_widget_host_is_hidden_ = true`). The `setAlphaValue:0` trick keeps the
+window in the window list so the compositor stays active and CAContext survives
+navigation.
+
+The GUI already passes `--hidden` to server processes (line 1004 of `xpc.zig`),
+but Plusium's stock Content Shell code doesn't recognize it.
+
+## Conclusion
+
+Issue 704 explored creating standalone browser binaries
+(Roamium/Zoomium/Plusium) that wrap Chromium's Content API through a shared C
+library. Five experiments were run across two sessions.
+
+### What was accomplished
+
+1. **C library extraction** (Experiment 1) — Confirmed `libtermsurf_content`
+   already provides a clean C API boundary. No new library needed.
+
+2. **Profile server dependency audit** (Experiment 2) — Verified that
+   `libtermsurf_content` has no dependencies on the Chromium Profile Server's
+   forked code. It links against stock `content/shell`.
+
+3. **Plusium C++ binary** (Experiment 3) — Built a working C++ binary
+   (`content/plusium/plusium_main.cc`) with its own `BUILD.gn` and protobuf IPC.
+   Compiles and links successfully.
+
+4. **`--browser` flag** (Experiment 4) — Added end-to-end support for selecting
+   browser binaries: proto schema changes, TUI `--browser` CLI flag, GUI browser
+   registry with composite `(profile, browser)` server keys, and dynamic binary
+   path resolution. Compiles clean but Plusium crashes on startup (DCHECK in
+   `paths_apple.mm`).
+
+5. **Skip bundle path check** (Experiment 5) — Overrode `BasicStartupComplete()`
+   in `TsMainDelegate` to skip the macOS `.app` bundle check. Fixed the DCHECK
+   crash. But a Content Shell window appears on screen because stock
+   `shell_platform_delegate_mac.mm` has no `--hidden` support.
+
+### Critical next steps for a future issue
+
+The remaining blocker is **window suppression**. Plusium links against stock
+Content Shell, which always shows a native macOS window when creating tabs. The
+fix requires one of:
+
+1. **Patch stock Content Shell** — Add `--hidden` support to
+   `content/shell/browser/shell_platform_delegate_mac.mm` (the same
+   `setAlphaValue:0` + `orderWindow:NSWindowBelow` trick the Profile Server
+   uses). This is the cleanest approach since Plusium already receives
+   `--hidden` from the GUI.
+
+2. **Fork `shell_platform_delegate_mac.mm` into `libtermsurf_content`** — Copy
+   the Profile Server's version and have `libtermsurf_content` link against it
+   instead of the stock one.
+
+3. **Make Plusium link against the Profile Server's forked shell code** — Change
+   Plusium's `BUILD.gn` deps from `content/shell:content_shell_lib` to the
+   Profile Server's equivalents.
+
+Option 1 is recommended — it's a small, surgical patch to one file that benefits
+all TermSurf browser binaries without code duplication.
