@@ -6,7 +6,7 @@
 - [x] Browser navigation keybindings (Cmd+[/]/R for back/forward/reload)
 - [x] Context menu removal (Content Shell menu didn't fit architecture)
 - [x] Fix Ctrl+Esc mode switching (dangling pointer in focused_pane)
-- [ ] target="_blank" handling (OAuth, "open in new tab" links fail)
+- [ ] target="\_blank" handling (OAuth, "open in new tab" links fail)
 - [ ] Drag-n-drop file uploads
 - [ ] JavaScript dialogs (alert/confirm/prompt)
 - [ ] Downloads
@@ -24,3 +24,20 @@
 - [ ] Hide/show webviews (ctrl+z/fg)
 - [ ] Multi-webview stacking (multiple webviews per pane)
 - [x] Dynamic tab titles (page title → terminal tab)
+
+## Future issues
+
+Problems identified but not yet started. Each becomes its own issue doc when
+ready.
+
+- [ ] Renderer crash UX — When the Chromium renderer process dies, the user sees
+      a blank white screen with no indication of what happened. The progress bar
+      continues as if the page is still loading, then times out. Need to detect
+      renderer termination, display an error page, clear the progress bar, and
+      show what went wrong. Discovered in Issue 655 Experiment 1.
+- [ ] Mojo interface audit — The Content API build is missing handlers for Mojo
+      interfaces that a full Chrome browser registers. Every missing binder is a
+      ticking time bomb — the renderer crashes when any page's JavaScript calls
+      that API. Fixed `blink.mojom.BadgeService` in Issue 655, but there are
+      likely many more. Need to systematically review all Mojo interfaces.
+      Discovered in Issue 655 Experiment 1.
