@@ -136,3 +136,160 @@ FrameSinkVideoCapturer code — gets left behind.
 
 4. **Clean up patches.** Generate a fresh patch set for issue-708. This should
    be dramatically smaller than issue-707's 68 patches.
+
+## Experiment 1: Create the clean Chromium branch
+
+### Goal
+
+Start from vanilla `146.0.7650.0` and create a minimal branch that contains only
+`libtermsurf_chromium` (the renamed library) and the 4 stock Chromium patches.
+No Profile Server, no Plusium, no historical baggage. Build the shared library
+and verify the `.dylib` exists.
+
+### Why start from scratch instead of cherry-picking
+
+The issue-707 branch has 68 commits. The library files evolved across Issues
+704–707 — created in 704, debugged in 705, crash-fixed in 706, feature-complete
+in 707. Cherry-picking would mean untangling which commits touch the library vs.
+Plusium vs. Profile Server, resolving conflicts from intermediate states, and
+still ending up with a messy history. It's cleaner to copy the final state of
+the 16 library files and the 4 stock patches as fresh commits.
+
+### Steps
+
+**1. Create the branch**
+
+```bash
+cd ~/dev/termsurf/chromium/src
+export PATH="$HOME/dev/termsurf/chromium/depot_tools:$PATH"
+git checkout 146.0.7650.0
+git checkout -b 146.0.7650.0-issue-708
+```
+
+**2. Copy the library from issue-707, renamed**
+
+Copy all 16 files from `content/libtermsurf_content/` on issue-707 into
+`content/libtermsurf_chromium/` on the new branch. Rename every occurrence:
+
+- Directory: `libtermsurf_content` → `libtermsurf_chromium`
+- Header: `libtermsurf_content.h` → `libtermsurf_chromium.h`
+- GN target: `libtermsurf_content` → `libtermsurf_chromium`
+- Include paths: `#include "content/libtermsurf_content/..."` →
+  `#include "content/libtermsurf_chromium/..."`
+- Header guard: update `LIBTERMSURF_CONTENT_H_` → `LIBTERMSURF_CHROMIUM_H_`
+
+Files to copy and rename (16 total):
+
+| From (issue-707)              | To (issue-708)                |
+| ----------------------------- | ----------------------------- |
+| `libtermsurf_content.h`       | `libtermsurf_chromium.h`      |
+| `libtermsurf_content.cc`      | `libtermsurf_chromium.cc`     |
+| `ts_browser_main_parts.h`     | `ts_browser_main_parts.h`     |
+| `ts_browser_main_parts.cc`    | `ts_browser_main_parts.cc`    |
+| `ts_browser_client.h`         | `ts_browser_client.h`         |
+| `ts_browser_client.cc`        | `ts_browser_client.cc`        |
+| `ts_main_delegate.h`          | `ts_main_delegate.h`          |
+| `ts_main_delegate.cc`         | `ts_main_delegate.cc`         |
+| `ts_ca_layer_bridge_mac.h`    | `ts_ca_layer_bridge_mac.h`    |
+| `ts_ca_layer_bridge_mac.mm`   | `ts_ca_layer_bridge_mac.mm`   |
+| `ts_compositor_bridge_mac.h`  | `ts_compositor_bridge_mac.h`  |
+| `ts_compositor_bridge_mac.mm` | `ts_compositor_bridge_mac.mm` |
+| `ts_tab_observer.h`           | `ts_tab_observer.h`           |
+| `ts_tab_observer.cc`          | `ts_tab_observer.cc`          |
+| `test_main.cc`                | `test_main.cc`                |
+| `BUILD.gn`                    | `BUILD.gn`                    |
+
+Commit: "Add libtermsurf_chromium library"
+
+**3. Apply stock Chromium patches**
+
+Four files need small patches. Apply them manually (not cherry-pick — the
+issue-707 commits bundle these with unrelated Profile Server changes).
+
+**a. `content/shell/common/shell_switches.h`** — Add `kHidden` constant:
+
+```cpp
+// Hide the Content Shell window (make it transparent and order it behind
+// all other windows). Used by TermSurf browser binaries that render via
+// CALayerHost compositing instead of a native window.
+inline constexpr char kHidden[] = "hidden";
+```
+
+Insert after the `kRemoteDebuggingAddress` block (line 51).
+
+**b. `content/shell/browser/shell_platform_delegate_mac.mm`** — Add `--hidden`
+flag support:
+
+- Add `#include "base/command_line.h"` to includes
+- Add `#include "content/shell/common/shell_switches.h"` to includes
+- Replace `[window makeKeyAndOrderFront:nil]` with the `--hidden` conditional:
+
+```objc
+if (base::CommandLine::ForCurrentProcess()->HasSwitch(switches::kHidden)) {
+    [window setAlphaValue:0.0];
+    [window orderWindow:NSWindowBelow relativeTo:0];
+} else {
+    [window makeKeyAndOrderFront:nil];
+}
+```
+
+**c. `content/shell/browser/shell_devtools_frontend.h`** — Move constructor and
+destructor from `private:` to `public:`. Add comment:
+
+```cpp
+// Construct with an existing Shell. The frontend observes the Shell's
+// WebContents and attaches DevTools bindings when the DOM loads.
+ShellDevToolsFrontend(Shell* frontend_shell, WebContents* inspected_contents);
+~ShellDevToolsFrontend() override;
+```
+
+**d. `BUILD.gn` (root)** — Add only `libtermsurf_chromium` to `gn_all`:
+
+```gn
+"//content/libtermsurf_chromium:libtermsurf_chromium",
+```
+
+Insert after the `content/browser/interest_group/tools:adjustable_auction` line
+(~line 196). Do NOT add `chromium_profile_server` or `plusium`.
+
+Commit: "Patch stock Chromium for libtermsurf_chromium"
+
+**4. Build**
+
+```bash
+gn gen out/Default
+autoninja -C out/Default libtermsurf_chromium
+```
+
+Note: `gn gen` is required because we're on a fresh branch with a new GN target.
+The build cache from issue-707 is still present in `out/Default/` — the
+incremental build should be fast since most object files haven't changed.
+
+**5. Verify**
+
+```bash
+ls -la out/Default/liblibtermsurf_chromium.dylib
+# or
+ls -la out/Default/libtermsurf_chromium.dylib
+```
+
+Check the actual output name — GN shared_library targets may or may not prepend
+`lib` depending on the target name. Also verify:
+
+```bash
+nm -gU out/Default/*termsurf_chromium*.dylib | grep "ts_"
+```
+
+All 20 `ts_*` symbols should be visible.
+
+### Success criteria
+
+- Branch `146.0.7650.0-issue-708` exists with exactly 2 commits on top of the
+  vanilla tag
+- `content/libtermsurf_chromium/` exists with 16 files, all references renamed
+- No `content/chromium_profile_server/`, no `content/plusium/`, no forked
+  `content/shell/` files
+- The 4 stock Chromium patches are applied (shell_switches.h,
+  shell_platform_delegate_mac.mm, shell_devtools_frontend.h, root BUILD.gn)
+- `autoninja -C out/Default libtermsurf_chromium` succeeds
+- The `.dylib` exists and exports all 20 `ts_*` symbols
