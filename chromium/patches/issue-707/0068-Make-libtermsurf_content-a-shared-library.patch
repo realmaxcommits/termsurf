@@ -1,0 +1,248 @@
+From 2d1b5b19ae42b918f884c59a15e7d03344f0cef8 Mon Sep 17 00:00:00 2001
+From: "Ryan X. Charles" <ryan@ryanxcharles.com>
+Date: Thu, 5 Mar 2026 05:15:45 -0600
+Subject: [PATCH 68/68] Make libtermsurf_content a shared library
+
+Four hundred dylibs walked into a bar,
+The linker said "this has gone too far."
+One shared_library to rule them all,
+Now Plusium stands lean and tall.
+
+Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>
+---
+ content/libtermsurf_content/BUILD.gn          |   2 +-
+ .../libtermsurf_content/libtermsurf_content.h | 105 ++++++++++--------
+ content/plusium/BUILD.gn                      |   2 -
+ 3 files changed, 57 insertions(+), 52 deletions(-)
+
+diff --git a/content/libtermsurf_content/BUILD.gn b/content/libtermsurf_content/BUILD.gn
+index 19e78b22c22b6..5c9db5e6052de 100644
+--- a/content/libtermsurf_content/BUILD.gn
++++ b/content/libtermsurf_content/BUILD.gn
+@@ -4,7 +4,7 @@
+ 
+ import("//build/config/ui.gni")
+ 
+-static_library("libtermsurf_content") {
++shared_library("libtermsurf_content") {
+   testonly = true
+   sources = [
+     "libtermsurf_content.cc",
+diff --git a/content/libtermsurf_content/libtermsurf_content.h b/content/libtermsurf_content/libtermsurf_content.h
+index 101d5b8e19337..266a5660b303a 100644
+--- a/content/libtermsurf_content/libtermsurf_content.h
++++ b/content/libtermsurf_content/libtermsurf_content.h
+@@ -8,6 +8,13 @@
+ #include <stdbool.h>
+ #include <stdint.h>
+ 
++/* Export macro for shared library builds. */
++#if defined(COMPONENT_BUILD)
++#define TS_EXPORT __attribute__((visibility("default")))
++#else
++#define TS_EXPORT
++#endif
++
+ #ifdef __cplusplus
+ extern "C" {
+ #endif
+@@ -28,28 +35,28 @@ typedef void* ts_web_contents_t;
+ /* Initialize Chromium and run the message loop. Blocks until shutdown.
+    Call ts_set_on_initialized() before this to get a callback when ready.
+    argc/argv are forwarded to Chromium's ContentMain(). */
+-int ts_content_main(int argc, const char** argv);
++TS_EXPORT int ts_content_main(int argc, const char** argv);
+ 
+ /* Called on the UI thread when the browser is initialized and ready
+    for profile/tab creation. */
+-void ts_set_on_initialized(void (*callback)(void* user_data),
+-                           void* user_data);
++TS_EXPORT void ts_set_on_initialized(void (*callback)(void* user_data),
++                                     void* user_data);
+ 
+ /* Post a task to the UI thread. Thread-safe -- call from any thread.
+    This is how bindings marshal socket messages onto the UI thread. */
+-void ts_post_task(void (*task)(void* user_data), void* user_data);
++TS_EXPORT void ts_post_task(void (*task)(void* user_data), void* user_data);
+ 
+ /* Shut down Chromium and exit the message loop. */
+-void ts_quit(void);
++TS_EXPORT void ts_quit(void);
+ 
+ /* --- Profiles --- */
+ 
+ /* Create a BrowserContext with persistent storage at the given path.
+    Returns an opaque handle. Synchronous — safe. */
+-ts_browser_context_t ts_create_browser_context(const char* path);
++TS_EXPORT ts_browser_context_t ts_create_browser_context(const char* path);
+ 
+ /* Destroy a BrowserContext and release its resources. Synchronous — safe. */
+-void ts_destroy_browser_context(ts_browser_context_t ctx);
++TS_EXPORT void ts_destroy_browser_context(ts_browser_context_t ctx);
+ 
+ /* --- Tabs --- */
+ 
+@@ -58,16 +65,16 @@ void ts_destroy_browser_context(ts_browser_context_t ctx);
+    dark=true sets prefers-color-scheme:dark.
+    Returns an opaque handle. Synchronous — safe.
+    The on_ca_context_id callback fires when the tab's CAContext is ready. */
+-ts_web_contents_t ts_create_web_contents(ts_browser_context_t ctx,
+-                                         const char* url,
+-                                         int width,
+-                                         int height,
+-                                         bool dark);
++TS_EXPORT ts_web_contents_t ts_create_web_contents(ts_browser_context_t ctx,
++                                                    const char* url,
++                                                    int width,
++                                                    int height,
++                                                    bool dark);
+ 
+ /* Create a DevTools WebContents inspecting the tab with the given ID.
+    The inspected tab is looked up internally — no pointer crosses the C boundary
+    (Issue 706 Exp 2). */
+-ts_web_contents_t ts_create_devtools_web_contents(
++TS_EXPORT ts_web_contents_t ts_create_devtools_web_contents(
+     ts_browser_context_t ctx,
+     int inspected_tab_id,
+     int width,
+@@ -75,66 +82,66 @@ ts_web_contents_t ts_create_devtools_web_contents(
+     bool dark);
+ 
+ /* Close and destroy a WebContents. Synchronous — safe. */
+-void ts_destroy_web_contents(ts_web_contents_t wc);
++TS_EXPORT void ts_destroy_web_contents(ts_web_contents_t wc);
+ 
+ /* --- Navigation --- */
+ 
+ /* Synchronous — safe. */
+-void ts_load_url(ts_web_contents_t wc, const char* url);
++TS_EXPORT void ts_load_url(ts_web_contents_t wc, const char* url);
+ 
+ /* --- Input --- */
+ 
+ /* type: 0=down, 1=up. button: 0=left, 1=right, 2=middle. Synchronous — safe. */
+-void ts_forward_mouse_event(ts_web_contents_t wc,
+-                            int type,
+-                            int button,
+-                            int x,
+-                            int y,
+-                            int click_count,
+-                            int modifiers);
++TS_EXPORT void ts_forward_mouse_event(ts_web_contents_t wc,
++                                      int type,
++                                      int button,
++                                      int x,
++                                      int y,
++                                      int click_count,
++                                      int modifiers);
+ 
+ /* Synchronous — safe. */
+-void ts_forward_mouse_move(ts_web_contents_t wc,
+-                           int x,
+-                           int y,
+-                           int modifiers);
++TS_EXPORT void ts_forward_mouse_move(ts_web_contents_t wc,
++                                     int x,
++                                     int y,
++                                     int modifiers);
+ 
+ /* phase/momentum_phase: 0=none, 1=began, 2=changed, 3=ended.
+    Synchronous — safe. */
+-void ts_forward_scroll_event(ts_web_contents_t wc,
+-                             int x,
+-                             int y,
+-                             float delta_x,
+-                             float delta_y,
+-                             int phase,
+-                             int momentum_phase,
+-                             bool precise,
+-                             int modifiers);
++TS_EXPORT void ts_forward_scroll_event(ts_web_contents_t wc,
++                                       int x,
++                                       int y,
++                                       float delta_x,
++                                       float delta_y,
++                                       int phase,
++                                       int momentum_phase,
++                                       bool precise,
++                                       int modifiers);
+ 
+ /* type: 0=down, 1=up, 2=repeat. keycode is Windows VK code.
+    Synchronous — safe. */
+-void ts_forward_key_event(ts_web_contents_t wc,
+-                          int type,
+-                          int keycode,
+-                          const char* utf8,
+-                          int modifiers);
++TS_EXPORT void ts_forward_key_event(ts_web_contents_t wc,
++                                    int type,
++                                    int keycode,
++                                    const char* utf8,
++                                    int modifiers);
+ 
+ /* --- State (all synchronous — safe) --- */
+ 
+-void ts_set_focus(ts_web_contents_t wc, bool focused);
+-void ts_set_color_scheme(ts_web_contents_t wc, bool dark);
+-void ts_set_view_size(ts_web_contents_t wc, int width, int height);
++TS_EXPORT void ts_set_focus(ts_web_contents_t wc, bool focused);
++TS_EXPORT void ts_set_color_scheme(ts_web_contents_t wc, bool dark);
++TS_EXPORT void ts_set_view_size(ts_web_contents_t wc, int width, int height);
+ 
+ /* --- Callbacks --- */
+ 
+ /* All callbacks fire on the UI thread. The wc parameter identifies which tab
+    changed. Bindings use these to send responses over the socket. */
+ 
+-void ts_set_on_tab_ready(
++TS_EXPORT void ts_set_on_tab_ready(
+     void (*cb)(ts_web_contents_t wc, int tab_id, void* user_data),
+     void* user_data);
+ 
+-void ts_set_on_ca_context_id(
++TS_EXPORT void ts_set_on_ca_context_id(
+     void (*cb)(ts_web_contents_t wc,
+                uint32_t ca_context_id,
+                int width,
+@@ -142,22 +149,22 @@ void ts_set_on_ca_context_id(
+                void* user_data),
+     void* user_data);
+ 
+-void ts_set_on_url_changed(
++TS_EXPORT void ts_set_on_url_changed(
+     void (*cb)(ts_web_contents_t wc, const char* url, void* user_data),
+     void* user_data);
+ 
+-void ts_set_on_loading_state(
++TS_EXPORT void ts_set_on_loading_state(
+     void (*cb)(ts_web_contents_t wc,
+                const char* state,
+                int progress,
+                void* user_data),
+     void* user_data);
+ 
+-void ts_set_on_title_changed(
++TS_EXPORT void ts_set_on_title_changed(
+     void (*cb)(ts_web_contents_t wc, const char* title, void* user_data),
+     void* user_data);
+ 
+-void ts_set_on_cursor_changed(
++TS_EXPORT void ts_set_on_cursor_changed(
+     void (*cb)(ts_web_contents_t wc, int cursor_type, void* user_data),
+     void* user_data);
+ 
+diff --git a/content/plusium/BUILD.gn b/content/plusium/BUILD.gn
+index 357f95a2326ce..f7322bdb310e9 100644
+--- a/content/plusium/BUILD.gn
++++ b/content/plusium/BUILD.gn
+@@ -16,7 +16,5 @@ executable("plusium") {
+   deps = [
+     ":termsurf_proto",
+     "//content/libtermsurf_content",
+-    "//content/shell:content_shell_app",
+-    "//content/shell:content_shell_lib",
+   ]
+ }
+-- 
+2.50.1 (Apple Git-155)
+

@@ -236,4 +236,29 @@ Keep only `:termsurf_proto` and `//content/libtermsurf_content`.
 5. `web google.com --browser plusium` — browse, navigate, DevTools — all
    working.
 
-#### Result
+#### Result: Success — Plusium links 5 dylibs instead of 430
+
+Three changes:
+
+1. `libtermsurf_content/BUILD.gn`: `static_library` → `shared_library`
+2. `plusium/BUILD.gn`: Removed `content_shell_app` and `content_shell_lib` deps
+3. `libtermsurf_content.h`: Added `TS_EXPORT` macro
+   (`__attribute__((visibility("default")))`) to all 23 `ts_*` functions.
+   Chromium builds with `-fvisibility=hidden`, so without this the symbols
+   weren't exported.
+
+Before: Plusium linked 430 Chromium dylibs directly.
+
+After: Plusium links 5 dylibs:
+
+- `libtermsurf_content.dylib` — our 23 C API functions
+- `libthird_party_protobuf_protobuf_lite.dylib` — Plusium's own protobuf
+- `libthird_party_abseil-cpp_absl.dylib` — protobuf dependency
+- `libc++_chrome.dylib` — C++ stdlib
+- `/usr/lib/libSystem.B.dylib` — system
+
+All 23 `ts_*` symbols are exported from the dylib. Plusium works end-to-end:
+browsing, navigation, DevTools.
+
+The C library is now a proper abstraction boundary. Roamium can link one dylib
+instead of dealing with Chromium's internal dependency graph.
