@@ -913,3 +913,126 @@ inferior alternative.
 
 The next experiment should debug the actual SEGV inside
 `ShellDevToolsFrontend::Show()` and fix the root cause.
+
+### Experiment 12: Match Profile Server's DevTools pattern in Plusium
+
+#### Root cause
+
+Profile Server has a **forked** `shell_devtools_frontend.h` in
+`content/chromium_profile_server/browser/` that moves the constructor from
+`private` to `public`. This lets it create `ShellDevToolsFrontend` manually
+after all setup is complete:
+
+```cpp
+// Profile Server pattern (shell_browser_main_parts.cc:602-776):
+// 1. Create Shell with DevTools URL
+Shell* shell = Shell::CreateNewWindow(browser_context_.get(), devtools_url,
+                                      nullptr, gfx::Size());
+// 2. Resize, compositor, bridge, observer, callbacks... (170 lines of setup)
+// 3. Create bindings LAST
+new ShellDevToolsFrontend(shell, inspected_contents);
+```
+
+Plusium uses stock `content/shell/browser/shell_devtools_frontend.h`, where the
+constructor is **private**. The only public entry point is the static `Show()`
+method, which does things in a different order:
+
+```cpp
+// Show() pattern (shell_devtools_frontend.cc):
+// 1. Create Shell with EMPTY URL
+Shell* shell = Shell::CreateNewWindow(..., GURL(), ...);
+// 2. Create bindings IMMEDIATELY
+ShellDevToolsFrontend* f = new ShellDevToolsFrontend(shell, inspected);
+// 3. Load URL LATER
+shell->LoadURL(GetFrontendURL());
+```
+
+This crashes in Plusium with SEGV. The empty-URL Shell creation and immediate
+binding attachment doesn't work in the libtermsurf_content context — likely
+because the Shell/WebContents lifecycle differs from stock content_shell (no
+NSWindow, no platform window, headless-ish operation).
+
+#### Fix
+
+Two changes:
+
+**1. Make the constructor public** in
+`content/shell/browser/shell_devtools_frontend.h`. Move it from `private` to
+`public`, matching Profile Server's forked header:
+
+```cpp
+ public:
+  static ShellDevToolsFrontend* Show(WebContents* inspected_contents);
+
+  ShellDevToolsFrontend(const ShellDevToolsFrontend&) = delete;
+  ShellDevToolsFrontend& operator=(const ShellDevToolsFrontend&) = delete;
+
++ // Construct with an existing Shell. The frontend observes the Shell's
++ // WebContents and attaches DevTools bindings when the DOM loads.
++ ShellDevToolsFrontend(Shell* frontend_shell, WebContents* inspected_contents);
++ ~ShellDevToolsFrontend() override;
+
+  void Activate();
+  // ...
+
+ private:
+  void PrimaryMainDocumentElementAvailable() override;
+  void WebContentsDestroyed() override;
+- ShellDevToolsFrontend(Shell* frontend_shell, WebContents* inspected_contents);
+- ~ShellDevToolsFrontend() override;
+  raw_ptr<Shell> frontend_shell_;
+```
+
+**2. Rewrite `CreateDevToolsTab` in `ts_browser_main_parts.cc`** to match
+Profile Server's pattern:
+
+```cpp
+void* TsBrowserMainParts::CreateDevToolsTab(void* ctx, void* inspected,
+                                             int width, int height,
+                                             bool dark) {
+  DCHECK_CURRENTLY_ON(BrowserThread::UI);
+  auto* inspected_wc = static_cast<WebContents*>(inspected);
+  auto* browser_ctx = static_cast<ShellBrowserContext*>(ctx);
+
+  // Find inspected tab's ID.
+  int inspected_tab_id = 0;
+  for (auto& t : tabs_) {
+    if (t->shell && t->shell->web_contents() == inspected_wc) {
+      inspected_tab_id = t->tab_id;
+      break;
+    }
+  }
+
+  // 1. Create Shell with DevTools URL (not empty URL via Show()).
+  GURL devtools_url(base::StringPrintf(
+      "http://127.0.0.1:%d/devtools/devtools_app.html?targetType=tab",
+      ShellDevToolsManagerDelegate::GetHttpHandlerPort()));
+  Shell* shell = Shell::CreateNewWindow(browser_ctx, devtools_url,
+                                        nullptr, gfx::Size());
+
+  // 2. Resize, compositor, observer, callbacks... (same as current code)
+  // ...
+
+  // 3. Create bindings LAST.
+  new ShellDevToolsFrontend(shell, inspected_wc);
+
+  tabs_.push_back(std::move(tab));
+  return handle;
+}
+```
+
+Key differences from the current code:
+
+- Uses `browser_ctx` (the `void* ctx` parameter) instead of
+  `inspected_contents->GetBrowserContext()` via `Show()`
+- Passes the DevTools URL at Shell creation time (not empty URL + later load)
+- Creates `ShellDevToolsFrontend` last, after all compositor/observer setup
+- No `Show()` call at all
+
+#### Verification
+
+1. `autoninja -C out/Default plusium` — compiles clean.
+2. `web google.com --browser plusium`, then `d` — DevTools opens without crash.
+3. Hover over elements in DevTools — highlights appear on the inspected page
+   (confirming in-process bindings work).
+4. Regular browser tabs still work after DevTools is open.
