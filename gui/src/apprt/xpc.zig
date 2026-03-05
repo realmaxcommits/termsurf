@@ -847,6 +847,7 @@ fn initBrowserRegistry() void {
     const browsers = [_]struct { name: []const u8, suffix: []const u8 }{
         .{ .name = "chromium", .suffix = "/dev/termsurf/chromium/src/out/Default/Chromium Profile Server.app/Contents/MacOS/Chromium Profile Server" },
         .{ .name = "plusium", .suffix = "/dev/termsurf/chromium/src/out/Default/plusium" },
+        .{ .name = "roamium", .suffix = "/dev/termsurf/chromium/src/out/Default/roamium" },
     };
 
     for (&browsers) |b| {

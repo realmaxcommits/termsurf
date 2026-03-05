@@ -9,10 +9,7 @@ fn main() {
         .expect("chromium/src/out/Default must exist — build Chromium first");
 
     // Link-time: find libtermsurf_content.dylib.
-    println!(
-        "cargo:rustc-link-search=native={}",
-        chromium_out.display()
-    );
+    println!("cargo:rustc-link-search=native={}", chromium_out.display());
     println!("cargo:rustc-link-lib=dylib=termsurf_content");
 
     // Runtime: two rpaths.
@@ -20,10 +17,7 @@ fn main() {
     // 2. Chromium build dir — for development (binary in target/, dylib in
     //    chromium/src/out/Default/).
     println!("cargo:rustc-link-arg=-Wl,-rpath,@loader_path/.");
-    println!(
-        "cargo:rustc-link-arg=-Wl,-rpath,{}",
-        chromium_out.display()
-    );
+    println!("cargo:rustc-link-arg=-Wl,-rpath,{}", chromium_out.display());
 
     // Compile protobuf (same pattern as TUI).
     prost_build::Config::new()

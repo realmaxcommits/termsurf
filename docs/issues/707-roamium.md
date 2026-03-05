@@ -641,3 +641,42 @@ roamium/src/
 5. Close the tab — proves CloseTab → ts_quit shutdown.
 6. DevTools: `:devtools` — proves CreateDevtoolsTab pipeline.
 7. No crashes, no hangs, no leaked threads.
+
+#### Result: Success — full IPC pipeline works in Rust
+
+Roamium is a drop-in replacement for Plusium. The GUI cannot tell the
+difference.
+
+Five files, ~400 lines of Rust replacing 511 lines of C++:
+
+- **`ffi.rs`** — All 20 `extern "C"` declarations matching
+  `libtermsurf_content.h`
+- **`proto.rs`** — prost include of generated protobuf code
+- **`ipc.rs`** — Socket connect, length-prefixed framing, reader thread with
+  `Box::into_raw()` → `ts_post_task()` → `Box::from_raw()` dispatch
+- **`dispatch.rs`** — Tab registry, all 12 message handlers, all 6 callbacks,
+  string-to-int mappings
+- **`main.rs`** — Argv parsing, `OnceLock` globals, callback registration,
+  `ts_content_main()` entry
+
+The threading model works exactly as designed: reader thread decodes protobuf
+and posts `Box<TermSurfMessage>` to the UI thread via `ts_post_task`. Callbacks
+fire on the UI thread and write responses back through the socket. No contention
+— the reader thread owns the read half, the UI thread owns the write half.
+
+Log output confirms the full pipeline: ServerRegister → CreateTab → TabReady →
+CaContext → UrlChanged → LoadingState → TitleChanged. Page loads, renders at
+60fps via CALayerHost compositing.
+
+Also added `"roamium"` to the GUI's browser registry in `xpc.zig` so
+`--browser roamium` resolves correctly.
+
+Two pre-existing Chromium warnings also appear (same as Plusium):
+
+- `In memory database cannot use the given database directory` — leveldb proto
+  database warning when using `--user-data-dir` with an in-memory profile.
+  Harmless.
+- `DisplayLinkMac ID is not available. Switch to DelayBasedTimeSource(Timer) for BeginFrameSource.`
+  — Chromium's compositor falls back to timer-based frame scheduling because the
+  process doesn't own a display link. Does not affect rendering — CALayerHost
+  compositing bypasses this path entirely.
