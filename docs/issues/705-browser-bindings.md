@@ -583,3 +583,113 @@ std.debug.print("[DEBUG] cursorPosCallback: overlay_cursor_type={}\n",
    - `cursorPosCallback` shows `overlay_cursor_type=0` → value not persisted
    - `cursorPosCallback` shows correct type → cursor mapping or application
      issue
+
+#### Result: No issue found
+
+Cursor changes work correctly without the debug traces. Stashed all changes,
+rebuilt both Plusium and GUI from clean state, and cursor still changes to a
+pointing hand over links. The original report was a fluke — likely a stale
+binary from before the Experiment 5 timing fix, which fixed `tab_id` assignment
+and thereby fixed all tab-id-keyed notifications including cursor changes.
+
+### Experiment 8: Comprehensive Plusium feature audit
+
+Systematic manual test of every Plusium feature. Walk through each category
+below and check off items as they pass. Use `web google.com --browser plusium`
+to test. Each item maps to a protobuf message or C API function.
+
+#### Checklist
+
+**IPC handshake**
+
+- [x] Plusium connects and registers (ServerRegister, case 12)
+- [x] Page renders in pane (CreateTab → TabReady → CaContext pipeline)
+
+**Navigation**
+
+- [x] Type `web google.com` — page loads (Navigate, case 5)
+- [x] Click a link — page navigates (Chromium-internal)
+- [s] URL bar updates after navigation (UrlChanged, case 15)
+- [x] Page title updates in tab bar (TitleChanged, case 17)
+- [x] Loading indicator shows progress (LoadingState, case 16)
+- [x] `Cmd+[` goes back (KeyEvent → Chromium Cmd+[ handler)
+- [x] `Cmd+]` goes forward
+- [x] `Cmd+R` reloads
+
+**Rendering**
+
+- [x] Page renders at correct size (CaContext, case 14)
+- [x] Resize window — page resizes to match (Resize, case 3)
+- [x] Page renders at 60fps (no stuttering or frame drops)
+
+**Mouse input**
+
+- [x] Click on page elements (MouseEvent, case 6)
+- [x] Hover over links — cursor changes to pointing hand (CursorChanged,
+      case 18)
+- [x] Hover over text — cursor changes to I-beam
+- [x] Drag to select text (MouseMove, case 7)
+- [x] Scroll with trackpad/mouse wheel (ScrollEvent, case 8)
+- [x] Momentum scrolling works (phase/momentum_phase)
+
+**Keyboard input**
+
+- [x] Type in search box / form field (KeyEvent, case 9)
+- [x] Special keys work: Tab, Enter, Backspace, arrow keys
+- [x] `Cmd+A` selects all text
+- [x] `Cmd+C` copies selected text
+- [x] `Cmd+V` pastes from clipboard
+- [x] `Cmd+X` cuts selected text
+- [x] `Cmd+Z` undoes
+
+**Focus**
+
+- [x] Click on pane — browser receives focus (FocusChanged, case 10)
+- [x] Switch to terminal pane — browser loses focus
+- [x] Text input only works in focused pane
+
+**Color scheme**
+
+- [x] System dark mode: page loads in dark mode (SetColorScheme on CreateTab)
+- [x] `:colorscheme dark` (`c d`) — page switches to dark (SetColorScheme,
+      case 11)
+- [x] `:colorscheme light` (`c l`) — page switches to light
+
+**DevTools**
+
+- [ ] `:devtools` opens DevTools in split pane (CreateDevtoolsTab, case 2)
+- [ ] DevTools renders and is interactive
+- [ ] DevTools shows correct page inspection
+- [ ] Close DevTools pane — DevTools tab closes (CloseTab, case 4)
+
+**Tab lifecycle**
+
+- [x] Close TUI pane — browser tab closes (CloseTab, case 4)
+- [x] Open second `web` pane — second tab works independently
+- [x] Close all panes — Chromium process exits
+
+**Multi-pane**
+
+- [x] Two browser panes render simultaneously
+- [x] Each pane has independent navigation
+- [x] Click-to-focus switches active pane (Issue 670)
+- [x] Active pane indicator visible (Issue 669)
+
+**TUI features**
+
+- [x] URL bar displays current URL
+- [x] Mode indicator shows current mode (Normal/Browse/Edit)
+- [x] `Esc` returns from Browse to Normal mode
+- [x] `i` enters Edit mode from Normal mode
+- [x] Overlay position and size correct (SetOverlay, case 19)
+
+**Queries (internal, verify indirectly)**
+
+- [x] Homepage loads on first `web` command (HelloRequest/Reply)
+- [x] Second `web` command reuses existing Chromium server
+      (QueryLastRequest/Reply)
+
+#### Verification
+
+Walk through the checklist in order. For each item, mark pass or fail. Record
+any failures with a short description of the observed behavior.
