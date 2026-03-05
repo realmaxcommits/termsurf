@@ -500,3 +500,86 @@ void TsBrowserClient::OverrideWebPreferences(
 3. Run `:colorscheme light` (`c l`) — page should switch to light mode.
 4. Run `:colorscheme dark` (`c d`) — page should switch back to dark mode.
 5. Verify default browser (no `--browser` flag) still works.
+
+#### Result: Success
+
+Dark mode works. Both system dark mode on page load and the `:colorscheme`
+command (`c d` / `c l`) now correctly control the page color scheme. The fix
+overrides `ShellContentBrowserClient::OverrideWebPreferences` in
+`TsBrowserClient` to read the per-tab `preferred_color_scheme` stored in
+`TsBrowserMainParts`, instead of falling through to the base class
+implementation that hardcodes light mode.
+
+### Experiment 7: Diagnose missing cursor changes in Plusium
+
+Hovering over links doesn't change the cursor to a pointing hand. This used to
+work with the Profile Server. The full code path from Chromium to GUI is wired:
+
+1. `RenderWidgetHostImpl::SetCursor()` fires `cursor_changed_callback_`
+2. `TsTabObserver::OnCursorChanged()` calls `TsNotifyCursorChanged()`
+3. `g_on_cursor_changed` global callback fires in `plusium_main.cc`
+4. `OnCursorChanged()` calls `FindByHandle()`, builds protobuf, sends over
+   socket
+5. GUI receives case 18, calls `handleSocketCursorChanged()` →
+   `handleCursorChanged()` → sets `surface.overlay_cursor_type`
+6. `cursorPosCallback()` reads `overlay_cursor_type` and applies cursor shape
+
+Code inspection found no obvious bug. Add debug traces at each stage to find
+where the chain breaks.
+
+#### What to change
+
+**`content/plusium/plusium_main.cc`** — Add `fprintf(stderr)` to
+`OnCursorChanged`:
+
+```cpp
+static void OnCursorChanged(ts_web_contents_t wc, int cursor_type, void*) {
+  fprintf(stderr, "[DEBUG] Plusium OnCursorChanged: handle=%p cursor_type=%d\n",
+          (void*)wc, cursor_type);
+  TabEntry* t = FindByHandle(wc);
+  if (!t) {
+    fprintf(stderr, "[DEBUG] Plusium OnCursorChanged: FindByHandle FAILED\n");
+    return;
+  }
+  fprintf(stderr, "[DEBUG] Plusium OnCursorChanged: tab_id=%d\n", t->tab_id);
+  // ... rest unchanged ...
+}
+```
+
+**`gui/src/apprt/xpc.zig`** — Add `std.debug.print` to three points:
+
+1. `handleSocketCursorChanged()` — confirm message arrives:
+
+```zig
+std.debug.print("[DEBUG] handleSocketCursorChanged: tab_id={} cursor_type={}\n",
+    .{ m.tab_id, m.cursor_type });
+```
+
+2. `handleCursorChanged()` — confirm pane lookup succeeds:
+
+```zig
+std.debug.print("[DEBUG] handleCursorChanged: tab_id={} cursor_type={} pane_found={}\n",
+    .{ tab_id, cursor_type, panes.get(pane_id) != null });
+```
+
+3. `cursorPosCallback()` inside the overlay forwarding block — confirm cursor
+   type is read:
+
+```zig
+std.debug.print("[DEBUG] cursorPosCallback: overlay_cursor_type={}\n",
+    .{ self.overlay_cursor_type });
+```
+
+#### Verification
+
+1. `autoninja -C out/Default plusium` — compiles.
+2. `cd gui && zig build` — compiles.
+3. Open a webpage, hover over a link, check stderr for `[DEBUG]` traces.
+4. The traces reveal which stage breaks:
+   - No `OnCursorChanged` in Plusium → callback not firing (Chromium issue)
+   - `FindByHandle FAILED` → handle mismatch
+   - No `handleSocketCursorChanged` in GUI → socket delivery issue
+   - No `handleCursorChanged` → protobuf parsing issue
+   - `cursorPosCallback` shows `overlay_cursor_type=0` → value not persisted
+   - `cursorPosCallback` shows correct type → cursor mapping or application
+     issue
