@@ -503,3 +503,141 @@ directory.
 Both existing scripts also now build `plusium` alongside
 `chromium_profile_server` via
 `autoninja -C out/Default chromium_profile_server plusium`.
+
+### Experiment 4: Full IPC pipeline — socket, protobuf, threading
+
+Prove the complete IPC pipeline works in Rust: socket connection,
+length-prefixed protobuf framing, background reader thread, and `ts_post_task`
+dispatch to Chromium's UI thread. Implement just enough to handle a real
+end-to-end flow: connect → ServerRegister → CreateTab → TabReady → navigate →
+browse.
+
+This is the critical threading experiment. Plusium runs three things
+concurrently:
+
+1. **Main thread** — blocked in `ts_content_main()` (Chromium's message loop)
+2. **Reader thread** — reads socket, decodes protobuf, posts tasks to main
+   thread via `ts_post_task()`
+3. **Callbacks** — fire on main thread, encode protobuf, write to socket
+
+The question: can Rust safely bridge these threads through `ts_post_task`'s
+`void*` interface?
+
+#### What to implement
+
+**Argument parsing** — Extract `--ipc-socket=` and `--user-data-dir=` from argv
+before calling `ts_content_main()`. Derive profile name from basename of user
+data dir.
+
+**Complete FFI bindings** (`ffi.rs`) — All 20 functions from
+`libtermsurf_content.h`. The smoke test only had 5; add the remaining 15:
+
+- `ts_destroy_browser_context`
+- `ts_create_web_contents`
+- `ts_create_devtools_web_contents`
+- `ts_destroy_web_contents`
+- `ts_load_url`
+- `ts_forward_mouse_event`
+- `ts_forward_mouse_move`
+- `ts_forward_scroll_event`
+- `ts_forward_key_event`
+- `ts_set_focus`
+- `ts_set_color_scheme`
+- `ts_set_view_size`
+- `ts_set_on_tab_ready`
+- `ts_set_on_ca_context_id`
+- `ts_set_on_url_changed`
+- `ts_set_on_loading_state`
+- `ts_set_on_title_changed`
+- `ts_set_on_cursor_changed`
+
+**Tab registry** — `Vec<TabEntry>` with `handle: *mut c_void`, `tab_id: i64`,
+`pane_id: String`, `inspected_tab_id: i64`, `last_url: String`. Lookup by handle
+and by tab_id. Stored in a global (same pattern as Plusium's
+`static std::vector<TabEntry>* g_tabs`).
+
+**Socket connection** — In `on_initialized()`, connect to the GUI's Unix socket,
+send `ServerRegister` with the profile name, spawn the reader thread.
+
+**Protobuf framing** — 4-byte LE length prefix + prost encode/decode. Same wire
+format as Plusium and TUI.
+
+**Reader thread** — Read from socket into a buffer. Extract complete messages.
+For each message, box it and post to the UI thread via `ts_post_task()`. The
+`void*` user_data carries a `Box<TermSurfMessage>` — `Box::into_raw()` to send,
+`Box::from_raw()` to receive.
+
+**Message dispatch** — Handle all 12 incoming message types:
+
+| Message             | C API call                        |
+| ------------------- | --------------------------------- |
+| `CreateTab`         | `ts_create_web_contents`          |
+| `CreateDevtoolsTab` | `ts_create_devtools_web_contents` |
+| `Resize`            | `ts_set_view_size`                |
+| `CloseTab`          | `ts_destroy_web_contents`         |
+| `Navigate`          | `ts_load_url`                     |
+| `MouseEvent`        | `ts_forward_mouse_event`          |
+| `MouseMove`         | `ts_forward_mouse_move`           |
+| `ScrollEvent`       | `ts_forward_scroll_event`         |
+| `KeyEvent`          | `ts_forward_key_event`            |
+| `FocusChanged`      | `ts_set_focus`                    |
+| `SetColorScheme`    | `ts_set_color_scheme`             |
+| `QueryTabsRequest`  | Build reply from tab registry     |
+
+**String-to-int mappings** — `"down"`/`"up"` → 0/1 for mouse type,
+`"left"`/`"right"`/`"middle"` → 0/1/2 for button, `"down"`/`"up"`/`"repeat"` →
+0/1/2 for key type.
+
+**6 callbacks** — Register before `ts_content_main()`:
+
+| Callback            | Sends protobuf  |
+| ------------------- | --------------- |
+| `on_tab_ready`      | `TabReady`      |
+| `on_ca_context_id`  | `CaContext`     |
+| `on_url_changed`    | `UrlChanged`    |
+| `on_loading_state`  | `LoadingState`  |
+| `on_title_changed`  | `TitleChanged`  |
+| `on_cursor_changed` | `CursorChanged` |
+
+Each callback looks up the tab by handle, builds the response message, and
+writes it to the socket.
+
+**Shutdown** — When CloseTab removes the last entry, call `ts_quit()`.
+
+#### Threading model
+
+```
+Main thread (Chromium UI loop)
+  ├── on_initialized() → connect socket, send ServerRegister, spawn reader
+  ├── ts_post_task callbacks → handle_message() → C API calls
+  └── C API callbacks → build protobuf → write to socket
+
+Reader thread
+  └── loop: read() → frame → decode → Box::into_raw() → ts_post_task()
+```
+
+The socket fd is shared between threads: reader thread reads, callbacks write.
+Use `Arc<Mutex<UnixStream>>` or duplicate the fd (one for read, one for write) —
+the latter is simpler and avoids contention.
+
+#### File structure
+
+```
+roamium/src/
+  main.rs    — argv parsing, on_initialized, callback registration
+  ffi.rs     — all 20 extern "C" declarations
+  ipc.rs     — socket connect, framing, reader thread, send_protobuf
+  dispatch.rs — handle_message(), tab registry, string-to-int maps
+  proto.rs   — prost include of generated code
+```
+
+#### Verification
+
+1. `scripts/build-roamium.sh` — compiles clean.
+2. Launch GUI, open a terminal pane, run `web google.com --browser roamium`.
+3. Page loads, URL bar updates, title shows — proves CreateTab → TabReady →
+   CaContext → UrlChanged → LoadingState → TitleChanged pipeline.
+4. Click links, type in search — proves mouse/keyboard forwarding.
+5. Close the tab — proves CloseTab → ts_quit shutdown.
+6. DevTools: `:devtools` — proves CreateDevtoolsTab pipeline.
+7. No crashes, no hangs, no leaked threads.
