@@ -35,6 +35,7 @@ APP="$REPO_DIR/gui/macos/build/ReleaseLocal/TermSurf.app"
 # --- Chromium ---
 
 CHROMIUM_SRC="$REPO_DIR/chromium/src"
+CHROMIUM_OUT="$CHROMIUM_SRC/out/Default"
 
 if [ -d "$CHROMIUM_SRC" ]; then
   export PATH="$REPO_DIR/chromium/depot_tools:$PATH"
@@ -46,7 +47,7 @@ if [ -d "$CHROMIUM_SRC" ]; then
   fi
 
   echo "==> Building Chromium..."
-  autoninja -C out/Default chromium_profile_server
+  autoninja -C out/Default chromium_profile_server plusium
 else
   echo "==> Skipping Chromium (chromium/src not found)"
 fi
@@ -55,7 +56,7 @@ fi
 
 # prost_build needs protoc. Use Chromium's built copy if available,
 # so users don't need a system-installed protoc.
-CHROMIUM_PROTOC="$REPO_DIR/chromium/src/out/Default/protoc"
+CHROMIUM_PROTOC="$CHROMIUM_OUT/protoc"
 if [ -x "$CHROMIUM_PROTOC" ]; then
   export PROTOC="$CHROMIUM_PROTOC"
 fi
@@ -70,10 +71,24 @@ fi
 echo "==> Building TUI (release)..."
 cargo build --release
 
+# --- Roamium (Rust) ---
+
+cd "$REPO_DIR/roamium"
+
+if $CLEAN; then
+  echo "==> Cleaning Roamium build..."
+  cargo clean
+fi
+
+echo "==> Building Roamium (release)..."
+cargo build --release
+cp "$REPO_DIR/roamium/target/release/roamium" "$CHROMIUM_OUT/roamium"
+
 echo ""
 echo "Done."
-echo "  GUI: $APP"
-echo "  TUI: $REPO_DIR/tui/target/release/web"
+echo "  GUI:     $APP"
+echo "  TUI:     $REPO_DIR/tui/target/release/web"
+echo "  Roamium: $CHROMIUM_OUT/roamium"
 
 if $OPEN; then
   echo "==> Opening $APP..."

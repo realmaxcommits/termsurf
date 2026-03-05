@@ -485,4 +485,21 @@ output to include Roamium.
 5. `scripts/build-debug.sh` — builds everything including Roamium.
 6. `scripts/build-release.sh` — builds everything including Roamium.
 
-#### Result
+#### Result: Success — build scripts work, child processes fixed
+
+Three scripts created/updated:
+
+1. **`scripts/build-roamium.sh`** (new) — standalone build + copy. Passes
+   through `cargo build` args (e.g., `--release`).
+2. **`scripts/build-debug.sh`** — added Roamium section, builds `plusium` too,
+   defines `CHROMIUM_OUT`.
+3. **`scripts/build-release.sh`** — same changes with `--release`.
+
+`build-roamium.sh` builds the binary and copies it to
+`chromium/src/out/Default/roamium`. Running from there, the smoke test passes
+cleanly — no child process ICU errors because `icudtl.dat` is in the same
+directory.
+
+Both existing scripts also now build `plusium` alongside
+`chromium_profile_server` via
+`autoninja -C out/Default chromium_profile_server plusium`.
