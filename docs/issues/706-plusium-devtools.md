@@ -236,3 +236,39 @@ inside `TsBrowserMainParts` and never crosses the C boundary.
 
 Five files changed, ~10 lines each. The simplest experiment in the issue solved
 a crash that persisted through two prior issues and four experiments.
+
+### Experiment 3: Audit remaining void\* usage in the C API
+
+Now that passing `void*` across the C boundary caused the DevTools crash, audit
+the entire C API (`libtermsurf_content.h`) for other `void*` usage.
+
+#### Results
+
+Three categories of `void*` in the API:
+
+**`ts_web_contents_t` (alias for `void*`)** — 15 functions. Every tab operation
+passes a `WebContents*` disguised as `void*`: create, destroy, navigate, mouse,
+scroll, keyboard, focus, color scheme, resize. All 6 callbacks also pass `wc`
+back to identify which tab fired. Plusium's `plusium_main.cc` stores these
+handles in `TabEntry` structs and passes them back on every call.
+
+**`ts_browser_context_t` (alias for `void*`)** — 4 functions. Profile
+create/destroy and both tab creation functions take a `BrowserContext*` as
+`void*`.
+
+**`void* user_data`** — 8 functions. Standard C callback pattern where the
+caller owns the data and casts it back. Not a concern.
+
+#### Risk assessment
+
+The DevTools crash was uniquely dangerous because `ShellDevToolsBindings` stored
+the `void*`-derived pointer and used it asynchronously — after the DevTools DOM
+loaded. The other functions use their handles synchronously (forward mouse
+event, load URL, etc.), so the pointer is used immediately and is less likely to
+go stale.
+
+However, all `ts_web_contents_t` and `ts_browser_context_t` handles carry the
+same fundamental risk. They could all be replaced with integer ID lookups —
+`tab_id` for tabs, a `context_id` for profiles — matching the pattern that fixed
+DevTools. This would make the C API boundary fully integer-based, with no C++
+pointers ever crossing it.
