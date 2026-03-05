@@ -859,3 +859,33 @@ DevTools must run in the same Chromium process as the inspected tab.
 4. `web google.com --profile test --browser plusium`, then `d` — DevTools opens
    in the correct Plusium process for profile `test`.
 5. Logs show DevTools uses the same server fd as the inspected tab.
+
+#### Result: Failure — IPC routing fixed, but Plusium crashes on DevTools
+
+The IPC routing fix worked correctly. Logs confirm the full chain:
+
+1. TUI sent `query_devtools` → GUI replied with
+   `tab_id=1, browser=plusium, profile=test`
+2. TUI opened split with `web devtools`
+3. New TUI sent `set_devtools_overlay` with `inspected_tab_id=1`
+4. GUI looked up tab 1 in `tab_to_pane`, found the Plusium server, sent
+   `CreateDevtoolsTab` to it
+5. Plusium received the message, `FindByTabId(1)` succeeded, resolved
+   `inspected handle=0x8e2d5c800`
+6. **SEGV inside `TsBrowserMainParts::CreateDevToolsTab` at
+   `ShellDevToolsFrontend::Show(inspected_wc)`**
+
+The crash is `signal 11 SEGV_ACCERR` at address `7101304d291445bc` — a corrupted
+pointer, likely a vtable or use-after-free. The stack shows `CreateDevToolsTab`
+appears twice at the same offset (+144), which points to the crash happening
+during the `ShellDevToolsFrontend::Show()` call or its immediate setup.
+
+This is a Chromium-side bug in Plusium's (libtermsurf_content) DevTools path.
+DevTools works with Profile Server because that binary has a different code
+path. Plusium's `CreateDevToolsTab` calls `ShellDevToolsFrontend::Show()`, which
+may not be safe in the libtermsurf_content context — possibly missing
+initialization, or the Shell/WebContents lifecycle differs from content_shell.
+
+The Experiment 10 IPC changes are correct and should be kept. The next
+experiment should investigate and fix the Plusium-side
+`ShellDevToolsFrontend::Show()` crash.
