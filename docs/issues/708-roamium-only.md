@@ -289,7 +289,68 @@ All 20 `ts_*` symbols should be visible.
 - `content/libtermsurf_chromium/` exists with 16 files, all references renamed
 - No `content/chromium_profile_server/`, no `content/plusium/`, no forked
   `content/shell/` files
-- The 4 stock Chromium patches are applied (shell_switches.h,
-  shell_platform_delegate_mac.mm, shell_devtools_frontend.h, root BUILD.gn)
+- The 8 stock Chromium patches are applied (shell_switches.h,
+  shell_platform_delegate_mac.mm, shell_devtools_frontend.h, root BUILD.gn,
+  render_widget_host_view_mac.h/.mm, render_widget_host_impl.h/.cc)
 - `autoninja -C out/Default libtermsurf_chromium` succeeds
 - The `.dylib` exists and exports all 20 `ts_*` symbols
+
+### Result
+
+**Success.** Branch `146.0.7650.0-issue-708` has 2 commits, 24 files changed
+(2,013 insertions). Build produced `libtermsurf_chromium.dylib` (10.8 MB) with
+23 exported `ts_*` symbols. The original issue doc listed 4 stock patches, but
+the build revealed 4 more — CALayerParams callback on `RenderWidgetHostViewMac`
+and cursor change callback on `RenderWidgetHostImpl` — both needed by the
+library for compositing and cursor forwarding.
+
+## Experiment 2: Update Roamium to link libtermsurf_chromium
+
+### Goal
+
+Change Roamium's build configuration to link `libtermsurf_chromium` instead of
+`libtermsurf_content`. Update build scripts to remove dead
+`chromium_profile_server` and `plusium` autoninja targets. Verify end-to-end:
+launch TermSurf, type `web google.com`, confirm page loads.
+
+### What changes
+
+**`roamium/build.rs`** (2 lines):
+
+- Line 11 comment: `libtermsurf_content.dylib` → `libtermsurf_chromium.dylib`
+- Line 13 link directive: `termsurf_content` → `termsurf_chromium`
+
+**`scripts/build-debug.sh`** (1 line):
+
+- Line 50: `autoninja -C out/Default chromium_profile_server plusium` →
+  `autoninja -C out/Default libtermsurf_chromium`
+
+**`scripts/build-release.sh`** (1 line):
+
+- Line 50: `autoninja -C out/Default chromium_profile_server plusium` →
+  `autoninja -C out/Default libtermsurf_chromium`
+
+### What does NOT change
+
+- `roamium/src/ffi.rs` — FFI declarations reference C function names (`ts_*`),
+  not the library name. No change needed.
+- `roamium/src/main.rs`, `dispatch.rs`, `ipc.rs`, `proto.rs` — No library name
+  references.
+- `roamium/Cargo.toml` — No library name references.
+
+### Steps
+
+1. Edit `roamium/build.rs` — update comment and link directive.
+2. Edit `scripts/build-debug.sh` — replace autoninja targets.
+3. Edit `scripts/build-release.sh` — replace autoninja targets.
+4. `cargo clean && cargo build` — force relink against the new dylib name.
+5. Copy binary: `cp target/debug/roamium chromium/src/out/Default/roamium`
+6. Launch TermSurf, type `web google.com`, verify page loads.
+7. `cargo build --release` — verify release build too.
+
+### Success criteria
+
+- `cargo build` succeeds (links `libtermsurf_chromium.dylib`)
+- `cargo build --release` succeeds
+- `web google.com` loads in TermSurf with `--browser roamium`
+- Build scripts reference only `libtermsurf_chromium` (no dead targets)
