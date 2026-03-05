@@ -262,3 +262,139 @@ browsing, navigation, DevTools.
 
 The C library is now a proper abstraction boundary. Roamium can link one dylib
 instead of dealing with Chromium's internal dependency graph.
+
+### Experiment 2: Minimal Rust binary that links libtermsurf_content
+
+Build a minimal Roamium binary that proves the full Cargo → dylib → Chromium
+pipeline works: FFI bindings, linking, runtime dylib loading, and calling
+`ts_content_main()`. No socket code, no protobuf — just enough to prove the
+build system works end-to-end.
+
+#### What to create
+
+**`roamium/Cargo.toml`**
+
+```toml
+[package]
+name = "roamium"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "roamium"
+path = "src/main.rs"
+
+[dependencies]
+prost = "0.14"
+
+[build-dependencies]
+prost-build = "0.14"
+```
+
+**`roamium/build.rs`**
+
+```rust
+use std::env;
+use std::path::PathBuf;
+
+fn main() {
+    // Chromium build output directory (relative to repo root).
+    let chromium_out = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap())
+        .join("../chromium/src/out/Default")
+        .canonicalize()
+        .expect("chromium/src/out/Default must exist — build Chromium first");
+
+    // Link-time: find libtermsurf_content.dylib.
+    println!(
+        "cargo:rustc-link-search=native={}",
+        chromium_out.display()
+    );
+    println!("cargo:rustc-link-lib=dylib=termsurf_content");
+
+    // Runtime: two rpaths.
+    // 1. @loader_path/. — for release (dylib colocated with binary).
+    // 2. Chromium build dir — for development (binary in target/, dylib in
+    //    chromium/src/out/Default/).
+    println!("cargo:rustc-link-arg=-Wl,-rpath,@loader_path/.");
+    println!(
+        "cargo:rustc-link-arg=-Wl,-rpath,{}",
+        chromium_out.display()
+    );
+
+    // Compile protobuf (same pattern as TUI).
+    prost_build::Config::new()
+        .compile_protos(&["../proto/termsurf.proto"], &["../proto/"])
+        .unwrap();
+}
+```
+
+**`roamium/src/ffi.rs`** — Hand-written FFI bindings for libtermsurf_content.h.
+Only the functions needed for the smoke test:
+
+```rust
+use std::ffi::c_void;
+use std::os::raw::{c_char, c_int};
+
+pub type TsBrowserContext = *mut c_void;
+pub type TsWebContents = *mut c_void;
+
+extern "C" {
+    pub fn ts_content_main(argc: c_int, argv: *const *const c_char) -> c_int;
+    pub fn ts_set_on_initialized(
+        callback: Option<unsafe extern "C" fn(*mut c_void)>,
+        user_data: *mut c_void,
+    );
+    pub fn ts_post_task(
+        task: Option<unsafe extern "C" fn(*mut c_void)>,
+        user_data: *mut c_void,
+    );
+    pub fn ts_quit();
+    pub fn ts_create_browser_context(path: *const c_char) -> TsBrowserContext;
+}
+```
+
+**`roamium/src/main.rs`** — Minimal smoke test:
+
+```rust
+mod ffi;
+
+use std::ffi::c_void;
+use std::ptr;
+
+unsafe extern "C" fn on_initialized(_user_data: *mut c_void) {
+    eprintln!("[Roamium] Chromium initialized — creating browser context");
+    let ctx = unsafe { ffi::ts_create_browser_context(ptr::null()) };
+    eprintln!("[Roamium] Browser context: {:?}", ctx);
+    eprintln!("[Roamium] Smoke test passed — shutting down");
+    unsafe { ffi::ts_quit() };
+}
+
+fn main() {
+    let args: Vec<std::ffi::CString> = std::env::args()
+        .map(|a| std::ffi::CString::new(a).unwrap())
+        .collect();
+    let argv: Vec<*const i8> = args.iter().map(|a| a.as_ptr()).collect();
+
+    unsafe {
+        ffi::ts_set_on_initialized(Some(on_initialized), ptr::null_mut());
+    }
+
+    eprintln!("[Roamium] Entering ts_content_main");
+    let ret = unsafe {
+        ffi::ts_content_main(argv.len() as i32, argv.as_ptr())
+    };
+    std::process::exit(ret);
+}
+```
+
+#### Verification
+
+1. `cd roamium && cargo build` — compiles and links clean.
+2. `./target/debug/roamium --no-sandbox` — prints "Chromium initialized",
+   creates a browser context, prints "Smoke test passed", exits cleanly.
+3. `otool -L target/debug/roamium | grep termsurf` — links
+   `libtermsurf_content.dylib`.
+4. `otool -l target/debug/roamium | grep -A2 LC_RPATH` — has both
+   `@loader_path/.` and the Chromium build dir.
+
+#### Result
