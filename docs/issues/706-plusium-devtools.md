@@ -186,3 +186,53 @@ in the DevTools code itself. The remaining hypotheses are:
    `content_shell_lib`, which is a shared library in component builds.
 3. **The pointer itself** (idea #1) — we still don't know if the pointer is
    corrupted in storage or if the object was destroyed.
+
+### Experiment 2: Pass tab_id instead of void\* for DevTools
+
+`plusium_main.cc` does `FindByTabId(inspected_tab_id)` to get a `void* handle`,
+passes it through the C API, where `CreateDevToolsTab` casts it back to
+`WebContents*` and searches `tabs_` again to find the tab ID. A pointless
+round-trip through `void*`. Pass the integer directly and look up `WebContents*`
+inside `TsBrowserMainParts::CreateDevToolsTab` — the same way Profile Server
+does.
+
+#### What to change
+
+**`libtermsurf_content.h`** — Change `ts_web_contents_t inspected` to
+`int inspected_tab_id` on `ts_create_devtools_web_contents`.
+
+**`libtermsurf_content.cc`** — Pass `inspected_tab_id` through.
+
+**`ts_browser_main_parts.h`** — Change `void* inspected` to
+`int inspected_tab_id`.
+
+**`ts_browser_main_parts.cc`** — Remove the `void*` cast. Look up `WebContents*`
+from `tabs_` by `inspected_tab_id`, matching Profile Server's pattern.
+
+**`plusium_main.cc`** — Pass `m.inspected_tab_id()` directly instead of
+`inspected->handle`. Remove the `FindByTabId` + handle lookup.
+
+#### Verification
+
+1. `autoninja -C out/Default plusium` — compiles clean.
+2. `web google.com --browser plusium`, then `d` — DevTools opens without crash.
+3. Hover over elements in DevTools — highlights on inspected page.
+
+#### Result: Success — DevTools opens without crash
+
+Passing `int inspected_tab_id` instead of `void* inspected` through the C API
+fixed the crash. DevTools opens in Plusium without a SEGV.
+
+The root cause was the `void*` round-trip. `plusium_main.cc` looked up the
+inspected tab by ID, extracted its `void* handle` (a `WebContents*` cast), and
+passed that pointer through the C API into `CreateDevToolsTab`, which cast it
+back to `WebContents*`. By the time `ShellDevToolsBindings::AttachInternal()`
+ran (asynchronously, after the DevTools DOM loaded), the pointer was corrupted.
+
+The fix eliminates the pointer crossing entirely. `plusium_main.cc` passes the
+integer tab ID, and `CreateDevToolsTab` looks up `WebContents*` from its own
+`tabs_` vector — the same pattern Profile Server uses. The `WebContents*` stays
+inside `TsBrowserMainParts` and never crosses the C boundary.
+
+Five files changed, ~10 lines each. The simplest experiment in the issue solved
+a crash that persisted through two prior issues and four experiments.

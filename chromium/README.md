@@ -14,7 +14,7 @@ No `origin` remote for now. Remote hosting TBD (likely patch set distribution).
 
 ## Current State
 
-- Branch: `146.0.7650.0-issue-705`
+- Branch: `146.0.7650.0-issue-706`
 - Base version: `146.0.7650.0` (tracking Electron's Chromium version)
 
 ## Branch Strategy
@@ -78,6 +78,7 @@ find the most relevant recent branch, create a new branch from it
 | `146.0.7650.0-issue-702`      | [Issue 702](../docs/issues/702-socket-cleanup.md)             | Remove dead XPC code                        |
 | `146.0.7650.0-issue-704`      | [Issue 704](../docs/issues/704-browser-bindings.md)           | Browser bindings (libtermsurf_content)       |
 | `146.0.7650.0-issue-705`      | [Issue 705](../docs/issues/705-browser-bindings.md)           | Browser bindings continued (DevTools fix)    |
+| `146.0.7650.0-issue-706`      | [Issue 706](../docs/issues/706-plusium-devtools.md)            | Plusium DevTools crash fix                    |
 
 ## Patches
 

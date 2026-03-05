@@ -1,0 +1,145 @@
+From 6c8a9a7236cd26bc77b5bf7632dcc07564fd4270 Mon Sep 17 00:00:00 2001
+From: "Ryan X. Charles" <ryan@ryanxcharles.com>
+Date: Wed, 4 Mar 2026 20:15:05 -0600
+Subject: [PATCH 66/66] Fix DevTools crash: pass tab_id not void*
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+A pointer crossed the C API line,
+Cast to void and back—seemed fine.
+But by the time the bindings attached,
+The address was garbled, corrupted, mismatched.
+Now an integer travels instead,
+And DevTools opens, no longer dead.
+
+Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>
+---
+ .../libtermsurf_content/libtermsurf_content.cc  |  4 ++--
+ .../libtermsurf_content/libtermsurf_content.h   |  6 ++++--
+ .../ts_browser_main_parts.cc                    | 17 +++++++++++------
+ .../libtermsurf_content/ts_browser_main_parts.h |  2 +-
+ content/plusium/plusium_main.cc                 | 11 +++--------
+ 5 files changed, 21 insertions(+), 19 deletions(-)
+
+diff --git a/content/libtermsurf_content/libtermsurf_content.cc b/content/libtermsurf_content/libtermsurf_content.cc
+index 58025c95457c7..18a4b912641ed 100644
+--- a/content/libtermsurf_content/libtermsurf_content.cc
++++ b/content/libtermsurf_content/libtermsurf_content.cc
+@@ -141,12 +141,12 @@ ts_web_contents_t ts_create_web_contents(ts_browser_context_t ctx,
+ 
+ ts_web_contents_t ts_create_devtools_web_contents(
+     ts_browser_context_t ctx,
+-    ts_web_contents_t inspected,
++    int inspected_tab_id,
+     int width,
+     int height,
+     bool dark) {
+   if (!g_main_parts) return nullptr;
+-  return g_main_parts->CreateDevToolsTab(ctx, inspected, width, height, dark);
++  return g_main_parts->CreateDevToolsTab(ctx, inspected_tab_id, width, height, dark);
+ }
+ 
+ void ts_destroy_web_contents(ts_web_contents_t wc) {
+diff --git a/content/libtermsurf_content/libtermsurf_content.h b/content/libtermsurf_content/libtermsurf_content.h
+index e087616fea286..b36298ae2b1d5 100644
+--- a/content/libtermsurf_content/libtermsurf_content.h
++++ b/content/libtermsurf_content/libtermsurf_content.h
+@@ -57,10 +57,12 @@ ts_web_contents_t ts_create_web_contents(ts_browser_context_t ctx,
+                                          int height,
+                                          bool dark);
+ 
+-/* Create a DevTools WebContents inspecting another tab. */
++/* Create a DevTools WebContents inspecting the tab with the given ID.
++   The inspected tab is looked up internally — no pointer crosses the C boundary
++   (Issue 706 Exp 2). */
+ ts_web_contents_t ts_create_devtools_web_contents(
+     ts_browser_context_t ctx,
+-    ts_web_contents_t inspected,
++    int inspected_tab_id,
+     int width,
+     int height,
+     bool dark);
+diff --git a/content/libtermsurf_content/ts_browser_main_parts.cc b/content/libtermsurf_content/ts_browser_main_parts.cc
+index 8900fa3df56e4..1844d8cf53106 100644
+--- a/content/libtermsurf_content/ts_browser_main_parts.cc
++++ b/content/libtermsurf_content/ts_browser_main_parts.cc
+@@ -224,22 +224,27 @@ void* TsBrowserMainParts::CreateTab(void* ctx, const char* url,
+   return handle;
+ }
+ 
+-void* TsBrowserMainParts::CreateDevToolsTab(void* ctx, void* inspected,
++void* TsBrowserMainParts::CreateDevToolsTab(void* ctx, int inspected_tab_id,
+                                              int width, int height,
+                                              bool dark) {
+   DCHECK_CURRENTLY_ON(BrowserThread::UI);
+ 
+-  auto* inspected_wc = static_cast<WebContents*>(inspected);
+   auto* browser_ctx = static_cast<ShellBrowserContext*>(ctx);
+ 
+-  // Find inspected tab's ID.
+-  int inspected_tab_id = 0;
++  // Look up inspected WebContents by tab_id — never cross the C API with a
++  // WebContents pointer (Issue 706 Exp 2).
++  WebContents* inspected_wc = nullptr;
+   for (auto& t : tabs_) {
+-    if (t->shell && t->shell->web_contents() == inspected_wc) {
+-      inspected_tab_id = t->tab_id;
++    if (t->tab_id == inspected_tab_id && t->tab_id != 0) {
++      inspected_wc = t->shell->web_contents();
+       break;
+     }
+   }
++  if (!inspected_wc) {
++    LOG(ERROR) << "[Plusium] DevTools: inspected tab_id=" << inspected_tab_id
++               << " not found";
++    return nullptr;
++  }
+ 
+   // Create Shell with the DevTools URL directly (Issue 705 Exp 12).
+   // Matches Profile Server's pattern: create Shell first, do all setup,
+diff --git a/content/libtermsurf_content/ts_browser_main_parts.h b/content/libtermsurf_content/ts_browser_main_parts.h
+index dd82b31d09d19..d0b3f4dc6970b 100644
+--- a/content/libtermsurf_content/ts_browser_main_parts.h
++++ b/content/libtermsurf_content/ts_browser_main_parts.h
+@@ -51,7 +51,7 @@ class TsBrowserMainParts : public ShellBrowserMainParts {
+   void* CreateBrowserContext(const char* path);
+   void DestroyBrowserContext(void* ctx);
+   void* CreateTab(void* ctx, const char* url, int width, int height, bool dark);
+-  void* CreateDevToolsTab(void* ctx, void* inspected, int width, int height,
++  void* CreateDevToolsTab(void* ctx, int inspected_tab_id, int width, int height,
+                           bool dark);
+   void DestroyTab(void* wc_handle);
+   void NavigateTab(void* wc_handle, const char* url);
+diff --git a/content/plusium/plusium_main.cc b/content/plusium/plusium_main.cc
+index b346769d56eee..39566ac9543a7 100644
+--- a/content/plusium/plusium_main.cc
++++ b/content/plusium/plusium_main.cc
+@@ -173,21 +173,16 @@ void HandleMessage(termsurf::TermSurfMessage* msg) {
+       auto& m = msg->create_devtools_tab();
+       fprintf(stderr, "[DEBUG] Plusium kCreateDevtoolsTab: pane=%s inspected_tab_id=%d dark=%d\n",
+               m.pane_id().c_str(), static_cast<int>(m.inspected_tab_id()), m.dark() ? 1 : 0);
+-      TabEntry* inspected = FindByTabId(m.inspected_tab_id());
+-      if (!inspected) {
+-        fprintf(stderr, "[DEBUG] Plusium kCreateDevtoolsTab: FindByTabId FAILED for inspected_tab_id=%d\n",
+-                static_cast<int>(m.inspected_tab_id()));
+-        break;
+-      }
+-      fprintf(stderr, "[DEBUG] Plusium kCreateDevtoolsTab: inspected handle=%p\n", (void*)inspected->handle);
+       // Push entry FIRST so OnTabReady can find it (it fires synchronously).
+       TabEntry entry;
+       entry.pane_id = m.pane_id();
+       entry.inspected_tab_id = m.inspected_tab_id();
+       g_tabs->push_back(std::move(entry));
+       TabEntry& ref = g_tabs->back();
++      // Pass tab_id directly — never send a WebContents* through the C API
++      // (Issue 706 Exp 2).
+       ref.handle = ts_create_devtools_web_contents(
+-          g_browser_context, inspected->handle,
++          g_browser_context, static_cast<int>(m.inspected_tab_id()),
+           static_cast<int>(m.pixel_width()),
+           static_cast<int>(m.pixel_height()),
+           m.dark());
+-- 
+2.50.1 (Apple Git-155)
+
