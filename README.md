@@ -2,8 +2,8 @@
 
 **A terminal that surfs.**
 
-Type `web` and a full Chromium browser opens right in your terminal pane. No
-window switching. No context loss. Just web.
+Type `web` and a full web browser opens right in your terminal pane. No window
+switching. No context loss. Just web.
 
 ```bash
 web google.com

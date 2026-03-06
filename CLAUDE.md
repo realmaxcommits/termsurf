@@ -82,11 +82,7 @@ will be extended to support:
 Care goes into the protocol first. Individual apps (boards, engines, TUIs) are
 implementations of the protocol.
 
-## Settled Architectural Decisions
-
-These are non-negotiable. They were chosen after extensive experimentation
-across six generations (ts1–ts5, gui) and hundreds of experiments. Do NOT
-suggest alternatives.
+## Architectural Decisions
 
 ### Unix sockets + protobuf for all IPC
 
@@ -223,6 +219,8 @@ git subtree pull --prefix=gui upstream main -m "Merge upstream Ghostty into gui"
 
 ## Documentation
 
+All documentation is in `docs/` or in `README.md` files throughout the codebase.
+
 ### GUI (active)
 
 Recent issues:
@@ -247,7 +245,7 @@ Recent issues:
 ### Early Prototypes (ts1–ts5)
 
 Issue docs for all prototype generations are indexed in
-[docs/early-prototypes.md](docs/early-prototypes.md#issue-documentation-index).
+[docs/early-prototypes.md](docs/early-prototypes.md).
 
 ### General
 
