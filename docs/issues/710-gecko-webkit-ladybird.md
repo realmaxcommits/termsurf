@@ -302,3 +302,274 @@ WPE), and iOS. Check which compositing path each platform uses.
 All 10 research questions answered with specific file paths and code references.
 A clear assessment of whether `libtermsurf_webkit` is feasible, and if so, what
 the C library surface area would look like.
+
+### Result
+
+#### Q1. Embedding API
+
+WebKit has two embedding APIs on macOS:
+
+- **WKWebView** (modern) — Objective-C class inheriting from `NSView`. This is
+  the only supported embedding API. There is no C++ or C wrapper for it. Any use
+  requires Objective-C or Swift.
+- **Legacy C API** (`Source/WebKit/UIProcess/API/C/WKPage.h`) — Exports C
+  functions like `WKPageLoadURL()`, `WKPageCopyTitle()`, etc. However, this API
+  is deprecated, not feature-complete, and diverged from the modern Objective-C
+  API. Not suitable for new code.
+
+MiniBrowser (`Tools/MiniBrowser/mac/`) shows the minimal surface:
+
+```objc
+WKWebViewConfiguration *config = ...;
+WKWebView *webView = [[WKWebView alloc] initWithFrame:bounds
+                                        configuration:config];
+webView.navigationDelegate = self;
+webView.UIDelegate = self;
+[containerView addSubview:webView];
+```
+
+Internally, `WKWebView` wraps `WebViewImpl` (C++, macOS-specific) which creates
+`WebPageProxy` (the real engine interface). `WebPageProxy` handles all IPC with
+the WebContent process.
+
+**For libtermsurf_webkit:** Write an Objective-C wrapper that creates WKWebView
+and exposes `ts_*` C functions. This is the same pattern Chromium uses — the C
+library is C++ internally but exports a C interface.
+
+#### Q2. Headless/hidden rendering
+
+WKWebView can render without a visible window. Create an `NSWindow` with
+`setAlphaValue:0` and `orderWindow:NSWindowBelow` (identical to what we do with
+Chromium's Content Shell via the `--hidden` flag). The WebContent process
+continues GPU rendering regardless of window visibility. The `WebKitTestRunner`
+in `Tools/WebKitTestRunner/` runs headless tests this way.
+
+**Verdict:** Same approach as Chromium. No special handling needed.
+
+#### Q3. CAContext / GPU surface (CRITICAL)
+
+WebKit's cross-process compositing uses **RemoteLayerTree** — but it does NOT
+work like Chromium's direct CAContext sharing.
+
+**How WebKit composites:**
+
+1. WebContent process creates graphics layers
+   (`GraphicsLayerCARemote`/`PlatformCALayerRemote`)
+2. Layer **properties** are serialized into `RemoteLayerTreeTransaction`
+   messages (position, bounds, opacity, transform, etc.)
+3. UIProcess receives the transaction and **reconstructs** the layer tree as
+   local `CALayer` objects (`RemoteLayerTreeHost::makeNode()`)
+4. The root `CALayer` is inserted into the `WKWebView`'s layer hierarchy
+
+WebKit does use `CAContext`/`CALayerHost` internally — but only for hosting
+**external content** (AVPlayer video layers, AR models):
+
+```objc
+// Source/WebKit/Platform/cocoa/LayerHostingContext.mm
+m_context = [CAContext remoteContextWithOptions:contextOptions];
+
+// Source/WebCore/platform/graphics/cocoa/WebCoreCALayerExtras.mm
++ (CALayer *)_web_renderLayerWithContextID:(uint32_t)contextID {
+    CALayerHost *layerHost = [CALayerHost layer];
+    layerHost.contextId = contextID;
+    return layerHost;
+}
+```
+
+**Key insight:** The `WKWebView` itself contains the reconstructed layer tree.
+We don't need to extract a `CAContext` ID from WebKit — we can take the
+`WKWebView`'s layer (or its backing layer) and host it via `CAContext` +
+`CALayerHost`, or simply position the `WKWebView` at the overlay's pixel
+coordinates.
+
+**Two approaches:**
+
+1. **WKWebView as overlay** — Create a `WKWebView`, add it as a subview of the
+   terminal window at the overlay's pixel coordinates. WebKit handles all GPU
+   compositing internally. No `CAContext` interception needed.
+
+2. **Extract CAContext** — Create a `CAContext` from the `WKWebView`'s root
+   layer, export its `contextId`, and use `CALayerHost` in the board. This would
+   require forking WebKit to create the `CAContext` wrapper, since WKWebView
+   doesn't expose one.
+
+Approach 1 is simpler and requires zero WebKit modifications. The `WKWebView` is
+just an `NSView` — position it inside the terminal window and let Window Server
+composite it.
+
+#### Q4. Input injection
+
+`WebPageProxy` has direct methods for injecting events:
+
+- `handleMouseEvent(const NativeWebMouseEvent&)` — mouse clicks, moves
+- `handleWheelEvent(const WebWheelEvent&)` — scroll
+- `handleKeyboardEvent(const NativeWebKeyboardEvent&)` — keyboard
+
+`NativeWebMouseEvent` wraps `NSEvent` with fields: button, position, click
+count, modifiers, delta. `NativeWebKeyboardEvent` wraps `NSEvent` with fields:
+text, key code, `windowsVirtualKeyCode`, modifiers, auto-repeat.
+
+However, since approach 1 (WKWebView as overlay) places a real `NSView` in the
+window, we may not need to inject events at all — macOS will route events to the
+`WKWebView` naturally when it's the first responder. We only need to manage
+focus (make `WKWebView` first responder in browse mode, resign in control mode).
+
+For programmatic injection (e.g., forwarding events from the terminal view),
+`EventSenderProxy` in `Tools/WebKitTestRunner/` shows synthetic event creation.
+
+#### Q5. Callback hooks
+
+**Navigation/loading** — `WKNavigationDelegate` protocol:
+
+- `didStartProvisionalNavigation:` — navigation started
+- `didCommitNavigation:` — content arriving
+- `didFinishNavigation:` — load complete
+- `didFailNavigation:withError:` — load failed
+
+**UI events** — `WKUIDelegate` protocol:
+
+- `createWebViewWithConfiguration:forNavigationAction:windowFeatures:` — new
+  window/tab
+- `webViewDidClose:` — page closed itself
+- `runJavaScriptAlertPanel...` / `runJavaScriptConfirmPanel...` — JS dialogs
+
+**Internal observer** — `PageLoadState::Observer`:
+
+- `didChangeTitle()` — page title changed
+- `didChangeActiveURL()` — URL changed
+- `didChangeEstimatedProgress()` — loading progress (0.0–1.0)
+- `didChangeIsLoading()` — loading state changed
+
+**Cursor changes** — `WebPageProxy` receives `SetCursor(WebCore::Cursor)` IPC
+messages from WebContent process, dispatched to `PageClient::setCursor()`.
+
+**KVO properties** on `WKWebView`: `title`, `URL`, `estimatedProgress`,
+`loading`, `canGoBack`, `canGoForward` — all observable via KVO, which is the
+simplest callback mechanism for Objective-C code.
+
+#### Q6. DevTools
+
+WebKit uses **Web Inspector** (not Chrome DevTools). Every `WKWebView` has a
+`_inspector` property returning a `_WKInspector` instance:
+
+```objc
+_WKInspector *inspector = webView._inspector;
+[inspector connect];     // establish backend connection
+[inspector show];        // open inspector UI
+[inspector attachRight]; // dock to right side
+[inspector detach];      // floating window
+```
+
+Configurable via `_WKInspectorConfiguration` (custom process pool, group ID).
+The inspector frontend lives in `Source/WebInspectorUI/`.
+
+**For TermSurf:** Open inspector with `[webView._inspector show]`, attach it to
+a split pane with `attachRight`/`attachBottom`, or detach for a separate window.
+
+#### Q7. Build system
+
+WebKit uses **CMake**. On macOS it builds as a `.framework` bundle
+(`WebKit.framework`). On Linux it builds as a shared library (`.so`).
+
+Top-level structure (`Source/CMakeLists.txt`):
+
+```
+bmalloc → WTF → JavaScriptCore → ANGLE → libwebrtc
+  → WebInspectorUI → WebCore → WebKit → WebDriver → WebGPU
+```
+
+The `WEBKIT_FRAMEWORK()` macro creates the main target. Additional subprocess
+targets: `WebKitWebProcess`, `WebKitNetworkProcess`, `WebKitGPUProcess`.
+
+**For libtermsurf_webkit:** Add a new `CMakeLists.txt` alongside
+`Source/WebKit/` that creates a shared library target linking `WebKit` and
+`WebCore`. Write Objective-C source files that wrap `WKWebView` and export
+`ts_*` C functions. Build with `cmake --build`.
+
+#### Q8. Multi-profile
+
+**Yes.** `WKWebsiteDataStore` is WebKit's equivalent of Chromium's
+`BrowserContext`:
+
+```objc
+// Persistent store by UUID (macOS 14+)
+WKWebsiteDataStore *store = [WKWebsiteDataStore
+    dataStoreForIdentifier:[[NSUUID alloc] init]];
+
+// Non-persistent (incognito)
+WKWebsiteDataStore *ephemeral = [WKWebsiteDataStore nonPersistentDataStore];
+
+// Apply to configuration
+config.websiteDataStore = store;
+WKWebView *view = [[WKWebView alloc] initWithFrame:frame configuration:config];
+```
+
+Multiple `WKWebView` instances can use different data stores in the same
+process. Each data store has isolated cookies, cache, localStorage, IndexedDB.
+Backed by `WebsiteDataStore` (C++) with a unique `SessionID`.
+
+#### Q9. Fork size
+
+**Potentially zero fork modifications.** Unlike Chromium, where we had to:
+
+- Add `--hidden` flag (patch `shell_platform_delegate_mac.mm`)
+- Make DevTools constructor public (patch `shell_devtools_frontend.h`)
+- Add CALayerParams callback (patch `render_widget_host_view_mac.h/.mm`)
+- Add cursor callback (patch `render_widget_host_impl.h/.cc`)
+
+WebKit's public API already provides everything we need:
+
+- Hidden window: standard `NSWindow` API (no WebKit patch)
+- DevTools: `[webView._inspector show]` (public API)
+- CALayerHost: not needed (WKWebView is an NSView, position it directly)
+- Callbacks: KVO on `title`, `URL`, `estimatedProgress`, `loading`
+- Input: `NSView` first responder (natural event routing)
+- Multi-profile: `WKWebsiteDataStore` (public API)
+
+The `libtermsurf_webkit` library could live entirely outside the WebKit tree —
+just an Objective-C wrapper that links the system `WebKit.framework`. No fork
+needed at all.
+
+**However:** If we want to use the open-source WebKit build (not Apple's system
+framework), we'd add a `libtermsurf_webkit/` directory to the source tree and
+build it with CMake. Still minimal patches — the C library wraps public APIs.
+
+#### Q10. Cross-platform
+
+| Platform    | API                | Compositing          | Build output |
+| ----------- | ------------------ | -------------------- | ------------ |
+| macOS       | WKWebView (Cocoa)  | CALayer tree         | `.framework` |
+| Linux (GTK) | WebKitGTK          | DMA-BUF + Skia       | `.so`        |
+| Linux (WPE) | WPE WebKit         | Shared memory + Skia | `.so`        |
+| Windows     | HWND-based WebView | CoordinatedGraphics  | `.dll`       |
+| iOS         | WKWebView (UIKit)  | CALayer tree         | `.framework` |
+
+Linux uses DMA-BUF for GPU buffer sharing (similar concept to CAContext but for
+Linux DRM). Windows uses CoordinatedGraphics with named pipes for IPC.
+
+### Assessment
+
+**WebKit is the easiest engine to embed.** Compared to Chromium:
+
+| Aspect               | Chromium                              | WebKit                               |
+| -------------------- | ------------------------------------- | ------------------------------------ |
+| Fork modifications   | 8 stock patches, 24 files             | Potentially zero                     |
+| C library complexity | ~2,000 lines, 16 files                | ~500 lines estimated                 |
+| GPU compositing      | Custom CAContext + CALayerHost        | WKWebView is an NSView (native)      |
+| Input handling       | Manual injection via RenderWidgetHost | NSView first responder (automatic)   |
+| DevTools             | Had to make constructor public        | `[webView._inspector show]` (public) |
+| Multi-profile        | BrowserContext (internal API)         | WKWebsiteDataStore (public API)      |
+| Build dependency     | Must fork Chromium source             | Can link system WebKit.framework     |
+
+**The WKWebView-as-overlay approach eliminates most complexity.** Instead of
+extracting a CAContext ID and compositing via CALayerHost (like Chromium),
+simply create a WKWebView and position it as a subview at the overlay's pixel
+coordinates. macOS handles compositing natively.
+
+**Remaining work for libtermsurf_webkit:**
+
+1. Objective-C wrapper (~500 lines) that creates WKWebView, implements
+   delegates, exposes `ts_*` C functions
+2. Rust binary (could share most of Roamium's code) linking the wrapper
+3. No Chromium-style fork — either link system WebKit.framework or add a small
+   CMake target to the open-source build
