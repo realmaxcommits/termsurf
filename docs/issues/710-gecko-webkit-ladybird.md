@@ -573,3 +573,123 @@ coordinates. macOS handles compositing natively.
 2. Rust binary (could share most of Roamium's code) linking the wrapper
 3. No Chromium-style fork — either link system WebKit.framework or add a small
    CMake target to the open-source build
+
+## Experiment 3: Gecko architecture audit
+
+### Goal
+
+Answer the 10 research questions for Gecko (Firefox). Map each question to
+specific source locations in `vendor/firefox/`. Determine what it would take to
+build `libtermsurf_gecko` — a C shared library wrapping Gecko's embedding API.
+
+### Background
+
+Gecko is fundamentally different from Chromium and WebKit in its embedding
+story. Chromium has the Content API, WebKit has WKWebView — both are designed
+for third-party embedding. Gecko was historically embeddable (via
+`libxul`/`nsIWebBrowser`), but Mozilla dropped embedding support years ago. The
+modern embedding API is **GeckoView** — but it's Android-only (Java/Kotlin).
+
+This means the research needs to find what embedding surfaces exist on desktop,
+even if they're not officially supported.
+
+### Research plan
+
+**Q1. Embedding API** — Gecko has no official desktop embedding API. Research
+the options:
+
+- **libxul** — The monolithic shared library containing all of Gecko. Firefox
+  itself links it. Can we load `libxul.so`/`XUL.framework` and call into it?
+  Look at `toolkit/xre/` for the XRE (XUL Runtime Environment) bootstrap.
+- **GeckoView** — Android-only (`mobile/android/geckoview/`). Uses JNI to
+  communicate with Gecko. Not usable on desktop.
+- **nsIWebBrowser** — The old XPCOM embedding interface. Deprecated but may
+  still exist in the tree. Search for `nsIWebBrowser`, `nsWebBrowser`.
+- **Servo components** — Mozilla has been replacing parts of Gecko with Servo
+  (Rust). Look at `servo/` for Servo components integrated into Gecko.
+- **Content Shell equivalent** — Does Firefox have a minimal browser app like
+  Chromium's Content Shell? Check `browser/` vs `toolkit/`.
+
+**Q2. Headless/hidden rendering** — Firefox has headless mode (`--headless`
+flag). Look at `widget/headless/` for the headless widget backend. Can we render
+to a hidden window while keeping GPU compositing active?
+
+**Q3. CAContext / GPU surface** — This is the critical question. Gecko has its
+own compositor:
+
+- Look at `gfx/layers/` — Gecko's layer system (Layers, WebRender)
+- `gfx/webrender_bindings/` — Rust bindings for WebRender
+- `widget/cocoa/` — macOS widget implementation. Search for `CAContext`,
+  `CALayer`, `IOSurface`, compositor setup
+- `gfx/layers/composite/` — compositing infrastructure
+- Does Gecko use `CAContext` for cross-process compositing on macOS?
+
+**Q4. Input injection** — How does Firefox receive input?
+
+- `widget/cocoa/nsChildView.mm` — macOS event handling
+- `widget/InputData.h` — input event data structures
+- `dom/events/` — DOM event dispatch
+- `widget/nsIWidget.h` — the widget interface that receives platform events
+- Can we call `DispatchEvent()` or similar on a widget to inject events?
+
+**Q5. Callback hooks** — How does Firefox expose navigation/loading state?
+
+- `docshell/` — the navigation engine (nsIDocShell, nsIWebNavigation)
+- `uriloader/` — URI loading infrastructure
+- `dom/base/Document.h` — document state
+- `toolkit/components/browser/nsIWebBrowserChrome.idl` — browser chrome
+  interface
+- Look for observer patterns: `nsIWebProgressListener`, `nsIObserverService`
+
+**Q6. DevTools** — Firefox has its own DevTools:
+
+- `devtools/` — the DevTools frontend and server
+- `devtools/server/` — the DevTools server (Remote Debugging Protocol)
+- Can we connect to DevTools programmatically via the protocol?
+- Firefox supports remote debugging — is there a socket-based protocol?
+
+**Q7. Build system** — Gecko uses `moz.build` + `mach`:
+
+- `moz.build` files throughout the tree
+- `build/` — build system infrastructure
+- `toolkit/library/moz.build` — how libxul is built
+- Can we add a shared library target alongside libxul?
+
+**Q8. Multi-profile** — Firefox supports profiles:
+
+- `toolkit/profile/` — profile management
+- `browser/components/profiles/` — profile switching
+- Can we run multiple profiles in one process? (Firefox normally uses one
+  profile per process.)
+
+**Q9. Fork size** — Based on the other answers, estimate the modification
+footprint.
+
+**Q10. Cross-platform** — Gecko runs on macOS, Linux, Windows, Android.
+
+- `widget/cocoa/` — macOS backend
+- `widget/gtk/` — Linux/GTK backend
+- `widget/windows/` — Windows backend
+- `widget/android/` — Android backend
+- What compositing does each platform use?
+
+### Key source directories to examine
+
+- `toolkit/xre/` — XUL Runtime Environment (bootstrap, startup)
+- `toolkit/library/` — libxul build definition
+- `widget/cocoa/` — macOS widget (NSView, CALayer, input events)
+- `widget/headless/` — Headless widget backend
+- `gfx/layers/` — Layer system and compositing
+- `gfx/webrender_bindings/` — WebRender Rust bindings
+- `docshell/` — Navigation engine
+- `dom/events/` — DOM event dispatch
+- `devtools/server/` — DevTools server
+- `mobile/android/geckoview/` — GeckoView (Android, for reference)
+- `xpcom/` — XPCOM component system
+
+### Success criteria
+
+All 10 research questions answered with specific file paths and code references.
+A clear assessment of whether `libtermsurf_gecko` is feasible, and if so, what
+the C library surface area would look like. Comparison with the WebKit findings
+from Experiment 2.
