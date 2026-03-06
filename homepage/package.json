@@ -1,5 +1,5 @@
 {
-  "name": "termsurf.com",
+  "name": "termsurf-homepage",
   "type": "module",
   "scripts": {
     "dev": "vite",
