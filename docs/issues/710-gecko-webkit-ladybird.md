@@ -1107,8 +1107,8 @@ embedding layer, analogous to Chromium's Content API or WebKit's WKWebView.
 
 - `UI/AppKit/Interface/` — Look for NSView subclasses, CALayer usage
 - `Libraries/LibGfx/` — Graphics primitives, painting, GPU surfaces
-- `Libraries/LibWebView/` — How does the WebContent process send rendered
-  output to the UI process?
+- `Libraries/LibWebView/` — How does the WebContent process send rendered output
+  to the UI process?
 - Does Ladybird use GPU compositing at all, or is it CPU/Skia-only?
 - Search for `CAContext`, `CALayerHost`, `IOSurface`, `Metal`, `Skia`
 - Look at `Libraries/LibWeb/Painting/` — how does painting work?
@@ -1127,8 +1127,7 @@ embedding layer, analogous to Chromium's Content API or WebKit's WKWebView.
   virtual methods, or observer patterns
 - Search for `on_title_change`, `on_url_change`, `on_load_start`,
   `on_load_finish`, `on_cursor_change` or similar
-- `Libraries/LibWebView/WebContentClient.h` — IPC messages from WebContent to
-  UI
+- `Libraries/LibWebView/WebContentClient.h` — IPC messages from WebContent to UI
 
 **Q6. DevTools** — Ladybird has its own DevTools:
 
@@ -1164,7 +1163,8 @@ Windows:
 
 ### Key source directories to examine
 
-- `Libraries/LibWebView/` — Embedding layer (ViewImplementation, WebContentClient)
+- `Libraries/LibWebView/` — Embedding layer (ViewImplementation,
+  WebContentClient)
 - `Libraries/LibWeb/` — Core web engine (DOM, layout, painting)
 - `Libraries/LibWeb/Painting/` — Painting/rendering pipeline
 - `Libraries/LibGfx/` — Graphics primitives
@@ -1180,3 +1180,382 @@ All 10 research questions answered with specific file paths and code references.
 A clear assessment of whether `libtermsurf_ladybird` is feasible, and if so,
 what the C library surface area would look like. Comparison with the Chromium,
 WebKit, and Gecko findings from Experiments 2–3.
+
+### Result
+
+#### Q1. Embedding API
+
+Ladybird has a clean, modern embedding API built around **`ViewImplementation`**
+(`Libraries/LibWebView/ViewImplementation.h`) — an abstract C++ base class that
+any frontend implements. This is the primary embedding surface.
+
+**Key methods:**
+
+- `load(URL::URL const&)` — Load a URL
+- `load_html(StringView)` — Load raw HTML
+- `reload()` — Reload current page
+- `traverse_the_history_by_delta(int)` — Navigate back/forward
+- `enqueue_input_event(Web::InputEvent)` — Send mouse/keyboard/drag events
+- `set_window_position(Gfx::IntPoint)` / `set_window_size(Gfx::IntSize)`
+- `set_zoom(double)` — Zoom level
+- `initialize_client()` — Spawn WebContent process and connect IPC
+
+**Platform bridges:**
+
+- **macOS:** `WebViewBridge` (`UI/AppKit/Interface/LadybirdWebViewBridge.h`) —
+  extends `ViewImplementation` with Metal rendering, IOSurface access, DPI
+  handling. Created via `WebViewBridge::create(screen_rects, dpi, max_fps)`.
+- **Qt:** `WebContentView` (`UI/Qt/WebContentView.h`) — extends both `QWidget`
+  and `ViewImplementation`.
+- **Android:** `WebViewImplementationNative`
+  (`UI/Android/src/main/cpp/WebViewImplementationNative.h`) — JNI bridge.
+
+**Embedding pattern (macOS):**
+
+```cpp
+auto bridge = WebViewBridge::create(screen_rects, dpi, max_fps);
+bridge->initialize_client();  // spawn WebContent process
+bridge->set_viewport_rect(visible_area);
+bridge->load(url);
+// When on_ready_to_paint fires:
+auto paintable = bridge->paintable();  // {bitmap, size, iosurface_ref}
+```
+
+**IPC:** `WebContentClient` (`Libraries/LibWebView/WebContentClient.h`) manages
+communication with the WebContent renderer process. Each ViewImplementation
+holds one. Messages: `async_load_url`, `async_handle_input_event`,
+`async_take_screenshot`, etc.
+
+**For libtermsurf_ladybird:** Subclass `ViewImplementation` or use
+`WebViewBridge` directly. The API is clean C++ — wrap it with `ts_*` C
+functions. Much simpler than Chromium's Content API or Gecko's XPCOM.
+
+#### Q2. Headless/hidden rendering
+
+**Yes.** Ladybird supports headless mode via `HeadlessMode` enum
+(`Libraries/LibWebView/Options.h`):
+
+```cpp
+enum class HeadlessMode {
+    Screenshot,  // Render once, save, exit
+    LayoutTree,  // Output layout tree
+    Text,        // Output rendered text
+    Manual,      // Headless but stay running
+    Test,        // Automated testing
+};
+```
+
+`ViewImplementation` is abstract and doesn't require a window. Its only abstract
+methods are `viewport_size()`, `to_content_position()`, `to_widget_position()`,
+`update_zoom()`, and `initialize_client()`. All can be implemented for headless
+use.
+
+The WebContent process accepts `--headless` flag
+(`Services/WebContent/main.cpp`). WebDriver (`Services/WebDriver/`) runs a full
+headless browser for automation.
+
+**For libtermsurf_ladybird:** Same approach as Chromium/Gecko — use a hidden
+`NSWindow` to keep GPU compositing active while rendering offscreen.
+
+#### Q3. CAContext / GPU surface (CRITICAL)
+
+**Ladybird already renders to IOSurfaces with Metal on macOS.** This is the most
+GPU-friendly architecture of all four engines.
+
+**Rendering pipeline:**
+
+1. WebContent process creates IOSurface backing stores
+   (`Libraries/LibWeb/Painting/BackingStoreManager.cpp`) — two surfaces
+   (front/back) for double buffering
+2. Skia renders with Metal backend directly into IOSurface GPU memory
+   (`Libraries/LibGfx/MetalContext.mm`) — zero-copy CPU-GPU handoff
+3. IOSurface Mach ports sent to UI process via Mach message IPC
+4. UI process reconstructs IOSurfaceRef and creates Metal textures from it
+5. `WebViewBridge::paintable()` returns `{bitmap, size, iosurface_ref}` — the
+   `iosurface_ref` is the raw `IOSurfaceRef` pointer
+
+**macOS rendering paths** (`UI/AppKit/Interface/LadybirdWebView.mm`):
+
+- **Metal path (GPU):** IOSurface → Metal texture →
+  `[blitEncoder copyFromTexture:]` → CAMetalLayer drawable
+- **CPU fallback:** IOSurface → CGImage → CALayer.contents
+
+**No CAContext export yet** — Ladybird uses Metal blit to CAMetalLayer, not
+CAContext/CALayerHost. But the IOSurface is already available via `paintable()`,
+so we have two integration options:
+
+1. **IOSurface → CAContext** — Take the IOSurfaceRef from `paintable()`, create
+   a `CAContext` wrapping it, export the context ID for CALayerHost in the
+   board. Small fork modification.
+2. **NSView overlay** — Position the LadybirdWebView as a subview in the
+   terminal window at overlay coordinates. Zero fork modifications.
+
+**Key files:**
+
+- `Libraries/LibWeb/Painting/BackingStoreManager.cpp` — IOSurface allocation
+- `Libraries/LibCore/IOSurface.cpp` — IOSurface wrapper (BGRA8888, Mach ports)
+- `Libraries/LibGfx/MetalContext.mm` — Metal texture from IOSurface
+- `UI/AppKit/Interface/LadybirdWebViewBridge.h:43-48` — `Paintable` struct
+- `UI/AppKit/Interface/LadybirdWebView.mm:968-1061` — Metal/CPU render paths
+
+#### Q4. Input injection
+
+**Direct programmatic injection — no OS events needed.** Call
+`enqueue_input_event()` on ViewImplementation with constructed event objects:
+
+```cpp
+// Mouse event
+Web::MouseEvent event {
+    .type = Web::MouseEvent::Type::MouseDown,
+    .position = { 100, 200 },
+    .screen_position = { 500, 600 },
+    .button = Web::UIEvents::MouseButton::Primary,
+    .buttons = Web::UIEvents::MouseButton::Primary,
+    .modifiers = Web::UIEvents::KeyModifier::Mod_None,
+    .wheel_delta_x = 0, .wheel_delta_y = 0,
+};
+view->enqueue_input_event(move(event));
+
+// Keyboard event
+Web::KeyEvent key {
+    .type = Web::KeyEvent::Type::KeyDown,
+    .key = Web::UIEvents::KeyCode::Key_A,
+    .modifiers = Web::UIEvents::KeyModifier::Mod_None,
+    .code_point = 'A',
+    .repeat = false,
+};
+view->enqueue_input_event(move(key));
+```
+
+**Event types** (`Libraries/LibWeb/Page/InputEvent.h`):
+
+- `MouseEvent` — MouseDown, MouseUp, MouseMove, MouseLeave, MouseWheel,
+  DoubleClick, TripleClick
+- `KeyEvent` — KeyDown, KeyUp
+- `DragEvent` — DragStart, DragMove, DragEnd, Drop
+- `PinchEvent` — position + scale_delta
+
+Events are queued in `m_pending_input_events` and dispatched asynchronously to
+WebContent via IPC (`async_mouse_event`, `async_key_event`, etc.).
+
+**For libtermsurf_ladybird:** Construct `Web::MouseEvent`/`Web::KeyEvent`
+structs and call `enqueue_input_event()`. Cleanest input API of all four
+engines.
+
+#### Q5. Callback hooks
+
+Ladybird uses **`Function<>` callbacks** (AK's equivalent of `std::function`) as
+public members on `ViewImplementation`. Over 40 named hooks. The ones relevant
+to TermSurf:
+
+**Navigation/loading:**
+
+- `on_load_start` — `Function<void(URL::URL const&, bool)>` (URL + redirect
+  flag)
+- `on_load_finish` — `Function<void(URL::URL const&)>`
+- `on_url_change` — `Function<void(URL::URL const&)>`
+- `on_title_change` — `Function<void(Utf16String const&)>`
+
+**Rendering:**
+
+- `on_ready_to_paint` — `Function<void()>` (frame ready for display)
+- `on_favicon_change` — `Function<void(Gfx::Bitmap const&)>`
+
+**Cursor/UI:**
+
+- `on_cursor_change` — `Function<void(Gfx::Cursor const&)>`
+- `on_link_hover` / `on_link_unhover` — link hover state
+
+**Tab/window:**
+
+- `on_new_web_view` —
+  `Function<String(ActivateTab, WebViewHints, Optional<u64>)>` (target=\_blank)
+- `on_activate_tab` / `on_close`
+
+**Input completion:**
+
+- `on_finish_handling_key_event` — `Function<void(Web::KeyEvent const&)>`
+  (unhandled key events bubble back to host)
+
+**Dispatch pattern:**
+
+```cpp
+// In WebContentClient (receives IPC from WebContent process)
+void WebContentClient::did_change_title(u64 page_id, Utf16String title) {
+    if (auto view = view_for_page_id(page_id); view.has_value()) {
+        if (view->on_title_change)
+            view->on_title_change(title);
+    }
+}
+```
+
+**For libtermsurf_ladybird:** Assign lambdas to the callback members. This is
+the simplest callback system of all four engines — no delegates, no XPCOM
+observers, no protocol registrations.
+
+#### Q6. DevTools
+
+Ladybird uses the **Firefox DevTools Protocol** (not Chrome DevTools Protocol):
+
+- TCP server on configurable port (default 6000,
+  `Libraries/LibWebView/Options.h:70`)
+- Wire format: `{length}:{json_payload}` (length-prefixed JSON)
+- Only one DevTools client at a time
+- Actor-based: 27 actors in `Libraries/LibDevTools/Actors/`
+
+**Key actors:** RootActor, TabActor, InspectorActor, WalkerActor, NodeActor,
+ConsoleActor, PageStyleActor, NetworkParentActor, AccessibilityActor
+
+**Opening DevTools programmatically:**
+
+- `Application::toggle_devtools_enabled()`
+  (`Libraries/LibWebView/Application.h:133`)
+- `ViewImplementation::did_connect_devtools_client()` notifies when connected
+- Connect to `localhost:6000`, get root actor, call `listTabs`, inspect
+
+**For libtermsurf_ladybird:** Connect to the DevTools TCP server. Similar
+complexity to Gecko's RDP (both JSON over TCP). Different from WebKit's simple
+`[webView._inspector show]`.
+
+#### Q7. Build system
+
+Ladybird uses **CMake** (3.25+). Clean macro system:
+
+```cmake
+# Libraries/LibWebView/CMakeLists.txt
+ladybird_lib(LibWebView webview EXPLICIT_SYMBOL_EXPORT)
+```
+
+The `ladybird_lib()` macro (`Meta/CMake/targets.cmake:189`) creates shared or
+static library targets with automatic export header generation.
+
+**Adding libtermsurf_ladybird:**
+
+```cmake
+# Libraries/LibTermsurfLadybird/CMakeLists.txt
+set(SOURCES TermSurfBrowser.cpp)
+ladybird_lib(LibTermsurfLadybird termsurfladybird EXPLICIT_SYMBOL_EXPORT)
+target_link_libraries(LibTermsurfLadybird PRIVATE LibCore LibWebView)
+```
+
+Register in `Libraries/CMakeLists.txt`: `add_subdirectory(LibTermsurfLadybird)`.
+
+Output: `liblagom-termsurfladybird.dylib`.
+
+**For libtermsurf_ladybird:** Easiest build integration of all four engines.
+CMake is familiar, the macro system handles symbol export automatically.
+
+#### Q8. Multi-profile
+
+**One profile per process** — same as Chromium and Gecko. Ladybird uses global
+singletons for storage:
+
+- `Application::cookie_jar()` — single global `CookieJar` per process
+  (`Libraries/LibWebView/CookieJar.h`)
+- `Application::storage_jar()` — single global `StorageJar` per process
+  (`Libraries/LibWebView/StorageJar.h`)
+
+Storage is keyed by origin (domain), not by profile. No multi-profile API
+exists.
+
+**For libtermsurf_ladybird:** Each profile requires a separate Ladybird process.
+This is exactly how TermSurf already works — one process per profile — so it's a
+perfect fit.
+
+#### Q9. Fork size
+
+**Minimal fork — smallest of all four engines.**
+
+Estimated modifications:
+
+1. **New library** — `Libraries/LibTermsurfLadybird/` with C wrapper (~300–500
+   lines). Smaller than all others because:
+   - `ViewImplementation` is already a clean C++ embedding API
+   - `Function<>` callbacks need only thin C wrappers
+   - `enqueue_input_event()` accepts constructed structs directly
+   - No XPCOM bootstrap, no Content API ceremony
+
+2. **GPU compositing** — If using NSView overlay, zero modifications. If
+   extracting IOSurface for CAContext/CALayerHost, small patch to
+   `LadybirdWebView.mm` to create a CAContext from the existing IOSurfaceRef
+   (~20 lines).
+
+3. **Build integration** — One new `CMakeLists.txt`, one line in parent
+   CMakeLists. Trivial.
+
+**Estimate:** 0–3 modified stock files. New code: ~300–500 lines in C library +
+existing Roamium Rust binary (~400 lines reusable).
+
+#### Q10. Cross-platform
+
+| Platform | Frontend | Compositing                      | GPU | Key files     |
+| -------- | -------- | -------------------------------- | --- | ------------- |
+| macOS    | AppKit   | Metal + IOSurface → CAMetalLayer | Yes | `UI/AppKit/`  |
+| Linux    | Qt       | QPainter software blit           | No  | `UI/Qt/`      |
+| Android  | Kotlin   | Canvas software blit             | No  | `UI/Android/` |
+
+`LibWebView` (`Libraries/LibWebView/`) is highly portable — only two
+`#ifdef AK_OS_MACOS` gates in `ViewImplementation`:
+
+1. `did_allocate_iosurface_backing_stores()` — IOSurface handoff (macOS only)
+2. `iosurface_ref` field in `SharedBitmap` struct
+
+All other code is platform-agnostic. The abstract `ViewImplementation` handles
+IPC, bitmap management, event queuing, and callbacks identically across
+platforms.
+
+**For libtermsurf_ladybird:** On macOS, use the Metal/IOSurface path for GPU
+compositing. On Linux/Qt, use shared-memory bitmaps (software rendering). The C
+library would need minimal platform ifdefs.
+
+### Assessment
+
+**Ladybird is the most natural fit for TermSurf's architecture.** It has the
+cleanest embedding API, the smallest codebase, and already exposes IOSurfaces on
+macOS.
+
+| Aspect               | Chromium                | WebKit                  | Gecko                    | Ladybird                  |
+| -------------------- | ----------------------- | ----------------------- | ------------------------ | ------------------------- |
+| Embedding API        | Content API (C++)       | WKWebView (Obj-C)       | libxul + XPCOM (C++)     | ViewImplementation (C++)  |
+| Official support     | Yes                     | Yes                     | No                       | Yes (it's the API)        |
+| Fork modifications   | 8 patches, 24 files     | Potentially zero        | 5-20 files               | 0-3 files                 |
+| C library complexity | ~2,000 lines            | ~500 lines est.         | ~1,000-1,500 lines est.  | ~300-500 lines est.       |
+| GPU compositing      | CAContext + CALayerHost | NSView (native)         | IOSurface mach ports     | IOSurface + Metal         |
+| Input handling       | Manual injection        | NSView first responder  | SynthesizeNative*Event() | enqueue_input_event()     |
+| DevTools             | Custom (forked)         | `_inspector` (public)   | RDP over WebSocket       | Firefox DevTools Protocol |
+| Multi-profile        | One per process         | Multiple in one process | One per process          | One per process           |
+| Build system         | GN/Ninja                | CMake                   | moz.build/mach           | CMake                     |
+| Init complexity      | Low                     | Very low                | High (XPCOM)             | Very low                  |
+| Codebase size        | ~40 GB                  | ~7.4 GB                 | ~9.1 GB                  | ~495 MB                   |
+| Web compat           | Production-grade        | Production-grade        | Production-grade         | Early stage               |
+
+**Key advantages:**
+
+1. **Cleanest C++ API** — `ViewImplementation` is a modern, well-designed
+   abstract class. No Objective-C wrappers, no XPCOM, no Content API ceremony.
+   Direct `enqueue_input_event()`, `Function<>` callbacks, `load(url)`.
+
+2. **IOSurface already exposed** — `paintable()` returns the raw IOSurfaceRef.
+   Creating a CAContext wrapper is trivial (~20 lines). No compositor forking.
+
+3. **Smallest fork footprint** — 0-3 modified stock files, ~300-500 line C
+   library. The smallest of all four engines by far.
+
+4. **CMake build** — Standard CMake with clean macros. Adding a library target
+   is one macro call.
+
+5. **Small, readable codebase** — 495 MB vs Chromium's 40+ GB. Entire engine is
+   comprehensible. Contributions upstream are realistic.
+
+**Key concern:**
+
+1. **Web compatibility** — Ladybird is a young engine still in active
+   development. It does not yet pass all Web Platform Tests. Many sites will
+   render incorrectly or not work at all. This is the fundamental trade-off:
+   easiest to embed, but furthest from production-ready web compatibility.
+
+**Recommendation:** Ladybird is the best engine for a proof-of-concept and for
+long-term investment. The embedding API is a near-perfect match for TermSurf's
+`libtermsurf_*` pattern. However, for production use today, Chromium (Roamium)
+remains necessary due to web compatibility. WebKit is the best middle ground —
+production-grade compatibility with minimal embedding effort.
