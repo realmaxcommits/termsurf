@@ -1,8 +1,9 @@
 # TermSurf
 
-TermSurf is the world's first terminal-browser hybrid. A Ghostty fork with a
-real Chromium engine inside. Users type `web localhost:3000` and see their work
-without ever leaving the terminal. No alt+tab, no context switch.
+TermSurf is a protocol for embedding web browsers inside terminal emulators.
+Any terminal, any browser engine, any TUI — connected by a protobuf/Unix socket
+protocol. Users type `web localhost:3000` and see their work without ever
+leaving the terminal. No alt+tab, no context switch.
 
 [Agent development guide](https://agents.md/).
 
@@ -10,6 +11,76 @@ without ever leaving the terminal. No alt+tab, no context switch.
 
 Do exactly what your user says. No more, no less. NEVER assume they want
 something they didn't ask for. NEVER change code unless explicitly asked.
+
+## Vision
+
+TermSurf is a protocol, not just an app. It is a network of interchangeable
+components — terminals, browser engines, and TUIs — all speaking the same
+protobuf/Unix socket protocol (`termsurf.proto`).
+
+### Cross-platform
+
+TermSurf will work on macOS, Linux, and Windows. iOS and Android can be added
+later.
+
+### Every major browser engine
+
+Each browser engine runs as a separate "profile server" process, communicating
+with the terminal (board) via the TermSurf protocol. One process per profile.
+
+| Engine   | C library              | Rust binary | Status     |
+| -------- | ---------------------- | ----------- | ---------- |
+| Chromium | `libtermsurf_chromium` | Roamium     | Done       |
+| WebKit   | `libtermsurf_webkit`   | Rebkit      | Planned    |
+| Gecko    | `libtermsurf_gecko`    | Recko       | Researched |
+| Ladybird | `libtermsurf_ladybird` | TBD         | Researched |
+
+Each engine follows the same pattern: a C shared library wrapping the engine's
+embedding API (`ts_*` functions), linked by a Rust binary that handles Unix
+socket IPC, protobuf parsing, and process lifecycle. The Rust binary (~400
+lines) is almost entirely reusable across engines.
+
+### Multiple terminals (boards)
+
+Although TermSurf currently ships as a Ghostty fork (`gui/`), we will implement
+forks of all major terminal emulators:
+
+- **Ghostty** (gui/) — Current board. Active development.
+- **WezTerm** (Wezboard) — Researched in Issue 709. Strong architectural match.
+- **Kitty** — Planned.
+- **Alacritty** — Planned.
+- **iTerm2** — Planned.
+
+Any terminal that implements the TermSurf protocol can host browser overlays.
+A "board" is a terminal emulator that listens on a Unix socket, accepts
+connections from TUIs and browser engines, and renders browser content as
+overlays at pixel coordinates.
+
+### Many TUIs
+
+The first TUI, `web`, provides browser chrome (URL bar, navigation, modes) in
+the terminal pane. But TermSurf is really a webview overlay protocol — many
+TUIs can embed web browsers with any engine:
+
+- `web` — General-purpose web browser TUI (current)
+- Future TUIs could include: documentation viewers, API explorers, email
+  clients, dashboard monitors, or any application that benefits from rendering
+  web content inside a terminal.
+
+### The protocol is the product
+
+The TermSurf protocol (`termsurf.proto`) is the most important artifact. It
+defines 30 message types covering tab lifecycle, navigation, input forwarding,
+GPU compositing, state synchronization, and request/reply pairs. The protocol
+will be extended to support:
+
+- All common web browser features (bookmarks, history, downloads, etc.)
+- Terminal-specific features (keyboard-based navigation, shrink/grow overlay,
+  split management)
+- New message types as needs arise
+
+Care goes into the protocol first. Individual apps (boards, engines, TUIs) are
+implementations of the protocol.
 
 ## Settled Architectural Decisions
 
@@ -52,10 +123,11 @@ This keeps every issue's Chromium changes isolated and traceable.
 
 ## What TermSurf Is
 
-TermSurf is a terminal emulator with an integrated web browser. Users type
-`web google.com` in their terminal and a webpage renders directly in the
-terminal pane, sharing cookies and sessions across tabs within the same browser
-profile.
+TermSurf is a protocol and ecosystem for embedding web browsers inside terminal
+emulators. Users type `web google.com` in their terminal and a webpage renders
+directly in the terminal pane, sharing cookies and sessions across tabs within
+the same browser profile. The protocol connects three kinds of components:
+terminals (boards), browser engines (profile servers), and TUIs.
 
 TermSurf evolved through six generations:
 
