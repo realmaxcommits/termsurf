@@ -25,7 +25,7 @@ names are ambiguous:
 
 - **GUI app name:** TermSurf → TermSurf Ghostboard
 - **GUI directory:** `gui/` → `ghostboard/`
-- **TUI binary name:** `web` → `webtui`
+- **TUI package name:** `web` → `webtui` (binary stays `web`)
 - **TUI directory:** `tui/` → `webtui/`
 - **Documentation:** CLAUDE.md, README files, issue docs, code comments
 - **Build system:** Binary names, bundle names, build targets
@@ -118,3 +118,59 @@ simultaneously without browser profile lock conflicts.
 
 Browser engine processes inherit these and append their own name (e.g.,
 `$TERMSURF_DATA_DIR/roamium` for Chromium's profile directory).
+
+## Experiments
+
+### Experiment 1: Rename `tui/` to `webtui/`
+
+Rename the TUI directory from `tui/` to `webtui/` and update the Cargo package
+name from `web` to `webtui`. The binary name stays `web` — users still type
+`web google.com`.
+
+#### Changes
+
+**Directory rename:**
+
+- `tui/` → `webtui/`
+
+**`webtui/Cargo.toml`:**
+
+- Package name: `web` → `webtui`
+- Binary name stays `web` (the `[[bin]] name = "web"` line is unchanged)
+
+**`webtui/src/main.rs`:**
+
+- Line 169: `#[command(name = "web", ...)]` — unchanged (binary is still `web`)
+- Line 350: `"web".to_string()` fallback — unchanged (exe name is still `web`)
+
+**`.gitignore`:**
+
+- `tui/target/` → `webtui/target/`
+
+**`CLAUDE.md`:**
+
+- `tui/` → `webtui/` in Directory Structure section
+- `tui/` → `webtui/` in all other references
+- Update "The first TUI, `web`" description to mention `webtui/` directory
+
+**`gui/src/apprt/xpc.zig`:**
+
+- No changes. The `web_fd` field name, `sendModeToWeb()` function, and `.tui`
+  enum variant refer to the protocol concept (TUI connection), not the directory
+  name. These will be revisited in a later experiment if needed.
+
+**`docs/issues/711-rename-ghostboard-webtui.md`:**
+
+- Already up to date.
+
+**No changes to other issue docs.** Historical issue documents reference `tui/`
+as it existed at the time. Rewriting history in 47 docs adds noise without
+value.
+
+#### Verification
+
+1. `cd webtui && cargo build` — must compile
+2. `ls webtui/target/debug/web` — binary is still named `web`
+3. `grep -r 'tui/' .gitignore` — no stale `tui/` references
+4. `grep 'tui/' CLAUDE.md` — no stale `tui/` references (except historical
+   mentions like "directory rename from ghost/web to gui/tui")

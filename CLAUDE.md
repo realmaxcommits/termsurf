@@ -247,17 +247,24 @@ Chromium fork with renamed libtermsurf_chromium (Issue 708).
 - `gui/build.zig` — Build system
 - `gui/build.zig.zon` — Dependencies
 
-### Build
+### Build & Install
 
-```bash
-cd gui && zig build
-```
+All build scripts live in `scripts/`. They handle GUI, Chromium, TUI, and
+Roamium together.
 
-### Launch
+| Script                                        | Purpose                                                                                                                    |
+| --------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `scripts/build-debug.sh [--clean] [--open]`   | Build all components (GUI debug, Chromium, TUI, Roamium). `--clean` wipes build dirs first, `--open` launches.             |
+| `scripts/build-release.sh [--clean] [--open]` | Same as above but ReleaseFast builds.                                                                                      |
+| `scripts/install.sh`                          | Install release build to `/Applications/TermSurf.app`, bundle Chromium + TUI, codesign, symlink CLIs to `/usr/local/bin/`. |
+| `scripts/build-roamium.sh [args]`             | Build Roamium only and copy binary to `chromium/src/out/Default/`. Pass `--release` for release build.                     |
+| `scripts/clean-zig.sh`                        | Clean Zig build artifacts + Xcode DerivedData. Preserves Chromium cache.                                                   |
+| `scripts/rename-ghostty.sh [dir]`             | Rename all Ghostty references to TermSurf in `gui/`. Re-runnable after upstream merges.                                    |
+| `scripts/generate-icons.sh [image]`           | Generate app icon assets from a source image (default: `assets/termsurf-2-black-3.png`).                                   |
+| `scripts/nerd-font-test.sh`                   | Print Nerd Font test glyphs for visual verification.                                                                       |
 
-```bash
-open gui/zig-out/TermSurf.app
-```
+For GUI-only iteration, `cd gui && zig build` still works. The full build
+scripts also auto-detect Chromium's `protoc` so you don't need a system install.
 
 ### Upstream Merges
 
