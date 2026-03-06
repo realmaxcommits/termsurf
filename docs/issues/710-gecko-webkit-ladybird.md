@@ -693,3 +693,375 @@ All 10 research questions answered with specific file paths and code references.
 A clear assessment of whether `libtermsurf_gecko` is feasible, and if so, what
 the C library surface area would look like. Comparison with the WebKit findings
 from Experiment 2.
+
+### Result
+
+#### Q1. Embedding API
+
+Gecko has three embedding options on desktop — two functional, one dead:
+
+- **libxul + nsIWindowlessBrowser (RECOMMENDED)** — `nsIWindowlessBrowser`
+  creates a headless browser context (no OS window) backed by `nsWebBrowser`,
+  `BrowsingContext`, and a `PuppetWidget`. Created via
+  `nsIAppShellService::CreateWindowlessBrowser()`. Used in Firefox's own test
+  suite. This is the cleanest path for `libtermsurf_gecko`.
+
+- **libxul + nsIWebBrowser** — The older XPCOM embedding interface. Contrary to
+  reports that it's "deprecated", `nsIWebBrowser` is still **fully functional**
+  in the tree. Implementation in `toolkit/components/browser/nsWebBrowser.cpp` —
+  creates a `BrowsingContext`, attaches a widget, and provides
+  `nsIWebNavigation` for URL loading. Requires more setup than
+  `nsIWindowlessBrowser` but gives full windowed rendering.
+
+- **GeckoView** — Android-only (`mobile/android/geckoview/`). Uses JNI. Not
+  usable on desktop.
+
+**Initialization flow:**
+
+1. Link against `XUL.framework` (macOS) or `libxul.so` (Linux)
+2. Call `XRE_GetBootstrap()` (`toolkit/xre/Bootstrap.h`) to get a Bootstrap
+   instance
+3. Initialize XPCOM via `NS_InitXPCOM()` (`xpcom/build/nsXPCOM.h`)
+4. Get `nsIAppShellService` from the XPCOM service manager
+5. Call `CreateWindowlessBrowser(false, 0)` to get an `nsIWindowlessBrowser`
+6. Access `nsIWindowlessBrowser::docShell` for content manipulation
+
+**Key files:**
+
+- `toolkit/xre/Bootstrap.h` — XRE bootstrap entry point
+- `xpcom/build/nsXPCOM.h` — XPCOM initialization
+- `xpfe/appshell/nsIWindowlessBrowser.idl` — headless browser interface
+- `xpfe/appshell/nsAppShellService.cpp:297-461` — `WindowlessBrowser`
+  implementation
+- `toolkit/components/browser/nsIWebBrowser.idl` — browser interface
+- `toolkit/components/browser/nsWebBrowser.cpp` — browser implementation
+
+**Servo components** (`servo/components/`) are integrated into Gecko's style
+system (CSS selector engine, style computation) — not a standalone embedding
+target.
+
+#### Q2. Headless/hidden rendering
+
+**Headless mode disables GPU compositing entirely.** When `--headless` or
+`MOZ_HEADLESS` is set, Firefox explicitly blocks the GPU process and hardware
+acceleration (`gfx/thebes/gfxPlatform.cpp:2504-2550`).
+
+The headless widget backend (`widget/headless/HeadlessWidget.cpp`) uses
+`HeadlessCompositorWidget` — purely software rendering, returns `nullptr` for
+native data.
+
+**For libtermsurf_gecko:** Do NOT use headless mode. Instead, use a real macOS
+widget (or `PuppetWidget` from `nsIWindowlessBrowser`) with a hidden `NSWindow`
+(same approach as Chromium: `setAlphaValue:0`, `orderWindow:NSWindowBelow`).
+This keeps GPU compositing active.
+
+#### Q3. CAContext / GPU surface (CRITICAL)
+
+**Gecko does NOT use CAContext for cross-process compositing.** This is a
+fundamental architectural difference from Chromium.
+
+Gecko's modern compositing path on macOS:
+
+1. **WebRender** (Rust) renders content into **IOSurface** GPU buffers
+2. Each `NativeLayerCA` (`gfx/layers/NativeLayerCA.h/.mm`) wraps one IOSurface
+   with a double/triple-buffered swap chain
+3. `NativeLayerRootCA` manages the `CALayer` tree on the NSView
+4. Cross-process compositing uses **IOSurface mach ports** — child process sends
+   `IOSurfacePort` (Mach send right) to parent, parent unpacks the
+   `IOSurfaceRef` (`gfx/layers/ipc/IOSurfacePort.h`,
+   `gfx/layers/NativeLayerRootRemoteMacParent.h/.mm`)
+5. Window Server composites CALayers directly from GPU VRAM (zero per-frame
+   copy)
+
+**No CAContext IDs are exchanged between processes** — only IOSurface mach
+ports.
+
+**For libtermsurf_gecko:** Two approaches:
+
+1. **Custom NativeLayerRoot** — Create a subclass that doesn't render to an
+   NSView's CALayer tree but instead exposes the underlying IOSurfaceRefs. Wrap
+   those IOSurfaces in a `CAContext` + `CALayerHost` for display in the terminal
+   pane. This requires forking Gecko.
+
+2. **NSView overlay** — Like the WebKit approach, create a real Gecko widget
+   with an NSView and position it as a subview at the overlay's pixel
+   coordinates. This avoids the IOSurface extraction complexity.
+
+**Key files:**
+
+- `gfx/layers/NativeLayerCA.h/.mm` — NativeLayer abstraction
+- `gfx/layers/NativeLayerRootRemoteMacParent.h/.mm` — cross-process receiver
+- `gfx/layers/ipc/IOSurfacePort.h` — IOSurface IPC serialization
+- `gfx/2d/MacIOSurface.h` — IOSurface wrapper
+- `gfx/webrender_bindings/RenderCompositorNative.h` — WebRender integration
+- `gfx/layers/SurfacePoolCA.h/.mm` — IOSurface pool
+
+#### Q4. Input injection
+
+Gecko has excellent programmatic input injection. The `nsIWidget` interface
+(`widget/nsIWidget.h`) provides synthesis methods that don't require real OS
+events:
+
+```cpp
+// Mouse events (nsIWidget.h:1681)
+nsresult SynthesizeNativeMouseEvent(
+    LayoutDeviceIntPoint aPoint,
+    NativeMouseMessage aNativeMessage,  // ButtonDown, ButtonUp, Move
+    MouseButton aButton,
+    Modifiers aModifierFlags,
+    nsISynthesizedEventCallback* aCallback);
+
+// Keyboard events (nsIWidget.h:1648)
+nsresult SynthesizeNativeKeyEvent(
+    int32_t aNativeKeyboardLayout,
+    int32_t aNativeKeyCode,
+    uint32_t aModifierFlags,
+    const nsAString& aCharacters,
+    const nsAString& aUnmodifiedCharacters,
+    nsISynthesizedEventCallback* aCallback);
+```
+
+Input data structures (`widget/InputData.h`):
+
+- `MouseInput` — type (MOUSE_MOVE/DOWN/UP), button (PRIMARY/SECONDARY/MIDDLE),
+  origin, modifiers
+- `ScrollWheelInput` — delta type (LINE/PAGE/PIXEL), mode (INSTANT/SMOOTH),
+  deltaX/Y
+- `KeyboardInput` — type (KEY_DOWN/PRESS/UP), keyCode, charCode
+
+Lower-level dispatch: `nsIWidget::DispatchInputEvent()` sends events through APZ
+(Async Pan/Zoom) then to content.
+
+On macOS, the `ChildView` NSView subclass (`widget/cocoa/nsChildView.h`)
+receives native `NSEvent`s and converts them to Gecko's internal format.
+
+**For libtermsurf_gecko:** Call `SynthesizeNativeMouseEvent()` and
+`SynthesizeNativeKeyEvent()` on the widget. These accept completion callbacks
+via `nsISynthesizedEventCallback*`.
+
+#### Q5. Callback hooks
+
+Gecko has a rich observer system through XPCOM interfaces:
+
+**Navigation/loading — `nsIWebProgressListener`**
+(`uriloader/base/nsIWebProgressListener.idl`):
+
+- `onStateChange()` — STATE_START, STATE_REDIRECTING, STATE_TRANSFERRING,
+  STATE_STOP (with STATE_IS_DOCUMENT/NETWORK/WINDOW flags)
+- `onProgressChange()` — bytes loaded (curSelfProgress/maxSelfProgress)
+- `onLocationChange()` — URL changed (with flags: SAME_DOCUMENT, ERROR_PAGE,
+  RELOAD, HASHCHANGE)
+- `onStatusChange()` — status messages
+- `onSecurityChange()` — HTTP/HTTPS transitions
+
+**Registration** — via `nsIWebProgress` (`uriloader/base/nsIWebProgress.idl`):
+
+```cpp
+webProgress->AddProgressListener(listener,
+    NOTIFY_STATE_DOCUMENT | NOTIFY_PROGRESS | NOTIFY_LOCATION);
+```
+
+**Navigation control** — `nsIWebNavigation`
+(`docshell/base/nsIWebNavigation.idl`):
+
+- `loadURI(aURI, aLoadURIOptions)` — load a URL
+- `currentURI` — current URL
+- `document` — DOM document (access `document.title` for page title)
+- `canGoBack`, `canGoForward`, `goBack()`, `goForward()`, `reload()`, `stop()`
+
+**Cursor changes** — `nsIWidget::SetCursor()` is called by the rendering engine.
+Hook into widget event processing to monitor cursor state.
+
+**For libtermsurf_gecko:** Implement `nsIWebProgressListener` and register it
+with `nsIWebProgress::addProgressListener()`. Get URL/title from
+`nsIWebNavigation`.
+
+#### Q6. DevTools
+
+Firefox DevTools uses the **Remote Debugging Protocol (RDP)** — a JSON-based
+bidirectional protocol:
+
+- **Packet format:** `{"to": actor, "type": type, ...}` (client → server),
+  `{"from": actor, ...}` (server → client)
+- **Server:** `devtools/server/devtools-server.js` — manages initialization,
+  actor registration
+- **Connection:** `devtools/server/devtools-server-connection.js` — manages
+  connections, request ordering
+
+**Actor hierarchy:**
+
+- Root actor (`devtools/server/actors/root.js`) — entry point
+- TabDescriptorActor (`devtools/server/actors/descriptors/tab.js`) — per-tab
+- WatcherActor (`devtools/server/actors/watcher.js`) — observes targets
+- InspectorActor (`devtools/server/actors/inspector/inspector.js`) — DOM
+  inspection
+
+**Remote debugging:** WebSocket transport
+(`devtools/server/socket/websocket-server.js`). Connect via TCP, upgrade to
+WebSocket, access root actor, call `listTabs`, get tab descriptors.
+
+**For libtermsurf_gecko:** Connect to the DevTools server via WebSocket. The RDP
+protocol is well-documented (`devtools/docs/contributor/backend/protocol.md`).
+This is more complex than WebKit's `[webView._inspector show]` but fully
+programmable.
+
+#### Q7. Build system
+
+Gecko uses **moz.build** + **mach**.
+
+**libxul construction** (`toolkit/library/moz.build`):
+
+```python
+@template
+def Libxul(name, output_category=None):
+    if CONFIG["MOZ_WIDGET_TOOLKIT"] in ("cocoa", "uikit"):
+        GeckoFramework(name, output_category=output_category)
+        SHARED_LIBRARY_NAME = "XUL"
+    else:
+        GeckoSharedLibrary(name, output_category=output_category)
+        SHARED_LIBRARY_NAME = "xul"
+```
+
+On macOS: builds as `XUL.framework`. On Linux: builds as `libxul.so`.
+
+**Adding libtermsurf_gecko:** Create a new directory (e.g., `toolkit/termsurf/`)
+with a `moz.build`:
+
+```python
+GeckoSharedLibrary("termsurf_gecko")
+SHARED_LIBRARY_NAME = "termsurf_gecko"
+UNIFIED_SOURCES += ["exports.cpp"]
+```
+
+Register in parent `moz.build`: `DIRS += ["termsurf"]`.
+
+**Build commands:** `./mach build` (full), `./mach build faster`
+(frontend-only).
+
+#### Q8. Multi-profile
+
+**Firefox cannot run multiple isolated profiles in one process.** This is a
+significant limitation compared to Chromium and WebKit.
+
+The profile service (`toolkit/profile/nsToolkitProfileService.cpp`) binds to
+**one profile directory per launch**:
+
+```idl
+interface nsIToolkitProfileService {
+    nsIToolkitProfile getProfileByName(AUTF8String aName);
+    nsIToolkitProfile createProfile(nsIFile aRootDir, AUTF8String aName);
+    readonly nsIToolkitProfile currentProfile;
+};
+```
+
+Each profile has a directory lock (`nsProfileLock`). `BrowsingContext`
+(`docshell/base/BrowsingContext.h`) manages DOM window/frame hierarchy, not
+profile isolation.
+
+Firefox's new "Selectable Profiles" feature
+(`browser/components/profiles/SelectableProfileService.sys.mjs`) allows profile
+switching within one session, but only one is active at a time.
+
+**For libtermsurf_gecko:** Each profile requires a **separate Gecko process**.
+This is the same as Roamium's current architecture (one process per profile), so
+it's not a blocker — but it means we can't consolidate multiple profiles into
+fewer processes.
+
+#### Q9. Fork size
+
+**Moderate fork — significantly larger than WebKit, comparable to Chromium.**
+
+Estimated modifications:
+
+1. **New directory** — `toolkit/termsurf/` with `libtermsurf_gecko` C library
+   (~1,000–1,500 lines). Larger than WebKit's ~500-line estimate because:
+   - Must initialize XPCOM and XRE bootstrap (WebKit: just create WKWebView)
+   - Must implement `nsIWebProgressListener` (WebKit: KVO observing)
+   - Must call `SynthesizeNative*Event()` (WebKit: natural NSView events)
+
+2. **GPU compositing** — If using the NSView overlay approach, zero
+   modifications. If extracting IOSurfaces for CALayerHost compositing, moderate
+   patches to `gfx/layers/NativeLayerCA.mm` and compositor setup.
+
+3. **Build integration** — New `moz.build` files, register in parent directory.
+   Minimal.
+
+4. **No XPCOM interface changes needed** — all required interfaces
+   (`nsIWebProgressListener`, `nsIWebNavigation`, `nsIWidget`) are public.
+
+**Estimate:** ~5–10 modified stock files (if NSView overlay), or ~15–20 (if
+IOSurface extraction). New code: ~1,000–1,500 lines in C library + existing
+Roamium Rust binary (~400 lines reusable).
+
+#### Q10. Cross-platform
+
+Gecko has highly portable widget backends:
+
+| Platform | Backend   | Compositing                               | Key files          |
+| -------- | --------- | ----------------------------------------- | ------------------ |
+| macOS    | Cocoa     | CALayer + IOSurface via NativeLayerCA     | `widget/cocoa/`    |
+| Linux    | GTK       | Wayland EGL + DMA-BUF, or X11 + Cairo/EGL | `widget/gtk/`      |
+| Windows  | Win32     | Direct3D 11 + DXGI swapchain              | `widget/windows/`  |
+| Android  | GeckoView | SurfaceTexture (Java/JNI)                 | `widget/android/`  |
+| Headless | Software  | BasicCompositor (CPU only)                | `widget/headless/` |
+
+The `CompositorWidget` abstraction (`widget/CompositorWidget.h`) provides a
+platform-neutral interface:
+
+- `GetNativeLayerRoot()` — native compositing backend
+- `PreRender()` / `PostRender()` — per-frame lifecycle hooks
+- `StartRemoteDrawing()` / `EndRemoteDrawing()` — software fallback
+
+**For libtermsurf_gecko:** Target the `CompositorWidget` abstraction for
+cross-platform code. Platform-specific code only needed for GPU zero-copy output
+(CALayerHost on macOS, DMA-BUF on Linux Wayland, DXGI on Windows).
+
+The NSView overlay approach (Q3 approach 2) would need platform-specific overlay
+code per platform (NSView on macOS, GtkWidget on Linux GTK, HWND child on
+Windows).
+
+### Assessment
+
+**Gecko is significantly harder to embed than WebKit, and moderately harder than
+Chromium.**
+
+| Aspect               | Chromium                  | WebKit                  | Gecko                                  |
+| -------------------- | ------------------------- | ----------------------- | -------------------------------------- |
+| Embedding API        | Content API (C++)         | WKWebView (Obj-C)       | libxul + XPCOM (C++)                   |
+| Official support     | Yes (Content API)         | Yes (WKWebView)         | No (dropped years ago)                 |
+| Fork modifications   | 8 patches, 24 files       | Potentially zero        | 5-20 files                             |
+| C library complexity | ~2,000 lines              | ~500 lines est.         | ~1,000-1,500 lines est.                |
+| GPU compositing      | CAContext + CALayerHost   | NSView (native)         | IOSurface mach ports or NSView overlay |
+| Input handling       | Manual injection          | NSView first responder  | SynthesizeNative*Event()               |
+| DevTools             | Had to expose constructor | `_inspector` (public)   | RDP over WebSocket                     |
+| Multi-profile        | Multiple in one process   | Multiple in one process | One per process                        |
+| Build system         | GN/Ninja                  | CMake                   | moz.build/mach                         |
+| Init complexity      | Low (Content API)         | Very low (WKWebView)    | High (XPCOM bootstrap)                 |
+
+**Key concerns:**
+
+1. **No official embedding support** — Mozilla dropped desktop embedding years
+   ago. We'd be using internal APIs that could change between versions. This is
+   the biggest risk.
+
+2. **XPCOM complexity** — Initializing Gecko requires bootstrapping XPCOM,
+   loading libxul, getting service managers. Much heavier than WebKit's
+   `[[WKWebView alloc] init]`.
+
+3. **One profile per process** — Cannot consolidate multiple profiles like
+   Chromium/WebKit. Every profile needs its own Gecko process.
+
+4. **No direct CAContext** — GPU compositing requires either the NSView overlay
+   approach (simpler, like WebKit) or IOSurface extraction (complex, requires
+   forking the compositor).
+
+5. **WebRender (Rust) in the rendering path** — Gecko's renderer is written in
+   Rust. Any compositor modifications require understanding both C++ and Rust
+   codebases.
+
+**Recommendation:** If building `libtermsurf_gecko`, use the NSView overlay
+approach (like WebKit) to avoid the IOSurface extraction complexity. Initialize
+via `nsIWindowlessBrowser` but with a real widget for GPU compositing. This
+gives a moderate-effort integration path comparable to the WebKit approach,
+though with higher initialization complexity and no official API stability
+guarantees.
