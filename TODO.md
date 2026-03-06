@@ -47,7 +47,7 @@ ready.
 - [ ] Linux, macOS and Windows
 - [ ] Chromium, Webkit, Ladybird, and Gecko
 - [ ] Ghostty, Wezterm, Kitty, Alacritty, iTerm2
-- [ ] All elementary web features
+- [ ] All elementary web features (Downloads, Bookmarks, Passwords, etc.)
 - [ ] Multi-tab in one pane
 - [ ] Scrollback webviews
 - [ ] Partially hidden webviews
@@ -55,3 +55,8 @@ ready.
 - [ ] Documentation web page
 - [ ] Whitepaper
 - [ ] Hosted passwords and bookmarks
+- [ ] Remote terminals, i.e. ssh
+
+## 2.0 Milestone
+
+- [ ] iOS, Android
