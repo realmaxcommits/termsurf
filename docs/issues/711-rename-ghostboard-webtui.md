@@ -513,8 +513,9 @@ gets a descriptive directory name.
 
 **6. `docs/issues/003-website.md`:**
 
-- Update directory references from `website/` to `termsurf.com/` in the
-  Directory Structure section and any other path references
+- Absolutely do not change this file. We NEVER change historical issue
+  documents, even if they are out of date. Issue documents are immutable records
+  that are never updated unless explicitly asked by the user.
 
 **7. Not changed:**
 

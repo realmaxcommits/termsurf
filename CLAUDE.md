@@ -319,6 +319,13 @@ Issue docs for all prototype generations are indexed in
   problem is identified during work on the active issue, add it to the "Future
   issues" section of TODO.md instead of creating an issue doc.
 
+### Immutability
+
+Issue documents in `docs/issues/` that have a `## Conclusion` are historical
+records. They are **immutable** and must NEVER be modified. They capture what
+happened at the time — even if details (like directory names or paths) are now
+outdated. History stays as it was written.
+
 ## Remember
 
 NEVER change code unless explicitly asked. NEVER make unrequested changes.
