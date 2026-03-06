@@ -59,3 +59,51 @@ immutable — no future growth will force another rename.
 3. **`CLAUDE.md`** — Issue references in documentation section
 4. **Issue documents themselves** — Cross-references between issues
 5. **Skill files** — Any hardcoded issue paths
+
+## Experiments
+
+### Experiment 1: Rename all files and update all references
+
+A single script-driven experiment. The rename is mechanical — every file and
+every reference follows the same pattern — so it can all be done in one pass.
+
+#### Changes
+
+**Step 1: Rename 224 issue files**
+
+A shell script using `git mv` to rename every file in `issues/` from
+`{N}-{name}.md` to `{0000000N}-{name}.md` (7-digit zero-padded). The script
+extracts the numeric prefix, zero-pads it to 7 digits, and renames.
+
+**Step 2: Update cross-references in 28 files**
+
+A `sed` or Python script to find-and-replace all `issues/{N}-` patterns with
+`issues/{0000000N}-` in:
+
+- 15 issue documents that reference other issues (e.g., `314-control.md` through
+  `714-seven-digit-issues.md`)
+- `chromium/README.md` (50 references)
+- `docs/early-prototypes.md` (60 references)
+- `CLAUDE.md` (15 references)
+- `.claude/skills/fix-nerd-fonts/SKILL.md` (1 reference)
+- `.claude/skills/issues-and-experiments/SKILL.md` (1 reference)
+
+The replacement is a regex: match `issues/(\d{1,3})-` and replace with
+`issues/` + zero-padded match + `-`. This is safe because:
+
+- Issue numbers are always followed by a hyphen and a name
+- No other content in these files matches the `issues/\d+-` pattern
+- The replacement is idempotent (already 7-digit numbers won't match `\d{1,3}`)
+
+**Step 3: Format touched markdown files**
+
+Run `prettier` on all edited `.md` files.
+
+#### Verification
+
+1. `ls issues/ | head -5` — all files start with 7-digit numbers
+2. `ls issues/ | wc -l` — still 224 files
+3. `grep -r 'issues/[0-9]\{1,3\}-' *.md docs/ chromium/README.md .claude/` —
+   zero matches (no old-style references remain)
+4. `grep -r 'issues/[0-9]\{7\}-' chromium/README.md | head -3` — references use
+   new format
