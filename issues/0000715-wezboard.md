@@ -1,0 +1,103 @@
+# Issue 715: Wezboard
+
+## Goal
+
+Build Wezboard — a WezTerm fork that speaks the TermSurf protocol. This is the
+second "board" (terminal emulator with browser integration), proving the
+protocol is board-agnostic. When complete, users can choose between Ghostboard
+(Ghostty fork) and Wezboard (WezTerm fork) as their terminal, with identical
+browser integration in both.
+
+Three milestones:
+
+1. **Fork** — Merge upstream WezTerm into the monorepo as `wezboard/`.
+2. **Rename** — Rebrand to Wezboard, update XDG paths to
+   `~/.config/termsurf/wezboard/`, verify it builds and runs.
+3. **Protocol** — Implement full TermSurf protocol support (all 30 message
+   types), matching Ghostboard's capabilities: Unix socket server, protobuf IPC,
+   CALayerHost compositing, BrowserPane, input routing, process spawning.
+
+## Background
+
+Issue 709 researched WezTerm's architecture and mapped all 13 TermSurf protocol
+requirements to specific code locations. The conclusion: WezTerm is a strong
+architectural match. It already has Unix socket servers, per-connection async
+dispatch, a pluggable `Pane` trait, binary tree pane layout, process spawning
+with env vars, and a macOS layer tree with `CAMetalLayer` sublayers.
+
+The three hardest problems identified:
+
+1. **CALayerHost + ANGLE coexistence** — Making `CALayerHost` render on top of
+   ANGLE's `CAMetalLayer`.
+2. **Transparent pane rendering** — Ensuring the terminal renderer doesn't draw
+   over browser content.
+3. **Mode switching UX** — Integrating browse/control mode without conflicting
+   with WezTerm's existing modals.
+
+### Repo state
+
+- WezTerm is tracked as a git remote (`wezterm` → `github.com/wezterm/wezterm`)
+- The `wezterm-ts2` branch has an old subtree merge from ts2 (moved to `ts2/`)
+- The remote `wezterm/main` is at commit `05343b3` (latest upstream)
+- Ghostboard was merged via `git subtree add --prefix=ghost/` then renamed to
+  `ghostboard/`. We follow the same pattern for Wezboard.
+
+### XDG conventions
+
+TermSurf uses `~/.config/termsurf/{board}/` for per-board configuration:
+
+- Ghostboard: `~/.config/termsurf/ghostboard/`
+- Wezboard: `~/.config/termsurf/wezboard/`
+
+### Protocol reference
+
+The full TermSurf protocol (30 messages) is documented in Issue 709. The proto
+file is at `proto/termsurf.proto`. Ghostboard's implementation is in
+`ghostboard/src/apprt/xpc.zig` (~3000 lines).
+
+## Architecture
+
+### BrowserPane approach (from Issue 709)
+
+Implement the WezTerm `Pane` trait for browser panes. This integrates browser
+content natively into WezTerm's tab/split/focus system:
+
+- `BrowserPane` — Implements `Pane` trait. `key_down()`/`mouse_event()` forward
+  to Chromium. `get_lines()` returns empty lines. `resize()` sends `Resize` to
+  Chromium. `get_title()` returns page title.
+- `BrowserDomain` — Implements `Domain` trait. `spawn_pane()` returns a
+  `BrowserPane`. Manages Roamium process lifecycle.
+- `TermSurfState` — Registries for servers, tabs, browsers, pending tabs. Stored
+  alongside the global `Mux`.
+
+### Socket server
+
+A `UnixListener` on `$TMPDIR/termsurf/termsurf-wezboard-{pid}.sock`. Uses
+WezTerm's existing async task infrastructure (`smol`/`SimpleExecutor`). One task
+per connection. First message determines connection type: `ServerRegister` =
+Chromium, anything else = TUI.
+
+### CALayerHost compositing (macOS)
+
+Create a `CALayerHost` sublayer on the view's backing layer, positioned at the
+`BrowserPane`'s pixel rect. The `CALayerHost` must have higher `zPosition` than
+ANGLE's `CAMetalLayer` sublayer. Position/resize when the pane moves. Remove
+when the tab closes.
+
+### Input routing
+
+Automatic via `BrowserPane`. When a browser pane is the active pane, all
+keyboard/mouse events dispatch to it through the `Pane` trait. Mode switching
+(browse ↔ control) uses WezTerm's key table system — activate a "browse" key
+table, Esc pops back.
+
+### Modifier translation
+
+WezTerm and TermSurf use different bit positions:
+
+| Modifier | WezTerm | TermSurf |
+| -------- | ------- | -------- |
+| Shift    | `1<<1`  | `1<<0`   |
+| Ctrl     | `1<<3`  | `1<<1`   |
+| Alt      | `1<<2`  | `1<<2`   |
+| Super    | `1<<4`  | `1<<3`   |
