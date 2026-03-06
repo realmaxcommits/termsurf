@@ -1055,3 +1055,128 @@ via `nsIWindowlessBrowser` but with a real widget for GPU compositing. This
 gives a moderate-effort integration path comparable to the WebKit approach,
 though with higher initialization complexity and no official API stability
 guarantees.
+
+## Experiment 4: Ladybird architecture audit
+
+### Goal
+
+Answer the 10 research questions for Ladybird. Map each question to specific
+source locations in `vendor/ladybird/`. Determine what it would take to build
+`libtermsurf_ladybird` — a C shared library wrapping Ladybird's embedding API.
+
+### Background
+
+Ladybird is fundamentally different from the three established engines. It's a
+new browser built from scratch — no legacy embedding API, no decades of
+accumulated abstraction layers. The codebase is relatively small (~495 MB vs
+Firefox's 9.1 GB or WebKit's 7.4 GB) and written in modern C++ with some Rust.
+
+Ladybird uses a multi-process architecture:
+
+- **UI process** — `UI/AppKit/` (macOS), `UI/Qt/` (Linux/cross-platform)
+- **WebContent process** — Renders pages, runs JavaScript (LibWeb + LibJS)
+- **WebDriver process** — Browser automation
+- **RequestServer** — Network requests
+- **ImageDecoder** — Image decoding
+
+The key library is **LibWebView** (`Libraries/LibWebView/`) — this is Ladybird's
+embedding layer, analogous to Chromium's Content API or WebKit's WKWebView.
+
+### Research plan
+
+**Q1. Embedding API** — Ladybird's embedding surface is `LibWebView`:
+
+- `Libraries/LibWebView/ViewImplementation.h` — The base class for all web
+  views. This is the primary embedding interface.
+- `Libraries/LibWebView/WebContentClient.h` — IPC client that talks to the
+  WebContent process.
+- `UI/AppKit/Application/` — macOS application code showing how AppKit uses
+  LibWebView.
+- `UI/Qt/` — Qt frontend showing the cross-platform embedding path.
+- How does a host application create a web view, load a URL, and receive
+  callbacks?
+
+**Q2. Headless/hidden rendering** — Can Ladybird render offscreen?
+
+- `Libraries/LibWebView/` — Look for headless or offscreen view implementations
+- `Utilities/` — Check for headless browser utilities
+- `Tests/` — Test infrastructure may use headless rendering
+- Does Ladybird support rendering without a visible window?
+
+**Q3. CAContext / GPU surface** — How does Ladybird composite on macOS?
+
+- `UI/AppKit/Interface/` — Look for NSView subclasses, CALayer usage
+- `Libraries/LibGfx/` — Graphics primitives, painting, GPU surfaces
+- `Libraries/LibWebView/` — How does the WebContent process send rendered
+  output to the UI process?
+- Does Ladybird use GPU compositing at all, or is it CPU/Skia-only?
+- Search for `CAContext`, `CALayerHost`, `IOSurface`, `Metal`, `Skia`
+- Look at `Libraries/LibWeb/Painting/` — how does painting work?
+
+**Q4. Input injection** — How does Ladybird receive input?
+
+- `Libraries/LibWebView/ViewImplementation.h` — Look for mouse/keyboard event
+  methods
+- `Libraries/LibWeb/Page/EventHandler.h` — DOM-level event handling
+- `UI/AppKit/Interface/` — How does AppKit forward events to LibWebView?
+- Can we call input methods directly on ViewImplementation?
+
+**Q5. Callback hooks** — How does Ladybird notify the host of state changes?
+
+- `Libraries/LibWebView/ViewImplementation.h` — Look for callback members,
+  virtual methods, or observer patterns
+- Search for `on_title_change`, `on_url_change`, `on_load_start`,
+  `on_load_finish`, `on_cursor_change` or similar
+- `Libraries/LibWebView/WebContentClient.h` — IPC messages from WebContent to
+  UI
+
+**Q6. DevTools** — Ladybird has its own DevTools:
+
+- `Libraries/LibDevTools/` — DevTools library
+- `Libraries/LibWebView/` — Look for inspector/devtools integration
+- Does Ladybird use Chrome DevTools Protocol (CDP), or its own protocol?
+- Can we open DevTools programmatically for a specific tab?
+
+**Q7. Build system** — Ladybird uses CMake:
+
+- `CMakeLists.txt` — Root build configuration
+- `Libraries/CMakeLists.txt` — Library targets
+- `Libraries/LibWebView/CMakeLists.txt` — LibWebView build
+- Can we add a `libtermsurf_ladybird` shared library target?
+
+**Q8. Multi-profile** — Does Ladybird support multiple browser profiles?
+
+- Search for profile, data store, cookie jar, or session concepts
+- `Libraries/LibWebView/` — Look for per-session or per-context isolation
+- Can we create multiple isolated browser contexts in one process?
+
+**Q9. Fork size** — Based on the other answers, estimate the modification
+footprint. Ladybird's smaller codebase may make forking easier.
+
+**Q10. Cross-platform** — Ladybird targets macOS, Linux, and potentially
+Windows:
+
+- `UI/AppKit/` — macOS frontend
+- `UI/Qt/` — Qt frontend (Linux, cross-platform)
+- `UI/Android/` — Android frontend
+- What compositing does each platform use?
+- How portable is `LibWebView`?
+
+### Key source directories to examine
+
+- `Libraries/LibWebView/` — Embedding layer (ViewImplementation, WebContentClient)
+- `Libraries/LibWeb/` — Core web engine (DOM, layout, painting)
+- `Libraries/LibWeb/Painting/` — Painting/rendering pipeline
+- `Libraries/LibGfx/` — Graphics primitives
+- `Libraries/LibDevTools/` — DevTools
+- `Libraries/LibIPC/` — IPC infrastructure
+- `UI/AppKit/` — macOS frontend
+- `UI/Qt/` — Qt frontend
+- `Utilities/` — Utility programs (headless browser?)
+
+### Success criteria
+
+All 10 research questions answered with specific file paths and code references.
+A clear assessment of whether `libtermsurf_ladybird` is feasible, and if so,
+what the C library surface area would look like. Comparison with the Chromium,
+WebKit, and Gecko findings from Experiments 2–3.
