@@ -268,3 +268,114 @@ Pass. Removed 16 dead submodule entries (8 ts1, 4 ts2, 4 ts3) from
 `git submodule add` at their pinned commits (zlib 1.3.1, libpng 1.6.44,
 freetype2 2.13.3, harfbuzz 11.2.1). Build still compiles. `git submodule status`
 now shows exactly four entries, all under `wezboard/deps/`.
+
+### Experiment 4: Rename script + full rebrand
+
+#### Goal
+
+Create `scripts/rename-wezterm.sh [dir]` — a deterministic, re-runnable script
+that renames all "wezterm" references in the given directory to "wezboard" (or
+"termsurf wezboard" where appropriate). After running, zero instances of
+"wezterm" remain. The directory defaults to `wezboard/` but accepts a custom
+path so the script can be run on a fresh WezTerm checkout before merging
+upstream.
+
+**Upstream merge workflow:**
+
+1. Clone upstream WezTerm to a temporary directory
+2. Run `scripts/rename-wezterm.sh /path/to/fresh-wezterm`
+3. Merge the pre-renamed tree into `wezboard/`
+4. Conflicts are minimized because both sides already use "wezboard" naming
+
+This follows the same pattern as `scripts/rename-ghostty.sh` (protect →
+substitute → restore → file renames → verify), which also accepts a custom path
+argument.
+
+#### Branding rules
+
+| Context                         | Before                                         | After                                             |
+| ------------------------------- | ---------------------------------------------- | ------------------------------------------------- |
+| App name (UI, About, title bar) | WezTerm                                        | TermSurf Wezboard                                 |
+| macOS app bundle                | WezTerm.app                                    | TermSurf Wezboard.app                             |
+| CLI binaries                    | `wezterm`, `wezterm-gui`, `wezterm-mux-server` | `wezboard`, `wezboard-gui`, `wezboard-mux-server` |
+| Bundle ID                       | `org.wezfurlong.wezterm`                       | `com.termsurf.wezboard`                           |
+| Environment variables           | `WEZTERM_*`                                    | `WEZBOARD_*`                                      |
+| XDG config path                 | `~/.config/wezterm/`                           | `~/.config/termsurf/wezboard/`                    |
+| Config file                     | `wezterm.lua`                                  | `wezboard.lua`                                    |
+| Crate/package names             | `wezterm-*`                                    | `wezboard-*`                                      |
+| Function/type names             | `wezterm_*` / `WezTerm*`                       | `wezboard_*` / `Wezboard*`                        |
+| Lua module name                 | `require("wezterm")`                           | `require("wezboard")`                             |
+| Lua API calls                   | `wezterm.action`, `wezterm.config_builder()`   | `wezboard.action`, `wezboard.config_builder()`    |
+| README title                    | WezTerm                                        | Wezboard                                          |
+| URLs (wezfurlong.org, etc.)     | Keep as-is (protected)                         |                                                   |
+| License/attribution             | Keep as-is (protected)                         |                                                   |
+
+#### Script structure
+
+**Phase 1+2+3: Protect → Substitute → Restore (single sed pass)**
+
+Protect patterns (URLs, attribution, upstream references):
+
+- `wezfurlong.org` — upstream author's domain
+- `wez/wezterm` — GitHub repo path
+- `wezterm/wezterm` — GitHub org/repo path
+- `Wez Furlong` — author name
+- `wez@wezfurlong.org` — author email
+- `wezterm contributors` — license text
+- `crates.io/crates/wezterm` — crate registry URLs
+- `docs.rs/wezterm` — docs URLs
+
+Substitute (order: specific before generic):
+
+- `org.wezfurlong.wezterm` → `com.termsurf.wezboard`
+- `~/.config/wezterm` → `~/.config/termsurf/wezboard`
+- `XDG_CONFIG_HOME…wezterm` → `XDG_CONFIG_HOME…termsurf/wezboard`
+- `WEZTERM_` → `WEZBOARD_`
+- `WEZTERM` → `WEZBOARD`
+- `WezTerm` → `Wezboard`
+- `wezterm` → `wezboard`
+
+**Phase 4: File/directory renames (git mv, idempotent)**
+
+Rename crate directories:
+
+- `wezboard/wezterm/` → `wezboard/wezboard-cli/`
+- `wezboard/wezterm-gui/` → `wezboard/wezboard-gui/`
+- `wezboard/wezterm-mux-server/` → `wezboard/wezboard-mux-server/`
+- `wezboard/wezterm-mux-server-impl/` → `wezboard/wezboard-mux-server-impl/`
+- `wezboard/wezterm-font/` → `wezboard/wezboard-font/`
+- `wezboard/wezterm-ssh/` → `wezboard/wezboard-ssh/`
+- `wezboard/wezterm-gui-subcommands/` → `wezboard/wezboard-gui-subcommands/`
+- `wezboard/wezterm-toast-notification/` →
+  `wezboard/wezboard-toast-notification/`
+- `wezboard/wezterm-blob-leases/` → `wezboard/wezboard-blob-leases/`
+- `wezboard/wezterm-cell/` → `wezboard/wezboard-cell/`
+- `wezboard/wezterm-dynamic/` → `wezboard/wezboard-dynamic/`
+- `wezboard/wezterm-escape-parser/` → `wezboard/wezboard-escape-parser/`
+- `wezboard/wezterm-surface/` → `wezboard/wezboard-surface/`
+- `wezboard/wezterm-uds/` → `wezboard/wezboard-uds/`
+- `wezboard/wezterm-open-url/` → `wezboard/wezboard-open-url/`
+
+Rename files with "wezterm" in the name (screenshots, configs, docs, CI
+templates, etc.).
+
+Rename `wezboard/README.md` title to "Wezboard".
+
+**Phase 5: Verify**
+
+- `grep -r wezterm wezboard/` shows only protected patterns (URLs, attribution)
+- No leftover `__PROTECT_` placeholders
+- `cargo build -p wezboard-gui` compiles
+
+#### Steps
+
+1. Write `scripts/rename-wezterm.sh` following the structure above.
+2. Run the script.
+3. Verify zero unprotected "wezterm" references remain.
+4. Build to confirm compilation.
+
+#### Verification
+
+1. `grep -ri wezterm wezboard/` — only protected patterns (URLs, attribution)
+2. `cargo build -p wezboard-gui` from `wezboard/` compiles
+3. The app launches as "TermSurf Wezboard"
