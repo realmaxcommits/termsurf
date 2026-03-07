@@ -550,3 +550,37 @@ Then delete the `get_view_ivar` and `set_view_ivar` functions (lines 2015–2029
    feeds into `Retained::from_raw` or other non-trivial uses)
 4. Grep confirms `get_view_ivar`/`set_view_ivar` functions are deleted
 5. Grep confirms both `type id` definitions have cross-reference comments
+
+**Result:** Pass
+
+All 3 smells fixed. Build passes with zero errors. App launches, spawns window,
+TermSurf socket listens, clean shutdown on quit.
+
+- Smell 7: 36 `__r as id` sites collapsed to direct `msg_send!` assignment. 4
+  complex sites left as-is (where `__r` feeds `Retained::from_raw` directly
+  without an `as id` cast, or is used inline in another `msg_send!`). Grep
+  confirms zero `__r as id` occurrences remain.
+- Smell 9: Cross-reference comments added to both `type id` definitions
+  (`window.rs:64` and `core_text.rs:6`).
+- Smell 10: `get_view_ivar` and `set_view_ivar` deleted (16 lines removed). All
+  4 call sites replaced with `#[allow(deprecated)]` `get_ivar`/`get_mut_ivar`,
+  matching the approach already used in `app.rs`, `menu.rs`, and `clipboard.rs`.
+
+#### Conclusion
+
+All 13 code smells from the objc2 migration are resolved across 3 experiments:
+
+- Experiment 1: Smells 2, 4, 5, 6, 8, 11, 13 (mechanical cleanup)
+- Experiment 2: Smells 1, 3 (fallible ObjC init error handling)
+- Experiment 3: Smells 7, 9, 10 (boilerplate reduction and consistency)
+- Smell 12 was already gone before the issue was filed.
+
+No behavior changes, no regressions. Issue 719 is complete.
+
+## Conclusion
+
+All 13 code smells from the objc2 migration (Issues 715-718) are fixed. Three
+experiments over three commits addressed every smell: mechanical cleanup (exp
+1), fallible ObjC init error handling (exp 2), and boilerplate reduction with
+consistency improvements (exp 3). No behavior changes, no regressions. The
+Wezboard codebase now follows consistent patterns for ObjC interop.

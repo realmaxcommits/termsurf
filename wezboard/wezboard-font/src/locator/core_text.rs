@@ -3,6 +3,7 @@
 use crate::locator::{FontDataSource, FontLocator, FontOrigin};
 use crate::parser::ParsedFont;
 #[allow(non_camel_case_types)]
+// NOTE: also defined in window/src/os/macos/window.rs
 type id = *mut objc2::runtime::AnyObject;
 use config::{FontAttributes, FontStretch, FontStyle, FontWeight};
 use core_foundation::array::CFArray;
