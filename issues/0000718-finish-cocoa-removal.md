@@ -664,3 +664,87 @@ Initial build succeeded but the app crashed at launch with SIGABRT in
 (`isize`/i64 on ARM64), but the raw constant was passed as `i32`. objc2's
 debug-mode method signature verification caught the type mismatch. Fixed by
 changing `236i32` → `236isize` and `222i32` → `222isize`.
+
+### Experiment 3: Replace `cocoa::base`, `objc` 0.2 types, and `cocoa::foundation`
+
+Remove all remaining `cocoa` and `objc` 0.2 imports from `window.rs`, then
+delete both crate dependencies entirely. This is the final cleanup experiment.
+
+#### What gets replaced
+
+**`cocoa::base::*` (wildcard import):**
+
+- `id` (`*mut Object`) → remove the type alias; use `*mut AnyObject` directly at
+  all ~108 sites
+- `nil` → `std::ptr::null_mut::<AnyObject>()` (only 2 remaining uses)
+
+**`objc::runtime::{Object, BOOL, NO, YES}`:**
+
+- `Object` → `AnyObject` (~49 sites, mostly callback casts like
+  `&mut *(this as *mut Object)`)
+- `BOOL` → `objc2::runtime::Bool` or `bool` (3 type annotation sites)
+- `YES` → `true` or `Bool::YES` depending on context (~20 sites)
+- `NO` → `false` or `Bool::NO` depending on context (~15 sites)
+
+**`cocoa::foundation::{NSFastEnumeration, NSPoint, NSRect, NSSize, NSString}`:**
+
+- `NSPoint` → `CGPoint` (from `objc2_core_foundation`)
+- `NSRect` → `CGRect`
+- `NSSize` → `CGSize`
+- `NSString` → already using `objc2_foundation::NSString` via `nsstring()`
+  helper; remove the cocoa import
+- `NSFastEnumeration` → replace `.iter()` calls with manual
+  `count`/`objectAtIndex` msg_send loops (2 sites)
+
+**`objc::rc::{StrongPtr, WeakPtr}`:**
+
+- `StrongPtr` → `objc2::rc::Retained<AnyObject>` (different API: `new` →
+  `from_raw`, deref returns `&AnyObject` not `id`)
+- `WeakPtr` → `objc2::rc::Weak<AnyObject>`
+
+**`wezboard-font/src/locator/core_text.rs`:**
+
+- `cocoa::base::id` → `objc2::runtime::AnyObject` (single import)
+
+#### Dependency deletion
+
+Once all imports are gone:
+
+- Remove `cocoa` from `window/Cargo.toml` and `wezboard-font/Cargo.toml`
+- Remove `objc` from `window/Cargo.toml`
+- Remove `cocoa` and `objc` from `[workspace.dependencies]` in root `Cargo.toml`
+
+#### Key challenges
+
+1. **`StrongPtr` → `Retained<AnyObject>`**: `StrongPtr::new(ptr)` retains on
+   creation and releases on drop. `Retained::from_raw(ptr)` assumes ownership
+   without retaining. For `alloc`/`init` patterns this is correct (they return
+   +1), but for other sources the retain count semantics must be checked at each
+   site.
+
+2. **`WeakPtr` → `Weak<AnyObject>`**: `WeakPtr::new(ptr)` creates a weak
+   reference. `Weak` in objc2 requires a `Retained` to create from — different
+   API shape.
+
+3. **`id` removal cascade**: Every function signature, struct field, and local
+   variable using `id` must change. This touches most of the file but is
+   mechanical.
+
+4. **`NSRect`/`NSPoint`/`NSSize` in struct fields**: The
+   `fullscreen: Option<NSRect>` field and
+   `LAST_POSITION: RefCell<Option<NSPoint>>` must change types, along with all
+   code that constructs/destructures them.
+
+5. **`NSFastEnumeration` `.iter()` replacement**: Two drag-and-drop handlers
+   iterate over `filenames` using cocoa's `NSFastEnumeration` trait. Replace
+   with `count`/`objectAtIndex` msg_send loops.
+
+#### Verification
+
+1. `cd wezboard && cargo build` — zero errors
+2. `cargo run --bin wezboard-gui` — app launches, window opens, no crash
+3. `grep -c 'cocoa::' window/src/os/macos/window.rs` returns 0
+4. `grep -c 'objc::' window/src/os/macos/window.rs` returns 0
+5. `grep -c 'cocoa' wezboard-font/src/locator/core_text.rs` returns 0
+6. `cocoa` and `objc` absent from all `Cargo.toml` files
+7. `cargo build` still succeeds after dependency removal
