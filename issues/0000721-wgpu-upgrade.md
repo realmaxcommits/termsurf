@@ -119,3 +119,24 @@ ts2's `ts2/wezterm-gui/` paths). Build and verify after each step.
    launches, terminal renders correctly
 3. If WebGpu config isn't set up, at minimum verify the build succeeds (the
    OpenGL backend is the default and doesn't use wgpu)
+
+## Experiments
+
+### Experiment 1: wgpu 25 → 26
+
+Bump wgpu from 25.0.2 to 26.0.0. This version has one breaking change: a new
+required field `depth_slice` on `RenderPassColorAttachment`.
+
+#### Changes
+
+1. **`wezboard/Cargo.toml`** (line 269): Change `wgpu = "25.0.2"` to
+   `wgpu = "26.0.0"`.
+
+2. **`wezboard-gui/src/termwindow/render/draw.rs`** (line 102): Add
+   `depth_slice: None` after `resolve_target: None` in the
+   `RenderPassColorAttachment` struct literal.
+
+#### Verification
+
+1. `cd wezboard && cargo build -p wezboard-gui` — zero errors
+2. `cargo run --bin wezboard-gui` — app launches and renders
