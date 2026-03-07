@@ -307,35 +307,41 @@ argument.
 | Lua module name                 | `require("wezterm")`                           | `require("wezboard")`                             |
 | Lua API calls                   | `wezterm.action`, `wezterm.config_builder()`   | `wezboard.action`, `wezboard.config_builder()`    |
 | README title                    | WezTerm                                        | Wezboard                                          |
-| URLs (wezfurlong.org, etc.)     | Keep as-is (protected)                         |                                                   |
-| License/attribution             | Keep as-is (protected)                         |                                                   |
+| Author name                     | Wez Furlong                                    | Wez Longboard                                     |
+| Author email                    | `wez@wezfurlong.org`                           | `wezboard@termsurf.com`                                |
+| Author domain                   | `wezfurlong.org`                               | `termsurf.com/wezboard`                           |
+| GitHub repo                     | `wez/wezterm`, `wezterm/wezterm`               | `termsurf/termsurf`                               |
+| Crate registry                  | `crates.io/crates/wezterm`                     | `crates.io/crates/wezboard`                       |
+| Docs URL                        | `docs.rs/wezterm`                              | `docs.rs/wezboard`                                |
 
 #### Script structure
 
-**Phase 1+2+3: Protect → Substitute → Restore (single sed pass)**
+**Phase 1: Text substitutions (single sed pass)**
 
-Protect patterns (URLs, attribution, upstream references):
-
-- `wezfurlong.org` — upstream author's domain
-- `wez/wezterm` — GitHub repo path
-- `wezterm/wezterm` — GitHub org/repo path
-- `Wez Furlong` — author name
-- `wez@wezfurlong.org` — author email
-- `wezterm contributors` — license text
-- `crates.io/crates/wezterm` — crate registry URLs
-- `docs.rs/wezterm` — docs URLs
+Unlike the Ghostty rename script, there are no protected patterns — everything
+gets renamed. The sed script applies substitutions in order from most specific
+to most generic, so longer matches are replaced before shorter ones can
+interfere.
 
 Substitute (order: specific before generic):
 
+- `wez@wezfurlong.org` → `wezboard@termsurf.com`
+- `Wez Furlong` → `Wez Longboard`
+- `wezfurlong.org` → `termsurf.com/wezboard`
+- `wez/wezterm` → `termsurf/termsurf`
+- `wezterm/wezterm` → `termsurf/termsurf`
+- `crates.io/crates/wezterm` → `crates.io/crates/wezboard`
+- `docs.rs/wezterm` → `docs.rs/wezboard`
 - `org.wezfurlong.wezterm` → `com.termsurf.wezboard`
 - `~/.config/wezterm` → `~/.config/termsurf/wezboard`
 - `XDG_CONFIG_HOME…wezterm` → `XDG_CONFIG_HOME…termsurf/wezboard`
+- `wezterm contributors` → `wezboard contributors`
 - `WEZTERM_` → `WEZBOARD_`
 - `WEZTERM` → `WEZBOARD`
 - `WezTerm` → `Wezboard`
 - `wezterm` → `wezboard`
 
-**Phase 4: File/directory renames (git mv, idempotent)**
+**Phase 2: File/directory renames (git mv, idempotent)**
 
 Rename crate directories:
 
@@ -361,7 +367,7 @@ templates, etc.).
 
 Rename `wezboard/README.md` title to "Wezboard".
 
-**Phase 5: Verify**
+**Phase 3: Verify**
 
 - `grep -r wezterm wezboard/` shows only protected patterns (URLs, attribution)
 - No leftover `__PROTECT_` placeholders
