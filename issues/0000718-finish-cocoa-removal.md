@@ -758,8 +758,7 @@ All 7 verification checks pass. 253 insertions, 326 deletions — net reduction 
 
 - **Deleted imports**: `cocoa::base::*`,
   `cocoa::foundation::{NSFastEnumeration, NSPoint, NSRect, NSSize, NSString}`,
-  `objc::rc::{StrongPtr, WeakPtr}`,
-  `objc::runtime::{Object, BOOL, NO, YES}`.
+  `objc::rc::{StrongPtr, WeakPtr}`, `objc::runtime::{Object, BOOL, NO, YES}`.
 - **Added imports**: `objc2::rc::{Retained, Weak}`.
 - **Added local alias**: `type id = *mut AnyObject` — preserves the ~108 `id`
   usage sites without mass-renaming.
@@ -822,9 +821,8 @@ All 7 verification checks pass. 253 insertions, 326 deletions — net reduction 
 **`get_ivar`/`set_ivar` replacement (4 sites):**
 
 - Added `get_view_ivar` and `set_view_ivar` helper functions using manual ivar
-  offset access (`obj.class().instance_variable().offset()`), since
-  `AnyObject` does not have the `get_ivar`/`set_ivar` methods from
-  `objc::runtime::Object`.
+  offset access (`obj.class().instance_variable().offset()`), since `AnyObject`
+  does not have the `get_ivar`/`set_ivar` methods from `objc::runtime::Object`.
 - `drop_inner`: `*this.get_ivar(...)` → `get_view_ivar(this)`.
 - `get_this`: same pattern.
 - `init_with_frame`: `(**view_id).set_ivar(...)` → `set_view_ivar(...)`.
@@ -859,3 +857,22 @@ All 7 verification checks pass. 253 insertions, 326 deletions — net reduction 
   `objc.workspace = true`.
 - `Cargo.lock`: `cocoa`, `cocoa-foundation`, `block`, and old `core-graphics`
   0.23 removed from the dependency tree.
+
+## Conclusion
+
+Issue 718 is complete. All `cocoa` and `objc` 0.2 usage has been removed from
+the wezboard codebase across three experiments:
+
+1. **Experiment 1** replaced cocoa constants and bitflags with raw `msg_send!`
+   calls and literal values.
+2. **Experiment 2** replaced the remaining ~50 cocoa trait method calls
+   (`NSWindow`, `NSView`, `NSEvent`, `NSScreen`, etc.) with `msg_send!`.
+3. **Experiment 3** removed `cocoa::base` (`id`, `nil`), `cocoa::foundation`
+   (`NSRect`, `NSPoint`, `NSSize`, `NSFastEnumeration`, `NSString`), and all
+   `objc` 0.2 types (`StrongPtr`, `WeakPtr`, `Object`, `BOOL`/`YES`/`NO`), then
+   deleted both crate dependencies from all `Cargo.toml` files.
+
+The wezboard macOS layer now uses only `objc2` and its ecosystem crates
+(`objc2-foundation`, `objc2-app-kit`, `objc2-core-foundation`,
+`objc2-core-graphics`). The `cocoa`, `cocoa-foundation`, `block`, and legacy
+`core-graphics` 0.23 crates are gone from the dependency tree entirely.
