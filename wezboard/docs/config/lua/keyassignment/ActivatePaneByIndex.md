@@ -9,8 +9,8 @@ This example causes ALT-a, ALT-b, ALT-c to switch to the 0th, 1st and 2nd
 panes, respectively:
 
 ```lua
-local wezterm = require 'wezterm'
-local act = wezterm.action
+local wezboard = require 'wezboard'
+local act = wezboard.action
 local config = {}
 
 config.keys = {

@@ -1,8 +1,8 @@
 # `Color` object
 
 Color objects can be created by calling
-[wezterm.color.parse()](../wezterm.color/parse.md) and may also be
-returned by various wezterm functions and methods.
+[wezboard.color.parse()](../wezboard.color/parse.md) and may also be
+returned by various wezboard functions and methods.
 
 They represent a color that is internally stored in SRGBA.
 

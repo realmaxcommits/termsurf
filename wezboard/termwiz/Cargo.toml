@@ -1,9 +1,9 @@
 [package]
-authors = ["Wez Furlong"]
+authors = ["Wez Longboard"]
 name = "termwiz"
 version = "0.24.0"
 edition = "2018"
-repository = "https://github.com/wezterm/wezterm"
+repository = "https://github.com/termsurf/termsurf"
 description = "Terminal Wizardry for Unix and Windows"
 license = "MIT"
 documentation = "https://docs.rs/termwiz"
@@ -37,23 +37,23 @@ thiserror.workspace = true
 ucd-trie.workspace = true
 unicode-segmentation.workspace = true
 vtparse.workspace = true
-wezterm-bidi.workspace = true
-wezterm-blob-leases = {workspace=true, optional=true}
-wezterm-cell = {workspace = true, features=["std"]}
-wezterm-char-props.workspace = true
-wezterm-color-types = {workspace = true, features=["std"]}
-wezterm-dynamic = {workspace = true, features=["std"]}
-wezterm-escape-parser = {workspace = true, features=["std"]}
-wezterm-input-types.workspace = true
-wezterm-surface = {workspace = true, features=["std", "appdata"]}
+wezboard-bidi.workspace = true
+wezboard-blob-leases = {workspace=true, optional=true}
+wezboard-cell = {workspace = true, features=["std"]}
+wezboard-char-props.workspace = true
+wezboard-color-types = {workspace = true, features=["std"]}
+wezboard-dynamic = {workspace = true, features=["std"]}
+wezboard-escape-parser = {workspace = true, features=["std"]}
+wezboard-input-types.workspace = true
+wezboard-surface = {workspace = true, features=["std", "appdata"]}
 
 [features]
 default = ["image", "tmux_cc"]
 widgets = ["cassowary", "fnv"]
-use_serde = ["serde", "wezterm-color-types/use_serde", "wezterm-blob-leases/serde", "bitflags/serde", "wezterm-input-types/serde", "wezterm-escape-parser/use_serde", "wezterm-cell/use_serde", "wezterm-surface/use_serde"]
-use_image = ["image", "dep:image", "wezterm-escape-parser/use_image", "wezterm-escape-parser/kitty-shm", "wezterm-cell/use_image", "wezterm-surface/use_image"]
-image = ["sha2", "wezterm-blob-leases", "wezterm-escape-parser/image"]
-tmux_cc = ["pest", "pest_derive", "wezterm-escape-parser/tmux_cc"]
+use_serde = ["serde", "wezboard-color-types/use_serde", "wezboard-blob-leases/serde", "bitflags/serde", "wezboard-input-types/serde", "wezboard-escape-parser/use_serde", "wezboard-cell/use_serde", "wezboard-surface/use_serde"]
+use_image = ["image", "dep:image", "wezboard-escape-parser/use_image", "wezboard-escape-parser/kitty-shm", "wezboard-cell/use_image", "wezboard-surface/use_image"]
+image = ["sha2", "wezboard-blob-leases", "wezboard-escape-parser/image"]
+tmux_cc = ["pest", "pest_derive", "wezboard-escape-parser/tmux_cc"]
 docs = ["widgets", "use_serde", "image", "tmux_cc"]
 
 [dev-dependencies]

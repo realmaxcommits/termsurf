@@ -1,6 +1,6 @@
-# `wezterm set-working-directory`
+# `wezboard set-working-directory`
 
 ```console
-{% include "../examples/cmd-synopsis-wezterm-set-working-directory--help.txt" %}
+{% include "../examples/cmd-synopsis-wezboard-set-working-directory--help.txt" %}
 ```
 

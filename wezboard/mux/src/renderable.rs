@@ -4,8 +4,8 @@ use rangeset::RangeSet;
 use serde::{Deserialize, Serialize};
 use std::ops::Range;
 use termwiz::surface::SequenceNo;
-use wezterm_dynamic::{FromDynamic, ToDynamic};
-use wezterm_term::{Line, StableRowIndex, Terminal};
+use wezboard_dynamic::{FromDynamic, ToDynamic};
+use wezboard_term::{Line, StableRowIndex, Terminal};
 
 /// Describes the location of the cursor
 #[derive(

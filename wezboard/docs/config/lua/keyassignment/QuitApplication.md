@@ -1,12 +1,12 @@
 # `QuitApplication`
 
-Terminate the WezTerm application, killing all tabs.
+Terminate the Wezboard application, killing all tabs.
 
 ```lua
-local wezterm = require 'wezterm'
+local wezboard = require 'wezboard'
 
 config.keys = {
-  { key = 'q', mods = 'CMD', action = wezterm.action.QuitApplication },
+  { key = 'q', mods = 'CMD', action = wezboard.action.QuitApplication },
 }
 ```
 

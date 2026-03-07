@@ -5,8 +5,8 @@
 Moves the CopyMode cursor position forward to the end of word.
 
 ```lua
-local wezterm = require 'wezterm'
-local act = wezterm.action
+local wezboard = require 'wezboard'
+local act = wezboard.action
 
 return {
   key_tables = {

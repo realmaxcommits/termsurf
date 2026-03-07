@@ -278,7 +278,7 @@ title: Color Schemes with first letter "{scheme_prefix}"
                     origin_url = scheme["metadata"].get("origin_url", None)
                     if origin_url:
                         idx.write(f"Source: <{origin_url}><br/>\n")
-                    version = scheme["metadata"].get("wezterm_version", None)
+                    version = scheme["metadata"].get("wezboard_version", None)
                     if version and version != "Always":
                         idx.write(f"{{{{since('{version}')}}}}<br/>\n")
 
@@ -324,7 +324,7 @@ document.addEventListener("DOMContentLoaded", function() {{
 
 TOC = [
     Page(
-        "WezTerm",
+        "Wezboard",
         "index.md",
         children=[
             Page("Features", "features.md"),
@@ -379,40 +379,40 @@ TOC = [
                 "config/lua/config",
             ),
             Gen(
-                "module: wezterm",
-                "config/lua/wezterm",
+                "module: wezboard",
+                "config/lua/wezboard",
             ),
             Gen(
-                "module: wezterm.color",
-                "config/lua/wezterm.color",
+                "module: wezboard.color",
+                "config/lua/wezboard.color",
             ),
             Gen(
-                "module: wezterm.gui",
-                "config/lua/wezterm.gui",
+                "module: wezboard.gui",
+                "config/lua/wezboard.gui",
             ),
             Gen(
-                "module: wezterm.mux",
-                "config/lua/wezterm.mux",
+                "module: wezboard.mux",
+                "config/lua/wezboard.mux",
             ),
             Gen(
-                "module: wezterm.plugin",
-                "config/lua/wezterm.plugin",
+                "module: wezboard.plugin",
+                "config/lua/wezboard.plugin",
             ),
             Gen(
-                "module: wezterm.procinfo",
-                "config/lua/wezterm.procinfo",
+                "module: wezboard.procinfo",
+                "config/lua/wezboard.procinfo",
             ),
             Gen(
-                "module: wezterm.serde",
-                "config/lua/wezterm.serde",
+                "module: wezboard.serde",
+                "config/lua/wezboard.serde",
             ),
             Gen(
-                "module: wezterm.time",
-                "config/lua/wezterm.time",
+                "module: wezboard.time",
+                "config/lua/wezboard.time",
             ),
             Gen(
-                "module: wezterm.url",
-                "config/lua/wezterm.url",
+                "module: wezboard.url",
+                "config/lua/wezboard.url",
             ),
             Gen(
                 "enum: KeyAssignment",
@@ -432,7 +432,7 @@ TOC = [
             Page("object: TabInformation", "config/lua/TabInformation.md"),
             Page("object: SshDomain", "config/lua/SshDomain.md"),
             Page("object: SpawnCommand", "config/lua/SpawnCommand.md"),
-            Gen("object: Time", "config/lua/wezterm.time/Time"),
+            Gen("object: Time", "config/lua/wezboard.time/Time"),
             Page("object: TlsDomainClient", "config/lua/TlsDomainClient.md"),
             Page("object: TlsDomainServer", "config/lua/TlsDomainServer.md"),
             Gen(
@@ -462,17 +462,17 @@ TOC = [
         "CLI Reference",
         "cli/general.md",
         children=[
-            Gen("wezterm cli", "cli/cli"),
-            Page("wezterm connect", "cli/connect.md"),
-            Page("wezterm imgcat", "cli/imgcat.md"),
-            Page("wezterm ls-fonts", "cli/ls-fonts.md"),
-            Page("wezterm record", "cli/record.md"),
-            Page("wezterm replay", "cli/replay.md"),
-            Page("wezterm serial", "cli/serial.md"),
-            Page("wezterm set-working-directory", "cli/set-working-directory.md"),
-            Page("wezterm show-keys", "cli/show-keys.md"),
-            Page("wezterm ssh", "cli/ssh.md"),
-            Page("wezterm start", "cli/start.md"),
+            Gen("wezboard cli", "cli/cli"),
+            Page("wezboard connect", "cli/connect.md"),
+            Page("wezboard imgcat", "cli/imgcat.md"),
+            Page("wezboard ls-fonts", "cli/ls-fonts.md"),
+            Page("wezboard record", "cli/record.md"),
+            Page("wezboard replay", "cli/replay.md"),
+            Page("wezboard serial", "cli/serial.md"),
+            Page("wezboard set-working-directory", "cli/set-working-directory.md"),
+            Page("wezboard show-keys", "cli/show-keys.md"),
+            Page("wezboard ssh", "cli/ssh.md"),
+            Page("wezboard start", "cli/start.md"),
         ],
     ),
     Page(

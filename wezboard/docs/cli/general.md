@@ -1,31 +1,31 @@
 # Command Line
 
-This section documents the wezterm command line.
+This section documents the wezboard command line.
 
-*Note that `wezterm --help` or `wezterm SUBCOMMAND --help` will show the precise
-set of options that are applicable to your installed version of wezterm.*
+*Note that `wezboard --help` or `wezboard SUBCOMMAND --help` will show the precise
+set of options that are applicable to your installed version of wezboard.*
 
-wezterm is deployed with two major executables:
+wezboard is deployed with two major executables:
 
-* `wezterm` (or `wezterm.exe` on Windows) - for interacting with wezterm from the terminal
-* `wezterm-gui` (or `wezterm-gui.exe` on Windows) - for spawning wezterm from a desktop environment
+* `wezboard` (or `wezboard.exe` on Windows) - for interacting with wezboard from the terminal
+* `wezboard-gui` (or `wezboard-gui.exe` on Windows) - for spawning wezboard from a desktop environment
 
-You will typically use `wezterm` when scripting wezterm; it knows when to
-delegate to `wezterm-gui` under the covers.
+You will typically use `wezboard` when scripting wezboard; it knows when to
+delegate to `wezboard-gui` under the covers.
 
-If you are setting up a launcher for wezterm to run in the Windows GUI
-environment then you will want to explicitly target `wezterm-gui` so that
+If you are setting up a launcher for wezboard to run in the Windows GUI
+environment then you will want to explicitly target `wezboard-gui` so that
 Windows itself doesn't pop up a console host for its logging output.
 
 !!! note
-    `wezterm-gui.exe --help` will not output anything to a console when
+    `wezboard-gui.exe --help` will not output anything to a console when
     run on Windows systems, because it runs in the Windows GUI subsystem and has no
-    connection to the console.  You can use `wezterm.exe --help` to see information
-    about the various commands; it will delegate to `wezterm-gui.exe` when
+    connection to the console.  You can use `wezboard.exe --help` to see information
+    about the various commands; it will delegate to `wezboard-gui.exe` when
     appropriate.
 
 ## Synopsis
 
 ```console
-{% include "../examples/cmd-synopsis-wezterm--help.txt" %}
+{% include "../examples/cmd-synopsis-wezboard--help.txt" %}
 ```

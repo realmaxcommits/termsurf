@@ -6,13 +6,13 @@ Put CopyMode/SearchMode into editing mode: keyboard input will be directed to
 the search pattern editor.
 
 ```lua
-local wezterm = require 'wezterm'
-local act = wezterm.action
+local wezboard = require 'wezboard'
+local act = wezboard.action
 
 return {
   key_tables = {
     search_mode = {
-      -- This action is not bound by default in wezterm
+      -- This action is not bound by default in wezboard
       { key = 'e', mods = 'CTRL', action = act.CopyMode 'EditPattern' },
     },
   },

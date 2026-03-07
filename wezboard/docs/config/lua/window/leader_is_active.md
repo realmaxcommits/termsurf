@@ -8,9 +8,9 @@ This example shows `LEADER` in the right status area, and turns the cursor orang
 when the leader is active:
 
 ```lua
-local wezterm = require 'wezterm'
+local wezboard = require 'wezboard'
 
-wezterm.on('update-right-status', function(window, pane)
+wezboard.on('update-right-status', function(window, pane)
   local leader = ''
   if window:leader_is_active() then
     leader = 'LEADER'

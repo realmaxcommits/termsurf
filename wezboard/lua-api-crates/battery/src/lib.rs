@@ -1,11 +1,11 @@
 use config::lua::get_or_create_module;
 use config::lua::mlua::{self, Lua};
 use luahelper::impl_lua_conversion_dynamic;
-use wezterm_dynamic::{FromDynamic, ToDynamic};
+use wezboard_dynamic::{FromDynamic, ToDynamic};
 
 pub fn register(lua: &Lua) -> anyhow::Result<()> {
-    let wezterm_mod = get_or_create_module(lua, "wezterm")?;
-    wezterm_mod.set("battery_info", lua.create_function(battery_info)?)?;
+    let wezboard_mod = get_or_create_module(lua, "wezboard")?;
+    wezboard_mod.set("battery_info", lua.create_function(battery_info)?)?;
     Ok(())
 }
 

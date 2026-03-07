@@ -1,6 +1,6 @@
-# `wezterm connect`
+# `wezboard connect`
 
 ```console
-{% include "../examples/cmd-synopsis-wezterm-connect--help.txt" %}
+{% include "../examples/cmd-synopsis-wezboard-connect--help.txt" %}
 ```
 

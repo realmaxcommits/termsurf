@@ -308,7 +308,7 @@ argument.
 | Lua API calls                   | `wezterm.action`, `wezterm.config_builder()`   | `wezboard.action`, `wezboard.config_builder()`    |
 | README title                    | WezTerm                                        | Wezboard                                          |
 | Author name                     | Wez Furlong                                    | Wez Longboard                                     |
-| Author email                    | `wez@wezfurlong.org`                           | `wezboard@termsurf.com`                                |
+| Author email                    | `wez@wezfurlong.org`                           | `wezboard@termsurf.com`                           |
 | Author domain                   | `wezfurlong.org`                               | `termsurf.com/wezboard`                           |
 | GitHub repo                     | `wez/wezterm`, `wezterm/wezterm`               | `termsurf/termsurf`                               |
 | Crate registry                  | `crates.io/crates/wezterm`                     | `crates.io/crates/wezboard`                       |
@@ -345,22 +345,26 @@ Substitute (order: specific before generic):
 
 Rename crate directories:
 
-- `wezboard/wezterm/` → `wezboard/wezboard-cli/`
-- `wezboard/wezterm-gui/` → `wezboard/wezboard-gui/`
-- `wezboard/wezterm-mux-server/` → `wezboard/wezboard-mux-server/`
-- `wezboard/wezterm-mux-server-impl/` → `wezboard/wezboard-mux-server-impl/`
-- `wezboard/wezterm-font/` → `wezboard/wezboard-font/`
-- `wezboard/wezterm-ssh/` → `wezboard/wezboard-ssh/`
-- `wezboard/wezterm-gui-subcommands/` → `wezboard/wezboard-gui-subcommands/`
-- `wezboard/wezterm-toast-notification/` →
-  `wezboard/wezboard-toast-notification/`
+- `wezboard/wezterm/` → `wezboard/wezboard/`
 - `wezboard/wezterm-blob-leases/` → `wezboard/wezboard-blob-leases/`
 - `wezboard/wezterm-cell/` → `wezboard/wezboard-cell/`
+- `wezboard/wezterm-char-props/` → `wezboard/wezboard-char-props/`
+- `wezboard/wezterm-client/` → `wezboard/wezboard-client/`
 - `wezboard/wezterm-dynamic/` → `wezboard/wezboard-dynamic/`
 - `wezboard/wezterm-escape-parser/` → `wezboard/wezboard-escape-parser/`
-- `wezboard/wezterm-surface/` → `wezboard/wezboard-surface/`
-- `wezboard/wezterm-uds/` → `wezboard/wezboard-uds/`
+- `wezboard/wezterm-font/` → `wezboard/wezboard-font/`
+- `wezboard/wezterm-gui/` → `wezboard/wezboard-gui/`
+- `wezboard/wezterm-gui-subcommands/` → `wezboard/wezboard-gui-subcommands/`
+- `wezboard/wezterm-input-types/` → `wezboard/wezboard-input-types/`
+- `wezboard/wezterm-mux-server/` → `wezboard/wezboard-mux-server/`
+- `wezboard/wezterm-mux-server-impl/` → `wezboard/wezboard-mux-server-impl/`
 - `wezboard/wezterm-open-url/` → `wezboard/wezboard-open-url/`
+- `wezboard/wezterm-ssh/` → `wezboard/wezboard-ssh/`
+- `wezboard/wezterm-surface/` → `wezboard/wezboard-surface/`
+- `wezboard/wezterm-toast-notification/` →
+  `wezboard/wezboard-toast-notification/`
+- `wezboard/wezterm-uds/` → `wezboard/wezboard-uds/`
+- `wezboard/wezterm-version/` → `wezboard/wezboard-version/`
 
 Rename files with "wezterm" in the name (screenshots, configs, docs, CI
 templates, etc.).
@@ -385,3 +389,28 @@ Rename `wezboard/README.md` title to "Wezboard".
 1. `grep -ri wezterm wezboard/` — only protected patterns (URLs, attribution)
 2. `cargo build -p wezboard-gui` from `wezboard/` compiles
 3. The app launches as "TermSurf Wezboard"
+
+#### Result
+
+Pass. Created `scripts/rename-wezterm.sh` — a deterministic, re-runnable rename
+script that transforms all "wezterm" references to "wezboard" (or "termsurf
+wezboard" where appropriate). The script processed 886 files across three
+phases: text substitutions (sed), file/directory renames (git mv for 19 crate
+dirs + 75 other files), and verification.
+
+After running, only 2 references to "wezterm" remain — both are the
+`github.com/wezterm/xcb-imdkit-rs` dependency URL, which is a real upstream repo
+that must stay unchanged. The script protects this URL via a protect/restore
+pattern.
+
+Key discoveries during implementation:
+
+- `Wezterm` (capital W, lowercase t) needed its own sed rule — `WezTerm` and
+  `wezterm` didn't catch it.
+- `WezFurlong` and `wezfurlong` as standalone account names (Patreon, Ko-Fi,
+  Copr, Twitter) needed explicit substitutions beyond the `wezfurlong.org`
+  domain rule.
+- The `wezterm` GitHub org owns non-main repos (xcb-imdkit-rs) that must be
+  protected from renaming.
+- `cargo build -p wezboard-gui` compiles with only 2 harmless warnings (same as
+  pre-rename). The 159MB debug binary builds successfully.

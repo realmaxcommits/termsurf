@@ -1,5 +1,5 @@
-# `wezterm start`
+# `wezboard start`
 
 ```console
-{% include "../examples/cmd-synopsis-wezterm-start--help.txt" %}
+{% include "../examples/cmd-synopsis-wezboard-start--help.txt" %}
 ```

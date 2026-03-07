@@ -15,8 +15,8 @@ Possible values for ZONE are:
 * `"Prompt"`
 
 ```lua
-local wezterm = require 'wezterm'
-local act = wezterm.action
+local wezboard = require 'wezboard'
+local act = wezboard.action
 
 return {
   key_tables = {

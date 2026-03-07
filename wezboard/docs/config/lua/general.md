@@ -1,14 +1,14 @@
 # Lua Reference
 
-WezTerm provides Lua 5.4 as a configuration language. This section documents
+Wezboard provides Lua 5.4 as a configuration language. This section documents
 the various lua functions and types that are provided to the configuration
-file. These are provided by the `wezterm` module that must be imported into
+file. These are provided by the `wezboard` module that must be imported into
 your configuration file:
 
 ```lua
-local wezterm = require 'wezterm'
+local wezboard = require 'wezboard'
 local config = {}
-config.font = wezterm.font 'JetBrains Mono'
+config.font = wezboard.font 'JetBrains Mono'
 return config
 ```
 

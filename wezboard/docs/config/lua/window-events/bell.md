@@ -5,7 +5,7 @@
 The `bell` event is emitted when the ASCII BEL sequence is emitted to
 a pane in the window.
 
-Defining an event handler doesn't alter wezterm's handling of the bell;
+Defining an event handler doesn't alter wezboard's handling of the bell;
 the event supplements it and allows you to take additional action over
 the configured behavior.
 
@@ -17,10 +17,10 @@ represents the pane in which the bell was rung, which may not be active
 pane--it could be in an unfocused pane or tab..
 
 ```lua
-local wezterm = require 'wezterm'
+local wezboard = require 'wezboard'
 
-wezterm.on('bell', function(window, pane)
-  wezterm.log_info('the bell was rung in pane ' .. pane:pane_id() .. '!')
+wezboard.on('bell', function(window, pane)
+  wezboard.log_info('the bell was rung in pane ' .. pane:pane_id() .. '!')
 end)
 
 return {}

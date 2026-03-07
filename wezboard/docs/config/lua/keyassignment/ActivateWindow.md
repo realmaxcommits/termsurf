@@ -7,14 +7,14 @@ Activates the *nth* GUI window, zero-based.
 Performing this action is equivalent to executing this lua code fragment:
 
 ```lua
-wezterm.gui.gui_windows()[n + 1]:focus()
+wezboard.gui.gui_windows()[n + 1]:focus()
 ```
 
 Here's an example of setting up hotkeys to activate specific windows:
 
 ```lua
-local wezterm = require 'wezterm'
-local act = wezterm.action
+local wezboard = require 'wezboard'
+local act = wezboard.action
 local config = {}
 
 config.keys = {}

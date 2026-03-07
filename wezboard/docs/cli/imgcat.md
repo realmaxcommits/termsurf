@@ -1,6 +1,6 @@
-# `wezterm imgcat`
+# `wezboard imgcat`
 
 ```console
-{% include "../examples/cmd-synopsis-wezterm-imgcat--help.txt" %}
+{% include "../examples/cmd-synopsis-wezboard-imgcat--help.txt" %}
 ```
 
