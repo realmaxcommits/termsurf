@@ -430,3 +430,141 @@ call. Remove the `num_panes` argument from `paint_pane_border` too.
 4. Resize window — content reflows correctly, borders stay consistent
 5. Remove `split_border_width` from config — original behavior restored (no
    borders, no space subtracted)
+
+**Result:** Fail
+
+The `split_border_pixels * 2` subtraction in `resize.rs` correctly reduced the
+cell count — the terminal got fewer cols/rows. However, the border still rendered
+on top of content with no visible padding between border and text. Subtracting
+from available space before cell count computation reserves pixels at the window
+level, but those reserved pixels are not allocated as inset space around
+individual panes. The upstream resize approach treats the border space like
+window padding (edge of window), not like per-pane inset (around each pane's
+content area).
+
+#### Conclusion
+
+The window-padding analogy was flawed. Window padding works because it subtracts
+from the total window dimensions before the single content area is laid out.
+Pane borders need per-pane inset — each pane's content must be independently
+inset from its own borders. Reducing the global cell count just makes all panes
+smaller without creating gaps between content and borders. A different approach
+is needed — possibly modifying how `PositionedPane` coordinates are computed in
+the mux layer, or applying per-pane pixel offsets at the point where each pane's
+line rendering begins.
+
+### Experiment 4: Per-pane pixel inset on all edges
+
+Experiments 1-2 applied insets only on **interior edges** (checking `pos.left !=
+0`, `pos.top != 0`, etc.), but the border draws on **all 4 sides** of every
+pane. Content at window edges was never inset, so the border always covered it
+there. Experiment 3 was the wrong abstraction level entirely (global vs
+per-pane).
+
+The fix: treat border width as per-pane padding applied **unconditionally on all
+sides**. This is the CSS container-with-padding model — the border is the
+container edge, and the content area shrinks inward by the border width.
+
+Three rendering adjustments:
+1. Add `bw` to `left_pixel_x` — content starts `bw` pixels right of pane edge
+2. Add `bw` to `top_pixel_y` — content starts `bw` pixels below pane edge
+3. Reduce `pixel_width` by `2 * bw` — content clips at right border edge
+
+The `background_rect` is also inset by `bw` on all sides so the pane background
+fill doesn't extend under the border.
+
+Also revert Experiment 3's `resize.rs` changes since the global subtraction is
+the wrong level.
+
+#### Changes
+
+**1. `wezboard/wezboard-gui/src/termwindow/resize.rs`** — Revert Experiment 3.
+Remove `split_border_pixels` computation and its addition to `pixel_height`,
+`pixel_width`, `avail_width`, and `avail_height` in both branches.
+
+**2. `wezboard/wezboard-gui/src/termwindow/render/pane.rs`** — Three changes in
+`paint_pane`:
+
+**(a)** After computing `background_rect` (line 152), compute `bw` and inset the
+rect on all sides:
+
+```rust
+let bw = self.config.split_border_width.evaluate_as_pixels(
+    config::DimensionContext {
+        dpi: self.dimensions.dpi as f32,
+        pixel_max: self.dimensions.pixel_width as f32,
+        pixel_cell: self.render_metrics.cell_size.width as f32,
+    },
+) as f32;
+if bw > 0.0 && !pos.is_zoomed {
+    background_rect.origin.x += bw;
+    background_rect.origin.y += bw;
+    background_rect.size.width -= bw * 2.0;
+    background_rect.size.height -= bw * 2.0;
+}
+```
+
+**(b)** Add `bw` to `left_pixel_x` and `top_pixel_y` (around line 340):
+
+```rust
+let left_pixel_x = padding_left
+    + border.left.get() as f32
+    + (pos.left as f32 * self.render_metrics.cell_size.width as f32)
+    + if bw > 0.0 && !pos.is_zoomed { bw } else { 0.0 };
+```
+
+And use an inset `top_pixel_y` in the `LineRender` initializer:
+
+```rust
+top_pixel_y: top_pixel_y
+    + if bw > 0.0 && !pos.is_zoomed { bw } else { 0.0 },
+```
+
+**(c)** Reduce `pixel_width` in the `render_screen_line` call (line 495-496):
+
+```rust
+pixel_width: self.dims.cols as f32
+    * self.term_window.render_metrics.cell_size.width as f32
+    - if self.term_window.config.split_border_width.evaluate_as_pixels(
+        config::DimensionContext {
+            dpi: self.term_window.dimensions.dpi as f32,
+            pixel_max: self.term_window.dimensions.pixel_width as f32,
+            pixel_cell: self.term_window.render_metrics.cell_size.width as f32,
+        },
+    ) > 0.0 && !self.pos.is_zoomed { bw * 2.0 } else { 0.0 },
+```
+
+Actually, cleaner: store `bw` in the `LineRender` struct and use it:
+
+```rust
+// In LineRender struct:
+border_inset: f32,
+
+// In LineRender initializer:
+border_inset: if bw > 0.0 && !pos.is_zoomed { bw } else { 0.0 },
+
+// In render_screen_line call:
+pixel_width: self.dims.cols as f32
+    * self.term_window.render_metrics.cell_size.width as f32
+    - self.border_inset * 2.0,
+```
+
+#### Verification
+
+1. `cd wezboard && cargo build -p wezboard-gui` — zero errors
+2. Launch with border config, single pane — border visible on all sides, text
+   does not render under border
+3. Create splits — borders on all panes, text inset on all edges
+4. Resize window — content reflows correctly
+5. Zoom a pane — no borders, full content area
+6. Remove `split_border_width` from config — no borders, no inset
+
+**Result:** Pass
+
+Content inset works on all edges. The border draws on layer 2, the background
+rect and text rendering are both inset by `bw` pixels on all sides, so the
+border never covers content. The key difference from Experiments 1-2: the inset
+applies unconditionally on **all four sides** (not just interior edges), and
+`pixel_width` is reduced by `2 * bw` to clip the right side. Storing `bw` as
+`border_inset` in the `LineRender` struct keeps the render_screen_line call
+clean.

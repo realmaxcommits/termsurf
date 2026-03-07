@@ -33,7 +33,6 @@ impl crate::TermWindow {
         &mut self,
         pos: &PositionedPane,
         layers: &mut TripleLayerQuadAllocator,
-        num_panes: usize,
     ) -> anyhow::Result<()> {
         if self.config.use_box_model_render {
             return self.paint_pane_box_model(pos);
@@ -152,8 +151,7 @@ impl crate::TermWindow {
             )
         };
 
-        // Inset content when split borders are active
-        let border_width = if num_panes > 1 && !pos.is_zoomed {
+        let bw = if !pos.is_zoomed {
             self.config.split_border_width.evaluate_as_pixels(
                 config::DimensionContext {
                     dpi: self.dimensions.dpi as f32,
@@ -165,25 +163,11 @@ impl crate::TermWindow {
             0.0
         };
         let mut background_rect = background_rect;
-        if border_width > 0.0 {
-            // Interior left edge
-            if pos.left != 0 {
-                background_rect.origin.x += border_width;
-                background_rect.size.width -= border_width;
-            }
-            // Interior top edge
-            if pos.top != 0 {
-                background_rect.origin.y += border_width;
-                background_rect.size.height -= border_width;
-            }
-            // Interior right edge
-            if pos.left + pos.width < self.terminal_size.cols as usize {
-                background_rect.size.width -= border_width;
-            }
-            // Interior bottom edge
-            if pos.top + pos.height < self.terminal_size.rows as usize {
-                background_rect.size.height -= border_width;
-            }
+        if bw > 0.0 {
+            background_rect.origin.x += bw;
+            background_rect.origin.y += bw;
+            background_rect.size.width -= bw * 2.0;
+            background_rect.size.height -= bw * 2.0;
         }
 
         if self.window_background.is_empty() {
@@ -369,23 +353,21 @@ impl crate::TermWindow {
                 filled_box: TextureRect,
                 window_is_transparent: bool,
                 layers: &'a mut TripleLayerQuadAllocator<'b>,
+                border_inset: f32,
                 error: Option<anyhow::Error>,
             }
 
             let left_pixel_x = padding_left
                 + border.left.get() as f32
                 + (pos.left as f32 * self.render_metrics.cell_size.width as f32)
-                + if border_width > 0.0 && pos.left != 0 { border_width } else { 0.0 };
-
-            let inset_top_pixel_y = top_pixel_y
-                + if border_width > 0.0 && pos.top != 0 { border_width } else { 0.0 };
+                + bw;
 
             let mut render = LineRender {
                 term_window: self,
                 selrange,
                 rectangular,
                 dims,
-                top_pixel_y: inset_top_pixel_y,
+                top_pixel_y: top_pixel_y + bw,
                 left_pixel_x,
                 pos,
                 pane_id,
@@ -403,6 +385,7 @@ impl crate::TermWindow {
                 filled_box,
                 window_is_transparent,
                 layers,
+                border_inset: bw,
                 error: None,
             };
 
@@ -532,7 +515,8 @@ impl crate::TermWindow {
                                 top_pixel_y: *quad_key.top_pixel_y,
                                 left_pixel_x: self.left_pixel_x,
                                 pixel_width: self.dims.cols as f32
-                                    * self.term_window.render_metrics.cell_size.width as f32,
+                                    * self.term_window.render_metrics.cell_size.width as f32
+                                    - self.border_inset * 2.0,
                                 stable_line_idx: Some(stable_row),
                                 line: &line,
                                 selection: selrange.clone(),
@@ -625,9 +609,8 @@ impl crate::TermWindow {
         &mut self,
         pos: &PositionedPane,
         layers: &mut TripleLayerQuadAllocator,
-        num_panes: usize,
     ) -> anyhow::Result<()> {
-        if num_panes <= 1 || pos.is_zoomed {
+        if pos.is_zoomed {
             return Ok(());
         }
 
