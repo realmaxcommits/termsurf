@@ -209,3 +209,14 @@ our changes, not by the upstream code or missing dependencies.
 - No renaming (Experiment 3)
 - No XDG path changes (Experiment 3)
 - No protocol integration (later experiments)
+
+#### Result
+
+Pass. `cargo build -p wezterm-gui` compiles successfully (2 harmless warnings).
+The 159MB debug binary launches and displays a working terminal window.
+
+One issue discovered: `git subtree add` does not populate git submodules.
+WezTerm has four submodules (zlib, libpng, freetype2, harfbuzz) that needed to
+be cloned manually at their pinned commits. The initial build failed because
+`--depth 1` clones pulled the latest upstream (where file paths had changed).
+Cloning at the exact commits from `git ls-tree wezterm/main` fixed it.
