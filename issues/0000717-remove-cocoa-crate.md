@@ -545,6 +545,7 @@ panicked at window/src/os/macos/window.rs:607:25
 ```
 
 This is on the line:
+
 ```rust
 let _: () = objc2::msg_send![*window as *const _ as *const _ as *const AnyObject, setTabbingMode:2];
 ```
@@ -564,6 +565,7 @@ The exact root cause needs investigation in the next experiment.
 `commands.rs` was not listed as a file to modify, but it imports
 `window::os::macos::menu::*` which pulls in the re-exported
 `NSEventModifierFlags` and previously `SEL`. The migration required:
+
 - `SEL` → `objc2::runtime::Sel`
 - `sel2to1(objc2::sel!(...))` → `objc2::sel!(...)`
 - `NSShiftKeyMask` → `Shift`, `NSAlternateKeyMask` → `Option`,
@@ -573,3 +575,58 @@ The exact root cause needs investigation in the next experiment.
 marking an experiment as done. The design should have anticipated the
 `performSelector:withObject:` return type issue and the downstream `commands.rs`
 impact.
+
+### Experiment 3: Fix `msg_send!` type mismatches in `window.rs`
+
+Issue 716 migrated `msg_send!` from `objc` 0.2 to `objc2`, but `objc2` enforces
+runtime type checking that `objc` 0.2 did not. Two categories of mismatch exist
+in `window.rs`:
+
+1. **Integer literal without suffix.** `setTabbingMode:2` — Rust infers `2` as
+   `i32` (type code `i`), but `setTabbingMode:` expects `NSInteger` (type code
+   `q`, 64-bit signed). Fix: `2_isize`.
+
+2. **`YES`/`NO` from `objc::runtime`.** These are `BOOL` = `i8` (type code `c`),
+   but on arm64 macOS, ObjC BOOL is `bool` (type code `B`). Every `msg_send!`
+   call passing `YES` or `NO` will crash at runtime. Fix: replace with `true` /
+   `false`.
+
+Both crash categories are pre-existing from Issue 716 — they exist in the
+committed code before experiment 2. Experiment 2 didn't modify these lines, but
+the `setAppleMenu:` crash (which was also pre-existing) masked them by crashing
+first.
+
+#### Changes
+
+**`window.rs`** — Fix all `objc2::msg_send!` calls that pass `YES`, `NO`, or
+bare integer literals:
+
+| Line | Old                             | New            | Why                 |
+| ---- | ------------------------------- | -------------- | ------------------- |
+| 235  | `setWantsLayer: YES`            | `...: true`    | BOOL `i8` → `bool`  |
+| 242  | `setOpaque: NO`                 | `...: false`   | BOOL `i8` → `bool`  |
+| 274  | `setOpaque: NO`                 | `...: false`   | BOOL `i8` → `bool`  |
+| 342  | `setWantsBest...Surface: YES`   | `...: true`    | BOOL `i8` → `bool`  |
+| 607  | `setTabbingMode:2`              | `...: 2_isize` | `i32` → `NSInteger` |
+| 608  | `setRestorable: NO`             | `...: false`   | BOOL `i8` → `bool`  |
+| 1349 | `setHiddenUntilMouseMoves: NO`  | `...: false`   | BOOL `i8` → `bool`  |
+| 1352 | `setHiddenUntilMouseMoves: YES` | `...: true`    | BOOL `i8` → `bool`  |
+| 1359 | `setNeedsDisplay: YES`          | `...: true`    | BOOL `i8` → `bool`  |
+| 2367 | `assumeInside: NO`              | `...: false`   | BOOL `i8` → `bool`  |
+| 2375 | `setNeedsDisplay: YES`          | `...: true`    | BOOL `i8` → `bool`  |
+| 3240 | `setOpaque: NO`                 | `...: false`   | BOOL `i8` → `bool`  |
+| 3279 | `setNeedsDisplay: YES`          | `...: true`    | BOOL `i8` → `bool`  |
+
+13 call sites total: 12 `YES`/`NO` → `true`/`false`, 1 integer literal →
+`_isize`.
+
+No other files need changes — `menu.rs`, `connection.rs`, and `app.rs` no longer
+use `objc::runtime::{YES, NO}` after experiments 1–2.
+
+#### Verification
+
+1. `cd wezboard && cargo build` — zero errors, zero warnings
+2. `cargo run --bin wezboard-gui` — app launches without crashing
+3. Verify a window opens and displays content
+4. Verify menus work (File, Edit, Window, Help)
+5. Verify dock menu (right-click dock icon → "New Window")
