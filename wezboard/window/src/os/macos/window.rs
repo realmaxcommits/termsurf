@@ -232,14 +232,14 @@ impl GlContextPair {
             let layer: id;
             unsafe {
                 let _: () =
-                    objc2::msg_send![view as *const _ as *const AnyObject, setWantsLayer: YES];
+                    objc2::msg_send![view as *const _ as *const AnyObject, setWantsLayer: true];
                 layer = {
                     let __r: *mut AnyObject =
                         objc2::msg_send![view as *const _ as *const AnyObject, layer];
                     __r as id
                 };
                 let _: () = objc2::msg_send![layer as *const _ as *const AnyObject, setContentsScale: 1.0f64];
-                let _: () = objc2::msg_send![layer as *const _ as *const AnyObject, setOpaque: NO];
+                let _: () = objc2::msg_send![layer as *const _ as *const AnyObject, setOpaque: false];
             };
 
             let conn = Connection::get().unwrap();
@@ -271,7 +271,7 @@ impl GlContextPair {
                     for i in 0..layer_count {
                         let layer = sublayers.objectAtIndex(i);
                         let _: () =
-                            objc2::msg_send![layer as *const _ as *const AnyObject, setOpaque: NO];
+                            objc2::msg_send![layer as *const _ as *const AnyObject, setOpaque: false];
                     }
                 }
             }
@@ -339,7 +339,7 @@ mod cglbits {
             // Allow using retina resolutions; without this we're forced into low res
             // and the system will scale us up, resulting in blurry rendering
             unsafe {
-                let _: () = objc2::msg_send![view as *const _ as *const AnyObject, setWantsBestResolutionOpenGLSurface: YES];
+                let _: () = objc2::msg_send![view as *const _ as *const AnyObject, setWantsBestResolutionOpenGLSurface: true];
             }
 
             let gl_context = unsafe {
@@ -604,8 +604,8 @@ impl Window {
             );
 
             // Prevent Cocoa native tabs from being used
-            let _: () = objc2::msg_send![*window as *const _ as *const _ as *const AnyObject, setTabbingMode:2 /* NSWindowTabbingModeDisallowed */];
-            let _: () = objc2::msg_send![*window as *const _ as *const _ as *const AnyObject, setRestorable: NO];
+            let _: () = objc2::msg_send![*window as *const _ as *const _ as *const AnyObject, setTabbingMode: 2_isize /* NSWindowTabbingModeDisallowed */];
+            let _: () = objc2::msg_send![*window as *const _ as *const _ as *const AnyObject, setRestorable: false];
 
             window.setReleasedWhenClosed_(NO);
             window.setBackgroundColor_(cocoa::appkit::NSColor::clearColor(nil));
@@ -1346,17 +1346,17 @@ impl WindowInner {
                         __r as id
                     }
                 };
-                let () = objc2::msg_send![cls1to2(ns_cursor_cls), setHiddenUntilMouseMoves: NO];
+                let () = objc2::msg_send![cls1to2(ns_cursor_cls), setHiddenUntilMouseMoves: false];
                 let () = objc2::msg_send![instance as *const _ as *const AnyObject, set];
             } else {
-                let () = objc2::msg_send![cls1to2(ns_cursor_cls), setHiddenUntilMouseMoves: YES];
+                let () = objc2::msg_send![cls1to2(ns_cursor_cls), setHiddenUntilMouseMoves: true];
             }
         }
     }
 
     fn invalidate(&mut self) {
         unsafe {
-            let () = objc2::msg_send![*self.view as *const _ as *const _ as *const AnyObject, setNeedsDisplay: YES];
+            let () = objc2::msg_send![*self.view as *const _ as *const _ as *const AnyObject, setNeedsDisplay: true];
             if let Some(window_view) = WindowView::get_this(&**self.view) {
                 window_view.inner.borrow_mut().invalidated = true;
             }
@@ -2364,7 +2364,7 @@ impl WindowView {
                     NSSize::new(frame.size.width, frame.size.height),
                 );
                 inner.tracking_rect_tag = unsafe {
-                    objc2::msg_send![*view as *const _ as *const AnyObject, addTrackingRect: std::mem::transmute::<NSRect, MsgSendRect>(rect), owner: *view as *const _ as *mut AnyObject, userData: std::ptr::null::<AnyObject>(), assumeInside: NO]
+                    objc2::msg_send![*view as *const _ as *const AnyObject, addTrackingRect: std::mem::transmute::<NSRect, MsgSendRect>(rect), owner: *view as *const _ as *mut AnyObject, userData: std::ptr::null::<std::ffi::c_void>(), assumeInside: false]
                 };
             }
         }
@@ -2372,7 +2372,7 @@ impl WindowView {
 
     extern "C" fn window_should_close(this: &mut Object, _sel: Sel, _id: id) -> BOOL {
         unsafe {
-            let () = objc2::msg_send![this as *const _ as *const _ as *const AnyObject, setNeedsDisplay: YES];
+            let () = objc2::msg_send![this as *const _ as *const _ as *const AnyObject, setNeedsDisplay: true];
         }
 
         if let Some(this) = Self::get_this(this) {
@@ -3237,7 +3237,7 @@ impl WindowView {
             };
             let () = objc2::msg_send![layer as *const _ as *const AnyObject, setDelegate: view as *const _ as *mut AnyObject];
             let () = objc2::msg_send![layer as *const _ as *const AnyObject, setContentsScale: 1.0];
-            let () = objc2::msg_send![layer as *const _ as *const AnyObject, setOpaque: NO];
+            let () = objc2::msg_send![layer as *const _ as *const AnyObject, setOpaque: false];
             layer
         }
     }
@@ -3276,7 +3276,7 @@ impl WindowView {
                             state.paint_throttled = false;
                             if state.invalidated {
                                 unsafe {
-                                    let () = objc2::msg_send![*inner.view as *const _ as *const _ as *const AnyObject, setNeedsDisplay: YES];
+                                    let () = objc2::msg_send![*inner.view as *const _ as *const _ as *const AnyObject, setNeedsDisplay: true];
                                 }
                             }
                         }

@@ -620,6 +620,13 @@ bare integer literals:
 13 call sites total: 12 `YES`/`NO` → `true`/`false`, 1 integer literal →
 `_isize`.
 
+Additionally, fix `addTrackingRect:owner:userData:assumeInside:` on line 2367:
+`userData: std::ptr::null::<AnyObject>()` passes type code `@` (object pointer)
+but the method expects `^v` (void pointer). Fix:
+`std::ptr::null::<std::ffi::c_void>()`.
+
+14 call sites total.
+
 No other files need changes — `menu.rs`, `connection.rs`, and `app.rs` no longer
 use `objc::runtime::{YES, NO}` after experiments 1–2.
 
@@ -630,3 +637,12 @@ use `objc::runtime::{YES, NO}` after experiments 1–2.
 3. Verify a window opens and displays content
 4. Verify menus work (File, Edit, Window, Help)
 5. Verify dock menu (right-click dock icon → "New Window")
+
+#### Result: PASS
+
+All 14 type mismatches fixed. App launches without crashing. Window opens and
+displays a terminal. The fixes were mechanical — `YES` → `true`, `NO` → `false`,
+`2` → `2_isize`, `null::<AnyObject>()` → `null::<c_void>()`. The
+`addTrackingRect` `userData` fix was discovered during testing (not in the
+original design) — another case of objc2's strict type checking catching a type
+code mismatch (`@` vs `^v`).
