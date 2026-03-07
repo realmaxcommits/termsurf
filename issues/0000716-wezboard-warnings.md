@@ -182,9 +182,135 @@ Pass. All 5 non-`objc` warnings eliminated:
   `wezboard-toast-notification/src/macos.rs`.
 - Deleted dead `phys_cell_idx` assignment in `screen_line.rs` and made the
   variable immutable (removing the cascading
-  `variable does not need to be
-  mutable` warning).
+  `variable does not need to be mutable` warning).
 - Added `#[allow(dead_code)]` to scaffolding in `state.rs`.
 
 `cargo build -p wezboard-gui` now produces only the 188 `cargo-clippy` cfg
 warnings from the legacy `objc` 0.2 crate.
+
+### Experiment 2: Migrate all files from `objc` 0.2 to `objc2`
+
+#### Goal
+
+Replace every direct `msg_send!`/`class!`/`sel!` call, every `ClassDecl`, every
+`StrongPtr`/`WeakPtr`, and every `objc::Encode` across all 7 files. Remove the
+direct `objc` 0.2 dependency. End state: 188 → 0 warnings.
+
+#### New dependencies
+
+- Add `objc2-app-kit = "0.3"` to workspace `Cargo.toml` and `window/Cargo.toml`.
+- Remove `objc.workspace = true` from `window/Cargo.toml`,
+  `wezboard-font/Cargo.toml`, `wezboard-gui/Cargo.toml`.
+- Keep `cocoa` for now — its trait methods (`NSApp()`, `NSScreen::frame()`,
+  `NSWindow::initWithContentRect_...`, etc.) don't produce warnings because
+  they're compiled inside the `cocoa` crate. Removing `cocoa` is a separate
+  future task.
+
+#### Migration patterns
+
+See `docs/objc-to-objc2.md` for the full reference. Summary of the patterns used
+in this experiment:
+
+| Old (`objc` 0.2)                    | New (`objc2`)                                  |
+| ----------------------------------- | ---------------------------------------------- |
+| `msg_send![obj, method: arg]`       | Typed method: `NSFoo::method(obj, arg)`        |
+| `class!(NSFoo)`                     | Direct type reference: `NSFoo::class()`        |
+| `sel!(foo:)`                        | `objc2::sel!(foo:)` (same syntax, no cfg warn) |
+| `StrongPtr`                         | `Retained<T>`                                  |
+| `WeakPtr`                           | `objc2::rc::Weak<T>`                           |
+| `ClassDecl::new("Cls", superclass)` | `ClassBuilder::new("Cls", superclass)`         |
+| `cls.add_method(sel!(...), fn)`     | `builder.add_method(sel!(...), fn)`            |
+| `cls.add_ivar::<T>("name")`         | `builder.add_ivar::<T>("name")`                |
+| `BOOL` / `YES` / `NO`               | Rust `bool`                                    |
+| `id` (`*mut Object`)                | `*mut AnyObject` or typed `&NSFoo`             |
+| `objc::Encode`                      | `objc2::encode::Encode` + `RefEncode`          |
+
+#### Changes by file
+
+1. **`window/src/os/macos/mod.rs`** (2 call sites)
+
+   `nsstring()` — Return `Retained<NSString>` via
+   `objc2_foundation::NSString::from_str()`. Remove `cocoa::base::{id, nil}`,
+   `cocoa::foundation::NSString`, `objc::rc::StrongPtr`.
+
+   `nsstring_to_str()` — Replace
+   `msg_send![ns, isKindOfClass: class!(NSAttributedString)]` and
+   `msg_send![ns, string]` with typed `objc2_foundation` calls. Use
+   `NSString::as_str()` instead of `NSString::UTF8String`.
+
+   Remove `#![allow(unexpected_cfgs)]`.
+
+2. **`window/src/os/macos/connection.rs`** (11 call sites)
+
+   Replace all `msg_send!` calls with typed `objc2_app_kit` methods:
+   `NSApplication::setDelegate()`, `stop()`, `abortModal()`,
+   `effectiveAppearance()`, `hide()`. Replace `NSAppearance::name()`,
+   `NSScreen::localizedName()`, `NSScreen::maximumFramesPerSecond()`,
+   `NSObject::respondsToSelector()`.
+
+   Remove `objc::runtime::*` and `objc::*` imports.
+
+3. **`window/src/os/macos/app.rs`** (18 call sites, 1 ClassDecl)
+
+   Replace all `msg_send!` calls with typed methods:
+   `NSAlert::setMessageText()`, `setInformativeText()`, `addButtonWithTitle()`,
+   `runModal()`. Replace `ClassDecl::new(...)` with `ClassBuilder::new(...)`.
+   Replace `StrongPtr` with `Retained<AnyObject>`. Replace `BOOL`/`YES`/`NO`
+   with `bool`.
+
+4. **`window/src/os/macos/menu.rs`** (25 call sites, 1 ClassDecl)
+
+   Replace all `msg_send!` calls with typed `NSMenu`/`NSMenuItem` methods.
+   Replace `ClassDecl` → `ClassBuilder` for the `WezboardNSMenuRepresentedItem`
+   wrapper class. Replace all `StrongPtr` fields/returns with `Retained<T>`.
+   Replace `superclass()` helper call in `dealloc` with `objc2::ClassType`.
+
+5. **`window/src/os/macos/window.rs`** (124 call sites, 2 ClassDecl, StrongPtr,
+   WeakPtr, Encode)
+
+   The bulk of the work. Key changes:
+   - **Two `ClassDecl`s** → `ClassBuilder`: `WezboardWindow` (NSWindow subclass,
+     2 methods) and `WezboardWindowView` (NSView subclass, ~38 methods including
+     NSTextInputClient protocol). Both register methods via
+     `add_method(sel!(...), fn)` — same API on `ClassBuilder`.
+   - **`StrongPtr` fields** (`view`, `window`, `_pixel_format`, `gl_context`) →
+     `Retained<AnyObject>` (or typed where possible).
+   - **`WeakPtr`** for titlebar/superview references → `objc2::rc::Weak<T>`.
+   - **`objc::Encode` impls** for `NSRange` and `NSRangePointer` →
+     `objc2::encode::Encode` + `RefEncode`.
+   - **`superclass()` helper** — Replace `msg_send![this, superclass]` with
+     `AnyClass` from `objc2`.
+   - **~124 `msg_send!` calls** — Replace with typed methods for NSView,
+     NSWindow, NSCursor, NSEvent, NSArray, CALayer, NSOpenGLContext, etc., or
+     use `objc2::msg_send!` for dynamic dispatch where typed wrappers don't
+     exist.
+
+6. **`window/src/os/macos/clipboard.rs`** (0 call sites)
+
+   No `msg_send!`/`class!`/`sel!` usage, but calls `nsstring()` and
+   `nsstring_to_str()`. Update for new return type (`Retained<NSString>` instead
+   of `StrongPtr`).
+
+7. **`wezboard-font/src/locator/core_text.rs`** (2 call sites)
+
+   Replace `msg_send![class!(NSUserDefaults), standardUserDefaults]` →
+   `objc2_foundation::NSUserDefaults::standardUserDefaults()`. Replace
+   `msg_send![user_defaults, stringArrayForKey:]` → typed method. Remove
+   `#![allow(unexpected_cfgs)]`.
+
+8. **`wezboard-gui/src/commands.rs`** (1 call site)
+
+   Replace `sel!(wezboardPerformKeyAssignment:)` with
+   `objc2::sel!(wezboardPerformKeyAssignment:)`. Remove
+   `#[allow(unexpected_cfgs)]`.
+
+#### Implementation order
+
+Start with `mod.rs` (shared utilities), then cascade outward: `connection.rs` →
+`app.rs` → `menu.rs` → `clipboard.rs` → `window.rs` → `core_text.rs` →
+`commands.rs`. Build after each file to catch errors incrementally.
+
+#### Verification
+
+`cargo build -p wezboard-gui` produces zero warnings. No direct `use objc::`
+imports remain in any source file.
