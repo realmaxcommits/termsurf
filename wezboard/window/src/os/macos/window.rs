@@ -2,7 +2,6 @@
 #![allow(clippy::let_unit_value)]
 
 use super::keycodes::*;
-use super::{cls1to2, get_class as get_objc_class, sel2to1};
 use super::{nsstring, nsstring_to_str};
 use crate::clipboard::Clipboard as ClipboardContext;
 use crate::connection::ConnectionOps;
@@ -17,15 +16,15 @@ use crate::{
 use anyhow::{anyhow, bail, ensure};
 use async_trait::async_trait;
 use cocoa::appkit::{
-    self, CGFloat, NSApplication, NSApplicationActivateIgnoringOtherApps,
+    self, NSApplication, NSApplicationActivateIgnoringOtherApps,
     NSApplicationPresentationOptions, NSBackingStoreBuffered, NSEvent, NSEventModifierFlags,
     NSOpenGLContext, NSOpenGLPixelFormat, NSPasteboard, NSRunningApplication, NSScreen, NSView,
     NSViewHeightSizable, NSViewWidthSizable, NSWindow, NSWindowStyleMask,
 };
 use cocoa::base::*;
 use cocoa::foundation::{
-    NSArray, NSAutoreleasePool, NSFastEnumeration, NSInteger, NSNotFound, NSPoint, NSRect, NSSize,
-    NSString, NSUInteger,
+    NSArray, NSAutoreleasePool, NSFastEnumeration, NSPoint, NSRect, NSSize,
+    NSString,
 };
 use config::window::WindowLevel;
 use config::{ConfigHandle, RgbaColor, SrgbaTuple};
@@ -34,11 +33,12 @@ use core_foundation::bundle::{CFBundleGetBundleWithIdentifier, CFBundleGetFuncti
 use core_foundation::data::{CFData, CFDataGetBytePtr, CFDataRef};
 use core_foundation::string::{CFString, CFStringRef, UniChar};
 use core_foundation::{declare_TCFType, impl_TCFType};
-use objc::declare::ClassDecl;
 use objc::rc::{StrongPtr, WeakPtr};
-use objc::runtime::{Class, Object, Protocol, Sel, BOOL, NO, YES};
+use objc::runtime::{Object, BOOL, NO, YES};
 use objc2::rc::Retained;
-use objc2::runtime::AnyObject;
+use objc2::runtime::{AnyClass, AnyObject, AnyProtocol, Bool, ClassBuilder, Sel};
+use objc2_core_foundation::{CGFloat, CGPoint, CGRect, CGSize};
+use objc2_foundation::NSRange;
 use promise::Future;
 use raw_window_handle::{
     AppKitDisplayHandle, AppKitWindowHandle, DisplayHandle, HandleError, HasDisplayHandle,
@@ -56,16 +56,16 @@ use wezboard_font::FontConfiguration;
 use wezboard_input_types::{is_ascii_control, IntegratedTitleButtonStyle, KeyboardLedStatus};
 
 #[allow(non_upper_case_globals)]
-const NSViewLayerContentsPlacementTopLeft: NSInteger = 11;
+const NSViewLayerContentsPlacementTopLeft: isize = 11;
 #[allow(non_upper_case_globals)]
-const NSViewLayerContentsRedrawDuringViewResize: NSInteger = 2;
+const NSViewLayerContentsRedrawDuringViewResize: isize = 2;
 
 #[link(name = "CoreGraphics", kind = "framework")]
 extern "C" {
     fn CGSMainConnectionID() -> id;
     fn CGSSetWindowBackgroundBlurRadius(
         connection_id: id,
-        window_id: NSInteger,
+        window_id: isize,
         radius: i64,
     ) -> i32;
 }
@@ -94,102 +94,6 @@ enum ImeDisposition {
     Acted,
     /// We decided to continue with key dispatch
     Continue,
-}
-
-#[repr(C)]
-struct NSRange(cocoa::foundation::NSRange);
-
-#[derive(Debug)]
-#[repr(C)]
-struct NSRangePointer(*mut NSRange);
-
-impl std::fmt::Debug for NSRange {
-    fn fmt(&self, fmt: &mut std::fmt::Formatter) -> std::result::Result<(), std::fmt::Error> {
-        fmt.debug_struct("NSRange")
-            .field("location", &self.0.location)
-            .field("length", &self.0.length)
-            .finish()
-    }
-}
-
-unsafe impl objc::Encode for NSRange {
-    fn encode() -> objc::Encoding {
-        let encoding = format!(
-            "{{NSRange={}{}}}",
-            NSUInteger::encode().as_str(),
-            NSUInteger::encode().as_str()
-        );
-        unsafe { objc::Encoding::from_str(&encoding) }
-    }
-}
-
-unsafe impl objc::Encode for NSRangePointer {
-    fn encode() -> objc::Encoding {
-        unsafe { objc::Encoding::from_str(&format!("^{}", NSRange::encode().as_str())) }
-    }
-}
-
-// objc2 Encode impls for local wrapper types used in objc2::msg_send!
-unsafe impl objc2::Encode for NSRange {
-    const ENCODING: objc2::Encoding = objc2::Encoding::Struct(
-        "NSRange",
-        &[objc2::Encoding::ULongLong, objc2::Encoding::ULongLong],
-    );
-}
-
-unsafe impl objc2::RefEncode for NSRange {
-    const ENCODING_REF: objc2::Encoding =
-        objc2::Encoding::Pointer(&<Self as objc2::Encode>::ENCODING);
-}
-
-unsafe impl objc2::Encode for NSRangePointer {
-    const ENCODING: objc2::Encoding =
-        objc2::Encoding::Pointer(&<NSRange as objc2::Encode>::ENCODING);
-}
-
-/// Helper types for passing cocoa geometry types through objc2::msg_send!
-/// These have the same layout as NSRect/NSSize but implement objc2::Encode.
-#[repr(C)]
-struct MsgSendRect {
-    origin_x: f64,
-    origin_y: f64,
-    size_w: f64,
-    size_h: f64,
-}
-
-unsafe impl objc2::Encode for MsgSendRect {
-    const ENCODING: objc2::Encoding = objc2::Encoding::Struct(
-        "CGRect",
-        &[
-            objc2::Encoding::Struct(
-                "CGPoint",
-                &[objc2::Encoding::Double, objc2::Encoding::Double],
-            ),
-            objc2::Encoding::Struct(
-                "CGSize",
-                &[objc2::Encoding::Double, objc2::Encoding::Double],
-            ),
-        ],
-    );
-}
-
-#[repr(C)]
-struct MsgSendSize {
-    width: f64,
-    height: f64,
-}
-
-unsafe impl objc2::Encode for MsgSendSize {
-    const ENCODING: objc2::Encoding = objc2::Encoding::Struct(
-        "CGSize",
-        &[objc2::Encoding::Double, objc2::Encoding::Double],
-    );
-}
-
-impl NSRange {
-    fn new(location: u64, length: u64) -> Self {
-        Self(cocoa::foundation::NSRange { location, length })
-    }
 }
 
 #[derive(Clone)]
@@ -587,7 +491,7 @@ impl Window {
             }));
 
             let window: id = {
-                let __r: *mut AnyObject = objc2::msg_send![cls1to2(get_window_class()), alloc];
+                let __r: *mut AnyObject = objc2::msg_send![get_window_class(), alloc];
                 __r as id
             };
             let window = StrongPtr::new(NSWindow::initWithContentRect_styleMask_backing_defer_(
@@ -681,7 +585,7 @@ impl Window {
 
             CGSSetWindowBackgroundBlurRadius(
                 CGSMainConnectionID(),
-                window.windowNumber(),
+                window.windowNumber() as isize,
                 config.macos_window_background_blur,
             );
             window.setContentView_(*view);
@@ -1260,7 +1164,7 @@ impl WindowInner {
         unsafe {
             CGSSetWindowBackgroundBlurRadius(
                 CGSMainConnectionID(),
-                self.window.windowNumber(),
+                self.window.windowNumber() as isize,
                 self.config.macos_window_background_blur,
             );
         }
@@ -1315,7 +1219,7 @@ impl WindowInner {
 
     fn set_cursor(&mut self, cursor: Option<MouseCursor>) {
         unsafe {
-            let ns_cursor_cls = get_objc_class(c"NSCursor");
+            let ns_cursor_cls = AnyClass::get(c"NSCursor").unwrap();
             if let Some(cursor) = cursor {
                 // Unconditionally apply the requested cursor, as there are
                 // cases where macOS can decide to change the cursor to something
@@ -1323,34 +1227,34 @@ impl WindowInner {
                 let instance: id = match cursor {
                     MouseCursor::Arrow => {
                         let __r: *mut AnyObject =
-                            objc2::msg_send![cls1to2(ns_cursor_cls), arrowCursor];
+                            objc2::msg_send![ns_cursor_cls, arrowCursor];
                         __r as id
                     }
                     MouseCursor::Text => {
                         let __r: *mut AnyObject =
-                            objc2::msg_send![cls1to2(ns_cursor_cls), IBeamCursor];
+                            objc2::msg_send![ns_cursor_cls, IBeamCursor];
                         __r as id
                     }
                     MouseCursor::Hand => {
                         let __r: *mut AnyObject =
-                            objc2::msg_send![cls1to2(ns_cursor_cls), pointingHandCursor];
+                            objc2::msg_send![ns_cursor_cls, pointingHandCursor];
                         __r as id
                     }
                     MouseCursor::SizeUpDown => {
                         let __r: *mut AnyObject =
-                            objc2::msg_send![cls1to2(ns_cursor_cls), resizeUpDownCursor];
+                            objc2::msg_send![ns_cursor_cls, resizeUpDownCursor];
                         __r as id
                     }
                     MouseCursor::SizeLeftRight => {
                         let __r: *mut AnyObject =
-                            objc2::msg_send![cls1to2(ns_cursor_cls), resizeLeftRightCursor];
+                            objc2::msg_send![ns_cursor_cls, resizeLeftRightCursor];
                         __r as id
                     }
                 };
-                let () = objc2::msg_send![cls1to2(ns_cursor_cls), setHiddenUntilMouseMoves: false];
+                let () = objc2::msg_send![ns_cursor_cls, setHiddenUntilMouseMoves: false];
                 let () = objc2::msg_send![instance as *const _ as *const AnyObject, set];
             } else {
-                let () = objc2::msg_send![cls1to2(ns_cursor_cls), setHiddenUntilMouseMoves: true];
+                let () = objc2::msg_send![ns_cursor_cls, setHiddenUntilMouseMoves: true];
             }
         }
     }
@@ -1375,9 +1279,9 @@ impl WindowInner {
             NSWindow::setLevel_(*self.window, window_level_to_nswindow_level(level));
             // Dispatch a resize event with the updated window state
             WindowView::did_resize(
-                &mut **self.view,
-                sel2to1(objc2::sel!(windowDidResize:)),
-                nil,
+                *self.view as *mut AnyObject,
+                objc2::sel!(windowDidResize:),
+                std::ptr::null_mut(),
             );
         }
     }
@@ -1475,7 +1379,7 @@ impl WindowInner {
                 .setResizeIncrements_(NSSize::new(incr.x.into(), incr.y.into()));
             let () = objc2::msg_send![
                 *self.window as *const _ as *const _ as *const AnyObject,
-                setContentMinSize: std::mem::transmute::<NSSize, MsgSendSize>(NSSize::new(min_width.into(), min_height.into()))
+                setContentMinSize: CGSize::new(min_width.into(), min_height.into())
             ];
         }
     }
@@ -1700,7 +1604,7 @@ struct Inner {
     invalidated: bool,
     gl_context_pair: Option<GlContextPair>,
     text_cursor_position: Rect,
-    tracking_rect_tag: NSInteger,
+    tracking_rect_tag: isize,
     hscroll_remainder: f64,
     vscroll_remainder: f64,
     last_wheel: Instant,
@@ -1976,21 +1880,19 @@ impl Inner {
 }
 
 const VIEW_CLS_NAME: &str = "WezboardWindowView";
-const WINDOW_CLS_NAME: &str = "WezboardWindow";
+const VIEW_CLS_CNAME: &CStr = c"WezboardWindowView";
+const WINDOW_CLS_CNAME: &CStr = c"WezboardWindow";
 const TITLEBAR_VIEW_NAME: &str = "NSTitlebarContainerView";
 
 struct WindowView {
     inner: Rc<RefCell<Inner>>,
 }
 
-pub fn superclass(this: &Object) -> &'static Class {
+pub fn superclass(this: &Object) -> &'static AnyClass {
     unsafe {
-        let superclass: id = {
-            let __r: *mut AnyObject =
-                objc2::msg_send![this as *const _ as *const _ as *const AnyObject, superclass];
-            __r as id
-        };
-        &*(superclass as *const _)
+        let superclass: *const AnyClass =
+            objc2::msg_send![this as *const _ as *const _ as *const AnyObject, superclass];
+        &*superclass
     }
 }
 
@@ -2059,23 +1961,23 @@ fn key_modifiers(flags: NSEventModifierFlags) -> Modifiers {
 /// canBecomeKeyWindow so that our simple fullscreen style can keep
 /// focus once the titlebar has been removed; the default behavior of
 /// NSWindow is to reject focus when it doesn't have a titlebar!
-fn get_window_class() -> &'static Class {
-    Class::get(WINDOW_CLS_NAME).unwrap_or_else(|| {
-        let mut cls = ClassDecl::new(WINDOW_CLS_NAME, get_objc_class(c"NSWindow"))
+fn get_window_class() -> &'static AnyClass {
+    AnyClass::get(WINDOW_CLS_CNAME).unwrap_or_else(|| {
+        let mut cls = ClassBuilder::new(WINDOW_CLS_CNAME, AnyClass::get(c"NSWindow").unwrap())
             .expect("Unable to register Window class");
 
-        extern "C" fn yes(_: &mut Object, _: Sel) -> BOOL {
-            YES
+        extern "C" fn yes(_: *mut AnyObject, _: Sel) -> Bool {
+            Bool::YES
         }
 
         unsafe {
             cls.add_method(
-                sel2to1(objc2::sel!(canBecomeKeyWindow)),
-                yes as extern "C" fn(&mut Object, Sel) -> BOOL,
+                objc2::sel!(canBecomeKeyWindow),
+                yes as extern "C" fn(*mut AnyObject, Sel) -> Bool,
             );
             cls.add_method(
-                sel2to1(objc2::sel!(canBecomeMainWindow)),
-                yes as extern "C" fn(&mut Object, Sel) -> BOOL,
+                objc2::sel!(canBecomeMainWindow),
+                yes as extern "C" fn(*mut AnyObject, Sel) -> Bool,
             );
         }
 
@@ -2084,14 +1986,15 @@ fn get_window_class() -> &'static Class {
 }
 
 impl WindowView {
-    extern "C" fn dealloc(this: &mut Object, _sel: Sel) {
+    extern "C" fn dealloc(this: *mut AnyObject, _sel: Sel) {
+        let this = unsafe { &mut *(this as *mut Object) };
         Self::drop_inner(this);
         unsafe {
             let superclass = superclass(this);
             let () = objc2::msg_send![
                 super(
                     this as *const _ as *const _ as *const AnyObject,
-                    cls1to2(superclass)
+                    superclass
                 ),
                 dealloc
             ];
@@ -2113,7 +2016,8 @@ impl WindowView {
     // Called by the inputContext manager when the IME processes events.
     // We need to translate the selector back into appropriate key
     // sequences
-    extern "C" fn do_command_by_selector(this: &mut Object, _sel: Sel, a_selector: Sel) {
+    extern "C" fn do_command_by_selector(this_raw: *mut AnyObject, _sel: Sel, a_selector: Sel) {
+        let this = unsafe { &mut *(this_raw as *mut Object) };
         let selector = format!("{:?}", a_selector);
         log::trace!("do_command_by_selector {:?}", selector);
 
@@ -2124,44 +2028,49 @@ impl WindowView {
         }
     }
 
-    extern "C" fn has_marked_text(this: &mut Object, _sel: Sel) -> BOOL {
+    extern "C" fn has_marked_text(this_raw: *mut AnyObject, _sel: Sel) -> Bool {
+        let this = unsafe { &mut *(this_raw as *mut Object) };
         if let Some(myself) = Self::get_this(this) {
             let inner = myself.inner.borrow();
             if inner.ime_text.is_empty() {
-                NO
+                Bool::NO
             } else {
-                YES
+                Bool::YES
             }
         } else {
-            NO
+            Bool::NO
         }
     }
 
-    extern "C" fn marked_range(this: &mut Object, _sel: Sel) -> NSRange {
+    extern "C" fn marked_range(this_raw: *mut AnyObject, _sel: Sel) -> NSRange {
+        let this = unsafe { &mut *(this_raw as *mut Object) };
         if let Some(myself) = Self::get_this(this) {
             let inner = myself.inner.borrow();
             log::trace!("marked_range {:?}", inner.ime_text);
             if inner.ime_text.is_empty() {
-                NSRange::new(NSNotFound as _, 0)
+                NSRange::new(isize::MAX as usize, 0)
             } else {
-                NSRange::new(0, inner.ime_text.len() as u64)
+                NSRange::new(0, inner.ime_text.len())
             }
         } else {
-            NSRange::new(NSNotFound as _, 0)
+            NSRange::new(isize::MAX as usize, 0)
         }
     }
 
-    extern "C" fn selected_range(_this: &mut Object, _sel: Sel) -> NSRange {
-        NSRange::new(NSNotFound as _, 0)
+    extern "C" fn selected_range(_this_raw: *mut AnyObject, _sel: Sel) -> NSRange {
+        let _this = unsafe { &mut *(_this_raw as *mut Object) };
+        NSRange::new(isize::MAX as usize, 0)
     }
 
     // Called by the IME when inserting composed text and/or emoji
     extern "C" fn insert_text_replacement_range(
-        this: &mut Object,
+        this_raw: *mut AnyObject,
         _sel: Sel,
-        astring: id,
+        astring_ao: *mut AnyObject,
         replacement_range: NSRange,
     ) {
+        let this = unsafe { &mut *(this_raw as *mut Object) };
+        let astring = astring_ao as id;
         let s = unsafe { nsstring_to_str(astring as *mut AnyObject) };
         log::trace!(
             "insert_text_replacement_range {} {:?}",
@@ -2195,12 +2104,14 @@ impl WindowView {
     }
 
     extern "C" fn set_marked_text_selected_range_replacement_range(
-        this: &mut Object,
+        this_raw: *mut AnyObject,
         _sel: Sel,
-        astring: id,
+        astring_ao: *mut AnyObject,
         selected_range: NSRange,
         replacement_range: NSRange,
     ) {
+        let this = unsafe { &mut *(this_raw as *mut Object) };
+        let astring = astring_ao as id;
         let s = unsafe { nsstring_to_str(astring as *mut AnyObject) };
         log::trace!(
             "set_marked_text_selected_range_replacement_range {} {:?} {:?}",
@@ -2233,7 +2144,8 @@ impl WindowView {
         }
     }
 
-    extern "C" fn unmark_text(this: &mut Object, _sel: Sel) {
+    extern "C" fn unmark_text(this_raw: *mut AnyObject, _sel: Sel) {
+        let this = unsafe { &mut *(this_raw as *mut Object) };
         log::trace!("unmarkText");
         if let Some(myself) = Self::get_this(this) {
             let mut inner = myself.inner.borrow_mut();
@@ -2246,41 +2158,43 @@ impl WindowView {
         }
     }
 
-    extern "C" fn valid_attributes_for_marked_text(_this: &mut Object, _sel: Sel) -> id {
+    extern "C" fn valid_attributes_for_marked_text(_this_raw: *mut AnyObject, _sel: Sel) -> *mut AnyObject {
+        let _this = unsafe { &mut *(_this_raw as *mut Object) };
         // FIXME: returns NSArray<NSAttributedStringKey> *
         // log::trace!("valid_attributes_for_marked_text");
         // nil
-        unsafe { NSArray::arrayWithObjects(nil, &[]) }
+        unsafe { NSArray::arrayWithObjects(nil, &[]) as *mut AnyObject }
     }
 
     extern "C" fn attributed_substring_for_proposed_range(
-        _this: &mut Object,
+        _this: *mut AnyObject,
         _sel: Sel,
         _proposed_range: NSRange,
-        _actual_range: NSRangePointer,
-    ) -> id {
+        _actual_range: *mut NSRange,
+    ) -> *mut AnyObject {
         log::trace!(
             "attributedSubstringForProposedRange {:?} {:?}",
             _proposed_range,
             _actual_range
         );
-        nil
+        std::ptr::null_mut()
     }
 
     extern "C" fn character_index_for_point(
-        _this: &mut Object,
+        _this: *mut AnyObject,
         _sel: Sel,
-        _point: NSPoint,
-    ) -> NSUInteger {
-        NSNotFound as _
+        _point: CGPoint,
+    ) -> usize {
+        isize::MAX as usize
     }
 
     extern "C" fn first_rect_for_character_range(
-        this: &mut Object,
+        this: *mut AnyObject,
         _sel: Sel,
         range: NSRange,
-        actual: NSRangePointer,
-    ) -> NSRect {
+        actual: *mut NSRange,
+    ) -> CGRect {
+        let this_obj = unsafe { &mut *(this as *mut Object) };
         // Returns a rect in screen coordinates; this is used to place
         // the input method editor
         log::trace!(
@@ -2290,21 +2204,21 @@ impl WindowView {
         );
         let window: id = unsafe {
             let __r: *mut AnyObject =
-                objc2::msg_send![this as *const _ as *const _ as *const AnyObject, window];
+                objc2::msg_send![this, window];
             __r as id
         };
         let frame = unsafe { NSWindow::frame(window) };
-        let content: NSRect = unsafe {
-            let __r: MsgSendRect = objc2::msg_send![window as *const _ as *const AnyObject, contentRectForFrameRect: std::mem::transmute::<NSRect, MsgSendRect>(frame)];
-            std::mem::transmute(__r)
+        let content: CGRect = unsafe {
+            let frame_cg = CGRect::new(CGPoint::new(frame.origin.x, frame.origin.y), CGSize::new(frame.size.width, frame.size.height));
+            objc2::msg_send![window as *const _ as *const AnyObject, contentRectForFrameRect: frame_cg]
         };
-        let backing_frame: NSRect = unsafe {
-            let __r: MsgSendRect = objc2::msg_send![this as *const _ as *const _ as *const AnyObject, convertRectToBacking: std::mem::transmute::<NSRect, MsgSendRect>(frame)];
-            std::mem::transmute(__r)
+        let backing_frame: CGRect = unsafe {
+            let frame_cg = CGRect::new(CGPoint::new(frame.origin.x, frame.origin.y), CGSize::new(frame.size.width, frame.size.height));
+            objc2::msg_send![this, convertRectToBacking: frame_cg]
         };
         let scale = frame.size.width / backing_frame.size.width;
 
-        if let Some(this) = Self::get_this(this) {
+        if let Some(this) = Self::get_this(this_obj) {
             let cursor_pos = this
                 .inner
                 .borrow()
@@ -2312,27 +2226,31 @@ impl WindowView {
                 .to_f64()
                 .scale(scale, scale);
 
-            NSRect::new(
-                NSPoint::new(
+            CGRect::new(
+                CGPoint::new(
                     content.origin.x + cursor_pos.min_x(),
                     content.origin.y + content.size.height - cursor_pos.max_y(),
                 ),
-                NSSize::new(cursor_pos.size.width, cursor_pos.size.height),
+                CGSize::new(cursor_pos.size.width, cursor_pos.size.height),
             )
         } else {
-            frame
+            CGRect::new(
+                CGPoint::new(frame.origin.x, frame.origin.y),
+                CGSize::new(frame.size.width, frame.size.height),
+            )
         }
     }
 
-    extern "C" fn accepts_first_mouse(_this: &mut Object, _sel: Sel, _nsevent: id) -> BOOL {
-        YES
+    extern "C" fn accepts_first_mouse(_this_raw: *mut AnyObject, _sel: Sel, _nsevent_ao: *mut AnyObject) -> Bool {
+        Bool::YES
     }
 
-    extern "C" fn accepts_first_responder(_this: &mut Object, _sel: Sel) -> BOOL {
-        YES
+    extern "C" fn accepts_first_responder(_this_raw: *mut AnyObject, _sel: Sel) -> Bool {
+        Bool::YES
     }
 
-    extern "C" fn view_did_change_effective_appearance(this: &mut Object, _sel: Sel) {
+    extern "C" fn view_did_change_effective_appearance(this_raw: *mut AnyObject, _sel: Sel) {
+        let this = unsafe { &mut *(this_raw as *mut Object) };
         if let Some(this) = Self::get_this(this) {
             let appearance = Connection::get().unwrap().get_appearance();
             this.inner
@@ -2342,7 +2260,8 @@ impl WindowView {
         }
     }
 
-    extern "C" fn update_tracking_areas(this: &mut Object, _sel: Sel) {
+    extern "C" fn update_tracking_areas(this_raw: *mut AnyObject, _sel: Sel) {
+        let this = unsafe { &mut *(this_raw as *mut Object) };
         let frame = unsafe { NSView::frame(this as *mut _) };
 
         if let Some(this) = Self::get_this(this) {
@@ -2360,18 +2279,16 @@ impl WindowView {
                     }
                 }
 
-                let rect = NSRect::new(
-                    NSPoint::new(0.0, 0.0),
-                    NSSize::new(frame.size.width, frame.size.height),
-                );
                 inner.tracking_rect_tag = unsafe {
-                    objc2::msg_send![*view as *const _ as *const AnyObject, addTrackingRect: std::mem::transmute::<NSRect, MsgSendRect>(rect), owner: *view as *const _ as *mut AnyObject, userData: std::ptr::null::<std::ffi::c_void>(), assumeInside: false]
+                    let cg_rect = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(frame.size.width, frame.size.height));
+                    objc2::msg_send![*view as *const _ as *const AnyObject, addTrackingRect: cg_rect, owner: *view as *const _ as *mut AnyObject, userData: std::ptr::null::<std::ffi::c_void>(), assumeInside: false]
                 };
             }
         }
     }
 
-    extern "C" fn window_should_close(this: &mut Object, _sel: Sel, _id: id) -> BOOL {
+    extern "C" fn window_should_close(this_raw: *mut AnyObject, _sel: Sel, _id_ao: *mut AnyObject) -> Bool {
+        let this = unsafe { &mut *(this_raw as *mut Object) };
         unsafe {
             let () = objc2::msg_send![this as *const _ as *const _ as *const AnyObject, setNeedsDisplay: true];
         }
@@ -2381,9 +2298,9 @@ impl WindowView {
                 .borrow_mut()
                 .events
                 .dispatch(WindowEvent::CloseRequested);
-            NO
+            Bool::NO
         } else {
-            YES
+            Bool::YES
         }
     }
 
@@ -2428,7 +2345,9 @@ impl WindowView {
         }
     }
 
-    extern "C" fn did_become_key(this: &mut Object, _sel: Sel, _id: id) {
+    extern "C" fn did_become_key(this_raw: *mut AnyObject, _sel: Sel, _id_ao: *mut AnyObject) {
+        let this = unsafe { &mut *(this_raw as *mut Object) };
+        let _id = _id_ao as id;
         if let Some(this) = Self::get_this(this) {
             this.inner
                 .borrow_mut()
@@ -2438,7 +2357,9 @@ impl WindowView {
         }
     }
 
-    extern "C" fn did_resign_key(this: &mut Object, _sel: Sel, _id: id) {
+    extern "C" fn did_resign_key(this_raw: *mut AnyObject, _sel: Sel, _id_ao: *mut AnyObject) {
+        let this = unsafe { &mut *(this_raw as *mut Object) };
+        let _id = _id_ao as id;
         if let Some(this) = Self::get_this(this) {
             this.inner
                 .borrow_mut()
@@ -2449,26 +2370,28 @@ impl WindowView {
     }
 
     // Switch the coordinate system to have 0,0 in the top left
-    extern "C" fn is_flipped(_this: &Object, _sel: Sel) -> BOOL {
-        YES
+    extern "C" fn is_flipped(_this: *mut AnyObject, _sel: Sel) -> Bool {
+        Bool::YES
     }
 
     // Tell the window/view/layer stuff that we only have a single opaque
     // thing in the window so that it can optimize rendering
-    extern "C" fn is_opaque(_this: &Object, _sel: Sel) -> BOOL {
-        NO
+    extern "C" fn is_opaque(_this: *mut AnyObject, _sel: Sel) -> Bool {
+        Bool::NO
     }
 
     // Don't use Cocoa native window tabbing
-    extern "C" fn allow_automatic_tabbing(_this: &Object, _sel: Sel) -> BOOL {
-        NO
+    extern "C" fn allow_automatic_tabbing(_this: *mut AnyObject, _sel: Sel) -> Bool {
+        Bool::NO
     }
 
     extern "C" fn wezboard_perform_key_assignment(
-        this: &mut Object,
+        this_raw: *mut AnyObject,
         _sel: Sel,
-        menu_item: *mut Object,
+        menu_item_ao: *mut AnyObject,
     ) {
+        let this = unsafe { &mut *(this_raw as *mut Object) };
+        let menu_item = menu_item_ao as *mut Object;
         let menu_item = MenuItem::with_menu_item(menu_item as *mut _ as *mut AnyObject);
         // Safe because wezboardPerformKeyAssignment: is only used with KeyAssignment
         let action = menu_item.get_represented_item();
@@ -2486,7 +2409,9 @@ impl WindowView {
         }
     }
 
-    extern "C" fn window_will_close(this: &mut Object, _sel: Sel, _id: id) {
+    extern "C" fn window_will_close(this_raw: *mut AnyObject, _sel: Sel, _id_ao: *mut AnyObject) {
+        let this = unsafe { &mut *(this_raw as *mut Object) };
+        let _id = _id_ao as id;
         if let Some(this) = Self::get_this(this) {
             // Advise the window of its impending death
             this.inner
@@ -2534,18 +2459,26 @@ impl WindowView {
         }
     }
 
-    extern "C" fn mouse_up(this: &mut Object, _sel: Sel, nsevent: id) {
+    extern "C" fn mouse_up(this_raw: *mut AnyObject, _sel: Sel, nsevent_ao: *mut AnyObject) {
+        let this = unsafe { &mut *(this_raw as *mut Object) };
+        let nsevent = nsevent_ao as id;
         Self::mouse_common(this, nsevent, MouseEventKind::Release(MousePress::Left));
     }
 
-    extern "C" fn mouse_down(this: &mut Object, _sel: Sel, nsevent: id) {
+    extern "C" fn mouse_down(this_raw: *mut AnyObject, _sel: Sel, nsevent_ao: *mut AnyObject) {
+        let this = unsafe { &mut *(this_raw as *mut Object) };
+        let nsevent = nsevent_ao as id;
         Self::mouse_common(this, nsevent, MouseEventKind::Press(MousePress::Left));
     }
-    extern "C" fn right_mouse_up(this: &mut Object, _sel: Sel, nsevent: id) {
+    extern "C" fn right_mouse_up(this_raw: *mut AnyObject, _sel: Sel, nsevent_ao: *mut AnyObject) {
+        let this = unsafe { &mut *(this_raw as *mut Object) };
+        let nsevent = nsevent_ao as id;
         Self::mouse_common(this, nsevent, MouseEventKind::Release(MousePress::Right));
     }
 
-    extern "C" fn other_mouse_up(this: &mut Object, _sel: Sel, nsevent: id) {
+    extern "C" fn other_mouse_up(this_raw: *mut AnyObject, _sel: Sel, nsevent_ao: *mut AnyObject) {
+        let this = unsafe { &mut *(this_raw as *mut Object) };
+        let nsevent = nsevent_ao as id;
         // Safety: We know this is an button event
         unsafe {
             let button_number = NSEvent::buttonNumber(nsevent);
@@ -2557,7 +2490,9 @@ impl WindowView {
         }
     }
 
-    extern "C" fn scroll_wheel(this: &mut Object, _sel: Sel, nsevent: id) {
+    extern "C" fn scroll_wheel(this_raw: *mut AnyObject, _sel: Sel, nsevent_ao: *mut AnyObject) {
+        let this = unsafe { &mut *(this_raw as *mut Object) };
+        let nsevent = nsevent_ao as id;
         let precise = unsafe { nsevent.hasPreciseScrollingDeltas() } == YES;
         let scale = if precise {
             // Devices with precise deltas report number of pixels scrolled.
@@ -2628,11 +2563,15 @@ impl WindowView {
         Self::mouse_common(this, nsevent, kind);
     }
 
-    extern "C" fn right_mouse_down(this: &mut Object, _sel: Sel, nsevent: id) {
+    extern "C" fn right_mouse_down(this_raw: *mut AnyObject, _sel: Sel, nsevent_ao: *mut AnyObject) {
+        let this = unsafe { &mut *(this_raw as *mut Object) };
+        let nsevent = nsevent_ao as id;
         Self::mouse_common(this, nsevent, MouseEventKind::Press(MousePress::Right));
     }
 
-    extern "C" fn other_mouse_down(this: &mut Object, _sel: Sel, nsevent: id) {
+    extern "C" fn other_mouse_down(this_raw: *mut AnyObject, _sel: Sel, nsevent_ao: *mut AnyObject) {
+        let this = unsafe { &mut *(this_raw as *mut Object) };
+        let nsevent = nsevent_ao as id;
         // Safety: See `other_mouse_up`
         unsafe {
             let button_number = NSEvent::buttonNumber(nsevent);
@@ -2643,11 +2582,15 @@ impl WindowView {
         }
     }
 
-    extern "C" fn mouse_moved_or_dragged(this: &mut Object, _sel: Sel, nsevent: id) {
+    extern "C" fn mouse_moved_or_dragged(this_raw: *mut AnyObject, _sel: Sel, nsevent_ao: *mut AnyObject) {
+        let this = unsafe { &mut *(this_raw as *mut Object) };
+        let nsevent = nsevent_ao as id;
         Self::mouse_common(this, nsevent, MouseEventKind::Move);
     }
 
-    extern "C" fn mouse_exited(this: &mut Object, _sel: Sel, _nsevent: id) {
+    extern "C" fn mouse_exited(this_raw: *mut AnyObject, _sel: Sel, _nsevent_ao: *mut AnyObject) {
+        let this = unsafe { &mut *(this_raw as *mut Object) };
+        let _nsevent = _nsevent_ao as id;
         if let Some(myself) = Self::get_this(this) {
             myself
                 .inner
@@ -2838,7 +2781,7 @@ impl WindowView {
 
             unsafe {
                 let array: id = {
-                    let __r: *mut AnyObject = objc2::msg_send![cls1to2(get_objc_class(c"NSArray")), arrayWithObject: nsevent as *mut AnyObject];
+                    let __r: *mut AnyObject = objc2::msg_send![AnyClass::get(c"NSArray").unwrap(), arrayWithObject: nsevent as *mut AnyObject];
                     __r as id
                 };
                 let _: () = objc2::msg_send![this as *const _ as *const _ as *const AnyObject, interpretKeyEvents: array as *mut AnyObject];
@@ -3017,7 +2960,11 @@ impl WindowView {
         }
     }
 
-    extern "C" fn perform_key_equivalent(this: &mut Object, _sel: Sel, nsevent: id) -> BOOL {
+    extern "C" fn perform_key_equivalent(this_raw: *mut AnyObject, _sel: Sel, nsevent_ao: *mut AnyObject) -> Bool {
+        let this = unsafe { &mut *(this_raw as *mut Object) };
+        let nsevent = nsevent_ao as id;
+        #[allow(unused_macros)]
+        macro_rules! yes_no { (YES) => { Bool::YES }; (NO) => { Bool::NO }; }
         let chars = unsafe { nsstring_to_str(nsevent.characters() as *mut AnyObject) };
         let modifier_flags = unsafe { nsevent.modifierFlags() };
         let modifiers = key_modifiers(modifier_flags);
@@ -3039,15 +2986,17 @@ impl WindowView {
             Self::key_common(this, nsevent, true);
 
             // Prevent macOS from calling doCommandBySelector(cancel:)
-            YES
+            Bool::YES
         } else {
             // Allow macOS to process built-in shortcuts like CMD-`
             // to cycle though windows
-            NO
+            Bool::NO
         }
     }
 
-    extern "C" fn flags_changed(this: &mut Object, _sel: Sel, nsevent: id) {
+    extern "C" fn flags_changed(this_raw: *mut AnyObject, _sel: Sel, nsevent_ao: *mut AnyObject) {
+        let this = unsafe { &mut *(this_raw as *mut Object) };
+        let nsevent = nsevent_ao as id;
         let modifier_flags = unsafe { nsevent.modifierFlags() };
         let modifiers = key_modifiers(modifier_flags);
         let leds = if modifier_flags.bits() & (1 << 16) != 0 {
@@ -3064,15 +3013,21 @@ impl WindowView {
         }
     }
 
-    extern "C" fn key_down(this: &mut Object, _sel: Sel, nsevent: id) {
+    extern "C" fn key_down(this_raw: *mut AnyObject, _sel: Sel, nsevent_ao: *mut AnyObject) {
+        let this = unsafe { &mut *(this_raw as *mut Object) };
+        let nsevent = nsevent_ao as id;
         Self::key_common(this, nsevent, true);
     }
 
-    extern "C" fn key_up(this: &mut Object, _sel: Sel, nsevent: id) {
+    extern "C" fn key_up(this_raw: *mut AnyObject, _sel: Sel, nsevent_ao: *mut AnyObject) {
+        let this = unsafe { &mut *(this_raw as *mut Object) };
+        let nsevent = nsevent_ao as id;
         Self::key_common(this, nsevent, false);
     }
 
-    extern "C" fn did_change_screen(this: &mut Object, _sel: Sel, _notification: id) {
+    extern "C" fn did_change_screen(this_raw: *mut AnyObject, _sel: Sel, _notification_ao: *mut AnyObject) {
+        let this = unsafe { &mut *(this_raw as *mut Object) };
+        let _notification = _notification_ao as id;
         log::trace!("did_change_screen");
         if let Some(this) = Self::get_this(this) {
             // Just set a flag; we don't want to react immediately
@@ -3083,22 +3038,27 @@ impl WindowView {
         }
     }
 
-    extern "C" fn will_start_live_resize(this: &mut Object, _sel: Sel, _notification: id) {
+    extern "C" fn will_start_live_resize(this_raw: *mut AnyObject, _sel: Sel, _notification_ao: *mut AnyObject) {
+        let this = unsafe { &mut *(this_raw as *mut Object) };
+        let _notification = _notification_ao as id;
         if let Some(this) = Self::get_this(this) {
             let mut inner = this.inner.borrow_mut();
             inner.live_resizing = true;
         }
     }
 
-    extern "C" fn did_end_live_resize(this: &mut Object, _sel: Sel, _notification: id) {
+    extern "C" fn did_end_live_resize(this_raw: *mut AnyObject, _sel: Sel, _notification_ao: *mut AnyObject) {
+        let this = unsafe { &mut *(this_raw as *mut Object) };
+        let _notification = _notification_ao as id;
         if let Some(this) = Self::get_this(this) {
             let mut inner = this.inner.borrow_mut();
             inner.live_resizing = false;
         }
     }
 
-    extern "C" fn did_resize(this: &mut Object, _sel: Sel, _notification: id) {
-        if let Some(this) = Self::get_this(this) {
+    extern "C" fn did_resize(this: *mut AnyObject, _sel: Sel, _notification: *mut AnyObject) {
+        let this_obj = unsafe { &mut *(this as *mut Object) };
+        if let Some(this) = Self::get_this(this_obj) {
             let inner = this.inner.borrow_mut();
 
             if let Some(gl_context_pair) = inner.gl_context_pair.as_ref() {
@@ -3106,11 +3066,11 @@ impl WindowView {
             }
         }
 
-        let frame = unsafe { NSView::frame(this as *mut _) };
-        let backing_frame = unsafe { NSView::convertRectToBacking(this as *mut _, frame) };
+        let frame = unsafe { NSView::frame(this as *mut _ as id) };
+        let backing_frame = unsafe { NSView::convertRectToBacking(this as *mut _ as id, frame) };
         let width = backing_frame.size.width;
         let height = backing_frame.size.height;
-        if let Some(this) = Self::get_this(this) {
+        if let Some(this) = Self::get_this(this_obj) {
             let mut inner = this.inner.borrow_mut();
 
             // This is a little gross; ideally we'd call
@@ -3187,64 +3147,63 @@ impl WindowView {
         }
     }
 
-    extern "C" fn update_layer(_view: &mut Object, _sel: Sel) {
+    extern "C" fn update_layer(_view_raw: *mut AnyObject, _sel: Sel) {
+        let _view = unsafe { &mut *(_view_raw as *mut Object) };
         log::trace!("update_layer called");
     }
 
-    extern "C" fn wants_update_layer(_view: &mut Object, _sel: Sel) -> BOOL {
+    extern "C" fn wants_update_layer(_view_raw: *mut AnyObject, _sel: Sel) -> Bool {
         log::trace!("wants_update_layer called");
-        YES
+        Bool::YES
     }
 
-    extern "C" fn display_layer(view: &mut Object, sel: Sel, _layer_id: id) {
+    extern "C" fn display_layer(view: *mut AnyObject, sel: Sel, _layer_id: *mut AnyObject) {
         Self::draw_rect(
             view,
             sel,
-            NSRect::new(NSPoint::new(0., 0.), NSSize::new(0., 0.)),
+            CGRect::new(CGPoint::new(0., 0.), CGSize::new(0., 0.)),
         )
     }
 
     extern "C" fn draw_layer_in_context(
-        _view: &mut Object,
+        _view: *mut AnyObject,
         _sel: Sel,
-        _layer_id: id,
-        _context: id,
+        _layer_id: *mut AnyObject,
+        _context: *mut AnyObject,
     ) {
     }
 
     extern "C" fn layer_should_inherit_contents_scale_from_window(
-        _: &Object,
+        _: *mut AnyObject,
         _: Sel,
-        layer: *mut Object,
+        layer: *mut AnyObject,
         _: CGFloat,
-        _: *mut Object,
-    ) -> BOOL {
+        _: *mut AnyObject,
+    ) -> Bool {
         log::trace!("layer_should_inherit_contents_scale_from_window");
         unsafe {
-            let () = objc2::msg_send![layer as *const _ as *const AnyObject, setContentsScale: 1.0];
+            let () = objc2::msg_send![layer, setContentsScale: 1.0];
         }
-        YES
+        Bool::YES
     }
 
-    extern "C" fn make_backing_layer(view: &mut Object, _: Sel) -> id {
+    extern "C" fn make_backing_layer(view: *mut AnyObject, _: Sel) -> *mut AnyObject {
         log::trace!("make_backing_layer");
-        let class = get_objc_class(c"CAMetalLayer");
+        let class = AnyClass::get(c"CAMetalLayer").unwrap();
         unsafe {
             // Use type method to get a instance of CAMetalLayer.
             // So that we don't have to worry about retaining/releasing it.
-            let layer: id = {
-                let __r: *mut AnyObject = objc2::msg_send![cls1to2(class), layer];
-                __r as id
-            };
-            let () = objc2::msg_send![layer as *const _ as *const AnyObject, setDelegate: view as *const _ as *mut AnyObject];
-            let () = objc2::msg_send![layer as *const _ as *const AnyObject, setContentsScale: 1.0];
-            let () = objc2::msg_send![layer as *const _ as *const AnyObject, setOpaque: false];
+            let layer: *mut AnyObject = objc2::msg_send![class, layer];
+            let () = objc2::msg_send![layer, setDelegate: view];
+            let () = objc2::msg_send![layer, setContentsScale: 1.0];
+            let () = objc2::msg_send![layer, setOpaque: false];
             layer
         }
     }
 
-    extern "C" fn draw_rect(view: &mut Object, sel: Sel, _dirty_rect: NSRect) {
-        if let Some(this) = Self::get_this(view) {
+    extern "C" fn draw_rect(view: *mut AnyObject, sel: Sel, _dirty_rect: CGRect) {
+        let view_obj = unsafe { &mut *(view as *mut Object) };
+        if let Some(this) = Self::get_this(view_obj) {
             let mut inner = this.inner.borrow_mut();
 
             if inner.screen_changed {
@@ -3255,7 +3214,7 @@ impl WindowView {
                 // and a repaint.
                 inner.screen_changed = false;
                 drop(inner);
-                Self::did_resize(view, sel, nil);
+                Self::did_resize(view, sel, std::ptr::null_mut());
                 return;
             }
 
@@ -3289,7 +3248,9 @@ impl WindowView {
         }
     }
 
-    extern "C" fn dragging_entered(this: &mut Object, _: Sel, sender: id) -> BOOL {
+    extern "C" fn dragging_entered(this_raw: *mut AnyObject, _: Sel, sender_ao: *mut AnyObject) -> Bool {
+        let this = unsafe { &mut *(this_raw as *mut Object) };
+        let sender = sender_ao as id;
         if let Some(this) = Self::get_this(this) {
             let mut inner = this.inner.borrow_mut();
 
@@ -3299,13 +3260,13 @@ impl WindowView {
                 __r as id
             };
             if pb.is_null() {
-                return NO;
+                return Bool::NO;
             }
 
             let filenames =
                 unsafe { NSPasteboard::propertyListForType(pb, appkit::NSFilenamesPboardType) };
             if filenames.is_null() {
-                return NO;
+                return Bool::NO;
             }
 
             let paths = unsafe { filenames.iter() }
@@ -3316,10 +3277,12 @@ impl WindowView {
                 .collect::<Vec<_>>();
             inner.events.dispatch(WindowEvent::DraggedFile(paths));
         }
-        YES
+        Bool::YES
     }
 
-    extern "C" fn perform_drag_operation(this: &mut Object, _: Sel, sender: id) -> BOOL {
+    extern "C" fn perform_drag_operation(this_raw: *mut AnyObject, _: Sel, sender_ao: *mut AnyObject) -> Bool {
+        let this = unsafe { &mut *(this_raw as *mut Object) };
+        let sender = sender_ao as id;
         if let Some(this) = Self::get_this(this) {
             let mut inner = this.inner.borrow_mut();
 
@@ -3329,13 +3292,13 @@ impl WindowView {
                 __r as id
             };
             if pb.is_null() {
-                return NO;
+                return Bool::NO;
             }
 
             let filenames =
                 unsafe { NSPasteboard::propertyListForType(pb, appkit::NSFilenamesPboardType) };
             if filenames.is_null() {
-                return NO;
+                return Bool::NO;
             }
 
             let paths = unsafe { filenames.iter() }
@@ -3346,7 +3309,7 @@ impl WindowView {
                 .collect::<Vec<_>>();
             inner.events.dispatch(WindowEvent::DroppedFile(paths));
         }
-        YES
+        Bool::YES
     }
 
     fn get_this(this: &Object) -> Option<&mut Self> {
@@ -3364,11 +3327,12 @@ impl WindowView {
         let cls = Self::get_class();
 
         let view_id: id = unsafe {
-            let __r: *mut AnyObject = objc2::msg_send![cls1to2(cls), alloc];
+            let __r: *mut AnyObject = objc2::msg_send![cls, alloc];
             __r as id
         };
         let view_id: StrongPtr = unsafe {
-            let __r: *mut AnyObject = objc2::msg_send![view_id as *const _ as *const AnyObject, initWithFrame: std::mem::transmute::<NSRect, MsgSendRect>(rect)];
+            let cg_rect = CGRect::new(CGPoint::new(rect.origin.x, rect.origin.y), CGSize::new(rect.size.width, rect.size.height));
+            let __r: *mut AnyObject = objc2::msg_send![view_id as *const _ as *const AnyObject, initWithFrame: cg_rect];
             StrongPtr::new(__r as id)
         };
         inner.borrow_mut().view_id.replace(view_id.weak());
@@ -3384,268 +3348,136 @@ impl WindowView {
         Ok(view_id)
     }
 
-    fn get_class() -> &'static Class {
-        Class::get(VIEW_CLS_NAME).unwrap_or_else(Self::define_class)
+    fn get_class() -> &'static AnyClass {
+        AnyClass::get(VIEW_CLS_CNAME).unwrap_or_else(|| Self::define_class())
     }
 
-    fn define_class() -> &'static Class {
-        let mut cls = ClassDecl::new(VIEW_CLS_NAME, get_objc_class(c"NSView"))
+    fn define_class() -> &'static AnyClass {
+        let mut cls = ClassBuilder::new(VIEW_CLS_CNAME, AnyClass::get(c"NSView").unwrap())
             .expect("Unable to register WindowView class");
 
-        cls.add_ivar::<*mut c_void>(VIEW_CLS_NAME);
+        cls.add_ivar::<*mut c_void>(VIEW_CLS_CNAME);
         cls.add_protocol(
-            Protocol::get("NSTextInputClient").expect("failed to get NSTextInputClient protocol"),
+            AnyProtocol::get(c"NSTextInputClient").expect("failed to get NSTextInputClient protocol"),
         );
 
-        cls.add_protocol(Protocol::get("CALayerDelegate").expect("CALayerDelegate not defined"));
+        cls.add_protocol(AnyProtocol::get(c"CALayerDelegate").expect("CALayerDelegate not defined"));
 
+        // All callbacks use *mut AnyObject for self and pointer args to satisfy
+        // ClassBuilder::add_method's MethodImplementation trait bound.
+        // id (= *mut Object) args become *mut AnyObject; BOOL returns become Bool.
         unsafe {
-            cls.add_method(
-                sel2to1(objc2::sel!(dealloc)),
-                WindowView::dealloc as extern "C" fn(&mut Object, Sel),
-            );
-
-            cls.add_method(
-                sel2to1(objc2::sel!(wezboardPerformKeyAssignment:)),
-                Self::wezboard_perform_key_assignment
-                    as extern "C" fn(&mut Object, Sel, *mut Object),
-            );
-
-            cls.add_method(
-                sel2to1(objc2::sel!(windowWillClose:)),
-                Self::window_will_close as extern "C" fn(&mut Object, Sel, id),
-            );
-
-            cls.add_method(
-                sel2to1(objc2::sel!(windowShouldClose:)),
-                Self::window_should_close as extern "C" fn(&mut Object, Sel, id) -> BOOL,
-            );
-
-            cls.add_method(
-                sel2to1(objc2::sel!(makeBackingLayer)),
-                Self::make_backing_layer as extern "C" fn(&mut Object, Sel) -> id,
-            );
-
-            cls.add_method(
-                sel2to1(objc2::sel!(layer:shouldInheritContentsScale:fromWindow:)),
+            cls.add_method(objc2::sel!(dealloc),
+                Self::dealloc as extern "C" fn(*mut AnyObject, Sel));
+            cls.add_method(objc2::sel!(wezboardPerformKeyAssignment:),
+                Self::wezboard_perform_key_assignment as extern "C" fn(*mut AnyObject, Sel, *mut AnyObject));
+            cls.add_method(objc2::sel!(windowWillClose:),
+                Self::window_will_close as extern "C" fn(*mut AnyObject, Sel, *mut AnyObject));
+            cls.add_method(objc2::sel!(windowShouldClose:),
+                Self::window_should_close as extern "C" fn(*mut AnyObject, Sel, *mut AnyObject) -> Bool);
+            cls.add_method(objc2::sel!(makeBackingLayer),
+                Self::make_backing_layer as extern "C" fn(*mut AnyObject, Sel) -> *mut AnyObject);
+            cls.add_method(objc2::sel!(layer:shouldInheritContentsScale:fromWindow:),
                 Self::layer_should_inherit_contents_scale_from_window
-                    as extern "C" fn(&Object, Sel, *mut Object, CGFloat, *mut Object) -> BOOL,
-            );
-
-            cls.add_method(
-                sel2to1(objc2::sel!(drawRect:)),
-                Self::draw_rect as extern "C" fn(&mut Object, Sel, NSRect),
-            );
-
-            cls.add_method(
-                sel2to1(objc2::sel!(updateLayer)),
-                Self::update_layer as extern "C" fn(&mut Object, Sel),
-            );
-
-            cls.add_method(
-                sel2to1(objc2::sel!(wantsUpdateLayer)),
-                Self::wants_update_layer as extern "C" fn(&mut Object, Sel) -> BOOL,
-            );
-
-            cls.add_method(
-                sel2to1(objc2::sel!(displayLayer:)),
-                Self::display_layer as extern "C" fn(&mut Object, Sel, id),
-            );
-
-            cls.add_method(
-                sel2to1(objc2::sel!(drawLayer:inContext:)),
-                Self::draw_layer_in_context as extern "C" fn(&mut Object, Sel, id, id),
-            );
-
-            cls.add_method(
-                sel2to1(objc2::sel!(isFlipped)),
-                Self::is_flipped as extern "C" fn(&Object, Sel) -> BOOL,
-            );
-
-            cls.add_method(
-                sel2to1(objc2::sel!(isOpaque)),
-                Self::is_opaque as extern "C" fn(&Object, Sel) -> BOOL,
-            );
-
-            cls.add_method(
-                sel2to1(objc2::sel!(allowsAutomaticWindowTabbing)),
-                Self::allow_automatic_tabbing as extern "C" fn(&Object, Sel) -> BOOL,
-            );
-
-            cls.add_method(
-                sel2to1(objc2::sel!(windowWillStartLiveResize:)),
-                Self::will_start_live_resize as extern "C" fn(&mut Object, Sel, id),
-            );
-            cls.add_method(
-                sel2to1(objc2::sel!(windowDidEndLiveResize:)),
-                Self::did_end_live_resize as extern "C" fn(&mut Object, Sel, id),
-            );
-            cls.add_method(
-                sel2to1(objc2::sel!(windowDidResize:)),
-                Self::did_resize as extern "C" fn(&mut Object, Sel, id),
-            );
-            cls.add_method(
-                sel2to1(objc2::sel!(windowDidChangeScreen:)),
-                Self::did_change_screen as extern "C" fn(&mut Object, Sel, id),
-            );
-
-            cls.add_method(
-                sel2to1(objc2::sel!(windowDidBecomeKey:)),
-                Self::did_become_key as extern "C" fn(&mut Object, Sel, id),
-            );
-            cls.add_method(
-                sel2to1(objc2::sel!(windowDidResignKey:)),
-                Self::did_resign_key as extern "C" fn(&mut Object, Sel, id),
-            );
-
-            cls.add_method(
-                sel2to1(objc2::sel!(mouseMoved:)),
-                Self::mouse_moved_or_dragged as extern "C" fn(&mut Object, Sel, id),
-            );
-            cls.add_method(
-                sel2to1(objc2::sel!(mouseDragged:)),
-                Self::mouse_moved_or_dragged as extern "C" fn(&mut Object, Sel, id),
-            );
-            cls.add_method(
-                sel2to1(objc2::sel!(rightMouseDragged:)),
-                Self::mouse_moved_or_dragged as extern "C" fn(&mut Object, Sel, id),
-            );
-            cls.add_method(
-                sel2to1(objc2::sel!(mouseDown:)),
-                Self::mouse_down as extern "C" fn(&mut Object, Sel, id),
-            );
-            cls.add_method(
-                sel2to1(objc2::sel!(mouseUp:)),
-                Self::mouse_up as extern "C" fn(&mut Object, Sel, id),
-            );
-            cls.add_method(
-                sel2to1(objc2::sel!(rightMouseDown:)),
-                Self::right_mouse_down as extern "C" fn(&mut Object, Sel, id),
-            );
-            cls.add_method(
-                sel2to1(objc2::sel!(rightMouseUp:)),
-                Self::right_mouse_up as extern "C" fn(&mut Object, Sel, id),
-            );
-            cls.add_method(
-                sel2to1(objc2::sel!(otherMouseDragged:)),
-                Self::mouse_moved_or_dragged as extern "C" fn(&mut Object, Sel, id),
-            );
-            cls.add_method(
-                sel2to1(objc2::sel!(otherMouseDown:)),
-                Self::other_mouse_down as extern "C" fn(&mut Object, Sel, id),
-            );
-            cls.add_method(
-                sel2to1(objc2::sel!(otherMouseUp:)),
-                Self::other_mouse_up as extern "C" fn(&mut Object, Sel, id),
-            );
-            cls.add_method(
-                sel2to1(objc2::sel!(scrollWheel:)),
-                Self::scroll_wheel as extern "C" fn(&mut Object, Sel, id),
-            );
-            cls.add_method(
-                sel2to1(objc2::sel!(mouseExited:)),
-                Self::mouse_exited as extern "C" fn(&mut Object, Sel, id),
-            );
-
-            cls.add_method(
-                sel2to1(objc2::sel!(keyDown:)),
-                Self::key_down as extern "C" fn(&mut Object, Sel, id),
-            );
-            cls.add_method(
-                sel2to1(objc2::sel!(keyUp:)),
-                Self::key_up as extern "C" fn(&mut Object, Sel, id),
-            );
-
-            cls.add_method(
-                sel2to1(objc2::sel!(performKeyEquivalent:)),
-                Self::perform_key_equivalent as extern "C" fn(&mut Object, Sel, id) -> BOOL,
-            );
-
-            cls.add_method(
-                sel2to1(objc2::sel!(acceptsFirstResponder)),
-                Self::accepts_first_responder as extern "C" fn(&mut Object, Sel) -> BOOL,
-            );
-
-            cls.add_method(
-                sel2to1(objc2::sel!(acceptsFirstMouse:)),
-                Self::accepts_first_mouse as extern "C" fn(&mut Object, Sel, id) -> BOOL,
-            );
-
-            cls.add_method(
-                sel2to1(objc2::sel!(viewDidChangeEffectiveAppearance)),
-                Self::view_did_change_effective_appearance as extern "C" fn(&mut Object, Sel),
-            );
-
-            cls.add_method(
-                sel2to1(objc2::sel!(updateTrackingAreas)),
-                Self::update_tracking_areas as extern "C" fn(&mut Object, Sel),
-            );
-
-            cls.add_method(
-                sel2to1(objc2::sel!(flagsChanged:)),
-                Self::flags_changed as extern "C" fn(&mut Object, Sel, id),
-            );
-
+                    as extern "C" fn(*mut AnyObject, Sel, *mut AnyObject, CGFloat, *mut AnyObject) -> Bool);
+            cls.add_method(objc2::sel!(drawRect:),
+                Self::draw_rect as extern "C" fn(*mut AnyObject, Sel, CGRect));
+            cls.add_method(objc2::sel!(updateLayer),
+                Self::update_layer as extern "C" fn(*mut AnyObject, Sel));
+            cls.add_method(objc2::sel!(wantsUpdateLayer),
+                Self::wants_update_layer as extern "C" fn(*mut AnyObject, Sel) -> Bool);
+            cls.add_method(objc2::sel!(displayLayer:),
+                Self::display_layer as extern "C" fn(*mut AnyObject, Sel, *mut AnyObject));
+            cls.add_method(objc2::sel!(drawLayer:inContext:),
+                Self::draw_layer_in_context as extern "C" fn(*mut AnyObject, Sel, *mut AnyObject, *mut AnyObject));
+            cls.add_method(objc2::sel!(isFlipped),
+                Self::is_flipped as extern "C" fn(*mut AnyObject, Sel) -> Bool);
+            cls.add_method(objc2::sel!(isOpaque),
+                Self::is_opaque as extern "C" fn(*mut AnyObject, Sel) -> Bool);
+            cls.add_method(objc2::sel!(allowsAutomaticWindowTabbing),
+                Self::allow_automatic_tabbing as extern "C" fn(*mut AnyObject, Sel) -> Bool);
+            cls.add_method(objc2::sel!(windowWillStartLiveResize:),
+                Self::will_start_live_resize as extern "C" fn(*mut AnyObject, Sel, *mut AnyObject));
+            cls.add_method(objc2::sel!(windowDidEndLiveResize:),
+                Self::did_end_live_resize as extern "C" fn(*mut AnyObject, Sel, *mut AnyObject));
+            cls.add_method(objc2::sel!(windowDidResize:),
+                Self::did_resize as extern "C" fn(*mut AnyObject, Sel, *mut AnyObject));
+            cls.add_method(objc2::sel!(windowDidChangeScreen:),
+                Self::did_change_screen as extern "C" fn(*mut AnyObject, Sel, *mut AnyObject));
+            cls.add_method(objc2::sel!(windowDidBecomeKey:),
+                Self::did_become_key as extern "C" fn(*mut AnyObject, Sel, *mut AnyObject));
+            cls.add_method(objc2::sel!(windowDidResignKey:),
+                Self::did_resign_key as extern "C" fn(*mut AnyObject, Sel, *mut AnyObject));
+            cls.add_method(objc2::sel!(mouseMoved:),
+                Self::mouse_moved_or_dragged as extern "C" fn(*mut AnyObject, Sel, *mut AnyObject));
+            cls.add_method(objc2::sel!(mouseDragged:),
+                Self::mouse_moved_or_dragged as extern "C" fn(*mut AnyObject, Sel, *mut AnyObject));
+            cls.add_method(objc2::sel!(rightMouseDragged:),
+                Self::mouse_moved_or_dragged as extern "C" fn(*mut AnyObject, Sel, *mut AnyObject));
+            cls.add_method(objc2::sel!(mouseDown:),
+                Self::mouse_down as extern "C" fn(*mut AnyObject, Sel, *mut AnyObject));
+            cls.add_method(objc2::sel!(mouseUp:),
+                Self::mouse_up as extern "C" fn(*mut AnyObject, Sel, *mut AnyObject));
+            cls.add_method(objc2::sel!(rightMouseDown:),
+                Self::right_mouse_down as extern "C" fn(*mut AnyObject, Sel, *mut AnyObject));
+            cls.add_method(objc2::sel!(rightMouseUp:),
+                Self::right_mouse_up as extern "C" fn(*mut AnyObject, Sel, *mut AnyObject));
+            cls.add_method(objc2::sel!(otherMouseDragged:),
+                Self::mouse_moved_or_dragged as extern "C" fn(*mut AnyObject, Sel, *mut AnyObject));
+            cls.add_method(objc2::sel!(otherMouseDown:),
+                Self::other_mouse_down as extern "C" fn(*mut AnyObject, Sel, *mut AnyObject));
+            cls.add_method(objc2::sel!(otherMouseUp:),
+                Self::other_mouse_up as extern "C" fn(*mut AnyObject, Sel, *mut AnyObject));
+            cls.add_method(objc2::sel!(scrollWheel:),
+                Self::scroll_wheel as extern "C" fn(*mut AnyObject, Sel, *mut AnyObject));
+            cls.add_method(objc2::sel!(mouseExited:),
+                Self::mouse_exited as extern "C" fn(*mut AnyObject, Sel, *mut AnyObject));
+            cls.add_method(objc2::sel!(keyDown:),
+                Self::key_down as extern "C" fn(*mut AnyObject, Sel, *mut AnyObject));
+            cls.add_method(objc2::sel!(keyUp:),
+                Self::key_up as extern "C" fn(*mut AnyObject, Sel, *mut AnyObject));
+            cls.add_method(objc2::sel!(performKeyEquivalent:),
+                Self::perform_key_equivalent as extern "C" fn(*mut AnyObject, Sel, *mut AnyObject) -> Bool);
+            cls.add_method(objc2::sel!(acceptsFirstResponder),
+                Self::accepts_first_responder as extern "C" fn(*mut AnyObject, Sel) -> Bool);
+            cls.add_method(objc2::sel!(acceptsFirstMouse:),
+                Self::accepts_first_mouse as extern "C" fn(*mut AnyObject, Sel, *mut AnyObject) -> Bool);
+            cls.add_method(objc2::sel!(viewDidChangeEffectiveAppearance),
+                Self::view_did_change_effective_appearance as extern "C" fn(*mut AnyObject, Sel));
+            cls.add_method(objc2::sel!(updateTrackingAreas),
+                Self::update_tracking_areas as extern "C" fn(*mut AnyObject, Sel));
+            cls.add_method(objc2::sel!(flagsChanged:),
+                Self::flags_changed as extern "C" fn(*mut AnyObject, Sel, *mut AnyObject));
             // NSTextInputClient
-
-            cls.add_method(
-                sel2to1(objc2::sel!(hasMarkedText)),
-                Self::has_marked_text as extern "C" fn(&mut Object, Sel) -> BOOL,
-            );
-            cls.add_method(
-                sel2to1(objc2::sel!(markedRange)),
-                Self::marked_range as extern "C" fn(&mut Object, Sel) -> NSRange,
-            );
-            cls.add_method(
-                sel2to1(objc2::sel!(selectedRange)),
-                Self::selected_range as extern "C" fn(&mut Object, Sel) -> NSRange,
-            );
-            cls.add_method(
-                sel2to1(objc2::sel!(setMarkedText:selectedRange:replacementRange:)),
+            cls.add_method(objc2::sel!(hasMarkedText),
+                Self::has_marked_text as extern "C" fn(*mut AnyObject, Sel) -> Bool);
+            cls.add_method(objc2::sel!(markedRange),
+                Self::marked_range as extern "C" fn(*mut AnyObject, Sel) -> NSRange);
+            cls.add_method(objc2::sel!(selectedRange),
+                Self::selected_range as extern "C" fn(*mut AnyObject, Sel) -> NSRange);
+            cls.add_method(objc2::sel!(setMarkedText:selectedRange:replacementRange:),
                 Self::set_marked_text_selected_range_replacement_range
-                    as extern "C" fn(&mut Object, Sel, id, NSRange, NSRange),
-            );
-            cls.add_method(
-                sel2to1(objc2::sel!(unmarkText)),
-                Self::unmark_text as extern "C" fn(&mut Object, Sel),
-            );
-            cls.add_method(
-                sel2to1(objc2::sel!(validAttributesForMarkedText)),
-                Self::valid_attributes_for_marked_text as extern "C" fn(&mut Object, Sel) -> id,
-            );
-            cls.add_method(
-                sel2to1(objc2::sel!(doCommandBySelector:)),
-                Self::do_command_by_selector as extern "C" fn(&mut Object, Sel, Sel),
-            );
-
-            cls.add_method(
-                sel2to1(objc2::sel!( attributedSubstringForProposedRange:actualRange:)),
+                    as extern "C" fn(*mut AnyObject, Sel, *mut AnyObject, NSRange, NSRange));
+            cls.add_method(objc2::sel!(unmarkText),
+                Self::unmark_text as extern "C" fn(*mut AnyObject, Sel));
+            cls.add_method(objc2::sel!(validAttributesForMarkedText),
+                Self::valid_attributes_for_marked_text as extern "C" fn(*mut AnyObject, Sel) -> *mut AnyObject);
+            cls.add_method(objc2::sel!(doCommandBySelector:),
+                Self::do_command_by_selector as extern "C" fn(*mut AnyObject, Sel, Sel));
+            cls.add_method(objc2::sel!(attributedSubstringForProposedRange:actualRange:),
                 Self::attributed_substring_for_proposed_range
-                    as extern "C" fn(&mut Object, Sel, NSRange, NSRangePointer) -> id,
-            );
-            cls.add_method(
-                sel2to1(objc2::sel!(insertText:replacementRange:)),
-                Self::insert_text_replacement_range as extern "C" fn(&mut Object, Sel, id, NSRange),
-            );
-
-            cls.add_method(
-                sel2to1(objc2::sel!(characterIndexForPoint:)),
-                Self::character_index_for_point
-                    as extern "C" fn(&mut Object, Sel, NSPoint) -> NSUInteger,
-            );
-            cls.add_method(
-                sel2to1(objc2::sel!(firstRectForCharacterRange:actualRange:)),
+                    as extern "C" fn(*mut AnyObject, Sel, NSRange, *mut NSRange) -> *mut AnyObject);
+            cls.add_method(objc2::sel!(insertText:replacementRange:),
+                Self::insert_text_replacement_range as extern "C" fn(*mut AnyObject, Sel, *mut AnyObject, NSRange));
+            cls.add_method(objc2::sel!(characterIndexForPoint:),
+                Self::character_index_for_point as extern "C" fn(*mut AnyObject, Sel, CGPoint) -> usize);
+            cls.add_method(objc2::sel!(firstRectForCharacterRange:actualRange:),
                 Self::first_rect_for_character_range
-                    as extern "C" fn(&mut Object, Sel, NSRange, NSRangePointer) -> NSRect,
-            );
-            cls.add_method(
-                sel2to1(objc2::sel!(draggingEntered:)),
-                Self::dragging_entered as extern "C" fn(&mut Object, Sel, id) -> BOOL,
-            );
-            cls.add_method(
-                sel2to1(objc2::sel!(performDragOperation:)),
-                Self::perform_drag_operation as extern "C" fn(&mut Object, Sel, id) -> BOOL,
-            );
+                    as extern "C" fn(*mut AnyObject, Sel, NSRange, *mut NSRange) -> CGRect);
+            cls.add_method(objc2::sel!(draggingEntered:),
+                Self::dragging_entered as extern "C" fn(*mut AnyObject, Sel, *mut AnyObject) -> Bool);
+            cls.add_method(objc2::sel!(performDragOperation:),
+                Self::perform_drag_operation as extern "C" fn(*mut AnyObject, Sel, *mut AnyObject) -> Bool);
         }
 
         cls.register()
