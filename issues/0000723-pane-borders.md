@@ -61,6 +61,29 @@ fields.
 | `wezboard/wezboard-gui/src/termwindow/render/split.rs`   | Current split divider rendering (thin `underline_height` line)       |
 | `wezboard/wezboard-gui/src/termwindow/render/borders.rs` | Window border rendering — pattern to follow (4 rectangles)           |
 
+### Content inset
+
+Without insetting, the border (layer 2) paints over the outermost pixels of
+terminal text (layer 0). Ghostboard solved this in Issue 672 by reducing the
+content area by the border width on each interior edge.
+
+In WezTerm, pane content positioning is controlled by two values in `paint_pane`:
+
+- **`left_pixel_x`** (line 340) — horizontal start of text rendering, computed
+  from `padding_left + border.left + (pos.left * cell_width)`.
+- **`top_pixel_y`** (line 78) — vertical start, computed from
+  `top_bar_height + padding_top + border.top`.
+
+The `background_rect` (lines 110-152) has edge detection logic: it checks
+`pos.left == 0`, `pos.top == 0`, and whether `pos.left + pos.width` reaches
+the terminal's column count to decide whether to extend to the window edge.
+
+The inset should only apply on **interior edges** — edges where panes meet other
+panes. Window-edge panes don't need inset on the side touching the window frame,
+since the window's own padding already provides separation. The edge detection
+logic in `background_rect` already identifies which edges are interior vs
+window-edge.
+
 ### Approach
 
 1. Add three config fields: `focused_split_border_color` (Option<RgbaColor>),
@@ -68,10 +91,9 @@ fields.
    (Dimension, default 0).
 2. Add a `paint_pane_border` method that draws 4 filled rectangles around each
    pane's `background_rect`, choosing color based on `pos.is_active`.
-3. Call it from the paint loop after `paint_pane`. When
+3. Inset pane content by adjusting `left_pixel_x`, `top_pixel_y`, and
+   `background_rect` in `paint_pane` — shift text rendering inward by
+   `border_width` on interior edges so the border doesn't cover terminal text.
+4. Call `paint_pane_border` from the paint loop after `paint_pane`. When
    `split_border_width > 0`, skip `paint_split` since borders replace dividers.
-4. Skip borders when there's only one visible pane (single pane or zoomed).
-
-The border draws as an overlay (layer 2) on top of pane content (layer 0), same
-approach as existing split dividers and window borders. Content inset can be
-added as a follow-up if the 2px overlap is noticeable.
+5. Skip borders when there's only one visible pane (single pane or zoomed).
