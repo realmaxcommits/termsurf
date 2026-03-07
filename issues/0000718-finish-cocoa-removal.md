@@ -369,121 +369,121 @@ becomes `objc2::msg_send![obj as *const _ as *const AnyObject, bar: arg]`.
 
 **NSWindow (18 sites)**
 
-| Call | Lines | Return | Notes |
-| ---- | ----- | ------ | ----- |
-| `NSWindow::frame(w)` | 409, 545, 1076, 2239 | `NSRect` | |
-| `NSWindow::contentRectForFrameRect_(w, r)` | 410 | `NSRect` | |
-| `NSWindow::setFrameOrigin_(w, p)` | 417 | `()` | |
-| `window.setBackgroundColor_(c)` | 524 | `()` | arg is `NSColor::clearColor(nil)` |
-| `window.setColorSpace_(c)` | 528 | `()` | arg is `NSColorSpace::sRGBColorSpace(nil)` |
-| `window.cascadeTopLeftFromPoint_(p)` | 571, 577 | `NSPoint` | |
-| `window.setTitle_(t)` | 583 | `()` | |
-| `window.setAcceptsMouseMovedEvents_(b)` | 584 | `()` | |
-| `window.setContentView_(v)` | 603 | `()` | |
-| `window.setDelegate_(v)` | 604 | `()` | |
-| `window.windowNumber()` | 600, 1188 | `NSInteger` | |
-| `window.orderOut_(nil)` | 1060, 1086 | `()` | |
-| `window.setFrame_display_(r, b)` | 1066, 1091 | `()` | |
-| `window.makeKeyAndOrderFront_(nil)` | 1067, 1092, 1221, 1233 | `()` | |
-| `window.setOpaque_(b)` | 1068, 1093, 1112 | `()` | |
-| `window.setHasShadow_(b)` | 1134 | `()` | |
-| `NSWindow::miniaturize_(w, w)` | 1239 | `()` | |
-| `NSWindow::setTitle_(w, t)` | 1299 | `()` | |
-| `NSWindow::setLevel_(w, l)` | 1305 | `()` | |
-| `NSWindow::setContentSize_(w, s)` | 1321 | `()` | |
-| `NSWindow::toggleFullScreen_(w, nil)` | 1016 | `()` | |
-| `NSWindow::zoom_(w, nil)` | 1369, 1377 | `()` | |
-| `window.setTitleVisibility_(v)` | 1472 | `()` | arg uses `appkit::NSWindowTitleVisibility` |
-| `window.setTitlebarAppearsTransparent_(b)` | 1481, 1483 | `()` | |
+| Call                                       | Lines                  | Return      | Notes                                      |
+| ------------------------------------------ | ---------------------- | ----------- | ------------------------------------------ |
+| `NSWindow::frame(w)`                       | 409, 545, 1076, 2239   | `NSRect`    |                                            |
+| `NSWindow::contentRectForFrameRect_(w, r)` | 410                    | `NSRect`    |                                            |
+| `NSWindow::setFrameOrigin_(w, p)`          | 417                    | `()`        |                                            |
+| `window.setBackgroundColor_(c)`            | 524                    | `()`        | arg is `NSColor::clearColor(nil)`          |
+| `window.setColorSpace_(c)`                 | 528                    | `()`        | arg is `NSColorSpace::sRGBColorSpace(nil)` |
+| `window.cascadeTopLeftFromPoint_(p)`       | 571, 577               | `NSPoint`   |                                            |
+| `window.setTitle_(t)`                      | 583                    | `()`        |                                            |
+| `window.setAcceptsMouseMovedEvents_(b)`    | 584                    | `()`        |                                            |
+| `window.setContentView_(v)`                | 603                    | `()`        |                                            |
+| `window.setDelegate_(v)`                   | 604                    | `()`        |                                            |
+| `window.windowNumber()`                    | 600, 1188              | `NSInteger` |                                            |
+| `window.orderOut_(nil)`                    | 1060, 1086             | `()`        |                                            |
+| `window.setFrame_display_(r, b)`           | 1066, 1091             | `()`        |                                            |
+| `window.makeKeyAndOrderFront_(nil)`        | 1067, 1092, 1221, 1233 | `()`        |                                            |
+| `window.setOpaque_(b)`                     | 1068, 1093, 1112       | `()`        |                                            |
+| `window.setHasShadow_(b)`                  | 1134                   | `()`        |                                            |
+| `NSWindow::miniaturize_(w, w)`             | 1239                   | `()`        |                                            |
+| `NSWindow::setTitle_(w, t)`                | 1299                   | `()`        |                                            |
+| `NSWindow::setLevel_(w, l)`                | 1305                   | `()`        |                                            |
+| `NSWindow::setContentSize_(w, s)`          | 1321                   | `()`        |                                            |
+| `NSWindow::toggleFullScreen_(w, nil)`      | 1016                   | `()`        |                                            |
+| `NSWindow::zoom_(w, nil)`                  | 1369, 1377             | `()`        |                                            |
+| `window.setTitleVisibility_(v)`            | 1472                   | `()`        | arg uses `appkit::NSWindowTitleVisibility` |
+| `window.setTitlebarAppearsTransparent_(b)` | 1481, 1483             | `()`        |                                            |
 
 **NSView (10 sites)**
 
-| Call | Lines | Return | Notes |
-| ---- | ----- | ------ | ----- |
-| `NSView::frame(v)` | 321, 619, 1317, 2294, 3107 | `NSRect` | |
-| `NSView::convertRectToBacking(v, r)` | 322, 620, 1318, 2466, 3108 | `NSRect` | |
-| `NSView::convertPoint_fromView_(v, p, nil)` | 2464 | `NSPoint` | |
-| `view.contentView()` | 1591 | `id` | |
-| `view.setWantsLayer(b)` | 606 | `()` | |
+| Call                                        | Lines                      | Return    | Notes |
+| ------------------------------------------- | -------------------------- | --------- | ----- |
+| `NSView::frame(v)`                          | 321, 619, 1317, 2294, 3107 | `NSRect`  |       |
+| `NSView::convertRectToBacking(v, r)`        | 322, 620, 1318, 2466, 3108 | `NSRect`  |       |
+| `NSView::convertPoint_fromView_(v, p, nil)` | 2464                       | `NSPoint` |       |
+| `view.contentView()`                        | 1591                       | `id`      |       |
+| `view.setWantsLayer(b)`                     | 606                        | `()`      |       |
 
 **NSScreen (9 sites)**
 
-| Call | Lines | Return | Notes |
-| ---- | ----- | ------ | ----- |
-| `NSScreen::mainScreen(nil)` | 546, 891, 1083 | `id` | |
-| `NSScreen::screens(nil)` | 957, 973 | `id` | |
-| `NSScreen::frame(s)` | 547, 921, 959, 975, 1084 | `NSRect` | |
-| `NSScreen::convertRectToBacking_(s, r)` | 922, 960, 976 | `NSRect` | |
+| Call                                    | Lines                    | Return   | Notes |
+| --------------------------------------- | ------------------------ | -------- | ----- |
+| `NSScreen::mainScreen(nil)`             | 546, 891, 1083           | `id`     |       |
+| `NSScreen::screens(nil)`                | 957, 973                 | `id`     |       |
+| `NSScreen::frame(s)`                    | 547, 921, 959, 975, 1084 | `NSRect` |       |
+| `NSScreen::convertRectToBacking_(s, r)` | 922, 960, 976            | `NSRect` |       |
 
 **NSEvent (7 sites)**
 
-| Call | Lines | Return | Notes |
-| ---- | ----- | ------ | ----- |
-| `NSEvent::pressedMouseButtons(e)` | 2473 | `NSUInteger` | |
-| `NSEvent::mouseLocation(e)` | 2478 | `NSPoint` | |
-| `NSEvent::buttonNumber(e)` | 2516, 2609 | `NSInteger` | |
-| `nsevent.locationInWindow()` | 2464 | `NSPoint` | |
-| `nsevent.isARepeat()` | 2636 | `BOOL` | |
-| `nsevent.characters()` | 2637, 3002 | `id` | |
-| `nsevent.charactersIgnoringModifiers()` | 2638 | `id` | |
-| `nsevent.keyCode()` | 2648 | `u16` | |
-| `nsevent.hasPreciseScrollingDeltas()` | 2528 | `BOOL` | |
-| `nsevent.scrollingDeltaY()` | 2542 | `CGFloat` | |
-| `nsevent.scrollingDeltaX()` | 2543 | `CGFloat` | |
+| Call                                    | Lines      | Return       | Notes |
+| --------------------------------------- | ---------- | ------------ | ----- |
+| `NSEvent::pressedMouseButtons(e)`       | 2473       | `NSUInteger` |       |
+| `NSEvent::mouseLocation(e)`             | 2478       | `NSPoint`    |       |
+| `NSEvent::buttonNumber(e)`              | 2516, 2609 | `NSInteger`  |       |
+| `nsevent.locationInWindow()`            | 2464       | `NSPoint`    |       |
+| `nsevent.isARepeat()`                   | 2636       | `BOOL`       |       |
+| `nsevent.characters()`                  | 2637, 3002 | `id`         |       |
+| `nsevent.charactersIgnoringModifiers()` | 2638       | `id`         |       |
+| `nsevent.keyCode()`                     | 2648       | `u16`        |       |
+| `nsevent.hasPreciseScrollingDeltas()`   | 2528       | `BOOL`       |       |
+| `nsevent.scrollingDeltaY()`             | 2542       | `CGFloat`    |       |
+| `nsevent.scrollingDeltaX()`             | 2543       | `CGFloat`    |       |
 
 **NSApplication (2 sites)**
 
-| Call | Lines | Return | Notes |
-| ---- | ----- | ------ | ----- |
-| `NSApplication::sharedApplication(nil)` | 1053, 2352 | `id` | |
+| Call                                    | Lines      | Return | Notes |
+| --------------------------------------- | ---------- | ------ | ----- |
+| `NSApplication::sharedApplication(nil)` | 1053, 2352 | `id`   |       |
 
 **NSRunningApplication (1 site)**
 
-| Call | Lines | Return | Notes |
-| ---- | ----- | ------ | ----- |
-| `NSRunningApplication::currentApplication(nil)` | 1198 | `id` | |
+| Call                                            | Lines | Return | Notes |
+| ----------------------------------------------- | ----- | ------ | ----- |
+| `NSRunningApplication::currentApplication(nil)` | 1198  | `id`   |       |
 
 **NSOpenGLContext + NSOpenGLPixelFormat (7 sites)**
 
-| Call | Lines | Return | Notes |
-| ---- | ----- | ------ | ----- |
-| `NSOpenGLPixelFormat::alloc(nil).initWithAttributes_(&[...])` | 223 | `id` | |
-| `NSOpenGLContext::alloc(nil).initWithFormat_shareContext_(...)` | 255 | `id` | |
-| `gl_context.setValues_forParameter_(...)` | 262, 272 | `()` | uses `NSOpenGLContextParameter` |
-| `gl_context.setView_(v)` | 267 | `()` | |
-| `gl_context.flushBuffer()` | 303 | `()` | |
-| `gl_context.view()` | 320 | `id` | |
-| `NSOpenGLContext::currentContext(nil)` | 333 | `id` | |
-| `gl_context.makeCurrentContext()` | 357 | `()` | |
+| Call                                                            | Lines    | Return | Notes                           |
+| --------------------------------------------------------------- | -------- | ------ | ------------------------------- |
+| `NSOpenGLPixelFormat::alloc(nil).initWithAttributes_(&[...])`   | 223      | `id`   |                                 |
+| `NSOpenGLContext::alloc(nil).initWithFormat_shareContext_(...)` | 255      | `id`   |                                 |
+| `gl_context.setValues_forParameter_(...)`                       | 262, 272 | `()`   | uses `NSOpenGLContextParameter` |
+| `gl_context.setView_(v)`                                        | 267      | `()`   |                                 |
+| `gl_context.flushBuffer()`                                      | 303      | `()`   |                                 |
+| `gl_context.view()`                                             | 320      | `id`   |                                 |
+| `NSOpenGLContext::currentContext(nil)`                          | 333      | `id`   |                                 |
+| `gl_context.makeCurrentContext()`                               | 357      | `()`   |                                 |
 
 **NSPasteboard (2 sites)**
 
-| Call | Lines | Return | Notes |
-| ---- | ----- | ------ | ----- |
-| `NSPasteboard::propertyListForType(pb, ...)` | 3308, 3340 | `id` | uses `appkit::NSFilenamesPboardType` |
+| Call                                         | Lines      | Return | Notes                                |
+| -------------------------------------------- | ---------- | ------ | ------------------------------------ |
+| `NSPasteboard::propertyListForType(pb, ...)` | 3308, 3340 | `id`   | uses `appkit::NSFilenamesPboardType` |
 
 **Other appkit references (4 sites)**
 
-| Call | Lines | Notes |
-| ---- | ----- | ----- |
-| `cocoa::appkit::NSColor::clearColor(nil)` | 524 | Used as arg to `setBackgroundColor_` |
-| `cocoa::appkit::NSColorSpace::sRGBColorSpace(nil)` | 528 | Used as arg to `setColorSpace_` |
-| `cocoa::appkit::NSOpenGLContextParameter::*` | 264, 274 | Constants for `setValues_forParameter_` |
-| `appkit::NSWindowTitleVisibility::*` | 1473, 1475 | Constants for `setTitleVisibility_` |
-| `appkit::NSFilenamesPboardType` | 616, 3308, 3340 | Pasteboard type string |
+| Call                                               | Lines           | Notes                                   |
+| -------------------------------------------------- | --------------- | --------------------------------------- |
+| `cocoa::appkit::NSColor::clearColor(nil)`          | 524             | Used as arg to `setBackgroundColor_`    |
+| `cocoa::appkit::NSColorSpace::sRGBColorSpace(nil)` | 528             | Used as arg to `setColorSpace_`         |
+| `cocoa::appkit::NSOpenGLContextParameter::*`       | 264, 274        | Constants for `setValues_forParameter_` |
+| `appkit::NSWindowTitleVisibility::*`               | 1473, 1475      | Constants for `setTitleVisibility_`     |
+| `appkit::NSFilenamesPboardType`                    | 616, 3308, 3340 | Pasteboard type string                  |
 
 **NSArray (2 sites)**
 
-| Call | Lines | Notes |
-| ---- | ----- | ----- |
-| `NSArray::arrayWithObject(nil, ...)` | 616 | |
-| `NSArray::arrayWithObjects(nil, &[])` | 2195 | |
+| Call                                  | Lines | Notes |
+| ------------------------------------- | ----- | ----- |
+| `NSArray::arrayWithObject(nil, ...)`  | 616   |       |
+| `NSArray::arrayWithObjects(nil, &[])` | 2195  |       |
 
 **NSAutoreleasePool (2 sites)**
 
-| Call | Lines | Notes |
-| ---- | ----- | ----- |
-| `NSAutoreleasePool::new(nil)` | 302, 332 | |
+| Call                          | Lines    | Notes |
+| ----------------------------- | -------- | ----- |
+| `NSAutoreleasePool::new(nil)` | 302, 332 |       |
 
 #### Translation pattern
 
@@ -514,18 +514,18 @@ replaces them.
 These constants are currently accessed via `cocoa::appkit::` and will need
 objc2-app-kit equivalents or raw `msg_send!` lookups:
 
-| Old | New |
-| --- | --- |
-| `cocoa::appkit::NSColor::clearColor(nil)` | `objc2::msg_send![objc2::class!(NSColor), clearColor]` |
-| `cocoa::appkit::NSColorSpace::sRGBColorSpace(nil)` | `objc2::msg_send![objc2::class!(NSColorSpace), sRGBColorSpace]` |
-| `cocoa::appkit::NSOpenGLContextParameter::NSOpenGLCPSurfaceOpacity` | raw value `236` |
-| `cocoa::appkit::NSOpenGLContextParameter::NSOpenGLCPSwapInterval` | raw value `222` |
-| `appkit::NSWindowTitleVisibility::NSWindowTitleVisible` | `0isize` |
-| `appkit::NSWindowTitleVisibility::NSWindowTitleHidden` | `1isize` |
-| `appkit::NSFilenamesPboardType` | `objc2_app_kit::NSPasteboardTypeFileURL` or `NSString` literal |
-| `NSArray::arrayWithObject(nil, x)` | `objc2::msg_send![objc2::class!(NSArray), arrayWithObject: x]` |
-| `NSArray::arrayWithObjects(nil, &[])` | `objc2::msg_send![objc2::class!(NSArray), arrayWithObjects: std::ptr::null::<id>(), count: 0usize]` |
-| `NSAutoreleasePool::new(nil)` | `objc2_foundation::NSAutoreleasePool::new()` or `autoreleasepool` closure |
+| Old                                                                 | New                                                                                                 |
+| ------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `cocoa::appkit::NSColor::clearColor(nil)`                           | `objc2::msg_send![objc2::class!(NSColor), clearColor]`                                              |
+| `cocoa::appkit::NSColorSpace::sRGBColorSpace(nil)`                  | `objc2::msg_send![objc2::class!(NSColorSpace), sRGBColorSpace]`                                     |
+| `cocoa::appkit::NSOpenGLContextParameter::NSOpenGLCPSurfaceOpacity` | raw value `236`                                                                                     |
+| `cocoa::appkit::NSOpenGLContextParameter::NSOpenGLCPSwapInterval`   | raw value `222`                                                                                     |
+| `appkit::NSWindowTitleVisibility::NSWindowTitleVisible`             | `0isize`                                                                                            |
+| `appkit::NSWindowTitleVisibility::NSWindowTitleHidden`              | `1isize`                                                                                            |
+| `appkit::NSFilenamesPboardType`                                     | `objc2_app_kit::NSPasteboardTypeFileURL` or `NSString` literal                                      |
+| `NSArray::arrayWithObject(nil, x)`                                  | `objc2::msg_send![objc2::class!(NSArray), arrayWithObject: x]`                                      |
+| `NSArray::arrayWithObjects(nil, &[])`                               | `objc2::msg_send![objc2::class!(NSArray), arrayWithObjects: std::ptr::null::<id>(), count: 0usize]` |
+| `NSAutoreleasePool::new(nil)`                                       | `objc2_foundation::NSAutoreleasePool::new()` or `autoreleasepool` closure                           |
 
 #### Import changes
 
