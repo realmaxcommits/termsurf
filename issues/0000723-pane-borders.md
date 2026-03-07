@@ -248,3 +248,78 @@ rethinking — adjusting `background_rect` and pixel offsets inside `paint_pane`
 is not sufficient to push the rendered terminal lines away from the border
 region. Experiment 2 should focus on fixing the content inset so borders don't
 obscure text.
+
+### Experiment 2: Fix content inset via pixel_width reduction
+
+Experiment 1's inset adjusted `background_rect`, `left_pixel_x`, and
+`top_pixel_y` but missed a critical parameter: `pixel_width`. The
+`render_screen_line` function receives `pixel_width` (currently
+`dims.cols * cell_width` — the full pane width) and uses it to construct the
+`bounding_rect` that clips background fills. Text glyphs are positioned relative
+to `left_pixel_x` and `top_pixel_y`, which Experiment 1 already adjusts
+correctly. The missing piece is that `pixel_width` still spans the full pane, so
+background fills extend under the border on the right side, and there is no
+signal to constrain rendering width.
+
+The fix: reduce `pixel_width` by the horizontal border insets (left + right
+interior edges). This mirrors how `window_padding` works — it reduces available
+space rather than adding clipping.
+
+#### Changes
+
+**1. `wezboard/wezboard-gui/src/termwindow/render/pane.rs`** — Two changes:
+
+**(a) Add `pixel_width` field to `LineRender` struct** (after `left_pixel_x`):
+
+```rust
+pixel_width: f32,
+```
+
+**(b) Compute `pixel_width` with border inset** — After `left_pixel_x` and
+`inset_top_pixel_y` (around line 380), compute the inset pixel width:
+
+```rust
+let pixel_width = {
+    let full = self.render_metrics.cell_size.width as f32 * dims.cols as f32;
+    if border_width > 0.0 {
+        let left_inset = if pos.left != 0 { border_width } else { 0.0 };
+        let right_inset = if pos.left + pos.width
+            < self.terminal_size.cols as usize
+        {
+            border_width
+        } else {
+            0.0
+        };
+        full - left_inset - right_inset
+    } else {
+        full
+    }
+};
+```
+
+Initialize the field in `LineRender`:
+
+```rust
+pixel_width,
+```
+
+**(c) Use `self.pixel_width` in `render_screen_line` call** — Replace the inline
+`pixel_width` computation (line 534-535):
+
+```rust
+// Before:
+pixel_width: self.dims.cols as f32
+    * self.term_window.render_metrics.cell_size.width as f32,
+// After:
+pixel_width: self.pixel_width,
+```
+
+#### Verification
+
+1. `cd wezboard && cargo build -p wezboard-gui` — zero errors
+2. Launch with border config, create splits, verify:
+   - Terminal text does not extend under the border on any edge
+   - Background fills stop at the border boundary
+   - Content is visually inset from the border on all interior edges
+3. Single pane — no change in behavior (no borders, no inset)
+4. Zoom a pane — no borders, full content area restored
