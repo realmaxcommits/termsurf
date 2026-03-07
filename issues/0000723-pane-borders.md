@@ -644,3 +644,49 @@ Borders now correctly appear only when multiple panes are visible. Combined with
 Experiment 4's per-pane inset, the border system is complete: configurable
 focused/unfocused colors, configurable width, content inset on all edges, and
 automatic hide for single-pane and zoomed states.
+
+## Conclusion
+
+Wezboard now has configurable focused/unfocused split pane borders with content
+inset, matching the Ghostboard feature set. Three config keys control the
+behavior: `focused_split_border_color`, `unfocused_split_border_color`, and
+`split_border_width`. When `split_border_width > 0`, the old thin split divider
+is skipped and per-pane borders are drawn instead.
+
+### What worked
+
+- **Experiment 1** established the foundation: three config fields, a
+  `paint_pane_border` method drawing 4 filled rectangles per pane on layer 2,
+  and conditional skipping of `paint_split`. Border rendering, color selection,
+  and the config integration all worked on the first attempt.
+- **Experiment 4** solved the content inset by treating the border as a CSS-like
+  container with padding on **all four sides** unconditionally. Three changes
+  made it work: adding `bw` to `left_pixel_x`, adding `bw` to `top_pixel_y`, and
+  reducing `pixel_width` by `2 * bw` via a `border_inset` field on the
+  `LineRender` struct. The `background_rect` was also inset by `bw` on all
+  sides.
+- **Experiment 5** added `num_panes` gating so single-pane windows and zoomed
+  panes have no borders and no content inset.
+
+### What didn't work
+
+- **Experiment 1's content inset** only applied on interior edges (checking
+  `pos.left != 0`, `pos.top != 0`, etc.), but the border draws on all 4 sides.
+  Content at window edges was never inset, so the border covered it there.
+- **Experiment 2** tried reducing `pixel_width` alone (without the other
+  adjustments from Experiment 4). Constraining just `pixel_width` passed to
+  `render_screen_line` was not sufficient — background fills and text
+  positioning also needed adjustment.
+- **Experiment 3** tried the wrong abstraction level entirely: subtracting
+  border pixels from the global window dimensions in `resize.rs` before
+  computing cell count. This treated borders like window padding (edge of
+  window) rather than per-pane inset (around each pane's content area). The
+  terminal got fewer cols/rows but no gap appeared between content and borders.
+
+### Key insight
+
+The critical realization was that content inset must apply **unconditionally on
+all four sides** of every pane, not selectively on interior edges. Earlier
+experiments failed because they tried to be clever about which edges needed
+inset. The simple approach — treat every pane as a container with uniform
+padding equal to the border width — was the correct one.
