@@ -320,8 +320,8 @@ features to `objc2-app-kit`.
   `NSAutoresizingMaskOptions`, `NSBackingStoreType`. Removed
   `NSApplicationActivateIgnoringOtherApps`, `NSBackingStoreBuffered`,
   `NSViewHeightSizable`, `NSViewWidthSizable`.
-- **`initWithContentRect` (1 site)**: Replaced cocoa trait call with `msg_send!`,
-  converting `NSRect` → `CGRect` for the argument. Return type is
+- **`initWithContentRect` (1 site)**: Replaced cocoa trait call with
+  `msg_send!`, converting `NSRect` → `CGRect` for the argument. Return type is
   `*mut AnyObject`, cast back to `id` for `StrongPtr::new`.
 - **`setAutoresizingMask_` (1 site)**: Replaced with `msg_send!` using
   `NSAutoresizingMaskOptions`.
@@ -338,19 +338,19 @@ features to `objc2-app-kit`.
   returning `NSEventModifierFlags`.
 - **`decoration_to_mask`**: Renamed all `NS*WindowMask` → short names (`Titled`,
   `Closable`, `Miniaturizable`, `Resizable`, `FullSizeContentView`).
-- **`key_modifiers`**: Renamed `NSShiftKeyMask` → `Shift`,
-  `NSAlternateKeyMask` → `Option`, `NSControlKeyMask` → `Control`,
-  `NSCommandKeyMask` → `Command`.
+- **`key_modifiers`**: Renamed `NSShiftKeyMask` → `Shift`, `NSAlternateKeyMask`
+  → `Option`, `NSControlKeyMask` → `Control`, `NSCommandKeyMask` → `Command`.
 - **`.bits()` → `.0` (5 sites)**: All raw bit access updated for objc2's tuple
   struct representation.
-- **`NSFullScreenWindowMask` → `FullScreen`** and
-  **`NSBorderlessWindowMask` → `Borderless`**: All sites.
+- **`NSFullScreenWindowMask` → `FullScreen`** and **`NSBorderlessWindowMask` →
+  `Borderless`**: All sites.
 - **`NSApplicationPresentationDefault` → `empty()`**: objc2 doesn't have a
   `Default` constant; `empty()` is the zero-value equivalent.
 
 Two deviations from the plan:
 
-1. `activateWithOptions:` returns `BOOL`, not `void`. Using `let _: bool` instead
-   of `let _: ()` to avoid a runtime panic from objc2's return type validation.
+1. `activateWithOptions:` returns `BOOL`, not `void`. Using `let _: bool`
+   instead of `let _: ()` to avoid a runtime panic from objc2's return type
+   validation.
 2. `initWithContentRect:` required converting `NSRect` to `CGRect` since
    `cocoa::foundation::NSRect` doesn't implement `objc2::Encode`.
