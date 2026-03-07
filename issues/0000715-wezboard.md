@@ -417,3 +417,132 @@ Key discoveries during implementation:
 - The app launches, reads config from
   `~/.config/termsurf/wezboard/wezboard.lua`, and displays a working terminal
   window. XDG paths correctly nest under `termsurf/wezboard`.
+
+### Experiment 5: TermSurf socket server
+
+#### Goal
+
+Add a second Unix socket listener to wezboard-gui that speaks the TermSurf
+protocol (length-prefixed protobuf). This is the foundation for all protocol
+integration — without it, no TUI or browser engine can connect.
+
+The existing WezTerm mux socket (`gui-sock-{pid}`) stays untouched. The TermSurf
+socket runs in parallel on a separate path.
+
+#### Context
+
+Wezboard already has a Unix socket server for its native mux protocol:
+
+- `spawn_mux_server()` in `wezboard-gui/src/main.rs` creates a `LocalListener`
+  on a dedicated thread
+- `LocalListener::run()` uses a blocking `incoming()` iterator
+- Each accepted connection spawns an async task via `spawn_into_main_thread()`
+  using `smol`
+- Per-connection dispatch multiplexes reads and mux notifications via
+  `smol::channel` and `smol::future::or()`
+
+We add a parallel TermSurf listener using the same patterns. The TermSurf
+protocol uses 4-byte little-endian length prefix + protobuf (same wire format as
+Ghostboard).
+
+#### Socket path
+
+`$TMPDIR/termsurf/termsurf-wezboard-{pid}.sock`
+
+Set `TERMSURF_SOCKET={path}` in child process environment so TUIs can discover
+it.
+
+#### New files
+
+1. **`wezboard/termsurf/Cargo.toml`** — New crate `termsurf` with deps: `prost`,
+   `smol`, `async-io`, `log`, `anyhow`, `wezboard-uds`.
+2. **`wezboard/termsurf/build.rs`** — Compile `proto/termsurf.proto` via
+   `prost-build`.
+3. **`wezboard/termsurf/src/lib.rs`** — Public API: `TermSurfListener`,
+   `TermSurfState`, generated protobuf types.
+4. **`wezboard/termsurf/src/listener.rs`** — `TermSurfListener` struct with
+   `run()` method (blocking accept loop, mirrors `LocalListener`).
+5. **`wezboard/termsurf/src/conn.rs`** — Per-connection async handler. Reads
+   length-prefixed messages, detects connection type on first message
+   (`ServerRegister` = Chromium, else = TUI), dispatches to stub handlers.
+6. **`wezboard/termsurf/src/state.rs`** — `TermSurfState` global (empty
+   registries for now).
+
+#### Modified files
+
+1. **`wezboard/Cargo.toml`** — Add `termsurf` to workspace members and
+   dependencies.
+2. **`wezboard/wezboard-gui/Cargo.toml`** — Add `termsurf` dependency.
+3. **`wezboard/wezboard-gui/src/main.rs`** — In `async_run_terminal_gui()`,
+   after `spawn_mux_server()`, call `spawn_termsurf_server()` which creates a
+   `TermSurfListener` on a new thread.
+
+#### Connection type detection
+
+```rust
+enum ConnType {
+    Unknown,
+    Tui,
+    Chromium,
+}
+```
+
+First message's `oneof` field determines type:
+
+- `msg_case == server_register` → `Chromium`
+- Anything else → `Tui`
+
+Locked after first message (no switching).
+
+#### Wire format
+
+Identical to Ghostboard:
+
+```
+[4 bytes: little-endian u32 length] [N bytes: serialized TermSurfMessage]
+```
+
+Reading:
+
+1. Read into buffer
+2. Parse 4-byte length prefix
+3. If buffer has enough bytes, decode protobuf
+4. Shift buffer, repeat
+
+Writing:
+
+1. Serialize protobuf to get packed size
+2. Write 4-byte LE length + packed bytes
+
+#### Stub handlers
+
+All message handlers log and return. No actual browser integration yet — that's
+future experiments. The goal is just the socket + framing + dispatch skeleton.
+
+```rust
+fn handle_message(msg: TermSurfMessage, conn: &mut Connection) {
+    match msg.msg {
+        Some(Msg::ServerRegister(r)) => log::info!("ServerRegister: {}", r.profile),
+        Some(Msg::SetOverlay(o)) => log::info!("SetOverlay: {}", o.pane_id),
+        Some(Msg::HelloRequest(_)) => { /* send HelloReply */ },
+        _ => log::debug!("unhandled message"),
+    }
+}
+```
+
+#### Steps
+
+1. Create the `termsurf` crate with protobuf compilation.
+2. Implement `TermSurfListener` (accept loop on dedicated thread).
+3. Implement per-connection async handler (length-prefixed framing + dispatch).
+4. Wire into `wezboard-gui/src/main.rs`.
+5. Build and verify socket is created on startup.
+6. Test with `socat` or a small script that sends a `HelloRequest`.
+
+#### Verification
+
+1. `cargo build -p wezboard-gui` compiles
+2. Launch wezboard-gui, verify socket exists at
+   `$TMPDIR/termsurf/termsurf-wezboard-{pid}.sock`
+3. `TERMSURF_SOCKET` env var is set in child shells
+4. A test client can connect and send a `HelloRequest`, receiving a `HelloReply`
