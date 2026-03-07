@@ -434,13 +434,13 @@ call. Remove the `num_panes` argument from `paint_pane_border` too.
 **Result:** Fail
 
 The `split_border_pixels * 2` subtraction in `resize.rs` correctly reduced the
-cell count — the terminal got fewer cols/rows. However, the border still rendered
-on top of content with no visible padding between border and text. Subtracting
-from available space before cell count computation reserves pixels at the window
-level, but those reserved pixels are not allocated as inset space around
-individual panes. The upstream resize approach treats the border space like
-window padding (edge of window), not like per-pane inset (around each pane's
-content area).
+cell count — the terminal got fewer cols/rows. However, the border still
+rendered on top of content with no visible padding between border and text.
+Subtracting from available space before cell count computation reserves pixels
+at the window level, but those reserved pixels are not allocated as inset space
+around individual panes. The upstream resize approach treats the border space
+like window padding (edge of window), not like per-pane inset (around each
+pane's content area).
 
 #### Conclusion
 
@@ -455,17 +455,19 @@ line rendering begins.
 
 ### Experiment 4: Per-pane pixel inset on all edges
 
-Experiments 1-2 applied insets only on **interior edges** (checking `pos.left !=
-0`, `pos.top != 0`, etc.), but the border draws on **all 4 sides** of every
-pane. Content at window edges was never inset, so the border always covered it
-there. Experiment 3 was the wrong abstraction level entirely (global vs
-per-pane).
+Experiments 1-2 applied insets only on **interior edges** (checking
+`pos.left !=
+0`, `pos.top != 0`, etc.), but the border draws on **all 4 sides**
+of every pane. Content at window edges was never inset, so the border always
+covered it there. Experiment 3 was the wrong abstraction level entirely (global
+vs per-pane).
 
 The fix: treat border width as per-pane padding applied **unconditionally on all
 sides**. This is the CSS container-with-padding model — the border is the
 container edge, and the content area shrinks inward by the border width.
 
 Three rendering adjustments:
+
 1. Add `bw` to `left_pixel_x` — content starts `bw` pixels right of pane edge
 2. Add `bw` to `top_pixel_y` — content starts `bw` pixels below pane edge
 3. Reduce `pixel_width` by `2 * bw` — content clips at right border edge
@@ -568,3 +570,63 @@ applies unconditionally on **all four sides** (not just interior edges), and
 `pixel_width` is reduced by `2 * bw` to clip the right side. Storing `bw` as
 `border_inset` in the `LineRender` struct keeps the render_screen_line call
 clean.
+
+### Experiment 5: Hide borders for single-pane windows
+
+Experiment 4 draws borders and insets content unconditionally — even when
+there's only one pane visible. Borders only make sense when multiple panes are
+on screen, since their purpose is to visually distinguish panes from each other.
+A single pane should have no border and no content inset.
+
+The paint loop in `paint.rs` already uses `panes.len()` for background color
+selection (line 233: `if panes.len() == 1`). Re-add `num_panes` as a parameter
+to `paint_pane` and `paint_pane_border` so they can skip border logic when
+there's only one pane.
+
+#### Changes
+
+**1. `wezboard/wezboard-gui/src/termwindow/render/paint.rs`** — Two changes:
+
+**(a)** Re-add `num_panes` before the pane loop:
+
+```rust
+let num_panes = panes.len();
+```
+
+**(b)** Pass `num_panes` to both calls:
+
+```rust
+self.paint_pane(&pos, &mut layers, num_panes)
+    .context("paint_pane")?;
+self.paint_pane_border(&pos, &mut layers, num_panes)?;
+```
+
+**2. `wezboard/wezboard-gui/src/termwindow/render/pane.rs`** — Two changes:
+
+**(a)** In `paint_pane`, add `num_panes: usize` parameter. Gate `bw` on
+`num_panes > 1`:
+
+```rust
+let bw = if num_panes > 1 && !pos.is_zoomed {
+    self.config.split_border_width.evaluate_as_pixels(...) as f32
+} else {
+    0.0
+};
+```
+
+**(b)** In `paint_pane_border`, add `num_panes: usize` parameter. Restore the
+early return:
+
+```rust
+if num_panes <= 1 || pos.is_zoomed {
+    return Ok(());
+}
+```
+
+#### Verification
+
+1. `cd wezboard && cargo build -p wezboard-gui` — zero errors
+2. Single pane — no border, no content inset, full content area
+3. Create a split — borders appear on both panes, content inset active
+4. Close split pane — borders disappear, content returns to full area
+5. Zoom a pane — borders disappear while zoomed
