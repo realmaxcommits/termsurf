@@ -140,3 +140,11 @@ required field `depth_slice` on `RenderPassColorAttachment`.
 
 1. `cd wezboard && cargo build -p wezboard-gui` — zero errors
 2. `cargo run --bin wezboard-gui` — app launches and renders
+
+#### Results
+
+Success. Both changes applied cleanly. `cargo build -p wezboard-gui` compiled
+with zero errors — wgpu 26.0.1 resolved (with naga 26.0.0, wgpu-hal 26.0.6,
+metal 0.32.0). The app launched, rendered the terminal, and quit normally. The
+only breaking change was the new `depth_slice: None` field on
+`RenderPassColorAttachment`, exactly as predicted from the ts2 upgrade history.
