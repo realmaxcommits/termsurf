@@ -652,4 +652,185 @@ Shared state, process spawning, and the full tab lifecycle work correctly in
 Wezboard. The `Arc<Mutex<TermSurfState>>` pattern works cleanly with smol async
 tasks on the main thread. The writer task pattern (channel +
 spawn_into_main_thread) allows cross-connection message forwarding. Ready for
-Experiment 2: overlay rendering or message forwarding.
+Experiment 2: message forwarding.
+
+### Experiment 2: Message forwarding (TUI ↔ Chromium)
+
+The board acts as a hub: TUI messages are forwarded to Chromium (with pane_id →
+tab_id translation), and Chromium state updates are forwarded to the TUI (via
+tab_to_pane lookup). This gives the `web` TUI working URL bar updates, loading
+progress, page titles, navigation, color scheme, and mode tracking — all
+verified in the terminal without any rendering.
+
+#### Message inventory
+
+**Chromium → Board → TUI** (3 messages, passthrough):
+
+| Message      | Lookup                          | Action                   |
+| ------------ | ------------------------------- | ------------------------ |
+| UrlChanged   | `tab_to_pane[tab_id]` → pane_id | Forward to `pane.tui_tx` |
+| LoadingState | `tab_to_pane[tab_id]` → pane_id | Forward to `pane.tui_tx` |
+| TitleChanged | `tab_to_pane[tab_id]` → pane_id | Forward to `pane.tui_tx` |
+
+These are pure passthrough — the board doesn't modify the message, just routes
+it to the correct TUI connection.
+
+**TUI → Board → Chromium** (2 messages, pane_id → tab_id translation):
+
+| Message        | Lookup                            | Transformation              |
+| -------------- | --------------------------------- | --------------------------- |
+| Navigate       | `panes[pane_id]` → tab_id, server | Replace pane_id with tab_id |
+| SetColorScheme | `panes[pane_id]` → tab_id, server | Replace pane_id with tab_id |
+
+The TUI sends `pane_id` (it doesn't know tab_ids). The board looks up the pane's
+`tab_id` and the server's `tx` channel, builds a new message with `tab_id`
+populated, and sends it to Chromium.
+
+**TUI → Board** (1 message, local state only):
+
+| Message     | Action                          |
+| ----------- | ------------------------------- |
+| ModeChanged | Update `pane.browsing` in state |
+
+ModeChanged is not forwarded to Chromium. It updates local state that will be
+used by input routing in a later experiment.
+
+#### Changes
+
+**1. `wezboard-gui/src/termsurf/conn.rs`** — Add 6 new match arms to
+`handle_message`:
+
+**(a) Chromium → TUI forwarding (UrlChanged, LoadingState, TitleChanged):**
+
+All three follow the same pattern. Extract a helper:
+
+```rust
+fn forward_to_tui(tab_id: i64, msg: Msg, state: &SharedState) {
+    let st = state.lock().unwrap();
+    let Some(pane_id) = st.tab_to_pane.get(&tab_id) else {
+        log::warn!("forward_to_tui: unknown tab_id={}", tab_id);
+        return;
+    };
+    let Some(pane) = st.panes.get(pane_id) else {
+        return;
+    };
+    let wrapped = TermSurfMessage { msg: Some(msg) };
+    let _ = pane.tui_tx.try_send(wrapped.encode_to_vec());
+}
+```
+
+Match arms:
+
+```rust
+Some(Msg::UrlChanged(u)) => {
+    log::info!("UrlChanged: tab_id={} url={}", u.tab_id, u.url);
+    forward_to_tui(u.tab_id, Msg::UrlChanged(u), state);
+}
+Some(Msg::LoadingState(l)) => {
+    log::debug!("LoadingState: tab_id={} state={}", l.tab_id, l.state);
+    forward_to_tui(l.tab_id, Msg::LoadingState(l), state);
+}
+Some(Msg::TitleChanged(t)) => {
+    log::info!("TitleChanged: tab_id={} title={}", t.tab_id, t.title);
+    forward_to_tui(t.tab_id, Msg::TitleChanged(t), state);
+}
+```
+
+**(b) TUI → Chromium forwarding (Navigate, SetColorScheme):**
+
+Both follow the same pattern. Extract a helper:
+
+```rust
+fn forward_to_chromium(
+    pane_id: &str,
+    build_msg: impl FnOnce(i64) -> Msg,
+    state: &SharedState,
+) {
+    let st = state.lock().unwrap();
+    let Some(pane) = st.panes.get(pane_id) else {
+        log::warn!("forward_to_chromium: unknown pane_id={}", pane_id);
+        return;
+    };
+    if pane.tab_id == 0 {
+        log::warn!("forward_to_chromium: pane {} has no tab yet", pane_id);
+        return;
+    }
+    let tab_id = pane.tab_id;
+    let key = TermSurfState::server_key(&pane.profile, &pane.browser);
+    let Some(server) = st.servers.get(&key) else {
+        return;
+    };
+    let Some(ref server_tx) = server.tx else {
+        return;
+    };
+    let msg = TermSurfMessage {
+        msg: Some(build_msg(tab_id)),
+    };
+    let _ = server_tx.try_send(msg.encode_to_vec());
+}
+```
+
+Match arms:
+
+```rust
+Some(Msg::Navigate(n)) => {
+    log::info!("Navigate: pane_id={} url={}", n.pane_id, n.url);
+    let url = n.url.clone();
+    forward_to_chromium(&n.pane_id, |tab_id| {
+        Msg::Navigate(proto::Navigate {
+            tab_id,
+            pane_id: String::new(),
+            url,
+        })
+    }, state);
+}
+Some(Msg::SetColorScheme(s)) => {
+    log::info!("SetColorScheme: pane_id={} dark={}", s.pane_id, s.dark);
+    let dark = s.dark;
+    // Update pane state
+    {
+        let mut st = state.lock().unwrap();
+        if let Some(pane) = st.panes.get_mut(&s.pane_id) {
+            pane.dark = dark;
+        }
+    }
+    forward_to_chromium(&s.pane_id, |tab_id| {
+        Msg::SetColorScheme(proto::SetColorScheme {
+            tab_id,
+            pane_id: String::new(),
+            dark,
+        })
+    }, state);
+}
+```
+
+**(c) ModeChanged (local state only):**
+
+```rust
+Some(Msg::ModeChanged(m)) => {
+    log::info!("ModeChanged: pane_id={} browsing={}", m.pane_id, m.browsing);
+    let mut st = state.lock().unwrap();
+    if let Some(pane) = st.panes.get_mut(&m.pane_id) {
+        pane.browsing = m.browsing;
+    }
+}
+```
+
+#### Verification
+
+1. `cd wezboard && cargo build -p wezboard-gui` — zero errors.
+2. Launch Wezboard, run `web google.com` in a pane.
+3. Confirm logs:
+   - `UrlChanged: tab_id=1 url=https://www.google.com/` (after redirect)
+   - `LoadingState: tab_id=1 state=loading`
+   - `LoadingState: tab_id=1 state=done`
+   - `TitleChanged: tab_id=1 title=Google`
+4. In the `web` TUI: URL bar shows `https://www.google.com/`, title shows
+   "Google", loading indicator completes.
+5. Type `:open https://example.com` in the TUI. Confirm:
+   - `Navigate: pane_id=... url=https://example.com`
+   - Chromium navigates, then UrlChanged/TitleChanged flow back.
+6. Toggle dark mode (`:colorscheme dark`). Confirm:
+   - `SetColorScheme: pane_id=... dark=true`
+7. Press Esc to switch modes. Confirm:
+   - `ModeChanged: pane_id=... browsing=false`
