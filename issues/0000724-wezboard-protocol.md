@@ -1103,7 +1103,72 @@ Possible causes for invisible overlay:
 The protocol plumbing works end-to-end: CaContext arrives, CALayerHost is
 created with the correct context ID, and cleanup is crash-free. The rendering
 pipeline is the problem — the CALayerHost sublayer exists but isn't producing
-visible output. Next experiment should investigate why: check layer hierarchy
-visibility, z-order relative to CAMetalLayer content, contentsScale
-interactions, and whether the CALayerHost is actually receiving frames from
-Chromium's GPU process.
+visible output.
+
+Post-experiment analysis traced through WezTerm's layer architecture and
+identified the root cause: **WezTerm uses a layer-backed view, not a
+layer-hosting view.** In a layer-backed view, AppKit owns the layer tree and
+manually added sublayers are not composited.
+
+WezTerm's layer setup (window.rs):
+
+1. `setWantsLayer: true` is called on the view (line 627), triggering
+   `make_backing_layer()` which returns a `CAMetalLayer`.
+2. ANGLE's EGL init (line 163) calls `setWantsLayer: true` again (no-op), gets
+   the backing layer, and creates its own `CAMetalLayer` as a sublayer for
+   rendering.
+3. Our code adds the flipped_layer/CALayerHost as another sublayer of the
+   backing layer.
+
+The z-order is correct — our CALayerHost is on top of ANGLE's sublayer. The
+frames are non-zero. The contextId is valid. But AppKit does not composite
+manually added sublayers in a layer-backed view's layer tree.
+
+Ghostboard avoids this by using a **layer-hosting** view: it assigns a custom
+`IOSurfaceLayer` to the view's `layer` property _before_ setting
+`wantsLayer = YES` (Metal.zig lines 124-125). This gives the app full control
+over the layer tree, and CALayerHost sublayers composite correctly.
+
+**Proposed fix for a future issue:** Create a transparent overlay NSView as a
+subview on top of the terminal view. Make the overlay view layer-hosting (assign
+its layer before setting `wantsLayer`). Put the CALayerHost in the overlay
+view's layer tree. This sidesteps the layer-backed restriction without modifying
+WezTerm's ANGLE rendering pipeline:
+
+```
+NSWindow
+  └─ contentView
+       ├─ terminalView (layer-backed, ANGLE renders here)
+       └─ overlayView (layer-hosting, transparent)
+            └─ CALayer [root]
+                 └─ flipped_layer → positioning_layer → CALayerHost
+```
+
+## Conclusion
+
+Issue 724 implemented the first three layers of the TermSurf protocol in
+Wezboard across three experiments:
+
+- **Experiment 1** — State management: `Pane`, `Server`, and `TermSurfState`
+  structs with pane registry, server registry, tab-to-pane mappings, and focus
+  tracking. Browser process spawning with `--ipc-socket` argument. Tab lifecycle
+  (`CreateTab`, `TabReady`, `CloseTab`).
+- **Experiment 2** — Message forwarding: Board acts as hub routing messages
+  between TUI and Chromium. Navigate, UrlChanged, LoadingState, TitleChanged,
+  SetColorScheme, ModeChanged, and Resize forwarding. Full disconnect cleanup
+  with server pane counting.
+- **Experiment 3** — CALayerHost rendering: CaContext message handling,
+  three-layer CALayerHost hierarchy creation, positioning, and cleanup. The
+  protocol plumbing works but the overlay is invisible due to WezTerm's
+  layer-backed view architecture.
+
+What works: socket IPC, protobuf parsing, connection type detection, server
+spawning, tab lifecycle, bidirectional message forwarding, pane state tracking,
+and CALayerHost creation with valid context IDs.
+
+What doesn't work yet: visible browser rendering (requires overlay NSView
+approach), input forwarding, and real cell-metric pixel dimensions.
+
+The CALayerHost visibility problem is an architectural issue specific to
+WezTerm's use of ANGLE with a layer-backed view. The proposed overlay NSView
+solution should be implemented in a new issue.
