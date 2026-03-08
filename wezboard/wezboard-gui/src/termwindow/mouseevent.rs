@@ -655,9 +655,9 @@ impl super::TermWindow {
     ) {
         // Forward to browser overlay if click hits overlay (TermSurf).
         if crate::termsurf::input::try_forward_mouse(pane.pane_id(), &event) {
-            context.set_cursor(Some(
-                crate::termsurf::input::cursor_for_pane(pane.pane_id()),
-            ));
+            context.set_cursor(Some(crate::termsurf::input::cursor_for_pane(
+                pane.pane_id(),
+            )));
             return;
         }
 

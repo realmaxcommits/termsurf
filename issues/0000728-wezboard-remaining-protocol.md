@@ -43,22 +43,22 @@ The full browser overlay pipeline is functional:
 
 ### Messages currently handled (14 of 30)
 
-| #  | Message              | Direction        | Handler                |
-| -- | -------------------- | ---------------- | ---------------------- |
-| 1  | ServerRegister       | Chromium → Board | handle_server_register |
-| 2  | SetOverlay           | TUI → Board      | handle_set_overlay     |
-| 3  | TabReady             | Chromium → Board | handle_tab_ready       |
-| 4  | HelloRequest         | TUI → Board      | inline reply           |
-| 5  | UrlChanged           | Chromium → Board | forward_to_tui         |
-| 6  | LoadingState         | Chromium → Board | forward_to_tui         |
-| 7  | TitleChanged         | Chromium → Board | forward_to_tui         |
-| 8  | Navigate             | TUI → Board      | forward_to_chromium    |
-| 9  | SetColorScheme       | TUI → Board      | forward_to_chromium    |
-| 10 | ModeChanged          | TUI → Board      | update pane state      |
-| 11 | CaContext            | Chromium → Board | handle_ca_context      |
-| 12 | QueryLastRequest     | TUI → Board      | inline reply           |
-| 13 | QueryDevtoolsRequest | TUI → Board      | inline reply           |
-| 14 | QueryTabsRequest     | TUI → Board      | inline reply           |
+| #   | Message              | Direction        | Handler                |
+| --- | -------------------- | ---------------- | ---------------------- |
+| 1   | ServerRegister       | Chromium → Board | handle_server_register |
+| 2   | SetOverlay           | TUI → Board      | handle_set_overlay     |
+| 3   | TabReady             | Chromium → Board | handle_tab_ready       |
+| 4   | HelloRequest         | TUI → Board      | inline reply           |
+| 5   | UrlChanged           | Chromium → Board | forward_to_tui         |
+| 6   | LoadingState         | Chromium → Board | forward_to_tui         |
+| 7   | TitleChanged         | Chromium → Board | forward_to_tui         |
+| 8   | Navigate             | TUI → Board      | forward_to_chromium    |
+| 9   | SetColorScheme       | TUI → Board      | forward_to_chromium    |
+| 10  | ModeChanged          | TUI → Board      | update pane state      |
+| 11  | CaContext            | Chromium → Board | handle_ca_context      |
+| 12  | QueryLastRequest     | TUI → Board      | inline reply           |
+| 13  | QueryDevtoolsRequest | TUI → Board      | inline reply           |
+| 14  | QueryTabsRequest     | TUI → Board      | inline reply           |
 
 ### Messages NOT handled (16 of 30)
 
@@ -991,3 +991,63 @@ Some(Msg::ModeChanged(m)) => {
 6. Press Esc — exits browse mode (regression check)
 7. Click on overlay — enters browse mode, click text field, cursor blinks
    (regression check for click-to-browse path)
+
+**Result:** Pass
+
+All verification steps passed. Entering browse mode via TUI now sends
+`FocusChanged` to Chromium, so text fields show a blinking cursor. Exit via Esc
+and click-to-browse both still work.
+
+#### Conclusion
+
+The fix was a single `forward_to_chromium` call in the `ModeChanged` handler,
+mirroring what `send_mode_and_focus` already does in the click-to-browse path.
+The mutex must be dropped (via an inner block) before calling
+`forward_to_chromium`, which acquires it again.
+
+## Conclusion
+
+Issue 728 brought Wezboard from a view-only browser overlay to a fully
+interactive browser-in-terminal experience. Across 6 experiments, we implemented
+mode-aware input forwarding, cursor changes, and focus management — the
+remaining protocol messages needed for the `web` TUI to work identically on
+Wezboard and Ghostboard.
+
+### What was accomplished
+
+1. **Experiment 1: Mode-aware input forwarding** (Fail) — First attempt at
+   hooking WezTerm's key/mouse/scroll event path to forward input to Chromium in
+   browse mode. Input reached Chromium but mouse coordinates were wrong (scale
+   and scroll phase bugs).
+
+2. **Experiment 2: Fix coordinate scale and scroll phase** (Success) — Fixed
+   mouse coordinates by applying `scale_factor` for Retina displays and sending
+   correct `ScrollPhase::Started`/`Ended` events. Mouse hover, clicks, and
+   scrolling now work correctly.
+
+3. **Experiment 3: Fix Esc key not exiting browse mode** (Success) — Esc
+   keystrokes were being forwarded to Chromium instead of being handled by the
+   TUI. Added Esc interception before the browse-mode forwarding path so it
+   exits browse mode as expected.
+
+4. **Experiment 4: CursorChanged** (Success) — Implemented system cursor updates
+   when hovering over the browser overlay. Chromium sends cursor type changes
+   (pointer, text, hand, etc.) and Wezboard now maps them to macOS `NSCursor`
+   types and applies them.
+
+5. **Experiment 5: FocusChanged on pane switch** (Success) — When switching
+   between panes, the board now sends `FocusChanged(false)` to the previously
+   focused pane's Chromium and `FocusChanged(true)` to the newly focused one.
+   This keeps Chromium's internal focus state in sync with the terminal.
+
+6. **Experiment 6: FocusChanged on TUI browse mode toggle** (Pass) — The
+   `ModeChanged` handler only updated local pane state but never notified
+   Chromium. Added a `forward_to_chromium` call to send `FocusChanged` so text
+   fields show a blinking cursor when entering browse mode via TUI.
+
+### Protocol coverage
+
+Wezboard now handles all protocol messages needed for interactive browsing:
+keyboard input, mouse clicks, mouse movement, scrolling, cursor changes, and
+focus management. The remaining unhandled messages (DevTools, OpenSplit) are
+feature extensions, not core browsing functionality.

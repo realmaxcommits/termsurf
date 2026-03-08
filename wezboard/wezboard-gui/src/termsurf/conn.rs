@@ -209,10 +209,23 @@ async fn handle_message(
         }
         Some(Msg::ModeChanged(m)) => {
             log::info!("ModeChanged: pane_id={} browsing={}", m.pane_id, m.browsing);
-            let mut st = state.lock().unwrap();
-            if let Some(pane) = st.panes.get_mut(&m.pane_id) {
-                pane.browsing = m.browsing;
+            {
+                let mut st = state.lock().unwrap();
+                if let Some(pane) = st.panes.get_mut(&m.pane_id) {
+                    pane.browsing = m.browsing;
+                }
             }
+            let browsing = m.browsing;
+            forward_to_chromium(
+                &m.pane_id,
+                |tab_id| {
+                    Msg::FocusChanged(proto::FocusChanged {
+                        tab_id,
+                        focused: browsing,
+                    })
+                },
+                state,
+            );
         }
         Some(Msg::CaContext(c)) => {
             log::info!(
@@ -226,7 +239,11 @@ async fn handle_message(
             }
         }
         Some(Msg::CursorChanged(c)) => {
-            log::debug!("CursorChanged: tab_id={} cursor_type={}", c.tab_id, c.cursor_type);
+            log::debug!(
+                "CursorChanged: tab_id={} cursor_type={}",
+                c.tab_id,
+                c.cursor_type
+            );
             let mut st = state.lock().unwrap();
             if let Some(pane_id) = st.tab_to_pane.get(&c.tab_id).cloned() {
                 if let Some(pane) = st.panes.get_mut(&pane_id) {
