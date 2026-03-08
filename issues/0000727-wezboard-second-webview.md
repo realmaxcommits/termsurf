@@ -288,3 +288,28 @@ let y = (top_bar_h + pad_top + border_top + (pane_top as u32 + pane.row as u32) 
 4. Open a vertical split, run `web google.com` in the second pane
 5. Both overlays visible, each over its own pane
 6. Close one pane — remaining overlay repositions correctly
+
+### Result: Failure
+
+Same symptoms as Issue 726 Exp 7. The first pane's overlay is positioned
+incorrectly (shifted from its correct location), and the second pane's overlay
+still doesn't appear. Adding `pane.col * cell_w` and `pane.row * cell_h` to the
+grid origin displaces the first overlay because the TUI sends row=1 (URL bar
+offset), which adds an extra `cell_h` to the y position on top of the grid
+origin that already accounts for the content area.
+
+The fundamental problem remains: the TUI's col/row are pane-relative viewport
+offsets (row=1 means "skip the URL bar row"), NOT window-relative grid
+coordinates. Adding them to the window-level grid origin double-counts the
+offset. For the single-pane case, col=0 and row=1 — so x stays correct but y
+gets pushed down by one cell height.
+
+Additionally, the metrics change (adding `border_left` and
+`padding_top + border_top` to the stored origin values) may have further shifted
+the first overlay compared to the pre-experiment baseline, since the original
+formula only used `padding_left` and `top_bar_height`.
+
+The `get_pane_cell_position` lookup from the mux is architecturally correct, but
+the formula for combining grid origin + pane cell offset + TUI viewport offset
+needs rethinking. The TUI's row=1 should offset within the pane's area, not be
+added to the window-level grid origin.
