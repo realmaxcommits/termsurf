@@ -812,3 +812,42 @@ let origin_y = top_bar_height;
 4. Webview top edge aligns immediately below the tab bar
 5. Resize window — webview stays aligned
 6. Close pane — clean shutdown
+
+**Result:** Pass
+
+The webview is correctly positioned immediately below the tab bar. The correct
+formula is `origin_y = top_bar_height` — just the tab bar pixel height, nothing
+else.
+
+The key insight: the webview overlay replaces the entire terminal content area,
+including the padding region. Terminal padding positions _text_ within the
+content area, but the webview fills from the tab bar's bottom edge to the
+window's bottom edge. Adding `padding_top` pushed the webview below where it
+should start; subtracting `cell_height` overcorrected in the other direction.
+
+#### What experiments 2-8 accomplished
+
+Experiment 2 introduced global atomic cell metrics (`metrics.rs`) bridging
+TermWindow's render data to the TermSurf connection code. The webview now has
+correct pixel dimensions computed from real cell metrics instead of placeholder
+`width*10`/`height*20` values.
+
+Experiments 3-8 fixed the y-offset through iterative debugging:
+
+- Exp 3: Added `top_bar_height + padding_top + border.top` — one row too low
+- Exp 4: Removed `border.top` (was already 0) — still one row too low
+- Exp 5: Added `log::info!` in resize.rs — never fired (wrong code path)
+- Exp 6: Added `eprintln!` in mod.rs constructor — revealed actual values:
+  `cell=13x30 tab_bar=50 padding_top=15`
+- Exp 7: Subtracted `cell_height` — almost one row too high
+- Exp 8: Used `top_bar_height` alone — correct
+
+The x-offset (`origin_x = padding_left`) was correct from experiment 2 and
+didn't need the tab bar treatment.
+
+#### Conclusion
+
+The cell metrics bridge works. Webview has correct size (real cell dimensions)
+and correct position (below tab bar, at left padding). The overlay fills the
+terminal content area including padding — correct behavior since the webview
+replaces terminal content entirely.

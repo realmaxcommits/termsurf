@@ -655,13 +655,11 @@ impl TermWindow {
         } else {
             tab_bar_height
         };
-        let origin_y = (top_bar_height + padding_top)
-            .saturating_sub(render_metrics.cell_size.height as usize);
         crate::termsurf::metrics::set(
             render_metrics.cell_size.width as u32,
             render_metrics.cell_size.height as u32,
             padding_left as u32,
-            origin_y as u32,
+            top_bar_height as u32,
         );
         eprintln!(
             "termsurf metrics: cell={}x{} padding_left={} padding_top={} \
@@ -673,7 +671,7 @@ impl TermWindow {
             tab_bar_height,
             top_bar_height,
             padding_left,
-            origin_y,
+            top_bar_height,
         );
 
         let mut dimensions = Dimensions {
