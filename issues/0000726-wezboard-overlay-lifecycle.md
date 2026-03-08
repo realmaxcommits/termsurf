@@ -312,3 +312,18 @@ cmd.env("TERMSURF_PANE_ID", pane_id.to_string());
 4. **Expected:** browser overlay disappears
 5. Switch back to the first tab
 6. **Expected:** browser overlay reappears
+
+**Result:** Pass
+
+Overlays hide on tab switch away and reappear on switch back. The missing
+`TERMSURF_PANE_ID` env var was the root cause of Experiment 1's failure —
+without it, the TUI couldn't identify itself to the board, so the TermSurf pane
+keys never matched the mux active pane set.
+
+#### Conclusion
+
+Setting `TERMSURF_PANE_ID` alongside `WEZBOARD_PANE` in `domain.rs` completes
+the pane identity bridge between WezTerm's mux and the TermSurf protocol.
+Combined with Experiment 1's `sync_overlay_visibility` (called from the
+`WindowInvalidated` handler), tab switching now correctly hides and shows
+browser overlays.

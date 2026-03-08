@@ -480,6 +480,7 @@ impl LocalDomain {
             cmd.env("WEZBOARD_UNIX_SOCKET", sock);
         }
         cmd.env("WEZBOARD_PANE", pane_id.to_string());
+        cmd.env("TERMSURF_PANE_ID", pane_id.to_string());
         if let Some(agent) = Mux::get().agent.as_ref() {
             cmd.env("SSH_AUTH_SOCK", agent.path());
         }
