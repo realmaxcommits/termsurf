@@ -395,3 +395,66 @@ No changes to metrics.rs, resize.rs, or state.rs. No col/row fields on Pane.
 3. Split pane, open from RIGHT side — overlay appears over right pane
 4. Split pane, open from LEFT side — overlay appears over left pane
 5. Close the TUI — overlay removed cleanly
+
+### Result: Failure
+
+The overlay for the right pane is positioned far beyond the visible window —
+stretching the window to the right reveals it. The offset is approximately the
+full window width, not the left pane's width. This means
+`PositionedPane.left * cell_w` is producing a value equal to the full window
+width in pixels rather than the left pane's pixel width.
+
+The `PositionedPane.left` value from `iter_panes()` is in cells relative to the
+tab, and `cell_w` is the cell width from metrics. If the right pane's `left` is,
+say, 80 cells in a 160-column window, then `80 * cell_w` should be half the
+window. But the overlay ends up at the full window width, suggesting either
+`pane_left` or `cell_w` is wrong, or the pane_id lookup is matching the wrong
+pane. Debug logging of the actual `pane_left`, `cell_w`, and resulting `x`
+values is needed to diagnose.
+
+## Experiment 4: Debug log pane positions
+
+### Hypothesis
+
+The `get_pane_cell_position` lookup returns wrong values — either the pane_id
+isn't matching, or `PositionedPane.left` is larger than expected. Logging the
+actual values will reveal why the overlay ends up at the full window width.
+
+### Design
+
+Add logging to two functions in `conn.rs`:
+
+**1. In `get_pane_cell_position`** — log ALL panes returned by `iter_panes()`,
+not just the matching one. This shows every pane's id, left, top, width, and
+height, revealing what WezTerm thinks the layout is:
+
+```rust
+for pos in tab.iter_panes() {
+    log::info!(
+        "  pane id={} left={} top={} width={} height={} pixel={}x{}",
+        pos.pane.pane_id(), pos.left, pos.top,
+        pos.width, pos.height, pos.pixel_width, pos.pixel_height
+    );
+    if pos.pane.pane_id() == numeric_id {
+        return (pos.left, pos.top);
+    }
+}
+```
+
+**2. In `update_ca_layer_frame`** — log the inputs and computed output:
+
+```rust
+log::info!(
+    "update_ca_layer_frame: pane_id={} cell=({},{}) origin=({},{}) "
+    "pane_cell=({},{}) → pixel=({:.1},{:.1}) size=({:.1},{:.1}) scale={}",
+    pane.pane_id, cell_w, cell_h, origin_x, origin_y,
+    pane_left, pane_top, x, y, w, h, scale
+);
+```
+
+### Verification
+
+1. Build and launch Wezboard
+2. Open a split pane, run `web ryanxcharles.com` from the right side
+3. Read the logs — check what `pane_left` value is, what `cell_w` is, and
+   whether `pane_left * cell_w` matches the expected left pane pixel width
