@@ -625,3 +625,72 @@ log::info!(
 5. Check `pad_top` — is it nonzero when it shouldn't be?
 6. Check `scale` — is it 1.0 or 2.0?
 7. Use the logged values to determine which component adds the extra row
+
+**Result:** Fail
+
+The debug logs provided no useful diagnostic value. The `termsurf metrics` log
+in `resize.rs` never fired — `resize()` is not called during initial window
+creation. The metrics come entirely from the `mod.rs` constructor, which has no
+logging. The only log that fired was in `conn.rs`, which showed the final atomic
+values (`origin_x=13 origin_y=65 scale=1`) but not the component breakdown (cell
+size, tab bar height, padding) needed to identify the extra row.
+
+The log should have been placed in `mod.rs` where the metrics are actually set
+at startup, not only in `resize.rs` which runs later.
+
+### Experiment 6: Debug logs in constructor via eprintln
+
+Add `eprintln!` debug logging in the `mod.rs` constructor (the only code path
+that actually runs at startup) and in `conn.rs` where the frame is set. Use
+`eprintln!` instead of `log::info!` so output goes to stderr and is visible when
+piping from the CLI. Remove the `log::info!` calls from experiments 3-5 that
+didn't help.
+
+#### Changes
+
+##### 1. EDIT `wezboard/wezboard-gui/src/termwindow/mod.rs`
+
+Add `eprintln!` after the `metrics::set()` call in the constructor, logging
+every component:
+
+```rust
+eprintln!(
+    "termsurf metrics: cell={}x{} padding_left={} padding_top={} \
+     tab_bar_height={} top_bar_height={} origin=({}, {})",
+    render_metrics.cell_size.width,
+    render_metrics.cell_size.height,
+    padding_left,
+    padding_top,
+    tab_bar_height,
+    top_bar_height,
+    padding_left,
+    top_bar_height + padding_top,
+);
+```
+
+##### 2. EDIT `wezboard/wezboard-gui/src/termsurf/conn.rs`
+
+Replace the `log::info!` in `update_ca_layer_frame()` with `eprintln!`:
+
+```rust
+eprintln!(
+    "termsurf frame: origin_x={} origin_y={} scale={} \
+     frame=({}, {}, {}, {})",
+    pad_left, pad_top, scale, x, y, w, h,
+);
+```
+
+##### 3. EDIT `wezboard/wezboard-gui/src/termwindow/resize.rs`
+
+Remove the `log::info!` call added in experiment 5. Keep the metrics computation
+and `metrics::set()` call.
+
+#### Verification
+
+1. `cd wezboard && cargo build -p wezboard-gui` — zero errors
+2. Run from CLI:
+   `cargo run -p wezboard-gui 2>&1 | tee ~/dev/termsurf/logs/wezboard.log`
+3. Run `web google.com` in the terminal
+4. Check output for `termsurf metrics` line with component breakdown
+5. Check output for `termsurf frame` line with final frame values
+6. Compare `top_bar_height` to `cell_height` — identify the extra row
