@@ -174,6 +174,118 @@ async fn handle_message(
                 handle_ca_context(c, state);
             }
         }
+        Some(Msg::QueryLastRequest(q)) => {
+            log::info!("QueryLastRequest: pane_id={} profile={}", q.pane_id, q.profile);
+            let reply = {
+                let st = state.lock().unwrap();
+                if let Some(ref last_id) = st.last_browser_pane {
+                    if let Some(pane) = st.panes.get(last_id) {
+                        if q.profile.is_empty() || pane.profile == q.profile {
+                            proto::QueryLastReply {
+                                pane_id: last_id.clone(),
+                                tab_id: pane.tab_id,
+                                profile: pane.profile.clone(),
+                                error: String::new(),
+                            }
+                        } else {
+                            proto::QueryLastReply {
+                                error: "No matching pane for profile".into(),
+                                ..Default::default()
+                            }
+                        }
+                    } else {
+                        proto::QueryLastReply {
+                            error: "Last pane no longer exists".into(),
+                            ..Default::default()
+                        }
+                    }
+                } else {
+                    proto::QueryLastReply {
+                        error: "No browser pane yet".into(),
+                        ..Default::default()
+                    }
+                }
+            };
+            let msg = TermSurfMessage { msg: Some(Msg::QueryLastReply(reply)) };
+            let payload = msg.encode_to_vec();
+            let len = (payload.len() as u32).to_le_bytes();
+            (&**stream).write_all(&len).await?;
+            (&**stream).write_all(&payload).await?;
+        }
+        Some(Msg::QueryDevtoolsRequest(q)) => {
+            log::info!(
+                "QueryDevtoolsRequest: pane_id={} inspected_tab_id={} profile={}",
+                q.pane_id, q.inspected_tab_id, q.profile
+            );
+            let reply = {
+                let st = state.lock().unwrap();
+
+                // Resolve inspected_tab_id (0 means auto-target to last browser pane)
+                let resolved_tab_id = if q.inspected_tab_id != 0 {
+                    q.inspected_tab_id
+                } else if let Some(ref last_id) = st.last_browser_pane {
+                    st.panes.get(last_id).map(|p| p.tab_id).unwrap_or(0)
+                } else {
+                    0
+                };
+
+                if resolved_tab_id == 0 {
+                    proto::QueryDevtoolsReply {
+                        error: "No browser tab found".into(),
+                        ..Default::default()
+                    }
+                } else {
+                    // Check for duplicate DevTools
+                    let already_open = st.panes.values().any(|p| p.inspected_tab_id == resolved_tab_id);
+                    if already_open {
+                        proto::QueryDevtoolsReply {
+                            error: format!("Tab {} already has DevTools open", resolved_tab_id),
+                            ..Default::default()
+                        }
+                    } else if let Some(inspected_pane_id) = st.tab_to_pane.get(&resolved_tab_id) {
+                        let inspected_pane = st.panes.get(inspected_pane_id).unwrap();
+                        proto::QueryDevtoolsReply {
+                            tab_id: resolved_tab_id,
+                            browser: inspected_pane.browser.clone(),
+                            profile: inspected_pane.profile.clone(),
+                            error: String::new(),
+                        }
+                    } else {
+                        proto::QueryDevtoolsReply {
+                            error: "Inspected tab not found".into(),
+                            ..Default::default()
+                        }
+                    }
+                }
+            };
+            let msg = TermSurfMessage { msg: Some(Msg::QueryDevtoolsReply(reply)) };
+            let payload = msg.encode_to_vec();
+            let len = (payload.len() as u32).to_le_bytes();
+            (&**stream).write_all(&len).await?;
+            (&**stream).write_all(&payload).await?;
+        }
+        Some(Msg::QueryTabsRequest(q)) => {
+            log::info!("QueryTabsRequest: pane_id={} profile={}", q.pane_id, q.profile);
+            let reply = {
+                let st = state.lock().unwrap();
+                let gui_panes = st.panes.values()
+                    .filter(|p| q.profile.is_empty() || p.profile == q.profile)
+                    .count() as i64;
+                proto::QueryTabsReply {
+                    gui_panes,
+                    chromium_tabs: 0,
+                    chromium_browser: 0,
+                    chromium_devtools: 0,
+                    tabs: vec![],
+                    error: String::new(),
+                }
+            };
+            let msg = TermSurfMessage { msg: Some(Msg::QueryTabsReply(reply)) };
+            let payload = msg.encode_to_vec();
+            let len = (payload.len() as u32).to_le_bytes();
+            (&**stream).write_all(&len).await?;
+            (&**stream).write_all(&payload).await?;
+        }
         Some(other) => {
             log::debug!("unhandled TermSurf message: {:?}", other);
         }

@@ -782,3 +782,22 @@ Some(Msg::QueryTabsRequest(q)) => {
 5. Close the first TUI, open a new one
 6. **Expected:** the new overlay appears, TUI stays alive
 7. Open a new tab, switch back — overlays show/hide correctly
+
+#### Result: Failure
+
+The code compiled successfully (required a minor fix: block-scoping the
+`MutexGuard` so it drops before `.await` points, avoiding a `Send` bound
+error). But at runtime there was no noticeable behavioral difference — the
+second pane's webview still does not appear.
+
+The hypothesis was wrong. The TUI never crashed — it stays alive but simply
+doesn't get a webview in the second pane. Query handler replies are irrelevant
+because the TUI handles query failures gracefully and continues running. The
+actual problem is somewhere in the overlay creation pipeline for the second
+pane: SetOverlay → CreateTab → TabReady → CaContext → CALayerHost. One of
+these steps is failing silently for the second pane. Likely candidates:
+
+1. Server reuse path doesn't send CreateTab to the already-running Chromium
+2. Chromium creates the tab but never sends CaContext for the second tab
+3. CaContext arrives but `sync_overlay_visibility` hides the layer
+4. The CALayerHost layer is created but positioned off-screen or zero-sized
