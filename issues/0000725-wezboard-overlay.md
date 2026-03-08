@@ -904,3 +904,10 @@ to `origin_x`/`origin_y` to match the atomic names.
 2. Launch Wezboard, run `web google.com`
 3. Webview still correctly positioned (no regressions)
 4. No debug output on stderr
+
+**Result:** Pass
+
+All debug `eprintln!` calls removed. Unused variables cleaned up. Variable names
+in `conn.rs` renamed to match the atomic names (`origin_x`/`origin_y`). Build
+produces zero warnings from our code. Webview still correctly positioned — no
+regressions.
