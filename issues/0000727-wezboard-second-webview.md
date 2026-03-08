@@ -650,3 +650,147 @@ need separate fixes:
    research (the render code formula includes `border.left + padding_left` and
    `border.top + padding_top + top_bar_height`) but was deferred in Exp 3–5 to
    keep changes minimal.
+
+## Experiment 7: Add padding_top and border offsets to metrics bridge
+
+### Hypothesis
+
+The half-cell y offset is the default `window_padding.top = 0.5 cells` not being
+included in `origin_y`. The pane border misalignment is `border.left` and
+`border.top` not being included either.
+
+WezTerm's render code (render/pane.rs:79) positions pane content at:
+
+```rust
+let top_pixel_y = top_bar_height + padding_top + border.top.get() as f32;
+```
+
+And for x (render/pane.rs:120–121, non-leftmost pane):
+
+```rust
+padding_left + border.left.get() as f32 + (pos.left as f32 * cell_width)
+```
+
+But the metrics bridge only stores `origin_x = padding_left` and
+`origin_y = top_bar_height`. The missing `padding_top` (default: 0.5 cells) and
+`border.top`/`border.left` cause the overlay to be mispositioned.
+
+### Design
+
+Three files changed: `metrics.rs`, `resize.rs`, `mod.rs`.
+
+**1. Expand metrics bridge** (metrics.rs)
+
+Add `border_left` and `border_top` to the stored values. Change `origin_y` to
+include `padding_top`. The metrics become:
+
+- `cell_width` — unchanged
+- `cell_height` — unchanged
+- `origin_x` — `padding_left` (unchanged — border_left is separate)
+- `origin_y` — `top_bar_height + padding_top` (was just `top_bar_height`)
+- `border_left` — new
+- `border_top` — new
+
+```rust
+static BORDER_LEFT: AtomicU32 = AtomicU32::new(0);
+static BORDER_TOP: AtomicU32 = AtomicU32::new(0);
+
+pub fn set(cell_width: u32, cell_height: u32, origin_x: u32, origin_y: u32,
+           border_left: u32, border_top: u32) {
+    // ... store all 6 values
+}
+
+pub fn get() -> (u32, u32, u32, u32, u32, u32) {
+    // ... load all 6 values
+}
+```
+
+**2. Update resize path** (resize.rs:72–89)
+
+Currently:
+
+```rust
+let (pad_left, _) = self.padding_left_top();
+```
+
+Change to capture `pad_top` and compute border:
+
+```rust
+let (pad_left, pad_top) = self.padding_left_top();
+let border = self.get_os_border();
+```
+
+Update `metrics::set` call to pass 6 values:
+
+```rust
+crate::termsurf::metrics::set(
+    self.render_metrics.cell_size.width as u32,
+    self.render_metrics.cell_size.height as u32,
+    pad_left as u32,
+    (top_bar_height + pad_top) as u32,
+    border.left.get() as u32,
+    border.top.get() as u32,
+);
+```
+
+**3. Update init path** (mod.rs:653–662)
+
+The init path already has `padding_top` and `border` computed. Update the
+`metrics::set` call:
+
+```rust
+crate::termsurf::metrics::set(
+    render_metrics.cell_size.width as u32,
+    render_metrics.cell_size.height as u32,
+    padding_left as u32,
+    (if config.tab_bar_at_bottom { 0 } else { tab_bar_height }
+        + padding_top) as u32,
+    border.left.get() as u32,
+    border.top.get() as u32,
+);
+```
+
+**4. Update positioning formula** (conn.rs `update_ca_layer_frame`)
+
+Change from:
+
+```rust
+let (cell_w, cell_h, origin_x, origin_y) = super::metrics::get();
+let (pane_left, pane_top) = get_pane_cell_position(&pane.pane_id);
+let x = (origin_x as u64 + (pane_left as u64 + pane.col) * cell_w as u64) as f64 / scale;
+let y = (origin_y as u64 + (pane_top as u64 + pane.row) * cell_h as u64) as f64 / scale;
+```
+
+To:
+
+```rust
+let (cell_w, cell_h, origin_x, origin_y, border_left, border_top) = super::metrics::get();
+let (pane_left, pane_top) = get_pane_cell_position(&pane.pane_id);
+let x = (origin_x as u64 + border_left as u64
+    + (pane_left as u64 + pane.col) * cell_w as u64) as f64 / scale;
+let y = (origin_y as u64 + border_top as u64
+    + (pane_top as u64 + pane.row) * cell_h as u64) as f64 / scale;
+```
+
+### Why this fixes both issues
+
+**Half-cell y offset:** `origin_y` changes from `top_bar_height` to
+`top_bar_height + padding_top`. With default `padding_top = 0.5 cells`, this
+adds ~15 physical pixels (half of cell_height=30), shifting the overlay down by
+exactly the amount it was too high.
+
+**Pane border misalignment:** When splits create borders, `border.left` and
+`border.top` become non-zero. Adding them to the formula shifts the overlay
+inward to match the terminal content. For a single pane with no splits, the
+window_frame border defaults are 0, so the formula reduces to the baseline.
+
+### Verification
+
+1. `cd wezboard && cargo build -p wezboard-gui` — zero errors
+2. Single pane: `web google.com` — overlay aligned with terminal content (URL
+   bar row visible, no half-cell gap)
+3. Split pane, open from RIGHT side — overlay over right pane, aligned with
+   terminal content
+4. Split pane, open from LEFT side — overlay over left pane, aligned with
+   terminal content
+5. Both overlays shift correctly when borders appear (no misalignment)
