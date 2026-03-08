@@ -776,3 +776,164 @@ these steps is failing silently for the second pane. Likely candidates:
 2. Chromium creates the tab but never sends CaContext for the second tab
 3. CaContext arrives but `sync_overlay_visibility` hides the layer
 4. The CALayerHost layer is created but positioned off-screen or zero-sized
+
+### Experiment 6: Debug logs for second webview failure
+
+#### Background
+
+Experiment 4 showed the second pane's overlay pipeline completes (SetOverlay →
+CreateTab → TabReady → CaContext → CALayerHost) but then the TUI's socket
+connection drops ~2 seconds later, causing cleanup. Experiment 5 proved query
+handlers aren't the cause. The TUI never crashes — it stays alive but has no
+webview.
+
+The problem reproduces for ANY second `web` command — same pane, new split, new
+window. This means it's a Wezboard-side state issue, not a TUI issue. The first
+TUI works; every subsequent one fails. Something about the first connection
+changes Wezboard's state in a way that breaks all future connections.
+
+There are several failure points we haven't instrumented:
+
+1. **Listener accept loop** — Does Wezboard even accept the second connection?
+   The listener runs in `std::thread::spawn` and calls
+   `spawn_into_main_thread` for each connection. If the first connection's async
+   task somehow blocks the executor, new connections may be accepted by the
+   thread but never polled by the async runtime.
+
+2. **Connection read loop** — The read loop at `handle_connection:47` uses `?`
+   on the async read. If `Async::new()` fails or the read errors (not EOF), the
+   handler exits via the `?` at line 47 or the `?` at line 22, logging to
+   `listener.rs:33` ("TermSurf connection error") but never calling
+   `handle_disconnect`. We'd see the accept log but no messages.
+
+3. **Protobuf decode** — The decode at line 63 also uses `?`. If a message
+   fails to decode, the entire connection handler exits. This would manifest as
+   an accept + type detection, then sudden disconnect.
+
+4. **First connection still alive vs. closed** — When the first TUI is still
+   running and we open a second, both connections share the same `SharedState`.
+   When the first TUI has exited and we open a second, the first connection's
+   `handle_disconnect` already ran. Does it leave state in a bad place? For
+   instance, if a server's `tx` was cleared on Chromium disconnect, the second
+   SetOverlay would find the server exists but `tx` is `None`, so `CreateTab`
+   never sends.
+
+5. **Server reuse path** — When the second TUI's SetOverlay arrives and a
+   server already exists for the profile, the code at line 331-337 increments
+   `pane_count` and sends `CreateTab` if `server_tx` is `Some`. If the first
+   TUI disconnected and the Chromium process also disconnected, `server.tx`
+   would be `None` and `CreateTab` silently doesn't send.
+
+#### Changes
+
+**`wezboard/wezboard-gui/src/termsurf/listener.rs`** — Log connection count:
+
+```rust
+// At the top of the accept loop body, before spawn_into_main_thread:
+log::info!("TermSurf client connected: {} (connection #{})", peer, conn_count);
+```
+
+Add a counter variable before the `for stream in listener.incoming()` loop.
+
+**`wezboard/wezboard-gui/src/termsurf/conn.rs`** — Add logs at these points:
+
+**1. handle_connection entry and exit** — Log when the connection starts and
+when it exits (both normal EOF and error paths):
+
+```rust
+// Line 21, after function signature:
+log::info!("handle_connection: starting");
+
+// Line 47, after read returns 0:
+log::info!("handle_connection: EOF after processing, conn_type={:?}", conn_type);
+
+// Wrap the entire function body in a block that logs on exit:
+// At end of handle_connection, the Ok(()) or ? propagation already exists.
+```
+
+**2. handle_connection read errors** — The `?` at line 47 silently propagates
+read errors. The caller in listener.rs:32 logs "TermSurf connection error" but
+doesn't distinguish read errors from other failures. Add a log before the `?`:
+
+```rust
+let n = match (&*stream).read(&mut tmp).await {
+    Ok(n) => n,
+    Err(e) => {
+        log::error!("handle_connection: read error: {:#}", e);
+        handle_disconnect(conn_type, &tx, &state);
+        tx.close();
+        return Err(e.into());
+    }
+};
+```
+
+**3. Every message received** — Log every message type as it arrives, with a
+connection-scoped counter, so we can see the exact message sequence for each
+connection:
+
+```rust
+// Before the conn_type detection block:
+msg_count += 1;
+log::info!(
+    "handle_connection: msg #{} type={:?} conn_type={:?}",
+    msg_count, msg_type_name(&msg), conn_type
+);
+```
+
+Add a helper `msg_type_name` that returns a short string for the message
+variant (e.g., "HelloRequest", "SetOverlay", "QueryLastRequest").
+
+**4. handle_set_overlay server reuse path** — Log whether `server.tx` is
+available when reusing an existing server:
+
+```rust
+// Line 331-337, in the server-exists branch:
+log::info!(
+    "SetOverlay: reusing server key={} pane_count={} has_tx={}",
+    key, st.servers.get(&key).unwrap().pane_count, server_tx.is_some()
+);
+```
+
+**5. handle_disconnect** — Log the full state snapshot on disconnect so we can
+see what's left behind:
+
+```rust
+// At the start of handle_disconnect:
+log::info!(
+    "handle_disconnect: conn_type={:?} panes={} servers={} tab_to_pane={}",
+    conn_type, st.panes.len(), st.servers.len(), st.tab_to_pane.len()
+);
+
+// After TUI disconnect cleanup:
+log::info!(
+    "handle_disconnect: after cleanup panes={} servers={}",
+    st.panes.len(), st.servers.len()
+);
+```
+
+**6. State snapshot on second SetOverlay** — Dump the full server and pane
+state when a new SetOverlay arrives so we can see if stale state from the first
+connection is causing the problem:
+
+```rust
+// At the top of handle_set_overlay, after locking state:
+log::info!(
+    "SetOverlay state: panes={:?} servers={:?}",
+    st.panes.keys().collect::<Vec<_>>(),
+    st.servers.keys().collect::<Vec<_>>()
+);
+```
+
+#### Verification
+
+1. `cd wezboard && cargo build -p wezboard-gui` — zero errors
+2. Launch Wezboard with stderr captured to a log file
+3. Run `web google.com` in the first pane — confirm overlay appears
+4. Close the first TUI (`:q`), then run `web google.com` again in the same pane
+5. Check the log. The sequence should reveal:
+   - Was the second connection accepted? (connection # log)
+   - Did messages arrive? (msg # logs)
+   - Did SetOverlay reach the server reuse path? (has_tx log)
+   - Did the connection drop? (EOF/error log)
+   - What state was left after the first disconnect? (state snapshot)
+6. If same-pane works, also test: new split pane, new window
