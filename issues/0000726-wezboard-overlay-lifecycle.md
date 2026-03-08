@@ -418,3 +418,109 @@ IDs are in the active set. The bug is upstream of `sync_overlay_visibility` —
 something in the overlay creation, CALayer tree setup, or the interaction
 between two concurrent pane connections is preventing the second overlay from
 persisting.
+
+### Experiment 4: Debug logs for second pane overlay lifecycle
+
+#### Background
+
+Experiment 3 proved the bug is not in `sync_overlay_visibility`. The second
+overlay flashes (appears briefly then vanishes) regardless of which pane IDs are
+in the active set. Static analysis of the code shows the overlay creation path
+_should_ work for multiple panes — each gets its own 3-layer hierarchy under a
+shared root layer. But something is wrong at runtime.
+
+Three hypotheses remain:
+
+1. **The second `CaContext` never arrives.** If `TabReady` for the second tab is
+   delayed or lost, `handle_ca_context` logs `"unknown tab_id"` and skips layer
+   creation. The "flash" could be the first overlay flickering during a
+   `WindowInvalidated` redraw, not the second overlay appearing at all.
+
+2. **The second `SetOverlay` hits the resize path instead of the new-pane
+   path.** If somehow the second pane's `pane_id` collides with an existing key
+   in `state.panes`, line 248 (`!st.panes.contains_key`) returns false and it
+   takes the resize-only path, never creating a tab.
+
+3. **`sync_overlay_visibility` runs between layer creation and the
+   `CATransaction` commit.** The second pane's `ca_layer_flipped` is set at line
+   734 but the transaction doesn't commit until line 764. If `WindowInvalidated`
+   fires on the main thread during this window, sync could set `hidden: YES` on
+   the new layer before it becomes visible.
+
+This experiment adds targeted debug logs at every critical point in the second
+pane's lifecycle to determine which hypothesis (or what other cause) is correct.
+
+#### Changes
+
+**`wezboard/wezboard-gui/src/termsurf/conn.rs`** — Add logs at these points:
+
+1. **`handle_set_overlay` entry** (~line 229): Log whether the pane is new or
+   existing, and the pane_id:
+
+   ```rust
+   log::info!(
+       "SetOverlay: pane_id={} is_new={} pixel={}x{}",
+       overlay.pane_id, is_new, pixel_w, pixel_h
+   );
+   ```
+
+2. **`handle_tab_ready`** (~line 378): Log the tab_to_pane mapping:
+
+   ```rust
+   log::info!(
+       "TabReady: tab_id={} pane_id={} tab_to_pane_count={}",
+       ready.tab_id, ready.pane_id, st.tab_to_pane.len()
+   );
+   ```
+
+3. **`handle_ca_context` pane lookup** (~line 672): Log whether the pane was
+   found and its current layer state:
+
+   ```rust
+   log::info!(
+       "handle_ca_context: tab_id={} pane_id={} has_layers={}",
+       ca_context.tab_id, pane_id, pane.ca_layer_host != 0
+   );
+   ```
+
+4. **`handle_ca_context` after layer creation** (~line 738): Log the layer
+   pointers:
+
+   ```rust
+   log::info!(
+       "CALayerHost created: pane_id={} flipped={:#x} host={:#x}",
+       pane_id, pane.ca_layer_flipped, pane.ca_layer_host
+   );
+   ```
+
+5. **`sync_overlay_visibility`** (~line 818): Log what's being shown/hidden:
+
+   ```rust
+   log::info!(
+       "sync_overlay_visibility: active_ids={:?} pane_count={}",
+       active_pane_ids, st.panes.len()
+   );
+   ```
+
+   And inside the loop:
+
+   ```rust
+   log::info!(
+       "  pane_id={} is_active={} ca_layer_flipped={:#x}",
+       pane_id, is_active, pane.ca_layer_flipped
+   );
+   ```
+
+#### Verification
+
+1. `cd wezboard && cargo build -p wezboard-gui` — zero errors
+2. Launch Wezboard with logs: redirect stderr to
+   `~/dev/termsurf/logs/wezboard.log`
+3. Run `web google.com` in the first pane — confirm overlay appears
+4. Open a split pane, run `web google.com` again
+5. Check the log for the second pane's message sequence:
+   - Does `SetOverlay` arrive with `is_new=true`?
+   - Does `TabReady` arrive with the correct pane_id?
+   - Does `handle_ca_context` find the pane and create layers?
+   - Does `sync_overlay_visibility` hide the second pane's layer?
+6. The log output will identify the exact failure point
