@@ -1064,3 +1064,21 @@ grid position within the window.
 4. **Expected:** both overlays visible, each in their own pane area
 5. Resize the split boundary — both overlays should resize and reposition
 6. Close one pane — remaining overlay should expand to fill the window
+
+#### Result: Failure
+
+The first pane's overlay shifted down and to the right — margins roughly
+doubled. The second pane's overlay still doesn't appear.
+
+The problem: `origin_x`/`origin_y` from `metrics::get()` is the pixel offset of
+the terminal content area from the window origin (padding, title bar). The TUI's
+`col`/`row` values are grid coordinates relative to that same content area. So
+adding `col * cell_w` to `origin_x` double-counts the offset — `origin_x`
+already positions us at the content area, and `col`/`row` position us within it.
+
+The correct formula likely needs to use `col * cell_w` and `row * cell_h` as the
+sole source of per-pane positioning (replacing the global origin), or
+`origin_x`/`origin_y` needs to be understood as a window-level offset that
+should be added only once, not combined with grid coordinates that already
+include it. The exact relationship between the TUI's col/row, the global metrics
+origin, and the CALayer coordinate space needs closer inspection.
