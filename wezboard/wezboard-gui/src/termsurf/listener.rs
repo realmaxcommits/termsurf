@@ -22,11 +22,13 @@ pub fn spawn_termsurf_server(sock_path: PathBuf, state: SharedState) -> anyhow::
     unsafe { std::env::set_var("TERMSURF_SOCKET", &sock_path) };
 
     std::thread::spawn(move || {
+        let mut conn_count: u64 = 0;
         for stream in listener.incoming() {
             match stream {
                 Ok(stream) => {
+                    conn_count += 1;
                     let peer = format!("{:?}", stream.peer_addr());
-                    log::info!("TermSurf client connected: {}", peer);
+                    log::info!("TermSurf client connected: {} (connection #{})", peer, conn_count);
                     let conn_state = state.clone();
                     promise::spawn::spawn_into_main_thread(async move {
                         if let Err(err) = super::conn::handle_connection(stream, conn_state).await {

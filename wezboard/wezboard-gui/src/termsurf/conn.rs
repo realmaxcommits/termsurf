@@ -19,6 +19,7 @@ enum ConnType {
 }
 
 pub async fn handle_connection(stream: UnixStream, state: SharedState) -> anyhow::Result<()> {
+    log::info!("handle_connection: starting");
     let stream = Arc::new(Async::new(stream).context("make stream async")?);
     let (tx, rx) = smol::channel::bounded::<Vec<u8>>(64);
 
@@ -42,11 +43,20 @@ pub async fn handle_connection(stream: UnixStream, state: SharedState) -> anyhow
     let mut buf = Vec::with_capacity(4096);
     let mut conn_type = ConnType::Unknown;
     let mut tmp = [0u8; 4096];
+    let mut msg_count: u64 = 0;
 
     loop {
-        let n = (&*stream).read(&mut tmp).await?;
+        let n = match (&*stream).read(&mut tmp).await {
+            Ok(n) => n,
+            Err(e) => {
+                log::error!("handle_connection: read error: {:#}", e);
+                handle_disconnect(conn_type, &tx, &state);
+                tx.close();
+                return Err(e.into());
+            }
+        };
         if n == 0 {
-            log::info!("TermSurf client disconnected ({:?})", conn_type);
+            log::info!("handle_connection: EOF conn_type={:?} msg_count={}", conn_type, msg_count);
             handle_disconnect(conn_type, &tx, &state);
             tx.close();
             return Ok(());
@@ -62,6 +72,12 @@ pub async fn handle_connection(stream: UnixStream, state: SharedState) -> anyhow
             let msg_bytes = &buf[4..4 + len];
             let msg = TermSurfMessage::decode(msg_bytes).context("decode TermSurfMessage")?;
 
+            msg_count += 1;
+            log::info!(
+                "handle_connection: msg #{} type={} conn_type={:?}",
+                msg_count, msg_type_name(&msg), conn_type
+            );
+
             if conn_type == ConnType::Unknown {
                 conn_type = match &msg.msg {
                     Some(Msg::ServerRegister(_)) => ConnType::Chromium,
@@ -76,6 +92,34 @@ pub async fn handle_connection(stream: UnixStream, state: SharedState) -> anyhow
 
             buf.drain(..4 + len);
         }
+    }
+}
+
+fn msg_type_name(msg: &TermSurfMessage) -> &'static str {
+    match &msg.msg {
+        Some(Msg::ServerRegister(_)) => "ServerRegister",
+        Some(Msg::SetOverlay(_)) => "SetOverlay",
+        Some(Msg::TabReady(_)) => "TabReady",
+        Some(Msg::HelloRequest(_)) => "HelloRequest",
+        Some(Msg::HelloReply(_)) => "HelloReply",
+        Some(Msg::UrlChanged(_)) => "UrlChanged",
+        Some(Msg::LoadingState(_)) => "LoadingState",
+        Some(Msg::TitleChanged(_)) => "TitleChanged",
+        Some(Msg::Navigate(_)) => "Navigate",
+        Some(Msg::SetColorScheme(_)) => "SetColorScheme",
+        Some(Msg::ModeChanged(_)) => "ModeChanged",
+        Some(Msg::CaContext(_)) => "CaContext",
+        Some(Msg::QueryLastRequest(_)) => "QueryLastRequest",
+        Some(Msg::QueryLastReply(_)) => "QueryLastReply",
+        Some(Msg::QueryDevtoolsRequest(_)) => "QueryDevtoolsRequest",
+        Some(Msg::QueryDevtoolsReply(_)) => "QueryDevtoolsReply",
+        Some(Msg::QueryTabsRequest(_)) => "QueryTabsRequest",
+        Some(Msg::QueryTabsReply(_)) => "QueryTabsReply",
+        Some(Msg::Resize(_)) => "Resize",
+        Some(Msg::CreateTab(_)) => "CreateTab",
+        Some(Msg::CloseTab(_)) => "CloseTab",
+        Some(_) => "Other",
+        None => "None",
     }
 }
 
@@ -339,6 +383,11 @@ fn handle_set_overlay(
     state: &SharedState,
 ) -> anyhow::Result<()> {
     let mut st = state.lock().unwrap();
+    log::info!(
+        "SetOverlay state: panes={:?} servers={:?}",
+        st.panes.keys().collect::<Vec<_>>(),
+        st.servers.keys().collect::<Vec<_>>()
+    );
     let browser = if overlay.browser.is_empty() {
         "roamium".to_string()
     } else {
@@ -441,11 +490,19 @@ fn handle_set_overlay(
             send_create_tab(server_tx, pane)?;
         }
     } else {
-        st.servers.get_mut(&key).unwrap().pane_count += 1;
-        let server_tx = st.servers.get(&key).unwrap().tx.clone();
+        let server = st.servers.get_mut(&key).unwrap();
+        server.pane_count += 1;
+        let has_tx = server.tx.is_some();
+        log::info!(
+            "SetOverlay: reusing server key={} pane_count={} has_tx={}",
+            key, server.pane_count, has_tx
+        );
+        let server_tx = server.tx.clone();
         if let Some(ref stx) = server_tx {
             let pane = st.panes.get(&overlay.pane_id).unwrap();
             send_create_tab(stx, pane)?;
+        } else {
+            log::warn!("SetOverlay: server exists but tx is None — CreateTab not sent!");
         }
     }
 
@@ -517,6 +574,16 @@ fn handle_tab_ready(ready: proto::TabReady, state: &SharedState) -> anyhow::Resu
 
 fn handle_disconnect(conn_type: ConnType, tx: &Sender<Vec<u8>>, state: &SharedState) {
     let mut st = state.lock().unwrap();
+    log::info!(
+        "handle_disconnect: conn_type={:?} panes={} servers={} tab_to_pane={}",
+        conn_type, st.panes.len(), st.servers.len(), st.tab_to_pane.len()
+    );
+    for (key, server) in &st.servers {
+        log::info!(
+            "  server key={} profile={} has_tx={} pane_count={}",
+            key, server.profile, server.tx.is_some(), server.pane_count
+        );
+    }
     match conn_type {
         ConnType::Tui => {
             // Remove panes whose tui_tx matches this connection's tx
@@ -555,6 +622,10 @@ fn handle_disconnect(conn_type: ConnType, tx: &Sender<Vec<u8>>, state: &SharedSt
                     log::info!("removed pane {} on TUI disconnect", pane_id);
                 }
             }
+            log::info!(
+                "handle_disconnect: after TUI cleanup panes={} servers={} tab_to_pane={}",
+                st.panes.len(), st.servers.len(), st.tab_to_pane.len()
+            );
         }
         ConnType::Chromium => {
             // Clear server tx for any server whose tx matches

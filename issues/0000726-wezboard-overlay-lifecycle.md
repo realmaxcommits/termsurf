@@ -561,9 +561,9 @@ hypothesized as the cause, but Experiment 5 disproved this — implementing all
 three query handlers had no effect. The TUI handles missing query replies
 gracefully (5-second timeout, returns `None`) and continues running.
 
-The actual cause of the socket disconnect / missing webview remains unknown.
-The overlay creation pipeline works correctly (as proven by the logs above),
-but something causes the connection to drop shortly after.
+The actual cause of the socket disconnect / missing webview remains unknown. The
+overlay creation pipeline works correctly (as proven by the logs above), but
+something causes the connection to drop shortly after.
 
 #### Conclusion
 
@@ -571,8 +571,8 @@ The debug logs proved the overlay creation path works correctly for multiple
 panes. The second pane's full lifecycle (SetOverlay → CreateTab → TabReady →
 CaContext → CALayerHost) completes successfully and the overlay briefly appears.
 But the TUI's socket connection drops ~2 seconds later, causing board-side
-cleanup to remove the overlay. The root cause of the disconnect is still
-unknown — it is not the missing query handlers (disproved by Experiment 5).
+cleanup to remove the overlay. The root cause of the disconnect is still unknown
+— it is not the missing query handlers (disproved by Experiment 5).
 
 ### Experiment 5: Implement query request/reply handlers
 
@@ -761,16 +761,16 @@ Some(Msg::QueryTabsRequest(q)) => {
 #### Result: Failure
 
 The code compiled successfully (required a minor fix: block-scoping the
-`MutexGuard` so it drops before `.await` points, avoiding a `Send` bound
-error). But at runtime there was no noticeable behavioral difference — the
-second pane's webview still does not appear.
+`MutexGuard` so it drops before `.await` points, avoiding a `Send` bound error).
+But at runtime there was no noticeable behavioral difference — the second pane's
+webview still does not appear.
 
 The hypothesis was wrong. The TUI never crashed — it stays alive but simply
 doesn't get a webview in the second pane. Query handler replies are irrelevant
 because the TUI handles query failures gracefully and continues running. The
 actual problem is somewhere in the overlay creation pipeline for the second
-pane: SetOverlay → CreateTab → TabReady → CaContext → CALayerHost. One of
-these steps is failing silently for the second pane. Likely candidates:
+pane: SetOverlay → CreateTab → TabReady → CaContext → CALayerHost. One of these
+steps is failing silently for the second pane. Likely candidates:
 
 1. Server reuse path doesn't send CreateTab to the already-running Chromium
 2. Chromium creates the tab but never sends CaContext for the second tab
@@ -795,10 +795,10 @@ changes Wezboard's state in a way that breaks all future connections.
 There are several failure points we haven't instrumented:
 
 1. **Listener accept loop** — Does Wezboard even accept the second connection?
-   The listener runs in `std::thread::spawn` and calls
-   `spawn_into_main_thread` for each connection. If the first connection's async
-   task somehow blocks the executor, new connections may be accepted by the
-   thread but never polled by the async runtime.
+   The listener runs in `std::thread::spawn` and calls `spawn_into_main_thread`
+   for each connection. If the first connection's async task somehow blocks the
+   executor, new connections may be accepted by the thread but never polled by
+   the async runtime.
 
 2. **Connection read loop** — The read loop at `handle_connection:47` uses `?`
    on the async read. If `Async::new()` fails or the read errors (not EOF), the
@@ -806,9 +806,9 @@ There are several failure points we haven't instrumented:
    `listener.rs:33` ("TermSurf connection error") but never calling
    `handle_disconnect`. We'd see the accept log but no messages.
 
-3. **Protobuf decode** — The decode at line 63 also uses `?`. If a message
-   fails to decode, the entire connection handler exits. This would manifest as
-   an accept + type detection, then sudden disconnect.
+3. **Protobuf decode** — The decode at line 63 also uses `?`. If a message fails
+   to decode, the entire connection handler exits. This would manifest as an
+   accept + type detection, then sudden disconnect.
 
 4. **First connection still alive vs. closed** — When the first TUI is still
    running and we open a second, both connections share the same `SharedState`.
@@ -818,11 +818,11 @@ There are several failure points we haven't instrumented:
    SetOverlay would find the server exists but `tx` is `None`, so `CreateTab`
    never sends.
 
-5. **Server reuse path** — When the second TUI's SetOverlay arrives and a
-   server already exists for the profile, the code at line 331-337 increments
-   `pane_count` and sends `CreateTab` if `server_tx` is `Some`. If the first
-   TUI disconnected and the Chromium process also disconnected, `server.tx`
-   would be `None` and `CreateTab` silently doesn't send.
+5. **Server reuse path** — When the second TUI's SetOverlay arrives and a server
+   already exists for the profile, the code at line 331-337 increments
+   `pane_count` and sends `CreateTab` if `server_tx` is `Some`. If the first TUI
+   disconnected and the Chromium process also disconnected, `server.tx` would be
+   `None` and `CreateTab` silently doesn't send.
 
 #### Changes
 
@@ -880,8 +880,8 @@ log::info!(
 );
 ```
 
-Add a helper `msg_type_name` that returns a short string for the message
-variant (e.g., "HelloRequest", "SetOverlay", "QueryLastRequest").
+Add a helper `msg_type_name` that returns a short string for the message variant
+(e.g., "HelloRequest", "SetOverlay", "QueryLastRequest").
 
 **4. handle_set_overlay server reuse path** — Log whether `server.tx` is
 available when reusing an existing server:
@@ -911,8 +911,8 @@ log::info!(
 );
 ```
 
-**6. State snapshot on second SetOverlay** — Dump the full server and pane
-state when a new SetOverlay arrives so we can see if stale state from the first
+**6. State snapshot on second SetOverlay** — Dump the full server and pane state
+when a new SetOverlay arrives so we can see if stale state from the first
 connection is causing the problem:
 
 ```rust
@@ -937,3 +937,130 @@ log::info!(
    - Did the connection drop? (EOF/error log)
    - What state was left after the first disconnect? (state snapshot)
 6. If same-pane works, also test: new split pane, new window
+
+#### Result: Success (diagnosis)
+
+The debug logs proved the second overlay IS fully created — every step of the
+pipeline succeeds (SetOverlay → CreateTab → TabReady → CaContext → CALayerHost).
+The second pane gets its own 3-layer hierarchy with a valid context ID. The TUI
+never crashes and never disconnects unexpectedly.
+
+The real bug is **overlay positioning**. `update_ca_layer_frame` computes the
+overlay's pixel origin from `super::metrics::get()` which returns a single
+global `(origin_x, origin_y)` — the content area offset for the entire window.
+Every pane's positioning layer gets the same origin, so the second overlay is
+drawn on top of the first pane's area. The second pane's screen area has no
+overlay.
+
+The SetOverlay message sends `col` and `row` (grid coordinates), and
+`handle_set_overlay` receives them, but the `Pane` struct doesn't store them.
+Ghostboard handles this correctly — it passes col/row to `setOverlay()` on each
+Surface, which computes per-surface pixel origin. Wezboard has no per-pane
+position tracking.
+
+The white flash on pane 0 is a separate issue: when the split opens, the first
+pane resizes, Chromium re-sends CaContext with the same context ID, and
+`handle_ca_context` swaps the CALayerHost (old removed, new added). The swap
+briefly shows a blank frame.
+
+### Experiment 7: Per-pane overlay positioning
+
+#### Background
+
+Experiment 6 proved the second overlay is created but drawn at the wrong
+position — every pane's CALayerHost positioning layer gets the same global
+origin from `metrics::get()`. The fix: store per-pane `col`/`row` from the
+SetOverlay message and compute pixel origin as
+`global_origin + col * cell_w, global_origin_y + row * cell_h`.
+
+The SetOverlay proto already sends `col` and `row` (grid coordinates). The TUI
+computes these from ratatui's viewport rect — `col` is the column offset and
+`row` is the row offset of the browser area within the terminal pane. For a
+single pane, col=0 and row=1 (row 0 is the URL bar). For a right split, col
+would be the split boundary column.
+
+Ghostboard handles this in `xpc.zig:273` —
+`surface.core().setOverlay(col, row,
+width, height)` stores the grid coordinates
+per-surface, and the Metal renderer uses them to position the CALayerHost.
+Wezboard needs the same per-pane positioning.
+
+#### Changes
+
+**1. `wezboard/wezboard-gui/src/termsurf/state.rs`** — Add `col` and `row`
+fields to the `Pane` struct:
+
+```rust
+pub struct Pane {
+    pub pane_id: String,
+    pub profile: String,
+    pub browser: String,
+    pub url: String,
+    pub col: u64,        // NEW: grid column offset
+    pub row: u64,        // NEW: grid row offset
+    pub pixel_width: u64,
+    pub pixel_height: u64,
+    // ... rest unchanged
+}
+```
+
+**2. `wezboard/wezboard-gui/src/termsurf/conn.rs` — `handle_set_overlay`** —
+Store col/row in both the new-pane and resize paths:
+
+In the new-pane path (Pane construction, ~line 410):
+
+```rust
+let pane = Pane {
+    pane_id: overlay.pane_id.clone(),
+    col: overlay.col,      // NEW
+    row: overlay.row,      // NEW
+    // ... rest unchanged
+};
+```
+
+In the resize path (~line 372):
+
+```rust
+let pane = st.panes.get_mut(&overlay.pane_id).unwrap();
+pane.col = overlay.col;        // NEW
+pane.row = overlay.row;        // NEW
+pane.pixel_width = pixel_w;
+pane.pixel_height = pixel_h;
+```
+
+**3. `wezboard/wezboard-gui/src/termsurf/conn.rs` — `update_ca_layer_frame`** —
+Compute per-pane pixel origin from col/row and cell metrics:
+
+```rust
+unsafe fn update_ca_layer_frame(pane: &Pane, root_layer: *mut objc2::runtime::AnyObject) {
+    use objc2::msg_send;
+    use objc2::runtime::AnyObject;
+    use objc2_core_foundation::{CGPoint, CGRect, CGSize};
+
+    let scale: f64 = msg_send![root_layer, contentsScale];
+    let scale = if scale > 0.0 { scale } else { 1.0 };
+    let w = pane.pixel_width as f64 / scale;
+    let h = pane.pixel_height as f64 / scale;
+    let (cell_w, cell_h, origin_x, origin_y) = super::metrics::get();
+    let x = (origin_x as u64 + pane.col * cell_w as u64) as f64 / scale;
+    let y = (origin_y as u64 + pane.row * cell_h as u64) as f64 / scale;
+    let frame = CGRect::new(CGPoint::new(x, y), CGSize::new(w, h));
+
+    let positioning = pane.ca_layer_positioning as *mut AnyObject;
+    let _: () = msg_send![positioning, setFrame: frame];
+}
+```
+
+The key change: `x` and `y` now include `pane.col * cell_w` and
+`pane.row * cell_h` respectively, offsetting each pane's overlay to its correct
+grid position within the window.
+
+#### Verification
+
+1. `cd wezboard && cargo build -p wezboard-gui` — zero errors
+2. Launch Wezboard, run `web google.com` — single pane overlay at correct
+   position
+3. Open a vertical split, run `web google.com` in the second pane
+4. **Expected:** both overlays visible, each in their own pane area
+5. Resize the split boundary — both overlays should resize and reposition
+6. Close one pane — remaining overlay should expand to fill the window
