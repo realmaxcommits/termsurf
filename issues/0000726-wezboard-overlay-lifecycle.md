@@ -269,6 +269,46 @@ mux pane ID.
 
 #### Conclusion
 
-Need debug logging to confirm what pane_id values the TUI sends vs. what the mux
-reports. The next experiment should add `eprintln!` in `sync_overlay_visibility`
-to print the active set and the pane keys, so we can see the exact mismatch.
+Research confirmed the root cause: Wezboard never sets `TERMSURF_PANE_ID`. The
+TUI reads this env var to get its pane identity — without it, either the TUI
+doesn't connect at all, or it sends a pane_id that doesn't match the mux pane
+ID. Either way, `sync_overlay_visibility` can never match the TermSurf pane keys
+against the mux active pane set.
+
+### Experiment 2: Set TERMSURF_PANE_ID in Wezboard
+
+#### Background
+
+Ghostboard sets `TERMSURF_PANE_ID` at `Surface.zig:662` when spawning child
+processes. The TUI reads it at `webtui/src/main.rs:223` to identify itself to
+the board. Without this env var, the TUI either cannot connect or sends an
+unrecognized pane_id.
+
+Wezboard already sets `WEZBOARD_PANE` to the mux pane ID at
+`mux/src/domain.rs:482`. We just need to also set `TERMSURF_PANE_ID` to the same
+value. This ensures:
+
+1. The TUI connects and sends `HelloRequest.pane_id` matching the mux pane ID
+2. The TermSurf state stores panes keyed by the mux pane ID string
+3. `sync_overlay_visibility` can match these keys against the active pane set
+
+**Hypothesis:** This single-line fix will make Experiment 1's tab switching
+logic work — overlays will hide on tab switch away and reappear on switch back.
+
+#### Changes
+
+**`wezboard/mux/src/domain.rs`** — Add `TERMSURF_PANE_ID` after line 482:
+
+```rust
+cmd.env("WEZBOARD_PANE", pane_id.to_string());
+cmd.env("TERMSURF_PANE_ID", pane_id.to_string());
+```
+
+#### Verification
+
+1. `cd wezboard && cargo build -p wezboard-gui` — zero errors
+2. Launch Wezboard, run `web google.com` in the first tab
+3. Open a new tab (Cmd+T)
+4. **Expected:** browser overlay disappears
+5. Switch back to the first tab
+6. **Expected:** browser overlay reappears
