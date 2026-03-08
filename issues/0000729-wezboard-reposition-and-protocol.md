@@ -95,3 +95,63 @@ The TUI sends `OpenSplit` with a direction (horizontal/vertical) to create a new
 terminal split pane. The board needs to call WezTerm's split pane API.
 Ghostboard implements this by spawning a new terminal pane in the specified
 direction.
+
+## Experiments
+
+### Experiment 1: Reposition overlay on resize
+
+#### Goal
+
+When the window resizes with multiple browser panes, each overlay's x/y position
+must track its terminal pane. Currently only dimensions update; position stays
+stale.
+
+#### Root cause
+
+The resize path in `handle_set_overlay()` (line 472-503) updates
+`pane.pixel_width`, `pane.pixel_height`, `pane.col`, and `pane.row`, sends
+`Resize` to Chromium, then returns at line 503 without calling
+`update_ca_layer_frame()`. The positioning layer's frame keeps its old x/y.
+
+#### Design
+
+After sending `Resize` to Chromium, look up the mux window for this pane, get
+the root layer via `get_or_create_overlay()`, get a mutable pane reference, and
+call `update_ca_layer_frame()`. This mirrors exactly what `handle_ca_context`
+does at lines 954-1053.
+
+The `get_or_create_overlay(&mut st, mux_window_id)` call returns a raw pointer,
+ending the mutable borrow on `st`, so `st.panes.get_mut()` can borrow again
+afterward — same pattern as `handle_ca_context`.
+
+#### Changes
+
+**1. `termsurf/conn.rs` — Call `update_ca_layer_frame` in resize path**
+
+Replace the early return at line 503 with:
+
+```rust
+// Reposition the overlay (x/y may have changed due to cell metric changes)
+#[cfg(target_os = "macos")]
+{
+    if let Some(mux_window_id) = get_pane_mux_window(&overlay.pane_id) {
+        if let Some(root_layer) = get_or_create_overlay(&mut st, mux_window_id) {
+            if let Some(pane) = st.panes.get_mut(&overlay.pane_id) {
+                unsafe {
+                    update_ca_layer_frame(pane, root_layer);
+                }
+            }
+        }
+    }
+}
+return Ok(());
+```
+
+#### Verification
+
+1. `cd wezboard && cargo build -p wezboard-gui` — zero errors
+2. Open two side-by-side panes: `web lite.duckduckgo.com` in both
+3. Resize the window horizontally — both overlays track their panes (second
+   pane's left edge stays aligned with its terminal pane)
+4. Resize vertically — overlays stay aligned
+5. Single pane still works (regression check)
