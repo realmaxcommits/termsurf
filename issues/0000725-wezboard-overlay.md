@@ -399,3 +399,117 @@ within the window.
 
 **Next step:** Add the tab bar height to the metrics bridge so
 `update_ca_layer_frame()` can offset the y-origin correctly.
+
+### Experiment 3: Fix y-offset with top_pixel_y
+
+The overlay's y-position uses only `padding_top` from window config, but
+WezTerm's actual content origin is computed as:
+
+```rust
+let top_pixel_y = top_bar_height + padding_top + border.top.get() as f32;
+```
+
+Three components are missing from our offset:
+
+1. **`top_bar_height`** — tab bar pixel height (when tab bar is at top, not
+   bottom)
+2. **`border.top`** — OS window frame border
+
+The simplest fix: replace `PADDING_LEFT`/`PADDING_TOP` atomics with
+`CONTENT_ORIGIN_X`/`CONTENT_ORIGIN_Y` — the fully computed pixel offsets where
+terminal content starts. This matches what WezTerm already computes in its
+render code (`top_pixel_y` in `render/pane.rs:79`, `padding_left + border.left`
+in `render/pane.rs:787`).
+
+#### Changes
+
+##### 1. EDIT `wezboard/wezboard-gui/src/termsurf/metrics.rs`
+
+Rename `PADDING_LEFT`/`PADDING_TOP` to `CONTENT_ORIGIN_X`/`CONTENT_ORIGIN_Y`.
+Update `set()` and `get()` parameter names to match:
+
+```rust
+static CONTENT_ORIGIN_X: AtomicU32 = AtomicU32::new(0);
+static CONTENT_ORIGIN_Y: AtomicU32 = AtomicU32::new(0);
+```
+
+The `set()` signature becomes:
+
+```rust
+pub fn set(cell_width: u32, cell_height: u32, origin_x: u32, origin_y: u32)
+```
+
+##### 2. EDIT `wezboard/wezboard-gui/src/termwindow/resize.rs`
+
+Replace the current metrics push (which passes `pad_left` and `pad_top`) with
+the full content origin calculation:
+
+```rust
+let (pad_left, pad_top) = self.padding_left_top();
+let tab_bar_height = if self.show_tab_bar {
+    self.tab_bar_pixel_height().unwrap_or(0.)
+} else {
+    0.
+};
+let top_bar_height = if self.config.tab_bar_at_bottom {
+    0.0
+} else {
+    tab_bar_height
+};
+let border = self.get_os_border();
+let origin_x = pad_left + border.left.get() as f32;
+let origin_y = top_bar_height + pad_top + border.top.get() as f32;
+crate::termsurf::metrics::set(
+    self.render_metrics.cell_size.width as u32,
+    self.render_metrics.cell_size.height as u32,
+    origin_x as u32,
+    origin_y as u32,
+);
+```
+
+This mirrors `render/pane.rs:79` exactly.
+
+##### 3. EDIT `wezboard/wezboard-gui/src/termwindow/mod.rs`
+
+Update the initial metrics push in `spawn_window_impl` to also compute the full
+origin. At this point in the constructor, `show_tab_bar` and `os_parameters` are
+not yet set, so use the config defaults:
+
+```rust
+let tab_bar_height = if config.enable_tab_bar {
+    TermWindow::tab_bar_pixel_height_impl(&config, &fontconfig, &render_metrics)
+        .unwrap_or(0.)
+} else {
+    0.
+};
+let top_bar_height = if config.tab_bar_at_bottom {
+    0.0
+} else {
+    tab_bar_height
+};
+crate::termsurf::metrics::set(
+    render_metrics.cell_size.width as u32,
+    render_metrics.cell_size.height as u32,
+    (padding_left as f32) as u32,
+    (top_bar_height + padding_top as f32) as u32,
+);
+```
+
+Note: `border.top` is omitted here because `os_parameters` is `None` at
+construction time (border defaults to 0). The first resize will set the correct
+value.
+
+##### 4. EDIT `wezboard/wezboard-gui/src/termsurf/conn.rs`
+
+No changes needed. `update_ca_layer_frame()` already reads the third and fourth
+values from `metrics::get()` and uses them as `x` and `y` offsets. The renamed
+atomics now contain the correct full origin instead of just padding.
+
+#### Verification
+
+1. `cd wezboard && cargo build -p wezboard-gui` — zero errors
+2. Launch Wezboard, run `web google.com`
+3. Webview top edge aligns with terminal content (below tab bar)
+4. Webview left edge aligns with terminal content (inside padding + border)
+5. Resize window — webview stays aligned
+6. Close pane — clean shutdown
