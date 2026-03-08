@@ -1,12 +1,13 @@
 use super::proto;
-use super::proto::term_surf_message::Msg;
 use super::proto::TermSurfMessage;
+use super::proto::term_surf_message::Msg;
 use super::state::{Pane, Server, SharedState, TermSurfState};
 use anyhow::Context;
 use prost::Message;
+use smol::Async;
 use smol::channel::Sender;
 use smol::io::{AsyncReadExt, AsyncWriteExt};
-use smol::Async;
+use std::collections::HashSet;
 use std::os::unix::net::UnixStream;
 use std::sync::Arc;
 
@@ -810,5 +811,26 @@ fn remove_ca_layers(host: usize, positioning: usize, flipped: usize) {
         }
 
         let _: () = msg_send![ca_transaction, commit];
+    }
+}
+
+#[cfg(target_os = "macos")]
+pub fn sync_overlay_visibility(active_pane_ids: &HashSet<String>) {
+    let Some(state) = super::shared_state() else {
+        return;
+    };
+    let st = state.lock().unwrap();
+    for (pane_id, pane) in &st.panes {
+        if pane.ca_layer_flipped == 0 {
+            continue;
+        }
+        let is_active = active_pane_ids.contains(pane_id);
+        unsafe {
+            use objc2::msg_send;
+            use objc2::runtime::Bool;
+            let layer = pane.ca_layer_flipped as *mut objc2::runtime::AnyObject;
+            let hidden = if is_active { Bool::NO } else { Bool::YES };
+            let _: () = msg_send![layer, setHidden: hidden];
+        }
     }
 }

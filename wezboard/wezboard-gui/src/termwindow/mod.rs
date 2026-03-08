@@ -1298,6 +1298,20 @@ impl TermWindow {
                 MuxNotification::WindowInvalidated(_) => {
                     window.invalidate();
                     self.update_title_post_status();
+
+                    // Sync TermSurf overlay visibility with active panes
+                    let mux = Mux::get();
+                    let mut active_ids = std::collections::HashSet::new();
+                    for window_id in mux.iter_windows() {
+                        if let Some(w) = mux.get_window(window_id) {
+                            if let Some(tab) = w.get_active() {
+                                if let Some(pane) = tab.get_active_pane() {
+                                    active_ids.insert(pane.pane_id().to_string());
+                                }
+                            }
+                        }
+                    }
+                    crate::termsurf::conn::sync_overlay_visibility(&active_ids);
                 }
                 MuxNotification::WindowRemoved(_window_id) => {
                     // Handled by frontend

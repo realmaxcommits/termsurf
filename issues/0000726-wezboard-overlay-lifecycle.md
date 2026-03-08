@@ -245,3 +245,30 @@ MuxNotification::WindowInvalidated(_) => {
    overlay)
 9. Open a second window with a webview — both windows' overlays visible
    simultaneously
+
+**Result:** Fail
+
+Switching to a new tab correctly hides the overlay. But switching back to the
+tab with the webview does not restore it — the overlay stays hidden.
+
+The hide works because `sync_overlay_visibility` sets `setHidden:YES` on every
+pane whose `pane_id` is not in the active set. The show fails because
+`active_pane_ids.contains(pane_id)` returns false even when the tab is active.
+
+The most likely cause is a **pane_id mismatch**. The TermSurf state stores panes
+keyed by the string the TUI sends in `HelloRequest.pane_id`. The
+`WindowInvalidated` handler builds the active set from
+`pane.pane_id().to_string()` (the mux's `PaneId` as a string). If these two
+strings don't match, the pane is never recognized as active.
+
+In Ghostboard, `TERMSURF_PANE_ID` is set to the surface's pane ID. In Wezboard,
+`WEZBOARD_PANE` is set to the mux pane ID at `mux/src/domain.rs:482` — but the
+TUI reads `TERMSURF_PANE_ID`, not `WEZBOARD_PANE`. If `TERMSURF_PANE_ID` isn't
+set, the TUI may send a different value (or empty string) that doesn't match the
+mux pane ID.
+
+#### Conclusion
+
+Need debug logging to confirm what pane_id values the TUI sends vs. what the mux
+reports. The next experiment should add `eprintln!` in `sync_overlay_visibility`
+to print the active set and the pane keys, so we can see the exact mismatch.

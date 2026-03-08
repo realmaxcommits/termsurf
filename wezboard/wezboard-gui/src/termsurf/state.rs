@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::process::Child;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use smol::channel::Sender;
 
@@ -67,3 +67,13 @@ impl TermSurfState {
 }
 
 pub type SharedState = Arc<Mutex<TermSurfState>>;
+
+static GLOBAL_STATE: OnceLock<SharedState> = OnceLock::new();
+
+pub fn init_global(state: SharedState) {
+    GLOBAL_STATE.set(state).ok();
+}
+
+pub fn global() -> Option<&'static SharedState> {
+    GLOBAL_STATE.get()
+}
