@@ -533,3 +533,26 @@ Keep the debug logging from Exp 4 to verify the values.
 3. Split pane, open from RIGHT side — overlay appears over right pane
 4. Split pane, open from LEFT side — overlay appears over left pane
 5. Check logs: `scale=2` on Retina, computed x/y values are reasonable
+
+### Result: Partial success
+
+The right-pane positioning is fixed — opening a webview from the right pane now
+places the overlay over the right pane. The `contentsScale` fix works: scale=2.0
+on Retina, and `pane_left * cell_w / scale` produces the correct point offset.
+
+**Regression:** The overlay now renders at the exact top-left corner of the
+pane, ignoring the TUI's viewport offset. Previously, the overlay appeared below
+the URL bar row (correct). Now it covers the URL bar.
+
+**Why:** Before the Retina fix, `origin_x=13` and `origin_y=50` (physical
+pixels) were divided by scale=1.0, producing 13 and 50 points. These values
+accidentally provided enough offset to position the overlay correctly below the
+tab bar and URL bar. With the correct scale=2.0, they become 6.5 and 25 points —
+half the previous offset. The overlay now starts closer to the true pane origin,
+which is too high (covers the URL bar) and too far left (less padding).
+
+The TUI sends `col=0, row=1` in SetOverlay (row 1 = skip the URL bar). The
+current formula doesn't use these values. Before the fix, the wrong scale
+accidentally compensated. Now that scale is correct, the TUI's col/row viewport
+offset needs to be explicitly added to the positioning formula. With scale=2.0,
+adding `row * cell_h / scale` would give the correct offset in points.

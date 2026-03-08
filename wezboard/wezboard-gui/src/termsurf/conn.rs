@@ -833,6 +833,15 @@ fn get_or_create_overlay(
         let ca_layer_class = cls(b"CALayer\0");
         let root_layer: *mut AnyObject = msg_send![ca_layer_class, layer];
         let _: () = msg_send![root_layer, setOpaque: Bool::NO];
+        // Set contentsScale to match the screen's backing scale factor (2.0 on Retina).
+        // Without this, contentsScale defaults to 1.0 and all pixel→point conversions
+        // in update_ca_layer_frame are wrong.
+        let window: *mut AnyObject = msg_send![superview, window];
+        if !window.is_null() {
+            let backing_scale: f64 = msg_send![window, backingScaleFactor];
+            let _: () = msg_send![root_layer, setContentsScale: backing_scale];
+            log::info!("overlay root layer contentsScale={}", backing_scale);
+        }
         let _: () = msg_send![overlay, setLayer: root_layer];
         let _: () = msg_send![overlay, setWantsLayer: Bool::YES];
 
@@ -968,6 +977,33 @@ fn handle_ca_context(ca_context: proto::CaContext, state: &SharedState) {
     }
 }
 
+/// Look up a pane's cell position within the tab from the mux.
+/// Returns (left, top) in cells, or (0, 0) if not found.
+fn get_pane_cell_position(pane_id: &str) -> (usize, usize) {
+    let numeric_id: usize = match pane_id.parse() {
+        Ok(id) => id,
+        Err(_) => return (0, 0),
+    };
+    let mux = mux::Mux::get();
+    for window_id in mux.iter_windows() {
+        if let Some(w) = mux.get_window(window_id) {
+            if let Some(tab) = w.get_active() {
+                for pos in tab.iter_panes() {
+                    log::info!(
+                        "get_pane_cell_position: mux pane id={} left={} top={} width={} height={} pixel={}x{}",
+                        pos.pane.pane_id(), pos.left, pos.top,
+                        pos.width, pos.height, pos.pixel_width, pos.pixel_height
+                    );
+                    if pos.pane.pane_id() == numeric_id {
+                        return (pos.left, pos.top);
+                    }
+                }
+            }
+        }
+    }
+    (0, 0)
+}
+
 #[cfg(target_os = "macos")]
 unsafe fn update_ca_layer_frame(pane: &Pane, root_layer: *mut objc2::runtime::AnyObject) {
     use objc2::msg_send;
@@ -978,9 +1014,16 @@ unsafe fn update_ca_layer_frame(pane: &Pane, root_layer: *mut objc2::runtime::An
     let scale = if scale > 0.0 { scale } else { 1.0 };
     let w = pane.pixel_width as f64 / scale;
     let h = pane.pixel_height as f64 / scale;
-    let (_, _, origin_x, origin_y) = super::metrics::get();
-    let x = origin_x as f64 / scale;
-    let y = origin_y as f64 / scale;
+    let (cell_w, cell_h, origin_x, origin_y) = super::metrics::get();
+    let (pane_left, pane_top) = get_pane_cell_position(&pane.pane_id);
+    let x = (origin_x as u64 + pane_left as u64 * cell_w as u64) as f64 / scale;
+    let y = (origin_y as u64 + pane_top as u64 * cell_h as u64) as f64 / scale;
+
+    log::info!(
+        "update_ca_layer_frame: pane_id={} pane_cell=({},{}) origin=({},{}) cell=({},{}) scale={} → frame=({:.1},{:.1},{:.1},{:.1})",
+        pane.pane_id, pane_left, pane_top, origin_x, origin_y, cell_w, cell_h, scale, x, y, w, h
+    );
+
     let frame = CGRect::new(CGPoint::new(x, y), CGSize::new(w, h));
 
     let positioning = pane.ca_layer_positioning as *mut AnyObject;
