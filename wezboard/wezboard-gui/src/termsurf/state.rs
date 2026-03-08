@@ -10,6 +10,8 @@ pub struct Pane {
     pub profile: String,
     pub browser: String,
     pub url: String,
+    pub col: u64,
+    pub row: u64,
     pub pixel_width: u64,
     pub pixel_height: u64,
     pub tab_id: i64,

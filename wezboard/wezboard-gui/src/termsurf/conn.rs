@@ -421,6 +421,8 @@ fn handle_set_overlay(
             let pane = st.panes.get_mut(&overlay.pane_id).unwrap();
             pane.pixel_width = pixel_w;
             pane.pixel_height = pixel_h;
+            pane.col = overlay.col;
+            pane.row = overlay.row;
             (pane.tab_id, pane.profile.clone(), pane.browser.clone())
         };
         log::info!(
@@ -461,6 +463,8 @@ fn handle_set_overlay(
         profile: overlay.profile.clone(),
         browser: browser.clone(),
         url: overlay.url.clone(),
+        col: overlay.col,
+        row: overlay.row,
         pixel_width: pixel_w,
         pixel_height: pixel_h,
         tab_id: 0,
@@ -1016,8 +1020,8 @@ unsafe fn update_ca_layer_frame(pane: &Pane, root_layer: *mut objc2::runtime::An
     let h = pane.pixel_height as f64 / scale;
     let (cell_w, cell_h, origin_x, origin_y) = super::metrics::get();
     let (pane_left, pane_top) = get_pane_cell_position(&pane.pane_id);
-    let x = (origin_x as u64 + pane_left as u64 * cell_w as u64) as f64 / scale;
-    let y = (origin_y as u64 + pane_top as u64 * cell_h as u64) as f64 / scale;
+    let x = (origin_x as u64 + (pane_left as u64 + pane.col) * cell_w as u64) as f64 / scale;
+    let y = (origin_y as u64 + (pane_top as u64 + pane.row) * cell_h as u64) as f64 / scale;
 
     log::info!(
         "update_ca_layer_frame: pane_id={} pane_cell=({},{}) origin=({},{}) cell=({},{}) scale={} → frame=({:.1},{:.1},{:.1},{:.1})",

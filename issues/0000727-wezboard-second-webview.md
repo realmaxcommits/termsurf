@@ -609,3 +609,44 @@ For the right pane (pane_left=80, pane_top=0, col=0, row=1):
 2. Single pane: overlay positioned below URL bar (no regression from pre-Exp 5)
 3. Split pane, open from RIGHT side — overlay over right pane, below URL bar
 4. Split pane, open from LEFT side — overlay over left pane, below URL bar
+
+### Result: Partial success
+
+Two webviews open side by side without crashes. Each overlay appears inside its
+own pane — the mux lookup and col/row offset are working. However, two issues
+remain:
+
+**Issue 1: Y position off by ~half a cell height.** The overlay renders slightly
+too high — approximately half a cell height (roughly 10 pixels) above where it
+should be. Something in the y calculation is producing a value that's slightly
+wrong. The col/row offset logic is directionally correct (the overlay is below
+the URL bar, not covering it), but the final pixel position is shifted upward by
+a small amount. This could be a rounding issue in the integer arithmetic, or one
+of the origin/padding values not accounting for something correctly.
+
+**Issue 2: Pane borders not accounted for.** When a second pane is created,
+WezTerm adds borders around both panes (the border/padding added in the Wezboard
+pane borders work, Issue 723). These borders shift the terminal content inward,
+but the overlay positioning formula doesn't include border offsets. The terminal
+text moves with the border but the webview overlay stays at the pre-border
+position. This means both overlays are misaligned by the border width on each
+affected side. The fix requires adding `border.left` and `border.top` to the
+positioning formula — these values are available in the render code
+(render/pane.rs:109–136) but are not currently passed through the metrics
+bridge.
+
+#### Conclusion
+
+The col/row viewport offset works correctly — the overlay is positioned below
+the URL bar in the right location relative to the pane. Two remaining problems
+need separate fixes:
+
+1. The mysterious ~half-cell y offset — needs debug logging of the exact values
+   to diagnose whether it's a rounding issue, an off-by-one in origin_y, or
+   something else.
+2. The missing border offset — requires expanding the metrics bridge to include
+   `border.left` and `border.top` (and possibly `padding_top`), then adding them
+   to the positioning formula. This is the same issue identified in Exp 1's
+   research (the render code formula includes `border.left + padding_left` and
+   `border.top + padding_top + top_bar_height`) but was deferred in Exp 3–5 to
+   keep changes minimal.
