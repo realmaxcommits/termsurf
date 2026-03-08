@@ -155,3 +155,94 @@ return Ok(());
    pane's left edge stays aligned with its terminal pane)
 4. Resize vertically — overlays stay aligned
 5. Single pane still works (regression check)
+
+**Result:** Fail
+
+Slow window resizes don't reposition the overlays. Fast resizes do. The
+`SetOverlay` path only fires when the TUI detects a viewport change and sends a
+new message — during slow resizes, the TUI may not send `SetOverlay` on every
+frame, so the repositioning doesn't happen. The hook is in the wrong place. The
+reposition needs to happen in WezTerm's own resize handler (where cell metrics
+are updated), not in the `SetOverlay` message handler.
+
+#### Conclusion
+
+The `SetOverlay` message path is the wrong place to reposition overlays during
+window resize. The TUI only sends `SetOverlay` when it detects a viewport
+change, which doesn't happen on every resize increment. The reposition needs to
+be driven by WezTerm's resize event directly — the same place that calls
+`metrics::set()` — so overlays track pane positions on every frame, not just
+when the TUI happens to send a message.
+
+### Experiment 2: Reposition from window resize handler
+
+#### Goal
+
+Same as Experiment 1 — overlays must track pane positions during window resize.
+This time, drive repositioning from WezTerm's resize handler instead of the
+`SetOverlay` message path. The `SetOverlay` resize path continues to handle
+resizing (pixel dimensions sent to Chromium); repositioning is a separate
+concern driven by the window.
+
+#### Design
+
+1. Add a public `reposition_all_overlays()` function in `conn.rs` that iterates
+   all panes with active CALayers and calls `update_ca_layer_frame()` for each.
+2. Export it from `termsurf/mod.rs`.
+3. Call it from `TermWindow::resize()` in `resize.rs`, right after
+   `metrics::set()` updates cell metrics.
+4. Revert the Experiment 1 change (remove `update_ca_layer_frame` from the
+   `SetOverlay` resize path).
+
+#### Changes
+
+**1. `termsurf/conn.rs` — Add `reposition_all_overlays()`**
+
+New public function after `update_ca_layer_frame`:
+
+```rust
+#[cfg(target_os = "macos")]
+pub fn reposition_all_overlays() {
+    let Some(state) = super::state::global() else { return };
+    let mut st = state.lock().unwrap();
+    let pane_ids: Vec<String> = st.panes.iter()
+        .filter(|(_, p)| p.ca_layer_positioning != 0)
+        .map(|(id, _)| id.clone())
+        .collect();
+    for pane_id in &pane_ids {
+        let Some(mux_window_id) = get_pane_mux_window(pane_id) else { continue };
+        let Some(root_layer) = get_or_create_overlay(&mut st, mux_window_id) else { continue };
+        let Some(pane) = st.panes.get_mut(pane_id) else { continue };
+        unsafe { update_ca_layer_frame(pane, root_layer); }
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn reposition_all_overlays() {}
+```
+
+**2. `termsurf/mod.rs` — Export the function**
+
+```rust
+pub use conn::reposition_all_overlays;
+```
+
+**3. `termwindow/resize.rs` — Call after `metrics::set()`**
+
+```rust
+crate::termsurf::metrics::set(/* ... */);
+crate::termsurf::reposition_all_overlays();
+```
+
+**4. `termsurf/conn.rs` — Revert Experiment 1**
+
+Remove the `update_ca_layer_frame` block from the `SetOverlay` resize path,
+restoring the original `return Ok(());`.
+
+#### Verification
+
+1. `cd wezboard && cargo build -p wezboard-gui` — zero errors
+2. Open two side-by-side panes: `web lite.duckduckgo.com` in both
+3. Slowly resize the window horizontally — both overlays track their panes
+4. Resize vertically — overlays stay aligned
+5. Single pane still works (regression check)
