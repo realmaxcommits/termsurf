@@ -36,6 +36,7 @@ ready.
       renderer termination, display an error page, clear the progress bar, and
       show what went wrong. Discovered in Issue 655 Experiment 1.
 - [x] Wezboard overlay NSView — Promoted to Issue 725.
+- [x] Wezboard scroll crash — Promoted to Issue 731.
 - [ ] Mojo interface audit — The Content API build is missing handlers for Mojo
       interfaces that a full Chrome browser registers. Every missing binder is a
       ticking time bomb — the renderer crashes when any page's JavaScript calls
