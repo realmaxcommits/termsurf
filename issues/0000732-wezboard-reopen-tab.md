@@ -85,3 +85,84 @@ server is dead — remove it and fall through to the spawn path.
 A more robust check: also verify the process handle (`server.process`) with
 `try_wait()` to detect if the process has exited even before the socket
 disconnect was processed.
+
+## Experiments
+
+### Experiment 1: Remove stale servers before spawning
+
+#### Goal
+
+When `handle_set_overlay` finds an existing server entry, check if the server is
+actually alive. If it's dead (process exited or `tx` is `None` with no active
+panes), remove the stale entry and spawn a fresh server.
+
+#### Changes
+
+**File: `wezboard/wezboard-gui/src/termsurf/conn.rs`** — `handle_set_overlay`,
+lines 554–585
+
+Replace the simple `contains_key` check with a liveness check. Before deciding
+to reuse a server, verify it's actually reachable:
+
+```rust
+// Get or create server
+let key = TermSurfState::server_key(&overlay.profile, &browser);
+let needs_spawn = match st.servers.get_mut(&key) {
+    None => true,
+    Some(server) => {
+        // Check if server process has exited
+        let process_dead = match server.process {
+            Some(ref mut child) => match child.try_wait() {
+                Ok(Some(_)) => true,  // Process exited
+                _ => false,           // Still running (or error)
+            },
+            None => true,             // No process handle
+        };
+        if process_dead || (server.tx.is_none() && server.pane_count == 0) {
+            log::info!(
+                "SetOverlay: removing stale server key={} process_dead={} tx={} pane_count={}",
+                key, process_dead, server.tx.is_some(), server.pane_count
+            );
+            st.servers.remove(&key);
+            true
+        } else {
+            false
+        }
+    }
+};
+
+if needs_spawn {
+    // Must drop lock before spawning (spawn_server doesn't need state)
+    drop(st);
+    let server = spawn_server(&overlay.profile, &browser)?;
+    let mut st = state.lock().unwrap();
+    st.servers.insert(key.clone(), server);
+    // If server already connected (unlikely for fresh spawn), send CreateTab
+    let server = st.servers.get(&key).unwrap();
+    if let Some(ref server_tx) = server.tx {
+        let pane = st.panes.get(&overlay.pane_id).unwrap();
+        send_create_tab(server_tx, pane)?;
+    }
+} else {
+    let server = st.servers.get_mut(&key).unwrap();
+    server.pane_count += 1;
+    // ... existing reuse logic (log, send CreateTab if tx available) ...
+}
+```
+
+The key insight: `try_wait()` on the `Child` process handle is non-blocking and
+tells us if the process has already exited. Combined with the `tx` and
+`pane_count` checks, this catches both failure modes described in the issue
+background.
+
+No other files need changes — this is entirely within the get-or-create logic in
+`handle_set_overlay`.
+
+#### Verification
+
+1. `cd wezboard && cargo build` — compiles without errors
+2. Open a webview (`web localhost:3000`), confirm it loads
+3. Close the tab (Ctrl+D or close the pane)
+4. Open a new webview (`web localhost:3000`) — it should appear and load
+5. Verify logs show "removing stale server" on the second open
+6. Repeat steps 2–4 multiple times to confirm reliability
