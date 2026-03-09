@@ -588,3 +588,93 @@ Dev path fallbacks and `.app` bundling removed. Boards now resolve Roamium from
 a single install path (`/usr/local/roamium/roamium`) or a user-specified
 absolute path via `--browser`. Clean separation between board install and
 browser engine install.
+
+### Experiment 6: Install Wezboard with new icon
+
+#### Goal
+
+Create a `scripts/install-wezboard.sh` that installs Wezboard as a macOS `.app`
+bundle in `/Applications/`, using the new TermSurf logo
+(`assets/termsurf-9.png`) as the app icon.
+
+#### Background
+
+Wezboard already has an app bundle template at
+`wezboard/assets/macos/Wezboard.app/` containing `Info.plist`, ANGLE dylibs, and
+an icon at `Contents/Resources/terminal.icns`. The deploy script
+(`wezboard/ci/deploy.sh`) assembles the final `.app` by copying this template
+and adding the compiled binary.
+
+The icon is currently the old WezTerm icon. We need to convert
+`assets/termsurf-9.png` to `.icns` format and replace `terminal.icns` in the
+template. Ghostboard already has `scripts/generate-icons.sh` that uses `sips` to
+resize PNGs — a similar approach can produce the `.icns` via `iconutil`.
+
+#### Design
+
+**1. Generate `terminal.icns` from `assets/termsurf-9.png`**
+
+macOS `.icns` files are created from an `.iconset` directory containing PNGs at
+specific sizes. Use `sips` to resize and `iconutil` to pack:
+
+```bash
+ICONSET=$(mktemp -d)/Wezboard.iconset
+mkdir -p "$ICONSET"
+for size in 16 32 128 256 512; do
+  sips -z $size $size assets/termsurf-9.png --out "$ICONSET/icon_${size}x${size}.png"
+  double=$((size * 2))
+  sips -z $double $double assets/termsurf-9.png --out "$ICONSET/icon_${size}x${size}@2x.png"
+done
+iconutil -c icns "$ICONSET" -o wezboard/assets/macos/Wezboard.app/Contents/Resources/terminal.icns
+```
+
+This replaces the old icon in the template. The `Info.plist` already references
+`terminal` as `CFBundleIconFile`, so no plist change needed.
+
+**2. Create `scripts/install-wezboard.sh`**
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_DIR="$(dirname "$SCRIPT_DIR")"
+APP_TEMPLATE="$REPO_DIR/wezboard/assets/macos/Wezboard.app"
+BINARY="$REPO_DIR/wezboard/target/release/wezboard-gui"
+APP="/Applications/Wezboard.app"
+
+# Verify release build exists.
+if [ ! -f "$BINARY" ]; then
+  echo "Error: Release build not found at $BINARY"
+  echo "Run: cd wezboard && cargo build --release -p wezboard-gui"
+  exit 1
+fi
+
+echo "==> Installing Wezboard to $APP..."
+sudo rm -rf "$APP"
+sudo cp -R "$APP_TEMPLATE" "$APP"
+sudo mkdir -p "$APP/Contents/MacOS"
+sudo cp "$BINARY" "$APP/Contents/MacOS/wezboard-gui"
+
+# Re-sign (ad-hoc).
+echo "==> Signing..."
+sudo codesign --force --deep --sign - "$APP"
+
+echo ""
+echo "Done."
+echo "  App: $APP"
+```
+
+**3. Update Ghostboard icon too**
+
+Run `scripts/generate-icons.sh assets/termsurf-9.png` to update Ghostboard's
+icon assets to the same new logo.
+
+#### Verification
+
+1. `terminal.icns` is regenerated from `termsurf-9.png`
+2. `scripts/install-wezboard.sh` completes without errors
+3. `/Applications/Wezboard.app` appears in Finder/Launchpad with the new icon
+4. Launching Wezboard from `/Applications/` works — terminal opens
+5. `web lite.duckduckgo.com` inside Wezboard uses installed Roamium
+6. Ghostboard icon also updated via `scripts/generate-icons.sh`
