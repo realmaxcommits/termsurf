@@ -321,3 +321,26 @@ dispatch both events. The `RawScrollEvent` handler sets a flag. The subsequent
 4. Momentum scrolling works (momentum_phase lifecycle after finger lifts)
 5. Terminal scrolling still works when no browser overlay is active
 6. Compare scroll behavior with Ghostboard as reference
+
+#### Result: Failed
+
+The code compiled but crashed at runtime on the first scroll event. The panic
+message:
+
+```
+invalid message send to -[NSEvent phase]: expected return to have type code 'Q', but found 'I'
+```
+
+`objc2` performs runtime type verification on `msg_send!` return types.
+`NSEvent.phase` returns `NSEventPhase`, which is a `typedef NSUInteger`. On
+64-bit macOS, `NSUInteger` is `unsigned long` — 8 bytes, Objective-C type
+encoding `'Q'` (`u64` in Rust). The experiment declared the return type as `u32`
+(type encoding `'I'`, 4 bytes), causing `objc2` to panic before the message was
+even sent. The same applies to `momentumPhase`.
+
+The fix for the next experiment: change `phase` and `momentum_phase` from `u32`
+to `u64` in the `msg_send!` calls, the `RawScrollEvent` variant fields, and all
+downstream function signatures (`try_forward_raw_scroll`, the
+`dispatch_window_event` match arm). The protobuf `ScrollEvent` already uses
+`u64` for these fields, so the only changes are in the Rust types between
+NSEvent and protobuf serialization.
