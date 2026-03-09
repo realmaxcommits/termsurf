@@ -843,14 +843,24 @@ fn serverProfile(server: *const Server) []const u8 {
 fn initBrowserRegistry() void {
     const home = std.posix.getenv("HOME") orelse return;
 
-    // Dev fallback paths for known browsers.
-    const browsers = [_]struct { name: []const u8, suffix: []const u8 }{
+    // Known browser paths: absolute paths first, then $HOME-relative dev paths.
+    const Entry = struct { name: []const u8, absolute: ?[]const u8 = null, suffix: ?[]const u8 = null };
+    const browsers = [_]Entry{
+        .{ .name = "roamium", .absolute = "/usr/local/roamium/roamium" },
         .{ .name = "roamium", .suffix = "/dev/termsurf/chromium/src/out/Default/roamium" },
     };
 
     for (&browsers) |b| {
         var path_buf: [std.fs.max_path_bytes]u8 = undefined;
-        const path = std.fmt.bufPrint(&path_buf, "{s}{s}", .{ home, b.suffix }) catch continue;
+        const path = if (b.absolute) |abs|
+            abs
+        else if (b.suffix) |sfx|
+            std.fmt.bufPrint(&path_buf, "{s}{s}", .{ home, sfx }) catch continue
+        else
+            continue;
+
+        // Skip if this browser name is already registered (first match wins).
+        if (browser_paths.contains(b.name)) continue;
 
         // Check if binary exists.
         if (std.fs.accessAbsolute(path, .{})) {

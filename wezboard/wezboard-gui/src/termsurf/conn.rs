@@ -934,10 +934,10 @@ fn resolve_browser_path(browser: &str) -> anyhow::Result<String> {
     }
 
     let home = std::env::var("HOME")?;
-    let candidates = &[(
-        "roamium",
-        format!("{}/dev/termsurf/chromium/src/out/Default/roamium", home),
-    )];
+    let candidates = &[
+        ("roamium", format!("/usr/local/roamium/roamium")),
+        ("roamium", format!("{}/dev/termsurf/chromium/src/out/Default/roamium", home)),
+    ];
 
     for (n, path) in candidates {
         if *n == name && std::path::Path::new(path).exists() {

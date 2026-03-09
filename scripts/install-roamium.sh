@@ -5,7 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_DIR="$(dirname "$SCRIPT_DIR")"
 CHROMIUM_OUT="$REPO_DIR/chromium/src/out/Default"
 ROAMIUM_SRC="$REPO_DIR/roamium/target/release/roamium"
-INSTALL_DIR="/usr/local/lib/roamium"
+INSTALL_DIR="/usr/local/roamium"
 
 # Verify release build exists.
 if [ ! -f "$ROAMIUM_SRC" ]; then
@@ -30,11 +30,11 @@ sudo cp "$CHROMIUM_OUT"/*.pak "$INSTALL_DIR/"
 sudo cp "$CHROMIUM_OUT/icudtl.dat" "$INSTALL_DIR/"
 sudo cp "$CHROMIUM_OUT"/v8_context_snapshot*.bin "$INSTALL_DIR/"
 
-# Symlink to /usr/local/bin.
-echo "==> Symlinking /usr/local/bin/roamium..."
-sudo ln -sf "$INSTALL_DIR/roamium" /usr/local/bin/roamium
+# Clean up old install locations.
+sudo rm -f /usr/local/bin/roamium
+sudo rm -rf /usr/local/lib/roamium
 
 echo ""
 echo "Done."
-echo "  Dir:  $INSTALL_DIR"
-echo "  Bin:  /usr/local/bin/roamium"
+echo "  Dir: $INSTALL_DIR"
+echo "  Bin: $INSTALL_DIR/roamium"

@@ -482,3 +482,21 @@ Same change — add `/usr/local/roamium/roamium` as the first candidate:
 6. Dev build still works: `web --browser roamium lite.duckduckgo.com` when
    installed path doesn't exist falls back to
    `$HOME/dev/termsurf/chromium/src/out/Default/roamium`
+
+#### Result
+
+Success — Wezboard correctly launches Roamium from `/usr/local/roamium/roamium`.
+The install script copies all files, `NSBundle` resolves correctly (no symlink
+or wrapper indirection), and `web lite.duckduckgo.com` renders pages normally.
+
+Ghostboard does not pick up the installed path — needs debugging in a follow-up
+experiment. The `initBrowserRegistry` change in `xpc.zig` was implemented but
+Ghostboard still uses the dev build path. This may be a build issue (Ghostboard
+wasn't rebuilt) or a logic issue in the registry initialization.
+
+#### Conclusion
+
+The install layout works. `/usr/local/roamium/` with the binary, dylibs, and
+resources colocated — no indirection — is the correct approach. Wezboard
+confirms end-to-end functionality. Ghostboard support needs debugging
+separately.
