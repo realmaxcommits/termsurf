@@ -189,25 +189,8 @@ pub fn try_forward_mouse(pane_id: usize, event: &MouseEvent) -> bool {
                 );
                 return true;
             }
-            WMEK::VertWheel(delta) => {
-                let mods = modifiers_to_termsurf(event.modifiers);
-                send_to_chromium(
-                    &pane_id_str,
-                    Msg::ScrollEvent(proto::ScrollEvent {
-                        tab_id: 0,
-                        x: rel_x,
-                        y: rel_y,
-                        delta_x: 0.0,
-                        delta_y: *delta as f64,
-                        phase: 4,
-                        momentum_phase: 0,
-                        precise: false,
-                        modifiers: mods,
-                    }),
-                );
-                return true;
-            }
-            _ => {
+            WMEK::VertWheel(_) | WMEK::HorzWheel(_) => {
+                // Consumed — raw scroll already forwarded via RawScrollEvent.
                 return true;
             }
         }
@@ -412,7 +395,7 @@ pub fn cursor_for_pane(pane_id: usize) -> MouseCursor {
     }
 }
 
-fn hit_test_overlay(pane_id_str: &str, event: &MouseEvent) -> Option<(f64, f64)> {
+fn hit_test_overlay_at(pane_id_str: &str, mx: f64, my: f64) -> Option<(f64, f64)> {
     let state = super::shared_state()?;
     let st = state.lock().unwrap();
     let pane = st.panes.get(pane_id_str)?;
@@ -421,8 +404,6 @@ fn hit_test_overlay(pane_id_str: &str, event: &MouseEvent) -> Option<(f64, f64)>
     let oy = pane.overlay_origin_y;
     let ow = pane.pixel_width as f64;
     let oh = pane.pixel_height as f64;
-    let mx = event.coords.x as f64;
-    let my = event.coords.y as f64;
 
     if mx >= ox && my >= oy && mx < ox + ow && my < oy + oh {
         let scale = pane.overlay_scale;
@@ -430,4 +411,57 @@ fn hit_test_overlay(pane_id_str: &str, event: &MouseEvent) -> Option<(f64, f64)>
     } else {
         None
     }
+}
+
+fn hit_test_overlay(pane_id_str: &str, event: &MouseEvent) -> Option<(f64, f64)> {
+    hit_test_overlay_at(pane_id_str, event.coords.x as f64, event.coords.y as f64)
+}
+
+/// Forward raw scroll event to Chromium. Returns true if consumed.
+pub fn try_forward_raw_scroll(
+    pane_id: usize,
+    coords: ::window::Point,
+    delta_x: f64,
+    delta_y: f64,
+    phase: u64,
+    momentum_phase: u64,
+    precise: bool,
+    modifiers: Modifiers,
+) -> bool {
+    let pane_id_str = pane_id.to_string();
+    let Some(state) = super::shared_state() else {
+        return false;
+    };
+    let (has_pane, has_tab) = {
+        let st = state.lock().unwrap();
+        match st.panes.get(&pane_id_str) {
+            Some(pane) => (true, pane.tab_id != 0),
+            None => (false, false),
+        }
+    };
+    if !has_pane || !has_tab {
+        return false;
+    }
+
+    if let Some((rel_x, rel_y)) =
+        hit_test_overlay_at(&pane_id_str, coords.x as f64, coords.y as f64)
+    {
+        let mods = modifiers_to_termsurf(modifiers);
+        send_to_chromium(
+            &pane_id_str,
+            Msg::ScrollEvent(proto::ScrollEvent {
+                tab_id: 0,
+                x: rel_x,
+                y: rel_y,
+                delta_x,
+                delta_y,
+                phase,
+                momentum_phase,
+                precise,
+                modifiers: mods,
+            }),
+        );
+        return true;
+    }
+    false
 }

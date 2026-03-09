@@ -196,6 +196,19 @@ pub enum WindowEvent {
     MouseEvent(MouseEvent),
     MouseLeave,
 
+    /// Raw macOS scroll event with unprocessed NSEvent data, for browser forwarding.
+    RawScrollEvent {
+        coords: Point,
+        screen_coords: ScreenPoint,
+        delta_x: f64,
+        delta_y: f64,
+        phase: u64,
+        momentum_phase: u64,
+        precise: bool,
+        modifiers: Modifiers,
+        mouse_buttons: MouseButtons,
+    },
+
     AppearanceChanged(Appearance),
 
     Notification(Box<dyn Any + Send + Sync>),

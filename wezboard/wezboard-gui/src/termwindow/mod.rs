@@ -402,6 +402,9 @@ pub struct TermWindow {
     current_mouse_event: Option<MouseEvent>,
     prev_cursor: PrevCursorPos,
     last_scroll_info: RenderableDimensions,
+    /// Set when a RawScrollEvent was consumed by the browser overlay,
+    /// so the subsequent VertWheel/HorzWheel MouseEvent can be suppressed.
+    raw_scroll_consumed: bool,
 
     tab_state: RefCell<HashMap<TabId, TabState>>,
     pane_state: RefCell<HashMap<PaneId, PaneState>>,
@@ -733,6 +736,7 @@ impl TermWindow {
             current_modifier_and_leds: Default::default(),
             prev_cursor: PrevCursorPos::new(),
             last_scroll_info: RenderableDimensions::default(),
+            raw_scroll_consumed: false,
             tab_state: RefCell::new(HashMap::new()),
             pane_state: RefCell::new(HashMap::new()),
             current_mouse_buttons: vec![],
@@ -1069,6 +1073,31 @@ impl TermWindow {
                 Ok(true)
             }
             WindowEvent::DraggedFile(_) => Ok(true),
+            WindowEvent::RawScrollEvent {
+                coords,
+                delta_x,
+                delta_y,
+                phase,
+                momentum_phase,
+                precise,
+                modifiers,
+                ..
+            } => {
+                if let Some(pane) = self.get_active_pane_or_overlay() {
+                    self.raw_scroll_consumed =
+                        crate::termsurf::input::try_forward_raw_scroll(
+                            pane.pane_id(),
+                            coords,
+                            delta_x,
+                            delta_y,
+                            phase,
+                            momentum_phase,
+                            precise,
+                            modifiers,
+                        );
+                }
+                Ok(true)
+            }
         }
     }
 

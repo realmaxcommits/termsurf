@@ -362,19 +362,51 @@ and `objc2` panics on the type mismatch before the message is even sent.
 
 Four files, same change: `u32` → `u64` for `phase` and `momentum_phase`.
 
-| File | Line(s) | Change |
-|------|---------|--------|
-| `wezboard/window/src/os/macos/window.rs` | 2563, 2566 | `let phase: u32` → `let phase: u64`, same for `momentum_phase` |
-| `wezboard/window/src/lib.rs` | 205–206 | `RawScrollEvent` fields `phase: u32` → `phase: u64`, same for `momentum_phase` |
-| `wezboard/wezboard-gui/src/termwindow/mod.rs` | match arm | Already destructured without type annotation — no change needed |
-| `wezboard/wezboard-gui/src/termsurf/input.rs` | 426–427 | `try_forward_raw_scroll` params `phase: u32` → `phase: u64`, same for `momentum_phase` |
+| File                                          | Line(s)    | Change                                                                                 |
+| --------------------------------------------- | ---------- | -------------------------------------------------------------------------------------- |
+| `wezboard/window/src/os/macos/window.rs`      | 2563, 2566 | `let phase: u32` → `let phase: u64`, same for `momentum_phase`                         |
+| `wezboard/window/src/lib.rs`                  | 205–206    | `RawScrollEvent` fields `phase: u32` → `phase: u64`, same for `momentum_phase`         |
+| `wezboard/wezboard-gui/src/termwindow/mod.rs` | match arm  | Already destructured without type annotation — no change needed                        |
+| `wezboard/wezboard-gui/src/termsurf/input.rs` | 426–427    | `try_forward_raw_scroll` params `phase: u32` → `phase: u64`, same for `momentum_phase` |
 
 The proto `ScrollEvent` already uses `u64` for both fields, so the `as u64`
 casts in `try_forward_raw_scroll` become no-ops and can be removed.
 
-#### Verification
+#### Result: Success
 
-1. `cargo build` compiles without errors
-2. Launch Wezboard, `web` a page — trackpad scroll works without crash
-3. Momentum scrolling works (inertial scroll after finger lift)
-4. Terminal scrolling still works with no browser overlay
+All four verification criteria passed. `cargo build` compiles cleanly, trackpad
+scrolling works without crashing, momentum scrolling works, and terminal
+scrolling is unaffected.
+
+## Conclusion
+
+Fixed Wezboard scroll crashes by implementing raw NSEvent scroll forwarding to
+Chromium.
+
+**Root cause:** WezTerm's input pipeline stripped raw scroll data (phase,
+momentumPhase, float deltas) before it reached application code, emitting only
+integer `VertWheel`/`HorzWheel` events. This made proper browser scroll
+forwarding impossible — Chromium's scroll state machine requires phase lifecycle
+events (began → changed → ended) and momentum phase data.
+
+**Solution across two experiments:**
+
+- **Experiment 1** added a new `RawScrollEvent` variant to the `WindowEvent`
+  enum, extracted `phase`, `momentumPhase`, and raw float deltas from the
+  `NSEvent` at the Cocoa handler level, piped them through to a new
+  `try_forward_raw_scroll()` function, and forwarded them to Chromium via the
+  existing protobuf `ScrollEvent`. This compiled but crashed at runtime.
+
+- **Experiment 2** fixed the crash by changing `phase` and `momentum_phase`
+  types from `u32` to `u64`. `NSEventPhase` is `typedef NSUInteger` which is
+  `unsigned long` (8 bytes) on 64-bit macOS. `objc2` performs runtime type
+  verification and panicked on the mismatch.
+
+**Files modified:**
+
+| File                                          | Change                                                     |
+| --------------------------------------------- | ---------------------------------------------------------- |
+| `wezboard/window/src/lib.rs`                  | Added `RawScrollEvent` variant with `u64` phase fields     |
+| `wezboard/window/src/os/macos/window.rs`      | Extract raw NSEvent scroll data, dispatch `RawScrollEvent` |
+| `wezboard/wezboard-gui/src/termwindow/mod.rs` | Handle `RawScrollEvent`, forward to termsurf               |
+| `wezboard/wezboard-gui/src/termsurf/input.rs` | Added `try_forward_raw_scroll()` with raw phase forwarding |

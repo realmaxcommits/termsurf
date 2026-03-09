@@ -653,6 +653,14 @@ impl super::TermWindow {
         context: &dyn WindowOps,
         capture_mouse: bool,
     ) {
+        // Raw scroll already forwarded to browser — suppress duplicate.
+        if matches!(event.kind, WMEK::VertWheel(_) | WMEK::HorzWheel(_))
+            && self.raw_scroll_consumed
+        {
+            self.raw_scroll_consumed = false;
+            return;
+        }
+
         // Forward to browser overlay if click hits overlay (TermSurf).
         if crate::termsurf::input::try_forward_mouse(pane.pane_id(), &event) {
             context.set_cursor(Some(crate::termsurf::input::cursor_for_pane(

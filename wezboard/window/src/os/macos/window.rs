@@ -2553,13 +2553,71 @@ impl WindowView {
         };
         let mut vert_delta: CGFloat =
             unsafe { objc2::msg_send![nsevent as *const _ as *const AnyObject, scrollingDeltaY] };
+        let raw_vert_delta = vert_delta;
         vert_delta /= scale;
         let mut horz_delta: CGFloat =
             unsafe { objc2::msg_send![nsevent as *const _ as *const AnyObject, scrollingDeltaX] };
+        let raw_horz_delta = horz_delta;
         horz_delta /= scale;
+
+        let phase: u64 = unsafe {
+            objc2::msg_send![nsevent as *const _ as *const AnyObject, phase]
+        };
+        let momentum_phase: u64 = unsafe {
+            objc2::msg_send![nsevent as *const _ as *const AnyObject, momentumPhase]
+        };
 
         if let Some(myself) = Self::get_this(this) {
             let mut inner = myself.inner.borrow_mut();
+
+            // Dispatch raw scroll event for browser forwarding (before accumulation).
+            {
+                let view = this_raw as id;
+                unsafe {
+                    let location: CGPoint = objc2::msg_send![
+                        nsevent as *const _ as *const AnyObject,
+                        locationInWindow
+                    ];
+                    let point: CGPoint = objc2::msg_send![
+                        view as *const _ as *const AnyObject,
+                        convertPoint: location,
+                        fromView: std::ptr::null::<AnyObject>()
+                    ];
+                    let rect = CGRect::new(
+                        CGPoint::new(0., 0.),
+                        CGSize::new(point.x, point.y),
+                    );
+                    let backing_rect: CGRect = objc2::msg_send![
+                        view as *const _ as *const AnyObject,
+                        convertRectToBacking: rect
+                    ];
+                    let bcoords = CGPoint::new(
+                        f64::copysign(backing_rect.size.width, point.x),
+                        f64::copysign(backing_rect.size.height, point.y),
+                    );
+                    let pressed: u64 =
+                        objc2::msg_send![objc2::class!(NSEvent), pressedMouseButtons];
+                    let raw_mouse_buttons = decode_mouse_buttons(pressed);
+                    let modifier_flags: NSEventModifierFlags =
+                        objc2::msg_send![nsevent as *const _ as *const AnyObject, modifierFlags];
+                    let raw_modifiers = key_modifiers(modifier_flags);
+                    let mouse_loc: CGPoint =
+                        objc2::msg_send![objc2::class!(NSEvent), mouseLocation];
+                    let raw_screen_coords = cartesian_to_screen_point(mouse_loc);
+
+                    inner.events.dispatch(WindowEvent::RawScrollEvent {
+                        coords: Point::new(bcoords.x as isize, bcoords.y as isize),
+                        screen_coords: raw_screen_coords,
+                        delta_x: raw_horz_delta as f64,
+                        delta_y: raw_vert_delta as f64,
+                        phase,
+                        momentum_phase,
+                        precise,
+                        modifiers: raw_modifiers,
+                        mouse_buttons: raw_mouse_buttons,
+                    });
+                }
+            }
 
             let elapsed = inner.last_wheel.elapsed();
 
