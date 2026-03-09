@@ -103,5 +103,88 @@ Options to investigate:
 
 ## Experiments
 
-Experiments will investigate the feasibility of each approach, starting with
-understanding the minimum runtime file set.
+### Experiment 1: Can Roamium run without .app bundles?
+
+#### Goal
+
+Determine whether Chromium's helper processes can be plain executables colocated
+with the Roamium binary, or whether they require macOS .app bundle structure.
+
+#### Research
+
+**How Chromium finds helper executables**
+(`content/browser/child_process_host_impl.cc:59-118`):
+
+1. Check `--browser-subprocess-path` CLI flag — if set, use that path directly
+2. Fall back to `CHILD_PROCESS_EXE` path service (current executable or
+   overridden via `OverrideChildProcessPath()`)
+3. **macOS-only transform (line 90-114):** If `flags != CHILD_NORMAL` AND
+   `base::apple::AmIBundled()` returns true, navigate up from the helper path
+   and construct `.app/Contents/MacOS/` paths for specialized helpers (Renderer,
+   GPU, Plugin)
+
+The .app bundle transform at line 90 has two conditions:
+
+```cpp
+if (flags != CHILD_NORMAL && base::apple::AmIBundled()) {
+```
+
+`AmIBundled()` returns true only when the process is running from inside a macOS
+.app bundle. Roamium runs as a plain binary launched by the board (just like
+`web`), so `AmIBundled()` returns false and the entire .app bundle transform is
+skipped.
+
+**Roamium already works this way today.** Looking at `roamium/src/main.rs`,
+Roamium is a plain Rust binary that:
+
+1. Parses `--ipc-socket=` and `--user-data-dir=` from argv
+2. Passes all argv through to `ts_content_main()` (which calls Chromium's
+   `ContentMain`)
+3. Runs from `chromium/src/out/Default/roamium` — a plain binary, not inside any
+   .app bundle
+
+The board (Wezboard) launches it as a plain process via
+`std::process::Command::new(&binary)` in `spawn_server()`. No .app bundle
+involved.
+
+**The `--browser-subprocess-path` flag** (line 62-63) is checked before any
+bundle logic. Roamium can pass this flag to tell Chromium where to find the
+helper executable. The helper binary handles all process types (Renderer, GPU,
+Plugin) — Chromium dispatches by `--type=` argument, not by executable name.
+
+**Current file layout in `chromium/src/out/Default/`:**
+
+The .app bundles that exist today (Chromium Profile Server Helper.app, etc.) are
+build artifacts from Chromium's default macOS build configuration. They are NOT
+required when the main process is a plain binary. The actual executables inside
+those .app bundles can be extracted and colocated as plain files.
+
+#### Proposed install layout
+
+```
+/usr/local/lib/roamium/
+  roamium                                  # main binary
+  chromium_profile_server_helper           # helper (all types via --type=)
+  libtermsurf_chromium.dylib               # + other dylibs
+  *.pak, icudtl.dat, v8_context_snapshot*  # resources
+/usr/local/bin/roamium → ../lib/roamium/roamium  # symlink
+```
+
+Roamium would pass
+`--browser-subprocess-path=/usr/local/lib/roamium/chromium_profile_server_helper`
+to Chromium, and all specialized helper types (GPU, Renderer, Plugin) use the
+same binary dispatched by `--type=`.
+
+#### Result
+
+Research confirms the approach is viable.
+
+#### Conclusion
+
+Roamium can run as a plain binary with `--browser-subprocess-path` pointing to
+colocated helper executables. No .app bundles required. `AmIBundled()` returns
+false for plain binaries, so Chromium's macOS bundle path transform never fires.
+The install would be a directory containing the binary, helper, dylibs, and
+resources, with a symlink in `$PATH`. This approach works for both Wezboard and
+Ghostboard — any board that speaks the TermSurf protocol can launch Roamium from
+its installed location.
