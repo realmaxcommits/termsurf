@@ -188,3 +188,104 @@ The install would be a directory containing the binary, helper, dylibs, and
 resources, with a symlink in `$PATH`. This approach works for both Wezboard and
 Ghostboard — any board that speaks the TermSurf protocol can launch Roamium from
 its installed location.
+
+### Experiment 2: Install script and test with Ghostboard
+
+#### Goal
+
+Create `scripts/install-roamium.sh` that installs Roamium to
+`/usr/local/lib/roamium/` with a symlink at `/usr/local/bin/roamium`, then test
+it by running `web --browser /usr/local/bin/roamium termsurf.com` in Ghostboard.
+
+#### Background
+
+Both Ghostboard (`xpc.zig:848`) and Wezboard (`conn.rs:938-939`) hardcode
+Roamium's path to `$HOME/dev/termsurf/chromium/src/out/Default/roamium`. Both
+also support absolute paths — the TUI's `--browser` flag passes the path through
+the protocol, and the board's `resolveBrowserPath()` returns absolute paths
+as-is.
+
+Roamium already runs as a plain binary (not in a .app bundle). The existing
+`@loader_path/.` rpath in `roamium/build.rs` means dylibs resolve relative to
+the binary's actual location. A symlink at `/usr/local/bin/roamium` resolves to
+`/usr/local/lib/roamium/roamium`, so `@loader_path` becomes
+`/usr/local/lib/roamium/` — exactly where the dylibs will be.
+
+Without `--browser-subprocess-path`, Chromium falls back to `CHILD_PROCESS_EXE`
+(the current executable). Since `AmIBundled()` is false, no .app transform
+happens — Chromium will re-invoke `roamium` itself as the helper process,
+dispatching by `--type=`. This is the same pattern as content_shell on Linux.
+
+#### Design
+
+**1. Create `scripts/install-roamium.sh`**
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_DIR="$(dirname "$SCRIPT_DIR")"
+CHROMIUM_OUT="$REPO_DIR/chromium/src/out/Default"
+ROAMIUM_SRC="$REPO_DIR/roamium/target/release/roamium"
+INSTALL_DIR="/usr/local/lib/roamium"
+
+# Verify release build exists.
+if [ ! -f "$ROAMIUM_SRC" ]; then
+  echo "Error: Release build not found at $ROAMIUM_SRC"
+  echo "Run: scripts/build-roamium.sh --release"
+  exit 1
+fi
+
+echo "==> Installing Roamium to $INSTALL_DIR..."
+sudo mkdir -p "$INSTALL_DIR"
+
+# Copy roamium binary.
+sudo cp "$ROAMIUM_SRC" "$INSTALL_DIR/roamium"
+
+# Copy dylibs.
+echo "==> Copying dylibs..."
+sudo cp "$CHROMIUM_OUT"/*.dylib "$INSTALL_DIR/"
+
+# Copy resources.
+echo "==> Copying resources..."
+sudo cp "$CHROMIUM_OUT"/*.pak "$INSTALL_DIR/"
+sudo cp "$CHROMIUM_OUT/icudtl.dat" "$INSTALL_DIR/"
+sudo cp "$CHROMIUM_OUT"/v8_context_snapshot*.bin "$INSTALL_DIR/"
+
+# Symlink to /usr/local/bin.
+echo "==> Symlinking /usr/local/bin/roamium..."
+sudo ln -sf "$INSTALL_DIR/roamium" /usr/local/bin/roamium
+
+echo ""
+echo "Done."
+echo "  Dir:  $INSTALL_DIR"
+echo "  Bin:  /usr/local/bin/roamium"
+```
+
+**2. Test with Ghostboard**
+
+```bash
+# Build roamium release
+scripts/build-roamium.sh --release
+
+# Install
+scripts/install-roamium.sh
+
+# Test — launch Ghostboard, then in the terminal:
+web --browser /usr/local/bin/roamium termsurf.com
+```
+
+#### Verification
+
+1. `scripts/install-roamium.sh` completes without errors
+2. `/usr/local/bin/roamium` exists and is a symlink to
+   `/usr/local/lib/roamium/roamium`
+3. `/usr/local/lib/roamium/` contains the binary, dylibs, .pak files, and
+   resource files
+4. In Ghostboard: `web --browser /usr/local/bin/roamium termsurf.com` opens
+   termsurf.com with the installed Roamium — page renders, input works
+5. In Ghostboard: `web --browser /usr/local/bin/roamium lite.duckduckgo.com` —
+   second test to confirm navigation works
+6. DevTools: `:devtools right` — verify helper processes spawn correctly from
+   the installed location
