@@ -513,3 +513,26 @@ Replace the current scripts table with:
 3. `scripts/build.sh webtui` — builds webtui in debug mode
 4. `scripts/build.sh all --release` — builds everything in release mode
 5. Old scripts are deleted and no longer referenced
+
+**Result:** Pass
+
+All three scripts print correct usage when called with no args. Old scripts
+(`build-debug.sh`, `build-release.sh`, `build-roamium.sh`, `install-roamium.sh`,
+`install-wezboard.sh`) are deleted. The new `build.sh`, `install.sh`, and
+`uninstall.sh` each take a component name as the first argument with consistent
+dispatch. CLAUDE.md scripts table updated to reflect the new interface.
+
+#### Conclusion
+
+The six inconsistent scripts are replaced by three unified scripts with a
+consistent `<script> <component> [flags]` interface. Each component can now be
+built, installed, or uninstalled independently.
+
+## Conclusion
+
+The build and install script interface is now uniform. Three scripts —
+`build.sh`, `install.sh`, `uninstall.sh` — replace six ad-hoc scripts. Every
+component (ghostboard, wezboard, roamium, webtui, chromium) can be targeted
+individually or together with `all`. Debug vs release is a single `--release`
+flag. Uninstall support is new — previously there was no way to cleanly remove
+installed components.
