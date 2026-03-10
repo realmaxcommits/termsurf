@@ -164,10 +164,31 @@ problem was the macOS icon services cache, which aggressively caches app icons
 and does not invalidate when an app is rebuilt with new assets. Clearing the
 cache resolved the issue.
 
-## Conclusion
+### Experiment 3: Update debug icon with new design
 
-Both the release icon (`ghostboard-1.png`, blue ghost) and the debug icon
-(`ghostboard-1-debug.png`, orange/green ghost) now display correctly in
-Ghostboard. The `generate-icons.sh` script defaults to the new source image.
-After changing app icons, the macOS icon cache must be cleared manually with
-`sudo rm -rf /Library/Caches/com.apple.iconservices.store && killall Dock`.
+#### Description
+
+The debug icon source (`assets/ghostboard-1-debug.png`) has been updated — it
+now uses the same blue ghost as the release icon but with a golden "DEBUG" label
+beneath it. Copy the new source into the asset catalog so the running app picks
+it up.
+
+#### Changes
+
+**1. Replace debug icon in asset catalog**
+
+Copy `assets/ghostboard-1-debug.png` →
+`ghostboard/macos/Assets.xcassets/TermSurfDebugIcon.imageset/termsurf-debug-icon.png`
+
+**2. Clear macOS icon cache**
+
+```bash
+sudo rm -rf /Library/Caches/com.apple.iconservices.store && killall Dock
+```
+
+#### Verification
+
+1. `cmp assets/ghostboard-1-debug.png ghostboard/macos/Assets.xcassets/TermSurfDebugIcon.imageset/termsurf-debug-icon.png`
+   shows files match.
+2. Launch Ghostboard in debug mode. The Dock icon shows the blue ghost with
+   golden "DEBUG" text.
