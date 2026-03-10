@@ -74,3 +74,22 @@ iconutil --convert icns --output wezboard/assets/macos/Wezboard.app/Contents/Res
    surfer, not the old WezTerm terminal icon.
 3. Right-click a `.sh` file → Get Info — the document icon should also show the
    new icon.
+
+**Result:** Pass
+
+Generated `wezboard.icns` from `assets/termsurf-11.png` using `sips` +
+`iconutil` with all 10 required sizes (16–1024px). Replaced `terminal.icns` in
+the app template, updated both `Info.plist` references. The dock icon now shows
+the TermSurf surfer.
+
+#### Conclusion
+
+Straightforward icon swap. The `.icns` generation is manual (not scripted) since
+Wezboard only needs it done once — unlike Ghostboard which has
+`generate-icons.sh` for its Xcode asset catalogs.
+
+## Conclusion
+
+Wezboard now uses the TermSurf icon (`termsurf-11.png`) instead of the stock
+WezTerm terminal icon. The app template, plist references, and `.icns` file are
+all updated.
