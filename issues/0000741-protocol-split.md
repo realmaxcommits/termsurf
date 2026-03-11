@@ -703,3 +703,21 @@ Add `sha2` to `wezboard-gui/Cargo.toml` if not already present.
    `bind failed`).
 4. `:colorscheme dark` — page changes to dark mode.
 5. `:colorscheme light` — page changes back to light mode.
+
+**Result:** Pass
+
+Shortened socket path resolves the bind failure from Experiment 3. Roamium's
+listener socket now binds successfully, and the direct TUI↔Browser connection
+works end-to-end. Navigate, `:colorscheme dark`, and `:colorscheme light` all
+work via the direct connection. Also removed a stray `eprintln!` debug log in
+`webtui/src/ipc.rs` that was corrupting the TUI display.
+
+#### Conclusion
+
+The socket path length was the root cause of Experiment 3's SetColorScheme
+failure — the listener never bound, so the TUI's direct connection to the
+browser was never established. With the shortened path format
+(`{browser_name}-{hash}-{gui_pid}-{profile}.sock`), the listener binds
+successfully and all direct TUI↔Browser messages work. The forwarding removal
+from Experiment 3 is now validated: content messages flow directly between TUI
+and browser without GUI proxying.

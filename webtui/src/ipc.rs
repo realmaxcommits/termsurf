@@ -329,8 +329,6 @@ impl BrowserConnection {
             reader_loop(reader, tx, reply_tx);
         });
 
-        eprintln!("BrowserConnection: connected to {} tab_id={}", path, tab_id);
-
         Some(Self {
             stream: Mutex::new(stream),
             tab_id,

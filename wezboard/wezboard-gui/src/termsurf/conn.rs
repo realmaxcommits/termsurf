@@ -1,12 +1,13 @@
 use super::proto;
-use super::proto::term_surf_message::Msg;
 use super::proto::TermSurfMessage;
+use super::proto::term_surf_message::Msg;
 use super::state::{Pane, Server, SharedState, TermSurfState};
 use anyhow::Context;
 use prost::Message;
+use sha2::{Digest, Sha256};
+use smol::Async;
 use smol::channel::Sender;
 use smol::io::{AsyncReadExt, AsyncWriteExt};
-use smol::Async;
 use std::collections::HashSet;
 use std::os::unix::net::UnixStream;
 use std::sync::Arc;
@@ -970,14 +971,24 @@ fn spawn_server(profile: &str, browser: &str) -> anyhow::Result<Server> {
     });
     let log_file = format!("{}/termsurf/chromium-server.log", state_home);
 
-    // Construct listen socket path before spawn. Use GUI PID + profile + browser
-    // as unique key since we don't know the child PID yet.
+    // Construct listen socket path before spawn. Use browser name + 4-byte hash
+    // of the full path (for testing different builds) + GUI PID + profile.
+    let browser_name = std::path::Path::new(&browser)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("browser");
+    let hash = Sha256::digest(browser.as_bytes());
+    let hash_hex = format!(
+        "{:02x}{:02x}{:02x}{:02x}",
+        hash[0], hash[1], hash[2], hash[3]
+    );
     let listen_sock = format!(
-        "{}/termsurf/termsurf-roamium-{}-{}-{}.sock",
+        "{}/termsurf/{}-{}-{}-{}.sock",
         std::env::temp_dir().display(),
+        browser_name,
+        hash_hex,
         std::process::id(),
         profile,
-        browser.replace('/', "-")
     );
 
     let child = std::process::Command::new(&binary)
