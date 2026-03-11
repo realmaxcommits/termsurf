@@ -150,3 +150,22 @@ git mv wezboard/assets/macos/Wezboard.app "wezboard/assets/macos/TermSurf Wezboa
 1. `./scripts/build.sh wezboard --release` — builds without errors.
 2. `./scripts/install.sh wezboard` — installs to `/Applications/TermSurf Wezboard.app`.
 3. Launch the app. The dock icon says "TermSurf Wezboard".
+
+**Result:** Pass
+
+The dock icon now says "TermSurf Wezboard". After clearing the macOS icon cache
+(`/Library/Caches/com.apple.iconservices.store`) and restarting Dock/Finder, the
+app icon also displays correctly in Finder.
+
+#### Conclusion
+
+Renaming the `.app` bundle directory was the correct fix. macOS uses the bundle
+directory name for the dock label, not Info.plist fields.
+
+## Conclusion
+
+The display name is now "TermSurf Wezboard" everywhere: the dock icon, the menu
+bar app menu, and Finder. Experiment 1 changed Info.plist and commands.rs for the
+menu bar title. Experiment 2 renamed the `.app` bundle directory for the dock
+label. Both were needed — macOS sources the display name from different places
+for different UI elements.
