@@ -216,3 +216,62 @@ The archive itself is complete — Ghostboard is removed, docs are updated, and
 the Ghostboard Legacy section preserves the knowledge. The webtui install path
 is broken: there's no way to install `web` to `/usr/local/bin/` via
 `scripts/install.sh webtui`. Next experiment should fix the webtui install.
+
+### Experiment 2: Fix webtui install
+
+#### Description
+
+Replace the placeholder `install_webtui()` with a real install that copies the
+release binary to `/usr/local/bin/web`. Also add `install_webtui` to the `all)`
+case — Experiment 1 removed it along with `install_ghostboard` but webtui should
+still be installed as part of `all`.
+
+#### Changes
+
+**`scripts/install.sh`** — Replace `install_webtui()`
+
+Replace the current stub:
+
+```bash
+install_webtui() {
+  echo "To install standalone: cargo install --path webtui"
+}
+```
+
+With:
+
+```bash
+install_webtui() {
+  local WEB="$REPO_DIR/webtui/target/release/web"
+
+  if [ ! -f "$WEB" ]; then
+    echo "Error: Release build not found at $WEB"
+    echo "Run: scripts/build.sh webtui --release"
+    exit 1
+  fi
+
+  echo "==> Installing webtui to /usr/local/bin/web..."
+  sudo cp "$WEB" /usr/local/bin/web
+
+  echo "  Bin: /usr/local/bin/web"
+}
+```
+
+Add `install_webtui` to the `all)` case, after `install_wezboard`:
+
+```bash
+  all)
+    install_roamium
+    install_wezboard
+    install_webtui
+    echo ""
+    echo "Done (all)."
+    ;;
+```
+
+#### Verification
+
+1. `scripts/build.sh webtui --release` — builds the release binary.
+2. `scripts/install.sh webtui` — copies `web` to `/usr/local/bin/web`.
+3. `which web` — returns `/usr/local/bin/web`.
+4. `web --help` — binary runs.
