@@ -619,8 +619,8 @@ fn main() -> io::Result<()> {
                                 CommandResult::SetColorScheme(scheme) => {
                                     if let Some(ref bc) = browser_conn {
                                         bc.send_set_color_scheme(&scheme);
-                                    } else if let (Some(ref conn), Some(ref pid)) =
-                                        (&compositor, &pane_id)
+                                    }
+                                    if let (Some(ref conn), Some(ref pid)) = (&compositor, &pane_id)
                                     {
                                         conn.send_set_color_scheme(pid, &scheme);
                                     }

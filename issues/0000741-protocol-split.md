@@ -610,3 +610,18 @@ This replaces the current either/or logic with both.
    directly" debug messages appear instead of forwarding calls.
 6. Open a second `web` pane with the same profile — confirm it still works
    (CreateTab still uses the correct dark preference).
+
+**Result:** Fail
+
+Web page loading works (UrlChanged arrives directly from browser), but
+`:colorscheme dark` does not change the page. SetColorScheme sent directly from
+TUI to browser is not taking effect.
+
+#### Conclusion
+
+The forwarding removal for content messages (UrlChanged, LoadingState,
+TitleChanged) works — pages load and the URL bar updates via the direct
+TUI↔Browser connection. However, SetColorScheme fails when sent directly from
+the TUI to the browser, indicating the direct path for TUI→Browser commands is
+not working correctly. The next experiment should investigate why the browser
+does not apply SetColorScheme when received over the direct connection.

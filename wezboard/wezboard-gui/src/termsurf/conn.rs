@@ -1,12 +1,12 @@
 use super::proto;
-use super::proto::TermSurfMessage;
 use super::proto::term_surf_message::Msg;
+use super::proto::TermSurfMessage;
 use super::state::{Pane, Server, SharedState, TermSurfState};
 use anyhow::Context;
 use prost::Message;
-use smol::Async;
 use smol::channel::Sender;
 use smol::io::{AsyncReadExt, AsyncWriteExt};
+use smol::Async;
 use std::collections::HashSet;
 use std::os::unix::net::UnixStream;
 use std::sync::Arc;
@@ -162,52 +162,39 @@ async fn handle_message(
             (&**stream).write_all(&payload).await?;
         }
         Some(Msg::UrlChanged(u)) => {
-            log::info!("UrlChanged: tab_id={} url={}", u.tab_id, u.url);
-            forward_to_tui(u.tab_id, Msg::UrlChanged(u), state);
+            log::debug!(
+                "UrlChanged: tab_id={} url={} (direct to TUI)",
+                u.tab_id,
+                u.url
+            );
         }
         Some(Msg::LoadingState(l)) => {
-            log::debug!("LoadingState: tab_id={} state={}", l.tab_id, l.state);
-            forward_to_tui(l.tab_id, Msg::LoadingState(l), state);
+            log::debug!(
+                "LoadingState: tab_id={} state={} (direct to TUI)",
+                l.tab_id,
+                l.state
+            );
         }
         Some(Msg::TitleChanged(t)) => {
-            log::info!("TitleChanged: tab_id={} title={}", t.tab_id, t.title);
-            forward_to_tui(t.tab_id, Msg::TitleChanged(t), state);
+            log::debug!(
+                "TitleChanged: tab_id={} title={} (direct to TUI)",
+                t.tab_id,
+                t.title
+            );
         }
         Some(Msg::Navigate(n)) => {
-            log::info!("Navigate: pane_id={} url={}", n.pane_id, n.url);
-            let url = n.url.clone();
-            forward_to_chromium(
-                &n.pane_id,
-                |tab_id| {
-                    Msg::Navigate(proto::Navigate {
-                        tab_id,
-                        pane_id: String::new(),
-                        url,
-                    })
-                },
-                state,
+            log::debug!(
+                "Navigate: pane_id={} url={} (direct to browser)",
+                n.pane_id,
+                n.url
             );
         }
         Some(Msg::SetColorScheme(s)) => {
             log::info!("SetColorScheme: pane_id={} dark={}", s.pane_id, s.dark);
-            let dark = s.dark;
-            {
-                let mut st = state.lock().unwrap();
-                if let Some(pane) = st.panes.get_mut(&s.pane_id) {
-                    pane.dark = dark;
-                }
+            let mut st = state.lock().unwrap();
+            if let Some(pane) = st.panes.get_mut(&s.pane_id) {
+                pane.dark = s.dark;
             }
-            forward_to_chromium(
-                &s.pane_id,
-                |tab_id| {
-                    Msg::SetColorScheme(proto::SetColorScheme {
-                        tab_id,
-                        pane_id: String::new(),
-                        dark,
-                    })
-                },
-                state,
-            );
         }
         Some(Msg::ModeChanged(m)) => {
             log::info!("ModeChanged: pane_id={} browsing={}", m.pane_id, m.browsing);
@@ -406,19 +393,6 @@ async fn handle_message(
         }
     }
     Ok(())
-}
-
-fn forward_to_tui(tab_id: i64, msg: Msg, state: &SharedState) {
-    let st = state.lock().unwrap();
-    let Some(pane_id) = st.tab_to_pane.get(&tab_id) else {
-        log::warn!("forward_to_tui: unknown tab_id={}", tab_id);
-        return;
-    };
-    let Some(pane) = st.panes.get(pane_id) else {
-        return;
-    };
-    let wrapped = TermSurfMessage { msg: Some(msg) };
-    let _ = pane.tui_tx.try_send(wrapped.encode_to_vec());
 }
 
 fn forward_to_chromium(pane_id: &str, build_msg: impl FnOnce(i64) -> Msg, state: &SharedState) {
