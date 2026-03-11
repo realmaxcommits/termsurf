@@ -480,3 +480,133 @@ The direct TUI↔Browser connection path is fully operational. The TUI can now
 send commands to and receive events from the browser without routing through the
 GUI. Next step is to stop forwarding content messages through the GUI (protocol
 split).
+
+### Experiment 3: Remove Wezboard forwarding
+
+#### Description
+
+Delete the proxy code from Wezboard that forwards content messages between TUI
+and browser. Experiment 2 proved that direct TUI↔Browser communication works
+end-to-end. Now both paths are active in parallel — messages arrive at the TUI
+from both the GUI (forwarded) and the browser (direct). This experiment removes
+the GUI forwarding path, making the direct connection the only path for these
+messages.
+
+Five message types are currently forwarded through Wezboard:
+
+- **Browser → TUI (3):** UrlChanged, LoadingState, TitleChanged — pure relay,
+  Wezboard does nothing with the data.
+- **TUI → Browser (2):** Navigate, SetColorScheme — Wezboard swaps `pane_id` for
+  `tab_id` and forwards. SetColorScheme also stores `pane.dark`, but this is
+  only used in `CreateTab.dark` which runs before the TUI has a direct
+  connection anyway.
+
+After removal, `forward_to_tui()` has no callers and is deleted. The
+`forward_to_chromium()` helper stays — it's still used by ModeChanged →
+FocusChanged translation (the GUI owns focus state). `tab_to_pane` stays — it's
+used by CursorChanged, CaContext overlay setup, QueryDevtools, and disconnect
+cleanup.
+
+#### Changes
+
+**`wezboard/wezboard-gui/src/termsurf/conn.rs`** — Remove five forwarding cases
+
+In `handle_message` (~line 164), delete the three Browser → TUI forwarding arms:
+
+```rust
+// DELETE: UrlChanged forwarding
+Some(Msg::UrlChanged(u)) => {
+    log::info!("UrlChanged: tab_id={} url={}", u.tab_id, u.url);
+    forward_to_tui(u.tab_id, Msg::UrlChanged(u), state);
+}
+
+// DELETE: LoadingState forwarding
+Some(Msg::LoadingState(l)) => {
+    log::debug!("LoadingState: tab_id={} state={}", l.tab_id, l.state);
+    forward_to_tui(l.tab_id, Msg::LoadingState(l), state);
+}
+
+// DELETE: TitleChanged forwarding
+Some(Msg::TitleChanged(t)) => {
+    log::info!("TitleChanged: tab_id={} title={}", t.tab_id, t.title);
+    forward_to_tui(t.tab_id, Msg::TitleChanged(t), state);
+}
+```
+
+Replace with debug logs (keep visibility but no action):
+
+```rust
+Some(Msg::UrlChanged(u)) => {
+    log::debug!("UrlChanged: tab_id={} url={} (TUI receives directly)", u.tab_id, u.url);
+}
+Some(Msg::LoadingState(l)) => {
+    log::debug!("LoadingState: tab_id={} state={} (TUI receives directly)", l.tab_id, l.state);
+}
+Some(Msg::TitleChanged(t)) => {
+    log::debug!("TitleChanged: tab_id={} title={} (TUI receives directly)", t.tab_id, t.title);
+}
+```
+
+Delete the two TUI → Browser forwarding arms (~lines 176–210):
+
+```rust
+// DELETE: Navigate forwarding
+Some(Msg::Navigate(n)) => { ... forward_to_chromium ... }
+
+// DELETE: SetColorScheme forwarding (keep pane.dark update)
+Some(Msg::SetColorScheme(s)) => { ... forward_to_chromium ... }
+```
+
+For Navigate, replace with a debug log. For SetColorScheme, keep only the
+`pane.dark` storage (still needed for `CreateTab.dark`), drop the forward:
+
+```rust
+Some(Msg::Navigate(n)) => {
+    log::debug!("Navigate: pane_id={} url={} (TUI sends directly)", n.pane_id, n.url);
+}
+Some(Msg::SetColorScheme(s)) => {
+    log::debug!("SetColorScheme: pane_id={} dark={} (TUI sends directly)", s.pane_id, s.dark);
+    let mut st = state.lock().unwrap();
+    if let Some(pane) = st.panes.get_mut(&s.pane_id) {
+        pane.dark = s.dark;
+    }
+}
+```
+
+**`wezboard/wezboard-gui/src/termsurf/conn.rs`** — Delete `forward_to_tui`
+
+Delete the `forward_to_tui` function (~lines 411–422). It has no remaining
+callers.
+
+**`webtui/src/main.rs`** — Send SetColorScheme to both browser and GUI
+
+The TUI currently sends SetColorScheme to either the browser (if connected) or
+the GUI (fallback). But Wezboard still needs to know the dark preference for
+`CreateTab.dark` on future tabs. Send to both — browser for the page, GUI for
+the pane state:
+
+```rust
+CommandResult::SetColorScheme(scheme) => {
+    if let Some(ref bc) = browser_conn {
+        bc.send_set_color_scheme(&scheme);
+    }
+    if let (Some(ref conn), Some(ref pid)) = (&compositor, &pane_id) {
+        conn.send_set_color_scheme(pid, &scheme);
+    }
+}
+```
+
+This replaces the current either/or logic with both.
+
+#### Verification
+
+1. `./scripts/build.sh roamium && ./scripts/build.sh webtui && ./scripts/build.sh wezboard`
+   — all build without errors.
+2. Launch Wezboard, run `web ryanxcharles.com`.
+3. Navigate to a page — URL bar updates (UrlChanged arrives directly from
+   browser, NOT forwarded through GUI).
+4. `:colorscheme dark` — page changes (SetColorScheme sent directly to browser).
+5. Check Wezboard logs — confirm "TUI receives directly" and "TUI sends
+   directly" debug messages appear instead of forwarding calls.
+6. Open a second `web` pane with the same profile — confirm it still works
+   (CreateTab still uses the correct dark preference).
