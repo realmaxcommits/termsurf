@@ -1,8 +1,66 @@
 use super::proto;
-use super::proto::term_surf_message::Msg;
 use super::proto::TermSurfMessage;
-use ::window::{KeyCode, Modifiers, MouseCursor, MouseEvent, MouseEventKind as WMEK, MousePress};
+use super::proto::term_surf_message::Msg;
+use ::window::{
+    KeyCode, Modifiers, MouseButtons, MouseCursor, MouseEvent, MouseEventKind as WMEK, MousePress,
+};
 use prost::Message;
+use std::sync::{Mutex, OnceLock};
+use std::time::Instant;
+
+struct MouseState {
+    left_click_count: i64,
+    last_click_time: Option<Instant>,
+    last_click_x: f64,
+    last_click_y: f64,
+    drag_pane: Option<String>,
+}
+
+static MOUSE_STATE: OnceLock<Mutex<MouseState>> = OnceLock::new();
+
+fn mouse_state() -> &'static Mutex<MouseState> {
+    MOUSE_STATE.get_or_init(|| {
+        Mutex::new(MouseState {
+            left_click_count: 0,
+            last_click_time: None,
+            last_click_x: 0.0,
+            last_click_y: 0.0,
+            drag_pane: None,
+        })
+    })
+}
+
+fn compute_click_count(x: f64, y: f64) -> i64 {
+    let mut ms = mouse_state().lock().unwrap();
+    let now = Instant::now();
+    let dist = ((x - ms.last_click_x).powi(2) + (y - ms.last_click_y).powi(2)).sqrt();
+    let expired = ms
+        .last_click_time
+        .map(|t| now.duration_since(t).as_millis() > 500)
+        .unwrap_or(true);
+    if dist > 5.0 || expired {
+        ms.left_click_count = 0;
+    }
+    ms.left_click_count = (ms.left_click_count % 3) + 1;
+    ms.last_click_time = Some(now);
+    ms.last_click_x = x;
+    ms.last_click_y = y;
+    ms.left_click_count
+}
+
+fn clamp_to_overlay(pane_id_str: &str, event: &MouseEvent) -> Option<(f64, f64)> {
+    let state = super::shared_state()?;
+    let st = state.lock().unwrap();
+    let pane = st.panes.get(pane_id_str)?;
+    let ox = pane.overlay_origin_x;
+    let oy = pane.overlay_origin_y;
+    let ow = pane.pixel_width as f64;
+    let oh = pane.pixel_height as f64;
+    let scale = pane.overlay_scale;
+    let mx = (event.coords.x as f64).clamp(ox, ox + ow - 1.0);
+    let my = (event.coords.y as f64).clamp(oy, oy + oh - 1.0);
+    Some(((mx - ox) / scale, (my - oy) / scale))
+}
 
 /// Check if pane is browsing and forward key. Returns Some(true) if consumed.
 pub fn try_forward_key(
@@ -120,6 +178,7 @@ pub fn try_forward_mouse(pane_id: usize, event: &MouseEvent) -> bool {
                 send_mode_and_focus(&pane_id_str, true);
                 // Also forward the click
                 let mods = modifiers_to_termsurf(event.modifiers);
+                let cc = compute_click_count(rel_x, rel_y);
                 send_to_chromium(
                     &pane_id_str,
                     Msg::MouseEvent(proto::MouseEvent {
@@ -128,10 +187,11 @@ pub fn try_forward_mouse(pane_id: usize, event: &MouseEvent) -> bool {
                         button: "left".to_string(),
                         x: rel_x,
                         y: rel_y,
-                        click_count: 1,
+                        click_count: cc,
                         modifiers: mods,
                     }),
                 );
+                mouse_state().lock().unwrap().drag_pane = Some(pane_id_str.clone());
                 return true;
             }
             WMEK::Press(press) => {
@@ -141,6 +201,11 @@ pub fn try_forward_mouse(pane_id: usize, event: &MouseEvent) -> bool {
                     MousePress::Middle => ("middle", "down"),
                 };
                 let mods = modifiers_to_termsurf(event.modifiers);
+                let cc = if matches!(press, MousePress::Left) {
+                    compute_click_count(rel_x, rel_y)
+                } else {
+                    1
+                };
                 send_to_chromium(
                     &pane_id_str,
                     Msg::MouseEvent(proto::MouseEvent {
@@ -149,10 +214,11 @@ pub fn try_forward_mouse(pane_id: usize, event: &MouseEvent) -> bool {
                         button: button_str.to_string(),
                         x: rel_x,
                         y: rel_y,
-                        click_count: 1,
+                        click_count: cc,
                         modifiers: mods,
                     }),
                 );
+                mouse_state().lock().unwrap().drag_pane = Some(pane_id_str.clone());
                 return true;
             }
             WMEK::Release(press) => {
@@ -174,10 +240,17 @@ pub fn try_forward_mouse(pane_id: usize, event: &MouseEvent) -> bool {
                         modifiers: mods,
                     }),
                 );
+                mouse_state().lock().unwrap().drag_pane = None;
                 return true;
             }
             WMEK::Move => {
-                let mods = modifiers_to_termsurf(event.modifiers);
+                let mut mods = modifiers_to_termsurf(event.modifiers);
+                if event.mouse_buttons.contains(MouseButtons::LEFT) {
+                    mods |= 64;
+                }
+                if event.mouse_buttons.contains(MouseButtons::RIGHT) {
+                    mods |= 256;
+                }
                 send_to_chromium(
                     &pane_id_str,
                     Msg::MouseMove(proto::MouseMove {
@@ -192,6 +265,61 @@ pub fn try_forward_mouse(pane_id: usize, event: &MouseEvent) -> bool {
             WMEK::VertWheel(_) | WMEK::HorzWheel(_) => {
                 // Consumed — raw scroll already forwarded via RawScrollEvent.
                 return true;
+            }
+        }
+    }
+
+    // Drag outside overlay — clamp to overlay bounds
+    if matches!(&event.kind, WMEK::Move | WMEK::Release(_)) {
+        let drag = mouse_state().lock().unwrap().drag_pane.clone();
+        if let Some(ref dp) = drag {
+            if *dp == pane_id_str {
+                if let Some((cx, cy)) = clamp_to_overlay(&pane_id_str, event) {
+                    match &event.kind {
+                        WMEK::Move => {
+                            let mut mods = modifiers_to_termsurf(event.modifiers);
+                            if event.mouse_buttons.contains(MouseButtons::LEFT) {
+                                mods |= 64;
+                            }
+                            if event.mouse_buttons.contains(MouseButtons::RIGHT) {
+                                mods |= 256;
+                            }
+                            send_to_chromium(
+                                &pane_id_str,
+                                Msg::MouseMove(proto::MouseMove {
+                                    tab_id: 0,
+                                    x: cx,
+                                    y: cy,
+                                    modifiers: mods,
+                                }),
+                            );
+                            return true;
+                        }
+                        WMEK::Release(press) => {
+                            let button_str = match press {
+                                MousePress::Left => "left",
+                                MousePress::Right => "right",
+                                MousePress::Middle => "middle",
+                            };
+                            let mods = modifiers_to_termsurf(event.modifiers);
+                            send_to_chromium(
+                                &pane_id_str,
+                                Msg::MouseEvent(proto::MouseEvent {
+                                    tab_id: 0,
+                                    r#type: "up".to_string(),
+                                    button: button_str.to_string(),
+                                    x: cx,
+                                    y: cy,
+                                    click_count: 1,
+                                    modifiers: mods,
+                                }),
+                            );
+                            mouse_state().lock().unwrap().drag_pane = None;
+                            return true;
+                        }
+                        _ => {}
+                    }
+                }
             }
         }
     }

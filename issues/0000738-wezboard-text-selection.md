@@ -267,3 +267,36 @@ from the event.
 5. **Double-click:** Double-click a word — entire word should be selected.
 6. **Triple-click:** Triple-click — entire line/paragraph should be selected.
 7. **Right-click:** Right-click — context menu should appear (no regression).
+
+**Result:** Pass
+
+All verification steps confirmed working — click+drag highlights text, dragging
+outside the overlay continues the selection clamped to the overlay edge,
+double-click selects a word, triple-click selects a line, and right-click shows
+the context menu without regression.
+
+#### Conclusion
+
+All three fixes landed cleanly in a single experiment. WezTerm's `MouseEvent`
+already carried `mouse_buttons: MouseButtons` bitflags, so we could read button
+state directly from the event instead of manually tracking press/release — a
+simpler approach than Ghostboard's `click_state` array.
+
+## Conclusion
+
+Wezboard browser overlays now support full text selection. Three bugs in
+`input.rs` were fixed in one experiment:
+
+1. **Click count tracking** — A `MouseState` struct with `OnceLock<Mutex<...>>`
+   tracks left-click timing and position, cycling `click_count` through 1→2→3
+   within a 500ms / 5px window. Double-click selects words, triple-click selects
+   lines.
+
+2. **Button-down flags in MouseMove** — Move events now encode `LEFT` (bit 6)
+   and `RIGHT` (bit 8) in the modifiers field by reading `event.mouse_buttons`,
+   letting Chromium distinguish drag from hover.
+
+3. **Drag outside overlay** — When a drag starts inside the overlay and the
+   mouse moves outside, coordinates are clamped to the overlay bounds and events
+   continue flowing to Chromium. The `drag_pane` field tracks which pane owns
+   the active drag, cleared on release.
