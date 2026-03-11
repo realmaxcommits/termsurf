@@ -52,3 +52,41 @@ ReloadConfiguration => CommandDef {
 The `keys` field binds Cmd+R. The `menubar` field places it in the application
 menu. These are independent — removing the key binding doesn't remove the menu
 item.
+
+## Experiments
+
+### Experiment 1: Remove Cmd+R from ReloadConfiguration
+
+#### Description
+
+Remove the Cmd+R keyboard shortcut from the `ReloadConfiguration` command
+definition. The menu item stays in the "TermSurf Wezboard" menu (without a
+shortcut indicator), and the config file auto-reload continues to work. With the
+key binding gone, Cmd+R will propagate through `try_forward_key()` to Chromium
+like Cmd+[/] already do.
+
+#### Changes
+
+**`wezboard/wezboard-gui/src/commands.rs`** (line 1267)
+
+Change `keys` from `vec![(Modifiers::SUPER, "r".into())]` to `vec![]`:
+
+```rust
+ReloadConfiguration => CommandDef {
+    brief: "Reload configuration".into(),
+    doc: "Reloads the configuration file".into(),
+    keys: vec![],
+    args: &[],
+    menubar: &["TermSurf Wezboard"],
+    icon: Some("md_reload"),
+},
+```
+
+#### Verification
+
+1. `scripts/build.sh wezboard` — builds without errors.
+2. Launch Wezboard, open a web page with `web`, press Cmd+R — page reloads.
+3. Edit the Wezboard config file and save — config reloads automatically
+   (confirming auto-reload still works).
+4. Open the "TermSurf Wezboard" menu — "Reload configuration" is present but has
+   no keyboard shortcut displayed.
