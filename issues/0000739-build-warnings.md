@@ -50,3 +50,41 @@ before destroying the context.
    currently called. It was likely written for overlay setup but superseded by
    the current `CALayerHost` approach. Can be removed since it's unused and easy
    to recreate if needed.
+
+### Content Shell shutdown research
+
+Content Shell's shutdown sequence: close all Shell windows (destroying their
+WebContents) → `Shell::Shutdown()` auto-called on last tab destroy → message
+loop exits → `PostMainMessageLoopRun` destroys the BrowserContext via
+`.reset()`.
+
+The TermSurf C library's `ts_destroy_browser_context()` is a no-op — the default
+browser context is owned by `ShellBrowserMainParts` and destroyed automatically
+in `PostMainMessageLoopRun`. The function was a stub for multi-context (multiple
+profiles per process) support, which we've decided against — TermSurf uses one
+profile per process across all engines.
+
+Ghostboard never calls `ts_destroy_browser_context`. Neither does Roamium.
+Removing it from `ffi.rs` has no effect on Ghostboard or the Chromium C library
+(the symbol stays exported but harmlessly unused).
+
+## Experiments
+
+### Experiment 1: Remove unused FFI declaration
+
+#### Description
+
+Remove the `ts_destroy_browser_context` FFI declaration from Roamium. The
+function is a no-op in the C library and represents a multi-context design we've
+rejected. Removing the declaration eliminates the dead-code warning.
+
+#### Changes
+
+**`roamium/src/ffi.rs`**
+
+Remove line 24 (`pub fn ts_destroy_browser_context(ctx: TsBrowserContext);`).
+
+#### Verification
+
+1. `./scripts/build.sh roamium --release`
+2. Zero warnings from Roamium.
