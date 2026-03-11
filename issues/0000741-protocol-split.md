@@ -1,10 +1,11 @@
-# Issue 741: Split protocol into three channels
+# Issue 741: Split protocol into two channels
 
 ## Goal
 
-Replace the single `termsurf.proto` with three independent protocols — TUI↔GUI,
-GUI↔Browser, and TUI↔Browser — and let the TUI talk directly to the browser
-engine over its own socket, eliminating all message proxying through the GUI.
+Replace the single `termsurf.proto` with two protocols — one for the GUI channel
+(TUI↔GUI) and one for the browser channel (GUI+TUI↔Browser) — and let the TUI
+talk directly to the browser engine over its own socket, eliminating all message
+proxying through the GUI.
 
 ## Background
 
@@ -129,9 +130,22 @@ way, it's no longer a three-hop relay.
 
 ### Proto file structure
 
-Three proto files, three wrapper messages, zero overlap:
+Two proto files, not three. The browser doesn't need separate protocols for GUI
+and TUI connections — a CreateTab is a CreateTab regardless of who sends it. The
+browser receives protobuf messages and acts on them; it doesn't need to restrict
+which client can send which message.
 
-**`proto/termsurf_tui_gui.proto`** — TUI↔GUI channel
+The only connection-awareness the browser needs is registration:
+`ServerRegister` identifies a GUI connection, `TuiRegister` identifies a TUI
+connection. After registration, the browser knows where to route events
+(CaContext → GUI, UrlChanged → TUI). But all messages share one proto, one
+wrapper, one handler.
+
+This also future-proofs the protocol. If the GUI ever needs UrlChanged (e.g.,
+for a window title), it just listens for it — no protocol change. If the TUI
+ever needs to send Resize directly, it just sends it.
+
+**`proto/termsurf_gui.proto`** — TUI↔GUI channel
 
 ```
 SetOverlay, SetDevtoolsOverlay, OpenSplit     (TUI → GUI)
@@ -140,31 +154,26 @@ BrowserReady                                   (GUI → TUI) — NEW
 HelloRequest/Reply                             (TUI ↔ GUI)
 QueryLastRequest/Reply                         (TUI ↔ GUI)
 QueryDevtoolsRequest/Reply                     (TUI ↔ GUI)
-Shutdown                                       (GUI → Browser, stays)
 ```
 
-**`proto/termsurf_gui_browser.proto`** — GUI↔Browser channel
+**`proto/termsurf_browser.proto`** — Browser channel (GUI and TUI both connect)
 
 ```
+ServerRegister                                 (GUI → Browser)
+TuiRegister                                    (TUI → Browser) — NEW
 CreateTab, CreateDevtoolsTab, CloseTab, Resize (GUI → Browser)
 MouseEvent, MouseMove, ScrollEvent, KeyEvent   (GUI → Browser)
 FocusChanged                                   (GUI → Browser)
-ServerRegister                                 (Browser → GUI)
+Navigate                                       (TUI → Browser)
+SetColorScheme                                 (TUI → Browser)
 TabReady                                       (Browser → GUI)
 CaContext                                      (Browser → GUI)
 CursorChanged                                  (Browser → GUI)
-```
-
-**`proto/termsurf_tui_browser.proto`** — TUI↔Browser channel
-
-```
-TuiRegister                                    (TUI → Browser) — NEW
-Navigate                                       (TUI → Browser)
-SetColorScheme                                 (TUI → Browser)
 UrlChanged                                     (Browser → TUI)
 LoadingState                                   (Browser → TUI)
 TitleChanged                                   (Browser → TUI)
 QueryTabsRequest/Reply                         (TUI ↔ Browser)
+Shutdown                                       (GUI → Browser)
 ```
 
 Navigate and SetColorScheme lose their dual-use fields — no more `pane_id` in
