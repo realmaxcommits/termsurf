@@ -717,6 +717,7 @@ let (pane_pixel_x, pane_pixel_y) = self.paint_pane(&pos, num_panes, &mut layers)
             pane_id,
             x, y,
             pw as f64, ph as f64,
+            self.dimensions.dpi,
         );
     }
 }
@@ -727,9 +728,70 @@ No padding. No border. No tab bar. No edge-case branches. Those are all inside
 
 **`wezboard-gui/src/termsurf/conn.rs` — add `set_overlay_frame()`:**
 
-Same function as experiment 2 (reads `contentsScale` from `ca_layer_positioning`
-layer, converts backing pixels to points, updates `overlay_origin_x/y/scale` for
-input.rs, sets CALayer frame). No changes from that design.
+Takes backing-pixel coordinates and `dpi` from the render pass. Computes scale
+as `dpi / default_dpi()` — the same formula the terminal uses everywhere, and
+equivalent to `backingScaleFactor` on macOS (144 / 72 = 2.0 on Retina). The
+scale stays correct when moving between displays because `self.dimensions.dpi`
+is updated by the terminal's display-change handling before `paint_pass()` runs.
+
+Unlike experiment 2 (which read `contentsScale` from `ca_layer_positioning` — a
+sublayer that doesn't inherit the root layer's scale), this uses the render
+pass's authoritative DPI.
+
+```rust
+#[cfg(target_os = "macos")]
+pub fn set_overlay_frame(
+    pane_id: usize,
+    x_backing: f64,
+    y_backing: f64,
+    w_backing: f64,
+    h_backing: f64,
+    dpi: usize,
+) {
+    use objc2::msg_send;
+    use objc2::runtime::AnyObject;
+    use objc2_core_foundation::{CGPoint, CGRect, CGSize};
+
+    let Some(state) = super::state::global() else {
+        return;
+    };
+    let mut st = state.lock().unwrap();
+    let id = pane_id.to_string();
+    let Some(pane) = st.panes.get_mut(&id) else {
+        return;
+    };
+    if pane.ca_layer_positioning == 0 {
+        return;
+    }
+
+    let scale = dpi as f64 / wezboard_window::default_dpi();
+    let scale = if scale > 0.0 { scale } else { 1.0 };
+
+    pane.overlay_origin_x = x_backing;
+    pane.overlay_origin_y = y_backing;
+    pane.overlay_scale = scale;
+
+    let x = x_backing / scale;
+    let y = y_backing / scale;
+    let w = w_backing / scale;
+    let h = h_backing / scale;
+    unsafe {
+        let layer = pane.ca_layer_positioning as *mut AnyObject;
+        let frame = CGRect::new(CGPoint::new(x, y), CGSize::new(w, h));
+        let _: () = msg_send![layer, setFrame: frame];
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn set_overlay_frame(
+    _pane_id: usize,
+    _x: f64,
+    _y: f64,
+    _w: f64,
+    _h: f64,
+    _dpi: usize,
+) {}
+```
 
 **`wezboard-gui/src/termsurf/conn.rs` — keep `handle_ca_context()` with
 `update_ca_layer_frame()`:**
