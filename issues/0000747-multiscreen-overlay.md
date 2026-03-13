@@ -292,3 +292,20 @@ Functional (test on both screens):
 - [ ] Resize the window — webview tracks pane position.
 - [ ] Close the split pane — webview expands to fill.
 - [ ] Open a new tab, switch back — webview at correct position.
+
+**Result:** Fail
+
+Same behavior as Experiment 1. Opening a webview positions it at (0,0). The
+`overlay_scale` is 0.0 on first creation (default), so the `else` branch runs —
+which is the same old formula. The branch never helps because `set_overlay_frame`
+hasn't run yet when the first `CaContext` arrives. The overlay starts wrong and
+stays wrong until user interaction triggers a `paint_pass`.
+
+#### Conclusion
+
+The stored-coordinates approach doesn't help on first creation because
+`overlay_scale` is 0.0, so the fallback (old formula) always runs. The old
+formula is what positions the overlay at first, and it's the only code path that
+fires before any `paint_pass`. The fix must ensure that the initial positioning
+in `handle_ca_context` is correct, or that a `paint_pass` with correct
+coordinates runs immediately after layer creation.
