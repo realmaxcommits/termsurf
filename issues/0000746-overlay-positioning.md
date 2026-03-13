@@ -572,3 +572,69 @@ Replace `pub use conn::reposition_all_overlays;` with
    pass updates every frame, no need for `reposition_all_overlays`).
 6. Click inside webview — mouse events land correctly (`overlay_origin_x/y` and
    `overlay_scale` updated every frame by `set_overlay_frame`).
+
+**Result:** Fail
+
+Opening a webview in a single unsplit pane positions correctly. Splitting the
+pane (adding a pane to the left) causes the webview to animate off screen to the
+right — a gross mispositioning.
+
+The root cause is the same fundamental mistake as experiment 1: **the overlay
+position is still not computed using the same calculation as the terminal
+pane.**
+
+The issue's goal (line 7-8) states: "The overlay's pixel coordinates should come
+from the same calculation that positions terminal pane content." The issue's
+background section (lines 22-28) documents exactly how `paint_pane()` computes
+pane positions, including edge-case handling for left-most panes starting at
+x=0, half-cell offsets for split dividers, and top-most pane tab bar accounting.
+
+Experiment 2's `paint_pass()` code reconstructs the position from scratch:
+
+```rust
+let x = pad_left as f64
+    + border.left.get() as f64
+    + (pos.left as f64 + col as f64) * cell_w;
+```
+
+Meanwhile, `paint_pane()` (pane.rs lines 111-153) computes a materially
+different value — with conditional logic for edge panes, half-cell offsets for
+split dividers, and different x origins depending on whether `pos.left == 0`:
+
+```rust
+let (x, width_delta) = if pos.left == 0 {
+    (0., padding_left + border.left.get() as f32 + (cell_width / 2.0))
+} else {
+    (padding_left + border.left.get() as f32 - (cell_width / 2.0)
+        + (pos.left as f32 * cell_width),
+     cell_width)
+};
+```
+
+These are not the same formula. The overlay code doesn't handle the left==0
+case, doesn't account for half-cell split offsets, and ignores the edge-case
+branches entirely. With a single unsplit pane (pos.left=0), the error is masked
+because the pane starts at x=0 and the overlay's `pad + border + 0*cell_w`
+happens to be close enough. With a split (pos.left > 0), the `-cell_width/2.0`
+offset in `paint_pane` diverges from the overlay's straight `pos.left * cell_w`,
+and the coordinate system mismatch (likely logical vs backing pixels in the
+padding/border values) amplifies the error proportionally to pos.left, pushing
+the overlay off screen.
+
+Two experiments have now failed for the same reason: duplicating the position
+formula instead of using the values that `paint_pane()` already computes. The
+next experiment must extract the actual pixel coordinates from `paint_pane()`'s
+calculation — either by reading them from the `PositionedPane` struct (if pixel
+coordinates are added) or by calling the same positioning function that
+`paint_pane()` uses — not by writing yet another approximation of the formula.
+
+#### Conclusion
+
+Failed. Despite the issue explicitly stating that overlay coordinates should
+come from the same calculation as terminal pane content, experiment 2 wrote a
+third independent approximation of the pane position formula. The formula
+diverges from `paint_pane()` in multiple ways (no edge-case handling, no
+half-cell split offsets, possible coordinate system mismatch), producing correct
+results only when pos.left=0 (single pane) and wrong results when pos.left > 0
+(split panes). The next experiment must reuse `paint_pane()`'s actual computed
+values, not reconstruct them.
