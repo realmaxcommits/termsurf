@@ -293,6 +293,10 @@ Recent issues:
 - `issues/0000734-build-scripts.md` — Consistent build and install scripts
 - `issues/0000735-ghostboard-release-icon.md` — Ghostboard app icons
 - `issues/0000736-roamium-process-leak.md` — Roamium process leak on GUI crash
+- `issues/0000746-overlay-positioning.md` — Fix webview overlay positioning
+  (render-pass based)
+- `issues/0000747-multiscreen-overlay.md` — Overlay doesn't reposition on split
+  (second screen)
 
 ### Early Prototypes (ts1–ts5)
 
