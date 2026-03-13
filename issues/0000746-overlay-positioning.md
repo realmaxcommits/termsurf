@@ -1133,12 +1133,13 @@ No other files change.
 
 Build:
 
-- [ ] `cd wezboard && cargo build` — compiles without errors.
+- [x] `cd wezboard && cargo build` — compiles without errors.
 
 Edge case checklist:
 
-- [ ] Open a webview — positioned and sized correctly.
-- [ ] Split pane to the left — webview correctly positioned on the right.
+- [x] Open a webview — positioned and sized correctly.
+- [x] Split pane to the left — webview correctly positioned on the right (single
+      window, single screen).
 - [ ] Open a new tab — webview disappears (no longer visible).
 - [ ] Resize the window (on the other tab) — resizes correctly, no webview
       visible.
@@ -1160,3 +1161,90 @@ Edge case checklist:
 - [ ] Close a split pane — remaining pane expands, its webview repositions to
       fill the larger space.
 - [ ] Click inside webview — mouse events land at correct coordinates.
+
+Stopped testing at the multi-window / multi-screen scenario.
+
+**Result:** Partial
+
+The `WindowInvalidated` notification fixes the split timing issue on a single
+screen. Opening a webview, splitting panes, and resizing all work correctly when
+testing with one window on one screen. The notification successfully triggers a
+repaint with the updated split tree, so the overlay repositions immediately
+after the split — no keypress needed.
+
+However, a multi-screen regression appears: open a second window, move it to a
+second screen, open a webview, then split to the left. The webview **resizes**
+(width shrinks correctly) but does **not reposition** (x stays at the left edge
+instead of moving right). This only happens when the window is on the second
+screen — the same window on the first screen works correctly.
+
+The overlay's width and position are both set in the same `set_overlay_frame()`
+call from `paint_pass()`. The width comes from `pane.pixel_width` (updated by
+the TUI's protocol resize message). The position comes from `pane_pixel_x`
+(returned by `paint_pane()`, which computes
+`padding_left + border.left + pos.left * cell_width`). Since the width updates
+but the position doesn't, the paint pass is running, but `pos.left` appears to
+be 0 (the pre-split value) even though the split tree has been updated.
+
+#### Conclusion
+
+The `WindowInvalidated` notification works correctly for single-screen scenarios
+and should be kept. The remaining bug is specific to multi-screen: when a window
+is on a secondary display, splitting a pane updates the overlay's size but not
+its position.
+
+**Root cause analysis:** The `WindowInvalidated` notification travels through a
+4-hop async chain before reaching `setNeedsDisplay: true`:
+
+1. `mux.notify()` → subscriber calls `spawn_into_main_thread` (hop 1)
+2. `mux_pane_output_event_callback` → `window.notify()` →
+   `Connection::with_window_inner` → `spawn_into_main_thread` (hop 2)
+3. Event handler dispatches `TermWindowNotif::MuxNotification` → calls
+   `window.invalidate()` → `Connection::with_window_inner` →
+   `spawn_into_main_thread` (hop 3)
+4. Inner invalidate runs `setNeedsDisplay: true` (hop 4)
+
+On macOS, the spawn queue (`window/src/spawn.rs`) is driven by a
+`CFRunLoopObserver` that processes **one task per invocation**. Each display has
+its own `CVDisplayLink` running at its own phase. The second screen's display
+link fires at a different phase than the first screen's.
+
+The likely sequence on a second screen:
+
+1. Key handler spawns async split task, calls `context.invalidate()` → immediate
+   paint with OLD tree (overlay at old position, old size).
+2. Async split completes, tree updated. `mux.notify(WindowInvalidated)` queued.
+3. Meanwhile, the TUI receives SIGWINCH from the pane resize and sends an
+   updated `pixel_width` via the TermSurf protocol. The IPC handler updates
+   `pane.pixel_width` in state.
+4. A `PaneOutput` notification from the new pane's shell startup also enters the
+   async chain. Whichever notification reaches `setNeedsDisplay: true` first
+   triggers the next repaint.
+5. On the second screen, the display link phase means the repaint fires during
+   an intermediate state where `pane.pixel_width` has been updated (new size
+   from step 3) but the run loop hasn't processed enough spawn queue tasks for
+   the `WindowInvalidated` chain to reach `setNeedsDisplay: true`. The repaint
+   sees the new width but the OLD `pos.left` because `get_panes_to_render()`
+   returns stale positions.
+
+Actually, `get_panes_to_render()` always reads directly from `tab.iter_panes()`,
+which walks the live split tree. The tree was updated in step 2. So any paint
+after step 2 should see the correct `pos.left`. This contradicts the observed
+behavior.
+
+The more likely explanation is that the initial `context.invalidate()` paint
+(step 1) races with the async split. On the first screen, the paint happens
+before the split completes, so the overlay shows the old position. Then the
+`WindowInvalidated` chain triggers a second paint with the correct tree. On the
+second screen, the display link phase difference means the
+`context.invalidate()` paint happens AFTER the split but BEFORE
+`pane.pixel_width` is updated by the TUI — so the overlay shows the new position
+but old size. Then when the TUI's resize message arrives and updates
+`pixel_width`, a `PaneOutput`-triggered repaint shows the new size and new
+position. But this isn't what's observed either.
+
+The root cause needs debugging with logging to determine exactly when
+`set_overlay_frame` is called, what values it receives, and whether the repaint
+from `WindowInvalidated` actually fires on the second screen. The next
+experiment should add targeted logging to `set_overlay_frame` and `paint_pass`'s
+overlay block to capture the coordinates and timing on both screens.
