@@ -122,45 +122,58 @@ instead of approximately correct). The fix needs to either (a) make
 `update_ca_layer_frame()` split-aware so the first frame is correct, or (b)
 defer CALayerHost visibility until `set_overlay_frame()` has run at least once.
 
-### Experiment 2: Hide positioning layer until first set_overlay_frame
+### Experiment 2: Defer CALayerHost creation to the render pass
 
 #### Description
 
-Create the positioning layer hidden at CALayerHost creation time. Unhide it on
-the first `set_overlay_frame()` call. This way the overlay is invisible during
-the gap between creation and the first paint pass, then appears at the correct
-split-aware position.
+Split `handle_ca_context()` into two phases: (1) store the `context_id` on the
+pane when the socket message arrives, (2) create the CALayerHost in
+`paint_pass()` where the correct split-aware position is already known. The
+CALayerHost is created already positioned — no flash, no hidden/unhidden dance.
 
-This is better than making `update_ca_layer_frame()` split-aware because:
+This is the right approach because:
 
-- It keeps positioning in one place (`set_overlay_frame()`)
+- The CALayerHost is never visible at the wrong position — it's created at the
+  correct position on its first frame
+- It keeps positioning in one place (the render pass)
 - It works for future multiple-webviews-per-pane where each webview's position
-  is independent and only known at render time
-- `update_ca_layer_frame()` can be deleted since it's no longer needed
+  is only known at render time
+- `update_ca_layer_frame()` can be deleted
 
 #### Changes
 
-**`wezboard/wezboard-gui/src/termsurf/conn.rs`**
-
-1. In `get_or_create_overlay()` (~line 1155), after creating the overlay NSView,
-   set it hidden:
-
-   ```rust
-   let _: () = msg_send![overlay, setHidden: Bool::YES];
-   ```
-
-2. Remove the call to `update_ca_layer_frame(pane, root_layer)` at ~line 1286.
-
-3. Delete the entire `update_ca_layer_frame()` function (~lines 1330-1369).
-
-4. In `set_overlay_frame()` (~line 1372), after setting the frame, unhide the
-   overlay if it's hidden. Add a `overlay_hidden` bool to the `Pane` struct
-   (default `true`), flip it to `false` on the first `set_overlay_frame()` call,
-   and call `setHidden: NO` on the overlay NSView.
-
 **`wezboard/wezboard-gui/src/termsurf/state.rs`**
 
-5. Add `pub overlay_hidden: bool` to the `Pane` struct, defaulting to `true`.
+1. Add `pub pending_context_id: Option<u32>` to the `Pane` struct (default
+   `None`). This holds a context ID that has arrived but whose CALayerHost has
+   not yet been created.
+
+**`wezboard/wezboard-gui/src/termsurf/conn.rs`**
+
+2. In `handle_ca_context()`, for the first-creation case (`ca_layer_host == 0`):
+   instead of creating the 3-layer hierarchy and calling
+   `update_ca_layer_frame()`, just store the context ID in
+   `pane.pending_context_id = Some(context_id)` and return. Still call
+   `get_or_create_overlay()` so the overlay NSView and root layer exist.
+
+3. For the swap case (`ca_layer_host != 0`): keep as-is. The layers already
+   exist and are positioned, so swapping the CALayerHost in place is fine — no
+   flash because the positioning layer is already at the correct location.
+
+4. Delete `update_ca_layer_frame()`.
+
+5. Add a new public function `create_pending_ca_layer_host()` that takes
+   `pane_id`, `root_layer` pointer, and the frame coordinates. It checks
+   `pane.pending_context_id`, and if `Some`, creates the 3-layer hierarchy
+   (flipped → positioning → host) with the positioning layer already set to the
+   correct frame. Clears `pending_context_id` to `None` after creation.
+
+**`wezboard/wezboard-gui/src/termwindow/render/paint.rs`**
+
+6. In the overlay positioning block (~line 264), after computing `x`, `y`, `pw`,
+   `ph`: check if the pane has a `pending_context_id`. If so, call
+   `create_pending_ca_layer_host()` with the position. Otherwise call
+   `set_overlay_frame()` as before.
 
 #### Verification
 
