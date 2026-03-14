@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import toml from "toml";
 
-const BLOG_DIR = path.resolve(process.cwd(), "blog-posts");
+const BLOG_DIR = path.resolve(process.cwd(), "../blog");
 
 export const getBlogPost = createServerFn({ method: "GET" })
   .inputValidator((slug: string) => slug)

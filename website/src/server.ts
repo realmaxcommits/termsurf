@@ -5,7 +5,7 @@ import { existsSync, readFileSync } from "node:fs";
 const handler = createStartHandler(defaultStreamHandler);
 
 const CLIENT_DIR = join(import.meta.dirname, "..", "client");
-const BLOG_DIR = join(import.meta.dirname, "..", "..", "blog-posts");
+const BLOG_DIR = join(import.meta.dirname, "..", "..", "..", "blog");
 
 export default {
   async fetch(request: Request): Promise<Response> {

@@ -10,7 +10,7 @@
     "build:icons": "bun run scripts/process-icons.ts",
     "build:blog": "bun run scripts/build-blog.ts",
     "build:data": "bun run build:commits && bun run build:blog",
-    "deploy": "fly deploy",
+    "deploy": "cd .. && fly deploy --config website/fly.toml --dockerfile website/Dockerfile",
     "typecheck": "tsc --noEmit",
     "lint": "oxlint",
     "lint:fix": "oxlint --fix",

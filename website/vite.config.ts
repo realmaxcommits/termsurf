@@ -6,7 +6,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 
 function blogMarkdownPlugin(): Plugin {
-  const blogDir = path.resolve(__dirname, "blog-posts");
+  const blogDir = path.resolve(__dirname, "../blog");
 
   return {
     name: "blog-markdown",
