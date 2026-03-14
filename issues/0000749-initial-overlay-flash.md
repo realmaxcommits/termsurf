@@ -96,10 +96,28 @@ remain untouched.
 scripts/build.sh wezboard
 ```
 
-| # | Test                    | Steps                                          | Expected                              |
-| - | ----------------------- | ---------------------------------------------- | ------------------------------------- |
-| 1 | No flash in right split | Split pane, run `web google.com` in right pane | Webview appears on right, no flash    |
-| 2 | No flash in left split  | Split pane, run `web google.com` in left pane  | Webview appears on left, no flash     |
-| 3 | No flash without split  | Single pane, run `web google.com`              | Webview appears normally              |
-| 4 | Resize after split      | Open webview in right split, resize window     | Webview repositions correctly         |
-| 5 | Split after webview     | Open webview, then split pane                  | Webview resizes/repositions correctly |
+| #   | Test                    | Steps                                          | Expected                              |
+| --- | ----------------------- | ---------------------------------------------- | ------------------------------------- |
+| 1   | No flash in right split | Split pane, run `web google.com` in right pane | Webview appears on right, no flash    |
+| 2   | No flash in left split  | Split pane, run `web google.com` in left pane  | Webview appears on left, no flash     |
+| 3   | No flash without split  | Single pane, run `web google.com`              | Webview appears normally              |
+| 4   | Resize after split      | Open webview in right split, resize window     | Webview repositions correctly         |
+| 5   | Split after webview     | Open webview, then split pane                  | Webview resizes/repositions correctly |
+
+**Result:** Fail
+
+The overlay still flashes, but now at (0, 0) — the top-left corner of the window
+— instead of at the correct coordinates on the wrong pane. Removing
+`update_ca_layer_frame()` eliminated the initial positioning entirely, so the
+CALayerHost renders at its default zero-rect origin until `set_overlay_frame()`
+fires on the next paint pass. The flash is still one frame long, just in a
+different (worse) location.
+
+#### Conclusion
+
+The hypothesis was wrong. The flash is not caused by having two positioning
+authorities — it's caused by the gap between CALayerHost creation and the first
+`paint_pass()` call. Removing the initial positioning made the flash worse (0,0
+instead of approximately correct). The fix needs to either (a) make
+`update_ca_layer_frame()` split-aware so the first frame is correct, or (b)
+defer CALayerHost visibility until `set_overlay_frame()` has run at least once.
