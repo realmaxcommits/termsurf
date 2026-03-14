@@ -12,6 +12,9 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as WelcomeRouteImport } from './routes/welcome'
 import { Route as TestMediaRouteImport } from './routes/test-media'
 import { Route as TestDownloadRouteImport } from './routes/test-download'
+import { Route as DocsRouteImport } from './routes/docs'
+import { Route as CommitsRouteImport } from './routes/commits'
+import { Route as AboutRouteImport } from './routes/about'
 import { Route as IndexRouteImport } from './routes/index'
 
 const WelcomeRoute = WelcomeRouteImport.update({
@@ -29,6 +32,21 @@ const TestDownloadRoute = TestDownloadRouteImport.update({
   path: '/test-download',
   getParentRoute: () => rootRouteImport,
 } as any)
+const DocsRoute = DocsRouteImport.update({
+  id: '/docs',
+  path: '/docs',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const CommitsRoute = CommitsRouteImport.update({
+  id: '/commits',
+  path: '/commits',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AboutRoute = AboutRouteImport.update({
+  id: '/about',
+  path: '/about',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
@@ -37,12 +55,18 @@ const IndexRoute = IndexRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/about': typeof AboutRoute
+  '/commits': typeof CommitsRoute
+  '/docs': typeof DocsRoute
   '/test-download': typeof TestDownloadRoute
   '/test-media': typeof TestMediaRoute
   '/welcome': typeof WelcomeRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/about': typeof AboutRoute
+  '/commits': typeof CommitsRoute
+  '/docs': typeof DocsRoute
   '/test-download': typeof TestDownloadRoute
   '/test-media': typeof TestMediaRoute
   '/welcome': typeof WelcomeRoute
@@ -50,20 +74,48 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/about': typeof AboutRoute
+  '/commits': typeof CommitsRoute
+  '/docs': typeof DocsRoute
   '/test-download': typeof TestDownloadRoute
   '/test-media': typeof TestMediaRoute
   '/welcome': typeof WelcomeRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/test-download' | '/test-media' | '/welcome'
+  fullPaths:
+    | '/'
+    | '/about'
+    | '/commits'
+    | '/docs'
+    | '/test-download'
+    | '/test-media'
+    | '/welcome'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/test-download' | '/test-media' | '/welcome'
-  id: '__root__' | '/' | '/test-download' | '/test-media' | '/welcome'
+  to:
+    | '/'
+    | '/about'
+    | '/commits'
+    | '/docs'
+    | '/test-download'
+    | '/test-media'
+    | '/welcome'
+  id:
+    | '__root__'
+    | '/'
+    | '/about'
+    | '/commits'
+    | '/docs'
+    | '/test-download'
+    | '/test-media'
+    | '/welcome'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  AboutRoute: typeof AboutRoute
+  CommitsRoute: typeof CommitsRoute
+  DocsRoute: typeof DocsRoute
   TestDownloadRoute: typeof TestDownloadRoute
   TestMediaRoute: typeof TestMediaRoute
   WelcomeRoute: typeof WelcomeRoute
@@ -92,6 +144,27 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof TestDownloadRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/docs': {
+      id: '/docs'
+      path: '/docs'
+      fullPath: '/docs'
+      preLoaderRoute: typeof DocsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/commits': {
+      id: '/commits'
+      path: '/commits'
+      fullPath: '/commits'
+      preLoaderRoute: typeof CommitsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/about': {
+      id: '/about'
+      path: '/about'
+      fullPath: '/about'
+      preLoaderRoute: typeof AboutRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/': {
       id: '/'
       path: '/'
@@ -104,6 +177,9 @@ declare module '@tanstack/react-router' {
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  AboutRoute: AboutRoute,
+  CommitsRoute: CommitsRoute,
+  DocsRoute: DocsRoute,
   TestDownloadRoute: TestDownloadRoute,
   TestMediaRoute: TestMediaRoute,
   WelcomeRoute: WelcomeRoute,
