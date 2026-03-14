@@ -232,3 +232,150 @@ The fix for Experiment 2 needs to either:
    straight to forwarding, or
 3. Make `perform_key_equivalent` conditionally intercept based on browse mode
    state (requires exposing TermSurf state to the window crate).
+
+### Experiment 2: Intercept clipboard Cmd+keys during keybinding-only passes
+
+#### Description
+
+Two changes that work together. The `perform_key_equivalent` change from
+Experiment 1 is still needed — without it, macOS menus eat Cmd+C/V/X before Rust
+code runs. The `input.rs` change is different: instead of removing the
+`only_key_bindings` guard entirely (which broke the multi-pass pipeline), we add
+a targeted carve-out for clipboard keys when browsing.
+
+The key insight from the Experiment 1 failure: `key_common` dispatches both
+`WindowEvent::RawKeyEvent` and `WindowEvent::KeyEvent`, but if
+`raw_key_event_impl` handles the event (by matching a keybinding), it calls
+`set_handled()` and `key_common` returns early — `WindowEvent::KeyEvent` is
+never dispatched. Cmd+C matches `CopyTo(Clipboard)` in the keybinding table
+during the `OnlyKeyBindings::Yes` passes, so `try_forward_key` with
+`OnlyKeyBindings::No` never runs.
+
+The fix: when `only_key_bindings` is true AND the pane is browsing AND the key
+is Cmd+{a,c,v,x,z}, forward to the browser immediately instead of returning
+`None`. This intercepts the event before keybinding lookup can consume it.
+
+One additional subtlety: during `OnlyKeyBindings::Yes` passes, the `keycode`
+parameter is `KeyCode::Physical(...)`, not `KeyCode::Char(...)`. The existing
+`keycode_to_windows_vk` function doesn't handle physical keycodes (falls through
+to `_ => 0`). We need to map `PhysKeyCode` to the correct Windows virtual key
+code for the five clipboard keys.
+
+#### Changes
+
+**`wezboard/window/src/os/macos/window.rs`** — Same as Experiment 1. In
+`perform_key_equivalent`, after the existing Cmd+period / Ctrl+Esc / Ctrl+Tab /
+Shift+Tab block, add:
+
+```rust
+} else if modifiers == Modifiers::SUPER
+    && matches!(chars, "a" | "c" | "v" | "x" | "z")
+{
+    Self::key_common(this, nsevent, true);
+    Bool::YES
+}
+```
+
+**`wezboard/wezboard-gui/src/termsurf/input.rs`** — Two changes:
+
+1. At the top of `try_forward_key`, replace the blanket `only_key_bindings`
+   early return with a targeted check. When `only_key_bindings` is true, still
+   return `None` for most keys, but allow Cmd+{a,c,v,x,z} through when browsing:
+
+```rust
+pub fn try_forward_key(
+    pane_id: usize,
+    keycode: &KeyCode,
+    modifiers: Modifiers,
+    is_down: bool,
+    key_event: Option<&::window::KeyEvent>,
+    only_key_bindings: bool,
+) -> Option<bool> {
+    // Check browse mode first — needed to decide clipboard key routing.
+    let pane_id_str = pane_id.to_string();
+    let state = super::shared_state()?;
+    let browsing = {
+        let st = state.lock().unwrap();
+        let pane = st.panes.get(&pane_id_str)?;
+        pane.browsing
+    };
+
+    if !browsing {
+        return None;
+    }
+
+    if only_key_bindings {
+        // During OnlyKeyBindings::Yes passes, only intercept clipboard
+        // Cmd+keys. Everything else returns None so the normal multi-pass
+        // pipeline continues.
+        if !(modifiers == Modifiers::SUPER && is_clipboard_key(keycode)) {
+            return None;
+        }
+    }
+
+    // ... rest unchanged (Esc handling, build KeyEvent proto, send)
+```
+
+2. Add a helper function `is_clipboard_key` that matches both `Char` and
+   `Physical` keycode variants:
+
+```rust
+/// Returns true for the five clipboard-related keys (a, c, v, x, z).
+/// Handles both Char and Physical keycode representations, since
+/// WezTerm's multi-pass pipeline uses Physical keycodes in the
+/// OnlyKeyBindings::Yes passes and Char keycodes in the No pass.
+fn is_clipboard_key(keycode: &KeyCode) -> bool {
+    match keycode {
+        KeyCode::Char(c) => matches!(c, 'a' | 'c' | 'v' | 'x' | 'z'),
+        KeyCode::Physical(phys) => {
+            use ::window::PhysKeyCode;
+            matches!(
+                phys,
+                PhysKeyCode::A
+                    | PhysKeyCode::C
+                    | PhysKeyCode::V
+                    | PhysKeyCode::X
+                    | PhysKeyCode::Z
+            )
+        }
+        _ => false,
+    }
+}
+```
+
+3. Add a physical keycode branch to `keycode_to_windows_vk` for the five
+   clipboard keys, so the correct VK code is sent to Chromium during the
+   `OnlyKeyBindings::Yes` pass:
+
+```rust
+fn keycode_to_windows_vk(key: &KeyCode) -> i64 {
+    match key {
+        KeyCode::Char(c) => match c {
+            // ... existing matches ...
+        },
+        KeyCode::Physical(phys) => {
+            use ::window::PhysKeyCode;
+            match phys {
+                PhysKeyCode::A => 0x41,
+                PhysKeyCode::C => 0x43,
+                PhysKeyCode::V => 0x56,
+                PhysKeyCode::X => 0x58,
+                PhysKeyCode::Z => 0x5A,
+                _ => 0,
+            }
+        }
+        // ... existing matches ...
+    }
+}
+```
+
+#### Verification
+
+```bash
+scripts/build.sh wezboard
+```
+
+Same 11-test table as Experiment 1. The critical difference: tests 6 (regular
+typing) and 7 (Esc exits browse mode) must still work — these broke in
+Experiment 1 because the `only_key_bindings` guard was removed entirely. Now
+only the five clipboard keys bypass it.
