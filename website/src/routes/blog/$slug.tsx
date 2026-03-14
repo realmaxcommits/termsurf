@@ -20,6 +20,12 @@ function BlogPost() {
         <div className="text-xs text-muted flex gap-3">
           <span>{post.date}</span>
           <span className="text-success">{post.author}</span>
+          <a
+            href={`/blog/${post.slug}.md`}
+            className="text-accent hover:text-primary"
+          >
+            [view markdown]
+          </a>
         </div>
         <div className="mt-3 text-muted text-xs">
           ──────────────────────────────────────────────────────────

@@ -1,14 +1,29 @@
 import { createStartHandler, defaultStreamHandler } from "@tanstack/react-start/server";
 import { join } from "node:path";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 
 const handler = createStartHandler(defaultStreamHandler);
 
 const CLIENT_DIR = join(import.meta.dirname, "..", "client");
+const BLOG_DIR = join(import.meta.dirname, "..", "..", "blog-posts");
 
 export default {
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
+
+    // Serve raw markdown for /blog/<slug>.md
+    const mdMatch = url.pathname.match(/^\/blog\/([a-zA-Z0-9_-]+)\.md$/);
+    if (mdMatch) {
+      const filePath = join(BLOG_DIR, `${mdMatch[1]}.md`);
+      if (existsSync(filePath)) {
+        const raw = readFileSync(filePath, "utf-8");
+        const content = raw;
+        return new Response(content, {
+          headers: { "Content-Type": "text/markdown; charset=utf-8" },
+        });
+      }
+      return new Response("Not found", { status: 404 });
+    }
 
     // Serve static assets from dist/client
     if (url.pathname.startsWith("/assets/") || url.pathname.startsWith("/_build/")) {
