@@ -178,3 +178,57 @@ mode.
 
 Tests 8-9 verify terminal clipboard still works in control mode. Tests 10-11
 verify that non-clipboard Cmd+key shortcuts still route through the menu system.
+
+**Result:** Fail
+
+No keybindings reached the browser at all — typing, Esc, everything was broken.
+
+#### Root cause
+
+The `input.rs` change removed the `only_key_bindings` early return, which caused
+`try_forward_key` to consume keys during the `OnlyKeyBindings::Yes` passes. The
+WezTerm key pipeline calls `process_key` **multiple times** per keystroke:
+
+1. First with `OnlyKeyBindings::Yes` for `KeyCode::Physical(...)` — match
+   physical key against keybinding table only
+2. Then with `OnlyKeyBindings::Yes` for `KeyCode::RawCode(...)` — match raw
+   scancode against keybinding table only
+3. Then with `OnlyKeyBindings::Yes` for the resolved `key.key` — match resolved
+   key against keybinding table only
+4. Finally (in a separate code path, `key_event`) with `OnlyKeyBindings::No` —
+   this is the only pass that should forward to the browser
+
+The `only_key_bindings` guard exists to make `try_forward_key` invisible during
+passes 1-3. By removing it, the function consumed the event on pass 1 (the
+physical key pass). But physical key codes like `KeyCode::Physical(KeyC)` don't
+carry UTF-8 text — the `key_event` parameter is `None` in these passes. So the
+browser received key events with no text content, and the real key event
+(pass 4) never ran because the event was already marked handled.
+
+The `perform_key_equivalent` change was correct in isolation — it successfully
+routed Cmd+C/V/X/A/Z through `key_common`. But the `input.rs` change broke the
+multi-pass pipeline, preventing ALL keys from working properly.
+
+#### Conclusion
+
+The `perform_key_equivalent` interception is the right approach for getting
+Cmd+keys past the macOS menu system. The `input.rs` change was wrong — removing
+the `only_key_bindings` guard breaks WezTerm's multi-pass key resolution.
+
+The real problem: when `perform_key_equivalent` routes Cmd+C through
+`key_common`, the event goes through `raw_key_event_impl` which calls
+`process_key` with `OnlyKeyBindings::Yes` three times. `try_forward_key` returns
+`None` on all three (because `only_key_bindings` is true). Then
+`raw_key_event_impl` returns — it never reaches `key_event` (the
+`OnlyKeyBindings::No` pass) because `raw_key_event_impl` handles the event
+fully.
+
+The fix for Experiment 2 needs to either:
+
+1. Make `try_forward_key` handle `only_key_bindings == true` for specific
+   Cmd+keys when browsing (check for Cmd+{a,c,v,x,z} specifically during the
+   keybinding-only passes), or
+2. Skip the multi-pass `raw_key_event_impl` entirely for browse mode keys and go
+   straight to forwarding, or
+3. Make `perform_key_equivalent` conditionally intercept based on browse mode
+   state (requires exposing TermSurf state to the window crate).
