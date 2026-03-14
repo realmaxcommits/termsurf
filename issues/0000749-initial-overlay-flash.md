@@ -188,3 +188,25 @@ scripts/build.sh wezboard
 | 3 | No flash without split  | Single pane, run `web google.com`              | Webview appears normally              |
 | 4 | Resize after split      | Open webview in right split, resize window     | Webview repositions correctly         |
 | 5 | Split after webview     | Open webview, then split pane                  | Webview resizes/repositions correctly |
+
+**Result:** Pass
+
+All five tests pass. No flash on any split configuration.
+
+#### Conclusion
+
+Deferring CALayerHost creation to the render pass eliminates the flash entirely.
+The socket handler now stores the `context_id` as `pending_context_id`, and the
+render pass creates the 3-layer hierarchy already positioned at the correct
+split-aware coordinates. The layer is never visible at the wrong location
+because it doesn't exist until the first frame that knows where to put it.
+
+## Conclusion
+
+The initial overlay flash was caused by creating the CALayerHost in
+`handle_ca_context()` (the socket handler), which had no knowledge of the split
+tree layout. The fix splits the work: the socket handler stores the context ID,
+and the render pass creates the CALayerHost at the correct position on the next
+frame. `update_ca_layer_frame()` was deleted — `set_overlay_frame()` and
+`create_pending_ca_layer_host()` are now the only two positioning code paths,
+both called from `paint_pass()` with split-aware coordinates.
