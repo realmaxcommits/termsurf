@@ -65,22 +65,18 @@ function CommitRow({ commit }: { commit: Commit }) {
                 {"\n"}
               </span>
             )}
-            <span>
-              <span className="text-muted">│</span>{" "}
-              <a
-                href={`${GITHUB_REPO}/commit/${commit.hash}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-accent hover:text-primary"
-              >
-                [view on GitHub]
-              </a>
-              {"\n"}
-            </span>
             <span className="text-muted">
               └──────────────────────────────────────────────────────
             </span>
           </pre>
+          <a
+            href={`${GITHUB_REPO}/commit/${commit.hash}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-xs text-muted hover:text-accent mt-1 inline-block"
+          >
+            [view on GitHub]
+          </a>
         </div>
       )}
     </li>
