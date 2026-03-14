@@ -2,20 +2,29 @@ import { $icon } from "../util/icons";
 
 export function Header() {
   return (
-    <header className="text-center mb-12 pb-8 border-b border-border">
-      <img src={$icon("/images/termsurf-11-transparent-192.png")} alt="TermSurf logo" className="w-16 h-16 mx-auto mb-4" />
-      <h1 className="text-4xl font-bold text-primary mb-2">TermSurf</h1>
-      <p className="text-foreground-dark mb-4">Terminal + Browser</p>
-      <nav>
+    <header className="mb-8 pb-4">
+      <div className="flex items-center gap-3 mb-2">
+        <img
+          src={$icon("/images/termsurf-11-transparent-192.png")}
+          alt="TermSurf logo"
+          className="w-10 h-10"
+        />
+        <h1 className="text-2xl font-bold text-primary">TermSurf</h1>
+        <span className="text-foreground-dark text-sm">Terminal + Browser</span>
+      </div>
+      <nav className="text-sm">
         <a
           href="https://github.com/termsurf/termsurf"
           target="_blank"
           rel="noopener noreferrer"
-          className="inline-block px-4 py-2 border border-border rounded text-accent hover:bg-background-highlight hover:border-accent transition-colors"
+          className="text-accent hover:text-primary"
         >
-          GitHub
+          [GitHub]
         </a>
       </nav>
+      <div className="mt-4 text-muted text-xs">
+        ────────────────────────────────────────────────────────────────────
+      </div>
     </header>
   );
 }
