@@ -193,3 +193,23 @@ cd website && bun run deploy
 ```
 
 Verify `https://termsurf.com/blog` works in production.
+
+**Result:** Pass
+
+Blog data build, production build, and Docker build all succeed. Blog posts are
+read from the top-level `blog/` directory. The `.dockerignore` allowlist keeps
+the context small (only `website/` and `blog/` are sent to Docker).
+
+#### Conclusion
+
+The earthbucks-com pattern works for TermSurf. The deploy script `cd`s to the
+repo root, the Dockerfile copies in `website/` and `blog/` separately, and a
+root `.dockerignore` excludes everything else. The same pattern can now be
+extended to include a top-level `docs/` directory.
+
+## Conclusion
+
+Blog posts moved from `website/blog-posts/` to a top-level `blog/` directory.
+The Docker build context is now the repo root, gated by an allowlist
+`.dockerignore`. This proves the pattern for including any top-level directory
+in the website build — docs integration can follow the same approach.

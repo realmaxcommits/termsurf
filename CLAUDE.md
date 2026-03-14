@@ -233,6 +233,7 @@ Roamium together.
 | `scripts/build.sh <comp> [--release] [--clean] [--open]` | Build a component. Components: wezboard, roamium, webtui, chromium, all. |
 | `scripts/install.sh <comp>`                              | Install a component. Components: wezboard, roamium, webtui, all.         |
 | `scripts/uninstall.sh <comp>`                            | Uninstall a component. Components: wezboard, roamium, webtui, all.       |
+| `scripts/deploy.sh <comp>`                               | Deploy a component. Components: website.                                 |
 | `scripts/rename-wezterm.sh [dir]`                        | Rename all WezTerm references to Wezboard in `wezboard/`. Re-runnable.   |
 | `scripts/nerd-font-test.sh`                              | Print Nerd Font test glyphs for visual verification.                     |
 
