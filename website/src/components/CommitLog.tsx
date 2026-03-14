@@ -48,29 +48,35 @@ function CommitRow({ commit }: { commit: Commit }) {
 
       {expanded && (
         <div className="ml-10 mb-2">
-          <div className="text-xs text-muted">
-            ┌──────────────────────────────────────────────────────
-          </div>
-          <div className="text-xs border-l-2 border-muted/30 pl-3 py-1">
+          <pre className="text-xs leading-none whitespace-pre-wrap">
+            <span className="text-muted">┌──────────────────────────────────────────────────────{"\n"}</span>
             {commit.body && commit.body.length > 0 ? (
-              <pre className="whitespace-pre-wrap text-foreground-dark">
-                {commit.body}
-              </pre>
+              commit.body.split("\n").map((line, i) => (
+                <span key={i}>
+                  <span className="text-muted">│</span>
+                  <span className="text-foreground-dark"> {line}</span>{"\n"}
+                </span>
+              ))
             ) : (
-              <span className="text-muted italic">No commit message</span>
+              <span>
+                <span className="text-muted">│</span>
+                <span className="text-muted italic"> No commit message</span>{"\n"}
+              </span>
             )}
-            <a
-              href={`${GITHUB_REPO}/commit/${commit.hash}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-accent hover:text-primary"
-            >
-              [view on github]
-            </a>
-          </div>
-          <div className="text-xs text-muted">
-            └──────────────────────────────────────────────────────
-          </div>
+            <span>
+              <span className="text-muted">│</span>
+              {" "}
+              <a
+                href={`${GITHUB_REPO}/commit/${commit.hash}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-accent hover:text-primary"
+              >
+                [view on GitHub]
+              </a>{"\n"}
+            </span>
+            <span className="text-muted">└──────────────────────────────────────────────────────</span>
+          </pre>
         </div>
       )}
     </li>
