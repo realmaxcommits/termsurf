@@ -1,26 +1,27 @@
 # TermSurf Website
 
-The TermSurf website at termsurf.com. Built with Vite, React, TanStack Router,
-and Tailwind CSS v4.
+The TermSurf website at termsurf.com. Built with TanStack Start, React, and
+Tailwind CSS v4. TanStack Start provides SSR, server functions, and file-based
+routing via the Vite plugin.
 
 ## Build Commands
 
 | Command | Purpose |
 | --- | --- |
 | `bun run dev` | Start dev server |
-| `bun run build` | Vite production build |
+| `bun run build` | TanStack Start production build (client + server) |
 | `bun run build:blog` | Generate blog.json + feeds from docs/blog/ |
 | `bun run build:commits` | Generate commits.json from git history |
 | `bun run build:data` | Run all data generators (commits + blog) |
 
 Always run `build:data` before `build` to ensure data files are up to date.
 
-## TanStack Router
+## TanStack Start
 
 ### File-based routing
 
-Routes live in `src/routes/`. The Vite plugin generates `src/routeTree.gen.ts`
-automatically. Never edit the generated file.
+Routes live in `src/routes/`. The TanStack Start Vite plugin generates
+`src/routeTree.gen.ts` automatically. Never edit the generated file.
 
 ### Naming conventions
 
@@ -32,32 +33,52 @@ automatically. Never edit the generated file.
 | Layout (with URL) | `routes/blog.tsx` | Wraps all `/blog/*` children |
 | Pathless layout | `routes/_app/dashboard.tsx` | `/dashboard` (layout without URL segment) |
 
-### Data loading
+### Server functions
 
-This is a static Vite site (no SSR). Data comes from JSON files generated at
-build time (`data/blog.json`, `data/commits.json`). Import them directly:
+Server-only code uses `createServerFn` from `@tanstack/react-start`. Server
+functions run on the server during SSR and via RPC on client-side navigation.
+Place server functions in `src/server/`.
 
 ```tsx
-import blogData from "../../data/blog.json";
+import { createServerFn } from "@tanstack/react-start";
+
+export const getData = createServerFn({ method: "GET" })
+  .inputValidator((id: string) => id)
+  .handler(async ({ data: id }) => {
+    // Server-only code (filesystem, database, etc.)
+  });
 ```
 
-Do not use TanStack Router loaders for static data — they are for SSR/dynamic
-fetching.
+Call server functions from route loaders:
+
+```tsx
+export const Route = createFileRoute("/example/$id")({
+  loader: ({ params: { id } }) => getData({ data: id }),
+  component: Example,
+});
+```
+
+### Data loading
+
+Static data (commits) comes from JSON files generated at build time
+(`data/commits.json`). Import these directly. Blog post content is loaded at
+runtime via a server function (`src/server/blog.ts`) that reads markdown from
+`docs/blog/`.
 
 ### Route params
 
-Dynamic segments use `$` in filenames. Access with `Route.useParams()`:
-
-```tsx
-// routes/blog/$slug.tsx
-const { slug } = Route.useParams();
-```
-
-Links are type-safe:
+Dynamic segments use `$` in filenames. Access with `Route.useLoaderData()` or
+`Route.useParams()`:
 
 ```tsx
 <Link to="/blog/$slug" params={{ slug: post.slug }}>Read</Link>
 ```
+
+### Root route
+
+`src/routes/__root.tsx` renders the full HTML document (`<html>`, `<head>`,
+`<body>`) with `HeadContent` and `Scripts` from `@tanstack/react-router`.
+TanStack Start manages SSR — there is no separate server file.
 
 ## Blog
 
@@ -82,7 +103,7 @@ date = "YYYY-MM-DD"
 `website/scripts/build-blog.ts` reads all `.md` files from `docs/blog/`,
 parses TOML front matter, and produces:
 
-- `website/data/blog.json` — typed metadata + raw markdown content
+- `website/data/blog.json` — typed metadata only (content loaded at runtime)
 - `website/public/blog/feed.json` — JSON Feed
 - `website/public/blog/feed.atom.xml` — Atom feed
 - `website/public/blog/feed.rss.xml` — RSS feed

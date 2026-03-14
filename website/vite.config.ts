@@ -1,20 +1,11 @@
 import { defineConfig } from "vite";
 import tsConfigPaths from "vite-tsconfig-paths";
-import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
-import { TanStackRouterVite } from "@tanstack/router-plugin/vite";
+import { tanstackStart } from "@tanstack/react-start/plugin/vite";
 
 export default defineConfig({
   server: {
     port: 3000,
   },
-  build: {
-    outDir: "dist/client",
-  },
-  plugins: [
-    tsConfigPaths(),
-    TanStackRouterVite({ autoCodeSplitting: true }),
-    react(),
-    tailwindcss(),
-  ],
+  plugins: [tsConfigPaths(), tanstackStart(), tailwindcss()],
 });

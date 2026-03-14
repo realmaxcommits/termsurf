@@ -6,25 +6,22 @@ FROM base AS deps
 COPY package.json bun.lock ./
 RUN bun install --frozen-lockfile
 
-# Build client assets only
+# Build
 FROM base AS build
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 RUN bun run build
 
-# Production - run TypeScript directly
+# Production
 FROM base AS production
 WORKDIR /app
-COPY --from=build /app/dist/client ./dist/client
+COPY --from=build /app/dist ./dist
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/package.json ./
-COPY --from=build /app/server.tsx ./
-COPY --from=build /app/src ./src
-COPY --from=build /app/tsconfig.json ./
-COPY --from=build /app/data ./data
+COPY --from=build /app/docs/blog ./docs/blog
 
 ENV NODE_ENV=production
 ENV PORT=3000
 EXPOSE 3000
 
-CMD ["bun", "run", "server.tsx"]
+CMD ["bun", "dist/server/server.js"]

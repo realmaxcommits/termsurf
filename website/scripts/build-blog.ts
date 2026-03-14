@@ -47,14 +47,16 @@ function buildBlog() {
     });
   }
 
-  // Write blog.json
+  // Write blog.json (metadata only, content loaded at runtime via server fn)
   mkdirSync(DATA_DIR, { recursive: true });
-  const blogData: BlogData = { posts };
+  const blogData: BlogData = {
+    posts: posts.map(({ content: _, ...meta }) => meta),
+  };
   writeFileSync(
     join(DATA_DIR, "blog.json"),
     JSON.stringify(blogData, null, 2) + "\n",
   );
-  console.log(`  blog.json: ${posts.length} posts`);
+  console.log(`  blog.json: ${posts.length} posts (metadata only)`);
 
   // Generate feeds
   mkdirSync(PUBLIC_DIR, { recursive: true });
