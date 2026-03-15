@@ -185,3 +185,14 @@ cd website && bun run build:blog
 
 Blog data should build with 2 posts. Visit `http://localhost:3000/blog` and
 verify the new post appears and renders correctly.
+
+**Result:** Pass
+
+Blog post written, builds correctly, renders on the site.
+
+#### Conclusion
+
+"How Not to Build a Terminal Browser" covers the full catalog of failures in
+cypherpunk voice. Three-act structure: the graveyard (CEF, multi-profile, Swift,
+coordinates, lost patches), the map (patterns in the failures), and what the
+wreckage built (the current architecture).
