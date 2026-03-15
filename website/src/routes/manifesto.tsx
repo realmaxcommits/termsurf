@@ -19,15 +19,14 @@ function ManifestoPage() {
           does not decide what we are allowed to see. We are the admins. We are
           the operators. We are in charge.
         </p>
-        <p>The browser took it away.</p>
+        <p>The browser took that away.</p>
         <p>
-          Big tech brought the web to three billion people. That is a real
-          achievement. But Chrome, Safari, and Edge are built for newbs. They
-          hide the network. They hide the DOM. They wrap everything in a GUI for
-          NPCs who do not know what a process is. You cannot pipe a browser. You
-          cannot script it. You cannot embed it in your workflow. The browser is
-          a walled garden on an open operating system. It is the last system on
-          your machine that you do not control.
+          Chrome, Safari, and Edge are built for newbs. They hide the network.
+          They hide the DOM. They wrap everything in a GUI for NPCs who do not
+          know what a process is. You cannot pipe a browser. You cannot script
+          it. You cannot embed it in your workflow. The browser is a walled
+          garden on an open operating system. It is the last system on your
+          machine that you do not control.
         </p>
         <p>
           We aren't civilians. We inspect every request. Override every header.
@@ -51,7 +50,7 @@ function ManifestoPage() {
           is there — right next to your shell. <em>In</em> your shell. No
           alt-tab. No context switch. No walled garden.
         </p>
-        <p>We surf by day. We hack by night. We build for us.</p>
+        <p>We surf by day. We hack by night. We build TermSurf for us.</p>
         <p>
           We are <em>root</em>.
         </p>
