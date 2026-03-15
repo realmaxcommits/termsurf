@@ -47,10 +47,10 @@ function ManifestoPage() {
           So we built TermSurf. Full Chromium. Full GPU rendering. Zero-copy
           compositing. Type{" "}
           <code className="text-accent">web localhost:3000</code> and the page
-          is there — right next to your shell. No alt-tab. No context switch. No
-          walled garden.
+          is there — right next to your shell. <em>In</em> your shell. No
+          alt-tab. No context switch. No walled garden.
         </p>
-        <p>We surf by day. We hack by night.</p>
+        <p>We surf by day. We hack by night. We build TermSurf for us.</p>
         <p>
           TermSurfers are <em>root</em>.
         </p>
