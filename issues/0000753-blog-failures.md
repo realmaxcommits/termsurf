@@ -226,3 +226,19 @@ cd website && bun run build:blog
 
 Blog data should build with 2 posts. Visit `http://localhost:3000/blog` and
 verify both posts render correctly.
+
+**Result:** Pass
+
+Post rewritten in cypherpunk voice, renamed to "Terminal, Meet Browser", author
+changed to Wez Longboard. Builds and renders correctly.
+
+#### Conclusion
+
+Both blog posts now share the same cypherpunk voice. "Terminal, Meet Browser"
+introduces TermSurf as a dispatch from cyberspace, not a product page.
+
+## Conclusion
+
+Two blog posts written in cypherpunk voice: "Terminal, Meet Browser" (the
+introduction) and "How Not to Build a Terminal Browser" (the failures catalog).
+Both by Wez Longboard. Both build and render on the site.
