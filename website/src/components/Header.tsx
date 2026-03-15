@@ -5,7 +5,7 @@ const NAV_ITEMS = [
   { to: "/blog", label: "Blog" },
   { to: "/commits", label: "Commits" },
   { to: "/docs", label: "Docs" },
-  { to: "/about", label: "About" },
+  { to: "/manifesto", label: "Manifesto" },
 ] as const;
 
 export function Header() {

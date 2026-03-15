@@ -12,10 +12,10 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as WelcomeRouteImport } from './routes/welcome'
 import { Route as TestMediaRouteImport } from './routes/test-media'
 import { Route as TestDownloadRouteImport } from './routes/test-download'
+import { Route as ManifestoRouteImport } from './routes/manifesto'
 import { Route as DocsRouteImport } from './routes/docs'
 import { Route as CommitsRouteImport } from './routes/commits'
 import { Route as BlogRouteImport } from './routes/blog'
-import { Route as AboutRouteImport } from './routes/about'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as BlogIndexRouteImport } from './routes/blog/index'
 import { Route as BlogSlugRouteImport } from './routes/blog/$slug'
@@ -35,6 +35,11 @@ const TestDownloadRoute = TestDownloadRouteImport.update({
   path: '/test-download',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ManifestoRoute = ManifestoRouteImport.update({
+  id: '/manifesto',
+  path: '/manifesto',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const DocsRoute = DocsRouteImport.update({
   id: '/docs',
   path: '/docs',
@@ -48,11 +53,6 @@ const CommitsRoute = CommitsRouteImport.update({
 const BlogRoute = BlogRouteImport.update({
   id: '/blog',
   path: '/blog',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const AboutRoute = AboutRouteImport.update({
-  id: '/about',
-  path: '/about',
   getParentRoute: () => rootRouteImport,
 } as any)
 const IndexRoute = IndexRouteImport.update({
@@ -73,10 +73,10 @@ const BlogSlugRoute = BlogSlugRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
-  '/about': typeof AboutRoute
   '/blog': typeof BlogRouteWithChildren
   '/commits': typeof CommitsRoute
   '/docs': typeof DocsRoute
+  '/manifesto': typeof ManifestoRoute
   '/test-download': typeof TestDownloadRoute
   '/test-media': typeof TestMediaRoute
   '/welcome': typeof WelcomeRoute
@@ -85,9 +85,9 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
-  '/about': typeof AboutRoute
   '/commits': typeof CommitsRoute
   '/docs': typeof DocsRoute
+  '/manifesto': typeof ManifestoRoute
   '/test-download': typeof TestDownloadRoute
   '/test-media': typeof TestMediaRoute
   '/welcome': typeof WelcomeRoute
@@ -97,10 +97,10 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
-  '/about': typeof AboutRoute
   '/blog': typeof BlogRouteWithChildren
   '/commits': typeof CommitsRoute
   '/docs': typeof DocsRoute
+  '/manifesto': typeof ManifestoRoute
   '/test-download': typeof TestDownloadRoute
   '/test-media': typeof TestMediaRoute
   '/welcome': typeof WelcomeRoute
@@ -111,10 +111,10 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
-    | '/about'
     | '/blog'
     | '/commits'
     | '/docs'
+    | '/manifesto'
     | '/test-download'
     | '/test-media'
     | '/welcome'
@@ -123,9 +123,9 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
-    | '/about'
     | '/commits'
     | '/docs'
+    | '/manifesto'
     | '/test-download'
     | '/test-media'
     | '/welcome'
@@ -134,10 +134,10 @@ export interface FileRouteTypes {
   id:
     | '__root__'
     | '/'
-    | '/about'
     | '/blog'
     | '/commits'
     | '/docs'
+    | '/manifesto'
     | '/test-download'
     | '/test-media'
     | '/welcome'
@@ -147,10 +147,10 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
-  AboutRoute: typeof AboutRoute
   BlogRoute: typeof BlogRouteWithChildren
   CommitsRoute: typeof CommitsRoute
   DocsRoute: typeof DocsRoute
+  ManifestoRoute: typeof ManifestoRoute
   TestDownloadRoute: typeof TestDownloadRoute
   TestMediaRoute: typeof TestMediaRoute
   WelcomeRoute: typeof WelcomeRoute
@@ -179,6 +179,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof TestDownloadRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/manifesto': {
+      id: '/manifesto'
+      path: '/manifesto'
+      fullPath: '/manifesto'
+      preLoaderRoute: typeof ManifestoRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/docs': {
       id: '/docs'
       path: '/docs'
@@ -198,13 +205,6 @@ declare module '@tanstack/react-router' {
       path: '/blog'
       fullPath: '/blog'
       preLoaderRoute: typeof BlogRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/about': {
-      id: '/about'
-      path: '/about'
-      fullPath: '/about'
-      preLoaderRoute: typeof AboutRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/': {
@@ -245,10 +245,10 @@ const BlogRouteWithChildren = BlogRoute._addFileChildren(BlogRouteChildren)
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
-  AboutRoute: AboutRoute,
   BlogRoute: BlogRouteWithChildren,
   CommitsRoute: CommitsRoute,
   DocsRoute: DocsRoute,
+  ManifestoRoute: ManifestoRoute,
   TestDownloadRoute: TestDownloadRoute,
   TestMediaRoute: TestMediaRoute,
   WelcomeRoute: WelcomeRoute,
