@@ -52,6 +52,13 @@ function HomePage() {
         </div>
       </section>
       <section className="mb-8">
+        <img
+          src="/images/screenshot2.webp"
+          alt="TermSurf — a browser pane alongside terminal panes"
+          className="w-full"
+        />
+      </section>
+      <section className="mb-8">
         <h2 className="text-sm font-bold text-foreground mb-4">┌─ Latest Post ─┐</h2>
         {latestPost ? (
           <Link
