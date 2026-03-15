@@ -1,6 +1,6 @@
 +++
 title = "How Not to Build a Terminal Browser"
-author = "Wez Longboard"
+author = "Max Commits"
 date = "2026-03-15"
 +++
 
