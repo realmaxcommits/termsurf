@@ -19,174 +19,182 @@
         <link href="https://termsurf.com/blog/2026-03-15-how-not-to-build-a-terminal-browser"/>
         <updated>2026-03-15T00:00:00.000Z</updated>
         <summary type="html"><![CDATA[How Not to Build a Terminal Browser]]></summary>
-        <content type="html"><![CDATA[We have written 750+ issue documents for TermSurf. Many of them end with
-**Result: Fail**. This is a tour of the graveyard.
+        <content type="html"><![CDATA[You want to jack the web into your terminal. Full Chromium. GPU-rendered. No
+alt-tab, no context switch. Type `web localhost:3000` and the page is _there_,
+right next to your shell. Sounds simple. It is not simple. We have 250+ issue
+documents that prove it.
 
-## The 31fps Wall
+Many of them end with **Result: Fail**.
 
-We started with CEF — the Chromium Embedded Framework. The idea was simple:
-render web pages off-screen, pipe the pixels into a terminal pane, done. We
-built two generations around this. ts2 ran CEF in-process with WezTerm. ts3
-moved CEF out-of-process and connected it over XPC.
+This is a field report from the wreckage.
 
-Both hit the same wall. CEF's off-screen rendering caps at 31fps on macOS. We
-ran 26 experiments across Issues 325–350. We tried every configuration. We
-profiled the compositor. We hacked the frame callback. Nothing broke through.
-31fps. That is the ceiling. It is a hard limit in CEF's off-screen pipeline and
-no amount of tuning gets past it.
+## The Signal Flatlines at 31fps
 
-26 experiments. Same answer every time. CEF cannot do this.
+We wired up CEF — the Chromium Embedded Framework. Render pages off-screen, pipe
+the pixels into a terminal pane, ship it. Two generations ran on this circuit.
+ts2 embedded CEF in-process. ts3 split it out over XPC.
 
-## The 2fps Catastrophe
+Same flatline. CEF's off-screen rendering caps at 31fps on macOS. We hacked the
+frame callback. Profiled the compositor. Overrode the paint scheduler. Ran 26
+experiments across Issues 325–350. Twenty-six. The signal never broke through.
 
-So we dropped CEF and went straight to the Chromium Content API. No wrapper, no
-framework — raw Chromium internals. ts4 was the proof of concept. One browser
-profile, one process, 60fps. It worked.
+31fps is not a bottleneck. It is a wall. Hardcoded in CEF's off-screen pipeline.
+No patch, no flag, no trick gets past it.
 
-Then we added a second profile.
+We pulled the plug on CEF.
 
-2fps. Both panes. We thought it was a bug. Issues 407–421, experiment after
-experiment. We applied Electron's throttling patches — all 147 of them. Could
-not even build: they require the entire Electron dependency tree, Node.js
-included. We applied just the three throttling patches. They compiled. They had
-zero effect. The code paths they target — `Hide()`, `WasOccluded()` — are never
-called in our layout.
+## Two Profiles, Two Frames Per Second
 
-Issue 621 finally isolated it. The bottleneck is JavaScript execution on the
-Blink main thread. Two `BrowserContext` instances sharing one process contend on
-the JS scheduler. CSS animations? 60fps. `requestAnimationFrame`? 2fps. Even a
-trivial 30-line rAF loop triggers it.
+Dropped down to raw Chromium internals. The Content API. No wrapper, no
+framework — bare metal. ts4 proved the concept. One profile, one process, 60fps.
+Clean signal.
 
-This is not a bug. It is an architectural constraint of Chromium. Two profiles in
-one process will never render JavaScript at 60fps simultaneously. The only fix is
-one process per profile.
+Then we spawned a second profile in the same process.
 
-## The Swift Memory Layout Crash
+2fps. Both panes. The whole system seized.
 
-Before Rust, we tried Swift. Swift's class memory model does not produce
-C-compatible struct layouts. CEF validates `base.size` from the raw struct
-pointer on every callback. Swift structs do not match.
+We thought it was a bug. Fourteen issues. We intercepted Electron's throttling
+patches — all 147. Could not build: they depend on the entire Electron tree,
+Node.js and 85 sub-patches included. Applied just the three bypass patches. They
+compiled. Zero effect. The code paths they target — `Hide()`, `WasOccluded()` —
+never fire in our layout. Dead wires.
 
-`[FATAL] CefApp_0_CToCpp called with invalid version -1`
+Issue 621 cracked it open. The contention is on Blink's main thread. Two
+`BrowserContext` instances in one process fight over the JavaScript scheduler.
+CSS animations? 60fps. A single `requestAnimationFrame` loop? 2fps. A trivial
+30-line rAF loop is enough to trigger it.
 
-One line. Fatal. No workaround. Rust's `#[repr(C)]` guarantees C layout. We
-rewrote the bindings in Rust the same week.
+Not a bug. A constraint. Baked into Chromium's architecture. Two JS runtimes in
+one process will never hit 60fps simultaneously.
 
-## The Coordinate Math Gauntlet
+The only fix: one process per profile. Fork the process. Isolate the scheduler.
+That is the law now.
 
-Every time we position a browser overlay in a split pane, we get the math wrong
-on the first try. Issue 727 — placing a second webview — took seven experiments.
+## Swift Crashes on Contact
 
-Experiment 2: doubled the y-offset by mixing window-level and pane-level
-coordinates. Experiment 3: overlay rendered beyond the visible window because
-`contentsScale` defaulted to 1.0 on Retina (should be 2.0). Experiment 5: fixed
-the scale but forgot the URL bar offset. Experiment 6: off by half a cell
-height because pane borders were not accounted for.
+Before Rust, we tried Swift. CEF's C API validates struct layouts on every
+callback — reads `base.size` from the raw pointer. Swift's class memory model
+does not produce C-compatible layouts. The structs do not align.
 
-Seven tries to place a rectangle at the right coordinates. The formula is not
-complicated — it is `origin + border + pane_offset + cell_offset`, divided by
-the scale factor. But every term in that formula comes from a different system
-(the window, the split tree, the TUI protocol, the GPU layer) and they all use
-different coordinate spaces.
+```
+[FATAL] CefApp_0_CToCpp called with invalid version -1
+```
 
-Issue 749 was the same story. Browser overlays flashed on the wrong side of a
-split pane because the CALayerHost was created before the render pass knew where
-to put it. Two experiments. First one made it worse. Second one deferred
-creation to the render pass, where the coordinates are already correct.
+One line. Connection severed. No workaround.
 
-## The Fix You Write Twice
+Rust's `#[repr(C)]` guarantees the layout. We rewired the bindings in Rust the
+same week. Swift never touched CEF again.
 
-Issue 639: `target="_blank"` links silently fail because Chromium creates an
-orphaned window. We overrode `IsWebContentsCreationOverridden`, posted a
-deferred navigation, done. Three methods in `shell.cc`. Worked perfectly.
+## Four Systems, Four Coordinate Spaces
+
+Every browser overlay needs pixel coordinates. The window manager has coordinates.
+The split tree has coordinates. The TUI protocol has coordinates. The GPU
+compositor has coordinates. They all disagree.
+
+Issue 727 — placing a second webview — took seven experiments. Experiment 2
+doubled the y-offset by mixing window-level and pane-level signals. Experiment 3
+rendered the overlay beyond the visible window because `contentsScale` defaulted
+to 1.0 on Retina — should be 2.0, every pixel doubled. Experiment 5 fixed the
+scale but forgot the URL bar offset. Experiment 6: off by half a cell height.
+Border widths.
+
+Seven attempts to place a rectangle. The formula is four terms from four systems
+that do not share a coordinate space. Every positioning feature starts wrong.
+
+Issue 749: overlays flashed on the wrong side of a split pane. The CALayerHost
+was forged before the render pass knew where to place it. First fix made it
+worse — the overlay appeared at 0,0. Second fix deferred creation to the render
+pass, where the coordinates already exist. Born in place. No flash.
+
+## The Patch That Fell Through the Wire
+
+Issue 639: `target="_blank"` links open nothing. Chromium spawns an orphaned
+window that no one can see. We overrode `IsWebContentsCreationOverridden`,
+intercepted the creation, posted a deferred navigation back to the source tab.
+Three methods in `shell.cc`. Signal restored.
 
 Issue 708: refactored the Chromium fork. Renamed directories. The Issue 639
-commits were not carried forward. The fix vanished.
+commits did not carry forward. The override vanished. Links broke again.
+Silently. No crash, no error — just nothing happening when you click.
 
-Issue 750: re-applied the same three methods to the new file paths. Same code,
-same fix, six months later. The lesson is not about `target="_blank"`. The
-lesson is that refactoring can silently erase working code, and if you do not
-have a test that catches it, you will not notice until a user clicks a link and
-nothing happens.
+Issue 750: re-applied the same three methods to the new paths. Same patch, weeks
+later. If the test suite does not cover a behavior, a refactor can erase it and
+you will not know until someone clicks a link and the wire is dead.
 
-## What the Graveyard Taught Us
+## The Map Inside the Graveyard
 
-The failures are not random. They cluster.
+The failures are not random. They cluster. And the clusters draw a map.
 
-**Performance walls are not bugs.** CEF's 31fps. Chromium's 2fps with
-multi-profile JS. These are architectural constraints baked into the engines. You
-cannot tune your way past them. You have to change the architecture. We changed
-it three times.
+**Performance walls are not bugs.** CEF's 31fps. Chromium's 2fps. These are
+constraints forged into the engines. You cannot tune past them. You have to
+rewire the architecture. We rewired it three times.
 
-**Coordinate math fails because the coordinates come from everywhere.** The
-window manager, the split tree, the TUI, the GPU compositor — they all have
-opinions about where things are, and they measure in different units. Every
-overlay positioning feature requires multiple experiments because the formula
-touches four systems that do not share a coordinate space.
+**Coordinates fail because four systems refuse to speak the same language.** The
+window, the split tree, the TUI, the compositor — each measures in its own
+units. Every overlay feature requires multiple experiments because the formula
+crosses four borders.
 
-**Cross-process is hard.** IPC ordering, re-entrancy, type mismatches across
-language boundaries. A `u32` where macOS expects a `u64` crashes the scroll
-handler. A RefCell borrow held during an event dispatch panics when CEF's
-message loop re-enters. These are not deep problems — they are papercuts that
-add up.
+**Cross-process is a minefield.** IPC ordering. Re-entrancy. A `u32` where macOS
+expects a `u64` crashes the scroll handler at runtime. A RefCell borrow held
+during an event dispatch panics when CEF's message loop re-enters. These are not
+deep problems. They are a thousand small wires that must all connect.
 
-**Refactoring erases fixes.** If the test suite does not cover a behavior, a
-rename can delete it. We lost `target="_blank"` handling for six months.
+**Refactoring severs working circuits.** Rename a directory, lose a fix. No test,
+no signal. The patch falls through.
 
-## What the Failures Built
+## What the Wreckage Built
 
-Every dead end pointed somewhere. CEF's framerate ceiling pushed us to Chromium's
-Content API. Chromium's multi-profile contention forced one-process-per-profile.
-Swift's struct layouts sent us to Rust. XPC's complexity led to Unix sockets and
-protobuf. Ghostboard's macOS-only limitation led to Wezboard, where WezTerm
-already runs on Windows and Rust's ecosystem gives us ratatui and edtui off the
-shelf.
+Every dead circuit pointed somewhere.
 
-TermSurf today is a protocol. 30+ message types over Unix sockets. Any terminal,
-any browser engine, any TUI. One process per profile. CALayerHost for zero-copy
-GPU compositing. The architecture is clean because we tried every wrong
+CEF's framerate wall pushed us to Chromium's Content API. Chromium's scheduler
+contention forced one-process-per-profile. Swift's struct misalignment sent us to
+Rust and `#[repr(C)]`. XPC's complexity drove us to Unix sockets and protobuf.
+Ghostboard ran on Ghostty — Linux and macOS only. We forked WezTerm instead:
+Windows support on day one, and Rust's ecosystem gives us ratatui and edtui off
+the shelf.
+
+TermSurf today is a protocol. 30+ message types over Unix domain sockets. Any
+terminal. Any browser engine. Any TUI. One process per profile. CALayerHost for
+zero-copy GPU compositing. The architecture is clean because we tried every wrong
 architecture first.
 
-750 issues. The graveyard is large. But every headstone has an arrow on it, and
+250+ issues. The graveyard is large. But every headstone has an arrow on it, and
 they all point forward.]]></content>
     </entry>
     <entry>
-        <title type="html"><![CDATA[Introducing TermSurf]]></title>
-        <id>https://termsurf.com/blog/2026-03-14-introducing-termsurf</id>
-        <link href="https://termsurf.com/blog/2026-03-14-introducing-termsurf"/>
+        <title type="html"><![CDATA[Terminal, Meet Browser]]></title>
+        <id>https://termsurf.com/blog/2026-03-14-terminal-meet-browser</id>
+        <link href="https://termsurf.com/blog/2026-03-14-terminal-meet-browser"/>
         <updated>2026-03-14T00:00:00.000Z</updated>
-        <summary type="html"><![CDATA[Introducing TermSurf]]></summary>
-        <content type="html"><![CDATA[Developers live in terminals. We write code, run builds, manage servers, tail
-logs, and navigate filesystems without ever reaching for a mouse. The terminal
-is fast, composable, and keyboard-driven. It is the natural habitat of focused
-work.
+        <summary type="html"><![CDATA[Terminal, Meet Browser]]></summary>
+        <content type="html"><![CDATA[We live in terminals. We write code, run builds, tail logs, manage servers, and
+navigate filesystems without touching a mouse. The terminal is fast. It is
+composable. It is keyboard-driven. It is where focused work happens.
 
-But then we need a browser.
+Then we need a browser.
 
-Maybe it is `localhost:3000` to check a UI change. Maybe it is documentation, a
-dashboard, or a pull request. Whatever it is, we alt-tab out of the terminal,
-lose our place, and break the flow we spent minutes building. The browser is a
-separate world with its own window manager, its own keybindings, and its own
-attention demands.
+`localhost:3000`. Documentation. A dashboard. A pull request. Whatever it is, we
+alt-tab out, lose our place, and shatter the flow we spent minutes building. The
+browser is a separate world — its own window manager, its own keybindings, its
+own gravity. Every time we leave the terminal, we lose signal.
 
-TermSurf eliminates that context switch.
+TermSurf kills the context switch.
 
-## What TermSurf is
+## The Protocol
 
-TermSurf is a protocol for embedding web browsers inside terminal emulators.
-Type `web localhost:3000` and the page renders right there, in your terminal
-pane, alongside your code and your shell. No new window. No alt-tab. No
-context switch.
+TermSurf is a protocol for jacking web browsers into terminal emulators. Type
+`web localhost:3000` and the page renders right there — in your terminal pane,
+next to your shell, next to your code. No new window. No alt-tab. No broken
+flow.
 
-It is not a text-mode browser. It is a real browser engine — full CSS, full
-JavaScript, full GPU rendering — displayed as an overlay inside the terminal
-window. You get the same rendering you would see in Chrome or Safari, but
-inside the tool you already live in.
+This is not a text-mode browser. This is a real engine — full CSS, full
+JavaScript, full GPU rendering — composited directly into the terminal window.
+The same pixels you would see in Chrome or Safari, inside the tool you already
+live in.
 
-## How it works
+## How It Works
 
-TermSurf is a network of interchangeable components — terminals, browser
-engines, and TUIs — all speaking the same protobuf protocol over Unix sockets.
+Three components. One protocol. Unix sockets and protobuf.
 
 ```
 ┌─────────┐  ┌─────────┐  ┌─────────┐
@@ -211,33 +219,28 @@ engines, and TUIs — all speaking the same protobuf protocol over Unix sockets.
 └─────────┘ └─────────┘ └─────────┘
 ```
 
-There are three kinds of components:
+**The GUI** is a terminal emulator that speaks the TermSurf protocol. It listens
+on a Unix socket, accepts connections from TUIs and browser engines, and
+composites browser content as overlays at pixel coordinates. The current GUI is
+Wezboard — a fork of WezTerm.
 
-**The GUI** is a terminal emulator that implements the TermSurf protocol. It
-listens on a Unix socket, accepts connections from TUIs and browser engines,
-and renders browser content as overlays at pixel coordinates. The current GUI
-is Wezboard, a fork of WezTerm.
+**The TUI** is a terminal app that provides browser chrome — URL bar, navigation,
+vim-style modes — inside a pane. The current TUI is `web`. It connects to the
+GUI over the socket and fires protocol messages to control the browser.
 
-**The TUI** is a terminal application that provides browser chrome — a URL bar,
-navigation, modes — inside a terminal pane. The current TUI is `web`. It
-connects to the GUI over the socket and sends protocol messages to control the
-browser.
+**The engine** runs as a separate process. One process per profile. Each engine
+connects to the GUI and renders web content into a GPU surface. On macOS, this
+uses CALayerHost — zero-copy compositing. The browser's GPU output appears
+directly in the terminal window. No pixel copying. No intermediate buffers.
 
-**The browser engine** runs as a separate process, one per profile. Each engine
-process connects to the GUI and renders web content into a GPU surface that the
-GUI composites into the terminal window. On macOS, this uses CALayerHost for
-zero-copy rendering — the browser's GPU output appears directly in the terminal
-window without any pixel copying.
+The protocol — `termsurf.proto` — defines 30+ message types. Tab lifecycle.
+Navigation. Input forwarding. GPU compositing. State sync. Request/reply pairs.
+All length-prefixed protobuf over Unix domain sockets.
 
-The protocol (`termsurf.proto`) defines 30+ message types covering tab
-lifecycle, navigation, input forwarding, GPU compositing, state
-synchronization, and request/reply pairs. All messages are length-prefixed
-protobuf over Unix domain sockets.
+## Any Engine
 
-## Not locked to one browser
-
-Every browser engine runs as a separate process speaking the same protocol.
-This means TermSurf is not tied to any single engine:
+Every engine is a separate process speaking the same protocol. TermSurf is not
+locked to Chromium.
 
 | Engine   | Binary    | Status  |
 | -------- | --------- | ------- |
@@ -246,65 +249,59 @@ This means TermSurf is not tied to any single engine:
 | Gecko    | Waterwolf | Planned |
 | Ladybird | Girlbat   | Planned |
 
-Each engine follows the same pattern: a C shared library wrapping the engine's
-embedding API, linked by a Rust binary that handles Unix socket IPC, protobuf
-parsing, and process lifecycle. The Rust binary is roughly 400 lines and is
-almost entirely reusable across engines.
+Same pattern for each: a C shared library wrapping the engine's embedding API,
+linked by a Rust binary that handles IPC, protobuf, and process lifecycle. The
+Rust binary is ~400 lines. Almost entirely reusable across engines.
 
-You could have one pane running Roamium (Chromium), another running Surfari
-(WebKit), and a third running Girlbat (Ladybird) — all in the same terminal
-window, all speaking the same protobuf messages.
+One pane running Roamium. Another running Surfari. A third running Girlbat. Same
+terminal window. Same protobuf messages. Different engines.
 
-## Not locked to one terminal
+## Any Terminal
 
-Any terminal emulator that implements the TermSurf protocol can host browser
-overlays. The current GUI is Wezboard, a WezTerm fork. But the protocol is
-designed so that forks of Ghostty, Kitty, Alacritty, and iTerm2 could all
-serve as TermSurf GUIs.
+Any terminal emulator that implements the protocol can host browser overlays.
+Wezboard is the current GUI. But the protocol is designed so that forks of
+Ghostty, Kitty, Alacritty, and iTerm2 could all serve as TermSurf GUIs.
 
-The protocol is the product. Individual apps are implementations.
+The protocol is the product. The apps are implementations.
 
-## What works today
+## What Works Now
 
-Wezboard and Roamium are functional on macOS. Here is what you can do right
-now:
+Wezboard and Roamium are functional on macOS. Here is what you can do today:
 
-- Open any URL in a terminal pane with `web <url>`.
-- Split panes — the browser overlay repositions and resizes immediately.
-- Switch tabs — overlays hide and restore correctly.
+- Jack into any URL from a terminal pane: `web <url>`.
+- Split panes — the overlay repositions and resizes instantly.
+- Switch tabs — overlays hide and restore.
 - Open DevTools for any browser pane.
-- Navigate with keyboard-driven modes (vim-style).
-- Use multiple browser profiles with isolated cookies and storage.
-- GPU-accelerated rendering with no pixel copying (CALayerHost compositing).
+- Navigate with keyboard-driven modes. Vim-style.
+- Run multiple profiles with isolated cookies and storage.
+- GPU-accelerated rendering. Zero pixel copying. CALayerHost compositing.
 
-The experience is surprisingly natural. You split a terminal, type
-`web localhost:3000`, and your app appears next to your editor. You resize the
-split and the browser follows. You switch to another tab to run tests, and when
-you switch back, the browser is exactly where you left it.
+You split a terminal. Type `web localhost:3000`. Your app appears next to your
+editor. Resize the split — the browser follows. Switch to another tab to run
+tests. Switch back. The browser is exactly where you left it.
 
-## What is next
+## What Is Next
 
-TermSurf is early. The protocol works, the rendering works, and the core
-workflow is solid. But there is a long list ahead:
+TermSurf is early. The protocol works. The rendering works. The core workflow is
+solid. The road ahead:
 
 - WebKit and Gecko engine integrations.
-- Linux and Windows support.
-- Forks of more terminal emulators.
-- Bookmarks, history, downloads, and other standard browser features.
-- A richer TUI with tab bar, status line, and search.
+- Linux and Windows.
+- Forks of more terminals.
+- Bookmarks, history, downloads.
+- A richer TUI — tab bar, status line, search.
 
-The most important work is on the protocol itself. Every feature starts as a
-protobuf message. The protocol is versioned, extensible, and designed to grow.
+The most important work is on the protocol. Every feature starts as a protobuf
+message. The protocol is versioned, extensible, and built to grow.
 
-## Get involved
+## Jack In
 
-TermSurf is open source. The code, the protocol, the issues, and the
-experiments are all public.
+TermSurf is open source. Code, protocol, issues, experiments — all public.
 
 - [GitHub](https://github.com/termsurf/termsurf)
 - [Website](https://termsurf.com)
 
-If you have ever wished you could see a web page without leaving your terminal,
-TermSurf is for you.]]></content>
+If you have ever wanted to see a web page without leaving your terminal, this is
+for you.]]></content>
     </entry>
 </feed>

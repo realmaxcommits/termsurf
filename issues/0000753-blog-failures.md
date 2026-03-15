@@ -196,3 +196,33 @@ Blog post written, builds correctly, renders on the site.
 cypherpunk voice. Three-act structure: the graveyard (CEF, multi-profile, Swift,
 coordinates, lost patches), the map (patterns in the failures), and what the
 wreckage built (the current architecture).
+
+### Experiment 2: Rewrite "Introducing TermSurf" in cypherpunk voice
+
+#### Description
+
+The first blog post ("Introducing TermSurf") reads like a product page. It
+explains correctly but it does not electrify. Rewrite it in the same cypherpunk
+voice as "How Not to Build a Terminal Browser" — dispatches from cyberspace, not
+a pitch deck. Change author to "Wez Longboard".
+
+The content stays the same — what TermSurf is, how it works, the architecture
+diagram, the engine table, what works today, what is next. But the language
+changes. Declare, don't sell. Name the metal. Short sentences. Verbs that hack.
+
+#### Changes
+
+**`blog/2026-03-14-introducing-termsurf.md`**
+
+Rewrite the post. Keep the TOML front matter format. Keep the architecture
+diagram and engine table. Change author to "Wez Longboard". Rewrite all prose in
+cypherpunk voice.
+
+#### Verification
+
+```bash
+cd website && bun run build:blog
+```
+
+Blog data should build with 2 posts. Visit `http://localhost:3000/blog` and
+verify both posts render correctly.
