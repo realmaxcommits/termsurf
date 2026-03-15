@@ -2,22 +2,22 @@ import { createFileRoute } from "@tanstack/react-router";
 
 export const Route = createFileRoute("/manifesto")({
   head: () => ({ meta: [{ title: "Manifesto — TermSurf" }] }),
-  component: AboutPage,
+  component: ManifestoPage,
 });
 
-function AboutPage() {
+function ManifestoPage() {
   return (
     <section>
       <h2 className="text-sm font-bold text-foreground mb-4">┌─ Manifesto ─┐</h2>
       <div className="text-sm space-y-4 text-foreground-dark">
         <p>
-          I surf by day. I hack by night. I sleep somewhere in between.
+          We surf by day. We hack by night. We sleep somewhere in between.
         </p>
         <p>
-          I live in the terminal. It is my cockpit. Total control. Every
+          We live in the terminal. It is our cockpit. Total control. Every
           process, every socket, every file — all reachable from a single prompt.
-          The terminal does not hide things. It does not decide what I am allowed
-          to see. I have root. I am the operator.
+          The terminal does not hide things. It does not decide what we are
+          allowed to see. We have root. We are the operators.
         </p>
         <p>
           Then there is the browser.
@@ -30,14 +30,14 @@ function AboutPage() {
           them.
         </p>
         <p>
-          I am not the lowest common denominator. I need to inspect every
+          We are not the lowest common denominator. We need to inspect every
           request. Override every header. Pipe responses into scripts. Open
-          DevTools in a split pane while tailing logs in another. I need the web
-          the same way I need the filesystem — raw, fast, and under complete
+          DevTools in a split pane while tailing logs in another. We need the web
+          the same way we need the filesystem — raw, fast, and under complete
           control.
         </p>
         <p>
-          The browser I need does not exist. Not as a standalone app. The app is
+          The browser we need does not exist. Not as a standalone app. The app is
           the wrong container. The right container is the terminal — where
           everything else already lives. The browser should be a pane. It should
           sit next to the shell, next to the editor, next to the logs. It should
@@ -45,7 +45,7 @@ function AboutPage() {
           It should be a component in the system, not a system unto itself.
         </p>
         <p>
-          So I built TermSurf.
+          So we built TermSurf.
         </p>
         <p>
           TermSurf is a protocol for jacking web browsers into terminal
@@ -56,11 +56,11 @@ function AboutPage() {
           lowest common denominator.
         </p>
         <p>
-          When I am not in the water, I am in the terminal. And now the web is
-          there too.
+          When we are not in the water, we are in the terminal. And now the web
+          is there too.
         </p>
         <p className="pt-2">
-          — Max Commits
+          — Max Commits, on behalf of the termsurfers
         </p>
         <p className="pt-2">
           <a
