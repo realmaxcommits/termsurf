@@ -1,6 +1,13 @@
 {
-  "generatedAt": "2026-03-14T20:48:32.738Z",
+  "generatedAt": "2026-03-15T10:27:28.378Z",
   "commits": [
+    {
+      "hash": "9949d744a5c2c8a96a414ac5fbc392227da0d4e0",
+      "message": "Fix scanline overlay on welcome page",
+      "body": "The CRT lines crept where they shouldn't go,\nInterlacing the welcome's Three.js show.\nScoped to a class, the scanlines now know:\nOnly the main site gets that retro glow.\n\nCo-Authored-By: Claude Opus 4.6 (1M context) <noreply@anthropic.com>",
+      "author": "Ryan X. Charles",
+      "date": "2026-03-15T05:27:21-05:00"
+    },
     {
       "hash": "8d88d3dd0e0b6925f9020037af02e31ae9b9bbca",
       "message": "Close Issue 751: blog top level + deploy",
@@ -343,13 +350,6 @@
       "body": "The night was dark, the code was too,\nBut users in the sun had no clue.\nNow Day is default, Night is dark—\nprefers-color-scheme lights the spark.\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>",
       "author": "Ryan X. Charles",
       "date": "2026-03-14T07:12:29-05:00"
-    },
-    {
-      "hash": "a94dd0999a198d46a7abca556bc456fcc7c4b779",
-      "message": "Issue 747: close with conclusion",
-      "body": "Two issues, one overlay, zero bugs remain.\n746 gave paint_pass the reins,\n747 stopped the clobber chain.\nNow every screen, every split, every pane—\nThe overlay lands where it should. No strain.\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>",
-      "author": "Ryan X. Charles",
-      "date": "2026-03-13T07:59:31-05:00"
     }
   ]
 }
