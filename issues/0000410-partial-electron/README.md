@@ -1,7 +1,7 @@
 +++
 status = "closed"
 opened = "2026-02-10"
-closed = "2026-03-06"
+closed = "2026-02-10"
 +++
 
 # Issue 410: Apply a Partial Electron Patch Set

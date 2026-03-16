@@ -1,7 +1,7 @@
 +++
 status = "closed"
 opened = "2026-02-08"
-closed = "2026-03-06"
+closed = "2026-02-08"
 +++
 
 # Issue 407: In-Process Chromium Proof of Concept

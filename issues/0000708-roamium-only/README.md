@@ -1,7 +1,7 @@
 +++
 status = "closed"
 opened = "2026-03-05"
-closed = "2026-03-06"
+closed = "2026-03-05"
 +++
 
 # Issue 708: Roamium-only Chromium fork

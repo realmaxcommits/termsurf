@@ -1,7 +1,7 @@
 +++
 status = "closed"
 opened = "2026-02-15"
-closed = "2026-03-06"
+closed = "2026-02-15"
 +++
 
 # Issue 502: Eliminate Hardcoded 2-Second Capturer Attach Delay

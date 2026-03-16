@@ -1,7 +1,7 @@
 +++
 status = "closed"
 opened = "2026-02-16"
-closed = "2026-03-06"
+closed = "2026-02-16"
 +++
 
 # Issue 508: Retina Checkerboard with Safe IOSurface Lifetime

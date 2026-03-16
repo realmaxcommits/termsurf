@@ -1,7 +1,7 @@
 +++
 status = "closed"
 opened = "2026-03-03"
-closed = "2026-03-06"
+closed = "2026-03-03"
 +++
 
 # Issue 700: Replace TUI↔GUI XPC with Unix Sockets

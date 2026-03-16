@@ -1,7 +1,7 @@
 +++
 status = "closed"
 opened = "2026-01-03"
-closed = "2026-03-16"
+closed = "2026-01-03"
 +++
 
 # Console Bridging and JavaScript API (TermSurf 1.x)

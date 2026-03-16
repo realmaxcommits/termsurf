@@ -1,7 +1,7 @@
 +++
 status = "closed"
 opened = "2026-01-27"
-closed = "2026-03-16"
+closed = "2026-01-27"
 +++
 
 # TermSurf 3.0 One-Process-Per-Profile

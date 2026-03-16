@@ -1,7 +1,7 @@
 +++
 status = "closed"
 opened = "2026-03-08"
-closed = "2026-03-09"
+closed = "2026-03-08"
 +++
 
 # Issue 730: Roamium standalone install

@@ -1,7 +1,7 @@
 +++
 status = "closed"
 opened = "2026-03-09"
-closed = "2026-03-10"
+closed = "2026-03-09"
 +++
 
 # Issue 733: Ghostboard should send Shutdown instead of SIGKILL

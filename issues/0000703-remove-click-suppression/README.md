@@ -1,7 +1,7 @@
 +++
 status = "closed"
 opened = "2026-03-04"
-closed = "2026-03-06"
+closed = "2026-03-04"
 +++
 
 # Issue 703: Remove click-to-activate suppression

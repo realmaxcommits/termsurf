@@ -1,7 +1,7 @@
 +++
 status = "closed"
 opened = "2026-02-22"
-closed = "2026-03-06"
+closed = "2026-02-22"
 +++
 
 # Issue 622: JavaScript Is Slow

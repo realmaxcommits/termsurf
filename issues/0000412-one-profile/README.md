@@ -1,7 +1,7 @@
 +++
 status = "closed"
 opened = "2026-02-11"
-closed = "2026-03-06"
+closed = "2026-02-11"
 +++
 
 # Issue 412: One Profile — Isolate the 2fps Cause

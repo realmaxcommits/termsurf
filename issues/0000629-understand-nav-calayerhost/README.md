@@ -1,7 +1,7 @@
 +++
 status = "closed"
 opened = "2026-02-23"
-closed = "2026-03-06"
+closed = "2026-02-23"
 +++
 
 # Issue 629: Understand Navigation Blank in CALayerHost

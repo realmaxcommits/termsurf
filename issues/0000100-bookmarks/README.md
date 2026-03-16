@@ -1,7 +1,7 @@
 +++
 status = "closed"
 opened = "2026-01-04"
-closed = "2026-03-16"
+closed = "2026-01-04"
 +++
 
 # Bookmarks Implementation Plan (TermSurf 1.x)

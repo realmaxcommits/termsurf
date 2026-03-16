@@ -1,7 +1,7 @@
 +++
 status = "closed"
 opened = "2026-01-12"
-closed = "2026-03-16"
+closed = "2026-01-12"
 +++
 
 # TermSurf 2.0 Architecture

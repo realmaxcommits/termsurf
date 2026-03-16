@@ -1,7 +1,7 @@
 +++
 status = "closed"
 opened = "2026-02-26"
-closed = "2026-03-06"
+closed = "2026-02-26"
 +++
 
 # Issue 646: Normal and Insert Modes

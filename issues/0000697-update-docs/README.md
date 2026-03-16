@@ -1,7 +1,7 @@
 +++
 status = "closed"
 opened = "2026-03-02"
-closed = "2026-03-06"
+closed = "2026-03-02"
 +++
 
 # Issue 697: Update Documentation

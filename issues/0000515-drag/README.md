@@ -1,7 +1,7 @@
 +++
 status = "closed"
 opened = "2026-02-18"
-closed = "2026-03-06"
+closed = "2026-02-18"
 +++
 
 # Issue 515: Text Selection (Drag-to-Select)

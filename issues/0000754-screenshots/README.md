@@ -1,7 +1,7 @@
 +++
 status = "closed"
 opened = "2026-03-15"
-closed = "2026-03-16"
+closed = "2026-03-15"
 +++
 
 # Issue 754: Screenshot pipeline and homepage hero

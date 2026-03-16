@@ -1,7 +1,7 @@
 +++
 status = "closed"
 opened = "2026-02-25"
-closed = "2026-03-16"
+closed = "2026-02-25"
 +++
 
 # Issue 641: Chromium Patch Archive

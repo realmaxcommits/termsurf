@@ -1,7 +1,7 @@
 +++
 status = "closed"
 opened = "2026-03-05"
-closed = "2026-03-16"
+closed = "2026-03-05"
 +++
 
 # Issue 709: Wezboard

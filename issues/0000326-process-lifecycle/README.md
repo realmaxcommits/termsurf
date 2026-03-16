@@ -1,7 +1,7 @@
 +++
 status = "closed"
 opened = "2026-02-01"
-closed = "2026-03-16"
+closed = "2026-02-01"
 +++
 
 # 326: Process Lifecycle

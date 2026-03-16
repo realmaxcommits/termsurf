@@ -1,7 +1,7 @@
 +++
 status = "closed"
 opened = "2026-02-21"
-closed = "2026-03-06"
+closed = "2026-02-21"
 +++
 
 # Issue 608: Search Input

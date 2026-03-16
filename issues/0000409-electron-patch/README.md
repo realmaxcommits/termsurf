@@ -1,7 +1,7 @@
 +++
 status = "closed"
 opened = "2026-02-09"
-closed = "2026-03-06"
+closed = "2026-02-09"
 +++
 
 # Issue 409: Apply Electron's Chromium Patch Set

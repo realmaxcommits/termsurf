@@ -1,7 +1,7 @@
 +++
 status = "closed"
 opened = "2026-01-29"
-closed = "2026-03-06"
+closed = "2026-01-29"
 +++
 
 # TS3-9: Dynamic Webview Resize (Continued)

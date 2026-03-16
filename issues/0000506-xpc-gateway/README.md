@@ -1,7 +1,7 @@
 +++
 status = "closed"
 opened = "2026-02-15"
-closed = "2026-03-16"
+closed = "2026-02-15"
 +++
 
 # Issue 506: XPC Gateway Daemon

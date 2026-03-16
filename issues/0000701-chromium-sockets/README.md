@@ -1,7 +1,7 @@
 +++
 status = "closed"
 opened = "2026-03-03"
-closed = "2026-03-06"
+closed = "2026-03-03"
 +++
 
 # Issue 701: Replace GUI↔Chromium XPC with Unix Sockets

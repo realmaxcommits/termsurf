@@ -1,7 +1,7 @@
 +++
 status = "closed"
 opened = "2026-01-31"
-closed = "2026-03-16"
+closed = "2026-01-31"
 +++
 
 # Issue 317: Input Forwarding to Webview

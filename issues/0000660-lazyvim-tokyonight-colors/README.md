@@ -1,7 +1,7 @@
 +++
 status = "closed"
 opened = "2026-02-27"
-closed = "2026-03-06"
+closed = "2026-02-27"
 +++
 
 # Issue 660: LazyVim Tokyo Night Mode Colors

@@ -1,7 +1,7 @@
 +++
 status = "closed"
 opened = "2026-02-11"
-closed = "2026-03-06"
+closed = "2026-02-11"
 +++
 
 # Issue 411: Two Profiles at 60fps (No Electron Patches)

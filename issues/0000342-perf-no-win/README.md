@@ -1,7 +1,7 @@
 +++
 status = "closed"
 opened = "2026-02-07"
-closed = "2026-03-16"
+closed = "2026-02-07"
 +++
 
 # Issue 342: 60fps Without a Hidden Window

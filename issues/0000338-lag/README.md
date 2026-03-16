@@ -1,7 +1,7 @@
 +++
 status = "closed"
 opened = "2026-02-03"
-closed = "2026-03-06"
+closed = "2026-02-03"
 +++
 
 # TermSurf 3.0 Browser Lag

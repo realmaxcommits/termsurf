@@ -39,11 +39,11 @@ for dir in "$ISSUES_DIR"/*/; do
   if [ "$status" = "open" ]; then
     open_rows="${open_rows}| ${display_num} | ${link} | ${opened} |\n"
   else
-    closed_rows="${closed_rows}${closed}\t| ${display_num} | ${link} | ${opened} | ${closed} |\n"
+    closed_rows="${closed_rows}${num}\t| ${display_num} | ${link} | ${opened} | ${closed} |\n"
   fi
 done
 
-# Sort closed rows by date descending, then strip the sort key
+# Sort closed rows by issue number descending, then strip the sort key
 sorted_closed=$(echo -e "$closed_rows" | sort -r -t$'\t' -k1 | cut -f2-)
 
 # Write output

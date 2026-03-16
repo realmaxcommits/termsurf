@@ -1,7 +1,7 @@
 +++
 status = "closed"
 opened = "2026-02-17"
-closed = "2026-03-06"
+closed = "2026-02-17"
 +++
 
 # Issue 514: Mouse Input Forwarding

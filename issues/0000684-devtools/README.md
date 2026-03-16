@@ -1,7 +1,7 @@
 +++
 status = "closed"
 opened = "2026-03-01"
-closed = "2026-03-06"
+closed = "2026-03-01"
 +++
 
 # Issue 684: DevTools

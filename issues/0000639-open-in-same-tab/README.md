@@ -1,7 +1,7 @@
 +++
 status = "closed"
 opened = "2026-02-24"
-closed = "2026-03-06"
+closed = "2026-02-24"
 +++
 
 # Issue 639: Open New-Tab Links in Same Tab

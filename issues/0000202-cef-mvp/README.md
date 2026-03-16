@@ -1,7 +1,7 @@
 +++
 status = "closed"
 opened = "2026-01-17"
-closed = "2026-03-16"
+closed = "2026-01-17"
 +++
 
 # CEF Integration: Incremental Plan

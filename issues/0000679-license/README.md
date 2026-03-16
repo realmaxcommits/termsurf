@@ -1,7 +1,7 @@
 +++
 status = "closed"
 opened = "2026-02-28"
-closed = "2026-03-06"
+closed = "2026-02-28"
 +++
 
 # Issue 679: License and Trademark

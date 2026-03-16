@@ -1,7 +1,7 @@
 +++
 status = "closed"
 opened = "2026-03-07"
-closed = "2026-03-08"
+closed = "2026-03-07"
 +++
 
 # Issue 725: Wezboard browser overlay rendering

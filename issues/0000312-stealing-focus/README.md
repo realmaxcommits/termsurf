@@ -1,7 +1,7 @@
 +++
 status = "closed"
 opened = "2026-01-30"
-closed = "2026-03-06"
+closed = "2026-01-30"
 +++
 
 # Issue 312: Profile Process Steals Focus on macOS

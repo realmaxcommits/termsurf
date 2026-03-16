@@ -1,7 +1,7 @@
 +++
 status = "closed"
 opened = "2026-01-20"
-closed = "2026-03-06"
+closed = "2026-01-20"
 +++
 
 # CEF MVP5: Copy+Paste
