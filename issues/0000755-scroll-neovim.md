@@ -185,3 +185,14 @@ scripts/build.sh wezboard
 | 3 | Scroll neovim without webviews  | No webviews open, scroll in neovim                     | Neovim scrolls (no regression) |
 | 4 | Scroll split webview            | Webview in split pane same tab, scroll over it         | Webview scrolls                |
 | 5 | Scroll terminal next to webview | Webview in right split, scroll over left terminal pane | Terminal scrolls               |
+
+**Result:** Pass
+
+All five tests pass. Neovim scrolls correctly with webviews open on other tabs.
+
+#### Conclusion
+
+Adding a `visible` bool to the `Pane` struct, set by `sync_overlay_visibility`,
+and filtering on it in `try_forward_scroll_any_pane` fixes the issue. Only
+visible overlays are scroll candidates. Hidden tabs no longer intercept scroll
+events.
