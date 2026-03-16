@@ -133,3 +133,55 @@ The hit test iterates all panes with `ca_layer_host != 0`, including panes on
 inactive tabs. An overlay on a hidden tab still has bounds that overlap with the
 visible tab's content area, causing false-positive hits. The fix: filter
 candidates to only include panes on the currently active tab.
+
+### Experiment 2: Filter scroll candidates by visibility
+
+#### Description
+
+Add a `visible` bool to the `Pane` struct. Set it in `sync_overlay_visibility`
+(which already knows which panes are active). Filter on it in
+`try_forward_scroll_any_pane` so only visible overlays are scroll candidates.
+Also remove the debug logging from experiment 1.
+
+#### Changes
+
+**`wezboard/wezboard-gui/src/termsurf/state.rs`**
+
+1. Add `pub visible: bool` to `Pane` (default `false`).
+
+**`wezboard/wezboard-gui/src/termsurf/conn.rs`**
+
+2. Add `visible: false` to both `Pane` construction sites.
+
+3. In `sync_overlay_visibility()`, after computing `is_active`, set
+   `pane.visible = is_active`. This requires changing `&st.panes` to
+   `&mut st.panes` (and `st` to `mut st`).
+
+**`wezboard/wezboard-gui/src/termsurf/input.rs`**
+
+4. In `try_forward_scroll_any_pane()`, add `p.visible` to the filter:
+
+   ```rust
+   .filter(|p| p.tab_id != 0 && p.ca_layer_host != 0 && p.visible)
+   ```
+
+5. Remove all `log::info!` debug lines added in experiment 1.
+
+**`wezboard/wezboard-gui/src/termwindow/mouseevent.rs`**
+
+6. Remove the `log::info!("VertWheel/HorzWheel SUPPRESSED...")` line added in
+   experiment 1.
+
+#### Verification
+
+```bash
+scripts/build.sh wezboard
+```
+
+| #   | Test                            | Steps                                                  | Expected                       |
+| --- | ------------------------------- | ------------------------------------------------------ | ------------------------------ |
+| 1   | Scroll neovim with webview tab  | Neovim in tab 1, webview in tab 2, scroll in tab 1     | Neovim scrolls                 |
+| 2   | Scroll webview in active tab    | Switch to tab 2, scroll over webview                   | Webview scrolls                |
+| 3   | Scroll neovim without webviews  | No webviews open, scroll in neovim                     | Neovim scrolls (no regression) |
+| 4   | Scroll split webview            | Webview in split pane same tab, scroll over it         | Webview scrolls                |
+| 5   | Scroll terminal next to webview | Webview in right split, scroll over left terminal pane | Terminal scrolls               |
