@@ -644,7 +644,7 @@ pub fn try_forward_scroll_any_pane(
         let st = state.lock().unwrap();
         st.panes
             .values()
-            .filter(|p| p.tab_id != 0 && p.ca_layer_host != 0)
+            .filter(|p| p.tab_id != 0 && p.ca_layer_host != 0 && p.visible)
             .filter_map(|p| p.pane_id.parse().ok())
             .collect()
     };

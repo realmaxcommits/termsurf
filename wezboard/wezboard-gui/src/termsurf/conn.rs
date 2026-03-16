@@ -524,6 +524,7 @@ fn handle_set_overlay(
         overlay_origin_y: 0.0,
         overlay_scale: 1.0,
         cursor_type: 0,
+        visible: false,
     };
     st.panes.insert(overlay.pane_id.clone(), pane);
 
@@ -649,6 +650,7 @@ fn handle_set_devtools_overlay(
         overlay_origin_y: 0.0,
         overlay_scale: 1.0,
         cursor_type: 0,
+        visible: false,
     };
     st.panes.insert(overlay.pane_id.clone(), pane);
 
@@ -1492,18 +1494,19 @@ pub fn sync_overlay_visibility(active_pane_ids: &HashSet<String>) {
     let Some(state) = super::shared_state() else {
         return;
     };
-    let st = state.lock().unwrap();
+    let mut st = state.lock().unwrap();
     log::info!(
         "sync_overlay_visibility: active_ids={:?} pane_count={}",
         active_pane_ids,
         st.panes.len()
     );
-    for (pane_id, pane) in &st.panes {
+    for (pane_id, pane) in &mut st.panes {
         if pane.ca_layer_flipped == 0 {
             log::info!("  pane_id={} skipped (no layer)", pane_id);
             continue;
         }
-        let is_active = active_pane_ids.contains(pane_id);
+        let is_active = active_pane_ids.contains(pane_id.as_str());
+        pane.visible = is_active;
         log::info!(
             "  pane_id={} is_active={} ca_layer_flipped={:#x}",
             pane_id,
