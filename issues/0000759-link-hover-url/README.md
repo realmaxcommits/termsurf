@@ -317,10 +317,10 @@ cd webtui && cargo build
 scripts/build.sh wezboard
 ```
 
-| #   | Test                     | Steps                           | Expected                                          |
-| --- | ------------------------ | ------------------------------- | ------------------------------------------------- |
-| 1   | Hover shows URL          | Hover mouse over a link         | URL appears in viewport bottom-left border        |
-| 2   | Leave link clears URL    | Move mouse off the link         | Bottom-left text disappears                       |
-| 3   | Different links update   | Move mouse across several links | URL updates to each link's destination            |
-| 4   | Engine label still works | Check viewport bottom-right     | Engine name still shows at bottom-right           |
-| 5   | No bleed across TUIs     | Two TUIs, hover in one          | Only that TUI shows the hover URL (tab_id filter) |
+| # | Test                     | Steps                           | Expected                                          |
+| - | ------------------------ | ------------------------------- | ------------------------------------------------- |
+| 1 | Hover shows URL          | Hover mouse over a link         | URL appears in viewport bottom-left border        |
+| 2 | Leave link clears URL    | Move mouse off the link         | Bottom-left text disappears                       |
+| 3 | Different links update   | Move mouse across several links | URL updates to each link's destination            |
+| 4 | Engine label still works | Check viewport bottom-right     | Engine name still shows at bottom-right           |
+| 5 | No bleed across TUIs     | Two TUIs, hover in one          | Only that TUI shows the hover URL (tab_id filter) |
