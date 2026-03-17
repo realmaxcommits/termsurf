@@ -5,6 +5,7 @@
 | #   | Issue                                                             | Opened     |
 | --- | ----------------------------------------------------------------- | ---------- |
 | 756 | [Surfari — WebKit engine for TermSurf](0000756-surfari/README.md) | 2026-03-16 |
+| 759 | [Show link URL on hover](0000759-link-hover-url/README.md)        | 2026-03-17 |
 
 ## Closed
 
