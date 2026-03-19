@@ -57,3 +57,106 @@ Three layers:
 2. **Wezboard (GUI)** — Populate the new field when sending `BrowserReady`.
 3. **TUI (`webtui`)** — Read the field from `BrowserReady` and update the
    `browser` variable.
+
+## Experiments
+
+### Experiment 1: Add browser field to BrowserReady
+
+#### Description
+
+Add `browser` to the `BrowserReady` protobuf message. The GUI already has the
+resolved browser name on `pane.browser` when it constructs `BrowserReady` — it
+just doesn't include it. The TUI already has `let mut browser` — it just never
+gets updated after initialization.
+
+#### Changes
+
+**1. Protocol: `proto/termsurf.proto`**
+
+Add `browser` field to `BrowserReady` (~line 233):
+
+```protobuf
+message BrowserReady {
+  string pane_id = 1;
+  int64 tab_id = 2;
+  string browser_socket = 3;
+  string browser = 4;
+}
+```
+
+**2. Wezboard: `wezboard-gui/src/termsurf/conn.rs`**
+
+In `handle_tab_ready()` (~line 747), add `pane.browser` to the `BrowserReady`
+construction:
+
+```rust
+let browser_ready = TermSurfMessage {
+    msg: Some(Msg::BrowserReady(proto::BrowserReady {
+        pane_id: ready.pane_id.clone(),
+        tab_id: ready.tab_id,
+        browser_socket: listen_socket.clone(),
+        browser: pane.browser.clone(),
+    })),
+};
+```
+
+**3. TUI: `webtui/src/ipc.rs`**
+
+Add `browser` to `CompositorMessage::BrowserReady` (~line 30):
+
+```rust
+BrowserReady { tab_id: i64, browser_socket: String, browser: String },
+```
+
+Update the dispatch case (~line 429):
+
+```rust
+Some(Msg::BrowserReady(m)) => {
+    let _ = event_tx.send(super::LoopEvent::Ipc(CompositorMessage::BrowserReady {
+        tab_id: m.tab_id,
+        browser_socket: m.browser_socket.clone(),
+        browser: m.browser.clone(),
+    }));
+}
+```
+
+**4. TUI: `webtui/src/main.rs`**
+
+Update the `BrowserReady` handler (~line 715) to also update the `browser`
+variable:
+
+```rust
+ipc::CompositorMessage::BrowserReady {
+    tab_id,
+    browser_socket,
+    browser: resolved_browser,
+} => {
+    if !resolved_browser.is_empty() {
+        browser = resolved_browser;
+    }
+    // Connect directly to the browser engine.
+    if let Some(conn) = ipc::BrowserConnection::connect(
+        &browser_socket,
+        tab_id,
+        browser_tx.clone(),
+    ) {
+        browser_conn = Some(conn);
+    }
+}
+```
+
+Only updates `browser` if the field is non-empty, so an explicit `--browser`
+flag is never overwritten by a blank.
+
+#### Verification
+
+```bash
+scripts/build.sh wezboard
+cd webtui && cargo build
+```
+
+| # | Test                 | Steps                                                    | Expected                                   |
+| - | -------------------- | -------------------------------------------------------- | ------------------------------------------ |
+| 1 | Default shows label  | Run `web localhost:3000` (no --browser)                  | "roamium" appears in viewport bottom-right |
+| 2 | Explicit still works | Run `web --browser roamium localhost`                    | "roamium" appears in viewport bottom-right |
+| 3 | Absolute path works  | Run `web --browser /usr/local/roamium/roamium localhost` | "roamium" in bottom-right                  |
