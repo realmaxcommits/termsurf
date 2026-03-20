@@ -175,11 +175,11 @@ struct Cli {
     url: Option<String>,
 
     /// Browser profile name
-    #[arg(long, global = true)]
+    #[arg(short, long, global = true)]
     profile: Option<String>,
 
     /// Browser binary to use ("chromium", "plusium", or absolute path)
-    #[arg(long, global = true)]
+    #[arg(short, long, global = true)]
     browser: Option<String>,
 }
 
