@@ -524,7 +524,7 @@ fn handle_set_overlay(
         overlay_origin_y: 0.0,
         overlay_scale: 1.0,
         cursor_type: 0,
-        visible: false,
+        visible: true,
     };
     st.panes.insert(overlay.pane_id.clone(), pane);
 
@@ -650,7 +650,7 @@ fn handle_set_devtools_overlay(
         overlay_origin_y: 0.0,
         overlay_scale: 1.0,
         cursor_type: 0,
-        visible: false,
+        visible: true,
     };
     st.panes.insert(overlay.pane_id.clone(), pane);
 
