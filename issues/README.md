@@ -2,9 +2,10 @@
 
 ## Open
 
-| #                                    | Title                                | Opened     |
-| ------------------------------------ | ------------------------------------ | ---------- |
-| [0000756](0000756-surfari/README.md) | Surfari — WebKit engine for TermSurf | 2026-03-16 |
+| #                                                   | Title                                               | Opened     |
+| --------------------------------------------------- | --------------------------------------------------- | ---------- |
+| [0000756](0000756-surfari/README.md)                | Surfari — WebKit engine for TermSurf                | 2026-03-16 |
+| [0000764](0000764-viewport-profile-label/README.md) | Move profile label to bottom-right with engine name | 2026-03-20 |
 
 ## Closed
 
