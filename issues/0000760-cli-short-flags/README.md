@@ -1,6 +1,7 @@
 +++
-status = "open"
+status = "closed"
 opened = "2026-03-17"
+closed = "2026-03-20"
 +++
 
 # Issue 760: Add short flags for TUI CLI arguments
@@ -99,3 +100,18 @@ cd webtui && cargo build
 | 3   | Both short        | `web -p work -b roamium localhost` | Both flags work together           |
 | 4   | Long still works  | `web --profile work localhost`     | Long form still accepted           |
 | 5   | Help shows shorts | `web --help`                       | Shows `-p` and `-b` in help output |
+
+**Result:** Pass
+
+All flags work: `-p` for profile, `-b` for browser, both together, long forms
+still accepted, and help output shows the short forms.
+
+#### Conclusion
+
+Adding `short` to clap's `#[arg()]` attribute is all it takes. Clap infers `-p`
+from `profile` and `-b` from `browser` automatically.
+
+## Conclusion
+
+Added `-p` and `-b` short flags for `--profile` and `--browser`. One-word change
+per flag in the clap derive attribute.
