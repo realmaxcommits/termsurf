@@ -1,6 +1,7 @@
 +++
-status = "open"
+status = "closed"
 opened = "2026-03-22"
+closed = "2026-03-22"
 +++
 
 # Issue 765: Wezboard pane crashes on XTGETTCAP (corrupted terminfo)
@@ -92,8 +93,25 @@ hexdump -C termwiz/data/wezboard | head -1
 scripts/build.sh wezboard
 ```
 
-| # | Test                 | Steps                                         | Expected                        |
-| - | -------------------- | --------------------------------------------- | ------------------------------- |
-| 1 | vim no longer panics | Run shannon, then run vim inside it           | vim opens normally              |
-| 2 | XTGETTCAP works      | Run a program that queries terminal caps      | No panic, capabilities returned |
-| 3 | No regression        | Use wezboard normally, open panes, browse web | Everything works as before      |
+| #   | Test                 | Steps                                         | Expected                        |
+| --- | -------------------- | --------------------------------------------- | ------------------------------- |
+| 1   | vim no longer panics | Run shannon, then run vim inside it           | vim opens normally              |
+| 2   | XTGETTCAP works      | Run a program that queries terminal caps      | No panic, capabilities returned |
+| 3   | No regression        | Use wezboard normally, open panes, browse web | Everything works as before      |
+
+**Result:** Pass
+
+vim opens normally from shannon without crashing the pane.
+
+#### Conclusion
+
+Recompiling the terminfo database with `tic -x` from the source file produced a
+correct binary with the right name section length (33 bytes for "wezboard").
+
+## Conclusion
+
+The rename script's binary find-and-replace of "wezterm" → "wezboard" inside the
+compiled terminfo file corrupted the header — the name grew by 1 byte but the
+length field wasn't updated, shifting every subsequent field. The fix was
+recompiling from the `.terminfo` source with `tic -x`. Lesson: never
+find-and-replace inside compiled binary formats; recompile from source.
