@@ -92,8 +92,8 @@ hexdump -C termwiz/data/wezboard | head -1
 scripts/build.sh wezboard
 ```
 
-| #   | Test                 | Steps                                         | Expected                        |
-| --- | -------------------- | --------------------------------------------- | ------------------------------- |
-| 1   | vim no longer panics | Run shannon, then run vim inside it           | vim opens normally              |
-| 2   | XTGETTCAP works      | Run a program that queries terminal caps      | No panic, capabilities returned |
-| 3   | No regression        | Use wezboard normally, open panes, browse web | Everything works as before      |
+| # | Test                 | Steps                                         | Expected                        |
+| - | -------------------- | --------------------------------------------- | ------------------------------- |
+| 1 | vim no longer panics | Run shannon, then run vim inside it           | vim opens normally              |
+| 2 | XTGETTCAP works      | Run a program that queries terminal caps      | No panic, capabilities returned |
+| 3 | No regression        | Use wezboard normally, open panes, browse web | Everything works as before      |
