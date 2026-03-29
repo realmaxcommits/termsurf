@@ -1,7 +1,5 @@
 ---
 import Base from "../layouts/Base.astro";
-import { CommitLog } from "../components/CommitLog";
-import commitsData from "../../data/commits.json";
 import blogData from "../../data/blog.json";
 
 const latestPost = blogData.posts[0];
@@ -77,11 +75,4 @@ const latestPost = blogData.posts[0];
       [view all posts]
     </a>
   </section>
-  <CommitLog client:load commits={commitsData.commits.slice(0, 10)} />
-  <a
-    href="/commits"
-    class="text-sm text-muted hover:text-accent mt-3 inline-block"
-  >
-    [view all commits]
-  </a>
 </Base>

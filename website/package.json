@@ -4,9 +4,8 @@
   "scripts": {
     "dev": "astro dev",
     "build": "bun run build:data && astro build",
-    "build:data": "bun run build:commits && bun run build:blog",
+    "build:data": "bun run build:blog",
     "build:blog": "bun run scripts/build-blog.ts",
-    "build:commits": "bun run scripts/build-commits.ts",
     "build:icons": "bun run scripts/process-icons.ts",
     "deploy": "bun run build && wrangler pages deploy dist"
   },
