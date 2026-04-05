@@ -120,3 +120,119 @@ connection state, set it when `ServerRegister` is processed, and pass it to
 `handle_message`. This is what 769 tried. The key difference: don't remove
 `ServerRegister` from `handle_message`'s match — just add a side effect that
 also stores the key on the connection.
+
+## Experiments
+
+### Experiment 1: Composite key with server_key on connection
+
+Use a composite `(String, i64)` key for `tab_to_pane`. Thread the server_key
+through the connection by having `handle_server_register` return it, then pass
+it to `handle_message`. Keep `ServerRegister` inside `handle_message` — don't
+restructure the message loop.
+
+#### Changes
+
+**`wezboard/wezboard-gui/src/termsurf/state.rs`**
+
+1. Change `tab_to_pane` type from `HashMap<i64, String>` to
+   `HashMap<(String, i64), String>`.
+
+**`wezboard/wezboard-gui/src/termsurf/conn.rs`**
+
+2. Add `server_key: Option<String>` local var in `handle_connection` (line 46,
+   alongside `conn_type`). Initialize to `None`.
+
+3. Change `handle_server_register` return type from `anyhow::Result<()>` to
+   `anyhow::Result<Option<String>>`. Return `Some(key.clone())` on match,
+   `Ok(None)` on no match. Keep the function body otherwise identical.
+
+4. In `handle_connection` (line 96): after `handle_message` returns, check if
+   `server_key` is still `None` and the message was a `ServerRegister`. But
+   since `handle_message` consumes the message, we can't check it afterward.
+   Instead, change `handle_message` to return the server_key when it processes a
+   `ServerRegister`:
+
+   Change `handle_message` return type from `anyhow::Result<()>` to
+   `anyhow::Result<Option<String>>`. Return `Ok(None)` from every arm except
+   `ServerRegister`, which returns the key from `handle_server_register`.
+
+   In the connection loop, capture the return:
+   ```rust
+   match handle_message(msg, &stream, &tx, &server_key, &state).await {
+       Ok(Some(key)) => server_key = Some(key),
+       Ok(None) => {}
+       Err(err) => log::error!("TermSurf handle error: {:#}", err),
+   }
+   ```
+
+5. Add `server_key: &Option<String>` parameter to `handle_message` (line 136).
+   The `ServerRegister` arm still calls `handle_server_register` as before, but
+   now returns its key. All other arms return `Ok(None)`.
+
+6. **Insert** (`handle_tab_ready`, line 731): Build composite key from the
+   pane's profile/browser (already available from `st.panes`):
+   ```rust
+   let pane = st.panes.get(&ready.pane_id).unwrap();
+   let skey = TermSurfState::server_key(&pane.profile, &pane.browser);
+   st.tab_to_pane.insert((skey, ready.tab_id), ready.pane_id.clone());
+   ```
+
+7. **CaContext lookup** (line 228): Pass `server_key` to `handle_ca_context`.
+   Inside, build composite key:
+   ```rust
+   let skey = server_key.as_deref().unwrap_or("");
+   let lookup = (skey.to_string(), ca_context.tab_id);
+   st.tab_to_pane.get(&lookup)
+   ```
+
+8. **CursorChanged lookup** (line 238): Same pattern — use `server_key` from the
+   connection to build composite key.
+
+9. **DevTools lookup** (line 323): This comes from a TUI connection where
+   `server_key` is `None`. Use the resolved pane's profile/browser instead:
+   ```rust
+   let resolved_pane = st.panes.values().find(|p| p.tab_id == resolved_tab_id);
+   if let Some(rp) = resolved_pane {
+       let skey = TermSurfState::server_key(&rp.profile, &rp.browser);
+       st.tab_to_pane.get(&(skey, resolved_tab_id))
+   }
+   ```
+
+10. **Remove on disconnect** (line 882): Build composite key from the pane being
+    removed:
+    ```rust
+    let skey = TermSurfState::server_key(&pane.profile, &pane.browser);
+    st.tab_to_pane.remove(&(skey, pane.tab_id));
+    ```
+
+#### Key difference from Issue 769
+
+- `ServerRegister` stays inside `handle_message`'s match. No restructuring of
+  the message loop.
+- The server_key flows out via `handle_message`'s return value, not by
+  intercepting the message before `handle_message`.
+- `handle_server_register` body is minimally changed (just the return type and
+  value).
+
+#### Verification
+
+1. **Single profile works:**
+   - Open one pane, `web ryanxcharles.com`.
+   - **Pass:** Browser loads and displays the page.
+
+2. **Two profiles, no cloning:**
+   - Open two panes with different profiles.
+   - Navigate in pane 1.
+   - **Pass:** Pane 2 continues showing its own page.
+
+3. **Two profiles, independent navigation:**
+   - Navigate in both panes independently.
+   - **Pass:** Each pane shows its own page throughout.
+
+4. **Single profile regression:**
+   - Navigate, refresh, open DevTools.
+   - **Pass:** Everything works as before.
+
+5. **Close and reopen:**
+   - Open two profiles, close one, reopen it.
+   - **Pass:** No stale mappings.
