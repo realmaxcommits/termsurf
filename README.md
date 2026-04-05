@@ -6,7 +6,7 @@ Type `web` and a full web browser opens right in your terminal pane. No window
 switching. No context loss. Just web.
 
 ```bash
-web termsurf.com/welcome
+web ryanxcharles.com
 ```
 
 ![TermSurf screenshot showing a browser pane alongside terminal panes](assets/screenshot2.png)
@@ -33,9 +33,8 @@ panes in the same window. You stay in flow.
 - **Multi-pane** — Multiple browser panes in one window.
 - **Profile isolation** — Separate cookies, sessions, and storage per profile.
 - **Dark mode** — System color scheme forwarded to Chromium. Override with
-  `:colorscheme dark|light|system`.
-- **Chrome DevTools** — Open in a split pane with
-  `:devtools right|left|up|down`.
+  `:dark` or `:da`.
+- **Chrome DevTools** — Open in a split pane with `:devtools` or `:de`.
 
 ### Mouse Input
 
@@ -92,14 +91,11 @@ indicators follow the LazyVim Tokyo Night palette.
 
 ### Commands
 
-| Command                            | Action                      |
-| ---------------------------------- | --------------------------- |
-| `:q` / `:quit`                     | Quit                        |
-| `:qa` / `:quitall`                 | Quit all panes              |
-| `:devtools [direction]`            | Open DevTools in split pane |
-| `:colorscheme dark\|light\|system` | Set color scheme            |
-
-Vim-style subsequence matching — `:cs dark` works for `:colorscheme dark`.
+| Command              | Shortcut | Action                      |
+| -------------------- | -------- | --------------------------- |
+| `:quit`              | `:q`     | Quit                        |
+| `:dark [on\|off\|s]` | `:da`    | Toggle/set dark mode        |
+| `:devtools [dir]`    | `:de`    | Open DevTools in split pane |
 
 ### UI
 
@@ -110,10 +106,9 @@ Vim-style subsequence matching — `:cs dark` works for `:colorscheme dark`.
 
 ### Terminal
 
-Based on [Ghostty](https://ghostty.org/) (Ghostboard) and
-[WezTerm](https://wezfurlong.org/wezterm/) (Wezboard). All native terminal
-features, configuration, and keybindings work out of the box. TermSurf adds
-browser integration on top.
+Based on [WezTerm](https://wezfurlong.org/wezterm/) (Wezboard). All native
+terminal features, configuration, and keybindings work out of the box. TermSurf
+adds browser integration on top.
 
 ## Profiles
 
@@ -131,17 +126,13 @@ logging into Google in one profile doesn't affect the others.
 
 ## Getting Started
 
-macOS only for now. You need Xcode installed and three toolchains: Zig
-(terminal), Rust (TUI), and Chromium (browser engine). Plan for ~100 GB of disk
-space (almost all of it is Chromium).
+macOS only for now. You need the Rust toolchain and a Chromium build. Plan for
+~100 GB of disk space (almost all of it is Chromium).
 
 ### 1. Install prerequisites
 
 ```bash
-# Zig 0.15.2+ (terminal emulator)
-brew install zig
-
-# Rust (web TUI)
+# Rust (GUI, TUI, engine binary)
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 
 # Chromium depot_tools (build system for Chromium)
@@ -181,7 +172,7 @@ Apply TermSurf patches and build:
 ```bash
 git checkout -b 146.0.7650.0-termsurf
 git am ../../chromium/patches/termsurf/*.patch
-autoninja -C out/Default chromium_profile_server
+autoninja -C out/Default libtermsurf_chromium
 ```
 
 **Always use `autoninja`, never `ninja` directly.** Using `ninja` even once
@@ -192,31 +183,30 @@ management, patch workflow, and recovery from build issues.
 ### 3. Build and run (development)
 
 ```bash
-./scripts/build.sh ghostboard --open
+./scripts/build.sh wezboard
+./wezboard/target/debug/wezboard-gui
 ```
-
-This builds Ghostboard in debug mode and opens the app. Flags: `--clean` to
-rebuild from scratch, `--open` to launch after building, `--release` for
-optimized builds. Components: `ghostboard`, `wezboard`, `roamium`, `webtui`,
-`chromium`, `all`.
 
 ### 4. Build and install (release)
 
 ```bash
 ./scripts/build.sh all --release
-./scripts/install.sh all
+sudo ./scripts/install.sh all
 ```
 
-`build.sh --release` builds optimized binaries (`ReleaseFast` for Zig,
-`--release` for Rust). `install.sh` copies the app bundle to `/Applications/`,
-bundles the Chromium server and `web` TUI inside it, re-signs the bundle, and
-symlinks `termsurf` and `web` to `/usr/local/bin/`.
+`install.sh` copies the app bundle to `/Applications/`, installs Roamium and
+Chromium dylibs to `/usr/local/roamium/`, and symlinks `wezboard` and `web` to
+`/usr/local/bin/`. All binaries are ad-hoc code-signed after copying.
 
-After installing, just run:
+After installing, launch Wezboard and run:
 
 ```bash
 web google.com
 ```
+
+## Documentation
+
+Full documentation at [termsurf.com/docs](https://termsurf.com/docs).
 
 ## Contributing
 
