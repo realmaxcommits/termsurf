@@ -1,0 +1,58 @@
+---
+import Base from "../layouts/Base.astro";
+
+interface Props {
+  title: string;
+}
+
+const { title } = Astro.props;
+
+const pages = [
+  { href: "/docs/getting-started", label: "Getting Started" },
+  { href: "/docs/architecture", label: "Architecture" },
+  { section: "Components" },
+  { href: "/docs/components/wezboard", label: "Wezboard" },
+  { href: "/docs/components/webtui", label: "Web TUI" },
+  { href: "/docs/components/roamium", label: "Roamium" },
+  { section: "Protocol" },
+  { href: "/docs/protocol/overview", label: "Overview" },
+  { href: "/docs/protocol/messages", label: "Messages" },
+  { section: "Reference" },
+  { href: "/docs/reference/configuration", label: "Configuration" },
+];
+
+const currentPath = Astro.url.pathname.replace(/\/$/, "");
+---
+
+<Base title={`${title} — TermSurf`}>
+  <div class="flex gap-8">
+    <aside class="hidden w-48 shrink-0 md:block">
+      <nav class="space-y-1 text-xs">
+        {
+          pages.map((page) =>
+            "section" in page ? (
+              <div class="text-foreground-dark mt-3 mb-1 font-bold">
+                {page.section}
+              </div>
+            ) : (
+              <a
+                href={page.href}
+                class:list={[
+                  "block py-0.5",
+                  currentPath === page.href
+                    ? "text-accent"
+                    : "text-muted hover:text-foreground-dark",
+                ]}
+              >
+                {page.label}
+              </a>
+            ),
+          )
+        }
+      </nav>
+    </aside>
+    <article class="prose-termsurf min-w-0 flex-1">
+      <slot />
+    </article>
+  </div>
+</Base>

@@ -1,0 +1,35 @@
+---
+import DocPage from "../../components/DocPage.astro";
+---
+
+<DocPage title="Docs">
+  <h1>Documentation</h1>
+
+  <p>
+    TermSurf is a protocol for embedding web browsers inside terminal emulators.
+    Any terminal, any browser engine, any TUI — connected by a protobuf/Unix
+    socket protocol.
+  </p>
+
+  <h2>Quick Start</h2>
+
+  <p>
+    See <a href="/docs/getting-started">Getting Started</a> for installation and
+    setup.
+  </p>
+
+  <h2>Components</h2>
+
+  <ul>
+    <li><a href="/docs/components/wezboard">Wezboard</a> — GUI terminal emulator (WezTerm fork)</li>
+    <li><a href="/docs/components/webtui">Web TUI</a> — browser chrome in the terminal pane</li>
+    <li><a href="/docs/components/roamium">Roamium</a> — Chromium browser engine binary</li>
+  </ul>
+
+  <h2>Protocol</h2>
+
+  <ul>
+    <li><a href="/docs/protocol/overview">Overview</a> — architecture and IPC design</li>
+    <li><a href="/docs/protocol/messages">Messages</a> — protobuf message reference</li>
+  </ul>
+</DocPage>
