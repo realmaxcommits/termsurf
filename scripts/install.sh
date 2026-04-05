@@ -41,6 +41,9 @@ install_roamium() {
   cp "$CHROMIUM_OUT/icudtl.dat" "$INSTALL_DIR/"
   cp "$CHROMIUM_OUT"/v8_context_snapshot*.bin "$INSTALL_DIR/"
 
+  echo "==> Codesigning Roamium..."
+  codesign --force --sign - "$INSTALL_DIR/roamium" || true
+
   # Clean up old install locations.
   rm -f /usr/local/bin/roamium
   rm -rf /usr/local/lib/roamium
@@ -73,6 +76,7 @@ install_wezboard() {
   if [ -f "$CLI" ]; then
     echo "==> Installing wezboard CLI to /usr/local/bin/wezboard..."
     cp "$CLI" /usr/local/bin/wezboard
+    codesign --force --sign - /usr/local/bin/wezboard || true
     echo "  Bin: /usr/local/bin/wezboard"
   fi
 
@@ -90,6 +94,7 @@ install_webtui() {
 
   echo "==> Installing webtui to /usr/local/bin/web..."
   cp "$WEB" /usr/local/bin/web
+  codesign --force --sign - /usr/local/bin/web || true
 
   echo "  Bin: /usr/local/bin/web"
 }

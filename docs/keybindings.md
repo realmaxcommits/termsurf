@@ -44,15 +44,13 @@ Chromium handles them internally via its default keybinding logic.
 
 ## Commands
 
-Entered via `:` in Control mode. Vim-style subsequence matching — `:cs dark`
-works for `:colorscheme dark` (Issue 681).
+Entered via `:` in Control mode. Exact match only (Issue 772).
 
-| Command                            | Action                      |
-| ---------------------------------- | --------------------------- |
-| `:q` / `:quit`                     | Quit                        |
-| `:qa` / `:quitall`                 | Quit all panes              |
-| `:devtools [direction]`            | Open DevTools in split pane |
-| `:colorscheme dark\|light\|system` | Set color scheme            |
+| Command              | Shortcut | Action                      |
+| -------------------- | -------- | --------------------------- |
+| `:quit`              | `:q`     | Quit                        |
+| `:dark [on\|off\|s]` | `:da`    | Toggle/set dark mode        |
+| `:devtools [dir]`    | `:de`    | Open DevTools in split pane |
 
 ## Modes
 

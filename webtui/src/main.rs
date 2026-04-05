@@ -57,40 +57,44 @@ enum LoopEvent {
     Ipc(ipc::CompositorMessage),
 }
 
-// Command dispatch (Issue 659).
+// Command dispatch (Issues 659, 772).
+enum DarkAction {
+    Toggle,
+    On,
+    Off,
+    System,
+}
+
 enum CommandResult {
     Quit,
-    SetColorScheme(String),
+    Dark(DarkAction),
     DevTools(String), // direction: "right", "down", "left", "up" (Issue 690).
     Error(String),    // error message for command bar (Issue 690).
     None,
 }
 
 struct Command {
-    name: &'static str,
+    names: &'static [&'static str],
     exec: fn(args: &[&str]) -> CommandResult,
 }
 
 const COMMANDS: &[Command] = &[
     Command {
-        name: "quit",
+        names: &["quit", "q"],
         exec: |_| CommandResult::Quit,
     },
     Command {
-        name: "quitall",
-        exec: |_| CommandResult::Quit,
-    },
-    Command {
-        name: "colorscheme",
-        exec: |args| match args.first().map(|s| *s) {
-            Some("dark" | "d") => CommandResult::SetColorScheme("dark".into()),
-            Some("light" | "l") => CommandResult::SetColorScheme("light".into()),
-            Some("system" | "s") => CommandResult::SetColorScheme("system".into()),
-            _ => CommandResult::None,
+        names: &["dark", "da"],
+        exec: |args| match args.first().copied() {
+            None => CommandResult::Dark(DarkAction::Toggle),
+            Some("on" | "yes" | "y") => CommandResult::Dark(DarkAction::On),
+            Some("off" | "no" | "n") => CommandResult::Dark(DarkAction::Off),
+            Some("system" | "s") => CommandResult::Dark(DarkAction::System),
+            Some(other) => CommandResult::Error(format!("Unknown: {}", other)),
         },
     },
     Command {
-        name: "devtools",
+        names: &["devtools", "de"],
         exec: |args| match args.first().copied() {
             Some("right" | "r") | None => CommandResult::DevTools("right".into()),
             Some("down" | "d") => CommandResult::DevTools("down".into()),
@@ -101,47 +105,22 @@ const COMMANDS: &[Command] = &[
     },
 ];
 
-fn is_subsequence(needle: &str, haystack: &str) -> bool {
-    let mut hay = haystack.chars();
-    for c in needle.chars() {
-        loop {
-            match hay.next() {
-                Some(h) if h == c => break,
-                Some(_) => continue,
-                None => return false,
-            }
-        }
-    }
-    true
-}
-
 fn dispatch(input: &str) -> CommandResult {
     let mut parts = input.trim().splitn(2, ' ');
-    let prefix = parts.next().unwrap_or("");
-    if prefix.is_empty() {
+    let cmd = parts.next().unwrap_or("");
+    if cmd.is_empty() {
         return CommandResult::None;
     }
     let args: Vec<&str> = parts
         .next()
         .map(|s| s.split_whitespace().collect())
         .unwrap_or_default();
-    let matches: Vec<&Command> = COMMANDS
-        .iter()
-        .filter(|c| is_subsequence(prefix, c.name))
-        .collect();
-    match matches.len() {
-        0 => CommandResult::None,
-        1 => (matches[0].exec)(&args),
-        _ => {
-            // Exact match wins, then shortest name wins (Issue 681).
-            if let Some(cmd) = matches.iter().find(|c| c.name == prefix) {
-                (cmd.exec)(&args)
-            } else {
-                let shortest = matches.iter().min_by_key(|c| c.name.len()).unwrap();
-                (shortest.exec)(&args)
-            }
+    for command in COMMANDS {
+        if command.names.contains(&cmd) {
+            return (command.exec)(&args);
         }
     }
+    CommandResult::None
 }
 
 /// Clipboard wrapper that strips leading newlines from edtui's line-mode yanks
@@ -363,6 +342,7 @@ fn main() -> io::Result<()> {
         .unwrap_or_else(|| "web".to_string());
 
     let mut mode = Mode::Control;
+    let mut is_dark = true;
     let mut command_error: Option<String> = None; // Command bar error (Issue 690).
     let mut last_viewport = Rect::default();
     let mut loading_bar_active = false;
@@ -618,13 +598,21 @@ fn main() -> io::Result<()> {
                                 .unwrap_or_default();
                             match dispatch(&cmd_text) {
                                 CommandResult::Quit => break,
-                                CommandResult::SetColorScheme(scheme) => {
+                                CommandResult::Dark(action) => {
+                                    let dark = match action {
+                                        DarkAction::Toggle => !is_dark,
+                                        DarkAction::On => true,
+                                        DarkAction::Off => false,
+                                        DarkAction::System => false,
+                                    };
+                                    is_dark = dark;
+                                    let scheme = if dark { "dark" } else { "light" };
                                     if let Some(ref bc) = browser_conn {
-                                        bc.send_set_color_scheme(&scheme);
+                                        bc.send_set_color_scheme(scheme);
                                     }
                                     if let (Some(ref conn), Some(ref pid)) = (&compositor, &pane_id)
                                     {
-                                        conn.send_set_color_scheme(pid, &scheme);
+                                        conn.send_set_color_scheme(pid, scheme);
                                     }
                                 }
                                 CommandResult::DevTools(direction) => {
