@@ -970,7 +970,10 @@ fn resolve_browser_path(browser: &str) -> anyhow::Result<String> {
         return Ok(name.to_string());
     }
 
-    let candidates: &[(&str, &str)] = &[("roamium", "/usr/local/roamium/roamium")];
+    let candidates: &[(&str, &str)] = &[
+        ("roamium", "/usr/local/roamium/roamium"),
+        ("roamium", "/opt/homebrew/opt/termsurf/roamium/roamium"),
+    ];
 
     for (n, path) in candidates {
         if *n == name && std::path::Path::new(path).exists() {

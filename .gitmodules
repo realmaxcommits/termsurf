@@ -11,3 +11,6 @@
 [submodule "wezboard/deps/freetype/freetype2"]
 	path = wezboard/deps/freetype/freetype2
 	url = https://github.com/freetype/freetype2.git
+[submodule "homebrew"]
+	path = homebrew
+	url = git@github.com:termsurf/homebrew-termsurf.git

@@ -112,3 +112,6 @@ vendor/objc2/
 # TUI build outputs
 webtui/target/
 
+# Release packaging
+dist/
+
