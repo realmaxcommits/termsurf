@@ -50,18 +50,3 @@ body {
   min-height: 100vh;
   font-family: var(--font-mono);
 }
-
-.scanline-overlay::after {
-  content: "";
-  position: fixed;
-  inset: 0;
-  pointer-events: none;
-  background: repeating-linear-gradient(
-    to bottom,
-    transparent 0px,
-    transparent 2px,
-    color-mix(in srgb, var(--color-foreground) 3%, transparent) 2px,
-    color-mix(in srgb, var(--color-foreground) 3%, transparent) 4px
-  );
-  z-index: 9999;
-}
