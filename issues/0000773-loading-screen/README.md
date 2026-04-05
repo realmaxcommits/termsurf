@@ -1,6 +1,7 @@
 +++
-status = "open"
+status = "closed"
 opened = "2026-04-05"
+closed = "2026-04-05"
 +++
 
 # Issue 773: Loading screen for browser startup
@@ -159,3 +160,27 @@ All the stage transitions are already observable from existing events:
 4. **Normal operation after load:**
    - Navigate to other pages after initial load.
    - **Pass:** Loading log does not reappear. Normal TUI behavior.
+
+**Result:** Pass
+
+All stages display with animated spinner, elapsed time, and smooth transitions.
+Browser overlay appears automatically after loading completes.
+
+#### Additional fixes during implementation
+
+- **Animated spinner:** 10-frame braille spinner (⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏) cycling at
+  100ms via `recv_timeout` during loading, blocking `recv` after.
+- **Overlay not appearing until keypress:** The GUI's paint_pass only runs when
+  terminal content changes. Fixed by keeping the 100ms polling active until
+  `page_loaded` (LoadingState "done"), not just `browser_ready`.
+- **2-second grace period:** After page_loaded, keep polling for 2 more seconds
+  to ensure the GUI creates and displays the CALayerHost overlay before switching
+  to blocking recv.
+
+## Conclusion
+
+The loading screen shows a vertical log of startup stages in the viewport with
+status icons (✓ done, ⠋ spinning, ✗ error), elapsed time for the Chromium wait,
+a 30-second warning for first launch, and a 120-second timeout. The animated
+spinner and auto-redraw use `recv_timeout(100ms)` during loading, switching to
+blocking `recv()` after a 2-second grace period post-load for zero idle CPU.

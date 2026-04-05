@@ -6,12 +6,12 @@
 | ----------------------------------------------- | ---------------------------------------------------- | ---------- |
 | [0000756](0000756-surfari/README.md)            | Surfari — WebKit engine for TermSurf                 | 2026-03-16 |
 | [0000768](0000768-cloudflare-website/README.md) | Migrate termsurf.com from Fly.io to Cloudflare Pages | 2026-03-29 |
-| [0000773](0000773-loading-screen/README.md)     | Loading screen for browser startup                   | 2026-04-05 |
 
 ## Closed
 
 | #                                                             | Title                                                                         | Opened     | Closed     |
 | ------------------------------------------------------------- | ----------------------------------------------------------------------------- | ---------- | ---------- |
+| [0000773](0000773-loading-screen/README.md)                   | Loading screen for browser startup                                            | 2026-04-05 | 2026-04-05 |
 | [0000772](0000772-command-shortcuts/README.md)                | Explicit command shortcuts and rename colorscheme to dark                     | 2026-04-05 | 2026-04-05 |
 | [0000771](0000771-tab-id-collision/README.md)                 | Tab ID collision across browser profiles                                      | 2026-04-05 | 2026-04-05 |
 | [0000770](0000770-browser-not-loading/README.md)              | Browser does not load                                                         | 2026-04-05 | 2026-04-05 |
