@@ -126,10 +126,26 @@ logging into Google in one profile doesn't affect the others.
 
 ## Getting Started
 
-macOS only for now. You need the Rust toolchain and a Chromium build. Plan for
+### Install with Homebrew
+
+The fastest way to install on macOS:
+
+```bash
+brew tap termsurf/termsurf
+brew install --cask termsurf
+```
+
+This installs the Wezboard app, the `web` and `wezboard` CLIs, and Roamium
+(Chromium engine). Launch Wezboard and type `web ryanxcharles.com`.
+
+To upgrade: `brew update && brew upgrade --cask termsurf`
+
+### Build from Source
+
+For development. Requires the Rust toolchain and a Chromium build. Plan for
 ~100 GB of disk space (almost all of it is Chromium).
 
-### 1. Install prerequisites
+#### 1. Install prerequisites
 
 ```bash
 # Rust (GUI, TUI, engine binary)
@@ -139,7 +155,7 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 git clone https://chromium.googlesource.com/chromium/tools/depot_tools.git chromium/depot_tools
 ```
 
-### 2. Fetch and build Chromium
+#### 2. Fetch and build Chromium
 
 This is the big one. The initial fetch downloads ~50 GB of source code and the
 first build takes ~1.5 hours. After that, incremental builds take 15–20 seconds.
@@ -180,14 +196,14 @@ permanently downgrades the build directory and the only recovery is a full
 rebuild. See [chromium/README.md](chromium/README.md) for details on branch
 management, patch workflow, and recovery from build issues.
 
-### 3. Build and run (development)
+#### 3. Build and run (development)
 
 ```bash
 ./scripts/build.sh wezboard
 ./wezboard/target/debug/wezboard-gui
 ```
 
-### 4. Build and install (release)
+#### 4. Build and install (release)
 
 ```bash
 ./scripts/build.sh all --release

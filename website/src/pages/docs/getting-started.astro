@@ -12,15 +12,37 @@ const cb =
     <code>web localhost:3000</code> and see your work without leaving the shell.
   </p>
 
-  <h2>Prerequisites</h2>
+  <h2>Install with Homebrew</h2>
 
-  <ul>
-    <li>macOS (Linux and Windows support planned)</li>
-    <li><a href="https://www.rust-lang.org/tools/install">Rust toolchain</a></li>
-    <li>Chromium build (for Roamium)</li>
-  </ul>
+  <p>The fastest way to install on macOS:</p>
 
-  <h2>Clone</h2>
+  <pre
+    class={cb}><code><span class="text-primary">brew</span> tap termsurf/termsurf
+<span class="text-primary">brew</span> install --cask termsurf</code></pre>
+
+  <p>
+    This installs the Wezboard app to <code>/Applications/</code>, the
+    <code>web</code> and <code>wezboard</code> CLIs to
+    <code>/opt/homebrew/bin/</code>, and Roamium (Chromium engine) to
+    <code>/opt/homebrew/opt/termsurf-roamium/</code>.
+  </p>
+
+  <p>
+    To upgrade to a new version:
+  </p>
+
+  <pre
+    class={cb}><code><span class="text-primary">brew</span> update && <span class="text-primary">brew</span> upgrade --cask termsurf</code></pre>
+
+  <h2>Build from Source</h2>
+
+  <p>
+    For development or if you want to build from source. Requires macOS, the
+    <a href="https://www.rust-lang.org/tools/install">Rust toolchain</a>, and
+    a Chromium build (~100 GB disk space).
+  </p>
+
+  <h3>Clone</h3>
 
   <pre
     class={cb}><code><span class="text-primary">git</span> clone <span class="text-success">https://github.com/termsurf/termsurf.git</span>

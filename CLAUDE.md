@@ -235,11 +235,33 @@ Roamium together.
 | `scripts/install.sh <comp>`                              | Install a component. Components: wezboard, roamium, webtui, all.         |
 | `scripts/uninstall.sh <comp>`                            | Uninstall a component. Components: wezboard, roamium, webtui, all.       |
 | `scripts/deploy.sh <comp>`                               | Deploy a component. Components: website.                                 |
+| `scripts/release.sh [version]`                           | Package, upload to GitHub, and publish to Homebrew. Default: 0.1.0.      |
 | `scripts/rename-wezterm.sh [dir]`                        | Rename all WezTerm references to Wezboard in `wezboard/`. Re-runnable.   |
 | `scripts/nerd-font-test.sh`                              | Print Nerd Font test glyphs for visual verification.                     |
 
 The build scripts auto-detect Chromium's `protoc` so you don't need a system
 install.
+
+### Homebrew Distribution
+
+TermSurf is distributed via a Homebrew Cask in the `termsurf/homebrew-termsurf`
+tap (submodule at `homebrew/`).
+
+**User install:** `brew tap termsurf/termsurf && brew install --cask termsurf`
+
+**Release workflow:**
+
+1. Build all components: `scripts/build.sh all --release`
+2. Run: `scripts/release.sh <version>`
+
+The release script packages a tarball (binaries + Chromium dylibs + .app
+bundle), uploads it to a GitHub Release on `termsurf/termsurf`, updates the
+Homebrew cask SHA and version, and pushes to `termsurf/homebrew-termsurf`.
+
+**Cask installs:**
+- `.app` bundle → `/Applications/TermSurf Wezboard.app`
+- `web`, `wezboard` CLIs → `/opt/homebrew/bin/`
+- Roamium + Chromium dylibs → `/opt/homebrew/opt/termsurf-roamium/`
 
 ## Documentation
 
