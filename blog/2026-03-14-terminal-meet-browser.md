@@ -1,6 +1,6 @@
 +++
 title = "Terminal, Meet Browser"
-author = "Max Commits"
+author = "Ryan X. Charles"
 date = "2026-03-14"
 +++
 

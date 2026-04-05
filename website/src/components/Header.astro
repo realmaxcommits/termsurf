@@ -9,11 +9,17 @@ const NAV_ITEMS = [
 <header class="mb-8">
   <div class="flex items-center justify-between text-sm">
     <a href="/" class="flex items-center gap-2 text-primary font-bold">
-      <img
-        src="/images/termsurf-13-transparent-192.png"
-        alt="TermSurf logo"
-        class="w-6 h-6"
-      />
+      <picture>
+        <source
+          srcset="/images/termsurf-14-dark-192.png"
+          media="(prefers-color-scheme: dark)"
+        />
+        <img
+          src="/images/termsurf-14-light-192.png"
+          alt="TermSurf logo"
+          class="w-6 h-6"
+        />
+      </picture>
       TermSurf
     </a>
     <nav class="flex gap-1">
