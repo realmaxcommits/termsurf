@@ -211,6 +211,34 @@ import DocPage from "../../../components/DocPage.astro";
     </li>
   </ul>
 
+  <h2>Loading Screen</h2>
+
+  <p>
+    When a browser is first launched, the TUI displays a loading log in the
+    viewport showing each startup stage:
+  </p>
+
+  <ul>
+    <li><strong>✓ Connected to GUI</strong></li>
+    <li><strong>✓ Starting browser engine</strong></li>
+    <li><strong>⠋ Waiting for Chromium (12s)</strong> — animated spinner with elapsed time</li>
+    <li><strong>✓ Loading page</strong></li>
+    <li><strong>✓ Ready</strong></li>
+  </ul>
+
+  <p>
+    On first launch, Chromium takes ~60 seconds to initialize (GPU process,
+    shader compilation, browser context creation). Subsequent launches are much
+    faster. If Chromium takes longer than 30 seconds, a note appears:
+    "First launch is slow — Chromium is initializing." If it exceeds 120
+    seconds, the stage shows an error suggesting Roamium may not be installed.
+  </p>
+
+  <p>
+    The loading screen disappears automatically when the browser overlay
+    appears.
+  </p>
+
   <h2>Direct Browser Connection</h2>
 
   <p>
