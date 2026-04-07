@@ -9,7 +9,7 @@ switching. No context loss. Just web.
 web ryanxcharles.com
 ```
 
-![TermSurf screenshot showing a browser pane alongside terminal panes](assets/screenshot2.png)
+![TermSurf screenshot showing a browser pane alongside terminal panes](assets/screenshot3.png)
 
 ## Why TermSurf?
 
