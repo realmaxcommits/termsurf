@@ -4,7 +4,7 @@ import Base from "../layouts/Base.astro";
 
 <Base title="TermSurf" showHeaderBrand={false}>
   <section class="mb-8">
-    <div class="mb-8 flex items-center gap-4">
+    <div class="mb-6 flex items-center gap-4">
       <picture>
         <source
           srcset="/images/termsurf-14-dark-192.png"
@@ -18,18 +18,21 @@ import Base from "../layouts/Base.astro";
       </picture>
       <div>
         <h1 class="text-foreground text-xl font-bold">TermSurf</h1>
-        <p class="text-primary text-sm font-bold">Root access to the 'net.</p>
+        <p class="text-primary text-sm font-bold">Terminal + Browser</p>
       </div>
     </div>
 
-    <p class="text-sm text-muted mt-3">
+    <h2 class="font-heading text-3xl font-bold tracking-tight sm:text-4xl mb-4">
+      ROOT ACCESS TO THE 'NET.
+    </h2>
+    <p class="text-foreground-dark text-sm">
       TermSurf is a protocol that overlays web browser engines, like
       Chromium and WebKit, in your terminal emulator.{" "}
-      <a href="/docs" class="text-accent hover:text-primary">
+      <a href="/docs" class="text-primary hover:text-accent">
         Read the docs &rarr;
       </a>
     </p>
-    <div class="mt-4 border-t border-border"></div>
+    <div class="mt-6 border-t border-border"></div>
   </section>
   <section class="mb-8">
     <img
