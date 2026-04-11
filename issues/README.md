@@ -8,6 +8,7 @@
 | [0000768](0000768-cloudflare-website/README.md)     | Migrate termsurf.com from Fly.io to Cloudflare Pages    | 2026-03-29 |
 | [0000774](0000774-zoom-webview-overlay/README.md)   | Zooming non-browser pane leaves webview overlay visible | 2026-04-11 |
 | [0000775](0000775-devtools-multi-profile/README.md) | DevTools gets confused with multiple profiles open      | 2026-04-11 |
+| [0000776](0000776-pdf-not-loading/README.md)        | PDF files show blank white screen instead of rendering  | 2026-04-11 |
 
 ## Closed
 
