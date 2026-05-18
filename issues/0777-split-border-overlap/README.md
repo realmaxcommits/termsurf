@@ -338,3 +338,24 @@ mouse-to-cell mapping must all use the same inner content rect.
 7. Overlay sanity:
    - Browser overlays still align with terminal content after the pane content
      origin moves inward.
+
+**Result:** Partial
+
+Implemented the shared split-border geometry in Wezboard and verified that the
+debug Wezboard build completes with `scripts/build.sh wezboard`.
+
+The implementation now resolves `split_border_width` as logical pixels for
+split-border geometry, converts it to physical pixels with the current DPI,
+insets pane content and browser overlay origins by that amount, keeps border
+drawing aligned with the shared outer pane rectangle, and registers split resize
+hit regions even when the old thin divider is not drawn.
+
+Manual GUI verification is still pending for the exact visual inset, Retina
+pixel scaling, mouse resize behavior, selection/click cell mapping, and zoom
+transitions.
+
+#### Conclusion
+
+The core border-box model is implemented and buildable. The next experiment
+should run the manual split-pane checks, tighten any visual or mouse-positioning
+drift found at runtime, and then decide whether the issue can be closed.
