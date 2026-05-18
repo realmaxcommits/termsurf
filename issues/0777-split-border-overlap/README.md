@@ -95,12 +95,15 @@ original pane width. The border is then drawn later on layer 2, directly over
 the outer pixels of that content.
 
 There is also a unit bug: the border width is currently treated as physical
-framebuffer pixels. Users configure border widths in UI terms, so
+framebuffer pixels. Today, `split_border_width` flows through
+`Dimension::evaluate_as_pixels`, where `Dimension::Pixels(n)` returns
+`n.floor()` with no DPI scaling. Users configure border widths in UI terms, so
 `split_border_width = 4` should mean 4 logical pixels, not 4 physical pixels. On
 a 2x Retina display, that should draw and reserve 8 physical pixels. On a 1x
 display, it should draw and reserve 4 physical pixels. The conversion from
-logical pixels to physical pixels must happen once, using the window's current
-scale/DPI, before painting, content inset, and hit-region geometry are computed.
+logical pixels to physical pixels must happen once in split-border-specific
+geometry, using the window's current scale/DPI, before painting, content inset,
+and hit-region geometry are computed.
 
 The historical failed attempts in Issue 723 explain why this must be a per-pane
 content inset, not a global resize:
@@ -137,11 +140,13 @@ split target to hover, click, or drag.
 
 The fix should restore the Ghostboard model in Wezboard:
 
-1. **Compute a per-pane border inset.** In `paint_pane`, evaluate
+1. **Compute a per-pane border inset.** In `paint_pane`, resolve
    `split_border_width` into physical pixels only when `num_panes > 1` and the
-   pane is not zoomed. Otherwise the inset is zero. The configured value should
-   be interpreted as logical pixels; convert it to physical pixels using the
-   current window scale/DPI before using it for geometry.
+   pane is not zoomed. Otherwise the inset is zero. Do not use the current
+   `Dimension::Pixels` behavior directly for this, because it returns raw
+   physical pixels. The configured value should be interpreted as logical
+   pixels; convert it to physical pixels using the current window scale/DPI
+   before using it for geometry.
 2. **Apply that inset to content on all four sides.** Add the inset to
    `left_pixel_x`, add it to the top coordinate used by `LineRender`, and reduce
    the width passed to `render_screen_line` by `2 * inset`. This makes text and
@@ -196,6 +201,8 @@ mouse-to-cell mapping must all use the same inner content rect.
    - Return `0.0` when `num_panes <= 1`.
    - Return `0.0` when the pane is zoomed.
    - Interpret `split_border_width` as logical pixels.
+   - Do not rely on `Dimension::evaluate_as_pixels` for pixel units here;
+     current `Dimension::Pixels(n)` returns `n.floor()` as physical pixels.
    - Convert logical pixels to physical pixels using the current window
      scale/DPI. With the current available `dpi`, use
      `physical = logical * dpi / 96.0`, rounded consistently for drawing and hit
