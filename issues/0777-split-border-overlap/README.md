@@ -166,3 +166,119 @@ The implementation should prove both requirements together: border padding must
 move content inward by exactly `split_border_width` logical pixels, converted to
 the correct physical pixel count for the current display, and the split
 divider/hit region must remain visible and clickable for mouse resizing.
+
+## Experiments
+
+### Experiment 1: Restore Border-Box Pane Geometry
+
+#### Description
+
+Fix split pane borders by restoring the Ghostboard border-box model in Wezboard.
+When multiple panes are visible, `split_border_width` should be interpreted as
+logical pixels, converted to physical pixels for the current display, and used
+as uniform inner padding for each bordered pane. The same physical border width
+must also define the split resize hit region so mouse dragging still works when
+the old thin divider is hidden.
+
+This experiment should not touch mux split sizing or terminal resize math. The
+fix belongs in GUI paint/hit-test geometry, not in `resize.rs`.
+
+#### Changes
+
+1. **Add a split border width helper.**
+
+   In `wezboard/wezboard-gui/src/termwindow/render/pane.rs` or another nearby
+   render helper module, add a small helper that returns the active split border
+   width in physical pixels:
+   - Return `0.0` when `num_panes <= 1`.
+   - Return `0.0` when the pane is zoomed.
+   - Interpret `split_border_width` as logical pixels.
+   - Convert logical pixels to physical pixels using the current window
+     scale/DPI.
+   - Use this helper everywhere split border geometry is computed.
+
+   Do not change global `Dimension::Pixels` semantics, since other config values
+   may already depend on physical-pixel behavior.
+
+2. **Inset pane content by the border width.**
+
+   In `wezboard/wezboard-gui/src/termwindow/render/pane.rs`, update `paint_pane`
+   so the existing `num_panes` parameter is used. When the helper returns a
+   non-zero inset:
+   - Add the inset to `left_pixel_x`.
+   - Add the inset to the `top_pixel_y` passed into `LineRender`.
+   - Add a `border_inset` field to `LineRender`.
+   - Pass `pixel_width = full_pixel_width - border_inset * 2.0` to
+     `render_screen_line`.
+   - Inset `background_rect` by the same border width so pane background fills
+     align with the inner content area.
+
+   Clamp reduced widths/heights with saturating or max-zero logic so narrow
+   panes cannot produce negative geometry.
+
+3. **Keep border drawing aligned with the helper.**
+
+   Update `paint_pane_border` to use the same physical border width helper. The
+   drawn rectangles and content inset must agree exactly.
+
+4. **Preserve split resize hit regions.**
+
+   In `wezboard/wezboard-gui/src/termwindow/render/split.rs` and/or
+   `wezboard/wezboard-gui/src/termwindow/render/paint.rs`, separate split
+   hit-region registration from old divider drawing:
+   - Keep drawing the old thin divider only when `split_border_width == 0`.
+   - Always register a `UIItemType::Split` for each split when multiple panes
+     are visible.
+   - When borders are enabled, make the hit region cover the visible
+     border/divider area and use the same logical-to-physical border conversion
+     as the border drawing.
+
+5. **Keep single-pane and zoomed behavior unchanged.**
+
+   A single pane must have no border, no content inset, and no split hit region.
+   A zoomed pane must also have no split border or inset.
+
+#### Verification
+
+1. Build Wezboard:
+
+   ```bash
+   scripts/build.sh wezboard
+   ```
+
+2. Configure:
+
+   ```lua
+   config.focused_split_border_color = "#7dcfff"
+   config.unfocused_split_border_color = "#565f89"
+   config.split_border_width = 4
+   ```
+
+3. Single pane:
+   - No border is drawn.
+   - Content starts at the same position as before.
+   - No layout space is lost.
+
+4. Split panes:
+   - Borders appear on all panes.
+   - The focused pane has the focused border color.
+   - Unfocused panes have the unfocused border color.
+   - Terminal content is inset from the border on all four sides by exactly
+     `split_border_width` logical pixels.
+   - On a 2x Retina display, `split_border_width = 4` occupies 8 physical
+     pixels; on a 1x display, it occupies 4 physical pixels.
+
+5. Mouse resizing:
+   - Hovering the divider/border region shows the resize cursor.
+   - Dragging the divider resizes panes.
+   - The old thin divider is not drawn when borders are enabled.
+   - Removing `split_border_width` restores the old thin divider and its mouse
+     resize behavior.
+
+6. Zoom:
+   - Zooming a pane hides borders and removes the inset.
+   - Unzooming restores borders and inset.
+
+7. Overlay sanity:
+   - Browser overlays still align with terminal content after the pane content
+     origin moves inward.
