@@ -199,3 +199,34 @@ upgrades. The first meaningful target is Electron-stable Chromium
 `148.0.7778.97`. A direct jump from `146.0.7650.0` to `148.0.7778.97` is worth
 trying after baseline builds pass. Keep `147.0.7727.139` and `149.0.7827.0` as
 debug checkpoints, not planned migration stops.
+
+### Experiment 2: Verify Current Baseline Builds
+
+#### Description
+
+Before changing Chromium versions, prove that the current `146.0.7650.0`
+baseline still builds for Chromium, Roamium, and Wezboard. This isolates
+existing build breakage from upgrade breakage.
+
+#### Changes
+
+No code changes are expected. Run the current build scripts in this order:
+
+1. `scripts/build.sh chromium`
+2. `scripts/build.sh roamium`
+3. `scripts/build.sh wezboard`
+
+Record the output paths and any failures. Do not clean Chromium output. Do not
+create a Chromium branch.
+
+#### Verification
+
+This experiment passes when all three build commands complete successfully:
+
+1. Chromium builds through `scripts/build.sh chromium`.
+2. Roamium builds against the current Chromium output.
+3. Wezboard builds its GUI and CLI targets.
+
+If any command fails, record the failure, the relevant log or command output,
+and whether Experiment 3 should fix the baseline before starting the Chromium
+upgrade.
