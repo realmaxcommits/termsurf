@@ -180,8 +180,11 @@ as uniform inner padding for each bordered pane. The same physical border width
 must also define the split resize hit region so mouse dragging still works when
 the old thin divider is hidden.
 
-This experiment should not touch mux split sizing or terminal resize math. The
-fix belongs in GUI paint/hit-test geometry, not in `resize.rs`.
+This experiment should define explicit outer and inner pane geometry. The outer
+pane rect is the full area assigned to the pane. The border occupies the edge of
+that outer rect. The inner content rect is the outer rect inset by the converted
+border width on all four sides. Rendering, browser overlay positioning, and
+mouse-to-cell mapping must all use the same inner content rect.
 
 #### Changes
 
@@ -194,34 +197,73 @@ fix belongs in GUI paint/hit-test geometry, not in `resize.rs`.
    - Return `0.0` when the pane is zoomed.
    - Interpret `split_border_width` as logical pixels.
    - Convert logical pixels to physical pixels using the current window
-     scale/DPI.
+     scale/DPI. With the current available `dpi`, use
+     `physical = logical * dpi / 96.0`, rounded consistently for drawing and hit
+     testing.
    - Use this helper everywhere split border geometry is computed.
 
    Do not change global `Dimension::Pixels` semantics, since other config values
    may already depend on physical-pixel behavior.
 
-2. **Inset pane content by the border width.**
+2. **Introduce shared pane geometry.**
+
+   In `wezboard/wezboard-gui/src/termwindow/render/pane.rs`, compute a shared
+   per-pane geometry struct or helper return value with:
+   - `outer_rect` — the current pane background rectangle.
+   - `border_width` — the active physical border width.
+   - `inner_rect` — `outer_rect` inset by `border_width` on all four sides.
+   - `content_origin` — the pixel origin used for terminal line rendering.
+   - `content_pixel_width` — the horizontal physical pixel span available to
+     line rendering inside the border.
+
+   Clamp inner width/height and content width to zero or another safe minimum so
+   narrow panes cannot produce negative geometry.
+
+3. **Inset pane content by using the inner rect.**
 
    In `wezboard/wezboard-gui/src/termwindow/render/pane.rs`, update `paint_pane`
-   so the existing `num_panes` parameter is used. When the helper returns a
-   non-zero inset:
-   - Add the inset to `left_pixel_x`.
-   - Add the inset to the `top_pixel_y` passed into `LineRender`.
-   - Add a `border_inset` field to `LineRender`.
-   - Pass `pixel_width = full_pixel_width - border_inset * 2.0` to
-     `render_screen_line`.
-   - Inset `background_rect` by the same border width so pane background fills
-     align with the inner content area.
+   so the existing `num_panes` parameter is used. When borders are active:
+   - Use the inner content origin for `left_pixel_x`.
+   - Use the inner content origin for the `top_pixel_y` passed into
+     `LineRender`.
+   - Pass `content_pixel_width` to `render_screen_line`.
+   - Inset pane background fills so they align with the inner content area, or
+     document and verify if the outer pane background intentionally remains
+     under the border.
 
-   Clamp reduced widths/heights with saturating or max-zero logic so narrow
-   panes cannot produce negative geometry.
+   The implementation must not simply draw the same cell grid into a narrower
+   clip if that visibly chops the rightmost glyphs or bottom row. If the
+   existing terminal cell count cannot fit inside the inner content rect, reduce
+   the renderable cell grid for the pane or adjust the pane's effective
+   renderable dimensions so cells fit the inner rect. This may require touching
+   pane sizing or renderable-dimension plumbing; clipping edge cells is not an
+   acceptable pass result.
 
-3. **Keep border drawing aligned with the helper.**
+4. **Update mouse-to-cell mapping.**
 
-   Update `paint_pane_border` to use the same physical border width helper. The
-   drawn rectangles and content inset must agree exactly.
+   Any mouse coordinate path that maps window pixels to pane cells must subtract
+   the inner content origin before computing row/column. This includes
+   click-to-focus/pass-through, selection, and any terminal mouse forwarding.
+   The same helper used for rendering should supply the inset/origin so mouse
+   behavior and drawing cannot drift apart.
 
-4. **Preserve split resize hit regions.**
+5. **Update browser overlay coordinates.**
+
+   In `wezboard/wezboard-gui/src/termwindow/render/paint.rs`, overlay frames are
+   currently derived from the `pane_pixel_x` and `pane_pixel_y` returned by
+   `paint_pane`. After the content origin moves inward, return the inner content
+   origin and use it for `set_overlay_frame` and `create_pending_ca_layer_host`.
+   Browser overlays must align with terminal content, not the outer border rect.
+
+6. **Keep border drawing aligned with shared geometry.**
+
+   Update `paint_pane_border` to use the shared `outer_rect` and `border_width`.
+   The drawn rectangles and content inset must agree exactly. Be careful around
+   the existing half-cell expansion used for pane backgrounds at interior split
+   edges; border drawing and content inset should share one geometry source so
+   they do not produce gaps or overlaps.
+
+7. **Preserve split resize hit regions.**
 
    In `wezboard/wezboard-gui/src/termwindow/render/split.rs` and/or
    `wezboard/wezboard-gui/src/termwindow/render/paint.rs`, separate split
@@ -232,8 +274,12 @@ fix belongs in GUI paint/hit-test geometry, not in `resize.rs`.
    - When borders are enabled, make the hit region cover the visible
      border/divider area and use the same logical-to-physical border conversion
      as the border drawing.
+   - Do not make the mouse target only as thin as the visible border. Use a
+     practical minimum hit thickness, such as the old cell-sized split hit
+     region or `max(border_width, cell_width / 2.0)` for vertical dividers and
+     `max(border_width, cell_height / 2.0)` for horizontal dividers.
 
-5. **Keep single-pane and zoomed behavior unchanged.**
+8. **Keep single-pane and zoomed behavior unchanged.**
 
    A single pane must have no border, no content inset, and no split hit region.
    A zoomed pane must also have no split border or inset.
@@ -267,6 +313,7 @@ fix belongs in GUI paint/hit-test geometry, not in `resize.rs`.
      `split_border_width` logical pixels.
    - On a 2x Retina display, `split_border_width = 4` occupies 8 physical
      pixels; on a 1x display, it occupies 4 physical pixels.
+   - Rightmost glyphs and the bottom row are not clipped by the border inset.
 
 5. Mouse resizing:
    - Hovering the divider/border region shows the resize cursor.
@@ -274,6 +321,8 @@ fix belongs in GUI paint/hit-test geometry, not in `resize.rs`.
    - The old thin divider is not drawn when borders are enabled.
    - Removing `split_border_width` restores the old thin divider and its mouse
      resize behavior.
+   - Clicking, selecting text, and terminal mouse forwarding still hit the
+     correct cells after the content origin moves inward.
 
 6. Zoom:
    - Zooming a pane hides borders and removes the inset.
