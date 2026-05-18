@@ -166,6 +166,12 @@ sockets, and Issue 702 removed all dead XPC code. CALayerHost compositing
 
 ### Every Chromium issue gets its own branch
 
+TermSurf's Chromium fork tracks the Chromium version used by the latest stable
+Electron release. When upgrading Chromium, target latest stable Electron's
+Chromium version — not Chromium stable, beta, tip-of-tree, or Electron
+prerelease/nightly — unless the user explicitly says otherwise. If a temporary
+exception is necessary, record it in the issue before implementing it.
+
 When modifying the Chromium fork (`chromium/src/`), ALWAYS create a new branch
 for the current issue. Never commit directly to an existing issue's branch.
 

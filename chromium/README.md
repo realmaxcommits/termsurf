@@ -19,9 +19,12 @@ No `origin` remote for now. Remote hosting TBD (likely patch set distribution).
 
 ## Branch Strategy
 
-Track the same Chromium version as Electron. Branches are named
-`{version}-termsurf` for the main working branch and `{version}-issue-{N}` for
-issue-specific branches.
+Track the Chromium version used by the latest stable Electron release. Do not
+target Chromium stable, beta, tip-of-tree, or Electron prerelease/nightly unless
+an issue explicitly records a temporary exception.
+
+Branches are named `{version}-termsurf` for the main working branch and
+`{version}-issue-{N}` for issue-specific branches.
 
 **Every issue gets its own branch.** When modifying Chromium for a new issue,
 find the most relevant recent branch, create a new branch from it
