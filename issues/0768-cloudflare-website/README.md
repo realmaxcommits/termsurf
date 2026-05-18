@@ -1,6 +1,7 @@
 +++
-status = "open"
+status = "closed"
 opened = "2026-03-29"
+closed = "2026-05-18"
 +++
 
 # Issue 768: Migrate termsurf.com from Fly.io to Cloudflare Pages
@@ -291,3 +292,15 @@ via `@tailwindcss/vite` — identical to the other sites.
    - Commit log expand/collapse works (React island hydrates).
    - Internal links work (no 404s).
    - External links open in new tab.
+
+**Result:** Pass
+
+The migration is already complete. The current `website/` project is an Astro
+static site with `wrangler` in `package.json` and a deploy script of
+`bun run build && wrangler pages deploy dist`. `website/CLAUDE.md` records the
+site as deployed to Cloudflare Pages.
+
+#### Conclusion
+
+termsurf.com is already hosted on Cloudflare Pages. This issue was left open
+after the migration work was completed, so it is now closed as done.
