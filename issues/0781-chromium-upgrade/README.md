@@ -138,3 +138,64 @@ This experiment passes when the issue contains:
 Experiment 1 should not modify Chromium source, create a Chromium branch, or run
 large builds. Its job is to choose where the migration should aim before we
 spend build time.
+
+**Result:** Pass
+
+The current TermSurf Chromium checkout is on `146.0.7650.0-issue-762`.
+`chromium/README.md` records `146.0.7650.0` as the base version. The local
+Chromium checkout currently has 146-series tags, but not the newer candidate
+tags. Remote tag checks against `chromium.googlesource.com/chromium/src.git`
+confirmed that the candidate tags below exist.
+
+Sources:
+
+- Chromium Dash release data:
+  `https://chromiumdash.appspot.com/fetch_releases?channel=Stable&platform=Mac&num=20`
+- Chromium Dash milestone data:
+  `https://chromiumdash.appspot.com/fetch_milestones?num=10`
+- Electron release feed: `https://releases.electronjs.org/`
+- Electron release JSON: `https://releases.electronjs.org/releases.json`
+
+| Milestone | Representative version/tag | Source/channel                                         | Electron version            | Tag availability | Notes                                                                                                                        |
+| --------- | -------------------------- | ------------------------------------------------------ | --------------------------- | ---------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| 146       | `146.0.7650.0`             | TermSurf base                                          | —                           | local            | Current Roamium base. Baseline for all comparisons.                                                                          |
+| 146       | `146.0.7680.216`           | Electron stable 41.6.1                                 | 41.6.1                      | remote           | Newer 146 patch level. Useful only as a fallback if we want a low-risk patch refresh before crossing milestones.             |
+| 147       | `147.0.7727.139`           | Chromium Dash stable history                           | —                           | remote           | Intermediate Chromium milestone. No current Electron stable target; use only as a checkpoint if 148 is too large.            |
+| 148       | `148.0.7778.97`            | Electron stable 42.1.0                                 | 42.1.0                      | remote           | Best first real upgrade target because it matches current Electron stable.                                                   |
+| 148       | `148.0.7778.168`           | Chromium Dash stable Mac                               | —                           | remote           | Newer Chromium stable patch in the same milestone. Consider after Electron-stable 148 works.                                 |
+| 149       | `149.0.7827.0`             | Chromium Dash beta / Electron alpha-nightly transition | 43 alpha/nightly            | remote           | Useful checkpoint between stable 148 and prerelease 150. Not a final target unless 150 is blocked.                           |
+| 150       | `150.0.7834.0`             | Electron alpha/nightly                                 | 43.0.0-alpha.3 / 44 nightly | remote           | Newest visible Electron prerelease/nightly Chromium. Highest risk; only target directly if 148 migration is straightforward. |
+
+#### Candidate targets
+
+1. **Primary target:** `148.0.7778.97`, matching Electron stable 42.1.0.
+2. **Patch target after success:** `148.0.7778.168`, matching newer Chromium
+   stable data from Chromium Dash.
+3. **Checkpoint target:** `149.0.7827.0`, if moving from 148 to 150 needs an
+   intermediate milestone.
+4. **Stretch target:** `150.0.7834.0`, matching current Electron
+   prerelease/nightly data.
+
+#### Recommendation for Experiment 2
+
+Experiment 2 should not start by upgrading. It should first prove the current
+`146.0.7650.0` baseline still builds:
+
+1. `scripts/build.sh chromium`
+2. `scripts/build.sh roamium`
+3. `scripts/build.sh wezboard`
+
+If the baseline passes, Experiment 3 should attempt the first real migration to
+`148.0.7778.97` on a new Chromium branch named `148.0.7778.97-issue-781`.
+
+If the baseline fails, fix or document the baseline failure before attempting an
+upgrade. Otherwise we will not be able to distinguish current breakage from
+Chromium migration breakage.
+
+#### Conclusion
+
+The version landscape is small enough to avoid a long ladder of obsolete
+upgrades. The first meaningful target is Electron-stable Chromium
+`148.0.7778.97`. A direct jump from `146.0.7650.0` to `148.0.7778.97` is worth
+trying after baseline builds pass. Keep `147.0.7727.139` and `149.0.7827.0` as
+debug checkpoints, not planned migration stops.
