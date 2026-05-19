@@ -563,7 +563,57 @@ that synthetic window.
    Color input can be clicked and recorded, but it remains a known exception if
    Chromium delegates it to the global `NSColorPanel`.
 
-6. **Analyze the result.**
+6. **Collect logs in deterministic files.**
+
+   Do not rely on default app logging locations for this experiment. Put all
+   logs under the repo's `logs/` directory so the result can quote exact files.
+
+   Start Wezboard from the repo root with an explicit `XDG_STATE_HOME` and Rust
+   logging enabled:
+
+   ```bash
+   mkdir -p logs/state/termsurf
+   XDG_STATE_HOME="$PWD/logs/state" \
+   RUST_LOG=termsurf=info,wezboard_gui::termsurf=info \
+     ./wezboard/target/debug/wezboard-gui \
+     2>&1 | tee logs/wezboard-issue-779-exp3.log
+   ```
+
+   Because Wezboard spawns Roamium with `--enable-logging` and
+   `--log-file=$XDG_STATE_HOME/termsurf/chromium-server.log`, Chromium/Roamium
+   logs should appear at:
+
+   ```bash
+   logs/state/termsurf/chromium-server.log
+   ```
+
+   Tail the Chromium/Roamium log while testing:
+
+   ```bash
+   tail -f logs/state/termsurf/chromium-server.log
+   ```
+
+   If the log file does not appear after opening the first browser pane, record
+   that as a failure of the logging setup before continuing.
+
+   After clicking the select, datalist, and date controls, extract the relevant
+   log lines with:
+
+   ```bash
+   rg "termsurf-popup-trace|Resize:|overlay screen rect|ResizeTab bounds|GetViewBounds" \
+     logs/wezboard-issue-779-exp3.log \
+     logs/state/termsurf/chromium-server.log
+   ```
+
+   The result must quote or summarize the extracted lines for:
+   - the Wezboard overlay screen rect;
+   - the resize message sent to Roamium;
+   - Chromium's incoming `ts_set_view_bounds` values;
+   - the local view bounds applied in Chromium;
+   - the synthetic window frame applied in Chromium;
+   - Chromium's resulting `GetViewBounds()`.
+
+7. **Analyze the result.**
 
    The result must answer these questions:
    - Does Wezboard compute the correct visible webview screen rect?
@@ -590,16 +640,39 @@ that synthetic window.
    bun test-html/server.ts
    ```
 
-3. Collect logs from Roamium/Wezboard:
-   - run local Wezboard;
+3. Start local Wezboard with deterministic logging:
+
+   ```bash
+   mkdir -p logs/state/termsurf
+   XDG_STATE_HOME="$PWD/logs/state" \
+   RUST_LOG=termsurf=info,wezboard_gui::termsurf=info \
+     ./wezboard/target/debug/wezboard-gui \
+     2>&1 | tee logs/wezboard-issue-779-exp3.log
+   ```
+
+4. Tail Chromium/Roamium logs in another terminal:
+
+   ```bash
+   tail -f logs/state/termsurf/chromium-server.log
+   ```
+
+5. Run the reproduction:
    - run local `web` with `--browser` pointing at
      `chromium/src/out/Default/roamium`;
    - open the reproduction page;
    - move the browser pane to the top-right or another visibly offset split;
    - click select, datalist, and date controls;
-   - save the relevant Wezboard, Roamium, and Chromium log excerpts.
+   - record whether each popup is anchored correctly.
 
-4. Pass criteria:
+6. Extract the relevant log lines:
+
+   ```bash
+   rg "termsurf-popup-trace|Resize:|overlay screen rect|ResizeTab bounds|GetViewBounds" \
+     logs/wezboard-issue-779-exp3.log \
+     logs/state/termsurf/chromium-server.log
+   ```
+
+7. Pass criteria:
    - Chromium logs show `GetViewBounds()` equals the visible Wezboard webview
      rect within 1 DIP;
    - select, datalist, and date popups open anchored to their controls inside
@@ -607,12 +680,12 @@ that synthetic window.
    - moving the browser pane to another split position updates `GetViewBounds()`
      and popup anchoring follows it.
 
-5. Partial criteria:
+8. Partial criteria:
    - `GetViewBounds()` is correct, but one or more native popups still open in
      the wrong place. In that case, keep the logs and design the next experiment
      around the specific popup path that ignores `GetViewBounds()`.
 
-6. Fail criteria:
+9. Fail criteria:
    - `GetViewBounds()` does not equal the visible Wezboard webview rect after
      applying the synthetic-window update;
    - popups still open completely outside the Wezboard window and the logs do
