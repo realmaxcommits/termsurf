@@ -536,34 +536,231 @@ content grid.
    - Unzooming restores borders, inset, overlay alignment, and resize hit
      regions.
 
-**Result:** Partial
+**Result:** Fail
 
-Implemented the correction path and verified that the debug Wezboard build
-completes with `scripts/build.sh wezboard`.
-
-The first implementation incorrectly resized pane PTYs from the render path and
-shrunk pane dimensions without shifting later panes or split dividers. That
-created split gaps and put resize side effects in paint. The correction removes
-that render-path PTY resize.
-
-`PaneRenderGeometry` now keeps the mux cell grid stable, uses the existing
-split-gutter-covering pane rect as the bordered outer rect, insets the content
-rect from that shared rect, and paints the pane background across the full
-bordered rect so interior split gutters are covered. Line rendering uses the
-full pane cell span instead of subtracting border pixels at paint time, so the
-rightmost column and bottom row remain part of the rendered grid. Focused pane
-borders still paint after unfocused borders so shared edges prefer the focused
-color. Split resize hit targets use a full cell as their minimum thickness when
-borders are enabled.
-
-Manual GUI verification is still pending for exact edge alignment, `stty size`
-versus visible grid, cross-DPI movement, config reload, drag-selection outside
-pane bounds, browser overlay alignment, and zoom transitions.
+Experiment 2 did not produce a correct solution. The implementation attempted to
+mix WezTerm's overlapping split-gutter geometry with Ghostboard-style pane
+borders. That made the coordinate system inconsistent: some attempts hid edge
+cells, some produced split gaps, some removed normal pane padding, and none
+implemented the captured-mouse offset fix reliably.
 
 #### Conclusion
 
-The implementation removes the bad render-path PTY resize from the first
-Experiment 2 attempt and keeps pane/split cell coordinates stable while applying
-border geometry in pixels. The remaining work is runtime verification and any
-follow-up needed if visual alignment, display-scale changes, or mouse behavior
-still drift under manual testing.
+The whole implementation approach was wrong. The next experiment should revert
+the Issue 777 code changes back to the pre-implementation state so a future
+attempt can start from clean geometry instead of patching a broken model.
+
+### Experiment 3: Revert Failed Split Border Implementation
+
+#### Description
+
+Fully revert the code changes from the failed Issue 777 implementation path. The
+previous attempts were based on the wrong model: they tried to graft thick pane
+borders onto WezTerm's existing shared split gutter instead of defining a single
+coherent pane geometry.
+
+This experiment should restore the code to the pre-implementation behavior so
+future work can redesign the feature from a clean baseline.
+
+#### Changes
+
+1. Revert the Wezboard code changes from the failed implementation commits:
+   - `2aac155a176b8` — Restore split border geometry.
+   - `0bc8211f85248` — Align bordered pane grids.
+   - `3b166a2d98b25` — Fix bordered pane padding.
+   - `3d6e108460e61` — Render full bordered pane grid.
+2. Leave the issue document in place and record why the implementation was
+   reverted.
+3. Do not close the issue.
+
+#### Verification
+
+1. Confirm the Wezboard source files touched by the failed implementation match
+   their pre-implementation state:
+   - `wezboard/wezboard-gui/src/termwindow/mouseevent.rs`
+   - `wezboard/wezboard-gui/src/termwindow/render/paint.rs`
+   - `wezboard/wezboard-gui/src/termwindow/render/pane.rs`
+   - `wezboard/wezboard-gui/src/termwindow/render/split.rs`
+2. Build Wezboard:
+
+   ```bash
+   scripts/build.sh wezboard
+   ```
+
+**Result:** Pass
+
+The failed Wezboard implementation changes from Issue 777 were reverted. The
+touched source files now match their pre-implementation state, and the debug
+Wezboard build completes with `scripts/build.sh wezboard`.
+
+#### Conclusion
+
+The codebase is back at the clean pre-implementation baseline for split pane
+borders. Issue 777 remains open; the next implementation attempt must start from
+a fresh geometry design instead of patching the reverted approach.
+
+### Experiment 4: Implement Ghostboard Border Boxes
+
+#### Description
+
+Implement the split border behavior with one explicit model: when
+`split_border_width > 0` and more than one pane is visible, Wezboard should use
+Ghostboard-style pane border boxes. Do not mix this with WezTerm's old half-cell
+split gutter model.
+
+In this model:
+
+- Each pane has a non-overlapping `outer_rect`.
+- Adjacent pane `outer_rect`s abut exactly at split boundaries.
+- The border is drawn inside the pane's `outer_rect`.
+- Terminal content starts at `outer_rect + border_width`.
+- Line rendering uses the full pane cell grid; no rightmost column or bottom row
+  is hidden by reducing render width at paint time.
+- Split resize hit regions straddle the shared boundary between adjacent
+  `outer_rect`s.
+- Single-pane and zoomed-pane rendering keep the old behavior: no split border,
+  no content inset, no split-border hit region.
+
+This experiment must not resize PTYs from paint, must not mutate mux pane
+dimensions locally in render code, and must not use the old half-cell-expanded
+background rect as the bordered pane's outer rect.
+
+#### Changes
+
+1. **Create a bordered pane geometry helper.**
+
+   In `wezboard/wezboard-gui/src/termwindow/render/pane.rs`, add a helper used
+   only when `split_border_width > 0`, `num_panes > 1`, and the pane is not
+   zoomed. The helper should compute:
+   - `outer_rect` from the pane's exact cell allocation, without half-cell
+     expansion.
+   - `border_width` from logical pixels using `physical = logical * dpi / 96.0`.
+   - `content_origin` as `outer_rect.origin + border_width`.
+   - `content_rect` as the full pane cell span starting at `content_origin`.
+   - `background_rect` as `outer_rect`.
+
+   The old half-cell-expanded background rect remains only for the no-border
+   path.
+
+2. **Render content from the bordered content origin without shrinking cells.**
+
+   In `paint_pane`, when bordered geometry is active:
+   - Use the bordered `content_origin` for `left_pixel_x` and `top_pixel_y`.
+   - Pass `pixel_width = dims.cols * cell_width` to `render_screen_line`.
+   - Keep `RenderableDimensions.cols` and `viewport_rows` unchanged.
+   - Do not subtract `2 * border_width` from render width or height.
+
+   This intentionally preserves the PTY/mux cell grid. The border creates visual
+   padding by moving the full cell grid inward, not by hiding cells or resizing
+   the terminal.
+
+3. **Draw borders inside non-overlapping pane boxes.**
+
+   Update `paint_pane_border` to use the bordered `outer_rect`. Since adjacent
+   `outer_rect`s abut instead of overlapping, interior borders should not create
+   a cell-wide gutter or cover neighboring content.
+
+   Paint unfocused pane borders first and focused pane borders last so focused
+   edges win on shared boundaries.
+
+4. **Register split resize hit regions from split boundaries.**
+
+   In `wezboard/wezboard-gui/src/termwindow/render/split.rs` and/or `paint.rs`,
+   keep suppressing the old thin divider when split borders are enabled, but
+   always register `UIItemType::Split`.
+
+   For bordered panes:
+   - The vertical resize hit region should straddle the boundary at
+     `padding_left + os_border.left + split.left * cell_width`.
+   - The horizontal resize hit region should straddle the boundary at
+     `top_pixel_y + split.top * cell_height`.
+   - Minimum target thickness is the old full-cell hit region:
+     `max(border_width, cell_width)` or `max(border_width, cell_height)`.
+
+   The hit region is for mouse interaction only; do not draw the old divider
+   when borders are active.
+
+5. **Update overlay and mouse geometry from the same helper.**
+
+   Browser overlay frames should use the bordered content origin returned by
+   `paint_pane`.
+
+   Mouse-to-cell mapping should subtract the same bordered content origin before
+   computing row/column. Captured drags outside the pane must preserve negative
+   `x_pixel_offset` and `y_pixel_offset`; do not clamp away the old
+   out-of-bounds offset behavior.
+
+6. **Keep old paths unchanged when borders are inactive.**
+
+   With one pane, a zoomed pane, or `split_border_width = 0`, the old WezTerm
+   gutter/background/divider behavior should remain unchanged.
+
+7. **Keep the diff scoped.**
+
+   Touch only the files required for pane geometry, split hit regions, overlay
+   positioning, mouse mapping, and this issue document. Avoid formatter churn.
+
+#### Verification
+
+1. Build Wezboard:
+
+   ```bash
+   scripts/build.sh wezboard
+   ```
+
+2. Configure:
+
+   ```lua
+   config.focused_split_border_color = "#7dcfff"
+   config.unfocused_split_border_color = "#565f89"
+   config.split_border_width = 4
+   ```
+
+3. Single-pane baseline:
+   - Open Wezboard with one pane.
+   - No split border is drawn.
+   - Existing window padding remains unchanged.
+   - `stty size` matches the visible terminal grid.
+
+4. Split-pane border boxes:
+   - Open a split pane.
+   - Borders appear on both panes.
+   - The focused pane uses the focused border color.
+   - The unfocused pane uses the unfocused border color.
+   - Adjacent pane borders meet at the split boundary without a cell-wide
+     gutter, unpainted seam, or overlap over content.
+   - Content in every pane starts exactly `split_border_width` logical pixels
+     inside that pane's visible border on all four edges.
+   - Normal window padding remains visible.
+
+5. Edge-cell visibility:
+   - In each split pane, print text that reaches the rightmost column and bottom
+     row.
+   - The rightmost glyphs and bottom row remain visible and are not painted
+     under the border.
+   - `stty size` or `tput cols` still matches the visible cell grid.
+
+6. Mouse resize:
+   - Hovering the shared border area shows the resize cursor.
+   - Dragging the shared border resizes the panes.
+   - The old thin divider is not drawn when borders are enabled.
+   - Removing `split_border_width` restores the old thin divider and old resize
+     behavior.
+
+7. Mouse cell mapping:
+   - Clicking, selecting text, and terminal mouse forwarding hit the expected
+     cells after the content origin moves inward.
+   - Drag-selection that leaves a pane past the left or top edge preserves
+     negative pixel offsets and does not snap incorrectly.
+
+8. Overlay and zoom:
+   - Browser overlays align with terminal content inside the bordered pane.
+   - Zooming a pane hides borders and removes the inset.
+   - Unzooming restores borders, inset, overlay alignment, and resize hit
+     regions.
+
+9. DPI:
+   - On a 2x Retina display, `split_border_width = 4` draws and reserves 8
+     physical pixels.
+   - On a 1x display, `split_border_width = 4` draws and reserves 4 physical
+     pixels.

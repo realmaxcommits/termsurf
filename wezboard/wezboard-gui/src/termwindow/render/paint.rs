@@ -1,6 +1,6 @@
 use crate::termwindow::{RenderFrame, TermWindowNotif};
-use ::window::bitmaps::atlas::OutOfTextureSpace;
 use ::window::WindowOps;
+use ::window::bitmaps::atlas::OutOfTextureSpace;
 use anyhow::Context;
 use smol::Timer;
 use std::time::{Duration, Instant};
@@ -247,7 +247,6 @@ impl crate::TermWindow {
         }
 
         let num_panes = panes.len();
-        let mut painted_panes = Vec::new();
         for pos in panes {
             if pos.is_active {
                 self.update_text_cursor(&pos);
@@ -259,6 +258,7 @@ impl crate::TermWindow {
             let (pane_pixel_x, pane_pixel_y) = self
                 .paint_pane(&pos, num_panes, &mut layers)
                 .context("paint_pane")?;
+            self.paint_pane_border(&pos, num_panes, &mut layers)?;
 
             // Update webview overlay position using paint_pane's coordinates.
             {
@@ -305,47 +305,22 @@ impl crate::TermWindow {
                     }
                 }
             }
-            painted_panes.push(pos);
         }
 
-        for pos in painted_panes.iter().filter(|pos| !pos.is_active) {
-            self.paint_pane_border(pos, num_panes, &mut layers)?;
-        }
-        for pos in painted_panes.iter().filter(|pos| pos.is_active) {
-            self.paint_pane_border(pos, num_panes, &mut layers)?;
-        }
-
-        if let Some(pane) = self.get_active_pane_or_overlay() {
-            let splits = self.get_splits();
-            if !splits.is_empty() {
-                let split_border_width = self.split_border_width_physical(num_panes, false);
+        let split_border_width =
+            self.config
+                .split_border_width
+                .evaluate_as_pixels(config::DimensionContext {
+                    dpi: self.dimensions.dpi as f32,
+                    pixel_max: self.dimensions.pixel_width as f32,
+                    pixel_cell: self.render_metrics.cell_size.width as f32,
+                });
+        if split_border_width == 0. {
+            if let Some(pane) = self.get_active_pane_or_overlay() {
+                let splits = self.get_splits();
                 for split in &splits {
-                    let hit_thickness =
-                        if split_border_width == 0.0 {
-                            match split.direction {
-                                mux::tab::SplitDirection::Horizontal => {
-                                    self.render_metrics.cell_size.width as f32
-                                }
-                                mux::tab::SplitDirection::Vertical => {
-                                    self.render_metrics.cell_size.height as f32
-                                }
-                            }
-                        } else {
-                            match split.direction {
-                                mux::tab::SplitDirection::Horizontal => split_border_width
-                                    .max(self.render_metrics.cell_size.width as f32),
-                                mux::tab::SplitDirection::Vertical => split_border_width
-                                    .max(self.render_metrics.cell_size.height as f32),
-                            }
-                        };
-                    self.paint_split(
-                        &mut layers,
-                        split,
-                        &pane,
-                        split_border_width == 0.0,
-                        hit_thickness,
-                    )
-                    .context("paint_split")?;
+                    self.paint_split(&mut layers, split, &pane)
+                        .context("paint_split")?;
                 }
             }
         }
