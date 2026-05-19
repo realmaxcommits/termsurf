@@ -842,9 +842,7 @@ fn main() -> io::Result<()> {
                         if matches!(entry.0, LoadingStage::WaitingForChromium)
                             && matches!(entry.1, StageStatus::InProgress)
                         {
-                            entry.1 = StageStatus::Error(
-                                "Timeout — is Roamium installed?".into(),
-                            );
+                            entry.1 = StageStatus::Error("Timeout — is Roamium installed?".into());
                         }
                     }
                     chromium_wait_start = None; // Don't keep re-triggering.

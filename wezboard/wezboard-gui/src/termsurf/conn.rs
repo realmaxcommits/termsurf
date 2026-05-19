@@ -332,8 +332,7 @@ async fn handle_message(
                             .values()
                             .find(|p| p.tab_id == resolved_tab_id)
                             .map(|p| {
-                                let skey =
-                                    TermSurfState::server_key(&p.profile, &p.browser);
+                                let skey = TermSurfState::server_key(&p.profile, &p.browser);
                                 st.tab_to_pane.get(&(skey, resolved_tab_id))
                             })
                             .flatten()
