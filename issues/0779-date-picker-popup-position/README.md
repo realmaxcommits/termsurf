@@ -947,3 +947,21 @@ and log it.
 - logs are missing for `SetBounds`, `GetViewBounds`, `OnBoundsInWindowChanged`,
   `OnWindowFrameInScreenChanged`, or `ShowPopupMenu`;
 - the result cannot identify the coordinate source used by the `<select>` popup.
+
+**Result:** Fail
+
+Experiment 4 was abandoned and its code was reverted. The Chromium trace logs
+and the earlier resize-screen-bounds changes did not produce a safe debugging
+path: local testing showed the browser overlay opening while the `web` TUI did
+not render as a usable interface.
+
+The Issue 779 Chromium patch archive was deleted, and the active Chromium branch
+now contains revert commits for the Issue 779 Chromium changes. The main repo
+also reverted the protocol, Roamium, Wezboard, and `test-html` code changes from
+this issue.
+
+#### Conclusion
+
+Issue 779 is back to documentation-only state. Any future attempt must start
+from the pre-Issue-779 code path and avoid reusing the discarded patch archive
+or the failed Chromium trace approach.
