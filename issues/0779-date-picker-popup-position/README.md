@@ -1059,3 +1059,34 @@ overlay's position on the screen.
    - it proves the native-popup bug without changing application code;
    - it gives enough visual context for screenshots;
    - it does not add debug logs or attempt a fix.
+
+**Result:** Pass
+
+Restored `test-html/public/test-native-popups.html` with native select, date,
+time, datetime-local, color, and datalist controls. The page includes a visible
+webview content boundary and an on-page event log with timestamps for the last
+focused or clicked control.
+
+Linked the page from `test-html/public/index.html` under Input as
+`Native Popups — select, date, time, color, datalist`.
+
+Verification passed:
+
+```bash
+curl -I http://localhost:9616/test-native-popups.html
+curl -v http://localhost:9616/
+curl -v http://localhost:9616/test-native-popups.html
+```
+
+Manual verification also passed: the restored page worked as the proof-of-bug
+reproduction in Wezboard.
+
+No Chromium, Roamium, Wezboard, protobuf, overlay geometry, popup positioning,
+or debug logging code was changed.
+
+#### Conclusion
+
+Issue 779 again has a local proof-of-bug page without restoring the failed fix
+or debug patches. Future experiments can use
+`http://localhost:9616/test-native-popups.html` to reproduce native popup
+mispositioning.
