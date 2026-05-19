@@ -541,14 +541,18 @@ content grid.
 Implemented the correction path and verified that the debug Wezboard build
 completes with `scripts/build.sh wezboard`.
 
-The GUI now adjusts each bordered pane's visible `PositionedPane` dimensions and
-resizes the pane PTY to that visible grid before rendering, so line rendering no
-longer hides edge cells behind a render-only inset. `PaneRenderGeometry` now
-uses a bordered outer rect and a content rect without the old half-cell interior
-expansion when split borders are active, paints the pane background across the
-full bordered rect, and paints focused pane borders after unfocused borders so
-shared edges prefer the focused color. Split resize hit targets now use a full
-cell as their minimum thickness when borders are enabled.
+The first implementation incorrectly resized pane PTYs from the render path and
+shrunk pane dimensions without shifting later panes or split dividers. That
+created split gaps and put resize side effects in paint. The correction removes
+that render-path PTY resize.
+
+`PaneRenderGeometry` now keeps the mux cell grid stable, uses the existing
+split-gutter-covering pane rect as the bordered outer rect, insets the content
+rect from that shared rect, and paints the pane background across the full
+bordered rect so interior split gutters are covered. Focused pane borders still
+paint after unfocused borders so shared edges prefer the focused color. Split
+resize hit targets use a full cell as their minimum thickness when borders are
+enabled.
 
 Manual GUI verification is still pending for exact edge alignment, `stty size`
 versus visible grid, cross-DPI movement, config reload, drag-selection outside
@@ -556,7 +560,8 @@ pane bounds, browser overlay alignment, and zoom transitions.
 
 #### Conclusion
 
-The implementation now corrects the main render-only inset mistake from
-Experiment 1 and is buildable. The remaining work is runtime verification and
-any follow-up needed if split tree cell coordinates or display-scale changes
+The implementation removes the bad render-path PTY resize from the first
+Experiment 2 attempt and keeps pane/split cell coordinates stable while applying
+border geometry in pixels. The remaining work is runtime verification and any
+follow-up needed if visual alignment, display-scale changes, or mouse behavior
 still drift under manual testing.

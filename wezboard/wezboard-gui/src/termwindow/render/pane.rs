@@ -83,40 +83,9 @@ impl crate::TermWindow {
         let cell_width = self.render_metrics.cell_size.width as f32;
         let cell_height = self.render_metrics.cell_size.height as f32;
 
-        let border_width = self.split_border_width_for_pane(pos, num_panes);
-
-        if border_width > 0.0 {
-            let content_origin_x =
-                padding_left + border.left.get() as f32 + (pos.left as f32 * cell_width);
-            let content_origin_y = top_pixel_y + pos.top as f32 * cell_height;
-            let content_pixel_width = pos.width as f32 * cell_width;
-            let content_pixel_height = pos.height as f32 * cell_height;
-            let outer_rect = euclid::rect(
-                (content_origin_x - border_width).max(0.0),
-                (content_origin_y - border_width).max(0.0),
-                content_pixel_width + border_width * 2.0,
-                content_pixel_height + border_width * 2.0,
-            );
-            let content_rect = euclid::rect(
-                content_origin_x,
-                content_origin_y,
-                content_pixel_width,
-                content_pixel_height,
-            );
-            return Ok(PaneRenderGeometry {
-                outer_rect,
-                background_rect: outer_rect,
-                content_rect,
-                border_width,
-                content_origin_x,
-                content_origin_y,
-                content_pixel_width,
-                content_pixel_height,
-            });
-        }
-
-        // We want to fill out to the edges of the splits when legacy split
-        // borders are not active.
+        // We want to fill out to the edges of the splits.  When split borders
+        // are active this old half-cell expansion is still the only rect that
+        // covers the mux split gutter; the content rect below is inset from it.
         let (x, width_delta) = if pos.left == 0 {
             (
                 0.,
@@ -154,22 +123,37 @@ impl crate::TermWindow {
             },
         );
 
-        let content_origin_x =
-            padding_left + border.left.get() as f32 + (pos.left as f32 * cell_width) + border_width;
-        let content_origin_y = top_pixel_y + pos.top as f32 * cell_height + border_width;
-        let content_pixel_width = (pos.width as f32 * cell_width - (border_width * 2.0)).max(0.0);
-        let content_pixel_height =
-            (pos.height as f32 * cell_height - (border_width * 2.0)).max(0.0);
+        let border_width = self.split_border_width_for_pane(pos, num_panes);
+        let content_rect = if border_width > 0.0 {
+            let content_origin_x =
+                padding_left + border.left.get() as f32 + (pos.left as f32 * cell_width)
+                    + border_width;
+            let content_origin_y = top_pixel_y + pos.top as f32 * cell_height + border_width;
+            let width = (pos.width as f32 * cell_width - border_width * 2.0).max(cell_width);
+            let height = (pos.height as f32 * cell_height - border_width * 2.0).max(cell_height);
+            euclid::rect(
+                content_origin_x,
+                content_origin_y,
+                width,
+                height,
+            )
+        } else {
+            euclid::rect(
+                padding_left + border.left.get() as f32 + (pos.left as f32 * cell_width),
+                top_pixel_y + pos.top as f32 * cell_height,
+                pos.width as f32 * cell_width,
+                pos.height as f32 * cell_height,
+            )
+        };
+        let content_origin_x = content_rect.origin.x;
+        let content_origin_y = content_rect.origin.y;
+        let content_pixel_width = content_rect.size.width;
+        let content_pixel_height = content_rect.size.height;
 
         Ok(PaneRenderGeometry {
             outer_rect,
             background_rect: outer_rect,
-            content_rect: euclid::rect(
-                content_origin_x,
-                content_origin_y,
-                content_pixel_width,
-                content_pixel_height,
-            ),
+            content_rect,
             border_width,
             content_origin_x,
             content_origin_y,
