@@ -549,10 +549,12 @@ that render-path PTY resize.
 `PaneRenderGeometry` now keeps the mux cell grid stable, uses the existing
 split-gutter-covering pane rect as the bordered outer rect, insets the content
 rect from that shared rect, and paints the pane background across the full
-bordered rect so interior split gutters are covered. Focused pane borders still
-paint after unfocused borders so shared edges prefer the focused color. Split
-resize hit targets use a full cell as their minimum thickness when borders are
-enabled.
+bordered rect so interior split gutters are covered. Line rendering uses the
+full pane cell span instead of subtracting border pixels at paint time, so the
+rightmost column and bottom row remain part of the rendered grid. Focused pane
+borders still paint after unfocused borders so shared edges prefer the focused
+color. Split resize hit targets use a full cell as their minimum thickness when
+borders are enabled.
 
 Manual GUI verification is still pending for exact edge alignment, `stty size`
 versus visible grid, cross-DPI movement, config reload, drag-selection outside

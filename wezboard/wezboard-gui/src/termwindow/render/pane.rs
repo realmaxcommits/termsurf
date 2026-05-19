@@ -129,8 +129,8 @@ impl crate::TermWindow {
                 padding_left + border.left.get() as f32 + (pos.left as f32 * cell_width)
                     + border_width;
             let content_origin_y = top_pixel_y + pos.top as f32 * cell_height + border_width;
-            let width = (pos.width as f32 * cell_width - border_width * 2.0).max(cell_width);
-            let height = (pos.height as f32 * cell_height - border_width * 2.0).max(cell_height);
+            let width = pos.width as f32 * cell_width;
+            let height = pos.height as f32 * cell_height;
             euclid::rect(
                 content_origin_x,
                 content_origin_y,
