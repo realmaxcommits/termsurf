@@ -2068,3 +2068,64 @@ input routing, overlay geometry, or TUI behavior.
     - the logs still cannot compare popup position against both the webview
       screen rect and Shell window frame;
     - behavior changes are introduced.
+
+**Result:** Partial
+
+The trace run reproduced the bug and identified the coordinate mismatch that
+explains the misplaced native popups.
+
+Wezboard's authoritative CALayerHost screen rect was:
+
+```text
+wezboard_webview_screen_rect
+screen_rect=(x=1653.0 y=307.0 width=1106.0 height=1056.0)
+window_frame=(x=1639.0 y=267.0 width=1134.0 height=1216.0)
+```
+
+Chromium's hidden content Shell window stayed near the screen origin:
+
+```text
+content_shell_window
+window_frame={{0, 90}, {800, 656}}
+```
+
+Chromium's main webview bounds were then computed from that hidden Shell window
+coordinate space:
+
+```text
+chromium_webview_bounds
+computed_view_bounds=0,654 1106x1056
+```
+
+Popup-like Chromium views later appeared in the same wrong coordinate space:
+
+```text
+chromium_webview_bounds
+computed_view_bounds=70,941 218x281
+```
+
+The webtui and Roamium side traces confirmed the expected setup:
+
+```text
+webtui_send_set_overlay pane_id=0 viewport=(x=1 y=1 width=158 height=66)
+roamium_tab_ready pane_id=0 tab_id=1 handle=0xaeac42000
+```
+
+No `NativeWidgetNSWindowBridge` lines fired in this run. That means the clicked
+controls did not reach the Views native-widget bridge that Experiment 8
+instrumented, or the specific reproduction path used popup `RenderWidgetHost`
+views instead. This keeps the experiment from being a full pass.
+
+#### Conclusion
+
+The useful finding is that Wezboard displays the browser at screen
+`x=1653, y=307`, while Chromium still believes the browser's AppKit host window
+lives around `x=0, y=90`. Native popup placement is therefore anchored to
+Chromium's hidden Shell `NSWindow`, not to the CALayerHost's actual on-screen
+location inside Wezboard.
+
+The next fix should make Chromium's host-window/screen bounds match the
+Wezboard overlay screen rect. A size-only update is insufficient. The likely fix
+is to either move/resize the hidden content Shell `NSWindow` to the overlay
+screen rect when Roamium receives Wezboard's bounds, or explicitly update the
+relevant `RenderWidgetHostViewMac` `window_frame_in_screen_dip_` from that rect.
