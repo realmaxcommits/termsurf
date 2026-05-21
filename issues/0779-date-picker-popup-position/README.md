@@ -1728,12 +1728,12 @@ any native popup window is logged regardless of which Chromium subsystem creates
 it. It should also log the browser-side click/control activation path closely
 enough to prove that the click that opens the native popup reached Chromium.
 
-### Experiment 8: Trace AppKit Windows and Webview Screen Rects
+### Experiment 8: Trace Native Widget Windows and Shell Bounds
 
 #### Description
 
-Stop guessing Chromium popup subsystems and log the actual AppKit state when a
-native widget appears.
+Stop guessing Chromium popup subsystems and log the shared native-window
+placement boundary.
 
 Experiments 6 and 7 proved that the surrounding TermSurf overlay path is active,
 but they did not capture the native popup path. Experiment 7 also proved that
@@ -1741,19 +1741,52 @@ hooking expected Chromium popup APIs is not reliable enough: the bug reproduced
 without hitting `PopupMenuHelper`, `WebMenuRunner`, `DateTimeChooser`, or the
 Autofill trace hook.
 
-This experiment should therefore log three authoritative coordinate sources:
+Further source research showed that the macOS controls split across different
+paths:
+
+- native `<select>` uses `PopupMenuHelper` / `WebMenuRunner` /
+  `NSPopUpButtonCell`;
+- `date`, `time`, and `datetime-local` do not use
+  `DateTimeChooser::OpenDateTimeDialog` on macOS Chromium 148; they route
+  through Blink page popup / Views widget code;
+- datalist/autofill starts in `AutofillExternalDelegate`, but final placement is
+  a Views widget;
+- color picker is not a useful pass criterion on this build because Chromium
+  does not provide the same macOS native color chooser path.
+
+For everything except native `<select>`, the common placement boundary is the
+Views native widget bridge:
+
+```text
+components/remote_cocoa/app_shim/native_widget_ns_window_bridge.mm
+NativeWidgetNSWindowBridge::SetBounds
+NativeWidgetNSWindowBridge::SetVisibilityState
+```
+
+Those methods set and show the actual `NSWindow` for Views-backed popups. The
+root hypothesis is:
+
+```text
+Popup windows are anchored to Chromium's hidden Shell NSWindow,
+but Wezboard displays the CALayerHost somewhere else.
+```
+
+This experiment should therefore log four coordinate sources:
 
 1. the **Wezboard webview screen rect** where the CALayerHost is actually
    visible;
 2. Chromium's **believed webview screen rect** from `RenderWidgetHostViewMac`;
-3. the **actual AppKit windows/menus** owned by the Chromium process before and
-   after the click that opens a native widget.
+3. Chromium content shell's **host `NSWindow` frame**;
+4. the **actual popup `NSWindow` frame** before and after
+   `NativeWidgetNSWindowBridge` applies bounds and shows it.
 
 The output must be enough to answer:
 
 ```text
 native_popup_window_frame inside wezboard_webview_screen_rect?
 chromium_view_bounds == wezboard_webview_screen_rect?
+shell_window_frame == wezboard_webview_screen_rect?
+native_popup_window anchored to shell_window_frame?
 ```
 
 This remains a diagnostic experiment. It must not change popup placement,
@@ -1814,21 +1847,22 @@ input routing, overlay geometry, or TUI behavior.
    - log `trace_enabled component=chromium-appkit`;
    - describe an `NSRect`;
    - describe an `NSWindow`;
-   - enumerate `[NSApp windows]`;
-   - enumerate `CGWindowListCopyWindowInfo` entries for the current process;
    - install trace observers exactly once.
 
    The helper should produce stable, grep-friendly lines with one logical event
    per line.
 
-5. **Log AppKit windows from `[NSApp windows]`.**
+5. **Log the content Shell window frame.**
 
-   The helper should emit `appkit_nsapp_window` lines containing:
-   - `reason`;
-   - process id;
-   - pointer;
+   In `chromium/src/content/shell/browser/shell_mac.mm`, add gated logs at the
+   Shell window lifecycle points that create, resize, or attach WebContents to
+   the host window.
+
+   Log a line named `shell_window_frame` with:
+   - `Shell*`;
+   - `WebContents*`, when available;
+   - `NSWindow*`;
    - class name;
-   - title;
    - `frame`;
    - `contentView.frame`;
    - `visible`;
@@ -1836,97 +1870,93 @@ input routing, overlay geometry, or TUI behavior.
    - `main`;
    - `level`;
    - `windowNumber`;
-   - parent pointer;
-   - child count;
-   - alpha;
-   - ordered index if available.
+   - `screen.frame`, if available;
+   - reason (`constructor`, `PlatformSetContents`, `PlatformResizeSubViews`, or
+     equivalent actual method names in this Chromium version).
 
-   This catches regular AppKit windows and Chromium `NativeWidgetMacNSWindow`
-   instances.
+   This proves whether Chromium's hidden Shell host window is frozen at a
+   default origin while Wezboard composites the CALayerHost elsewhere.
 
-6. **Log actual on-screen windows with `CGWindowListCopyWindowInfo`.**
+6. **Log Views popup window bounds at the native bridge.**
 
-   The helper should emit `appkit_cgwindow` lines for windows whose owner PID is
-   the Chromium/Roamium process.
+   In
+   `chromium/src/components/remote_cocoa/app_shim/native_widget_ns_window_bridge.mm`,
+   add gated logs in `NativeWidgetNSWindowBridge::SetBounds`.
 
-   Log:
-   - `reason`;
-   - `kCGWindowNumber`;
-   - owner PID;
-   - owner name;
-   - window name;
-   - layer;
-   - bounds;
-   - alpha;
-   - sharing state;
-   - store type;
-   - whether the CG window bounds are inside the Wezboard webview rect, if the
-     webview rect is known to Chromium.
+   Before the existing `setFrame:` call, log:
+   - `NativeWidgetNSWindowBridge*`;
+   - `NSWindow*`;
+   - `new_bounds` in Chromium screen DIP;
+   - `actual_new_bounds` after minimum/maximum size adjustment;
+   - `window_.frame` before;
+   - `window_.screen.frame`;
+   - `window_.parentWindow`;
+   - `window_.parentWindow.frame`;
+   - `window_.level`;
+   - `window_.isVisible`;
+   - `modal_type_`;
+   - `parent_` pointer, if present.
 
-   `CGWindowListCopyWindowInfo` is important because native AppKit popup windows
-   may not be represented by the Chromium objects guessed in earlier
-   experiments.
+   Immediately after the existing `setFrame:` call, log:
+   - `window_.frame` after;
+   - `window_.screen.frame` after;
+   - whether AppKit changed the requested frame.
 
-7. **Snapshot AppKit state around mouse events.**
+   This is the primary hook for date/time page popups, datalist/autofill popups,
+   and other Views-backed native popup windows.
 
-   In the Chromium process, install an opt-in local event monitor for mouse
-   events using `NSEvent addLocalMonitorForEventsMatchingMask`.
+7. **Log popup window visibility/order.**
 
-   On left mouse down and left mouse up, log:
-   - event type;
-   - event window pointer/class/frame;
-   - `locationInWindow`;
-   - modifier flags;
-   - click count.
+   In the same file, add gated logs in
+   `NativeWidgetNSWindowBridge::SetVisibilityState`.
 
-   Then take AppKit window snapshots:
-   - immediately on left mouse down;
-   - immediately on left mouse up;
-   - 50ms after left mouse up;
-   - 250ms after left mouse up;
-   - 1000ms after left mouse up.
+   Log a line named `native_widget_visibility` with:
+   - requested `WindowVisibilityState`;
+   - `NSWindow*`;
+   - `window_.frame`;
+   - `window_.screen.frame`;
+   - `window_.isVisible`;
+   - `window_.isKeyWindow`;
+   - `window_.isMainWindow`;
+   - parent window pointer/frame;
+   - whether the method is about to call `makeKeyAndOrderFront:`,
+     `orderWindow:relativeTo:`, `orderFrontKeepWindowKeyState`, or `orderOut:`.
 
-   Each snapshot should enumerate both `[NSApp windows]` and
-   `CGWindowListCopyWindowInfo`.
+   This is the last boundary before the popup becomes visible.
 
-8. **Observe native menu tracking.**
+8. **Keep the Experiment 7 `<select>` logs.**
 
-   Register observers for:
-   - `NSMenuDidBeginTrackingNotification`;
-   - `NSMenuDidEndTrackingNotification`.
+   Keep `WebMenuRunner::runMenuInView` and
+   `RenderWidgetHostNSViewBridge::DisplayPopupMenu`. These cover the native
+   `<select>` path, which does not use `NativeWidgetNSWindowBridge::SetBounds`.
 
-   On each notification, log:
-   - notification name;
-   - menu pointer;
-   - menu class;
-   - menu title;
-   - item count;
-   - current event type/location/window;
-   - an immediate AppKit window snapshot.
+   The `<select>` logs should be compared against:
+   - Wezboard's screen rect;
+   - Chromium's `RenderWidgetHostViewMac` bounds;
+   - the Shell `NSWindow` frame;
+   - the `WebMenuRunner` `bounds_in_screen`.
 
-   This should catch native menu/dropdown behavior even if Chromium's normal
-   select-menu hooks do not fire.
+9. **Do not rely on dead or too-high hooks.**
 
-9. **Install the AppKit trace helper during Chromium startup.**
+   Leave these logs if already present, but do not count on them for pass/fail:
+   - `DateTimeChooser::OpenDateTimeDialog`, which is not the macOS path for
+     date/time controls in Chromium 148;
+   - `AutofillExternalDelegate::ShowSuggestions`, which sees renderer-side
+     element bounds but not the final native popup window;
+   - `PopupMenuHelper::ShowPopupMenu`, which is redundant for `<select>` once
+     `WebMenuRunner` is logged.
 
-   In TermSurf's Chromium startup path, call the helper once when
-   `TERMSURF_ISSUE_779_TRACE=1`.
+10. **Optional fallback: snapshot AppKit/CGWindow state.**
 
-   The likely location is
-   `chromium/src/content/libtermsurf_chromium/ts_browser_main_parts.cc`, after
-   AppKit/Chromium browser initialization is active enough that
-   `[NSApplication sharedApplication]` exists.
+    If the Shell frame logs and `NativeWidgetNSWindowBridge` logs are
+    inconclusive, add a fallback snapshot helper that enumerates
+    `[NSApp windows]` and `CGWindowListCopyWindowInfo` for the Chromium/Roamium
+    process. This should be used only as supporting evidence, not as the primary
+    diagnostic path.
 
-   The startup log should include:
-
-   ```text
-   appkit_trace_installed pid=... app=... windows_initial_count=...
-   ```
-
-10. **Keep Experiment 7 popup hooks if they are already present.**
-
-    They are not sufficient, but they are harmless and can still provide useful
-    context if a later control happens to use one of those paths.
+    If implemented, the helper should emit `appkit_nsapp_window` and
+    `appkit_cgwindow` lines with class/name/window-number/frame/visibility
+    fields.
 
 #### Verification
 
@@ -1973,24 +2003,39 @@ input routing, overlay geometry, or TUI behavior.
    http://localhost:9616/test-native-popups.html
    ```
 
-6. Click the native `<select>` control first.
+6. Click only the native `<select>` first.
 
    Confirm logs include:
    - `wezboard_webview_screen_rect`;
    - `chromium_webview_bounds`;
-   - `appkit_event`;
-   - `appkit_nsapp_window_snapshot`;
-   - `appkit_cgwindow_snapshot`;
-   - at least one new or changed `appkit_cgwindow` or `appkit_nsapp_window`
-     after the click.
+   - `shell_window_frame`;
+   - `RenderWidgetHostNSViewBridge::DisplayPopupMenu` or
+     `WebMenuRunner::runMenuInView`;
+   - `WebMenuRunner::fakeControlView`, if the fake-control path is reached.
 
-7. Click `date`, `time`, `datetime-local`, and datalist controls.
+   This verifies the `<select>` path and gives a direct comparison between the
+   Shell window frame, Chromium view bounds, Wezboard webview screen rect, and
+   AppKit menu anchor.
 
-   For each control, note whether a new native window/menu appears in the AppKit
-   snapshots and whether it is inside or outside the Wezboard webview screen
-   rect.
+7. Click only the `date` input next.
 
-8. Extract trace logs:
+   Confirm logs include:
+   - `wezboard_webview_screen_rect`;
+   - `chromium_webview_bounds`;
+   - `shell_window_frame`;
+   - `NativeWidgetNSWindowBridge::SetBounds`;
+   - `NativeWidgetNSWindowBridge::SetBounds applied`;
+   - `native_widget_visibility`.
+
+   This verifies the Views-backed popup path and should prove whether the popup
+   window is positioned relative to the hidden Shell window.
+
+8. Only after the `<select>` and `date` traces are useful, click datalist,
+   `time`, and `datetime-local`.
+
+   These are secondary checks. Do not let them obscure the two primary cases.
+
+9. Extract trace logs:
 
    ```bash
    rg -a "\\[issue-779-trace\\]" \
@@ -2000,26 +2045,26 @@ input routing, overlay geometry, or TUI behavior.
      logs/issue-779-exp8-state/termsurf/chromium-server.log
    ```
 
-9. Pass criteria:
-   - trace remains opt-in;
-   - `web` remains visible and usable;
-   - the logs include Wezboard's webview screen rect;
-   - the logs include Chromium's believed webview rect;
-   - the logs include AppKit/CGWindow snapshots before and after the click;
-   - the native popup/widget window is identified by class/name/window number or
-     by appearing as a new/changed window after click;
-   - the result can say whether the native window is outside the webview screen
-     rect;
-   - the result can say whether Chromium's believed webview rect differs from
-     Wezboard's webview screen rect.
+10. Pass criteria:
+    - trace remains opt-in;
+    - `web` remains visible and usable;
+    - the logs include Wezboard's webview screen rect;
+    - the logs include Chromium's believed webview rect;
+    - the logs include the Shell host `NSWindow` frame;
+    - `<select>` logs show the AppKit menu anchor or final menu screen bounds;
+    - `date` logs show the Views popup `NSWindow` frame before and after
+      `SetBounds`;
+    - the result can say whether native popup coordinates are anchored to the
+      Shell window frame instead of the Wezboard webview screen rect.
 
-10. Fail criteria:
+11. Fail criteria:
     - `web` breaks or disappears;
     - logs emit without `TERMSURF_ISSUE_779_TRACE=1`;
-    - a native popup visibly appears but no AppKit/CGWindow snapshot shows a new
-      or changed window;
-    - logs omit either the Wezboard webview screen rect or Chromium's believed
-      webview rect;
-    - the logs still cannot compare native popup position against the webview
-      position;
+    - the `<select>` click produces no `WebMenuRunner` or display-menu log;
+    - the `date` click produces no `NativeWidgetNSWindowBridge::SetBounds` or
+      visibility log;
+    - logs omit either the Wezboard webview screen rect, Chromium view bounds,
+      or Shell window frame;
+    - the logs still cannot compare popup position against both the webview
+      screen rect and Shell window frame;
     - behavior changes are introduced.
