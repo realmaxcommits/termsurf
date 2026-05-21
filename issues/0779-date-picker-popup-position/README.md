@@ -1,6 +1,7 @@
 +++
-status = "open"
+status = "closed"
 opened = "2026-04-15"
+closed = "2026-05-21"
 +++
 
 # Issue 779: Native popups (date picker, select dropdown) render outside webview overlay
@@ -3695,3 +3696,33 @@ Experiment 12 fixes the primary date PagePopup y-axis issue. Keep the correction
 and continue with one remaining bug at a time. The alt-tab PagePopup visibility
 bug, dropdown x bug, post-select native-widget failure, and datalist behavior
 are separate follow-up issues.
+
+## Conclusion
+
+Issue 779 started with native browser popups appearing far outside the TermSurf
+webview overlay. The work established that these controls do not all share one
+implementation path:
+
+- date, time, date-time, and color controls use Blink PagePopup widgets;
+- `<select>` uses Chromium's AppKit menu path;
+- datalist did not produce a reliable popup-open chain during testing.
+
+The core PagePopup positioning bug is fixed. Wezboard now reports the overlay's
+real screen geometry, Chromium's synthetic webview/window bounds are aligned
+with that geometry, and the PagePopup-family y-axis correction changes the bad
+`anchor.y + anchor.height()` placement to `anchor.y`. Manual testing confirmed
+that date, time, date-time, and color popups now appear at the correct y
+position.
+
+Several issues remain and should continue in a new, smaller issue:
+
+- PagePopup controls still remain visible after alt-tab/window deactivation;
+- `<select>` has the correct y position but the wrong x position;
+- after interacting with `<select>` once or twice, native widgets stop opening
+  for the rest of the session;
+- datalist behavior still needs to be isolated once the post-select failure no
+  longer blocks testing.
+
+The next issue should treat these as separate bugs and fix them one at a time,
+starting with the highest-risk shared lifecycle problem rather than extending
+this already-large issue further.
