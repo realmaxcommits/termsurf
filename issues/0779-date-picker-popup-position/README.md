@@ -2871,3 +2871,52 @@ and identifying which coordinate conversion introduced that delta.
     - the `<select>` anchor cannot be compared to a screenshot-measured menu
       position;
     - the logs add noise without producing a concrete y delta.
+
+**Result:** Fail
+
+The manual trace run showed that the experiment did not produce the information
+needed to explain the remaining date picker y-axis error.
+
+The base overlay geometry was stable. WebTUI sent one viewport, Roamium resized
+the browser to `screen=(1956.0,485.0 1106.0x1056.0)`, Wezboard reported the same
+webview top-left, and Chromium's main `RenderWidgetHostViewMac` resolved to
+`computed_view_bounds=1956,485 1106x1056`.
+
+The `<select>` path produced a complete expected anchor chain. The select
+control had `input_bounds=407,385 292x43`; adding that to the webview top-left
+gives `2363,870 292x43`, exactly matching the traced
+`bounds_top_left_screen={{2363.0, 870.0}, {292.0, 43.0}}`. This means the
+`<select>` anchor rect was correct in both x and y. However, Chromium still did
+not expose AppKit's final menu window frame, so the trace could not compare the
+visible menu position to Chromium's anchor without an external screenshot
+measurement.
+
+The date picker did not hit the expected `NativeWidgetNSWindowBridge` trace
+path. No `NativeWidgetNSWindowBridge::SetBounds path=views-popup` lines were
+emitted. Instead, the date interaction produced transient
+`RenderWidgetHostViewMac` views with `webcontents=0`, including bounds such as
+`2026,772 218x281` and `2364,774 172x260`. Those rects showed that date-related
+popup views were inside the webview, but the run did not log the date input's
+expected anchor rect before those popup views were created. Therefore the trace
+could not compute the required date picker `delta_y`.
+
+A separate regression or previously unnoticed bug appeared during the run: after
+the `<select>` interaction, native widgets stopped appearing. The log contains
+many later `CursorChanged` messages, which indicates Chromium was still
+receiving hover/cursor movement, but there were no later
+`RenderFrameHostImpl::ShowPopupMenu`, `WebContentsViewMac::ShowPopupMenu`,
+`DisplayPopupMenu`, `WebMenuRunner`, `NativeWidgetNSWindowBridge`, or date popup
+view creation logs. That means subsequent clicks did not reach any popup request
+path at all. This is upstream of popup placement and was not diagnosed by this
+experiment.
+
+#### Conclusion
+
+Experiment 10 failed because it did not teach the needed fact: the exact y delta
+between the date input's expected anchor and the date popup's final rect. It
+confirmed that the base webview placement is stable and that the `<select>`
+anchor calculation is correct, but it did not identify why the date picker y
+position is wrong. The next experiment must trace the date/page-popup anchor
+before the transient `webcontents=0` popup `RenderWidgetHostViewMac` is created,
+and it must also trace click delivery/menu lifecycle state after a popup closes
+to explain why later native widgets stop opening.
