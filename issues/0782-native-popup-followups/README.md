@@ -120,7 +120,31 @@ boundary in the second popup-open attempt.
 
 #### Changes
 
-1. **Keep the Issue 779 popup trace hooks.**
+1. **Create the Issue 782 Chromium branch.**
+
+   This experiment modifies Chromium trace code, so it must use a new Chromium
+   issue branch:
+
+   ```text
+   148.0.7778.97-issue-782
+   ```
+
+   Branch it from the tip of `148.0.7778.97-issue-779`, then register the new
+   branch in `chromium/README.md`. Do not continue adding Chromium commits to
+   the Issue 779 branch.
+
+2. **Use the existing trace gate.**
+
+   All new logs must be gated by the existing trace variable:
+
+   ```text
+   TERMSURF_ISSUE_779_TRACE=1
+   ```
+
+   Do not add a new behavior flag or a new issue-specific trace flag for this
+   experiment.
+
+3. **Keep the Issue 779 popup trace hooks.**
 
    Preserve existing logs for:
    - `RenderFrameHostImpl::ShowPopupMenu`;
@@ -132,7 +156,24 @@ boundary in the second popup-open attempt.
    - `WebContentsImpl::ShowCreatedWidget`;
    - `RenderWidgetHostViewMac::InitAsPopup`.
 
-2. **Log select menu lifecycle cleanup.**
+4. **Define the popup sequence key.**
+
+   Use one field name consistently:
+
+   ```text
+   popup_sequence=...
+   ```
+
+   In the browser process, `popup_sequence` is a process-local atomic counter.
+   Increment it once per popup-open intent at the top browser entry:
+   - `RenderFrameHostImpl::ShowPopupMenu` for `<select>` menus;
+   - the browser-side PagePopup entry for date/time/color controls.
+
+   Downstream browser/AppKit logs reuse that same value. Renderer-side logs do
+   not need to share the counter; they join by timestamp plus frame/WebContents
+   identity fields.
+
+5. **Log select menu lifecycle cleanup.**
 
    In Chromium's select/AppKit path, add trace lines for:
    - menu open entry;
@@ -157,7 +198,18 @@ boundary in the second popup-open attempt.
    If Chromium already has a process-local popup/menu counter or helper pointer,
    log it. Do not add protocol fields.
 
-3. **Log the top of the popup-open decision points.**
+6. **Log `popup_menu_helper_` state directly.**
+
+   Specifically log `WebContentsViewMac::popup_menu_helper_.get()` at:
+   - the top of `WebContentsViewMac::ShowPopupMenu`, before replacing or
+     rejecting any helper;
+   - the callback that should clear the helper when the menu closes;
+   - `PopupMenuHelper::CloseMenu` and the `PopupMenuHelper` destructor.
+
+   These logs must answer whether an old helper remains alive after the select
+   menu closes.
+
+7. **Log the top of the popup-open decision points.**
 
    Add trace lines before any early return or suppression in:
    - `RenderFrameHostImpl::ShowPopupMenu`;
@@ -168,59 +220,105 @@ boundary in the second popup-open attempt.
    These logs must answer whether the failed post-select click reaches the
    popup-open functions and, if it does, why the open is rejected.
 
-4. **Log mouse click delivery after select closes.**
+8. **Log renderer-side popup intent and active state.**
 
-   Add trace lines for the macOS `RenderWidgetHostViewMac` input path that sees
-   mouse down/up events for the main webview after the select menu closes.
+   Add renderer-side trace lines for:
+   - PagePopup open intent and close in `WebPagePopupImpl` / `WebViewImpl`;
+   - date/time/color open intent before crossing to the browser;
+   - select popup intent in the Blink select path;
+   - any renderer-side "popup already open" state checked before sending popup
+     IPC.
 
-   Include:
+   These logs are required because the failure may happen before the browser
+   receives a popup-open request. If all browser-side popup logs are silent, the
+   renderer trace must still say whether Blink activated the control and whether
+   it suppressed the popup.
 
-   ```text
-   event type
-   location in window/view
-   target RenderWidgetHostViewMac pointer
-   webcontents pointer if available
-   window isKey/isMain/isVisible
-   firstResponder class if cheap to log
-   ```
+9. **Log PagePopup close cleanup.**
 
-   The purpose is not to trace every cursor move. Log clicks only, or keep move
-   logs out of the experiment trace, so the result is readable.
+   Mirror the close-path logging for PagePopup controls:
+   - `WebPagePopupImpl::ClosePopup`;
+   - the `WebViewImpl` popup-open/closed state used by PagePopup;
+   - browser-side PagePopup widget destruction or close notification if present.
 
-5. **Log window activation state around AppKit menu tracking.**
+   The trigger appears to be `<select>`, but the symptom affects date/time/color
+   too, so both popup families need close-state visibility.
 
-   In the AppKit select menu path, log before opening the menu and after it
-   returns:
+10. **Log mouse click delivery after select closes.**
 
-   ```text
-   window isKey/isMain/isVisible
-   app isActive
-   firstResponder
-   currentEvent type
-   ```
+    Add trace lines for the macOS `RenderWidgetHostViewMac` input path that sees
+    mouse down/up events for the main webview after the select menu closes.
 
-   If AppKit leaves the hidden/transparent Chromium shell window in a different
-   activation state after the select menu closes, this should make it visible.
+    Include:
 
-6. **Add one concise summary line for each attempted popup.**
+    ```text
+    event type
+    location in window/view
+    target RenderWidgetHostViewMac pointer
+    webcontents pointer if available
+    window isKey/isMain/isVisible
+    firstResponder class if cheap to log
+    ```
 
-   Emit a summary line at each attempted popup boundary:
+    The purpose is not to trace every cursor move. Log clicks only, or keep move
+    logs out of the experiment trace, so the result is readable.
 
-   ```text
-   native_popup_attempt
-     attempt=N
-     control=select|date|unknown
-     boundary=input|blink|browser-popup-open|appkit-open|cleanup
-     outcome=entered|opened|closed|cancelled|suppressed|missing
-     reason=...
-   ```
+11. **Log window activation state around AppKit menu tracking.**
 
-   The summary does not need to be perfect automation. It only needs to make the
-   trace easy to scan and compare with the detailed lines.
+    In the AppKit select menu path, log before opening the menu, after it
+    returns, and again at the next attempted popup/click boundary:
+
+    ```text
+    window isKey/isMain/isVisible
+    app isActive
+    firstResponder
+    currentEvent type
+    ```
+
+    If AppKit leaves the hidden/transparent Chromium shell window in a different
+    activation state after the select menu closes, this should make it visible.
+
+12. **Add one concise summary line for each attempted popup.**
+
+    Emit a summary line at each attempted popup boundary:
+
+    ```text
+    native_popup_attempt
+      attempt=N
+      control=select|date|unknown
+      boundary=input|blink|browser-popup-open|appkit-open|cleanup
+      outcome=entered|opened|closed|cancelled|suppressed|missing
+      reason=...
+    ```
+
+    The `boundary` field is a fixed enum for this experiment:
+    - `input`
+    - `blink`
+    - `browser-popup-open`
+    - `appkit-open`
+    - `cleanup`
+
+    Do not invent new boundary values without updating this experiment text.
+
+    The summary does not need to be perfect automation. It only needs to make
+    the trace easy to scan and compare with the detailed lines.
 
 #### Verification
 
-0. Build through the project scripts:
+0. Confirm the Chromium branch:
+
+   ```bash
+   cd /Users/ryan/dev/termsurf/chromium/src
+   git branch --show-current
+   ```
+
+   The branch must be:
+
+   ```text
+   148.0.7778.97-issue-782
+   ```
+
+1. Build through the project scripts:
 
    ```bash
    cd /Users/ryan/dev/termsurf
@@ -230,14 +328,20 @@ boundary in the second popup-open attempt.
    scripts/build.sh wezboard
    ```
 
-1. Start the test page server:
+2. Start the test page server:
 
    ```bash
    cd /Users/ryan/dev/termsurf
    bun test-html/server.ts
    ```
 
-2. Start Wezboard with deterministic logs:
+3. Run a trace-off baseline.
+
+   Start Wezboard once without `TERMSURF_ISSUE_779_TRACE`, confirm the test page
+   is usable, and confirm no `[issue-779-trace]` lines are emitted. Stop that
+   run before starting the traced run.
+
+4. Start Wezboard with deterministic logs:
 
    ```bash
    cd /Users/ryan/dev/termsurf
@@ -250,7 +354,7 @@ boundary in the second popup-open attempt.
    2>&1 | tee logs/issue-782-exp1-wezboard.log
    ```
 
-3. Launch the TUI:
+5. Launch the TUI:
 
    ```bash
    /Users/ryan/dev/termsurf/webtui/target/release/web \
@@ -258,7 +362,7 @@ boundary in the second popup-open attempt.
      http://localhost:9616/test-native-popups.html
    ```
 
-4. Run one controlled interaction sequence:
+6. Run one controlled interaction sequence:
    - click the date control and confirm it opens;
    - close it;
    - click the `<select>` dropdown and choose or dismiss one item;
@@ -266,10 +370,10 @@ boundary in the second popup-open attempt.
    - click the `<select>` dropdown again;
    - if widgets stop opening, stop the test immediately and preserve the logs.
 
-5. Extract the trace:
+7. Extract the trace:
 
    ```bash
-   rg -a "\[issue-779-trace\]|native_popup_attempt|ShowPopupMenu|PopupMenuHelper|DisplayPopupMenu|WebMenuRunner|DateTimeChooserImpl|WebPagePopupImpl|ShowCreatedWidget|InitAsPopup|mouse.*down|mouse.*up|firstResponder|isKey|isMain|app isActive|menu.*close|menu.*cancel|menu.*dismiss" \
+   rg -a "\[issue-779-trace\]|native_popup_attempt|popup_sequence|popup_menu_helper_|ShowPopupMenu|PopupMenuHelper|DisplayPopupMenu|WebMenuRunner|DateTimeChooserImpl|WebPagePopupImpl|WebViewImpl|ShowCreatedWidget|InitAsPopup|mouse.*down|mouse.*up|firstResponder|isKey|isMain|app isActive|menu.*close|menu.*cancel|menu.*dismiss|popup.*active|popup.*suppress" \
      logs/issue-782-exp1-wezboard.log \
      logs/issue-782-exp1-state/termsurf/webtui-trace.log \
      logs/issue-782-exp1-state/termsurf/roamium-trace.log \
@@ -277,22 +381,28 @@ boundary in the second popup-open attempt.
      > logs/issue-782-exp1-trace.log
    ```
 
-6. Pass criteria:
+8. Pass criteria:
    - the first date click shows the normal PagePopup open chain;
    - the select click shows the full select menu open and cleanup chain;
    - after select closes, the next failed click shows exactly where the chain
      stops: no mouse click delivered, no Blink activation, popup-open
      suppressed, AppKit/menu state stuck, or another concrete boundary;
+   - if browser-side popup-open logs are silent, renderer-side logs explain
+     whether Blink received the activation and whether it suppressed the popup;
+   - select cleanup logs show whether `popup_menu_helper_` was cleared;
    - logs are quiet enough to read without cursor-move floods.
 
-7. Partial criteria:
+9. Partial criteria:
    - the failure reproduces and the trace narrows the cause to a subsystem, but
      another experiment is needed to identify the exact function or state flag;
    - the failure does not reproduce, but the trace proves repeated date/select
-     interactions can work in a clean run.
+     interactions can work in a clean run;
+   - if mouse down/up stops reaching Chromium after `<select>` closes, run a
+     follow-up experiment with Wezboard's mouse-forwarding path logged to
+     distinguish AppKit input absorption from missing GUI forwarding.
 
-8. Fail criteria:
-   - the logs still only show cursor movement after the failure;
-   - the trace cannot distinguish input delivery, Blink activation, Chromium
-     popup suppression, and AppKit menu cleanup;
-   - the experiment changes popup behavior instead of only adding logs.
+10. Fail criteria:
+    - the logs still only show cursor movement after the failure;
+    - the trace cannot distinguish input delivery, Blink activation, Chromium
+      popup suppression, and AppKit menu cleanup;
+    - the experiment changes popup behavior instead of only adding logs.
