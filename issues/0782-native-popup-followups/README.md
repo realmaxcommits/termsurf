@@ -1899,3 +1899,64 @@ issues:
    - the Shell window no longer provides correct screen geometry for
      date/time/color placement;
    - the fix introduces a behavior flag or changes unrelated popup families.
+
+**Result:** Pass.
+
+The manual sequence succeeded. Date opened before the first select interaction,
+the first select menu opened and closed, date opened again afterward, the other
+PagePopup-family controls opened afterward, and a later select attempt opened
+instead of triggering the session-wide native-widget shutdown.
+
+The trace confirmed the intended Shell-window invariant. No Experiment 6 log
+line reported `ignoresMouseEvents=false`. The TermSurf Shell move path reported
+the hidden Shell window as mouse-transparent before and after positioning:
+
+```text
+TermSurfMoveShellWindow.before ... alphaValue=0 isVisible=1 ignoresMouseEvents=1
+TermSurfMoveShellWindow.after  ... alphaValue=0 isVisible=1 ignoresMouseEvents=1
+```
+
+The select menu snapshots also stayed mouse-transparent through the AppKit menu
+boundary:
+
+```text
+phase=before_open              ... ignoresMouseEvents=true
+phase=after_return             ... ignoresMouseEvents=true
+phase=menu_closed_before_reset ... ignoresMouseEvents=true
+phase=menu_closed_after_reset  ... ignoresMouseEvents=true
+```
+
+After the first select menu closed, later button events continued through the
+expected stack:
+
+```text
+Wezboard appkit_view
+Wezboard mouse_forward_boundary
+Roamium mouse_forward_boundary
+Chromium input/popup paths
+Blink DateTimeChooserImpl or MenuListSelectType
+```
+
+The trace showed native controls opening after the first select interaction:
+
+- post-select date reached `DateTimeChooserImpl::ctor.before_open`;
+- time/date-family PagePopup widgets reached
+  `WebContentsImpl::ShowCreatedWidget`;
+- color/PagePopup also reached `WebContentsImpl::ShowCreatedWidget`;
+- the later select attempt reached
+  `MenuListSelectType::DefaultEventHandler.before_show_popup` and
+  `RenderFrameHostImpl::ShowPopupMenu`.
+
+#### Conclusion
+
+Experiment 6 fixed the post-select native-widget shutdown. The root cause was
+the invisible Chromium Shell window being eligible for AppKit mouse hit testing
+while overlapping the visible Wezboard overlay. Making the Shell window
+consistently mouse-transparent restored click delivery to Wezboard after native
+select menu interactions.
+
+The `RenderWidgetPopupWindow` entries at level `101`, visible and not ignoring
+mouse events, still appeared in ordered-window snapshots. They did not block the
+Experiment 6 sequence once the main Shell window ignored mouse events, so they
+are not the cause of this shutdown bug. Keep them deferred unless they explain a
+later symptom such as PagePopup alt-tab visibility.
