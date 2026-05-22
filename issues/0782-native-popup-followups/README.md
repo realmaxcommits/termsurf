@@ -742,3 +742,53 @@ existing `TERMSURF_ISSUE_779_TRACE=1` trace gate and the existing
    - the trace cannot compare hit test, dispatch, focus, default action, and
      form-control activation between the successful and failed clicks;
    - the experiment changes popup behavior instead of only adding logs.
+
+**Result:** Partial.
+
+The run reproduced the post-select shutdown: after opening and dismissing the
+native `<select>` menu, clicking the date control did not open the date popup.
+The test stopped immediately after the failed post-select date click, as
+requested.
+
+The trace disproved the main stuck-Blink-state hypothesis. After the successful
+select interaction, Blink and browser cleanup both looked healthy:
+
+- `WebContentsViewMac::OnMenuClosed.after` reported
+  `popup_menu_helper_after_reset=0`, so the browser-side `popup_menu_helper_`
+  did not leak.
+- `MenuListSelectType::SetNativePopupIsVisible` reported
+  `native_popup_is_visible_after=0`, so the select-specific native-popup flag
+  was cleared.
+- `EventHandler::HandleMouseReleaseEvent.exit` reported `mouse_pressed=0`, so
+  Blink was not left in a stuck pressed state.
+
+The successful first date click showed the expected full renderer path:
+`HandleMousePressEvent`, `HandleMouseReleaseEvent`,
+`HTMLInputElement::DefaultEventHandler`, `DateTimeChooserImpl::ctor`, and
+`WebViewImpl::OpenPagePopup`. The successful select click likewise showed the
+full path through `MenuListSelectType::DefaultEventHandler.before_show_popup`,
+`RenderFrameHostImpl::ShowPopupMenu`, AppKit menu display, and cleanup.
+
+The failed post-select date click produced only
+`WebViewImpl::CancelPagePopup path=date-page-popup web_view=... page_popup=0`.
+It did not produce `HandleMousePressEvent`, `HandleMouseReleaseEvent`,
+`HTMLInputElement::DefaultEventHandler`, `DateTimeChooserImpl::ctor`, or
+`OpenPagePopup` for the date control. One `CursorChanged` message arrived after
+select cleanup, which shows the Chromium process and cursor/move path were still
+alive.
+
+#### Conclusion
+
+The failure is earlier than Blink form-control activation. It is not caused by
+`mouse_pressed_`, `mouse_down_node_`, select native-popup visibility, or
+`popup_menu_helper_` lifetime. After the AppKit select menu closes, subsequent
+clicks no longer reach Blink's normal `LocalFrame::EventHandler` mouse
+press/release path, even though movement/cursor activity can still reach the
+browser process.
+
+The next experiment should move upward in the input pipeline: log Wezboard mouse
+forwarding and Chromium's top-level WebView/RenderWidgetHost receipt of
+`MouseDown`/`MouseUp` after the select menu closes. The goal is to distinguish
+between a Wezboard forwarding failure, AppKit/RemoteCocoa swallowing click
+events, and Chromium receiving the native click but not routing it to the
+renderer.
