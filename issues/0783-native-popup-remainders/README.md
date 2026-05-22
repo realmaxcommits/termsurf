@@ -392,3 +392,282 @@ the Chromium diff against the known-good Issue 779/782 state and identify which
 removed or changed log/positioning code was actually part of the fix path, then
 restore the working y-axis behavior before running any further alt-tab
 experiments.
+
+### Experiment 2: Clean Alt-Tab Trace Without Breaking PagePopup Y
+
+#### Description
+
+Experiment 1 failed because it removed the actual PagePopup y-axis fix while
+removing obsolete logs. This experiment repeats the cleanup and alt-tab trace
+work, but with an explicit hard boundary around the working y-axis solution.
+
+The working y-axis fix lives in:
+
+```text
+chromium/src/third_party/blink/renderer/core/exported/web_page_popup_impl.cc
+```
+
+inside:
+
+```text
+WebPagePopupImpl::SetWindowRect
+```
+
+It must continue to:
+
+```text
+anchor_rect_in_screen = GetAnchorRectInScreen()
+window_rect = rect_in_screen
+
+if rect_in_screen.x == anchor_rect_in_screen.x
+and rect_in_screen.y == anchor_rect_in_screen.bottom()
+then window_rect.y = anchor_rect_in_screen.y
+```
+
+Then `window_rect`, not `rect_in_screen`, must continue flowing into:
+
+```text
+widget_base_->SetPendingWindowRect(window_rect)
+popup_widget_host_->SetPopupBounds(window_rect, ...)
+initial_rect_ = window_rect
+```
+
+**LOUD RULE: DO NOT REMOVE, REWRITE, BYPASS, DISABLE, OR "CLEAN UP" THE
+`page_popup_y_fix` / `SetWindowRect` Y-CORRECTION CODE.**
+
+**LOUD RULE: ANY DIFF THAT CHANGES THE SEMANTICS OF
+`WebPagePopupImpl::SetWindowRect` IS AN AUTOMATIC FAILURE UNLESS IT IS ONLY
+ADDING LOG FIELDS AROUND THE EXISTING CORRECTION.**
+
+This experiment is still logs-only except for deleting obsolete trace lines. The
+cleanup must be surgical: remove high-volume diagnostics from the solved
+post-select shutdown investigation, preserve the PagePopup y correction, and add
+only focused alt-tab/PagePopup lifecycle logs.
+
+#### Changes
+
+1. **Start from the restored, known-good code state.**
+
+   Before editing, confirm that the current working tree code matches the
+   pre-Experiment-1 code state and that the date picker y value is visually
+   correct. The only existing differences from before Issue 783 code work should
+   be documentation.
+
+2. **Freeze the PagePopup y fix before cleanup.**
+
+   Before removing any logs, inspect:
+
+   ```text
+   chromium/src/third_party/blink/renderer/core/exported/web_page_popup_impl.cc
+   ```
+
+   Confirm `WebPagePopupImpl::SetWindowRect` still has:
+   - `gfx::Rect anchor_rect_in_screen = GetAnchorRectInScreen();`
+   - `gfx::Rect window_rect = rect_in_screen;`
+   - the `anchored_at_bottom` predicate comparing:
+     - `rect_in_screen.x()` to `anchor_rect_in_screen.x()`;
+     - `rect_in_screen.y()` to `anchor_rect_in_screen.bottom()`;
+   - `window_rect.set_y(anchor_rect_in_screen.y())` when the predicate passes;
+   - downstream use of `window_rect` for pending bounds, popup bounds, and
+     deferred initial rect.
+
+   This code is part of the product behavior now. It is not obsolete logging.
+
+3. **Remove obsolete high-volume Issue 782 shutdown logs only.**
+
+   Remove logs that fire per input event or were only useful for the solved
+   post-select click-loss bug:
+   - Wezboard `NSApplication sendEvent:` / `NSWindow sendEvent:` swizzle logs;
+   - Wezboard `appkit_view`, `window_event`, `mouse_event_impl`,
+     `before_try_forward_mouse`, `after_try_forward_mouse`, and
+     `mouse_forward_boundary` logs;
+   - Roamium per-mouse forwarding boundary logs;
+   - Chromium input-router, `RouteOrProcessMouseEvent`, `ProcessMouseEvent`,
+     `WebFrameWidgetImpl::HandleInputEvent`, and Blink `EventHandler` /
+     `MouseEventManager` logs added only for post-select click loss.
+
+   Do not use a blanket revert of `Trace native popup event loss`. That commit
+   contains the PagePopup y-axis fix. Cleanup must be by reviewed hunks, not by
+   mechanical commit revert.
+
+4. **Preserve the useful low-volume popup logs.**
+
+   Keep logs that are useful for PagePopup-family placement or lifecycle:
+   - `page_popup_y_fix`;
+   - `DateTimeChooserImpl`;
+   - `WebPagePopupImpl::SetWindowRect`;
+   - `WebViewImpl::OpenPagePopup` / close lifecycle;
+   - `WebContentsImpl::ShowCreatedWidget`;
+   - `RenderWidgetHostViewMac::InitAsPopup`;
+   - Shell window state logs that show `ignoresMouseEvents`.
+
+   These are low-frequency popup-open / popup-close logs, not cursor floods.
+
+5. **Add focused Wezboard activation logs.**
+
+   Add only app/window activation state needed for the alt-tab bug:
+   - `applicationDidResignActive`;
+   - `applicationDidBecomeActive`;
+   - `windowDidResignKey`;
+   - `windowDidBecomeKey`;
+   - `windowDidMiniaturize`;
+   - `windowDidDeminiaturize`.
+
+   Use:
+
+   ```text
+   [issue-779-trace] pagepopup_alt_tab boundary=wezboard_activation event=...
+   ```
+
+   Include app active state, key/main window pointers, window frame, visible,
+   key/main state, and first responder if cheap. Do not add mouse logs.
+
+6. **Add focused Chromium activation/window logs.**
+
+   Add Chromium/Roamium-process activation and window state logs:
+   - `NSApplicationDidResignActiveNotification`;
+   - `NSApplicationDidBecomeActiveNotification`;
+   - `NSWindowDidResignKeyNotification`;
+   - `NSWindowDidBecomeKeyNotification`;
+   - `NSWindowDidMiniaturizeNotification`;
+   - `NSWindowDidDeminiaturizeNotification`;
+   - `NSWindowDidChangeOcclusionStateNotification`.
+
+   Use:
+
+   ```text
+   [issue-779-trace] pagepopup_alt_tab boundary=chromium_activation event=...
+   ```
+
+   Include ordered Chromium windows top 5, class, frame, level, visible,
+   key/main, and `ignoresMouseEvents`.
+
+7. **Add PagePopup alt-tab lifecycle logs without changing placement.**
+
+   Add or keep concise `pagepopup_alt_tab` logs around:
+   - `DateTimeChooserImpl` construction/open/close;
+   - `WebViewImpl::OpenPagePopup`, `CancelPagePopup`, `ClosePagePopup`,
+     `CleanupPagePopup`;
+   - `WebPagePopupImpl::ClosePopup`, `Cancel`, destructor;
+   - `WebContentsImpl::ShowCreatedWidget`;
+   - `RenderWidgetHostViewMac::InitAsPopup`.
+
+   These logs may record `rect_in_screen`, `anchor_rect_in_screen`,
+   `corrected_rect`, popup pointers, widget pointers, and window state.
+
+   They must not change:
+   - the y-correction predicate;
+   - which rect is passed downstream;
+   - popup open/close order;
+   - Shell window positioning;
+   - select/dropdown behavior.
+
+8. **Add a hard pre-run diff audit.**
+
+   Before building, inspect the diff and verify:
+   - `WebPagePopupImpl::SetWindowRect` still contains the y correction;
+   - any diff in `SetWindowRect` is only additive logging or harmless helper
+     formatting;
+   - no diff changes `window_rect` back to plain `rect_in_screen`;
+   - no diff removes `page_popup_y_fix`;
+   - no diff changes `MoveShellWindowToTermSurfScreenRect`;
+   - no diff changes `<select>` / `PopupMenuHelper` behavior.
+
+#### Verification
+
+1. Confirm the Chromium branch:
+
+   ```bash
+   cd /Users/ryan/dev/termsurf/chromium/src
+   git branch --show-current
+   ```
+
+   It must be:
+
+   ```text
+   148.0.7778.97-issue-783
+   ```
+
+2. Build through project scripts:
+
+   ```bash
+   cd /Users/ryan/dev/termsurf
+   scripts/build.sh chromium
+   scripts/build.sh roamium
+   scripts/build.sh wezboard
+   scripts/build.sh webtui
+   ```
+
+3. Start the test page:
+
+   ```bash
+   cd /Users/ryan/dev/termsurf
+   bun test-html/server.ts
+   ```
+
+4. Start Wezboard with fresh Experiment 2 logs:
+
+   ```bash
+   cd /Users/ryan/dev/termsurf
+   mkdir -p logs/issue-783-exp2-state/termsurf
+
+   TERMSURF_ISSUE_779_TRACE=1 \
+   XDG_STATE_HOME="$PWD/logs/issue-783-exp2-state" \
+   RUST_LOG=info \
+   ./wezboard/target/debug/wezboard-gui \
+   2>&1 | tee logs/issue-783-exp2-wezboard.log
+   ```
+
+5. Launch the TUI:
+
+   ```bash
+   /Users/ryan/dev/termsurf/webtui/target/debug/web \
+     --browser /Users/ryan/dev/termsurf/chromium/src/out/Default/roamium \
+     http://localhost:9616/test-native-popups.html
+   ```
+
+6. First verify the non-negotiable y-axis invariant:
+   - click the date input;
+   - confirm the date picker y position is correct;
+   - if the y value is wrong, stop immediately and mark the experiment failed.
+
+7. If and only if the date y value is correct, test the alt-tab bug:
+   - open the date picker again if needed;
+   - Cmd-Tab to another app while the popup is still open;
+   - observe whether the popup remains visible;
+   - Cmd-Tab back to Wezboard;
+   - stop the run.
+
+   If date does not reproduce the alt-tab visibility bug, repeat once with time,
+   then once with color. Do not test select or datalist.
+
+8. Extract the focused trace:
+
+   ```bash
+   rg -a "\[issue-779-trace\]|pagepopup_alt_tab|page_popup_y_fix|DateTimeChooserImpl|WebViewImpl::.*PagePopup|WebPagePopupImpl|ShowCreatedWidget|InitAsPopup|RenderWidgetPopupWindow|NSApplicationDid|NSWindowDid|chromium_activation|wezboard_activation|popup_window|pagepopup_lifecycle" \
+     logs/issue-783-exp2-wezboard.log \
+     logs/issue-783-exp2-state/termsurf/webtui-trace.log \
+     logs/issue-783-exp2-state/termsurf/roamium-trace.log \
+     logs/issue-783-exp2-state/termsurf/chromium-server.log \
+     > logs/issue-783-exp2-trace.log
+   ```
+
+9. Pass criteria:
+   - date picker y position remains correct;
+   - trace includes `page_popup_y_fix applied=true` for the date popup;
+   - `corrected_rect.y == anchor_rect.y`;
+   - obsolete input-router/mouse-dispatch flood logs are gone;
+   - alt-tab produces Wezboard activation logs;
+   - trace shows whether Chromium activation/window logs fire during Wezboard
+     alt-tab;
+   - trace shows whether PagePopup close/cancel cleanup fires on deactivation;
+   - result identifies the next fix boundary for the alt-tab persistence bug.
+
+10. Fail criteria:
+    - **date y-axis regresses in any way;**
+    - `page_popup_y_fix` is missing;
+    - `SetWindowRect` no longer passes corrected `window_rect` downstream;
+    - the trace is still dominated by old Issue 782 input logs;
+    - no activation boundary is logged;
+    - select/dropdown behavior changes during this experiment;
+    - the experiment changes popup behavior beyond logging.
