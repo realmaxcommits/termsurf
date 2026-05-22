@@ -372,3 +372,23 @@ change popup behavior. Do not add any runtime experiment flag. Continue using
     - the trace is still dominated by Issue 782 shutdown logs;
     - the experiment changes popup behavior;
     - no app/window activation boundary is logged during alt-tab.
+
+**Result:** Fail
+
+The experiment changed popup behavior before reaching the intended alt-tab test.
+After opening the date picker, the picker appeared at the wrong y position. This
+regressed the y-axis fix that was completed in Issue 779.
+
+Because the PagePopup position was wrong at the first step, the alt-tab
+visibility trace is invalid. The experiment must not be used to diagnose the
+remaining PagePopup deactivation bug until the regression is understood and
+reverted or fixed.
+
+#### Conclusion
+
+Experiment 1 failed. The combined cleanup plus new trace change was too broad:
+it disturbed the working date picker y-axis behavior. The next step is to audit
+the Chromium diff against the known-good Issue 779/782 state and identify which
+removed or changed log/positioning code was actually part of the fix path, then
+restore the working y-axis behavior before running any further alt-tab
+experiments.
