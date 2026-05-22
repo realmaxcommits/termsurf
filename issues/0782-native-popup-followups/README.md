@@ -1403,3 +1403,285 @@ select menu. The next experiment should add an application-level AppKit event
 hook, such as `NSApplication sendEvent:` or a local event monitor, to determine
 whether the missing post-select mouse down reaches the app and where AppKit
 routes or consumes it before `WezboardWindowView.mouseDown:`.
+
+### Experiment 5: Trace AppKit Event Dispatch Above NSView
+
+Experiment 4 showed that the failed post-select date click does not reach
+`WezboardWindowView.mouseDown:` or `mouseUp:`. Mouse moves still reach the view
+and still forward to Chromium, so the app is alive and the overlay forwarding
+path still works. The next missing boundary is AppKit's event dispatch above the
+view.
+
+Electron's macOS code provides useful precedent here: it wraps
+`NSApplication::sendEvent:` and `NSWindow::sendEvent:` for native event
+coordination, and it scopes native menu popup loops carefully. This experiment
+does not copy Electron behavior or change routing. It only adds AppKit-level
+logs to determine whether the missing button event enters the application, which
+window AppKit targets, and whether it reaches Wezboard's window before being
+lost.
+
+The primary hypothesis is that the hidden Chromium Shell window starts
+intercepting clicks after the native `<select>` menu closes. Issue 779 moved
+that Shell window to the same screen rect as Wezboard's composited overlay so
+native popups could compute correct screen positions. The Shell window is
+supposed to be invisible and `ignoresMouseEvents=YES`, but the macOS `<select>`
+path opens an AppKit menu from the Shell window's view. If menu teardown changes
+the Shell window's mouse-event, ordering, key, parent/child, or visibility
+state, the next click at the overlay location could go to Chromium instead of
+Wezboard. That would explain why Experiment 4 saw no
+`WezboardWindowView.mouseDown:` while earlier Chromium-side traces sometimes saw
+post-select mouse handling.
+
+Keep all new logs behind the existing `TERMSURF_ISSUE_779_TRACE=1` gate. Do not
+change focus, responder, menu, mouse capture, overlay hit testing, or browser
+forwarding behavior. Continue using Chromium branch `148.0.7778.97-issue-782`
+for Chromium-side trace additions.
+
+#### Changes
+
+1. Add an `NSApplication sendEvent:` trace at the macOS application boundary.
+
+   Find Wezboard's macOS `NSApplication` subclass or delegate setup. If there is
+   already a custom application class, add a trace at the start and end of
+   `sendEvent:`. If not, add the smallest possible trace hook that observes the
+   same boundary without changing dispatch behavior.
+
+   Log every mouse down/up event and a small sampled move signal. Include:
+   - event type, button number, click count, pressed mouse buttons, modifier
+     flags, timestamp, event number, and window number;
+   - `[NSApp currentEvent]` type and whether it is the same object as the event
+     being dispatched;
+   - `[NSApp isActive]`, `[NSApp keyWindow]`, `[NSApp mainWindow]`,
+     `[NSApp modalWindow]`, and the event's `[event window]`;
+   - the event window's class, title if available, window number, frame, screen,
+     `isKeyWindow`, `isMainWindow`, `isVisible`, `ignoresMouseEvents`, level,
+     and first responder class;
+   - event `locationInWindow` and the top-level content view under that point if
+     it can be found without side effects.
+
+   Use summary lines:
+
+   ```text
+   [issue-779-trace] wezboard_appkit_dispatch boundary=nsapp_send_event phase=before ...
+   [issue-779-trace] wezboard_appkit_dispatch boundary=nsapp_send_event phase=after ...
+   ```
+
+2. Add an `NSWindow sendEvent:` trace for Wezboard windows.
+
+   In Wezboard's macOS window class or window wrapper, log at the start and end
+   of `sendEvent:` for mouse down/up events and sampled moves. Include:
+   - the same event identity fields as the app-level log;
+   - window class, window number, frame, content view class, first responder
+     class, key/main/visible/ignores-mouse-events state;
+   - the view returned by `hitTest:` for the event location in the content view,
+     including class name and frame;
+   - whether the hit-tested view is `WezboardWindowView` or another view.
+
+   Use:
+
+   ```text
+   [issue-779-trace] wezboard_appkit_dispatch boundary=nswindow_send_event phase=before ...
+   [issue-779-trace] wezboard_appkit_dispatch boundary=nswindow_send_event phase=after ...
+   ```
+
+3. Add a local AppKit event monitor as a comparison signal in Wezboard.
+
+   Register a local monitor for mouse down/up and a sampled move signal while
+   tracing is enabled. The monitor must return the original event unchanged.
+   Include:
+   - event type, button, click count, window number, location, and timestamp;
+   - `[event window]`, key/main/modal window numbers, and first responder class;
+   - whether this event later appears in `NSApplication sendEvent:`.
+
+   Use:
+
+   ```text
+   [issue-779-trace] wezboard_appkit_dispatch boundary=local_event_monitor outcome=observed ...
+   ```
+
+   If a local monitor would be invasive or risky in the current AppKit setup,
+   skip it and state that in the result. The `sendEvent:` logs are the required
+   part of this experiment.
+
+4. Add Chromium-side Shell window state snapshots around native `<select>` menu
+   open/close.
+
+   In the Chromium process, log the Shell window state at:
+   - the point that opens the native select menu, before calling AppKit;
+   - the point where `WebMenuRunner::runMenuInView` returns;
+   - `PopupMenuHelper::PopupMenuClosed` / `WebContentsViewMac::OnMenuClosed`;
+   - the next Chromium-side mouse down/up if one appears after select close.
+
+   Include:
+   - Shell window pointer, class, window number, frame, screen, level,
+     collection behavior, style mask, alpha, visibility, key/main state, and
+     `ignoresMouseEvents`;
+   - content view, first responder, parent window, child window count, and a
+     compact child-window summary;
+   - `[NSApp keyWindow]`, `[NSApp mainWindow]`, `[NSApp modalWindow]`, and the
+     top few ordered Chromium-process windows with frame, level, visibility, and
+     `ignoresMouseEvents`;
+   - the WebContents pointer and RenderWidgetHostViewCocoa pointer used by the
+     select menu.
+
+   Use:
+
+   ```text
+   [issue-779-trace] chromium_shell_window_state boundary=select_menu phase=before_open ...
+   [issue-779-trace] chromium_shell_window_state boundary=select_menu phase=after_return ...
+   [issue-779-trace] chromium_shell_window_state boundary=select_menu phase=menu_closed ...
+   [issue-779-trace] chromium_shell_window_state boundary=post_select_input phase=mouse_event ...
+   ```
+
+   These logs are required because Wezboard's `[NSApp windows]` cannot see
+   Chromium-process windows. If the Shell window's `ignoresMouseEvents`, level,
+   key/main state, child windows, or ordering changes only in the Chromium
+   process, Wezboard-side window snapshots will not show it.
+
+5. Add a short Wezboard window snapshot around the failure window.
+
+   Wezboard's window list cannot include Chromium's Shell window, but it can
+   still prove that Wezboard did not create or reorder a local window that would
+   consume the click. On app-level mouse events and sampled moves after select
+   close, log the top few Wezboard-process windows:
+   - pointer, class, window number, frame, level, visibility,
+     `ignoresMouseEvents`, key/main state;
+   - parent/child summary;
+   - first responder.
+
+   If the failed click is absent from Wezboard's app-level event stream, this
+   snapshot still provides context for the last known Wezboard state before the
+   missing button event.
+
+6. Keep the Experiment 4 NSView and Rust forwarding logs in place.
+
+   The combined trace should now distinguish:
+   - local monitor sees the failed click, but `NSApplication sendEvent:` does
+     not;
+   - `NSApplication sendEvent:` sees the failed click, but no Wezboard
+     `NSWindow sendEvent:` sees it;
+   - Wezboard `NSWindow sendEvent:` sees it, but `WezboardWindowView.mouseDown:`
+     does not;
+   - Chromium's Shell window receives the failed click directly, bypassing
+     Wezboard;
+   - all AppKit boundaries see it, meaning the Experiment 4 result missed the
+     failed click or the failure reproduced differently;
+   - no AppKit boundary sees it, meaning the OS or another app/window consumes
+     it before Wezboard's process.
+
+7. Log foreign-window targeting explicitly.
+
+   If the failed click targets a non-Wezboard window, log enough information to
+   identify it:
+   - hidden Chromium shell window vs Wezboard terminal window;
+   - native popup/menu window;
+   - no event window;
+   - a different app window.
+
+   The hidden Chromium window is especially important because native select
+   menus are opened by the Chromium process, while the visible terminal overlay
+   lives in Wezboard. A stale target to the hidden Chromium window would explain
+   why Wezboard's NSView never receives the next button event while mouse moves
+   still work.
+
+8. Interpret the logs mechanically:
+
+   | Trace pattern                                                   | Diagnosis                                                 |
+   | --------------------------------------------------------------- | --------------------------------------------------------- |
+   | No Wezboard monitor and no Wezboard `NSApplication sendEvent:`  | Event did not enter Wezboard's process                    |
+   | Wezboard local monitor sees click, but no app `sendEvent:`      | AppKit local monitoring sees an event that dispatch skips |
+   | Chromium post-select mouse event fires, Wezboard app does not   | Hidden Chromium window likely intercepted the click       |
+   | Shell `ignoresMouseEvents` flips to false after select close    | Shell mouse-event pass-through was lost                   |
+   | Shell level/order/child-window state changes after select close | Native menu changed Shell window targeting or stacking    |
+   | Chromium menu/popup child window remains after menu close       | Stale native menu child window is consuming clicks        |
+   | Wezboard app sees click, no Wezboard window send                | App/window dispatch boundary is dropping the event        |
+   | Wezboard window send fires, `hitTest` is not Wezboard view      | View hierarchy/hit testing changed after select close     |
+   | Wezboard window send fires, hit-test is Wezboard, no mouseDown  | NSResponder dispatch below `sendEvent:` is disrupted      |
+   | Window/view path works but Rust forwarding does not             | Experiment 4 missed the consumer; inspect Rust logs again |
+
+#### Verification
+
+1. Build through the project scripts:
+
+   ```bash
+   cd /Users/ryan/dev/termsurf
+   scripts/build.sh wezboard
+   scripts/build.sh roamium
+   scripts/build.sh chromium
+   scripts/build.sh webtui
+   ```
+
+2. Start the native popup test page:
+
+   ```bash
+   cd /Users/ryan/dev/termsurf
+   bun test-html/server.ts
+   ```
+
+3. Start Wezboard with fresh Experiment 5 logs:
+
+   ```bash
+   cd /Users/ryan/dev/termsurf
+   mkdir -p logs/issue-782-exp5-state/termsurf
+
+   TERMSURF_ISSUE_779_TRACE=1 \
+   XDG_STATE_HOME="$PWD/logs/issue-782-exp5-state" \
+   RUST_LOG=info \
+   ./wezboard/target/debug/wezboard-gui \
+   2>&1 | tee logs/issue-782-exp5-wezboard.log
+   ```
+
+4. Launch the TUI:
+
+   ```bash
+   /Users/ryan/dev/termsurf/webtui/target/debug/web \
+     --browser /Users/ryan/dev/termsurf/chromium/src/out/Default/roamium \
+     http://localhost:9616/test-native-popups.html
+   ```
+
+5. Run the minimum sequence:
+   - click the date control and confirm it opens;
+   - close it;
+   - click the `<select>` dropdown and dismiss it by clicking outside;
+   - click the same date control again;
+   - stop immediately after the failed post-select date click.
+
+6. Extract the trace:
+
+   ```bash
+   rg -a "\[issue-779-trace\]|wezboard_appkit_dispatch|chromium_shell_window_state|wezboard_mouse_dispatch|nsapp_send_event|nswindow_send_event|local_event_monitor|appkit_view|window_event|mouse_event_impl|before_try_forward_mouse|after_try_forward_mouse|mouse_forward_boundary|ts_forward_mouse|ForwardMouseEvent|ForwardMouseMove|DateTimeChooserImpl|MenuListSelectType|PopupMenuClosed|OnMenuClosed|RouteOrProcessMouseEvent" \
+     logs/issue-782-exp5-wezboard.log \
+     logs/issue-782-exp5-state/termsurf/webtui-trace.log \
+     logs/issue-782-exp5-state/termsurf/roamium-trace.log \
+     logs/issue-782-exp5-state/termsurf/chromium-server.log \
+     > logs/issue-782-exp5-trace.log
+   ```
+
+7. Pass criteria:
+   - the trace includes the successful date click, select open/close, and the
+     failed post-select date click attempt;
+   - the failed click is visible at exactly one of the new AppKit boundaries, or
+     absent from all of them;
+   - the trace names the event window/view target for the failed click, if
+     AppKit sees it;
+   - the trace includes Chromium Shell window state before select menu open,
+     after `WebMenuRunner` returns, and after popup cleanup;
+   - the trace shows whether the Shell window's `ignoresMouseEvents`, ordering,
+     key/main state, parent/child windows, or level changed across select menu
+     open/close;
+   - the result identifies whether the next fix belongs in AppKit menu teardown,
+     Wezboard window dispatch, hidden Chromium window targeting, or NSResponder
+     view dispatch.
+
+8. Partial criteria:
+   - the failure reproduces and the trace proves the click is absent from
+     Wezboard's NSView, but the new AppKit hook is too high or too low to name
+     the target;
+   - the logs show a suspicious target window or responder state but need one
+     more field to identify the fix.
+
+9. Fail criteria:
+   - the failure does not reproduce;
+   - the local monitor or `sendEvent:` hook changes event behavior;
+   - the logs are too noisy to pair the failed click with the preceding select
+     cleanup.
