@@ -1,6 +1,7 @@
 +++
-status = "open"
+status = "closed"
 opened = "2026-05-22"
+closed = "2026-05-23"
 +++
 
 # Issue 783: Remaining native popup bugs after Shell fix
@@ -2180,3 +2181,44 @@ The direct `NSMenu` path is now the final intended fix for the select x-position
 bug. The prior `NSPopUpButtonCell` path should not be restored unless a future
 regression identifies a concrete select behavior that direct `NSMenu` cannot
 support.
+
+## Conclusion
+
+Issue 783 closed the remaining native popup bugs that were ready to solve after
+Issues 779 and 782.
+
+First, it cleaned up the accumulated popup trace scaffolding without regressing
+the earlier fixes. The PagePopup y-axis correction remained intact, and native
+widgets continued opening after select interactions.
+
+Second, it fixed the PagePopup alt-tab bug. Date, time, date-time, and color
+controls are owned by the Chromium/Roamium process, while the visible app is
+Wezboard. Chromium was not receiving the same application deactivation signal
+that Wezboard received, so PagePopup widgets could remain visible after the user
+Cmd-Tabbed away. The fix added a `SetGuiActive` TermSurf protocol message:
+Wezboard now sends app activation state to Roamium, and Chromium forwards that
+state to the focused page with `SetPageFocus`. PagePopup controls now dismiss on
+app deactivation and regain page focus when Wezboard becomes active again.
+
+Third, it fixed the select dropdown x-position bug. The logs showed that
+TermSurf's screen coordinates, Chromium's select anchor, the AppKit bridge
+conversion, and WebMenuRunner's fake-control geometry were all correct. The
+remaining x offset came from the `NSPopUpButtonCell` invocation path. Replacing
+that final AppKit call with direct
+`NSMenu popUpMenuPositioningItem:nil atLocation:inView:` aligned the menu with
+the select field. A focused hardening pass covered long option text, many
+options, disabled options, placeholder options, RTL/right-aligned selects, and
+grouped options; all worked in manual testing. Direct `NSMenu` is therefore the
+final intended select-menu implementation for TermSurf.
+
+Work that remains is intentionally deferred to a new issue:
+
+- the datalist input still does not show suggestions;
+- any remaining cleanup of now-obsolete diagnostic logs can happen separately
+  once the current fixes have baked;
+- broader select-menu edge cases should be treated as future regressions only if
+  a concrete failure is found.
+
+The completed fixes from this issue are archived in Chromium patch
+`chromium/patches/issue-783/0018-Use-direct-NSMenu-for-selects.patch` and the
+earlier issue 783 patch series.
