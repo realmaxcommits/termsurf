@@ -83,6 +83,17 @@ This experiment should remove the "last tab" fallback from the DevTools open
 path. It is acceptable for `web last` to keep querying the last browser pane as
 a separate user command, but DevTools must not depend on it.
 
+#### Non-Negotiable Invariants
+
+This experiment must not regress normal browser behavior:
+
+- normal browser pane creation still works;
+- browser overlays still appear and resize normally;
+- navigation still works;
+- `web last` still works if it is intentionally kept;
+- `web status` still works;
+- `:devtools` from inside a DevTools pane remains rejected.
+
 #### Changes
 
 1. Update the protocol shape in `proto/termsurf.proto`.
@@ -94,9 +105,11 @@ a separate user command, but DevTools must not depend on it.
      - keep `profile`;
      - add `browser`.
 
-   Also consider adding `profile` and `browser` to `CreateDevtoolsTab` for
-   validation/logging symmetry, even though Wezboard already routes the message
-   to a single browser process by `(profile, browser)`.
+   Do not add `profile` or `browser` to `CreateDevtoolsTab` in this experiment.
+   Wezboard already routes that message to exactly one browser process by
+   `(profile, browser)` before sending it. Adding duplicate fields would be
+   defensive protocol bloat unless a future bug shows Roamium needs to validate
+   them independently.
 
    Regenerate Rust protobuf bindings through the existing project build flow. Do
    not hand-edit generated protobuf files except where the repo already tracks
@@ -111,6 +124,8 @@ a separate user command, but DevTools must not depend on it.
    - `BrowserReady.tab_id` becomes the pane's current tab number.
    - `:devtools` must call `send_query_devtools` with the current browser,
      profile, and tab id.
+   - if the user runs `:devtools` before `BrowserReady`, fail with a clear
+     "browser is still loading" message. Do not queue the request.
    - The split command that launches the DevTools TUI must be explicit, for
      example:
 
@@ -122,11 +137,14 @@ a separate user command, but DevTools must not depend on it.
 
    For a DevTools pane:
    - keep rejecting `:devtools` from inside DevTools.
-   - bare `web devtools` should no longer mean "last tab." It should fail with a
-     clear error that DevTools requires an explicit tab id, or be kept only as a
-     compatibility path that immediately queries by current pane and resolves to
-     an explicit tuple before opening anything. The preferred fix is to remove
-     the global last-tab behavior from DevTools entirely.
+   - bare `web devtools` must remain parseable for backward parser
+     compatibility, but it must fail with a clear error. It must never
+     auto-resolve to `last_browser_pane`.
+   - the preferred error text is:
+
+     ```text
+     DevTools requires opening from a browser pane or an explicit devtools://<tab_id> target with --browser and --profile
+     ```
 
 3. Update Wezboard's DevTools validation in
    `wezboard/wezboard-gui/src/termsurf/conn.rs`.
@@ -147,20 +165,27 @@ a separate user command, but DevTools must not depend on it.
    - no existing DevTools pane already targets the same
      `(server_key, inspected_tab_id)` tuple.
 
+   For duplicate detection, iterate `st.panes` and find panes whose
+   `inspected_tab_id` matches the requested tab id and whose
+   `TermSurfState::server_key(p.profile, p.browser)` matches the requested
+   server key. Do not add a new `devtools_targets` map in this experiment; the
+   existing pane map is sufficient and avoids extra lifecycle bookkeeping.
+
    Remove the `last_browser_pane` fallback from the DevTools path. Do not remove
    `last_browser_pane` entirely if `web last` or other non-DevTools flows still
    need it.
+
+   Before editing, grep for every `last_browser_pane` reference in Wezboard.
+   Preserve the non-DevTools references intentionally. At minimum:
+   - `QueryLastRequest` / `web last` may keep using `last_browser_pane`;
+   - `TabReady` may keep updating `last_browser_pane` for browser panes;
+   - `QueryDevtoolsRequest` must stop using `last_browser_pane`.
 
 4. Update DevTools pane creation and routing.
 
    `SetDevtoolsOverlay` already carries `profile`, `browser`, and
    `inspected_tab_id`. Make sure Wezboard uses those fields as the only routing
    source when choosing the browser server for `CreateDevtoolsTab`.
-
-   If `CreateDevtoolsTab` gains `profile` and `browser`, populate them from the
-   pane and have Roamium log or validate them where cheap. The Chromium C API
-   can still receive only `inspected_tab_id` because it is already running in
-   the selected browser process.
 
 5. Update the `web` TUI viewport identity display.
 
@@ -237,11 +262,17 @@ a separate user command, but DevTools must not depend on it.
    ```
 
    This must not silently open DevTools for "the last tab." It should either
-   fail clearly or resolve only through explicit pane context. The preferred
-   passing behavior is a clear failure telling the user to open DevTools from a
-   browser pane.
+   fail clearly or resolve only through explicit pane context. The passing
+   behavior for this experiment is a clear failure telling the user to open
+   DevTools from a browser pane or provide an explicit `devtools://<tab_id>`
+   target with `--browser` and `--profile`.
 
-7. Run a normal browser flow after the change:
+7. Try `:devtools right` before the browser reports `BrowserReady`.
+
+   The command should fail with a clear "browser is still loading" message.
+   After `BrowserReady`, the same command should succeed.
+
+8. Run a normal browser flow after the change:
    - navigation still works;
    - `web last` still works if it is intentionally kept;
    - `web status` still works;
