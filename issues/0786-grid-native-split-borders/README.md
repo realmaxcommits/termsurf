@@ -1,6 +1,7 @@
 +++
-status = "open"
+status = "closed"
 opened = "2026-05-23"
+closed = "2026-05-23"
 +++
 
 # Issue 786: Grid-Native Split Borders
@@ -2060,3 +2061,22 @@ removed:
 
 The cleanup intentionally preserved the repaired `hit_left` / `hit_top`
 coordinates because they are part of the working split resize behavior.
+
+## Conclusion
+
+Issue 786 is closed.
+
+Wezboard now implements split pane borders with a grid-native model:
+
+- split border space is reserved in terminal cells, so borders do not hide
+  terminal content;
+- PTY dimensions truthfully match the visible content grid;
+- active and inactive panes draw connected pixel borders inside the reserved
+  cells;
+- split resize hit regions align with the visible borders;
+- browser overlays, terminal mouse forwarding, single-pane behavior, and zoomed
+  panes remain consistent.
+
+The issue also removed the temporary split hit-test diagnostics after they
+served their purpose. The final implementation keeps the repaired `hit_left` /
+`hit_top` split coordinates as part of normal resize behavior.
