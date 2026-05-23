@@ -8,7 +8,9 @@
 - [x] Fix Ctrl+Esc mode switching (dangling pointer in focused_pane)
 - [x] Clipboard (copy/cut/paste in browser overlays)
 - [x] target="\_blank" handling (OAuth, "open in new tab" links fail)
-- [ ] Drag-n-drop file uploads
+- [ ] Drag-and-drop support, including file uploads and native HTML5 drag/drop
+      (Issue 780 suppresses native Chromium drag start to prevent freezes; real
+      cross-process drag/drop still needs a design)
 - [ ] JavaScript dialogs (alert/confirm/prompt)
 - [ ] Downloads
 - [ ] File uploads (`<input type="file">`)
