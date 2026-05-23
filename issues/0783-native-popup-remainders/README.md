@@ -1812,3 +1812,61 @@ If any of these regress, stop and mark the experiment failed.
 - If logged and measured x both match the anchor but the menu still appears
   wrong, inspect `right_aligned`, `NSPopUpButtonCell` selected-item-over-button
   alignment, and `[NSScreen visibleFrame]` constraints separately.
+
+**Result:** Pass
+
+The experiment reproduced the select dropdown x-position bug in both tested
+layouts. The screenshots were saved under:
+
+```text
+logs/issue-783-exp5-state/termsurf/select-open-default.png
+logs/issue-783-exp5-state/termsurf/select-open-offset.png
+```
+
+The focused trace was extracted to:
+
+```text
+logs/issue-783-exp5-trace.log
+```
+
+Default/full-width run:
+
+```text
+webview_top_left_screen=(1659,426)
+input_bounds=407,385 292x43
+PopupMenuHelper bounds_in_screen=2066,811 292x43
+DisplayPopupMenu flipped_bounds_top_left_screen={{2066.0, 811.0}, {292.0, 43.0}}
+WebMenuRunner bounds_top_left_screen={{2066.0, 811.0}, {292.0, 43.0}}
+WebMenuRunner fake_bounds_top_left_screen={{2066.0, 811.0}, {292.0, 43.0}}
+```
+
+Offset/right-split run:
+
+```text
+webview_top_left_screen≈(1867.5,431.5)
+input_bounds=70,701 399x43
+PopupMenuHelper bounds_in_screen=1937,1133 399x43
+DisplayPopupMenu flipped_bounds_top_left_screen={{1937.0, 1133.0}, {399.0, 43.0}}
+WebMenuRunner bounds_top_left_screen={{1937.0, 1133.0}, {399.0, 43.0}}
+WebMenuRunner fake_bounds_top_left_screen={{1937.0, 1133.0}, {399.0, 43.0}}
+```
+
+The logged coordinates agree at every TermSurf/Chromium-controlled stage:
+browser anchor, WebContentsViewMac, PopupMenuHelper, DisplayPopupMenu,
+WebMenuRunner, and the fake control view. The screenshots show the visible menu
+shifted left of the select field in both layouts, but the logs show no x error
+before AppKit's final menu drawing.
+
+#### Conclusion
+
+The select x-position bug is not caused by TermSurf's webview screen rect,
+Chromium's select anchor, top-left/bottom-left conversion,
+`RenderWidgetHostNSViewBridge`, or WebMenuRunner fake-control placement. Those
+values are internally consistent and correct.
+
+The remaining failure point is AppKit's `NSPopUpButtonCell` menu placement
+policy after Chromium attaches the popup to the fake control. The next
+experiment should investigate or replace the `NSPopUpButtonCell` attachment
+strategy, focusing on selected-item-over-button alignment, cell border/inset
+geometry, and whether Chromium should use a different AppKit API or compensate
+for AppKit's final placement behavior.
