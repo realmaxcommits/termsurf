@@ -125,7 +125,7 @@ Rendering must not silently hide rows or columns after the fact.
 - Should `split_border_width` be reinterpreted as a cell-count option, or should
   grid-native borders use a separate configuration option?
 - What is the minimum viable implementation that restores a complete active
-  outline without changing PTY dimensions unexpectedly?
+  outline while keeping PTY dimensions truthful?
 
 For Experiment 1, answer these conservatively:
 
@@ -134,20 +134,21 @@ For Experiment 1, answer these conservatively:
 - prefer the active pane's color on shared dividers so the active outline is
   continuous;
 - make grid-native borders one cell thick;
+- reserve those border cells in mux/layout before PTY dimensions are assigned;
 - do not reinterpret `split_border_width` yet.
 
 ## Experiments
 
-### Experiment 1: One-Cell Shared-Divider Outline
+### Experiment 1: Reserve One-Cell Grid Borders
 
 #### Description
 
-Implement the first grid-native split border model with the smallest behavior
-surface:
+Implement the first true grid-native split border model:
 
-- keep existing mux split layout and PTY dimensions unchanged;
-- keep existing one-cell shared internal dividers;
-- add missing one-cell outer edge border segments around visible panes;
+- reserve one-cell outer border space in the mux/layout cell model;
+- keep existing one-cell shared internal dividers between adjacent panes;
+- assign PTYs only the inner content grid that remains after border/divider
+  cells are reserved;
 - make the active pane visually outlined on all four sides;
 - do not reintroduce pixel insets, temporary render-dimension shrinkage, or
   post-layout clipping.
@@ -158,10 +159,17 @@ already uses cells as its currency. The existing `split_border_width` config
 field remains for compatibility and for the old pre-grid-native rendering path,
 but it is not the shape control for this experiment.
 
+PTY dimensions are allowed to change in this experiment. That is the point of
+the grid-native model: if border cells consume rows or columns, the PTY must
+receive the smaller truthful content size through the normal mux/layout resize
+path. Hidden rows are unacceptable; smaller honest PTY dimensions are
+acceptable.
+
 #### Non-Negotiable Invariants
 
 - Do not use pixel presentation insets.
-- Do not change PTY row or column counts in this experiment.
+- Any PTY row or column changes must come from the normal mux/layout cell
+  allocation path, not from paint.
 - Do not shrink `RenderableDimensions` inside `paint_pane()`.
 - Do not hide terminal rows or columns under border paint.
 - Do not break existing shared split divider hit regions or split dragging.
@@ -195,7 +203,39 @@ but it is not the shape control for this experiment.
    The expected finding is that internal split dividers are already represented
    as shared one-cell grid regions and should be reused.
 
-2. **Define active-pane border ownership in grid cells.**
+2. **Reserve one-cell perimeter space in mux/layout.**
+
+   Add a grid-native border reservation before leaf pane PTY dimensions are
+   assigned. The layout should produce two concepts:
+   - an outer visible pane rect, including border/divider cells;
+   - an inner content rect, assigned to the pane's PTY/renderable dimensions.
+
+   Reserve a one-cell perimeter around visible split layouts when more than one
+   pane is visible and the pane is not zoomed. The outer perimeter is real grid
+   space. It may reduce the content rows/columns available to PTYs, and that
+   reduction must be delivered through the normal pane resize path.
+
+   The existing internal split divider cells should remain shared one-cell grid
+   regions. Do not create duplicated per-pane borders between adjacent panes.
+
+   If a pane or split subtree is too small to reserve a border without reducing
+   content to zero rows or columns, do not draw that border segment. Preserve at
+   least one content row and one content column for every visible pane.
+
+3. **Extend positioned geometry to expose border/content rects.**
+
+   Extend the data produced by the split layout enough for rendering and input
+   to know:
+   - pane outer rect in cells;
+   - pane content rect in cells;
+   - which edge cells are perimeter border cells;
+   - which internal edge cells are existing shared `PositionedSplit` dividers.
+
+   Prefer extending `PositionedPane` or adding a companion geometry structure
+   over duplicating layout math in the renderer. The renderer should consume the
+   mux/layout result, not rediscover it from pixels.
+
+4. **Define active-pane border ownership in grid cells.**
 
    Use visible `PositionedPane` values from `get_panes_to_render()` and visible
    `PositionedSplit` values from `get_splits()`.
@@ -211,7 +251,12 @@ but it is not the shape control for this experiment.
    divider is adjacent to the active pane, draw that divider using the active
    pane border color.
 
-3. **Render outer perimeter segments in `render/pane.rs` or a new helper.**
+   Note: a shared divider belongs to both adjacent panes. When the active pane
+   colors a shared divider edge, the inactive pane on the other side will also
+   appear to have that focused-color edge. That is acceptable. The active pane
+   is still the only pane with a fully-focused-colored outline.
+
+5. **Render outer perimeter segments in `render/pane.rs` or a new helper.**
 
    Add a helper that draws one-cell-thick perimeter segments for visible pane
    exterior edges. The helper should work in cell units:
@@ -222,10 +267,10 @@ but it is not the shape control for this experiment.
    - segment color uses `focused_split_border_color` for the active pane and
      `unfocused_split_border_color` otherwise, falling back to `palette.split`.
 
-   This helper must not alter pane rendering origin, pane dimensions, or overlay
-   coordinates.
+   This helper must draw only in cells reserved as border cells by the
+   mux/layout model. It must not draw over pane content cells.
 
-4. **Update shared divider coloring without changing hit regions.**
+6. **Update shared divider coloring without changing hit regions.**
 
    In `render/split.rs`, keep the existing `paint_split()` signature and
    `UIItem` hit region geometry.
@@ -235,7 +280,26 @@ but it is not the shape control for this experiment.
    `paint_split()` is awkward, pass enough context from `render/paint.rs` to
    choose the color without changing split layout or hit testing.
 
-5. **Wire the render order in `render/paint.rs`.**
+   Remove the current `split_border_width == 0` gate around `paint_split()` if
+   needed. In the grid-native model, shared dividers are structural grid cells
+   and should be rendered regardless of the legacy pixel-width option.
+
+7. **Reconcile or replace existing pixel border paths.**
+
+   The current rollback state still has `paint_pane_border()`, which draws
+   `split_border_width`-pixel-thick rectangles at pane edges. That path overlaps
+   with this experiment's new grid-native perimeter border.
+
+   Pick one explicit resolution:
+   - remove `paint_pane_border()` if the new perimeter helper fully replaces it;
+     or
+   - gate it off when grid-native borders are active; or
+   - repurpose it as the one-cell grid-native perimeter renderer.
+
+   Do not leave both the legacy pixel border and the new grid-native perimeter
+   active at the same time.
+
+8. **Wire the render order in `render/paint.rs`.**
 
    Keep the existing order that paints pane content and overlays safely.
 
@@ -244,11 +308,10 @@ but it is not the shape control for this experiment.
    should continue to be painted through the split path.
 
    The render order should make the outline visible without obscuring terminal
-   content rows/columns. Because this experiment only draws in cells that are
-   already outside pane content or in existing divider cells, no content should
-   be covered.
+   content rows/columns. Because this experiment reserves border cells before
+   PTY dimensions are assigned, no content should be painted into those cells.
 
-6. **Leave `split_border_width` alone.**
+9. **Leave `split_border_width` alone.**
 
    Do not reinterpret `split_border_width` as a cell count in this experiment.
    Do not remove it. Do not add a new config option yet.
@@ -281,50 +344,57 @@ but it is not the shape control for this experiment.
      split outline;
    - unzoom and confirm outlines return.
 
-4. Active pane outline:
+4. PTY size truthfulness:
+   - record `stty size` in a single pane;
+   - open a split and record `stty size` in both panes;
+   - confirm any row/column reduction caused by one-cell border reservation is
+     reported by `stty size`;
+   - confirm the visible terminal grid matches the reported size.
+
+5. Active pane outline:
    - create a two-pane horizontal split;
    - focus each pane in turn;
    - confirm the active pane has a complete visual outline, including the
      outside window edge and the shared divider edge;
    - repeat with a vertical split.
 
-5. Nested splits:
+6. Nested splits:
    - create at least three panes with both horizontal and vertical splits;
    - focus each pane in turn;
    - confirm every active pane can be visually identified by a complete outline;
    - confirm shared internal dividers are not double-thick.
 
-6. Bottom row and edge cells:
+7. Bottom row and edge cells:
    - run `stty size` in split panes;
    - print content on the last visible row and rightmost column;
    - confirm the bottom row and rightmost column remain visible;
    - confirm Codex or Neovim bottom status lines are visible.
 
-7. Mouse and split dragging:
+8. Mouse and split dragging:
    - drag shared split dividers;
    - click/select text near pane edges;
    - run a terminal mouse app and confirm mouse forwarding targets visible
      cells;
    - confirm border drawing did not steal terminal-cell clicks.
 
-8. Browser overlays:
+9. Browser overlays:
    - open a browser pane with `web`;
    - verify the overlay still aligns with the terminal pane;
    - resize splits and verify the overlay follows its pane.
 
-9. `split_border_width` compatibility:
-   - test with `split_border_width = 0`;
-   - test with `split_border_width = 4`;
-   - confirm the one-cell grid-native outline behavior is unchanged except for
-     any old pre-existing divider behavior that still intentionally depends on
-     the option.
+10. `split_border_width` compatibility:
+    - test with `split_border_width = 0`;
+    - test with `split_border_width = 4`;
+    - confirm the one-cell grid-native outline behavior is unchanged except for
+      any old pre-existing divider behavior that still intentionally depends on
+      the option.
 
 #### Pass Criteria
 
 The experiment passes if active split panes have a complete one-cell visual
-outline, no terminal rows or columns are hidden, shared dividers remain
-single-cell and draggable, browser overlays remain aligned, and
-`scripts/build.sh wezboard` passes.
+outline, PTY dimensions truthfully match the visible content grid, no terminal
+rows or columns are hidden, shared dividers remain single-cell and draggable,
+browser overlays remain aligned, and `scripts/build.sh wezboard` passes.
 
 #### Partial Criteria
 
@@ -340,6 +410,7 @@ The experiment fails if:
 - pixel inset geometry is reintroduced;
 - `paint_pane()` shrinks `RenderableDimensions`;
 - any terminal row or column is hidden;
+- PTY dimensions disagree with the visible content grid;
 - shared dividers become double-thick;
 - split dragging, mouse mapping, selection, terminal mouse forwarding, or
   browser overlay positioning regress;
