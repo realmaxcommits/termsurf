@@ -7,26 +7,11 @@ use std::sync::Arc;
 impl crate::TermWindow {
     pub fn paint_split(
         &mut self,
-        layers: &mut TripleLayerQuadAllocator,
+        _layers: &mut TripleLayerQuadAllocator,
         split: &PositionedSplit,
-        pane: &Arc<dyn Pane>,
-        active_pos: Option<&PositionedPane>,
+        _pane: &Arc<dyn Pane>,
+        _active_pos: Option<&PositionedPane>,
     ) -> anyhow::Result<()> {
-        let palette = pane.palette();
-        let adjacent_to_active = active_pos
-            .map(|pos| split_is_adjacent_to_pane(split, pos))
-            .unwrap_or(false);
-        let foreground = if adjacent_to_active {
-            self.config
-                .focused_split_border_color
-                .map(|c| c.to_linear())
-                .unwrap_or_else(|| palette.split.to_linear())
-        } else {
-            self.config
-                .unfocused_split_border_color
-                .map(|c| c.to_linear())
-                .unwrap_or_else(|| palette.split.to_linear())
-        };
         let cell_width = self.render_metrics.cell_size.width as f32;
         let cell_height = self.render_metrics.cell_size.height as f32;
 
@@ -39,34 +24,7 @@ impl crate::TermWindow {
 
         let (padding_left, padding_top) = self.padding_left_top();
 
-        let pos_y = split.top as f32 * cell_height + first_row_offset + padding_top;
-        let pos_x = split.left as f32 * cell_width + padding_left + border.left.get() as f32;
-        let raw_line_width =
-            self.config
-                .split_border_width
-                .evaluate_as_pixels(config::DimensionContext {
-                    dpi: self.dimensions.dpi as f32,
-                    pixel_max: self.dimensions.pixel_width as f32,
-                    pixel_cell: cell_width,
-                }) as f32;
-        let should_draw_line = raw_line_width > 0.0;
-
         if split.direction == SplitDirection::Horizontal {
-            if should_draw_line {
-                let line_width = raw_line_width.min((cell_width - 2.0).max(1.0)).max(1.0);
-                let line_offset = ((cell_width - line_width) / 2.0).round();
-                self.filled_rectangle(
-                    layers,
-                    2,
-                    euclid::rect(
-                        pos_x + line_offset,
-                        pos_y,
-                        line_width,
-                        split.size as f32 * cell_height,
-                    ),
-                    foreground,
-                )?;
-            }
             self.ui_items.push(UIItem {
                 x: border.left.get() as usize
                     + padding_left as usize
@@ -79,21 +37,6 @@ impl crate::TermWindow {
                 item_type: UIItemType::Split(split.clone()),
             });
         } else {
-            if should_draw_line {
-                let line_height = raw_line_width.min((cell_height - 2.0).max(1.0)).max(1.0);
-                let line_offset = ((cell_height - line_height) / 2.0).round();
-                self.filled_rectangle(
-                    layers,
-                    2,
-                    euclid::rect(
-                        pos_x,
-                        pos_y + line_offset,
-                        split.size as f32 * cell_width,
-                        line_height,
-                    ),
-                    foreground,
-                )?;
-            }
             self.ui_items.push(UIItem {
                 x: border.left.get() as usize
                     + padding_left as usize
@@ -108,29 +51,5 @@ impl crate::TermWindow {
         }
 
         Ok(())
-    }
-}
-
-fn split_is_adjacent_to_pane(split: &PositionedSplit, pane: &PositionedPane) -> bool {
-    match split.direction {
-        SplitDirection::Horizontal => {
-            let split_left = split.left;
-            let split_top = split.top;
-            let split_bottom = split.top + split.size;
-            let pane_top = pane.top;
-            let pane_bottom = pane.top + pane.height;
-            let vertical_overlap = pane_top < split_bottom && pane_bottom > split_top;
-            vertical_overlap
-                && (pane.left + pane.width == split_left || pane.left == split_left + 1)
-        }
-        SplitDirection::Vertical => {
-            let split_left = split.left;
-            let split_right = split.left + split.size;
-            let split_top = split.top;
-            let pane_left = pane.left;
-            let pane_right = pane.left + pane.width;
-            let horizontal_overlap = pane_left < split_right && pane_right > split_left;
-            horizontal_overlap && (pane.top + pane.height == split_top || pane.top == split_top + 1)
-        }
     }
 }

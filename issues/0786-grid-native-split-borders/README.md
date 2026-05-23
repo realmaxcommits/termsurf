@@ -1042,3 +1042,194 @@ The experiment fails if:
 - inactive pane borders are introduced in this experiment;
 - PTY dimensions stop matching visible content cells;
 - browser overlay, mouse mapping, selection, or split dragging regresses.
+
+**Result:** Pass
+
+Experiment 3 solved its scoped goal. The active pane border is now drawn by one
+rectangle painter instead of being assembled from separate `paint_split()` and
+perimeter fragments. Manual testing showed the active border nearly matches the
+old pre-Issue-777 visual model: the active outline is connected, corners are no
+longer fragment-joined, and content is not hidden by the border.
+
+The remaining gap is intentional scope, not a failure of Experiment 3:
+Experiment 3 drew only the active pane border. The old pre-Issue-777 behavior
+also drew unfocused borders around inactive panes. That unfocused-border
+behavior should be restored next using the same one-rectangle painter.
+
+#### Conclusion
+
+The correct model is confirmed:
+
+- keep Experiment 1's grid-reserved layout;
+- keep Experiment 3's one-rectangle pixel border painter;
+- keep `paint_split()` visually out of the border system;
+- restore inactive borders by drawing every pane with the same rectangle
+  painter, inactive panes first and active pane last.
+
+The next experiment should restore the old active/inactive border behavior
+without returning to split-fragment painting.
+
+### Experiment 4: Restore Inactive Pane Borders
+
+#### Description
+
+Restore the pre-Issue-777 active/inactive pane border behavior on top of the
+working one-rectangle painter from Experiment 3.
+
+Experiment 3 intentionally drew only the active pane border to prove the
+single-rectangle model. That worked, but it is not the complete old visual
+behavior. Before Issue 777, inactive panes also had borders in an unfocused
+color, and the active pane had a focused border. Adjacent borders overlapped in
+practice, but the old rectangle painter made that overlap look normal.
+
+Experiment 4 should restore that behavior:
+
+- every visible non-zoomed pane draws one border rectangle;
+- inactive panes draw first using `unfocused_split_border_color`;
+- the active pane draws last using `focused_split_border_color`;
+- shared overlaps are resolved by draw order, not by special split-fragment
+  geometry;
+- `paint_split()` remains visually unused.
+
+#### Non-Negotiable Invariants
+
+- Preserve Experiment 1's grid-reserved layout and truthful PTY sizing.
+- Preserve Experiment 3's one-rectangle border painter.
+- Do not reintroduce border fragments from `paint_split()`.
+- Do not paint over terminal content cells.
+- Do not change mouse mapping, selection, terminal mouse forwarding, or browser
+  overlay content coordinates.
+- Keep split divider `UIItem` hit regions and dragging behavior unchanged.
+- Single-pane and zoomed-pane behavior remain unchanged: no split outline is
+  drawn.
+
+#### Changes
+
+1. **Keep `paint_split()` non-visual.**
+
+   In `wezboard/wezboard-gui/src/termwindow/render/split.rs`, keep
+   `paint_split()` as a hit-region-only function. It must not draw visible
+   dividers or border fragments.
+
+2. **Draw inactive pane rectangles too.**
+
+   In `wezboard/wezboard-gui/src/termwindow/render/pane.rs`, update
+   `paint_pane_border()` so inactive panes can draw the same one-rectangle
+   border as the active pane.
+
+   Color rule:
+   - active pane: `focused_split_border_color`, fallback to `palette.split`;
+   - inactive pane: `unfocused_split_border_color`, fallback to `palette.split`.
+
+   Geometry rule:
+   - both active and inactive panes use the same
+     `outer_x/outer_y/outer_width/outer_height` rectangle derivation;
+   - both use the same four-edge, overlapping-corner painter;
+   - no per-edge or `paint_split()` fragment logic is reintroduced.
+
+3. **Paint inactive borders before the active border.**
+
+   In `wezboard/wezboard-gui/src/termwindow/render/paint.rs`, ensure the draw
+   order is:
+   1. pane content/backgrounds;
+   2. inactive pane borders;
+   3. active pane border;
+   4. tab/window/modal layers.
+
+   The active pane must be drawn last among pane borders. At shared boundaries,
+   the focused active border wins by normal overpaint.
+
+4. **Keep border thickness semantics unchanged.**
+
+   Preserve Experiment 3's thickness behavior:
+   - `split_border_width = 0` means no visible border line;
+   - negative values are treated as zero;
+   - oversized values clamp to half of the reserved cell dimension;
+   - `split_border_width` does not change reserved-cell count.
+
+5. **Do not change layout or content coordinates.**
+
+   This experiment is paint-order and color behavior only. Do not change
+   `wezboard/mux/src/tab.rs` unless an implementation bug directly requires it.
+
+#### Verification
+
+1. Build Wezboard:
+
+   ```bash
+   scripts/build.sh wezboard
+   ```
+
+2. Two-pane active/inactive check:
+   - open a horizontal split;
+   - confirm both panes have borders;
+   - confirm the inactive pane uses `unfocused_split_border_color`;
+   - confirm the active pane uses `focused_split_border_color`;
+   - focus the other pane and confirm colors swap correctly;
+   - repeat with a vertical split.
+
+3. Shared-boundary draw-order check:
+   - inspect the divider boundary between active and inactive panes;
+   - confirm the active focused color wins at the shared edge;
+   - confirm there are no doubled, broken, or disconnected borders.
+
+4. Nested split check:
+   - create at least three panes with horizontal and vertical nesting;
+   - focus each pane in turn;
+   - confirm every pane has exactly one rectangle border;
+   - confirm the active pane's focused border is visually dominant.
+
+5. `split_border_width` behavior:
+   - test `split_border_width = 0` and confirm no border lines are drawn;
+   - test `split_border_width = 4` and confirm normal active/inactive borders;
+   - test an oversized value such as `100` and confirm it clamps without
+     covering content or filling the entire reserved cell.
+
+6. PTY/content truthfulness:
+   - run `stty size` in split panes;
+   - print text on the last visible row and rightmost column;
+   - confirm all content remains visible.
+
+7. Mouse and split dragging:
+   - drag shared split dividers;
+   - click/select text near pane edges;
+   - run a terminal mouse app and confirm mouse forwarding targets content cells
+     correctly.
+
+8. Browser overlays:
+   - open a browser pane with `web`;
+   - split next to it;
+   - confirm the overlay remains aligned to the content rect;
+   - confirm neither active nor inactive borders overlap browser content.
+
+9. Single-pane and zoomed-pane behavior:
+   - confirm no split outline is drawn in a single-pane tab;
+   - zoom a split pane and confirm split outlines disappear;
+   - unzoom and confirm active/inactive borders return.
+
+#### Pass Criteria
+
+The experiment passes if all visible non-zoomed split panes have exactly one
+rectangle border, inactive panes use unfocused color, the active pane uses
+focused color and wins shared overlaps by draw order, content remains visible,
+split dragging/mouse/browser overlays still work, and
+`scripts/build.sh wezboard` passes.
+
+#### Partial Criteria
+
+The experiment is Partial if active/inactive borders work for simple two-pane
+splits but one nested split visual edge case remains. Partial is not acceptable
+if the active border becomes disconnected, content is under a border, or
+`paint_split()` becomes visually responsible for borders again.
+
+#### Failure Criteria
+
+The experiment fails if:
+
+- inactive pane borders are still missing;
+- active/inactive shared boundaries are broken or disconnected;
+- active focused color does not win over inactive borders;
+- `paint_split()` draws visible border fragments;
+- terminal content appears underneath borders;
+- PTY dimensions stop matching visible content cells;
+- browser overlay, mouse mapping, selection, or split dragging regresses.

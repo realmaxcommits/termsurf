@@ -590,7 +590,7 @@ impl crate::TermWindow {
         num_panes: usize,
         layers: &mut TripleLayerQuadAllocator,
     ) -> anyhow::Result<()> {
-        if num_panes <= 1 || pos.is_zoomed {
+        if num_panes <= 1 || pos.is_zoomed || !pos.is_active {
             return Ok(());
         }
 
@@ -599,17 +599,11 @@ impl crate::TermWindow {
         };
 
         let palette = pos.pane.palette();
-        let color = if pos.is_active {
-            self.config
-                .focused_split_border_color
-                .map(|c| c.to_linear())
-                .unwrap_or_else(|| palette.split.to_linear())
-        } else {
-            self.config
-                .unfocused_split_border_color
-                .map(|c| c.to_linear())
-                .unwrap_or_else(|| palette.split.to_linear())
-        };
+        let color = self
+            .config
+            .focused_split_border_color
+            .map(|c| c.to_linear())
+            .unwrap_or_else(|| palette.split.to_linear());
 
         let (padding_left, padding_top) = self.padding_left_top();
         let tab_bar_height = if self.show_tab_bar {
@@ -627,7 +621,7 @@ impl crate::TermWindow {
         let top_pixel_y = top_bar_height + padding_top + border.top.get() as f32;
         let cell_width = self.render_metrics.cell_size.width as f32;
         let cell_height = self.render_metrics.cell_size.height as f32;
-        let raw_line_width =
+        let raw_thickness =
             self.config
                 .split_border_width
                 .evaluate_as_pixels(config::DimensionContext {
@@ -635,89 +629,61 @@ impl crate::TermWindow {
                     pixel_max: self.dimensions.pixel_width as f32,
                     pixel_cell: cell_width,
                 }) as f32;
-        if raw_line_width <= 0.0 {
+        if raw_thickness <= 0.0 {
             return Ok(());
         }
 
-        let vertical_line_width = raw_line_width.min((cell_width - 2.0).max(1.0)).max(1.0);
-        let horizontal_line_height = raw_line_width.min((cell_height - 2.0).max(1.0)).max(1.0);
-        let vertical_line_offset = ((cell_width - vertical_line_width) / 2.0).round();
-        let horizontal_line_offset = ((cell_height - horizontal_line_height) / 2.0).round();
+        let max_thickness = (cell_width / 2.0).floor().min((cell_height / 2.0).floor());
+        let thickness = raw_thickness.min(max_thickness).max(1.0);
+        let x_offset = ((cell_width - thickness) / 2.0).floor();
+        let y_offset = ((cell_height - thickness) / 2.0).floor();
 
-        let cell_to_pixel = |left: usize, top: usize| {
-            (
-                padding_left + border.left.get() as f32 + left as f32 * cell_width,
-                top_pixel_y + top as f32 * cell_height,
-            )
-        };
+        let outer_x = padding_left
+            + border.left.get() as f32
+            + border_geometry.outer_left as f32 * cell_width;
+        let outer_y = top_pixel_y + border_geometry.outer_top as f32 * cell_height;
+        let outer_width = border_geometry.outer_width as f32 * cell_width;
+        let outer_height = border_geometry.outer_height as f32 * cell_height;
 
-        if border_geometry.top {
-            let (x, y) = cell_to_pixel(border_geometry.outer_left, border_geometry.outer_top);
-            self.filled_rectangle(
-                layers,
-                2,
-                euclid::rect(
-                    x,
-                    y + horizontal_line_offset,
-                    border_geometry.outer_width as f32 * cell_width,
-                    horizontal_line_height,
-                ),
-                color,
-            )?;
-        }
-        if border_geometry.bottom {
-            let (x, y) = cell_to_pixel(
-                border_geometry.outer_left,
-                border_geometry.outer_top + border_geometry.outer_height - 1,
-            );
-            self.filled_rectangle(
-                layers,
-                2,
-                euclid::rect(
-                    x,
-                    y + horizontal_line_offset,
-                    border_geometry.outer_width as f32 * cell_width,
-                    horizontal_line_height,
-                ),
-                color,
-            )?;
-        }
-        let vertical_top = border_geometry.outer_top + usize::from(border_geometry.top);
-        let vertical_height = border_geometry
-            .outer_height
-            .saturating_sub(usize::from(border_geometry.top))
-            .saturating_sub(usize::from(border_geometry.bottom));
-        if border_geometry.left {
-            let (x, y) = cell_to_pixel(border_geometry.outer_left, vertical_top);
-            self.filled_rectangle(
-                layers,
-                2,
-                euclid::rect(
-                    x + vertical_line_offset,
-                    y,
-                    vertical_line_width,
-                    vertical_height as f32 * cell_height,
-                ),
-                color,
-            )?;
-        }
-        if border_geometry.right {
-            let (x, y) = cell_to_pixel(
-                border_geometry.outer_left + border_geometry.outer_width - 1,
-                vertical_top,
-            );
-            self.filled_rectangle(
-                layers,
-                2,
-                euclid::rect(
-                    x + vertical_line_offset,
-                    y,
-                    vertical_line_width,
-                    vertical_height as f32 * cell_height,
-                ),
-                color,
-            )?;
-        }
+        let rect_x = outer_x + x_offset;
+        let rect_y = outer_y + y_offset;
+        let rect_width = outer_width - 2.0 * x_offset;
+        let rect_height = outer_height - 2.0 * y_offset;
+
+        self.filled_rectangle(
+            layers,
+            2,
+            euclid::rect(rect_x, rect_y, rect_width, thickness),
+            color,
+        )?;
+        self.filled_rectangle(
+            layers,
+            2,
+            euclid::rect(
+                rect_x,
+                rect_y + rect_height - thickness,
+                rect_width,
+                thickness,
+            ),
+            color,
+        )?;
+        self.filled_rectangle(
+            layers,
+            2,
+            euclid::rect(rect_x, rect_y, thickness, rect_height),
+            color,
+        )?;
+        self.filled_rectangle(
+            layers,
+            2,
+            euclid::rect(
+                rect_x + rect_width - thickness,
+                rect_y,
+                thickness,
+                rect_height,
+            ),
+            color,
+        )?;
 
         Ok(())
     }

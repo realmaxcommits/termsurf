@@ -1134,28 +1134,15 @@ impl TabInner {
                 let border = if inset == 0 {
                     None
                 } else {
-                    let inner_left = inset;
-                    let inner_top = inset;
-                    let inner_right = inset + layout_size.cols as usize;
-                    let inner_bottom = inset + layout_size.rows as usize;
-                    let touches_left = left == inner_left;
-                    let touches_top = top == inner_top;
-                    let touches_right = left + dims.cols as usize == inner_right;
-                    let touches_bottom = top + dims.rows as usize == inner_bottom;
-
                     Some(PositionedPaneBorder {
-                        outer_left: if touches_left { left - 1 } else { left },
-                        outer_top: if touches_top { top - 1 } else { top },
-                        outer_width: dims.cols as usize
-                            + usize::from(touches_left)
-                            + usize::from(touches_right),
-                        outer_height: dims.rows as usize
-                            + usize::from(touches_top)
-                            + usize::from(touches_bottom),
-                        top: touches_top,
-                        bottom: touches_bottom,
-                        left: touches_left,
-                        right: touches_right,
+                        outer_left: left - 1,
+                        outer_top: top - 1,
+                        outer_width: dims.cols as usize + 2,
+                        outer_height: dims.rows as usize + 2,
+                        top: true,
+                        bottom: true,
+                        left: true,
+                        right: true,
                     })
                 };
 
