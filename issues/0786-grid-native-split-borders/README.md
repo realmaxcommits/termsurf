@@ -1804,8 +1804,9 @@ mouse. The visible pixel line remains centered inside that grid cell.
 
 - Preserve Experiment 1's grid-reserved layout and truthful PTY sizing.
 - Preserve Experiments 3 and 4's one-rectangle active/inactive pane borders.
-- Preserve Experiment 6's trace gate and log file unless this experiment
-  deliberately removes the temporary diagnostics after verification.
+- Preserve Experiment 6's trace gate and log file after the fix. The trace is
+  useful for future split hit-test debugging; cleanup belongs in a separate
+  diagnostic sweep if it is no longer wanted.
 - Keep `paint_split()` visually non-visual.
 - Do not paint over terminal content cells.
 - Do not change browser overlay content coordinates.
@@ -1847,11 +1848,29 @@ mouse. The visible pixel line remains centered inside that grid cell.
      spans the visible split width. Its `y` coordinate must be the reserved
      horizontal border-cell start, not the previous logical split row.
 
-   Prefer deriving this from the pane border geometry or the same layout
-   metadata used by `paint_pane_border()`. Avoid reintroducing a bare `+ 1`
-   arithmetic guess unless the surrounding code proves that the next cell is
-   exactly the reserved border cell for every split orientation and nested
-   layout.
+   Derive this from the same cell-to-pixel mapping used by
+   `paint_pane_border()`, applied to the split's reserved divider cell. Do not
+   derive the shared divider cell from an individual `PositionedPaneBorder`; the
+   divider belongs to both adjacent panes.
+
+   Add or repair one source-of-truth helper near `PositionedSplit`, for example
+   `reserved_cell_pixel_rect()`, that returns the one-cell split hit rectangle
+   in pixel coordinates. `paint_split()` should use that helper when registering
+   `UIItem::Split`.
+
+   The one-cell offset is structural, not arbitrary. Experiment 1 reserved a
+   one-cell perimeter around the split layout. The old split logical coordinate
+   is content-ward of the reserved border cell; the visible border is drawn in
+   the cell after that perimeter shift. Add a short code comment at the offset
+   site explaining this relationship and referencing Issue 786 Experiments 1
+   and 6.
+
+   The implementation must prove the new coordinate reaches the actual
+   registered `UIItem` rectangle. After the fix, rerun with
+   `TERMSURF_SPLIT_HIT_TRACE=1` and confirm the `split-hit split-ui ... rect_px`
+   line shifts by exactly one `cell_width` for a right split and one
+   `cell_height` for a down split. If `rect_px` does not move, the wiring is
+   still wrong in the same way Experiment 5 was wrong.
 
 4. **Keep resize math logically separate from hitbox placement.**
 
@@ -1861,24 +1880,35 @@ mouse. The visible pixel line remains centered inside that grid cell.
    that logical coordinate for resize math and carry a separate visual/hit
    coordinate for the `UIItem` rectangle and drag-anchor calculation.
 
-   If drag delta is currently computed from the hit rectangle, update the anchor
-   consistently so dragging starts from the visible border cell and resizing
-   remains stable. Do not make the pane jump by one cell at drag start.
+   Use the same hitbox reference for drag delta that `UIItem::Split` uses for
+   hover. Prefer passing the split hit rectangle's reference position into the
+   drag path and computing:
 
-5. **Remove or repair Experiment 5's failed fields.**
+   ```text
+   delta = cursor_position - hitbox_reference_position
+   ```
+
+   The resize target still comes from the split index and the existing logical
+   resize path. The drag reference must be colocated with the hitbox so dragging
+   from the visible border starts with zero effective delta. Do not make the
+   pane jump by one cell at drag start.
+
+5. **Repair Experiment 5's failed fields.**
 
    Experiment 6 showed `hit_left` / `hit_top` were equal to `left` / `top` at
    runtime and did not fix the bug.
 
-   Choose one explicit resolution:
-   - repair `hit_left` / `hit_top` so they are the actual reserved border-cell
-     coordinates and are used by the split `UIItem`; or
-   - remove them and introduce a clearer structure or helper name that expresses
-     the two coordinate roles: logical resize coordinate vs. visual hitbox
-     coordinate.
+   Keep the field names for Experiment 7 and repair their wiring:
+   - `left` / `top` remain the logical split coordinates used by resize math;
+   - `hit_left` / `hit_top` become the reserved border-cell coordinates used by
+     the split `UIItem` and drag reference.
 
    Do not leave misleading fields in place if they still duplicate the logical
    coordinates after the fix.
+
+   If the repaired fields always differ from `left` / `top` by a constant
+   perimeter offset, a later cleanup may replace the fields with a derived
+   method. That cleanup is not part of Experiment 7.
 
 6. **Use Experiment 6 logging to prove the new alignment.**
 
@@ -1894,6 +1924,9 @@ mouse. The visible pixel line remains centered inside that grid cell.
 
    The exact numbers may differ with window size and font metrics. The invariant
    is that the visible line lies inside the split `UIItem` rectangle.
+
+   Keep the `TERMSURF_SPLIT_HIT_TRACE` diagnostic in place after Experiment 7.
+   Do not combine the behavior fix with trace cleanup.
 
 #### Verification
 
@@ -1932,13 +1965,25 @@ mouse. The visible pixel line remains centered inside that grid cell.
      split;
    - verify every internal visible border has its draggable area on the visible
      border cell;
-   - verify active and inactive borders remain visually connected.
+   - verify active and inactive borders remain visually connected;
+   - inspect `logs/split-hitbox.log` and confirm that every internal
+     `pane-border-edge` shared boundary has a matching `split-ui` rectangle
+     whose `rect_px` contains the edge's pixel rectangle.
 
 6. Regression checks:
    - terminal content remains visible and is not covered by borders;
    - browser overlays remain aligned to content cells;
    - content-cell mouse forwarding still works away from split borders;
    - single-pane and zoomed-pane behavior are unchanged.
+
+7. Format Rust code:
+
+   ```bash
+   cargo fmt
+   ```
+
+   Accept formatter output as-is. Do not manually undo or minimize formatting
+   changes.
 
 #### Pass Criteria
 
@@ -1969,3 +2014,34 @@ The experiment fails if:
 - terminal content, browser overlays, or content mouse forwarding regress;
 - single-pane or zoomed-pane behavior changes;
 - `scripts/build.sh wezboard` fails.
+
+**Result:** Pass
+
+Experiment 7 fixed the split resize slider alignment. The resize cursor now
+appears on the visible split border instead of one reserved grid cell before it,
+and dragging the visible border resizes panes correctly.
+
+The final fix was smaller than the first implementation attempt. The key bug was
+inside `iter_splits()`: it computed `inset` after calling `self.pane.take()`.
+Because `grid_border_inset_for_size()` checks whether `self.pane` contains a
+split layout, computing it after `take()` always returned `0`. That made
+`hit_left` / `hit_top` duplicate `left` / `top`, which is why Experiments 5 and
+the first Experiment 7 attempt had no visible effect.
+
+The corrected implementation computes `inset` before taking the pane tree, then
+keeps `left` / `top` as logical resize coordinates while using `hit_left` /
+`hit_top` for the visible reserved-border hit cell.
+
+Verification:
+
+- `cargo fmt` was run from `wezboard/`.
+- `scripts/build.sh wezboard` passed.
+- Manual testing confirmed the split slider now lines up with the visible
+  border.
+
+#### Conclusion
+
+The split resize hitbox now shares the same reserved grid cell model as the
+painted border. This preserves the grid-native pane-border architecture from
+Experiment 1 and the one-rectangle active/inactive border painting from
+Experiments 3 and 4, while restoring correct mouse resize behavior.

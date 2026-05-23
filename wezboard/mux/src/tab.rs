@@ -1183,9 +1183,9 @@ impl TabInner {
             return dividers;
         }
 
-        let mut cursor = self.pane.take().unwrap().cursor();
         let mut index = 0;
         let inset = self.grid_border_inset_for_size(self.size);
+        let mut cursor = self.pane.take().unwrap().cursor();
 
         loop {
             if !cursor.is_leaf() {
@@ -1204,15 +1204,19 @@ impl TabInner {
                         SplitDirection::Horizontal => left += node.first.cols as usize,
                         SplitDirection::Vertical => top += node.first.rows as usize,
                     }
-                    left += inset;
-                    top += inset;
+                    // Issue 786: pane content is shifted inward by the reserved
+                    // one-cell border perimeter, but split resizing is still
+                    // defined in the split tree's logical coordinates. The
+                    // hit cell is the reserved border cell that contains the
+                    // visible line (Exp 6), not the content-ward logical cell
+                    // (Exp 1).
                     let hit_left = if inset > 0 && node.direction == SplitDirection::Horizontal {
-                        left + 1
+                        left + inset
                     } else {
                         left
                     };
                     let hit_top = if inset > 0 && node.direction == SplitDirection::Vertical {
-                        top + 1
+                        top + inset
                     } else {
                         top
                     };
