@@ -1890,9 +1890,19 @@ or the closest direct `NSMenu` API available in this Chromium/AppKit build.
 
 The goal is to determine whether the x offset is specific to
 `NSPopUpButtonCell`'s popup-button semantics, or whether direct `NSMenu`
-placement has the same final x behavior. This is still an experiment, not the
-final fix. The default code path must remain the existing `NSPopUpButtonCell`
-path unless the experiment is explicitly enabled for the run.
+placement has the same final x behavior. Chromium already documents this direct
+API as problematic: the comment in `web_menu_runner_mac.mm` says
+`popUpMenuPositioningItem:atLocation:inView:` displays menus with incorrect
+width and truncated contents, with references to `crbug.com/401443090`,
+`crbug.com/389067059`, and Apple feedback `FB16843355`. This experiment is
+therefore not assuming that direct `NSMenu` is a clean fix. It is measuring the
+tradeoff: whether direct placement fixes x, and if so whether the known
+width/truncation problems appear in TermSurf's embedded context.
+
+This is still an experiment, not the final fix. The implementation should
+replace the select invocation with direct `NSMenu` for this experiment only. Do
+not add a runtime flag. The current `NSPopUpButtonCell` behavior from Experiment
+5 is the baseline comparison.
 
 #### Non-Negotiable Invariants
 
@@ -1902,51 +1912,66 @@ This experiment must not modify or regress:
 - PagePopup controls opening after select interactions;
 - PagePopup dismissal on Cmd-Tab via `SetGuiActive`;
 - Shell window movement and `setIgnoresMouseEvents:YES` reassertions;
-- the default `NSPopUpButtonCell` select path when the experiment is not
-  enabled;
 - datalist behavior.
 
 If any protected behavior regresses, stop and mark the experiment failed.
 
 #### Changes
 
-1. **Keep the existing path as the default.**
+1. **Measure the Experiment 5 screenshot deltas first.**
+
+   Before modifying code, open the Experiment 5 screenshots:
+
+   ```text
+   logs/issue-783-exp5-state/termsurf/select-open-default.png
+   logs/issue-783-exp5-state/termsurf/select-open-offset.png
+   ```
+
+   Measure the visible menu top-left in both screenshots and compare it to the
+   logged `WebMenuRunner` fake control top-left:
+
+   ```text
+   default_logged_fake_top_left=(2066,811)
+   offset_logged_fake_top_left=(1937,1133)
+   measured_menu_top_left=(x,y)
+   measured_delta_x=measured_menu_x - logged_fake_x
+   measured_delta_y=measured_menu_y - logged_fake_y
+   ```
+
+   Record the measured deltas in the Experiment 6 result. The magnitude matters:
+   a small offset suggests cell inset/border geometry, while a large offset
+   suggests a broader AppKit menu-positioning policy.
+
+2. **Replace the final AppKit invocation for this experiment only.**
 
    In `content/app_shim_remote_cocoa/web_menu_runner_mac.mm`, keep the current
-   behavior unchanged by default:
+   setup code that builds `_menu`, selects the initial item, configures
+   right-alignment, and creates `fakeControlView`.
+
+   Replace only the final AppKit invocation:
 
    ```objc
    [cell attachPopUpWithFrame:fakeControlView.bounds inView:fakeControlView];
    [cell performClickWithFrame:fakeControlView.bounds inView:fakeControlView];
    ```
 
-   Do not change the default path's placement math, fake-control frame, or
-   selection callback behavior.
-
-2. **Add an explicit experiment-only direct NSMenu path.**
-
-   Add a temporary experiment selector gated by an environment variable:
-
-   ```text
-   TERMSURF_ISSUE_783_SELECT_DIRECT_MENU=1
-   ```
-
-   This gate is allowed here because the experiment must compare two AppKit API
-   paths without making the alternate path permanent or changing normal
-   behavior. It must be removed or converted into the real fix once the
-   experiment has a result.
-
-   When the variable is set, call direct `NSMenu` placement instead of
-   `NSPopUpButtonCell` for the select menu. Prefer:
+   with direct `NSMenu` placement:
 
    ```objc
-   [_menu popUpMenuPositioningItem:positioningItem
+   NSPoint location = NSMakePoint(0, NSHeight(fakeControlView.bounds));
+   [_menu popUpMenuPositioningItem:nil
                         atLocation:location
                             inView:fakeControlView];
    ```
 
-   Use the selected menu item as `positioningItem` when possible. If the
-   selected index is invalid, use `nil` and record that choice in the trace.
+   This variant uses `positioningItem=nil` so AppKit should place the menu's
+   top-left at the requested location. It is the cleanest x-position diagnostic.
+   Do not add an environment variable or keep both code paths in the experiment
+   implementation.
+
+   A future experiment may test selected-item positioning separately if this
+   top-left direct menu path fixes x but changes expected macOS selected-item
+   alignment.
 
 3. **Preserve item selection reporting.**
 
@@ -1958,17 +1983,18 @@ If any protected behavior regresses, stop and mark the experiment failed.
    experiment, record that explicitly and mark the result Partial rather than
    treating the direct path as a candidate fix.
 
-4. **Log both AppKit invocation paths.**
+4. **Log the direct AppKit invocation path.**
 
    Extend the existing `select_x_position` logs in `WebMenuRunner` with:
 
    ```text
-   appkit_menu_api=popup_button_cell|direct_nsmenu
-   positioning_item_index=N|none
-   direct_menu_location=(x,y)
+   appkit_menu_api=direct_nsmenu
+   positioning_item_index=none
+   direct_menu_location=(0,height)
    direct_menu_location_space=fake-control-local
    fake_bounds_top_left_screen=(x,y widthxheight)
    visible_menu_top_left=unavailable-appkit-owned
+   known_direct_api_width_risk=true
    ```
 
    Keep all logs gated by `TERMSURF_ISSUE_779_TRACE=1`. Do not reintroduce
@@ -2015,17 +2041,17 @@ If any protected behavior regresses, stop and mark the experiment failed.
    bun test-html/server.ts
    ```
 
-3. Run the default path first, without the direct-menu variable:
+3. Start Wezboard with fresh Experiment 6 logs:
 
    ```bash
    cd /Users/ryan/dev/termsurf
-   mkdir -p logs/issue-783-exp6-default-state/termsurf
+   mkdir -p logs/issue-783-exp6-state/termsurf
 
    TERMSURF_ISSUE_779_TRACE=1 \
-   XDG_STATE_HOME="$PWD/logs/issue-783-exp6-default-state" \
+   XDG_STATE_HOME="$PWD/logs/issue-783-exp6-state" \
    RUST_LOG=info \
    ./wezboard/target/debug/wezboard-gui \
-   2>&1 | tee logs/issue-783-exp6-default-wezboard.log
+   2>&1 | tee logs/issue-783-exp6-wezboard.log
    ```
 
 4. Launch the TUI:
@@ -2036,74 +2062,56 @@ If any protected behavior regresses, stop and mark the experiment failed.
      http://localhost:9616/test-native-popups.html
    ```
 
-5. In the default run:
+5. Re-check protected invariants:
+   - click the date input and confirm y position is correct;
+   - close it;
+   - open the date input again after one select interaction and confirm it still
+     opens;
+   - open the date picker, Cmd-Tab away, and confirm it dismisses.
+
+   Stop if any prior fix regresses.
+
+6. Measure the direct `NSMenu` run:
    - click the first `<select>`;
    - leave the menu open;
    - save a screenshot as
-     `logs/issue-783-exp6-default-state/termsurf/select-default-api.png`;
-   - dismiss the menu;
-   - stop the run.
-
-   Expected default-path behavior: the visible menu still reproduces the wrong x
-   position, and the trace reports `appkit_menu_api=popup_button_cell`.
-
-6. Run the direct `NSMenu` path:
-
-   ```bash
-   cd /Users/ryan/dev/termsurf
-   mkdir -p logs/issue-783-exp6-direct-state/termsurf
-
-   TERMSURF_ISSUE_779_TRACE=1 \
-   TERMSURF_ISSUE_783_SELECT_DIRECT_MENU=1 \
-   XDG_STATE_HOME="$PWD/logs/issue-783-exp6-direct-state" \
-   RUST_LOG=info \
-   ./wezboard/target/debug/wezboard-gui \
-   2>&1 | tee logs/issue-783-exp6-direct-wezboard.log
-   ```
-
-7. Launch the TUI again with the same command from step 4.
-
-8. In the direct-menu run:
-   - click the first `<select>`;
-   - leave the menu open;
-   - save a screenshot as
-     `logs/issue-783-exp6-direct-state/termsurf/select-direct-api.png`;
+     `logs/issue-783-exp6-state/termsurf/select-direct-api.png`;
+   - visually inspect whether x improved relative to the Experiment 5
+     screenshots;
+   - inspect whether menu width, item text truncation, styling, keyboard
+     behavior, or selection behavior regressed;
    - select a different menu item and confirm the page reports the selected
      value, if possible;
    - dismiss the menu;
    - stop the run.
 
-9. Extract focused traces:
+7. Extract the focused trace:
 
    ```bash
    rg -a "select_x_position|appkit_menu_api|WebMenuRunner|fakeControlView|DisplayPopupMenu|PopupMenuHelper|ShowPopupMenu" \
-     logs/issue-783-exp6-default-wezboard.log \
-     logs/issue-783-exp6-default-state/termsurf/chromium-server.log \
-     > logs/issue-783-exp6-default-trace.log
-
-   rg -a "select_x_position|appkit_menu_api|WebMenuRunner|fakeControlView|DisplayPopupMenu|PopupMenuHelper|ShowPopupMenu" \
-     logs/issue-783-exp6-direct-wezboard.log \
-     logs/issue-783-exp6-direct-state/termsurf/chromium-server.log \
-     > logs/issue-783-exp6-direct-trace.log
+     logs/issue-783-exp6-wezboard.log \
+     logs/issue-783-exp6-state/termsurf/chromium-server.log \
+     > logs/issue-783-exp6-trace.log
    ```
 
-10. Pass criteria:
-    - all non-negotiable invariants hold;
-    - default run still uses `appkit_menu_api=popup_button_cell`;
-    - direct run uses `appkit_menu_api=direct_nsmenu`;
-    - both runs produce screenshots;
-    - result states whether direct `NSMenu` placement fixes, worsens, or
-      preserves the x offset;
-    - result states whether direct `NSMenu` selection reporting still works.
+8. Pass criteria:
+   - all non-negotiable invariants hold;
+   - trace reports `appkit_menu_api=direct_nsmenu`;
+   - direct run produces a screenshot;
+   - result records the Experiment 5 measured pixel deltas;
+   - result states whether direct `NSMenu` placement fixes, worsens, or
+     preserves the x offset;
+   - result states whether direct `NSMenu` selection reporting still works;
+   - result states whether direct `NSMenu` width or item truncation regresses.
 
-11. Fail criteria:
-    - any protected PagePopup or Shell behavior regresses;
-    - default path changes when the direct-menu variable is not set;
-    - select menu does not open in either run;
-    - direct menu opens but cannot be dismissed;
-    - trace does not identify which AppKit API was used;
-    - experiment changes upstream coordinate math instead of only changing the
-      final AppKit invocation path.
+9. Fail criteria:
+   - any protected PagePopup or Shell behavior regresses;
+   - select menu does not open;
+   - direct menu opens but cannot be dismissed;
+   - trace does not identify `appkit_menu_api=direct_nsmenu`;
+   - Experiment 5 pixel deltas are not recorded;
+   - experiment changes upstream coordinate math instead of only changing the
+     final AppKit invocation path.
 
 #### Expected Interpretations
 
@@ -2120,3 +2128,55 @@ If any protected behavior regresses, stop and mark the experiment failed.
 - If direct `NSMenu` placement is worse or unusable, keep the current
   `NSPopUpButtonCell` path and design a compensation experiment around the final
   AppKit placement offset.
+
+**Result:** Pass
+
+Direct `NSMenu` placement fixed the select dropdown x-position in the manual
+test. The screenshot `logs/issue-783-exp6-state/termsurf/select-direct-api.png`
+shows the menu opening aligned with the select control's left edge, instead of
+shifted left like the Experiment 5 `NSPopUpButtonCell` baseline.
+
+The Experiment 5 screenshots show a consistent screenshot-local x offset:
+
+- default layout: select field left was approximately `x=873`, visible menu left
+  was approximately `x=850`, so the menu was about `23 px` left of the control;
+- offset layout: select field left was approximately `x=1341`, visible menu left
+  was approximately `x=1318`, again about `23 px` left of the control.
+
+The Experiment 6 direct `NSMenu` screenshot shows the select field left at
+approximately `x=861` and the visible menu left at approximately `x=862`, so the
+remaining local x delta is about `+1 px`, effectively aligned.
+
+The trace confirms the direct path ran. `WebMenuRunner::fakeControlView` logged
+`appkit_menu_api=direct_nsmenu`, `positioning_item_index=none`, and
+`direct_menu_location={0, 43}` with
+`fake_bounds_top_left_screen={{2189.0, 737.0}, {292.0, 43.0}}`. The appkit-open
+summary also logged `reason=before_direct_nsmenu`, and the menu returned through
+`reason=direct_nsmenu_returned`.
+
+Protected invariants held. The date picker still used
+`page_popup_y_fix applied=1`, correcting the raw popup y from `639` to the
+anchor y `596`. The Cmd-Tab focus path still fired through `set_gui_active`
+(`wezboard_protocol` to `chromium_protocol`) during the test run. The user
+confirmed that the experiment worked and did not report width, truncation,
+styling, keyboard, selection, PagePopup, or Cmd-Tab regressions.
+
+The follow-up select hardening pass also succeeded. The test page was extended
+with focused select cases for long option text, many options / scrolling,
+disabled options, placeholder options, RTL/right-aligned select, and grouped
+options. The user tested those cases and reported that every option worked as
+far as they could tell. That verifies the direct `NSMenu` path across the
+realistic select shapes we were concerned about.
+
+#### Conclusion
+
+The select x-position bug is caused by the `NSPopUpButtonCell` invocation path,
+not by TermSurf screen coordinates, Chromium's select anchor, the AppKit bridge
+conversion, or the fake-control view geometry. Direct
+`NSMenu popUpMenuPositioningItem:nil atLocation:inView:` places the menu at the
+correct x in TermSurf.
+
+The direct `NSMenu` path is now the final intended fix for the select x-position
+bug. The prior `NSPopUpButtonCell` path should not be restored unless a future
+regression identifies a concrete select behavior that direct `NSMenu` cannot
+support.

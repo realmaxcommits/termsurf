@@ -37,6 +37,11 @@ p {
   grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
   gap: 16px;
 }
+.section-title {
+  color: #7dcfff;
+  font-weight: 700;
+  margin: 22px 0 12px;
+}
 .control {
   border: 1px solid #3b4261;
   border-radius: 8px;
@@ -62,6 +67,10 @@ select {
 input[type="color"] {
   height: 44px;
   padding: 4px;
+}
+.rtl-select {
+  direction: rtl;
+  text-align: right;
 }
 .expectation {
   color: #9aa5ce;
@@ -140,6 +149,104 @@ input[type="color"] {
       </div>
     </div>
 
+    <div class="section-title">Select hardening cases</div>
+    <div class="grid">
+      <div class="control">
+        <label for="select-long">Long option text</label>
+        <select id="select-long">
+          <option>Short label</option>
+          <option>Very long option label that should remain readable without breaking the menu width</option>
+          <option>Another compact label</option>
+        </select>
+        <div class="expectation">Long text should not cause a detached menu.</div>
+      </div>
+
+      <div class="control">
+        <label for="select-many">Many options</label>
+        <select id="select-many">
+          <option>Item 01</option>
+          <option>Item 02</option>
+          <option>Item 03</option>
+          <option>Item 04</option>
+          <option>Item 05</option>
+          <option>Item 06</option>
+          <option>Item 07</option>
+          <option>Item 08</option>
+          <option>Item 09</option>
+          <option>Item 10</option>
+          <option>Item 11</option>
+          <option>Item 12</option>
+          <option>Item 13</option>
+          <option>Item 14</option>
+          <option>Item 15</option>
+          <option>Item 16</option>
+          <option>Item 17</option>
+          <option>Item 18</option>
+          <option>Item 19</option>
+          <option>Item 20</option>
+          <option>Item 21</option>
+          <option>Item 22</option>
+          <option>Item 23</option>
+          <option>Item 24</option>
+          <option>Item 25</option>
+          <option>Item 26</option>
+          <option>Item 27</option>
+          <option>Item 28</option>
+          <option>Item 29</option>
+          <option>Item 30</option>
+        </select>
+        <div class="expectation">Scrolling and keyboard navigation should work.</div>
+      </div>
+
+      <div class="control">
+        <label for="select-disabled">Disabled option</label>
+        <select id="select-disabled">
+          <option>Enabled option</option>
+          <option disabled>Disabled option</option>
+          <option>Another enabled option</option>
+        </select>
+        <div class="expectation">The disabled option should not be selectable.</div>
+      </div>
+
+      <div class="control">
+        <label for="select-placeholder">Placeholder option</label>
+        <select id="select-placeholder">
+          <option value="" selected disabled>Choose an engine</option>
+          <option>Roamium</option>
+          <option>Surfari</option>
+          <option>Waterwolf</option>
+        </select>
+        <div class="expectation">The placeholder state should not break menu placement.</div>
+      </div>
+
+      <div class="control">
+        <label for="select-rtl">RTL/right-aligned select</label>
+        <select id="select-rtl" class="rtl-select" dir="rtl">
+          <option>Roamium</option>
+          <option>Surfari</option>
+          <option>Waterwolf</option>
+          <option>Girlbat</option>
+        </select>
+        <div class="expectation">The menu should remain associated with the field.</div>
+      </div>
+
+      <div class="control">
+        <label for="select-groups">Grouped options</label>
+        <select id="select-groups">
+          <optgroup label="Current">
+            <option>Roamium</option>
+            <option>Wezboard</option>
+          </optgroup>
+          <optgroup label="Planned">
+            <option>Surfari</option>
+            <option>Waterwolf</option>
+            <option>Girlbat</option>
+          </optgroup>
+        </select>
+        <div class="expectation">Groups should display and selection should report.</div>
+      </div>
+    </div>
+
     <div id="log">Last event: none</div>
   </div>
 
@@ -160,6 +267,9 @@ input[type="color"] {
       });
       el.addEventListener('focus', () => {
         log.textContent = `[${stamp()}] Last focused control: ${describe(el)}`;
+      });
+      el.addEventListener('change', () => {
+        log.textContent = `[${stamp()}] Changed control: ${describe(el)} = ${el.value}`;
       });
     }
   </script>
