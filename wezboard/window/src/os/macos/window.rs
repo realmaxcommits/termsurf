@@ -2376,54 +2376,10 @@ impl WindowView {
         }
     }
 
-    fn trace_pagepopup_alt_tab_window_activation(
-        event: &str,
-        window_id: usize,
-        this_raw: *mut AnyObject,
-        notification: *mut AnyObject,
-    ) {
-        if std::env::var_os("TERMSURF_ISSUE_779_TRACE").is_none() {
-            return;
-        }
-
-        unsafe {
-            let window: *mut AnyObject = objc2::msg_send![notification, object];
-            let frame: CGRect = objc2::msg_send![window, frame];
-            let is_key: Bool = objc2::msg_send![window, isKeyWindow];
-            let is_main: Bool = objc2::msg_send![window, isMainWindow];
-            let is_visible: Bool = objc2::msg_send![window, isVisible];
-            let first_responder: *mut AnyObject = objc2::msg_send![window, firstResponder];
-            log::info!(
-                "[issue-779-trace] pagepopup_alt_tab boundary=wezboard_activation event={} window_id={} view={:?} notification={:?} window={:?} frame={:?} is_key={} is_main={} is_visible={} first_responder={:?}",
-                event,
-                window_id,
-                this_raw,
-                notification,
-                window,
-                frame,
-                is_key.as_bool(),
-                is_main.as_bool(),
-                is_visible.as_bool(),
-                first_responder,
-            );
-        }
-    }
-
-    extern "C" fn did_become_key(
-        this_raw: *mut AnyObject,
-        _sel: Sel,
-        notification: *mut AnyObject,
-    ) {
+    extern "C" fn did_become_key(this_raw: *mut AnyObject, _sel: Sel, _id_ao: *mut AnyObject) {
         let this = unsafe { &mut *(this_raw as *mut AnyObject) };
-        let _id = notification as id;
+        let _id = _id_ao as id;
         if let Some(this) = Self::get_this(this) {
-            let window_id = this.inner.borrow().window_id;
-            Self::trace_pagepopup_alt_tab_window_activation(
-                "windowDidBecomeKey",
-                window_id,
-                this_raw,
-                notification,
-            );
             this.inner
                 .borrow_mut()
                 .events
@@ -2432,60 +2388,15 @@ impl WindowView {
         }
     }
 
-    extern "C" fn did_resign_key(
-        this_raw: *mut AnyObject,
-        _sel: Sel,
-        notification: *mut AnyObject,
-    ) {
+    extern "C" fn did_resign_key(this_raw: *mut AnyObject, _sel: Sel, _id_ao: *mut AnyObject) {
         let this = unsafe { &mut *(this_raw as *mut AnyObject) };
-        let _id = notification as id;
+        let _id = _id_ao as id;
         if let Some(this) = Self::get_this(this) {
-            let window_id = this.inner.borrow().window_id;
-            Self::trace_pagepopup_alt_tab_window_activation(
-                "windowDidResignKey",
-                window_id,
-                this_raw,
-                notification,
-            );
             this.inner
                 .borrow_mut()
                 .events
                 .dispatch(WindowEvent::FocusChanged(false));
             this.update_application_presentation(true);
-        }
-    }
-
-    extern "C" fn did_miniaturize(
-        this_raw: *mut AnyObject,
-        _sel: Sel,
-        notification: *mut AnyObject,
-    ) {
-        let this = unsafe { &mut *(this_raw as *mut AnyObject) };
-        if let Some(this) = Self::get_this(this) {
-            let window_id = this.inner.borrow().window_id;
-            Self::trace_pagepopup_alt_tab_window_activation(
-                "windowDidMiniaturize",
-                window_id,
-                this_raw,
-                notification,
-            );
-        }
-    }
-
-    extern "C" fn did_deminiaturize(
-        this_raw: *mut AnyObject,
-        _sel: Sel,
-        notification: *mut AnyObject,
-    ) {
-        let this = unsafe { &mut *(this_raw as *mut AnyObject) };
-        if let Some(this) = Self::get_this(this) {
-            let window_id = this.inner.borrow().window_id;
-            Self::trace_pagepopup_alt_tab_window_activation(
-                "windowDidDeminiaturize",
-                window_id,
-                this_raw,
-                notification,
-            );
         }
     }
 
@@ -3740,14 +3651,6 @@ impl WindowView {
             cls.add_method(
                 objc2::sel!(windowDidResignKey:),
                 Self::did_resign_key as extern "C" fn(*mut AnyObject, Sel, *mut AnyObject),
-            );
-            cls.add_method(
-                objc2::sel!(windowDidMiniaturize:),
-                Self::did_miniaturize as extern "C" fn(*mut AnyObject, Sel, *mut AnyObject),
-            );
-            cls.add_method(
-                objc2::sel!(windowDidDeminiaturize:),
-                Self::did_deminiaturize as extern "C" fn(*mut AnyObject, Sel, *mut AnyObject),
             );
             cls.add_method(
                 objc2::sel!(mouseMoved:),

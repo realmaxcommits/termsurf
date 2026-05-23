@@ -55,31 +55,6 @@ fn terminate_now() -> u64 {
     NSApplicationTerminateReply::TerminateNow.0 as u64
 }
 
-fn issue_779_trace_enabled() -> bool {
-    std::env::var_os("TERMSURF_ISSUE_779_TRACE").is_some()
-}
-
-fn trace_pagepopup_alt_tab_app_activation(event: &str, notif: *mut AnyObject) {
-    if !issue_779_trace_enabled() {
-        return;
-    }
-
-    unsafe {
-        let app: *mut AnyObject = objc2::msg_send![notif, object];
-        let app_is_active: Bool = objc2::msg_send![app, isActive];
-        let key_window: *mut AnyObject = objc2::msg_send![app, keyWindow];
-        let main_window: *mut AnyObject = objc2::msg_send![app, mainWindow];
-        log::info!(
-            "[issue-779-trace] pagepopup_alt_tab boundary=wezboard_activation event={} app={:?} app_is_active={} key_window={:?} main_window={:?}",
-            event,
-            app,
-            app_is_active.as_bool(),
-            key_window,
-            main_window,
-        );
-    }
-}
-
 extern "C" fn application_will_finish_launching(
     _self: *mut AnyObject,
     _sel: Sel,
@@ -98,22 +73,6 @@ extern "C" fn application_did_finish_launching(
     unsafe {
         *(&mut *this).get_mut_ivar::<Bool>("launched") = Bool::YES;
     }
-}
-
-extern "C" fn application_did_resign_active(
-    _self: *mut AnyObject,
-    _sel: Sel,
-    notif: *mut AnyObject,
-) {
-    trace_pagepopup_alt_tab_app_activation("applicationDidResignActive", notif);
-}
-
-extern "C" fn application_did_become_active(
-    _self: *mut AnyObject,
-    _sel: Sel,
-    notif: *mut AnyObject,
-) {
-    trace_pagepopup_alt_tab_app_activation("applicationDidBecomeActive", notif);
 }
 
 extern "C" fn application_open_untitled_file(
@@ -211,14 +170,6 @@ fn get_class() -> &'static AnyClass {
                 objc2::sel!(applicationDidFinishLaunching:),
                 application_did_finish_launching
                     as extern "C" fn(*mut AnyObject, Sel, *mut AnyObject),
-            );
-            cls.add_method(
-                objc2::sel!(applicationDidResignActive:),
-                application_did_resign_active as extern "C" fn(*mut AnyObject, Sel, *mut AnyObject),
-            );
-            cls.add_method(
-                objc2::sel!(applicationDidBecomeActive:),
-                application_did_become_active as extern "C" fn(*mut AnyObject, Sel, *mut AnyObject),
             );
             cls.add_method(
                 objc2::sel!(application:openFile:),

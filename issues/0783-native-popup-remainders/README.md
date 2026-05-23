@@ -656,3 +656,33 @@ new diagnostic surface is added here.
     - the experiment adds new alt-tab diagnostics instead of only cleaning up
       obsolete logs;
     - the experiment changes popup behavior beyond deleting obsolete logs.
+
+**Result:** Pass
+
+The cleanup succeeded. Manual testing confirmed that the date picker y-axis
+remained correct, and the date picker still opened after opening and dismissing
+the select dropdown. This means Experiment 2 preserved both prior fixes: the
+Issue 779 PagePopup y-axis correction and the Issue 782 Shell
+`setIgnoresMouseEvents:YES` post-select click fix.
+
+The trace confirms the same result. After the select dropdown closed, the date
+picker path still reached `DateTimeChooserImpl`, `WebViewImpl::OpenPagePopup`,
+`WebContentsImpl::ShowCreatedWidget`, and
+`RenderWidgetHostViewMac::InitAsPopup`. The y-axis correction logged
+`page_popup_y_fix applied=1`, with the raw popup rect at `1620,670`, the anchor
+rect at `1620,627`, and the corrected popup rect at `1620,627`. The Shell window
+state logs continued to show `ignoresMouseEvents=true` before and after the
+select menu.
+
+The obsolete high-volume input logs were removed: the Experiment 2 trace no
+longer contains the old `mouse_forward_boundary`, `wezboard_mouse_dispatch`,
+`wezboard_appkit_dispatch`, or `pagepopup_alt_tab` flood.
+
+#### Conclusion
+
+Experiment 2 restored a clean diagnostic baseline without changing popup
+behavior. It did not newly fix the select dropdown; it verified that the
+previous post-select fix survived the cleanup. The remaining bugs are still
+deferred to follow-up experiments: PagePopup-family alt-tab persistence, select
+dropdown x-position, datalist behavior, and suspicious lingering
+`RenderWidgetPopupWindow` entries.
