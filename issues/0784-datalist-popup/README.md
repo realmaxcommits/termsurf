@@ -485,6 +485,226 @@ whether to reuse Chromium's existing `AutofillAgent` plus the browser-side
 Autofill popup machinery, or to add a narrower TermSurf-specific
 `WebAutofillClient` that only supports datalist suggestions.
 
+### Experiment 3: Prototype minimal datalist Autofill plumbing
+
+#### Description
+
+Experiment 2 proved that the datalist request reaches Blink and then dies
+because the frame has no `WebAutofillClient`.
+
+This experiment should try the shortest plausible fix path: install Chromium's
+existing Autofill renderer plumbing in the content_shell/Roamium embedding, then
+add only the browser-side support required to let datalist suggestions reach a
+popup boundary.
+
+This is an implementation spike, not another geometry or AppKit experiment. The
+goal is to make datalist work if the existing Autofill UI can be reused without
+pulling in Chrome's full browser stack. If the implementation reaches a
+dependency wall, stop at the smallest verified boundary and record that result.
+
+#### Non-Negotiable Invariants
+
+Do not regress the native-popup fixes from Issues 779, 782, and 783:
+
+- do not modify `WebPagePopupImpl::SetWindowRect` or the PagePopup y-axis
+  correction;
+- do not modify Shell window movement or any `setIgnoresMouseEvents:YES`
+  reassertion;
+- do not modify `SetGuiActive`;
+- do not modify `WebMenuRunner` direct `NSMenu` select placement;
+- do not modify the native popup test page;
+- do not reintroduce broad per-mouse, input-router, or AppKit tracing.
+
+If any invariant regresses, stop and fix that regression before continuing.
+
+#### Changes
+
+Continue on the Issue 784 Chromium branch, `148.0.7778.97-issue-784`.
+
+1. Renderer setup: install Autofill for content_shell frames.
+
+   In `content/shell/renderer/shell_content_renderer_client.cc`, update
+   `ShellContentRendererClient::RenderFrameCreated(...)` to install the same
+   core renderer object that Chrome installs:
+   - create the password Autofill support objects required by `AutofillAgent`;
+   - construct `autofill::AutofillAgent`;
+   - pass `render_frame->GetAssociatedInterfaceRegistry()` as the associated
+     interface registry;
+   - preserve the existing `ShellRenderFrameObserver` setup.
+
+   Use Chrome's
+   `chrome/renderer/chrome_content_renderer_client.cc::RenderFrameCreated(...)`
+   as the reference shape, but do not copy unrelated Chrome renderer behavior.
+
+   Expected immediate effect: Experiment 2's
+   `ChromeClientImpl::OpenTextDataListChooser(...)` log should change from
+   `autofill_client_present=0` to `autofill_client_present=1`, and
+   `AutofillAgent::OpenTextDataListChooser(...)` should fire.
+
+2. Browser setup: attach the smallest content Autofill client that can receive
+   datalist queries.
+
+   `AutofillAgent` sends its browser query through
+   `components/autofill/content/browser/ContentAutofillDriverFactory`, which
+   requires a `ContentAutofillClient` attached to the `WebContents`. Add a
+   content_shell/Roamium-specific client under `content/shell/browser/`, for
+   example `ShellContentAutofillClient`, and create it for each Shell
+   `WebContents`.
+
+   The client must be datalist-focused:
+   - implement unrelated Autofill services as safe no-op or null-returning
+     methods;
+   - do not enable address, card, payments, identity, sync, strike database, or
+     password storage features;
+   - implement enough of `CreateManager(...)`, `ShowAutofillSuggestions(...)`,
+     `UpdateAutofillDataListValues(...)`, and `HideAutofillSuggestions(...)` for
+     datalist suggestions to reach a visible or inspectable boundary;
+   - reject or no-op non-datalist Autofill flows.
+
+   Use `components/autofill/content/browser/test_content_autofill_client.*` only
+   as a reference for how a `ContentAutofillClient` can be attached and stubbed.
+   Do not add test-only dependencies to production code.
+
+3. Popup display: prefer reusing existing Autofill suggestion UI, but do not
+   import Chrome wholesale.
+
+   If the content Autofill client can reuse Chromium's existing Autofill popup
+   UI without importing `chrome/browser` profile services or Chrome-only UI
+   infrastructure, wire it far enough that selecting `Surfari` from the datalist
+   fills `input#browser`.
+
+   If the existing UI requires broad Chrome dependencies, do not keep expanding
+   the patch. Stop after the browser client receives the datalist suggestions
+   and records the exact missing UI boundary. That result is Partial and should
+   feed a narrower custom datalist popup experiment.
+
+4. Build wiring.
+
+   Update only the GN targets required for the renderer agent and the minimal
+   browser-side datalist client. Keep dependency additions narrow. If adding one
+   Autofill dependency pulls in large Chrome subsystems, stop and record the
+   dependency boundary rather than forcing it.
+
+5. Keep the existing `datalist_autofill` trace lines from Experiment 2.
+
+   Add only low-volume logs needed to interpret this experiment:
+   - renderer installed Autofill client for a frame;
+   - browser attached `ShellContentAutofillClient` to a `WebContents`;
+   - datalist query reached the browser client;
+   - suggestion count and first few suggestion labels/values;
+   - visible popup shown, if a UI path is reached;
+   - suggestion accepted, if selection is wired.
+
+#### Verification
+
+1. Build Chromium with the project script:
+
+   ```bash
+   scripts/build.sh chromium
+   ```
+
+2. Build the other components normally if needed:
+
+   ```bash
+   scripts/build.sh roamium
+   scripts/build.sh wezboard
+   scripts/build.sh webtui
+   ```
+
+3. Run the invariant checks first:
+   - open the native popup test page;
+   - open a date picker and confirm the y-position is still correct;
+   - with the date picker still open, Cmd-Tab to another app and confirm the
+     picker dismisses; Cmd-Tab back and confirm the page is still usable;
+   - open a select dropdown and confirm the x-position is still correct;
+   - dismiss the select, then open the date picker again and confirm native
+     widgets still work.
+
+4. Run the datalist test with trace enabled:
+
+   ```bash
+   TERMSURF_ISSUE_779_TRACE=1 \
+   XDG_STATE_HOME="$PWD/logs/issue-784-exp3-state" \
+   RUST_LOG=info \
+   ./wezboard/target/debug/wezboard-gui \
+   2>&1 | tee logs/issue-784-exp3-wezboard.log
+   ```
+
+5. In `web`, open the native popup test page.
+
+6. Test `input#browser`:
+   - click into the datalist field;
+   - select the existing `Roamium` text;
+   - type `S`;
+   - click the datalist affordance if visible, or press ArrowDown.
+
+   `S` should match `Surfari`. If a suggestion popup appears, select `Surfari`
+   and verify the field value changes to `Surfari`.
+
+7. Stop after the datalist succeeds or reaches the first new failure boundary.
+   Do not continue with unrelated controls after the datalist attempt.
+
+8. Extract the relevant trace:
+
+   ```bash
+   rg "\\[issue-779-trace\\].*datalist_autofill" \
+     logs/issue-784-exp3-wezboard.log \
+     logs/issue-784-exp3-state
+   ```
+
+9. Commit Chromium changes on the Issue 784 branch and regenerate
+   `chromium/patches/issue-784/` after a successful or useful partial result.
+
+#### Pass Criteria
+
+The experiment passes if datalist suggestions visibly work:
+
+- `ChromeClientImpl::OpenTextDataListChooser(...)` reports
+  `autofill_client_present=1`;
+- `AutofillAgent::OpenTextDataListChooser(...)` fires;
+- the browser-side datalist client receives suggestions including `Surfari`;
+- a visible popup appears for `input#browser`;
+- selecting `Surfari` fills the field with `Surfari`;
+- all known-good native-popup invariants still pass.
+
+#### Partial Criteria
+
+The experiment is Partial if it proves the next boundary but does not yet make a
+visible popup work. Useful partial outcomes include:
+
+- renderer Autofill installation works, but the browser query is rejected
+  because no `ContentAutofillClient` or driver factory is attached;
+- the browser client receives datalist suggestions, but Chromium's existing
+  Autofill popup UI requires broad Chrome dependencies;
+- the popup appears but accepting a suggestion does not update the input;
+- dependency additions become too broad and the trace identifies the smallest
+  missing production interface.
+
+#### Failure Criteria
+
+The experiment fails if:
+
+- it imports broad Chrome browser/profile UI infrastructure without a narrow
+  datalist reason;
+- it enables address/card/password Autofill features unintentionally;
+- it changes the test page;
+- any known-good native-popup invariant regresses;
+- it makes the datalist state less diagnosable than Experiment 2.
+
+#### Expected Interpretation
+
+If this passes, datalist is fixed and the next experiment should be the promised
+native-popup log cleanup pass.
+
+If renderer Autofill installation works but browser-side Autofill is too large
+to integrate safely, the next experiment should implement a narrow
+TermSurf/content_shell datalist popup UI using the already-proven datalist
+option extraction boundary.
+
+If the browser receives suggestions but selection cannot be accepted through the
+existing Autofill delegate path, the next experiment should focus only on
+acceptance and value-setting, not on popup discovery.
+
 ## Cleanup Requirement
 
 Do not perform broad log cleanup before the datalist fix. Some remaining
