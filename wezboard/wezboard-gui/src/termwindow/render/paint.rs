@@ -1,6 +1,6 @@
 use crate::termwindow::{RenderFrame, TermWindowNotif};
-use ::window::WindowOps;
 use ::window::bitmaps::atlas::OutOfTextureSpace;
+use ::window::WindowOps;
 use anyhow::Context;
 use smol::Timer;
 use std::time::{Duration, Instant};
@@ -247,18 +247,18 @@ impl crate::TermWindow {
         }
 
         let num_panes = panes.len();
-        for pos in panes {
+        for pos in &panes {
             if pos.is_active {
-                self.update_text_cursor(&pos);
+                self.update_text_cursor(pos);
                 if focused {
                     pos.pane.advise_focus();
                     mux::Mux::get().record_focus_for_current_identity(pos.pane.pane_id());
                 }
             }
             let (pane_pixel_x, pane_pixel_y) = self
-                .paint_pane(&pos, num_panes, &mut layers)
+                .paint_pane(pos, num_panes, &mut layers)
                 .context("paint_pane")?;
-            self.paint_pane_border(&pos, num_panes, &mut layers)?;
+            self.paint_pane_border(pos, num_panes, &mut layers)?;
 
             // Update webview overlay position using paint_pane's coordinates.
             {
@@ -307,21 +307,12 @@ impl crate::TermWindow {
             }
         }
 
-        let split_border_width =
-            self.config
-                .split_border_width
-                .evaluate_as_pixels(config::DimensionContext {
-                    dpi: self.dimensions.dpi as f32,
-                    pixel_max: self.dimensions.pixel_width as f32,
-                    pixel_cell: self.render_metrics.cell_size.width as f32,
-                });
-        if split_border_width == 0. {
-            if let Some(pane) = self.get_active_pane_or_overlay() {
-                let splits = self.get_splits();
-                for split in &splits {
-                    self.paint_split(&mut layers, split, &pane)
-                        .context("paint_split")?;
-                }
+        if let Some(pane) = self.get_active_pane_or_overlay() {
+            let active_pos = panes.iter().find(|pos| pos.is_active);
+            let splits = self.get_splits();
+            for split in &splits {
+                self.paint_split(&mut layers, split, &pane, active_pos)
+                    .context("paint_split")?;
             }
         }
 

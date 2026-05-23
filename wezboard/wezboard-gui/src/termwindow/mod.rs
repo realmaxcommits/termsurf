@@ -3578,6 +3578,7 @@ impl TermWindow {
                 pixel_width: size.cols as usize * self.render_metrics.cell_size.width as usize,
                 pixel_height: size.rows as usize * self.render_metrics.cell_size.height as usize,
                 pane,
+                border: None,
             }]
         } else {
             let mut panes = tab.iter_panes();

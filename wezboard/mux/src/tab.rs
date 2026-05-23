@@ -76,6 +76,20 @@ pub struct PositionedPane {
     pub pixel_height: usize,
     /// The pane instance
     pub pane: Arc<dyn Pane>,
+    /// Border cells reserved around this pane by the split layout.
+    pub border: Option<PositionedPaneBorder>,
+}
+
+#[derive(Clone, Debug)]
+pub struct PositionedPaneBorder {
+    pub outer_left: usize,
+    pub outer_top: usize,
+    pub outer_width: usize,
+    pub outer_height: usize,
+    pub top: bool,
+    pub bottom: bool,
+    pub left: bool,
+    pub right: bool,
 }
 
 impl std::fmt::Debug for PositionedPane {
@@ -87,6 +101,7 @@ impl std::fmt::Debug for PositionedPane {
             .field("top", &self.top)
             .field("width", &self.width)
             .field("height", &self.height)
+            .field("border", &self.border)
             .field("pane_id", &self.pane.pane_id())
             .finish()
     }
@@ -506,6 +521,17 @@ fn cell_dimensions(size: &TerminalSize) -> TerminalSize {
     }
 }
 
+fn terminal_size_from_cells(size: &TerminalSize, cols: usize, rows: usize) -> TerminalSize {
+    let dims = cell_dimensions(size);
+    TerminalSize {
+        rows,
+        cols,
+        pixel_width: cols.saturating_mul(dims.pixel_width),
+        pixel_height: rows.saturating_mul(dims.pixel_height),
+        dpi: dims.dpi,
+    }
+}
+
 impl Tab {
     pub fn new(size: &TerminalSize) -> Self {
         let inner = TabInner::new(size);
@@ -840,6 +866,7 @@ impl TabInner {
             }
         };
 
+        let inset = self.grid_border_inset_for_size(self.size);
         let active = self.get_active_pane();
         let zoomed = self.zoomed.as_ref();
         if let Some(root) = self.pane.as_ref() {
@@ -850,8 +877,8 @@ impl TabInner {
                 active.as_ref(),
                 zoomed,
                 &workspace,
-                0,
-                0,
+                inset,
+                inset,
             )
         } else {
             PaneNode::Empty
@@ -1000,6 +1027,54 @@ impl TabInner {
         Mux::try_get().map(|mux| mux.notify(MuxNotification::TabResized(self.id)));
     }
 
+    fn has_split_layout(&self) -> bool {
+        self.zoomed.is_none()
+            && self
+                .pane
+                .as_ref()
+                .map(|tree| tree.num_leaves() > 1)
+                .unwrap_or(false)
+    }
+
+    fn grid_border_inset_for_size(&mut self, size: TerminalSize) -> usize {
+        if !self.has_split_layout() {
+            return 0;
+        }
+
+        let (min_x, min_y) = compute_min_size(self.pane.as_mut().unwrap());
+        if size.cols > min_x.saturating_add(2) && size.rows > min_y.saturating_add(2) {
+            1
+        } else {
+            0
+        }
+    }
+
+    fn split_layout_size_for_size(&mut self, size: TerminalSize) -> TerminalSize {
+        let inset = self.grid_border_inset_for_size(size);
+        terminal_size_from_cells(
+            &size,
+            size.cols.saturating_sub(inset * 2),
+            size.rows.saturating_sub(inset * 2),
+        )
+    }
+
+    fn first_split_layout_size(&self) -> TerminalSize {
+        terminal_size_from_cells(
+            &self.size,
+            self.size.cols.saturating_sub(2),
+            self.size.rows.saturating_sub(2),
+        )
+    }
+
+    fn current_split_layout_size(&self) -> TerminalSize {
+        match self.pane.as_ref() {
+            Some(Tree::Node {
+                data: Some(data), ..
+            }) if self.zoomed.is_none() => data.size(),
+            _ => self.size,
+        }
+    }
+
     fn iter_panes_impl(&mut self, respect_zoom_state: bool) -> Vec<PositionedPane> {
         let mut panes = vec![];
 
@@ -1017,6 +1092,7 @@ impl TabInner {
                     height: size.rows.into(),
                     pixel_height: size.pixel_height.into(),
                     pane: Arc::clone(zoomed),
+                    border: None,
                 });
                 return panes;
             }
@@ -1025,6 +1101,8 @@ impl TabInner {
         let active_idx = self.active;
         let zoomed_id = self.zoomed.as_ref().map(|p| p.pane_id());
         let root_size = self.size;
+        let inset = self.grid_border_inset_for_size(root_size);
+        let layout_size = self.split_layout_size_for_size(root_size);
         let mut cursor = self.pane.take().unwrap().cursor();
 
         loop {
@@ -1050,7 +1128,36 @@ impl TabInner {
                 }
 
                 let pane = Arc::clone(cursor.leaf_mut().unwrap());
-                let dims = parent_size.unwrap_or_else(|| root_size);
+                let dims = parent_size.unwrap_or(layout_size);
+                left += inset;
+                top += inset;
+                let border = if inset == 0 {
+                    None
+                } else {
+                    let inner_left = inset;
+                    let inner_top = inset;
+                    let inner_right = inset + layout_size.cols as usize;
+                    let inner_bottom = inset + layout_size.rows as usize;
+                    let touches_left = left == inner_left;
+                    let touches_top = top == inner_top;
+                    let touches_right = left + dims.cols as usize == inner_right;
+                    let touches_bottom = top + dims.rows as usize == inner_bottom;
+
+                    Some(PositionedPaneBorder {
+                        outer_left: if touches_left { left - 1 } else { left },
+                        outer_top: if touches_top { top - 1 } else { top },
+                        outer_width: dims.cols as usize
+                            + usize::from(touches_left)
+                            + usize::from(touches_right),
+                        outer_height: dims.rows as usize
+                            + usize::from(touches_top)
+                            + usize::from(touches_bottom),
+                        top: touches_top,
+                        bottom: touches_bottom,
+                        left: touches_left,
+                        right: touches_right,
+                    })
+                };
 
                 panes.push(PositionedPane {
                     index,
@@ -1063,6 +1170,7 @@ impl TabInner {
                     pixel_width: dims.pixel_width as _,
                     pixel_height: dims.pixel_height as _,
                     pane,
+                    border,
                 });
             }
 
@@ -1086,6 +1194,7 @@ impl TabInner {
 
         let mut cursor = self.pane.take().unwrap().cursor();
         let mut index = 0;
+        let inset = self.grid_border_inset_for_size(self.size);
 
         loop {
             if !cursor.is_leaf() {
@@ -1104,6 +1213,8 @@ impl TabInner {
                         SplitDirection::Horizontal => left += node.first.cols as usize,
                         SplitDirection::Vertical => top += node.first.rows as usize,
                     }
+                    left += inset;
+                    top += inset;
 
                     dividers.push(PositionedSplit {
                         index,
@@ -1147,29 +1258,38 @@ impl TabInner {
             zoomed.resize(size).ok();
         } else {
             let dims = cell_dimensions(&size);
+            let current_layout_size = self.current_split_layout_size();
             let (min_x, min_y) = compute_min_size(self.pane.as_mut().unwrap());
-            let current_size = self.size;
 
-            // Constrain the new size to the minimum possible dimensions
-            let cols = size.cols.max(min_x);
-            let rows = size.rows.max(min_y);
-            let size = TerminalSize {
-                rows,
-                cols,
-                pixel_width: cols * dims.pixel_width,
-                pixel_height: rows * dims.pixel_height,
+            // Constrain the new outer size to at least one cell.
+            // The split-tree layout below applies stronger constraints after
+            // the optional one-cell perimeter reservation is considered.
+            let requested_size = TerminalSize {
+                rows: size.rows.max(1),
+                cols: size.cols.max(1),
+                pixel_width: size.cols.max(1) * dims.pixel_width,
+                pixel_height: size.rows.max(1) * dims.pixel_height,
                 dpi: dims.dpi,
             };
+            let inset = self.grid_border_inset_for_size(requested_size);
+            let layout_cols = requested_size.cols.saturating_sub(inset * 2).max(min_x);
+            let layout_rows = requested_size.rows.saturating_sub(inset * 2).max(min_y);
+            let layout_size = terminal_size_from_cells(&requested_size, layout_cols, layout_rows);
+            let size = terminal_size_from_cells(
+                &requested_size,
+                layout_cols.saturating_add(inset * 2),
+                layout_rows.saturating_add(inset * 2),
+            );
 
             // Update the split nodes with adjusted sizes
             adjust_x_size(
                 self.pane.as_mut().unwrap(),
-                cols as isize - current_size.cols as isize,
+                layout_size.cols as isize - current_layout_size.cols as isize,
                 &dims,
             );
             adjust_y_size(
                 self.pane.as_mut().unwrap(),
-                rows as isize - current_size.rows as isize,
+                layout_size.rows as isize - current_layout_size.rows as isize,
                 &dims,
             );
 
@@ -1180,6 +1300,23 @@ impl TabInner {
         }
 
         Mux::try_get().map(|mux| mux.notify(MuxNotification::TabResized(self.id)));
+    }
+
+    fn resize_split_tree_to_layout(&mut self, layout_size: TerminalSize) {
+        let dims = self.cell_dimensions();
+        let current_layout_size = self.current_split_layout_size();
+
+        adjust_x_size(
+            self.pane.as_mut().unwrap(),
+            layout_size.cols as isize - current_layout_size.cols as isize,
+            &dims,
+        );
+        adjust_y_size(
+            self.pane.as_mut().unwrap(),
+            layout_size.rows as isize - current_layout_size.rows as isize,
+            &dims,
+        );
+        apply_sizes_from_splits(self.pane.as_mut().unwrap(), &layout_size);
     }
 
     fn apply_pane_size(&mut self, pane_size: TerminalSize, cursor: &mut Cursor) {
@@ -1890,7 +2027,16 @@ impl TabInner {
         }
 
         if request.top_level {
-            let size = self.size;
+            let size = if self
+                .pane
+                .as_ref()
+                .map(|tree| tree.num_leaves() == 1)
+                .unwrap_or(false)
+            {
+                self.first_split_layout_size()
+            } else {
+                self.split_layout_size_for_size(self.size)
+            };
 
             let ((width1, width2), (height1, height2)) = match request.direction {
                 SplitDirection::Horizontal => (
@@ -1926,15 +2072,33 @@ impl TabInner {
         // a bogus split state (https://github.com/termsurf/termsurf/issues/723)
         self.set_zoomed(false);
 
+        let split_panes = self
+            .pane
+            .as_ref()
+            .map(|tree| tree.num_leaves())
+            .unwrap_or(0);
+        let first_split_layout_size = if split_panes == 1 {
+            Some(self.first_split_layout_size())
+        } else {
+            None
+        };
+
         self.iter_panes().iter().nth(pane_index).map(|pos| {
+            let pane_width = first_split_layout_size
+                .map(|size| size.cols as usize)
+                .unwrap_or(pos.width);
+            let pane_height = first_split_layout_size
+                .map(|size| size.rows as usize)
+                .unwrap_or(pos.height);
             let ((width1, width2), (height1, height2)) = match request.direction {
                 SplitDirection::Horizontal => (
-                    split_dimension(pos.width, request),
-                    (pos.height, pos.height),
+                    split_dimension(pane_width, request),
+                    (pane_height, pane_height),
                 ),
-                SplitDirection::Vertical => {
-                    ((pos.width, pos.width), split_dimension(pos.height, request))
-                }
+                SplitDirection::Vertical => (
+                    (pane_width, pane_width),
+                    split_dimension(pane_height, request),
+                ),
             };
 
             SplitDirectionAndSize {
@@ -2005,9 +2169,9 @@ impl TabInner {
                 // match the target size; it's easier to reuse
                 // existing resize logic that way
                 if request.target_is_second {
-                    self.resize(split_info.first.clone());
+                    self.resize_split_tree_to_layout(split_info.first.clone());
                 } else {
-                    self.resize(split_info.second.clone());
+                    self.resize_split_tree_to_layout(split_info.second.clone());
                 }
             }
 
@@ -2362,17 +2526,17 @@ mod test {
             SplitDirectionAndSize {
                 direction: SplitDirection::Horizontal,
                 second: TerminalSize {
-                    rows: 24,
-                    cols: 40,
-                    pixel_width: 400,
-                    pixel_height: 600,
+                    rows: 22,
+                    cols: 39,
+                    pixel_width: 390,
+                    pixel_height: 550,
                     dpi: 96,
                 },
                 first: TerminalSize {
-                    rows: 24,
-                    cols: 39,
-                    pixel_width: 390,
-                    pixel_height: 600,
+                    rows: 22,
+                    cols: 38,
+                    pixel_width: 380,
+                    pixel_height: 550,
                     dpi: 96,
                 },
             }
@@ -2392,17 +2556,17 @@ mod test {
             SplitDirectionAndSize {
                 direction: SplitDirection::Vertical,
                 second: TerminalSize {
-                    rows: 12,
-                    cols: 80,
-                    pixel_width: 800,
-                    pixel_height: 300,
+                    rows: 11,
+                    cols: 78,
+                    pixel_width: 780,
+                    pixel_height: 275,
                     dpi: 96,
                 },
                 first: TerminalSize {
-                    rows: 11,
-                    cols: 80,
-                    pixel_width: 800,
-                    pixel_height: 275,
+                    rows: 10,
+                    cols: 78,
+                    pixel_width: 780,
+                    pixel_height: 250,
                     dpi: 96,
                 }
             }
@@ -2425,23 +2589,31 @@ mod test {
 
         assert_eq!(0, panes[0].index);
         assert_eq!(false, panes[0].is_active);
-        assert_eq!(0, panes[0].left);
-        assert_eq!(0, panes[0].top);
-        assert_eq!(39, panes[0].width);
-        assert_eq!(24, panes[0].height);
-        assert_eq!(390, panes[0].pixel_width);
-        assert_eq!(600, panes[0].pixel_height);
+        assert_eq!(1, panes[0].left);
+        assert_eq!(1, panes[0].top);
+        assert_eq!(38, panes[0].width);
+        assert_eq!(22, panes[0].height);
+        assert_eq!(380, panes[0].pixel_width);
+        assert_eq!(550, panes[0].pixel_height);
         assert_eq!(1, panes[0].pane.pane_id());
+        assert!(panes[0].border.as_ref().unwrap().left);
+        assert!(panes[0].border.as_ref().unwrap().top);
+        assert!(panes[0].border.as_ref().unwrap().bottom);
+        assert!(!panes[0].border.as_ref().unwrap().right);
 
         assert_eq!(1, panes[1].index);
         assert_eq!(true, panes[1].is_active);
         assert_eq!(40, panes[1].left);
-        assert_eq!(0, panes[1].top);
-        assert_eq!(40, panes[1].width);
-        assert_eq!(24, panes[1].height);
-        assert_eq!(400, panes[1].pixel_width);
-        assert_eq!(600, panes[1].pixel_height);
+        assert_eq!(1, panes[1].top);
+        assert_eq!(39, panes[1].width);
+        assert_eq!(22, panes[1].height);
+        assert_eq!(390, panes[1].pixel_width);
+        assert_eq!(550, panes[1].pixel_height);
         assert_eq!(2, panes[1].pane.pane_id());
+        assert!(!panes[1].border.as_ref().unwrap().left);
+        assert!(panes[1].border.as_ref().unwrap().top);
+        assert!(panes[1].border.as_ref().unwrap().bottom);
+        assert!(panes[1].border.as_ref().unwrap().right);
 
         let vert_size = tab
             .compute_split_size(
@@ -2471,50 +2643,50 @@ mod test {
 
         assert_eq!(0, panes[0].index);
         assert_eq!(false, panes[0].is_active);
-        assert_eq!(0, panes[0].left);
-        assert_eq!(0, panes[0].top);
-        assert_eq!(39, panes[0].width);
-        assert_eq!(11, panes[0].height);
-        assert_eq!(390, panes[0].pixel_width);
-        assert_eq!(275, panes[0].pixel_height);
+        assert_eq!(1, panes[0].left);
+        assert_eq!(1, panes[0].top);
+        assert_eq!(38, panes[0].width);
+        assert_eq!(10, panes[0].height);
+        assert_eq!(380, panes[0].pixel_width);
+        assert_eq!(250, panes[0].pixel_height);
         assert_eq!(1, panes[0].pane.pane_id());
 
         assert_eq!(1, panes[1].index);
         assert_eq!(true, panes[1].is_active);
-        assert_eq!(0, panes[1].left);
+        assert_eq!(1, panes[1].left);
         assert_eq!(12, panes[1].top);
-        assert_eq!(39, panes[1].width);
-        assert_eq!(12, panes[1].height);
-        assert_eq!(390, panes[1].pixel_width);
-        assert_eq!(300, panes[1].pixel_height);
+        assert_eq!(38, panes[1].width);
+        assert_eq!(11, panes[1].height);
+        assert_eq!(380, panes[1].pixel_width);
+        assert_eq!(275, panes[1].pixel_height);
         assert_eq!(3, panes[1].pane.pane_id());
 
         assert_eq!(2, panes[2].index);
         assert_eq!(false, panes[2].is_active);
         assert_eq!(40, panes[2].left);
-        assert_eq!(0, panes[2].top);
-        assert_eq!(40, panes[2].width);
-        assert_eq!(24, panes[2].height);
-        assert_eq!(400, panes[2].pixel_width);
-        assert_eq!(600, panes[2].pixel_height);
+        assert_eq!(1, panes[2].top);
+        assert_eq!(39, panes[2].width);
+        assert_eq!(22, panes[2].height);
+        assert_eq!(390, panes[2].pixel_width);
+        assert_eq!(550, panes[2].pixel_height);
         assert_eq!(2, panes[2].pane.pane_id());
 
         tab.resize_split_by(1, 1);
         let panes = tab.iter_panes();
-        assert_eq!(39, panes[0].width);
-        assert_eq!(12, panes[0].height);
-        assert_eq!(390, panes[0].pixel_width);
-        assert_eq!(300, panes[0].pixel_height);
+        assert_eq!(38, panes[0].width);
+        assert_eq!(11, panes[0].height);
+        assert_eq!(380, panes[0].pixel_width);
+        assert_eq!(275, panes[0].pixel_height);
 
-        assert_eq!(39, panes[1].width);
-        assert_eq!(11, panes[1].height);
-        assert_eq!(390, panes[1].pixel_width);
-        assert_eq!(275, panes[1].pixel_height);
+        assert_eq!(38, panes[1].width);
+        assert_eq!(10, panes[1].height);
+        assert_eq!(380, panes[1].pixel_width);
+        assert_eq!(250, panes[1].pixel_height);
 
-        assert_eq!(40, panes[2].width);
-        assert_eq!(24, panes[2].height);
-        assert_eq!(400, panes[2].pixel_width);
-        assert_eq!(600, panes[2].pixel_height);
+        assert_eq!(39, panes[2].width);
+        assert_eq!(22, panes[2].height);
+        assert_eq!(390, panes[2].pixel_width);
+        assert_eq!(550, panes[2].pixel_height);
     }
 
     fn is_send_and_sync<T: Send + Sync>() -> bool {

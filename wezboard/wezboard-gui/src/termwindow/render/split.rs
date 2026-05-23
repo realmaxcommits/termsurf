@@ -1,7 +1,7 @@
 use crate::termwindow::render::TripleLayerQuadAllocator;
 use crate::termwindow::{UIItem, UIItemType};
 use mux::pane::Pane;
-use mux::tab::{PositionedSplit, SplitDirection};
+use mux::tab::{PositionedPane, PositionedSplit, SplitDirection};
 use std::sync::Arc;
 
 impl crate::TermWindow {
@@ -10,9 +10,23 @@ impl crate::TermWindow {
         layers: &mut TripleLayerQuadAllocator,
         split: &PositionedSplit,
         pane: &Arc<dyn Pane>,
+        active_pos: Option<&PositionedPane>,
     ) -> anyhow::Result<()> {
         let palette = pane.palette();
-        let foreground = palette.split.to_linear();
+        let adjacent_to_active = active_pos
+            .map(|pos| split_is_adjacent_to_pane(split, pos))
+            .unwrap_or(false);
+        let foreground = if adjacent_to_active {
+            self.config
+                .focused_split_border_color
+                .map(|c| c.to_linear())
+                .unwrap_or_else(|| palette.split.to_linear())
+        } else {
+            self.config
+                .unfocused_split_border_color
+                .map(|c| c.to_linear())
+                .unwrap_or_else(|| palette.split.to_linear())
+        };
         let cell_width = self.render_metrics.cell_size.width as f32;
         let cell_height = self.render_metrics.cell_size.height as f32;
 
@@ -33,10 +47,10 @@ impl crate::TermWindow {
                 layers,
                 2,
                 euclid::rect(
-                    pos_x + (cell_width / 2.0),
-                    pos_y - (cell_height / 2.0),
-                    self.render_metrics.underline_height as f32,
-                    (1. + split.size as f32) * cell_height,
+                    pos_x,
+                    pos_y,
+                    cell_width,
+                    split.size as f32 * cell_height,
                 ),
                 foreground,
             )?;
@@ -56,10 +70,10 @@ impl crate::TermWindow {
                 layers,
                 2,
                 euclid::rect(
-                    pos_x - (cell_width / 2.0),
-                    pos_y + (cell_height / 2.0),
-                    (1.0 + split.size as f32) * cell_width,
-                    self.render_metrics.underline_height as f32,
+                    pos_x,
+                    pos_y,
+                    split.size as f32 * cell_width,
+                    cell_height,
                 ),
                 foreground,
             )?;
@@ -77,5 +91,29 @@ impl crate::TermWindow {
         }
 
         Ok(())
+    }
+}
+
+fn split_is_adjacent_to_pane(split: &PositionedSplit, pane: &PositionedPane) -> bool {
+    match split.direction {
+        SplitDirection::Horizontal => {
+            let split_left = split.left;
+            let split_top = split.top;
+            let split_bottom = split.top + split.size;
+            let pane_top = pane.top;
+            let pane_bottom = pane.top + pane.height;
+            let vertical_overlap = pane_top < split_bottom && pane_bottom > split_top;
+            vertical_overlap
+                && (pane.left + pane.width == split_left || pane.left == split_left + 1)
+        }
+        SplitDirection::Vertical => {
+            let split_left = split.left;
+            let split_right = split.left + split.size;
+            let split_top = split.top;
+            let pane_left = pane.left;
+            let pane_right = pane.left + pane.width;
+            let horizontal_overlap = pane_left < split_right && pane_right > split_left;
+            horizontal_overlap && (pane.top + pane.height == split_top || pane.top == split_top + 1)
+        }
     }
 }

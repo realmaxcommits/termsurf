@@ -2,12 +2,12 @@ use crate::quad::{HeapQuadAllocator, QuadTrait, TripleLayerQuadAllocator};
 use crate::selection::SelectionRange;
 use crate::termwindow::box_model::*;
 use crate::termwindow::render::{
-    CursorProperties, LineQuadCacheKey, LineQuadCacheValue, LineToEleShapeCacheKey,
-    RenderScreenLineParams, same_hyperlink,
+    same_hyperlink, CursorProperties, LineQuadCacheKey, LineQuadCacheValue, LineToEleShapeCacheKey,
+    RenderScreenLineParams,
 };
 use crate::termwindow::{ScrollHit, UIItem, UIItemType};
-use ::window::DeadKeyStatus;
 use ::window::bitmaps::TextureRect;
+use ::window::DeadKeyStatus;
 use anyhow::Context;
 use config::VisualBellTarget;
 use mux::pane::{PaneId, WithPaneLines};
@@ -594,17 +594,9 @@ impl crate::TermWindow {
             return Ok(());
         }
 
-        let bw = self
-            .config
-            .split_border_width
-            .evaluate_as_pixels(config::DimensionContext {
-                dpi: self.dimensions.dpi as f32,
-                pixel_max: self.dimensions.pixel_width as f32,
-                pixel_cell: self.render_metrics.cell_size.width as f32,
-            }) as f32;
-        if bw == 0.0 {
+        let Some(border_geometry) = pos.border.as_ref() else {
             return Ok(());
-        }
+        };
 
         let palette = pos.pane.palette();
         let color = if pos.is_active {
@@ -636,60 +628,70 @@ impl crate::TermWindow {
         let cell_width = self.render_metrics.cell_size.width as f32;
         let cell_height = self.render_metrics.cell_size.height as f32;
 
-        // Compute background_rect (same logic as paint_pane)
-        let background_rect: ::window::RectF = {
-            let (x, width_delta) = if pos.left == 0 {
-                (
-                    0.,
-                    padding_left + border.left.get() as f32 + (cell_width / 2.0),
-                )
-            } else {
-                (
-                    padding_left + border.left.get() as f32 - (cell_width / 2.0)
-                        + (pos.left as f32 * cell_width),
-                    cell_width,
-                )
-            };
-            let (y, height_delta) = if pos.top == 0 {
-                (
-                    (top_pixel_y - padding_top),
-                    padding_top + (cell_height / 2.0),
-                )
-            } else {
-                (
-                    top_pixel_y + (pos.top as f32 * cell_height) - (cell_height / 2.0),
-                    cell_height,
-                )
-            };
-            euclid::rect(
-                x,
-                y,
-                if pos.left + pos.width >= self.terminal_size.cols as usize {
-                    self.dimensions.pixel_width as f32 - x
-                } else {
-                    (pos.width as f32 * cell_width) + width_delta
-                },
-                if pos.top + pos.height >= self.terminal_size.rows as usize {
-                    self.dimensions.pixel_height as f32 - y
-                } else {
-                    (pos.height as f32 * cell_height) + height_delta as f32
-                },
+        let cell_to_pixel = |left: usize, top: usize| {
+            (
+                padding_left + border.left.get() as f32 + left as f32 * cell_width,
+                top_pixel_y + top as f32 * cell_height,
             )
         };
 
-        let x = background_rect.origin.x;
-        let y = background_rect.origin.y;
-        let w = background_rect.size.width;
-        let h = background_rect.size.height;
-
-        // Top border
-        self.filled_rectangle(layers, 2, euclid::rect(x, y, w, bw), color)?;
-        // Bottom border
-        self.filled_rectangle(layers, 2, euclid::rect(x, y + h - bw, w, bw), color)?;
-        // Left border
-        self.filled_rectangle(layers, 2, euclid::rect(x, y, bw, h), color)?;
-        // Right border
-        self.filled_rectangle(layers, 2, euclid::rect(x + w - bw, y, bw, h), color)?;
+        if border_geometry.top {
+            let (x, y) = cell_to_pixel(border_geometry.outer_left, border_geometry.outer_top);
+            self.filled_rectangle(
+                layers,
+                2,
+                euclid::rect(
+                    x,
+                    y,
+                    border_geometry.outer_width as f32 * cell_width,
+                    cell_height,
+                ),
+                color,
+            )?;
+        }
+        if border_geometry.bottom {
+            let (x, y) = cell_to_pixel(
+                border_geometry.outer_left,
+                border_geometry.outer_top + border_geometry.outer_height - 1,
+            );
+            self.filled_rectangle(
+                layers,
+                2,
+                euclid::rect(
+                    x,
+                    y,
+                    border_geometry.outer_width as f32 * cell_width,
+                    cell_height,
+                ),
+                color,
+            )?;
+        }
+        let vertical_top = border_geometry.outer_top + usize::from(border_geometry.top);
+        let vertical_height = border_geometry
+            .outer_height
+            .saturating_sub(usize::from(border_geometry.top))
+            .saturating_sub(usize::from(border_geometry.bottom));
+        if border_geometry.left {
+            let (x, y) = cell_to_pixel(border_geometry.outer_left, vertical_top);
+            self.filled_rectangle(
+                layers,
+                2,
+                euclid::rect(x, y, cell_width, vertical_height as f32 * cell_height),
+                color,
+            )?;
+        }
+        if border_geometry.right {
+            let (x, y) = cell_to_pixel(
+                border_geometry.outer_left + border_geometry.outer_width - 1,
+                vertical_top,
+            );
+            self.filled_rectangle(
+                layers,
+                2,
+                euclid::rect(x, y, cell_width, vertical_height as f32 * cell_height),
+                color,
+            )?;
+        }
 
         Ok(())
     }

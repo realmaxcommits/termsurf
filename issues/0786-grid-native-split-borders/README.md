@@ -464,3 +464,26 @@ The experiment fails if:
 - split dragging, mouse mapping, selection, terminal mouse forwarding, or
   browser overlay positioning regress;
 - `split_border_width` is reinterpreted without an explicit follow-up design.
+
+**Result:** Partial
+
+The experiment successfully moved the border model into real grid layout space:
+multi-pane layouts reserve cells before PTY sizing, pane content dimensions are
+truthful, and the bottom/right terminal content is no longer hidden by border
+paint.
+
+However, the visual rendering is not acceptable. The implementation fills the
+entire reserved border cell with the focused/unfocused border color. That is not
+the intended design. The reserved cells should create real layout space, but the
+cells themselves should visually read as normal background space. The actual
+border line should still be drawn as a thin pixel border inside or along the
+reserved border space, similar to the old pixel border rendering but no longer
+overlapping terminal content.
+
+#### Conclusion
+
+Keep the grid-reserved layout direction. The next experiment should preserve the
+truthful PTY/content sizing from this experiment, but change the paint model so
+reserved border cells are background-colored spacing and the visible border is a
+thin pixel line drawn within that spacing. Full-cell border fills are the wrong
+visual treatment.
