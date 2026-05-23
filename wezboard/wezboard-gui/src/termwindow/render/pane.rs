@@ -627,6 +627,22 @@ impl crate::TermWindow {
         let top_pixel_y = top_bar_height + padding_top + border.top.get() as f32;
         let cell_width = self.render_metrics.cell_size.width as f32;
         let cell_height = self.render_metrics.cell_size.height as f32;
+        let raw_line_width =
+            self.config
+                .split_border_width
+                .evaluate_as_pixels(config::DimensionContext {
+                    dpi: self.dimensions.dpi as f32,
+                    pixel_max: self.dimensions.pixel_width as f32,
+                    pixel_cell: cell_width,
+                }) as f32;
+        if raw_line_width <= 0.0 {
+            return Ok(());
+        }
+
+        let vertical_line_width = raw_line_width.min((cell_width - 2.0).max(1.0)).max(1.0);
+        let horizontal_line_height = raw_line_width.min((cell_height - 2.0).max(1.0)).max(1.0);
+        let vertical_line_offset = ((cell_width - vertical_line_width) / 2.0).round();
+        let horizontal_line_offset = ((cell_height - horizontal_line_height) / 2.0).round();
 
         let cell_to_pixel = |left: usize, top: usize| {
             (
@@ -642,9 +658,9 @@ impl crate::TermWindow {
                 2,
                 euclid::rect(
                     x,
-                    y,
+                    y + horizontal_line_offset,
                     border_geometry.outer_width as f32 * cell_width,
-                    cell_height,
+                    horizontal_line_height,
                 ),
                 color,
             )?;
@@ -659,9 +675,9 @@ impl crate::TermWindow {
                 2,
                 euclid::rect(
                     x,
-                    y,
+                    y + horizontal_line_offset,
                     border_geometry.outer_width as f32 * cell_width,
-                    cell_height,
+                    horizontal_line_height,
                 ),
                 color,
             )?;
@@ -676,7 +692,12 @@ impl crate::TermWindow {
             self.filled_rectangle(
                 layers,
                 2,
-                euclid::rect(x, y, cell_width, vertical_height as f32 * cell_height),
+                euclid::rect(
+                    x + vertical_line_offset,
+                    y,
+                    vertical_line_width,
+                    vertical_height as f32 * cell_height,
+                ),
                 color,
             )?;
         }
@@ -688,7 +709,12 @@ impl crate::TermWindow {
             self.filled_rectangle(
                 layers,
                 2,
-                euclid::rect(x, y, cell_width, vertical_height as f32 * cell_height),
+                euclid::rect(
+                    x + vertical_line_offset,
+                    y,
+                    vertical_line_width,
+                    vertical_height as f32 * cell_height,
+                ),
                 color,
             )?;
         }

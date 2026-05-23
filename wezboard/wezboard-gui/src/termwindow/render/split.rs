@@ -41,19 +41,32 @@ impl crate::TermWindow {
 
         let pos_y = split.top as f32 * cell_height + first_row_offset + padding_top;
         let pos_x = split.left as f32 * cell_width + padding_left + border.left.get() as f32;
+        let raw_line_width =
+            self.config
+                .split_border_width
+                .evaluate_as_pixels(config::DimensionContext {
+                    dpi: self.dimensions.dpi as f32,
+                    pixel_max: self.dimensions.pixel_width as f32,
+                    pixel_cell: cell_width,
+                }) as f32;
+        let should_draw_line = raw_line_width > 0.0;
 
         if split.direction == SplitDirection::Horizontal {
-            self.filled_rectangle(
-                layers,
-                2,
-                euclid::rect(
-                    pos_x,
-                    pos_y,
-                    cell_width,
-                    split.size as f32 * cell_height,
-                ),
-                foreground,
-            )?;
+            if should_draw_line {
+                let line_width = raw_line_width.min((cell_width - 2.0).max(1.0)).max(1.0);
+                let line_offset = ((cell_width - line_width) / 2.0).round();
+                self.filled_rectangle(
+                    layers,
+                    2,
+                    euclid::rect(
+                        pos_x + line_offset,
+                        pos_y,
+                        line_width,
+                        split.size as f32 * cell_height,
+                    ),
+                    foreground,
+                )?;
+            }
             self.ui_items.push(UIItem {
                 x: border.left.get() as usize
                     + padding_left as usize
@@ -66,17 +79,21 @@ impl crate::TermWindow {
                 item_type: UIItemType::Split(split.clone()),
             });
         } else {
-            self.filled_rectangle(
-                layers,
-                2,
-                euclid::rect(
-                    pos_x,
-                    pos_y,
-                    split.size as f32 * cell_width,
-                    cell_height,
-                ),
-                foreground,
-            )?;
+            if should_draw_line {
+                let line_height = raw_line_width.min((cell_height - 2.0).max(1.0)).max(1.0);
+                let line_offset = ((cell_height - line_height) / 2.0).round();
+                self.filled_rectangle(
+                    layers,
+                    2,
+                    euclid::rect(
+                        pos_x,
+                        pos_y + line_offset,
+                        split.size as f32 * cell_width,
+                        line_height,
+                    ),
+                    foreground,
+                )?;
+            }
             self.ui_items.push(UIItem {
                 x: border.left.get() as usize
                     + padding_left as usize
