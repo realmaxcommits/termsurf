@@ -370,9 +370,11 @@ existing `[issue-779-trace]` prefix. Use a new event label such as
      logs/issue-784-exp2-state
    ```
 
-9. After committing the Chromium trace patch, export it to
-   `chromium/patches/issue-784/0001-Trace-datalist-autofill-boundary.patch` and
-   verify the patch applies cleanly.
+9. After committing the Chromium trace patch, export the cumulative Issue 784
+   patch archive to `chromium/patches/issue-784/`. The new trace patch should
+   appear after the inherited Issue 783 patches, currently as
+   `0019-Trace-datalist-Autofill.patch`. Verify that the new patch applies
+   cleanly.
 
 #### Pass Criteria
 
