@@ -1233,3 +1233,191 @@ The experiment fails if:
 - terminal content appears underneath borders;
 - PTY dimensions stop matching visible content cells;
 - browser overlay, mouse mapping, selection, or split dragging regresses.
+
+**Result:** Partial
+
+The active/inactive pane border behavior is mostly restored. Every visible
+non-zoomed pane now draws a one-rectangle border, inactive panes use the
+unfocused color, and the active pane draws last so the focused color wins shared
+overlaps. This preserves the one-rectangle paint model from Experiment 3 and
+does not return to `paint_split()` border fragments.
+
+However, split dragging regressed. The resize "slider" hit region is one grid
+cell before the visible border: for a right split, the resize cursor appears one
+cell left of the border; for a down split, it appears one cell above the border.
+This means the visual border and the interactive split hit region no longer come
+from the same effective geometry.
+
+#### Conclusion
+
+Experiment 4 should not be rolled back. It fixed the missing inactive border
+behavior and kept the correct paint architecture: one rectangle per pane, with
+inactive borders painted before the active border.
+
+The remaining problem is separate: `paint_split()` no longer draws visible
+dividers, but it still creates `UIItemType::Split` hit regions from
+`PositionedSplit.left/top`. The visible border now comes from
+`PositionedPaneBorder.outer_*`. Those two coordinate sources differ by one grid
+cell after the grid-native perimeter reservation, so the invisible resize slider
+is offset from the visible border.
+
+The next experiment should keep the current visual border implementation and
+move the split resize hit region onto the same reserved border cell geometry
+that users see.
+
+### Experiment 5: Align Split Resize Hit Regions
+
+#### Description
+
+Fix the one-cell offset between the visible grid-native border and the invisible
+split resize slider.
+
+Experiments 3 and 4 intentionally removed visual border responsibility from
+`paint_split()`. That is still correct. But `paint_split()` also owns the
+`UIItemType::Split` hit region used for hover cursors and mouse resizing. After
+the visual border moved to `paint_pane_border()` and `PositionedPaneBorder`, the
+split hit region stayed on the old `PositionedSplit.left/top` coordinate. The
+result is a slider that is one grid cell left or above the visible border.
+
+Experiment 5 should align the interactive split hit region with the visible
+border users are trying to drag, without making `paint_split()` draw visible
+border fragments again.
+
+#### Non-Negotiable Invariants
+
+- Preserve Experiment 1's grid-reserved layout and truthful PTY sizing.
+- Preserve Experiments 3 and 4's one-rectangle pane border painter.
+- Keep `paint_split()` visually non-visual. It may register hit regions only.
+- Do not paint over terminal content cells.
+- Do not change terminal mouse forwarding or browser overlay content
+  coordinates.
+- Split dragging must resize the same split as before; only the hit region
+  location should move to the visible border.
+- Single-pane and zoomed-pane behavior remain unchanged.
+
+#### Changes
+
+1. **Identify the exact coordinate mismatch.**
+
+   Inspect:
+   - `wezboard/mux/src/tab.rs::iter_splits()`;
+   - `wezboard/mux/src/tab.rs::PositionedPaneBorder`;
+   - `wezboard/wezboard-gui/src/termwindow/render/split.rs::paint_split()`;
+   - `wezboard/wezboard-gui/src/termwindow/mouseevent.rs::drag_split()`.
+
+   Confirm that `PositionedSplit.left/top` is the logical split-tree divider
+   coordinate, while the visible border users see is derived from
+   `PositionedPaneBorder.outer_*`.
+
+2. **Keep logical split coordinates stable for resizing.**
+
+   Do not change `resize_split_by()` or the split-tree sizing model unless the
+   audit proves it is unavoidable. `PositionedSplit.index`, `direction`, `left`,
+   and `top` are still useful as logical resize inputs.
+
+   The fix should prefer adding or deriving a separate hit-region coordinate,
+   not mutating the logical split coordinate in a way that changes resize delta
+   math.
+
+3. **Register split hit regions on the visible border cell.**
+
+   In `render/split.rs::paint_split()`, compute the `UIItem` rectangle from the
+   visible border position instead of the old pre-border divider position.
+
+   Expected adjustment:
+   - for `SplitDirection::Horizontal` (left/right split), the vertical resize
+     hitbox should move one grid cell toward the visible divider border;
+   - for `SplitDirection::Vertical` (up/down split), the horizontal resize
+     hitbox should move one grid cell toward the visible divider border.
+
+   Validate the sign from the actual layout geometry before committing the
+   change. The observed bug is:
+   - right split: hitbox is one cell left of the visible border;
+   - down split: hitbox is one cell above the visible border.
+
+   So the likely fix is to add one cell to the split hitbox's `x` coordinate for
+   horizontal splits and one cell to its `y` coordinate for vertical splits.
+
+4. **Preserve drag delta semantics.**
+
+   `mouseevent.rs::drag_split()` currently computes:
+   - horizontal split delta from `x - split.left`;
+   - vertical split delta from `y - split.top`.
+
+   If the `UIItem` hitbox moves but `split.left/top` remain logical, verify the
+   first drag event does not immediately jump by one cell. If it does, add a
+   separate visual-hit coordinate to `PositionedSplit` or `UIItemType::Split` so
+   drag delta calculation uses the same anchor as the hitbox while
+   `resize_split_by(split.index, delta)` still targets the same split.
+
+   Do not fix the hover offset by introducing a resize jump.
+
+5. **Do not reintroduce visual split drawing.**
+
+   `paint_split()` should continue to push only `UIItemType::Split`. It must not
+   call `filled_rectangle()` or otherwise draw visible split dividers.
+
+#### Verification
+
+1. Build Wezboard:
+
+   ```bash
+   scripts/build.sh wezboard
+   ```
+
+2. Right split hover alignment:
+   - open a split pane to the right;
+   - move the mouse across the visible vertical border;
+   - confirm the resize cursor appears on the visible border, not one cell left;
+   - confirm it disappears when moving one cell away from the border.
+
+3. Down split hover alignment:
+   - open a split pane down;
+   - move the mouse across the visible horizontal border;
+   - confirm the resize cursor appears on the visible border, not one cell
+     above;
+   - confirm it disappears when moving one cell away from the border.
+
+4. Drag behavior:
+   - drag a vertical split border left and right;
+   - drag a horizontal split border up and down;
+   - confirm the split starts moving from the visible border with no one-cell
+     jump on mouse-down or first move.
+
+5. Nested split behavior:
+   - create at least three panes with nested horizontal and vertical splits;
+   - verify each visible internal border has a correctly aligned resize cursor;
+   - verify dragging each border resizes the intended split.
+
+6. Border visual regression check:
+   - confirm active and inactive pane borders still draw as one connected
+     rectangle per pane;
+   - confirm `paint_split()` still does not draw visible border fragments.
+
+7. Content and overlay check:
+   - run `stty size` and print on the last visible row/rightmost column;
+   - open a browser pane and confirm overlay alignment remains unchanged.
+
+#### Pass Criteria
+
+The experiment passes if resize hover hit regions line up with the visible
+grid-native split borders for right/down and nested splits, dragging starts
+without a one-cell jump, the intended split resizes, active/inactive borders
+remain visually correct, and `scripts/build.sh wezboard` passes.
+
+#### Partial Criteria
+
+The experiment is Partial if the hitbox aligns for simple two-pane splits but a
+nested split edge case remains. Partial is not acceptable if dragging jumps on
+mouse-down or resizes the wrong split.
+
+#### Failure Criteria
+
+The experiment fails if:
+
+- the resize cursor remains one cell offset from the visible border;
+- hover alignment is fixed but dragging jumps by one cell;
+- the wrong split resizes;
+- `paint_split()` draws visible border fragments again;
+- active/inactive pane borders regress;
+- terminal content, browser overlays, or terminal mouse forwarding regress.
