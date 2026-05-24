@@ -14,7 +14,7 @@ No `origin` remote for now. Remote hosting TBD (likely patch set distribution).
 
 ## Current State
 
-- Branch: `148.0.7778.97-issue-784`
+- Branch: `148.0.7778.97-issue-778`
 - Base version: `148.0.7778.97` (tracking Electron's Chromium version)
 
 ## Branch Strategy
@@ -95,6 +95,7 @@ find the most relevant recent branch, create a new branch from it
 | `148.0.7778.97-issue-784`     | [Issue 784](../issues/0784-datalist-popup/README.md)             | Datalist popup fix and cleanup              |
 | `148.0.7778.97-issue-781`     | [Issue 781](../issues/0781-chromium-upgrade/README.md)           | Chromium 148 migration                      |
 | `148.0.7778.97-issue-780`     | [Issue 780](../issues/0780-link-drag-freeze/README.md)           | Suppress native link drag in Roamium        |
+| `148.0.7778.97-issue-778`     | [Issue 778](../issues/0778-back-nav-title-stale/README.md)       | Re-emit titles on navigation commit         |
 
 ## Patches
 
@@ -108,7 +109,7 @@ patches/
 ├── issue-411/         — Two profiles experiment 3
 ├── issue-412/         — One profile
 ├── ...
-└── issue-784/         — Current Chromium branch patch archive
+└── issue-778/         — Current Chromium branch patch archive
 ```
 
 Each patch set is cumulative — it contains all commits from the base tag to the
@@ -128,8 +129,8 @@ git am ../../chromium/patches/issue-{N}/*.patch
 For the current TermSurf Chromium branch, use:
 
 ```bash
-git checkout -b 148.0.7778.97-issue-784 148.0.7778.97
-git am ../../chromium/patches/issue-784/*.patch
+git checkout -b 148.0.7778.97-issue-778 148.0.7778.97
+git am ../../chromium/patches/issue-778/*.patch
 ```
 
 ### Generating patches
@@ -159,8 +160,8 @@ export PATH="$(pwd)/depot_tools:$PATH"
 gclient config --name=src https://chromium.googlesource.com/chromium/src.git
 caffeinate gclient sync --revision src@148.0.7778.97 --no-history
 cd src
-git checkout -b 148.0.7778.97-issue-784 148.0.7778.97
-git am ../../chromium/patches/issue-784/*.patch
+git checkout -b 148.0.7778.97-issue-778 148.0.7778.97
+git am ../../chromium/patches/issue-778/*.patch
 ```
 
 ```

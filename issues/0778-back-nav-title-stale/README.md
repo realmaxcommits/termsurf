@@ -1,6 +1,7 @@
 +++
-status = "open"
+status = "closed"
 opened = "2026-04-12"
+closed = "2026-05-23"
 +++
 
 # Issue 778: Back navigation leaves stale title in webtui
@@ -165,3 +166,31 @@ design a follow-up experiment.
   the correct title from Chromium.
 - JavaScript-driven title changes stop working.
 - The patch introduces protocol changes or touches unrelated subsystems.
+
+**Result:** Pass
+
+Experiment 1 fixed the stale title regression. The implementation landed on
+Chromium branch `148.0.7778.97-issue-778` and updates
+`TsTabObserver::DidFinishNavigation()` to send the current committed navigation
+entry title immediately after sending the committed URL.
+
+Manual testing confirmed that back navigation now restores both the URL and the
+matching page title in webtui. The existing `TitleWasSet()` path remains intact
+for JavaScript-driven title changes.
+
+#### Conclusion
+
+The stale title was caused by TermSurf only sending title updates when Chromium
+reported an explicit title change. Back/forward navigation can restore a cached
+history entry without firing that callback, so webtui received the restored URL
+but kept the previous page's title.
+
+Sending the current committed entry title on every committed primary main-frame
+navigation makes the URL/title state coherent without adding protocol messages
+or making webtui guess.
+
+## Conclusion
+
+Issue 778 is closed. Back and forward navigation now leave webtui's title in
+sync with the restored page by re-emitting Chromium's committed navigation entry
+title alongside URL changes.
