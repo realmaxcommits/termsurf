@@ -68,12 +68,27 @@ This should be a Chromium-only experiment. Do not add new protocol messages and
 do not paper over the stale state in webtui by merely clearing the title on
 `UrlChanged`.
 
+`NavigationEntry::GetTitleForDisplay()` may return a formatted URL when the
+entry does not have a parsed title yet. For first-time forward navigation, this
+may briefly show a URL-like placeholder before `TitleWasSet()` sends the final
+page title. That is acceptable and matches Chromium's normal untitled-tab
+fallback behavior. The important invariant is that restored history entries send
+the best current title known to Chromium instead of leaving webtui with the
+previous page's title.
+
 #### Changes
 
-1. Create a new Chromium branch for this issue from the most relevant recent
+1. Optional hypothesis check before patching: add temporary logs in
+   `TsTabObserver::DidFinishNavigation()` and `TsTabObserver::TitleWasSet()`,
+   reproduce the bug, and confirm that back navigation fires
+   `DidFinishNavigation()` with the restored URL but does not fire
+   `TitleWasSet()`. Remove these temporary logs before committing. If
+   `TitleWasSet()` does fire on back navigation, stop and redesign because the
+   stale title is likely in Roamium or webtui's receive path.
+2. Create a new Chromium branch for this issue from the most relevant recent
    TermSurf Chromium branch: `148.0.7778.97-issue-778`.
-2. Add the branch to the Branches table in `chromium/README.md`.
-3. In `chromium/src/content/libtermsurf_chromium/ts_tab_observer.cc`, update
+3. Add the branch to the Branches table in `chromium/README.md`.
+4. In `chromium/src/content/libtermsurf_chromium/ts_tab_observer.cc`, update
    `TsTabObserver::DidFinishNavigation()`:
    - keep the existing committed primary-main-frame guard;
    - keep the existing `TsNotifyUrlChanged(...)` call;
@@ -81,11 +96,14 @@ do not paper over the stale state in webtui by merely clearing the title on
      `web_contents()->GetController()`;
    - if an entry exists, convert `entry->GetTitleForDisplay()` to UTF-8 and call
      `TsNotifyTitleChanged(...)`.
-4. Keep `TsTabObserver::TitleWasSet()` intact. It remains responsible for title
+5. Keep `TsTabObserver::TitleWasSet()` intact. It remains responsible for title
    changes that happen after navigation commit.
-5. Add any include needed by Chromium 148 for `NavigationController` access, but
+6. Add any include needed by Chromium 148 for `NavigationController` access, but
    avoid unrelated include churn.
-6. Regenerate the issue 778 Chromium patch archive after the branch commit.
+7. Format the modified Chromium file with Chromium's normal formatter before
+   committing.
+8. Regenerate the issue 778 Chromium patch archive after the branch commit using
+   the standard Chromium patch archive workflow.
 
 #### Non-Negotiable Invariants
 
@@ -111,7 +129,21 @@ do not paper over the stale state in webtui by merely clearing the title on
 6. Press forward. Verify webtui shows page B's URL and page B's title again.
 7. Test a page that changes `document.title` after load. Verify the later title
    update still reaches webtui.
-8. Smoke-test ordinary link clicks, reload, and direct URL entry.
+8. Test first-time navigation to a never-before-visited page. Observe whether
+   webtui briefly shows the URL fallback before the final title arrives. A brief
+   placeholder is acceptable; a permanently stale previous title is not.
+9. Test same-document navigation, such as a page or SPA that calls
+   `history.pushState(...)`. Confirm the title stays correct when the page does
+   not change `document.title`, and updates when it does.
+10. Test both bfcache and non-bfcache back navigation:
+    - use a simple page without unload handlers for a bfcache-eligible case;
+    - use a page with an unload handler or `Cache-Control: no-store` for a
+      reload-on-back case. Both should leave the correct title displayed after
+      back navigation.
+11. Test a page with no `<title>` element. Confirm webtui shows Chromium's
+    URL-like title fallback and that back/forward navigation still restores the
+    correct fallback or title for each history entry.
+12. Smoke-test ordinary link clicks, reload, and direct URL entry.
 
 #### Pass Criteria
 
