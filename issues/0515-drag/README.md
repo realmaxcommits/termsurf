@@ -904,8 +904,7 @@ for (uuid, pending) in pendingTabs {
 ```
 
 This replaces the `chromiumFocusedPane == uuid` check with
-`paneBrowsing[uuid]
-== true`, which is the actual source of truth for whether a
+`paneBrowsing[uuid] == true`, which is the actual source of truth for whether a
 pane should be focused. `updatePaneFocus` handles unfocusing the old pane and
 setting `chromiumFocusedPane`.
 
@@ -1092,8 +1091,7 @@ The experiment required fixing two independent bugs:
 2. **Wrong modifier values.** The button-down flags in the move/drag monitor
    used incorrect values: `32` for `kLeftButtonDown` and `512` for
    `kRightButtonDown`. The actual Blink values are
-   `kLeftButtonDown = 1 << 6 =
-64` and `kRightButtonDown = 1 << 8 = 256`. The
+   `kLeftButtonDown = 1 << 6 = 64` and `kRightButtonDown = 1 << 8 = 256`. The
    old values mapped to `kIsAutoRepeat` and `kCapsLockOn`, so Chromium treated
    every drag as a plain mouse move with no button held — never initiating
    selection.

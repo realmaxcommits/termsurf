@@ -7,8 +7,9 @@ closed = "2026-01-06"
 # Build Guide (TermSurf 1.x)
 
 > **Scope:** This document applies to TermSurf 1.x (Ghostty + WKWebView).
-> TermSurf 2.0 build instructions will be documented separately once development begins.
-> For 2.0, see the cef-rs build commands in [CLAUDE.md](../CLAUDE.md#cef-rs).
+> TermSurf 2.0 build instructions will be documented separately once development
+> begins. For 2.0, see the cef-rs build commands in
+> [CLAUDE.md](../CLAUDE.md#cef-rs).
 
 ## Build Commands
 

@@ -1176,7 +1176,8 @@ import, rendering).
 - [x] No `[Webview]` error messages in GUI logs
 - [x] Terminal renders normally when `web` command is running
 - [x] Socket communication still works (GUI acknowledges `display_webview`)
-- [x] Clean build (minor warnings about unused socket server functions - expected)
+- [x] Clean build (minor warnings about unused socket server functions -
+      expected)
 - [x] Profile server still captures IOSurface IDs (visible in logs, for
       debugging)
 

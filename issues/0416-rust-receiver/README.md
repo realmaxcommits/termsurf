@@ -384,8 +384,7 @@ call. Rust goes through three layers: IOSurface (C FFI) → Metal texture
 crossing is `unsafe` and each has its own error modes.
 
 **Mitigation:** Copy the proven pattern from
-`cef-rs/osr_texture_import/
-iosurface.rs`. It already handles sRGB formats,
+`cef-rs/osr_texture_import/ iosurface.rs`. It already handles sRGB formats,
 texture usage flags, and the `msg_send!` typing correctly. The original
 `transmute` crash has been fixed.
 
@@ -1130,8 +1129,7 @@ The three untested unknowns from Experiment 1:
 
 2. **IOSurface → Metal → wgpu texture** — The five-step unsafe pipeline:
    `device.as_hal::<Metal>()` → Metal texture descriptor →
-   `msg_send!
-[device, newTextureWithDescriptor:iosurface:plane:]` →
+   `msg_send! [device, newTextureWithDescriptor:iosurface:plane:]` →
    `Device::texture_from_raw()` → `device.create_texture_from_hal()`.
 
 3. **Cross-thread IOSurface handoff** — `SendPtr` wrapper with
@@ -1291,9 +1289,10 @@ All seven unknowns from the Experiment 1 hypothesis:
 
 #### Hypothesis
 
-Adding a second pane to the Experiment 2 receiver is mechanical. The C++ (Issue 414) and Swift (Issue 415) receivers both use the same pattern: two texture
-slots, a `session_id → pane index` mapping, and two `setViewport` + draw calls
-per frame. The Rust/wgpu equivalent is `RenderPass::set_viewport()` — same
+Adding a second pane to the Experiment 2 receiver is mechanical. The C++
+(Issue 414) and Swift (Issue 415) receivers both use the same pattern: two
+texture slots, a `session_id → pane index` mapping, and two `setViewport` + draw
+calls per frame. The Rust/wgpu equivalent is `RenderPass::set_viewport()` — same
 concept, different API. No new unknowns; this is purely a code change.
 
 #### What changes from Experiment 2
@@ -1612,8 +1611,7 @@ Experiment 3 with no additional issues.
 
 3. **IOSurface → wgpu texture works via the Metal HAL.** The five-step pipeline
    (`device.as_hal::<Metal>()` → Metal descriptor →
-   `msg_send!
-[newTextureWithDescriptor:iosurface:plane:]` →
+   `msg_send! [newTextureWithDescriptor:iosurface:plane:]` →
    `Device::texture_from_raw()` → `device.create_texture_from_hal()`) produces
    valid textures at 60fps. This is the cef-rs pattern, proven to work with
    wgpu 28.

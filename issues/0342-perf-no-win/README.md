@@ -583,8 +583,8 @@ not a window.** The window was only incidentally necessary because it provided
 the display link. If we can provide a display link without a window, CEF's
 internal `ExternalBeginFrameSourceMac` should work correctly.
 
-**Next steps:** Idea 12 (NSApplication init without window) is the simplest
-test — one line of code that may fix CEF's internal display link. Idea 4
+**Next steps:** Idea 12 (NSApplication init without window) is the simplest test
+— one line of code that may fix CEF's internal display link. Idea 4
 (CVDisplayLink from CGDirectDisplayID) and Idea 7 (GUI-driven frame requests via
 XPC) are alternatives if NSApplication init alone isn't enough.
 
@@ -599,9 +599,9 @@ what CEF's internal `ExternalBeginFrameSourceMac.DisplayLink` needs to function.
 **Rationale:** Experiment 1 revealed that CEF creates its own display link
 internally (`ExternalBeginFrameSourceMac.DisplayLink`) but it only fired 3
 times. The cef-rs OSR example has a working display link because winit
-initializes `NSApplication` during setup. The hypothesis is that
-`NSApplication` initialization — not the window itself — is what gives the
-process a window server connection that makes the display link work.
+initializes `NSApplication` during setup. The hypothesis is that `NSApplication`
+initialization — not the window itself — is what gives the process a window
+server connection that makes the display link work.
 
 **Changes:** One addition to `ts3/termsurf-profile/src/main.rs`, before CEF
 initialization:
@@ -658,11 +658,12 @@ internally runs a CFRunLoop/NSRunLoop on macOS. Combined with the NSApplication
 initialization from Experiment 2, this gives CEF's internal display link both a
 window server connection AND a running run loop to deliver callbacks on.
 
-**Rationale:** Experiment 1 showed CEF's `ExternalBeginFrameSourceMac.DisplayLink`
-only fired 3 times. Experiment 2 showed that initializing NSApplication alone
-doesn't fix this — the display link callbacks need the CFRunLoop to be actively
-serviced. `run_message_loop()` runs CEF's own message loop, which on macOS is a
-CFRunLoop. This is the simplest way to provide everything the display link needs.
+**Rationale:** Experiment 1 showed CEF's
+`ExternalBeginFrameSourceMac.DisplayLink` only fired 3 times. Experiment 2
+showed that initializing NSApplication alone doesn't fix this — the display link
+callbacks need the CFRunLoop to be actively serviced. `run_message_loop()` runs
+CEF's own message loop, which on macOS is a CFRunLoop. This is the simplest way
+to provide everything the display link needs.
 
 Issue 341, Experiment 6 tried `run_message_loop()` and got 18fps. But that
 experiment also had `external_message_pump: 1` enabled, which is incompatible
@@ -682,7 +683,8 @@ println!("Profile: Running message loop (run_message_loop mode)...");
 cef::run_message_loop();
 ```
 
-2. **Call `quit_message_loop()` instead of setting QUIT_FLAG** in shutdown paths:
+2. **Call `quit_message_loop()` instead of setting QUIT_FLAG** in shutdown
+   paths:
 
 The Ctrl+C handler (~line 308) and the XPC disconnect handler (~line 1143) both
 set `QUIT_FLAG`. These must also call `cef::quit_message_loop()` to break out of
@@ -747,15 +749,15 @@ The 50-59ms bucket is dominant, suggesting CEF's internal loop is throttling to
 `run_message_loop()` made things worse, not better. Three key findings:
 
 1. **No display link histograms at all.** The CEF debug log contains zero
-   `ExternalBeginFrameSourceMac.DisplayLink`, `MissedVsyncs`,
-   `DroppedFrames`, or `CaptureDuration` histograms. Experiment 1's polling
-   loop produced all of these. This suggests `run_message_loop()` runs a
-   different code path that doesn't even activate the display link frame source.
+   `ExternalBeginFrameSourceMac.DisplayLink`, `MissedVsyncs`, `DroppedFrames`,
+   or `CaptureDuration` histograms. Experiment 1's polling loop produced all of
+   these. This suggests `run_message_loop()` runs a different code path that
+   doesn't even activate the display link frame source.
 
 2. **Performance regressed from 28.5fps to 19.2fps.** Without the display link,
-   CEF's internal loop falls back to a conservative timer-based schedule
-   (~50ms intervals). The 1ms polling loop was actually better at catching
-   frames promptly because it called `do_message_loop_work()` aggressively.
+   CEF's internal loop falls back to a conservative timer-based schedule (~50ms
+   intervals). The 1ms polling loop was actually better at catching frames
+   promptly because it called `do_message_loop_work()` aggressively.
 
 3. **Same `SetApplicationIsDaemon: paramErr (-50)` error** from the CEF
    subprocess — unchanged across all experiments.
@@ -763,17 +765,18 @@ The 50-59ms bucket is dominant, suggesting CEF's internal loop is throttling to
 The hypothesis that `run_message_loop()` would service the CFRunLoop and unlock
 the display link was wrong. The display link requires more than just a running
 run loop — it likely requires a connection to the window server's display
-hardware, which a windowless process doesn't have. The question is now whether we
-can create a CVDisplayLink or CADisplayLink directly without a window.
+hardware, which a windowless process doesn't have. The question is now whether
+we can create a CVDisplayLink or CADisplayLink directly without a window.
 
 ### Experiment 4: CFRunLoop + `external_message_pump` + `on_schedule_message_pump_work`
 
 **Status:** Complete — FAILED (webview never opens, times out)
 
 **Goal:** Replace the blind 1ms polling loop with CEF's cooperative scheduling
-system. Enable `external_message_pump`, implement `on_schedule_message_pump_work`
-to schedule CFRunLoop timers, and run `CFRunLoopRun()` as the main loop. This is
-how CEF is _designed_ to be driven when you own the message loop.
+system. Enable `external_message_pump`, implement
+`on_schedule_message_pump_work` to schedule CFRunLoop timers, and run
+`CFRunLoopRun()` as the main loop. This is how CEF is _designed_ to be driven
+when you own the message loop.
 
 **Rationale:** Experiments 1-3 revealed:
 
@@ -787,10 +790,11 @@ how CEF is _designed_ to be driven when you own the message loop.
 
 The reference implementation in
 `cef-rs/examples/tests_shared/src/browser/main_message_loop_external_pump/mac.rs`
-shows exactly how macOS CEF is meant to be driven: `on_schedule_message_pump_work`
-is called by CEF from any thread with a `delay_ms` value. The callback marshals
-to the main thread, creates an `NSTimer` on the CFRunLoop, and when the timer
-fires it calls `do_message_loop_work()`. The main loop is `NSApp().run()`.
+shows exactly how macOS CEF is meant to be driven:
+`on_schedule_message_pump_work` is called by CEF from any thread with a
+`delay_ms` value. The callback marshals to the main thread, creates an `NSTimer`
+on the CFRunLoop, and when the timer fires it calls `do_message_loop_work()`.
+The main loop is `NSApp().run()`.
 
 We adapt this for a windowless process by replacing `NSApp().run()` with
 `CFRunLoopRun()` — the raw Core Foundation primitive that NSApplication wraps.
@@ -810,11 +814,12 @@ This gives us a running run loop without AppKit overhead.
 
 **Why CFRunLoop instead of NSApp().run():**
 
-`NSApp().run()` requires `NSApplication` initialization and enters AppKit's event
-processing loop. `CFRunLoopRun()` is the lower-level primitive — it services
-timer sources and run loop sources without any AppKit dependency. NSTimers added
-to the current thread's run loop will fire when `CFRunLoopRun()` is active. This
-is the minimal loop needed to service CEF's timer-based scheduling.
+`NSApp().run()` requires `NSApplication` initialization and enters AppKit's
+event processing loop. `CFRunLoopRun()` is the lower-level primitive — it
+services timer sources and run loop sources without any AppKit dependency.
+NSTimers added to the current thread's run loop will fire when `CFRunLoopRun()`
+is active. This is the minimal loop needed to service CEF's timer-based
+scheduling.
 
 **Changes to `ts3/termsurf-profile/src/main.rs`:**
 
@@ -916,10 +921,10 @@ unsafe { CFRunLoopStop(CFRunLoopGetMain()); }
 
 `on_schedule_message_pump_work` is called from CEF's internal threads. CFRunLoop
 timers can be added from any thread — `CFRunLoopAddTimer` with
-`CFRunLoopGetMain()` is thread-safe. The timer callback fires on the main thread,
-where `do_message_loop_work()` must be called. This avoids the `performSelector`
-cross-thread marshaling that the reference implementation uses (that approach
-requires NSObject/NSThread, which we're trying to avoid).
+`CFRunLoopGetMain()` is thread-safe. The timer callback fires on the main
+thread, where `do_message_loop_work()` must be called. This avoids the
+`performSelector` cross-thread marshaling that the reference implementation uses
+(that approach requires NSObject/NSThread, which we're trying to avoid).
 
 **What to look for:**
 
@@ -938,10 +943,10 @@ profile server to produce its first frame. CEF never reaches
 `on_context_initialized`, meaning `cef::initialize()` or the early
 `do_message_loop_work()` calls that process initialization tasks never complete.
 
-The root cause: `CFRunLoopRun()` blocks the main thread, but CEF's initialization
-requires `do_message_loop_work()` to be called to process startup tasks. With
-`external_message_pump: 1`, CEF doesn't do its own internal message processing —
-it relies entirely on us calling `do_message_loop_work()`. But our
+The root cause: `CFRunLoopRun()` blocks the main thread, but CEF's
+initialization requires `do_message_loop_work()` to be called to process startup
+tasks. With `external_message_pump: 1`, CEF doesn't do its own internal message
+processing — it relies entirely on us calling `do_message_loop_work()`. But our
 `on_schedule_message_pump_work` callback schedules CFRunLoop timers, and those
 timers can only fire once `CFRunLoopRun()` is running. This creates a chicken-
 and-egg deadlock:
@@ -974,8 +979,8 @@ starts relative to CEF initialization. A future attempt would need to either:
 **Status:** Complete — SUCCESS (38.2fps, 71% at 60fps, max streak 424)
 
 **Goal:** Replace the dead `thread::sleep(1ms)` in the polling loop with a live
-`CFRunLoopRunInMode` call that services the main thread's CFRunLoop for 1ms. This
-is the smallest possible change that tests whether CEF's internal run loop
+`CFRunLoopRunInMode` call that services the main thread's CFRunLoop for 1ms.
+This is the smallest possible change that tests whether CEF's internal run loop
 sources are being starved.
 
 **Rationale:** The cef-rs OSR example achieves 60fps with a loop that looks
@@ -996,9 +1001,9 @@ loop {
 ```
 
 The critical difference is what happens between `do_message_loop_work()` calls.
-`pump_app_events` internally runs one CFRunLoop iteration — servicing any pending
-timer sources, Mach port sources, and display link callbacks. `sleep` does
-nothing — it just blocks the thread for 1ms.
+`pump_app_events` internally runs one CFRunLoop iteration — servicing any
+pending timer sources, Mach port sources, and display link callbacks. `sleep`
+does nothing — it just blocks the thread for 1ms.
 
 CEF's compositor may rely on CFRunLoop sources that fire between work calls. Exp
 1 showed CEF's `ExternalBeginFrameSourceMac.DisplayLink` only fires 3 times — if
@@ -1007,7 +1012,8 @@ callbacks. `sleep` starves it; `CFRunLoopRunInMode` feeds it.
 
 This avoids Exp 4's deadlock because we never block on `CFRunLoopRun()`. We keep
 the existing polling cadence — `do_message_loop_work()` is still called ~1000x
-per second. The only change is replacing dead sleep with live run loop servicing.
+per second. The only change is replacing dead sleep with live run loop
+servicing.
 
 No `external_message_pump`. No NSApplication. Just one line.
 
@@ -1145,8 +1151,8 @@ firing much more consistently (19 samples vs 3), and the interval is correctly
 contention or GC pauses.
 
 This is not yet a perfect 60fps, but it's a massive step forward. The next
-experiments should focus on eliminating the remaining 30fps and slow-frame tail —
-possibly by combining this approach with `external_message_pump` cooperative
+experiments should focus on eliminating the remaining 30fps and slow-frame tail
+— possibly by combining this approach with `external_message_pump` cooperative
 scheduling (fixing Exp 4's deadlock) or by adding a CVDisplayLink for
 vsync-aligned timing on top of the CFRunLoop servicing.
 

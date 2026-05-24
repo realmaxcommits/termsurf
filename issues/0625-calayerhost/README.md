@@ -659,8 +659,7 @@ texture.
 #### Verification
 
 1. Build Chromium Profile Server
-   (`autoninja -C out/Default
-chromium_profile_server`).
+   (`autoninja -C out/Default chromium_profile_server`).
 2. Build TermSurf GUI (`cd gui && zig build`).
 3. Launch the app, open a terminal, type `web google.com`.
 4. **Pass criteria:**
@@ -729,8 +728,7 @@ Two options:
   Core Animation that sublayers use a top-left coordinate system (Y=0 at top, Y
   increases downward). Only affects sublayer geometry, not the layer's own
   `contents` rendering. No Y math needed —
-  `frame.origin.y = grid_row *
-cell_height` works as-is.
+  `frame.origin.y = grid_row * cell_height` works as-is.
 
 Option B is cleaner (one property, no math), but it could have side effects on
 terminal rendering if any other code assumes the default bottom-left geometry.
@@ -915,8 +913,7 @@ CALayerHost frame readback: x=50.0 y=50.0 w=400.0 h=300.0
 - **#2 (function not called / values zero):** Eliminated. The function is called
   with valid grid coordinates `(1, 4, 120, 35)` and non-null host pointer. The
   first `updateCALayerHostFrame` call (from `set_overlay`) has
-  `ca_layer_host=
-null` because `ca_context_id` hasn't arrived yet, but the
+  `ca_layer_host= null` because `ca_context_id` hasn't arrived yet, but the
   second call (from `setCALayerHostContextId`) succeeds with valid data.
 
 **Key finding: the frame DOES control positioning, but there's a ~400px

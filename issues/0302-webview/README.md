@@ -9,8 +9,8 @@ closed = "2026-01-24"
 ## Background
 
 This document continues the work started in
-[301-architecture.md](./301-architecture.md), which established the core
-process model for TermSurf 3.0.
+[301-architecture.md](./301-architecture.md), which established the core process
+model for TermSurf 3.0.
 
 ### What We Accomplished
 

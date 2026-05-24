@@ -717,10 +717,9 @@ SwiftUI's view update cycle.**
 there was nothing to update and could optimize the representable's lifecycle.
 With a non-empty `updateOSView`, SwiftUI now calls it on every state change
 (focus, border color, border width), and the call to
-`scrollView.wantsLayer =
-true` plus layer property mutations may be triggering an
-`NSView.needsLayout` cycle that conflicts with the automatic frame propagation
-the scroll view relies on.
+`scrollView.wantsLayer = true` plus layer property mutations may be triggering
+an `NSView.needsLayout` cycle that conflicts with the automatic frame
+propagation the scroll view relies on.
 
 The "typing triggers resize" symptom is the key clue: typing causes a
 `surfaceView` state change (observable via `@ObservedObject`), which triggers a

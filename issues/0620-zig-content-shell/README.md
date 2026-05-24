@@ -1267,8 +1267,7 @@ identical in structure — same subclass chain (`TsMainDelegate` →
 `PostMainMessageLoopRun`) — but without the C API wrapper functions
 (`ts_create_browser_context`, `ts_destroy_browser_context`, `ts_create_tab`).
 Profiles are created directly with `PathService::Override` +
-`new
-ShellBrowserContext`.
+`new ShellBrowserContext`.
 
 The purpose is to continue the bisection. If Experiment 2 also shows 2fps, the
 problem is in the subclass chain or the build itself. If it's smooth, the C API
@@ -1729,8 +1728,9 @@ diagnostic logs. The analysis below traces the complete root cause.
 Both `DisplayScheduler` and `CompositorFrameSinkSupport` are **observers** of
 the same `ExternalBeginFrameSourceMac`. The `ExternalBeginFrameSource` base
 class (begin*frame_source.cc:510–540) tracks all observers. When the first
-observer is added, it calls `client*->OnNeedsBeginFrames(true)`which registers
-the vsync callback. When the last observer is removed, it calls`client\_->OnNeedsBeginFrames(false)` which unregisters it.
+observer is added, it calls
+`client*->OnNeedsBeginFrames(true)`which registers the vsync callback. When the last observer is removed, it calls`client\_->OnNeedsBeginFrames(false)`
+which unregisters it.
 
 **The deadlock mechanism.** After drawing a frame:
 

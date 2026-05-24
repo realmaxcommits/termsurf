@@ -121,8 +121,7 @@ The Chromium Profile Server already captures frames via
    `IOSurfaceRef`.
 2. `IOSurfaceCreateMachPort(io_surface)` creates a Mach port handle.
 3. The port is sent via XPC:
-   `xpc_dictionary_set_mach_send(msg, "iosurface_port",
-port)`.
+   `xpc_dictionary_set_mach_send(msg, "iosurface_port", port)`.
 4. The app imports it: `IOSurfaceLookupFromMachPort(port)`.
 5. The renderer creates a `MTLTexture` from the IOSurface for the current frame.
 
@@ -327,15 +326,13 @@ The Mach port is received as `mach_port_t` (`u32` in Zig). The import uses
    (`Process` / `NSTask`). Track it by pane ID. The server binary path is
    hardcoded or configured (e.g., `TERMSURF_CHROMIUM_PATH` env var, defaulting
    to
-   `chromium/src/out/Default/Chromium Profile Server.app/Contents/MacOS/
-Chromium Profile Server`).
+   `chromium/src/out/Default/Chromium Profile Server.app/Contents/MacOS/ Chromium Profile Server`).
 
 2. **Handle `display_surface`.** When an IOSurface frame arrives from the
    server:
    - Extract `pane_id` and look up the surface.
    - Extract `iosurface_port` via
-     `xpc_dictionary_copy_mach_send(msg,
-"iosurface_port")`.
+     `xpc_dictionary_copy_mach_send(msg, "iosurface_port")`.
    - Extract `width` and `height`.
    - Call `ghostty_surface_set_overlay_surface(surface, port, width, height)`.
 
@@ -797,8 +794,8 @@ the overlay viewport, so the texture maps 1:1 with screen pixels.
 
 Ghostty's `cell_width` and `cell_height` (from font metrics) are already in
 physical pixels. When the display scale factor changes, `contentScaleCallback()`
-recalculates font metrics at the new DPI (e.g., 72 \* 2 = 144 DPI for Retina). So
-the conversion is simply:
+recalculates font metrics at the new DPI (e.g., 72 \* 2 = 144 DPI for Retina).
+So the conversion is simply:
 
 ```
 pixel_width  = grid_width  * cell_width

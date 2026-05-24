@@ -254,9 +254,9 @@ windowed rendering.
 
 #### Conclusion
 
-Phase 4 failed. The 147 Chromium patches cannot be built in isolation — they
-are not standalone modifications to Chromium. They introduce hard dependencies
-on Electron's build infrastructure (`//electron/build/config`,
+Phase 4 failed. The 147 Chromium patches cannot be built in isolation — they are
+not standalone modifications to Chromium. They introduce hard dependencies on
+Electron's build infrastructure (`//electron/build/config`,
 `//third_party/electron_node/`, and others) that require the full Electron
 source tree and its dependencies to be present. See the document conclusion for
 full details.
@@ -320,32 +320,32 @@ larger build system.
 Electron's Chromium patches assume the presence of the full Electron build
 environment. Specifically:
 
-1. **Node.js dependency.** The patched `.gn` file (Chromium's root build
-   config) references 21 files under `//third_party/electron_node/` — Node.js
-   v24.13.0 and its 17 sub-dependencies (ada, brotli, cares, llhttp, nghttp2,
-   openssl, uv, etc.). These files must exist for GN to generate build files.
-   TermSurf has no use for Node.js.
+1. **Node.js dependency.** The patched `.gn` file (Chromium's root build config)
+   references 21 files under `//third_party/electron_node/` — Node.js v24.13.0
+   and its 17 sub-dependencies (ada, brotli, cares, llhttp, nghttp2, openssl,
+   uv, etc.). These files must exist for GN to generate build files. TermSurf
+   has no use for Node.js.
 
 2. **`is_electron_build` flag.** The patches expect the GN arg
    `is_electron_build=true`, which triggers `root_extra_deps=["//electron"]`.
    This pulls in Electron's full BUILD.gn, which imports
    `//third_party/electron_node/node.gni` — back to the Node.js dependency.
-   Without this flag, the build hits missing framework links (e.g.,
-   `CFRelease` undefined in `libcomponents_os_crypt_sync.dylib`) because
-   Electron's build infrastructure handles macOS framework linking that vanilla
-   Chromium doesn't need.
+   Without this flag, the build hits missing framework links (e.g., `CFRelease`
+   undefined in `libcomponents_os_crypt_sync.dylib`) because Electron's build
+   infrastructure handles macOS framework linking that vanilla Chromium doesn't
+   need.
 
 3. **232 patches, not 147.** The 147 Chromium patches are just one of 13 patch
-   targets. Electron also patches boringssl (2), devtools (1), ffmpeg (1),
-   v8 (1), node (48), nan (10), perfetto (1), webrtc (1), sqlite (1),
-   squirrel.mac (12), ReactiveObjC (2), and reclient-configs (5). Some of
-   the Chromium patches assume these other patches have been applied.
+   targets. Electron also patches boringssl (2), devtools (1), ffmpeg (1), v8
+   (1), node (48), nan (10), perfetto (1), webrtc (1), sqlite (1), squirrel.mac
+   (12), ReactiveObjC (2), and reclient-configs (5). Some of the Chromium
+   patches assume these other patches have been applied.
 
-4. **Additional third-party checkouts.** Beyond `electron_node`, Electron's
-   DEPS file fetches `third_party/nan/`, `third_party/squirrel.mac/`,
-   `third_party/engflow-reclient-configs/`, and specific versions of
-   boringssl, devtools-frontend, and others. These are managed by
-   `gclient sync` reading Electron's DEPS, not Chromium's.
+4. **Additional third-party checkouts.** Beyond `electron_node`, Electron's DEPS
+   file fetches `third_party/nan/`, `third_party/squirrel.mac/`,
+   `third_party/engflow-reclient-configs/`, and specific versions of boringssl,
+   devtools-frontend, and others. These are managed by `gclient sync` reading
+   Electron's DEPS, not Chromium's.
 
 5. **The `generate_mas_config` dependency.** Dozens of Chromium BUILD.gn files
    were patched to depend on `//electron/build/config:generate_mas_config`,
@@ -363,12 +363,12 @@ exist at this level.
 
 - Electron's patches apply cleanly to the correct Chromium version. The
   version-matching and branch workflow (Phases 1–3) is sound and reusable.
-- The `146.0.7650.0-electron` branch is a valid artifact — it contains all
-  147 patches as commits and can be used as a reference for reading and
-  extracting specific patches.
+- The `146.0.7650.0-electron` branch is a valid artifact — it contains all 147
+  patches as commits and can be used as a reference for reading and extracting
+  specific patches.
 - The three throttling patches identified in Issue 408 are still the right
-  solution. The problem is not the patches themselves but the 144 other
-  patches that come bundled with them.
+  solution. The problem is not the patches themselves but the 144 other patches
+  that come bundled with them.
 
 ### Paths forward
 
@@ -385,34 +385,34 @@ throttling patches from Issue 408:
 3. `fix_disabling_background_throttling_in_compositor.patch` — bypasses
    `ui::Compositor::SetVisible()` check (Layer 3)
 
-These three patches have no dependency on Node.js, `is_electron_build`, or
-any Electron build infrastructure. They modify core Chromium rendering code
-and should apply and build cleanly on vanilla Chromium.
+These three patches have no dependency on Node.js, `is_electron_build`, or any
+Electron build infrastructure. They modify core Chromium rendering code and
+should apply and build cleanly on vanilla Chromium.
 
-The `146.0.7650.0-electron` branch serves as the reference — we can read
-each patch, understand what it changes, and extract only what we need. Over
-time, additional patches can be adopted individually as the need arises.
+The `146.0.7650.0-electron` branch serves as the reference — we can read each
+patch, understand what it changes, and extract only what we need. Over time,
+additional patches can be adopted individually as the need arises.
 
 #### Option B: Use Electron's full build system
 
-Set up the complete Electron build environment using `e init` and `e sync`
-from `@electron/build-tools`. This would fetch `electron_node`, all
-third-party dependencies, apply all 232 patches, and build with
-`is_electron_build=true`. This gives us everything Electron has, but at the
-cost of pulling in Node.js and dozens of dependencies TermSurf doesn't need.
-The build tree would be ~60GB and tightly coupled to Electron's release cycle.
+Set up the complete Electron build environment using `e init` and `e sync` from
+`@electron/build-tools`. This would fetch `electron_node`, all third-party
+dependencies, apply all 232 patches, and build with `is_electron_build=true`.
+This gives us everything Electron has, but at the cost of pulling in Node.js and
+dozens of dependencies TermSurf doesn't need. The build tree would be ~60GB and
+tightly coupled to Electron's release cycle.
 
 #### Option C: Stub out the Electron dependencies
 
 Create minimal stub files for the missing dependencies
-(`third_party/electron_node/*.gni`, `electron/build/config/BUILD.gn`, etc.)
-so the build can proceed with `is_electron_build=false`. This is fragile —
-each Electron version update could introduce new dependencies that need new
-stubs. Not recommended for ongoing maintenance.
+(`third_party/electron_node/*.gni`, `electron/build/config/BUILD.gn`, etc.) so
+the build can proceed with `is_electron_build=false`. This is fragile — each
+Electron version update could introduce new dependencies that need new stubs.
+Not recommended for ongoing maintenance.
 
 ### Next step
 
-Option A — create Issue 410 to build a minimal TermSurf patch set starting
-with the three throttling patches. Use the `146.0.7650.0-electron` branch as
-a reference. Return the submodule to vanilla Chromium 146.0.7650.0 and apply
-only TermSurf's own patches on top.
+Option A — create Issue 410 to build a minimal TermSurf patch set starting with
+the three throttling patches. Use the `146.0.7650.0-electron` branch as a
+reference. Return the submodule to vanilla Chromium 146.0.7650.0 and apply only
+TermSurf's own patches on top.

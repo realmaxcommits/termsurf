@@ -866,8 +866,7 @@ Also verify the normal cases still work:
 **Result:** Pass
 
 Back navigation no longer leaves the bar stuck at 100%. Suppressing
-`progress
-100` at the source eliminates the race condition entirely — no
+`progress 100` at the source eliminates the race condition entirely — no
 straggler message is ever sent.
 
 #### Conclusion
@@ -1208,8 +1207,7 @@ When the user presses Ctrl+Esc to exit browse mode, the following happens:
    calls `notifyNonOverlayClicked`, switches to Control mode, returns
    `.consumed`. **Esc is NOT forwarded to Chromium.**
 3. User releases **Ctrl** → `keyCallback` fires with
-   `key=control_left,
-action=release`. But `isOverlayForwarding` is now
+   `key=control_left, action=release`. But `isOverlayForwarding` is now
    **false** (mode just changed), so the event goes to the terminal, **NOT to
    Chromium**.
 4. **Chromium never receives the Ctrl key-up.** Its renderer thinks Ctrl is

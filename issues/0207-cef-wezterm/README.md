@@ -6,8 +6,8 @@ closed = "2026-01-17"
 
 # CEF + WezTerm Integration
 
-This document explains how CEF (Chromium Embedded Framework) is integrated into our
-WezTerm fork for TermSurf 2.0.
+This document explains how CEF (Chromium Embedded Framework) is integrated into
+our WezTerm fork for TermSurf 2.0.
 
 ## Overview
 
@@ -21,8 +21,8 @@ terminal panes and browser panes in the same window.
 - Single language (Rust) vs Zig + Swift + Objective-C
 - Both WezTerm and cef-rs use wgpu for GPU rendering
 
-**Current status:** CEF loads and initializes inside WezTerm. No browser panes yet -
-this is the foundation for that work.
+**Current status:** CEF loads and initializes inside WezTerm. No browser panes
+yet - this is the foundation for that work.
 
 ```
 [CEF] Framework loaded
@@ -46,8 +46,8 @@ this is the foundation for that work.
 └─────────────────────────────────────────┘
 ```
 
-CEF runs in Off-Screen Rendering (OSR) mode, rendering to GPU textures that can be
-composited with terminal content:
+CEF runs in Off-Screen Rendering (OSR) mode, rendering to GPU textures that can
+be composited with terminal content:
 
 - **macOS:** IOSurface → Metal → wgpu
 - **Linux:** DMA-BUF → Vulkan → wgpu
@@ -122,8 +122,9 @@ Called in `main()` after `notify_on_panic()`, before `run()`.
 cef::shutdown();
 ```
 
-Called in `main()` BEFORE `Mux::shutdown()` and `frontend::shutdown()`. Order matters -
-CEF's shutdown triggers callbacks that expect the GUI thread to still be active.
+Called in `main()` BEFORE `Mux::shutdown()` and `frontend::shutdown()`. Order
+matters - CEF's shutdown triggers callbacks that expect the GUI thread to still
+be active.
 
 ### CEF Integration Module (`wezterm-gui/src/cef_integration.rs`)
 
@@ -271,7 +272,8 @@ CEF uses a multi-process architecture. Each process type runs as a separate app:
 | Helper (Plugin)   | Browser plugins      |
 | Helper (Alerts)   | System notifications |
 
-All helpers use the same `wezterm-cef-helper` binary - only the bundle name differs.
+All helpers use the same `wezterm-cef-helper` binary - only the bundle name
+differs.
 
 ## cef-rs Modifications
 

@@ -68,7 +68,8 @@ WezTerm provides:
 
 1. **Single language** - Pure Rust vs Zig + Swift + Objective-C
 2. **Cross-platform** - Already works on macOS, Linux, Windows
-3. **wgpu rendering** - Same GPU abstraction as cef-rs, enabling clean compositor
+3. **wgpu rendering** - Same GPU abstraction as cef-rs, enabling clean
+   compositor
 4. **Active community** - Well-maintained, feature-rich terminal
 
 ## Architecture Comparison
@@ -92,7 +93,8 @@ The remainder of this document describes the 1.x architecture in detail.
 
 TermSurf has two primary requirements:
 
-1. **Browser as a pane**: Display web content in terminal panes, not as separate windows
+1. **Browser as a pane**: Display web content in terminal panes, not as separate
+   windows
 2. **CLI-first**: Invoke browser via command line (`web open`), not GUI
 
 ## Stack
@@ -134,8 +136,8 @@ For 1.x, we use Apple's native WKWebView:
 
 ### The Problem
 
-TermSurf needs a way for CLI tools (`web open`, etc.) to communicate with
-the running TermSurf app to control browser panes.
+TermSurf needs a way for CLI tools (`web open`, etc.) to communicate with the
+running TermSurf app to control browser panes.
 
 ### Solution: Unix Domain Sockets
 
@@ -258,14 +260,16 @@ Console output flows through the socket connection to the blocking CLI:
 
 1. **JavaScript injection** - Console methods are overridden to capture output
 2. **Swift handler** - `WKScriptMessageHandler` receives messages
-3. **Socket event** - Swift sends `{"event":"console","data":{"level":"log","message":"..."}}` to CLI
+3. **Socket event** - Swift sends
+   `{"event":"console","data":{"level":"log","message":"..."}}` to CLI
 4. **CLI output** - CLI writes to stdout (log/info) or stderr (warn/error)
 
 ```
 Browser console.log() → Swift → Socket → CLI stdout → Terminal
 ```
 
-This approach avoids direct PTY access and leverages the existing socket infrastructure.
+This approach avoids direct PTY access and leverages the existing socket
+infrastructure.
 
 ### JavaScript API
 
@@ -277,7 +281,8 @@ window.termsurf.exit(0); // Close with exit code 0
 window.termsurf.exit(1); // Close with exit code 1
 ```
 
-The exit code is passed through the socket to the CLI, which exits with that code.
+The exit code is passed through the socket to the CLI, which exits with that
+code.
 
 ## File Structure (1.x)
 
@@ -312,5 +317,6 @@ termsurf/
 
 ### TermSurf 2.0
 
-- [termsurf2-wezterm-analysis.md](termsurf2-wezterm-analysis.md) - Architecture analysis
+- [termsurf2-wezterm-analysis.md](termsurf2-wezterm-analysis.md) - Architecture
+  analysis
 - [cef-rs.md](cef-rs.md) - Our cef-rs modifications

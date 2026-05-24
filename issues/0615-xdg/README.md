@@ -9,8 +9,7 @@ closed = "2026-02-21"
 ## Goal
 
 Chromium browser profile data is stored in `XDG_DATA_HOME`
-(`~/.local/share/
-termsurf/chromium-profiles/`), not `XDG_CONFIG_HOME`
+(`~/.local/share/ termsurf/chromium-profiles/`), not `XDG_CONFIG_HOME`
 (`~/.config/termsurf/`). The XDG directory pattern is documented in
 `docs/xdg.md`.
 
@@ -176,6 +175,5 @@ existing profile data at `~/.config/termsurf/chromium-profiles/` can move it to
 ## Conclusion
 
 Chromium browser profile data now lives in
-`XDG_DATA_HOME/termsurf/
-chromium-profiles/` where it belongs. Configuration
+`XDG_DATA_HOME/termsurf/ chromium-profiles/` where it belongs. Configuration
 stays in `XDG_CONFIG_HOME`. The pattern is documented in `docs/xdg.md`.

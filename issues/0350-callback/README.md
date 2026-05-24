@@ -78,9 +78,9 @@ from ~50 to ~29, with p50 shifting from 17ms to 25ms.
 ### Idea 1: Diagnostic logging
 
 Add logging to `on_schedule_message_pump_work` (timestamp, delay_ms, thread) and
-`pump_timer_callback` (timestamp, was it a fallback?) to see whether the callback
-fires reliably or if we're running on the 33ms fallback. This is the most
-important first step — it tells us which of the open questions matters.
+`pump_timer_callback` (timestamp, was it a fallback?) to see whether the
+callback fires reliably or if we're running on the 33ms fallback. This is the
+most important first step — it tells us which of the open questions matters.
 
 ### Idea 2: Reduce fallback timer to 1ms
 
@@ -109,8 +109,8 @@ implementation's `NSApp().run()`.
 firing, or by our timer scheduling adding too much latency. Without this data,
 every fix is a guess.
 
-**Method:** Add counters and per-second summary logging to the `cef_pump` module.
-No architectural changes — just instrumentation.
+**Method:** Add counters and per-second summary logging to the `cef_pump`
+module. No architectural changes — just instrumentation.
 
 **What to measure (per-second counters):**
 
@@ -239,8 +239,8 @@ fire — the rest are superseded before they get a chance. A persistent
 
 **Architecture:**
 
-- **delay=0 (immediate):** Signal the persistent source + wake the run loop.
-  No timer creation, no timer supersession. This is the fast path — Experiment 1
+- **delay=0 (immediate):** Signal the persistent source + wake the run loop. No
+  timer creation, no timer supersession. This is the fast path — Experiment 1
   showed ~75% of callbacks are immediate.
 - **delay>0 (deferred):** Keep using `CFRunLoopTimer` as before. These are
   infrequent (~25% of callbacks) and legitimately need a delay.
@@ -286,8 +286,8 @@ Helper functions: `create_source(callback) -> CFRunLoopSourceRef`,
 
 - Add `init()` function that creates and registers the persistent source. Call
   it once before `cfrunloop::run()`.
-- `schedule_work(delay_ms)` with delay<=0: signal the source + `wake_up()`.
-  No timer involved.
+- `schedule_work(delay_ms)` with delay<=0: signal the source + `wake_up()`. No
+  timer involved.
 - `schedule_work(delay_ms)` with delay>0: create a `CFRunLoopTimer` as before.
 - Source callback: same reentrancy guard, `do_message_loop_work()`, fallback
   scheduling as current `pump_timer_callback`.
@@ -315,8 +315,8 @@ iteration speed, benchmark timer contention, or NSApp vs CFRunLoop).
 [PUMP] callbacks=170(imm=121 def=49) fires=41017(src=90 tmr=19 fb=40908) reentrant=0 work=41017
 ```
 
-Benchmark: ~22fps (down from ~29fps in Experiment 1), thermal nominal. Performance
-got worse, not better.
+Benchmark: ~22fps (down from ~29fps in Experiment 1), thermal nominal.
+Performance got worse, not better.
 
 **Findings: zombie timer leak**
 
@@ -324,12 +324,13 @@ The fallback count is exploding: 17k → 27k → 31k → 35k → 41k fires/sec, 
 every second and never stabilizing. This is a cascading timer leak caused by two
 bugs in the source+timer interaction:
 
-**Bug 1: Timer reference dropped without invalidation.** When the source callback
-fires, `do_pump_work()` unconditionally sets `pump.timer = None`. If a fallback
-timer was already pending, dropping the reference does NOT remove it from the run
-loop — it becomes a zombie. The zombie still fires, calls `do_pump_work`, and
-schedules yet another fallback. Each source fire (~100/sec) leaks one zombie.
-After a few seconds, thousands of zombies are firing in a chain reaction.
+**Bug 1: Timer reference dropped without invalidation.** When the source
+callback fires, `do_pump_work()` unconditionally sets `pump.timer = None`. If a
+fallback timer was already pending, dropping the reference does NOT remove it
+from the run loop — it becomes a zombie. The zombie still fires, calls
+`do_pump_work`, and schedules yet another fallback. Each source fire (~100/sec)
+leaks one zombie. After a few seconds, thousands of zombies are firing in a
+chain reaction.
 
 **Bug 2: No source-pending tracking.** After `do_message_loop_work()`, if CEF
 called `schedule_work(0)` (signaling the source), we don't detect that.
@@ -340,10 +341,11 @@ even though the source is already signaled for the next iteration.
 **Fixes needed:**
 
 1. **Invalidate, don't just clear:** `do_pump_work` must invalidate any pending
-   timer before clearing: `if let Some(timer) = pump.timer.take() { invalidate(timer); }`
+   timer before clearing:
+   `if let Some(timer) = pump.timer.take() { invalidate(timer); }`
 2. **Track source pending state:** Add `source_pending: bool` to PumpState.
-   `schedule_work(0)` sets it true. Source callback sets it false. Don't schedule
-   fallback if `source_pending` is true.
+   `schedule_work(0)` sets it true. Source callback sets it false. Don't
+   schedule fallback if `source_pending` is true.
 
 These are implementation bugs, not architectural problems. The CFRunLoopSource
 approach is sound — we just need to fix the source/timer interaction before we
@@ -370,8 +372,10 @@ This ensures any pending timer is removed from the run loop, not just orphaned.
 
 Add `source_pending: bool` to `PumpState`. Update the three touchpoints:
 
-1. **`schedule_work(0)`** — after signaling the source, set `source_pending = true`
-2. **`source_callback`** — set `source_pending = false` (the signal was consumed)
+1. **`schedule_work(0)`** — after signaling the source, set
+   `source_pending = true`
+2. **`source_callback`** — set `source_pending = false` (the signal was
+   consumed)
 3. **`do_pump_work` post-work logic** — don't schedule fallback if
    `source_pending` is true (source is already queued for the next iteration)
 
@@ -392,9 +396,9 @@ else:
 is unchanged — the same `[PUMP]` line lets us compare directly with prior runs.
 
 **Expected outcome:** Fallback fires should drop back to single digits (as in
-Experiment 1). Work/sec should reflect actual source + timer fires without zombie
-inflation. If the source eliminates timer supersession, work/sec should be higher
-than Experiment 1's ~100/sec, and fps should improve above ~29.
+Experiment 1). Work/sec should reflect actual source + timer fires without
+zombie inflation. If the source eliminates timer supersession, work/sec should
+be higher than Experiment 1's ~100/sec, and fps should improve above ~29.
 
 **Status:** Complete
 
@@ -428,18 +432,18 @@ leak is fixed (fallback back to 0-7/sec), but performance got worse, not better.
    invalidates the timer → deferred work waits for the next source fire or a
    33ms fallback instead of the requested 5ms.
 
-3. **More work, fewer frames.** Experiment 1: ~100 work/sec → 29fps.
-   Experiment 3: ~100-180 work/sec → 22fps. The source eliminated supersession
-   (fires ≈ callbacks), but extra work calls didn't produce extra frames — they
-   add overhead that slows the rendering pipeline.
+3. **More work, fewer frames.** Experiment 1: ~100 work/sec → 29fps. Experiment
+   3: ~100-180 work/sec → 22fps. The source eliminated supersession (fires ≈
+   callbacks), but extra work calls didn't produce extra frames — they add
+   overhead that slows the rendering pipeline.
 
 4. **p50 jumped from 25ms → 44ms.** Each frame takes longer despite more
    `do_message_loop_work()` calls per second.
 
 5. **Source adds lock contention.** Each pump cycle now involves 4 PUMP lock
-   acquisitions (schedule_work → source_callback → do_pump_work × 2) vs 2 in
-   the timer approach. Background-thread `schedule_work(0)` calls contend with
-   the main thread.
+   acquisitions (schedule_work → source_callback → do_pump_work × 2) vs 2 in the
+   timer approach. Background-thread `schedule_work(0)` calls contend with the
+   main thread.
 
 **Comparison across experiments:**
 
@@ -461,7 +465,8 @@ main thread time) or replacing bare `CFRunLoopRun()` with `NSApp().run()`.
 ### Reference implementation analysis
 
 After Experiments 1-3 failed to close the gap, we compared the cef-rs reference
-external pump (`cef-rs/examples/tests_shared/src/browser/main_message_loop_external_pump/`)
+external pump
+(`cef-rs/examples/tests_shared/src/browser/main_message_loop_external_pump/`)
 with our `cef_pump` module. The reference gets ~50fps. We get ~22-29fps. Three
 critical differences:
 
@@ -517,8 +522,8 @@ CFRunLoop signaling with a mutex.
 2. **Register timers in both modes.** Add `NSEventTrackingRunLoopMode` to
    `cfrunloop::create_timer` and `cfrunloop::create_repeating_timer`. This
    requires importing the `NSEventTrackingRunLoopMode` constant — it lives in
-   AppKit, not CoreFoundation. Since we use raw FFI, we need the
-   `CFStringRef` for this mode. It can be obtained via:
+   AppKit, not CoreFoundation. Since we use raw FFI, we need the `CFStringRef`
+   for this mode. It can be obtained via:
 
    ```rust
    extern "C" {
@@ -538,9 +543,10 @@ CFRunLoop signaling with a mutex.
    timer should also be registered in both modes (it already goes through
    `create_repeating_timer`, so fix #2 covers it).
 
-**Implementation order:** Apply all three changes together. They work as a unit —
-the reference uses all three, and testing them individually would take three more
-experiments without clear signal (any one change alone might not close the gap).
+**Implementation order:** Apply all three changes together. They work as a unit
+— the reference uses all three, and testing them individually would take three
+more experiments without clear signal (any one change alone might not close the
+gap).
 
 **Expected outcome:** If the run loop mode starvation is the root cause (and the
 diagnostic data from Experiment 1 strongly suggests it is — fires ≈ 30/sec
@@ -577,29 +583,29 @@ Launcher: Profile 'default' connection error      ← Trial 1 process dies
 The benchmark coordinator sent trial 2's `spawn_profile` in the window between
 trial 1's benchmark completing (printing `[BENCHMARK-DONE]`) and the profile
 process actually unregistering from the launcher. The launcher saw profile
-'default' still registered and forwarded the request to the dying process instead
-of spawning a new one. The dying process briefly accepted the session, then exited.
-No new process was ever spawned for trial 2.
+'default' still registered and forwarded the request to the dying process
+instead of spawning a new one. The dying process briefly accepted the session,
+then exited. No new process was ever spawned for trial 2.
 
-**Why this didn't happen in Experiments 1-3:** Those used bare `CFRunLoopRun()` +
-`CFRunLoopStop()`. `CFRunLoopStop` exits the run loop immediately on the current
-iteration. `NSApp.stop()` only takes effect after the current event finishes
-dispatching — there's a small delay before `NSApp.run()` returns and the shutdown
-code (which sends `unregister_profile`) executes. This widened the race window
-enough for trial 2's spawn to slip through.
+**Why this didn't happen in Experiments 1-3:** Those used bare
+`CFRunLoopRun()` + `CFRunLoopStop()`. `CFRunLoopStop` exits the run loop
+immediately on the current iteration. `NSApp.stop()` only takes effect after the
+current event finishes dispatching — there's a small delay before `NSApp.run()`
+returns and the shutdown code (which sends `unregister_profile`) executes. This
+widened the race window enough for trial 2's spawn to slip through.
 
 **Trial 1 result (31.9fps) is promising but inconclusive.** The single trial
-showed improvement over Experiment 1's ~29fps, but one data point isn't enough to
-draw conclusions. The dual-mode timer registration and NSApp changes couldn't be
-properly evaluated due to the race condition.
+showed improvement over Experiment 1's ~29fps, but one data point isn't enough
+to draw conclusions. The dual-mode timer registration and NSApp changes couldn't
+be properly evaluated due to the race condition.
 
 **Conclusion:** The `nsapp::run()` / `nsapp::stop()` approach has a latent race
-condition with multi-trial benchmarking that bare `CFRunLoopRun()` / `CFRunLoopStop()`
-doesn't trigger. The fix requires either: (a) unregistering from the launcher
-before printing benchmark results (moving unregister into `tick_callback`), or
-(b) having the benchmark coordinator wait for profile process death before
-starting the next trial. The architectural changes (dual-mode timers, NSApp)
-cannot be evaluated until the race condition is fixed.
+condition with multi-trial benchmarking that bare `CFRunLoopRun()` /
+`CFRunLoopStop()` doesn't trigger. The fix requires either: (a) unregistering
+from the launcher before printing benchmark results (moving unregister into
+`tick_callback`), or (b) having the benchmark coordinator wait for profile
+process death before starting the next trial. The architectural changes
+(dual-mode timers, NSApp) cannot be evaluated until the race condition is fixed.
 
 ### Experiment 5: Fix benchmark race condition
 
@@ -611,8 +617,8 @@ timers and `NSApp().run()`.
 and calls `nsapp::stop()`. The benchmark coordinator sees the result and
 immediately sends `spawn_profile` for the next trial. But the profile process
 hasn't unregistered yet — `nsapp::run()` hasn't returned, so the shutdown code
-(which sends `unregister_profile`) hasn't executed. The launcher sees the profile
-still registered and forwards to the dying process.
+(which sends `unregister_profile`) hasn't executed. The launcher sees the
+profile still registered and forwards to the dying process.
 
 **Fix: unregister from the launcher in `tick_callback` before stopping.**
 
@@ -649,7 +655,8 @@ handles duplicate unregisters gracefully).
 **What to change:**
 
 1. Add `static PROFILE_NAME: OnceLock<String>` alongside the other globals
-2. Set it early in `run_profile_server`: `PROFILE_NAME.set(args.profile.clone())`
+2. Set it early in `run_profile_server`:
+   `PROFILE_NAME.set(args.profile.clone())`
 3. In `tick_callback`: unregister from launcher before `[BENCHMARK-DONE]`
 4. Keep the existing shutdown unregister as a fallback (non-benchmark exits)
 
@@ -680,8 +687,8 @@ Launcher: Spawned profile 'default' (pid: 43100)
 Launcher: Received action: claim_session          ← Trial 2 claims successfully
 ```
 
-Trial 2 correctly got its own fresh process. The forwarding bug from Experiment 4
-is gone.
+Trial 2 correctly got its own fresh process. The forwarding bug from Experiment
+4 is gone.
 
 **New failure: CEF `SingletonLock` contention.**
 
@@ -705,9 +712,9 @@ process has released the CEF lock.
 
 **Conclusion:** Two-stage race condition. Experiment 5 fixed stage 1 (launcher
 forwarding). Stage 2 (CEF lock) requires the old process to complete
-`cef::shutdown()` before the new process can initialize. The fix must ensure
-the old profile process fully exits (or at least releases the CEF lock) before
-the launcher spawns the replacement.
+`cef::shutdown()` before the new process can initialize. The fix must ensure the
+old profile process fully exits (or at least releases the CEF lock) before the
+launcher spawns the replacement.
 
 ### Experiment 6: Retry CEF initialization on SingletonLock failure
 
@@ -752,16 +759,16 @@ succeed within a few attempts.
 
 **What to change:**
 
-1. Wrap the existing `cef::initialize()` call in a retry loop (15 attempts, 200ms
-   between retries)
+1. Wrap the existing `cef::initialize()` call in a retry loop (15 attempts,
+   200ms between retries)
 2. Log each retry attempt for diagnostics
 3. Keep `std::process::exit(1)` if all retries exhausted
 
 **Expected outcome:** Trial 2 retries `cef::initialize()` until trial 1 releases
-the lock. Combined with Experiment 5's early unregister, both race conditions are
-handled: the launcher spawns a new process (not forwarding), and the new process
-waits for the lock. The Experiment 4 dual-mode timers and NSApp get a full 7-trial
-benchmark.
+the lock. Combined with Experiment 5's early unregister, both race conditions
+are handled: the launcher spawns a new process (not forwarding), and the new
+process waits for the lock. The Experiment 4 dual-mode timers and NSApp get a
+full 7-trial benchmark.
 
 **Status:** Failed (`nsapp::stop()` is broken — process never exits)
 
@@ -792,8 +799,8 @@ events. Without an event to process, NSApp never checks the stop flag.
 `CFRunLoopStop` wakes the inner `CFRunLoopRunInMode`, but `NSApp.run()` has its
 own outer loop that re-enters the run loop before checking the stop flag.
 
-The standard fix is to post a dummy `NSEvent` after calling `stop:`, giving NSApp
-an event to dispatch so it notices the stop flag.
+The standard fix is to post a dummy `NSEvent` after calling `stop:`, giving
+NSApp an event to dispatch so it notices the stop flag.
 
 **Why trial 1 "completed":** `tick_callback` printed `[BENCHMARK-DONE]` and the
 coordinator collected the result — but the profile process itself never exited.
@@ -842,7 +849,8 @@ NSEvent *event = [NSEvent otherEventWithType:NSEventTypeApplicationDefined
 [NSApp postEvent:event atStart:YES];
 ```
 
-In raw objc FFI, this requires a new `objc_msgSend` signature for the 10-argument
+In raw objc FFI, this requires a new `objc_msgSend` signature for the
+10-argument
 `otherEventWithType:location:modifierFlags:timestamp:windowNumber:context:subtype:data1:data2:`
 class method. The `NSPoint` struct (two `f64` fields) is passed by value.
 
@@ -851,7 +859,8 @@ class method. The `NSPoint` struct (two `f64` fields) is passed by value.
 1. After `[app stop:nil]`, create a dummy `NSEvent` using
    `[NSEvent otherEventWithType:...]` with `NSEventTypeApplicationDefined` (15)
 2. Post it with `[NSApp postEvent:event atStart:YES]`
-3. Remove the `CFRunLoopStop` call — the posted event will wake the loop naturally
+3. Remove the `CFRunLoopStop` call — the posted event will wake the loop
+   naturally
 
 **New FFI needed:**
 
@@ -884,10 +893,10 @@ type MsgSendPost = unsafe extern "C" fn(
 );
 ```
 
-**Expected outcome:** `nsapp::run()` returns immediately after `nsapp::stop()` is
-called. Trial 1's process reaches `cef::shutdown()`, releases the `SingletonLock`,
-and exits. Trial 2's retry loop succeeds on the first or second attempt. Full
-7-trial benchmark completes.
+**Expected outcome:** `nsapp::run()` returns immediately after `nsapp::stop()`
+is called. Trial 1's process reaches `cef::shutdown()`, releases the
+`SingletonLock`, and exits. Trial 2's retry loop succeeds on the first or second
+attempt. Full 7-trial benchmark completes.
 
 **Status:** Complete
 
@@ -905,7 +914,8 @@ and exits. Trial 2's retry loop succeeds on the first or second attempt. Full
 
 Average: ~31.5fps, p50 ~22ms. Thermal nominal, no bimodal behavior.
 
-**Infrastructure fixes confirmed:** All three race condition fixes work together:
+**Infrastructure fixes confirmed:** All three race condition fixes work
+together:
 
 - Experiment 5 (early unregister) — launcher spawns new process, not forwarding
 - Experiment 6 (CEF init retry) — handles SingletonLock contention
@@ -930,11 +940,11 @@ Profile log confirms clean shutdown: "Shutting down... Done."
 
 **Findings:**
 
-1. **Small improvement over Experiment 1.** ~31.5fps vs ~29fps — a real but modest
-   ~2.5fps gain. p50 improved from 25ms to 22ms.
+1. **Small improvement over Experiment 1.** ~31.5fps vs ~29fps — a real but
+   modest ~2.5fps gain. p50 improved from 25ms to 22ms.
 
-2. **Pump behavior is nearly identical to Experiment 1.** ~95-130 work/sec during
-   steady-state scrolling, 0-6 fallback fires/sec. The dual-mode timer
+2. **Pump behavior is nearly identical to Experiment 1.** ~95-130 work/sec
+   during steady-state scrolling, 0-6 fallback fires/sec. The dual-mode timer
    registration did not significantly change how often timers fire.
 
 3. **NSEventTrackingRunLoopMode is irrelevant to the benchmark.** Our simulated
@@ -946,8 +956,8 @@ Profile log confirms clean shutdown: "Shutting down... Done."
 
 4. **The ~31fps cap is fundamental to the timer-only architecture.** At ~100
    work/sec, with 3-4 `do_message_loop_work()` calls needed per frame, each
-   frame takes 3-4 timer cycles. At ~10ms per cycle, that's 30-40ms per frame
-   — matching the observed p50 of 22ms (some cycles are faster).
+   frame takes 3-4 timer cycles. At ~10ms per cycle, that's 30-40ms per frame —
+   matching the observed p50 of 22ms (some cycles are faster).
 
 **Comparison across all experiments:**
 
@@ -961,11 +971,11 @@ Profile log confirms clean shutdown: "Shutting down... Done."
 | Reference  | Busy-wait (100% CPU)         | ~50   | 17ms | —    |
 
 **Conclusion:** The dual-mode timer registration and NSApp provided a small but
-real improvement (~2.5fps). The infrastructure fixes (early unregister, CEF retry,
-dummy event) are solid and should be kept. But the remaining gap to ~50fps
-(reference) cannot be closed by run loop tuning alone. The ~100 work/sec rate is
-the bottleneck — the timer-only architecture limits how many CEF pipeline stages
-can be processed per second. Possible next steps:
+real improvement (~2.5fps). The infrastructure fixes (early unregister, CEF
+retry, dummy event) are solid and should be kept. But the remaining gap to
+~50fps (reference) cannot be closed by run loop tuning alone. The ~100 work/sec
+rate is the bottleneck — the timer-only architecture limits how many CEF
+pipeline stages can be processed per second. Possible next steps:
 
 - **Reduce fallback timer delay** (Idea 2 from the original list) — drop from
   33ms to 1ms to increase work rate
@@ -976,30 +986,33 @@ can be processed per second. Possible next steps:
 
 ### Experiment 8: Fixed-rate 1ms repeating timer
 
-**Goal:** Determine whether the ~31fps cap is caused by timer scheduling overhead
-or something else (IPC latency, CEF internal pacing). This gives a binary answer.
+**Goal:** Determine whether the ~31fps cap is caused by timer scheduling
+overhead or something else (IPC latency, CEF internal pacing). This gives a
+binary answer.
 
-**Hypothesis:** The timer-only architecture creates a new one-shot timer for every
-`schedule_work` call. Each cycle involves: timer callback returns → run loop
-checks other sources → new timer created and registered → run loop schedules it →
-timer fires. This overhead adds ~10ms per cycle, capping work at ~100/sec. If we
-bypass on-demand timers and just poll at 1000Hz, the overhead disappears.
+**Hypothesis:** The timer-only architecture creates a new one-shot timer for
+every `schedule_work` call. Each cycle involves: timer callback returns → run
+loop checks other sources → new timer created and registered → run loop
+schedules it → timer fires. This overhead adds ~10ms per cycle, capping work at
+~100/sec. If we bypass on-demand timers and just poll at 1000Hz, the overhead
+disappears.
 
-**Method:** Replace the on-demand cef_pump with a single 1ms repeating timer that
-calls `do_message_loop_work()` on every tick. This is the busy-wait approach
-capped at 1000Hz — enough to saturate CEF's pipeline without burning 100% CPU.
+**Method:** Replace the on-demand cef_pump with a single 1ms repeating timer
+that calls `do_message_loop_work()` on every tick. This is the busy-wait
+approach capped at 1000Hz — enough to saturate CEF's pipeline without burning
+100% CPU.
 
-Keep `external_message_pump: 1` and the `on_schedule_message_pump_work` callback,
-but use the callback only for diagnostic logging — don't create any timers from
-it. The repeating timer drives all work unconditionally.
+Keep `external_message_pump: 1` and the `on_schedule_message_pump_work`
+callback, but use the callback only for diagnostic logging — don't create any
+timers from it. The repeating timer drives all work unconditionally.
 
 **What to change in `cef_pump`:**
 
 1. Remove `schedule_work`, `schedule_internal`, `schedule_fallback`, and
    `timer_callback` — no more on-demand timers
 2. Add `pub fn pump_callback()` — called by a 1ms repeating timer. Contains the
-   reentrancy guard and calls `do_message_loop_work()`. Keeps diagnostic counters
-   for work/sec.
+   reentrancy guard and calls `do_message_loop_work()`. Keeps diagnostic
+   counters for work/sec.
 3. Change `schedule_work` to only increment diagnostic counters (track CEF's
    callback rate for comparison)
 4. Remove PumpState's timer field — no timers to track
@@ -1023,8 +1036,8 @@ nsapp::run();
 ```
 
 Where `callbacks` is what CEF requested (for comparison with Experiments 1/7),
-`work` is how many times `do_message_loop_work()` was called, and `idle` is ticks
-where the reentrancy guard triggered (pump already active).
+`work` is how many times `do_message_loop_work()` was called, and `idle` is
+ticks where the reentrancy guard triggered (pump already active).
 
 **Expected outcomes:**
 
@@ -1075,7 +1088,8 @@ Average: ~26fps, p50 varies widely (13.8-49.9ms). **Worse than Experiment 7's
 1. **Only ~450-490 work/sec out of 1000 ticks.** `do_message_loop_work()` takes
    ~2ms on average, so roughly half the 1ms ticks are skipped (the timer fires
    while the previous call is still running, but since `idle=0`, the calls don't
-   actually overlap — they just consume enough time to halve the effective rate).
+   actually overlap — they just consume enough time to halve the effective
+   rate).
 
 2. **Zero reentrancy (idle=0).** Every tick successfully enters
    `do_message_loop_work()`. The calls don't overlap — they just take ~2ms each,
@@ -1090,14 +1104,15 @@ Average: ~26fps, p50 varies widely (13.8-49.9ms). **Worse than Experiment 7's
    send input events. With fewer scroll events reaching CEF, fewer frames are
    produced.
 
-5. **`do_message_loop_work()` is not free.** Even with no rendering work pending,
-   each call takes ~2ms (likely: checking internal queues, acquiring CEF locks,
-   processing IPC). Unnecessary calls waste time that could serve other timers.
+5. **`do_message_loop_work()` is not free.** Even with no rendering work
+   pending, each call takes ~2ms (likely: checking internal queues, acquiring
+   CEF locks, processing IPC). Unnecessary calls waste time that could serve
+   other timers.
 
 **None of the three predicted outcomes matched.** The actual result was a fourth
 scenario not anticipated: ~26fps at ~470 work/sec — fewer fps than the on-demand
-approach despite more work calls. The cause: excessive pumping starves the scroll
-timer, reducing input to CEF.
+approach despite more work calls. The cause: excessive pumping starves the
+scroll timer, reducing input to CEF.
 
 **Comparison across all experiments:**
 
@@ -1110,9 +1125,9 @@ timer, reducing input to CEF.
 | Reference  | Busy-wait (100% CPU)         | ~50   | 17ms | ~∞       |
 
 **Conclusion:** Timer scheduling overhead is NOT the bottleneck. The on-demand
-approach (Experiment 7) was already optimal for pump timing — CEF's callback tells
-us exactly when work is needed, and calling more often just wastes time. The
-~31fps cap comes from somewhere downstream: IPC latency (IOSurface Mach port
+approach (Experiment 7) was already optimal for pump timing — CEF's callback
+tells us exactly when work is needed, and calling more often just wastes time.
+The ~31fps cap comes from somewhere downstream: IPC latency (IOSurface Mach port
 transfer per frame), CEF's internal rendering pipeline, or the GUI's frame
 presentation timing. Experiment 7's architecture should be restored as the best
 event-driven result.
@@ -1263,19 +1278,19 @@ Average: ~24fps, p50 ~42ms. Worse than every previous experiment.
 2. **Cascading timer accumulation from the 33ms fallback.** Every
    `pump_callback` invocation creates a 33ms fallback timer. Each fallback fires
    and creates another. Combined with ~248 new timers/sec from `schedule_work`
-   (which always creates deferred timers), the count grows linearly:
-   9k → 15k → 22k → 35k work/sec until CPU-saturated. This is the same class
-   of bug as Experiment 2's zombie timer leak.
+   (which always creates deferred timers), the count grows linearly: 9k → 15k →
+   22k → 35k work/sec until CPU-saturated. This is the same class of bug as
+   Experiment 2's zombie timer leak.
 
 3. **~24fps with p50=42ms — worst result yet.** The 35,000 idle
    `do_message_loop_work()` calls per second starve the scroll timer even more
    aggressively than Experiment 8's ~470/sec.
 
-4. **Implementation bug: `schedule_work(delay > 0)` always creates timers.**
-   The initial implementation skipped timer creation when `IS_ACTIVE` was true,
-   which killed the pump entirely (no surface reached the GUI). The fix —
-   always creating deferred timers — prevented the deadlock but introduced
-   the cascading accumulation because no timer is ever invalidated.
+4. **Implementation bug: `schedule_work(delay > 0)` always creates timers.** The
+   initial implementation skipped timer creation when `IS_ACTIVE` was true,
+   which killed the pump entirely (no surface reached the GUI). The fix — always
+   creating deferred timers — prevented the deadlock but introduced the
+   cascading accumulation because no timer is ever invalidated.
 
 **Comparison across all experiments:**
 
@@ -1305,8 +1320,8 @@ outside the pump architecture:
 
 - **IPC overhead:** IOSurface Mach port transfer adds per-frame latency not
   present in the in-process reference
-- **CEF's internal frame pacing:** CEF may pace frame delivery differently
-  in external pump mode vs its own message loop
+- **CEF's internal frame pacing:** CEF may pace frame delivery differently in
+  external pump mode vs its own message loop
 - **GUI presentation timing:** The GUI's wgpu texture import and rendering
   pipeline may introduce latency
 
@@ -1337,14 +1352,14 @@ Chromium's `FrameSinkVideoCapturer` API with `kGpuMemoryBuffer` — a completely
 different capture path than CEF's `OnAcceleratedPaint`. Concluded that CEF's
 architecture might be fundamentally limited.
 
-**Issue 340 — Architecture Reconsideration.** Began evaluating whether to abandon
-CEF entirely and embed Chromium directly (C++ rewrite). However, research
-revealed the cef-rs OSR example achieves 60fps with the same CEF version. The
-bottleneck wasn't CEF itself — it was ts3's integration. This reopened
-optimization before committing to a rewrite.
+**Issue 340 — Architecture Reconsideration.** Began evaluating whether to
+abandon CEF entirely and embed Chromium directly (C++ rewrite). However,
+research revealed the cef-rs OSR example achieves 60fps with the same CEF
+version. The bottleneck wasn't CEF itself — it was ts3's integration. This
+reopened optimization before committing to a rewrite.
 
-**Issue 341 — Performance Investigation (18 experiments).** Systematic search for
-why ts3 gets ~20fps while the cef-rs example gets ~60fps. Tried winit event
+**Issue 341 — Performance Investigation (18 experiments).** Systematic search
+for why ts3 gets ~20fps while the cef-rs example gets ~60fps. Tried winit event
 loops, `external_message_pump`, NSApplication initialization, hidden windows,
 CVDisplayLink, activation policies. A hidden 1x1 window achieved 60fps but
 steals focus — architectural dead end. Root cause: CEF's
@@ -1352,8 +1367,8 @@ steals focus — architectural dead end. Root cause: CEF's
 
 **Issue 342 — 60fps Without a Window (20fps → 38fps).** Replacing
 `thread::sleep(1ms)` with `CFRunLoopRunInMode(0.001)` unlocked 38fps. The
-breakthrough: CEF's timer sources were being starved by dead sleeping instead
-of run loop servicing. This was the first real architectural fix.
+breakthrough: CEF's timer sources were being starved by dead sleeping instead of
+run loop servicing. This was the first real architectural fix.
 
 **Issue 343 — Optimal Performance (38fps → stuck).** Eight experiments tried to
 close the gap from 38fps to 60fps. All failed or regressed. Key finding:
@@ -1370,8 +1385,8 @@ came from input routing overhead.
 **Issue 345 — Automated Benchmark (51fps without mouse, 39fps with).** Created
 `web benchmark` with simulated scroll input directly in the profile server,
 eliminating manual scrolling variability. Discovery: 51.5fps with no mouse
-movement, 39fps with continuous mouse movement. Mouse move events forwarded
-over XPC cause frame drops.
+movement, 39fps with continuous mouse movement. Mouse move events forwarded over
+XPC cause frame drops.
 
 **Issue 346 — Mouse Performance (problem didn't exist).** Three experiments
 investigated the 12fps mouse penalty. Finding: the "mouse performance problem"
@@ -1387,10 +1402,10 @@ pushes frames past the 16.7ms vsync deadline, reducing 60fps hit rate from
 
 **Issue 348 — CEF Test Ceiling (~51fps hard limit).** Investigated why cef-test
 plateaus at ~51fps. Removing 1ms sleeps pushed to 55.7fps but caused thermal
-throttling (46.7fps → 33.7fps → 27.9fps across runs). IOSurface handles are
-NOT reused by CEF (~850 unique handles per ~3000 frames), ruling out "send Mach
-port once" optimization. The ~15% vsync miss rate is fundamental to the CEF OSR
-→ IOSurface → Mach port → wgpu pipeline.
+throttling (46.7fps → 33.7fps → 27.9fps across runs). IOSurface handles are NOT
+reused by CEF (~850 unique handles per ~3000 frames), ruling out "send Mach port
+once" optimization. The ~15% vsync miss rate is fundamental to the CEF OSR →
+IOSurface → Mach port → wgpu pipeline.
 
 **Issue 349 — Bimodal Pattern.** Investigated why frame rates cluster into
 distinct "good" and "bad" modes. Likely cause: WezTerm uses `PresentMode::Fifo`
@@ -1431,14 +1446,14 @@ scheduling is not the bottleneck — more pumping only starves the scroll timer.
 
 ### What was learned
 
-1. **CEF's `on_schedule_message_pump_work` fires from a background thread.**
-   It does not fire synchronously during `do_message_loop_work()`. This means
-   there is no opportunity for immediate re-pumping inside the callback — every
-   pump cycle requires a timer round-trip through the run loop.
+1. **CEF's `on_schedule_message_pump_work` fires from a background thread.** It
+   does not fire synchronously during `do_message_loop_work()`. This means there
+   is no opportunity for immediate re-pumping inside the callback — every pump
+   cycle requires a timer round-trip through the run loop.
 
-2. **~100 work/sec is the optimal pump rate.** Experiment 7 achieves ~31.5fps
-   at ~100 `do_message_loop_work()` calls per second. Pumping faster (470/sec
-   in Exp 8, 35k/sec in Exp 9) makes things worse by starving the scroll timer.
+2. **~100 work/sec is the optimal pump rate.** Experiment 7 achieves ~31.5fps at
+   ~100 `do_message_loop_work()` calls per second. Pumping faster (470/sec in
+   Exp 8, 35k/sec in Exp 9) makes things worse by starving the scroll timer.
    `do_message_loop_work()` takes ~2ms even with no work pending.
 
 3. **Timer scheduling overhead is not the bottleneck.** Creating one-shot
@@ -1475,7 +1490,8 @@ scheduling is not the bottleneck — more pumping only starves the scroll timer.
    - CEF's internal frame pacing in `external_message_pump` mode vs its own loop
    - The busy-wait's `cfrunloop::run_for(0.0)` processing run loop events inline
      with pumping, giving CEF tighter integration than timer-based pumping
-   - Interaction between the event-driven pump and the scroll timer's 8ms cadence
+   - Interaction between the event-driven pump and the scroll timer's 8ms
+     cadence
 
 2. **The ~10fps gap between busy-wait (~50fps) and 60fps.** Even the best
    busy-wait result misses ~15% of vsync deadlines. This is fundamental to the

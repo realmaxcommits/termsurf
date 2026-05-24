@@ -39,8 +39,7 @@ This matches vim's behavior: pressing `Esc` once enters Normal mode, pressing
 ### Changes
 
 1. **Zig intercept** (`gui/src/Surface.zig`, line ~2741) — change the `Ctrl+Esc`
-   check to bare `Esc`: replace `event.key == .escape and
-event.mods.ctrl` with
+   check to bare `Esc`: replace `event.key == .escape and event.mods.ctrl` with
    `event.key == .escape and !event.mods.ctrl` (or just `event.key == .escape`
    with no modifier requirement). This makes bare `Esc` trigger the XPC
    notification to the TUI instead of `Ctrl+Esc`.

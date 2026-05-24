@@ -467,8 +467,7 @@ Replace `CompositorConnection::connect()` with a two-step flow:
 2. Send `{ action: "connect", pane_id: "<uuid>" }` using
    `xpc_connection_send_message_with_reply_sync` to get a reply.
 3. Extract the endpoint from the reply with
-   `xpc_dictionary_get_value(reply,
-"endpoint")`.
+   `xpc_dictionary_get_value(reply, "endpoint")`.
 4. Create a new connection from the endpoint with
    `xpc_connection_create_from_endpoint(endpoint)`.
 5. Resume the endpoint connection.
@@ -557,8 +556,7 @@ needed.
    ongoing overlay messages.
 
 2. **`open` works.** The app launches normally via `open` instead of
-   `launchctl
-kickstart`. The gateway handles Mach service ownership, freeing
+   `launchctl kickstart`. The gateway handles Mach service ownership, freeing
    the app from launchd identity constraints.
 
 3. **Anonymous XPC listeners work for direct connections.** The app creates an
@@ -577,8 +575,7 @@ kickstart`. The gateway handles Mach service ownership, freeing
   launchd via `launchctl bootstrap` (one-time setup). Apple's `SMAppService` API
   (macOS 13+) can automate this — the plist ships inside the app bundle at
   `Contents/Library/LaunchAgents/` and the app calls
-  `SMAppService.agent
-(plistName:).register()` on first launch.
+  `SMAppService.agent (plistName:).register()` on first launch.
 
 - **Chromium texture swap.** The pink overlay will be replaced with a real
   IOSurface texture from Chromium. The direct connection established here is the
@@ -773,8 +770,7 @@ cargo run -p web -- https://example.com
 
 All six pass criteria met. The app launches via `open`, the SMAppService
 registration happens automatically, the pink overlay works, and no
-`launchctl
-bootstrap` is needed.
+`launchctl bootstrap` is needed.
 
 #### Gotcha: Stale App Process
 

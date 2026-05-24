@@ -359,8 +359,7 @@ If the main thread is busy (e.g., processing input, rendering), the swap is
 delayed.
 
 **#11 — No timestamp logging: suspect.**
-`log.info("ca_context pane={s}
-context_id={}")` at line 414 logs arrival, but no
+`log.info("ca_context pane={s} context_id={}")` at line 414 logs arrival, but no
 microsecond timestamp. Cannot measure dispatch latency to main thread.
 
 **#15 — Loading state not used for visibility: confirmed.**
@@ -406,8 +405,7 @@ callback may fire with the same ID, causing a second XPC send + GUI swap on top
 of the first.
 
 **#11 — No timestamp logging at swap boundaries: confirmed.**
-`LOG(INFO) <<
-"Sent ca_context_id=..."` (line 425) uses Chromium's default
+`LOG(INFO) << "Sent ca_context_id=..."` (line 425) uses Chromium's default
 logging. No `base::TimeTicks::Now()` or microsecond precision. Cannot correlate
 with GUI-side logs to measure end-to-end latency.
 
@@ -444,8 +442,7 @@ the same or different `ca_context_id`, causing two GUI-side swaps in quick
 succession.
 
 **#11 — No timestamp logging: confirmed.**
-`LOG(INFO) <<
-"Navigation committed:..."` (line 103) and
+`LOG(INFO) << "Navigation committed:..."` (line 103) and
 `"RenderViewHostChanged..."` (line 66) use default logging format. No
 microsecond timestamps to correlate with the CALayerParams callback timing or
 GUI-side swap.

@@ -36,7 +36,8 @@ embedders.
 
 ## How it works in Chrome
 
-`BrowserCompositorMac::UpdateState()` (`browser_compositor_view_mac.mm` line 191) checks `parent_ui_layer_`:
+`BrowserCompositorMac::UpdateState()` (`browser_compositor_view_mac.mm`
+line 191) checks `parent_ui_layer_`:
 
 ```cpp
 if (parent_ui_layer_) {

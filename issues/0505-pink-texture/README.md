@@ -73,9 +73,8 @@ panes. Key lessons:
 ts4 proved in-process Chromium rendering at 60fps. Key lessons:
 
 - **Metal IOSurface textures are zero-copy.**
-  `device.makeTexture(descriptor:
-iosurface: plane:)` creates an MTLTexture
-  that directly references IOSurface GPU memory. No pixel copying.
+  `device.makeTexture(descriptor: iosurface: plane:)` creates an MTLTexture that
+  directly references IOSurface GPU memory. No pixel copying.
 - **Retina requires three coordinated fixes (Issue 414).** All three must work
   together for crisp output:
   1. Capture at physical pixel resolution (not logical).
@@ -344,8 +343,7 @@ was learned the hard way.
    projection in `generic.zig` (`math.ortho2d`). The matrix maps pixel
    coordinates to normalized device coordinates. All existing shaders
    (cell_text, image) follow the pattern:
-   `position = projection × float4(pixel_x, pixel_y,
-0, 1)`. The pink overlay
+   `position = projection × float4(pixel_x, pixel_y, 0, 1)`. The pink overlay
    must do the same.
 
 3. **Grid → pixel conversion is simple.** Ghostty uses one formula everywhere:
@@ -828,8 +826,7 @@ float2 image_pos = (uniforms.cell_size * in.grid_pos) + in.cell_offset;
 
 The projection matrix maps world `(0, 0)` to the grid origin. Adding
 `grid_padding` shifts the overlay to the right by
-`padding.left +
-blank_padding.left` pixels in world space — double-counting the
+`padding.left + blank_padding.left` pixels in world space — double-counting the
 offset.
 
 The visual effect depends on the value of `grid_padding.left`, which equals

@@ -808,8 +808,7 @@ failed with no visible output because `open` discards stdout/stderr.
 **Result:** GUI log (`/tmp/termsurf-gui.log`) captured successfully via
 `open --stdout --stderr`. It revealed that the XPC launcher connection goes
 invalid immediately after connecting
-(`Launcher connection error: XPC connection
-invalid`), confirming the launcher
+(`Launcher connection error: XPC connection invalid`), confirming the launcher
 XPC service never starts. No launcher or profile logs were created, which per
 the diagnostic guide means "XPC service never started." The logging
 infrastructure works and will carry forward into future experiments.

@@ -224,17 +224,17 @@ Create a winit window with wgpu. Render two colored rectangles side by side at
 60fps. This proves the compositor works before adding real content.
 
 Deliverable: a Rust binary that opens a window and composites multiple textures
-into a single frame at 60fps. The compositor API should accept arbitrary textures
-(from terminal rendering, browser rendering, or test patterns) and place them in
-a pane layout.
+into a single frame at 60fps. The compositor API should accept arbitrary
+textures (from terminal rendering, browser rendering, or test patterns) and
+place them in a pane layout.
 
 ### Phase 2: Terminal in our window
 
 **Goal:** Embed a real terminal and validate the compositor with real content.
 
 Use `alacritty_terminal` for PTY management, VTE parsing, and grid state. Write
-or adapt GPU text rendering (Alacritty's `alacritty/src/renderer/` uses OpenGL
-— we need wgpu, so adaptation is required).
+or adapt GPU text rendering (Alacritty's `alacritty/src/renderer/` uses OpenGL —
+we need wgpu, so adaptation is required).
 
 This gives us a working, usable product — a terminal running in our own window.
 It validates the entire rendering pipeline with real content: input handling,
@@ -249,8 +249,8 @@ input.
 **Goal:** Get a webpage rendering into a texture in our process.
 
 Build the C++ shim around Chromium's Content API based on Phase 0 research.
-Initialize a browser instance, navigate to a URL, receive rendered frames as
-GPU textures, composite them alongside the terminal in our window.
+Initialize a browser instance, navigate to a URL, receive rendered frames as GPU
+textures, composite them alongside the terminal in our window.
 
 This is where we prove the concept. If a webpage renders at 60fps in our
 compositor alongside the terminal, the architecture is validated.

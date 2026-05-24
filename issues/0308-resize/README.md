@@ -1698,8 +1698,8 @@ dimensions properly.
 
 3. **Scale Factor Inconsistency**
 
-   Initial spawn uses pane's DPI: `dims.dpi as f32 / 72.0`
-   Resize uses window's DPI: `self.dimensions.dpi as f32 / 72.0`
+   Initial spawn uses pane's DPI: `dims.dpi as f32 / 72.0` Resize uses window's
+   DPI: `self.dimensions.dpi as f32 / 72.0`
 
    If these differ, the logical dimensions sent for resize won't match what was
    used for initial spawn, causing texture size mismatches.

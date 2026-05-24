@@ -74,10 +74,9 @@ Moved cef-rs files into `cef-rs/` folder for TermSurf integration.
 **Problem:** The original code used `std::mem::transmute` to cast raw pointers
 to Metal API types, causing crashes at memory address 0x1f00000080.
 
-**Root cause:** Transmuting raw device/descriptor pointers to
-`&metal::NSObject` references was incorrect. The Metal-rs crate expects properly
-typed references that implement the `Message` trait for Objective-C message
-sending.
+**Root cause:** Transmuting raw device/descriptor pointers to `&metal::NSObject`
+references was incorrect. The Metal-rs crate expects properly typed references
+that implement the `Message` trait for Objective-C message sending.
 
 **Fix:** Replace unsafe transmutes with proper typed references via the objc
 crate:

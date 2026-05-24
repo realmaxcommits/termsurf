@@ -6,8 +6,8 @@ closed = "2026-01-12"
 
 # TermSurf 2.0 Architecture
 
-TermSurf 2.0 is built on **WezTerm + cef-rs** for cross-platform terminal-browser
-integration.
+TermSurf 2.0 is built on **WezTerm + cef-rs** for cross-platform
+terminal-browser integration.
 
 ## Executive Summary
 
@@ -82,7 +82,8 @@ Both WezTerm and cef-rs use **wgpu** for GPU rendering:
 - WezTerm: `wgpu = "28"` for terminal rendering
 - cef-rs: `wgpu = "28"` for CEF texture import
 
-These versions are now aligned (see [WezTerm Fork Modifications](#wezterm-fork-modifications)).
+These versions are now aligned (see
+[WezTerm Fork Modifications](#wezterm-fork-modifications)).
 
 CEF's accelerated OSR mode renders to shared textures:
 
@@ -250,8 +251,8 @@ CEF provides full Chromium API including:
 
 ## WezTerm Fork Modifications
 
-This section tracks all modifications made to our WezTerm fork (ts2/) to facilitate
-merging upstream changes in the future.
+This section tracks all modifications made to our WezTerm fork (ts2/) to
+facilitate merging upstream changes in the future.
 
 ### Dependency Alignment
 
@@ -282,9 +283,11 @@ The wgpu upgrade required code changes across multiple files:
 
 - Made `enumerate_adapters` calls async (now returns a future)
 - Made `compute_compatibility_list` function async in `webgpu.rs`
-- Wrapped `enumerate_adapters` in `smol::block_on` for Lua `enumerate_gpus` function
+- Wrapped `enumerate_adapters` in `smol::block_on` for Lua `enumerate_gpus`
+  function
 - Added `Surface<'_>` lifetime parameter
-- Renamed `push_constant_ranges` to `immediate_size` in `PipelineLayoutDescriptor`
+- Renamed `push_constant_ranges` to `immediate_size` in
+  `PipelineLayoutDescriptor`
 - Renamed `multiview` to `multiview_mask` in `RenderPipelineDescriptor`
 - Changed `mipmap_filter` type from `FilterMode` to `MipmapFilterMode`
 - Used `..Default::default()` for `RenderPassDescriptor` optional fields

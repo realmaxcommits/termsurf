@@ -232,7 +232,7 @@ subsequence-based commands no longer match.
 ## Conclusion
 
 Replaced vim-style subsequence matching with explicit command aliases. Three
-commands: `quit`/`q`, `dark`/`da`, `devtools`/`de`. The `colorscheme` command
-is replaced by `dark` with toggle support. The `quitall` command is removed
+commands: `quit`/`q`, `dark`/`da`, `devtools`/`de`. The `colorscheme` command is
+replaced by `dark` with toggle support. The `quitall` command is removed
 (identical behavior to `quit`). Also added `codesign` to `install.sh` after
 copying binaries to prevent macOS SIGKILL on unsigned executables.

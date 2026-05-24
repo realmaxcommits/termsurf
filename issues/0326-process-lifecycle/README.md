@@ -168,8 +168,9 @@ ps aux | grep termsurf
 detecting these errors and setting the existing `quit_flag`, the profile will
 exit within milliseconds via the 1ms polling loop.
 
-**Approach:** Modify the GUI connection event handler to detect disconnect errors
-and trigger shutdown using the existing `quit_flag` pattern from Issue 325.
+**Approach:** Modify the GUI connection event handler to detect disconnect
+errors and trigger shutdown using the existing `quit_flag` pattern from
+Issue 325.
 
 **Changes:**
 
@@ -232,13 +233,15 @@ cat /tmp/termsurf-profile-*.log | tail -10
 
 **Result:** Profile server exits when GUI disconnects, but this **breaks
 multi-pane support**. Opening two webviews for the same profile, then closing
-one pane, kills the entire profile server — leaving the second pane unresponsive.
+one pane, kills the entire profile server — leaving the second pane
+unresponsive.
 
 **Implementation notes:**
 
 - Added global `QUIT_FLAG` static (couldn't use local variable in closure)
 - Updated Ctrl+C handler and main loop to use `QUIT_FLAG`
-- Event handler detects `ConnectionInterrupted`/`ConnectionInvalid` and sets flag
+- Event handler detects `ConnectionInterrupted`/`ConnectionInvalid` and sets
+  flag
 - Profile exits within ~1ms of GUI disconnect (polling loop detects flag)
 
 **What worked:**
@@ -288,9 +291,9 @@ if any connections remain. If not, exit.
 
 **Status:** Failed (not tested due to Experiment 1 failure).
 
-**Result:** Implementation was completed but could not be properly tested because
-Experiment 1 broke multi-pane support. The launcher changes follow the correct
-pattern (connection counting), but the profile server changes do not.
+**Result:** Implementation was completed but could not be properly tested
+because Experiment 1 broke multi-pane support. The launcher changes follow the
+correct pattern (connection counting), but the profile server changes do not.
 
 **Key learnings:**
 
@@ -342,7 +345,8 @@ connections close. Multi-pane support works correctly.
 
 - `ts3/termsurf-profile/src/main.rs` — Added `GUI_CONNECTION_COUNT`, increment
   on connect, decrement on disconnect, exit only when count = 0
-- `ts3/termsurf-launcher/src/main.rs` — Added `GUI_CONNECTION_COUNT`, same pattern
+- `ts3/termsurf-launcher/src/main.rs` — Added `GUI_CONNECTION_COUNT`, same
+  pattern
 - `ts3/termsurf-xpc/src/ffi.rs` — Added `CFRunLoopStop`, `CFRunLoopGetMain`
 - `ts3/termsurf-xpc/src/runloop.rs` — Added `stop_run_loop()` function
 - `ts3/termsurf-xpc/src/lib.rs` — Exported `stop_run_loop`

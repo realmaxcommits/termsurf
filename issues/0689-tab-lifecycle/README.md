@@ -810,10 +810,10 @@ void ShellBrowserMainParts::CloseTabByPaneId(const std::string& pane_id) {
 }
 ```
 
-The Shell's raw*ptr in TabState is not freed. The Shell stays in `windows*`as an
-orphan.`web*contents*` is intact. The NSWindow stays alive (hidden). This leaks,
-but it's a diagnostic experiment — we need to know if the cascade is inside
-Shell destruction.
+The Shell's raw*ptr in TabState is not freed. The Shell stays in
+`windows*`as an orphan.`web*contents*` is intact. The NSWindow stays alive
+(hidden). This leaks, but it's a diagnostic experiment — we need to know if the
+cascade is inside Shell destruction.
 
 #### 2. Chromium: add `close_tab` action handler (`shell_browser_main_parts.cc`)
 

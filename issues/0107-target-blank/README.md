@@ -60,8 +60,8 @@ original page.
 
 ### Technical Requirements
 
-1. **Callback chain** - WebViewOverlay needs to signal up through WebViewContainer
-   to reach TerminalController or Ghostty.App
+1. **Callback chain** - WebViewOverlay needs to signal up through
+   WebViewContainer to reach TerminalController or Ghostty.App
 2. **URL escaping** - URLs from untrusted web content must be properly escaped
    before being passed to a shell command
 3. **URL validation** - Filter out `javascript:`, `blob:`, and other non-http(s)

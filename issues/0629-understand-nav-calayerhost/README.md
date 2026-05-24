@@ -850,8 +850,7 @@ triggered `WasShown`)?
 Two new leads emerged from this research:
 
 1. **Surface Manager temporary reference expiration**
-   (`kExpireInterval =
-base::Seconds(10)`). If the hidden window's compositor
+   (`kExpireInterval = base::Seconds(10)`). If the hidden window's compositor
    doesn't properly claim new surfaces after navigation, temporary references
    expire after 10 seconds. This is the only untested 10-second delay that could
    affect rendering.

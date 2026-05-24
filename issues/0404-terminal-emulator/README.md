@@ -275,15 +275,16 @@ to IOSurface-backed textures internally.** The Metal render target
 (`src/renderer/metal/Target.zig`) creates an IOSurface, then creates an
 `MTLTexture` backed by it via `newTextureWithDescriptor:iosurface:plane:`. The
 renderer draws into this texture, and the `present()` function simply sets the
-IOSurface as the `contents` property of a CALayer. The coupling to the window
-is minimal — to redirect to XPC Mach ports, you would: (1) skip the
+IOSurface as the `contents` property of a CALayer. The coupling to the window is
+minimal — to redirect to XPC Mach ports, you would: (1) skip the
 IOSurfaceLayer/view attachment in `Metal.init()`, (2) replace `present()` with
 `IOSurfaceCreateMachPort()` + XPC send, (3) provide an alternative to
 `surfaceSize()`. The rendering pipeline itself is view-independent.
 
-**Rendering backend:** Metal directly via Zig's Objective-C interop. No MetalKit,
-no abstraction layer — talks directly to `MTLDevice`, `MTLCommandQueue`,
-`MTLRenderPassDescriptor`. Uses triple buffering with IOSurfaces.
+**Rendering backend:** Metal directly via Zig's Objective-C interop. No
+MetalKit, no abstraction layer — talks directly to `MTLDevice`,
+`MTLCommandQueue`, `MTLRenderPassDescriptor`. Uses triple buffering with
+IOSurfaces.
 
 **Terminal state separation:** Fully separate. The terminal state lives in
 `src/terminal/` — `Terminal.zig` (state machine), `Screen.zig` (page list,
@@ -291,11 +292,12 @@ cursor, selection), `page.Cell` (individual cells), `PageList.zig` (grid
 storage). A `RenderState` struct converts terminal state into renderer-friendly
 form. No rendering dependencies in any of these files.
 
-**Text rendering:** Compile-time selectable backends. macOS default: CoreText for
-discovery, rendering, and shaping. Alternatives: CoreText + HarfBuzz shaping,
-CoreText + FreeType rendering. Glyph atlas uses rectangle bin-packing with
-atomic dirty tracking. Supports ligatures (via HarfBuzz backend), color emoji,
-bold/italic. Font grids can be shared across surfaces with matching configs.
+**Text rendering:** Compile-time selectable backends. macOS default: CoreText
+for discovery, rendering, and shaping. Alternatives: CoreText + HarfBuzz
+shaping, CoreText + FreeType rendering. Glyph atlas uses rectangle bin-packing
+with atomic dirty tracking. Supports ligatures (via HarfBuzz backend), color
+emoji, bold/italic. Font grids can be shared across surfaces with matching
+configs.
 
 **Language:** Zig with first-class C interop via `@cImport`. Already uses
 IOSurface, Metal, and Mach APIs directly. XPC would be called the same way —
@@ -311,9 +313,9 @@ objects required.
 Raw bytes can be fed directly to the `Parser`/`Stream` → `Terminal` pipeline,
 bypassing the PTY entirely.
 
-**Features:** Kitty graphics protocol (full), Unicode with grapheme clusters, OSC
-8 hyperlinks, 24-bit color, shell integration (bash/zsh/fish/elvish). No Sixel.
-No iTerm2 image protocol.
+**Features:** Kitty graphics protocol (full), Unicode with grapheme clusters,
+OSC 8 hyperlinks, 24-bit color, shell integration (bash/zsh/fish/elvish). No
+Sixel. No iTerm2 image protocol.
 
 **License:** MIT.
 
@@ -341,10 +343,10 @@ handling one visual layer. Uses a transient state pattern: terminal state is
 snapshot on the main thread and consumed on the GPU thread.
 
 **Terminal state separation:** Conceptual separation exists — `VT100Terminal`
-(parser), `VT100Screen` (grid/scrollback), `VT100Grid` (cells),
-`screen_char_t` (cell type). But all are Objective-C classes with deep imports
-of iTerm2-specific headers (preferences, profiles, notifications). Extracting
-them requires stubbing dozens of dependencies.
+(parser), `VT100Screen` (grid/scrollback), `VT100Grid` (cells), `screen_char_t`
+(cell type). But all are Objective-C classes with deep imports of
+iTerm2-specific headers (preferences, profiles, notifications). Extracting them
+requires stubbing dozens of dependencies.
 
 **Text rendering:** CoreGraphics for default path (fast, no ligatures), CoreText
 for ligature path (slow, disables GPU renderer entirely). Glyph atlas via
@@ -364,8 +366,8 @@ and the app's notification system.
 
 **Features:** The most feature-rich terminal on macOS. Sixel (via libsixel),
 iTerm2 inline image protocol (originator), tmux `-CC` integration, shell
-integration, triggers, semantic history, annotations, Python scripting API.
-No Kitty image protocol.
+integration, triggers, semantic history, annotations, Python scripting API. No
+Kitty image protocol.
 
 **License:** GPLv2-or-later. Embedding any iTerm2 code requires open-sourcing
 the entire application under GPLv2. This is a hard blocker.
@@ -390,15 +392,15 @@ renderer, exactly as Zed does.
 
 **Rendering backend:** OpenGL ES 2.0 only (GLSL 3.3 primary, GLES 2.0 fallback).
 No Metal, no plans for Metal. The rendering approach: crossfont rasterizes
-glyphs to CPU bitmaps, uploads to OpenGL texture atlas, two draw calls per
-frame (backgrounds + text). For ts4, you would skip this entirely and build a
-Metal renderer that reads from `alacritty_terminal`'s cell grid.
+glyphs to CPU bitmaps, uploads to OpenGL texture atlas, two draw calls per frame
+(backgrounds + text). For ts4, you would skip this entirely and build a Metal
+renderer that reads from `alacritty_terminal`'s cell grid.
 
 **Terminal state separation:** Genuinely separate. `Term<T>` is parameterized
 over `EventListener` (a simple trait with one method). `renderable_content()`
 returns an iterator over visible cells with cursor info, designed for renderer
-consumption. Each cell has: character, foreground/background color, flags
-(bold, italic, underline, etc.). Can be driven entirely without a renderer.
+consumption. Each cell has: character, foreground/background color, flags (bold,
+italic, underline, etc.). Can be driven entirely without a renderer.
 
 **Text rendering:** `crossfont` crate (separate repo). CoreText + CoreGraphics
 on macOS, FreeType + Fontconfig on Linux. CPU-side glyph rasterization only.
@@ -467,16 +469,16 @@ fundamental barrier — you would need to rewrite the orchestration layer.
 **PTY:** Custom `ChildMonitor` with dedicated I/O thread using `poll()`. Well
 designed, but coupled to the Python lifecycle.
 
-**Features:** Rich. Kitty graphics protocol (originator), Kitty keyboard protocol
-(originator), ligatures, Unicode with grapheme clusters, styled underlines,
-shell integration, remote control, SSH kitten, file transfer, OSC 8. No Sixel
-(Kitty graphics is the intended replacement).
+**Features:** Rich. Kitty graphics protocol (originator), Kitty keyboard
+protocol (originator), ligatures, Unicode with grapheme clusters, styled
+underlines, shell integration, remote control, SSH kitten, file transfer, OSC 8.
+No Sixel (Kitty graphics is the intended replacement).
 
 **License:** GPLv3. Embedding any Kitty code forces the entire application to
 GPLv3. Hard blocker.
 
-**Build:** Custom Python-based build system (`setup.py` + `dev.sh`). Requires
-C compiler, Go >= 1.24, Python 3, HarfBuzz, zlib, libpng, OpenSSL. Heavyweight.
+**Build:** Custom Python-based build system (`setup.py` + `dev.sh`). Requires C
+compiler, Go >= 1.24, Python 3, HarfBuzz, zlib, libpng, OpenSSL. Heavyweight.
 
 ### WezTerm (Rust)
 
@@ -503,10 +505,10 @@ wgpu is the primary path. Accessing the underlying Metal texture requires
 `wgpu::hal` unsafe APIs. This works but adds a layer between you and the
 IOSurface.
 
-**Terminal state separation:** `wezterm-term::Terminal` is genuinely independent.
-Created with a `TerminalSize`, a `TerminalConfiguration` trait impl, and a
-`Box<dyn Write>` writer. Feed PTY bytes via `advance_bytes()`. Query state via
-`cursor_pos()`, `screen()`. Input via `key_down()`, `mouse_event()`,
+**Terminal state separation:** `wezterm-term::Terminal` is genuinely
+independent. Created with a `TerminalSize`, a `TerminalConfiguration` trait
+impl, and a `Box<dyn Write>` writer. Feed PTY bytes via `advance_bytes()`. Query
+state via `cursor_pos()`, `screen()`. Input via `key_down()`, `mouse_event()`,
 `send_paste()`. No GUI dependency.
 
 **Text rendering:** HarfBuzz (vendored) for shaping, FreeType (vendored) for
@@ -519,8 +521,8 @@ produces CPU-side `RasterizedGlyph` bitmaps — GPU-independent. But
 
 **Input injection:** Direct API: `Terminal::key_down(key, mods)`,
 `Terminal::mouse_event(event)`, `Terminal::send_paste(text)`. Encodes to
-appropriate escape sequences respecting terminal state (application cursor
-mode, mouse encoding mode, Kitty keyboard mode, bracketed paste).
+appropriate escape sequences respecting terminal state (application cursor mode,
+mouse encoding mode, Kitty keyboard mode, bracketed paste).
 
 **PTY:** `portable-pty` is a fully independent crate on crates.io. Provides
 `PtySystem::openpty()`, `MasterPty`, `SlavePty`. No dependency on any other
@@ -592,12 +594,12 @@ weight. TermSurf already has deep WezTerm experience from ts3, which reduces
 risk.
 
 **Alacritty** offers the cleanest library boundary (`alacritty_terminal` is
-proven by Zed) but the least out of the box. No renderer, no ligatures, no
-image protocols, only VT102-level emulation. You get a solid terminal state
-machine and must build everything else — Metal renderer, glyph atlas, text
-shaping pipeline. The features missing from Alacritty (ligatures, image
-protocols, shell integration) are exactly the features that differentiate a
-modern terminal from a basic one.
+proven by Zed) but the least out of the box. No renderer, no ligatures, no image
+protocols, only VT102-level emulation. You get a solid terminal state machine
+and must build everything else — Metal renderer, glyph atlas, text shaping
+pipeline. The features missing from Alacritty (ligatures, image protocols, shell
+integration) are exactly the features that differentiate a modern terminal from
+a basic one.
 
 ### Ghostty vs WezTerm: the real decision
 
@@ -613,10 +615,10 @@ modern terminal from a basic one.
 | Modification surface        | ~3 functions in Metal.zig         | New renderer + HAL interop         |
 
 Ghostty's Metal renderer already does what ts4 needs — render terminal text to
-an IOSurface. The delta between what Ghostty does today and what ts4 requires
-is small: redirect the IOSurface from a CALayer to an XPC Mach port. With
-WezTerm, the delta is larger: build an offscreen renderer, integrate wgpu HAL
-with IOSurface, and manage the font crate's dependency chain.
+an IOSurface. The delta between what Ghostty does today and what ts4 requires is
+small: redirect the IOSurface from a CALayer to an XPC Mach port. With WezTerm,
+the delta is larger: build an offscreen renderer, integrate wgpu HAL with
+IOSurface, and manage the font crate's dependency chain.
 
 WezTerm's advantage is feature coverage (Sixel, iTerm2 images) and the Rust
 ecosystem familiarity. But Ghostty's architectural alignment with ts4's
@@ -639,7 +641,6 @@ The modification path:
 5. Use the existing C API for input injection (`ghostty_surface_key()`, etc.)
 6. Use the existing PTY infrastructure or feed raw bytes to the parser
 
-WezTerm remains a strong fallback. If Ghostty's renderer proves harder to
-modify than expected, `wezterm-term` + a custom Metal renderer is a viable
-alternative — more work, but in a more familiar language with broader feature
-coverage.
+WezTerm remains a strong fallback. If Ghostty's renderer proves harder to modify
+than expected, `wezterm-term` + a custom Metal renderer is a viable alternative
+— more work, but in a more familiar language with broader feature coverage.

@@ -28,7 +28,8 @@ Project page for TermSurf showing commit history and project info.
 | `clsx`                   | ^2.1.0   | Class name utility          |
 | `tailwind-merge`         | ^2.6.0   | Merge Tailwind classes      |
 
-Note: shadcn/ui components are installed on-demand via CLI, not as a package dependency.
+Note: shadcn/ui components are installed on-demand via CLI, not as a package
+dependency.
 
 ## Directory Structure
 
@@ -132,7 +133,8 @@ website/
 
 ## Tokyo Night Theme
 
-Dark mode only. Colors defined in `src/globals.css` using Tailwind v4 `@theme` directive:
+Dark mode only. Colors defined in `src/globals.css` using Tailwind v4 `@theme`
+directive:
 
 ```css
 @import "tailwindcss";

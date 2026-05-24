@@ -187,15 +187,15 @@ in incognito — different string appears.
 
 ### Phase 2: Merge Chromium into the repo
 
-The Chromium source is added to the termsurf repo as a **git submodule**, not
-a subtree merge. Chromium's build tools (`gclient`, `gn`, `depot_tools`)
-require the source to be at the root of its own git repo. A subtree merge
-breaks this — `gclient sync` cannot run inside a subdirectory of another repo.
-A submodule preserves the repo boundary.
+The Chromium source is added to the termsurf repo as a **git submodule**, not a
+subtree merge. Chromium's build tools (`gclient`, `gn`, `depot_tools`) require
+the source to be at the root of its own git repo. A subtree merge breaks this —
+`gclient sync` cannot run inside a subdirectory of another repo. A submodule
+preserves the repo boundary.
 
-The upstream fork lives at `~/dev/termsurf-chromium/` (standard Chromium
-layout with `.gclient` + `src/`). The submodule in the termsurf repo points
-to this local path. When the software is ready, the fork will be pushed to
+The upstream fork lives at `~/dev/termsurf-chromium/` (standard Chromium layout
+with `.gclient` + `src/`). The submodule in the termsurf repo points to this
+local path. When the software is ready, the fork will be pushed to
 `github.com/termsurf/termsurf-chromium` and the submodule URL updated.
 
 **Directory layout:**
@@ -210,16 +210,16 @@ to this local path. When the software is ready, the fork will be pushed to
 ~/dev/termsurf/ts4/termsurf-chromium/src/       ← git submodule → ~/dev/termsurf-chromium/src
 ```
 
-**Why `src/` cannot be renamed:** Chromium's DEPS file hardcodes `src/` as
-the path prefix for all dependencies. `gclient` resolves these paths relative
-to the `.gclient` file location, using the solution name as the directory
-name. The solution name must be `src` to match DEPS. This is a Chromium
-build system constraint.
+**Why `src/` cannot be renamed:** Chromium's DEPS file hardcodes `src/` as the
+path prefix for all dependencies. `gclient` resolves these paths relative to the
+`.gclient` file location, using the solution name as the directory name. The
+solution name must be `src` to match DEPS. This is a Chromium build system
+constraint.
 
 **CRITICAL: Full history is required.** The `fetch chromium` command must be
 used (not `fetch --no-history`). A shallow clone produces grafted roots that
-break `gclient sync` when the repo is moved or cloned. Full history also
-enables future upstream merges.
+break `gclient sync` when the repo is moved or cloned. Full history also enables
+future upstream merges.
 
 **Step 1: Install depot_tools**
 
@@ -240,8 +240,8 @@ caffeinate fetch chromium
 ```
 
 This creates `~/dev/termsurf-chromium/src/` with the full source, all
-dependencies, and full git history. ~100+ GB. Takes hours. `caffeinate`
-prevents sleep.
+dependencies, and full git history. ~100+ GB. Takes hours. `caffeinate` prevents
+sleep.
 
 **Step 3: Add the submodule to the termsurf repo**
 
@@ -250,15 +250,15 @@ cd /Users/ryan/dev/termsurf
 git submodule add ~/dev/termsurf-chromium/src ts4/termsurf-chromium/src
 ```
 
-This registers `ts4/termsurf-chromium/src/` as a submodule pointing to the
-local upstream. The submodule contains the full Chromium source and all
+This registers `ts4/termsurf-chromium/src/` as a submodule pointing to the local
+upstream. The submodule contains the full Chromium source and all
 `gclient`-managed dependencies.
 
 **Step 4: Create `.gclient` for the submodule workspace**
 
-Create `ts4/termsurf-chromium/.gclient` (committed to the termsurf repo, not
-the submodule) so that `gclient sync` and `gn gen` work from within the
-termsurf tree:
+Create `ts4/termsurf-chromium/.gclient` (committed to the termsurf repo, not the
+submodule) so that `gclient sync` and `gn gen` work from within the termsurf
+tree:
 
 ```
 solutions = [
@@ -283,15 +283,15 @@ gn gen out/Default --args='is_debug=false symbol_level=0 enable_nacl=false is_co
 
 If `gn gen` succeeds, the source is buildable.
 
-**Note on GitHub:** The Chromium fork is too large to push to GitHub in one
-shot (pack exceeds GitHub's 2GB limit). Incremental pushing in batches of
-~500K commits is possible but not needed yet. The submodule URL will be
-updated from the local path to `github.com/termsurf/termsurf-chromium` when
-the software is ready for distribution.
+**Note on GitHub:** The Chromium fork is too large to push to GitHub in one shot
+(pack exceeds GitHub's 2GB limit). Incremental pushing in batches of ~500K
+commits is possible but not needed yet. The submodule URL will be updated from
+the local path to `github.com/termsurf/termsurf-chromium` when the software is
+ready for distribution.
 
 **Note on the existing shallow clone:** The existing
-`/Users/ryan/dev/termsurf/chromium/` directory is a shallow read-only clone
-from Issue 401 research. It is separate from the fork and can be removed.
+`/Users/ryan/dev/termsurf/chromium/` directory is a shallow read-only clone from
+Issue 401 research. It is separate from the fork and can be removed.
 
 ### Phase 3: Build Chromium from source
 
@@ -299,14 +299,7 @@ Get `content_shell` building and running on macOS.
 
 - [x] Exclude `ts4/termsurf-chromium/src/` from Spotlight indexing
 - [x] Configure GN:
-      `     cd ts4/termsurf-chromium/src
-    gn gen out/Default --args='
-      is_debug = false
-      symbol_level = 0
-      enable_nacl = false
-      is_component_build = true
-    '
-    `
+      `     cd ts4/termsurf-chromium/src   gn gen out/Default --args='     is_debug = false     symbol_level = 0     enable_nacl = false     is_component_build = true   '   `
 - [x] Build content_shell: `autoninja -C out/Default content_shell` (1h31m,
       42,918 steps at 7.83/s)
 - [x] Add `ts4/termsurf-chromium/src/out/` to `.gitignore`
@@ -357,21 +350,20 @@ adds the minimal code needed for dual-profile behavior and side-by-side layout.
 
 - Overrides `InitializeBrowserContexts()` to create two
   `TwoProfilesBrowserContext` instances with different storage paths
-- Overrides `InitializeMessageLoopContext()` to create two Shell windows (or
-  one window with two WebContents), each using a different BrowserContext,
-  both loading `http://localhost:9407`
+- Overrides `InitializeMessageLoopContext()` to create two Shell windows (or one
+  window with two WebContents), each using a different BrowserContext, both
+  loading `http://localhost:9407`
 - Overrides `PostMainMessageLoopRun()` to clean up the second context
 
 **`two_profiles_content_browser_client.h/.cc`** — Subclass of
 `ShellContentBrowserClient`:
 
-- Overrides `CreateBrowserMainParts()` to return `TwoProfilesMainParts`
-  instead of the default `ShellBrowserMainParts`
+- Overrides `CreateBrowserMainParts()` to return `TwoProfilesMainParts` instead
+  of the default `ShellBrowserMainParts`
 
 **`two_profiles_layout_mac.mm`** — Side-by-side layout on macOS:
 
-- After both WebContents are created, arranges them side by side in one
-  NSWindow
+- After both WebContents are created, arranges them side by side in one NSWindow
 - Gets Shell A's NSWindow contentView
 - Sets Shell A's WebContents view frame to the left half
 - Sets Shell B's WebContents view frame to the right half
@@ -409,17 +401,17 @@ create two `WebContents` in one window — Shell A (profile A) via
 `Shell::CreateNewWindow()`, and WebContents B (profile B) via raw
 `WebContents::Create()`, manually added as a subview to Shell A's window.
 
-**Result:** Partial success. Two panes rendered side by side in one window,
-each showing the spinning blue square with a different localStorage identity
-string — proving profile isolation works. However, both panes rendered at only
-2fps instead of 60fps.
+**Result:** Partial success. Two panes rendered side by side in one window, each
+showing the spinning blue square with a different localStorage identity string —
+proving profile isolation works. However, both panes rendered at only 2fps
+instead of 60fps.
 
 **Diagnosis:** Chromium throttles `requestAnimationFrame` to ~1-2fps for
 WebContents it considers hidden or in a background state. WebContents B was
 created via raw `WebContents::Create()` without ever receiving a `WasShown()`
-call, so Chromium treated it as a background tab. Shell A's WebContents may
-also have been affected by the manual NSView frame manipulation disrupting
-the Shell's internal visibility tracking.
+call, so Chromium treated it as a background tab. Shell A's WebContents may also
+have been affected by the manual NSView frame manipulation disrupting the
+Shell's internal visibility tracking.
 
 ##### Experiment 2: WasShown() calls (3fps — failed)
 
@@ -428,22 +420,21 @@ after laying out both views side by side. The hypothesis was that Chromium was
 throttling `requestAnimationFrame` because it considered the WebContents hidden.
 
 **Result:** Failed. Framerate went from ~2fps to ~3fps — no meaningful
-improvement. `WasShown()` alone does not fix the throttling. The root cause
-is something else — possibly macOS occlusion detection misclassifying the
-views, `RenderWidgetHostView` not receiving resize notifications after the
-manual frame changes, or a deeper issue with how content_shell's platform
-delegate manages visibility for reparented views.
+improvement. `WasShown()` alone does not fix the throttling. The root cause is
+something else — possibly macOS occlusion detection misclassifying the views,
+`RenderWidgetHostView` not receiving resize notifications after the manual frame
+changes, or a deeper issue with how content_shell's platform delegate manages
+visibility for reparented views.
 
 ## Conclusion
 
 ### What we proved
 
-1. **Multiple BrowserContexts work in one process.** Two
-   `ShellBrowserContext` instances with different `SHELL_DIR_USER_DATA` paths
-   coexist in the same Chromium process. Each has its own cookies, localStorage,
-   and cache. This confirms Issue 406's architectural analysis — the
-   one-profile-per-process limitation is CEF-specific, not a Chromium
-   constraint.
+1. **Multiple BrowserContexts work in one process.** Two `ShellBrowserContext`
+   instances with different `SHELL_DIR_USER_DATA` paths coexist in the same
+   Chromium process. Each has its own cookies, localStorage, and cache. This
+   confirms Issue 406's architectural analysis — the one-profile-per-process
+   limitation is CEF-specific, not a Chromium constraint.
 
 2. **Profile isolation is real.** The Two Profiles app displays two panes side
    by side, each showing a different localStorage identity string. The strings
@@ -501,27 +492,27 @@ throttling rate.
 
 - **WebContents A** (Shell A) was created through the proper pipeline and
   initially renders at 60fps. But then we manually resize its NSView from
-  full-window to half-window and add a sibling view — bypassing Chromium's
-  view management. The `RenderWidgetHostViewCocoa` has its own NSView-level
+  full-window to half-window and add a sibling view — bypassing Chromium's view
+  management. The `RenderWidgetHostViewCocoa` has its own NSView-level
   visibility tracking that can override explicit `WasShown()` calls, and the
   manual frame manipulation causes it to misreport its state.
 
 - **Explicit `WasShown()` calls don't help** (Experiment 2). `WasShown()` sets
-  visibility at the `WebContentsImpl` level, but `RenderWidgetHostViewCocoa`
-  has independent visibility tracking at the NSView level that overrides it.
+  visibility at the `WebContentsImpl` level, but `RenderWidgetHostViewCocoa` has
+  independent visibility tracking at the NSView level that overrides it.
 
 - **Broken autoresizing masks compound the problem.** Both views were set to
-  `NSViewWidthSizable | NSViewHeightSizable`, which tells AppKit to stretch
-  each view to fill the entire container on resize. The views would overlap
-  on any window resize, potentially causing layout thrashing that further
-  confuses the visibility detector.
+  `NSViewWidthSizable | NSViewHeightSizable`, which tells AppKit to stretch each
+  view to fill the entire container on resize. The views would overlap on any
+  window resize, potentially causing layout thrashing that further confuses the
+  visibility detector.
 
 - **content_shell doesn't use Chromium's `views` framework.** Chrome's
   `NativeWidgetNSWindowBridge` with `windowDidChangeOcclusionState:` handles
   sophisticated occlusion tracking — but content_shell uses raw NSWindows
-  without this infrastructure. The `RenderWidgetHostViewCocoa` falls back to
-  its own NSView-level visibility detection, which was not designed for
-  manually reparented views.
+  without this infrastructure. The `RenderWidgetHostViewCocoa` falls back to its
+  own NSView-level visibility detection, which was not designed for manually
+  reparented views.
 
 ### What comes next
 
@@ -530,15 +521,15 @@ Chromium's rendering pipeline. Possible approaches:
 
 1. **Use Chromium's `views` framework** instead of raw NSWindows. Create a
    `views::Widget` with two child `views::WebView` instances. The `views`
-   framework handles visibility, layout, and resize notifications through
-   proper Chromium channels, avoiding the NSView manipulation that breaks
+   framework handles visibility, layout, and resize notifications through proper
+   Chromium channels, avoiding the NSView manipulation that breaks
    `RenderWidgetHostViewCocoa`.
 
 2. **Off-screen compositing.** Use `RenderWidgetHostViewBase`'s
    `CopyFromSurface()` or a custom `DelegatedFrameHost` to capture each
-   WebContents' rendered output to an IOSurface, then composite both surfaces
-   in a single Metal render pass — similar to the CEF approach from ts3 but
-   without CEF's framerate ceiling.
+   WebContents' rendered output to an IOSurface, then composite both surfaces in
+   a single Metal render pass — similar to the CEF approach from ts3 but without
+   CEF's framerate ceiling.
 
 3. **Patch `RenderWidgetHostViewCocoa`** to support externally-managed
    visibility. Override the NSView-level visibility detection so that explicit
@@ -547,9 +538,9 @@ Chromium's rendering pipeline. Possible approaches:
 
 4. **Create two Shell windows and composite them.** Create two full Shell
    instances (each with proper platform window setup), then either reparent
-   their content views into a shared parent NSWindow or capture their
-   IOSurfaces for compositing. This preserves Chromium's one-WebContents-
-   per-window assumption while achieving the side-by-side visual result.
+   their content views into a shared parent NSWindow or capture their IOSurfaces
+   for compositing. This preserves Chromium's one-WebContents- per-window
+   assumption while achieving the side-by-side visual result.
 
 Each approach has different tradeoffs in complexity, invasiveness to the
 Chromium source, and risk. This will be explored in Issue 408.

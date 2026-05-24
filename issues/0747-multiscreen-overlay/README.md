@@ -346,10 +346,8 @@ This does not modify `update_ca_layer_frame` itself.
 **`wezboard-gui/src/termsurf/conn.rs`** — `handle_ca_context`:
 
 Move lines 1306–1307 (`// Position the overlay` +
-`update_ca_layer_frame(pane,
-root_layer);`) from after the `if/else` block into
-the end of the `if
-pane.ca_layer_host == 0` branch (after line 1283, before the
+`update_ca_layer_frame(pane, root_layer);`) from after the `if/else` block into
+the end of the `if pane.ca_layer_host == 0` branch (after line 1283, before the
 closing `}`).
 
 Before:

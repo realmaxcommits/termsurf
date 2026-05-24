@@ -417,13 +417,13 @@ Electron installations.
 ### Why we're adopting Electron's full patch set
 
 Rather than cherry-picking the 7 visibility patches and guessing which of the
-remaining 140 we might need later, we will apply Electron's entire 147-patch
-set to our Chromium fork. The reasoning:
+remaining 140 we might need later, we will apply Electron's entire 147-patch set
+to our Chromium fork. The reasoning:
 
 1. **Simplicity.** Analyzing 147 patches to decide which subset we need is more
    work than just applying all of them. Patches we don't need are either inert
-   hooks (callback points that nothing calls) or gated behind flags we don't
-   set (`is_electron_build`, `is_mas_build`).
+   hooks (callback points that nothing calls) or gated behind flags we don't set
+   (`is_electron_build`, `is_mas_build`).
 
 2. **Tested combination.** Electron tests these 147 patches against Chromium
    146.0.7650.0. Applying the full set to the same version is a known-good
@@ -431,16 +431,16 @@ set to our Chromium fork. The reasoning:
 
 3. **Future-proofing.** Patches that seem irrelevant today (fullscreen
    propagation, per-window WebPreferences, resize performance fixes) may become
-   necessary as TermSurf matures. Having them already applied means we
-   discover their value rather than their absence.
+   necessary as TermSurf matures. Having them already applied means we discover
+   their value rather than their absence.
 
 4. **Patch-on-patch escape hatch.** If any Electron patch causes a problem, we
    can apply our own patch on top to fix it. This is unlikely in the short term,
    but the option exists.
 
 This approach means our `termsurf-chromium` submodule tracks the same Chromium
-version as Electron and applies the same patch set. Our own modifications
-(like `content/two_profiles/`) go on top. This is the subject of Issue 409.
+version as Electron and applies the same patch set. Our own modifications (like
+`content/two_profiles/`) go on top. This is the subject of Issue 409.
 
 ## Relationship to Other Issues
 

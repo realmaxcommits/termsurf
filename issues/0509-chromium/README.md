@@ -95,8 +95,8 @@ NOT reimplement the Chromium-specific pieces:
 - **The full pipeline runs at 60fps.** Before the crash,
   `FrameSinkVideoCapturer` sustained 58-60fps with 1600x1200 Retina frames
   streaming over XPC.
-- \__`freopen` only redirects C FILE_ stderr.\_\* Zig writes to fd 2 directly via
-  `std.debug.print`, bypassing the C FILE layer. `open --stderr <path>`
+- \__`freopen` only redirects C FILE_ stderr.\_\* Zig writes to fd 2 directly
+  via `std.debug.print`, bypassing the C FILE layer. `open --stderr <path>`
   redirects fd 2 at the OS level, capturing everything.
 
 ### What Issue 508 fixed
@@ -366,8 +366,7 @@ with different identities in the same terminal window.
 ### Idea 7: Three panes — two profiles
 
 Run three `web` commands: two panes share the same profile (e.g.,
-`--profile
-work`) and the third uses a different profile (e.g.,
+`--profile work`) and the third uses a different profile (e.g.,
 `--profile personal`). This tests the one-server-per-profile architecture — the
 two `work` panes should share a single Chromium Profile Server process (with two
 tabs/WebContents inside it), while the `personal` pane gets its own server. This

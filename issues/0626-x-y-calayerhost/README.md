@@ -32,9 +32,8 @@ and fix the positioning:
 - **Experiment 3:** Tried flipping Y (`flipped_y = screen_height - y - h`). Zero
   visible effect — the Y flip had no impact at all.
 - **Experiment 4:** Added diagnostic logging. Confirmed
-  `setProperty("frame",
-frame)` works (readback matches), the function is
-  called with valid data, and the parent IOSurfaceLayer is 800×600 points with
+  `setProperty("frame", frame)` works (readback matches), the function is called
+  with valid data, and the parent IOSurfaceLayer is 800×600 points with
   `contentsScale=2.0`. The hardcoded frame test proved the frame property
   controls positioning. Also discovered cell dimensions are in physical pixels
   while CALayer frames use logical points.
@@ -250,8 +249,7 @@ The CALayerHost frame is NEVER explicitly set. Instead:
 - `maybe_flipped_layer_` auto-resizes to fill `background_layer_` (via
   `kCALayerWidthSizable | kCALayerHeightSizable`)
 - The CALayerHost has
-  `autoresizingMask = kCALayerMaxXMargin |
-kCALayerMaxYMargin` — it stays at
+  `autoresizingMask = kCALayerMaxXMargin | kCALayerMaxYMargin` — it stays at
   origin, does NOT resize with parent
 - The remote CAContext content renders at its own intrinsic size
 - Size agreement happens because both the NSView and the Chromium compositor are
@@ -311,8 +309,7 @@ IOSurfaceLayer (no geometryFlipped, has contentsScale=2.0)
 
 The root cause is architectural: we're missing the intermediate flipped layer
 that Chromium uses. Chromium's pattern is
-`root → maybe_flipped_layer_
-(geometryFlipped) → CALayerHost`, not
+`root → maybe_flipped_layer_ (geometryFlipped) → CALayerHost`, not
 `root → CALayerHost (geometryFlipped)`. The fix should either: (a) add an
 intermediate layer matching Chromium's pattern, or (b) move `geometryFlipped` to
 the IOSurfaceLayer (risky — could break terminal rendering) and position the

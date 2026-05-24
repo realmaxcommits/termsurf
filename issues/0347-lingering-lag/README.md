@@ -243,9 +243,9 @@ Release build dramatically improves cef-test performance:
    remaining ~15% miss by just enough to wait for the next one — costing exactly
    one extra frame interval.
 
-4. **CEF OSR is NOT the ceiling.** The ~38fps was debug overhead, not an inherent
-   OSR limitation. At ~51fps with 85% of frames at 60fps, there's a clear path
-   to smoother rendering.
+4. **CEF OSR is NOT the ceiling.** The ~38fps was debug overhead, not an
+   inherent OSR limitation. At ~51fps with 85% of frames at 60fps, there's a
+   clear path to smoother rendering.
 
 5. **The remaining gap to 60fps is small.** The ~15% of frames that slip past
    the vsync deadline are likely caused by IOSurface → Mach port → IPC transfer
@@ -267,7 +267,8 @@ TermSurf pipeline adds no overhead beyond CEF OSR itself.
 **How to test:**
 
 1. Build release: `cd ts3 && ./scripts/build-release.sh`
-2. Run benchmark: `./target/release/termsurf-gui.app/Contents/MacOS/web benchmark`
+2. Run benchmark:
+   `./target/release/termsurf-gui.app/Contents/MacOS/web benchmark`
 3. Run 3 times with no mouse movement, record fps/p50/p95
 
 **What the results tell us:**
@@ -345,12 +346,12 @@ distinct layers:
    CEF's `windowless_frame_rate` setting, or inherent cost of off-screen
    rendering. This is the next area to investigate.
 
-3. **TermSurf pipeline overhead (~2ms per frame).** ts3 release has
-   p50=18.9ms vs cef-test's 16.7ms. The extra ~2ms comes from the IPC path:
-   IOSurface → Mach port → XPC → GUI import → wgpu render. This pushes ts3's
-   60fps hit rate from ~83% down to ~51%. However, this layer only matters after
-   the cef-test baseline is understood — if cef-test can be brought to 60fps,
-   the pipeline overhead may shrink or become irrelevant.
+3. **TermSurf pipeline overhead (~2ms per frame).** ts3 release has p50=18.9ms
+   vs cef-test's 16.7ms. The extra ~2ms comes from the IPC path: IOSurface →
+   Mach port → XPC → GUI import → wgpu render. This pushes ts3's 60fps hit rate
+   from ~83% down to ~51%. However, this layer only matters after the cef-test
+   baseline is understood — if cef-test can be brought to 60fps, the pipeline
+   overhead may shrink or become irrelevant.
 
 **Recommended next step:** Investigate why cef-test tops out at ~51fps before
 diving into ts3 pipeline details. cef-test is a smaller codebase, changes are

@@ -153,8 +153,7 @@ renderer process swap, the old view is destroyed and the callback is lost.
 
 `ShellTabObserver` already extends `WebContentsObserver` and has
 `xpc_connection_` and `pane_id_`. `WebContentsObserver` provides
-`RenderViewHostChanged(old_host,
-new_host)`, which fires when the `WebContents`
+`RenderViewHostChanged(old_host, new_host)`, which fires when the `WebContents`
 swaps its `RenderViewHost` — exactly when the `RenderWidgetHostView` changes.
 
 Move the CALayerParams callback registration into `ShellTabObserver` so it can
@@ -417,8 +416,7 @@ Key files:
 
 The RWHV gets its initial size from `SetParentWebContentsNSView()`, which copies
 the parent's bounds and sets
-`autoresizingMask = NSViewWidthSizable |
-NSViewHeightSizable` on the Cocoa view.
+`autoresizingMask = NSViewWidthSizable | NSViewHeightSizable` on the Cocoa view.
 After that, autoresizing keeps the view sized to its parent automatically. When
 the NSView frame changes (from autoresizing or explicit `SetBounds`),
 `setFrameSize:` fires → `sendViewBoundsInWindowToHost` →
@@ -437,8 +435,7 @@ Key files:
 
 Our `SetContents` in `shell_platform_delegate_mac.mm` adds the web view to the
 hidden NSWindow's contentView with
-`autoresizingMask = NSViewWidthSizable |
-NSViewHeightSizable`. But `ResizeTab()`
+`autoresizingMask = NSViewWidthSizable | NSViewHeightSizable`. But `ResizeTab()`
 only calls `view->SetSize()` — it never resizes the hidden NSWindow itself. This
 creates a mismatch: the NSView frame is set to the new size via `SetBounds()`,
 but the NSWindow remains at its creation size. The autoresizing mask ties the
@@ -507,8 +504,7 @@ NSWindow stays at the correct size.
 `ResizeTab()` calls `view->SetSize(logical)` to resize the
 `RenderWidgetHostView` directly. This sets the NSView frame but never resizes
 the hidden NSWindow. The web view has
-`autoresizingMask = NSViewWidthSizable |
-NSViewHeightSizable`, tying it to the
+`autoresizingMask = NSViewWidthSizable | NSViewHeightSizable`, tying it to the
 window's contentView. When navigation triggers
 `BrowserCompositorMac::DidNavigate()`, the new compositor surface is created
 with `dfh_size_dip_`, which may reflect the window's original size rather than

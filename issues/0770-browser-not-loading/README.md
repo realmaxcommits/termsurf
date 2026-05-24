@@ -57,18 +57,18 @@ Run Roamium with the same arguments the GUI passes to it and capture its output.
 
 4. **Same crash from the Chromium build directory** — not an install issue.
 
-5. **Root cause identified: macOS updated from 26.3.1 to 26.4 on March 29.**
-   The Chromium build was compiled against the 26.3.1 SDK. macOS 26.4 changed
+5. **Root cause identified: macOS updated from 26.3.1 to 26.4 on March 29.** The
+   Chromium build was compiled against the 26.3.1 SDK. macOS 26.4 changed
    sandbox behavior, causing child processes to fail the `IsSandboxed()` check.
    The old installed binary (from March 19, before the OS update) had continued
    working because macOS maintains backward compatibility for existing signed
    binaries. Running `install.sh` today replaced the binary with a fresh
    unsigned copy, which triggered the new OS version's stricter enforcement.
 
-6. **Fix: full Chromium rebuild** with `scripts/build.sh chromium --clean`,
-   then `scripts/build.sh all --release` and `scripts/install.sh all`. The
-   rebuild compiled Chromium against the macOS 26.4 SDK, producing binaries
-   compatible with the new sandbox behavior.
+6. **Fix: full Chromium rebuild** with `scripts/build.sh chromium --clean`, then
+   `scripts/build.sh all --release` and `scripts/install.sh all`. The rebuild
+   compiled Chromium against the macOS 26.4 SDK, producing binaries compatible
+   with the new sandbox behavior.
 
 **Result:** Pass
 
@@ -84,14 +84,13 @@ fresh unsigned copy that exposed the incompatibility.
 
 ### Symptoms
 
-- `web` TUI connects to Wezboard, sends `SetOverlay`, Roamium spawns — but
-  never connects back to the GUI.
+- `web` TUI connects to Wezboard, sends `SetOverlay`, Roamium spawns — but never
+  connects back to the GUI.
 - Wezboard logs show `has_tx=false` and only one connection (TUI, no browser).
 - Kernel log: `load code signature error 2 for file "roamium"` (before
   re-signing).
 - After re-signing: child processes crash with
-  `FATAL:content/app/content_main_runner_impl.cc:1002]
-Check failed: sandbox::Seatbelt::IsSandboxed()`.
+  `FATAL:content/app/content_main_runner_impl.cc:1002] Check failed: sandbox::Seatbelt::IsSandboxed()`.
 
 ### Diagnostic commands
 
@@ -131,6 +130,6 @@ tightly coupled to the OS version. A Chromium binary built against an older SDK
 may fail to initialize sandboxes on a newer OS, causing child processes (GPU,
 network, renderer) to crash.
 
-The install script should ideally re-sign binaries after copying, but the
-deeper issue is the SDK mismatch — re-signing alone won't fix sandbox
+The install script should ideally re-sign binaries after copying, but the deeper
+issue is the SDK mismatch — re-signing alone won't fix sandbox
 incompatibilities.

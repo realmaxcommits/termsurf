@@ -160,11 +160,11 @@ arrive in bursts.
 pump) are responsible for the ~15% of frames that miss vsync.
 
 **Hypothesis:** Each sleep adds up to 1ms of idle wait. Together they can add up
-to 2ms per frame in the pipeline. At 60fps the entire frame budget is 16.7ms.
-If CEF finishes rendering at, say, 15ms into the frame, the profile sleep adds
-1ms (now 16ms), and the GUI sleep adds another 1ms (now 17ms) — past the
-16.7ms vsync deadline. Eliminating the sleeps should push these marginal frames
-back under the deadline.
+to 2ms per frame in the pipeline. At 60fps the entire frame budget is 16.7ms. If
+CEF finishes rendering at, say, 15ms into the frame, the profile sleep adds 1ms
+(now 16ms), and the GUI sleep adds another 1ms (now 17ms) — past the 16.7ms
+vsync deadline. Eliminating the sleeps should push these marginal frames back
+under the deadline.
 
 **What needs to change:**
 
@@ -195,9 +195,8 @@ Two lines, one in each process:
 
 **Risk:** Higher CPU usage. Without the 1ms sleeps, both processes will spin
 their loops as fast as possible. This is acceptable for a benchmark — we're
-measuring the ceiling, not optimizing power consumption. If fps improves, we
-can later find a smarter sleep strategy (e.g., sleep only when no frame is
-pending).
+measuring the ceiling, not optimizing power consumption. If fps improves, we can
+later find a smarter sleep strategy (e.g., sleep only when no frame is pending).
 
 **How to test:**
 
@@ -214,8 +213,8 @@ pending).
   hot path.
 - If fps stays at ~51: the sleeps aren't the problem. Move to L3/L4 (IOSurface
   handle reuse).
-- If fps improves partially (e.g., ~55fps): the sleeps contribute but aren't
-  the only factor. Combine with other optimizations.
+- If fps improves partially (e.g., ~55fps): the sleeps contribute but aren't the
+  only factor. Combine with other optimizations.
 
 **Result:**
 
@@ -236,9 +235,9 @@ pending).
    about half the gap from ~51fps to 60fps, but something else accounts for the
    rest.
 
-3. **p50 and p95 are unchanged.** Good frames are still 16.7ms, bad frames
-   still 33.3ms. The sleeps didn't change the latency of individual frames —
-   they just changed how many frames fell on each side of the vsync cliff.
+3. **p50 and p95 are unchanged.** Good frames are still 16.7ms, bad frames still
+   33.3ms. The sleeps didn't change the latency of individual frames — they just
+   changed how many frames fell on each side of the vsync cliff.
 
 4. **LEFT outperforms RIGHT.** 93.2% vs 87.9% at 60fps. Processing order may
    matter — LEFT gets imported first in `process_pending_surfaces()`.
@@ -277,13 +276,14 @@ all frames. If CEF allocates a new IOSurface per frame, the pointer will change.
 1. Add the log line
 2. `cd ts3 && ./cef-test-scripts/benchmark.sh --release`
 3. After the run, check: `grep '\[HANDLE\]' /tmp/cef-test-gui.log | head -20`
-4. Count unique handle values: `grep '\[HANDLE\]' /tmp/cef-test-gui.log | sed 's/.*handle=//' | sort -u | wc -l`
+4. Count unique handle values:
+   `grep '\[HANDLE\]' /tmp/cef-test-gui.log | sed 's/.*handle=//' | sort -u | wc -l`
 
 **What the results tell us:**
 
 - If 1 unique handle: CEF reuses the IOSurface. We can send the Mach port once
-  at the first frame, then signal "new frame" with a lightweight XPC message
-  (no Mach port) for subsequent frames. The GUI reuses the wgpu texture, just
+  at the first frame, then signal "new frame" with a lightweight XPC message (no
+  Mach port) for subsequent frames. The GUI reuses the wgpu texture, just
   re-rendering from the same IOSurface. This eliminates per-frame kernel calls
   and GPU resource creation.
 - If many unique handles: CEF allocates new IOSurfaces. The per-frame Mach port
@@ -337,8 +337,8 @@ consecutive benchmark runs showed progressive degradation: 46.7fps → 33.7fps �
 spin at 100% CPU with no idle time, the machine heats up, macOS throttles clock
 speed, and each subsequent run starts hotter.
 
-The original 1ms sleep wasn't just wasted latency — it kept CPU utilization
-low enough to avoid thermal throttling. The Experiment 1 result of 55.7fps was
+The original 1ms sleep wasn't just wasted latency — it kept CPU utilization low
+enough to avoid thermal throttling. The Experiment 1 result of 55.7fps was
 likely a "cold" first run before thermal effects accumulated.
 
 **What needs to change:**
@@ -393,15 +393,15 @@ reverted to 0ms sleep (no hot-path logs):
 
 The 1ms sleep result (24.9fps) was dramatically worse than the original 1ms
 baseline (51fps), despite having fewer logs. The machine had been cooling but
-may have still been thermally throttled from the earlier 0ms runs. Restoring
-0ms sleep immediately brought performance back to 49.4fps.
+may have still been thermally throttled from the earlier 0ms runs. Restoring 0ms
+sleep immediately brought performance back to 49.4fps.
 
 **Findings:**
 
 1. **The 1ms sleep result is anomalous.** The original baseline had 1ms sleeps
-   AND hot-path logs and achieved 51fps. Getting 24.9fps with 1ms sleeps and
-   NO logs makes no sense unless the machine was still thermally throttled from
-   the prior 0ms benchmark runs. This data point is unreliable.
+   AND hot-path logs and achieved 51fps. Getting 24.9fps with 1ms sleeps and NO
+   logs makes no sense unless the machine was still thermally throttled from the
+   prior 0ms benchmark runs. This data point is unreliable.
 
 2. **0ms sleep with no logs gives ~49fps.** This is comparable to the original
    baseline (51fps) and close to the Experiment 1 "cold run" result (55.7fps).
@@ -409,15 +409,14 @@ may have still been thermally throttled from the earlier 0ms runs. Restoring
    setting, suggesting the logs were not a major bottleneck.
 
 3. **Thermal effects dominate.** The progressive degradation across runs
-   (Experiment 1: 46.7 → 33.7 → 27.9, then this experiment's 24.9fps) shows
-   that thermal state has a larger effect on benchmark results than any code
-   change we've made. Benchmarks must account for thermal state to be
-   meaningful.
+   (Experiment 1: 46.7 → 33.7 → 27.9, then this experiment's 24.9fps) shows that
+   thermal state has a larger effect on benchmark results than any code change
+   we've made. Benchmarks must account for thermal state to be meaningful.
 
-4. **The bimodal pattern persists.** Even in the best 0ms run (49.4fps), ~20%
-   of frames miss vsync. The p50=16.7ms and p95=33.6ms pattern is unchanged
-   from the original baseline. Neither sleep duration nor log removal has
-   shifted this fundamental behavior.
+4. **The bimodal pattern persists.** Even in the best 0ms run (49.4fps), ~20% of
+   frames miss vsync. The p50=16.7ms and p95=33.6ms pattern is unchanged from
+   the original baseline. Neither sleep duration nor log removal has shifted
+   this fundamental behavior.
 
 **Status:** Done
 
@@ -435,28 +434,28 @@ Three experiments investigated the cef-test performance ceiling:
 **What we learned:**
 
 1. **Thermal throttling is the dominant variable.** Run-to-run variance of
-   20+fps dwarfs any code-level optimization. The 0ms sleep burns CPU and
-   causes progressive degradation. The 1ms sleep keeps thermals stable but
-   adds pipeline latency. Neither setting has been tested under controlled
-   thermal conditions.
+   20+fps dwarfs any code-level optimization. The 0ms sleep burns CPU and causes
+   progressive degradation. The 1ms sleep keeps thermals stable but adds
+   pipeline latency. Neither setting has been tested under controlled thermal
+   conditions.
 
-2. **The ~15% vsync miss rate is persistent.** Across all conditions — debug
-   vs release, 0ms vs 1ms sleep, with or without logs — about 15–20% of frames
+2. **The ~15% vsync miss rate is persistent.** Across all conditions — debug vs
+   release, 0ms vs 1ms sleep, with or without logs — about 15–20% of frames
    consistently miss the 16.7ms vsync deadline by exactly one frame interval.
-   This is not caused by sleep duration or logging. It's an inherent property
-   of the CEF OSR → IOSurface → Mach port → wgpu pipeline.
+   This is not caused by sleep duration or logging. It's an inherent property of
+   the CEF OSR → IOSurface → Mach port → wgpu pipeline.
 
-3. **IOSurface handles are not reused.** CEF allocates a new IOSurface per
-   frame (~850 unique handles across ~3,000 frames). The per-frame Mach port
-   creation and wgpu texture import cannot be optimized away.
+3. **IOSurface handles are not reused.** CEF allocates a new IOSurface per frame
+   (~850 unique handles across ~3,000 frames). The per-frame Mach port creation
+   and wgpu texture import cannot be optimized away.
 
 4. **Hot-path logging is devastating but not the ceiling.** A single `println!`
    per frame can halve fps (Experiment 2). But removing all logs did not push
    fps above ~50. The logs amplify other problems but aren't the root cause.
 
 **The path forward** requires a different approach than tuning sleep durations
-or removing logs. The persistent ~15% vsync miss rate suggests the bottleneck
-is in the per-frame IOSurface transfer pipeline itself — the kernel calls
+or removing logs. The persistent ~15% vsync miss rate suggests the bottleneck is
+in the per-frame IOSurface transfer pipeline itself — the kernel calls
 (`IOSurfaceCreateMachPort` + `IOSurfaceLookupFromMachPort`) and GPU resource
 creation (`import_to_wgpu`) that happen every frame. Reducing that per-frame
 cost, or finding a way to decouple frame production from vsync presentation,

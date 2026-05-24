@@ -462,8 +462,7 @@ line rendering begins.
 ### Experiment 4: Per-pane pixel inset on all edges
 
 Experiments 1-2 applied insets only on **interior edges** (checking
-`pos.left !=
-0`, `pos.top != 0`, etc.), but the border draws on **all 4 sides**
+`pos.left != 0`, `pos.top != 0`, etc.), but the border draws on **all 4 sides**
 of every pane. Content at window edges was never inset, so the border always
 covered it there. Experiment 3 was the wrong abstraction level entirely (global
 vs per-pane).

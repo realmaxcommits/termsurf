@@ -59,7 +59,8 @@ From `cef-rs` bindings, the Browser object has:
 
 ## ts2 Implementation
 
-In ts2, refresh is handled in `keyevent.rs` (lines 497-511) alongside back/forward:
+In ts2, refresh is handled in `keyevent.rs` (lines 497-511) alongside
+back/forward:
 
 ```rust
 KeyCode::Char('r') => {
@@ -291,7 +292,8 @@ This frees Cmd+R for browser refresh.
 - WezTerm's `automatically_reload_config` is enabled by default
 - Config changes are detected and applied automatically
 - Manual reload via Cmd+R is redundant
-- Removing it allows Experiment 1's handler in `key_event_impl` to receive the key
+- Removing it allows Experiment 1's handler in `key_event_impl` to receive the
+  key
 
 #### Step 1: Remove Cmd+R keybinding from commands.rs
 
@@ -380,14 +382,16 @@ tail -f /tmp/termsurf-profile-*.log | grep NAV
 Follow ts2's pattern: match on `KeyCode::Char('R')` directly instead of checking
 for `Modifiers::SHIFT`. When Shift is held, the character arrives as uppercase.
 
-**Failure reason:** Cmd+Shift+R still does not trigger. The key difference between
-ts2 and ts3 may be the event type: ts2 handles this in `raw_key_event_impl` with
-`RawKeyEvent`, while ts3 handles it in `key_event_impl` with `KeyEvent`. The key
-representation may differ between these event types.
+**Failure reason:** Cmd+Shift+R still does not trigger. The key difference
+between ts2 and ts3 may be the event type: ts2 handles this in
+`raw_key_event_impl` with `RawKeyEvent`, while ts3 handles it in
+`key_event_impl` with `KeyEvent`. The key representation may differ between
+these event types.
 
 #### Rationale
 
-ts2's working implementation (lines 497-511) does NOT check for `Modifiers::SHIFT`:
+ts2's working implementation (lines 497-511) does NOT check for
+`Modifiers::SHIFT`:
 
 ```rust
 // ts2 only checks SUPER, then matches on character case
@@ -452,8 +456,8 @@ tail -f /tmp/termsurf-profile-*.log | grep NAV
 
 **Status: Success**
 
-Handle Cmd+R and Cmd+Shift+R directly in `raw_key_event_impl` instead of deferring
-to `key_event_impl`. This matches ts2's working approach exactly.
+Handle Cmd+R and Cmd+Shift+R directly in `raw_key_event_impl` instead of
+deferring to `key_event_impl`. This matches ts2's working approach exactly.
 
 #### Rationale
 
@@ -565,12 +569,14 @@ Browser refresh is now fully implemented:
 ### Key Learnings
 
 1. **Remove conflicting default keybindings**: WezTerm's default Cmd+R →
-   `ReloadConfiguration` binding had to be removed since config auto-reloads anyway.
+   `ReloadConfiguration` binding had to be removed since config auto-reloads
+   anyway.
 
 2. **Handle shortcuts in `raw_key_event_impl`, not `key_event_impl`**: The key
-   representation differs between `RawKeyEvent` and `KeyEvent`. ts2 handles browser
-   shortcuts in `raw_key_event_impl` where the uppercase 'R' is correctly detected
-   for Cmd+Shift+R. Deferring to `key_event_impl` caused Cmd+Shift+R to fail.
+   representation differs between `RawKeyEvent` and `KeyEvent`. ts2 handles
+   browser shortcuts in `raw_key_event_impl` where the uppercase 'R' is
+   correctly detected for Cmd+Shift+R. Deferring to `key_event_impl` caused
+   Cmd+Shift+R to fail.
 
 3. **Match on character case, not SHIFT modifier**: When Shift is held, the key
    arrives as uppercase `KeyCode::Char('R')`. Matching on the character directly

@@ -121,8 +121,8 @@ pointer to `docs/early-prototypes.md` for details.
 
 All four stages completed.
 
-- **Stage 1** (`0bdf837`): Deleted `ts1/`–`ts5/` — 7,053 files, 3.6M lines,
-  ~161 GB freed.
+- **Stage 1** (`0bdf837`): Deleted `ts1/`–`ts5/` — 7,053 files, 3.6M lines, ~161
+  GB freed.
 - **Stage 2** (`9554829`): Created `docs/early-prototypes.md` with full
   prototype documentation, archive log, and issue doc index.
 - **Stage 3** (`b9f41f7`): Slimmed `CLAUDE.md` from 805 to 236 lines. Replaced

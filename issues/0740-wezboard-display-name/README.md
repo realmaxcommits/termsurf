@@ -111,10 +111,10 @@ install script, and that's what the dock displays.
 #### Conclusion
 
 The commands.rs changes worked — the menu bar shows "TermSurf Wezboard". The
-Info.plist changes alone are insufficient for the dock. To fix the dock name, the
-app bundle directory itself needs to be renamed from `Wezboard.app` to
-`TermSurf Wezboard.app`, and the install script
-(`scripts/install.sh`) needs to install to `/Applications/TermSurf Wezboard.app`.
+Info.plist changes alone are insufficient for the dock. To fix the dock name,
+the app bundle directory itself needs to be renamed from `Wezboard.app` to
+`TermSurf Wezboard.app`, and the install script (`scripts/install.sh`) needs to
+install to `/Applications/TermSurf Wezboard.app`.
 
 ### Experiment 2: Rename app bundle directory
 
@@ -154,7 +154,8 @@ git mv wezboard/assets/macos/Wezboard.app "wezboard/assets/macos/TermSurf Wezboa
 #### Verification
 
 1. `./scripts/build.sh wezboard --release` — builds without errors.
-2. `./scripts/install.sh wezboard` — installs to `/Applications/TermSurf Wezboard.app`.
+2. `./scripts/install.sh wezboard` — installs to
+   `/Applications/TermSurf Wezboard.app`.
 3. Launch the app. The dock icon says "TermSurf Wezboard".
 
 **Result:** Pass
@@ -171,7 +172,7 @@ directory name for the dock label, not Info.plist fields.
 ## Conclusion
 
 The display name is now "TermSurf Wezboard" everywhere: the dock icon, the menu
-bar app menu, and Finder. Experiment 1 changed Info.plist and commands.rs for the
-menu bar title. Experiment 2 renamed the `.app` bundle directory for the dock
-label. Both were needed — macOS sources the display name from different places
-for different UI elements.
+bar app menu, and Finder. Experiment 1 changed Info.plist and commands.rs for
+the menu bar title. Experiment 2 renamed the `.app` bundle directory for the
+dock label. Both were needed — macOS sources the display name from different
+places for different UI elements.

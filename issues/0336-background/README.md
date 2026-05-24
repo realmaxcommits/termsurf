@@ -117,8 +117,8 @@ Test pages:
 
 Webviews now render with an opaque white background by default, matching the
 behavior of Chrome, Safari, and other browsers. Pages that don't explicitly set
-a background color will display correctly instead of showing the terminal's
-dark background bleeding through.
+a background color will display correctly instead of showing the terminal's dark
+background bleeding through.
 
 ### Implementation Summary
 
@@ -128,6 +128,6 @@ dark background bleeding through.
 
 ### Technical Note
 
-CEF uses ARGB color format. Setting `background_color` to an opaque value
-(alpha = 0xFF) disables transparent painting mode, which was causing the
-terminal background to show through.
+CEF uses ARGB color format. Setting `background_color` to an opaque value (alpha
+= 0xFF) disables transparent painting mode, which was causing the terminal
+background to show through.

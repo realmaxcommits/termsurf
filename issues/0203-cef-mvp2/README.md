@@ -6,7 +6,8 @@ closed = "2026-01-17"
 
 # CEF MVP2: Web-Open Command
 
-This document details the implementation plan for MVP2 - adding a `web-open` CLI command that displays a CEF browser overlay on a terminal pane.
+This document details the implementation plan for MVP2 - adding a `web-open` CLI
+command that displays a CEF browser overlay on a terminal pane.
 
 ## Implementation Status
 
@@ -15,7 +16,8 @@ This document details the implementation plan for MVP2 - adding a `web-open` CLI
 1. MuxNotification variants (`WebOpen`, `WebClosed`) added to `mux/src/lib.rs`
 2. Session handler updated to publish `WebOpen` notification
 3. Pattern matching updated in `dispatch.rs`, `frontend.rs`, `termwindow/mod.rs`
-4. CEF browser module created at `wezterm-gui/src/cef_browser/mod.rs` (renamed from `cef` to avoid shadowing crate)
+4. CEF browser module created at `wezterm-gui/src/cef_browser/mod.rs` (renamed
+   from `cef` to avoid shadowing crate)
 5. Browser state field added to TermWindow
 6. `handle_web_open()` method implemented
 7. `close_browser_for_pane()` method implemented
@@ -26,7 +28,8 @@ This document details the implementation plan for MVP2 - adding a `web-open` CLI
 **Remaining:**
 
 1. ~~Actual CEF texture rendering~~ - DONE (commit `247ba3b1c`)
-2. Fix macOS terminal launch issue - see [Known Issues in cef.md](cef.md#macos-multiple-browsers-fail-when-launched-from-terminal)
+2. Fix macOS terminal launch issue - see
+   [Known Issues in cef.md](cef.md#macos-multiple-browsers-fail-when-launched-from-terminal)
 3. Fix HiDPI/Retina resolution (content appears small on high-DPI displays)
 4. Testing and validation
 
@@ -36,7 +39,8 @@ This document details the implementation plan for MVP2 - adding a `web-open` CLI
 wezterm cli web-open https://example.com
 ```
 
-Opens a CEF browser displaying the URL in the current terminal pane. Press Ctrl+C to close the webview and return to the terminal.
+Opens a CEF browser displaying the URL in the current terminal pane. Press
+Ctrl+C to close the webview and return to the terminal.
 
 ## Current State
 
@@ -57,11 +61,15 @@ Opens a CEF browser displaying the URL in the current terminal pane. Press Ctrl+
 
 The following was reverted and has been re-implemented:
 
-1. ✅ **MuxNotification variants** - `WebOpen` and `WebClosed` in `mux/src/lib.rs`
-2. ✅ **CEF browser module** - `wezterm-gui/src/cef_browser/mod.rs` (~580 lines, renamed from `cef` to avoid shadowing)
-3. ✅ **TermWindow integration** - `browser_states` field, `handle_web_open()`, `close_browser_for_pane()`
+1. ✅ **MuxNotification variants** - `WebOpen` and `WebClosed` in
+   `mux/src/lib.rs`
+2. ✅ **CEF browser module** - `wezterm-gui/src/cef_browser/mod.rs` (~580 lines,
+   renamed from `cef` to avoid shadowing)
+3. ✅ **TermWindow integration** - `browser_states` field, `handle_web_open()`,
+   `close_browser_for_pane()`
 4. ✅ **Keyboard handling** - Ctrl+C detection in `keyevent.rs`
-5. 🔄 **Browser rendering** - Placeholder implemented in `paint_browser_overlay()`, actual texture compositing pending
+5. 🔄 **Browser rendering** - Placeholder implemented in
+   `paint_browser_overlay()`, actual texture compositing pending
 
 ## Implementation Plan
 
@@ -83,7 +91,8 @@ WebClosed {
 
 **File:** `wezterm-mux-server-impl/src/sessionhandler.rs`
 
-In the `Pdu::WebOpen` handler, after the success response, publish the notification:
+In the `Pdu::WebOpen` handler, after the success response, publish the
+notification:
 
 ```rust
 Pdu::WebOpen(WebOpen { pane_id, url }) => {
@@ -105,7 +114,8 @@ Pdu::WebOpen(WebOpen { pane_id, url }) => {
 
 **File:** `wezterm-gui/src/cef_browser/mod.rs` (new file, ~400 lines)
 
-Port selectively from the reverted code, removing the old `set_message_pump_hook` approach since we now use callback-based integration.
+Port selectively from the reverted code, removing the old
+`set_message_pump_hook` approach since we now use callback-based integration.
 
 Key components:
 
@@ -207,7 +217,8 @@ fn handle_web_open(&self, pane_id: PaneId, url: String) {
 }
 ```
 
-Wire up in the notification dispatch (in `TermWindow::dispatch_mux_notification`):
+Wire up in the notification dispatch (in
+`TermWindow::dispatch_mux_notification`):
 
 ```rust
 MuxNotification::WebOpen { pane_id, url } => {
@@ -355,7 +366,8 @@ MuxNotification::WebClosed { pane_id } => {
 1. **Build:** `./scripts/build-debug.sh`
 2. **Run:** `./target/debug/WezTerm.app/Contents/MacOS/wezterm-gui`
 3. **Open terminal:** Let WezTerm start normally
-4. **Test command:** In another terminal: `./target/debug/WezTerm.app/Contents/MacOS/wezterm cli web-open https://example.com`
+4. **Test command:** In another terminal:
+   `./target/debug/WezTerm.app/Contents/MacOS/wezterm cli web-open https://example.com`
 5. **Verify:** Browser should appear in the pane
 6. **Close:** Press Ctrl+C in the WezTerm window
 7. **Verify:** Terminal should return to normal
@@ -368,9 +380,13 @@ MuxNotification::WebClosed { pane_id } => {
 
 ## Notes
 
-- The old reverted code used `set_message_pump_hook` for CEF polling. We now use the callback-based `BrowserProcessHandler::on_schedule_message_pump_work` from `cef_integration.rs`. The new CEF module should NOT include any message pump setup.
+- The old reverted code used `set_message_pump_hook` for CEF polling. We now use
+  the callback-based `BrowserProcessHandler::on_schedule_message_pump_work` from
+  `cef_integration.rs`. The new CEF module should NOT include any message pump
+  setup.
 
-- Mouse events are deferred to a future MVP. This MVP focuses on keyboard-only interaction.
+- Mouse events are deferred to a future MVP. This MVP focuses on keyboard-only
+  interaction.
 
 - Browser resize on pane resize is included but may need refinement.
 

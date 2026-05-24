@@ -691,8 +691,7 @@ checkerboard rendered, and resizing crashed as before. But **none of the logs
 were captured.**
 
 Zig's `log.warn` writes to stderr via `std.debug.print`. Swift's
-`fputs(...,
-stderr)` also writes to stderr. When the app is launched via `open`,
+`fputs(..., stderr)` also writes to stderr. When the app is launched via `open`,
 macOS discards stderr — it is not written to any file or the unified log. The
 crash also didn't produce a new macOS crash report
 (`~/Library/Logs/DiagnosticReports/`) because macOS rate-limits reports to

@@ -149,25 +149,24 @@ Reviewed the following files:
 This is the most likely cause of the bimodal pattern:
 
 - **Fifo** (WezTerm): Strict FIFO queue. Frames are presented in order at each
-  vsync. If a frame misses the vsync deadline, it waits for the next vsync —
-  AND it pushes all subsequent frames back in the queue. A single late frame
-  can desynchronize the entire pipeline, causing a cascade where every
-  subsequent frame also misses. This creates a bistable system: either all
-  frames are on time (good mode) or the queue is perpetually one frame behind
-  (bad mode).
+  vsync. If a frame misses the vsync deadline, it waits for the next vsync — AND
+  it pushes all subsequent frames back in the queue. A single late frame can
+  desynchronize the entire pipeline, causing a cascade where every subsequent
+  frame also misses. This creates a bistable system: either all frames are on
+  time (good mode) or the queue is perpetually one frame behind (bad mode).
 
-- **AutoVsync** (cef-test): Automatically selects the best vsync mode. On
-  macOS with Metal, this likely uses Mailbox semantics, where a late frame
-  simply replaces the pending frame in the queue instead of backing up behind
-  it. A single late frame is absorbed gracefully — it doesn't cascade.
+- **AutoVsync** (cef-test): Automatically selects the best vsync mode. On macOS
+  with Metal, this likely uses Mailbox semantics, where a late frame simply
+  replaces the pending frame in the queue instead of backing up behind it. A
+  single late frame is absorbed gracefully — it doesn't cascade.
 
 This explains every observation:
 
 - Why ts3 is bimodal but cef-test is not (different present modes)
 - Why the mode is stable within a run (once the Fifo queue desynchronizes, it
   stays desynchronized)
-- Why the mode is random between runs (depends on whether early frames happen
-  to hit or miss the first few vsync deadlines)
+- Why the mode is random between runs (depends on whether early frames happen to
+  hit or miss the first few vsync deadlines)
 
 **Other findings:**
 
@@ -187,8 +186,8 @@ This explains every observation:
    rendering takes variable time, it could push webview frames past vsync.
 
 **Recommended next experiment:** Change WezTerm's present mode from `Fifo` to
-`AutoVsync` and re-run the ts3 benchmark. If the bimodal pattern disappears,
-the present mode is the cause.
+`AutoVsync` and re-run the ts3 benchmark. If the bimodal pattern disappears, the
+present mode is the cause.
 
 **Status:** Done
 
@@ -402,9 +401,9 @@ which has three critical features the ts3 attempts lacked:
 3. **Thread-safe marshaling:** The callback can come from any thread. The
    reference uses `performSelector:onThread:` to marshal to the main thread.
 
-The ts2 implementation (which worked at 60fps) also used this architecture,
-but benefited from WezTerm's existing AppKit event loop. The ts3 profile server
-is a headless process — it needs to run its own CFRunLoop.
+The ts2 implementation (which worked at 60fps) also used this architecture, but
+benefited from WezTerm's existing AppKit event loop. The ts3 profile server is a
+headless process — it needs to run its own CFRunLoop.
 
 **What needs to change in `termsurf-profile/src/main.rs`:**
 
@@ -418,8 +417,8 @@ is a headless process — it needs to run its own CFRunLoop.
 4. Solve the init deadlock: use a two-phase approach:
    - Phase 1: Poll with `do_message_loop_work()` + short sleep during
      `cef::initialize()` and browser creation
-   - Phase 2: Switch to `CFRunLoopRun()` once `on_context_initialized` fires
-     (or after browser is created)
+   - Phase 2: Switch to `CFRunLoopRun()` once `on_context_initialized` fires (or
+     after browser is created)
 
 **How to test:**
 
@@ -501,8 +500,8 @@ Key findings:
 1. **~30fps matches the 33ms fallback timer exactly.** The fallback timer is the
    dominant scheduling mechanism. CEF's `on_schedule_message_pump_work` callback
    is not firing reliably enough to drive 60fps rendering — after the initial
-   burst, the callback stops being the primary work driver, and the 33ms fallback
-   becomes the ceiling.
+   burst, the callback stops being the primary work driver, and the 33ms
+   fallback becomes the ceiling.
 
 2. **p50 of ~25ms = 1.5 vsync intervals.** Frames land between vsync boundaries
    because `do_message_loop_work()` isn't called quickly enough after CEF has
@@ -541,9 +540,9 @@ untested, and we lack diagnostic data to distinguish between them.
 
 2. **Timer creation overhead for immediate work.** When CEF requests delay=0
    ("work NOW"), we allocate a new `CFRunLoopTimer`, add it to the run loop, and
-   wait for CFRunLoop to process it on the next iteration. That's heavyweight.
-   A `CFRunLoopSource` would be much faster — signaling a source is just setting
-   a flag, and it triggers on the very next run loop iteration without timer
+   wait for CFRunLoop to process it on the next iteration. That's heavyweight. A
+   `CFRunLoopSource` would be much faster — signaling a source is just setting a
+   flag, and it triggers on the very next run loop iteration without timer
    allocation. The reference uses `performSelector:onThread:` which is similarly
    lighter than raw timer creation.
 
@@ -556,10 +555,11 @@ untested, and we lack diagnostic data to distinguish between them.
 4. **Multiple pump calls per frame.** CEF may need several
    `do_message_loop_work()` calls to push one frame through its internal
    pipeline (compositor schedule → layer composite → paint → accelerated paint
-   callback). The busy-wait loop provides thousands of calls per second — plenty.
-   With the event-driven approach, each call requires timer fire → run loop
-   iteration → next timer fire. If a frame needs 5–10 calls and each iteration
-   takes 0.1–1ms, a single frame could take 1–10ms of scheduling overhead.
+   callback). The busy-wait loop provides thousands of calls per second —
+   plenty. With the event-driven approach, each call requires timer fire → run
+   loop iteration → next timer fire. If a frame needs 5–10 calls and each
+   iteration takes 0.1–1ms, a single frame could take 1–10ms of scheduling
+   overhead.
 
 5. **NSApp.run() vs bare CFRunLoopRun().** The reference uses `NSApp().run()`. A
    headless process CAN create and run NSApplication (activation policy
@@ -593,9 +593,9 @@ CPU burn but halved fps from ~50 to ~29.
 
 **The bimodality investigation is blocked by the CPU problem.** The only way to
 get ~50fps today is a zero-delay busy-wait loop that pegs one core at 100%. This
-causes thermal throttling within minutes, making multi-run benchmarks unreliable.
-We cannot meaningfully test whether `PresentMode::AutoVsync` fixes bimodality
-until the profile server can sustain ~50fps without overheating.
+causes thermal throttling within minutes, making multi-run benchmarks
+unreliable. We cannot meaningfully test whether `PresentMode::AutoVsync` fixes
+bimodality until the profile server can sustain ~50fps without overheating.
 
 **The callback approach is the right path forward.** The busy-wait loop is not a
 viable long-term architecture — it wastes an entire CPU core to repeatedly call

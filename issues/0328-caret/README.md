@@ -191,9 +191,10 @@ cat /tmp/termsurf-profile-*.log | grep "FOCUS"
 pattern — wait for the first paint, then toggle unfocus/refocus.
 
 **Hypothesis:** CEF requires proper focus initialization timing. Setting focus
-immediately after `create_browser()` happens before CEF is fully ready. By waiting
-until `on_accelerated_paint` fires and toggling `set_focus(0)` then `set_focus(1)`,
-CEF's internal focus state will be properly initialized, enabling caret rendering.
+immediately after `create_browser()` happens before CEF is fully ready. By
+waiting until `on_accelerated_paint` fires and toggling `set_focus(0)` then
+`set_focus(1)`, CEF's internal focus state will be properly initialized,
+enabling caret rendering.
 
 **Changes:**
 
@@ -226,7 +227,8 @@ CEF's internal focus state will be properly initialized, enabling caret renderin
    });
    ```
 
-3. **Remove early set_focus call** (`create_browser_on_ui_thread`, lines ~1060-1064)
+3. **Remove early set_focus call** (`create_browser_on_ui_thread`, lines
+   ~1060-1064)
 
    Delete or comment out:
 
@@ -238,7 +240,8 @@ CEF's internal focus state will be properly initialized, enabling caret renderin
    }
    ```
 
-4. **Add focus toggle in on_accelerated_paint** (`ProfileRenderHandler`, line ~463)
+4. **Add focus toggle in on_accelerated_paint** (`ProfileRenderHandler`, line
+   ~463)
 
    Insert after the `PET_VIEW` check, before sending the frame:
 
@@ -340,8 +343,8 @@ cat /tmp/termsurf-profile-*.log | grep "FOCUS"
    `initial_focus_set` flag, so multiple webviews should work correctly.
 
 3. **Race condition** — The `browser` mutex lock in `on_accelerated_paint` could
-   theoretically race with browser creation, but since `on_accelerated_paint` only
-   fires after the browser is created and stored, this should be safe.
+   theoretically race with browser creation, but since `on_accelerated_paint`
+   only fires after the browser is created and stored, this should be safe.
 
 ## References
 

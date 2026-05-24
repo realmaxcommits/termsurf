@@ -908,8 +908,9 @@ Ownership chain traced from top to bottom:
 4. This layer is part of the window's `ui::Layer` tree, whose root has a
    `ui::Compositor` attached.
 
-**In content*shell, `views_host*`is always null, so`parent*ui_layer*`is never
-set, and`HasOwnCompositor` is always used.**
+**In content*shell,
+`views_host*`is always null, so`parent*ui_layer*`is never set, and`HasOwnCompositor`
+is always used.**
 
 #### Answer 3: Chrome's persistent compositor
 

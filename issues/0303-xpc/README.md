@@ -8,9 +8,9 @@ closed = "2026-01-25"
 
 ## Background
 
-This document continues the work from [302-webview.md](./302-webview.md),
-which explored cross-process GPU texture sharing between the profile server
-(CEF) and the GUI (wezterm-gui).
+This document continues the work from [302-webview.md](./302-webview.md), which
+explored cross-process GPU texture sharing between the profile server (CEF) and
+the GUI (wezterm-gui).
 
 ### The Problem
 

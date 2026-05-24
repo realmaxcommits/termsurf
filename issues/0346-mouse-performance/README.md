@@ -186,8 +186,8 @@ This eliminates task queue overhead entirely for mouse moves.
 
 **Goal:** Determine how many `mouse_move` XPC messages per second actually reach
 the profile server. We've been assuming ~125Hz based on standard Apple mouse
-polling, but we haven't measured it. The true rate determines how much throttling
-would help and which hypotheses are most likely.
+polling, but we haven't measured it. The true rate determines how much
+throttling would help and which hypotheses are most likely.
 
 **What to measure:**
 
@@ -251,7 +251,8 @@ Benchmark with continuous mouse movement: 40.4fps, p50=16.9ms, p95=50.0ms.
    per-event cost is the problem, not the volume.
 
 4. **GUI-side throttling alone won't fix this.** Halving from 60Hz to 30Hz would
-   reduce load but not eliminate the drop, because the per-event cost is so high.
+   reduce load but not eliminate the drop, because the per-event cost is so
+   high.
 
 **Hypothesis impact:**
 
@@ -281,7 +282,8 @@ overhead — potentially doubling XPC traffic (mouse_move in, cursor_change out)
 
 **Implementation plan:**
 
-1. Add a global `AtomicU64` counter (`CURSOR_CHANGE_COUNT`) to the profile server
+1. Add a global `AtomicU64` counter (`CURSOR_CHANGE_COUNT`) to the profile
+   server
 2. Increment it at the top of `on_cursor_change` in the display handler (inside
    `cef_handlers` module, accessed via `crate::CURSOR_CHANGE_COUNT`)
 3. In the message loop, log the count once per second alongside the mouse rate:
@@ -300,8 +302,8 @@ overhead — potentially doubling XPC traffic (mouse_move in, cursor_change out)
 **What the results tell us:**
 
 - If rate is ~60/sec (1:1 with mouse moves): H3 is confirmed — every mouse move
-  triggers a cursor change round-trip, doubling XPC traffic. Deduplicating cursor
-  changes would halve the per-event overhead.
+  triggers a cursor change round-trip, doubling XPC traffic. Deduplicating
+  cursor changes would halve the per-event overhead.
 - If rate is >> 60/sec: CEF fires redundant callbacks even without type changes.
   Filtering by actual type change is critical.
 - If rate is near 0: H3 is ruled out. The per-event cost is elsewhere (H2 mutex
@@ -340,9 +342,9 @@ performance across these runs.
    factor but not the dominant one.
 
 2. **Run-to-run variance dominates the signal.** The 35.5–45.7fps swing between
-   runs with identical conditions is larger than the mouse-vs-no-mouse difference
-   we were trying to measure. Something else — thermal state, system load, CEF
-   internal scheduling — is the primary source of variation.
+   runs with identical conditions is larger than the mouse-vs-no-mouse
+   difference we were trying to measure. Something else — thermal state, system
+   load, CEF internal scheduling — is the primary source of variation.
 
 3. **The Issue 345 conclusion may have been premature.** The clean 51.5 vs 39.0
    result that motivated this investigation may have been partly luck — one good
@@ -362,11 +364,11 @@ average, or identify and control the source of variance.
 
 ### Experiment 3: Remove debug logging from hot paths
 
-**Goal:** Eliminate excessive `println!` calls from performance-critical paths and
-re-measure. The profile server currently emits ~660 println!/sec during mouse
-movement. Each call acquires a stdout lock, formats a string, and writes to a log
-file. This I/O overhead may be the primary cause of both the fps drop and the
-run-to-run variance.
+**Goal:** Eliminate excessive `println!` calls from performance-critical paths
+and re-measure. The profile server currently emits ~660 println!/sec during
+mouse movement. Each call acquires a stdout lock, formats a string, and writes
+to a log file. This I/O overhead may be the primary cause of both the fps drop
+and the run-to-run variance.
 
 **What to remove:**
 
@@ -451,8 +453,8 @@ Four benchmark runs with logging removed, plus a cef-test reference run:
 **Findings:**
 
 1. **Mouse movement has no effect on performance.** Run 3 (no mouse) was the
-   worst at 33.7fps. Run 4 (with mouse) was the best at 46.6fps. The
-   correlation is random.
+   worst at 33.7fps. Run 4 (with mouse) was the best at 46.6fps. The correlation
+   is random.
 
 2. **There are exactly two performance modes.** The p50/p95 values are bimodal,
    not continuous:
@@ -461,7 +463,8 @@ Four benchmark runs with logging removed, plus a cef-test reference run:
 
    These are quantized to display refresh multiples (16.7ms = 1/60s, 50.0ms =
    3/60s, 83.3ms = 5/60s). Something external — vsync alignment, macOS display
-   server scheduling, or thermal state — determines which mode the system enters.
+   server scheduling, or thermal state — determines which mode the system
+   enters.
 
 3. **cef-test shows the same performance.** At 37.8–39.5fps with identical p50
    and p95 values, cef-test is in the same band as termsurf's good mode.

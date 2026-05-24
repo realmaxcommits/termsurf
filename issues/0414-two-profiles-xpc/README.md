@@ -122,8 +122,7 @@ the PoC with a single window, the simpler approach should work.
 
 1. GUI registers as Mach service `com.termsurf.two-profiles` (via launchd plist)
 2. GUI spawns profile-a server with args:
-   `--service com.termsurf.two-profiles
---session-id profile-a --profile profile-a --url <url>`
+   `--service com.termsurf.two-profiles --session-id profile-a --profile profile-a --url <url>`
 3. Profile-a server connects to `com.termsurf.two-profiles` by name
 4. Profile-a server sends `register` message with its session ID
 5. GUI maps the connection to the left pane
@@ -1278,9 +1277,8 @@ timing overlap.
 **Possible fixes for the next attempt:**
 
 1. **Store the peer connection in a global.** Assign the peer to a
-   `static
-xpc_connection_t` (or `__strong` Objective-C variable) so ARC
-   doesn't release it when the event handler block returns.
+   `static xpc_connection_t` (or `__strong` Objective-C variable) so ARC doesn't
+   release it when the event handler block returns.
 2. **Start the XPC listener before `[NSApp run]`.** Move `start_xpc_listener()`
    to `main()` before entering the NSApplication event loop. The XPC listener
    runs on its own dispatch queue and doesn't need NSApplication.
@@ -1305,8 +1303,7 @@ Comparing the working Experiment 2 receiver with the failing Experiment 3
 receiver reveals the exact root cause:
 
 **Experiment 2 (works):** Plain Objective-C (`main.m`). The
-`xpc_connection_t
-listener` is a local variable in `main()`. After setup,
+`xpc_connection_t listener` is a local variable in `main()`. After setup,
 `main()` calls `dispatch_main()`, which never returns. The local variable lives
 forever on the stack. ARC never releases it. The listener stays alive, and all
 peer connections delivered through it stay alive.
@@ -1582,9 +1579,9 @@ size multiplied by the device scale factor.
 
 Note: Chromium also has a `SetScaleOverrideForCapture()` mechanism on
 `RenderWidgetHostViewBase` that multiplies the device*scale_factor for HiDPI
-capture mode. This is designed for capturing at \_higher* than native resolution.
-Since we just want native Retina resolution (not super-resolution), setting
-explicit resolution constraints is the simpler and more direct fix.
+capture mode. This is designed for capturing at \_higher* than native
+resolution. Since we just want native Retina resolution (not super-resolution),
+setting explicit resolution constraints is the simpler and more direct fix.
 
 **Problem 2: The receiver's CAMetalLayer renders at 1x.**
 

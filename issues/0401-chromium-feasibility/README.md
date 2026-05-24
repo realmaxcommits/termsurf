@@ -51,7 +51,8 @@ int main(int argc, const char** argv) {
 }
 ```
 
-**What the delegate must provide** (`content/public/app/content_main_delegate.h`):
+**What the delegate must provide**
+(`content/public/app/content_main_delegate.h`):
 
 | Method                          | Purpose                        |
 | ------------------------------- | ------------------------------ |
@@ -63,7 +64,8 @@ int main(int argc, const char** argv) {
 | `CreateContentRendererClient()` | Renderer process customization |
 | `CreateContentUtilityClient()`  | Utility process customization  |
 
-**Browser process lifecycle** (`content/shell/browser/shell_browser_main_parts.h`):
+**Browser process lifecycle**
+(`content/shell/browser/shell_browser_main_parts.h`):
 
 The `ContentBrowserClient::CreateBrowserMainParts()` override returns a
 `BrowserMainParts` subclass with hooks:
@@ -99,12 +101,12 @@ Chromium's Content API provides two frame capture mechanisms on
    capture. Good for screenshots, not for streaming.
 
 2. **`CreateVideoCapturer()`** — Returns a `viz::ClientFrameSinkVideoCapturer`.
-   This is the streaming path. Both CEF and Electron use this for GPU-accelerated
-   frame delivery.
+   This is the streaming path. Both CEF and Electron use this for
+   GPU-accelerated frame delivery.
 
 **There is no built-in off-screen rendering API.** The Content API provides
-hooks (`is_never_composited`, `CopyFromSurface`, `CreateVideoCapturer`), but each
-embedder must implement its own `RenderWidgetHostView` subclass that:
+hooks (`is_never_composited`, `CopyFromSurface`, `CreateVideoCapturer`), but
+each embedder must implement its own `RenderWidgetHostView` subclass that:
 
 - Manages a `ui::Compositor` and `content::DelegatedFrameHost`
 - Creates a `viz::HostDisplayClient` for the software path
@@ -140,8 +142,8 @@ The base class adds more (`render_widget_host_view_base.h`, 706 lines).
 
 ## Question 2: CEF's Browser Creation → Content API Mapping
 
-CEF's `AlloyBrowserHostImpl::Create()` (`libcef/browser/alloy/alloy_browser_host_impl.cc`)
-does the following:
+CEF's `AlloyBrowserHostImpl::Create()`
+(`libcef/browser/alloy/alloy_browser_host_impl.cc`) does the following:
 
 ```
 CefBrowserHost::CreateBrowser(settings, client, url, ...)
@@ -157,7 +159,8 @@ CefBrowserHost::CreateBrowser(settings, client, url, ...)
 
 The critical chain is:
 
-1. **`WebContents::Create(CreateParams(browser_context))`** — Standard Content API
+1. **`WebContents::Create(CreateParams(browser_context))`** — Standard Content
+   API
 2. **`WebContentsView` subclass** — CEF provides `CefWebContentsViewOSR`
    (`libcef/browser/osr/web_contents_view_osr.h`) which implements
    `content::WebContentsView` + `content::RenderViewHostDelegateView`
@@ -179,9 +182,8 @@ concentrated in `libcef/browser/osr/` (~10 files, ~5000 lines total):
 | `video_consumer_osr.h/cc`          | ~250  | GPU frame delivery (FrameSinkVideoCapturer)    |
 | `web_contents_view_osr.h/cc`       | ~150  | WebContentsView for off-screen                 |
 
-**~2000 lines of core OSR logic.** The rest of CEF's 500 files are API
-wrappers, platform code, and Chrome integration — not needed for direct
-embedding.
+**~2000 lines of core OSR logic.** The rest of CEF's 500 files are API wrappers,
+platform code, and Chrome integration — not needed for direct embedding.
 
 ## Question 3: Frame Delivery Without CEF's Throttling
 
@@ -220,8 +222,8 @@ video_capturer_->SetAnimationFpsLockIn(false, 1);   // Disabled
 CEF disables Chromium's auto-throttling. The frame rate is controlled by
 `video_capturer_->SetMinCapturePeriod(frame_rate)`, which is set from the
 embedder. The `CefCopyFrameGenerator` that we identified as a bottleneck in
-Issue 350 is part of this pipeline — it manages frame scheduling and can
-discard frames when one is already in-flight.
+Issue 350 is part of this pipeline — it manages frame scheduling and can discard
+frames when one is already in-flight.
 
 ### Can we bypass the throttling?
 
@@ -276,8 +278,8 @@ Both extend `content::RenderWidgetHostViewBase`. Both use
    frames. Electron exposes a `release()` callback to JavaScript, letting the
    consumer control when frames return to the pool.
 
-4. **Capturer configuration** — Same as CEF: auto-throttling disabled,
-   animation FPS lock-in disabled, resolution constraints set to full range.
+4. **Capturer configuration** — Same as CEF: auto-throttling disabled, animation
+   FPS lock-in disabled, resolution constraints set to full range.
 
 ### Why Electron achieves higher FPS
 
@@ -365,8 +367,8 @@ void ts_chromium_shutdown();
 ```
 
 Pros: Thin C ABI is stable. Rust calls C functions. Chromium internals hidden
-behind the shim. This is essentially what CEF does, but minimal.
-Cons: Must live in or near the Chromium source tree for GN to find dependencies.
+behind the shim. This is essentially what CEF does, but minimal. Cons: Must live
+in or near the Chromium source tree for GN to find dependencies.
 
 **Option C: Fork content_shell**
 
@@ -375,8 +377,7 @@ Chromium tree. Compile with GN + Ninja. The output is a binary or library that
 our Rust application spawns or loads.
 
 Pros: Proven build path. content_shell already builds. We modify known-working
-code.
-Cons: Tied to Chromium source tree. Harder to version separately.
+code. Cons: Tied to Chromium source tree. Harder to version separately.
 
 ### Recommended approach: Option B
 
@@ -427,8 +428,8 @@ The build story:
 
 4. **Message loop integration** — Chromium wants to own the message loop on the
    main thread. This conflicts with our desire to own the event loop (winit).
-   CEF solves this with `external_message_pump`. We'd need a similar approach
-   or run Chromium on a separate thread.
+   CEF solves this with `external_message_pump`. We'd need a similar approach or
+   run Chromium on a separate thread.
 
 ### What's risky
 
@@ -444,9 +445,9 @@ The build story:
    (IOSurface vs DXGI vs DMA-BUF).
 
 3. **Scope creep** — The "minimal" Content API surface is not that minimal.
-   `BrowserContext` alone has dozens of required delegates (permissions, storage,
-   downloads, SSL). content_shell stubs most of these, but some are required for
-   basic web browsing (cookies, HTTPS, storage).
+   `BrowserContext` alone has dozens of required delegates (permissions,
+   storage, downloads, SSL). content_shell stubs most of these, but some are
+   required for basic web browsing (cookies, HTTPS, storage).
 
 ## Research Plan
 

@@ -254,10 +254,9 @@ different rate or has variable frame times, it could drop profile server frames
 or introduce jitter.
 
 The GUI currently uses `PresentMode::Fifo` with
-`desired_maximum_frame_latency:
-2`, which means 2 frames in the GPU queue. If the
-GUI's render loop takes variable time, frames from the profile server may sit in
-the queue waiting.
+`desired_maximum_frame_latency: 2`, which means 2 frames in the GPU queue. If
+the GUI's render loop takes variable time, frames from the profile server may
+sit in the queue waiting.
 
 **Test:** Add frame timing instrumentation to the GUI side to measure when
 IOSurface frames arrive vs when they're actually rendered to screen.

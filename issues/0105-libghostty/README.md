@@ -6,12 +6,12 @@ closed = "2026-01-04"
 
 # libghostty Changes (TermSurf 1.x)
 
-> **Scope:** This document applies to TermSurf 1.x (Ghostty-based).
-> TermSurf 2.0 is based on WezTerm and does not use libghostty.
+> **Scope:** This document applies to TermSurf 1.x (Ghostty-based). TermSurf 2.0
+> is based on WezTerm and does not use libghostty.
 
-This document tracks modifications made to libghostty (the Zig core in `ts1/src/`)
-for TermSurf 1.x. These changes are designed to be upstream-friendly and will be
-submitted as PRs to
+This document tracks modifications made to libghostty (the Zig core in
+`ts1/src/`) for TermSurf 1.x. These changes are designed to be upstream-friendly
+and will be submitted as PRs to
 [ghostty-org/ghostty](https://github.com/ghostty-org/ghostty) after MVP.
 
 ## Upstream Strategy
@@ -100,8 +100,8 @@ TermSurf-specific branding and are NOT intended for upstream submission.
 
 **Why this change:**
 
-TermSurf is a distinct product with its own branding. Users running CLI
-commands should see "TermSurf" rather than "Ghostty" to avoid confusion.
+TermSurf is a distinct product with its own branding. Users running CLI commands
+should see "TermSurf" rather than "Ghostty" to avoid confusion.
 
 **Upstream compatibility:**
 
@@ -113,7 +113,8 @@ updates, these files may have conflicts but they will be trivial to resolve
 
 ### 3. Web CLI Command (TermSurf-Specific)
 
-**Note:** This is a TermSurf-specific feature, NOT intended for upstream submission.
+**Note:** This is a TermSurf-specific feature, NOT intended for upstream
+submission.
 
 **Files added:**
 
@@ -121,15 +122,17 @@ updates, these files may have conflicts but they will be trivial to resolve
 
 **Files modified:**
 
-- `src/cli/ghostty.zig` - Registered `web` action in CLI, added `detectMultiCall`
+- `src/cli/ghostty.zig` - Registered `web` action in CLI, added
+  `detectMultiCall`
 - `src/cli/action.zig` - Added multi-call binary detection via `argv[0]`
-- `termsurf-macos/TermSurf.xcodeproj/project.pbxproj` - Added build phase for `web` symlink
+- `termsurf-macos/TermSurf.xcodeproj/project.pbxproj` - Added build phase for
+  `web` symlink
 
 **Multi-call binary:**
 
-The `web` command supports multi-call binary invocation. A symlink `web` -> `termsurf`
-is created in the app bundle during build. When invoked as `web`, the CLI automatically
-acts as if `+web` was specified.
+The `web` command supports multi-call binary invocation. A symlink `web` ->
+`termsurf` is created in the app bundle during build. When invoked as `web`, the
+CLI automatically acts as if `+web` was specified.
 
 **Usage:**
 

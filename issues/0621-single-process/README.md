@@ -279,11 +279,10 @@ contention. Look at `GpuProcessHost::EstablishGpuChannel()` in
 ### 9. Adjust MaxPendingSwaps threshold
 
 `DisplayScheduler::MaxPendingSwaps()` (display*scheduler.cc:357) returns
-different values based on display refresh rate. If
-`pending_swaps* >=
-MaxPendingSwaps()`, the GPU is marked busy and BeginFrame
-delivery throttles. Increasing the threshold might prevent premature GPU busy
-signals when two profiles share the same GPU.
+different values based on display refresh rate. If `pending_swaps* >=
+MaxPendingSwaps()`, the GPU is marked busy and BeginFrame delivery throttles.
+Increasing the threshold might prevent premature GPU busy signals when two
+profiles share the same GPU.
 
 ### 10. Disable frame rate throttling in the scheduler state machine
 
@@ -304,8 +303,7 @@ process.
 ### 12. Profile with Chrome tracing
 
 Run with
-`--trace-startup=cc,viz,gpu --trace-startup-duration=10
---trace-startup-file=/tmp/trace.json`.
+`--trace-startup=cc,viz,gpu --trace-startup-duration=10 --trace-startup-file=/tmp/trace.json`.
 Load the trace in `chrome://tracing` or Perfetto UI. The trace will show exactly
 where time is spent per frame for each compositor, revealing whether the
 bottleneck is in cc scheduling, GPU command submission, or Blink main thread

@@ -20,8 +20,8 @@ scrolling but required too much trackpad movement.
 
 ## Background
 
-Issue 321 established scroll support with a `* 2` multiplier for trackpad
-input. This was chosen because:
+Issue 321 established scroll support with a `* 2` multiplier for trackpad input.
+This was chosen because:
 
 - `* 120` (CEF default for line-based scroll) was blocky
 - `* 1` (raw values) was too slow

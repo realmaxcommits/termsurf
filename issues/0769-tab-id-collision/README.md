@@ -329,8 +329,8 @@ breaks.
 1. Build Wezboard, launch it, run `web ryanxcharles.com`.
 2. Check the log output (stdout or log file).
 3. Look for:
-   - `ServerRegister: captured server_key=Some(...)` — confirms key was set.
-     If `None`, the `handle_server_register` matching failed.
+   - `ServerRegister: captured server_key=Some(...)` — confirms key was set. If
+     `None`, the `handle_server_register` matching failed.
    - `TabReady: inserted tab_to_pane key=(...)` — confirms the insert happened
      and what key was used.
    - `handle_ca_context: looking up key=(...)` — confirms what key is used for
@@ -382,5 +382,5 @@ The tab_id collision bug (the original issue) remains unfixed. The composite key
 approach in experiment 1 was correct in principle but the implementation broke
 the browser entirely. Reverting did not restore a working browser, indicating
 the root cause of the current failure is unrelated to the changes made in this
-issue. A new issue should be opened to diagnose why the browser process fails
-to connect to the GUI.
+issue. A new issue should be opened to diagnose why the browser process fails to
+connect to the GUI.

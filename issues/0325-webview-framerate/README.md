@@ -564,9 +564,9 @@ Investigate CEF's rendering pipeline:
 **Goal:** Test whether replacing `run_message_loop()` with a tight polling loop
 using `do_message_loop_work()` improves frame rate.
 
-**Hypothesis:** CEF's `run_message_loop()` is not pumping work frequently enough.
-Calling `do_message_loop_work()` at a higher frequency will increase the frame
-rate toward 60fps.
+**Hypothesis:** CEF's `run_message_loop()` is not pumping work frequently
+enough. Calling `do_message_loop_work()` at a higher frequency will increase the
+frame rate toward 60fps.
 
 **Approach:** Replace the blocking `run_message_loop()` with a custom loop that
 calls `do_message_loop_work()` with short sleeps between iterations.
@@ -679,8 +679,8 @@ pkill -f termsurf-launcher
 ```
 
 **Root cause:** When the GUI app closes, the profile server and launcher
-processes are not terminated. This is a separate bug that should be fixed —
-the GUI should signal child processes to exit on shutdown.
+processes are not terminated. This is a separate bug that should be fixed — the
+GUI should signal child processes to exit on shutdown.
 
 ### Next Steps
 
@@ -695,8 +695,9 @@ the GUI should signal child processes to exit on shutdown.
 
 ### Experiment 4: Demand-Driven Message Pump (like ts2)
 
-**Goal:** Replace the 1ms polling loop with proper `on_schedule_message_pump_work`
-callback, matching ts2's architecture for efficient CPU usage.
+**Goal:** Replace the 1ms polling loop with proper
+`on_schedule_message_pump_work` callback, matching ts2's architecture for
+efficient CPU usage.
 
 **Hypothesis:** CEF will call `on_schedule_message_pump_work(delay_ms)` to tell
 us exactly when to pump work. Using CFRunLoop timers like ts2, we can pump work
@@ -840,8 +841,8 @@ web google.com
 
 **Status:** Failed.
 
-**Result:** Webview did not open at all. GUI reported "Timeout waiting for surface
-from XPC" — no frames were ever received.
+**Result:** Webview did not open at all. GUI reported "Timeout waiting for
+surface from XPC" — no frames were ever received.
 
 **Analysis:** The profile server started correctly:
 
@@ -860,8 +861,8 @@ But no `FRAME-TX` log output appeared — `on_accelerated_paint` was never calle
 3. Expects `run_message_loop()` to be called for proper operation
 
 We replaced `run_message_loop()` with `CFRunLoopRun()`, but CEF wasn't
-configured to drive rendering through our callback. The CFRunLoop ran, but
-CEF never scheduled any work on it.
+configured to drive rendering through our callback. The CFRunLoop ran, but CEF
+never scheduled any work on it.
 
 **Missing configuration:**
 
@@ -881,8 +882,8 @@ Both ts2 and the cef-rs OSR example set `external_message_pump: 1`:
 - `cef-rs/examples/osr/src/main.rs:674` — `external_message_pump: true as _`
 
 **Conclusion:** The experiment failed because of a missing CEF configuration
-setting, not a fundamental flaw in the approach. The CFRunLoop timer pattern
-is correct, but CEF must be told to use external message pump mode.
+setting, not a fundamental flaw in the approach. The CFRunLoop timer pattern is
+correct, but CEF must be told to use external message pump mode.
 
 **Next steps:** Either:
 
@@ -973,9 +974,9 @@ top -pid $(pgrep -f termsurf-profile)
 events were received but never processed — tasks posted to CEF's UI thread via
 `post_task` never executed.
 
-**Analysis:** Only 3 frames were produced (`frame=0`, `frame=1`, `frame=2`), then
-nothing. Scroll events arrived at the XPC handler and were posted to CEF's UI
-thread, but `MouseWheelTask::execute()` was never called.
+**Analysis:** Only 3 frames were produced (`frame=0`, `frame=1`, `frame=2`),
+then nothing. Scroll events arrived at the XPC handler and were posted to CEF's
+UI thread, but `MouseWheelTask::execute()` was never called.
 
 This indicates that after the initial burst, `do_message_loop_work()` stopped
 being called. Either:
@@ -1022,9 +1023,9 @@ while !quit_flag.load(Ordering::Relaxed) {
 }
 ```
 
-**Trade-off:** The polling loop uses slightly more CPU when idle (~5-10%) compared
-to the blocking `run_message_loop()`. This is acceptable for now. Attempts to
-optimize with CFRunLoop timers (Experiments 4-5) failed — CEF's
+**Trade-off:** The polling loop uses slightly more CPU when idle (~5-10%)
+compared to the blocking `run_message_loop()`. This is acceptable for now.
+Attempts to optimize with CFRunLoop timers (Experiments 4-5) failed — CEF's
 `on_schedule_message_pump_work` callback doesn't work reliably in the
 out-of-process architecture.
 
@@ -1041,8 +1042,8 @@ out-of-process architecture.
 
 **Files changed:**
 
-- `ts3/termsurf-profile/src/main.rs` — Replaced `run_message_loop()` with polling
-  loop, removed dedup logic, added frame timing diagnostics
+- `ts3/termsurf-profile/src/main.rs` — Replaced `run_message_loop()` with
+  polling loop, removed dedup logic, added frame timing diagnostics
 
 ## References
 

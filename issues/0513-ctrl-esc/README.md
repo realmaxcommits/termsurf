@@ -10,8 +10,7 @@ closed = "2026-02-17"
 
 The `web` TUI has two modes: Browse and Control. Pressing Esc switches from
 Browse to Control mode. The status bar displays
-`[ctrl+esc] force exit browse
-mode` as a hint — the intent was always for
+`[ctrl+esc] force exit browse mode` as a hint — the intent was always for
 Ctrl+Esc to be the primary mode switch, with bare Esc as a temporary
 convenience.
 
@@ -484,8 +483,7 @@ if let Some(ref conn) = compositor {
 The initial mode is explicit in the `set_overlay` message:
 
 - `web` sends `browsing: true` in `set_overlay` (derived from
-  `mode ==
-Mode::Browse`)
+  `mode == Mode::Browse`)
 - CompositorXPC reads `browsing` from the message and sets `paneBrowsing[uuid]`
 
 No separate sync message needed. The initial state is part of the same message

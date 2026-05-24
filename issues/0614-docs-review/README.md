@@ -111,8 +111,7 @@ must be mirrored in AGENTS.md.
    xpc-gateway build step is ts5-specific and not needed for gui/.
 
 2. **Launch command (lines 70–71):** `open ts5/zig-out/TermSurf.app` →
-   `open
-gui/zig-out/TermSurf.app`.
+   `open gui/zig-out/TermSurf.app`.
 
 3. **Status section (lines 99–123):** Says "five generations (ts1 through ts5).
    The current generation (ts5)..." — gui/ is the sixth generation and the
@@ -230,9 +229,9 @@ Minimal README: what it is, how to build, how it fits into the project.
 **Result:** Pass
 
 All four verification checks passed. The one "Ghost" match in docs/ghostty.md is
-an intentional historical reference ("It was originally named `ghost/` (after the
-working name 'Ghost')"), not stale naming. AGENTS.md is a symlink to CLAUDE.md,
-so they stay in sync automatically.
+an intentional historical reference ("It was originally named `ghost/` (after
+the working name 'Ghost')"), not stale naming. AGENTS.md is a symlink to
+CLAUDE.md, so they stay in sync automatically.
 
 #### Conclusion
 

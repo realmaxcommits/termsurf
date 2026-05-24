@@ -234,8 +234,8 @@ We added a single function declaration at the end.
 
 ### Post-Merge: Review macOS App Changes
 
-After merging upstream, review changes to `ts1/macos/` (Ghostty's macOS app)
-and port relevant updates to `ts1/termsurf-macos/`.
+After merging upstream, review changes to `ts1/macos/` (Ghostty's macOS app) and
+port relevant updates to `ts1/termsurf-macos/`.
 
 ```bash
 # List files changed in macos/ during the merge

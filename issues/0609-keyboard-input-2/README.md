@@ -560,8 +560,7 @@ when we're providing commands explicitly.
 The public `RenderWidgetHost` API only exposes `ForwardKeyboardEvent`.
 `ForwardKeyboardEventWithCommands` is on `RenderWidgetHostImpl`, which is
 already included in our file
-(`content/browser/renderer_host/
-render_widget_host_impl.h`). We static_cast to
+(`content/browser/renderer_host/ render_widget_host_impl.h`). We static_cast to
 access it.
 
 #### Chromium branch

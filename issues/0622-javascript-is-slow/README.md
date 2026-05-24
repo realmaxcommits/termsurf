@@ -738,8 +738,7 @@ if (IsDrawThrottled() && !just_submitted_in_deadline)
 ```
 
 `IsDrawThrottled()` returns true when
-`pending_submit_frames_ >=
-kMaxPendingSubmitFrames` (line 1602-1607). This is
+`pending_submit_frames_ >= kMaxPendingSubmitFrames` (line 1602-1607). This is
 per-renderer-process.
 
 **B. Viz-side: undrawn frame throttling (`kUndrawnFrameLimit = 3`)**

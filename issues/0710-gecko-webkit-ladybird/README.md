@@ -1577,8 +1577,8 @@ cross-platform portability. Here's what we learned.
 ### The libtermsurf\_\* pattern works for all four engines
 
 Every engine can be wrapped in a C shared library exporting `ts_*` functions,
-linked by a Rust binary that speaks the TermSurf protocol over Unix sockets.
-The pattern proven by Roamium (Issue 707) and libtermsurf_chromium (Issue 708)
+linked by a Rust binary that speaks the TermSurf protocol over Unix sockets. The
+pattern proven by Roamium (Issue 707) and libtermsurf_chromium (Issue 708)
 generalizes cleanly. The Rust binary (~400 lines) is almost entirely reusable
 across engines — only the C library differs.
 
@@ -1616,14 +1616,14 @@ Each engine takes a different approach to cross-process compositing on macOS:
   CAMetalLayer). IOSurfaceRef exposed via `paintable()`.
 
 For WebKit and Ladybird, the **NSView overlay approach** avoids all compositor
-complexity — just position the engine's view as a subview at the overlay's
-pixel coordinates. For Chromium, we already use CAContext/CALayerHost. For
-Gecko, the NSView overlay approach is also the recommended path.
+complexity — just position the engine's view as a subview at the overlay's pixel
+coordinates. For Chromium, we already use CAContext/CALayerHost. For Gecko, the
+NSView overlay approach is also the recommended path.
 
 ### Multi-profile is consistent
 
-Chromium, Gecko, and Ladybird all support one profile per process. WebKit is
-the exception — `WKWebsiteDataStore` allows multiple isolated data stores in a
+Chromium, Gecko, and Ladybird all support one profile per process. WebKit is the
+exception — `WKWebsiteDataStore` allows multiple isolated data stores in a
 single process. TermSurf's architecture (one browser process per profile) was
 designed around this constraint and works with all four engines.
 
@@ -1647,15 +1647,15 @@ everything, and is already shipping.
 **WebKit (Rebkit) is the highest-value next engine.** Production-grade web
 compatibility with the smallest embedding effort. Potentially zero fork
 modifications. The WKWebView-as-overlay approach eliminates GPU compositing
-complexity entirely. On macOS, it could link system WebKit.framework — no
-engine build required.
+complexity entirely. On macOS, it could link system WebKit.framework — no engine
+build required.
 
-**Ladybird is the long-term bet.** The cleanest API, smallest codebase, and
-most natural fit for TermSurf's architecture. As Ladybird matures toward web
+**Ladybird is the long-term bet.** The cleanest API, smallest codebase, and most
+natural fit for TermSurf's architecture. As Ladybird matures toward web
 compatibility, it becomes increasingly attractive. Worth tracking and
 contributing to.
 
 **Gecko (Recko) is the hardest path for the least gain.** No official embedding
 API, XPCOM complexity, and high maintenance risk. Firefox users who want a
-terminal browser can use Roamium (Chromium renders everything Firefox does).
-Not recommended unless there's a specific need for Gecko's rendering.
+terminal browser can use Roamium (Chromium renders everything Firefox does). Not
+recommended unless there's a specific need for Gecko's rendering.

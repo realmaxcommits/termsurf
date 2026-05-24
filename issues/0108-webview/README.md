@@ -7,25 +7,29 @@ closed = "2026-01-10"
 # WebView Implementation (TermSurf 1.x)
 
 > **Scope:** This document applies to TermSurf 1.x (Ghostty + WKWebView).
-> TermSurf 2.0 uses CEF via cef-rs instead of WKWebView.
-> See [cef-rs.md](cef-rs.md) and [termsurf2-wezterm-analysis.md](termsurf2-wezterm-analysis.md).
+> TermSurf 2.0 uses CEF via cef-rs instead of WKWebView. See
+> [cef-rs.md](cef-rs.md) and
+> [termsurf2-wezterm-analysis.md](termsurf2-wezterm-analysis.md).
 
 This document covers TermSurf's browser pane implementation, including the API
 checklist, implemented features, and implementation notes.
 
-For high-level architecture decisions (why WKWebView, comparison with CEF, etc.),
-see [architecture.md](architecture.md).
+For high-level architecture decisions (why WKWebView, comparison with CEF,
+etc.), see [architecture.md](architecture.md).
 
 ---
 
 ## Implementation Checklist
 
-Track progress on WKWebView API coverage. Check off items as they're implemented.
+Track progress on WKWebView API coverage. Check off items as they're
+implemented.
 
 ### WKNavigationDelegate
 
-- [x] `decidePolicyFor:navigationAction:` - Header injection (Upgrade-Insecure-Requests)
-- [x] `decidePolicyFor:navigationResponse:` - Download trigger for non-displayable content
+- [x] `decidePolicyFor:navigationAction:` - Header injection
+      (Upgrade-Insecure-Requests)
+- [x] `decidePolicyFor:navigationResponse:` - Download trigger for
+      non-displayable content
 - [x] `didStartProvisionalNavigation:` - URL change notification
 - [ ] `didReceiveServerRedirectForProvisionalNavigation:` - Redirect tracking
 - [ ] `didCommit:` - Content arriving
@@ -69,7 +73,8 @@ Track progress on WKWebView API coverage. Check off items as they're implemented
 - [ ] `applicationNameForUserAgent` - Append to UA
 - [ ] `allowsAirPlayForMediaPlayback` - AirPlay (using default)
 - [ ] `upgradeKnownHostsToHTTPS` - Auto HTTPS upgrade
-- [ ] `mediaTypesRequiringUserActionForPlayback` - Autoplay policy (using default)
+- [ ] `mediaTypesRequiringUserActionForPlayback` - Autoplay policy (using
+      default)
 - [ ] `defaultWebpagePreferences` - Per-page settings
 - [ ] `limitsNavigationsToAppBoundDomains` - Domain restriction
 - [ ] `allowsInlinePredictions` - Text predictions (using default)
@@ -100,7 +105,8 @@ embedded webviews.
 **Why No Built-in Fix?** Apple's `WKWebViewConfiguration` has no property to
 enable this header. The `upgradeKnownHostsToHTTPS` option does something
 different—it converts HTTP URLs to HTTPS but doesn't send the header. This is a
-known limitation ([Open Radar rdar://50057283](https://openradar.appspot.com/50057283)).
+known limitation
+([Open Radar rdar://50057283](https://openradar.appspot.com/50057283)).
 
 **Our Solution:** Intercept navigation requests via `WKNavigationDelegate` and
 inject the header:
@@ -130,7 +136,8 @@ func webView(
 }
 ```
 
-**Limitation:** Only works for top-level navigation, not XHR/fetch or subresources.
+**Limitation:** Only works for top-level navigation, not XHR/fetch or
+subresources.
 
 ### User-Agent String
 
@@ -170,8 +177,8 @@ WKWebView supports session isolation via `WKWebsiteDataStore`:
 ### target="\_blank" Links
 
 WKWebView ignores `target="_blank"` links by default. We implement
-`WKUIDelegate.webView(_:createWebViewWith:for:windowFeatures:)` to load these
-in the same webview. See [target-blank.md](target-blank.md).
+`WKUIDelegate.webView(_:createWebViewWith:for:windowFeatures:)` to load these in
+the same webview. See [target-blank.md](target-blank.md).
 
 ---
 
@@ -238,10 +245,10 @@ func webView(_ webView: WKWebView,
 
 ### Downloads
 
-**Limitation:** Cross-origin downloads (e.g., clicking a download link on site A that
-points to site B) are not supported due to browser security restrictions. The
-`download` attribute only works for same-origin URLs. Blob URL downloads work via
-JavaScript interception.
+**Limitation:** Cross-origin downloads (e.g., clicking a download link on site A
+that points to site B) are not supported due to browser security restrictions.
+The `download` attribute only works for same-origin URLs. Blob URL downloads
+work via JavaScript interception.
 
 ```swift
 // Add WKDownloadDelegate conformance to WebViewOverlay

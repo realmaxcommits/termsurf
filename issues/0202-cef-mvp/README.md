@@ -114,7 +114,8 @@ cargo build -p wezterm-gui --features cef
 
 **Results:**
 
-- ✅ Build completed in ~1 minute (CEF was already cached from previous attempts)
+- ✅ Build completed in ~1 minute (CEF was already cached from previous
+  attempts)
 - ✅ Binary exists at `target/debug/wezterm-gui` (170MB)
 - ✅ No linking errors
 - ✅ No unanticipated issues occurred
@@ -306,9 +307,9 @@ grep CFBundleExecutable target/release/WezTerm.app/Contents/Frameworks/*/Content
 - ✅ MallocNanoZone in plist with value 0
 - ✅ All CFBundleExecutable values correct
 - ✅ `plutil -lint` confirms plist is valid
-- ⚠️ Minor: sed inserted MallocNanoZone multiple times (multiple `<dict>` tags) -
-  this is the known "sed command differences" risk. Plist still valid, will clean up
-  in Step 7.
+- ⚠️ Minor: sed inserted MallocNanoZone multiple times (multiple `<dict>`
+  tags) - this is the known "sed command differences" risk. Plist still valid,
+  will clean up in Step 7.
 - ✅ No unanticipated issues occurred
 
 ---
@@ -440,13 +441,16 @@ RUST_LOG=info ./target/release/WezTerm.app/Contents/MacOS/wezterm-gui 2>&1 | gre
 - ✅ Log shows: `[CEF] Framework loaded`
 - ✅ Log shows: `[CEF] Initialized successfully`
 - ✅ WezTerm launches normally and runs
-- ⚠️ Additional issue discovered: After copying binary to bundle, macOS killed the
-  process with SIGKILL (exit code 137) due to invalid code signature. Fixed by:
+- ⚠️ Additional issue discovered: After copying binary to bundle, macOS killed
+  the process with SIGKILL (exit code 137) due to invalid code signature. Fixed
+  by:
   1. Moving ANGLE dylibs from bundle root to Contents/Frameworks/ (fixes
      "unsealed contents" error)
-  2. Re-signing with `codesign --force --deep --sign - target/release/WezTerm.app`
+  2. Re-signing with
+     `codesign --force --deep --sign - target/release/WezTerm.app`
 - ⚠️ Note for Step 7: Bundle script must include codesign step and dylib move
-- ✅ No unanticipated issues occurred (code signing is a known macOS requirement)
+- ✅ No unanticipated issues occurred (code signing is a known macOS
+  requirement)
 
 ---
 
@@ -541,5 +545,5 @@ rm -rf target/release/WezTerm.app
 | 6    | Add shutdown       | Quit app                     | Clean exit          | Low    | ✅     |
 | 7    | Automate           | Run script                   | Same as step 5      | Medium | ✅     |
 
-**🎉 All steps completed successfully!** CEF is now integrated into WezTerm and can be
-built with `./scripts/bundle-cef.sh`.
+**🎉 All steps completed successfully!** CEF is now integrated into WezTerm and
+can be built with `./scripts/bundle-cef.sh`.

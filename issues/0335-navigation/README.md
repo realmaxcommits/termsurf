@@ -98,8 +98,8 @@ server.
 **Status: Success**
 
 Use XPC messages (Option B) to send navigation commands from GUI to profile
-server. This follows the established pattern used for copy/cut/select_all
-(issue 318).
+server. This follows the established pattern used for copy/cut/select_all (issue
+318).
 
 #### Step 1: Add XPC methods in GUI (webview_xpc.rs)
 
@@ -318,9 +318,9 @@ tail -f /tmp/termsurf-profile-*.log | grep NAV
 
 ## Conclusion
 
-Browser navigation with Cmd+[ (back) and Cmd+] (forward) is now implemented.
-The feature works in both Browse mode and Control mode, following the
-established XPC pattern used for clipboard operations (issue 318).
+Browser navigation with Cmd+[ (back) and Cmd+] (forward) is now implemented. The
+feature works in both Browse mode and Control mode, following the established
+XPC pattern used for clipboard operations (issue 318).
 
 ### Implementation Summary
 

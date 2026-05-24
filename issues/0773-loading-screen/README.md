@@ -168,14 +168,14 @@ Browser overlay appears automatically after loading completes.
 
 #### Additional fixes during implementation
 
-- **Animated spinner:** 10-frame braille spinner (⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏) cycling at
-  100ms via `recv_timeout` during loading, blocking `recv` after.
+- **Animated spinner:** 10-frame braille spinner (⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏) cycling at 100ms
+  via `recv_timeout` during loading, blocking `recv` after.
 - **Overlay not appearing until keypress:** The GUI's paint_pass only runs when
   terminal content changes. Fixed by keeping the 100ms polling active until
   `page_loaded` (LoadingState "done"), not just `browser_ready`.
 - **2-second grace period:** After page_loaded, keep polling for 2 more seconds
-  to ensure the GUI creates and displays the CALayerHost overlay before switching
-  to blocking recv.
+  to ensure the GUI creates and displays the CALayerHost overlay before
+  switching to blocking recv.
 
 ## Conclusion
 

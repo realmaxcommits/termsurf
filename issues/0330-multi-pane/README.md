@@ -649,11 +649,12 @@ error events for a single disconnect, but that's now handled correctly.
 
 ### Experiment 4: GUI-Side Cursor Cleanup
 
-**Goal:** Fix memory leak where `webview_cursors` accumulates stale entries after
-webviews close.
+**Goal:** Fix memory leak where `webview_cursors` accumulates stale entries
+after webviews close.
 
-**Background:** During the issue 330 review, we found that `close_webview_for_pane()`
-cleans up most per-pane state but misses `webview_cursors`:
+**Background:** During the issue 330 review, we found that
+`close_webview_for_pane()` cleans up most per-pane state but misses
+`webview_cursors`:
 
 | Map                    | Cleaned on close?                     |
 | ---------------------- | ------------------------------------- |
@@ -726,8 +727,9 @@ cat /tmp/termsurf-gui.log | grep "Removed connection"
 
 **Goal:** Stop leaking Objective-C blocks when setting XPC event handlers.
 
-**Background:** Research revealed that `xpc_connection_set_event_handler` copies the
-block via `Block_copy()` internally. The current code unnecessarily leaks blocks:
+**Background:** Research revealed that `xpc_connection_set_event_handler` copies
+the block via `Block_copy()` internally. The current code unnecessarily leaks
+blocks:
 
 ```rust
 // Current code (block.rs:46-52)
@@ -741,7 +743,8 @@ This creates two references:
 1. Our leaked reference (via `into_raw`)
 2. XPC's copy (via `Block_copy`)
 
-When the connection is canceled, XPC releases its copy, but our leaked copy persists.
+When the connection is canceled, XPC releases its copy, but our leaked copy
+persists.
 
 **Research findings:**
 
@@ -751,7 +754,8 @@ When the connection is canceled, XPC releases its copy, but our leaked copy pers
 | `xpc_connection_cancel` releases handler blocks                   | [xpc_object man page](https://keith.github.io/xcode-man-pages/xpc_hash.3.html) |
 | RcBlock is ref-counted; safe to drop after passing to copying API | [block2 docs](https://docs.rs/block2/latest/block2/)                           |
 
-**Fix:** Pass a reference to the block, then let it drop normally. XPC has its own copy.
+**Fix:** Pass a reference to the block, then let it drop normally. XPC has its
+own copy.
 
 **Changes:**
 
@@ -856,7 +860,8 @@ done
 ### What We Accomplished
 
 **Core bug fixed.** Multiple webviews in the same profile now work correctly.
-Closing one webview no longer kills the profile server or affects other webviews.
+Closing one webview no longer kills the profile server or affects other
+webviews.
 
 | Experiment            | Outcome    | Impact                                                                     |
 | --------------------- | ---------- | -------------------------------------------------------------------------- |
@@ -868,31 +873,31 @@ Closing one webview no longer kills the profile server or affects other webviews
 
 ### Key Learnings About XPC
 
-1. **XPC fires multiple error events per disconnect.** A single connection close can
-   trigger 10+ `ConnectionInvalid` events. Any code that decrements a counter on
-   error must be idempotent.
+1. **XPC fires multiple error events per disconnect.** A single connection close
+   can trigger 10+ `ConnectionInvalid` events. Any code that decrements a
+   counter on error must be idempotent.
 
-2. **Canceling a listener invalidates ALL connections through its endpoint.** This
-   is documented XPC behavior: anonymous endpoints become invalid when their
-   listener is canceled. We cannot clean up listeners without breaking other
-   webviews.
+2. **Canceling a listener invalidates ALL connections through its endpoint.**
+   This is documented XPC behavior: anonymous endpoints become invalid when
+   their listener is canceled. We cannot clean up listeners without breaking
+   other webviews.
 
-3. **XPC copies blocks via `Block_copy()`.** The original comment claiming "we have
-   no way to know when XPC is done with it" was wrong. XPC copies the block when
-   you call `xpc_connection_set_event_handler`, so leaking the original is
+3. **XPC copies blocks via `Block_copy()`.** The original comment claiming "we
+   have no way to know when XPC is done with it" was wrong. XPC copies the block
+   when you call `xpc_connection_set_event_handler`, so leaking the original is
    unnecessary.
 
-4. **Mystery reconnections occur after webview close.** When a webview closes, its
-   listener (still alive in the Vec) accepts spurious reconnection attempts. The
-   idempotent handler safely ignores these.
+4. **Mystery reconnections occur after webview close.** When a webview closes,
+   its listener (still alive in the Vec) accepts spurious reconnection attempts.
+   The idempotent handler safely ignores these.
 
 ### Known Limitations
 
-**Listener accumulation (~1-2 KB per closed webview).** Each `web` command creates
-an `XpcListener` that's never freed. We cannot drop listeners because doing so
-invalidates all connections through their endpoints (experiment 2). This is
-acceptable for typical usage but would matter for long-running sessions with
-hundreds of webview open/close cycles.
+**Listener accumulation (~1-2 KB per closed webview).** Each `web` command
+creates an `XpcListener` that's never freed. We cannot drop listeners because
+doing so invalidates all connections through their endpoints (experiment 2).
+This is acceptable for typical usage but would matter for long-running sessions
+with hundreds of webview open/close cycles.
 
 | Resource               | Leak per webview | Status                                               |
 | ---------------------- | ---------------- | ---------------------------------------------------- |
@@ -908,16 +913,16 @@ hundreds of webview open/close cycles.
 
 With multi-webview support working, the remaining gaps from `CLAUDE.md` are:
 
-1. **Dynamic resize on pane change** — Webviews should resize when terminal panes
-   are resized. Currently tracked in issue 306.
+1. **Dynamic resize on pane change** — Webviews should resize when terminal
+   panes are resized. Currently tracked in issue 306.
 
 2. **Input forwarding** — Keyboard and mouse events need to be forwarded to CEF.
    Partially implemented but needs testing.
 
-3. **Profile process reuse** — The launcher should detect existing profile servers
-   and send `create_browser` commands instead of spawning new processes. This is
-   architecturally correct but not yet implemented.
+3. **Profile process reuse** — The launcher should detect existing profile
+   servers and send `create_browser` commands instead of spawning new processes.
+   This is architecturally correct but not yet implemented.
 
-Multi-pane support is now **production-ready** for the single-profile case. Users
-can open multiple webviews in the same profile, close them independently, and the
-profile server will exit gracefully when the last webview closes.
+Multi-pane support is now **production-ready** for the single-profile case.
+Users can open multiple webviews in the same profile, close them independently,
+and the profile server will exit gracefully when the last webview closes.

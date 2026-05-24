@@ -196,8 +196,7 @@ Two includes are needed at the top of the file:
 (`base/files/file_path.h` is already present.)
 
 Everything else stays the same. `InitializeMessageLoopContext()` still calls
-`Shell::CreateNewWindow(browser_context(), GetStartupURL(), nullptr,
-gfx::Size())`
+`Shell::CreateNewWindow(browser_context(), GetStartupURL(), nullptr, gfx::Size())`
 — a single Shell, single profile, standard lifecycle.
 
 #### Branch setup
@@ -259,10 +258,11 @@ profile data stored at `~/.config/termsurf/poc/profile-a`.
 
 #### Build note
 
-`autoninja` is at `ts4/termsurf-chromium/depot_tools/autoninja` and is not in the
-default shell PATH. When building from a script or automation, prefix with
-`PATH="/Users/ryan/dev/termsurf/ts4/termsurf-chromium/depot_tools:$PATH"`. The incremental build compiled only 8
-steps (~12 seconds) since the only change was `shell_browser_main_parts.cc`.
+`autoninja` is at `ts4/termsurf-chromium/depot_tools/autoninja` and is not in
+the default shell PATH. When building from a script or automation, prefix with
+`PATH="/Users/ryan/dev/termsurf/ts4/termsurf-chromium/depot_tools:$PATH"`. The
+incremental build compiled only 8 steps (~12 seconds) since the only change was
+`shell_browser_main_parts.cc`.
 
 #### Conclusion
 

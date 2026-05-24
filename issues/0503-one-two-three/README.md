@@ -926,14 +926,12 @@ profile server sends `{"action": "register", "profile": "..."}`:
 
 1. Store `peer` as `gControlConnection`.
 2. Send
-   `{"action": "create_tab", "url": "http://localhost:9407", "tab_id":
-"main"}`
+   `{"action": "create_tab", "url": "http://localhost:9407", "tab_id": "main"}`
    back on the control connection.
 3. Log the profile name.
 
 **New `tab_ready` handler:** When a profile server sends
-`{"action":
-"tab_ready", "tab_id": "main"}` on a new connection:
+`{"action": "tab_ready", "tab_id": "main"}` on a new connection:
 
 1. Store `peer` as `gTabConnection`.
 2. Log the tab ID.
@@ -998,7 +996,8 @@ three-profiles compositors — the compositor decides how many tabs to create.
 
 Update `ts5/two-profiles/` to speak the dynamic tab protocol. Same motivation as
 Experiment 4 — two-profiles is incompatible with the `146.0.7650.0-issue-503`
-Chromium branch because it routes frames by `session_id` (removed in Experiment 3) instead of by connection identity.
+Chromium branch because it routes frames by `session_id` (removed in
+Experiment 3) instead of by connection identity.
 
 Two profiles, two panes, two profile servers — each profile server gets one
 `create_tab` command and opens one tab connection. Connection identity

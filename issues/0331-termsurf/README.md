@@ -114,7 +114,8 @@ cd ts3 && ./scripts/build-debug.sh --open
 
 ## Experiment 4: Rename bundle name ✓
 
-Rename `CFBundleName` from "WezTerm" to "TermSurf" so the main menu bar shows "TermSurf".
+Rename `CFBundleName` from "WezTerm" to "TermSurf" so the main menu bar shows
+"TermSurf".
 
 **Status: Success**
 
@@ -138,7 +139,8 @@ cd ts3 && ./scripts/build-debug.sh --open
 
 Rename `~/.config/wezterm/wezterm.lua` to `~/.config/termsurf/termsurf.lua`.
 
-**Status: Success** - Works when `WEZTERM_CONFIG_FILE` env var is not set. (When launching from WezTerm, this var is inherited and overrides the path.)
+**Status: Success** - Works when `WEZTERM_CONFIG_FILE` env var is not set. (When
+launching from WezTerm, this var is inherited and overrides the path.)
 
 ### Changes
 
@@ -164,7 +166,8 @@ cd ts3 && ./scripts/build-debug.sh --open
 
 ## Experiment 6: Rename config env vars ✓
 
-Rename `WEZTERM_CONFIG_FILE` → `TERMSURF_CONFIG_FILE` and `WEZTERM_CONFIG_DIR` → `TERMSURF_CONFIG_DIR`.
+Rename `WEZTERM_CONFIG_FILE` → `TERMSURF_CONFIG_FILE` and `WEZTERM_CONFIG_DIR` →
+`TERMSURF_CONFIG_DIR`.
 
 **Status: Success**
 

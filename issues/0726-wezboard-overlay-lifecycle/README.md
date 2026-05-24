@@ -986,8 +986,7 @@ single pane, col=0 and row=1 (row 0 is the URL bar). For a right split, col
 would be the split boundary column.
 
 Ghostboard handles this in `xpc.zig:273` —
-`surface.core().setOverlay(col, row,
-width, height)` stores the grid coordinates
+`surface.core().setOverlay(col, row, width, height)` stores the grid coordinates
 per-surface, and the Metal renderer uses them to position the CALayerHost.
 Wezboard needs the same per-pane positioning.
 
@@ -1100,18 +1099,18 @@ Seven experiments across two tracks: **overlay visibility** (solved) and
 
 - **Tab switching** (Exps 1–2): Overlays hide when switching to a tab without a
   webview and reappear on switch back. Required two changes: a
-  `sync_overlay_visibility` function called from the `WindowInvalidated` handler,
-  and setting `TERMSURF_PANE_ID` in Wezboard's `domain.rs` so the TUI's pane
-  identity matches the mux pane ID.
+  `sync_overlay_visibility` function called from the `WindowInvalidated`
+  handler, and setting `TERMSURF_PANE_ID` in Wezboard's `domain.rs` so the TUI's
+  pane identity matches the mux pane ID.
 
 - **Query handlers** (Exp 5): Implemented `QueryLastRequest`,
   `QueryDevtoolsRequest`, and `QueryTabsRequest` reply handlers. These don't
-  affect the multi-pane bug but complete the protocol for `:last`, `web devtools`,
-  and `:status`.
+  affect the multi-pane bug but complete the protocol for `:last`,
+  `web devtools`, and `:status`.
 
 - **Debug instrumentation** (Exps 4, 6): Comprehensive logging across the
-  connection lifecycle — accept, message sequence, server reuse, disconnect state
-  snapshots, and per-message type names.
+  connection lifecycle — accept, message sequence, server reuse, disconnect
+  state snapshots, and per-message type names.
 
 **Diagnosed but unsolved:**
 
@@ -1128,10 +1127,11 @@ Seven experiments across two tracks: **overlay visibility** (solved) and
 1. **Overlay positioning formula** — The relationship between `origin_x`/
    `origin_y` (global content area offset), the TUI's `col`/`row` (grid
    coordinates), and the CALayer coordinate space is not yet understood. The
-   global origin may already include padding that the grid coordinates replicate,
-   or the grid coordinates may be window-relative rather than content-relative.
-   Need to inspect the actual col/row values the TUI sends and compare with
-   Ghostboard's coordinate handling in `Surface.zig` and `Metal.zig`.
+   global origin may already include padding that the grid coordinates
+   replicate, or the grid coordinates may be window-relative rather than
+   content-relative. Need to inspect the actual col/row values the TUI sends and
+   compare with Ghostboard's coordinate handling in `Surface.zig` and
+   `Metal.zig`.
 
 2. **White flash on resize** — When a split opens and the first pane resizes,
    Chromium re-sends CaContext with the same context ID. `handle_ca_context`

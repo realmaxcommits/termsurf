@@ -188,8 +188,8 @@ are viable.
   captures frames and renders via wgpu
 - **Integrate into TermSurf** — Replace CEF's `OnAcceleratedPaint` with the new
   capture API in termsurf-profile
-- **Optimize and polish** — Frame pacing, vsync alignment, edge cases, production
-  quality
+- **Optimize and polish** — Frame pacing, vsync alignment, edge cases,
+  production quality
 
 ## Experiments
 
@@ -204,8 +204,8 @@ and what Chromium APIs it uses.
 
 **Tasks:**
 
-1. Study [PR #42953](https://github.com/electron/electron/pull/42953) using local
-   source code:
+1. Study [PR #42953](https://github.com/electron/electron/pull/42953) using
+   local source code:
    - Identify the key files implementing GPU OSR
    - Understand what Chromium headers are included
    - Document how the capturer is configured
@@ -355,11 +355,13 @@ From `README.md`: The capturer uses a pool of **10 frames**
 ##### Critical Insight: Electron Bypasses CEF Entirely
 
 Electron doesn't use CEF at all. It embeds Chromium directly and accesses
-`viz::ClientFrameSinkVideoCapturer` through Chromium's internal APIs. This means:
+`viz::ClientFrameSinkVideoCapturer` through Chromium's internal APIs. This
+means:
 
 1. **We cannot add this to CEF easily** — CEF would need to expose these APIs
 2. **Patching CEF is significant work** — Would need to add new callback type
-3. **Best path: Use Chromium directly** — Either via Electron or custom embedding
+3. **Best path: Use Chromium directly** — Either via Electron or custom
+   embedding
 
 ##### Recommendation
 
@@ -369,9 +371,9 @@ Based on this research, the viable options are:
 2. **Fork Electron's approach** — Extract the OSR code and adapt for TermSurf
 3. **Patch CEF** — Add `FrameSinkVideoCapturer` support (significant C++ work)
 
-Option 1 (Embed Electron) is the lowest risk since it's already working.
-Option 2 requires understanding Chromium's build system.
-Option 3 requires maintaining a CEF fork.
+Option 1 (Embed Electron) is the lowest risk since it's already working. Option
+2 requires understanding Chromium's build system. Option 3 requires maintaining
+a CEF fork.
 
 ---
 
@@ -381,8 +383,9 @@ Option 3 requires maintaining a CEF fork.
 
 The evidence is now conclusive:
 
-1. **Issue 338** — Five experiments confirmed CEF's frame throttling is hard-coded
-   in `CefCopyFrameGenerator::GenerateCopyFrame()`. No configuration can bypass it.
+1. **Issue 338** — Five experiments confirmed CEF's frame throttling is
+   hard-coded in `CefCopyFrameGenerator::GenerateCopyFrame()`. No configuration
+   can bypass it.
 
 2. **Experiment 1** — Electron achieves 240fps by using Chromium's
    `FrameSinkVideoCapturer` API directly. This API is _internal to Chromium_ and
@@ -395,9 +398,9 @@ The evidence is now conclusive:
 ### The Ceiling is Architectural, Not Configurational
 
 CEF was designed as a simplified embedding layer. It deliberately hides
-Chromium's internal compositor APIs behind abstractions like `OnAcceleratedPaint`.
-The frame-dropping logic is part of that abstraction — CEF's authors considered
-it a feature, not a bug.
+Chromium's internal compositor APIs behind abstractions like
+`OnAcceleratedPaint`. The frame-dropping logic is part of that abstraction —
+CEF's authors considered it a feature, not a bug.
 
 The `FrameSinkVideoCapturer` API that Electron uses is internal to Chromium's
 `viz` layer. CEF does not expose it, and adding support would require forking
@@ -415,7 +418,8 @@ Chromium embedding (2017–2020) once their UI became mission-critical. Today,
 Steam is effectively its own browser platform.
 
 This trajectory is rare. Most apps never outgrow CEF. But TermSurf has hit the
-wall: browser-quality smoothness is core to the product, and CEF cannot deliver it.
+wall: browser-quality smoothness is core to the product, and CEF cannot deliver
+it.
 
 ### Paths Forward
 
@@ -438,4 +442,5 @@ Rationale:
 - Lower risk than patching CEF or embedding Chromium directly
 - Electron's OSR code can serve as reference even if we later diverge
 
-The day CEF blocks your vision is the day you earn the pain. That day has arrived.
+The day CEF blocks your vision is the day you earn the pain. That day has
+arrived.

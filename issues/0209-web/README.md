@@ -1662,12 +1662,12 @@ that make this approach unsuitable.
    with its own root directory.
 
 2. **The CLI command should BE the browser process** - When the user types
-   `termsurf web <url>`, that process should own the browser lifecycle, not
-   send a message to a hidden daemon. This matches the user's mental model.
+   `termsurf web <url>`, that process should own the browser lifecycle, not send
+   a message to a hidden daemon. This matches the user's mental model.
 
 3. **Event routing across all browsers is fragile** - Each browser should have
-   its own dedicated communication channel, not share a multiplexed socket
-   where events must be filtered by `pane_id`.
+   its own dedicated communication channel, not share a multiplexed socket where
+   events must be filtered by `pane_id`.
 
 4. **Start with the right architecture** - The complexity of retrofitting a
    multi-process model onto the existing single-process design was greater than

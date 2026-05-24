@@ -47,8 +47,7 @@ In `tui/`:
    - `Cli` struct with `#[derive(Parser)]`, a `--profile` global option, and an
      optional `#[command(subcommand)]` field
    - `Commands` enum with `#[derive(Subcommand)]` containing a
-     `Url { url:
-String }` variant
+     `Url { url: String }` variant
 
 3. **Replace manual parsing** — replace lines 110–142 with `Cli::parse()`.
    Extract the URL from either `Commands::Url { url }` or the fallback

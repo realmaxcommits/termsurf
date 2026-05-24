@@ -307,7 +307,8 @@ bottleneck.
 
 ### Experiment 3: Measure cef-rs Example Frame Rate
 
-**Status:** CONFIRMED — cef-rs achieves 60fps, proving CEF can deliver high frame rates
+**Status:** CONFIRMED — cef-rs achieves 60fps, proving CEF can deliver high
+frame rates
 
 **Goal:** Measure the actual frame rate in the cef-rs OSR example to determine
 whether it truly achieves 60fps or just feels smoother for other reasons.
@@ -381,9 +382,9 @@ cef-rs example that causes the 30fps throttling
 **Goal:** Fix the configuration mismatch between ts3 and the cef-rs example by
 enabling `external_message_pump` in CEF settings.
 
-**Rationale:** The cef-rs example (60fps) sets `external_message_pump: true`. ts3
-(17fps) does not. This is the most obvious configuration difference between the
-two.
+**Rationale:** The cef-rs example (60fps) sets `external_message_pump: true`.
+ts3 (17fps) does not. This is the most obvious configuration difference between
+the two.
 
 ts3 is in a **contradictory state**: it calls `do_message_loop_work()` in a
 manual polling loop (the external message pump pattern), but doesn't tell CEF
@@ -404,7 +405,8 @@ throttling frame production.
 Issue 325, Experiments 4-5 tried adding `external_message_pump: 1` but combined
 it with **CFRunLoop timers**, which broke for unrelated reasons (timers stopped
 firing after initial setup). Nobody has tried the simple combination of
-`external_message_pump: 1` with the **existing polling loop** that already works.
+`external_message_pump: 1` with the **existing polling loop** that already
+works.
 
 #### Implementation
 
@@ -469,8 +471,8 @@ are 60fps.
 #### Conclusion
 
 `external_message_pump` made a significant difference — the most common frame
-interval flipped from 33ms to **17ms**. CEF is now _trying_ to run at 60fps,
-but something still causes it to drop frames and stall.
+interval flipped from 33ms to **17ms**. CEF is now _trying_ to run at 60fps, but
+something still causes it to drop frames and stall.
 
 The bimodal distribution (sometimes 16ms, sometimes 33ms+) suggests CEF is
 intermittently throttling — possibly because the process lacks a window/display
@@ -487,14 +489,14 @@ foreground GUI app. The profile server has neither.
 **Goal:** Tell macOS the profile server is a foreground GUI app to prevent
 background process throttling.
 
-**Rationale:** macOS aggressively throttles background processes via **App Nap**:
-timer coalescing, reduced scheduling priority, and lower CPU allocation. The
-profile server has no window and no activation policy — macOS treats it as a
+**Rationale:** macOS aggressively throttles background processes via **App
+Nap**: timer coalescing, reduced scheduling priority, and lower CPU allocation.
+The profile server has no window and no activation policy — macOS treats it as a
 background process.
 
-This perfectly explains the bimodal distribution from Experiment 4: sometimes the
-process gets scheduled on time (16ms), sometimes macOS delays it (33ms+). App
-Nap doesn't fully block the process — it just makes scheduling inconsistent,
+This perfectly explains the bimodal distribution from Experiment 4: sometimes
+the process gets scheduled on time (16ms), sometimes macOS delays it (33ms+).
+App Nap doesn't fully block the process — it just makes scheduling inconsistent,
 which is exactly what we observe.
 
 The cef-rs example calls `NSApplicationActivationPolicyRegular` before CEF init.
@@ -556,9 +558,10 @@ vsync-multiple gaps, this suggests the `pump_app_events` +
 `do_message_loop_work()` polling loop is not synchronized with CEF's internal
 compositor timing.
 
-The key remaining difference from the cef-rs example: it has an actual **window**
-connected to a display, which provides a real vsync signal. The profile server
-has no window — CEF's compositor has no display link to synchronize against.
+The key remaining difference from the cef-rs example: it has an actual
+**window** connected to a display, which provides a real vsync signal. The
+profile server has no window — CEF's compositor has no display link to
+synchronize against.
 
 ### Experiment 6: Use `run_message_loop()` Instead of Manual Pump
 
@@ -686,7 +689,8 @@ hidden 1x1 window to provide a CVDisplayLink/display connection.
 
 ### Experiment 7: Add a Hidden 1x1 Window
 
-**Status:** SIGNIFICANT SUCCESS — 78% of frames at 60fps, sustained runs of 57 frames
+**Status:** SIGNIFICANT SUCCESS — 78% of frames at 60fps, sustained runs of 57
+frames
 
 **Goal:** Provide the process with a display link by creating a hidden window,
 closing the last remaining gap between ts3 and the cef-rs example.
@@ -704,8 +708,8 @@ CEF settings are now identical to the cef-rs example. The only remaining
 difference: the cef-rs example has **real windows** connected to the display
 server. The profile server has none.
 
-On macOS, a window connected to the window server provides a **CVDisplayLink**
-— a hardware-driven callback synchronized to the monitor's refresh rate (60Hz).
+On macOS, a window connected to the window server provides a **CVDisplayLink** —
+a hardware-driven callback synchronized to the monitor's refresh rate (60Hz).
 This is the timing signal that winit's event loop processes. Without a window,
 `pump_app_events` has nothing meaningful to pump, and CEF's compositor has no
 vsync reference.
@@ -761,8 +765,8 @@ impl ApplicationHandler for MinimalApp {
 **Most common intervals:** 17ms (327), 16ms (174) — overwhelmingly **60fps**.
 
 **Sustained rendering:** Max consecutive 60fps frames: **57** (nearly a full
-second). Multiple long streaks: 38, 34, 32, 29, 28 consecutive frames. This
-is qualitatively different from all prior experiments where the max was 5.
+second). Multiple long streaks: 38, 34, 32, 29, 28 consecutive frames. This is
+qualitatively different from all prior experiments where the max was 5.
 
 **Stalls:** The remaining 10% of "Low" frames are mostly 100ms+ stalls, likely
 caused by page load, layout, or JavaScript execution — not systematic
@@ -784,9 +788,9 @@ throttling.
 The hidden window hypothesis was **correct**. The display link provided by the
 window gives CEF's compositor the vsync timing signal it needs.
 
-The bimodal pattern from Experiment 4 is largely gone. CEF now sustains 60fps
-in long uninterrupted runs (up to 57 consecutive frames). The 25.7 fps average
-is dragged down by idle periods and page load stalls, not by systematic frame
+The bimodal pattern from Experiment 4 is largely gone. CEF now sustains 60fps in
+long uninterrupted runs (up to 57 consecutive frames). The 25.7 fps average is
+dragged down by idle periods and page load stalls, not by systematic frame
 dropping during active rendering.
 
 **What the window provides:** On macOS, a window connected to the window server
@@ -797,10 +801,10 @@ vsync reference and dropped frames unpredictably.
 
 **Remaining gap from cef-rs (78% vs 90% at 60fps):** The cef-rs example renders
 directly to its window via wgpu. ts3's profile server creates the window but
-doesn't render to it — the actual rendering happens in the GUI process. This
-may mean the display link integration is slightly less effective without an
-active rendering surface. However, 78% at 60fps with sustained runs is a
-dramatic improvement and likely sufficient for smooth user experience.
+doesn't render to it — the actual rendering happens in the GUI process. This may
+mean the display link integration is slightly less effective without an active
+rendering surface. However, 78% at 60fps with sustained runs is a dramatic
+improvement and likely sufficient for smooth user experience.
 
 #### Notes
 
@@ -940,8 +944,8 @@ peak. The intervals are scattered rather than clustered at vsync boundaries.
 
 #### Conclusion
 
-The CVDisplayLink alone does **not** work. Performance is worse than Experiment 4
-(30% vs 52% at 60fps) and far worse than Experiment 7 (30% vs 78%). The "Why
+The CVDisplayLink alone does **not** work. Performance is worse than Experiment
+4 (30% vs 52% at 60fps) and far worse than Experiment 7 (30% vs 78%). The "Why
 This Might NOT Work" prediction was correct.
 
 CEF's compositor does not use process-level CVDisplayLink timing. It relies on
@@ -975,11 +979,12 @@ foundation. Focus-stealing will be addressed in a subsequent experiment.
 
 1. **Add `winit` dependency back** to `Cargo.toml`
 2. **Remove `cv_display_link` module** entirely
-3. **Restore `MinimalApp`** struct implementing `winit::application::ApplicationHandler`
+3. **Restore `MinimalApp`** struct implementing
+   `winit::application::ApplicationHandler`
    - `resumed()` creates a hidden 1×1 window
    - `about_to_wait()` calls `do_message_loop_work()` and checks `QUIT_FLAG`
-4. **Restore winit event loop** using `pump_app_events(Some(Duration::ZERO))`
-   in a loop with 1ms sleep
+4. **Restore winit event loop** using `pump_app_events(Some(Duration::ZERO))` in
+   a loop with 1ms sleep
 5. **Keep** `external_message_pump: 1` and `QUIT_FLAG`
 
 #### Expected Outcome
@@ -1057,9 +1062,9 @@ The three activation policies:
 | **Accessory** | **1** | **No**    | **Yes**         | **No**       |
 | Prohibited    | 2     | No        | No              | No           |
 
-`Prohibited` won't work because it prevents window creation entirely. `Accessory`
-is the sweet spot — windows are allowed (for the vsync signal) but the process
-stays in the background.
+`Prohibited` won't work because it prevents window creation entirely.
+`Accessory` is the sweet spot — windows are allowed (for the vsync signal) but
+the process stays in the background.
 
 #### Changes
 
@@ -1113,14 +1118,15 @@ the NSWindow directly with `canBecomeKey: NO`.
 
 **Status:** PARTIAL — Focus fix works, but lost vsync benefit
 
-**Goal:** Replace winit with a native NSWindow created via AppKit FFI, subclassed
-to override `canBecomeKey` returning `NO`. This prevents the window from ever
-becoming the key window, which is what causes focus stealing.
+**Goal:** Replace winit with a native NSWindow created via AppKit FFI,
+subclassed to override `canBecomeKey` returning `NO`. This prevents the window
+from ever becoming the key window, which is what causes focus stealing.
 
 **Problem:** Experiments 7, 9, and 10 proved that a window is needed for vsync,
-but winit's window creation steals focus. `NSApplicationActivationPolicyAccessory`
-(Exp 10) didn't help because winit internally activates the window during
-creation. We need full control over the window's behavior.
+but winit's window creation steals focus.
+`NSApplicationActivationPolicyAccessory` (Exp 10) didn't help because winit
+internally activates the window during creation. We need full control over the
+window's behavior.
 
 **Hypothesis:** When an NSWindow's `canBecomeKey` returns `NO`, it cannot become
 the key window, so it cannot steal keyboard focus. Combined with `orderBack:`
@@ -1186,9 +1192,9 @@ window must become key. By subclassing NSWindow to return `NO` from
 `canBecomeKey`, the window can never become key — it simply exists in the window
 server's window list. The window server still sends vsync notifications to all
 windows, regardless of key status. Combined with `orderBack:` (which places the
-window without activating it) and `NSApplicationActivationPolicyAccessory` (which
-prevents app-level activation), there are three layers of protection against
-focus stealing.
+window without activating it) and `NSApplicationActivationPolicyAccessory`
+(which prevents app-level activation), there are three layers of protection
+against focus stealing.
 
 #### Results
 
@@ -1247,9 +1253,9 @@ was not fully registered with the window server's compositing pipeline.
 
 **Hypothesis:** `orderBack:` puts the window in a partially-registered state
 where the window server doesn't include it in its vsync notification list.
-`orderFront:nil` fully registers the window with the compositing pipeline.
-Since `canBecomeKey` returns `NO`, the window cannot become the key window even
-when ordered front — keyboard focus should stay with WezTerm.
+`orderFront:nil` fully registers the window with the compositing pipeline. Since
+`canBecomeKey` returns `NO`, the window cannot become the key window even when
+ordered front — keyboard focus should stay with WezTerm.
 
 The macOS window server tracks "on-screen" windows for compositing and vsync.
 `orderBack:` may place the window below everything (possibly off-screen to the
@@ -1275,13 +1281,15 @@ compositor), while `orderFront:` ensures the window is actively composited.
 `canBecomeKey` and `orderFront:` are orthogonal:
 
 - `orderFront:` controls window **visibility and compositing** — it tells the
-  window server "this window is on-screen, include it in your rendering pipeline"
+  window server "this window is on-screen, include it in your rendering
+  pipeline"
 - `canBecomeKey` controls **keyboard focus** — it determines whether the window
   can receive keyboard events
 
 A window can be ordered front (visible, composited, receiving vsync) without
-being key (receiving keyboard input). This is exactly how utility/palette windows
-work in macOS — they're visible and rendered but don't steal the text cursor.
+being key (receiving keyboard input). This is exactly how utility/palette
+windows work in macOS — they're visible and rendered but don't steal the text
+cursor.
 
 #### Results
 
@@ -1319,9 +1327,9 @@ work in macOS — they're visible and rendered but don't steal the text cursor.
 
 The most likely culprit is that winit creates a **content view with a CALayer
 backing**. On macOS, the window server's compositing pipeline is driven by Core
-Animation layers, not the NSWindow itself. A bare NSWindow without a layer-backed
-content view may not participate in the vsync-driven compositing cycle. Winit
-creates an `NSView` as the content view and enables layer backing
+Animation layers, not the NSWindow itself. A bare NSWindow without a
+layer-backed content view may not participate in the vsync-driven compositing
+cycle. Winit creates an `NSView` as the content view and enables layer backing
 (`wantsLayer = YES`), which is what actually hooks into the display's refresh
 cycle.
 
@@ -1338,8 +1346,8 @@ stealing.
 
 **Problem:** Experiments 11 and 12 proved that a native NSWindow with
 `canBecomeKey: NO` prevents focus stealing, but the window doesn't get vsync
-notifications — regardless of `orderBack:` vs `orderFront:`. Winit's window
-gets vsync but steals focus. The difference must be in how winit configures the
+notifications — regardless of `orderBack:` vs `orderFront:`. Winit's window gets
+vsync but steals focus. The difference must be in how winit configures the
 window beyond creation and ordering.
 
 **Hypothesis:** On macOS, the window server's compositing pipeline is driven by
@@ -1361,8 +1369,8 @@ the window server's compositing cycle, enabling vsync notifications.
    - Set `wantsLayer = YES` on the view
    - Set it as the window's content view
 2. **Everything else stays the same:** `canBecomeKey: NO` subclass,
-   `NSApplicationActivationPolicyAccessory`, `orderFront:nil`, simple
-   sleep+pump loop
+   `NSApplicationActivationPolicyAccessory`, `orderFront:nil`, simple sleep+pump
+   loop
 
 #### Implementation
 
@@ -1427,9 +1435,10 @@ peak.
 
 #### Conclusion
 
-The CALayer hypothesis was wrong. All three native NSWindow experiments (11, 12, 13) produce the same ~34-36% at 60fps with max streak of 3-4, regardless of
-ordering method or layer backing. Winit's window produces 61-78% with streaks
-of 35-57.
+The CALayer hypothesis was wrong. All three native NSWindow experiments (11,
+12, 13) produce the same ~34-36% at 60fps with max streak of 3-4, regardless of
+ordering method or layer backing. Winit's window produces 61-78% with streaks of
+35-57.
 
 The difference isn't the window configuration — it's the **event loop**. Winit's
 `pump_app_events` integrates with the macOS `NSRunLoop`, which is what drives
@@ -1456,17 +1465,17 @@ replacing the naive `sleep(1ms)` polling. Keep the native NSWindow with
 `canBecomeKey: NO` from Experiments 11-13.
 
 **Problem:** Experiments 11-13 proved that a native NSWindow (with various
-configurations) prevents focus stealing but doesn't get vsync. The window
-itself isn't the issue — all three configurations produced identical ~34-36%
-at 60fps. Winit's `pump_app_events` produces 61-78%. The difference must be
-the event loop, not the window.
+configurations) prevents focus stealing but doesn't get vsync. The window itself
+isn't the issue — all three configurations produced identical ~34-36% at 60fps.
+Winit's `pump_app_events` produces 61-78%. The difference must be the event
+loop, not the window.
 
 **Hypothesis:** Winit's `pump_app_events` internally calls
-`NSApplication.nextEventMatchingMask:untilDate:inMode:dequeue:`, which runs
-the macOS run loop. The macOS window server delivers display refresh
-notifications as events through `NSApplication`. Without pumping these events,
-the window server's vsync callbacks never fire, and CEF's compositor doesn't
-get the timing signal it needs.
+`NSApplication.nextEventMatchingMask:untilDate:inMode:dequeue:`, which runs the
+macOS run loop. The macOS window server delivers display refresh notifications
+as events through `NSApplication`. Without pumping these events, the window
+server's vsync callbacks never fire, and CEF's compositor doesn't get the timing
+signal it needs.
 
 Evidence supporting this:
 
@@ -1529,17 +1538,17 @@ loop {
 #### Why This Should Work
 
 The macOS window server communicates with applications through the
-`NSApplication` event queue. Display refresh notifications, window
-update events, and compositing signals are all delivered as events.
-`NSApplication.nextEventMatchingMask:` is the standard way to receive
-these — it runs the underlying `CFRunLoop`, which processes:
+`NSApplication` event queue. Display refresh notifications, window update
+events, and compositing signals are all delivered as events.
+`NSApplication.nextEventMatchingMask:` is the standard way to receive these — it
+runs the underlying `CFRunLoop`, which processes:
 
 - Display link callbacks (per-window vsync)
 - Window server notifications (damage, expose, update)
 - Core Animation commit triggers
 
-Without this event pumping, the window exists but the process never
-processes the vsync events the window server sends to it.
+Without this event pumping, the window exists but the process never processes
+the vsync events the window server sends to it.
 
 #### Results
 
@@ -1585,8 +1594,8 @@ configuration or event pumping — possibly a `CFRunLoop` observer,
 `CADisplayLink`, or its own `CVDisplayLink` tied to the window's display
 connection. The mechanism is internal to winit's macOS backend.
 
-**Next step:** Stop trying to replicate winit's internals. Go back to winit
-and prevent focus stealing via method swizzling.
+**Next step:** Stop trying to replicate winit's internals. Go back to winit and
+prevent focus stealing via method swizzling.
 
 ### Experiment 15: Swizzle canBecomeKey on Winit's Window
 
@@ -1596,8 +1605,8 @@ and prevent focus stealing via method swizzling.
 NSWindow's `canBecomeKey` method to return `NO` before winit creates its window.
 
 **Problem:** Four experiments (11-14) tried to replicate winit's vsync with a
-native NSWindow. All failed identically at ~34% at 60fps. Winit's internal
-setup — whatever it is — cannot be replicated by creating an NSWindow manually.
+native NSWindow. All failed identically at ~34% at 60fps. Winit's internal setup
+— whatever it is — cannot be replicated by creating an NSWindow manually.
 Meanwhile, winit produces 61-78% at 60fps but steals focus.
 
 Previous focus-fix attempts with winit:
@@ -1608,14 +1617,14 @@ Previous focus-fix attempts with winit:
 Both failed because winit internally calls `makeKeyAndOrderFront:`, which makes
 the window key and activates the application regardless of these settings.
 
-**Hypothesis:** If we swizzle `canBecomeKey` on the `NSWindow` class itself
-(via the ObjC runtime) _before_ winit creates its EventLoop and window, then
-when winit calls `makeKeyAndOrderFront:`, the window will be ordered front
+**Hypothesis:** If we swizzle `canBecomeKey` on the `NSWindow` class itself (via
+the ObjC runtime) _before_ winit creates its EventLoop and window, then when
+winit calls `makeKeyAndOrderFront:`, the window will be ordered front
 (preserving vsync registration) but _cannot_ become key (preserving focus).
 
-This is the reverse of Experiment 11's approach: instead of building a focus-safe
-window and trying to add vsync, we take winit's vsync-capable window and remove
-its ability to steal focus.
+This is the reverse of Experiment 11's approach: instead of building a
+focus-safe window and trying to add vsync, we take winit's vsync-capable window
+and remove its ability to steal focus.
 
 #### Changes
 
@@ -1649,8 +1658,9 @@ unsafe {
 }
 ```
 
-Note: The actual swizzling API may need `objc::runtime::method_setImplementation`
-or similar. The exact implementation will be determined at build time.
+Note: The actual swizzling API may need
+`objc::runtime::method_setImplementation` or similar. The exact implementation
+will be determined at build time.
 
 #### Expected Outcome
 
@@ -1662,9 +1672,10 @@ or similar. The exact implementation will be determined at build time.
 
 #### Why This Should Work
 
-Method swizzling replaces the implementation of an Objective-C method at runtime.
-By replacing `canBecomeKey` on the `NSWindow` class _before_ winit creates any
-windows, every NSWindow in this process will return `NO` from `canBecomeKey`.
+Method swizzling replaces the implementation of an Objective-C method at
+runtime. By replacing `canBecomeKey` on the `NSWindow` class _before_ winit
+creates any windows, every NSWindow in this process will return `NO` from
+`canBecomeKey`.
 
 When winit calls `makeKeyAndOrderFront:`:
 
@@ -1678,8 +1689,8 @@ this process, not the system.
 
 #### Why Previous Focus Fixes Failed
 
-- `with_active(false)` — winit window attribute, but winit may ignore it or
-  call `makeKeyAndOrderFront:` regardless
+- `with_active(false)` — winit window attribute, but winit may ignore it or call
+  `makeKeyAndOrderFront:` regardless
 - `NSApplicationActivationPolicyAccessory` — prevents app-level activation, but
   `makeKeyAndOrderFront:` can still make the window key _within_ the app,
   triggering macOS to switch focus to the process
@@ -1688,12 +1699,12 @@ this process, not the system.
 
 #### Notes
 
-- This flips the approach: instead of replicating winit's vsync (Exp 11-14),
-  we disable winit's focus stealing
+- This flips the approach: instead of replicating winit's vsync (Exp 11-14), we
+  disable winit's focus stealing
 - Restores `winit` dependency, removes `cocoa` NSWindow creation code
 - Keeps `cocoa` and `objc` for the swizzle and activation policy
-- Method swizzling is a standard Objective-C pattern used by many macOS apps
-  for customizing framework behavior
+- Method swizzling is a standard Objective-C pattern used by many macOS apps for
+  customizing framework behavior
 - If `canBecomeKey` alone isn't enough, we may also need to swizzle
   `canBecomeMain` and/or `[NSApp activateIgnoringOtherApps:]`
 
@@ -1771,9 +1782,9 @@ profile server has started. Options:
 
 #### Changes
 
-1. **In `webview_xpc.rs`** (GUI-side XPC handler): When the profile server's
-   XPC connection is established, call `[NSApp activateIgnoringOtherApps:YES]`
-   to reclaim focus
+1. **In `webview_xpc.rs`** (GUI-side XPC handler): When the profile server's XPC
+   connection is established, call `[NSApp activateIgnoringOtherApps:YES]` to
+   reclaim focus
 2. **No changes to `termsurf-profile`** — keep the winit window as-is (Exp 9
    configuration for vsync)
 3. **Revert Exp 15 code changes** in `termsurf-profile` — remove the swizzle,
@@ -1818,14 +1829,14 @@ The XPC connection event is the ideal trigger because:
 
 #### Notes
 
-- This is the first experiment that modifies the **GUI process** rather than
-  the profile server
+- This is the first experiment that modifies the **GUI process** rather than the
+  profile server
 - The profile server keeps its winit window for vsync — no performance risk
-- The focus reclaim should happen within milliseconds of the focus steal,
-  making it imperceptible
+- The focus reclaim should happen within milliseconds of the focus steal, making
+  it imperceptible
 - If the flicker is noticeable, a follow-up experiment could add a small delay
-  before the profile server creates its winit window, giving the GUI time to
-  set up a focus-reclaim callback first
+  before the profile server creates its winit window, giving the GUI time to set
+  up a focus-reclaim callback first
 
 #### Results
 
@@ -1878,8 +1889,8 @@ unsolvable problems:
 2. **Vsync dependency on activation:** The vsync signal requires the process to
    be (or have been) the active app when the window is created
 
-These problems are in direct conflict. The hidden 1×1 window was always a hack
-— it works only when the profile server is allowed to steal focus, which is
+These problems are in direct conflict. The hidden 1×1 window was always a hack —
+it works only when the profile server is allowed to steal focus, which is
 unacceptable in production.
 
 **The hidden window approach is abandoned.** Future experiments should explore
@@ -1901,11 +1912,11 @@ were fighting CEF's internal scheduling instead of controlling it.
 
 CEF provides an explicit API for exactly this case: **external begin frame**.
 When enabled, CEF's compositor stops deciding when to render and instead waits
-for the embedder to call `send_external_begin_frame()`. The embedder becomes
-the frame clock.
+for the embedder to call `send_external_begin_frame()`. The embedder becomes the
+frame clock.
 
-**Hypothesis:** If we call `send_external_begin_frame()` at exactly 60Hz using
-a high-resolution timer, CEF will produce exactly one frame per call, delivered
+**Hypothesis:** If we call `send_external_begin_frame()` at exactly 60Hz using a
+high-resolution timer, CEF will produce exactly one frame per call, delivered
 via `on_accelerated_paint`. No window needed — the timer IS the frame clock.
 
 #### How It Works
@@ -1936,8 +1947,9 @@ The cef-rs bindings fully expose this feature:
   cycle. CEF renders the current page state and delivers the result via
   `on_accelerated_paint`. Takes no arguments.
 
-The cef-rs OSR example explicitly disables this (`external_begin_frame_enabled:
-false as _`) because it uses winit's event loop for timing instead.
+The cef-rs OSR example explicitly disables this
+(`external_begin_frame_enabled: false as _`) because it uses winit's event loop
+for timing instead.
 
 #### Changes
 
@@ -1947,8 +1959,8 @@ false as _`) because it uses winit's event loop for timing instead.
    browsers
 3. **Create a high-resolution timer** at 16.67ms (60Hz) using
    `mach_absolute_time` + `mach_wait_until` (sub-millisecond precision on macOS)
-4. **In the timer loop**, call `send_external_begin_frame()` on every browser
-   in the profile, then call `do_message_loop_work()`
+4. **In the timer loop**, call `send_external_begin_frame()` on every browser in
+   the profile, then call `do_message_loop_work()`
 5. **Keep `external_message_pump: 1`** in CEF settings
 
 #### Implementation
@@ -1983,8 +1995,8 @@ loop {
 }
 ```
 
-Note: `mach_absolute_time` returns ticks in a hardware-specific timebase.
-The conversion ratio from nanoseconds to ticks is obtained from
+Note: `mach_absolute_time` returns ticks in a hardware-specific timebase. The
+conversion ratio from nanoseconds to ticks is obtained from
 `mach_timebase_info`.
 
 #### Why This Should Work
@@ -2000,9 +2012,9 @@ This approach is fundamentally different from all 16 previous experiments:
 | Inconsistent frame timing           | Deterministic frame timing   |
 
 CEF's `external_begin_frame` is designed for embedders who have their own
-rendering pipeline and need CEF to synchronize with it. This is exactly our
-case — the GUI process has its own wgpu rendering loop, and we need CEF to
-produce frames on our schedule, not its own.
+rendering pipeline and need CEF to synchronize with it. This is exactly our case
+— the GUI process has its own wgpu rendering loop, and we need CEF to produce
+frames on our schedule, not its own.
 
 #### Expected Outcome
 
@@ -2042,8 +2054,8 @@ window.
 We assumed CEF needed environmental signals (vsync, display link, window server
 notifications) to produce frames. Experiments 1-16 tried to provide those
 signals. But the real answer was always available — CEF has an API to bypass its
-internal scheduling entirely. We were so focused on what the process _environment_
-needed that we missed what the CEF _API_ offered.
+internal scheduling entirely. We were so focused on what the process
+_environment_ needed that we missed what the CEF _API_ offered.
 
 #### Notes
 
@@ -2089,15 +2101,15 @@ needed that we missed what the CEF _API_ offered.
 
 **FAILED.** `send_external_begin_frame()` does not work as expected. Despite
 being called at a precise 60Hz by a high-resolution timer, CEF produced frames
-at only 14.8fps — worse than every prior experiment including the original
-sleep loop (Exp 2: 17fps).
+at only 14.8fps — worse than every prior experiment including the original sleep
+loop (Exp 2: 17fps).
 
 The frame intervals are completely scattered with no pattern, suggesting
 `send_external_begin_frame()` does not directly trigger frame production. The
 call likely posts an internal task to CEF's compositor, which then needs
 `do_message_loop_work()` to process it. But the compositor may require multiple
-message loop iterations to complete a frame, meaning a single
-begin-frame + message-loop-work per tick is insufficient.
+message loop iterations to complete a frame, meaning a single begin-frame +
+message-loop-work per tick is insufficient.
 
 The `external_begin_frame` API appears to be designed for a different use case
 than ours — likely for embedders with their own compositor that need to
@@ -2122,8 +2134,8 @@ changes accumulated in the profile server are:
 None of these changes produced an acceptable solution:
 
 - The hidden window achieves 60-70% at 60fps but **steals focus** (Exp 7/9)
-- Every attempt to fix focus stealing either broke vsync (Exp 11-14), broke
-  CEF (Exp 15), or caused a performance regression (Exp 16)
+- Every attempt to fix focus stealing either broke vsync (Exp 11-14), broke CEF
+  (Exp 15), or caused a performance regression (Exp 16)
 - `external_begin_frame` was worse than the original code (Exp 17)
 
 The original code before performance work (commit `d3fc03161`) was:
@@ -2146,9 +2158,9 @@ while !QUIT_FLAG.load(Ordering::Relaxed) {
 }
 ```
 
-This ran at ~17-20fps, which prompted the investigation. Reverting to this
-state provides a clean baseline for future experiments that take a different
-approach entirely.
+This ran at ~17-20fps, which prompted the investigation. Reverting to this state
+provides a clean baseline for future experiments that take a different approach
+entirely.
 
 #### Changes
 
@@ -2237,8 +2249,8 @@ unstable timing. Any future experiments start from this foundation.
 3. **The hidden window is unacceptable.** It steals focus from the GUI. Every
    attempt to fix focus stealing either destroyed the vsync signal (Exp 11-14,
    16), broke CEF entirely (Exp 15), or had no effect (Exp 10). Focus and vsync
-   are fundamentally coupled through the window — you cannot have one without the
-   other.
+   are fundamentally coupled through the window — you cannot have one without
+   the other.
 
 4. **`external_message_pump` helps but isn't enough.** Enabling it raised
    performance from 17fps to 22fps (Exp 4), but consistent 60fps still requires
@@ -2249,8 +2261,8 @@ unstable timing. Any future experiments start from this foundation.
    14.8fps (Exp 17). The API does not directly trigger frame production.
 
 6. **The bottleneck is the process environment, not the code.** No amount of
-   polling strategy, event loop design, or timer precision can compensate for the
-   lack of a window server connection. A headless process on macOS does not
+   polling strategy, event loop design, or timer precision can compensate for
+   the lack of a window server connection. A headless process on macOS does not
    receive vsync callbacks.
 
 ### What Didn't Work
@@ -2265,8 +2277,8 @@ unstable timing. Any future experiments start from this foundation.
 - **Global method swizzling** (Exp 15) — broke CEF's internal windows.
 - **Focus reclaim from GUI** (Exp 16) — deactivating the profile server before
   window creation destroyed the vsync signal.
-- **External frame timing** (Exp 17) — `send_external_begin_frame()` at 60Hz
-  was worse than doing nothing.
+- **External frame timing** (Exp 17) — `send_external_begin_frame()` at 60Hz was
+  worse than doing nothing.
 
 ### Current Baseline
 

@@ -640,8 +640,7 @@ WezTerm or any other ts3 crate.
 6. Create `ts3/cef-test-scripts/` directory for build scripts
 
 **Test:**
-`cd ts3 && cargo build -p cef-test-gui -p cef-test-profile -p
-cef-test-launcher`
+`cd ts3 && cargo build -p cef-test-gui -p cef-test-profile -p cef-test-launcher`
 succeeds. `cargo build -p wezterm-gui` still succeeds (no regressions).
 
 ### Phase 2: Profile Server — Standalone Headless CEF
@@ -1034,8 +1033,8 @@ Key observations:
 - **Max streak of 80-139 vs cef-rs's 400+.** The periodic spikes break long
   streaks. This is consistent with CEF's internal scheduling interacting with
   the manual `do_message_loop_work` + `CFRunLoopRunInMode` pump pattern.
-- **Both profiles perform nearly identically** (~50fps), confirming that
-  running two CEF processes doesn't materially degrade per-profile performance.
+- **Both profiles perform nearly identically** (~50fps), confirming that running
+  two CEF processes doesn't materially degrade per-profile performance.
 
 Key implementation details:
 
@@ -1043,8 +1042,8 @@ Key implementation details:
   keep the page in constant visual motion without hitting top/bottom stalls.
 - Profile server logs frame intervals in `on_accelerated_paint` via
   `LAST_PAINT_TIME` mutex.
-- GUI tracks per-side `FrameStats` with frame count, intervals, and computes
-  avg fps, 60fps%, max streak, percentiles. Summary prints every 10 seconds.
+- GUI tracks per-side `FrameStats` with frame count, intervals, and computes avg
+  fps, 60fps%, max streak, percentiles. Summary prints every 10 seconds.
 - `PendingSurface` includes `rx_time` timestamp for accurate GUI-side interval
   measurement.
 - XPC callbacks dispatch on a background queue (not the main queue) so they
@@ -1065,8 +1064,8 @@ cross-process IPC or IOSurface sharing.
 Three things are now established:
 
 1. **Multi-process works.** Two CEF processes sharing one window via Mach port
-   IOSurface transfer achieve ~50fps each with p50 = 16.7ms (exactly 60fps).
-   The architecture is sound.
+   IOSurface transfer achieve ~50fps each with p50 = 16.7ms (exactly 60fps). The
+   architecture is sound.
 
 2. **ts3's 38fps may be an input problem, not a rendering problem.** cef-test
    sends scroll events at 125Hz directly inside the profile server. ts3's 38fps
@@ -1132,13 +1131,13 @@ Three conclusions:
    The architecture is sound. Cross-process IPC and GPU texture sharing cost
    almost nothing.
 
-2. **ts3's 38fps is likely an input rate problem.** The 38fps was measured during
-   manual scrolling, where input traverses a long pipeline (macOS → winit →
-   WezTerm → XPC → profile server). cef-test bypasses this entirely by
+2. **ts3's 38fps is likely an input rate problem.** The 38fps was measured
+   during manual scrolling, where input traverses a long pipeline (macOS → winit
+   → WezTerm → XPC → profile server). cef-test bypasses this entirely by
    simulating scroll events at 125Hz directly in the profile server. The 12fps
    gap between cef-test (50fps) and ts3 (38fps) may simply reflect fewer scroll
-   events reaching CEF, not slower rendering. [Issue
-   345](./345-benchmark.md) tests this hypothesis with `web benchmark`.
+   events reaching CEF, not slower rendering. [Issue 345](./345-benchmark.md)
+   tests this hypothesis with `web benchmark`.
 
 3. **CEF's message pump has inherent jitter.** The p95 = 33.6ms spikes occur
    every 80-139 frames regardless of architecture. This is a CEF scheduling
@@ -1165,8 +1164,8 @@ Run a reproducible 70-second benchmark:
 cd ts3 && ./cef-test-scripts/benchmark.sh
 ```
 
-The script builds the app, launches it, waits 70 seconds, kills it, and prints
-a formatted summary. Use this to validate any future changes to the profile
+The script builds the app, launches it, waits 70 seconds, kills it, and prints a
+formatted summary. Use this to validate any future changes to the profile
 server's message loop, XPC transport, or rendering pipeline.
 
 ### Next steps
@@ -1183,5 +1182,5 @@ server's message loop, XPC transport, or rendering pipeline.
 
 3. **Apply the background XPC queue pattern to ts3.** The
    `set_target_queue_background()` fix discovered here should be applied to
-   ts3's `webview_xpc.rs` to prevent the same main queue conflict with
-   WezTerm's event loop.
+   ts3's `webview_xpc.rs` to prevent the same main queue conflict with WezTerm's
+   event loop.

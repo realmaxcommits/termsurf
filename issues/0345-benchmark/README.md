@@ -329,10 +329,11 @@ messages. The webview should scroll automatically without any manual input.
 Visually confirm the page scrolls up and down.
 
 **Result:** Done. `web benchmark` scrolls automatically — 1,250 scroll events
-sent over ~21s before Ctrl+C. Log shows `[SCROLL] Page loaded, starting
-simulated scroll at ~125Hz` followed by periodic `[SCROLL] N events sent`
-milestones. Cursor type oscillates between 0 and 2 confirming page scrolls over
-different elements. Early framerate read: ~42fps (883 frames in 21.05s).
+sent over ~21s before Ctrl+C. Log shows
+`[SCROLL] Page loaded, starting simulated scroll at ~125Hz` followed by periodic
+`[SCROLL] N events sent` milestones. Cursor type oscillates between 0 and 2
+confirming page scrolls over different elements. Early framerate read: ~42fps
+(883 frames in 21.05s).
 
 ### Phase 5: FrameStats collection (`log output`)
 
@@ -361,9 +362,9 @@ same `[PERF]` format as cef-test.
 numbers against cef-test's benchmark.
 
 **Result:** Done. Seven `[PERF]` summaries printed at 10s intervals. Auto-quit
-fired at 70s. Final stats: 2939 frames over 70.6s = 41.6fps, 57.4% at 60fps,
-max streak 57, p50=16.8ms, p95=49.9ms. This is close to the manually-measured
-38fps and well below cef-test's ~50fps — the input rate hypothesis is wrong, the
+fired at 70s. Final stats: 2939 frames over 70.6s = 41.6fps, 57.4% at 60fps, max
+streak 57, p50=16.8ms, p95=49.9ms. This is close to the manually-measured 38fps
+and well below cef-test's ~50fps — the input rate hypothesis is wrong, the
 bottleneck is in ts3's WezTerm integration.
 
 ### Phase 6: Statistics printed to the terminal (`end-to-end`)
@@ -400,10 +401,10 @@ needed.
 
 **Result:** Done. `web benchmark` prints formatted stats directly to the
 terminal after 70s, then auto-closes the webview. Clean run result: 51.5fps,
-55.4% at 60fps, streak 25, p50 18.7ms, p95 33.9ms, 3646 frames over 70.8s.
-This matches cef-test's ~50fps — confirming the input hypothesis: ts3's
-rendering pipeline is fine, the 38fps during manual scrolling was caused by
-insufficient input rate through the GUI → XPC → profile path.
+55.4% at 60fps, streak 25, p50 18.7ms, p95 33.9ms, 3646 frames over 70.8s. This
+matches cef-test's ~50fps — confirming the input hypothesis: ts3's rendering
+pipeline is fine, the 38fps during manual scrolling was caused by insufficient
+input rate through the GUI → XPC → profile path.
 
 ### Phase summary
 

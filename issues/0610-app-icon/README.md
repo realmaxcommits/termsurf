@@ -585,8 +585,7 @@ but macOS isn't reading it. The real icon source is `Assets.car`.
 #### Conclusion
 
 The `.icns` file is a red herring. `Info.plist` declares both
-`CFBundleIconFile
-= Ghostty` and `CFBundleIconName = Ghostty`. When
+`CFBundleIconFile = Ghostty` and `CFBundleIconName = Ghostty`. When
 `CFBundleIconName` is present, macOS reads the icon from the compiled asset
 catalog (`Assets.car`), not the `.icns` file. The `.icns` is only a fallback for
 systems that don't support asset catalogs.

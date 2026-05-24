@@ -6,8 +6,8 @@ closed = "2026-01-06"
 
 # Release Procedure (TermSurf 1.x)
 
-> **Scope:** This document applies to TermSurf 1.x releases.
-> TermSurf 2.0 will have a different release process based on Rust/Cargo tooling.
+> **Scope:** This document applies to TermSurf 1.x releases. TermSurf 2.0 will
+> have a different release process based on Rust/Cargo tooling.
 
 This document describes how to make a new release of TermSurf.
 
@@ -30,11 +30,14 @@ Edit `build.zig.zon` and update the version field:
 .version = "X.Y.Z",
 ```
 
-**Important:** The version here must match the git tag you'll create (without the `v` prefix). The build system enforces this—if they don't match, `zig build` will fail with "tagged releases must be in vX.Y.Z format matching build.zig".
+**Important:** The version here must match the git tag you'll create (without
+the `v` prefix). The build system enforces this—if they don't match, `zig build`
+will fail with "tagged releases must be in vX.Y.Z format matching build.zig".
 
 #### b) Xcode Project (MARKETING_VERSION)
 
-Update `MARKETING_VERSION` in the Xcode project. This controls the version shown in the About box.
+Update `MARKETING_VERSION` in the Xcode project. This controls the version shown
+in the About box.
 
 **Option 1 - In Xcode:**
 
@@ -102,7 +105,8 @@ bun run build:data
 bun run deploy
 ```
 
-This rebuilds the commit and version data from git history and deploys the updated website to Fly.io.
+This rebuilds the commit and version data from git history and deploys the
+updated website to Fly.io.
 
 ## Version Numbering
 

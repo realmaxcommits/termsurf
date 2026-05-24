@@ -8,8 +8,8 @@ closed = "2026-01-27"
 
 ## Background
 
-This document continues from [304-webpage.md](./304-webpage.md), which got
-CEF rendering real webpages in the terminal.
+This document continues from [304-webpage.md](./304-webpage.md), which got CEF
+rendering real webpages in the terminal.
 
 ### What We Accomplished (ts3-4)
 
