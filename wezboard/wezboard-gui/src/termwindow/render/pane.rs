@@ -2,12 +2,12 @@ use crate::quad::{HeapQuadAllocator, QuadTrait, TripleLayerQuadAllocator};
 use crate::selection::SelectionRange;
 use crate::termwindow::box_model::*;
 use crate::termwindow::render::{
-    same_hyperlink, CursorProperties, LineQuadCacheKey, LineQuadCacheValue, LineToEleShapeCacheKey,
-    RenderScreenLineParams,
+    CursorProperties, LineQuadCacheKey, LineQuadCacheValue, LineToEleShapeCacheKey,
+    RenderScreenLineParams, same_hyperlink,
 };
 use crate::termwindow::{ScrollHit, UIItem, UIItemType};
-use ::window::bitmaps::TextureRect;
 use ::window::DeadKeyStatus;
+use ::window::bitmaps::TextureRect;
 use anyhow::Context;
 use config::VisualBellTarget;
 use mux::pane::{PaneId, WithPaneLines};
@@ -611,7 +611,7 @@ impl crate::TermWindow {
                 .unwrap_or_else(|| palette.split.to_linear())
         };
 
-        let (padding_left, padding_top) = self.padding_left_top();
+        let (padding_left, padding_top, padding_right, padding_bottom) = self.padding_edges();
         let tab_bar_height = if self.show_tab_bar {
             self.tab_bar_pixel_height()
                 .context("tab_bar_pixel_height")?
@@ -644,50 +644,79 @@ impl crate::TermWindow {
         let x_offset = ((cell_width - thickness) / 2.0).floor();
         let y_offset = ((cell_height - thickness) / 2.0).floor();
 
-        let outer_x = padding_left
+        let mut outer_x = padding_left
             + border.left.get() as f32
             + border_geometry.outer_left as f32 * cell_width;
-        let outer_y = top_pixel_y + border_geometry.outer_top as f32 * cell_height;
-        let outer_width = border_geometry.outer_width as f32 * cell_width;
-        let outer_height = border_geometry.outer_height as f32 * cell_height;
+        let mut outer_y = top_pixel_y + border_geometry.outer_top as f32 * cell_height;
+        let mut outer_right = outer_x + border_geometry.outer_width as f32 * cell_width;
+        let mut outer_bottom = outer_y + border_geometry.outer_height as f32 * cell_height;
 
-        let rect_x = outer_x + x_offset;
-        let rect_y = outer_y + y_offset;
-        let rect_width = outer_width - 2.0 * x_offset;
-        let rect_height = outer_height - 2.0 * y_offset;
+        let touches_left = border_geometry.outer_left == 0;
+        let touches_top = border_geometry.outer_top == 0;
+        let touches_right = border_geometry.outer_left + border_geometry.outer_width
+            >= self.terminal_size.cols as usize;
+        let touches_bottom = border_geometry.outer_top + border_geometry.outer_height
+            >= self.terminal_size.rows as usize;
+
+        if touches_left {
+            outer_x -= padding_left.min(cell_width);
+        }
+        if touches_top {
+            outer_y -= padding_top.min(cell_height);
+        }
+        if touches_right {
+            outer_right += padding_right.min(cell_width);
+        }
+        if touches_bottom {
+            outer_bottom += padding_bottom.min(cell_height);
+        }
+
+        let left_x = if touches_left {
+            outer_x
+        } else {
+            outer_x + x_offset
+        };
+        let top_y = if touches_top {
+            outer_y
+        } else {
+            outer_y + y_offset
+        };
+        let right_x = if touches_right {
+            outer_right - thickness
+        } else {
+            outer_right - x_offset - thickness
+        };
+        let bottom_y = if touches_bottom {
+            outer_bottom - thickness
+        } else {
+            outer_bottom - y_offset - thickness
+        };
+
+        let rect_width = right_x - left_x + thickness;
+        let rect_height = bottom_y - top_y + thickness;
 
         self.filled_rectangle(
             layers,
             2,
-            euclid::rect(rect_x, rect_y, rect_width, thickness),
+            euclid::rect(left_x, top_y, rect_width, thickness),
             color,
         )?;
         self.filled_rectangle(
             layers,
             2,
-            euclid::rect(
-                rect_x,
-                rect_y + rect_height - thickness,
-                rect_width,
-                thickness,
-            ),
+            euclid::rect(left_x, bottom_y, rect_width, thickness),
             color,
         )?;
         self.filled_rectangle(
             layers,
             2,
-            euclid::rect(rect_x, rect_y, thickness, rect_height),
+            euclid::rect(left_x, top_y, thickness, rect_height),
             color,
         )?;
         self.filled_rectangle(
             layers,
             2,
-            euclid::rect(
-                rect_x + rect_width - thickness,
-                rect_y,
-                thickness,
-                rect_height,
-            ),
+            euclid::rect(right_x, top_y, thickness, rect_height),
             color,
         )?;
 

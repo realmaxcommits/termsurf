@@ -203,3 +203,24 @@ coordinate path.
 - Browser overlays or mouse input become offset from pane content.
 - The experiment changes PTY sizing or mux split allocation instead of only
   resolving render/input placement relative to padding.
+
+**Result:** Pass
+
+Experiment 1 fixed the visible extra outer margin. The implementation kept the
+Issue 786 mux/PTY sizing model intact and changed only border painting:
+`paint_pane_border()` now expands outer perimeter edges into the existing window
+padding area, while internal divider-facing edges remain centered in their
+reserved grid cells.
+
+Debug Wezboard built successfully, and manual testing confirmed the border now
+reads as the outer visual boundary of the multi-pane layout instead of an inset
+line behind an extra margin.
+
+#### Conclusion
+
+The issue was primarily visual placement, not PTY sizing or pane layout. The
+successful fix was to let the outer border line occupy the padding-side edge of
+the reserved border geometry, avoiding the stacked appearance of normal
+`window_padding` plus a centered split-border gutter.
+
+The issue remains open for any follow-up polish or additional verification.

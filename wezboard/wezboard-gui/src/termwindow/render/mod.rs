@@ -11,7 +11,7 @@ use crate::termwindow::{BorrowedShapeCacheKey, RenderState, ShapedInfo, TermWind
 use crate::utilsprites::RenderMetrics;
 use ::window::bitmaps::{TextureCoord, TextureRect, TextureSize};
 use ::window::{DeadKeyStatus, PointF, RectF, SizeF, WindowOps};
-use anyhow::{anyhow, Context};
+use anyhow::{Context, anyhow};
 use config::{
     BoldBrightening, ConfigHandle, DimensionContext, HorizontalWindowContentAlignment, TextStyle,
     VerticalWindowContentAlignment, VisualBellTarget,
@@ -338,7 +338,7 @@ impl crate::TermWindow {
             })
     }
 
-    pub fn padding_left_top(&self) -> (f32, f32) {
+    pub fn padding_edges(&self) -> (f32, f32, f32, f32) {
         let h_context = DimensionContext {
             dpi: self.dimensions.dpi as f32,
             pixel_max: self.terminal_size.pixel_width as f32,
@@ -385,13 +385,29 @@ impl crate::TermWindow {
             HorizontalWindowContentAlignment::Center => (horizontal_gap / 2.).round(),
             HorizontalWindowContentAlignment::Right => horizontal_gap,
         };
+        let right_gap = horizontal_gap - left_gap;
         let top_gap = match self.config.window_content_alignment.vertical {
             VerticalWindowContentAlignment::Top => 0.,
             VerticalWindowContentAlignment::Center => (vertical_gap / 2.).round(),
             VerticalWindowContentAlignment::Bottom => vertical_gap,
         };
+        let bottom_gap = vertical_gap - top_gap;
 
-        (padding_left + left_gap, padding_top + top_gap)
+        (
+            padding_left + left_gap,
+            padding_top + top_gap,
+            if self.show_scroll_bar && padding_right.is_zero() {
+                h_context.pixel_cell
+            } else {
+                padding_right.evaluate_as_pixels(h_context)
+            } + right_gap,
+            padding_bottom + bottom_gap,
+        )
+    }
+
+    pub fn padding_left_top(&self) -> (f32, f32) {
+        let (padding_left, padding_top, _, _) = self.padding_edges();
+        (padding_left, padding_top)
     }
 
     fn resolve_lock_glyph(
