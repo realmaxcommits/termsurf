@@ -1,0 +1,478 @@
+From 993436b5a4d2518656e6e1b49f8e400b1c791ed9 Mon Sep 17 00:00:00 2001
+From: "Ryan X. Charles" <ryan@ryanxcharles.com>
+Date: Wed, 27 May 2026 13:13:38 -0500
+Subject: [PATCH] Probe PDF stream handoff
+
+The PDF stream knocked on Chrome's door,
+And brought a browser through the floor.
+It reached the linker, bold and bright,
+Then proved this path is far too wide.
+---
+ .../dispatch_mime_handler_event.cc            | 39 ++++++++++
+ .../browser/pdf/pdf_viewer_stream_manager.cc  | 24 ++++++
+ ...esponse_interceptor_url_loader_throttle.cc | 48 ++++++++++--
+ ...response_interceptor_url_loader_throttle.h |  4 +-
+ content/libtermsurf_chromium/BUILD.gn         |  1 +
+ .../libtermsurf_chromium/ts_browser_client.cc | 23 ++++++
+ .../libtermsurf_chromium/ts_browser_client.h  | 17 ++++
+ .../ts_pdf_navigation_throttle.cc             | 78 +------------------
+ 8 files changed, 151 insertions(+), 83 deletions(-)
+
+diff --git a/chrome/browser/extensions/api/mime_handlers/dispatch_mime_handler_event.cc b/chrome/browser/extensions/api/mime_handlers/dispatch_mime_handler_event.cc
+index bc1e9374beb95..3b967adf1d707 100644
+--- a/chrome/browser/extensions/api/mime_handlers/dispatch_mime_handler_event.cc
++++ b/chrome/browser/extensions/api/mime_handlers/dispatch_mime_handler_event.cc
+@@ -17,6 +17,7 @@
+ #include "extensions/browser/guest_view/mime_handler_view/mime_handler_stream_manager.h"
+ #include "extensions/browser/guest_view/mime_handler_view/mime_handler_view_guest.h"
+ #include "extensions/browser/mime_handler/stream_container.h"
++#include "extensions/common/extension.h"
+ #include "extensions/common/extension_id.h"
+ #include "extensions/common/manifest_handlers/mime_types_handler.h"
+ #include "pdf/buildflags.h"
+@@ -58,6 +59,44 @@ void SendExecuteMimeTypeHandlerEvent(
+ 
+   auto* browser_context = web_contents->GetBrowserContext();
+ 
++#if BUILDFLAG(ENABLE_PDF)
++  if (extension_id == extension_misc::kPdfExtensionId) {
++    const bool oopif_pdf_enabled = chrome_pdf::features::IsOopifPdfEnabled();
++    LOG(INFO) << "[issue-776-exp8] stream-dispatch extension_id="
++              << extension_id
++              << " original_url=" << original_url.possibly_invalid_spec()
++              << " frame_tree_node_id=" << frame_tree_node_id
++              << " internal_id=" << internal_id
++              << " embedded=" << (embedded ? "true" : "false")
++              << " oopif_pdf_enabled="
++              << (oopif_pdf_enabled ? "true" : "false");
++    if (!oopif_pdf_enabled) {
++      LOG(INFO)
++          << "[issue-776-exp8] stream-dispatch-aborted reason=oopif-disabled";
++      return;
++    }
++
++    GURL handler_url(Extension::GetBaseURLFromExtensionId(extension_id).spec() +
++                     "pdf/index.html");
++    auto stream_container = std::make_unique<StreamContainer>(
++        /*tab_id=*/-1, embedded, handler_url, extension_id,
++        std::move(transferrable_loader), original_url);
++    pdf::PdfViewerStreamManager::Create(web_contents);
++    auto* stream_manager =
++        pdf::PdfViewerStreamManager::FromWebContents(web_contents);
++    stream_manager->AddStreamContainer(frame_tree_node_id, internal_id,
++                                       std::move(stream_container));
++    LOG(INFO) << "[issue-776-exp8] stream-container-added extension_id="
++              << extension_id
++              << " original_url=" << original_url.possibly_invalid_spec()
++              << " handler_url=" << handler_url.possibly_invalid_spec()
++              << " frame_tree_node_id=" << frame_tree_node_id
++              << " internal_id=" << internal_id
++              << " embedded=" << (embedded ? "true" : "false");
++    return;
++  }
++#endif  // BUILDFLAG(ENABLE_PDF)
++
+   const Extension* extension = ExtensionRegistry::Get(browser_context)
+                                    ->enabled_extensions()
+                                    .GetByID(extension_id);
+diff --git a/chrome/browser/pdf/pdf_viewer_stream_manager.cc b/chrome/browser/pdf/pdf_viewer_stream_manager.cc
+index 9a569aeca5e34..a46d03159df3c 100644
+--- a/chrome/browser/pdf/pdf_viewer_stream_manager.cc
++++ b/chrome/browser/pdf/pdf_viewer_stream_manager.cc
+@@ -11,6 +11,7 @@
+ #include <utility>
+ 
+ #include "base/functional/bind.h"
++#include "base/logging.h"
+ #include "base/memory/ptr_util.h"
+ #include "base/memory/weak_ptr.h"
+ #include "base/strings/to_string.h"
+@@ -160,9 +161,11 @@ PdfViewerStreamManager::~PdfViewerStreamManager() {
+ // static
+ void PdfViewerStreamManager::Create(content::WebContents* contents) {
+   if (FromWebContents(contents)) {
++    LOG(INFO) << "[issue-776-exp8] stream-manager-create existing=true";
+     return;
+   }
+ 
++  LOG(INFO) << "[issue-776-exp8] stream-manager-create existing=false";
+   if (g_factory) {
+     g_factory->CreatePdfViewerStreamManager(contents);
+   } else {
+@@ -192,6 +195,14 @@ void PdfViewerStreamManager::AddStreamContainer(
+     const std::string& internal_id,
+     std::unique_ptr<extensions::StreamContainer> stream_container) {
+   CHECK(stream_container);
++  LOG(INFO) << "[issue-776-exp8] stream-manager-add frame_tree_node_id="
++            << frame_tree_node_id << " internal_id=" << internal_id
++            << " original_url="
++            << stream_container->original_url().possibly_invalid_spec()
++            << " handler_url="
++            << stream_container->handler_url().possibly_invalid_spec()
++            << " embedded="
++            << (stream_container->embedded() ? "true" : "false");
+ 
+   // If an entry with the same frame tree node ID already exists in
+   // `stream_infos_`, then a new PDF navigation has occurred. If the
+@@ -456,10 +467,23 @@ void PdfViewerStreamManager::ReadyToCommitNavigation(
+   content::RenderFrameHost* embedder_host =
+       navigation_handle->GetRenderFrameHost();
+   if (!ContainsUnclaimedStreamInfo(embedder_host->GetFrameTreeNodeId())) {
++    if (navigation_handle->GetURL().host() == extension_misc::kPdfExtensionId ||
++        navigation_handle->GetURL() == embedder_host->GetLastCommittedURL()) {
++      LOG(INFO) << "[issue-776-exp8] stream-unclaimed"
++                << " frame_tree_node_id=" << embedder_host->GetFrameTreeNodeId()
++                << " url="
++                << navigation_handle->GetURL().possibly_invalid_spec()
++                << " stream_count=" << stream_infos_.size();
++    }
+     return;
+   }
+ 
+   extensions::StreamInfo* claimed_stream_info = ClaimStreamInfo(embedder_host);
++  LOG(INFO) << "[issue-776-exp8] stream-claimed frame_tree_node_id="
++            << embedder_host->GetFrameTreeNodeId()
++            << " url=" << navigation_handle->GetURL().possibly_invalid_spec()
++            << " internal_id=" << claimed_stream_info->internal_id()
++            << " stream_count=" << stream_infos_.size();
+ 
+   // Set the internal ID to set up postMessage later, when the PDF content host
+   // finishes navigating.
+diff --git a/chrome/browser/plugins/plugin_response_interceptor_url_loader_throttle.cc b/chrome/browser/plugins/plugin_response_interceptor_url_loader_throttle.cc
+index 50e5ac31c57ca..6b17f9f5d77fb 100644
+--- a/chrome/browser/plugins/plugin_response_interceptor_url_loader_throttle.cc
++++ b/chrome/browser/plugins/plugin_response_interceptor_url_loader_throttle.cc
+@@ -42,8 +42,9 @@ void ClearAllButFrameAncestors(network::mojom::URLResponseHead* response_head) {
+   response_head->headers->RemoveHeader("Content-Security-Policy");
+   response_head->headers->RemoveHeader("Content-Security-Policy-Report-Only");
+ 
+-  if (!response_head->parsed_headers)
++  if (!response_head->parsed_headers) {
+     return;
++  }
+ 
+   std::vector<network::mojom::ContentSecurityPolicyPtr>& csp =
+       response_head->parsed_headers->content_security_policy;
+@@ -52,8 +53,9 @@ void ClearAllButFrameAncestors(network::mojom::URLResponseHead* response_head) {
+   for (auto& policy : csp) {
+     auto frame_ancestors = policy->directives.find(
+         network::mojom::CSPDirectiveName::FrameAncestors);
+-    if (frame_ancestors == policy->directives.end())
++    if (frame_ancestors == policy->directives.end()) {
+       continue;
++    }
+ 
+     auto cleared_policy = network::mojom::ContentSecurityPolicy::New();
+     cleared_policy->self_origin = std::move(policy->self_origin);
+@@ -92,9 +94,11 @@ void ClearAllButFrameAncestors(network::mojom::URLResponseHead* response_head) {
+ PluginResponseInterceptorURLLoaderThrottle::
+     PluginResponseInterceptorURLLoaderThrottle(
+         network::mojom::RequestDestination request_destination,
+-        content::FrameTreeNodeId frame_tree_node_id)
++        content::FrameTreeNodeId frame_tree_node_id,
++        bool pdf_only)
+     : request_destination_(request_destination),
+-      frame_tree_node_id_(frame_tree_node_id) {}
++      frame_tree_node_id_(frame_tree_node_id),
++      pdf_only_(pdf_only) {}
+ 
+ PluginResponseInterceptorURLLoaderThrottle::
+     ~PluginResponseInterceptorURLLoaderThrottle() = default;
+@@ -107,8 +111,9 @@ void PluginResponseInterceptorURLLoaderThrottle::WillProcessResponse(
+ 
+   content::WebContents* web_contents =
+       content::WebContents::FromFrameTreeNodeId(frame_tree_node_id_);
+-  if (!web_contents)
++  if (!web_contents) {
+     return;
++  }
+ 
+   if (content::download_utils::MustDownload(
+           web_contents->GetBrowserContext(), response_url,
+@@ -116,11 +121,36 @@ void PluginResponseInterceptorURLLoaderThrottle::WillProcessResponse(
+     return;
+   }
+ 
+-  std::string extension_id = PluginUtils::GetExtensionIdForMimeType(
++  std::string extension_id;
++#if BUILDFLAG(ENABLE_PDF)
++  if (pdf_only_) {
++    LOG(INFO) << "[issue-776-exp8] pdf-response url="
++              << response_url.possibly_invalid_spec()
++              << " mime=" << response_head->mime_type
++              << " destination=" << static_cast<int>(request_destination_)
++              << " frame_tree_node_id=" << frame_tree_node_id_;
++    if (response_head->mime_type == pdf::kPDFMimeType) {
++      extension_id = extension_misc::kPdfExtensionId;
++      LOG(INFO) << "[issue-776-exp8] mime-extension-bypass mime="
++                << response_head->mime_type << " extension_id=" << extension_id;
++    } else {
++      LOG(INFO) << "[issue-776-exp8] ignored non-pdf mime="
++                << response_head->mime_type
++                << " url=" << response_url.possibly_invalid_spec();
++      return;
++    }
++  } else {
++    extension_id = PluginUtils::GetExtensionIdForMimeType(
++        web_contents->GetBrowserContext(), response_head->mime_type);
++  }
++#else
++  extension_id = PluginUtils::GetExtensionIdForMimeType(
+       web_contents->GetBrowserContext(), response_head->mime_type);
++#endif
+ 
+-  if (extension_id.empty())
++  if (extension_id.empty()) {
+     return;
++  }
+ 
+   // TODO(crbug.com/40180674): Support prerendering of MimeHandlerViews.
+   if (web_contents->IsPrerenderedFrame(frame_tree_node_id_)) {
+@@ -157,6 +187,10 @@ void PluginResponseInterceptorURLLoaderThrottle::WillProcessResponse(
+ #if BUILDFLAG(ENABLE_PDF)
+   const bool is_for_oopif_pdf = chrome_pdf::features::IsOopifPdfEnabled() &&
+                                 response_head->mime_type == pdf::kPDFMimeType;
++  if (pdf_only_) {
++    LOG(INFO) << "[issue-776-exp8] oopif-pdf enabled="
++              << (is_for_oopif_pdf ? "true" : "false");
++  }
+ #else
+   constexpr bool is_for_oopif_pdf = false;
+ #endif
+diff --git a/chrome/browser/plugins/plugin_response_interceptor_url_loader_throttle.h b/chrome/browser/plugins/plugin_response_interceptor_url_loader_throttle.h
+index ed7c46e44b825..167fe2f93aafd 100644
+--- a/chrome/browser/plugins/plugin_response_interceptor_url_loader_throttle.h
++++ b/chrome/browser/plugins/plugin_response_interceptor_url_loader_throttle.h
+@@ -23,7 +23,8 @@ class PluginResponseInterceptorURLLoaderThrottle
+  public:
+   PluginResponseInterceptorURLLoaderThrottle(
+       network::mojom::RequestDestination request_destination,
+-      content::FrameTreeNodeId frame_tree_node_id);
++      content::FrameTreeNodeId frame_tree_node_id,
++      bool pdf_only = false);
+ 
+   PluginResponseInterceptorURLLoaderThrottle(
+       const PluginResponseInterceptorURLLoaderThrottle&) = delete;
+@@ -43,6 +44,7 @@ class PluginResponseInterceptorURLLoaderThrottle
+ 
+   const network::mojom::RequestDestination request_destination_;
+   const content::FrameTreeNodeId frame_tree_node_id_;
++  const bool pdf_only_;
+ 
+   base::WeakPtrFactory<PluginResponseInterceptorURLLoaderThrottle>
+       weak_factory_{this};
+diff --git a/content/libtermsurf_chromium/BUILD.gn b/content/libtermsurf_chromium/BUILD.gn
+index dd9317687ab48..6585605b23e51 100644
+--- a/content/libtermsurf_chromium/BUILD.gn
++++ b/content/libtermsurf_chromium/BUILD.gn
+@@ -43,6 +43,7 @@ shared_library("libtermsurf_chromium") {
+   deps = [
+     "//base",
+     "//chrome/browser:resources",
++    "//chrome/browser/plugins:impl",
+     "//chrome/browser/resources/pdf:resources",
+     "//components/pdf/common:constants",
+     "//components/pdf/common:util",
+diff --git a/content/libtermsurf_chromium/ts_browser_client.cc b/content/libtermsurf_chromium/ts_browser_client.cc
+index da96320dd9c94..8dd85ad364d38 100644
+--- a/content/libtermsurf_chromium/ts_browser_client.cc
++++ b/content/libtermsurf_chromium/ts_browser_client.cc
+@@ -6,6 +6,7 @@
+ 
+ #include "base/command_line.h"
+ #include "base/logging.h"
++#include "chrome/browser/plugins/plugin_response_interceptor_url_loader_throttle.h"
+ #include "content/libtermsurf_chromium/ts_browser_main_parts.h"
+ #include "content/libtermsurf_chromium/ts_pdf_component_extension_resource_manager.h"
+ #include "content/libtermsurf_chromium/ts_pdf_navigation_throttle.h"
+@@ -21,7 +22,9 @@
+ #include "mojo/public/cpp/bindings/binder_map.h"
+ #include "mojo/public/cpp/bindings/pending_receiver.h"
+ #include "mojo/public/cpp/bindings/receiver_set.h"
++#include "services/network/public/cpp/resource_request.h"
+ #include "services/network/public/mojom/network_context.mojom.h"
++#include "third_party/blink/public/common/loader/url_loader_throttle.h"
+ #include "third_party/blink/public/common/web_preferences/web_preferences.h"
+ #include "third_party/blink/public/mojom/badging/badging.mojom.h"
+ #include "third_party/blink/public/mojom/css/preferred_color_scheme.mojom.h"
+@@ -102,6 +105,26 @@ void TsBrowserClient::CreateThrottlesForNavigation(
+   registry.AddThrottle(std::make_unique<TsPdfNavigationThrottle>(registry));
+ }
+ 
++std::vector<std::unique_ptr<blink::URLLoaderThrottle>>
++TsBrowserClient::CreateURLLoaderThrottles(
++    const network::ResourceRequest& request,
++    BrowserContext* browser_context,
++    const base::RepeatingCallback<WebContents*()>& wc_getter,
++    NavigationUIData* navigation_ui_data,
++    FrameTreeNodeId frame_tree_node_id,
++    std::optional<int64_t> navigation_id) {
++  std::vector<std::unique_ptr<blink::URLLoaderThrottle>> result =
++      ShellContentBrowserClient::CreateURLLoaderThrottles(
++          request, browser_context, wc_getter, navigation_ui_data,
++          frame_tree_node_id, navigation_id);
++  result.push_back(std::make_unique<PluginResponseInterceptorURLLoaderThrottle>(
++      request.destination, frame_tree_node_id, /*pdf_only=*/true));
++  LOG(INFO) << "[issue-776-exp8] throttle-installed destination="
++            << static_cast<int>(request.destination)
++            << " frame_tree_node_id=" << frame_tree_node_id;
++  return result;
++}
++
+ void TsBrowserClient::AppendExtraCommandLineSwitches(
+     base::CommandLine* command_line,
+     int child_process_id) {
+diff --git a/content/libtermsurf_chromium/ts_browser_client.h b/content/libtermsurf_chromium/ts_browser_client.h
+index 6f7de69515d2e..2b4c7719f4747 100644
+--- a/content/libtermsurf_chromium/ts_browser_client.h
++++ b/content/libtermsurf_chromium/ts_browser_client.h
+@@ -8,6 +8,7 @@
+ #include <memory>
+ #include <optional>
+ #include <string>
++#include <vector>
+ 
+ #include "content/libtermsurf_chromium/ts_pdf_component_extension_resource_manager.h"
+ #include "content/shell/browser/shell_content_browser_client.h"
+@@ -19,6 +20,14 @@ namespace base {
+ class CommandLine;
+ }  // namespace base
+ 
++namespace blink {
++class URLLoaderThrottle;
++}  // namespace blink
++
++namespace network {
++struct ResourceRequest;
++}  // namespace network
++
+ namespace content {
+ 
+ // TsBrowserClient overrides ShellContentBrowserClient to return
+@@ -43,6 +52,14 @@ class TsBrowserClient : public ShellContentBrowserClient {
+                               blink::web_pref::WebPreferences* prefs) override;
+   void CreateThrottlesForNavigation(
+       NavigationThrottleRegistry& registry) override;
++  std::vector<std::unique_ptr<blink::URLLoaderThrottle>>
++  CreateURLLoaderThrottles(
++      const network::ResourceRequest& request,
++      BrowserContext* browser_context,
++      const base::RepeatingCallback<WebContents*()>& wc_getter,
++      NavigationUIData* navigation_ui_data,
++      FrameTreeNodeId frame_tree_node_id,
++      std::optional<int64_t> navigation_id) override;
+   void AppendExtraCommandLineSwitches(base::CommandLine* command_line,
+                                       int child_process_id) override;
+   mojo::PendingRemote<network::mojom::URLLoaderFactory>
+diff --git a/content/libtermsurf_chromium/ts_pdf_navigation_throttle.cc b/content/libtermsurf_chromium/ts_pdf_navigation_throttle.cc
+index d07b9fd6b9144..d4bd505245564 100644
+--- a/content/libtermsurf_chromium/ts_pdf_navigation_throttle.cc
++++ b/content/libtermsurf_chromium/ts_pdf_navigation_throttle.cc
+@@ -5,20 +5,11 @@
+ #include "content/libtermsurf_chromium/ts_pdf_navigation_throttle.h"
+ 
+ #include <string>
+-#include <utility>
+ 
+-#include "base/functional/bind.h"
+-#include "base/location.h"
+ #include "base/logging.h"
+-#include "base/memory/weak_ptr.h"
+-#include "base/strings/escape.h"
+-#include "base/strings/strcat.h"
+-#include "base/task/sequenced_task_runner.h"
+ #include "components/pdf/common/constants.h"
+ #include "content/browser/renderer_host/navigation_request.h"
+-#include "content/public/browser/navigation_controller.h"
+ #include "content/public/browser/navigation_handle.h"
+-#include "content/public/browser/web_contents.h"
+ #include "net/base/filename_util.h"
+ #include "net/http/http_response_headers.h"
+ #include "url/gurl.h"
+@@ -65,59 +56,6 @@ std::string ResponseMimeType(NavigationHandle* handle) {
+   return LooksLikePdfUrl(handle->GetURL()) ? pdf::kPDFMimeType : std::string();
+ }
+ 
+-GURL BuildPdfWrapperUrl(const GURL& pdf_url) {
+-  const std::string escaped_pdf_url = base::EscapeForHTML(pdf_url.spec());
+-  const std::string child_html = base::StrCat({
+-      "<!doctype html><meta charset=\"utf-8\">",
+-      "<style>",
+-      "html,body,embed{margin:0;width:100%;height:100%;overflow:hidden;",
+-      "background:#f8d7da;}",
+-      "</style>",
+-      "<embed src=\"",
+-      escaped_pdf_url,
+-      "\" type=\"",
+-      pdf::kInternalPluginMimeType,
+-      "\">",
+-  });
+-  const std::string html = base::StrCat({
+-      "<!doctype html><meta charset=\"utf-8\">",
+-      "<style>",
+-      "html,body,iframe{margin:0;width:100%;height:100%;overflow:hidden;",
+-      "background:#f8d7da;}",
+-      "iframe{border:0;display:block;}",
+-      "#termsurf-pdf-wrapper-marker{position:fixed;left:6px;top:6px;",
+-      "z-index:2147483647;background:#7f1d1d;color:white;",
+-      "font:12px sans-serif;padding:3px 5px;}",
+-      "</style>",
+-      "<div id=\"termsurf-pdf-wrapper-marker\">TermSurf PDF wrapper</div>",
+-      "<iframe id=\"termsurf-pdf-frame\" srcdoc=\"",
+-      base::EscapeForHTML(child_html),
+-      "\"></iframe>",
+-  });
+-  LOG(INFO) << "[issue-776-exp3] nested-wrapper probe pdf_url="
+-            << pdf_url.possibly_invalid_spec();
+-  return GURL(base::StrCat({
+-      "data:text/html;charset=utf-8;",
+-      kWrapperSentinel,
+-      ",",
+-      base::EscapeUrlEncodedData(html, /*use_plus=*/false),
+-  }));
+-}
+-
+-void LoadWrapper(base::WeakPtr<WebContents> web_contents, GURL wrapper_url) {
+-  if (!web_contents) {
+-    LOG(INFO)
+-        << "[issue-776-exp3] wrapper navigation skipped: WebContents gone";
+-    return;
+-  }
+-
+-  NavigationController::LoadURLParams params(wrapper_url);
+-  params.is_renderer_initiated = false;
+-  web_contents->GetController().LoadURLWithParams(std::move(params));
+-  LOG(INFO) << "[issue-776-exp3] wrapper navigation posted url="
+-            << wrapper_url.possibly_invalid_spec();
+-}
+-
+ }  // namespace
+ 
+ TsPdfNavigationThrottle::TsPdfNavigationThrottle(
+@@ -150,20 +88,10 @@ TsPdfNavigationThrottle::WillProcessResponse() {
+     return PROCEED;
+   }
+ 
+-  WebContents* web_contents = handle->GetWebContents();
+-  if (!web_contents) {
+-    LOG(INFO) << "[issue-776-exp3] proceeding: no WebContents";
+-    return PROCEED;
+-  }
+-
+-  const GURL wrapper_url = BuildPdfWrapperUrl(url);
+-  LOG(INFO) << "[issue-776-exp3] canceling PDF navigation before download path"
++  LOG(INFO) << "[issue-776-exp8] wrapper-bypass active=false"
+             << " pdf_url=" << url.possibly_invalid_spec()
+-            << " wrapper_url=" << wrapper_url.possibly_invalid_spec();
+-  base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
+-      FROM_HERE,
+-      base::BindOnce(&LoadWrapper, web_contents->GetWeakPtr(), wrapper_url));
+-  return CANCEL_AND_IGNORE;
++            << " response_mime=" << response_mime_type;
++  return PROCEED;
+ }
+ 
+ const char* TsPdfNavigationThrottle::GetNameForLogging() {
+-- 
+2.50.1 (Apple Git-155)
+

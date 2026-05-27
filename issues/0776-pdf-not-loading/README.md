@@ -3389,3 +3389,94 @@ that layer.
 - The implementation fakes a rendered PDF with static HTML or screenshots.
 - The experiment silently expands into `MimeHandlerViewGuest` / GuestView /
   `pdf_viewer_private` instead of recording those as the next missing layer.
+
+**Result:** Partial
+
+Experiment 8 proved that directly reusing Chrome's
+`PluginResponseInterceptorURLLoaderThrottle` is the wrong integration shape for
+Roamium.
+
+The branch `148.0.7778.97-issue-776-exp8` was created from Experiment 7 and
+committed as Chromium commit `993436b5a4d25` (`Probe PDF stream handoff`). The
+patch archive is preserved at `chromium/patches/issue-776-exp8/`.
+
+The implementation attempted the intended narrow handoff:
+
+- added `PluginResponseInterceptorURLLoaderThrottle` to
+  `TsBrowserClient::CreateURLLoaderThrottles()`;
+- added a PDF-only `application/pdf` -> `extension_misc::kPdfExtensionId` bypass
+  in the interceptor;
+- added a PDF-only dispatch bypass in `dispatch_mime_handler_event.cc` that
+  creates a `StreamContainer` and calls
+  `PdfViewerStreamManager::AddStreamContainer()`;
+- added `[issue-776-exp8]` logs to the interceptor, dispatch bypass, PDF stream
+  manager, and the old wrapper throttle;
+- disabled the old `data:` wrapper cancellation path by letting top-level PDF
+  navigations proceed;
+- added one BUILD.gn dependency: `//chrome/browser/plugins:impl`.
+
+Changed Chromium files:
+
+- `chrome/browser/extensions/api/mime_handlers/dispatch_mime_handler_event.cc`;
+- `chrome/browser/pdf/pdf_viewer_stream_manager.cc`;
+- `chrome/browser/plugins/plugin_response_interceptor_url_loader_throttle.cc`;
+- `chrome/browser/plugins/plugin_response_interceptor_url_loader_throttle.h`;
+- `content/libtermsurf_chromium/BUILD.gn`;
+- `content/libtermsurf_chromium/ts_browser_client.cc`;
+- `content/libtermsurf_chromium/ts_browser_client.h`;
+- `content/libtermsurf_chromium/ts_pdf_navigation_throttle.cc`.
+
+The build did not complete:
+
+```text
+autoninja -C chromium/src/out/Default libtermsurf_chromium
+```
+
+failed at the `libtermsurf_chromium.dylib` link step after compiling 7,680
+actions. The single `//chrome/browser/plugins:impl` dependency pulled in a large
+Chrome browser dependency graph, including extensions, WebRTC/media capture,
+safe browsing, web apps, side panels, and other Chrome-only browser features.
+
+The final linker errors included:
+
+```text
+undefined symbol:
+  prerender::ChromeNoStatePrefetchContentsDelegate::FromWebContents(...)
+
+undefined symbols:
+  OBJC_CLASS_$_SCShareableContent
+  OBJC_CLASS_$_SCStreamConfiguration
+  OBJC_CLASS_$_SCScreenshotManager
+  OBJC_CLASS_$_SCContentFilter
+  OBJC_CLASS_$_AVCaptureDevice
+```
+
+This is not a small missing-dependency problem. It means the stock Chrome
+plugin-interceptor path is coupled to Chrome's full browser layer and macOS
+framework linkage in ways that are inappropriate for TermSurf's
+`content_shell`-based embedding library.
+
+No automated PDF probe ran, no `[issue-776-exp8]` runtime logs were collected,
+and no screenshot artifact was produced because the Chromium shared library did
+not link.
+
+#### Conclusion
+
+Experiment 8 partially succeeded by eliminating a dead end: Roamium should not
+link Chrome's stock `PluginResponseInterceptorURLLoaderThrottle` implementation
+directly.
+
+The next experiment should keep the useful idea but change ownership:
+
+- create a TermSurf-owned minimal PDF response throttle under
+  `content/libtermsurf_chromium/`;
+- copy only the small PDF-specific response interception behavior needed to hand
+  the original PDF stream to `PdfViewerStreamManager`;
+- avoid depending on `//chrome/browser/plugins:impl`;
+- avoid depending on the full Chrome extension dispatch target;
+- keep the PDF-only MIME and extension-id restrictions from Experiment 8;
+- keep the old wrapper path disabled so the response throttle can see the PDF
+  response.
+
+In short: the next attempt should be a narrow TermSurf equivalent of the Chrome
+PDF stream handoff, not a direct link to Chrome's full browser implementation.
