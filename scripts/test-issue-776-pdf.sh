@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 STAMP="$(date +%Y%m%d-%H%M%S)"
-LOG_DIR="${LOG_DIR:-"$ROOT/logs/issue-776-exp1-$STAMP"}"
+LOG_DIR="${LOG_DIR:-"$ROOT/logs/issue-776-exp2-$STAMP"}"
 URL="${1:-http://localhost:9616/bitcoin.pdf}"
 
 WEZBOARD_BIN="$ROOT/wezboard/target/debug/wezboard-gui"
@@ -15,6 +15,7 @@ WEZBOARD_LOG="$LOG_DIR/wezboard-gui.log"
 CHROMIUM_LOG="$LOG_DIR/chromium-server.log"
 WEB_LAUNCHER="$LOG_DIR/run-web.sh"
 WEB_LAUNCHER_LOG="$LOG_DIR/run-web.log"
+RUN_INFO="$LOG_DIR/run-info.txt"
 PERMISSION_TEST="$LOG_DIR/screenshot-permission-test.png"
 
 SERVER_PID=""
@@ -44,6 +45,15 @@ mkdir -p "$LOG_DIR"
 require_file "$WEZBOARD_BIN" "debug Wezboard"
 require_file "$WEB_BIN" "debug web"
 require_file "$ROAMIUM_BIN" "repo-built Roamium"
+
+{
+  echo "timestamp=$STAMP"
+  echo "url=$URL"
+  echo "wezboard_bin=$WEZBOARD_BIN"
+  echo "web_bin=$WEB_BIN"
+  echo "roamium_bin=$ROAMIUM_BIN"
+  echo "web_command=$WEB_BIN --browser $ROAMIUM_BIN $URL"
+} >"$RUN_INFO"
 
 screencapture -x "$PERMISSION_TEST"
 test -s "$PERMISSION_TEST"
@@ -83,6 +93,7 @@ for _ in {1..100}; do
   if [[ -n "\$sock" && -S "\$sock" ]]; then
     export TERMSURF_SOCKET="\$sock"
     echo "using TERMSURF_SOCKET=\$TERMSURF_SOCKET" >>"$WEB_LAUNCHER_LOG"
+    echo "exec $WEB_BIN --browser $ROAMIUM_BIN $URL" >>"$WEB_LAUNCHER_LOG"
     exec "$WEB_BIN" --browser "$ROAMIUM_BIN" "$URL"
   fi
   sleep 0.1
@@ -98,6 +109,10 @@ env -u TERMSURF_SOCKET -u WEZBOARD_UNIX_SOCKET "$WEZBOARD_BIN" start \
   --cwd "$ROOT" \
   -- "$WEB_LAUNCHER" >"$WEZBOARD_LOG" 2>&1 &
 WEZBOARD_PID="$!"
+{
+  echo "wezboard_pid=$WEZBOARD_PID"
+  echo "wezboard_command=$WEZBOARD_BIN start --always-new-process --no-auto-connect --cwd $ROOT -- $WEB_LAUNCHER"
+} >>"$RUN_INFO"
 
 sleep "${TERMSURF_PDF_SETTLE_SECONDS:-18}"
 
@@ -131,4 +146,5 @@ Issue 776 PDF smoke test artifacts:
   Chromium log: $CHROMIUM_LOG
   web launcher log: $WEB_LAUNCHER_LOG
   test server log: $SERVER_LOG
+  run info: $RUN_INFO
 EOF

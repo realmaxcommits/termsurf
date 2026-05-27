@@ -786,3 +786,97 @@ the first missing layer, such as:
 - The generated wrapper loops indefinitely.
 - Roamium crashes while loading the PDF, before teardown.
 - Normal HTML navigation regresses.
+
+**Result:** Partial
+
+Experiment 2 implemented the browser-side PDF navigation throttle and wrapper
+probe on Chromium branch `148.0.7778.97-issue-776-exp2`. The throttle is wired
+from `TsBrowserClient::CreateThrottlesForNavigation()`, detects top-level PDF
+responses, cancels the original navigation with `CANCEL_AND_IGNORE`, and
+asynchronously loads a diagnostic `data:` wrapper that embeds the original PDF
+URL with `application/x-google-chrome-pdf`.
+
+The automated HTTP PDF run completed and captured a trustworthy screenshot:
+
+```text
+/Users/ryan/dev/termsurf/logs/issue-776-exp2-20260527-082708/pdf-smoke.png
+```
+
+The screenshot shows the intended debug Wezboard run and generated wrapper URL.
+The wrapper's diagnostic marker and pink background are visible, so the wrapper
+loaded in the browser pane. The PDF content did not render. The center of the
+pane shows Chromium's plugin failure message:
+
+```text
+Couldn't load plugin.
+```
+
+Key log evidence:
+
+```text
+[issue-776-exp2] pdf throttle response url=http://localhost:9616/bitcoin.pdf response_mime=application/pdf header_mime=application/pdf primary_main_frame=1 wrapper=0 supported_scheme=1
+[issue-776-exp2] canceling PDF navigation before download path pdf_url=http://localhost:9616/bitcoin.pdf wrapper_url=data:text/html;charset=utf-8;termsurf-pdf-wrapper=1,...
+[issue-776-exp2] wrapper navigation posted url=data:text/html;charset=utf-8;termsurf-pdf-wrapper=1,...
+[issue-776] OverrideCreatePlugin saw PDF mime=application/x-google-chrome-pdf url=http://localhost:9616/bitcoin.pdf
+[issue-776] CreateInternalPlugin returned nullptr
+```
+
+Failure-layer table:
+
+| Layer                                                            | Result |
+| ---------------------------------------------------------------- | ------ |
+| `TsPdfNavigationThrottle` sees `application/pdf` main-frame URL  | yes    |
+| Throttle cancels top-level PDF before download path              | yes    |
+| `ShellDownloadManagerDelegate::ChooseDownloadPath` no longer hit | yes    |
+| Generated wrapper navigation starts in the same tab              | yes    |
+| Wrapper marker/background is visible in screenshot               | yes    |
+| `<embed>` appears to be blocked by wrapper origin                | no     |
+| `OverrideCreatePlugin()` sees internal PDF MIME type             | yes    |
+| `CreateInternalPlugin()` returns a plugin                        | no     |
+| Screenshot shows recognizable PDF content                        | no     |
+
+The implementation used `NavigationRequest::GetMimeType()` as the primary MIME
+signal because Chromium 148 does not expose `NavigationHandle::GetMimeType()` on
+the public `NavigationHandle` interface. Response headers are still logged for
+comparison.
+
+Additional verification:
+
+- `autoninja -C out/Default libtermsurf_chromium` succeeded.
+- `./scripts/build.sh roamium`, `./scripts/build.sh wezboard`, and
+  `./scripts/build.sh webtui` succeeded.
+- Normal HTML smoke test with `https://example.com` rendered correctly:
+  `/Users/ryan/dev/termsurf/logs/issue-776-exp2-20260527-082751/pdf-smoke.png`.
+  The throttle logged `response_mime=text/html` and did not intercept.
+- Non-PDF binary smoke test with `http://localhost:9616/test.bin` was not
+  intercepted by the PDF throttle. It reached Content Shell's normal download
+  path with `response_mime=application/octet-stream`, which is expected for a
+  non-PDF binary:
+  `/Users/ryan/dev/termsurf/logs/issue-776-exp2-20260527-082902/pdf-smoke.png`.
+- The `file://` PDF fixture was not run because the HTTP fixture did not render;
+  the experiment was already Partial before the local-file requirement could be
+  evaluated.
+- The teardown crash from Experiment 1 recurred after screenshots were captured.
+  It appears during test cleanup, after useful artifacts are written, but it is
+  still a residual bug to address separately:
+
+  ```text
+  Received signal 11 SEGV_ACCERR
+  ```
+
+#### Conclusion
+
+Experiment 2 proved that the next missing layer is after top-level PDF
+navigation routing. TermSurf can now intercept a PDF response before Content
+Shell turns it into a download, can load a same-tab wrapper, and can get Blink
+to ask the renderer client for an internal PDF plugin.
+
+The remaining blocker is that `pdf::CreateInternalPlugin()` returns `nullptr`
+for this wrapper/plugin context. That rules out "the renderer hook is never
+reached" as the primary problem and points to missing PDF plugin substrate:
+plugin availability/permissions for the document context, required PDF renderer
+initialization, or Chrome's MimeHandlerView/component-extension path.
+
+Experiment 3 should focus on why `pdf::CreateInternalPlugin()` returns
+`nullptr`, using the smallest targeted probe first. Do not keep adjusting the
+top-level navigation throttle; it did its job.
