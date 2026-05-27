@@ -1129,3 +1129,184 @@ that boundary.
 - Non-PDF responses are intercepted as PDFs.
 - The Chromium branch is left in an incoherent, unbuildable state without a
   recorded Partial/Failure explanation and cleanup plan.
+
+**Result:** Pass
+
+Experiment 2 built the first TermSurf-owned PDF stream handoff layer and avoided
+the failed Issue 776 Experiment 8 dependency path.
+
+Chromium branch:
+
+```text
+148.0.7778.97-issue-789-exp2
+```
+
+Chromium commit:
+
+```text
+bea8d5383ad9cd09a336da8edad788127eaa19e2 Build TermSurf PDF handoff
+```
+
+Patch archive:
+
+```text
+chromium/patches/issue-789/0001-Build-TermSurf-PDF-handoff.patch
+```
+
+#### Implemented Files
+
+New Chromium files:
+
+- `content/libtermsurf_chromium/ts_pdf_response_url_loader_throttle.h`
+- `content/libtermsurf_chromium/ts_pdf_response_url_loader_throttle.cc`
+- `content/libtermsurf_chromium/ts_pdf_stream_dispatch.h`
+- `content/libtermsurf_chromium/ts_pdf_stream_dispatch.cc`
+
+Modified Chromium files:
+
+- `content/libtermsurf_chromium/BUILD.gn`
+- `content/libtermsurf_chromium/ts_browser_client.h`
+- `content/libtermsurf_chromium/ts_browser_client.cc`
+
+Main repo metadata:
+
+- `chromium/README.md`
+- `chromium/patches/issue-789/0001-Build-TermSurf-PDF-handoff.patch`
+
+#### What Changed
+
+`TsBrowserClient::CreateURLLoaderThrottles()` now installs a TermSurf-owned PDF
+URL loader throttle. The old data-wrapper `TsPdfNavigationThrottle` cancel path
+is disabled by no longer registering that throttle from
+`CreateThrottlesForNavigation()`.
+
+The new `TsPdfResponseURLLoaderThrottle`:
+
+- observes post-sniff `application/pdf` responses;
+- logs request destination and OOPIF PDF state;
+- emits a TermSurf-owned copy of Chromium's PDF embedder/template HTML;
+- intercepts the response body;
+- preserves the original PDF body as a `blink::mojom::TransferrableURLLoader`;
+- dispatches that original stream to `TsDispatchPdfStream()`.
+
+The new `TsDispatchPdfStream()` constructs and stores an
+`extensions::StreamContainer` from the narrow
+`//extensions/browser/mime_handler:stream_container` target. It deliberately
+does not link `PdfViewerStreamManager`, because the only current owner is broad
+`//chrome/browser/pdf:pdf`.
+
+#### Dependency Evidence
+
+Target-name checks:
+
+```text
+//extensions/browser/mime_handler:stream_container
+//extensions/browser/mime_handler:stream_info
+
+//chrome/browser/pdf:pdf
+//chrome/browser/pdf:pdf_extension_test_utils
+//chrome/browser/pdf:pdf_pref_names
+//chrome/browser/pdf:pdf_test_utils
+```
+
+The TermSurf dependency surface includes:
+
+```text
+//extensions/browser/mime_handler:stream_container
+```
+
+It does not include:
+
+```text
+//chrome/browser/plugins:impl
+//chrome/browser/extensions:extensions
+//components/guest_view/browser
+```
+
+The expected warning about `enable_nacl = false` having no effect appeared in GN
+output and is unrelated to this experiment.
+
+#### Build Verification
+
+Build command:
+
+```bash
+cd chromium/src
+export PATH="$HOME/dev/termsurf/chromium/depot_tools:$PATH"
+autoninja -C out/Default libtermsurf_chromium
+```
+
+Result:
+
+```text
+Build Succeeded: 16 steps
+```
+
+The previous Issue 776 Experiment 8 undefined symbols did not recur.
+
+#### Runtime Verification
+
+PDF run:
+
+```text
+logs/issue-789-exp2-20260527-180734/
+```
+
+The run used debug Wezboard, debug `web`, and the repo-built Roamium binary:
+
+```text
+/Users/ryan/dev/termsurf/webtui/target/debug/web
+--browser /Users/ryan/dev/termsurf/chromium/src/out/Default/roamium
+http://localhost:9616/bitcoin.pdf
+```
+
+Relevant log evidence:
+
+```text
+[issue-789-exp2] old-pdf-navigation-throttle=disabled
+[issue-789-exp2] pdf-response-throttle-created frame_tree_node_id=1 destination=3
+[issue-789-exp2] pdf-throttle-installed frame_tree_node_id=1 destination=3
+[issue-789-exp2] oopif-pdf-enabled value=true
+[issue-789-exp2] pdf-response url=http://localhost:9616/bitcoin.pdf mime=application/pdf destination=3 oopif_pdf=true
+[issue-789-exp2] viewer-template-emitted internal_id=C80C2291DE434362A590A9EF43A0494B bytes=536
+[issue-789-exp2] stream-dispatch frame_tree_node_id=1 extension_id=mhjfbmdgcfjbbpaeojofohoefgiehjai handler_url=chrome-extension://mhjfbmdgcfjbbpaeojofohoefgiehjai/pdf/index.html internal_id=C80C2291DE434362A590A9EF43A0494B embedded=false
+[issue-789-exp2] stream-container-captured internal_id=C80C2291DE434362A590A9EF43A0494B count=1 pdf-viewer-stream-manager=not-linked
+```
+
+The old wrapper cancel log did not appear for the PDF navigation.
+
+Normal HTML smoke:
+
+```text
+logs/issue-789-exp2-html-20260527-180811/
+```
+
+This run installed the throttle but emitted no `pdf-response` or
+`stream-dispatch` lines.
+
+Non-PDF binary smoke:
+
+```text
+logs/issue-789-exp2-bin-20260527-180823/
+```
+
+This run installed the throttle but emitted no `pdf-response` or
+`stream-dispatch` lines. The existing content-shell download-path log appeared,
+which confirms the binary response was not handled as a PDF.
+
+The known Issue 776 teardown crash recurred after screenshot/log capture. It did
+not prevent the experiment evidence from being collected.
+
+#### Conclusion
+
+Experiment 2 succeeded at the intended build-first layer. TermSurf now has a
+buildable, TermSurf-owned PDF response throttle that avoids
+`//chrome/browser/plugins:impl`, emits the PDF viewer-template response, and
+captures the original PDF response as an `extensions::StreamContainer`.
+
+The remaining blocker is the final stream-manager integration. In Chromium 148,
+`PdfViewerStreamManager` is still owned by broad `//chrome/browser/pdf:pdf`.
+Experiment 3 should decide how to provide that layer without recreating the
+Issue 776 Experiment 8 dependency explosion: split the upstream target, fork the
+stream manager into TermSurf-owned code, or prove that a carefully bounded
+Chrome PDF dependency can link safely.
