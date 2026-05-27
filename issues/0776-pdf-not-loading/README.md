@@ -1961,3 +1961,260 @@ After that, the critical path is Electron's stream path:
 `PdfViewerStreamManager` -> `pdf::PdfNavigationThrottle` with `is_pdf = true` ->
 Chromium launches the PDF renderer. Chromium handles the PDF process once
 TermSurf enters that path.
+
+### Experiment 6: Register PDF Viewer Component Resources
+
+#### Description
+
+Experiment 5 identified the first useful Electron-style milestone: establish the
+trusted PDF viewer extension resource substrate before changing navigation or
+stream routing.
+
+This experiment ports the smallest possible TermSurf equivalent of Electron's
+PDF component-extension resource registration. It should make Chromium know that
+the PDF viewer component extension exists, that its bundled resources are
+available, and that its template replacements can be resolved. It should not yet
+try to render a PDF, intercept PDF streams, create MimeHandlerViews, or replace
+the wrapper throttle.
+
+This is intentionally a substrate experiment. A successful result means the
+viewer origin and resources are buildable and resolvable; PDF pages may still
+download or fail exactly as they do after Experiment 4.
+
+#### Changes
+
+1. Create a new Chromium branch for this experiment.
+
+   Branch from `148.0.7778.97-issue-776-exp4`:
+
+   ```bash
+   git -C chromium/src checkout 148.0.7778.97-issue-776-exp4
+   git -C chromium/src checkout -b 148.0.7778.97-issue-776-exp6
+   ```
+
+   Add the branch to `chromium/README.md` with a short note:
+
+   > Issue 776 Experiment 6: PDF viewer component resources.
+
+2. Audit Electron's resource path before porting.
+
+   Re-read these files and record any version-specific differences in the
+   result:
+
+   ```bash
+   sed -n '1,220p' \
+     vendor/electron/shell/browser/extensions/electron_component_extension_resource_manager.cc
+   sed -n '1,180p' \
+     vendor/electron/shell/browser/extensions/electron_extension_system.cc
+   sed -n '1,120p' \
+     vendor/electron/shell/common/plugin_info.cc
+   ```
+
+   Confirm these Chromium 148 symbols and generated resources exist:
+
+   ```bash
+   rg "kPdfResources|IDR_PDF" chromium/src/chrome/grit chromium/src/out/Default/gen/chrome -n
+   rg "GetManifest|GetStrings|PdfViewerContext" \
+     chromium/src/chrome/browser/pdf chromium/src/chrome/common -n
+   rg "kPdfExtensionId|kPDFMimeType|kInternalPluginMimeType" \
+     chromium/src/extensions chromium/src/components/pdf chromium/src/content/libtermsurf_chromium -n
+   ```
+
+3. Add a TermSurf PDF component resource manager.
+
+   Create a small TermSurf-owned Chromium file pair under
+   `content/libtermsurf_chromium/`, for example:
+   - `ts_pdf_component_extension_resource_manager.h`
+   - `ts_pdf_component_extension_resource_manager.cc`
+
+   The class should mirror only the PDF-relevant part of Electron's
+   `ElectronComponentExtensionResourceManager`:
+   - include `chrome/grit/pdf_resources_map.h`;
+   - include `chrome/browser/pdf/pdf_extension_util.h`;
+   - register `kPdfResources`;
+   - register template replacements for `extension_misc::kPdfExtensionId` using
+     `pdf_extension_util::GetStrings(PdfViewerContext::kPdfViewer)`;
+   - expose a small lookup/probe API that can answer:
+     - is this resource path a PDF component extension resource?
+     - are template replacements registered for the PDF extension id?
+
+   Do not add general extension support. This class is PDF-only.
+
+4. Register the PDF extension metadata in TermSurf.
+
+   Port the minimal metadata from Electron's `shell/common/plugin_info.cc` into
+   TermSurf-owned code. The experiment should make the following facts
+   inspectable in logs/probes:
+   - PDF extension id is `extension_misc::kPdfExtensionId`;
+   - handled MIME type is `pdf::kPDFMimeType`;
+   - internal plugin MIME type remains `pdf::kInternalPluginMimeType`;
+   - PDF extension manifest comes from `pdf_extension_util::GetManifest()`.
+
+   Do not change the existing internal plugin registration in
+   `TsContentClient::AddPlugins()` except for adding diagnostic output if
+   useful.
+
+5. Wire the resource manager into TermSurf startup only far enough to create and
+   probe it.
+
+   The safest first implementation is a singleton or owned member initialized
+   from TermSurf browser startup code. The experiment should not yet require
+   `extensions::ExtensionsBrowserClient`, `ExtensionSystem`,
+   `ExtensionRegistry`, `GuestViewManager`, or `MimeHandlerViewGuest`.
+
+   If a Chromium API requires one of those systems just to instantiate the
+   resource manager, stop and mark the experiment Partial. Do not silently grow
+   Experiment 6 into a full extension-system port.
+
+6. Add gated diagnostics for the probe.
+
+   Add a TermSurf-specific log prefix such as `[issue-776-exp6]`. On startup,
+   log:
+   - whether PDF viewer resources were registered;
+   - number of registered PDF resource paths, if easy to expose;
+   - whether template replacements exist for `extension_misc::kPdfExtensionId`;
+   - the first few PDF resource path keys, if easy to expose;
+   - whether `pdf_extension_util::GetManifest()` parses as a dictionary.
+
+   Keep the log low-volume and deterministic. It may be unconditional during the
+   experiment, or gated behind an env var such as `TERMSURF_PDF_TRACE=1`.
+
+7. Update GN deps only for the resource milestone.
+
+   Add the minimum dependencies needed by the TermSurf resource manager. Likely
+   candidates include:
+   - `//chrome/browser/pdf`;
+   - generated grit/resource targets that provide `pdf_resources_map.h`;
+   - `//extensions/common` for `extension_misc::kPdfExtensionId`;
+   - `//ui/base` for template replacements, if needed.
+
+   Do not add `//extensions/browser`, `//extensions/renderer`,
+   `GuestViewManager`, `MimeHandlerViewGuest`, `streams_private`, or
+   `pdf_viewer_private` deps in this experiment unless compilation proves a tiny
+   resource-only dependency already requires them. If that happens, record the
+   dependency reason in the result before proceeding.
+
+8. Build Chromium and Roamium enough to prove the branch is coherent.
+
+   ```bash
+   autoninja -C chromium/src/out/Default libtermsurf_chromium roamium
+   ```
+
+   If the normal build script is more reliable for this repo state, this is also
+   acceptable:
+
+   ```bash
+   ./scripts/build.sh chromium
+   ./scripts/build.sh roamium
+   ```
+
+9. Regenerate the Chromium patch archive if the experiment passes or produces a
+   coherent Partial worth preserving.
+
+   The archive should capture only the Experiment 6 Chromium branch changes. Do
+   not archive an incoherent failed spike.
+
+#### Non-Negotiable Invariants
+
+- Do not attempt to render PDFs in this experiment.
+- Do not remove or rewrite the existing Experiment 4 wrapper throttle yet.
+- Do not add `streams_private`, `pdf_viewer_private`, MimeHandlerView,
+  GuestView, or `PdfHost` implementation in this experiment.
+- Do not weaken `CHECK(IsPdfRenderer())`.
+- Do not globally add `--pdf-renderer` to ordinary renderers.
+- Do not enable general user extension support.
+- Do not change the TermSurf protocol.
+- Do not close Issue 776.
+
+#### Verification
+
+1. Confirm branch and files:
+
+   ```bash
+   git -C chromium/src branch --show-current
+   git -C chromium/src diff --name-only
+   git diff --name-only
+   ```
+
+   Expected:
+   - Chromium branch is `148.0.7778.97-issue-776-exp6`;
+   - Chromium changes are limited to TermSurf Chromium PDF resource plumbing and
+     any required BUILD.gn edits;
+   - main repo changes are limited to `chromium/README.md`, the issue document,
+     and the regenerated Issue 776 patch archive, if applicable.
+
+2. Build:
+
+   ```bash
+   autoninja -C chromium/src/out/Default libtermsurf_chromium roamium
+   ```
+
+   Or:
+
+   ```bash
+   ./scripts/build.sh chromium
+   ./scripts/build.sh roamium
+   ```
+
+   Record which command was used and whether it passed.
+
+3. Run a lightweight startup probe.
+
+   Start Roamium through the normal debug test path with `TERMSURF_PDF_TRACE=1`,
+   or use any existing Chromium logging path that captures `LOG(INFO)` from
+   `libtermsurf_chromium`.
+
+   Confirm logs contain:
+   - `[issue-776-exp6] pdf resources registered=true`;
+   - `[issue-776-exp6] pdf template replacements registered=true`;
+   - `[issue-776-exp6] pdf manifest parsed=true`;
+   - the PDF extension id.
+
+4. Confirm no behavior change is claimed.
+
+   Load the vendored Bitcoin PDF with the existing automated screenshot test.
+   The screenshot may still show the pre-existing failure. That is acceptable.
+   This experiment only passes on resource substrate readiness, not visible PDF
+   rendering.
+
+5. Record the result directly under this experiment.
+
+   Include:
+   - exact Chromium files changed;
+   - exact BUILD.gn deps added;
+   - resource probe log lines;
+   - binary size before/after if easy to capture;
+   - whether Experiment 7 should proceed to `streams_private` / interceptor
+     redirect or whether Experiment 6 exposed an earlier blocker.
+
+6. Format this issue document:
+
+   ```bash
+   prettier --write --prose-wrap always --print-width 80 \
+     issues/0776-pdf-not-loading/README.md
+   ```
+
+#### Pass Criteria
+
+Pass if Chromium builds and TermSurf logs prove that the PDF viewer component
+resources, PDF extension manifest, PDF extension id, and PDF viewer template
+replacements are registered/resolvable from TermSurf-owned code without enabling
+general extension support.
+
+#### Partial Criteria
+
+Partial if some resource substrate works, but the experiment discovers that even
+resource resolution requires a broader extension-system object such as
+`ExtensionsBrowserClient`, `ExtensionRegistry`, or `ExtensionSystem`. The result
+must name the exact missing object and design Experiment 7 around that object.
+
+#### Failure Criteria
+
+- The experiment tries to render PDFs instead of proving resource substrate.
+- The experiment silently expands into `streams_private`, MimeHandlerView,
+  GuestView, or `PdfHost`.
+- The experiment weakens PDF renderer security checks.
+- The experiment adds broad extension support without a focused PDF-only reason.
+- The experiment builds only by adding unrelated Chrome app/browser features.
+- The result claims success without log/probe evidence that PDF resources and
+  template replacements are registered.
