@@ -2276,3 +2276,109 @@ must name the exact missing object and design Experiment 7 around that object.
 - The experiment builds only by adding unrelated Chrome app/browser features.
 - The result claims success without log/probe evidence that PDF resources and
   template replacements are registered.
+
+**Result:** Pass
+
+Experiment 6 established the PDF viewer component-resource substrate without
+turning on the general extension system.
+
+Chromium branch:
+
+- `148.0.7778.97-issue-776-exp6`
+
+Chromium files changed:
+
+- `content/libtermsurf_chromium/BUILD.gn`
+- `content/libtermsurf_chromium/ts_browser_client.cc`
+- `content/libtermsurf_chromium/ts_browser_client.h`
+- `content/libtermsurf_chromium/ts_pdf_component_extension_resource_manager.cc`
+- `content/libtermsurf_chromium/ts_pdf_component_extension_resource_manager.h`
+
+The new `TsPdfComponentExtensionResourceManager` is owned by `TsBrowserClient`
+startup code and logs a one-time resource probe. It registers the generated
+`kPdfResources` map, exposes the PDF extension metadata, loads the browser
+resource pack, parses `IDR_PDF_MANIFEST`, and registers minimal TermSurf-owned
+template replacements.
+
+`//chrome/browser/pdf` was avoided. Chromium 148 does not expose
+`pdf_extension_util` through a narrow dependency suitable for this experiment,
+so the probe uses generated resources directly:
+
+- `chrome/grit/pdf_resources_map.h` for PDF viewer resource path registration;
+- `chrome/grit/browser_resources.h` and `IDR_PDF_MANIFEST` for manifest parsing;
+- a small TermSurf-owned template replacement table for this resource milestone.
+
+BUILD.gn deps added:
+
+- `//base`
+- `//chrome/browser:resources`
+- `//chrome/browser/resources/pdf:resources`
+- `//extensions/common:common_constants`
+- `//ui/base`
+
+Deps intentionally not added:
+
+- `//chrome/browser/pdf`
+- `//extensions/browser`
+- `//extensions/renderer`
+- `streams_private`
+- `pdf_viewer_private`
+- MimeHandlerView / GuestView / PdfHost deps
+
+Build verification:
+
+- Baseline `autoninja -C chromium/src/out/Default libtermsurf_chromium` passed
+  before changes.
+- Final `autoninja -C chromium/src/out/Default libtermsurf_chromium` passed.
+- `./scripts/build.sh roamium` passed.
+- `libtermsurf_chromium_test` was not used as a pass/fail signal. It currently
+  fails to link on the inherited branch because
+  `content::TsNotifyTargetUrlChanged(void*, char const*)` is unresolved from
+  `content::Shell::UpdateTargetURL(...)`. The Roamium startup probe gave the
+  required evidence for this experiment.
+
+Probe evidence appeared in Roamium/Wezboard logs:
+
+```text
+[issue-776-exp6] pdf resources registered=true count=12
+[issue-776-exp6] pdf template replacements registered=true
+[issue-776-exp6] pdf manifest parsed=true
+[issue-776-exp6] pdf known resource resolved=true path=pdf/index.html id=21596
+[issue-776-exp6] pdf extension id=mhjfbmdgcfjbbpaeojofohoefgiehjai pdf_mime=application/pdf internal_plugin_mime=application/x-google-chrome-pdf
+[issue-776-exp6] browser resources pack loaded=true
+[issue-776-exp6] pdf resource sample=pdf/browser_api.js
+[issue-776-exp6] pdf resource sample=pdf/index.css
+[issue-776-exp6] pdf resource sample=pdf/index.html
+```
+
+Automated smoke runs completed and captured screenshots:
+
+- PDF fixture: `logs/issue-776-exp6-pdf-20260527-114611/pdf-smoke.png`
+- HTML smoke: `logs/issue-776-exp6-html-20260527-114632/pdf-smoke.png`
+- non-PDF binary smoke: `logs/issue-776-exp6-bin-20260527-114648/pdf-smoke.png`
+
+Each screenshot artifact is a non-empty `4112 x 2658` PNG, and each run logged
+the resource probe lines above. As expected, this experiment did not claim
+visible PDF rendering.
+
+The final `libtermsurf_chromium.dylib` size after the build was `14,781,856`
+bytes. No pre-change size baseline was captured for this experiment.
+
+The patch archive was regenerated under `chromium/patches/issue-776-exp6/`. The
+archive contains the cumulative Issue 776 Chromium patch stack through
+`0029-Register-PDF-viewer-resources.patch`.
+
+#### Conclusion
+
+TermSurf can now own the PDF viewer resource substrate directly: the generated
+PDF viewer resources are buildable, the manifest is parseable, the extension id
+and MIME metadata are available, and known viewer resource paths resolve without
+enabling the general extension system.
+
+The next experiment should move from static resource substrate to runtime
+delivery. The likely next layer is either a minimal `chrome-extension://`
+resource-serving bridge for the PDF extension id or the Electron-style stream
+path around `PluginResponseInterceptorURLLoaderThrottle` and `streams_private`.
+If Chromium refuses to serve the PDF viewer URL without an
+`ExtensionsBrowserClient` component-resource manager hook, that exact object
+should become the next experiment's scope.
