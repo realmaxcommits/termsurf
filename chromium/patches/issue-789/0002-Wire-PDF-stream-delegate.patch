@@ -1,0 +1,990 @@
+From 332a28d1ba350a441d8f4d814b5b69b4e87f7e8e Mon Sep 17 00:00:00 2001
+From: "Ryan X. Charles" <ryan@ryanxcharles.com>
+Date: Wed, 27 May 2026 18:50:00 -0500
+Subject: [PATCH 2/2] Wire PDF stream delegate
+
+The stream now keeps a proper desk,
+With delegates on call.
+It waits for viewer hands to knock,
+And names the missing wall.
+---
+ content/libtermsurf_chromium/BUILD.gn         |   6 +
+ .../libtermsurf_chromium/ts_browser_client.cc |  37 +-
+ .../libtermsurf_chromium/ts_browser_client.h  |   8 +
+ .../ts_pdf_response_url_loader_throttle.cc    |   5 +
+ .../ts_pdf_stream_delegate.cc                 | 106 ++++
+ .../ts_pdf_stream_delegate.h                  |  36 ++
+ .../ts_pdf_stream_dispatch.cc                 |  21 +-
+ .../ts_pdf_stream_store.cc                    | 509 ++++++++++++++++++
+ .../ts_pdf_stream_store.h                     |  98 ++++
+ 9 files changed, 812 insertions(+), 14 deletions(-)
+ create mode 100644 content/libtermsurf_chromium/ts_pdf_stream_delegate.cc
+ create mode 100644 content/libtermsurf_chromium/ts_pdf_stream_delegate.h
+ create mode 100644 content/libtermsurf_chromium/ts_pdf_stream_store.cc
+ create mode 100644 content/libtermsurf_chromium/ts_pdf_stream_store.h
+
+diff --git a/content/libtermsurf_chromium/BUILD.gn b/content/libtermsurf_chromium/BUILD.gn
+index 265e9b643649c..d6240864c83c8 100644
+--- a/content/libtermsurf_chromium/BUILD.gn
++++ b/content/libtermsurf_chromium/BUILD.gn
+@@ -23,8 +23,12 @@ shared_library("libtermsurf_chromium") {
+     "ts_pdf_navigation_throttle.h",
+     "ts_pdf_response_url_loader_throttle.cc",
+     "ts_pdf_response_url_loader_throttle.h",
++    "ts_pdf_stream_delegate.cc",
++    "ts_pdf_stream_delegate.h",
+     "ts_pdf_stream_dispatch.cc",
+     "ts_pdf_stream_dispatch.h",
++    "ts_pdf_stream_store.cc",
++    "ts_pdf_stream_store.h",
+     "ts_pdf_viewer_url_loader_factory.cc",
+     "ts_pdf_viewer_url_loader_factory.h",
+     "ts_renderer_client.cc",
+@@ -48,6 +52,7 @@ shared_library("libtermsurf_chromium") {
+     "//base",
+     "//chrome/browser:resources",
+     "//chrome/browser/resources/pdf:resources",
++    "//components/pdf/browser:interceptors",
+     "//components/pdf/common:constants",
+     "//components/pdf/common:util",
+     "//components/pdf/renderer",
+@@ -57,6 +62,7 @@ shared_library("libtermsurf_chromium") {
+     "//content/shell:content_shell_app",
+     "//content/shell:content_shell_lib",
+     "//extensions/browser/mime_handler:stream_container",
++    "//extensions/browser/mime_handler:stream_info",
+     "//extensions/common:common_constants",
+     "//mojo/public/cpp/bindings",
+     "//net",
+diff --git a/content/libtermsurf_chromium/ts_browser_client.cc b/content/libtermsurf_chromium/ts_browser_client.cc
+index 2bea7e7b4fa7c..6221ce153e3ab 100644
+--- a/content/libtermsurf_chromium/ts_browser_client.cc
++++ b/content/libtermsurf_chromium/ts_browser_client.cc
+@@ -6,10 +6,15 @@
+ 
+ #include "base/command_line.h"
+ #include "base/logging.h"
++#include "components/pdf/browser/pdf_navigation_throttle.h"
++#include "components/pdf/browser/pdf_url_loader_request_interceptor.h"
+ #include "content/libtermsurf_chromium/ts_browser_main_parts.h"
+ #include "content/libtermsurf_chromium/ts_pdf_component_extension_resource_manager.h"
+ #include "content/libtermsurf_chromium/ts_pdf_response_url_loader_throttle.h"
++#include "content/libtermsurf_chromium/ts_pdf_stream_delegate.h"
++#include "content/libtermsurf_chromium/ts_pdf_stream_store.h"
+ #include "content/libtermsurf_chromium/ts_pdf_viewer_url_loader_factory.h"
++#include "content/public/browser/navigation_handle.h"
+ #include "content/public/browser/navigation_throttle_registry.h"
+ #include "content/public/browser/render_frame_host.h"
+ #include "content/public/browser/render_process_host.h"
+@@ -100,7 +105,12 @@ void TsBrowserClient::OverrideWebPreferences(
+ void TsBrowserClient::CreateThrottlesForNavigation(
+     NavigationThrottleRegistry& registry) {
+   ShellContentBrowserClient::CreateThrottlesForNavigation(registry);
+-  LOG(INFO) << "[issue-789-exp2] old-pdf-navigation-throttle=disabled";
++  if (TsPdfStreamStore::HasStreams(
++          registry.GetNavigationHandle().GetWebContents())) {
++    registry.AddThrottle(std::make_unique<pdf::PdfNavigationThrottle>(
++        registry, std::make_unique<TsPdfStreamDelegate>()));
++    LOG(INFO) << "[issue-789-exp3] pdf-navigation-throttle-installed";
++  }
+ }
+ 
+ std::vector<std::unique_ptr<blink::URLLoaderThrottle>>
+@@ -122,6 +132,31 @@ TsBrowserClient::CreateURLLoaderThrottles(
+   return throttles;
+ }
+ 
++std::vector<std::unique_ptr<URLLoaderRequestInterceptor>>
++TsBrowserClient::WillCreateURLLoaderRequestInterceptors(
++    NavigationUIData* navigation_ui_data,
++    FrameTreeNodeId frame_tree_node_id,
++    int64_t navigation_id,
++    bool force_no_https_upgrade,
++    scoped_refptr<base::SequencedTaskRunner> navigation_response_task_runner) {
++  auto interceptors =
++      ShellContentBrowserClient::WillCreateURLLoaderRequestInterceptors(
++          navigation_ui_data, frame_tree_node_id, navigation_id,
++          force_no_https_upgrade, navigation_response_task_runner);
++  if (!TsPdfStreamStore::HasStreams(
++          WebContents::FromFrameTreeNodeId(frame_tree_node_id))) {
++    return interceptors;
++  }
++
++  interceptors.push_back(
++      pdf::PdfURLLoaderRequestInterceptor::MaybeCreateInterceptor(
++          frame_tree_node_id, std::make_unique<TsPdfStreamDelegate>()));
++  LOG(INFO) << "[issue-789-exp3] pdf-url-loader-request-interceptor-installed"
++            << " frame_tree_node_id=" << frame_tree_node_id
++            << " navigation_id=" << navigation_id;
++  return interceptors;
++}
++
+ void TsBrowserClient::AppendExtraCommandLineSwitches(
+     base::CommandLine* command_line,
+     int child_process_id) {
+diff --git a/content/libtermsurf_chromium/ts_browser_client.h b/content/libtermsurf_chromium/ts_browser_client.h
+index 1a7e4a68c0275..7eaf7875b6a17 100644
+--- a/content/libtermsurf_chromium/ts_browser_client.h
++++ b/content/libtermsurf_chromium/ts_browser_client.h
+@@ -54,6 +54,14 @@ class TsBrowserClient : public ShellContentBrowserClient {
+       NavigationUIData* navigation_ui_data,
+       FrameTreeNodeId frame_tree_node_id,
+       std::optional<int64_t> navigation_id) override;
++  std::vector<std::unique_ptr<URLLoaderRequestInterceptor>>
++  WillCreateURLLoaderRequestInterceptors(
++      NavigationUIData* navigation_ui_data,
++      FrameTreeNodeId frame_tree_node_id,
++      int64_t navigation_id,
++      bool force_no_https_upgrade,
++      scoped_refptr<base::SequencedTaskRunner> navigation_response_task_runner)
++      override;
+   void AppendExtraCommandLineSwitches(base::CommandLine* command_line,
+                                       int child_process_id) override;
+   mojo::PendingRemote<network::mojom::URLLoaderFactory>
+diff --git a/content/libtermsurf_chromium/ts_pdf_response_url_loader_throttle.cc b/content/libtermsurf_chromium/ts_pdf_response_url_loader_throttle.cc
+index ccb4f59fa6189..07141e41c04da 100644
+--- a/content/libtermsurf_chromium/ts_pdf_response_url_loader_throttle.cc
++++ b/content/libtermsurf_chromium/ts_pdf_response_url_loader_throttle.cc
+@@ -161,6 +161,11 @@ void TsPdfResponseURLLoaderThrottle::WillProcessResponse(
+   }
+ 
+   ClearAllButFrameAncestors(response_head);
++  response_head->mime_type = "text/html";
++  if (response_head->headers) {
++    response_head->headers->RemoveHeader("Content-Type");
++    response_head->headers->AddHeader("Content-Type", "text/html");
++  }
+ 
+   mojo::PendingRemote<network::mojom::URLLoader> dummy_new_loader;
+   std::ignore = dummy_new_loader.InitWithNewPipeAndPassReceiver();
+diff --git a/content/libtermsurf_chromium/ts_pdf_stream_delegate.cc b/content/libtermsurf_chromium/ts_pdf_stream_delegate.cc
+new file mode 100644
+index 0000000000000..3e1a9e18a6836
+--- /dev/null
++++ b/content/libtermsurf_chromium/ts_pdf_stream_delegate.cc
+@@ -0,0 +1,106 @@
++// Copyright 2026 TermSurf
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#include "content/libtermsurf_chromium/ts_pdf_stream_delegate.h"
++
++#include <optional>
++#include <string>
++
++#include "base/logging.h"
++#include "content/libtermsurf_chromium/ts_pdf_stream_store.h"
++#include "content/public/browser/navigation_handle.h"
++#include "content/public/browser/render_frame_host.h"
++#include "content/public/browser/web_contents.h"
++#include "url/gurl.h"
++
++namespace content {
++
++TsPdfStreamDelegate::TsPdfStreamDelegate() {
++  LOG(INFO) << "[issue-789-exp3] delegate-created this=" << this;
++}
++
++TsPdfStreamDelegate::~TsPdfStreamDelegate() = default;
++
++std::optional<GURL> TsPdfStreamDelegate::MapToOriginalUrl(
++    content::NavigationHandle& navigation_handle) {
++  std::string internal_id;
++  TsPdfStreamStore* store =
++      TsPdfStreamStore::GetOrCreate(navigation_handle.GetWebContents());
++  if (!store) {
++    LOG(INFO) << "[issue-789-exp3] map-to-original-url"
++              << " url=" << navigation_handle.GetURL().possibly_invalid_spec()
++              << " internal_id=" << internal_id << " result=no-store";
++    return std::nullopt;
++  }
++  return store->MapToOriginalUrl(navigation_handle, &internal_id);
++}
++
++std::optional<pdf::PdfStreamDelegate::StreamInfo>
++TsPdfStreamDelegate::GetStreamInfo(content::RenderFrameHost* embedder_frame) {
++  TsPdfStreamStore* store =
++      embedder_frame
++          ? TsPdfStreamStore::GetOrCreate(
++                content::WebContents::FromRenderFrameHost(embedder_frame))
++          : nullptr;
++  if (!store) {
++    LOG(INFO) << "[issue-789-exp3] get-stream-info"
++              << " frame_tree_node_id="
++              << (embedder_frame ? embedder_frame->GetFrameTreeNodeId()
++                                 : content::FrameTreeNodeId())
++              << " result=no-store";
++    return std::nullopt;
++  }
++  return store->GetStreamInfo(embedder_frame);
++}
++
++bool TsPdfStreamDelegate::MaybeDeleteSandboxedStream(
++    content::FrameTreeNodeId frame_tree_node_id) {
++  TsPdfStreamStore* store =
++      TsPdfStreamStore::FromFrameTreeNodeId(frame_tree_node_id);
++  if (!store) {
++    LOG(INFO) << "[issue-789-exp3] maybe-delete-sandboxed-stream"
++              << " frame_tree_node_id=" << frame_tree_node_id
++              << " deleted=false reason=no-store";
++    return false;
++  }
++  return store->MaybeDeleteSandboxedStream(frame_tree_node_id);
++}
++
++bool TsPdfStreamDelegate::ShouldAllowPdfFrameNavigation(
++    content::NavigationHandle* navigation_handle) {
++  TsPdfStreamStore* store =
++      navigation_handle
++          ? TsPdfStreamStore::GetOrCreate(navigation_handle->GetWebContents())
++          : nullptr;
++  if (!store) {
++    LOG(INFO) << "[issue-789-exp3] allow-pdf-frame-navigation"
++              << " url="
++              << (navigation_handle
++                      ? navigation_handle->GetURL().possibly_invalid_spec()
++                      : std::string())
++              << " allowed=true reason=no-store";
++    return true;
++  }
++  return store->ShouldAllowPdfFrameNavigation(navigation_handle);
++}
++
++bool TsPdfStreamDelegate::ShouldAllowPdfExtensionFrameNavigation(
++    content::NavigationHandle* navigation_handle) {
++  TsPdfStreamStore* store =
++      navigation_handle
++          ? TsPdfStreamStore::GetOrCreate(navigation_handle->GetWebContents())
++          : nullptr;
++  if (!store) {
++    LOG(INFO) << "[issue-789-exp3] allow-pdf-extension-frame-navigation"
++              << " url="
++              << (navigation_handle
++                      ? navigation_handle->GetURL().possibly_invalid_spec()
++                      : std::string())
++              << " allowed=true reason=no-store";
++    return true;
++  }
++  return store->ShouldAllowPdfExtensionFrameNavigation(navigation_handle);
++}
++
++}  // namespace content
+diff --git a/content/libtermsurf_chromium/ts_pdf_stream_delegate.h b/content/libtermsurf_chromium/ts_pdf_stream_delegate.h
+new file mode 100644
+index 0000000000000..de27ad3654024
+--- /dev/null
++++ b/content/libtermsurf_chromium/ts_pdf_stream_delegate.h
+@@ -0,0 +1,36 @@
++// Copyright 2026 TermSurf
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#ifndef CONTENT_LIBTERMSURF_CHROMIUM_TS_PDF_STREAM_DELEGATE_H_
++#define CONTENT_LIBTERMSURF_CHROMIUM_TS_PDF_STREAM_DELEGATE_H_
++
++#include <optional>
++
++#include "components/pdf/browser/pdf_stream_delegate.h"
++
++namespace content {
++
++class TsPdfStreamDelegate final : public pdf::PdfStreamDelegate {
++ public:
++  TsPdfStreamDelegate();
++  TsPdfStreamDelegate(const TsPdfStreamDelegate&) = delete;
++  TsPdfStreamDelegate& operator=(const TsPdfStreamDelegate&) = delete;
++  ~TsPdfStreamDelegate() override;
++
++  // pdf::PdfStreamDelegate:
++  std::optional<GURL> MapToOriginalUrl(
++      content::NavigationHandle& navigation_handle) override;
++  std::optional<pdf::PdfStreamDelegate::StreamInfo> GetStreamInfo(
++      content::RenderFrameHost* embedder_frame) override;
++  bool MaybeDeleteSandboxedStream(
++      content::FrameTreeNodeId frame_tree_node_id) override;
++  bool ShouldAllowPdfFrameNavigation(
++      content::NavigationHandle* navigation_handle) override;
++  bool ShouldAllowPdfExtensionFrameNavigation(
++      content::NavigationHandle* navigation_handle) override;
++};
++
++}  // namespace content
++
++#endif  // CONTENT_LIBTERMSURF_CHROMIUM_TS_PDF_STREAM_DELEGATE_H_
+diff --git a/content/libtermsurf_chromium/ts_pdf_stream_dispatch.cc b/content/libtermsurf_chromium/ts_pdf_stream_dispatch.cc
+index 09d51d234d1a9..f5739847048c1 100644
+--- a/content/libtermsurf_chromium/ts_pdf_stream_dispatch.cc
++++ b/content/libtermsurf_chromium/ts_pdf_stream_dispatch.cc
+@@ -4,15 +4,15 @@
+ 
+ #include "content/libtermsurf_chromium/ts_pdf_stream_dispatch.h"
+ 
+-#include <map>
+ #include <memory>
+ #include <string>
+ 
+ #include "base/logging.h"
+-#include "base/no_destructor.h"
+ #include "base/strings/strcat.h"
++#include "content/libtermsurf_chromium/ts_pdf_stream_store.h"
+ #include "content/public/browser/browser_thread.h"
+ #include "extensions/browser/mime_handler/stream_container.h"
++#include "extensions/common/api/mime_handler.mojom.h"
+ #include "extensions/common/constants.h"
+ #include "extensions/common/extension_id.h"
+ #include "third_party/blink/public/mojom/loader/transferrable_url_loader.mojom.h"
+@@ -24,14 +24,6 @@ namespace {
+ 
+ constexpr int kUnknownTabId = -1;
+ 
+-std::map<std::string, std::unique_ptr<extensions::StreamContainer>>&
+-CapturedPdfStreams() {
+-  static base::NoDestructor<
+-      std::map<std::string, std::unique_ptr<extensions::StreamContainer>>>
+-      streams;
+-  return *streams;
+-}
+-
+ GURL PdfViewerHandlerUrl() {
+   return GURL(
+       base::StrCat({extensions::kExtensionScheme, "://",
+@@ -59,11 +51,14 @@ void TsDispatchPdfStream(
+   auto stream_container = std::make_unique<extensions::StreamContainer>(
+       kUnknownTabId, embedded, handler_url, extension_misc::kPdfExtensionId,
+       std::move(transferrable_loader), original_url);
+-  CapturedPdfStreams()[internal_id] = std::move(stream_container);
++  stream_container->set_pdf_plugin_attributes(
++      extensions::mime_handler::PdfPluginAttributes::New(
++          /*background_color=*/0, /*allow_javascript=*/true));
++  TsPdfStreamStore::AddStreamContainer(frame_tree_node_id, internal_id,
++                                       std::move(stream_container));
+ 
+   LOG(INFO) << "[issue-789-exp2] stream-container-captured internal_id="
+-            << internal_id << " count=" << CapturedPdfStreams().size()
+-            << " pdf-viewer-stream-manager=not-linked";
++            << internal_id << " pdf-viewer-stream-manager=replaced-by-exp3";
+ }
+ 
+ }  // namespace content
+diff --git a/content/libtermsurf_chromium/ts_pdf_stream_store.cc b/content/libtermsurf_chromium/ts_pdf_stream_store.cc
+new file mode 100644
+index 0000000000000..a0eefacbad169
+--- /dev/null
++++ b/content/libtermsurf_chromium/ts_pdf_stream_store.cc
+@@ -0,0 +1,509 @@
++// Copyright 2026 TermSurf
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#include "content/libtermsurf_chromium/ts_pdf_stream_store.h"
++
++#include <tuple>
++#include <utility>
++
++#include "base/feature_list.h"
++#include "base/logging.h"
++#include "components/pdf/common/pdf_util.h"
++#include "content/public/browser/document_user_data.h"
++#include "content/public/browser/navigation_handle.h"
++#include "content/public/browser/render_frame_host.h"
++#include "content/public/browser/web_contents.h"
++#include "extensions/browser/mime_handler/stream_container.h"
++#include "extensions/browser/mime_handler/stream_info.h"
++#include "pdf/pdf_features.h"
++#include "third_party/blink/public/mojom/loader/transferrable_url_loader.mojom.h"
++
++namespace content {
++
++namespace {
++
++TsPdfStreamStore::EmbedderHostInfo GetEmbedderHostInfo(
++    const RenderFrameHost* embedder_host) {
++  return {embedder_host->GetFrameTreeNodeId(), embedder_host->GetGlobalId()};
++}
++
++TsPdfStreamStore::EmbedderHostInfo GetUnclaimedEmbedderHostInfo(
++    FrameTreeNodeId frame_tree_node_id) {
++  return {frame_tree_node_id, GlobalRenderFrameHostId()};
++}
++
++RenderFrameHost* GetEmbedderHostFromPdfContentNavigation(
++    NavigationHandle* navigation_handle) {
++  RenderFrameHost* extension_host = navigation_handle->GetParentFrame();
++  if (!extension_host) {
++    return nullptr;
++  }
++  return extension_host->GetParent();
++}
++
++class TsPdfStreamInfoHelper : public DocumentUserData<TsPdfStreamInfoHelper> {
++ public:
++  std::optional<pdf::PdfStreamDelegate::StreamInfo> TakeStreamInfo() {
++    return std::move(stream_info_);
++  }
++
++ private:
++  friend class DocumentUserData<TsPdfStreamInfoHelper>;
++  DOCUMENT_USER_DATA_KEY_DECL();
++
++  TsPdfStreamInfoHelper(RenderFrameHost* render_frame_host,
++                        pdf::PdfStreamDelegate::StreamInfo stream_info)
++      : DocumentUserData<TsPdfStreamInfoHelper>(render_frame_host),
++        stream_info_(std::move(stream_info)) {}
++
++  std::optional<pdf::PdfStreamDelegate::StreamInfo> stream_info_;
++};
++
++DOCUMENT_USER_DATA_KEY_IMPL(TsPdfStreamInfoHelper);
++
++pdf::PdfStreamDelegate::StreamInfo BuildStreamInfo(
++    extensions::StreamInfo* stream_info) {
++  extensions::StreamContainer* stream = stream_info->stream();
++  pdf::PdfStreamDelegate::StreamInfo info;
++  info.stream_url = stream->stream_url();
++  info.original_url = stream->original_url();
++  static const std::string kEmptyInjectedScript;
++  info.injected_script = &kEmptyInjectedScript;
++  info.full_frame = !stream->embedded();
++  info.allow_javascript =
++      stream->pdf_plugin_attributes()
++          ? stream->pdf_plugin_attributes()->allow_javascript
++          : true;
++  info.background_color =
++      stream->pdf_plugin_attributes()
++          ? static_cast<SkColor>(
++                stream->pdf_plugin_attributes()->background_color)
++          : SK_ColorTRANSPARENT;
++  info.use_skia =
++      base::FeatureList::IsEnabled(chrome_pdf::features::kPdfUseSkiaRenderer);
++  info.allow_xfa_forms =
++      base::FeatureList::IsEnabled(chrome_pdf::features::kPdfXfaSupport);
++  if (stream->response_headers()) {
++    std::optional<std::string> coep_header =
++        stream->response_headers()->GetNormalizedHeader(
++            "Cross-Origin-Embedder-Policy");
++    if (coep_header.has_value()) {
++      info.coep_header = coep_header.value();
++    }
++  }
++  return info;
++}
++
++}  // namespace
++
++bool TsPdfStreamStore::EmbedderHostInfo::operator<(
++    const TsPdfStreamStore::EmbedderHostInfo& other) const {
++  return std::tie(frame_tree_node_id, global_id) <
++         std::tie(other.frame_tree_node_id, other.global_id);
++}
++
++TsPdfStreamStore::TsPdfStreamStore(WebContents* web_contents)
++    : WebContentsObserver(web_contents),
++      WebContentsUserData<TsPdfStreamStore>(*web_contents) {
++  LOG(INFO) << "[issue-789-exp3] stream-store-created web_contents="
++            << web_contents;
++}
++
++TsPdfStreamStore::~TsPdfStreamStore() = default;
++
++// static
++TsPdfStreamStore* TsPdfStreamStore::GetOrCreate(WebContents* web_contents) {
++  if (!web_contents) {
++    return nullptr;
++  }
++  TsPdfStreamStore::CreateForWebContents(web_contents);
++  return TsPdfStreamStore::FromWebContents(web_contents);
++}
++
++// static
++TsPdfStreamStore* TsPdfStreamStore::FromFrameTreeNodeId(
++    FrameTreeNodeId frame_tree_node_id) {
++  return GetOrCreate(WebContents::FromFrameTreeNodeId(frame_tree_node_id));
++}
++
++// static
++bool TsPdfStreamStore::HasStreams(WebContents* web_contents) {
++  TsPdfStreamStore* store = TsPdfStreamStore::FromWebContents(web_contents);
++  return store && !store->stream_infos_.empty();
++}
++
++// static
++void TsPdfStreamStore::AddStreamContainer(
++    FrameTreeNodeId frame_tree_node_id,
++    const std::string& internal_id,
++    std::unique_ptr<extensions::StreamContainer> stream_container) {
++  CHECK(stream_container);
++
++  TsPdfStreamStore* store = FromFrameTreeNodeId(frame_tree_node_id);
++  if (!store) {
++    LOG(INFO) << "[issue-789-exp3] stream-container-add-failed"
++              << " frame_tree_node_id=" << frame_tree_node_id
++              << " internal_id=" << internal_id << " reason=no-web-contents";
++    return;
++  }
++
++  auto key = GetUnclaimedEmbedderHostInfo(frame_tree_node_id);
++  store->stream_infos_[key] = std::make_unique<extensions::StreamInfo>(
++      internal_id, std::move(stream_container));
++
++  LOG(INFO) << "[issue-789-exp3] stream-container-added"
++            << " frame_tree_node_id=" << frame_tree_node_id
++            << " internal_id=" << internal_id
++            << " count=" << store->stream_infos_.size();
++}
++
++std::optional<GURL> TsPdfStreamStore::MapToOriginalUrl(
++    NavigationHandle& navigation_handle,
++    std::string* internal_id) {
++  RenderFrameHost* extension_frame = navigation_handle.GetParentFrame();
++  RenderFrameHost* embedder_frame =
++      extension_frame ? extension_frame->GetParent() : nullptr;
++  if (!embedder_frame) {
++    LOG(INFO) << "[issue-789-exp3] map-to-original-url"
++              << " url=" << navigation_handle.GetURL().possibly_invalid_spec()
++              << " internal_id=" << (internal_id ? *internal_id : std::string())
++              << " result=no-embedder-frame";
++    return std::nullopt;
++  }
++
++  extensions::StreamInfo* stream_info =
++      ClaimStreamInfo(embedder_frame, navigation_handle.GetURL());
++  if (!stream_info) {
++    LOG(INFO) << "[issue-789-exp3] map-to-original-url"
++              << " url=" << navigation_handle.GetURL().possibly_invalid_spec()
++              << " internal_id=" << (internal_id ? *internal_id : std::string())
++              << " result=no-stream";
++    return std::nullopt;
++  }
++
++  stream_info->set_extension_host_frame_tree_node_id(
++      extension_frame->GetFrameTreeNodeId());
++  stream_info->set_content_host_frame_tree_node_id(
++      navigation_handle.GetFrameTreeNodeId());
++  if (internal_id) {
++    *internal_id = stream_info->internal_id();
++  }
++  TsPdfStreamInfoHelper::CreateForCurrentDocument(extension_frame,
++                                                  BuildStreamInfo(stream_info));
++
++  LOG(INFO) << "[issue-789-exp3] map-to-original-url"
++            << " url=" << navigation_handle.GetURL().possibly_invalid_spec()
++            << " internal_id=" << stream_info->internal_id() << " original_url="
++            << stream_info->stream()->original_url().possibly_invalid_spec()
++            << " embedder_frame_tree_node_id="
++            << embedder_frame->GetFrameTreeNodeId()
++            << " content_frame_tree_node_id="
++            << navigation_handle.GetFrameTreeNodeId() << " result=claimed";
++  return stream_info->stream()->original_url();
++}
++
++std::optional<pdf::PdfStreamDelegate::StreamInfo>
++TsPdfStreamStore::GetStreamInfo(RenderFrameHost* embedder_frame) {
++  LOG(INFO) << "[issue-789-exp3] get-stream-info"
++            << " frame_tree_node_id="
++            << (embedder_frame ? embedder_frame->GetFrameTreeNodeId()
++                               : FrameTreeNodeId())
++            << " embedder_exists=" << (embedder_frame ? "true" : "false");
++  if (!embedder_frame) {
++    return std::nullopt;
++  }
++
++  TsPdfStreamInfoHelper* helper =
++      TsPdfStreamInfoHelper::GetForCurrentDocument(embedder_frame);
++  if (helper) {
++    std::optional<pdf::PdfStreamDelegate::StreamInfo> info =
++        helper->TakeStreamInfo();
++    LOG(INFO) << "[issue-789-exp3] get-stream-info"
++              << " frame_tree_node_id=" << embedder_frame->GetFrameTreeNodeId()
++              << " result="
++              << (info.has_value() ? "document-helper"
++                                   : "document-helper-empty");
++    return info;
++  }
++
++  extensions::StreamInfo* stream_info = GetClaimedStreamInfo(embedder_frame);
++  if (!stream_info) {
++    LOG(INFO) << "[issue-789-exp3] get-stream-info result=no-stream";
++    return std::nullopt;
++  }
++
++  pdf::PdfStreamDelegate::StreamInfo info = BuildStreamInfo(stream_info);
++
++  LOG(INFO) << "[issue-789-exp3] get-stream-info"
++            << " internal_id=" << stream_info->internal_id()
++            << " stream_url=" << info.stream_url.possibly_invalid_spec()
++            << " original_url=" << info.original_url.possibly_invalid_spec()
++            << " result=ok";
++  return info;
++}
++
++bool TsPdfStreamStore::MaybeDeleteSandboxedStream(
++    FrameTreeNodeId frame_tree_node_id) {
++  LOG(INFO) << "[issue-789-exp3] maybe-delete-sandboxed-stream"
++            << " frame_tree_node_id=" << frame_tree_node_id;
++  const bool erased =
++      stream_infos_.erase(GetUnclaimedEmbedderHostInfo(frame_tree_node_id)) > 0;
++  LOG(INFO) << "[issue-789-exp3] maybe-delete-sandboxed-stream"
++            << " frame_tree_node_id=" << frame_tree_node_id
++            << " deleted=" << (erased ? "true" : "false");
++  DeleteIfEmpty();
++  return erased;
++}
++
++bool TsPdfStreamStore::ShouldAllowPdfFrameNavigation(
++    NavigationHandle* navigation_handle) {
++  if (!navigation_handle) {
++    return true;
++  }
++
++  RenderFrameHost* parent_frame = navigation_handle->GetParentFrame();
++  if (!parent_frame) {
++    LOG(INFO) << "[issue-789-exp3] allow-pdf-frame-navigation"
++              << " url=" << navigation_handle->GetURL().possibly_invalid_spec()
++              << " allowed=true reason=no-parent";
++    return true;
++  }
++
++  const GURL& url = navigation_handle->GetURL();
++  bool allowed = true;
++  const char* reason = "untracked";
++
++  if (extensions::StreamInfo* stream_info =
++          GetClaimedStreamInfo(parent_frame)) {
++    allowed = url == stream_info->stream()->handler_url() ||
++              navigation_handle->GetFrameTreeNodeId() !=
++                  stream_info->extension_host_frame_tree_node_id();
++    reason = "extension-frame";
++  } else if (RenderFrameHost* grandparent = parent_frame->GetParent()) {
++    stream_info = GetClaimedStreamInfo(grandparent);
++    if (stream_info) {
++      allowed = url == stream_info->stream()->original_url() ||
++                navigation_handle->GetFrameTreeNodeId() !=
++                    stream_info->content_host_frame_tree_node_id();
++      reason = "content-frame";
++    }
++  }
++
++  LOG(INFO) << "[issue-789-exp3] allow-pdf-frame-navigation"
++            << " url=" << url.possibly_invalid_spec()
++            << " allowed=" << (allowed ? "true" : "false")
++            << " reason=" << reason;
++  return allowed;
++}
++
++bool TsPdfStreamStore::ShouldAllowPdfExtensionFrameNavigation(
++    NavigationHandle* navigation_handle) {
++  bool allowed = chrome_pdf::features::IsOopifPdfEnabled() ||
++                 !navigation_handle ||
++                 navigation_handle->GetURL().IsAboutBlank();
++  LOG(INFO) << "[issue-789-exp3] allow-pdf-extension-frame-navigation"
++            << " url="
++            << (navigation_handle
++                    ? navigation_handle->GetURL().possibly_invalid_spec()
++                    : std::string())
++            << " allowed=" << (allowed ? "true" : "false");
++  return allowed;
++}
++
++void TsPdfStreamStore::RenderFrameDeleted(RenderFrameHost* render_frame_host) {
++  if (!render_frame_host) {
++    return;
++  }
++
++  if (GetClaimedStreamInfo(render_frame_host)) {
++    DeleteClaimedStreamInfo(render_frame_host);
++    return;
++  }
++
++  if (!render_frame_host->IsActive()) {
++    return;
++  }
++
++  const FrameTreeNodeId frame_tree_node_id =
++      render_frame_host->GetFrameTreeNodeId();
++  if (stream_infos_.erase(GetUnclaimedEmbedderHostInfo(frame_tree_node_id)) >
++      0) {
++    LOG(INFO) << "[issue-789-exp3] stream-container-deleted"
++              << " frame_tree_node_id=" << frame_tree_node_id
++              << " reason=render-frame-deleted";
++  }
++  DeleteIfEmpty();
++}
++
++void TsPdfStreamStore::FrameDeleted(FrameTreeNodeId frame_tree_node_id) {
++  for (auto iter = stream_infos_.begin(); iter != stream_infos_.end();) {
++    extensions::StreamInfo* stream_info = iter->second.get();
++    if (frame_tree_node_id == iter->first.frame_tree_node_id ||
++        frame_tree_node_id ==
++            stream_info->extension_host_frame_tree_node_id() ||
++        frame_tree_node_id == stream_info->content_host_frame_tree_node_id()) {
++      LOG(INFO) << "[issue-789-exp3] stream-container-deleted"
++                << " frame_tree_node_id=" << frame_tree_node_id
++                << " internal_id=" << stream_info->internal_id()
++                << " reason=frame-deleted";
++      iter = stream_infos_.erase(iter);
++    } else {
++      ++iter;
++    }
++  }
++  DeleteIfEmpty();
++}
++
++void TsPdfStreamStore::ReadyToCommitNavigation(
++    NavigationHandle* navigation_handle) {
++  extensions::StreamInfo* stream_info =
++      GetClaimedStreamInfoFromPdfContentNavigation(navigation_handle);
++  if (!stream_info) {
++    return;
++  }
++
++  if (navigation_handle->GetFrameTreeNodeId() !=
++      stream_info->content_host_frame_tree_node_id()) {
++    return;
++  }
++
++  auto transferrable_loader =
++      stream_info->stream()->TakeTransferrableURLLoader();
++  if (!transferrable_loader) {
++    LOG(INFO) << "[issue-789-exp3] stream-served"
++              << " original_url="
++              << stream_info->stream()->original_url().possibly_invalid_spec()
++              << " internal_id=" << stream_info->internal_id()
++              << " result=no-loader";
++    return;
++  }
++
++  navigation_handle->RegisterSubresourceOverride(
++      std::move(transferrable_loader));
++  LOG(INFO) << "[issue-789-exp3] stream-served"
++            << " original_url="
++            << stream_info->stream()->original_url().possibly_invalid_spec()
++            << " internal_id=" << stream_info->internal_id()
++            << " frame_tree_node_id=" << navigation_handle->GetFrameTreeNodeId()
++            << " result=registered-subresource-override";
++}
++
++void TsPdfStreamStore::DidFinishNavigation(
++    NavigationHandle* navigation_handle) {
++  if (!navigation_handle || !navigation_handle->HasCommitted() ||
++      navigation_handle->IsErrorPage()) {
++    return;
++  }
++
++  RenderFrameHost* parent_frame = navigation_handle->GetParentFrame();
++  if (!parent_frame) {
++    return;
++  }
++
++  if (extensions::StreamInfo* stream_info =
++          GetClaimedStreamInfo(parent_frame)) {
++    if (navigation_handle->GetURL() == stream_info->stream()->handler_url() &&
++        navigation_handle->GetFrameTreeNodeId() ==
++            stream_info->extension_host_frame_tree_node_id()) {
++      stream_info->SetDidExtensionFinishNavigation();
++      LOG(INFO) << "[issue-789-exp3] extension-frame-committed"
++                << " internal_id=" << stream_info->internal_id()
++                << " frame_tree_node_id="
++                << navigation_handle->GetFrameTreeNodeId();
++    }
++  }
++}
++
++extensions::StreamInfo* TsPdfStreamStore::GetClaimedStreamInfo(
++    const RenderFrameHost* embedder_host) {
++  auto iter = stream_infos_.find(GetEmbedderHostInfo(embedder_host));
++  return iter != stream_infos_.end() ? iter->second.get() : nullptr;
++}
++
++const extensions::StreamInfo* TsPdfStreamStore::GetClaimedStreamInfo(
++    const RenderFrameHost* embedder_host) const {
++  auto iter = stream_infos_.find(GetEmbedderHostInfo(embedder_host));
++  return iter != stream_infos_.end() ? iter->second.get() : nullptr;
++}
++
++extensions::StreamInfo*
++TsPdfStreamStore::GetClaimedStreamInfoFromPdfContentNavigation(
++    NavigationHandle* navigation_handle) {
++  if (!navigation_handle || !navigation_handle->IsPdf()) {
++    return nullptr;
++  }
++
++  RenderFrameHost* embedder_host =
++      GetEmbedderHostFromPdfContentNavigation(navigation_handle);
++  if (!embedder_host) {
++    return nullptr;
++  }
++
++  return GetClaimedStreamInfo(embedder_host);
++}
++
++extensions::StreamInfo* TsPdfStreamStore::ClaimStreamInfo(
++    RenderFrameHost* embedder_host,
++    const GURL& stream_url) {
++  LOG(INFO) << "[issue-789-exp3] stream-container-claim-request"
++            << " frame_tree_node_id=" << embedder_host->GetFrameTreeNodeId()
++            << " url=" << stream_url.possibly_invalid_spec();
++
++  auto key = GetUnclaimedEmbedderHostInfo(embedder_host->GetFrameTreeNodeId());
++  auto iter = stream_infos_.find(key);
++  if (iter == stream_infos_.end() ||
++      iter->second->stream()->stream_url() != stream_url) {
++    for (auto candidate = stream_infos_.begin();
++         candidate != stream_infos_.end(); ++candidate) {
++      if (!candidate->first.global_id &&
++          candidate->second->stream()->stream_url() == stream_url) {
++        iter = candidate;
++        break;
++      }
++    }
++  }
++
++  if (iter == stream_infos_.end() ||
++      iter->second->stream()->stream_url() != stream_url) {
++    LOG(INFO) << "[issue-789-exp3] stream-container-claim-request"
++              << " frame_tree_node_id=" << embedder_host->GetFrameTreeNodeId()
++              << " result=no-match";
++    return nullptr;
++  }
++
++  auto claimed_key = GetEmbedderHostInfo(embedder_host);
++  stream_infos_[claimed_key] = std::move(iter->second);
++  stream_infos_.erase(iter);
++
++  extensions::StreamInfo* stream_info = stream_infos_[claimed_key].get();
++  LOG(INFO) << "[issue-789-exp3] stream-container-claimed"
++            << " render_frame_host=" << embedder_host
++            << " frame_tree_node_id=" << embedder_host->GetFrameTreeNodeId()
++            << " internal_id=" << stream_info->internal_id();
++  return stream_info;
++}
++
++void TsPdfStreamStore::DeleteClaimedStreamInfo(RenderFrameHost* embedder_host) {
++  auto iter = stream_infos_.find(GetEmbedderHostInfo(embedder_host));
++  if (iter == stream_infos_.end()) {
++    return;
++  }
++
++  LOG(INFO) << "[issue-789-exp3] stream-container-deleted"
++            << " frame_tree_node_id=" << embedder_host->GetFrameTreeNodeId()
++            << " internal_id=" << iter->second->internal_id()
++            << " reason=claimed-render-frame-deleted";
++  stream_infos_.erase(iter);
++  DeleteIfEmpty();
++}
++
++void TsPdfStreamStore::DeleteIfEmpty() {
++  if (stream_infos_.empty()) {
++    LOG(INFO) << "[issue-789-exp3] stream-store-empty";
++  }
++}
++
++WEB_CONTENTS_USER_DATA_KEY_IMPL(TsPdfStreamStore);
++
++}  // namespace content
+diff --git a/content/libtermsurf_chromium/ts_pdf_stream_store.h b/content/libtermsurf_chromium/ts_pdf_stream_store.h
+new file mode 100644
+index 0000000000000..6db2de403dbcf
+--- /dev/null
++++ b/content/libtermsurf_chromium/ts_pdf_stream_store.h
+@@ -0,0 +1,98 @@
++// Copyright 2026 TermSurf
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#ifndef CONTENT_LIBTERMSURF_CHROMIUM_TS_PDF_STREAM_STORE_H_
++#define CONTENT_LIBTERMSURF_CHROMIUM_TS_PDF_STREAM_STORE_H_
++
++#include <map>
++#include <memory>
++#include <optional>
++#include <string>
++
++#include "base/memory/weak_ptr.h"
++#include "components/pdf/browser/pdf_stream_delegate.h"
++#include "content/public/browser/frame_tree_node_id.h"
++#include "content/public/browser/global_routing_id.h"
++#include "content/public/browser/web_contents_observer.h"
++#include "content/public/browser/web_contents_user_data.h"
++#include "url/gurl.h"
++
++namespace content {
++class NavigationHandle;
++class RenderFrameHost;
++class WebContents;
++}  // namespace content
++
++namespace extensions {
++class StreamContainer;
++class StreamInfo;
++}  // namespace extensions
++
++namespace content {
++
++class TsPdfStreamStore : public WebContentsObserver,
++                         public WebContentsUserData<TsPdfStreamStore> {
++ public:
++  TsPdfStreamStore(const TsPdfStreamStore&) = delete;
++  TsPdfStreamStore& operator=(const TsPdfStreamStore&) = delete;
++  ~TsPdfStreamStore() override;
++
++  static TsPdfStreamStore* GetOrCreate(WebContents* web_contents);
++  static TsPdfStreamStore* FromFrameTreeNodeId(
++      FrameTreeNodeId frame_tree_node_id);
++  static bool HasStreams(WebContents* web_contents);
++
++  static void AddStreamContainer(
++      FrameTreeNodeId frame_tree_node_id,
++      const std::string& internal_id,
++      std::unique_ptr<extensions::StreamContainer> stream_container);
++
++  std::optional<GURL> MapToOriginalUrl(NavigationHandle& navigation_handle,
++                                       std::string* internal_id);
++  std::optional<pdf::PdfStreamDelegate::StreamInfo> GetStreamInfo(
++      RenderFrameHost* embedder_frame);
++  bool MaybeDeleteSandboxedStream(FrameTreeNodeId frame_tree_node_id);
++  bool ShouldAllowPdfFrameNavigation(NavigationHandle* navigation_handle);
++  bool ShouldAllowPdfExtensionFrameNavigation(
++      NavigationHandle* navigation_handle);
++
++  struct EmbedderHostInfo {
++    bool operator<(const EmbedderHostInfo& other) const;
++
++    FrameTreeNodeId frame_tree_node_id;
++    GlobalRenderFrameHostId global_id;
++  };
++
++  // WebContentsObserver:
++  void RenderFrameDeleted(RenderFrameHost* render_frame_host) override;
++  void FrameDeleted(FrameTreeNodeId frame_tree_node_id) override;
++  void ReadyToCommitNavigation(NavigationHandle* navigation_handle) override;
++  void DidFinishNavigation(NavigationHandle* navigation_handle) override;
++
++ private:
++  friend class WebContentsUserData<TsPdfStreamStore>;
++  WEB_CONTENTS_USER_DATA_KEY_DECL();
++
++  explicit TsPdfStreamStore(WebContents* web_contents);
++
++  extensions::StreamInfo* GetClaimedStreamInfo(
++      const RenderFrameHost* embedder_host);
++  const extensions::StreamInfo* GetClaimedStreamInfo(
++      const RenderFrameHost* embedder_host) const;
++  extensions::StreamInfo* GetClaimedStreamInfoFromPdfContentNavigation(
++      NavigationHandle* navigation_handle);
++  extensions::StreamInfo* ClaimStreamInfo(RenderFrameHost* embedder_host,
++                                          const GURL& stream_url);
++  void DeleteClaimedStreamInfo(RenderFrameHost* embedder_host);
++  void DeleteIfEmpty();
++
++  std::map<EmbedderHostInfo, std::unique_ptr<extensions::StreamInfo>>
++      stream_infos_;
++
++  base::WeakPtrFactory<TsPdfStreamStore> weak_factory_{this};
++};
++
++}  // namespace content
++
++#endif  // CONTENT_LIBTERMSURF_CHROMIUM_TS_PDF_STREAM_STORE_H_
+-- 
+2.50.1 (Apple Git-155)
+

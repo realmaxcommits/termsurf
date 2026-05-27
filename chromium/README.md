@@ -14,7 +14,7 @@ No `origin` remote for now. Remote hosting TBD (likely patch set distribution).
 
 ## Current State
 
-- Branch: `148.0.7778.97-issue-789-exp2`
+- Branch: `148.0.7778.97-issue-789-exp3`
 - Base version: `148.0.7778.97` (tracking Electron's Chromium version)
 
 ## Branch Strategy
@@ -105,6 +105,7 @@ find the most relevant recent branch, create a new branch from it
 | `148.0.7778.97-issue-776-exp7` | [Issue 776](../issues/0776-pdf-not-loading/README.md)            | Serve PDF viewer shell resources            |
 | `148.0.7778.97-issue-776-exp8` | [Issue 776](../issues/0776-pdf-not-loading/README.md)            | Probe PDF stream handoff                    |
 | `148.0.7778.97-issue-789-exp2` | [Issue 789](../issues/0789-electron-style-pdf-viewer/README.md)  | Build TermSurf PDF stream handoff           |
+| `148.0.7778.97-issue-789-exp3` | [Issue 789](../issues/0789-electron-style-pdf-viewer/README.md)  | Implement PDF stream delegate               |
 
 ## Patches
 

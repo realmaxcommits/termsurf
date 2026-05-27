@@ -1748,3 +1748,210 @@ The result must name the next exact missing layer and include the relevant logs.
 - The PDF `internal_id` does not match from template emission through stream
   claim and serve.
 - Normal HTML or non-PDF binary behavior regresses.
+
+**Result:** Partial
+
+Experiment 3 implemented the Chromium PDF delegate/interceptor shape, but the
+viewer never issued the stream-claim navigation. The result is a coherent
+Partial: the code builds, the PDF response reaches the TermSurf response
+throttle, the stream is stored in a per-`WebContents` TermSurf stream store, and
+non-PDF smoke tests do not trigger PDF stream-store behavior. The missing layer
+is now narrower and clearer: TermSurf still lacks the MimeHandlerView
+attach/container machinery that turns the `internalid` iframe in
+`pdf_embedder.html` into the PDF extension/content-frame navigation that would
+call `pdf::PdfNavigationThrottle` and `pdf::PdfURLLoaderRequestInterceptor`.
+
+Chromium branch:
+
+```text
+148.0.7778.97-issue-789-exp3
+```
+
+Chromium commits:
+
+```text
+bea8d5383ad9cd09a336da8edad788127eaa19e2 Build TermSurf PDF handoff
+332a28d1ba350 Wire PDF stream delegate
+```
+
+Patch archive:
+
+```text
+chromium/patches/issue-789/0001-Build-TermSurf-PDF-handoff.patch
+chromium/patches/issue-789/0002-Wire-PDF-stream-delegate.patch
+```
+
+#### Implemented Files
+
+New Chromium files:
+
+- `content/libtermsurf_chromium/ts_pdf_stream_delegate.h`
+- `content/libtermsurf_chromium/ts_pdf_stream_delegate.cc`
+- `content/libtermsurf_chromium/ts_pdf_stream_store.h`
+- `content/libtermsurf_chromium/ts_pdf_stream_store.cc`
+
+Modified Chromium files:
+
+- `content/libtermsurf_chromium/BUILD.gn`
+- `content/libtermsurf_chromium/ts_browser_client.h`
+- `content/libtermsurf_chromium/ts_browser_client.cc`
+- `content/libtermsurf_chromium/ts_pdf_response_url_loader_throttle.cc`
+- `content/libtermsurf_chromium/ts_pdf_stream_dispatch.cc`
+
+Main repo metadata:
+
+- `chromium/README.md`
+- `chromium/patches/issue-789/0001-Build-TermSurf-PDF-handoff.patch`
+- `chromium/patches/issue-789/0002-Wire-PDF-stream-delegate.patch`
+
+#### What Changed
+
+`TsPdfStreamDelegate` implements Chromium 148's `pdf::PdfStreamDelegate`
+interface and delegates state lookup to `TsPdfStreamStore`.
+
+`TsPdfStreamStore` is a TermSurf-owned, per-`WebContents` store for captured PDF
+streams. It stores `extensions::StreamInfo` objects after Experiment 2 captures
+the original PDF response, can claim a stream for a later PDF viewer/content
+navigation, and is prepared to register the original transferable loader as a
+subresource override when the PDF content navigation reaches
+`ReadyToCommitNavigation()`.
+
+`TsBrowserClient` now conditionally installs:
+
+- `pdf::PdfNavigationThrottle`;
+- `pdf::PdfURLLoaderRequestInterceptor`.
+
+Those are installed only when a PDF stream store already has streams for the
+`WebContents`. This avoids running the PDF delegate/interceptor path for normal
+HTML and non-PDF binary navigations.
+
+`TsPdfResponseURLLoaderThrottle` now changes the synthetic viewer-template
+response MIME to `text/html`. Without this, content_shell treated the swapped
+body as a PDF/download and never committed the embedder HTML.
+
+#### Build Verification
+
+Build command:
+
+```bash
+cd chromium/src
+export PATH="$HOME/dev/termsurf/chromium/depot_tools:$PATH"
+autoninja -C out/Default libtermsurf_chromium
+```
+
+Result:
+
+```text
+Build Succeeded: 5 steps
+```
+
+Dependency evidence:
+
+```text
+//components/pdf/browser:interceptors
+//extensions/browser/mime_handler:stream_container
+//extensions/browser/mime_handler:stream_info
+```
+
+The TermSurf dependency surface did not include:
+
+```text
+//chrome/browser/plugins:impl
+//chrome/browser/extensions:extensions
+//components/guest_view/browser
+```
+
+The expected warning about `enable_nacl = false` having no effect appeared in GN
+output and is unrelated to this experiment.
+
+#### Runtime Verification
+
+PDF run:
+
+```text
+logs/issue-789-exp3-20260527-184836/
+```
+
+Relevant log evidence:
+
+```text
+[issue-789-exp2] pdf-response-throttle-created frame_tree_node_id=1 destination=3
+[issue-789-exp2] pdf-throttle-installed frame_tree_node_id=1 destination=3
+[issue-789-exp2] oopif-pdf-enabled value=true
+[issue-789-exp2] pdf-response url=http://localhost:9616/bitcoin.pdf mime=application/pdf destination=3 oopif_pdf=true
+[issue-789-exp2] viewer-template-emitted internal_id=B990F3BB4A1A47BC8190D4268101B4BF bytes=536
+[issue-789-exp2] stream-dispatch frame_tree_node_id=1 extension_id=mhjfbmdgcfjbbpaeojofohoefgiehjai handler_url=chrome-extension://mhjfbmdgcfjbbpaeojofohoefgiehjai/pdf/index.html internal_id=B990F3BB4A1A47BC8190D4268101B4BF embedded=false
+[issue-789-exp3] stream-store-created web_contents=0x75b06e000
+[issue-789-exp3] stream-container-added frame_tree_node_id=1 internal_id=B990F3BB4A1A47BC8190D4268101B4BF count=1
+```
+
+Expected-but-missing logs:
+
+```text
+[issue-789-exp3] map-to-original-url ...
+[issue-789-exp3] stream-container-claim-request ...
+[issue-789-exp3] stream-container-claimed ...
+[issue-789-exp3] get-stream-info ...
+[issue-789-exp3] stream-served ...
+```
+
+Screenshot classification:
+
+```text
+viewer-template loaded but PDF body not displayed
+```
+
+The screenshot shows the white embedder surface with a small empty iframe area,
+not a rendered PDF. That matches the log evidence: the embedder template loaded
+and the original PDF stream was stored, but no viewer/content-frame navigation
+claimed or served the stream.
+
+Normal HTML smoke:
+
+```text
+logs/issue-789-exp3-html-20260527-184848/
+```
+
+The run installed the always-present Experiment 2 response throttle, but emitted
+no `pdf-response`, `stream-store`, delegate claim, or `stream-served` lines.
+
+Non-PDF binary smoke:
+
+```text
+logs/issue-789-exp3-bin-20260527-184856/
+```
+
+The run installed the always-present Experiment 2 response throttle, but emitted
+no `pdf-response`, `stream-store`, delegate claim, or `stream-served` lines. The
+existing content-shell download-path log appeared, confirming the binary was not
+handled as a PDF.
+
+The known Issue 776 teardown crash recurred after screenshot/log capture. It did
+not prevent the experiment evidence from being collected.
+
+#### Conclusion
+
+Experiment 3 successfully moved TermSurf to the right Chromium API boundary:
+`pdf::PdfStreamDelegate`, `pdf::PdfNavigationThrottle`, and
+`pdf::PdfURLLoaderRequestInterceptor` are now the intended path, backed by a
+TermSurf-owned stream store and the narrow
+`//components/pdf/browser:interceptors` target.
+
+The experiment did not reach stream claim or stream serving. The viewer never
+issued the navigation that would call `MapToOriginalUrl(...)`. The screenshot
+and logs both point to the same missing layer: TermSurf is still only emitting
+the static `pdf_embedder.html` template. It has not implemented the
+MimeHandlerView attach/container behavior that Chromium normally uses to notice
+the `internalid` iframe, create or navigate the PDF extension/content frame, and
+drive the delegate/interceptor flow.
+
+Experiment 4 should focus on the minimal MimeHandlerView attach/container
+equivalent needed for OOPIF PDF:
+
+- detect the `internalid` iframe in the emitted embedder document;
+- navigate/create the PDF extension frame at
+  `chrome-extension://mhjfbmdgcfjbbpaeojofohoefgiehjai/pdf/index.html`;
+- preserve the internal id so the extension/content frame can claim the stored
+  stream;
+- keep using the delegate/interceptor/store built in Experiment 3 rather than
+  returning to the broad Chrome plugin stack.
