@@ -880,3 +880,211 @@ initialization, or Chrome's MimeHandlerView/component-extension path.
 Experiment 3 should focus on why `pdf::CreateInternalPlugin()` returns
 `nullptr`, using the smallest targeted probe first. Do not keep adjusting the
 top-level navigation throttle; it did its job.
+
+### Experiment 3: Diagnose PDF Plugin Null Return
+
+#### Description
+
+Experiment 2 moved the failure forward. The browser-side throttle now prevents
+Content Shell from treating the PDF as a download, the generated wrapper loads,
+and Blink calls `TsRendererClient::OverrideCreatePlugin()` for
+`application/x-google-chrome-pdf`.
+
+The remaining failure is:
+
+```text
+[issue-776] CreateInternalPlugin returned nullptr
+```
+
+Chromium 148's implementation in
+`components/pdf/renderer/internal_plugin_renderer_helpers.cc` has a small and
+important first return path:
+
+```cpp
+blink::WebFrame* frame = render_frame->GetWebFrame();
+blink::WebFrame* parent_frame = frame->Parent();
+if (!parent_frame ||
+    !IsPdfInternalPluginAllowedOrigin(parent_frame->GetSecurityOrigin(),
+                                      additional_allowed_origins)) {
+  return nullptr;
+}
+```
+
+Only after this branch does Chromium `CHECK(IsPdfRenderer())`. Because
+Experiment 2 returned `nullptr` instead of crashing, the most likely cause is
+one of:
+
+- the plugin frame has no parent frame;
+- the wrapper's parent origin is not allowed to embed the internal PDF plugin.
+
+That matches the design concern from Experiment 2: the `data:` wrapper has an
+opaque origin and is probably not an allowed PDF embedder origin.
+
+Experiment 3 should prove which branch returns `nullptr` and then run the
+smallest targeted probe:
+
+1. Add diagnostic logging around the exact parent-frame/origin checks.
+2. If the parent origin is the blocker, pass the wrapper's origin as an
+   `additional_allowed_origins` probe to `pdf::CreateInternalPlugin()`.
+3. Run the same automated screenshot test.
+
+This is still a probe, not the final security model. If allowing the wrapper
+origin gets past the `nullptr` branch but hits `CHECK(IsPdfRenderer())`, that is
+valuable evidence: the plugin must run in a PDF renderer process, which points
+toward the real Chrome/MimeHandlerView/component-extension flow. If it creates a
+plugin but remains blank, the next missing layer is resource/stream plumbing.
+
+#### Changes
+
+1. Create a new Chromium experiment branch from the current branch:
+   `148.0.7778.97-issue-776-exp3`.
+   - Do not commit directly to `148.0.7778.97-issue-776-exp2`.
+   - Add the new branch to the Branches table in `chromium/README.md`.
+   - Archive the branch under `chromium/patches/issue-776-exp3/` on Pass or
+     Partial.
+
+2. Instrument `TsRendererClient::OverrideCreatePlugin()` in
+   `content/libtermsurf_chromium/ts_renderer_client.cc`.
+   - Before calling `pdf::CreateInternalPlugin()`, log:
+     - plugin URL;
+     - plugin MIME type;
+     - whether `render_frame->GetWebFrame()` is non-null;
+     - whether `frame->Parent()` is non-null;
+     - frame security origin;
+     - parent security origin;
+     - whether the parent frame is a remote frame.
+   - Use an `[issue-776-exp3]` log prefix.
+   - If the needed Blink APIs are not easy to stringify, log the available
+     booleans first and keep the experiment moving.
+
+3. Add a local helper in `ts_renderer_client.cc` that calls
+   `pdf::IsPdfInternalPluginAllowedOrigin()` for the parent origin.
+   - Add any minimal deps/includes needed to access this function.
+   - Log whether the parent origin is allowed with no extra origins.
+   - If the function is not exported or cannot be used cleanly from
+     `libtermsurf_chromium`, do not patch Chromium broadly just for logging.
+     Instead, log the parent origin and infer the allowed-origin result from
+     whether `CreateInternalPlugin()` returns `nullptr`.
+
+4. If the parent origin is not allowed, run a minimal allowance probe:
+   - call
+     `pdf::CreateInternalPlugin(params, render_frame, base::span<const url::Origin>(&parent_origin, 1))`
+     or the clean Chromium equivalent;
+   - only do this for the Experiment 2 wrapper URL / internal PDF MIME path;
+   - log that this is an `[issue-776-exp3] additional_allowed_origins probe`;
+   - do not treat this as a final security model.
+
+5. Do not change the Experiment 2 top-level PDF throttle except for any logging
+   needed to correlate wrapper URL and plugin URL.
+   - The throttle already proved it can bypass the download path.
+   - Do not add a new wrapper scheme in this experiment.
+   - Do not implement MimeHandlerView, GuestView, component-extension loading,
+     or streams-private in this experiment.
+
+6. Build and run:
+   - `autoninja -C out/Default libtermsurf_chromium`;
+   - `./scripts/build.sh roamium`;
+   - `./scripts/build.sh wezboard`;
+   - `./scripts/build.sh webtui`;
+   - `./scripts/test-issue-776-pdf.sh`.
+
+#### Non-Negotiable Invariants
+
+- Do not change `webtui`.
+- Do not change `termsurf.proto`.
+- Do not change Wezboard overlay positioning or input forwarding.
+- Do not patch the Content Shell download manager as the fix.
+- Do not continue moving the navigation throttle; Experiment 2 already proved
+  that layer works.
+- Do not turn this into a MimeHandlerView/component-extension port.
+- The `additional_allowed_origins` path is diagnostic only. If it works, the
+  result must explicitly say that a real security model is still required.
+- Normal HTML navigation must continue to work.
+- Non-PDF binary downloads must not be intercepted as PDFs.
+
+#### Verification
+
+1. Confirm the branch and patch target:
+   - Chromium branch: `148.0.7778.97-issue-776-exp3`;
+   - eventual patch archive: `chromium/patches/issue-776-exp3/`.
+
+2. Build Chromium and Rust debug targets listed in the Changes section.
+
+3. Run the automated HTTP PDF smoke test:
+
+   ```bash
+   ./scripts/test-issue-776-pdf.sh
+   ```
+
+4. Inspect logs and record:
+
+   | Layer                                                         | Result |
+   | ------------------------------------------------------------- | ------ |
+   | `OverrideCreatePlugin()` reached                              | yes/no |
+   | plugin frame exists                                           | yes/no |
+   | parent frame exists                                           | yes/no |
+   | parent frame is remote                                        | yes/no |
+   | parent origin logged                                          | yes/no |
+   | parent origin allowed without extra origins                   | yes/no |
+   | `additional_allowed_origins` probe attempted                  | yes/no |
+   | `CreateInternalPlugin()` returns plugin after allowance probe | yes/no |
+   | process hits `CHECK(IsPdfRenderer())` after allowance probe   | yes/no |
+   | screenshot shows recognizable PDF content                     | yes/no |
+
+5. Inspect the screenshot artifact.
+   - Pass visual state: recognizable Bitcoin PDF content appears in the TermSurf
+     browser pane.
+   - Partial visual state: logs identify the exact null-return cause or the next
+     post-null blocker, but PDF content still does not render.
+   - Fail visual state: the experiment no longer reaches
+     `OverrideCreatePlugin()`, breaks the wrapper route, regresses normal HTML,
+     or crashes before producing useful logs.
+
+6. Re-run the normal HTML smoke test from Experiment 2:
+
+   ```bash
+   TERMSURF_PDF_SETTLE_SECONDS=8 ./scripts/test-issue-776-pdf.sh \
+     https://example.com
+   ```
+
+7. Re-run the non-PDF binary smoke test from Experiment 2:
+
+   ```bash
+   TERMSURF_PDF_SETTLE_SECONDS=8 ./scripts/test-issue-776-pdf.sh \
+     http://localhost:9616/test.bin
+   ```
+
+#### Pass Criteria
+
+The automated PDF screenshot shows recognizable Bitcoin PDF content rendered in
+the existing TermSurf browser overlay, normal HTML navigation still works, and
+the non-PDF binary fixture is not intercepted by the PDF path.
+
+If this passes only because of `additional_allowed_origins`, the result must
+call out that this is a prototype security model and that a future experiment
+must replace it with a principled wrapper/origin design before closing
+Issue 776.
+
+#### Partial Criteria
+
+The screenshot still does not show PDF content, but the logs identify the exact
+post-Experiment-2 blocker. Valid Partial outcomes include:
+
+- parent frame is missing;
+- parent origin is not allowed;
+- allowing the wrapper origin gets past the `nullptr` branch but hits
+  `CHECK(IsPdfRenderer())`;
+- allowing the wrapper origin creates a plugin, but the plugin remains blank;
+- plugin creation succeeds but PDF bytes/stream routing is missing;
+- the evidence proves MimeHandlerView/component-extension infrastructure is
+  required.
+
+#### Failure Criteria
+
+- The experiment breaks the Experiment 2 wrapper route.
+- `OverrideCreatePlugin()` is no longer reached for the PDF wrapper.
+- The implementation changes `webtui` or the TermSurf protocol.
+- The experiment silently implements broad MimeHandlerView/extension plumbing.
+- Normal HTML navigation regresses.
+- Non-PDF binary responses are intercepted by the PDF path.
+- Roamium crashes before producing enough logs to identify the blocker.
