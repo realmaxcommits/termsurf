@@ -1243,3 +1243,236 @@ process/MimeHandlerView layer: how Chrome causes a top-level PDF navigation to
 spawn or route into a renderer with `--pdf-renderer`, how the PDF plugin frame's
 parent becomes a remote trusted viewer frame, and which minimal subset of that
 pipeline Roamium can adopt without porting all of Chrome's extension system.
+
+### Experiment 4: Trace PDF Renderer Process Routing
+
+#### Description
+
+Experiment 3 proved that wrapper markup is no longer the load-bearing problem.
+The nested wrapper creates a parent frame, and the diagnostic allowance probe
+gets past the `nullptr` branch in `pdf::CreateInternalPlugin()`, but Chromium
+then aborts at:
+
+```text
+CHECK(IsPdfRenderer())
+```
+
+The next question is therefore not "how do we write a better wrapper?" The next
+question is:
+
+> How does Chrome arrange for the internal PDF plugin frame to run inside a
+> renderer process launched with the PDF renderer switch, and what is the
+> smallest TermSurf/Roamium-compatible subset of that routing?
+
+This experiment is a focused plumbing investigation. It should instrument and
+minimally probe the PDF renderer process routing layer. It must not attempt a
+full MimeHandlerView/component-extension port unless the probe first identifies
+that as the unavoidable next implementation unit.
+
+The likely Chrome architecture is:
+
+- top-level `application/pdf` navigation is intercepted before ordinary content
+  rendering;
+- Chrome creates or navigates to a trusted PDF viewer/MimeHandlerView document;
+- the actual PDF plugin frame is placed below a trusted remote parent frame;
+- the plugin renderer process is launched with `--pdf-renderer`;
+- only then does `pdf::CreateInternalPlugin()` pass `CHECK(IsPdfRenderer())`.
+
+Experiment 4 should prove this path in code and decide whether Roamium can
+create the same process-routing condition without importing the entire Chrome
+extension/PDF viewer stack.
+
+#### Changes
+
+1. Create a new Chromium experiment branch from `148.0.7778.97-issue-776-exp3`:
+   `148.0.7778.97-issue-776-exp4`.
+   - Do not commit directly to `148.0.7778.97-issue-776-exp3`.
+   - Add the new branch to the Branches table in `chromium/README.md`.
+   - Archive the branch under `chromium/patches/issue-776-exp4/` on Pass or
+     Partial.
+
+2. Research the exact upstream Chromium call chain that sets up a PDF renderer.
+   Use local source only. Record file/function names in the result.
+
+   Required search targets:
+
+   ```bash
+   rg "kPdfRenderer|--pdf-renderer|switches::kPdfRenderer" chromium/src
+   rg "MimeHandlerView|CreateFrameContainer|IsPluginHandledExternally" chromium/src
+   rg "application/pdf|kPDFMimeType|kInternalPluginMimeType" chromium/src/chrome chromium/src/components/pdf chromium/src/content
+   rg "PluginResponseInterceptor|streams_private|pdf_viewer" chromium/src
+   ```
+
+   The result must identify:
+   - where Chrome decides a PDF navigation should become a PDF viewer route;
+   - where the trusted parent frame is created;
+   - where a renderer is selected or launched with `--pdf-renderer`;
+   - whether that selection depends on extensions, MimeHandlerView, GuestView, a
+     Chrome content browser client override, or a navigation throttle;
+   - whether Content Shell has any comparable hook that Roamium can reuse.
+
+3. Add narrow instrumentation around renderer process creation and command-line
+   setup in the TermSurf Chromium branch.
+   - Log every renderer process command line when it is created or launched,
+     filtered to TermSurf/Roamium if a narrow hook exists.
+   - The log must show whether `--pdf-renderer` is present.
+   - Use `[issue-776-exp4]` as the prefix.
+   - Prefer existing browser-client or content-shell embedder hooks before
+     patching broad Chromium internals.
+
+4. Add narrow instrumentation around the PDF wrapper/plugin route from
+   Experiment 3.
+   - Keep the Experiment 3 nested-wrapper probe and parent/origin logs.
+   - Add the current process type or command-line PDF-renderer state to the
+     `OverrideCreatePlugin()` diagnostic, using `pdf::IsPdfRenderer()` or direct
+     command-line inspection.
+   - Do not call `pdf::CreateInternalPlugin()` in a way that intentionally
+     crashes before logging this state.
+
+5. Run a minimal process-routing probe if the source audit identifies a small
+   hook.
+
+   Acceptable probes:
+   - a browser-side navigation/content hook that marks only the internal PDF
+     plugin child frame as requiring a PDF renderer process;
+   - a TermSurf-only renderer command-line hook that adds `--pdf-renderer` only
+     for a clearly identified PDF plugin renderer process;
+   - a controlled experiment that proves such targeting is impossible without
+     MimeHandlerView/GuestView by showing there is no distinct PDF plugin
+     renderer process in the current wrapper route.
+
+   Unacceptable probes:
+   - add `--pdf-renderer` to every Roamium renderer process globally;
+   - disable `CHECK(IsPdfRenderer())`;
+   - weaken PDF origin checks as a proposed final fix;
+   - silently import large Chrome extension/MimeHandlerView infrastructure;
+   - change `webtui`, Wezboard, or `termsurf.proto`.
+
+6. Build and run:
+
+   ```bash
+   cd chromium/src
+   export PATH="$HOME/dev/termsurf/chromium/depot_tools:$PATH"
+   autoninja -C out/Default libtermsurf_chromium
+   cd ../..
+   ./scripts/build.sh roamium
+   ./scripts/build.sh wezboard
+   ./scripts/build.sh webtui
+   ./scripts/test-issue-776-pdf.sh
+   ```
+
+7. If a minimal process-routing probe passes `CHECK(IsPdfRenderer())`, continue
+   only until the next concrete blocker is reached.
+   - If the plugin creates but remains blank, record whether the next missing
+     layer is PDF bytes/stream routing, viewer resources, or `PdfHost` Mojo
+     binding.
+   - Do not keep layering fixes into this experiment.
+
+#### Non-Negotiable Invariants
+
+- Do not disable or bypass `CHECK(IsPdfRenderer())`.
+- Do not globally mark all Roamium renderers as PDF renderers.
+- Do not weaken PDF origin checks as a real fix.
+- Do not import broad MimeHandlerView, GuestView, extension system, or
+  `streams_private` infrastructure in this experiment.
+- Do not change `webtui`, Wezboard, or `termsurf.proto`.
+- Keep Experiment 2's navigation-throttle result intact: PDF navigations should
+  still bypass the Content Shell download path.
+- Keep Experiment 3's diagnostic visibility intact: logs must still show the
+  wrapper/plugin frame state and whether the renderer is a PDF renderer.
+- Normal HTML navigation must continue to work.
+- Non-PDF binary downloads must not be intercepted as PDFs.
+
+#### Verification
+
+1. Confirm the branch and patch target:
+   - Chromium branch: `148.0.7778.97-issue-776-exp4`;
+   - eventual patch archive: `chromium/patches/issue-776-exp4/`.
+
+2. Record the source-audit findings in the result:
+
+   | Question                                          | File/function answer |
+   | ------------------------------------------------- | -------------------- |
+   | Where is PDF navigation intercepted in Chrome?    |                      |
+   | Where is the trusted parent/viewer frame created? |                      |
+   | Where is `--pdf-renderer` added or required?      |                      |
+   | Does the path require extensions/MimeHandlerView? |                      |
+   | Is there a smaller Content Shell/Roamium hook?    |                      |
+
+3. Build Chromium and Rust debug targets listed in the Changes section.
+
+4. Run the automated PDF smoke test:
+
+   ```bash
+   ./scripts/test-issue-776-pdf.sh
+   ```
+
+5. Inspect logs and record:
+
+   | Layer                                                        | Result |
+   | ------------------------------------------------------------ | ------ |
+   | PDF navigation still reaches wrapper throttle                | yes/no |
+   | `OverrideCreatePlugin()` still reached                       | yes/no |
+   | nested wrapper still creates a parent frame                  | yes/no |
+   | renderer command line logged                                 | yes/no |
+   | any renderer has `--pdf-renderer` before probe               | yes/no |
+   | minimal process-routing probe attempted                      | yes/no |
+   | targeted renderer gets `--pdf-renderer` after probe          | yes/no |
+   | `CHECK(IsPdfRenderer())` is passed without disabling it      | yes/no |
+   | plugin object is created                                     | yes/no |
+   | screenshot shows recognizable PDF content                    | yes/no |
+   | next blocker identified if PDF content still does not render | yes/no |
+
+6. Re-run the normal HTML smoke test:
+
+   ```bash
+   TERMSURF_PDF_SETTLE_SECONDS=8 ./scripts/test-issue-776-pdf.sh \
+     https://example.com
+   ```
+
+7. Re-run the non-PDF binary smoke test:
+
+   ```bash
+   TERMSURF_PDF_SETTLE_SECONDS=8 ./scripts/test-issue-776-pdf.sh \
+     http://localhost:9616/test.bin
+   ```
+
+8. The known teardown crash remains out of scope. The experiment is valid if
+   screenshots and logs are captured before teardown. A crash before useful
+   process-routing logs is a Failure.
+
+#### Pass Criteria
+
+The automated PDF screenshot shows recognizable Bitcoin PDF content rendered in
+the existing TermSurf browser overlay, normal HTML still works, and non-PDF
+binary responses are not intercepted by the PDF path. The result identifies the
+exact process-routing hook that made `pdf::IsPdfRenderer()` true without
+weakening the PDF renderer check or marking all renderers as PDF renderers.
+
+#### Partial Criteria
+
+PDF content still does not render, but the experiment identifies the next exact
+architectural layer. Valid Partial outcomes include:
+
+- the source audit proves MimeHandlerView/GuestView/extension infrastructure is
+  required and no smaller Roamium hook exists;
+- the probe can target a PDF renderer process and pass `CHECK(IsPdfRenderer())`,
+  but plugin creation then blocks on `PdfHost` Mojo binding;
+- the probe can create the plugin, but PDF bytes/stream routing is missing;
+- the probe can create the plugin, but PDF viewer resources are missing;
+- the current wrapper route has no distinct renderer process that can be marked
+  as PDF-only without globally affecting ordinary web content.
+
+#### Failure Criteria
+
+- The experiment disables or bypasses `CHECK(IsPdfRenderer())`.
+- The experiment adds `--pdf-renderer` to all Roamium renderers globally.
+- The experiment changes `webtui`, Wezboard, or the TermSurf protocol.
+- The experiment silently imports broad MimeHandlerView/extension plumbing
+  instead of recording that as the next scoped experiment.
+- The PDF navigation no longer reaches the wrapper throttle.
+- `OverrideCreatePlugin()` is no longer reached.
+- Normal HTML navigation regresses.
+- Non-PDF binary responses are intercepted by the PDF path.
+- The result still says only "PDF blank" without identifying the next concrete
+  missing layer.
