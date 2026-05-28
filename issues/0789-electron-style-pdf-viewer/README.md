@@ -3584,6 +3584,27 @@ grant, no extensions browser/renderer stack, no GuestView, no MimeHandlerView.
    (`kDisallowSubdomains`), so no other origin gains `chrome://resources` access
    and the PDF viewer gains nothing beyond that host.
 
+   Two scope facts to keep in mind (both verified against
+   `third_party/blink/public/web/web_security_policy.h`):
+   - The grant is **per source origin, not per frame**. It cannot be scoped to
+     the active Exp 4 viewer frame — _any_ document with the PDF extension
+     origin in this renderer will pass the renderer-side
+     `CanDisplay(chrome://resources/...)` check after Exp 7. The frame-level
+     enforcement that stops a non-active PDF-extension frame from actually
+     receiving bytes stays in Exp 6's browser-side gate
+     (`TsPdfStreamStore::IsPdfExtensionHostFrame`). The two layers are
+     complementary: this experiment permits _display_, Exp 6 decides _which
+     frame is served_. Negative test 5b checks that the browser gate still
+     contains this widened renderer grant.
+   - `AddOriginAccessAllowListEntry` is not display-only. Per the header, it
+     also lets the source origin bypass the same-origin policy when
+     `fetch()`-ing the destination and set otherwise-forbidden headers on those
+     requests. So this entry permits the PDF extension origin to make
+     `fetch()`/SOP-relaxed requests to `chrome://resources`, not just load it as
+     a subresource. That is acceptable here because the destination is the
+     read-only shared WebUI resource host and the source is the single PDF
+     viewer origin, but it is a real widening and is recorded deliberately.
+
 3. Do not register the entry per-frame and do not broaden it. Do not grant any
    host other than `chrome://resources`. Do not grant the entry to any origin
    other than the PDF viewer extension origin. Do not touch
@@ -3649,14 +3670,36 @@ grant, no extensions browser/renderer stack, no GuestView, no MimeHandlerView.
 
 4. Run HTML and non-PDF binary smoke (`index.html`, `test.bin`). The
    origin-access entry targets only the PDF extension origin, so normal pages
-   must be unaffected: no `[issue-789-exp7]`-attributable behavior change, and
-   no Exp 4/5/6 PDF-path logs.
+   must be unaffected. Note: `RenderThreadStarted()` runs for every renderer
+   process, so the `[issue-789-exp7] origin-access-granted` startup log **is
+   expected** to appear in these smokes (like the Exp 6 `scheme-check` log) and
+   is not a violation. What must not appear: successful `chrome://resources`
+   loading, or any Exp 4/5/6 PDF-path behavior (attach, shim, factory
+   registration).
 
-5. Negative leak test. From a normal HTML page, attempt
-   `fetch('chrome://resources/js/assert.js')` (or an `import`). It must still
-   fail with `Not allowed to load local resource` — the grant must not extend to
-   non-PDF-viewer origins. (This is the explicit assertion Exp 6 left as future
-   hardening; do it here now that a real grant exists.)
+5. Negative leak test — two cases. The grant must not let any origin other than
+   the PDF viewer extension origin reach `chrome://resources`.
+
+   a. **Normal web page.** From `index.html`, attempt
+   `fetch('chrome://resources/js/assert.js')` (or an `import`). It must fail
+   with `Not allowed to load local resource`. (The explicit assertion Exp 6 left
+   as future hardening; do it here now that a real grant exists.)
+
+   b. **Non-active PDF-extension-origin frame.** This is the case the Exp 7
+   grant genuinely widens: `AddOriginAccessAllowListEntry` is process-global and
+   scoped only to the _source origin_, so **any**
+   `chrome-extension://mhjfbmdgcfjbbpaeojofohoefgiehjai` document now passes the
+   renderer `CanDisplay` check — not just the active viewer frame. The only
+   thing stopping a non-active PDF-extension-origin frame from actually
+   receiving bytes is Exp 6's browser-side frame gate
+   (`TsPdfStreamStore::IsPdfExtensionHostFrame`,
+   `content/libtermsurf_chromium/ts_browser_client.cc`). Verify that gate still
+   holds end to end: create/load a PDF-extension-origin frame that is not the
+   active stored-stream viewer frame and confirm
+   `chrome://resources/js/assert.js` still fails for it and that no
+   `[issue-789-exp6] webui-factory-registered` log fires for that frame (expect
+   `reason=frame-not-active-viewer`). If this frame can load
+   `chrome://resources`, the two-layer design has a hole — record Failure.
 
 #### Pass Criteria
 
@@ -3666,9 +3709,12 @@ grant, no extensions browser/renderer stack, no GuestView, no MimeHandlerView.
   `CanDisplay`/"Not allowed to load local resource" for the PDF viewer frame),
   proven per path by console/network evidence.
 - The grant is scoped to the PDF viewer extension origin and the
-  `chrome://resources` host only.
-- A normal web page still cannot load `chrome://resources/...` (negative test).
-- HTML and non-PDF binary smoke show no PDF-path behavior change.
+  `chrome://resources` host only (no other origin, no other chrome host).
+- Both negative tests pass: a normal web page cannot load
+  `chrome://resources/...`, and a non-active PDF-extension-origin frame cannot
+  either (Exp 6's frame gate holds, `reason=frame-not-active-viewer`).
+- HTML and non-PDF binary smoke show no PDF-path behavior change (the
+  `[issue-789-exp7] origin-access-granted` startup log is expected and allowed).
 
 Stretch Pass: the viewer reaches the Exp 5 `mimeHandlerPrivate.getStreamInfo()`
 shim.
@@ -3685,7 +3731,10 @@ blank. Name the exact next failure and cite log lines.
 
 - The origin-access grant is too broad: any origin other than the PDF viewer
   extension origin, or any host other than `chrome://resources`, gains access
-  (the negative test fails).
+  (negative test 5a fails).
+- A non-active PDF-extension-origin frame can load `chrome://resources` end to
+  end — i.e. Exp 6's browser-side frame gate no longer contains the
+  process-global renderer grant (negative test 5b fails).
 - The experiment registers the entry per-frame or repeatedly instead of once at
   renderer startup, or flips `chrome` off display-isolated.
 - The implementation imports the extensions renderer/browser stack, GuestView,
