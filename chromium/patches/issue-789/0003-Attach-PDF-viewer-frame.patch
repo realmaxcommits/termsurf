@@ -1,0 +1,317 @@
+From a4a2b52259f944ae040118f61cf5e99168d62495 Mon Sep 17 00:00:00 2001
+From: "Ryan X. Charles" <ryan@ryanxcharles.com>
+Date: Wed, 27 May 2026 20:55:06 -0500
+Subject: [PATCH 3/3] Attach PDF viewer frame
+
+A blank little iframe waited alone,
+With stream bytes stacked in a pile.
+We taught it the viewer's chrome-extension home,
+Now PDFs walk one more mile.
+---
+ .../ts_pdf_stream_store.cc                    | 202 ++++++++++++++++++
+ .../ts_pdf_stream_store.h                     |   7 +
+ 2 files changed, 209 insertions(+)
+
+diff --git a/content/libtermsurf_chromium/ts_pdf_stream_store.cc b/content/libtermsurf_chromium/ts_pdf_stream_store.cc
+index a0eefacbad169..37832a7f6cf7c 100644
+--- a/content/libtermsurf_chromium/ts_pdf_stream_store.cc
++++ b/content/libtermsurf_chromium/ts_pdf_stream_store.cc
+@@ -11,6 +11,7 @@
+ #include "base/logging.h"
+ #include "components/pdf/common/pdf_util.h"
+ #include "content/public/browser/document_user_data.h"
++#include "content/public/browser/navigation_controller.h"
+ #include "content/public/browser/navigation_handle.h"
+ #include "content/public/browser/render_frame_host.h"
+ #include "content/public/browser/web_contents.h"
+@@ -156,6 +157,18 @@ void TsPdfStreamStore::AddStreamContainer(
+             << " frame_tree_node_id=" << frame_tree_node_id
+             << " internal_id=" << internal_id
+             << " count=" << store->stream_infos_.size();
++  LOG(INFO) << "[issue-789-exp4] attach-watch"
++            << " embedder_frame_tree_node_id=" << frame_tree_node_id
++            << " internal_id=" << internal_id << " stream_url="
++            << store->stream_infos_[key]
++                   ->stream()
++                   ->stream_url()
++                   .possibly_invalid_spec()
++            << " handler_url="
++            << store->stream_infos_[key]
++                   ->stream()
++                   ->handler_url()
++                   .possibly_invalid_spec();
+ }
+ 
+ std::optional<GURL> TsPdfStreamStore::MapToOriginalUrl(
+@@ -247,11 +260,19 @@ bool TsPdfStreamStore::MaybeDeleteSandboxedStream(
+     FrameTreeNodeId frame_tree_node_id) {
+   LOG(INFO) << "[issue-789-exp3] maybe-delete-sandboxed-stream"
+             << " frame_tree_node_id=" << frame_tree_node_id;
++  LOG(INFO) << "[issue-789-exp4] sandbox-stream-check"
++            << " frame_tree_node_id=" << frame_tree_node_id
++            << " contains_unclaimed="
++            << (ContainsUnclaimedStreamInfo(frame_tree_node_id) ? "true"
++                                                                : "false");
+   const bool erased =
+       stream_infos_.erase(GetUnclaimedEmbedderHostInfo(frame_tree_node_id)) > 0;
+   LOG(INFO) << "[issue-789-exp3] maybe-delete-sandboxed-stream"
+             << " frame_tree_node_id=" << frame_tree_node_id
+             << " deleted=" << (erased ? "true" : "false");
++  LOG(INFO) << "[issue-789-exp4] sandbox-stream-delete"
++            << " frame_tree_node_id=" << frame_tree_node_id
++            << " deleted=" << (erased ? "true" : "false");
+   DeleteIfEmpty();
+   return erased;
+ }
+@@ -355,11 +376,34 @@ void TsPdfStreamStore::FrameDeleted(FrameTreeNodeId frame_tree_node_id) {
+   DeleteIfEmpty();
+ }
+ 
++void TsPdfStreamStore::DidStartNavigation(NavigationHandle* navigation_handle) {
++  if (!navigation_handle) {
++    return;
++  }
++
++  LOG(INFO) << "[issue-789-exp4] navigation-start"
++            << " frame_tree_node_id=" << navigation_handle->GetFrameTreeNodeId()
++            << " url=" << navigation_handle->GetURL().possibly_invalid_spec()
++            << " parent_frame_tree_node_id="
++            << (navigation_handle->GetParentFrame()
++                    ? navigation_handle->GetParentFrame()->GetFrameTreeNodeId()
++                    : FrameTreeNodeId())
++            << " is_pdf=" << (navigation_handle->IsPdf() ? "true" : "false");
++}
++
+ void TsPdfStreamStore::ReadyToCommitNavigation(
+     NavigationHandle* navigation_handle) {
+   extensions::StreamInfo* stream_info =
+       GetClaimedStreamInfoFromPdfContentNavigation(navigation_handle);
+   if (!stream_info) {
++    RenderFrameHost* embedder_host =
++        navigation_handle ? navigation_handle->GetRenderFrameHost() : nullptr;
++    if (!embedder_host ||
++        !ContainsUnclaimedStreamInfo(embedder_host->GetFrameTreeNodeId())) {
++      return;
++    }
++
++    ClaimStreamInfo(embedder_host);
+     return;
+   }
+ 
+@@ -397,16 +441,54 @@ void TsPdfStreamStore::DidFinishNavigation(
+   }
+ 
+   RenderFrameHost* parent_frame = navigation_handle->GetParentFrame();
++  RenderFrameHost* render_frame_host = navigation_handle->GetRenderFrameHost();
++
++  LOG(INFO) << "[issue-789-exp4] navigation-commit"
++            << " frame_tree_node_id=" << navigation_handle->GetFrameTreeNodeId()
++            << " url=" << navigation_handle->GetURL().possibly_invalid_spec()
++            << " parent_frame_tree_node_id="
++            << (parent_frame ? parent_frame->GetFrameTreeNodeId()
++                             : FrameTreeNodeId());
++
++  if (!parent_frame && render_frame_host) {
++    MaybeAttachPdfExtensionFrame(render_frame_host);
++    return;
++  }
++
+   if (!parent_frame) {
+     return;
+   }
+ 
+   if (extensions::StreamInfo* stream_info =
+           GetClaimedStreamInfo(parent_frame)) {
++    if (navigation_handle->GetURL().IsAboutBlank() &&
++        !stream_info->DidPdfExtensionStartNavigation()) {
++      stream_info->set_extension_host_frame_tree_node_id(
++          navigation_handle->GetFrameTreeNodeId());
++      LOG(INFO) << "[issue-789-exp4] attach-child-found"
++                << " embedder_frame_tree_node_id="
++                << parent_frame->GetFrameTreeNodeId()
++                << " child_frame_tree_node_id="
++                << navigation_handle->GetFrameTreeNodeId()
++                << " internal_id=" << stream_info->internal_id();
++      NavigatePdfExtensionFrame(navigation_handle->GetFrameTreeNodeId(),
++                                parent_frame, stream_info);
++      return;
++    }
++
+     if (navigation_handle->GetURL() == stream_info->stream()->handler_url() &&
+         navigation_handle->GetFrameTreeNodeId() ==
+             stream_info->extension_host_frame_tree_node_id()) {
+       stream_info->SetDidExtensionFinishNavigation();
++      const std::string origin =
++          render_frame_host
++              ? render_frame_host->GetLastCommittedOrigin().Serialize()
++              : std::string();
++      LOG(INFO) << "[issue-789-exp4] attach-handler-committed"
++                << " child_frame_tree_node_id="
++                << navigation_handle->GetFrameTreeNodeId()
++                << " origin=" << origin << " url="
++                << navigation_handle->GetURL().possibly_invalid_spec();
+       LOG(INFO) << "[issue-789-exp3] extension-frame-committed"
+                 << " internal_id=" << stream_info->internal_id()
+                 << " frame_tree_node_id="
+@@ -450,6 +532,16 @@ extensions::StreamInfo* TsPdfStreamStore::ClaimStreamInfo(
+             << " frame_tree_node_id=" << embedder_host->GetFrameTreeNodeId()
+             << " url=" << stream_url.possibly_invalid_spec();
+ 
++  if (extensions::StreamInfo* claimed = GetClaimedStreamInfo(embedder_host)) {
++    if (claimed->stream()->stream_url() == stream_url) {
++      LOG(INFO) << "[issue-789-exp3] stream-container-claim-request"
++                << " frame_tree_node_id=" << embedder_host->GetFrameTreeNodeId()
++                << " result=already-claimed"
++                << " internal_id=" << claimed->internal_id();
++      return claimed;
++    }
++  }
++
+   auto key = GetUnclaimedEmbedderHostInfo(embedder_host->GetFrameTreeNodeId());
+   auto iter = stream_infos_.find(key);
+   if (iter == stream_infos_.end() ||
+@@ -484,6 +576,116 @@ extensions::StreamInfo* TsPdfStreamStore::ClaimStreamInfo(
+   return stream_info;
+ }
+ 
++extensions::StreamInfo* TsPdfStreamStore::ClaimStreamInfo(
++    RenderFrameHost* embedder_host) {
++  LOG(INFO) << "[issue-789-exp4] stream-claim-attempt"
++            << " embedder_frame_tree_node_id="
++            << (embedder_host ? embedder_host->GetFrameTreeNodeId()
++                              : FrameTreeNodeId());
++  if (!embedder_host) {
++    LOG(INFO) << "[issue-789-exp4] stream-claim-missing"
++              << " internal_id= reason=no-embedder";
++    return nullptr;
++  }
++
++  auto unclaimed_key =
++      GetUnclaimedEmbedderHostInfo(embedder_host->GetFrameTreeNodeId());
++  auto iter = stream_infos_.find(unclaimed_key);
++  if (iter == stream_infos_.end()) {
++    LOG(INFO) << "[issue-789-exp4] stream-claim-missing"
++              << " internal_id= reason=no-unclaimed-stream"
++              << " embedder_frame_tree_node_id="
++              << embedder_host->GetFrameTreeNodeId();
++    return nullptr;
++  }
++
++  auto claimed_key = GetEmbedderHostInfo(embedder_host);
++  stream_infos_[claimed_key] = std::move(iter->second);
++  stream_infos_.erase(iter);
++
++  extensions::StreamInfo* stream_info = stream_infos_[claimed_key].get();
++  LOG(INFO) << "[issue-789-exp3] stream-container-claimed"
++            << " render_frame_host=" << embedder_host
++            << " frame_tree_node_id=" << embedder_host->GetFrameTreeNodeId()
++            << " internal_id=" << stream_info->internal_id()
++            << " reason=embedder-ready-to-commit";
++  LOG(INFO) << "[issue-789-exp4] stream-claim-ready"
++            << " internal_id=" << stream_info->internal_id()
++            << " embedder_frame_tree_node_id="
++            << embedder_host->GetFrameTreeNodeId()
++            << " embedder_rfh=" << embedder_host;
++  MaybeAttachPdfExtensionFrame(embedder_host);
++  return stream_info;
++}
++
++bool TsPdfStreamStore::ContainsUnclaimedStreamInfo(
++    FrameTreeNodeId frame_tree_node_id) const {
++  return stream_infos_.contains(
++      GetUnclaimedEmbedderHostInfo(frame_tree_node_id));
++}
++
++bool TsPdfStreamStore::MaybeAttachPdfExtensionFrame(
++    RenderFrameHost* embedder_host) {
++  extensions::StreamInfo* stream_info = GetClaimedStreamInfo(embedder_host);
++  if (!stream_info) {
++    return false;
++  }
++  if (stream_info->DidPdfExtensionStartNavigation()) {
++    return false;
++  }
++
++  RenderFrameHost* child_frame = nullptr;
++  embedder_host->ForEachRenderFrameHostWithAction([&](RenderFrameHost* frame) {
++    if (frame != embedder_host && frame->GetParent() == embedder_host) {
++      child_frame = frame;
++      return RenderFrameHost::FrameIterationAction::kStop;
++    }
++    return RenderFrameHost::FrameIterationAction::kContinue;
++  });
++
++  if (!child_frame) {
++    LOG(INFO) << "[issue-789-exp4] stream-claim-missing"
++              << " internal_id=" << stream_info->internal_id()
++              << " reason=no-child-frame"
++              << " embedder_frame_tree_node_id="
++              << embedder_host->GetFrameTreeNodeId();
++    return false;
++  }
++
++  stream_info->set_extension_host_frame_tree_node_id(
++      child_frame->GetFrameTreeNodeId());
++  LOG(INFO) << "[issue-789-exp4] attach-child-found"
++            << " embedder_frame_tree_node_id="
++            << embedder_host->GetFrameTreeNodeId()
++            << " child_frame_tree_node_id=" << child_frame->GetFrameTreeNodeId()
++            << " internal_id=" << stream_info->internal_id();
++  NavigatePdfExtensionFrame(child_frame->GetFrameTreeNodeId(), embedder_host,
++                            stream_info);
++  return true;
++}
++
++void TsPdfStreamStore::NavigatePdfExtensionFrame(
++    FrameTreeNodeId extension_frame_tree_node_id,
++    RenderFrameHost* embedder_host,
++    extensions::StreamInfo* stream_info) {
++  CHECK(embedder_host);
++  CHECK(stream_info);
++
++  NavigationController::LoadURLParams params(
++      stream_info->stream()->handler_url());
++  params.frame_tree_node_id = extension_frame_tree_node_id;
++  params.source_site_instance = embedder_host->GetSiteInstance();
++  params.transition_type = ui::PAGE_TRANSITION_AUTO_SUBFRAME;
++  params.is_renderer_initiated = false;
++  web_contents()->GetController().LoadURLWithParams(std::move(params));
++  LOG(INFO) << "[issue-789-exp4] attach-navigate"
++            << " embedder_frame_tree_node_id="
++            << embedder_host->GetFrameTreeNodeId()
++            << " child_frame_tree_node_id=" << extension_frame_tree_node_id
++            << " target="
++            << stream_info->stream()->handler_url().possibly_invalid_spec();
++}
++
+ void TsPdfStreamStore::DeleteClaimedStreamInfo(RenderFrameHost* embedder_host) {
+   auto iter = stream_infos_.find(GetEmbedderHostInfo(embedder_host));
+   if (iter == stream_infos_.end()) {
+diff --git a/content/libtermsurf_chromium/ts_pdf_stream_store.h b/content/libtermsurf_chromium/ts_pdf_stream_store.h
+index 6db2de403dbcf..10f80171e9915 100644
+--- a/content/libtermsurf_chromium/ts_pdf_stream_store.h
++++ b/content/libtermsurf_chromium/ts_pdf_stream_store.h
+@@ -67,6 +67,7 @@ class TsPdfStreamStore : public WebContentsObserver,
+   // WebContentsObserver:
+   void RenderFrameDeleted(RenderFrameHost* render_frame_host) override;
+   void FrameDeleted(FrameTreeNodeId frame_tree_node_id) override;
++  void DidStartNavigation(NavigationHandle* navigation_handle) override;
+   void ReadyToCommitNavigation(NavigationHandle* navigation_handle) override;
+   void DidFinishNavigation(NavigationHandle* navigation_handle) override;
+ 
+@@ -84,6 +85,12 @@ class TsPdfStreamStore : public WebContentsObserver,
+       NavigationHandle* navigation_handle);
+   extensions::StreamInfo* ClaimStreamInfo(RenderFrameHost* embedder_host,
+                                           const GURL& stream_url);
++  extensions::StreamInfo* ClaimStreamInfo(RenderFrameHost* embedder_host);
++  bool ContainsUnclaimedStreamInfo(FrameTreeNodeId frame_tree_node_id) const;
++  bool MaybeAttachPdfExtensionFrame(RenderFrameHost* embedder_host);
++  void NavigatePdfExtensionFrame(FrameTreeNodeId extension_frame_tree_node_id,
++                                 RenderFrameHost* embedder_host,
++                                 extensions::StreamInfo* stream_info);
+   void DeleteClaimedStreamInfo(RenderFrameHost* embedder_host);
+   void DeleteIfEmpty();
+ 
+-- 
+2.50.1 (Apple Git-155)
+

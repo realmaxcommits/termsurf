@@ -2359,3 +2359,66 @@ The result must name the exact next missing piece and cite the log lines.
   at the extension-viewer attach layer.
 - The PDF `internal_id` does not match from template emission through attach,
   claim, and serve.
+
+**Result:** Pass
+
+Implemented on Chromium branch `148.0.7778.97-issue-789-exp4`.
+
+Experiment 4 successfully connected the inert `pdf_embedder.html` child iframe
+to the PDF extension viewer frame without pulling in Chrome's broad
+MimeHandlerView, GuestView, or browser extension stacks.
+
+Verification artifacts:
+
+```text
+logs/issue-789-exp4-20260527-205225/
+logs/issue-789-exp4-html-20260527-205315/
+logs/issue-789-exp4-bin-20260527-205327/
+```
+
+The PDF smoke run produced the required attach-layer sequence:
+
+```text
+[issue-789-exp2] viewer-template-emitted internal_id=63BA94E58433D02A0F615F680678E198 ...
+[issue-789-exp3] stream-container-added frame_tree_node_id=1 internal_id=63BA94E58433D02A0F615F680678E198 ...
+[issue-789-exp4] attach-watch embedder_frame_tree_node_id=1 internal_id=63BA94E58433D02A0F615F680678E198 ...
+[issue-789-exp4] stream-claim-ready internal_id=63BA94E58433D02A0F615F680678E198 embedder_frame_tree_node_id=1 ...
+[issue-789-exp4] attach-child-found embedder_frame_tree_node_id=1 child_frame_tree_node_id=2 internal_id=63BA94E58433D02A0F615F680678E198
+[issue-789-exp4] attach-navigate embedder_frame_tree_node_id=1 child_frame_tree_node_id=2 target=chrome-extension://mhjfbmdgcfjbbpaeojofohoefgiehjai/pdf/index.html
+[issue-789-exp4] attach-handler-committed child_frame_tree_node_id=2 origin=chrome-extension://mhjfbmdgcfjbbpaeojofohoefgiehjai url=chrome-extension://mhjfbmdgcfjbbpaeojofohoefgiehjai/pdf/index.html
+```
+
+The forbidden dependency check passed:
+`gn desc out/Default //content/libtermsurf_chromium deps` contained none of:
+
+```text
+//chrome/browser/plugins:impl
+//chrome/browser/extensions:extensions
+//components/guest_view/browser
+```
+
+The normal HTML smoke and non-PDF binary smoke produced no Exp 3 stream-store
+logs and no Exp 4 attach logs, proving the attach shim stays gated to PDF stream
+loads.
+
+The PDF screenshot did not visibly render the Bitcoin PDF as a finished viewer.
+It showed the extension attach path getting farther than the previous blank
+viewer state, but not a complete PDF document. The logs also did not reach
+`[issue-789-exp3] stream-served`. That is acceptable for Experiment 4 because
+the experiment's revised Pass criteria stop at proving the extension-viewer
+attach layer and identifying the next missing layer.
+
+#### Conclusion
+
+Experiment 4 proved that TermSurf can replace the first missing MimeHandlerView
+attach step with a narrow TermSurf-owned browser-side shim: claim the stored PDF
+stream when the embedder commits, observe the `about:blank` child iframe created
+by `pdf_embedder.html`, and navigate that child frame to the PDF extension
+handler URL.
+
+The next missing piece is no longer "how does the blank iframe become the PDF
+viewer?" It is the viewer-private API surface that lets the PDF extension viewer
+obtain stream information and drive the inner PDF content/plugin frame to the
+stored stream URL. The next experiment should implement the smallest TermSurf
+equivalent of `chrome.pdfViewerPrivate.getStreamInfo(...)` /
+`chrome.mimeHandlerPrivate.getStreamInfo(...)`, backed by `TsPdfStreamStore`.
