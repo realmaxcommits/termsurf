@@ -1960,8 +1960,8 @@ equivalent needed for OOPIF PDF:
 
 #### Description
 
-Connect the blank PDF viewer shell to the PDF stream that Experiment 3 already
-stores.
+Connect the blank PDF viewer shell to the stored PDF stream by reproducing the
+smallest missing part of Chrome's MimeHandlerView attach flow.
 
 In plain terms, Experiment 3 got the PDF file into TermSurf's hands, but the
 viewer page never asked for it. The pane now shows a mostly blank white viewer
@@ -1971,22 +1971,32 @@ iframe and turns it into the real PDF viewer/content-frame setup. TermSurf does
 not have that machinery yet.
 
 This experiment should first prove the exact missing callback, then add the
-smallest TermSurf-owned connection that makes the viewer ask for the PDF bytes.
-It must build on the Experiment 3 delegate/store path. Do not replace it with a
-new wrapper, do not return to Chrome's broad plugin stack, and do not implement
-full MimeHandlerView/GuestView unless the minimal path proves impossible.
+smallest TermSurf-owned connection that gets the inert iframe to load the PDF
+extension viewer. It must build on the Experiment 3 delegate/store path. Do not
+replace it with a new wrapper, do not return to Chrome's broad plugin stack, and
+do not implement full MimeHandlerView/GuestView unless the minimal path proves
+impossible.
 
-The preferred implementation is a narrow TermSurf attach shim:
+The important correction from review: the attach shim must not navigate the
+iframe directly to the stored stream URL. Chrome's expected frame structure is:
 
-1. detect that a PDF stream has been stored for the current embedder frame;
-2. navigate the blank PDF iframe/content frame to the stored stream URL;
-3. let Experiment 3's `pdf::PdfNavigationThrottle` claim the stream;
-4. let Experiment 3's `pdf::PdfURLLoaderRequestInterceptor` serve the original
-   PDF bytes.
+1. original embedder frame serves `pdf_embedder.html`;
+2. the child iframe navigates to the PDF extension handler URL
+   (`chrome-extension://mhjfbmdgcfjbbpaeojofohoefgiehjai/pdf/index.html`) with
+   the stored stream/internal id;
+3. the PDF extension viewer JS runs in that child frame;
+4. the viewer JS asks `chrome.mimeHandlerPrivate` / `pdf_viewer_private` for
+   stream information;
+5. only then does an inner PDF content/plugin navigation reach the stored stream
+   URL and allow Experiment 3's delegate/interceptor path to claim and serve the
+   bytes.
 
-Visible PDF rendering is still a stretch outcome, but this experiment should get
-past "blank viewer shell." A Pass requires the viewer/request path to ask for
-and receive the stored PDF stream, proven by logs.
+This experiment owns steps 1-3 and the stream-claim bookkeeping needed to make a
+later step 4 possible. It may discover that the next hard blocker is the missing
+`pdf_viewer_private` API. In that case the correct result is Pass for Experiment
+4 if the extension-viewer attach layer is proven; Partial is reserved for cases
+where the attach layer itself remains incomplete. Visible PDF rendering is not
+expected from this experiment.
 
 #### Changes
 
@@ -2007,6 +2017,9 @@ and receive the stored PDF stream, proven by logs.
    - when `TsPdfStreamStore` stores a stream;
    - when any navigation starts/commits in the same `WebContents` after the PDF
      stream is stored;
+   - when the embedder frame commits after the stream is stored;
+   - when child frames are created under that embedder frame;
+   - when a child frame commits at the PDF extension handler URL;
    - when `pdf::PdfNavigationThrottle` is installed;
    - when `TsPdfStreamDelegate::MapToOriginalUrl(...)` runs;
    - when `TsPdfStreamDelegate::GetStreamInfo(...)` runs;
@@ -2015,53 +2028,115 @@ and receive the stored PDF stream, proven by logs.
 
    The result must answer:
    - Did the viewer shell commit as `text/html`?
-   - Did any child frame navigate after the stream was stored?
-   - Did any navigation URL equal the stored stream URL?
+   - Did the child iframe inside `pdf_embedder.html` exist?
+   - Did that child iframe navigate to the PDF extension handler URL?
+   - Did the extension-frame origin match the canonical PDF extension origin?
+   - Did the viewer JS attempt to ask for stream information?
+   - Did any later navigation URL equal the stored stream URL?
    - Did `MapToOriginalUrl(...)` run?
    - Did `GetStreamInfo(...)` run?
 
-3. Add a minimal stored-stream navigation trigger.
+3. Add a minimal PDF extension attach shim.
 
-   Preferred implementation: in `TsPdfStreamStore`, after adding the captured
-   stream, post a UI task that finds the frame represented by the stored
-   `FrameTreeNodeId` and navigates an appropriate child/content frame to the
-   stream URL.
+   Preferred implementation: add a browser-side observer owned by the
+   `WebContents` / `TsPdfStreamStore` path. After a PDF stream is stored, the
+   observer waits for the corresponding embedder document to commit and for the
+   child iframe from `pdf_embedder.html` to exist. Then it navigates that child
+   frame to the PDF extension handler URL with the stream/internal id encoded in
+   the way the viewer expects.
+
+   Do not use a fire-and-forget UI task immediately after storing the stream.
+   `TsPdfStreamStore::AddStreamContainer(...)` runs before `pdf_embedder.html`
+   has necessarily committed in the renderer, so the child iframe may not exist
+   yet.
+
+   The stored `FrameTreeNodeId` identifies the original embedder frame, not the
+   child iframe that must be navigated. The shim must:
+   - look up the stored embedder frame;
+   - wait until the embedder has committed the `pdf_embedder.html` document;
+   - find the child iframe created by that document. The iframe is inside a
+     closed shadow root, so find it through the browser-side frame tree, not by
+     injected JavaScript;
+   - navigate that child frame to `StreamContainer::handler_url()` with the
+     stream/internal id, not to `StreamContainer::stream_url()`.
 
    Use the existing stored data:
    - stored frame tree node id;
-   - `extensions::StreamContainer::stream_url()`;
    - `extensions::StreamContainer::handler_url()`;
+   - `extensions::StreamContainer::stream_url()`, for later delegate matching
+     only;
    - `internal_id`.
 
-   The navigation target must be the PDF stream URL, not the original PDF URL.
-   The original PDF URL is returned later by
-   `TsPdfStreamDelegate::MapToOriginalUrl(...)`.
+   The navigation target must be the PDF handler URL, not the original PDF URL
+   and not the stored stream URL. The stored stream URL should only appear later
+   if the PDF extension viewer JS successfully asks for stream information and
+   triggers the inner PDF content/plugin navigation.
 
    Required logs:
 
    ```text
-   [issue-789-exp4] attach-attempt frame_tree_node_id=<id> internal_id=<id> stream_url=<url> handler_url=<url>
-   [issue-789-exp4] attach-navigate frame_tree_node_id=<id> target=<stream_url>
+   [issue-789-exp4] attach-watch embedder_frame_tree_node_id=<id> internal_id=<id> stream_url=<url> handler_url=<url>
+   [issue-789-exp4] attach-child-found embedder_frame_tree_node_id=<id> child_frame_tree_node_id=<id> internal_id=<id>
+   [issue-789-exp4] attach-navigate embedder_frame_tree_node_id=<id> child_frame_tree_node_id=<id> target=<handler_url>
+   [issue-789-exp4] attach-handler-committed child_frame_tree_node_id=<id> origin=<origin> url=<handler_url>
    ```
 
    If there is no safe frame to navigate, do not guess blindly. Record exactly
    which frame lookup failed and mark the experiment Partial.
 
-4. Keep Experiment 3 as the stream handoff owner.
+4. Record the stream-claim transition explicitly.
+
+   Experiment 3 stores unclaimed streams by the original embedder identity and
+   `internal_id`. Chrome's delegate later looks up claimed streams by the
+   relevant embedder `RenderFrameHost`, using the frame relationship around the
+   PDF extension/content frames.
+
+   This experiment must make that transition observable. When the child iframe
+   commits at the PDF extension handler URL, record which original embedder
+   frame owns the stream and whether the stream is now claimable by the RFH key
+   that `TsPdfStreamDelegate::MapToOriginalUrl(...)` will use later.
+
+   Required logs:
+
+   ```text
+   [issue-789-exp4] stream-claim-ready internal_id=<id> embedder_frame_tree_node_id=<id> embedder_rfh=<ptr-or-id>
+   [issue-789-exp4] stream-claim-missing internal_id=<id> reason=<reason>
+   ```
+
+   If Experiment 3 already implemented the RFH-keyed transition, keep it and add
+   logs proving where it happens. If it did not, add the smallest transition
+   needed for the later delegate lookup. Do not duplicate stream serving.
+
+5. Keep Experiment 3 as the stream handoff owner.
 
    Do not duplicate the stream claim or stream serving logic. The expected
-   sequence after the attach shim is:
+   minimum sequence after the attach shim is:
 
    ```text
    [issue-789-exp3] stream-container-added ...
-   [issue-789-exp4] attach-navigate ... target=<stream_url>
+   [issue-789-exp4] attach-watch ...
+   [issue-789-exp4] attach-child-found ...
+   [issue-789-exp4] attach-navigate ... target=<handler_url>
+   [issue-789-exp4] attach-handler-committed ... origin=chrome-extension://mhjfbmdgcfjbbpaeojofohoefgiehjai
+   [issue-789-exp4] stream-claim-ready ...
+   ```
+
+   If `pdf_viewer_private` is not present yet, the sequence may stop there. That
+   is a valid Experiment 4 Pass if the extension-viewer attach layer is proven.
+   The next experiment should then target the minimal viewer-private API
+   surface.
+
+   If the viewer-private path already works or is small enough to include, the
+   extended sequence is:
+
+   ```text
    [issue-789-exp3] map-to-original-url ... internal_id=<same id>
    [issue-789-exp3] stream-container-claimed ... internal_id=<same id>
    [issue-789-exp3] get-stream-info ...
    [issue-789-exp3] stream-served ...
    ```
 
-5. Preserve dependency boundaries.
+6. Preserve dependency boundaries.
 
    `content/libtermsurf_chromium` must still avoid:
 
@@ -2077,20 +2152,37 @@ and receive the stored PDF stream, proven by logs.
    result and design the next experiment around the smallest specific missing
    piece.
 
-6. Preserve non-PDF behavior.
+7. Preserve non-PDF behavior.
 
    Normal HTML and non-PDF binary navigations must not run the attach shim. They
    may still create the always-present Experiment 2 response throttle, but they
    must not emit:
 
    ```text
-   [issue-789-exp4] attach-attempt ...
+   [issue-789-exp4] attach-watch ...
+   [issue-789-exp4] attach-child-found ...
    [issue-789-exp4] attach-navigate ...
    [issue-789-exp3] stream-container-added ...
    [issue-789-exp3] stream-served ...
    ```
 
-7. Format, build, archive.
+8. Log sandbox cleanup/store support.
+
+   If the delegate has a TermSurf equivalent of
+   `MaybeDeleteSandboxedStream(...)`, log whether it can query and delete
+   unclaimed streams by `FrameTreeNodeId`.
+
+   Required logs if that path exists:
+
+   ```text
+   [issue-789-exp4] sandbox-stream-check frame_tree_node_id=<id> contains_unclaimed=<true|false>
+   [issue-789-exp4] sandbox-stream-delete frame_tree_node_id=<id> deleted=<true|false>
+   ```
+
+   If the path does not exist yet, record that explicitly in the result. Do not
+   weaken PDF sandbox behavior silently.
+
+9. Format, build, archive.
 
    Run Chromium formatting on modified C++/GN files:
 
@@ -2151,8 +2243,16 @@ and receive the stored PDF stream, proven by logs.
    ```text
    [issue-789-exp2] viewer-template-emitted internal_id=<id> ...
    [issue-789-exp3] stream-container-added ... internal_id=<same id> ...
-   [issue-789-exp4] attach-attempt ... internal_id=<same id> ...
-   [issue-789-exp4] attach-navigate ... target=<stream_url> ...
+   [issue-789-exp4] attach-watch ... internal_id=<same id> ...
+   [issue-789-exp4] attach-child-found ... internal_id=<same id> ...
+   [issue-789-exp4] attach-navigate ... target=<handler_url> ...
+   [issue-789-exp4] attach-handler-committed ... origin=chrome-extension://mhjfbmdgcfjbbpaeojofohoefgiehjai ...
+   [issue-789-exp4] stream-claim-ready ... internal_id=<same id> ...
+   ```
+
+   If the run also reaches the stored PDF bytes, record the extended sequence:
+
+   ```text
    [issue-789-exp3] map-to-original-url ... internal_id=<same id> ...
    [issue-789-exp3] stream-container-claimed ... internal_id=<same id> ...
    [issue-789-exp3] get-stream-info ...
@@ -2163,6 +2263,7 @@ and receive the stored PDF stream, proven by logs.
 
    Classify the screenshot as one of:
    - PDF visibly rendered;
+   - PDF extension viewer frame loaded but page still blank;
    - PDF plugin/content frame loaded but page still blank;
    - viewer shell only, no claim;
    - download/error page;
@@ -2179,7 +2280,12 @@ and receive the stored PDF stream, proven by logs.
    ./scripts/test-issue-776-pdf.sh http://localhost:9616/index.html
    ```
 
-   No Exp 3 stream-store logs or Exp 4 attach logs should appear.
+   No Exp 3 stream-store logs or Exp 4 attach logs should appear. Confirm an
+   explicit attach counter or grep result shows zero attach attempts:
+
+   ```text
+   [issue-789-exp4] attach-attempt-count count=0 kind=html
+   ```
 
 6. Run non-PDF binary smoke.
 
@@ -2190,7 +2296,12 @@ and receive the stored PDF stream, proven by logs.
    ```
 
    No Exp 3 stream-store logs or Exp 4 attach logs should appear. Existing
-   content-shell download behavior is acceptable.
+   content-shell download behavior is acceptable. Confirm an explicit attach
+   counter or grep result shows zero attach attempts:
+
+   ```text
+   [issue-789-exp4] attach-attempt-count count=0 kind=non_pdf_binary
+   ```
 
 7. Record the known teardown crash separately.
 
@@ -2202,21 +2313,29 @@ and receive the stored PDF stream, proven by logs.
 - `libtermsurf_chromium` builds and links.
 - The forbidden broad Chrome dependency set is still absent.
 - A PDF response stores the original PDF stream.
-- The new attach shim causes a navigation to the stored stream URL.
-- Experiment 3's delegate receives the stream URL and claims the matching
+- The new attach shim finds the child iframe created by `pdf_embedder.html`.
+- The attach shim navigates that child iframe to the PDF extension handler URL,
+  not to the stored stream URL.
+- The child frame commits at the canonical PDF extension origin.
+- The stored stream is claim-ready for the original embedder frame /
   `internal_id`.
-- `GetStreamInfo(...)` runs for the claimed frame.
-- `stream-served` appears, proving the PDF bytes were handed to the viewer path.
+- If `pdf_viewer_private` is still missing, the result records that as the next
+  exact missing layer. `stream-served` is not required for Pass in that case.
+- If `pdf_viewer_private` is available or implemented in this experiment, the
+  extended delegate sequence reaches `stream-served`.
 - HTML and non-PDF binary smoke tests do not run the attach shim.
 - The patch archive is regenerated under `chromium/patches/issue-789/`.
 
 #### Partial Criteria
 
-Partial if the build succeeds and the logs identify a narrower missing layer,
-but the stream still is not served. Valid Partial outcomes include:
+Partial if the build succeeds but the extension-viewer attach layer is still
+incomplete. Valid Partial outcomes include:
 
-- the embedder document loads, but no child/content frame exists to navigate;
-- a child frame exists, but navigating it to the stream URL is blocked;
+- the embedder document loads, but no child iframe exists to navigate;
+- the child iframe exists, but browser-side navigation to the handler URL is
+  blocked;
+- the handler URL commits, but the committed origin is not the canonical PDF
+  extension origin;
 - `MapToOriginalUrl(...)` runs but cannot match the stored stream URL;
 - the stream is claimed but `GetStreamInfo(...)` never runs;
 - `GetStreamInfo(...)` runs but the PDF plugin/content frame still stays blank;
@@ -2229,10 +2348,14 @@ The result must name the exact next missing piece and cite the log lines.
 
 - The experiment reintroduces the old data-wrapper fake PDF solution.
 - The experiment bypasses Experiment 3's delegate/store/interceptor path.
+- The attach shim navigates the child iframe directly to the stream URL and
+  calls that a Pass.
 - The implementation imports `//chrome/browser/plugins:impl`.
 - The implementation imports broad Chrome extension/browser or GuestView
   infrastructure without recording a Partial and redesigning around that scope.
 - The attach shim runs for normal HTML or non-PDF binary navigations.
-- The implementation claims Pass without a `stream-served` log.
+- The implementation claims visible PDF rendering or byte serving without either
+  a `stream-served` log or an explicit explanation that the experiment stopped
+  at the extension-viewer attach layer.
 - The PDF `internal_id` does not match from template emission through attach,
   claim, and serve.
