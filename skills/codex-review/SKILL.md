@@ -128,21 +128,29 @@ after the first run and stores it for follow-ups.
 The helper uses `codex exec` for a new review thread and
 `codex exec resume <uuid>` for follow-up turns.
 
+**Default policy: maintain one continuous review session.** The helper resumes
+the stored session id on every run. Keep doing that — review after review goes
+into the same thread.
+
+- **Do NOT pass `--new-session` on your own judgment.** Not for a "different
+  topic," not for a new experiment, not for a new issue. The user decides when
+  to start a new thread. Only pass `--new-session` when the user explicitly asks
+  for a fresh/new review session.
 - If `logs/codex-review/current-session-id` exists and holds a valid UUID, the
-  script resumes it.
-- If no usable session id exists, the script starts a fresh session and stores
-  the id Codex reports.
-- `--new-session` ignores the stored id and starts fresh.
-- Use the same session for related reviews so outputs are grouped and Codex may
-  retain context.
-- Start a new session when switching issues or when stale context would be
-  misleading.
-- Always include the essential context again on follow-up reviews. Resuming the
-  same session id works, but model-visible history should not be treated as
+  script resumes it. If it is missing or unparseable, the script starts a fresh
+  session and stores the id Codex reports.
+- **Automatic self-heal.** If resuming the stored session fails because the id
+  stopped working (expired/unknown), the helper detects the failed resume,
+  retries once as a fresh session, adopts the new id, and prints a
+  `note: stored session could not be resumed...` line. You do not need to do
+  anything — continuity is restored automatically going forward.
+- `--new-session` (explicit user request only) ignores the stored id and starts
+  fresh.
+- Always include the essential context again on every review. Resuming the same
+  session id works, but model-visible history should not be treated as
   guaranteed.
-- If the stored id is missing or unparseable, the helper logs a warning and
-  starts fresh. `codex exec resume --last` is the manual fallback if you need to
-  reattach to the most recent session by hand.
+- `codex exec resume --last` is a manual fallback if you ever need to reattach
+  to the most recent session by hand.
 
 ## Codex Command Shape
 

@@ -192,6 +192,47 @@ def extract_session_id(events_path: Path) -> str | None:
     return None
 
 
+def run_subprocess(
+    cmd: list,
+    stdin_path: Path,
+    events_path: Path,
+    stderr_path: Path,
+) -> int:
+    """Run `cmd` with stdin from `stdin_path`, capturing events/stderr to files.
+
+    Returns the process exit code, or 124 on timeout, 130 on interrupt, 127 on
+    launch failure. Truncates the events/stderr files on each call.
+    """
+    try:
+        with stdin_path.open("r") as stdin_file, events_path.open(
+            "w"
+        ) as events_file, stderr_path.open("w") as stderr_file:
+            proc = subprocess.Popen(
+                cmd,
+                cwd=ROOT,
+                text=True,
+                stdin=stdin_file,
+                stdout=events_file,
+                stderr=stderr_file,
+                start_new_session=True,
+            )
+            try:
+                return proc.wait(timeout=TIMEOUT_SECONDS)
+            except subprocess.TimeoutExpired:
+                stderr_file.write(f"\nTimed out after {TIMEOUT_SECONDS} seconds.\n")
+                stderr_file.flush()
+                terminate_process_group(proc)
+                return 124
+            except KeyboardInterrupt:
+                stderr_file.write("\nInterrupted by user.\n")
+                stderr_file.flush()
+                terminate_process_group(proc)
+                return 130
+    except OSError as exc:
+        stderr_path.write_text(f"Failed to launch Codex: {exc}\n")
+        return 127
+
+
 def terminate_process_group(proc: subprocess.Popen) -> None:
     try:
         os.killpg(proc.pid, signal.SIGTERM)
@@ -222,35 +263,23 @@ def main() -> int:
     prompt_path.write_text(prompt)
 
     cmd = codex_command(resume_id, last_message_path, args.allow_bash, args.model)
-    return_code = 0
-    try:
-        with prompt_path.open("r") as stdin_file, events_path.open(
-            "w"
-        ) as events_file, stderr_path.open("w") as stderr_file:
-            proc = subprocess.Popen(
-                cmd,
-                cwd=ROOT,
-                text=True,
-                stdin=stdin_file,
-                stdout=events_file,
-                stderr=stderr_file,
-                start_new_session=True,
-            )
-            try:
-                return_code = proc.wait(timeout=TIMEOUT_SECONDS)
-            except subprocess.TimeoutExpired:
-                stderr_file.write(f"\nTimed out after {TIMEOUT_SECONDS} seconds.\n")
-                stderr_file.flush()
-                terminate_process_group(proc)
-                return_code = 124
-            except KeyboardInterrupt:
-                stderr_file.write("\nInterrupted by user.\n")
-                stderr_file.flush()
-                terminate_process_group(proc)
-                return_code = 130
-    except OSError as exc:
-        stderr_path.write_text(f"Failed to launch Codex: {exc}\n")
-        return_code = 127
+    return_code = run_subprocess(cmd, prompt_path, events_path, stderr_path)
+
+    # Self-heal: if resuming a stored session failed (not a timeout/interrupt)
+    # and the session never even started, the stored id has most likely stopped
+    # working. Default policy is to maintain continuity, so rather than failing,
+    # retry once as a fresh session and adopt the new id.
+    fell_back = False
+    if (
+        resume_id is not None
+        and return_code not in (0, 124, 130)
+        and not extract_session_id(events_path)
+    ):
+        first_error = stderr_path.read_text(errors="replace").strip()
+        resume_id = None
+        cmd = codex_command(resume_id, last_message_path, args.allow_bash, args.model)
+        return_code = run_subprocess(cmd, prompt_path, events_path, stderr_path)
+        fell_back = True
 
     sid = resume_id
     if return_code == 0:
@@ -259,6 +288,12 @@ def main() -> int:
             sid = captured
             SESSION_FILE.write_text(sid + "\n")
 
+    if fell_back:
+        print(
+            "note: stored session could not be resumed; started a fresh session."
+        )
+        if first_error:
+            print(f"resume_error={first_error.splitlines()[-1]}")
     print(f"session_id={sid if sid else '(unknown)'}")
     print(f"prompt={prompt_path}")
     print(f"events={events_path}")

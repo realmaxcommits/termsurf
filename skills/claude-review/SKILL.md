@@ -118,15 +118,24 @@ secrets into review prompts.
 The helper script uses `claude -p --session-id <uuid>` for a new review thread
 and `claude -p --resume <uuid>` for follow-up turns.
 
-- If `logs/claude-review/current-session-id` exists, the script resumes it.
-- If no session exists, the script creates a UUID and stores it.
-- `--new-session` creates and stores a new UUID.
-- Use the same session for related reviews so outputs are grouped and Claude may
-  retain context.
-- Start a new session when switching issues or when stale context would be
-  misleading.
-- Always include the essential context again on follow-up reviews. The smoke
-  test proved the CLI can resume the same session ID, but model-visible history
+**Default policy: maintain one continuous review session.** The helper resumes
+the stored session id on every run. Keep doing that — review after review goes
+into the same thread.
+
+- **Do NOT pass `--new-session` on your own judgment.** Not for a "different
+  topic," not for a new experiment, not for a new issue. The user decides when
+  to start a new thread. Only pass `--new-session` when the user explicitly asks
+  for a fresh/new review session.
+- If `logs/claude-review/current-session-id` exists, the script resumes it. If
+  no session exists, the script creates a UUID and stores it.
+- **Automatic self-heal.** If resuming the stored session fails because the id
+  stopped working (expired/unknown), the helper retries once with a fresh UUID,
+  adopts it, and prints a `note: stored session could not be resumed...` line.
+  You do not need to do anything — continuity is restored automatically going
+  forward.
+- `--new-session` (explicit user request only) creates and stores a new UUID.
+- Always include the essential context again on every review. The smoke test
+  proved the CLI can resume the same session ID, but model-visible history
   should not be treated as guaranteed.
 
 ## Claude Command Shape

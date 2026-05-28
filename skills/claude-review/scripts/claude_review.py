@@ -191,6 +191,39 @@ def terminate_process_group(proc: subprocess.Popen[str]) -> None:
     proc.wait()
 
 
+def run_subprocess(cmd: list, stdout_path: Path, stderr_path: Path) -> int:
+    """Run `cmd`, capturing stdout/stderr to files. Truncates both each call.
+
+    Returns the exit code, or 124 on timeout, 130 on interrupt, 127 on launch
+    failure.
+    """
+    try:
+        with stdout_path.open("w") as stdout_file, stderr_path.open("w") as stderr_file:
+            proc = subprocess.Popen(
+                cmd,
+                cwd=ROOT,
+                text=True,
+                stdout=stdout_file,
+                stderr=stderr_file,
+                start_new_session=True,
+            )
+            try:
+                return proc.wait(timeout=TIMEOUT_SECONDS)
+            except subprocess.TimeoutExpired:
+                stderr_file.write(f"\nTimed out after {TIMEOUT_SECONDS} seconds.\n")
+                stderr_file.flush()
+                terminate_process_group(proc)
+                return 124
+            except KeyboardInterrupt:
+                stderr_file.write("\nInterrupted by user.\n")
+                stderr_file.flush()
+                terminate_process_group(proc)
+                return 130
+    except OSError as exc:
+        stderr_path.write_text(f"Failed to launch Claude: {exc}\n")
+        return 127
+
+
 def main() -> int:
     args = parse_args()
     ensure_log_dir()
@@ -203,38 +236,31 @@ def main() -> int:
     prompt_path.write_text(prompt)
 
     cmd = claude_command(sid, is_new_session, prompt, args.no_tools, args.allow_bash)
-    return_code = 0
-    try:
-        with stdout_path.open("w") as stdout_file, stderr_path.open("w") as stderr_file:
-            proc = subprocess.Popen(
-                cmd,
-                cwd=ROOT,
-                text=True,
-                stdout=stdout_file,
-                stderr=stderr_file,
-                start_new_session=True,
-            )
-            try:
-                return_code = proc.wait(timeout=TIMEOUT_SECONDS)
-            except subprocess.TimeoutExpired:
-                stderr_file.write(f"\nTimed out after {TIMEOUT_SECONDS} seconds.\n")
-                stderr_file.flush()
-                terminate_process_group(proc)
-                return_code = 124
-            except KeyboardInterrupt:
-                stderr_file.write("\nInterrupted by user.\n")
-                stderr_file.flush()
-                terminate_process_group(proc)
-                return_code = 130
-    except OSError as exc:
-        stderr_path.write_text(f"Failed to launch Claude: {exc}\n")
-        return_code = 127
+    return_code = run_subprocess(cmd, stdout_path, stderr_path)
+
+    # Self-heal: if resuming a stored session failed (not a timeout/interrupt),
+    # the stored id has most likely expired. Default policy is to maintain
+    # continuity, so rather than failing, retry once with a fresh session id.
+    fell_back = False
+    if not is_new_session and return_code not in (0, 124, 130):
+        first_error = stderr_path.read_text(errors="replace").strip()
+        sid = str(uuid.uuid4())
+        is_new_session = True
+        cmd = claude_command(sid, is_new_session, prompt, args.no_tools, args.allow_bash)
+        return_code = run_subprocess(cmd, stdout_path, stderr_path)
+        fell_back = True
 
     stdout = stdout_path.read_text(errors="replace")
     if return_code == 0:
         sid = update_session_from_stdout(stdout, sid)
         SESSION_FILE.write_text(sid + "\n")
 
+    if fell_back:
+        print(
+            "note: stored session could not be resumed; started a fresh session."
+        )
+        if first_error:
+            print(f"resume_error={first_error.splitlines()[-1]}")
     print(f"session_id={sid}")
     print(f"prompt={prompt_path}")
     print(f"stdout={stdout_path}")
