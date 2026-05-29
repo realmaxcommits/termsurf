@@ -326,18 +326,29 @@ incremental steps that solve the problem.
 
 ### Issue Structure
 
-Each issue is a **folder** containing a `README.md` with TOML frontmatter:
+Each issue is a **folder**. The `README.md` is the issue **spine** (frontmatter,
+goal, background, analysis, an ordered index of experiments, and the final
+conclusion). **Every experiment is its own numbered file** in the same folder —
+the README never contains experiment bodies, only links to them.
 
 ```
-issues/0756-surfari/
-├── README.md          ← main issue document with frontmatter
-├── 01-build-webkit.md ← optional: additional files for long issues
-└── 02-compositing.md
+issues/0792-pdf-support/
+├── README.md                     ← spine: frontmatter, goal, background,
+│                                    the ordered Experiments index, conclusion
+├── 01-stand-up-extensions.md     ← Experiment 1 (full body in its own file)
+├── 02-wire-stream-manager.md     ← Experiment 2
+└── 03-...                        ← one file per experiment, in sequence
 ```
 
 The folder name is `{NNNN}-{slug}`. The number is zero-padded to 4 digits and
 globally sequential across all generations (ts1–ts5). The slug is lowercase,
 hyphenated, and describes the topic.
+
+**Why one file per experiment:** it keeps experiments ordered and easy to read,
+access, and organize (up to ~100 per issue with clean `NN-` filenames), and —
+critically — it makes experiments easy to **automate**: each experiment is a
+discrete file created and tracked from the README, rather than ever-growing
+edits to one monolithic document.
 
 The full index of all issues is at `issues/README.md`. Regenerate it with:
 
@@ -368,20 +379,54 @@ closed = "2026-03-16"
 
 #### README.md structure
 
-After the frontmatter, a new issue has these sections:
+After the frontmatter, a new issue's `README.md` has these sections:
 
 1. **Title** (H1) — `# Issue {N}: {descriptive title}`
 2. **Goal** — One or two sentences describing the desired outcome.
 3. **Background** — Context, prior work, constraints.
 4. **Architecture** / **Analysis** / **Proposed Solutions** — Technical details.
 
-A new issue does **not** have an Experiments section yet.
+A new issue's README has **no experiments listed yet**.
 
-#### Additional files
+As experiments are created, the README grows an **`## Experiments`** section: an
+ordered list linking to each experiment file, one per line, with a one-line
+status. The README holds the links and statuses only — never the experiment
+bodies. Example:
 
-For long issues, split experiments or sub-topics into numbered files:
-`01-name.md`, `02-name.md`, etc. Link them from the README.md. Keep each file
-under ~1000 lines to fit in an AI agent's context window.
+```markdown
+## Experiments
+
+- [Experiment 1: Stand up the extensions system](01-stand-up-extensions.md) —
+  **Pass**
+- [Experiment 2: Wire PdfViewerStreamManager](02-wire-stream-manager.md) —
+  **Partial** (needs a Profile-less stream delegate)
+- [Experiment 3: …](03-….md) — **Designed**
+```
+
+Keep each status to one of: `Designed`, `In progress`, `Pass`, `Partial`,
+`Fail`. Update the line when the experiment's result is recorded, so the README
+doubles as an at-a-glance progress tracker.
+
+When the issue is solved or abandoned, add the **`## Conclusion`** section to
+the README (see "Closing an Issue").
+
+#### Experiment files
+
+Each experiment lives in its **own file** `NN-{slug}.md` in the issue folder,
+where `NN` is a zero-padded two-digit number in creation order (`01`, `02`, …,
+up to `99`). The slug is lowercase-hyphenated and describes the experiment.
+
+Each experiment file contains:
+
+1. **Title** (H1) — `# Experiment {N}: {descriptive title}`
+2. **Description** — What and why.
+3. **Changes** — Specific code changes, listed by file.
+4. **Verification** — How to test. Concrete steps and pass/fail criteria.
+5. **Result** and **Conclusion** — added after the experiment runs (see
+   "Recording results").
+
+Keep each file focused; if one grows past ~1000 lines, that is a sign the
+experiment is too big and should be split into the next numbered experiment.
 
 ### Multiple Open Issues
 
@@ -401,12 +446,15 @@ comes next.
 
 #### Experiment structure
 
-Each experiment has:
+Each experiment is its own file `NN-{slug}.md` (see "Experiment files" above),
+and is added as a new link in the README's `## Experiments` index the moment it
+is created. Inside the file, use an H1 title and H2 sections:
 
-1. **Title** (H3) — `### Experiment {N}: {descriptive title}`
-2. **Description** — What and why.
-3. **Changes** — Specific code changes, listed by file.
-4. **Verification** — How to test. Concrete steps and pass/fail criteria.
+1. **Title** (H1) — `# Experiment {N}: {descriptive title}`
+2. **Description** (H2) — What and why.
+3. **Changes** (H2) — Specific code changes, listed by file.
+4. **Verification** (H2) — How to test. Concrete steps and pass/fail criteria.
+5. **Result** / **Conclusion** (H2) — added after it runs.
 
 #### Chromium branches
 
@@ -421,24 +469,31 @@ directly informs what Experiment 2 should be.
 
 #### Recording results
 
-After testing, add a result below the verification section:
+After testing, append the result **inside the experiment's own file**, below
+Verification:
 
 ```markdown
+## Result
+
 **Result:** Pass / Partial / Fail
 
 {description}
 
-#### Conclusion
+## Conclusion
 
-{what we learned, what to do next}
+{what we learned, what the next experiment should be}
 ```
 
-All three outcomes are valuable. Failed experiments eliminate dead ends.
+Then update that experiment's status on its line in the README's
+`## Experiments` index (`Designed` → `Pass`/`Partial`/`Fail`). All three
+outcomes are valuable — failed experiments eliminate dead ends.
 
 ### Closing an Issue
 
-Add a `## Conclusion` section after the last experiment. Update the frontmatter
-to `status = "closed"` with a `closed` date. Regenerate the index:
+When the issue is solved or abandoned, add a `## Conclusion` section to the
+**`README.md`** (after the `## Experiments` index), summarizing what was learned
+and the outcome. Update the frontmatter to `status = "closed"` with a `closed`
+date. Regenerate the index:
 
 ```bash
 scripts/build-issues-index.sh
@@ -449,16 +504,24 @@ scripts/build-issues-index.sh
 Closed issues are historical records. They are **immutable** and must NEVER be
 modified. History stays as it was written.
 
+The one-file-per-experiment structure applies to **issues created from now on**.
+Earlier issues that recorded all experiments inline in a single `README.md`
+(e.g. Issues 789–791) keep their original form as historical records — do not
+retrofit them.
+
 ### Process Summary
 
 1. **Create the issue** — `issues/{NNNN}-{slug}/README.md` with frontmatter,
-   goal, background. No experiments yet.
-2. **Design Experiment 1** — Add `## Experiments` and `### Experiment 1`.
+   goal, background, analysis. No experiments yet.
+2. **Design Experiment 1** — Create `01-{slug}.md` with the experiment body, and
+   add a link to it under `## Experiments` in the README (status `Designed`).
 3. **Implement Experiment 1** — Write the code.
-4. **Record the result** — Pass, partial, or fail with a conclusion.
-5. **Repeat** — Design the next experiment. Continue until the goal is met.
-6. **Close the issue** — Write the `## Conclusion`, update frontmatter, rebuild
-   index.
+4. **Record the result** — Append `## Result` / `## Conclusion` inside
+   `01-{slug}.md`, and update its status on the README index line.
+5. **Repeat** — Create `02-{slug}.md` for the next experiment (the prior result
+   informs it), link it from the README, and continue until the goal is met.
+6. **Close the issue** — Write the `## Conclusion` in the README, update
+   frontmatter, rebuild the index.
 
 ## Remember
 
