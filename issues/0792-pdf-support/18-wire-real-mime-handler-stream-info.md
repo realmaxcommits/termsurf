@@ -288,3 +288,88 @@ before any next experiment is designed.
   web frames.
 - Attachment PDFs stop downloading.
 - HTML navigation, DevTools, popups, or ordinary browser input regress.
+
+## Result
+
+**Result:** Partial
+
+Experiment 18 successfully replaced the null-stream `MimeHandlerService` stub
+with a real `MimeHandlerServiceImpl` bridge and added the companion
+`pdfViewerPrivate.getStreamInfo()` diagnostic. The branch builds cleanly:
+
+```text
+autoninja -C out/Default libtermsurf_chromium
+Build Succeeded: 3 steps
+```
+
+Primary PDF smoke:
+
+```text
+logs/issue-792-exp18-pdf-20260529-142747
+```
+
+Longer PDF smoke:
+
+```text
+logs/issue-792-exp18-pdf-long-20260529-142824
+```
+
+Both PDF runs reproduce the Experiment 17 success chain:
+
+```text
+[issue-792-exp17] navigation-download-classification ... intercepted_by_plugin=1 must_download=0 known_mime_type=0 is_download=0
+[issue-792-exp16] pvs-ready ... has_unclaimed=1 stream_count=1
+[issue-792-exp16] pvs-claim frame_tree_node_id=1 claimed=1 original_url=http://127.0.0.1:9787/bitcoin.pdf
+```
+
+But neither PDF run emits any of the new stream-info logs:
+
+```text
+[issue-792-exp18] mime-handler-service-request ...
+[issue-792-exp18] real-mime-handler-get-stream-info ...
+[issue-792-exp18] pdf-viewer-private-get-stream-info ...
+```
+
+The longer run rules out a simple settle-time issue. After stream claim, the PDF
+extension renderer loads and the MIME-handler container manager associated
+interface is bound:
+
+```text
+[issue-792-exp9] renderer-load-extension extension_id=mhjfbmdgcfjbbpaeojofohoefgiehjai
+[issue-792-exp15] mime-handler-container-manager-bound render_frame=...
+```
+
+However, the viewer does not request either stream-info API. That means the next
+blocker is earlier than stream-info conversion: the PDF extension/viewer startup
+path is not reaching the code that asks for stream information.
+
+Regression smokes:
+
+```text
+logs/issue-792-exp18-html-20260529-142914
+logs/issue-792-exp18-bin-20260529-142937
+logs/issue-792-exp18-attachment-20260529-143034
+```
+
+- HTML navigation emitted no Experiment 18 logs and did not trigger a download.
+- Unsupported non-PDF `file.bin` still reached
+  `ShellDownloadManagerDelegate::ChooseDownloadPath(...)`.
+- Attachment PDF still downloaded with:
+
+  ```text
+  [issue-792-exp17] navigation-download-classification url=http://127.0.0.1:9794/attachment.pdf mime_type=application/pdf intercepted_by_plugin=0 must_download=1 known_mime_type=0 is_download=1
+  ```
+
+## Conclusion
+
+The null `MimeHandlerService` stub is no longer the active blocker because the
+PDF viewer never requests that service after the stream is claimed. The
+companion `pdfViewerPrivate.getStreamInfo()` diagnostic also does not fire, so
+the viewer is not using the other Chromium stream-info API either.
+
+The next experiment should move one step earlier in the viewer startup path. It
+should diagnose why, after `pvs-claim claimed=1`, the wrapper/extension frame
+does not progress to the point where it asks for stream info. The most useful
+next logs are likely in `PdfViewerStreamManager::DidFinishNavigation()` around
+the about:blank child-frame path (`pdf-extension-about-blank` /
+`pdf-extension-navigate`) and in the generated wrapper HTML/frame creation path.

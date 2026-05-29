@@ -213,4 +213,5 @@ stream/extension portion and should be mined rather than rebuilt from scratch.
 - [Experiment 17: Mark the PDF wrapper response as intercepted](17-mark-pdf-wrapper-response-intercepted.md)
   — **Pass**
 - [Experiment 18: Wire real MIME handler stream info](18-wire-real-mime-handler-stream-info.md)
-  — **Designed**
+  — **Partial** (viewer never requests either stream-info API after stream
+  claim)
