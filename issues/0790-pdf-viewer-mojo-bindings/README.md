@@ -1121,3 +1121,85 @@ PDF component extension is registered in the `ExtensionRegistry` (logged), and
 `application/pdf` is recognized as externally handled — with no regression to
 HTML/non-PDF behavior. The PDF need not render yet; that follows once
 `PdfViewerStreamManager` is wired on top.
+
+#### Result
+
+**Result:** Deferred (not implemented)
+
+While scoping this port, research surfaced that adopting the canonical
+extensions/guest-view system is effectively re-implementing **app_shell**
+(`extensions/shell`) piece by piece on top of content_shell — app_shell already
+wires the extensions + guest-view + extension-URL-loader infrastructure the PDF
+OOPIF flow needs. That raised a foundational question (base TermSurf's embedder
+on app_shell instead of content_shell?) and a scope reality (a ~2k LOC port,
+multi-session). The decision was to **stop here, restore the app to its last
+known-good non-PDF state**, and evaluate the app_shell re-base deliberately
+before resuming PDF. See Experiment 7.
+
+### Experiment 7: Restore the app to the pre-PDF baseline
+
+#### Description
+
+PDF inline rendering proved to be a large port (the canonical
+extensions/guest-view/`PdfViewerStreamManager` stack — Exp 5/6). Rather than
+leave the buildable app in a half-ported state, restore it to the last
+known-good non-PDF baseline, **preserving all PDF experimental work as
+history**, then (separately) assess re-basing on app_shell.
+
+#### Assessment (research findings)
+
+- **Pre-PDF Chromium baseline = `148.0.7778.97-issue-784`** (`ae63073` "Cull
+  stale popup traces"). Verified: `merge-base(issue-784, issue-790-exp5)` equals
+  issue-784's tip, so the entire PDF effort (Issues 789 + 790) was built
+  directly on top of it. Issues 785–788 were GUI-only (no Chromium patch
+  archives, no fork branches), so 784 is the latest non-PDF Chromium state.
+- **roamium / webtui / wezboard are unaffected.** Their most recent commits are
+  all the Issue 785–788 split-border GUI work; none touched PDF. No restore
+  needed there.
+- **Main-repo PDF footprint to address:** the `chromium/README.md` "Current
+  State" branch pointer (currently `…-790-exp5`), and the experimental test
+  fixture `test-html/public/test-chrome-resources-leak.html` (added in Exp 4).
+- **Preserve (do not delete):** the Issue 789/790 docs, the Chromium fork
+  branches `…-issue-789-exp*` and `…-issue-790-exp*`, and the
+  `chromium/patches/issue-789/` archive — these are the durable record of the
+  PDF attempt.
+
+#### Changes
+
+1. Chromium fork (`chromium/src`, gitignored):
+   `git checkout 148.0.7778.97-issue-784`; rebuild `libtermsurf_chromium`. No
+   new commits on the fork; the PDF branches remain as history. (The dylib
+   reverts to pre-PDF; `roamium` loads it via `@rpath`, so no `roamium` rebuild
+   is strictly needed, but rebuild it to be safe.)
+2. Main repo:
+   - `chromium/README.md` "Current State" branch → `148.0.7778.97-issue-784`.
+     Keep the Branches table rows for the `789-exp*` / `790-exp*` branches but
+     annotate them as experimental PDF work (parked).
+   - Remove `test-html/public/test-chrome-resources-leak.html`.
+   - Keep the Issue 789/790 docs and `chromium/patches/issue-789/` (history).
+
+#### Verification
+
+1. `libtermsurf_chromium` builds and links on `148.0.7778.97-issue-784`.
+2. HTML smoke (`index.html`) renders — no regression.
+3. PDF smoke (`bitcoin.pdf`) shows the **pre-PDF** behavior (whatever 784 did —
+   e.g. download/blank, no inline viewer), with **no `IsPdfRenderer` crash** and
+   **no `[issue-789-*]` / `[issue-790-*]` experimental logs** in the output.
+4. The app launches and behaves as the known-good 784 build.
+5. Preservation check: the `789-exp*` / `790-exp*` fork branches and
+   `chromium/patches/issue-789/` still exist.
+
+#### Pass Criteria
+
+- The build is on `148.0.7778.97-issue-784`; no experimental PDF code is active.
+- HTML and the broader app work as before (no regressions vs the 784 baseline).
+- PDF behaves as it did pre-experiments (no crash).
+- All PDF experimental work is preserved (branches, patches, issue docs).
+
+#### Conclusion (closes Issue 790)
+
+To be written after the restore is verified: record that inline PDF rendering is
+a large canonical-stack port deferred pending a foundation decision, that the
+attempt is fully preserved, that the app is restored to the 784 baseline with no
+regressions, and that the next direction is to evaluate re-basing TermSurf's
+embedder on app_shell (a new issue).
