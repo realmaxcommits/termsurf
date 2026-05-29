@@ -172,5 +172,11 @@ stream/extension portion and should be mined rather than rebuilt from scratch.
 
 ## Experiments
 
-_None yet. The first experiment will be designed after the issue principles and
-scope have been reviewed._
+- [Experiment 1: Map the Electron PDF extension layer](01-map-electron-pdf-extension-layer.md)
+  — **Pass**
+- [Experiment 2: Stand up the extension foundation](02-stand-up-extension-foundation.md)
+  — **Pass**
+- [Experiment 3: Register the PDF component extension](03-register-pdf-component-extension.md)
+  — **Pass**
+- [Experiment 4: Load PDF viewer resource bytes](04-load-pdf-resource-pack.md) —
+  **Pass**

@@ -14,13 +14,15 @@ No `origin` remote for now. Remote hosting TBD (likely patch set distribution).
 
 ## Current State
 
-- Branch: `148.0.7778.97-issue-784`
+- Branch: `148.0.7778.97-issue-792-exp4`
 - Base version: `148.0.7778.97` (tracking Electron's Chromium version)
 
 > **Note:** The `…-issue-789-exp*` and `…-issue-790-exp*` branches are
 > experimental inline-PDF work, **parked** (Issue 790 Exp 7). They are preserved
-> as history; the active/buildable branch is `148.0.7778.97-issue-784`. See
-> [Issue 790](../issues/0790-pdf-viewer-mojo-bindings/README.md).
+> as history. The current active/buildable inline-PDF foundation branch is
+> `148.0.7778.97-issue-792-exp4`, forked from the protected
+> `148.0.7778.97-issue-784` baseline. See
+> [Issue 792](../issues/0792-pdf-support/README.md).
 
 ## Branch Strategy
 
@@ -99,6 +101,9 @@ find the most relevant recent branch, create a new branch from it
 | `148.0.7778.97-issue-782`      | [Issue 782](../issues/0782-native-popup-followups/README.md)     | Native popup follow-up tracing              |
 | `148.0.7778.97-issue-783`      | [Issue 783](../issues/0783-native-popup-remainders/README.md)    | PagePopup alt-tab fixes                     |
 | `148.0.7778.97-issue-784`      | [Issue 784](../issues/0784-datalist-popup/README.md)             | Datalist popup fix and cleanup              |
+| `148.0.7778.97-issue-792-exp2` | [Issue 792](../issues/0792-pdf-support/README.md)                | Stand up extension foundation               |
+| `148.0.7778.97-issue-792-exp3` | [Issue 792](../issues/0792-pdf-support/README.md)                | Register PDF component extension            |
+| `148.0.7778.97-issue-792-exp4` | [Issue 792](../issues/0792-pdf-support/README.md)                | Load PDF viewer resource bytes              |
 | `148.0.7778.97-issue-781`      | [Issue 781](../issues/0781-chromium-upgrade/README.md)           | Chromium 148 migration                      |
 | `148.0.7778.97-issue-780`      | [Issue 780](../issues/0780-link-drag-freeze/README.md)           | Suppress native link drag in Roamium        |
 | `148.0.7778.97-issue-778`      | [Issue 778](../issues/0778-back-nav-title-stale/README.md)       | Re-emit titles on navigation commit         |
