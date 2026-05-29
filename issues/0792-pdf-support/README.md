@@ -223,4 +223,5 @@ stream/extension portion and should be mined rather than rebuilt from scratch.
   — **Pass** (wrapper commits as HTML and opens an HTML parser; wrapper body
   does not reach declarative shadow-root parsing)
 - [Experiment 22: Trace wrapper body delivery](22-trace-wrapper-body-delivery.md)
-  — **Designed**
+  — **Pass** (Blink receives and parses fallback plugin HTML, not the generated
+  PDF wrapper body)

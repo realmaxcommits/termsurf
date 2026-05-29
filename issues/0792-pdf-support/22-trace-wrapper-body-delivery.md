@@ -216,8 +216,94 @@ before any next experiment is designed.
 
 ## Result
 
-Not run yet.
+**Result:** Pass
+
+Build:
+
+```text
+autoninja -C out/Default libtermsurf_chromium
+Build Succeeded: 4 steps
+```
+
+PDF log:
+
+```text
+logs/issue-792-exp22-pdf-20260529-154140
+```
+
+HTML control log:
+
+```text
+logs/issue-792-exp22-html-20260529-154203
+```
+
+The HTML control emitted no `[issue-792-exp22]` body or parser logs.
+
+Important PDF trace lines:
+
+```text
+[issue-792-exp19] wrapper-payload ... bytes=536 has_template=1 has_iframe=1 has_about_blank=1 has_internal_id=1 has_pdf_extension_url=1
+[issue-792-exp21] document-commit url=http://127.0.0.1:9787/bitcoin.pdf mime_type=text/html document_class=html is_for_external_handler=0 child_count=0
+[issue-792-exp21] document-parser-open url=http://127.0.0.1:9787/bitcoin.pdf mime_type=text/html parser=html
+[issue-792-exp22] body-loader-start url=http://127.0.0.1:9787/bitcoin.pdf mime_type=text/html reason=resume has_body_loader=1 is_static_data=1 loading_empty=0 is_main_frame=1
+[issue-792-exp22] body-data-received url=http://127.0.0.1:9787/bitcoin.pdf encoded_size=76 parser_blocked=0 in_commit_data=0 has_template=0 has_iframe=0 has_shadowrootmode=0 has_internal_id=0 sample=<html><body><!-- no enabled plugin supports this MIME type --></
+[issue-792-exp22] process-data-buffer url=http://127.0.0.1:9787/bitcoin.pdf has_data=1 parser_blocked=0 in_commit_data=0 buffered_encoded=0 buffered_decoded=0 action=commit
+[issue-792-exp22] commit-data url=http://127.0.0.1:9787/bitcoin.pdf encoded_size=76 has_frame=1 document_parsing=1 has_parser=1 action=append
+[issue-792-exp22] parser-append-bytes url=http://127.0.0.1:9787/bitcoin.pdf size=76 stopped=0 needs_decoder=0 has_template=0 has_iframe=0 has_shadowrootmode=0 sample=<html><body><!-- no enabled plugin supports this MIME type --></
+[issue-792-exp22] parser-append-string url=http://127.0.0.1:9787/bitcoin.pdf length=76 stopped=0 prefetch_only=0 has_template=0 has_iframe=0 has_shadowrootmode=0 sample=<html><body><!-- no enabled plugin supports this MIME type --></
+[issue-792-exp22] parser-finish-append url=http://127.0.0.1:9787/bitcoin.pdf should_pump_now=1 is_preloading=0 in_pump_session=0
+[issue-792-exp22] parser-pump url=http://127.0.0.1:9787/bitcoin.pdf result=0 have_seen_eof=1 stopped=0
+```
+
+This rules out the suspected Blink-side body-loader/parser failure. The body
+loader starts, bytes arrive, bytes are committed, the HTML parser receives
+encoded bytes, decoding produces text, and the tokenizer pumps.
+
+The failure is that the bytes are wrong. The browser-side throttle created the
+correct 536-byte wrapper payload, but Blink receives a 76-byte fallback HTML
+document:
+
+```html
+<html><body><!-- no enabled plugin supports this MIME type --></...
+```
+
+That fallback contains none of the wrapper markers, so the absence of
+`declarative-shadow-root`, `frame-owner-inserted`, and
+`load-or-redirect-subframe` is expected.
+
+The `body-loader-start ... is_static_data=1` field is the key diagnostic clue:
+the body has already been synthesized as static data before the body loader
+starts. The fallback string is Chromium's renderer-side "unsupported MIME"
+static response, not a truncated version of TermSurf's wrapper.
 
 ## Conclusion
 
-Pending implementation.
+Experiment 22 proved the parser path is healthy. The wrapper body is not being
+lost inside Blink after `DocumentLoader` starts the body loader. Instead, the
+substituted response body is replaced before it reaches the parser.
+
+The replacement source is `FillStaticResponseIfNeeded(...)` in
+`third_party/blink/renderer/core/loader/frame_loader.cc`. That function
+synthesizes the exact fallback observed in the log when:
+
+1. the response MIME type is not natively supported by Blink; and
+2. renderer-side `PluginData::SupportsMimeType(mime_type)` returns false.
+
+That means TermSurf's renderer-side plugin data does not recognize
+`application/pdf`. Experiment 15 registered the internal PDF plugin for
+`application/x-google-chrome-pdf`, but the top-level PDF navigation is still
+checked as `application/pdf` before the wrapper body can reach the parser.
+
+The next experiment should extend the TermSurf PDF plugin registration so the
+renderer-side plugin data supports both `application/pdf` and
+`application/x-google-chrome-pdf`, matching Chrome's internal PDF plugin
+registration. Then `FillStaticResponseIfNeeded(...)` should return early at the
+plugin-data check, the 536-byte wrapper body should reach Blink intact, and the
+existing Experiment 21/22 traces should show `declarative-shadow-root`,
+`frame-owner-inserted`, and the child `about:blank` navigation if no later gate
+blocks the flow.
+
+This is the renderer-side counterpart of Experiment 17's browser-side
+`intercepted_by_plugin` fix. Experiment 17 prevented content-shell download
+classification; the next fix should prevent renderer-side fallback-body
+synthesis.
