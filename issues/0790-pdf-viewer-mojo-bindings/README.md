@@ -134,3 +134,245 @@ source and Electron's approach before any code change, consistent with how Issue
 - **Every Chromium change gets its own branch** (`148.0.7778.97-issue-790-expN`,
   forked from the last Issue 789 branch `148.0.7778.97-issue-789-exp7`) and is
   archived to `chromium/patches/`.
+
+## Experiments
+
+### Experiment 1: Enable Mojo JS on the PDF viewer frame via a minimal broker
+
+#### Description
+
+Resolve the `Mojo is not defined` failure by enabling Mojo JS bindings on the
+PDF viewer frame, so the bindings module initializes and the viewer's `init()`
+runs. Do it with the narrowest, most-restrictive mechanism, and make the
+mechanism double as a probe that reveals which Mojo interfaces the viewer needs
+next.
+
+Research into the Chromium source (verified, not assumed) settled two facts that
+shape this experiment:
+
+- **The viewer frame is a subframe, so the context-only enable does not work.**
+  In `RenderFrameImpl::DidCreateScriptContext`
+  (`content/renderer/render_frame_impl.cc`), the context-only path
+  (`enable_mojo_js_bindings_` / `BindingsPolicyValue::kMojoWebUi`) is gated on
+  `IsMainFrame()`. The PDF viewer is the embedded extension subframe (frame tree
+  node 2, parent 1 in the Issue 789 logs), so that path can never enable it. The
+  **broker** path —
+  `if (world_id == GLOBAL && mojo_js_interface_broker_.is_valid()) EnableMojoJSAndUseBroker(...)`
+  — has no `IsMainFrame()` restriction; its own comment says "MojoJS interface
+  broker can be enabled on subframes, and will limit the interfaces JavaScript
+  can request to those provided in the broker." So the broker variant is the
+  only one that works here, and it is also the more secure one (it restricts the
+  interface set).
+
+- **Mojo JS is never enabled by origin.** The gate is
+  `kMojoWebUi || enable_mojo_js_bindings_ || valid broker` — there is no
+  automatic enable for `chrome-extension://` origins. (A survey of Electron
+  suggested component-extension frames get Mojo JS automatically; the Issue 789
+  runtime evidence — `Mojo is not defined` on exactly such a frame — disproves
+  that. Electron most likely runs the full extensions renderer, which TermSurf
+  does not. TermSurf must enable it explicitly.)
+
+The mechanism is
+`RenderFrameHostImpl::EnableMojoJsBindingsWithBroker( mojo::PendingRemote<blink::mojom::BrowserInterfaceBroker>)`,
+called before the viewer frame commits — the same hook WebUI uses
+(`WebUIImpl::SetUpMojoInterfaceBroker` at `ReadyToCommitNavigation`). WebUI
+passes a chrome-specific `PerWebUIBrowserInterfaceBroker`, which TermSurf must
+not pull in; instead TermSurf supplies its own minimal broker.
+
+For Experiment 1 that broker is intentionally **empty**: it implements
+`blink::mojom::BrowserInterfaceBroker` and, for every `GetInterface` request,
+logs the requested interface name and drops it. This is the most secure possible
+starting point (the viewer JS gets the `Mojo` global but can reach no browser
+interface), it unblocks `Mojo is not defined` so `init()` runs, and its log
+output enumerates exactly which interfaces the viewer tries to bind — directly
+informing Experiment 2.
+
+#### Changes
+
+1. New Chromium branch `148.0.7778.97-issue-789-exp7` →
+   `148.0.7778.97-issue-790-exp1`. Add it to `chromium/README.md`.
+
+2. New `content/libtermsurf_chromium/ts_pdf_mojo_interface_broker.{h,cc}`: a
+   `TsPdfMojoInterfaceBroker` implementing
+   `blink::mojom::BrowserInterfaceBroker`.
+   `GetInterface(mojo::GenericPendingReceiver receiver)` logs
+   `[issue-790-exp1] mojo-js-interface-requested name=<receiver.interface_name()>`
+   and drops the receiver (lets it close). Add to `BUILD.gn`.
+
+3. Add a minimal, non-WebUI Mojo-JS-with-broker entry point on
+   `RenderFrameHostImpl`. The existing public
+   `RenderFrameHostImpl::EnableMojoJsBindingsWithBroker(...)` is **not callable
+   here**: it `CHECK(GetWebUI())`s (its comment: the broker's ownership is
+   transferred to the frame's `WebUIController`). Our PDF viewer frame has no
+   `WebUI`, so calling it would crash. But the underlying renderer call it makes
+   —
+   `GetFrameBindingsControl()->EnableMojoJsBindingsWithBroker(std::move(broker))`
+   — is exactly what we need, and `GetFrameBindingsControl()` is private to
+   `RenderFrameHostImpl`. So add a small sibling method (Chromium fork patch to
+   `content/browser/renderer_host/render_frame_host_impl.{h,cc}`), e.g.
+   `EnableMojoJsBindingsWithBrokerNoWebUI(broker)`, that forwards to
+   `GetFrameBindingsControl()->EnableMojoJsBindingsWithBroker(std::move(broker))`
+   **without** the `CHECK(GetWebUI())`. This is safe for our use: TermSurf keeps
+   the broker alive with a self-owned receiver, so no `WebUIController`
+   ownership transfer is involved. Do not weaken the existing CHECK'd method —
+   add a parallel one so the WebUI invariant is untouched for every other
+   caller.
+
+4. In `TsPdfStreamStore::ReadyToCommitNavigation`
+   (`content/libtermsurf_chromium/ts_pdf_stream_store.cc`), before the existing
+   logic, gate on the committing frame being the active PDF viewer host frame
+   (`IsPdfExtensionHostFrame(navigation_handle->GetRenderFrameHost())`, the same
+   identity check Issue 789 Exp 6/7 used). When it matches, enable Mojo JS with
+   a fresh self-owned broker via the new method:
+
+   ```cpp
+   mojo::PendingRemote<blink::mojom::BrowserInterfaceBroker> broker;
+   mojo::MakeSelfOwnedReceiver(std::make_unique<TsPdfMojoInterfaceBroker>(),
+                               broker.InitWithNewPipeAndPassReceiver());
+   static_cast<RenderFrameHostImpl*>(rfh)
+       ->EnableMojoJsBindingsWithBrokerNoWebUI(std::move(broker));
+   ```
+
+   Log `[issue-790-exp1] mojo-js-enabled frame_tree_node_id=<id>`. Guard so it
+   is enabled at most once per viewer frame. (`RenderFrameHostImpl` is reachable
+   because `content/libtermsurf_chromium` is part of the `content` component, as
+   `WebUIImpl` does the same cast.)
+
+5. Preserve all Issue 789 behavior. The gate reuses the existing
+   `IsPdfExtensionHostFrame` identity check; no other navigation behavior
+   changes.
+
+6. Preserve dependency boundaries: no `//chrome/browser/plugins:impl`,
+   `//chrome/browser/extensions:extensions`, `//components/guest_view/browser`,
+   no WebUI controller stack. The broker is a plain `blink::mojom`
+   implementation; `EnableMojoJsBindingsWithBroker` is a `content`-internal
+   call.
+
+7. Format (`clang-format`, `gn format BUILD.gn`), build
+   (`autoninja -C out/Default libtermsurf_chromium`), and regenerate the patch
+   archive.
+
+#### Verification
+
+1. Build; confirm forbidden deps still absent (`gn desc`).
+
+2. Bitcoin PDF smoke
+   (`test-issue-776-pdf.sh http://localhost:9616/bitcoin.pdf`). Required for
+   Pass:
+   - `[issue-790-exp1] mojo-js-enabled frame_tree_node_id=<id>` for the viewer
+     frame;
+   - no `Uncaught ReferenceError: Mojo is not defined`;
+   - `[issue-790-exp1] mojo-js-interface-requested name=...` lines enumerating
+     the interfaces the viewer requests (record them — they define Experiment
+     2);
+   - the viewer advances past the Issue 789 stopping point (`viewer.init` runs;
+     name the new failure precisely).
+3. Capture and classify the screenshot (same buckets as Issue 789).
+4. HTML and non-PDF binary smoke (`index.html`, `test.bin`): no
+   `[issue-790-exp1] mojo-js-enabled` line (the gate must not fire for
+   non-viewer frames), and no regression in normal behavior.
+5. Negative check: confirm no normal frame gets Mojo JS — the `mojo-js-enabled`
+   log must appear only for the PDF viewer frame.
+
+#### Pass Criteria
+
+- Builds and links; forbidden deps absent.
+- `Mojo is not defined` is gone; the viewer frame has the `Mojo` global.
+- Mojo JS is enabled only for the PDF viewer frame (not normal HTML/binary
+  frames).
+- The viewer's requested interfaces are logged, and the viewer advances to a
+  new, precisely named failure.
+- HTML and non-PDF binary smoke show no regression.
+
+#### Partial Criteria
+
+Partial if the `Mojo` global appears but the viewer still cannot proceed for a
+narrower, named reason (e.g. `init()` runs but immediately needs an interface
+the empty broker drops, which is expected and informs Experiment 2; or a
+different renderer error surfaces). Name the exact next failure and the
+requested interface names.
+
+#### Failure Criteria
+
+- Mojo JS is enabled for frames other than the PDF viewer frame (over-broad).
+- The build pulls in a forbidden subsystem to obtain the broker or the enable
+  call.
+- Normal HTML or non-PDF binary behavior regresses.
+- `Mojo is not defined` persists (mechanism or timing wrong — e.g. the broker is
+  applied too late, after the viewer's script context is created).
+
+#### Result
+
+**Result:** Pass
+
+Enabling Mojo JS on the viewer frame resolved `Mojo is not defined`, the viewer
+ran `init()`, and it advanced all the way to instantiating the inner PDF plugin
+before hitting the next layer — a much larger jump than expected.
+
+Chromium branch `148.0.7778.97-issue-790-exp1` (from
+`148.0.7778.97-issue-789-exp7`). Changes:
+
+- `content/browser/renderer_host/render_frame_host_impl.{h,cc}` —
+  `EnableMojoJsBindingsWithBrokerNoWebUI(broker)`, identical to the existing
+  broker method minus the `CHECK(GetWebUI())` (Codex caught that the standard
+  method would crash on our non-WebUI frame). Safe because the broker is kept
+  alive by a self-owned receiver, not a `WebUIController`.
+- `content/libtermsurf_chromium/ts_pdf_mojo_interface_broker.{h,cc}` — a
+  `blink::mojom::BrowserInterfaceBroker` that logs each `GetInterface` request
+  and drops it (empty allowlist).
+- `content/libtermsurf_chromium/ts_pdf_stream_store.cc` — in
+  `ReadyToCommitNavigation`, when the committing frame is the active PDF viewer
+  host frame (`IsPdfExtensionHostFrame`), enable Mojo JS with a fresh self-owned
+  broker via the new method.
+
+Verification:
+
+- **Build / deps.** Builds and links; forbidden deps still absent. (Touches core
+  `RenderFrameHostImpl`, which is `content`, not a forbidden product subsystem.)
+- **Mojo global present.**
+  `[issue-790-exp1] mojo-js-enabled frame_tree_node_id=2` fires for the viewer
+  frame, and `Mojo is not defined` is gone (0 occurrences, down from the Issue
+  789 failure).
+- **Subframe confirmed.** The viewer is frame tree node 2 (a subframe), so the
+  broker variant was indeed required; the context-only path would have been a
+  no-op.
+- **Interface probe.** The empty broker logged exactly one request:
+  `[issue-790-exp1] mojo-js-interface-requested name=help_bubble.mojom.PdfHelpBubbleHandlerFactory`.
+  (Notably the viewer did **not** block on a missing core PDF host interface at
+  this stage — it proceeded to create the plugin.)
+- **Viewer advanced far.** `viewer.init` ran (no console errors), the viewer
+  re-reached `getStreamInfo()`, and then created the inner PDF content
+  navigation with the real internal plugin mime
+  (`application/x-google-chrome-pdf`).
+- **Next failure (new layer).** The renderer then crashed:
+  `FATAL: components/pdf/renderer/internal_plugin_renderer_helpers.cc:61] Check failed: IsPdfRenderer().`,
+  in `pdf::CreateInternalPlugin`. The PDF plugin must be created in a process
+  designated as a PDF renderer (the `IsPdfRenderer()` / `--pdf-renderer`
+  machinery the Issue 776 logs already tracked). The `plugin-context` log shows
+  `parent_is_remote=true` — the PDF content frame is an out-of-process child of
+  the extension viewer frame, and that process is not flagged as a PDF renderer.
+- **Screenshot.** Grey/blank overlay (renderer crashed at the CHECK).
+- **HTML and non-PDF binary smoke.** `index.html` and `test.bin`: 0
+  `mojo-js-enabled` lines and 0 FATAL/crash lines. The Mojo gate fires only for
+  the PDF viewer frame; no regression.
+
+#### Conclusion
+
+The empty logging broker was the right call: it unblocked `Mojo is not defined`
+with the most restrictive possible grant, and its one logged request plus the
+subsequent progression showed the viewer needs almost nothing from the broker at
+this stage — it ran `init()` and went straight to plugin creation. The
+Codex-flagged `CHECK(GetWebUI())` would otherwise have crashed us immediately;
+the no-WebUI sibling method is the clean fix.
+
+The renderer crash is not a regression (HTML/binary paths are unaffected); it is
+the next layer surfacing. The viewer has now traversed the entire JS path —
+shell, resources, Mojo, init, getStreamInfo, plugin element — and the remaining
+work is in the **process model**: the inner PDF plugin must run in a PDF
+renderer process.
+
+Next layer (Experiment 2): satisfy `IsPdfRenderer()` for the frame that hosts
+the internal PDF plugin — i.e. get the PDF content frame into a process
+designated as a PDF renderer (the `--pdf-renderer` process flag / the OOPIF PDF
+process path), or route plugin creation so the CHECK is satisfied. This is the
+process-model layer beneath the JS the viewer has now fully executed.
