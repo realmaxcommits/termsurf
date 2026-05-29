@@ -231,3 +231,5 @@ stream/extension portion and should be mined rather than rebuilt from scratch.
 - [Experiment 24: Verify visible PDF rendering](24-verify-visible-pdf-rendering.md)
   — **Fail** (real-GUI `screencapture` produced black images; no PDF-rendering
   conclusion)
+- [Experiment 25: Capture PDF via DevTools](25-capture-pdf-via-devtools.md) —
+  **Designed**
