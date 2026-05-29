@@ -204,3 +204,5 @@ stream/extension portion and should be mined rather than rebuilt from scratch.
 - [Experiment 14: Wire PDF stream entry hooks](14-wire-pdf-stream-entry-hooks.md)
   — **Partial** (PDF response creates a stream container; no viewer-side claim
   yet)
+- [Experiment 15: Start the MIME-handler attach path](15-start-mime-handler-attach-path.md)
+  — **Designed**
