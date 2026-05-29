@@ -200,4 +200,4 @@ stream/extension portion and should be mined rather than rebuilt from scratch.
   — **Partial** (MIME-handler binders registered; next gate is
   `extensions.KeepAlive`)
 - [Experiment 13: Register PDF KeepAlive binder](13-register-pdf-keepalive-binder.md)
-  — **Designed**
+  — **Pass**

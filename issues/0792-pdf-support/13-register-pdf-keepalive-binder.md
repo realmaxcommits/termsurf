@@ -392,3 +392,121 @@ The experiment fails if:
 - ordinary HTML pages crash, hang, or lose normal lifecycle messages;
 - direct PDF navigation regresses into a crash, hang, or renderer IPC failure;
 - the build cannot complete.
+
+## Result
+
+**Result:** Pass
+
+Experiment 13 built and crossed the `extensions.KeepAlive` bad-Mojo gate. The
+PDF viewer now reaches Experiment 12's diagnostic null-stream path:
+
+```text
+[issue-792-exp12] mime-handler-get-stream-info frame_url=chrome-extension://mhjfbmdgcfjbbpaeojofohoefgiehjai/index.html stream_info=null
+```
+
+Build:
+
+```text
+autoninja -C out/Default libtermsurf_chromium
+Build Succeeded: 2 steps
+```
+
+Direct PDF extension smoke:
+
+```text
+logs/issue-792-exp13-extension-after-20260529-122654/
+```
+
+The diagnostic logs showed why the canonical observer path did not run:
+
+```text
+[issue-792-exp13] extension-frame-binder-check frame_url= site_url=chrome-extension://mhjfbmdgcfjbbpaeojofohoefgiehjai/ observer=0 extension_id=none is_pdf_extension=0
+```
+
+At binder-registration time, `LastCommittedURL` was still empty and
+`ExtensionWebContentsObserver` was unavailable, but the `SiteInstance` URL
+already identified the PDF extension. The implementation therefore used the
+Electron-style direct population fallback from the PDF `SiteInstance` URL:
+
+```text
+[issue-792-exp13] pdf-extension-frame-binders frame_url= site_url=chrome-extension://mhjfbmdgcfjbbpaeojofohoefgiehjai/ extension_id=mhjfbmdgcfjbbpaeojofohoefgiehjai source=direct-populate
+```
+
+Because the canonical `TsExtensionsBrowserClient` path did not run, no
+`extensions-frame-binder-invoked` log appeared. No keepalive-only fallback was
+needed.
+
+Experiment 9 activation and API availability remained intact:
+
+```text
+[issue-792-exp9] renderer-activate-extension extension_id=mhjfbmdgcfjbbpaeojofohoefgiehjai active=1
+[issue-792-exp9] pdf-script-context url=chrome-extension://mhjfbmdgcfjbbpaeojofohoefgiehjai/index.html context=BLESSED_EXTENSION effective_context=BLESSED_EXTENSION has_extension=1 active=1 is_webview=0 pdfViewerPrivate_available=1 result=0 message=
+[issue-792-exp8] schema-request name=pdfViewerPrivate found=1
+```
+
+Experiment 10's help-bubble binder remained intact:
+
+```text
+[issue-792-exp10] pdf-help-bubble-binder frame_url=chrome-extension://mhjfbmdgcfjbbpaeojofohoefgiehjai/index.html site_url=chrome-extension://mhjfbmdgcfjbbpaeojofohoefgiehjai/
+[issue-792-exp10] pdf-help-bubble-create-handler frame_url=chrome-extension://mhjfbmdgcfjbbpaeojofohoefgiehjai/index.html site_url=chrome-extension://mhjfbmdgcfjbbpaeojofohoefgiehjai/
+```
+
+Experiment 11's renderer resource pack remained loaded:
+
+```text
+[issue-792-exp11] extensions-renderer-pak path=/Users/ryan/dev/termsurf/chromium/src/out/Default/gen/extensions/extensions_renderer_resources.pak found=1 loaded=1 mimeHandlerPrivate_bytes=3766 mime_handler_mojom_bytes=27053
+```
+
+Experiment 12's MIME-handler binders remained intact:
+
+```text
+[issue-792-exp12] mime-handler-service-binder frame_url=chrome-extension://mhjfbmdgcfjbbpaeojofohoefgiehjai/index.html site_url=chrome-extension://mhjfbmdgcfjbbpaeojofohoefgiehjai/
+[issue-792-exp12] before-unload-control-binder frame_url=chrome-extension://mhjfbmdgcfjbbpaeojofohoefgiehjai/index.html site_url=chrome-extension://mhjfbmdgcfjbbpaeojofohoefgiehjai/
+```
+
+The previous bad-Mojo gate did not recur:
+
+```text
+No binder found for interface extensions.KeepAlive
+```
+
+The renderer then reported the expected null-stream behavior:
+
+```text
+Unchecked runtime.lastError: Stream has been aborted.
+```
+
+Regression checks:
+
+- `logs/issue-792-exp13-html-20260529-122714/`: normal HTML reached
+  `UrlChanged`, `TitleChanged`, and `LoadingState`.
+- `logs/issue-792-exp13-pdf-20260529-122729/`: direct PDF navigation still
+  followed the content_shell download path via
+  `ShellDownloadManagerDelegate::ChooseDownloadPath`.
+
+The known teardown `SEGV_ACCERR` after artifact capture still recurred. It did
+not prevent the required artifacts from being captured.
+
+Bookkeeping status: Chromium branch commit, patch archive refresh,
+`chromium/README.md` branch row, and main-repo commit are deferred until Claude
+after-review accepts this result.
+
+## Conclusion
+
+The extension-frame `KeepAlive` binder gate is solved. The important diagnostic
+finding is that binder registration for the PDF extension page happens before
+the committed frame URL and `ExtensionWebContentsObserver` are available, but
+after the `SiteInstance` URL already names the PDF extension. Using the
+SiteInstance URL to identify the PDF component extension lets TermSurf call
+Chromium's canonical `PopulateExtensionFrameBinders(...)` directly, matching
+Electron's browser-client pattern.
+
+The PDF viewer now reaches `mimeHandlerPrivate.getStreamInfo()` and receives the
+intentional null stream from Experiment 12's diagnostic service. The next
+missing layer is no longer another startup binder; it is the real PDF stream
+handoff. Experiment 14 should begin the Electron-style stream path:
+intercepting/owning an `application/pdf` response, creating a real stream record
+compatible with Chromium's MIME-handler APIs, and returning a non-null
+`StreamInfo` to the PDF viewer. That experiment should still avoid guest-view or
+renderer-process-model changes until the stream handoff proves what the next
+gate is.
