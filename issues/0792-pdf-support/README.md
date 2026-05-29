@@ -215,3 +215,5 @@ stream/extension portion and should be mined rather than rebuilt from scratch.
 - [Experiment 18: Wire real MIME handler stream info](18-wire-real-mime-handler-stream-info.md)
   — **Partial** (viewer never requests either stream-info API after stream
   claim)
+- [Experiment 19: Trace wrapper-to-extension startup](19-trace-wrapper-extension-startup.md)
+  — **Designed**
