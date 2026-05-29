@@ -42,6 +42,13 @@ Two principles govern every decision in this issue:
    shortcuts do not work. The amount of work is not a reason to deviate. Put in
    the work, follow Electron, ship inline PDF.
 
+4. **Every experiment gets Claude review before and after.** For every
+   experiment design, ask Claude to review it, fix all real issues Claude finds,
+   and do not implement until Claude agrees the design is good. After completing
+   an experiment, ask Claude to review the implementation, verification, and
+   recorded result; fix all real issues Claude finds, and do not proceed to the
+   next experiment until Claude agrees the output is good.
+
 ## Background
 
 ### How we got here
@@ -68,9 +75,9 @@ resumes the work with a settled architectural direction.
   **do not re-base or rewrite on app_shell.** Coupling is shallow and
   FFI-insulated from roamium; all rendering/input/compositing lives on
   `content/public` + `ui::` (preserved trivially); app_shell's only real benefit
-  (the extensions/guest-view wiring PDF needs) is **separable** and comes bundled
-  with a single-window macOS model that conflicts with TermSurf's per-tab
-  CALayerHost overlay architecture.
+  (the extensions/guest-view wiring PDF needs) is **separable** and comes
+  bundled with a single-window macOS model that conflicts with TermSurf's
+  per-tab CALayerHost overlay architecture.
 
 ### The settled direction
 
@@ -80,7 +87,7 @@ From Issue 791's conclusion, the path to inline PDF is:
 > `extensions/shell` as the reference. A separate issue should pick that up when
 > PDF work resumes.
 
-This is that issue. Per the principles above, the primary reference for *how* to
+This is that issue. Per the principles above, the primary reference for _how_ to
 add that layer is **Electron** (a content-embedder with its own extensions
 glue); `extensions/shell` is a secondary, Chromium-maintained cross-reference.
 
@@ -101,28 +108,27 @@ PdfNavigationThrottle
 Issue 790 reached the point where the internal plugin instantiated, then hit the
 `pdf::IsPdfRenderer()` process-model gate (`--pdf-renderer` switch) and the
 absence of `PdfViewerStreamManager` / a registered PDF extension / guest-view
-hosting. Those are exactly what the extensions browser system provides. app_shell
-pre-wires them; content_shell does not. The 791 audit confirmed this layer is
-separable from the window/shell layer, so it can be added to the current
-embedder without re-basing.
+hosting. Those are exactly what the extensions browser system provides.
+app_shell pre-wires them; content_shell does not. The 791 audit confirmed this
+layer is separable from the window/shell layer, so it can be added to the
+current embedder without re-basing.
 
 ## Architecture
 
 ### What "add the extensions browser system as a layer" means
 
 On top of the Issue 784 `libtermsurf_chromium` (which is
-`TsBrowserClient : content::ShellContentBrowserClient`, etc.), add the extensions
-integration the way **Electron** does — embedder-owned glue on a content base —
-onto TermSurf's existing `Ts*` classes and per-tab CALayerHost window model,
-**not** app_shell's `AppWindow`/`DesktopController`:
+`TsBrowserClient : content::ShellContentBrowserClient`, etc.), add the
+extensions integration the way **Electron** does — embedder-owned glue on a
+content base — onto TermSurf's existing `Ts*` classes and per-tab CALayerHost
+window model, **not** app_shell's `AppWindow`/`DesktopController`:
 
 - `ShellExtensionsBrowserClient` / `ShellExtensionsClient` equivalents —
   register the extensions system with the browser process.
 - `ShellExtensionSystem` equivalent — load and run (component) extensions in the
   `ShellBrowserContext`.
-- Extension URL-loader factories
-  (`CreateExtensionNavigationURLLoaderFactory` and worker variants) — so
-  `chrome-extension://` viewer resources load.
+- Extension URL-loader factories (`CreateExtensionNavigationURLLoaderFactory`
+  and worker variants) — so `chrome-extension://` viewer resources load.
 - `guest_view` / `MimeHandlerView` wiring — so the PDF viewer can be hosted as a
   guest frame.
 - The **PDF component extension** registration — so `application/pdf` becomes
@@ -166,8 +172,5 @@ stream/extension portion and should be mined rather than rebuilt from scratch.
 
 ## Experiments
 
-_None yet. The first experiment will be designed once the cheapest decisive
-spike is scoped — standing up the minimal extensions browser system and
-registering the PDF component extension so `application/pdf` becomes externally
-handled. Each experiment is added here as its own `NN-{slug}.md` file when
-created._
+- [Experiment 1: Stand up the extensions browser system (Electron-mirrored)](01-stand-up-extensions-system.md)
+  — **In progress**
