@@ -234,3 +234,5 @@ stream/extension portion and should be mined rather than rebuilt from scratch.
 - [Experiment 25: Capture PDF via DevTools](25-capture-pdf-via-devtools.md) —
   **Partial** (DevTools visual capture works; PDF reaches stream-info, then
   falls back to "Couldn't load plugin")
+- [Experiment 26: Route internal PDF plugin](26-route-internal-pdf-plugin.md) —
+  **Designed**
