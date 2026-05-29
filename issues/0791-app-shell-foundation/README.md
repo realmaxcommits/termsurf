@@ -139,3 +139,100 @@ Two shapes to evaluate:
   this issue does not touch it.
 - The current buildable baseline remains `148.0.7778.97-issue-784` until/unless
   a migration experiment is approved.
+
+## Experiments
+
+### Experiment 1: Audit content/shell coupling in libtermsurf_chromium
+
+#### Description
+
+Measure exactly how coupled the current (Issue 784 baseline) TermSurf Chromium
+embedder is to content/shell specifics versus portable `content::*` virtuals.
+This is the key unknown that decides whether re-basing on app_shell is a
+low-risk mechanical move or a heavy migration — and therefore whether to re-base,
+rewrite, or stay. **Read-only audit: no code changes, no Chromium branch, no
+build.**
+
+A quick survey of the 784 baseline already shows the surface is small — the
+embedder is just `TsMainDelegate`, `TsBrowserClient`, `TsBrowserMainParts`,
+`TsTabObserver`, the FFI entry (`libtermsurf_chromium.cc`), and the macOS
+window/compositor bridges (`ts_shell_window_mac`, `ts_ca_layer_bridge_mac`,
+`ts_compositor_bridge_mac`). Their content/shell ties seen so far:
+
+| Touchpoint | content/shell dependency |
+| --- | --- |
+| `TsMainDelegate` | extends `content::ShellMainDelegate` |
+| `TsBrowserClient` | extends `content::ShellContentBrowserClient`; calls `ConfigureNetworkContextParamsForShell`; `ShellDevTools*` |
+| `TsBrowserMainParts` | extends `content::ShellBrowserMainParts`; `content::Shell` window; `ShellBrowserContext` |
+| `TsTabObserver` | extends `content::WebContentsObserver` (content/public — portable) |
+| FFI / window / compositor | `content::Shell` (`shell.h`, `Shell::Shutdown()`), `ShellBrowserContext*` casts, `shell_paths`, `shell_switches` |
+
+#### Method (read-only)
+
+1. **Enumerate every content/shell touchpoint** in
+   `content/libtermsurf_chromium/` (and confirm the `roamium` Rust binary only
+   touches the `ts_*` FFI surface, not content/shell — i.e. it is insulated):
+   includes (`content/shell/...`), base classes, and API calls
+   (`content::Shell`, `ShellBrowserContext`, `ShellMainDelegate`,
+   `ShellBrowserMainParts`, `ShellContentBrowserClient`, `ConfigureNetworkContextParamsForShell`,
+   `ShellDevTools*`, `shell_paths`, `shell_switches`, etc.).
+2. **Classify each touchpoint** as:
+   - **Portable** — an override of a `content::ContentBrowserClient` /
+     `ContentMainDelegate` / `ContentBrowserMainParts` virtual, or a
+     content/public type, that moves to app_shell (or `content::*` directly)
+     mechanically; or
+   - **Coupled** — relies on content/shell-specific behavior/types that
+     app_shell does not provide or implements differently.
+3. **Map each content/shell base/type to its app_shell counterpart** and note
+   the API delta: `content::ShellMainDelegate` →
+   `extensions::ShellMainDelegate`; `content::ShellBrowserMainParts` →
+   `extensions::ShellBrowserMainParts`; `content::ShellContentBrowserClient` →
+   `extensions::ShellContentBrowserClient` (note: extends
+   `content::ContentBrowserClient` directly, not content/shell's client);
+   `content::ShellBrowserContext` → `extensions::ShellBrowserContext`; and
+   crucially the **window model** — content_shell's `content::Shell` vs
+   app_shell's `AppWindow`/window handling.
+4. **Deep-dive the riskiest item: the window + CALayerHost compositing path**
+   (`ts_shell_window_mac` / `ts_*_bridge_mac` ↔ `content::Shell`). Determine what
+   `content::Shell` provides that TermSurf relies on (the `NSView`/`NSWindow`,
+   the `WebContents` host, lifecycle) and whether app_shell's window model
+   exposes an equivalent, or whether this work would need to bind to
+   `content::ContentBrowserClient`/`WebContents` directly (decoupling from any
+   shell's window object). This is the make-or-break for "preserve all
+   functionality."
+5. **Synthesize**: a coupling inventory with a portability verdict per item, an
+   overall re-base cost estimate (low / medium / high), the riskiest items
+   called out, and a recommendation (re-base / rewrite / stay on content_shell,
+   or "prototype needed to decide").
+
+#### Verification / Deliverable
+
+The audit's output is recorded as the experiment Result: the complete coupling
+inventory (every touchpoint classified portable/coupled with its app_shell
+counterpart), the window/compositing deep-dive finding, the cost estimate, and a
+recommendation. Cross-check completeness with `rg` over
+`content/libtermsurf_chromium/` for any `content/shell` reference not in the
+inventory.
+
+#### Pass Criteria
+
+- Every content/shell touchpoint in the baseline embedder is enumerated and
+  classified portable vs coupled, with its app_shell counterpart mapped.
+- The window/CALayerHost path is assessed concretely (the riskiest item), with a
+  clear statement of whether it ports, decouples, or needs a prototype.
+- `roamium` is confirmed insulated (touches only the `ts_*` FFI, not
+  content/shell).
+- The Result states an overall re-base cost (low/medium/high) and a
+  recommendation, naming any item that needs a follow-up prototype experiment.
+
+#### Partial Criteria
+
+Partial if the inventory is complete but one or more touchpoints (likely the
+window/compositing path) cannot be judged from source alone and require a
+boot-on-app_shell prototype to resolve. Name those items precisely; they define
+the next experiment.
+
+#### Failure Criteria
+
+- The audit misses content/shell touchpoints (incomplete inventory), or
+- It cannot reach any cost/recommendation conclusion (no decision value).
