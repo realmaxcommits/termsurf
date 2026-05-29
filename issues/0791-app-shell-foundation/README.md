@@ -149,9 +149,9 @@ Two shapes to evaluate:
 Measure exactly how coupled the current (Issue 784 baseline) TermSurf Chromium
 embedder is to content/shell specifics versus portable `content::*` virtuals.
 This is the key unknown that decides whether re-basing on app_shell is a
-low-risk mechanical move or a heavy migration — and therefore whether to re-base,
-rewrite, or stay. **Read-only audit: no code changes, no Chromium branch, no
-build.**
+low-risk mechanical move or a heavy migration — and therefore whether to
+re-base, rewrite, or stay. **Read-only audit: no code changes, no Chromium
+branch, no build.**
 
 A quick survey of the 784 baseline already shows the surface is small — the
 embedder is just `TsMainDelegate`, `TsBrowserClient`, `TsBrowserMainParts`,
@@ -159,12 +159,12 @@ embedder is just `TsMainDelegate`, `TsBrowserClient`, `TsBrowserMainParts`,
 window/compositor bridges (`ts_shell_window_mac`, `ts_ca_layer_bridge_mac`,
 `ts_compositor_bridge_mac`). Their content/shell ties seen so far:
 
-| Touchpoint | content/shell dependency |
-| --- | --- |
-| `TsMainDelegate` | extends `content::ShellMainDelegate` |
-| `TsBrowserClient` | extends `content::ShellContentBrowserClient`; calls `ConfigureNetworkContextParamsForShell`; `ShellDevTools*` |
-| `TsBrowserMainParts` | extends `content::ShellBrowserMainParts`; `content::Shell` window; `ShellBrowserContext` |
-| `TsTabObserver` | extends `content::WebContentsObserver` (content/public — portable) |
+| Touchpoint                | content/shell dependency                                                                                         |
+| ------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `TsMainDelegate`          | extends `content::ShellMainDelegate`                                                                             |
+| `TsBrowserClient`         | extends `content::ShellContentBrowserClient`; calls `ConfigureNetworkContextParamsForShell`; `ShellDevTools*`    |
+| `TsBrowserMainParts`      | extends `content::ShellBrowserMainParts`; `content::Shell` window; `ShellBrowserContext`                         |
+| `TsTabObserver`           | extends `content::WebContentsObserver` (content/public — portable)                                               |
 | FFI / window / compositor | `content::Shell` (`shell.h`, `Shell::Shutdown()`), `ShellBrowserContext*` casts, `shell_paths`, `shell_switches` |
 
 #### Method (read-only)
@@ -174,8 +174,9 @@ window/compositor bridges (`ts_shell_window_mac`, `ts_ca_layer_bridge_mac`,
    touches the `ts_*` FFI surface, not content/shell — i.e. it is insulated):
    includes (`content/shell/...`), base classes, and API calls
    (`content::Shell`, `ShellBrowserContext`, `ShellMainDelegate`,
-   `ShellBrowserMainParts`, `ShellContentBrowserClient`, `ConfigureNetworkContextParamsForShell`,
-   `ShellDevTools*`, `shell_paths`, `shell_switches`, etc.).
+   `ShellBrowserMainParts`, `ShellContentBrowserClient`,
+   `ConfigureNetworkContextParamsForShell`, `ShellDevTools*`, `shell_paths`,
+   `shell_switches`, etc.).
 2. **Classify each touchpoint** as:
    - **Portable** — an override of a `content::ContentBrowserClient` /
      `ContentMainDelegate` / `ContentBrowserMainParts` virtual, or a
@@ -193,13 +194,13 @@ window/compositor bridges (`ts_shell_window_mac`, `ts_ca_layer_bridge_mac`,
    crucially the **window model** — content_shell's `content::Shell` vs
    app_shell's `AppWindow`/window handling.
 4. **Deep-dive the riskiest item: the window + CALayerHost compositing path**
-   (`ts_shell_window_mac` / `ts_*_bridge_mac` ↔ `content::Shell`). Determine what
-   `content::Shell` provides that TermSurf relies on (the `NSView`/`NSWindow`,
-   the `WebContents` host, lifecycle) and whether app_shell's window model
-   exposes an equivalent, or whether this work would need to bind to
-   `content::ContentBrowserClient`/`WebContents` directly (decoupling from any
-   shell's window object). This is the make-or-break for "preserve all
-   functionality."
+   (`ts_shell_window_mac` / `ts_*_bridge_mac` ↔ `content::Shell`). Determine
+   what `content::Shell` provides that TermSurf relies on (the
+   `NSView`/`NSWindow`, the `WebContents` host, lifecycle) and whether
+   app_shell's window model exposes an equivalent, or whether this work would
+   need to bind to `content::ContentBrowserClient`/`WebContents` directly
+   (decoupling from any shell's window object). This is the make-or-break for
+   "preserve all functionality."
 5. **Synthesize**: a coupling inventory with a portability verdict per item, an
    overall re-base cost estimate (low / medium / high), the riskiest items
    called out, and a recommendation (re-base / rewrite / stay on content_shell,
@@ -236,3 +237,105 @@ the next experiment.
 
 - The audit misses content/shell touchpoints (incomplete inventory), or
 - It cannot reach any cost/recommendation conclusion (no decision value).
+
+#### Result
+
+**Result:** Pass
+
+The audit is complete and yields a clear, perhaps counter-intuitive
+recommendation: **do not re-base or rewrite on app_shell.** The content/shell
+coupling is shallow and contained, all of TermSurf's actual functionality lives
+on `content/public` + `ui::` libraries TermSurf controls, and app_shell's only
+real offering (the extensions/guest-view wiring) comes bundled with a window
+model TermSurf does not use and would have to fight.
+
+##### Complete content/shell coupling inventory (Issue 784 baseline)
+
+All coupling is inside `content/libtermsurf_chromium/`; **`roamium` (Rust) is
+fully insulated** — it references only the `ts_*` FFI (`ts_content_main`,
+`ts_create_web_contents`, `ts_forward_*`, `ts_set_on_*`, …), zero content/shell.
+A migration would not touch roamium, webtui, or wezboard.
+
+| Touchpoint                                                                                                                                | Usage                                                           | Classification                                                                                                                                                          |
+| ----------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `TsTabObserver : content::WebContentsObserver`                                                                                            | tab lifecycle/observation                                       | **Portable** (content/public)                                                                                                                                           |
+| Per-tab `ui::Compositor` + `AcceleratedWidgetMac` + `ui::Layer`, RWHV parenting, CALayer/CAContext callbacks, the `ts_*_bridge_mac` files | **all rendering / CALayerHost compositing**                     | **Portable** (content/public + `ui::` + content/browser `RenderWidgetHostImpl`; no content/shell)                                                                       |
+| Input forwarding (mouse/key/scroll), focus, color scheme                                                                                  | via `WebContents`/`RenderWidgetHostView`/`RenderWidgetHostImpl` | **Portable** (content/public + content/browser)                                                                                                                         |
+| `TsMainDelegate : content::ShellMainDelegate`                                                                                             | swaps in TsBrowserClient/MainParts                              | **Coupled** — app_shell 1:1 (`extensions::ShellMainDelegate`)                                                                                                           |
+| `TsBrowserClient : content::ShellContentBrowserClient`                                                                                    | overrides + `ConfigureNetworkContextParamsForShell`             | **Coupled** — app_shell's client subclasses `ContentBrowserClient` directly and has no `…ForShell`; that override's logic would move to `ConfigureNetworkContextParams` |
+| `TsBrowserMainParts : content::ShellBrowserMainParts`                                                                                     | tab/window mgmt                                                 | **Coupled** — app_shell 1:1 (`extensions::ShellBrowserMainParts`, owns a `DesktopController`)                                                                           |
+| `content::Shell` (`CreateNewWindow`, `window()` NSWindow, `web_contents()`, `Shutdown()`)                                                 | per-tab **WebContents + overlay NSWindow factory + lifecycle**  | **Coupled** — the crux; see below                                                                                                                                       |
+| `content::ShellBrowserContext`                                                                                                            | browser-context type                                            | **Coupled** — app_shell extends it (`extensions::ShellBrowserContext`)                                                                                                  |
+| `ShellDevToolsFrontend` / `ShellDevToolsManagerDelegate`                                                                                  | DevTools                                                        | **Coupled** — app_shell has no direct equivalent; would need a small replacement                                                                                        |
+| `shell_paths`, `shell_switches`, `v8_crashpad_support_win`                                                                                | utilities                                                       | **Coupled (trivial)**                                                                                                                                                   |
+
+##### The window/CALayerHost deep-dive (the make-or-break item)
+
+TermSurf creates **one `content::Shell` per tab** (`Shell::CreateNewWindow` in
+`CreateTab`/`CreateDevToolsTab`), but uses it only as a **WebContents + NSWindow
+factory**. Display does **not** go through the Shell's window: each tab owns its
+own `ui::Compositor` + `AcceleratedWidgetMac` + root `ui::Layer`, the
+WebContents' `RenderWidgetHostView` is parented to that layer, and the resulting
+CALayer's `ca_context_id` is handed to wezboard via `TsNotifyCAContextId` (the
+CALayerHost overlay). The Shell's `NSWindow` is set `ignoresMouseEvents:YES` and
+merely positioned over the terminal pane (`MoveShellWindowToTermSurfScreenRect`)
+— it is not the rendering surface.
+
+Consequence: the rendering/compositing/input stack — the bulk of the Issue
+715–789 work — is **fully decoupled from any shell window model**. It would be
+unaffected by a base change, and could even drop `content::Shell` entirely in
+favor of a direct `WebContents::Create` + TermSurf's existing compositor
+hosting.
+
+This also means app_shell's window model (the `AppWindow` + `NativeAppWindow` +
+`DesktopController` split, hard-coded to a **single** window on macOS) is both
+**irrelevant and adverse** to TermSurf: TermSurf needs N per-tab WebContents
+hosted by its own compositors, not one OS app window. Re-basing would force
+TermSurf to either adopt that single-window model (a regression) or override it
+heavily — for no rendering benefit.
+
+##### Answering the issue's two questions
+
+1. **Preserve all current functionality?** Yes — but most cheaply by **not**
+   re-basing. The functionality lives on content/public + `ui::`, independent of
+   the shell. A re-base's only real risk is the window model, which is
+   avoidable.
+2. **More easily add PDF?** **No, not meaningfully.** The gating prerequisite
+   (the extensions + guest-view + `PdfViewerStreamManager` browser system) is
+   needed regardless of base, and it is **separable from the window/shell
+   layer**. app_shell pre-wires it but bundles the unwanted window model. So
+   re-basing does not reduce the PDF work; it adds window-model migration cost
+   on top of it.
+
+##### Recommendation
+
+- **Do not re-base or rewrite on app_shell.** Cost would be **medium–high**
+  (window-model migration, DevTools replacement, base re-parenting) with **no
+  PDF benefit**.
+- **Keep TermSurf on content_shell** (window/compositor layer preserved, ~zero
+  migration). When PDF resumes, **add the extensions browser system as a
+  separable layer on the existing base** — cherry-picking from
+  `extensions/shell` source (`ShellExtensionsBrowserClient`,
+  `ShellExtensionSystem`, the extension URL-loader factories, the guest-view
+  binding) onto `TsBrowserClient` / `TsBrowserMainParts`. That is the parked
+  Issue 790 Exp 6 work; **app_shell is the reference implementation, not the
+  base.**
+- Optional future cleanup (not required for PDF): drop the thin `content::Shell`
+  dependency by hosting `WebContents` directly, since TermSurf already owns the
+  compositor — further reducing content/shell coupling without app_shell.
+
+## Conclusion
+
+Issue 791's investigation is resolved by Experiment 1: re-basing (or rewriting)
+TermSurf's Chromium embedder on app_shell is **not** the right move. The audit
+showed TermSurf's content/shell coupling is shallow and fully FFI-insulated from
+roamium, that all rendering/input/compositing functionality lives on
+content/public + `ui::` (so it is preserved trivially), and that app_shell's
+only real benefit — the extensions/guest-view wiring needed for PDF — is
+separable and comes bundled with a single-window macOS model that conflicts with
+TermSurf's per-tab CALayerHost overlay architecture.
+
+The path to inline PDF is therefore: stay on content_shell and add the
+extensions browser system as a layer (the parked Issue 790 Exp 6), using
+`extensions/shell` as the reference. A separate issue should pick that up when
+PDF work resumes.
