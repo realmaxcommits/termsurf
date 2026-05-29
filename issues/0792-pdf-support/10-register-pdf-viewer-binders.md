@@ -291,3 +291,89 @@ The experiment fails if:
 - ordinary HTML pages crash, hang, or lose normal lifecycle messages;
 - direct PDF navigation regresses into a crash, hang, or renderer IPC failure;
 - the build cannot complete.
+
+## Result
+
+**Result:** Partial
+
+Experiment 10 built successfully and proved the targeted help-bubble binder
+slice, but the direct PDF extension smoke advanced to a new renderer fatal
+before the viewer could continue.
+
+Direct PDF extension smoke:
+
+```text
+logs/issue-792-exp10-extension-20260529-114312/
+```
+
+The previous Experiment 9 activation success remained intact:
+
+```text
+[issue-792-exp9] renderer-activate-extension extension_id=mhjfbmdgcfjbbpaeojofohoefgiehjai active=1
+[issue-792-exp9] pdf-script-context url=chrome-extension://mhjfbmdgcfjbbpaeojofohoefgiehjai/index.html context=BLESSED_EXTENSION effective_context=BLESSED_EXTENSION has_extension=1 active=1 is_webview=0 pdfViewerPrivate_available=1 result=0 message=
+[issue-792-exp8] schema-request name=pdfViewerPrivate found=1
+```
+
+The new TermSurf-owned no-op help-bubble binder was invoked:
+
+```text
+[issue-792-exp10] pdf-help-bubble-binder frame_url=chrome-extension://mhjfbmdgcfjbbpaeojofohoefgiehjai/index.html site_url=chrome-extension://mhjfbmdgcfjbbpaeojofohoefgiehjai/
+[issue-792-exp10] pdf-help-bubble-create-handler frame_url=chrome-extension://mhjfbmdgcfjbbpaeojofohoefgiehjai/index.html site_url=chrome-extension://mhjfbmdgcfjbbpaeojofohoefgiehjai/
+```
+
+The previous bad Mojo termination for
+`help_bubble.mojom.PdfHelpBubbleHandlerFactory` did not recur. The new blocker
+is:
+
+```text
+FATAL:extensions/renderer/resource_bundle_source_map.cc:72] NOTREACHED hit. Module resource registered as "mimeHandlerPrivate" not found
+Received signal 6
+```
+
+`pdf::mojom::PdfHost` was registered, but the direct extension smoke did not
+request it before the renderer hit the `mimeHandlerPrivate` module-resource
+fatal.
+
+The help-bubble binder registration is globally present in the frame binder map,
+matching Chromium's binder-map pattern, but the TermSurf-owned bind function
+rejects non-PDF-extension frames before creating the self-owned no-op receiver.
+
+No forbidden dependency was added. The implementation used
+`//components/pdf/browser` and
+`//ui/webui/resources/cr_components/help_bubble:mojo_bindings`, and did not add
+`//chrome/browser/pdf`, `//chrome/browser/pdf:pdf`, `//chrome/browser/ui`, or a
+broad `//chrome/browser/*` dependency.
+
+Regression checks:
+
+- `logs/issue-792-exp10-html-20260529-114336/`: normal HTML reached
+  `UrlChanged`, `TitleChanged`, and `LoadingState`.
+- `logs/issue-792-exp10-pdf-20260529-114346/`: direct PDF navigation still
+  followed the content_shell download path.
+
+The known teardown `SEGV_ACCERR` after artifact capture still recurred in all
+smokes. That is the pre-existing cleanup crash from earlier PDF experiments and
+did not prevent the required artifacts from being captured.
+
+Bookkeeping status: Chromium branch commit, patch archive refresh,
+`chromium/README.md` branch row, and main-repo commit are deferred until Claude
+after-review accepts this result. Claude accepted the result on 2026-05-29, with
+only low-severity documentation notes.
+
+## Conclusion
+
+The help-bubble bad Mojo gate is no longer blocking the PDF extension page.
+TermSurf can provide the viewer's PDF help-bubble interface without importing
+Chrome's PDF browser target by using a local no-op factory.
+
+The next missing layer is not `PdfHost` yet. The renderer dies earlier because
+the extensions renderer resource map does not contain the generated
+`mimeHandlerPrivate` module. Experiment 11 should follow the same narrow
+diagnostic pattern as Experiment 8/9: expose only the `mimeHandlerPrivate`
+module resource surface required by the PDF component extension, keep the
+browser-side API implementation out of scope unless the logs prove that the
+module resource gate has been crossed, and then record the next actual failure.
+
+Experiment 11 should also re-check whether `pdf-host-binder` fires after the
+`mimeHandlerPrivate` module resource gate is crossed, because Experiment 10
+registered `PdfHost` but the renderer died before requesting it.

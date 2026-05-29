@@ -192,4 +192,5 @@ stream/extension portion and should be mined rather than rebuilt from scratch.
 - [Experiment 9: Diagnose PDF API availability gates](09-diagnose-pdf-api-availability.md)
   — **Pass**
 - [Experiment 10: Register PDF viewer Mojo binders](10-register-pdf-viewer-binders.md)
-  — **Designed**
+  — **Partial** (help-bubble binder fixed; `mimeHandlerPrivate` module resource
+  missing)
