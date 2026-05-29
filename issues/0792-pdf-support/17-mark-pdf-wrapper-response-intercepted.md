@@ -275,3 +275,86 @@ before any next experiment is designed.
 - HTML navigation, DevTools, popups, or ordinary browser input regress.
 - The implementation removes Experiment 16 lifecycle evidence before proving the
   next gate.
+
+## Result
+
+**Result:** Pass
+
+Experiment 17 fixed the content_shell download-classification gate for TermSurf
+owned PDF wrapper responses.
+
+Build:
+
+```text
+autoninja -C out/Default libtermsurf_chromium
+Build Succeeded: 4 steps
+```
+
+PDF smoke artifact:
+
+```text
+logs/issue-792-exp17-pdf-20260529-140918
+```
+
+The PDF run proves the intended before/after transition:
+
+```text
+[issue-792-exp17] wrapper-classification-before frame_tree_node_id=1 mime_type=application/pdf intercepted_by_plugin=0 request_destination=3
+[issue-792-exp17] wrapper-classification-after frame_tree_node_id=1 mime_type=application/pdf intercepted_by_plugin=1 request_destination=3
+[issue-792-exp17] navigation-download-classification url=http://127.0.0.1:9787/bitcoin.pdf mime_type=application/pdf intercepted_by_plugin=1 must_download=0 known_mime_type=0 is_download=0
+```
+
+There is no `ShellDownloadManagerDelegate::ChooseDownloadPath(...)` line for the
+PDF navigation after the wrapper response is marked intercepted.
+
+The run also proves that Experiment 16's blocker is gone:
+
+```text
+[issue-792-exp16] pvs-ready frame_tree_node_id=1 url=http://127.0.0.1:9787/bitcoin.pdf is_pdf=0 has_unclaimed=1 stream_count=1
+[issue-792-exp16] pvs-ready-subresource-override frame_tree_node_id=1 handled=0
+[issue-792-exp15] pdf-stream-claim frame_tree_node_id=1 claimed=1
+[issue-792-exp16] pvs-claim frame_tree_node_id=1 claimed=1 original_url=http://127.0.0.1:9787/bitcoin.pdf
+```
+
+Regression smokes:
+
+```text
+logs/issue-792-exp17-html-20260529-140956
+logs/issue-792-exp17-bin-20260529-141026
+logs/issue-792-exp17-attachment-20260529-141128
+```
+
+- HTML navigation emitted no Experiment 17 PDF classification logs, did not
+  trigger a download, and produced the normal fake-GUI message sequence.
+- Unsupported non-PDF `file.bin` still reached
+  `ShellDownloadManagerDelegate::ChooseDownloadPath(...)` and did not emit
+  wrapper classification logs.
+- Attachment PDF still downloaded. Its classification remained:
+
+  ```text
+  [issue-792-exp17] navigation-download-classification url=http://127.0.0.1:9792/attachment.pdf mime_type=application/pdf intercepted_by_plugin=0 must_download=1 known_mime_type=0 is_download=1
+  ```
+
+I also tried the older real-GUI screenshot smoke:
+
+```text
+logs/issue-792-exp17-real-gui-20260529-141214
+```
+
+That run is not result evidence. It produced a black screenshot and no Chromium
+log because the old harness launched Wezboard with `pane_count=0`; it never
+created a real web pane or started Roamium. This matches the earlier reason the
+Issue 792 series moved official verification to the fake-GUI harness.
+
+## Conclusion
+
+The download classifier is no longer the blocker. TermSurf now marks only the
+successfully intercepted and stream-registered PDF wrapper response as
+`intercepted_by_plugin`, which makes `NavigationURLLoaderImpl` classify the
+navigation as `is_download=0`.
+
+That allows `PdfViewerStreamManager::ReadyToCommitNavigation()` to run and claim
+the stream. The next experiment should start after the stream claim and identify
+the next missing viewer/render step. The current log suggests the next useful
+question is whether the PDF extension viewer asks for stream information through
+the expected renderer/browser API path after the claimed stream is registered.

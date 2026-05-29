@@ -211,4 +211,4 @@ stream/extension portion and should be mined rather than rebuilt from scratch.
   — **Partial** (content_shell downloads the PDF before the wrapper navigation
   reaches `PdfViewerStreamManager`)
 - [Experiment 17: Mark the PDF wrapper response as intercepted](17-mark-pdf-wrapper-response-intercepted.md)
-  — **Designed**
+  — **Pass**
