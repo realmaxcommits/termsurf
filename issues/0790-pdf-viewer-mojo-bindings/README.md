@@ -1003,3 +1003,63 @@ onto canonical PDF-frame identity (all per the Experiment 4 design's Changes,
 now executed as Experiment 5). Expect this to be large and possibly itself
 iterative; the most likely first outcome is identifying the content-shell
 extensions/guest-view wiring `PdfViewerStreamManager` still needs.
+
+### Experiment 5: Link the canonical PDF stack; map the assembly and gating gap
+
+#### Description
+
+Execute the first step of the canonical adoption: pull `//chrome/browser/pdf` +
+the guest-view renderer/browser deps into `libtermsurf_chromium`, confirm it
+links and does not regress, and map exactly how Chrome assembles the OOPIF PDF
+flow so the remaining wiring is concrete.
+
+#### Result
+
+**Result:** Partial — feasibility confirmed, gating prerequisite identified
+
+Chromium branch `148.0.7778.97-issue-790-exp5` (from `-exp4`).
+
+- **Deps link cleanly (the key de-risking).** Adding `//chrome/browser/pdf`,
+  `//extensions/renderer`, `//components/guest_view/{browser,renderer}`,
+  `//components/guest_view/common:mojom` compiled (141 targets) and linked into
+  the content*shell-based `libtermsurf_chromium` with a single addition:
+  `AVFoundation.framework` (the only undefined symbol was
+  `OBJC_CLASS*$\_AVCaptureDevice`, from the new deps' media-capture code). The feared `Profile`/`BrowserProcess`
+  symbol explosion did **not** occur.
+- **No regression.** With the deps linked but unwired: `index.html` renders (0
+  FATAL); `bitcoin.pdf` still shows the pre-existing `IsPdfRenderer` crash
+  (unchanged — nothing wired yet); no new startup crash from the
+  extensions/guest-view static initializers.
+- **Canonical assembly mapped.** The OOPIF PDF flow is:
+  `PluginResponseInterceptorURLLoaderThrottle` (intercepts the PDF response;
+  `plugin_response_interceptor_url_loader_throttle.cc:136` keys on the PDF
+  extension id) → creates the stream → `PdfViewerStreamManager::Create` /
+  `AddStreamContainer` (per-WebContents; the canonical counterpart of TermSurf's
+  `TsPdfStreamStore`) → drives the OOPIF viewer + attach → renderer guest-view
+  `MimeHandlerViewContainerManager` external plugin handling.
+- **Gating prerequisite identified.** That whole flow presupposes the
+  **extensions browser system is running**: an `ExtensionsBrowserClient` and
+  `ExtensionRegistry` with the PDF component extension registered as the
+  `application/pdf` mime handler. That registration is what makes the embed's
+  object type "external" (the missing condition Exp 4 proved) and what lets
+  `PdfViewerStreamManager` attach the OOPIF. content_shell does not run this
+  system. Standing it up (à la Electron's `shell/browser/extensions/*`:
+  `ElectronExtensionSystem`, `ElectronExtensionsBrowserClient`, component
+  extension registration) is the substantial remaining prerequisite.
+
+#### Conclusion
+
+Experiment 5 turned the open feasibility question into a concrete, bounded
+engineering plan: the canonical PDF stack links and runs in TermSurf's binary,
+and the path to rendering is now "stand up the extensions browser
+infrastructure, then wire the response interceptor + `PdfViewerStreamManager` +
+renderer guest-view through it." This is a real port (Electron spreads it across
+a lot of code), so it will span multiple experiments.
+
+Next layer (Experiment 6): stand up the minimal extensions browser
+infrastructure in TermSurf's content_shell base — an `ExtensionsBrowserClient`
+implementation, an `ExtensionRegistry`, and registration of the PDF viewer as a
+component extension that handles `application/pdf` — mirroring Electron's
+`ElectronExtensionSystem` / `ElectronExtensionsBrowserClient`, scoped to what
+the PDF OOPIF flow needs. Then wire the response interceptor +
+`PdfViewerStreamManager` on top.

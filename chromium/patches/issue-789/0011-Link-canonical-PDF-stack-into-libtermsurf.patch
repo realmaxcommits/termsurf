@@ -1,0 +1,57 @@
+From f497a2e479d85f961d14beaf8f346386d04fa39f Mon Sep 17 00:00:00 2001
+From: "Ryan X. Charles" <ryan@ryanxcharles.com>
+Date: Thu, 28 May 2026 20:50:22 -0500
+Subject: [PATCH 11/11] Link canonical PDF stack into libtermsurf
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+We feared the browser globals would explode—
+Profile, BrowserProcess, a tangled load.
+But chrome/browser/pdf and guest-view linked clean;
+one framework (AVFoundation) bridged the between.
+No regression, no crash at startup's door—
+the canonical stack is reachable. Now to wire its core.
+---
+ content/libtermsurf_chromium/BUILD.gn | 10 ++++++++++
+ 1 file changed, 10 insertions(+)
+
+diff --git a/content/libtermsurf_chromium/BUILD.gn b/content/libtermsurf_chromium/BUILD.gn
+index 7bd9c61ca6f68..b3669b4d0a63e 100644
+--- a/content/libtermsurf_chromium/BUILD.gn
++++ b/content/libtermsurf_chromium/BUILD.gn
+@@ -53,7 +53,11 @@ shared_library("libtermsurf_chromium") {
+   deps = [
+     "//base",
+     "//chrome/browser:resources",
++    "//chrome/browser/pdf",
+     "//chrome/browser/resources/pdf:resources",
++    "//components/guest_view/browser",
++    "//components/guest_view/common:mojom",
++    "//components/guest_view/renderer",
+     "//components/pdf/browser:interceptors",
+     "//components/pdf/common:constants",
+     "//components/pdf/common:util",
+@@ -66,6 +70,7 @@ shared_library("libtermsurf_chromium") {
+     "//extensions/browser/mime_handler:stream_container",
+     "//extensions/browser/mime_handler:stream_info",
+     "//extensions/common:common_constants",
++    "//extensions/renderer",
+     "//mojo/public/cpp/bindings",
+     "//net",
+     "//pdf",
+@@ -81,6 +86,11 @@ shared_library("libtermsurf_chromium") {
+       "//ui/accelerated_widget_mac",
+       "//ui/compositor",
+     ]
++
++    # Issue 790 Exp 5: the canonical PDF stack (//chrome/browser/pdf and its
++    # media-capture transitive deps) references AVFoundation's AVCaptureDevice.
++    # content_shell does not link AVFoundation by default, so add it here.
++    frameworks = [ "AVFoundation.framework" ]
+   }
+ }
+ 
+-- 
+2.50.1 (Apple Git-155)
+

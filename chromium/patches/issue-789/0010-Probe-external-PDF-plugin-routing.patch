@@ -1,7 +1,7 @@
 From e8d5109f2603d5bfdac06bb960fc5ff993f0b985 Mon Sep 17 00:00:00 2001
 From: "Ryan X. Charles" <ryan@ryanxcharles.com>
 Date: Thu, 28 May 2026 20:44:59 -0500
-Subject: [PATCH 10/10] Probe external PDF plugin routing
+Subject: [PATCH 10/11] Probe external PDF plugin routing
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
