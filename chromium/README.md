@@ -14,8 +14,13 @@ No `origin` remote for now. Remote hosting TBD (likely patch set distribution).
 
 ## Current State
 
-- Branch: `148.0.7778.97-issue-790-exp5`
+- Branch: `148.0.7778.97-issue-784`
 - Base version: `148.0.7778.97` (tracking Electron's Chromium version)
+
+> **Note:** The `…-issue-789-exp*` and `…-issue-790-exp*` branches are
+> experimental inline-PDF work, **parked** (Issue 790 Exp 7). They are preserved
+> as history; the active/buildable branch is `148.0.7778.97-issue-784`. See
+> [Issue 790](../issues/0790-pdf-viewer-mojo-bindings/README.md).
 
 ## Branch Strategy
 

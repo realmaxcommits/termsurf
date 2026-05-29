@@ -1,6 +1,7 @@
 +++
-status = "open"
+status = "closed"
 opened = "2026-05-28"
+closed = "2026-05-29"
 +++
 
 # Issue 790: Expose Mojo JS Bindings to the PDF Viewer Frame
@@ -1213,10 +1214,57 @@ history**, then (separately) assess re-basing on app_shell.
 - PDF behaves as it did pre-experiments (no crash).
 - All PDF experimental work is preserved (branches, patches, issue docs).
 
-#### Conclusion (closes Issue 790)
+#### Result
 
-To be written after the restore is verified: record that inline PDF rendering is
-a large canonical-stack port deferred pending a foundation decision, that the
-attempt is fully preserved, that the app is restored to the 784 baseline with no
-regressions, and that the next direction is to evaluate re-basing TermSurf's
-embedder on app_shell (a new issue).
+**Result:** Pass
+
+The buildable app is restored to the pre-PDF baseline with all experimental work
+preserved.
+
+- **Chromium fork** checked out to `148.0.7778.97-issue-784`;
+  `HEAD == ae630730d826b`; `git log 148.0.7778.97-issue-784..HEAD` empty (no PDF
+  commits on top). `libtermsurf_chromium` rebuilds and links on the baseline.
+- **Source proof:** the active `content/libtermsurf_chromium` tree has no
+  `ts_pdf_*` files and no `issue-789` / `issue-790` / `TsPdf` /
+  `PdfViewerStreamManager` / `MimeHandlerViewContainerManager` symbols.
+  `gn desc` confirms `//chrome/browser/pdf`, `//chrome/browser/extensions`, and
+  `//components/pdf` are **absent** from `//content/libtermsurf_chromium`. (The
+  remaining `//components/guest_view` entries are content_shell's normal
+  transitive deps, present in the 784 baseline — not PDF-experiment residue.)
+- **Smoke tests, no regression:** `index.html` renders; `bitcoin.pdf` produces
+  **0** `IsPdfRenderer`/FATAL crashes and **0** `[issue-789-*]`/`[issue-790-*]`
+  logs — it shows the pre-PDF blank-white behavior (the original Issue 776
+  symptom), i.e. the known-good 784 state.
+- **Main repo:** `chromium/README.md` "Current State" →
+  `148.0.7778.97-issue-784` with a note marking the `789-exp*`/`790-exp*`
+  branches as parked; `test-html/public/test-chrome-resources-leak.html` removed
+  (its only other reference is in closed Issue 789, which is left untouched).
+- **Preserved:** the fork branches `…-issue-789-exp*` and `…-issue-790-exp*`,
+  the `chromium/patches/issue-789/` archive (which holds both the 789 and 790
+  PDF patches through Exp 5), and the Issue 789/790 docs.
+
+## Conclusion
+
+Inline PDF rendering in Roamium is achievable but is a **large canonical-stack
+port**, not a small embedder hook. Across Issues 789–790 the PDF viewer was
+driven from a blank shell all the way through: the stream handoff, the viewer
+shell, `chrome://resources` (a two-layer browser-factory + renderer
+origin-access fix), Mojo JS bindings, OOPIF viewer mode, and the internal PDF
+plugin — stopping at the `IsPdfRenderer()` process-model layer. The decisive
+finding (Exp 5) is that completing it requires adopting Chromium's canonical
+extensions + guest-view + `PdfViewerStreamManager` infrastructure — which is
+essentially re-implementing **app_shell** (`extensions/shell`) on top of
+content_shell (a ~2k LOC port).
+
+Rather than leave a half-built port in the tree, the app is restored to the last
+known-good non-PDF baseline (`148.0.7778.97-issue-784`), and the entire PDF
+attempt is preserved as a complete, reproducible record (issue docs, fork
+branches, patch archive).
+
+**Next direction:** before resuming PDF, evaluate re-basing TermSurf's Chromium
+embedder on **app_shell** instead of content_shell. app_shell already wires the
+extensions + guest-view + extension-URL-loader infrastructure that inline PDF
+(and likely other future features) needs, so it may be the cleaner foundation
+than content_shell plus an ever-growing hand-ported extension layer — weighed
+against the cost of migrating the existing Issue 715–789 work onto a parallel
+base. That evaluation is a separate issue.
