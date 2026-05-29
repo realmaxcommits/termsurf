@@ -226,4 +226,5 @@ stream/extension portion and should be mined rather than rebuilt from scratch.
   — **Pass** (Blink receives and parses fallback plugin HTML, not the generated
   PDF wrapper body)
 - [Experiment 23: Register PDF MIME in plugin data](23-register-pdf-mime-in-plugin-data.md)
-  — **Designed**
+  — **Pass** (renderer plugin data now supports `application/pdf`; wrapper and
+  stream-info path reaches the PDF extension)

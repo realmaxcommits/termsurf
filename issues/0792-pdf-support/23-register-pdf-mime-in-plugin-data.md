@@ -214,8 +214,77 @@ before any next experiment is designed.
 
 ## Result
 
-Not run yet.
+**Result:** Pass
+
+Build:
+
+```text
+autoninja -C out/Default libtermsurf_chromium
+Build Succeeded: 5 steps
+```
+
+PDF log:
+
+```text
+logs/issue-792-exp23-pdf-20260529-155540
+```
+
+HTML control log:
+
+```text
+logs/issue-792-exp23-html-20260529-155603
+```
+
+The HTML control emitted no `[issue-792-exp23]` fallback logs and no
+`[issue-792-exp22]` body/parser logs.
+
+Important PDF trace lines:
+
+```text
+[issue-792-exp15] internal-pdf-plugin-registered mime_type=application/x-google-chrome-pdf document_mime_type=application/pdf path=internal-pdf-viewer
+[issue-792-exp19] wrapper-payload ... bytes=536 has_template=1 has_iframe=1 has_about_blank=1 has_internal_id=1 has_pdf_extension_url=1
+[issue-792-exp23] static-response-check url=http://127.0.0.1:9787/bitcoin.pdf mime_type=application/pdf supported_mime=0 has_plugin_data=1 plugin_supports_mime=1 action=return
+[issue-792-exp21] document-type-check mime_type=application/pdf has_frame=1 allow_plugins=1 has_plugin_data=1 supports_mime=1 is_external=1 result=html
+[issue-792-exp21] document-type-selected mime_type=application/pdf result=html is_for_external_handler=1
+[issue-792-exp21] document-commit url=http://127.0.0.1:9787/bitcoin.pdf mime_type=application/pdf document_class=html is_for_external_handler=1 child_count=0
+[issue-792-exp21] document-parser-open url=http://127.0.0.1:9787/bitcoin.pdf mime_type=application/pdf parser=html
+[issue-792-exp22] body-loader-start url=http://127.0.0.1:9787/bitcoin.pdf mime_type=application/pdf reason=resume has_body_loader=1 is_static_data=0 loading_empty=0 is_main_frame=1
+[issue-792-exp22] body-data-received url=http://127.0.0.1:9787/bitcoin.pdf encoded_size=536 ... has_template=1 has_iframe=1 has_shadowrootmode=1 has_internal_id=1 ...
+[issue-792-exp22] parser-append-string url=http://127.0.0.1:9787/bitcoin.pdf length=536 ... has_template=1 has_iframe=1 has_shadowrootmode=1 ...
+[issue-792-exp21] declarative-shadow-root url=http://127.0.0.1:9787/bitcoin.pdf host_tag=BODY mode=closed success=1 should_attach_template=0
+[issue-792-exp21] frame-owner-inserted document_url=http://127.0.0.1:9787/bitcoin.pdf tag=IFRAME name=DE6EFBAA58A6CE20E4696463BBB4E2BB src=about:blank type=application/pdf internalid=DE6EFBAA58A6CE20E4696463BBB4E2BB is_connected=1
+[issue-792-exp19] pvs-finish-about-blank frame_tree_node_id=2 parent_frame_tree_node_id=1 url=about:blank
+[issue-792-exp15] pdf-extension-about-blank frame_tree_node_id=2 embedder=1
+[issue-792-exp15] pdf-extension-navigate handler_url=chrome-extension://mhjfbmdgcfjbbpaeojofohoefgiehjai/index.html
+[issue-792-exp21] load-or-redirect-subframe document_url=http://127.0.0.1:9787/bitcoin.pdf tag=IFRAME frame_name=DE6EFBAA58A6CE20E4696463BBB4E2BB url=about:blank internalid=DE6EFBAA58A6CE20E4696463BBB4E2BB result=1
+[issue-792-exp19] pvs-finish-extension-already-started frame_tree_node_id=2 url=chrome-extension://mhjfbmdgcfjbbpaeojofohoefgiehjai/index.html matches_extension_url=1 matches_tracked_frame=1 has_committed=1 is_error_page=0
+[issue-792-exp18] mime-handler-service-bound frame_url=chrome-extension://mhjfbmdgcfjbbpaeojofohoefgiehjai/index.html stream_url=chrome-extension://mhjfbmdgcfjbbpaeojofohoefgiehjai/2db89b22-e758-41e2-a1bb-16639feaeddd original_url=http://127.0.0.1:9787/bitcoin.pdf
+[issue-792-exp18] real-mime-handler-get-stream-info has_stream=1 stream_url=chrome-extension://mhjfbmdgcfjbbpaeojofohoefgiehjai/2db89b22-e758-41e2-a1bb-16639feaeddd original_url=http://127.0.0.1:9787/bitcoin.pdf
+```
+
+This experiment fixed the renderer-side static fallback. The decisive changes
+are:
+
+- renderer plugin data now supports `application/pdf`;
+- `FillStaticResponseIfNeeded(...)` returns instead of synthesizing fallback
+  HTML;
+- `DocumentInit` classifies the PDF navigation as external-handler HTML;
+- `DocumentLoader` no longer uses static fallback data;
+- the 536-byte wrapper body reaches the parser;
+- the declarative shadow root attaches;
+- the wrapper iframe inserts and starts the `about:blank` child navigation;
+- `PdfViewerStreamManager` navigates the child frame to the PDF extension;
+- the extension viewer requests and receives real stream info.
 
 ## Conclusion
 
-Pending implementation.
+Experiment 23 was the renderer-side counterpart to Experiment 17. Experiment 17
+prevented browser-side download classification; Experiment 23 prevented
+renderer-side unsupported-plugin fallback synthesis.
+
+The PDF plumbing has now advanced through the full wrapper and stream-info path.
+The remaining question is no longer whether the wrapper/stream handoff exists;
+it does. The next experiment should verify the final user-visible outcome: does
+the PDF viewer actually render the PDF page in the pane? If it does not, the
+next failure is inside the PDF extension viewer or PDFium rendering path after
+`mimeHandlerPrivate.getStreamInfo(...)` succeeds.
