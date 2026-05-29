@@ -239,3 +239,5 @@ stream/extension portion and should be mined rather than rebuilt from scratch.
 - [Experiment 27: Externalize internal PDF plugin](27-externalize-internal-pdf-plugin.md)
   — **Partial** (PDF renderer and plugin now start; metadata string resource is
   missing)
+- [Experiment 28: Load PDF localized strings](28-load-pdf-localized-strings.md)
+  — **Designed**
