@@ -280,3 +280,190 @@ This experiment fails if:
   current harnesses still support the claim;
 - it omits Codex design or completion review;
 - it produces a cleanup backlog too vague to implement safely.
+
+## Result
+
+**Result:** Pass
+
+This audit reviewed the current non-print PDF viewer after Experiment 4 on
+Chromium branch `148.0.7778.97-issue-796-exp4`. No runtime code was changed.
+
+### Feature Inventory
+
+| Feature                                  | Status                           | Evidence                                                                                                                                       | Notes                                                                                                                                                                   |
+| ---------------------------------------- | -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Full-page PDF rendering                  | Implemented and automated        | `logs/issue-796-exp4-security-rerun/positive-pdf/pdf-toolbar-summary.json`; `logs/issue-796-exp4-protocol-scroll/protocol-scroll-summary.json` | Real PDF loads create the PDF extension target and protocol scroll succeeds.                                                                                            |
+| Embedded PDF rendering                   | Implemented but weakly automated | `logs/issue-796-exp4-save-title-local-rerun/save-print-title-local/save-print-title-local-summary.json`                                        | `embeddedTitle.status = "pass"` proves the embedded path/title case, but there is no standalone embedded scroll/input matrix.                                           |
+| HTTP PDF                                 | Implemented and automated        | Issue 796 Exp 4 security probe and save/title/local runs use `http://127.0.0.1:9799/bitcoin.pdf`.                                              | Covered by current local fixture server.                                                                                                                                |
+| HTTPS PDF                                | Implemented but weakly automated | Issue 794 history used web PDFs; current deterministic runs use local HTTP.                                                                    | Current automation avoids the network. A future smoke can add a local TLS fixture if needed, but HTTP exercises the same PDF viewer path after response classification. |
+| `file://` PDF                            | Implemented but weakly automated | `logs/issue-796-exp4-save-title-local-rerun/save-print-title-local/save-print-title-local-summary.json` local parity rows.                     | Title/render evidence exists; local parity scroll subcheck is weak/partial.                                                                                             |
+| Extensionless local PDF                  | Implemented but weakly automated | Same local parity summary, `file-extensionless` row.                                                                                           | Rendering/title evidence exists; scroll proof comes from the general protocol scroll harness rather than local parity.                                                  |
+| Extensionless HTTP PDF                   | Implemented but weakly automated | Same local parity summary, `http-extensionless` row.                                                                                           | Same local-parity weakness as above.                                                                                                                                    |
+| Titled PDFs                              | Implemented and automated        | `titlePropagationPass = true` in save/title/local summaries; `ts_pdf_viewer_private_api.cc` title path.                                        | Current title propagation is covered.                                                                                                                                   |
+| Untitled PDFs                            | Implemented but weakly automated | `http-untitled` and `file-untitled` local parity rows; Issue 794 Exp 14/15 records.                                                            | Evidence exists, but the local parity harness status is partial.                                                                                                        |
+| Permission-restricted PDFs               | Implemented but weakly automated | `ts_pdf_document_helper_client.cc` logs `pdf-content-restrictions`; save/title/local print statuses include restricted-document handling code. | No dedicated restricted fixture currently proves every disabled state.                                                                                                  |
+| Copy restrictions                        | Unknown                          | `chromium/src/pdf/content_restriction.h`; protocol selection/copy harness proves normal copy only.                                             | No restricted-copy fixture or negative copy assertion.                                                                                                                  |
+| Save/download restrictions               | Unknown                          | Save/download probe proves ordinary download; Chromium plugin exposes content restrictions.                                                    | No restricted-save fixture or disabled download-control assertion.                                                                                                      |
+| Disabled toolbar states for restrictions | Unknown                          | Toolbar inventory captures disabled flags, but current fixture is not restriction-specific.                                                    | Needs a restricted fixture check.                                                                                                                                       |
+| Scroll wheel                             | Implemented and automated        | `logs/issue-796-exp4-protocol-scroll/protocol-scroll-summary.json` reports `first_failing_hop = "no-failure-observed"`.                        | Protocol-level wheel path is covered.                                                                                                                                   |
+| Keyboard scroll/navigation               | Unknown                          | `scripts/test-issue-794-protocol-mouse.py --action key-select-copy` proves keyboard delivery for selection/copy only.                          | Keyboard page/scroll navigation is not separately asserted.                                                                                                             |
+| Mouse click and focus                    | Implemented and automated        | `logs/issue-796-exp4-protocol-mouse-click/protocol-mouse-summary.json`.                                                                        | No failure observed.                                                                                                                                                    |
+| Text selection                           | Implemented and automated        | `logs/issue-796-exp4-protocol-mouse-select-copy/protocol-mouse-summary.json`; PDFium selection log checks in script.                           | Covered through key-select-copy.                                                                                                                                        |
+| Copy                                     | Implemented and automated        | Same protocol mouse summary.                                                                                                                   | Normal unrestricted copy is covered.                                                                                                                                    |
+| Resize and reflow                        | Implemented and automated        | `logs/issue-796-exp4-protocol-resize/protocol-resize-summary.json`.                                                                            | No failure observed.                                                                                                                                                    |
+| Toolbar visibility                       | Implemented and automated        | `logs/issue-796-exp4-security-rerun/positive-pdf/pdf-toolbar-summary.json`; control inventories.                                               | Toolbar target and controls are visible.                                                                                                                                |
+| Toolbar page navigation                  | Implemented but weakly automated | `probe-pdf-toolbar.mjs` inventories `viewer-page-selector`; old Issue 794 toolbar runs covered controls.                                       | Current post-security run did not separately assert page selector changes.                                                                                              |
+| Zoom in/out                              | Implemented but weakly automated | `logs/issue-794-exp20-regression-toolbar-events-20260530-151446/toolbar-events/toolbar-events-summary.json` status `pass`.                     | Evidence is recent but pre-Experiment 4. Experiment 6 should rerun this on the current branch.                                                                          |
+| Fit-to-page / fit-to-width               | Implemented but weakly automated | Same toolbar-events summary status `pass`.                                                                                                     | Same caveat as zoom.                                                                                                                                                    |
+| Rotate                                   | Implemented but weakly automated | Same toolbar-events summary status `pass`; print-intercept run also observed rotate callback plumbing.                                         | Same caveat as zoom.                                                                                                                                                    |
+| Save/download                            | Implemented and automated        | Save/title/local summary reports `saveDownload.status = "download-file-created"`.                                                              | Ordinary download is covered.                                                                                                                                           |
+| Title propagation                        | Implemented and automated        | Save/title/local summaries report `titlePropagationPass = true`; `ts_pdf_viewer_private_api.cc`.                                               | Covered.                                                                                                                                                                |
+| Internal PDF links                       | Unknown                          | No current harness fixture or log asserts clicking links inside a PDF.                                                                         | Likely upstream PDFium/plugin behavior, but TermSurf input routing needs a fixture.                                                                                     |
+| External links from PDFs                 | Unknown                          | No current harness fixture asserts URL/navigation behavior after clicking a PDF link.                                                          | Important user workflow; should be automated.                                                                                                                           |
+| Find/search within PDF                   | Unknown                          | Chromium PDF plugin has find APIs (`pdf_view_web_plugin.h`), but TermSurf has no current PDF find harness.                                     | This is a common PDF viewer feature and should be probed.                                                                                                               |
+| Forms                                    | Unknown                          | Chromium plugin has form loader/filler code; no TermSurf fixture or harness.                                                                   | Needs at least a simple form fixture decision: support now or follow-up.                                                                                                |
+| Annotations                              | Unknown / likely follow-up       | Chromium PDF resources include Ink/text annotation managers; TermSurf does not have dedicated annotation automation.                           | More complex than core viewing; likely follow-up unless current UI already works trivially.                                                                             |
+| Password-protected PDFs                  | Unknown                          | Chromium viewer has password prompt plumbing; no TermSurf fixture or native/HTML prompt assertion.                                             | Needs probe or explicit follow-up.                                                                                                                                      |
+| Error-page PDFs                          | Unknown                          | No malformed/404 PDF fixture in current harness matrix.                                                                                        | Needs small fixture.                                                                                                                                                    |
+| Context menu behavior                    | Unknown / likely follow-up       | No TermSurf PDF context-menu harness.                                                                                                          | TermSurf context-menu story is broader than PDF; should not block core PDF viewing unless user workflow requires it.                                                    |
+| Accessibility/searchify                  | Unknown / likely follow-up       | Chromium plugin has accessibility/searchify code; TermSurf has no coverage.                                                                    | Large surface; document as follow-up unless a concrete non-print requirement appears.                                                                                   |
+| Normal HTML regression                   | Implemented and automated        | `logs/issue-796-exp4-non-pdf-html/protocol-resize-summary.json` reports no failure.                                                            | HTML resize works; logs include normal PDF subsystem startup but no fake-extension process/grant handling.                                                              |
+| Native PDF printing                      | Intentionally out of scope       | Issue 795.                                                                                                                                     | Do not pull into Experiment 6.                                                                                                                                          |
+
+### Chrome and Electron Comparison
+
+TermSurf now follows the Electron-style embedder-owned PDF stack for the core
+viewer path: component extension resources, stream handoff, MimeHandler/OOPIF
+setup, PDF viewer APIs, and plugin creation. Local Chromium source confirms
+Chrome's PDF viewer contains additional non-print feature surfaces that TermSurf
+has not proven end to end:
+
+- find/search hooks in `chromium/src/pdf/pdf_view_web_plugin.h`;
+- save and content-restriction plumbing in
+  `chromium/src/pdf/pdf_view_web_plugin.h` and
+  `chromium/src/pdf/content_restriction.h`;
+- forms and accessibility state in `chromium/src/pdf/pdf_view_web_plugin.h`;
+- annotation UI/resource code under
+  `chromium/src/chrome/browser/resources/pdf/ink2_manager.ts`;
+- password prompt handling references in
+  `chromium/src/chrome/browser/resources/pdf/pdf_viewer_base.ts`.
+
+The audit does not prove these features are missing in product code. Many are
+likely already available through upstream PDFium/Chrome viewer code once the
+TermSurf input and resource path is active. The gap is evidence: TermSurf has no
+current fixtures or automated assertions for several common PDF workflows.
+
+### Automation Coverage Findings
+
+Current automation is strongest for the core browser-embedding plumbing:
+
+- full-page rendering and toolbar inventory;
+- protocol scroll;
+- protocol resize;
+- protocol mouse click;
+- selection/copy;
+- title propagation;
+- ordinary save/download;
+- default print non-click behavior and contained print intercept;
+- security boundary for fake extension URLs;
+- normal HTML resize smoke.
+
+Current automation is weak or missing for:
+
+- local parity scroll inside `probe-pdf-save-print-title-local.mjs`;
+- keyboard scroll/page navigation;
+- page selector/page navigation after security cleanup;
+- current post-security toolbar event run for zoom/fit/rotate;
+- PDF links;
+- find/search;
+- permission-restricted copy/save/disabled toolbar states;
+- forms;
+- password/error pages;
+- annotations;
+- context menu;
+- accessibility/searchify.
+
+The Experiment 4 local-parity nuance is real. The save/title/local harness exits
+0 and proves save/title/embedded title/print states, but marks overall status
+`partial` because its DevTools wheel subcheck does not observe local-parity
+scroll movement. The protocol scroll harness separately proves TermSurf
+scrolling through Roamium and Chromium. Experiment 6 should fix or replace this
+local-parity assertion so future runs are not ambiguous.
+
+### User-Facing Gap Classification
+
+Required for a normal non-print PDF viewer:
+
+- reliable full-page/embedded rendering;
+- scrolling;
+- resizing;
+- selection/copy;
+- save/download;
+- toolbar zoom/fit/rotate/page controls;
+- title propagation;
+- local-file and extensionless parity;
+- links inside PDFs;
+- find/search;
+- password/error handling;
+- restrictions/disabled states for copy and save.
+
+Acceptable as follow-up if not already trivial:
+
+- annotations;
+- forms beyond simple display/interact;
+- context menu;
+- accessibility/searchify.
+
+Intentionally out of scope:
+
+- native PDF printing, tracked by Issue 795.
+
+### Experiment 6 Backlog
+
+Required cleanup for Experiment 6:
+
+1. Repair or replace the local-parity scroll assertion in
+   `probe-pdf-save-print-title-local.mjs` so the save/title/local harness can
+   report a clean pass when the underlying protocol scroll path works.
+2. Add keyboard scroll/page navigation assertions for the PDF viewer.
+3. Add a current post-security toolbar-events verification for zoom in/out, fit,
+   rotate, and page selector/page navigation.
+4. Add a small link fixture and automated probe for internal PDF links and
+   external PDF links.
+5. Add a find/search probe for a known text string in the Bitcoin PDF or a small
+   deterministic fixture.
+6. Add restricted-document fixtures or a clear fixture-generation plan for copy
+   and save/download restrictions, and assert disabled toolbar states where
+   applicable.
+7. Add password/error fixtures or explicitly open follow-up issues if Chromium's
+   viewer path requires more infrastructure than fits in Experiment 6.
+
+Acceptable follow-up issues outside Experiment 6 if they prove large:
+
+- forms;
+- annotations;
+- context menu;
+- accessibility/searchify.
+
+Non-findings:
+
+- No evidence from this audit suggests the core stream/resource/plugin
+  architecture needs another rewrite.
+- No evidence suggests the Experiment 4 security cleanup regressed the core PDF
+  viewer path.
+- Native print remains correctly deferred to Issue 795.
+
+## Conclusion
+
+The non-print PDF viewer is usable and the core embedding path is covered, but
+"complete" is not yet proven. Experiment 6 should focus on tightening automation
+and filling common workflow probes, especially local parity scroll, toolbar
+event coverage after the security branch, links, find/search, document
+restrictions, and password/error behavior. Large advanced surfaces such as
+annotations, forms, context menus, and accessibility/searchify can be documented
+as follow-up issues if they exceed this audit issue's cleanup budget.
+
+Codex completion review passed after two fixes: keyboard scroll/navigation was
+downgraded to `Unknown` and added to the Experiment 6 backlog, and
+zoom/fit/rotate were downgraded to `Implemented but weakly automated` until
+rerun on the current branch.
