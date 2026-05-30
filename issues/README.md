@@ -2,10 +2,11 @@
 
 ## Open
 
-| #                                       | Title                                | Opened     |
-| --------------------------------------- | ------------------------------------ | ---------- |
-| [0756](0756-surfari/README.md)          | Surfari — WebKit engine for TermSurf | 2026-03-16 |
-| [0795](0795-pdf-native-print/README.md) | PDF Native Print                     | 2026-05-30 |
+| #                                               | Title                                | Opened     |
+| ----------------------------------------------- | ------------------------------------ | ---------- |
+| [0756](0756-surfari/README.md)                  | Surfari — WebKit engine for TermSurf | 2026-03-16 |
+| [0795](0795-pdf-native-print/README.md)         | PDF Native Print                     | 2026-05-30 |
+| [0796](0796-pdf-implementation-audit/README.md) | PDF Implementation Audit             | 2026-05-30 |
 
 ## Closed
 
