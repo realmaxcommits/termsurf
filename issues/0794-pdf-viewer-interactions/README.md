@@ -204,7 +204,7 @@ viewer," should be automated with state checks, screenshots, and targeted logs.
 ## Proposed Direction
 
 This issue should not be solved with one giant patch. The work should proceed as
-experiments, each reviewed by Claude before implementation and again after
+experiments, each reviewed by Codex before implementation and again after
 completion:
 
 1. First, build an interaction diagnostic harness for the current PDF viewer. It
@@ -227,6 +227,8 @@ PDF tests remain the feature checklist.
   — **Pass**
 - [Experiment 2: Trace real wheel input](02-trace-real-wheel-input.md) —
   **Partial** (agent-side macOS wheel injection did not reach Wezboard)
+- [Experiment 3: Direct protocol scroll injection](03-direct-protocol-scroll-injection.md)
+  — **Designed**
 
 ## Constraints
 
@@ -239,4 +241,4 @@ PDF tests remain the feature checklist.
 - If an experiment modifies Chromium, create a fresh Chromium branch for this
   issue and add it to `chromium/README.md`.
 - Every experiment design and every completed experiment result must be reviewed
-  by Claude. Fix real issues from the review before proceeding.
+  by Codex. Fix real issues from the review before proceeding.
