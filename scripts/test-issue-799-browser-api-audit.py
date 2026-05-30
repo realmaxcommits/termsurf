@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import hashlib
 import html
 import http.server
 import json
@@ -46,6 +47,20 @@ CRASH_PATTERNS = [
 ]
 MISSING_INTERFACE_RE = re.compile(r"No binder found for interface ([^\s]+)")
 EMPTY_BINDER_RE = re.compile(r"Empty binder for interface ([^\s]+)")
+
+ATTACHMENT_DOWNLOAD_BYTES = b"TermSurf generic attachment download fixture.\n"
+BLOB_DOWNLOAD_TEXT = "TermSurf generic blob download fixture.\n"
+BLOB_DOWNLOAD_BYTES = BLOB_DOWNLOAD_TEXT.encode("utf-8")
+EXPECTED_DOWNLOADS = {
+    "download-attachment": (
+        "termsurf-download.txt",
+        ATTACHMENT_DOWNLOAD_BYTES,
+    ),
+    "download-blob": (
+        "termsurf-blob-download.txt",
+        BLOB_DOWNLOAD_BYTES,
+    ),
+}
 
 
 @dataclass(frozen=True)
@@ -263,6 +278,40 @@ try {
 }
 """,
     ),
+    Probe(
+        name="download-attachment",
+        feature="Generic attachment downloads",
+        expected_surface="Content download manager delegate and deterministic target path",
+        reference_evidence="Content Shell has ShellDownloadManagerDelegate; Chrome has full download UI.",
+        termsurf_evidence="TermSurf needs contained no-prompt generic download target selection.",
+        requires_user_activation=False,
+        script="""
+const link = document.createElement('a');
+link.href = '/download/attachment.txt';
+link.textContent = 'download attachment';
+document.body.appendChild(link);
+setTimeout(() => link.click(), 250);
+return {status: 'download_triggered', expectedFile: 'termsurf-download.txt'};
+""",
+    ),
+    Probe(
+        name="download-blob",
+        feature="Generic blob downloads",
+        expected_surface="Content download manager delegate and deterministic target path",
+        reference_evidence="Chrome downloads Blob URLs through the generic download stack.",
+        termsurf_evidence="TermSurf needs contained no-prompt generic download target selection.",
+        requires_user_activation=False,
+        script=f"""
+const blob = new Blob([{json.dumps(BLOB_DOWNLOAD_TEXT)}], {{type: 'text/plain'}});
+const link = document.createElement('a');
+link.href = URL.createObjectURL(blob);
+link.download = 'termsurf-blob-download.txt';
+link.textContent = 'download blob';
+document.body.appendChild(link);
+setTimeout(() => link.click(), 250);
+return {{status: 'download_triggered', expectedFile: 'termsurf-blob-download.txt'}};
+""",
+    ),
 ]
 
 
@@ -398,6 +447,17 @@ def make_handler(state: ProbeState) -> type[http.server.BaseHTTPRequestHandler]:
                     b"self.addEventListener('activate', event => event.waitUntil(self.clients.claim()));\n",
                     "application/javascript; charset=utf-8",
                 )
+                return
+            if parsed.path == "/download/attachment.txt":
+                self.send_response(200)
+                self.send_header("Content-Type", "text/plain; charset=utf-8")
+                self.send_header(
+                    "Content-Disposition",
+                    'attachment; filename="termsurf-download.txt"',
+                )
+                self.send_header("Content-Length", str(len(ATTACHMENT_DOWNLOAD_BYTES)))
+                self.end_headers()
+                self.wfile.write(ATTACHMENT_DOWNLOAD_BYTES)
                 return
             if parsed.path == "/summary":
                 self.send_bytes(
@@ -574,11 +634,52 @@ def classify_probe(report: dict[str, Any] | None, log_scan: dict[str, Any], proc
     return "reported"
 
 
+def verify_download(
+    download_dir: pathlib.Path,
+    filename: str,
+    expected_bytes: bytes,
+    deadline: float,
+) -> dict[str, Any]:
+    target = download_dir / filename
+    intermediate = download_dir / f"{filename}.crdownload"
+    last_state = "missing"
+    while time.time() < deadline:
+        crdownloads = sorted(path.name for path in download_dir.glob("*.crdownload"))
+        if target.exists() and not intermediate.exists() and not crdownloads:
+            actual = target.read_bytes()
+            actual_hash = hashlib.sha256(actual).hexdigest()
+            expected_hash = hashlib.sha256(expected_bytes).hexdigest()
+            return {
+                "status": "completed" if actual == expected_bytes else "wrong_bytes",
+                "path": str(target),
+                "filename": filename,
+                "size": len(actual),
+                "sha256": actual_hash,
+                "expected_size": len(expected_bytes),
+                "expected_sha256": expected_hash,
+            }
+        if target.exists():
+            last_state = "waiting_for_intermediate"
+        elif crdownloads:
+            last_state = "intermediate_only"
+        time.sleep(0.1)
+    crdownloads = sorted(path.name for path in download_dir.glob("*.crdownload"))
+    return {
+        "status": "timeout",
+        "path": str(target),
+        "filename": filename,
+        "exists": target.exists(),
+        "last_state": last_state,
+        "crdownloads": crdownloads,
+    }
+
+
 def run_probe(
     probe: Probe,
     base_url: str,
     run_dir: pathlib.Path,
     roamium: pathlib.Path,
+    download_dir: pathlib.Path,
     seconds: float,
     width: int,
     height: int,
@@ -605,10 +706,18 @@ def run_probe(
     stdout = stdout_path.open("wb")
     stderr = stderr_path.open("wb")
     url = f"{base_url}/probe/{probe.name}.html"
+    expected_download = EXPECTED_DOWNLOADS.get(probe.name)
+    if expected_download:
+        expected_path = download_dir / expected_download[0]
+        expected_path.unlink(missing_ok=True)
+        expected_path.with_name(expected_path.name + ".crdownload").unlink(
+            missing_ok=True
+        )
     command = [
         str(roamium),
         f"--ipc-socket={socket_path}",
         f"--user-data-dir={probe_dir / 'profile'}",
+        f"--termsurf-download-dir={download_dir}",
         "--no-sandbox",
         "--enable-logging=stderr",
         "--v=1",
@@ -695,6 +804,27 @@ def run_probe(
     report = (non_timeout_reports or reports)[-1] if reports else None
     proc_exit = proc.returncode
     classification = classify_probe(report, log_scan, proc_exit)
+    download_result = None
+    if expected_download:
+        download_result = verify_download(
+            download_dir,
+            expected_download[0],
+            expected_download[1],
+            time.time() + 0.1,
+        )
+        if (
+            classification
+            not in (
+                "missing_binder",
+                "bad_mojo",
+                "renderer_or_browser_crash",
+                "process_exit",
+            )
+            and download_result["status"] == "completed"
+        ):
+            classification = "download_completed"
+        elif classification == "exercised":
+            classification = "download_failed"
     result = {
         "probe": probe.name,
         "feature": probe.feature,
@@ -711,6 +841,7 @@ def run_probe(
         "missing_interfaces": log_scan["missing_interfaces"],
         "empty_interfaces": log_scan["empty_interfaces"],
         "classification": classification,
+        "download": download_result,
         "log_dir": str(probe_dir),
     }
     write_json(probe_dir / "probe-result.json", result)
@@ -790,6 +921,10 @@ def write_coverage_map(path: pathlib.Path, results: list[dict[str, Any]]) -> Non
             next_action = "Browser service unavailable; inspect logs and reference binders."
         elif classification == "exercised":
             next_action = "No action from this probe; expand coverage if needed."
+        elif classification == "download_completed":
+            next_action = "Generic download completed with verified file bytes."
+        elif classification == "download_failed":
+            next_action = "Inspect download target selection and file evidence."
         elif classification == "unsupported":
             next_action = "No runtime surface exposed in this build."
         else:
@@ -828,6 +963,8 @@ def write_reference_coverage_map(path: pathlib.Path, results: list[dict[str, Any
             next_action = "Add contained user-activation probe before claiming coverage."
         elif classification == "blocked_needs_virtual_authenticator":
             next_action = "Add contained DevTools virtual-authenticator coverage before claiming coverage."
+        elif classification == "download_completed":
+            next_action = "No immediate action; verified generic download completion."
         elif classification in ("exercised", "unsupported"):
             next_action = "No immediate binder fix from this probe."
         else:
@@ -884,6 +1021,8 @@ def main() -> int:
 
     run_dir = (args.log_dir or DEFAULT_LOG_ROOT / timestamp()).resolve()
     run_dir.mkdir(parents=True, exist_ok=True)
+    download_dir = run_dir / "downloads"
+    download_dir.mkdir(parents=True, exist_ok=True)
     state = ProbeState(run_dir)
     server = start_server(state)
     host, port = server.server_address
@@ -896,6 +1035,7 @@ def main() -> int:
         "roamium": str(roamium),
         "chromium_branch": chromium_branch(),
         "fixture_base_url": base_url,
+        "download_dir": str(download_dir),
         "started_at": start.isoformat(),
         "probe_count": len(selected),
         "logging": {
@@ -914,6 +1054,7 @@ def main() -> int:
                 base_url,
                 run_dir,
                 roamium,
+                download_dir,
                 args.seconds,
                 args.width,
                 args.height,

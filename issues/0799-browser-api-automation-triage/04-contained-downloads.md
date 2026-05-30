@@ -239,3 +239,172 @@ If this passes, the next Issue 799 experiment should move to the next
 automatable queue item from Experiment 1: likely page zoom or console capture if
 we want a narrow Chromium-only feature, or JavaScript dialogs / HTTP Basic Auth
 if we are ready to add a protocol-mediated prompt/reply design.
+
+## Result
+
+**Result:** Pass
+
+Implemented contained generic downloads on Chromium branch
+`148.0.7778.97-issue-799-exp4`.
+
+The Chromium implementation:
+
+- adds `ts_download_support.h` / `ts_download_support.cc` under
+  `content/libtermsurf_chromium/`;
+- configures the regular and off-the-record `ShellBrowserContext` download
+  delegates during `TsBrowserMainParts::InitializeBrowserContexts()`;
+- uses Content Shell's existing
+  `ShellDownloadManagerDelegate::SetDownloadBehaviorForTesting(...)` hook to
+  bypass the native save-dialog path and set a deterministic target directory;
+- accepts `--termsurf-download-dir=/path` and otherwise falls back to
+  `{browser_context->GetPath()}/Downloads`;
+- logs the active directory with `[termsurf-download] configured path=...`;
+- does not import Chrome download UI, download bubble, Safe Browsing UI,
+  download history, or Chrome's broader download product stack.
+
+The harness now includes two generic download probes:
+
+- `download-attachment` loads a local attachment served as
+  `termsurf-download.txt`;
+- `download-blob` creates a Blob URL and downloads `termsurf-blob-download.txt`.
+
+The harness passes `{run_dir}/downloads` to Roamium with
+`--termsurf-download-dir`, waits for the expected final file, checks that no
+`.crdownload` remains, and classifies the probe as `download_completed` only
+after exact byte/hash verification.
+
+Verification:
+
+```text
+autoninja -C out/Default libtermsurf_chromium
+python3 -m py_compile scripts/test-issue-799-browser-api-audit.py
+```
+
+Result: both commands succeeded.
+
+Attachment probe:
+
+```text
+scripts/test-issue-799-browser-api-audit.py --probe download-attachment --seconds 8
+```
+
+Run directory:
+
+```text
+logs/issue-799-browser-api-audit/20260530-232556
+```
+
+Observed result:
+
+```json
+{
+  "classification": "download_completed",
+  "download": {
+    "filename": "termsurf-download.txt",
+    "size": 46,
+    "sha256": "fb1b8df47ac6d41796d646ce2c64d33a0d6f15d58496d30eed1b9f8f57d80dae",
+    "expected_size": 46,
+    "expected_sha256": "fb1b8df47ac6d41796d646ce2c64d33a0d6f15d58496d30eed1b9f8f57d80dae",
+    "status": "completed"
+  }
+}
+```
+
+Blob probe:
+
+```text
+scripts/test-issue-799-browser-api-audit.py --probe download-blob --seconds 8
+```
+
+Run directory:
+
+```text
+logs/issue-799-browser-api-audit/20260530-232604
+```
+
+Observed result:
+
+```json
+{
+  "classification": "download_completed",
+  "download": {
+    "filename": "termsurf-blob-download.txt",
+    "size": 40,
+    "sha256": "abb93400d1352a45fb98a49283d26921ef75fcaa01c5ffd97f55a6970948796b",
+    "expected_size": 40,
+    "expected_sha256": "abb93400d1352a45fb98a49283d26921ef75fcaa01c5ffd97f55a6970948796b",
+    "status": "completed"
+  }
+}
+```
+
+Full suite:
+
+```text
+scripts/test-issue-799-browser-api-audit.py --seconds 8
+```
+
+Run directory:
+
+```text
+logs/issue-799-browser-api-audit/20260530-232615
+```
+
+Observed classifications:
+
+```json
+{
+  "badge": "exercised",
+  "permissions-query": "exercised",
+  "notification-permission": "exercised",
+  "geolocation-deny": "exercised",
+  "credential-get-empty": "exercised",
+  "webauthn-create": "blocked_needs_virtual_authenticator",
+  "file-system-access": "blocked_user_activation",
+  "payment-request": "exercised",
+  "service-worker-basic": "exercised",
+  "download-attachment": "download_completed",
+  "download-blob": "download_completed"
+}
+```
+
+The full run wrote both expected files under:
+
+```text
+logs/issue-799-browser-api-audit/20260530-232615/downloads/
+```
+
+Hashes:
+
+```text
+fb1b8df47ac6d41796d646ce2c64d33a0d6f15d58496d30eed1b9f8f57d80dae  termsurf-download.txt
+abb93400d1352a45fb98a49283d26921ef75fcaa01c5ffd97f55a6970948796b  termsurf-blob-download.txt
+```
+
+Chromium logged the configured directory for every probe process. Example:
+
+```text
+[termsurf-download] configured path=/Users/ryan/dev/termsurf/logs/issue-799-browser-api-audit/20260530-232615/downloads off_the_record=0
+```
+
+Chromium archival:
+
+- Chromium branch committed as `578efab1d4b5e`: `Enable contained downloads`.
+- Patch archive regenerated under `chromium/patches/issue-799/`.
+- `chromium/README.md` now records `148.0.7778.97-issue-799-exp4` as the current
+  branch and includes it in the branch table.
+
+## Conclusion
+
+Generic page-triggered downloads now have a deterministic target path in Roamium
+and complete without native save UI or manual interaction. The harness proves
+both attachment and Blob downloads with exact file-byte evidence.
+
+This is intentionally not a full download manager UI. The remaining product work
+for user-visible download status, history, preferences, or open/reveal actions
+should be handled separately if needed.
+
+The next Issue 799 experiment should move to another automatable queue item. The
+best candidates are page zoom or console capture if we want a narrow
+browser-side feature with strong automation, or JavaScript dialogs / HTTP Basic
+Auth if we are ready for a protocol-mediated prompt/reply design.

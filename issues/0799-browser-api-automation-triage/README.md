@@ -169,4 +169,4 @@ and reviewed.
 - [Experiment 3: Add PaymentRequest default-deny binder](03-payment-request-default-deny.md)
   — **Pass**
 - [Experiment 4: Enable contained generic downloads](04-contained-downloads.md)
-  — **Designed**
+  — **Pass**
