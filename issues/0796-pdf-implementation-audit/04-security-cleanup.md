@@ -226,6 +226,11 @@ inside `chromium/src`.
 
 7. Run the new security negative probe.
 
+   ```bash
+   python3 scripts/test-issue-796-pdf-security.py \
+     --log-dir logs/issue-796-exp4-security
+   ```
+
    Expected result:
    - fake extension URL receives no TermSurf PDF handling/process/grant logs;
    - real PDF URL still receives the positive PDF extension logs needed for
@@ -285,3 +290,240 @@ This experiment fails if:
 - code is committed on an existing Chromium issue branch instead of a fresh
   Experiment 4 branch;
 - Codex design or completion review is skipped.
+
+## Result
+
+**Result:** Pass
+
+Implemented the Experiment 3 security cleanup on Chromium branch
+`148.0.7778.97-issue-796-exp4`.
+
+Chromium commit:
+
+- `f671947b255e3 Harden PDF extension boundary`
+
+Main repo artifacts added or updated:
+
+- `chromium/patches/issue-796-exp4/`
+- `chromium/README.md`
+- `scripts/test-issue-796-pdf-security.py`
+- this experiment result
+
+### Changes Made
+
+1. Added a shared PDF extension identity helper:
+   - `content/libtermsurf_chromium/extensions/ts_pdf_extension_identity.h`
+   - `content/libtermsurf_chromium/extensions/ts_pdf_extension_identity.cc`
+
+   The helper centralizes the fixed PDF component extension id check, PDF
+   extension URL check, component-extension object check, and extension-function
+   sender check.
+
+2. Restricted broad extension-scheme handling in `ts_pdf_browser_support.cc`.
+
+   These helpers now only handle the fixed PDF component extension URL:
+   - `MaybeUseTsPdfProcessPerSite()`
+   - `MaybeHandleTsPdfExtensionURL()`
+   - `MaybeActivateTsPdfSiteInstance()`
+
+   Non-PDF `chrome-extension://...` URLs now fall through instead of receiving
+   TermSurf PDF process policy, process-map insertion, PDF activation, or
+   `chrome://resources` grants.
+
+3. Added an explicit process-scoped `chrome://resources` grant comment.
+
+   The grant now documents that it is safe only because the process policy is
+   restricted to the PDF component extension's site URL.
+
+4. Added explicit sender checks to PDF extension APIs.
+
+   The following APIs now reject non-PDF senders before doing their normal work:
+   - `resourcesPrivate.getStrings(PDF)`
+   - `pdfViewerPrivate.setPdfDocumentTitle`
+
+   `pdfViewerPrivate.setPdfDocumentTitle` keeps the existing `application/pdf`
+   MIME guard after the new sender guard.
+
+5. Replaced PDF wrapper data-pipe `CHECK_EQ` crashes with graceful load failure.
+
+   `ts_plugin_response_interceptor_url_loader_throttle.cc` now logs stable
+   `[termsurf-pdf]` failure lines and cancels the load with `net::ERR_FAILED` if
+   wrapper data-pipe creation or writing fails.
+
+6. Added `scripts/test-issue-796-pdf-security.py`.
+
+   The script runs a positive PDF probe, opens a fake extension URL, verifies no
+   fake extension receives PDF process/grant handling after the fake URL reaches
+   `TabReady` and receives a resize, and statically verifies both PDF extension
+   API files call the shared sender guard.
+
+### Verification
+
+Builds:
+
+```bash
+cd chromium/src
+export PATH="$HOME/dev/termsurf/chromium/depot_tools:$PATH"
+autoninja -C out/Default libtermsurf_chromium
+cd ../..
+```
+
+Result: pass.
+
+```bash
+PATH="$PWD/logs/rustup-shims:$PATH" ./scripts/build.sh roamium
+```
+
+Result: pass. The normal shell's `~/.cargo/bin/cargo` symlink is currently
+broken, so this run used a local ignored `logs/rustup-shims/` wrapper that
+invokes `/opt/homebrew/bin/rustup run stable cargo` and `rustc`. No tracked
+files were changed for that shim.
+
+Security negative probe:
+
+```bash
+python3 scripts/test-issue-796-pdf-security.py \
+  --log-dir logs/issue-796-exp4-security-rerun
+```
+
+Result: pass.
+
+Evidence from
+`logs/issue-796-exp4-security-rerun/issue-796-pdf-security-summary.json`:
+
+- real PDF path had `process-per-site`, `process-map-insert`,
+  `pdf-activate-request`, and `chrome-resources-grant`;
+- fake extension URL
+  `chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/index.html` had no
+  `handled-url`, `process-per-site`, `process-map-insert`,
+  `pdf-activate-request`, `chrome-resources-grant`, or
+  `chrome-resources-factory`;
+- the fake extension tab reached `TabReady` and received a resize before the log
+  assertions were evaluated, so the negative check did not pass vacuously;
+- both API files contain `IsTsPdfExtensionFunctionSender(this)`.
+
+The API sender rejection check is a static/source check, not a dynamic fake
+extension invocation. Constructing a second enabled extension sender is outside
+this cleanup experiment. The source guard is still the security-relevant fix:
+both PDF API functions reject senders that are not the fixed PDF component
+extension before returning strings or setting titles.
+
+PDF save/title/local harness, default print:
+
+```bash
+python3 scripts/test-issue-794-pdf-toolbar.py \
+  --log-dir logs/issue-796-exp4-save-title-local-rerun \
+  --serve-bitcoin-pdf \
+  --probe save-print-title-local \
+  --settle-seconds 2 \
+  --capture-timeout-seconds 20
+```
+
+Result: exit code 0. Relevant security-regression checks passed:
+
+- save/download produced `download-file-created`;
+- title propagation passed;
+- embedded title passed;
+- production print remained `print-production-available-not-clicked`.
+
+The harness summary status was `partial` because its DevTools wheel local-parity
+subcheck did not observe scroll movement in the local parity pages. The
+dedicated protocol scroll harness below passed, so this was not treated as a
+security-cleanup regression.
+
+PDF save/title/local harness, print intercept:
+
+```bash
+python3 scripts/test-issue-794-pdf-toolbar.py \
+  --log-dir logs/issue-796-exp4-save-title-local-print-intercept \
+  --serve-bitcoin-pdf \
+  --probe save-print-title-local \
+  --enable-pdf-print-intercept \
+  --settle-seconds 2 \
+  --capture-timeout-seconds 20
+```
+
+Result: exit code 0. Relevant checks passed:
+
+- title propagation passed;
+- embedded title passed;
+- print status was `print-contained-callback`.
+
+The same local-parity DevTools wheel subcheck reported `partial`; protocol
+scroll passed separately.
+
+Protocol harnesses:
+
+```bash
+python3 scripts/test-issue-794-protocol-scroll.py \
+  --log-dir logs/issue-796-exp4-protocol-scroll \
+  --serve-bitcoin-pdf
+python3 scripts/test-issue-794-protocol-resize.py \
+  --log-dir logs/issue-796-exp4-protocol-resize \
+  --serve-bitcoin-pdf
+python3 scripts/test-issue-794-protocol-mouse.py \
+  --log-dir logs/issue-796-exp4-protocol-mouse-click \
+  --serve-bitcoin-pdf \
+  --action click
+python3 scripts/test-issue-794-protocol-mouse.py \
+  --log-dir logs/issue-796-exp4-protocol-mouse-select-copy \
+  --serve-bitcoin-pdf \
+  --action key-select-copy
+```
+
+Result: pass. All four summaries reported
+`first_failing_hop = "no-failure-observed"`.
+
+Non-PDF HTML smoke:
+
+```bash
+python3 scripts/test-issue-794-protocol-resize.py \
+  --log-dir logs/issue-796-exp4-non-pdf-html \
+  --url-contains 'text/html' \
+  'data:text/html,<html><body><h1 id="click-target">HTML smoke</h1><p id="selection-target">normal page</p></body></html>'
+```
+
+Result: pass. Summary reported `first_failing_hop = "no-failure-observed"` and
+HTML content resized. The log still contains normal PDF subsystem startup lines,
+but no fake extension or non-PDF page received the PDF process/grant handling
+blocked by this experiment.
+
+Static checks:
+
+```bash
+rg -n "MaybeUseTsPdfProcessPerSite|MaybeHandleTsPdfExtensionURL|MaybeActivateTsPdfSiteInstance|chrome-resources-grant|CHECK_EQ" \
+  chromium/src/content/libtermsurf_chromium
+```
+
+Result: pass.
+
+- the three process/URL helpers call `IsTsPdfComponentExtensionUrl()` and
+  `IsTsPdfComponentExtension()`;
+- the `chrome://resources` grant has the process-scoped invariant comment;
+- no `CHECK_EQ` remains in
+  `ts_plugin_response_interceptor_url_loader_throttle.cc`;
+- the remaining PDF-adjacent `CHECK_EQ` is the component extension creation
+  invariant in `extensions/ts_pdf_component_extension.cc`.
+
+Formatting:
+
+- `clang-format` ran on changed C++ files;
+- `gn format` ran on `content/libtermsurf_chromium/BUILD.gn`;
+- Prettier ran on this experiment file and `chromium/README.md`;
+- no Rust files were edited, so `cargo fmt` was not required.
+
+Codex completion review: pass after one fix. The first completion review found
+that the negative probe could pass vacuously after only sending `CreateTab`. The
+probe now requires `TabReady` and a resize before asserting that the fake
+extension received no PDF handling. Codex re-reviewed the fix and reported no
+remaining blocking findings.
+
+## Conclusion
+
+Experiment 4 made the PDF security boundary explicit in code. TermSurf no longer
+treats arbitrary extension-scheme URLs as PDF extension URLs, PDF private APIs
+now check the sender identity directly, and generated-wrapper data-pipe failures
+no longer crash the browser process.
+
+The security track cleanup is complete. The next experiment should begin Track 3
+with the completeness audit.
