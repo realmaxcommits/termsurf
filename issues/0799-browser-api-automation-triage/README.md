@@ -164,3 +164,7 @@ and reviewed.
 
 - [Experiment 1: Inventory and classify missing browser APIs](01-inventory-and-classify.md)
   — **Pass**
+- [Experiment 2: Build the browser API no-crash audit harness](02-browser-api-no-crash-harness.md)
+  — **Pass**
+- [Experiment 3: Add PaymentRequest default-deny binder](03-payment-request-default-deny.md)
+  — **Pass**
