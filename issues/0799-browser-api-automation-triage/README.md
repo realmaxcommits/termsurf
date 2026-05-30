@@ -77,7 +77,18 @@ Candidate surfaces include, but are not limited to:
 - hide/show webview behavior;
 - multi-webview stacking;
 - native and web drag-and-drop, including file uploads;
-- systematic missing Mojo binder coverage.
+- systematic missing Mojo binder coverage;
+- Notifications and Push API browser services;
+- Geolocation;
+- WebAuthn and Credential Management;
+- Payment Request;
+- Web Share;
+- File System Access and related storage/quota prompts;
+- Web Bluetooth, USB, HID, Serial, and MIDI;
+- screen capture and media-capture permissions;
+- Permissions API plumbing;
+- service-worker-adjacent browser services that require browser-process
+  delegates or binders.
 
 Already solved items should be recorded as solved and excluded from the active
 implementation scope. Examples likely include `target="_blank"` handling,
@@ -148,3 +159,8 @@ issue history, then produce a table with:
 The result of that experiment determines the implementation order. No
 implementation experiments should be designed until the triage table is complete
 and reviewed.
+
+## Experiments
+
+- [Experiment 1: Inventory and classify missing browser APIs](01-inventory-and-classify.md)
+  — **Designed**
