@@ -153,7 +153,7 @@ it to the `## Experiments` index.
 ## Experiments
 
 - [Experiment 1: Code organization audit](01-code-organization-audit.md) —
-  **Designed**
+  **Pass**
 
 ## Experiment Rules
 
