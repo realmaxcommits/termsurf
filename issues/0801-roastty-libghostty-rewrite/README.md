@@ -154,6 +154,8 @@ No experiment may proceed to the next stage until the required review passes.
   **Pass**
 - [Experiment 13: Port Page Clone for Text and Graphemes](13-port-page-clone.md)
   — **Pass**
+- [Experiment 14: Port Ref-Counted Set Storage](14-port-ref-counted-set.md) —
+  **Designed**
 
 ## Non-Goals
 
