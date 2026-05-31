@@ -150,3 +150,69 @@ The experiment fails if:
 - linked PageList mutation, pins, scrolling, resize, screen/parser behavior, or
   public ABI is introduced prematurely;
 - tests or formatting fail.
+
+## Result
+
+**Result:** Pass
+
+Implemented `roastty/src/terminal/page_list.rs` and wired it into the internal
+terminal module tree.
+
+The new module adds:
+
+- `Viewport` with upstream PageList variants: active, top, and pin;
+- `initial_capacity(cols)`;
+- `min_max_size(cols, rows)`;
+- internal standard-page-size calculation based on
+  `page_layout(STD_CAPACITY).total_size()`.
+
+The sizing behavior matches upstream:
+
+- normal widths first adjust `STD_CAPACITY` while preserving the standard page
+  byte size;
+- widths beyond `STD_CAPACITY.max_cols()` take the non-standard capacity path by
+  changing only `cols`;
+- `min_max_size` uses the initial capacity to count the pages needed for the
+  active area, then adds one extra standard page, matching upstream
+  `PagePool.item_size * pages`.
+
+Added narrow internal Page access:
+
+- `Capacity::cols()`;
+- `Capacity::rows()`;
+- `Capacity::with_cols()`;
+- `CapacityAdjustment::cols()`;
+- `PageLayout::total_size()`.
+
+No Page capacity fields were made public outside the terminal module, and no
+PageList node storage, pools, pins, scrolling, resize, screen/parser behavior,
+or public ABI were added.
+
+Added tests for:
+
+- `Viewport` variant comparisons;
+- normal-width initial capacity preserving standard page size;
+- maximum standard-width capacity preserving standard page size;
+- too-wide initial capacity using a non-standard page;
+- maximum-column initial capacity laying out successfully;
+- normal `min_max_size` returning two standard pages;
+- multi-page active-area `min_max_size` using ceil-div plus one extra page.
+
+Verification passed:
+
+```bash
+cargo fmt
+cargo test -p roastty terminal::page_list
+cargo test -p roastty
+```
+
+The targeted PageList sizing suite reported 7 passing tests. The full `roastty`
+suite reported 288 unit tests, the ABI harness, and doc tests passing.
+
+## Conclusion
+
+Roastty now has the first upstream PageList foundation: sizing arithmetic that
+decides standard pooled capacity versus wider non-standard capacity and computes
+the minimum active-area budget with the extra page required by later PageList
+algorithms. This prepares the next slice to add PageList allocation and initial
+node construction without rediscovering the sizing model.

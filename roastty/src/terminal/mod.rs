@@ -14,6 +14,9 @@ mod offset_hash_map;
 mod page;
 
 #[allow(dead_code)]
+mod page_list;
+
+#[allow(dead_code)]
 mod point;
 
 #[allow(dead_code)]

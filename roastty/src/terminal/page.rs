@@ -114,6 +114,19 @@ impl Capacity {
         Some(max_cols.min(CellCountInt::MAX as usize) as CellCountInt)
     }
 
+    pub(super) const fn cols(self) -> CellCountInt {
+        self.cols
+    }
+
+    pub(super) const fn rows(self) -> CellCountInt {
+        self.rows
+    }
+
+    pub(super) const fn with_cols(mut self, cols: CellCountInt) -> Self {
+        self.cols = cols;
+        self
+    }
+
     pub(super) fn adjust(
         self,
         adjustment: CapacityAdjustment,
@@ -182,6 +195,12 @@ pub(super) struct CapacityAdjustment {
     cols: Option<CellCountInt>,
 }
 
+impl CapacityAdjustment {
+    pub(super) const fn cols(cols: CellCountInt) -> Self {
+        Self { cols: Some(cols) }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum CapacityAdjustError {
     OutOfMemory,
@@ -207,6 +226,12 @@ pub(super) struct PageLayout {
     hyperlink_set_start: usize,
     hyperlink_set_layout: HyperlinkSetLayout,
     capacity: Capacity,
+}
+
+impl PageLayout {
+    pub(super) const fn total_size(self) -> usize {
+        self.total_size
+    }
 }
 
 pub(super) fn page_layout(capacity: Capacity) -> PageLayout {
