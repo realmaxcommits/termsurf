@@ -121,3 +121,50 @@ The experiment fails if:
 - public ABI, PageList, screen, parser, or selection behavior is introduced in
   this slice;
 - tests or formatting fail.
+
+## Result
+
+**Result:** Pass
+
+Implemented `roastty/src/terminal/point.rs` and wired it into the internal
+terminal module tree.
+
+The new module adds:
+
+- `Tag` with the upstream coordinate-space tags: active, viewport, screen, and
+  history;
+- `Coordinate` with `x: CellCountInt` and `y: u32`;
+- `Point` variants carrying `Coordinate`;
+- `Point::coord()` matching upstream `Point.coord()`;
+- `Point::tag()` for tests and upcoming PageList code;
+- small constructors for each variant.
+
+No public C ABI point representation was added. Upstream has a C tagged-union
+shape, but Roastty does not yet expose PageList points across the ABI, so adding
+that now would be premature. The ABI-facing point shape remains deferred until a
+public exported API needs it.
+
+Added tests for:
+
+- coordinate equality;
+- `Coordinate::y` accepting values larger than `CellCountInt::MAX`;
+- each point variant preserving its coordinate;
+- each point variant reporting the expected tag.
+
+Verification passed:
+
+```bash
+cargo fmt
+cargo test -p roastty terminal::point
+cargo test -p roastty
+```
+
+The targeted point suite reported 6 passing tests. The full `roastty` suite
+reported 281 unit tests, the ABI harness, and doc tests passing.
+
+## Conclusion
+
+Roastty now has the small but necessary coordinate vocabulary used by upstream
+`PageList`. This keeps the next PageList work grounded in Ghostty's four
+coordinate spaces instead of flattening active, viewport, screen, and history
+coordinates into a single ambiguous point type.
