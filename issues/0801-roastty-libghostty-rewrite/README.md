@@ -137,6 +137,8 @@ No experiment may proceed to the next stage until the required review passes.
 - [Experiment 3: Port Terminal Tabstops](03-port-tabstops.md) — **Pass**
 - [Experiment 4: Port Terminal Size Offsets](04-port-terminal-size.md) —
   **Pass**
+- [Experiment 5: Decompose Page Storage Port](05-decompose-page-storage.md) —
+  **Designed**
 
 ## Non-Goals
 
