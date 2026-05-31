@@ -238,3 +238,52 @@ The experiment fails if:
 This experiment design must be reviewed by Codex before implementation. Any real
 design issues must be fixed before committing the plan or implementing the
 slice.
+
+## Result
+
+**Result:** Pass
+
+Implemented the Page hyperlink storage substrate:
+
+- added `roastty/src/terminal/hyperlink.rs` with Roastty hyperlink input types,
+  Page-backed entries, explicit/implicit Page entry IDs, and a ref-counted set
+  alias;
+- added Page-owned `string_alloc`, `hyperlink_set`, and `hyperlink_map` fields
+  initialized from the existing Page layout regions;
+- added Page hyperlink APIs for insertion, lookup, setting, clearing, row-flag
+  recomputation, linked-cell count/capacity, ref-count inspection, ref use, and
+  test snapshots;
+- added Page-backed hashing/equality over actual URI and explicit-ID bytes;
+- added deletion cleanup that frees Page string slices through the
+  `RefCountedSet` deletion context;
+- added insertion rollback for URI-success/explicit-ID-failure and
+  string-success/set-insertion-failure cases;
+- included the new hyperlink fields in whole-page byte-copy clone metadata;
+- preserved the existing row-copy hyperlink guard. Hyperlink row-copy migration
+  remains deferred to the next experiment.
+
+Tests added cover initialization, zero-capacity failure, implicit and explicit
+insert/lookup, set/clear flags and refs, replacement, same-ID replacement,
+deduplication, linked-cell count semantics, failure rollback, and whole-page
+clone independence.
+
+Verification run:
+
+```bash
+cargo fmt
+cargo test -p roastty terminal::page
+cargo test -p roastty
+```
+
+Results:
+
+- `cargo test -p roastty terminal::page`: 79 passed.
+- `cargo test -p roastty`: 188 unit tests passed, ABI harness passed, doc tests
+  passed.
+
+## Conclusion
+
+Roastty now has the hyperlink storage layer required before hyperlink-aware Page
+row copy can be ported. The next experiment should remove the final `cloneFrom`
+hyperlink guard by copying hyperlink map/set/string data from source rows into
+destination rows while preserving ref counts and rollback behavior.

@@ -4,7 +4,9 @@ use std::ptr::NonNull;
 
 use super::bitmap_allocator::{BitmapAllocator, Layout as BitmapAllocatorLayout};
 use super::color::Rgb;
+use super::hyperlink;
 use super::offset_hash_map;
+use super::ref_counted_set;
 use super::size::{
     get_offset, CellCountInt, GraphemeBytesInt, HyperlinkCountInt, Offset, OffsetSlice,
     StringBytesInt,
@@ -290,12 +292,27 @@ pub(super) struct Page {
     styles: style::Set,
     grapheme_alloc: GraphemeAlloc,
     grapheme_map: Option<offset_hash_map::OffsetHashMap<Offset<Cell>, OffsetSlice<u32>>>,
+    string_alloc: StringAlloc,
+    hyperlink_set: hyperlink::Set,
+    hyperlink_map: Option<offset_hash_map::OffsetHashMap<Offset<Cell>, HyperlinkId>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum GraphemeError {
     GraphemeMapOutOfMemory,
     GraphemeAllocOutOfMemory,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum InsertHyperlinkError {
+    StringsOutOfMemory,
+    SetOutOfMemory,
+    SetNeedsRehash,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum HyperlinkError {
+    HyperlinkMapOutOfMemory,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -362,6 +379,37 @@ impl Page {
                 )
             })
         };
+        let string_alloc = unsafe {
+            // Safety: PageMemory is live for the lifetime of Page, and the
+            // layout range is inside the page backing allocation.
+            StringAlloc::init(
+                super::size::OffsetBuf::init_offset(memory.as_mut_ptr(), layout.string_alloc_start),
+                layout.string_alloc_layout,
+            )
+        };
+        let hyperlink_set = hyperlink::Set::init(
+            unsafe {
+                // Safety: hyperlink_set_start is inside this page's live
+                // backing memory.
+                memory.as_mut_ptr().add(layout.hyperlink_set_start)
+            },
+            layout.hyperlink_set_layout.into(),
+        );
+        let hyperlink_map = if layout.hyperlink_map_layout.capacity == 0 {
+            None
+        } else {
+            Some(unsafe {
+                // Safety: PageMemory is live for the lifetime of Page, and the
+                // layout range is inside the page backing allocation.
+                offset_hash_map::OffsetHashMap::init(
+                    super::size::OffsetBuf::init_offset(
+                        memory.as_mut_ptr(),
+                        layout.hyperlink_map_start,
+                    ),
+                    layout.hyperlink_map_layout.into(),
+                )
+            })
+        };
 
         let cells_len = capacity.cols as usize * capacity.rows as usize;
         let cells_ptr = cells.ptr(memory.as_ptr());
@@ -401,6 +449,9 @@ impl Page {
             styles,
             grapheme_alloc,
             grapheme_map,
+            string_alloc,
+            hyperlink_set,
+            hyperlink_map,
         })
     }
 
@@ -437,6 +488,9 @@ impl Page {
             styles: self.styles,
             grapheme_alloc: self.grapheme_alloc,
             grapheme_map: self.grapheme_map,
+            string_alloc: self.string_alloc,
+            hyperlink_set: self.hyperlink_set,
+            hyperlink_map: self.hyperlink_map,
         })
     }
 
@@ -790,6 +844,126 @@ impl Page {
         self.get_row_mut(row_index).set_styled(has_styling);
     }
 
+    pub(super) fn insert_hyperlink(
+        &mut self,
+        link: hyperlink::Hyperlink<'_>,
+    ) -> Result<hyperlink::Id, InsertHyperlinkError> {
+        let uri = self.alloc_string_slice(link.uri)?;
+        let page_id = match link.id {
+            hyperlink::HyperlinkId::Implicit(id) => hyperlink::PageEntryId::implicit(id),
+            hyperlink::HyperlinkId::Explicit(id) => {
+                let id = match self.alloc_string_slice(id) {
+                    Ok(id) => id,
+                    Err(err) => {
+                        self.free_string_slice(uri);
+                        return Err(err);
+                    }
+                };
+                hyperlink::PageEntryId::explicit(id)
+            }
+        };
+        let entry = hyperlink::PageEntry::new(page_id, uri);
+
+        let base = unsafe {
+            // Safety: hyperlink_set_start is inside this page's live backing
+            // memory.
+            self.memory
+                .as_mut_ptr()
+                .add(self.layout.hyperlink_set_start)
+        };
+        let mut context =
+            HyperlinkSetContext::new(self.memory.as_mut_ptr(), &mut self.string_alloc);
+        match self.hyperlink_set.add(base, entry, &mut context) {
+            Ok(id) => Ok(id),
+            Err(ref_counted_set::AddError::OutOfMemory) => {
+                self.free_hyperlink_entry(entry);
+                Err(InsertHyperlinkError::SetOutOfMemory)
+            }
+            Err(ref_counted_set::AddError::NeedsRehash) => {
+                self.free_hyperlink_entry(entry);
+                Err(InsertHyperlinkError::SetNeedsRehash)
+            }
+        }
+    }
+
+    pub(super) fn lookup_hyperlink_at(&self, x: usize, y: usize) -> Option<hyperlink::Id> {
+        self.lookup_hyperlink_at_offset(self.cell_offset_at(x, y))
+    }
+
+    fn lookup_hyperlink_at_offset(&self, cell_offset: Offset<Cell>) -> Option<hyperlink::Id> {
+        self.hyperlink_map_ref()?.get(cell_offset)
+    }
+
+    pub(super) fn set_hyperlink(
+        &mut self,
+        x: usize,
+        y: usize,
+        id: hyperlink::Id,
+    ) -> Result<(), HyperlinkError> {
+        let cell_offset = self.cell_offset_at(x, y);
+        self.set_hyperlink_at_offset(y, cell_offset, id)
+    }
+
+    fn set_hyperlink_at_offset(
+        &mut self,
+        row_index: usize,
+        cell_offset: Offset<Cell>,
+        id: hyperlink::Id,
+    ) -> Result<(), HyperlinkError> {
+        let Some(_) = self.hyperlink_map else {
+            return Err(HyperlinkError::HyperlinkMapOutOfMemory);
+        };
+
+        let existing = {
+            let mut map = self.hyperlink_map_mut().expect("hyperlink map must exist");
+            let result = map
+                .get_or_put(cell_offset)
+                .map_err(|_| HyperlinkError::HyperlinkMapOutOfMemory)?;
+            let existing = result.found_existing.then_some(*result.value);
+            *result.value = id;
+            existing
+        };
+
+        if let Some(old_id) = existing {
+            self.release_hyperlink(old_id);
+            if old_id == id {
+                self.cell_mut_at_offset(cell_offset).set_hyperlink(true);
+                assert!(self.get_row(row_index).hyperlink());
+                return Ok(());
+            }
+        }
+
+        self.cell_mut_at_offset(cell_offset).set_hyperlink(true);
+        self.get_row_mut(row_index).set_hyperlink(true);
+        Ok(())
+    }
+
+    pub(super) fn clear_hyperlink(&mut self, x: usize, y: usize) {
+        let cell_offset = self.cell_offset_at(x, y);
+        self.clear_hyperlink_at_offset(cell_offset);
+    }
+
+    fn clear_hyperlink_at_offset(&mut self, cell_offset: Offset<Cell>) {
+        let Some(mut map) = self.hyperlink_map_mut() else {
+            return;
+        };
+        let Some((_, id)) = map.fetch_remove(cell_offset) else {
+            return;
+        };
+        drop(map);
+
+        self.release_hyperlink(id);
+        self.cell_mut_at_offset(cell_offset).set_hyperlink(false);
+    }
+
+    pub(super) fn update_row_hyperlink_flag(&mut self, row_index: usize) {
+        let has_hyperlink = self
+            .get_cells(self.get_row(row_index))
+            .iter()
+            .any(|cell| cell.hyperlink());
+        self.get_row_mut(row_index).set_hyperlink(has_hyperlink);
+    }
+
     pub(super) fn grapheme_count(&self) -> usize {
         self.grapheme_map_ref()
             .map(|map| map.count() as usize)
@@ -800,6 +974,46 @@ impl Page {
         self.grapheme_map_ref()
             .map(|map| map.capacity() as usize)
             .unwrap_or(0)
+    }
+
+    pub(super) fn hyperlink_count(&self) -> usize {
+        self.hyperlink_map_ref()
+            .map(|map| map.count() as usize)
+            .unwrap_or(0)
+    }
+
+    pub(super) fn hyperlink_capacity(&self) -> usize {
+        self.hyperlink_map_ref()
+            .map(|map| map.capacity() as usize)
+            .unwrap_or(0)
+    }
+
+    pub(super) fn get_hyperlink(&self, id: hyperlink::Id) -> HyperlinkSnapshot {
+        let entry = *self.hyperlink_set.get(self.hyperlink_set_base(), id);
+        self.hyperlink_snapshot(entry)
+    }
+
+    pub(super) fn use_hyperlink(&self, id: hyperlink::Id) {
+        self.hyperlink_set.use_one(self.hyperlink_set_base(), id);
+    }
+
+    pub(super) fn release_hyperlink(&mut self, id: hyperlink::Id) {
+        let base = unsafe {
+            // Safety: hyperlink_set_start is inside this page's live backing
+            // memory.
+            self.memory
+                .as_mut_ptr()
+                .add(self.layout.hyperlink_set_start)
+        };
+        self.hyperlink_set.release(base, id);
+    }
+
+    pub(super) fn hyperlink_ref_count(&self, id: hyperlink::Id) -> hyperlink::Id {
+        self.hyperlink_set.ref_count(self.hyperlink_set_base(), id)
+    }
+
+    pub(super) fn hyperlink_set_count(&self) -> usize {
+        self.hyperlink_set.count()
     }
 
     pub(super) fn add_style(
@@ -855,6 +1069,15 @@ impl Page {
             // Safety: this page initialized grapheme_alloc with its backing
             // memory and the allocation is still live.
             self.grapheme_alloc.used_bytes(self.memory.as_ptr())
+        }
+    }
+
+    #[cfg(test)]
+    fn string_used_bytes(&self) -> usize {
+        unsafe {
+            // Safety: this page initialized string_alloc with its backing
+            // memory and the allocation is still live.
+            self.string_alloc.used_bytes(self.memory.as_ptr())
         }
     }
 
@@ -917,6 +1140,72 @@ impl Page {
         }
     }
 
+    fn alloc_string_slice(
+        &mut self,
+        bytes: &[u8],
+    ) -> Result<OffsetSlice<u8>, InsertHyperlinkError> {
+        if bytes.is_empty() {
+            return Ok(OffsetSlice::default());
+        }
+
+        let slice = unsafe {
+            // Safety: this page initialized string_alloc with its backing
+            // memory and the allocation is uniquely borrowed through &mut self.
+            self.string_alloc
+                .alloc::<u8, _>(self.memory.as_mut_ptr(), bytes.len())
+        }
+        .map_err(|_| InsertHyperlinkError::StringsOutOfMemory)?;
+        slice.copy_from_slice(bytes);
+        let offset = get_offset(self.memory.as_ptr(), slice.as_ptr());
+        Ok(OffsetSlice::new(offset, slice.len()))
+    }
+
+    fn free_string_slice(&mut self, slice: OffsetSlice<u8>) {
+        if slice.len() == 0 {
+            return;
+        }
+
+        let slice = unsafe {
+            // Safety: `slice` came from this page's string allocator and is no
+            // longer referenced by any live hyperlink entry at call sites.
+            slice.slice_mut(self.memory.as_mut_ptr())
+        };
+        unsafe {
+            // Safety: the slice was allocated by this allocator from this page
+            // backing memory and is being freed exactly once.
+            self.string_alloc.free(self.memory.as_mut_ptr(), slice);
+        }
+    }
+
+    fn free_hyperlink_entry(&mut self, entry: hyperlink::PageEntry) {
+        match entry.id().tag() {
+            hyperlink::PageEntryIdTag::Implicit => {}
+            hyperlink::PageEntryIdTag::Explicit => {
+                self.free_string_slice(entry.id().explicit_value());
+            }
+        }
+        self.free_string_slice(entry.uri());
+    }
+
+    fn hyperlink_bytes(&self, slice: OffsetSlice<u8>) -> &[u8] {
+        hyperlink_bytes_from(self.memory.as_ptr(), slice)
+    }
+
+    fn hyperlink_snapshot(&self, entry: hyperlink::PageEntry) -> HyperlinkSnapshot {
+        let id = match entry.id().tag() {
+            hyperlink::PageEntryIdTag::Implicit => {
+                HyperlinkSnapshotId::Implicit(entry.id().implicit_value())
+            }
+            hyperlink::PageEntryIdTag::Explicit => HyperlinkSnapshotId::Explicit(
+                self.hyperlink_bytes(entry.id().explicit_value()).to_vec(),
+            ),
+        };
+        HyperlinkSnapshot {
+            id,
+            uri: self.hyperlink_bytes(entry.uri()).to_vec(),
+        }
+    }
+
     fn grapheme_map_ref(
         &self,
     ) -> Option<offset_hash_map::MapRef<'_, Offset<Cell>, OffsetSlice<u32>>> {
@@ -932,11 +1221,30 @@ impl Page {
         Some(map.map(self.memory.as_mut_slice()))
     }
 
+    fn hyperlink_map_ref(&self) -> Option<offset_hash_map::MapRef<'_, Offset<Cell>, HyperlinkId>> {
+        self.hyperlink_map
+            .as_ref()
+            .map(|map| map.map_ref(self.memory.as_slice()))
+    }
+
+    fn hyperlink_map_mut(&mut self) -> Option<offset_hash_map::Map<'_, Offset<Cell>, HyperlinkId>> {
+        let map = self.hyperlink_map?;
+        Some(map.map(self.memory.as_mut_slice()))
+    }
+
     fn style_base(&self) -> *const u8 {
         unsafe {
             // Safety: styles_start is produced by Page layout and is inside
             // this page's live backing memory.
             self.memory.as_ptr().add(self.layout.styles_start)
+        }
+    }
+
+    fn hyperlink_set_base(&self) -> *const u8 {
+        unsafe {
+            // Safety: hyperlink_set_start is produced by Page layout and is
+            // inside this page's live backing memory.
+            self.memory.as_ptr().add(self.layout.hyperlink_set_start)
         }
     }
 
@@ -986,6 +1294,13 @@ impl Page {
         }
     }
 
+    fn cell_mut_at_offset(&mut self, offset: Offset<Cell>) -> &mut Cell {
+        unsafe {
+            // Safety: call sites derive offsets from checked page cell ranges.
+            &mut *offset.ptr_mut(self.memory.as_mut_ptr())
+        }
+    }
+
     fn assert_row_provenance(&self, row: &Row) {
         let row_addr = row as *const Row as usize;
         let rows_start = self.rows.ptr(self.memory.as_ptr()) as usize;
@@ -1032,6 +1347,162 @@ impl Page {
 pub(super) struct RowAndCellMut<'a> {
     pub(super) row: &'a mut Row,
     pub(super) cell: &'a mut Cell,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct HyperlinkSnapshot {
+    pub(super) id: HyperlinkSnapshotId,
+    pub(super) uri: Vec<u8>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum HyperlinkSnapshotId {
+    Explicit(Vec<u8>),
+    Implicit(u32),
+}
+
+struct HyperlinkSetContext {
+    page_memory: *mut u8,
+    src_memory: *const u8,
+    string_alloc: *mut StringAlloc,
+}
+
+impl HyperlinkSetContext {
+    fn new(page_memory: *mut u8, string_alloc: &mut StringAlloc) -> Self {
+        Self {
+            page_memory,
+            src_memory: std::ptr::null(),
+            string_alloc,
+        }
+    }
+
+    fn page_memory(&self) -> *const u8 {
+        self.page_memory
+    }
+
+    fn candidate_memory(&self) -> *const u8 {
+        if self.src_memory.is_null() {
+            self.page_memory()
+        } else {
+            self.src_memory
+        }
+    }
+}
+
+impl ref_counted_set::Context<hyperlink::PageEntry> for HyperlinkSetContext {
+    fn hash(&self, value: hyperlink::PageEntry) -> u64 {
+        hash_hyperlink_entry(self.candidate_memory(), value)
+    }
+
+    fn eql(&self, candidate: hyperlink::PageEntry, resident: hyperlink::PageEntry) -> bool {
+        hyperlink_entry_eq(
+            self.candidate_memory(),
+            candidate,
+            self.page_memory(),
+            resident,
+        )
+    }
+
+    fn deleted(&mut self, value: hyperlink::PageEntry) {
+        free_hyperlink_entry_from(self.page_memory, self.string_alloc, value);
+    }
+}
+
+fn hash_hyperlink_entry(base: *const u8, entry: hyperlink::PageEntry) -> u64 {
+    let mut hash = 0xcbf2_9ce4_8422_2325_u64;
+    fnv1a64_write(&mut hash, &[entry.id().tag() as u8]);
+    match entry.id().tag() {
+        hyperlink::PageEntryIdTag::Implicit => {
+            fnv1a64_write(&mut hash, &entry.id().implicit_value().to_le_bytes());
+        }
+        hyperlink::PageEntryIdTag::Explicit => {
+            fnv1a64_write(
+                &mut hash,
+                hyperlink_bytes_from(base, entry.id().explicit_value()),
+            );
+        }
+    }
+    fnv1a64_write(&mut hash, hyperlink_bytes_from(base, entry.uri()));
+    hash
+}
+
+fn hyperlink_entry_eq(
+    candidate_base: *const u8,
+    candidate: hyperlink::PageEntry,
+    resident_base: *const u8,
+    resident: hyperlink::PageEntry,
+) -> bool {
+    if candidate.id().tag() != resident.id().tag() {
+        return false;
+    }
+
+    match candidate.id().tag() {
+        hyperlink::PageEntryIdTag::Implicit => {
+            if candidate.id().implicit_value() != resident.id().implicit_value() {
+                return false;
+            }
+        }
+        hyperlink::PageEntryIdTag::Explicit => {
+            if hyperlink_bytes_from(candidate_base, candidate.id().explicit_value())
+                != hyperlink_bytes_from(resident_base, resident.id().explicit_value())
+            {
+                return false;
+            }
+        }
+    }
+
+    hyperlink_bytes_from(candidate_base, candidate.uri())
+        == hyperlink_bytes_from(resident_base, resident.uri())
+}
+
+fn hyperlink_bytes_from<'a>(base: *const u8, slice: OffsetSlice<u8>) -> &'a [u8] {
+    if slice.len() == 0 {
+        return &[];
+    }
+
+    unsafe {
+        // Safety: callers only pass slices allocated from the page memory base
+        // for the active hyperlink entry.
+        slice.slice(base)
+    }
+}
+
+fn free_hyperlink_entry_from(
+    base: *mut u8,
+    string_alloc: *mut StringAlloc,
+    entry: hyperlink::PageEntry,
+) {
+    match entry.id().tag() {
+        hyperlink::PageEntryIdTag::Implicit => {}
+        hyperlink::PageEntryIdTag::Explicit => {
+            free_string_slice_from(base, string_alloc, entry.id().explicit_value());
+        }
+    }
+    free_string_slice_from(base, string_alloc, entry.uri());
+}
+
+fn free_string_slice_from(base: *mut u8, string_alloc: *mut StringAlloc, slice: OffsetSlice<u8>) {
+    if slice.len() == 0 {
+        return;
+    }
+
+    let slice = unsafe {
+        // Safety: callers only pass slices allocated from this string
+        // allocator and base pair.
+        slice.slice_mut(base)
+    };
+    unsafe {
+        // Safety: string_alloc is the allocator that produced this slice, and
+        // the slice is being released exactly once.
+        (*string_alloc).free(base, slice);
+    }
+}
+
+fn fnv1a64_write(hash: &mut u64, bytes: &[u8]) {
+    for byte in bytes {
+        *hash ^= *byte as u64;
+        *hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
 }
 
 #[derive(Debug)]
@@ -1200,6 +1671,19 @@ impl From<StyleSetLayout> for super::ref_counted_set::Layout {
 
 impl From<RefCountedSetLayout> for HyperlinkSetLayout {
     fn from(value: RefCountedSetLayout) -> Self {
+        Self {
+            cap: value.cap,
+            table_cap: value.table_cap,
+            table_mask: value.table_mask,
+            table_start: value.table_start,
+            items_start: value.items_start,
+            total_size: value.total_size,
+        }
+    }
+}
+
+impl From<HyperlinkSetLayout> for ref_counted_set::Layout {
+    fn from(value: HyperlinkSetLayout) -> Self {
         Self {
             cap: value.cap,
             table_cap: value.table_cap,
@@ -1768,6 +2252,11 @@ mod tests {
         assert_eq!(STYLE_SET_ITEM_ALIGN, 4);
         assert_eq!(HYPERLINK_PAGE_ENTRY_SIZE, 40);
         assert_eq!(HYPERLINK_PAGE_ENTRY_ALIGN, 8);
+        assert_eq!(size_of::<hyperlink::PageEntry>(), HYPERLINK_PAGE_ENTRY_SIZE);
+        assert_eq!(
+            align_of::<hyperlink::PageEntry>(),
+            HYPERLINK_PAGE_ENTRY_ALIGN
+        );
         assert_eq!(HYPERLINK_SET_ITEM_SIZE, 48);
         assert_eq!(HYPERLINK_SET_ITEM_ALIGN, 8);
         assert_eq!(REF_COUNTED_SET_ID_SIZE, 2);
@@ -2381,6 +2870,317 @@ mod tests {
             Err(super::super::ref_counted_set::AddError::OutOfMemory)
         );
         assert_eq!(page.style_count(), 0);
+    }
+
+    #[test]
+    fn page_hyperlink_init_and_zero_capacity_insert_fails() {
+        let page = Page::init(Capacity::new(5, 5)).unwrap();
+        assert_eq!(page.hyperlink_count(), 0);
+        assert!(page.hyperlink_capacity() > 0);
+        assert_eq!(page.hyperlink_set_count(), 0);
+        assert_eq!(page.string_used_bytes(), 0);
+
+        let mut zero = Page::init(Capacity::with_metadata(
+            5,
+            5,
+            8,
+            0,
+            GRAPHEME_BYTES_DEFAULT,
+            0,
+        ))
+        .unwrap();
+        assert_eq!(
+            zero.insert_hyperlink(hyperlink::Hyperlink {
+                id: hyperlink::HyperlinkId::Implicit(1),
+                uri: b"https://example.com",
+            }),
+            Err(InsertHyperlinkError::StringsOutOfMemory)
+        );
+        assert_eq!(zero.hyperlink_count(), 0);
+        assert_eq!(zero.hyperlink_capacity(), 0);
+        assert_eq!(zero.hyperlink_set_count(), 0);
+    }
+
+    #[test]
+    fn page_hyperlink_insert_lookup_implicit_and_explicit() {
+        let mut page = Page::init(Capacity::new(5, 5)).unwrap();
+
+        let implicit = page
+            .insert_hyperlink(hyperlink::Hyperlink {
+                id: hyperlink::HyperlinkId::Implicit(42),
+                uri: b"https://example.com/a",
+            })
+            .unwrap();
+        let explicit = page
+            .insert_hyperlink(hyperlink::Hyperlink {
+                id: hyperlink::HyperlinkId::Explicit(b"tab-1"),
+                uri: b"https://example.com/b",
+            })
+            .unwrap();
+
+        page.set_hyperlink(0, 0, implicit).unwrap();
+        page.set_hyperlink(1, 0, explicit).unwrap();
+
+        assert_eq!(page.lookup_hyperlink_at(0, 0), Some(implicit));
+        assert_eq!(page.lookup_hyperlink_at(1, 0), Some(explicit));
+        assert_eq!(
+            page.get_hyperlink(implicit),
+            HyperlinkSnapshot {
+                id: HyperlinkSnapshotId::Implicit(42),
+                uri: b"https://example.com/a".to_vec(),
+            }
+        );
+        assert_eq!(
+            page.get_hyperlink(explicit),
+            HyperlinkSnapshot {
+                id: HyperlinkSnapshotId::Explicit(b"tab-1".to_vec()),
+                uri: b"https://example.com/b".to_vec(),
+            }
+        );
+    }
+
+    #[test]
+    fn page_hyperlink_set_clear_flags_and_refs() {
+        let mut page = Page::init(Capacity::new(5, 5)).unwrap();
+        let id = page
+            .insert_hyperlink(hyperlink::Hyperlink {
+                id: hyperlink::HyperlinkId::Implicit(1),
+                uri: b"https://example.com",
+            })
+            .unwrap();
+
+        page.set_hyperlink(0, 0, id).unwrap();
+        assert!(page.cell_copy_at(0, 0).hyperlink());
+        assert!(page.get_row(0).hyperlink());
+        assert_eq!(page.lookup_hyperlink_at(0, 0), Some(id));
+        assert_eq!(page.hyperlink_ref_count(id), 1);
+        assert_eq!(page.hyperlink_count(), 1);
+
+        page.clear_hyperlink(0, 0);
+        page.update_row_hyperlink_flag(0);
+
+        assert!(!page.cell_copy_at(0, 0).hyperlink());
+        assert!(!page.get_row(0).hyperlink());
+        assert_eq!(page.lookup_hyperlink_at(0, 0), None);
+        assert_eq!(page.hyperlink_ref_count(id), 0);
+        assert_eq!(page.hyperlink_count(), 0);
+        assert_eq!(page.hyperlink_set_count(), 0);
+    }
+
+    #[test]
+    fn page_hyperlink_replacement_releases_old_and_maps_new() {
+        let mut page = Page::init(Capacity::new(5, 5)).unwrap();
+        let old = page
+            .insert_hyperlink(hyperlink::Hyperlink {
+                id: hyperlink::HyperlinkId::Implicit(1),
+                uri: b"https://example.com/old",
+            })
+            .unwrap();
+        let new = page
+            .insert_hyperlink(hyperlink::Hyperlink {
+                id: hyperlink::HyperlinkId::Implicit(2),
+                uri: b"https://example.com/new",
+            })
+            .unwrap();
+
+        page.set_hyperlink(0, 0, old).unwrap();
+        page.set_hyperlink(0, 0, new).unwrap();
+
+        assert_eq!(page.lookup_hyperlink_at(0, 0), Some(new));
+        assert_eq!(page.hyperlink_ref_count(old), 0);
+        assert_eq!(page.hyperlink_ref_count(new), 1);
+        assert_eq!(page.hyperlink_count(), 1);
+    }
+
+    #[test]
+    fn page_hyperlink_same_id_replacement_consumes_preused_ref() {
+        let mut page = Page::init(Capacity::new(5, 5)).unwrap();
+        let id = page
+            .insert_hyperlink(hyperlink::Hyperlink {
+                id: hyperlink::HyperlinkId::Implicit(1),
+                uri: b"https://example.com",
+            })
+            .unwrap();
+
+        page.set_hyperlink(0, 0, id).unwrap();
+        assert_eq!(page.hyperlink_ref_count(id), 1);
+        page.use_hyperlink(id);
+        assert_eq!(page.hyperlink_ref_count(id), 2);
+        page.set_hyperlink(0, 0, id).unwrap();
+
+        assert_eq!(page.hyperlink_ref_count(id), 1);
+        assert_eq!(page.lookup_hyperlink_at(0, 0), Some(id));
+        assert!(page.cell_copy_at(0, 0).hyperlink());
+        assert!(page.get_row(0).hyperlink());
+    }
+
+    #[test]
+    fn page_hyperlink_deduplicates_by_id_and_uri_contents() {
+        let mut page = Page::init(Capacity::with_metadata(
+            5,
+            5,
+            8,
+            16 * HYPERLINK_SET_ITEM_SIZE as HyperlinkCountInt,
+            GRAPHEME_BYTES_DEFAULT,
+            STRING_BYTES_DEFAULT,
+        ))
+        .unwrap();
+
+        let first = page
+            .insert_hyperlink(hyperlink::Hyperlink {
+                id: hyperlink::HyperlinkId::Implicit(1),
+                uri: b"https://example.com/a",
+            })
+            .unwrap();
+        let same_implicit = page
+            .insert_hyperlink(hyperlink::Hyperlink {
+                id: hyperlink::HyperlinkId::Implicit(1),
+                uri: b"https://example.com/a",
+            })
+            .unwrap();
+        let different_implicit = page
+            .insert_hyperlink(hyperlink::Hyperlink {
+                id: hyperlink::HyperlinkId::Implicit(2),
+                uri: b"https://example.com/a",
+            })
+            .unwrap();
+        let explicit = page
+            .insert_hyperlink(hyperlink::Hyperlink {
+                id: hyperlink::HyperlinkId::Explicit(b"id"),
+                uri: b"https://example.com/a",
+            })
+            .unwrap();
+        let same_explicit = page
+            .insert_hyperlink(hyperlink::Hyperlink {
+                id: hyperlink::HyperlinkId::Explicit(b"id"),
+                uri: b"https://example.com/a",
+            })
+            .unwrap();
+        let different_uri = page
+            .insert_hyperlink(hyperlink::Hyperlink {
+                id: hyperlink::HyperlinkId::Explicit(b"id"),
+                uri: b"https://example.com/b",
+            })
+            .unwrap();
+        let different_explicit = page
+            .insert_hyperlink(hyperlink::Hyperlink {
+                id: hyperlink::HyperlinkId::Explicit(b"other"),
+                uri: b"https://example.com/a",
+            })
+            .unwrap();
+
+        assert_eq!(same_implicit, first);
+        assert_ne!(different_implicit, first);
+        assert_eq!(same_explicit, explicit);
+        assert_ne!(different_uri, explicit);
+        assert_ne!(different_explicit, explicit);
+        assert_eq!(page.hyperlink_ref_count(first), 2);
+        assert_eq!(page.hyperlink_ref_count(explicit), 2);
+    }
+
+    #[test]
+    fn page_hyperlink_count_reports_linked_cells() {
+        let mut page = Page::init(Capacity::new(5, 5)).unwrap();
+        let id = page
+            .insert_hyperlink(hyperlink::Hyperlink {
+                id: hyperlink::HyperlinkId::Implicit(1),
+                uri: b"https://example.com",
+            })
+            .unwrap();
+
+        page.set_hyperlink(0, 0, id).unwrap();
+        page.use_hyperlink(id);
+        page.set_hyperlink(1, 0, id).unwrap();
+        page.use_hyperlink(id);
+        page.set_hyperlink(2, 0, id).unwrap();
+
+        assert_eq!(page.hyperlink_count(), 3);
+        assert_eq!(page.hyperlink_set_count(), 1);
+        assert_eq!(page.hyperlink_ref_count(id), 3);
+        assert!(page.hyperlink_capacity() >= 3);
+    }
+
+    #[test]
+    fn page_hyperlink_insert_rolls_back_uri_success_id_failure() {
+        let mut page = Page::init(Capacity::with_metadata(
+            5,
+            5,
+            8,
+            HYPERLINK_BYTES_DEFAULT,
+            GRAPHEME_BYTES_DEFAULT,
+            64,
+        ))
+        .unwrap();
+        let uri = vec![b'u'; page.string_alloc.capacity_bytes()];
+
+        assert_eq!(
+            page.insert_hyperlink(hyperlink::Hyperlink {
+                id: hyperlink::HyperlinkId::Explicit(b"id"),
+                uri: &uri,
+            }),
+            Err(InsertHyperlinkError::StringsOutOfMemory)
+        );
+        assert_eq!(page.string_used_bytes(), 0);
+        assert_eq!(page.hyperlink_set_count(), 0);
+        assert_eq!(page.hyperlink_count(), 0);
+    }
+
+    #[test]
+    fn page_hyperlink_insert_rolls_back_string_success_set_failure() {
+        let mut page = Page::init(Capacity::with_metadata(
+            5,
+            5,
+            8,
+            0,
+            GRAPHEME_BYTES_DEFAULT,
+            1,
+        ))
+        .unwrap();
+
+        assert_eq!(
+            page.insert_hyperlink(hyperlink::Hyperlink {
+                id: hyperlink::HyperlinkId::Explicit(b"id"),
+                uri: b"https://example.com",
+            }),
+            Err(InsertHyperlinkError::SetOutOfMemory)
+        );
+        assert_eq!(page.string_used_bytes(), 0);
+        assert_eq!(page.hyperlink_set_count(), 0);
+        assert_eq!(page.hyperlink_count(), 0);
+    }
+
+    #[test]
+    fn page_clone_hyperlinks_survive_source_release_and_drop() {
+        let (page2, id) = {
+            let mut page = Page::init(Capacity::new(5, 5)).unwrap();
+            let id = page
+                .insert_hyperlink(hyperlink::Hyperlink {
+                    id: hyperlink::HyperlinkId::Explicit(b"id"),
+                    uri: b"https://example.com",
+                })
+                .unwrap();
+            page.set_hyperlink(0, 0, id).unwrap();
+
+            let page2 = page.clone_page().unwrap();
+            page.clear_hyperlink(0, 0);
+            page.update_row_hyperlink_flag(0);
+            assert_eq!(page.hyperlink_ref_count(id), 0);
+            assert_eq!(page.hyperlink_count(), 0);
+
+            (page2, id)
+        };
+
+        assert_eq!(page2.lookup_hyperlink_at(0, 0), Some(id));
+        assert_eq!(
+            page2.get_hyperlink(id),
+            HyperlinkSnapshot {
+                id: HyperlinkSnapshotId::Explicit(b"id".to_vec()),
+                uri: b"https://example.com".to_vec(),
+            }
+        );
+        assert_eq!(page2.hyperlink_ref_count(id), 1);
+        assert_eq!(page2.hyperlink_count(), 1);
+        assert_eq!(page2.hyperlink_set_count(), 1);
     }
 
     #[test]
