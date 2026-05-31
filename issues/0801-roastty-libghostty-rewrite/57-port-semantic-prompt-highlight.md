@@ -168,3 +168,64 @@ The experiment fails if:
 - the implementation expands into renderer highlights, search selection, diagram
   output, parser, renderer, app, ABI, resize/reflow, selection, or search work;
 - tests or formatting fail.
+
+## Result
+
+**Result:** Pass
+
+Added a private `UntrackedHighlight` value that stores untracked `start` and
+`end` pins only. No tracked highlights, flattened render highlights, search
+highlights, public API, or ABI surface were added.
+
+Added prompt semantic highlight helpers:
+
+- `semantic_prompt_zone_end`;
+- `highlight_semantic_prompt`;
+- `pin_cell`.
+
+`semantic_prompt_zone_end` matches upstream behavior for this slice: starting
+from the prompt pin, it uses prompt iteration to find the next prompt. If a next
+prompt exists, the semantic zone ends at the last column of the row immediately
+before that prompt. If no next prompt exists, the zone ends at the screen
+bottom-right cell.
+
+`highlight_semantic_prompt` matches upstream prompt-branch behavior:
+
+- returned highlight `start` is normalized to `x = 0` on the prompt row;
+- returned highlight `end` starts at the provided prompt pin;
+- scanning starts at the provided pin's `x`, not at `x = 0`;
+- `end` extends through `SemanticContent::Prompt` and `SemanticContent::Input`;
+- scanning stops before the first `SemanticContent::Output` cell.
+
+Tests cover:
+
+- prompt cells followed by input cells;
+- prompt/input followed by output;
+- multiline prompt/input ranges;
+- prompt-only ranges;
+- nonzero `at.x` behavior, proving earlier output cells do not stop the scan;
+- cross-page prompt-zone ending before the next prompt;
+- no-next-prompt zone ending at screen bottom;
+- untracked behavior with no tracked-pin side effects.
+
+Verification:
+
+- `cargo fmt`
+- `cargo test -p roastty terminal::page_list` — 241 PageList tests passed, ABI
+  harness filtered out
+- `cargo test -p roastty` — 522 unit tests passed, ABI harness passed, doc-tests
+  passed
+
+Independent result review approved the experiment as a Pass with no required
+implementation findings. The review confirmed the untracked highlight shape,
+prompt-zone end behavior, prompt-branch semantics, test coverage, and scope
+boundaries.
+
+## Conclusion
+
+Experiment 57 completed the first semantic-highlight slice by porting the prompt
+branch of upstream `highlightSemanticContent`.
+
+The next experiments should port the remaining semantic highlight branches
+separately: input highlighting first, then output highlighting, so each branch's
+null/stop/extension behavior can be reviewed and tested independently.
