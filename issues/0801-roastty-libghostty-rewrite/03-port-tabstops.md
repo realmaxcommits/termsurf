@@ -148,3 +148,87 @@ The experiment fails if:
 
 This experiment design must be reviewed by Codex before implementation. Any real
 design issues must be fixed before committing the plan or implementing the port.
+
+## Result
+
+**Result:** Pass
+
+Roastty now has its first real terminal-core module ported from Ghostty:
+`terminal::tabstops`.
+
+Implemented files:
+
+- `roastty/src/terminal/mod.rs`
+- `roastty/src/terminal/tabstops.rs`
+- `roastty/src/lib.rs` module wiring
+
+The port preserves the upstream `Tabstops.zig` behavior that matters for parity:
+
+- 512 preallocated columns backed by 64 `u8` units;
+- dynamic storage above the preallocated segment;
+- Ghostty's exact dynamic sizing rule: `cols - prealloc_columns` dynamic `u8`
+  entries;
+- Ghostty's exact `capacity()` rule:
+  `(prealloc_count + dynamic_stops.len()) * unit_bits`;
+- 0-indexed `entry` / `index` bit mapping;
+- upstream XOR/toggle behavior for `unset`;
+- interval reset behavior;
+- rollback on resize allocation failure.
+
+All upstream tests from `Tabstops.zig` were ported or matched with a direct Rust
+equivalent:
+
+- `Tabstops: basic` -> `tabstops_basic`
+- `Tabstops: dynamic allocations` -> `tabstops_dynamic_allocations`
+- `Tabstops: interval` -> `tabstops_interval`
+- `Tabstops: count on 80` -> `tabstops_count_on_80`
+- `Tabstops: resize alloc failure preserves state` ->
+  `tabstops_resize_alloc_failure_preserves_state`
+
+Two extra parity tests were added:
+
+- `tabstops_unset_toggles`, because upstream `unset` uses XOR and therefore a
+  second unset toggles the bit back on;
+- `tabstops_preserves_upstream_capacity_semantics`, because Ghostty's dynamic
+  storage sizing is larger than a minimal Rust bitset implementation would be
+  and is observable through `capacity()`.
+
+The allocation-failure behavior is tested with a module-local test hook. This
+keeps the deterministic failure injection scoped to `Tabstops` and avoids adding
+a project-wide allocator abstraction before a second module proves one is
+needed.
+
+No public C ABI or header files changed.
+
+### Verification
+
+Ran `cargo fmt` after Rust edits and accepted the output.
+
+Ran:
+
+```bash
+cargo test -p roastty terminal::tabstops
+cargo test -p roastty
+```
+
+Both commands passed. The targeted command ran 7 `terminal::tabstops` tests. The
+full Roastty test suite ran 10 Rust unit tests, 1 C ABI harness integration
+test, and doc tests.
+
+### Completion Review
+
+Codex reviewed the completed implementation and result and found no blocking
+correctness, style, integration, or documentation issues. It confirmed the port
+preserves Ghostty's capacity semantics, XOR `unset` behavior, allocation-failure
+rollback, internal-only module scope, and test coverage for this experiment.
+
+## Conclusion
+
+Experiment 3 succeeds. The first small Ghostty subsystem has been adapted into
+Roastty with behavior-parity tests, and the Experiment 2 translation rules held
+up in practice.
+
+The next experiment should continue through another small terminal-core module
+before moving into pointer-heavy page storage. A good next slice is likely a
+small terminal support type that depends on simple integer or enum behavior
+rather than PTY, renderer, CoreText, or page-grid ownership.

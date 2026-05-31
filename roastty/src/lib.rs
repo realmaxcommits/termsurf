@@ -3,6 +3,8 @@ use std::os::raw::{c_char, c_int, c_void};
 use std::ptr;
 use std::slice;
 
+mod terminal;
+
 // ABI ownership model:
 // - Config/app/surface handles returned by Roastty are heap-owned by Roastty and
 //   released only by their matching free function.
