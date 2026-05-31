@@ -9,7 +9,7 @@ opened = "2026-05-31"
 
 Reimplement the remaining `libghostty` library surface and behavior as
 `libroastty`, a Rust library with Roastty naming throughout. The end state is a
-macOS-first terminal implementation with Ghostty feature parity before TermSurf
+macOS-only terminal implementation with Ghostty feature parity before TermSurf
 browser-overlay features are added.
 
 ## Background
@@ -41,6 +41,13 @@ This issue is intentionally broad: it tracks the remaining work needed to turn
 implemented incrementally through reviewed experiments, but the target is the
 entire remaining `libghostty` behavior needed by the macOS app.
 
+Roastty is macOS-only. The rewrite should not preserve Ghostty's Linux, FreeBSD,
+Windows, GTK, Wayland, X11, OpenGL, or other non-macOS gates as live
+implementation paths. When upstream Ghostty has code shaped like "if Linux do
+this, else if macOS do that," the Roastty port should keep the macOS behavior
+and omit the other branches unless an experiment documents a specific reason to
+keep a stub for testability or source comparison.
+
 The rewrite includes, at minimum:
 
 - complete configuration loading, parsing, validation, finalization,
@@ -54,8 +61,9 @@ The rewrite includes, at minimum:
 - terminal core behavior: parser, screen/grid, scrollback, cursor state, style
   state, CSI/OSC/DCS handling, SGR, mouse modes, selection, reflow, input
   encoding, Kitty keyboard behavior, and Kitty graphics behavior
-- PTY and IO behavior: shell/process spawn, read/write loops, resize, foreground
-  process ID, TTY name, process exit, and platform-specific macOS behavior
+- PTY and IO behavior: macOS shell/process spawn, read/write loops, resize,
+  foreground process ID, TTY name, process exit, and platform-specific macOS
+  behavior
 - rendering state and renderer boundary: enough structure to preserve Ghostty's
   rendering model while adapting it to Rust, with Metal renderer parity as a
   later subsystem slice
@@ -68,11 +76,11 @@ The rewrite includes, at minimum:
 
 ## Architecture
 
-Roastty should be a faithful adaptation of Ghostty's architecture, not a new
-terminal emulator invented beside it. The implementation may use idiomatic Rust
-where Rust gives a clearer or safer representation, but the port should preserve
-Ghostty's subsystem boundaries and behavior unless an experiment explicitly
-records why a different design is required.
+Roastty should be a faithful macOS adaptation of Ghostty's architecture, not a
+new terminal emulator invented beside it. The implementation may use idiomatic
+Rust where Rust gives a clearer or safer representation, but the port should
+preserve Ghostty's subsystem boundaries and macOS behavior unless an experiment
+explicitly records why a different design is required.
 
 The public library boundary is `libroastty`:
 
@@ -83,8 +91,8 @@ The public library boundary is `libroastty`:
 - upstream Ghostty names are allowed only when describing the source material,
   vendored paths, test provenance, or attribution
 
-The macOS app target remains macOS-first. Cross-platform terminal parity can be
-revisited after the macOS Roastty library and app reach the feature baseline.
+The target is macOS-only, not macOS-first. Cross-platform terminal parity is not
+part of this issue and should not shape the internal architecture.
 
 ## Test Parity
 
@@ -129,7 +137,11 @@ No experiment may proceed to the next stage until the required review passes.
   and attribution context.
 - Do not retrofit older issue documents to the one-file-per-experiment
   structure.
-- Do not solve cross-platform support before macOS parity is established.
+- Do not implement Linux, FreeBSD, Windows, GTK, Wayland, X11, OpenGL, or other
+  non-macOS support paths.
+- Do not keep platform abstraction layers merely because upstream Ghostty has
+  them. Keep an abstraction only when it is useful for Roastty's macOS design or
+  for tests.
 
 ## Closure Criteria
 
