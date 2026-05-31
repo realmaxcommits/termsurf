@@ -150,3 +150,62 @@ The experiment fails if:
   highlighting, parser, renderer, app, ABI, resize/reflow, selection, or search
   work;
 - tests or formatting fail.
+
+## Result
+
+**Result:** Pass
+
+Added a private `CellIterator<'a>` that stores the underlying `RowIterator<'a>`
+and the current `Option<Pin>`. The iterator yields the current cell pin first,
+advances horizontally inside the row, and delegates row transitions to
+`RowIterator`.
+
+The implementation preserves upstream direction behavior:
+
+- `RightDown` increments `x` while the current row has remaining cells, then
+  uses `RowIterator` for the next row, which resets to `x = 0`.
+- `LeftUp` decrements `x` while possible, then uses `RowIterator` for the prior
+  row and resets that row to `x = cols - 1`.
+- `cell_iterator_from_pin` consumes the first row pin from `RowIterator` and
+  restores the starting pin's `x`, matching upstream `Pin.cellIterator`.
+- explicit endpoint `x` values are not treated as horizontal clipping limits
+  unless that endpoint is also the starting pin for the chosen direction.
+
+Added PageList constructors:
+
+- `cell_iterator_from_pin`;
+- `empty_cell_iterator`;
+- `cell_iterator`.
+
+Tests cover:
+
+- single-row right/down and left/up iteration with explicit limit `x` ignored;
+- multi-row right/down and left/up reset-column behavior;
+- cross-page iteration in both directions;
+- active partial starts across page boundaries in both directions;
+- history iteration in both directions, stopping before active rows;
+- invalid endpoint handling;
+- cell-pin conversion back to points via `point_from_pin`.
+
+Verification:
+
+- `cargo fmt`
+- `cargo test -p roastty terminal::page_list` — 221 PageList tests passed, ABI
+  harness filtered out
+- `cargo test -p roastty` — 502 unit tests passed, ABI harness passed, doc-tests
+  passed
+
+Independent result review approved the experiment as a Pass with no required
+implementation findings. The review confirmed the `CellIterator` state machine
+matches upstream, including row resets, starting-column restoration, and
+direction-specific point/bound handling.
+
+## Conclusion
+
+Experiment 55 completed the PageList cell-iteration layer. Roastty now has the
+cell traversal primitive that upstream builds on top of row iteration.
+
+The next PageList experiment can move to another isolated traversal/debug layer,
+such as prompt iteration or diagram/debug output, while continuing to keep
+semantic highlighting, parser, renderer, app, and ABI work out of scope until
+their dependencies are in place.
