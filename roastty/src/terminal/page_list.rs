@@ -1,5 +1,6 @@
 use std::ptr::NonNull;
 
+use super::highlight;
 use super::page::{
     page_layout, Capacity, CapacityAdjustment, Cell, CloneFromError, Page, PageAllocError, Row,
     SemanticContent, SemanticPrompt, STD_CAPACITY,
@@ -63,7 +64,7 @@ struct Node {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct Pin {
+pub(super) struct Pin {
     node: NonNull<Node>,
     y: CellCountInt,
     x: CellCountInt,
@@ -137,12 +138,6 @@ struct PromptIterator<'a> {
     current: Option<Pin>,
     limit: Option<Pin>,
     direction: Direction,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct UntrackedHighlight {
-    start: Pin,
-    end: Pin,
 }
 
 #[derive(Debug, Default)]
@@ -1302,9 +1297,9 @@ impl PageList {
         }
     }
 
-    fn highlight_semantic_prompt(&self, at: Pin) -> Option<UntrackedHighlight> {
+    fn highlight_semantic_prompt(&self, at: Pin) -> Option<highlight::Untracked> {
         let end = self.semantic_prompt_zone_end(at)?;
-        let mut result = UntrackedHighlight {
+        let mut result = highlight::Untracked {
             start: Pin { x: 0, ..at },
             end: at,
         };
@@ -1321,7 +1316,7 @@ impl PageList {
         Some(result)
     }
 
-    fn highlight_semantic_input(&self, at: Pin) -> Option<UntrackedHighlight> {
+    fn highlight_semantic_input(&self, at: Pin) -> Option<highlight::Untracked> {
         let end = self.semantic_prompt_zone_end(at)?;
         let mut it = self.cell_iterator_from_pin(Direction::RightDown, at, Some(end));
 
@@ -1331,7 +1326,7 @@ impl PageList {
             match cell.semantic_content() {
                 SemanticContent::Prompt => {}
                 SemanticContent::Input => {
-                    break UntrackedHighlight {
+                    break highlight::Untracked {
                         start: pin,
                         end: pin,
                     }
@@ -1352,7 +1347,7 @@ impl PageList {
         Some(result)
     }
 
-    fn highlight_semantic_output(&self, at: Pin) -> Option<UntrackedHighlight> {
+    fn highlight_semantic_output(&self, at: Pin) -> Option<highlight::Untracked> {
         let end = self.semantic_prompt_zone_end(at)?;
         let mut it = self.cell_iterator_from_pin(Direction::RightDown, at, Some(end));
 
@@ -1365,7 +1360,7 @@ impl PageList {
                     if !cell.has_text() {
                         continue;
                     }
-                    break UntrackedHighlight {
+                    break highlight::Untracked {
                         start: pin,
                         end: pin,
                     };
@@ -1392,7 +1387,7 @@ impl PageList {
         &self,
         at: Pin,
         content: SemanticContent,
-    ) -> Option<UntrackedHighlight> {
+    ) -> Option<highlight::Untracked> {
         match content {
             SemanticContent::Prompt => self.highlight_semantic_prompt(at),
             SemanticContent::Input => self.highlight_semantic_input(at),
@@ -2966,7 +2961,10 @@ mod tests {
             .collect()
     }
 
-    fn highlight_screen_points(list: &PageList, highlight: UntrackedHighlight) -> [Coordinate; 2] {
+    fn highlight_screen_points(
+        list: &PageList,
+        highlight: highlight::Untracked,
+    ) -> [Coordinate; 2] {
         [
             list.point_from_pin(point::Tag::Screen, highlight.start)
                 .expect("highlight start must map to screen point")

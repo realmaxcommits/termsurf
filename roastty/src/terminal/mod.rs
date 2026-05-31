@@ -8,6 +8,9 @@ mod color;
 mod hyperlink;
 
 #[allow(dead_code)]
+mod highlight;
+
+#[allow(dead_code)]
 mod offset_hash_map;
 
 #[allow(dead_code)]

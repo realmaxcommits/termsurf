@@ -237,7 +237,7 @@ No experiment may proceed to the next stage until the required review passes.
 - [Experiment 60: Port Semantic Highlight Dispatcher](60-port-semantic-highlight-dispatcher.md)
   — **Pass**
 - [Experiment 61: Port Highlight Untracked Module](61-port-highlight-untracked-module.md)
-  — **Designed**
+  — **Pass**
 
 ## Non-Goals
 

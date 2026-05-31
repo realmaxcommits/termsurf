@@ -134,3 +134,55 @@ The experiment fails if:
 - tracked or flattened highlights are presented as implemented;
 - renderer/app/public ABI behavior is introduced;
 - tests or formatting fail.
+
+## Result
+
+**Result:** Pass
+
+Experiment 61 added `roastty/src/terminal/highlight.rs` and moved the ad hoc
+PageList-local untracked highlight value into `highlight::Untracked`.
+
+Code changes:
+
+- added the private terminal `highlight` module;
+- added `highlight::Untracked { start: Pin, end: Pin }` with derived `Debug`,
+  `Clone`, `Copy`, `PartialEq`, and `Eq`;
+- made `page_list::Pin` visible as `pub(super)` so sibling terminal modules can
+  name the type;
+- kept `Pin` fields private to `page_list.rs`;
+- replaced PageList semantic helper return types and tests with
+  `highlight::Untracked`;
+- removed the local `UntrackedHighlight` struct from `page_list.rs`.
+
+The change is structural only. Semantic prompt, input, output, and dispatcher
+behavior remained unchanged. Tracked highlights, flattened highlights,
+selection, search, renderer, parser, app, public ABI, and resize/reflow behavior
+remain deferred.
+
+Verification:
+
+```bash
+cargo fmt
+cargo test -p roastty terminal::page_list
+cargo test -p roastty
+```
+
+Results:
+
+- `cargo test -p roastty terminal::page_list`: 263 passed, 0 failed.
+- `cargo test -p roastty`: 544 unit tests passed, ABI harness 1 passed,
+  doctests 0.
+
+Independent result review approved the experiment as Pass with no required
+findings. The reviewer confirmed that `highlight::Untracked` matches upstream's
+untracked start/end-pin shape, that `Pin` visibility was widened only to
+`pub(super)` while fields stayed private, and that no tracked/flattened,
+renderer, app, ABI, selection, or search work was introduced.
+
+## Conclusion
+
+Roastty now has the first dedicated highlight module and no longer carries the
+untracked semantic highlight type inside PageList. The next highlight data-model
+step should be designed separately, likely around tracked highlight lifecycle or
+flattened highlight representation, after reviewing which upstream consumer is
+needed next.
