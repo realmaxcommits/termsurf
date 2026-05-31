@@ -150,3 +150,101 @@ The experiment fails if:
 
 This experiment design must be reviewed by Codex before implementation. Any real
 design issues must be fixed before committing the plan or implementing the port.
+
+## Result
+
+**Result:** Pass
+
+Roastty now has a `terminal::bitmap_allocator` module ported from Ghostty's
+`terminal/bitmap_allocator.zig`.
+
+Implemented files:
+
+- `roastty/src/terminal/bitmap_allocator.rs`
+- `roastty/src/terminal/mod.rs` module wiring
+
+The port preserves the upstream allocator shape:
+
+- const-generic `BitmapAllocator<const CHUNK_SIZE: usize>`;
+- `BASE_ALIGN = align_of::<u64>()`;
+- `BITMAP_BIT_SIZE = 64`;
+- offset-backed `bitmap` and `chunks` fields;
+- `Layout` with `total_size`, `bitmap_count`, `bitmap_start`, and
+  `chunks_start`;
+- `init` that asserts base alignment, initializes all bitmap words to
+  `u64::MAX`, and derives offsets from `OffsetBuf`;
+- upstream layout math, including
+  `chunks_end = chunks_start + (aligned_cap * CHUNK_SIZE)`;
+- byte requirement, capacity, used-byte, allocation, free, and test-only
+  allocation-state helpers.
+
+The unsafe boundary is local to `bitmap_allocator.rs`. Initialization, used-byte
+inspection, typed allocation, and free are `unsafe fn`s where they depend on
+caller-provided backing memory. The documented invariants require the backing
+buffer to match the allocator layout, outlive returned slices, and be freed
+through the same allocator/backing buffer exactly once. The implementation also
+preserves the upstream alignment assertions, checks the derived typed pointer
+alignment, and returns `OutOfMemory` for allocation overflow instead of
+wrapping.
+
+All upstream `findFreeChunks` tests were ported:
+
+- single found;
+- single not found;
+- multiple found;
+- exactly 64 chunks;
+- larger than 64 chunks;
+- larger than 64 chunks not at beginning;
+- larger than 64 chunks exact.
+
+All upstream allocator behavior tests were ported or matched with direct Rust
+equivalents:
+
+- layout;
+- sequential allocation;
+- non-byte allocation;
+- non-byte multi-chunk allocation;
+- large allocation;
+- allocation/free across one bitmap, half bitmap, two half bitmaps, 1.5 bitmaps,
+  two 1.5 bitmaps, 1.5 bitmaps offset by 0.75, three 0.75 bitmaps, and two 1.5
+  bitmaps offset by 0.75;
+- `bytesRequired`.
+
+One extra Rust-specific test was added for the Experiment 6 overflow
+requirement: allocation overflow returns `OutOfMemory`.
+
+No public C ABI or header files changed.
+
+### Verification
+
+Ran `cargo fmt` after Rust edits and accepted the output.
+
+Ran:
+
+```bash
+cargo test -p roastty terminal::bitmap_allocator
+cargo test -p roastty
+```
+
+Both commands passed. The targeted command ran 22 `terminal::bitmap_allocator`
+tests. The full Roastty test suite ran 44 Rust unit tests, 1 C ABI harness
+integration test, and doc tests.
+
+### Completion Review
+
+Codex reviewed the completed implementation and result. The first review found
+real unsafe-boundary issues: `init` and `used_bytes` depended on raw backing
+memory through safe APIs, and `alloc` needed a derived typed-pointer alignment
+assertion. Those issues were fixed. Codex re-reviewed the result and found no
+remaining correctness, style, integration, or documentation issues.
+
+## Conclusion
+
+Experiment 6 succeeds. Roastty now has the first page-storage dependency after
+`size`: an offset-backed bitmap allocator with upstream behavior tests and a
+local unsafe boundary.
+
+The next experiment should port the next prerequisite selected by Experiment 5.
+The likely next slice is minimal `color` / `sgr` / `style::Style` value types or
+the packed `Row`/`Cell` value model, depending on which path gives the smallest
+testable step toward `Page.layout`.
