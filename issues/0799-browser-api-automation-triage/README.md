@@ -179,3 +179,5 @@ and reviewed.
   — **Pass**
 - [Experiment 10: Add explicit default-deny permissions](10-default-deny-permissions.md)
   — **Pass**
+- [Experiment 11: Add WebAuthn virtual-authenticator coverage](11-webauthn-virtual-authenticator.md)
+  — **Designed**
