@@ -148,3 +148,67 @@ The experiment fails if:
 - clone loses or over-expands row-level dirty state;
 - the implementation expands into unrelated PageList operations;
 - tests or formatting fail.
+
+## Result
+
+**Result:** Pass
+
+Experiment 43 ported the PageList dirty-helper surface needed by the current
+PageList test/debug layer:
+
+- private `Pin::is_dirty` and `Pin::mark_dirty` helpers;
+- private `PageList::pin_is_dirty`;
+- private `PageList::clear_dirty`;
+- private `PageList::is_dirty`;
+- private `PageList::mark_dirty`.
+
+The implementation preserves upstream semantics:
+
+- a point is dirty if its containing page is dirty;
+- otherwise, a point is dirty if its containing row is dirty;
+- marking a point dirty sets the row dirty bit, not the page dirty bit;
+- clearing dirty state clears page-level dirty bits and every live row dirty bit
+  across every page.
+
+Tests added:
+
+- row-level dirty marking and querying;
+- page-level dirty querying;
+- multi-page `clear_dirty` covering page-level and row-level dirty bits on
+  distinct pages;
+- upstream `PageList clone full dirty` behavior, now enabled after Experiment
+  42's clone implementation.
+
+No erase, resize/reflow, split, compact, iterator, renderer, parser, or ABI work
+was introduced.
+
+Verification:
+
+```bash
+cargo fmt
+cargo test -p roastty terminal::page_list
+cargo test -p roastty
+```
+
+Observed result:
+
+- `cargo test -p roastty terminal::page_list`: 111 passed;
+- `cargo test -p roastty`: 392 unit tests passed, plus 1 ABI harness test
+  passed.
+
+Independent review:
+
+- Design review required multi-page `clear_dirty` coverage; the design was
+  updated and approved before implementation.
+- Result review found no correctness issues and approved Experiment 43 as ready
+  to record as `Pass`.
+
+## Conclusion
+
+PageList now has the dirty test/debug helpers required by upstream clone tests.
+The deferred clone dirty case from Experiment 42 is now covered, and dirty state
+can be marked, queried, and cleared without expanding into larger PageList
+mutation operations.
+
+The next experiment can move to another PageList operation with dirty semantics
+available as supporting infrastructure.

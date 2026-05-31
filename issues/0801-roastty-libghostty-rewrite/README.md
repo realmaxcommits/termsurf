@@ -203,7 +203,7 @@ No experiment may proceed to the next stage until the required review passes.
   — **Pass**
 - [Experiment 42: Port PageList Clone](42-port-pagelist-clone.md) — **Pass**
 - [Experiment 43: Port PageList Dirty Helpers](43-port-pagelist-dirty-helpers.md)
-  — **Designed**
+  — **Pass**
 
 ## Non-Goals
 

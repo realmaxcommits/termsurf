@@ -156,6 +156,21 @@ impl From<GrowError> for CloneRegionError {
     }
 }
 
+impl Pin {
+    fn is_dirty(self, list: &PageList) -> bool {
+        list.pin_is_dirty(self)
+    }
+
+    fn mark_dirty(self, list: &mut PageList) {
+        if let Some(index) = list.node_index(self.node) {
+            list.pages[index]
+                .page
+                .get_row_mut(self.y as usize)
+                .set_dirty(true);
+        }
+    }
+}
+
 impl Iterator for PageIterator<'_> {
     type Item = PageChunk;
 
@@ -789,6 +804,34 @@ impl PageList {
         Ok(result)
     }
 
+    fn clear_dirty(&mut self) {
+        for node in &mut self.pages {
+            node.page.set_dirty(false);
+            for y in 0..node.page.size_rows() as usize {
+                node.page.get_row_mut(y).set_dirty(false);
+            }
+        }
+    }
+
+    fn is_dirty(&self, point: point::Point) -> bool {
+        self.pin(point)
+            .map(|pin| pin.is_dirty(self))
+            .unwrap_or(false)
+    }
+
+    fn mark_dirty(&mut self, point: point::Point) {
+        if let Some(pin) = self.pin(point) {
+            pin.mark_dirty(self);
+        }
+    }
+
+    fn pin_is_dirty(&self, pin: Pin) -> bool {
+        let Some(node) = self.node_for_pin(&pin) else {
+            return false;
+        };
+        node.page.is_dirty() || node.page.get_row(pin.y as usize).dirty()
+    }
+
     fn track_pin(&mut self, pin: Pin) -> Option<NonNull<Pin>> {
         if !self.pin_is_valid(&pin) {
             return None;
@@ -1318,6 +1361,19 @@ mod tests {
 
     fn page_cell(page: &Page, x: usize, y: usize) -> Cell {
         page.get_cells(page.get_row(y))[x]
+    }
+
+    fn multi_page_list(rows: CellCountInt) -> (PageList, CellCountInt) {
+        let mut capacity = STD_CAPACITY.adjust(CapacityAdjustment::cols(50)).unwrap();
+        while capacity.rows() >= rows {
+            capacity = STD_CAPACITY
+                .adjust(CapacityAdjustment::cols(capacity.cols() + 50))
+                .unwrap();
+        }
+
+        let list = PageList::init(capacity.cols(), rows, None).unwrap();
+        assert!(list.pages.len() > 1);
+        (list, capacity.rows())
     }
 
     #[test]
@@ -2471,6 +2527,77 @@ mod tests {
                 .unwrap_err(),
             CloneRegionError::Empty
         );
+    }
+
+    #[test]
+    fn page_list_dirty_helpers_mark_and_query_row_dirty() {
+        let mut list = PageList::init(80, 24, None).unwrap();
+
+        assert!(!list.is_dirty(point::Point::active(Coordinate::new(0, 4))));
+        list.mark_dirty(point::Point::active(Coordinate::new(0, 4)));
+
+        assert!(list.is_dirty(point::Point::active(Coordinate::new(0, 4))));
+        assert!(list.is_dirty(point::Point::active(Coordinate::new(79, 4))));
+        assert!(!list.is_dirty(point::Point::active(Coordinate::new(0, 3))));
+        assert!(!list.is_dirty(point::Point::active(Coordinate::new(0, 5))));
+        list.verify_integrity().unwrap();
+    }
+
+    #[test]
+    fn page_list_dirty_helpers_page_dirty_marks_all_page_points_dirty() {
+        let mut list = PageList::init(80, 24, None).unwrap();
+
+        list.pages[0].page.set_dirty(true);
+
+        assert!(list.is_dirty(point::Point::active(Coordinate::new(0, 0))));
+        assert!(list.is_dirty(point::Point::active(Coordinate::new(0, 23))));
+        list.verify_integrity().unwrap();
+    }
+
+    #[test]
+    fn page_list_clear_dirty_clears_all_pages_and_rows() {
+        let (mut list, second_page_y) = multi_page_list(100);
+        let first_page_point = point::Point::screen(Coordinate::new(0, 2));
+        let second_page_point = point::Point::screen(Coordinate::new(0, second_page_y as u32));
+
+        list.pages[0].page.set_dirty(true);
+        list.pages[1].page.set_dirty(true);
+        list.mark_dirty(first_page_point);
+        list.mark_dirty(second_page_point);
+
+        assert!(list.is_dirty(first_page_point));
+        assert!(list.is_dirty(second_page_point));
+
+        list.clear_dirty();
+
+        assert!(!list.is_dirty(first_page_point));
+        assert!(!list.is_dirty(second_page_point));
+        for node in &list.pages {
+            assert!(!node.page.is_dirty());
+            for y in 0..node.page.size_rows() as usize {
+                assert!(!node.page.get_row(y).dirty());
+            }
+        }
+        list.verify_integrity().unwrap();
+    }
+
+    #[test]
+    fn page_list_clone_region_preserves_full_dirty_rows() {
+        let mut list = PageList::init(80, 24, None).unwrap();
+        list.mark_dirty(point::Point::active(Coordinate::new(0, 0)));
+        list.mark_dirty(point::Point::active(Coordinate::new(0, 12)));
+        list.mark_dirty(point::Point::active(Coordinate::new(0, 23)));
+
+        let clone = list
+            .clone_region(clone_options(point::Point::screen(Coordinate::new(0, 0))))
+            .unwrap();
+
+        assert!(clone.is_dirty(point::Point::active(Coordinate::new(0, 0))));
+        assert!(!clone.is_dirty(point::Point::active(Coordinate::new(0, 1))));
+        assert!(clone.is_dirty(point::Point::active(Coordinate::new(0, 12))));
+        assert!(!clone.is_dirty(point::Point::active(Coordinate::new(0, 14))));
+        assert!(clone.is_dirty(point::Point::active(Coordinate::new(0, 23))));
+        clone.verify_integrity().unwrap();
     }
 
     #[test]
