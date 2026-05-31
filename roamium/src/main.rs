@@ -96,6 +96,7 @@ fn main() {
         );
         ffi::ts_set_on_console_message(Some(dispatch::on_console_message), ptr::null_mut());
         ffi::ts_set_on_http_auth_request(Some(dispatch::on_http_auth_request), ptr::null_mut());
+        ffi::ts_set_on_renderer_crashed(Some(dispatch::on_renderer_crashed), ptr::null_mut());
     }
 
     // Enter Chromium's message loop (blocks until shutdown).

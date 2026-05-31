@@ -430,6 +430,17 @@ return {status: 'unused'};
 """,
     ),
     Probe(
+        name="renderer-crash-recovery",
+        feature="Renderer crash recovery",
+        expected_surface="WebContentsObserver renderer crash event routed through TermSurf protocol",
+        reference_evidence="Chromium exposes PrimaryMainFrameRenderProcessGone and chrome://crash/ test URL.",
+        termsurf_evidence="Experiment 9 adds protocol-visible RendererCrashed recovery UX.",
+        requires_user_activation=False,
+        script="""
+return {status: 'ready'};
+""",
+    ),
+    Probe(
         name="javascript-alert",
         feature="JavaScript dialogs",
         expected_surface="TermSurf JavaScript dialog request/reply protocol",
@@ -1165,6 +1176,82 @@ def verify_http_auth_probe(
     }
 
 
+def verify_renderer_crash_probe(
+    probe_name: str,
+    tab_id: int | None,
+    reports: list[dict[str, Any]],
+    loading_states: list[dict[str, Any]],
+    renderer_crashes: list[dict[str, Any]],
+    crash_navigation_sent: bool,
+    post_crash_navigation_sent: bool,
+    socket_disconnect: bool,
+    proc_exit: int | None,
+) -> dict[str, Any] | None:
+    if probe_name != "renderer-crash-recovery":
+        return None
+
+    status = "completed"
+    reasons: list[str] = []
+    crash = renderer_crashes[0] if renderer_crashes else None
+    report_statuses = [str(report.get("status")) for report in reports]
+
+    if "ready" not in report_statuses:
+        status = "failed"
+        reasons.append("initial page did not report ready")
+    if not crash_navigation_sent:
+        status = "failed"
+        reasons.append("chrome://crash navigation was not sent")
+    if not crash:
+        status = "failed"
+        reasons.append("missing RendererCrashed event")
+    else:
+        if tab_id is not None and crash.get("tab_id") != tab_id:
+            status = "failed"
+            reasons.append(f"wrong tab_id: {crash.get('tab_id')}")
+        if crash.get("termination_status") in (
+            "",
+            "normal_termination",
+            "still_running",
+        ):
+            status = "failed"
+            reasons.append(f"non-crash status: {crash.get('termination_status')}")
+        if int(crash.get("termination_status_code", 0) or 0) == 0:
+            status = "failed"
+            reasons.append("missing nonzero termination_status_code")
+        if "chrome://crash" not in str(crash.get("url", "")):
+            status = "failed"
+            reasons.append(f"crash URL missing from event: {crash.get('url')}")
+        if not crash.get("can_reload"):
+            status = "failed"
+            reasons.append("RendererCrashed can_reload was false")
+    if len(renderer_crashes) != 1:
+        status = "failed"
+        reasons.append(f"expected one RendererCrashed event, got {len(renderer_crashes)}")
+    if not any(state.get("state") == "error" for state in loading_states):
+        status = "failed"
+        reasons.append("missing LoadingState error")
+    if not post_crash_navigation_sent:
+        status = "failed"
+        reasons.append("post-crash navigation was not sent")
+    if "post_crash_navigation" not in report_statuses:
+        status = "failed"
+        reasons.append("post-crash page did not report completion")
+    if socket_disconnect:
+        status = "failed"
+        reasons.append("socket disconnected before recovery completed")
+    if proc_exit is not None and proc_exit not in (0, -15):
+        status = "failed"
+        reasons.append(f"Roamium exited unexpectedly: {proc_exit}")
+
+    return {
+        "status": status,
+        "reasons": reasons,
+        "messages": renderer_crashes,
+        "loading_states": loading_states,
+        "reports": reports,
+    }
+
+
 def create_tab_payload(url: str, width: int, height: int) -> bytes:
     return (
         string_field(1, url)
@@ -1356,6 +1443,28 @@ post cancel
 """.encode("utf-8")
                 self.send_bytes(body, "text/html; charset=utf-8")
                 return
+            if parsed.path == "/renderer-crash/post-crash.html":
+                query = parse_qs(parsed.query)
+                probe = query.get("probe", ["unknown"])[-1]
+                body = f"""<!doctype html>
+<meta charset="utf-8">
+<title>post crash recovery</title>
+<script>
+fetch('/report', {{
+  method: 'POST',
+  headers: {{'Content-Type': 'application/json'}},
+  body: JSON.stringify({{
+    probe: {json.dumps(probe)},
+    status: 'post_crash_navigation',
+    reportedAt: new Date().toISOString()
+  }}),
+  keepalive: true
+}});
+</script>
+post crash
+""".encode("utf-8")
+                self.send_bytes(body, "text/html; charset=utf-8")
+                return
             if parsed.path == "/probe/console-capture-basic-frame.html":
                 query = parse_qs(parsed.query)
                 nonce = query.get("nonce", ["issue799"])[-1]
@@ -1533,28 +1642,55 @@ def read_text(path: pathlib.Path) -> str:
         return ""
 
 
-def scan_logs(text: str) -> dict[str, Any]:
+def scan_logs(text: str, *, expect_renderer_crash: bool = False) -> dict[str, Any]:
     missing = sorted(set(MISSING_INTERFACE_RE.findall(text)))
     empty = sorted(set(EMPTY_BINDER_RE.findall(text)))
+    text_lines = text.splitlines()
     bad_mojo_lines = [
         line
-        for line in text.splitlines()
+        for line in text_lines
         if any(pattern in line for pattern in BAD_MOJO_PATTERNS)
     ]
     empty_binder_lines = [
-        line for line in text.splitlines() if "Empty binder for interface" in line
+        line for line in text_lines if "Empty binder for interface" in line
     ]
-    crash_lines = [
-        line for line in text.splitlines() if any(pattern in line for pattern in CRASH_PATTERNS)
+    crash_entries = [
+        (index, line)
+        for index, line in enumerate(text_lines)
+        if any(pattern in line for pattern in CRASH_PATTERNS)
+    ]
+    expected_crash_indexes: set[int] = set()
+    if expect_renderer_crash:
+        for index, line in enumerate(text_lines):
+            if (
+                "third_party/blink/common/chrome_debug_urls.cc" in line
+                and "Intentionally crashing" in line
+                and "chrome://crash/" in line
+                and "inducebrowsercrashforrealz" not in line
+            ):
+                for candidate in range(index + 1, min(index + 12, len(text_lines))):
+                    candidate_line = text_lines[candidate]
+                    if "[termsurf-renderer-crash]" in candidate_line:
+                        break
+                    if any(pattern in candidate_line for pattern in CRASH_PATTERNS):
+                        expected_crash_indexes.add(candidate)
+    crash_lines = [line for _, line in crash_entries]
+    expected_crash_lines = [
+        line for index, line in crash_entries if index in expected_crash_indexes
+    ]
+    unexpected_crash_lines = [
+        line for index, line in crash_entries if index not in expected_crash_indexes
     ]
     return {
         "bad_mojo": bool(bad_mojo_lines),
-        "crashed": bool(crash_lines),
+        "crashed": bool(unexpected_crash_lines),
         "missing_interfaces": missing,
         "empty_interfaces": empty,
         "bad_mojo_lines": bad_mojo_lines,
         "empty_binder_lines": empty_binder_lines,
         "crash_lines": crash_lines,
+        "expected_crash_lines": expected_crash_lines,
+        "unexpected_crash_lines": unexpected_crash_lines,
     }
 
 
@@ -1703,6 +1839,8 @@ def run_probe(
     javascript_dialogs: list[dict[str, Any]] = []
     console_messages: list[dict[str, Any]] = []
     http_auth: list[dict[str, Any]] = []
+    loading_states: list[dict[str, Any]] = []
+    renderer_crashes: list[dict[str, Any]] = []
     activation_sent = False
     activation_ready_at: float | None = None
     activation_sent_at: float | None = None
@@ -1712,6 +1850,8 @@ def run_probe(
     page_zoom_next_step = 0
     http_auth_cancel_sent_at: float | None = None
     post_cancel_navigation_sent = False
+    crash_navigation_sent = False
+    post_crash_navigation_sent = False
     start = time.time()
 
     try:
@@ -1823,6 +1963,25 @@ def run_probe(
                     post_cancel_navigation_sent = True
                     messages.write(f"sent post-cancel Navigate url={destination}\n")
                     messages.flush()
+                if probe.name == "renderer-crash-recovery" and tab_id:
+                    reports = state_reports_for_probe(run_dir, probe.name)
+                    statuses = {str(report.get("status")) for report in reports}
+                    if "ready" in statuses and not crash_navigation_sent:
+                        send_message(conn, 5, navigate_payload(tab_id, "chrome://crash/"))
+                        crash_navigation_sent = True
+                        messages.write("sent renderer crash Navigate url=chrome://crash/\n")
+                        messages.flush()
+                    has_error = any(
+                        state.get("state") == "error" for state in loading_states
+                    )
+                    if renderer_crashes and has_error and not post_crash_navigation_sent:
+                        destination = (
+                            f"{base_url}/renderer-crash/post-crash.html?probe={probe.name}"
+                        )
+                        send_message(conn, 5, navigate_payload(tab_id, destination))
+                        post_crash_navigation_sent = True
+                        messages.write(f"sent post-crash Navigate url={destination}\n")
+                        messages.flush()
                 try:
                     header = conn.recv(4)
                     if not header:
@@ -1854,6 +2013,21 @@ def run_probe(
                             send_message(conn, 10, focus_changed_payload(tab_id, True))
                             messages.write("sent Resize\n")
                             messages.write("sent FocusChanged focused=true\n")
+                        messages.flush()
+                    elif top == 16:
+                        fields = parse_message_fields(body)
+                        evidence = {
+                            "received_time": time.time() - start,
+                            "tab_id": int(fields.get(1, 0) or 0),
+                            "state": str(fields.get(2, "")),
+                            "progress": int(fields.get(3, 0) or 0),
+                        }
+                        loading_states.append(evidence)
+                        messages.write(
+                            "loading_state "
+                            f"state={evidence['state']} "
+                            f"progress={evidence['progress']}\n"
+                        )
                         messages.flush()
                     elif top == 34:
                         fields = parse_message_fields(body)
@@ -1960,6 +2134,25 @@ def run_probe(
                             f"realm={realm} accepted={accepted}\n"
                         )
                         messages.flush()
+                    elif top == 39:
+                        fields = parse_message_fields(body)
+                        evidence = {
+                            "received_time": time.time() - start,
+                            "tab_id": int(fields.get(1, 0) or 0),
+                            "termination_status": str(fields.get(2, "")),
+                            "termination_status_code": int(fields.get(3, 0) or 0),
+                            "url": str(fields.get(4, "")),
+                            "can_reload": bool(fields.get(5, False)),
+                        }
+                        renderer_crashes.append(evidence)
+                        messages.write(
+                            "renderer_crashed "
+                            f"status={evidence['termination_status']} "
+                            f"code={evidence['termination_status_code']} "
+                            f"url={evidence['url']} "
+                            f"can_reload={evidence['can_reload']}\n"
+                        )
+                        messages.flush()
                 except socket.timeout:
                     pass
     finally:
@@ -1979,7 +2172,10 @@ def run_probe(
 
     stderr_text = read_text(stderr_path)
     stdout_text = read_text(stdout_path)
-    log_scan = scan_logs(stderr_text + "\n" + stdout_text)
+    log_scan = scan_logs(
+        stderr_text + "\n" + stdout_text,
+        expect_renderer_crash=probe.name == "renderer-crash-recovery",
+    )
     reports = state_reports_for_probe(run_dir, probe.name)
     auth_events = state.auth_events_for(probe.name)
     non_timeout_reports = [
@@ -2095,6 +2291,31 @@ def run_probe(
             )
         elif classification in ("exercised", "reported"):
             classification = "http_auth_failed"
+    renderer_crash_result = verify_renderer_crash_probe(
+        probe.name,
+        tab_id,
+        reports,
+        loading_states,
+        renderer_crashes,
+        crash_navigation_sent,
+        post_crash_navigation_sent,
+        socket_disconnect,
+        proc_exit,
+    )
+    if renderer_crash_result:
+        if (
+            classification
+            not in (
+                "missing_binder",
+                "bad_mojo",
+                "renderer_or_browser_crash",
+                "process_exit",
+            )
+            and renderer_crash_result["status"] == "completed"
+        ):
+            classification = "renderer_crash_recovered"
+        elif classification in ("exercised", "reported", "no_report", "page_timeout"):
+            classification = "renderer_crash_unrecovered"
     result = {
         "probe": probe.name,
         "feature": probe.feature,
@@ -2120,6 +2341,11 @@ def run_probe(
         "http_auth": http_auth,
         "http_auth_server_events": auth_events,
         "http_auth_result": http_auth_result,
+        "loading_states": loading_states,
+        "renderer_crashes": renderer_crashes,
+        "expected_crash_lines": log_scan["expected_crash_lines"],
+        "unexpected_crash_lines": log_scan["unexpected_crash_lines"],
+        "renderer_crash_result": renderer_crash_result,
         "beforeunload_activation": (
             {
                 "ready": activation_ready_at is not None,
@@ -2231,6 +2457,10 @@ def write_coverage_map(path: pathlib.Path, results: list[dict[str, Any]]) -> Non
             next_action = "HTTP Basic Auth cancellation completed and tab stayed usable."
         elif classification == "http_auth_failed":
             next_action = "Inspect HTTP auth request/reply and server sequence evidence."
+        elif classification == "renderer_crash_recovered":
+            next_action = "Renderer crash was reported and same-tab recovery completed."
+        elif classification == "renderer_crash_unrecovered":
+            next_action = "Inspect crash event and post-crash navigation evidence."
         elif classification == "unsupported":
             next_action = "No runtime surface exposed in this build."
         else:
@@ -2285,6 +2515,10 @@ def write_reference_coverage_map(path: pathlib.Path, results: list[dict[str, Any
             next_action = "No immediate action; verified HTTP Basic Auth cancellation."
         elif classification == "http_auth_failed":
             next_action = "Inspect HTTP auth request/reply and server sequence evidence."
+        elif classification == "renderer_crash_recovered":
+            next_action = "No immediate action; verified renderer crash recovery."
+        elif classification == "renderer_crash_unrecovered":
+            next_action = "Inspect crash event and same-tab recovery evidence."
         elif classification in ("exercised", "unsupported"):
             next_action = "No immediate binder fix from this probe."
         else:

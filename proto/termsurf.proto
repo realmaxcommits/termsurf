@@ -65,6 +65,9 @@ message TermSurfMessage {
     // HTTP auth (Chromium ↔ TUI / automation harness)
     HttpAuthRequest http_auth_request = 37;
     HttpAuthReply http_auth_reply = 38;
+
+    // Renderer crash recovery (Chromium → TUI / automation harness)
+    RendererCrashed renderer_crashed = 39;
   }
 }
 
@@ -254,6 +257,14 @@ message HttpAuthReply {
   bool accepted = 3;
   string username = 4;
   string password = 5;
+}
+
+message RendererCrashed {
+  int64 tab_id = 1;
+  string termination_status = 2;
+  int32 termination_status_code = 3;
+  string url = 4;
+  bool can_reload = 5;
 }
 
 // --- TUI → GUI ---

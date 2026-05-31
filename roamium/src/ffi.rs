@@ -195,4 +195,18 @@ extern "C" {
         >,
         user_data: *mut c_void,
     );
+
+    pub fn ts_set_on_renderer_crashed(
+        cb: Option<
+            unsafe extern "C" fn(
+                TsWebContents,
+                *const c_char,
+                c_int,
+                *const c_char,
+                bool,
+                *mut c_void,
+            ),
+        >,
+        user_data: *mut c_void,
+    );
 }

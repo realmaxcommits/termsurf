@@ -68,6 +68,13 @@ pub enum CompositorMessage {
         is_proxy: bool,
         first_auth_attempt: bool,
     },
+    RendererCrashed {
+        tab_id: i64,
+        termination_status: String,
+        termination_status_code: i32,
+        url: String,
+        can_reload: bool,
+    },
 }
 
 /// A direct connection to the TermSurf app via Unix domain socket.
@@ -572,6 +579,18 @@ fn dispatch_message(
                 realm: m.realm.clone(),
                 is_proxy: m.is_proxy,
                 first_auth_attempt: m.first_auth_attempt,
+            }));
+        }
+        Some(Msg::RendererCrashed(m)) => {
+            if tab_id != 0 && m.tab_id != 0 && m.tab_id != tab_id {
+                return;
+            }
+            let _ = event_tx.send(super::LoopEvent::Ipc(CompositorMessage::RendererCrashed {
+                tab_id: m.tab_id,
+                termination_status: m.termination_status.clone(),
+                termination_status_code: m.termination_status_code,
+                url: m.url.clone(),
+                can_reload: m.can_reload,
             }));
         }
 

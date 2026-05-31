@@ -95,6 +95,17 @@ struct ConsoleLogEntry {
     message: String,
     line_no: i32,
     source_id: String,
+    received_at: Instant,
+}
+
+#[derive(Clone)]
+struct RendererCrashState {
+    tab_id: i64,
+    termination_status: String,
+    termination_status_code: i32,
+    url: String,
+    can_reload: bool,
+    received_at: Instant,
 }
 
 // Loading screen stages (Issue 773).
@@ -427,6 +438,8 @@ fn main() -> io::Result<()> {
     let mut page_loaded_at: Option<Instant> = None;
     let mut loading_log: Vec<(LoadingStage, StageStatus)> = Vec::new();
     let mut console_log: Vec<ConsoleLogEntry> = Vec::new();
+    let mut renderer_crash: Option<RendererCrashState> = None;
+    let mut renderer_crash_recovery_load_started = false;
     let mut chromium_wait_start: Option<Instant> = None;
 
     // Populate initial loading stages (Issue 773).
@@ -494,6 +507,7 @@ fn main() -> io::Result<()> {
                 &pending_auth,
                 &loading_log,
                 &console_log,
+                &renderer_crash,
                 browser_ready,
                 chromium_wait_start,
             );
@@ -962,12 +976,20 @@ fn main() -> io::Result<()> {
                         let mut stdout = io::stdout();
                         let _ = match state.as_str() {
                             "loading" => {
+                                if renderer_crash.is_some() {
+                                    renderer_crash = None;
+                                    renderer_crash_recovery_load_started = true;
+                                }
                                 loading_bar_active = true;
                                 loading_bar_start = Some(Instant::now());
                                 write!(stdout, "\x1b]9;4;3\x1b\\")
                             }
                             "progress" => Ok(()),
                             "done" => {
+                                if renderer_crash_recovery_load_started {
+                                    renderer_crash = None;
+                                    renderer_crash_recovery_load_started = false;
+                                }
                                 loading_bar_active = false;
                                 loading_bar_start = None;
                                 // Loading stages (Issue 773).
@@ -1011,11 +1033,31 @@ fn main() -> io::Result<()> {
                             message,
                             line_no,
                             source_id,
+                            received_at: Instant::now(),
                         });
                         if console_log.len() > 100 {
                             let drain_count = console_log.len() - 100;
                             console_log.drain(0..drain_count);
                         }
+                    }
+                    ipc::CompositorMessage::RendererCrashed {
+                        tab_id,
+                        termination_status,
+                        termination_status_code,
+                        url,
+                        can_reload,
+                    } => {
+                        loading_bar_active = false;
+                        loading_bar_start = None;
+                        renderer_crash_recovery_load_started = false;
+                        renderer_crash = Some(RendererCrashState {
+                            tab_id,
+                            termination_status,
+                            termination_status_code,
+                            url,
+                            can_reload,
+                            received_at: Instant::now(),
+                        });
                     }
                     ipc::CompositorMessage::BrowserReady {
                         tab_id,
@@ -1242,6 +1284,7 @@ fn ui(
     pending_auth: &Option<PendingHttpAuth>,
     loading_log: &[(LoadingStage, StageStatus)],
     console_log: &[ConsoleLogEntry],
+    renderer_crash: &Option<RendererCrashState>,
     browser_ready: bool,
     chromium_wait_start: Option<Instant>,
 ) -> Rect {
@@ -1477,6 +1520,42 @@ fn ui(
             .style(Style::default().fg(FG).bg(BG))
             .block(viewport_block);
         frame.render_widget(auth_widget, layout[0]);
+    } else if let Some(crash) = renderer_crash {
+        let mut lines: Vec<Line> = Vec::new();
+        lines.push(Line::from(""));
+        lines.push(Line::from(vec![
+            Span::raw("  ").style(Style::default()),
+            Span::raw("Renderer crashed").style(Style::default().fg(RED)),
+        ]));
+        lines.push(Line::from(""));
+        lines.push(Line::from(
+            Span::raw("  Press Cmd+R to reload, or enter a new URL.")
+                .style(Style::default().fg(FG)),
+        ));
+        let detail = if crash.url.is_empty() {
+            format!(
+                "  status={} code={} tab={}",
+                crash.termination_status, crash.termination_status_code, crash.tab_id
+            )
+        } else {
+            format!(
+                "  status={} code={} tab={} url={}",
+                crash.termination_status, crash.termination_status_code, crash.tab_id, crash.url
+            )
+        };
+        lines.push(Line::from(
+            Span::raw(detail).style(Style::default().fg(COMMENT)),
+        ));
+        if !crash.can_reload {
+            lines.push(Line::from(
+                Span::raw("  Reload is not available for this tab.")
+                    .style(Style::default().fg(YELLOW)),
+            ));
+        }
+        let crash_widget = Paragraph::new(lines)
+            .style(Style::default().fg(FG).bg(BG))
+            .block(viewport_block);
+        frame.render_widget(crash_widget, layout[0]);
     } else if !browser_ready && !loading_log.is_empty() {
         // Render loading log (Issue 773).
         const SPINNER: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
@@ -1558,7 +1637,27 @@ fn ui(
         .rev()
         .find(|entry| matches!(entry.level.as_str(), "warning" | "error"));
 
-    let hints = if let Some(entry) = latest_console {
+    let crash_is_latest = renderer_crash
+        .as_ref()
+        .map(|crash| {
+            latest_console
+                .map(|entry| crash.received_at >= entry.received_at)
+                .unwrap_or(true)
+        })
+        .unwrap_or(false);
+
+    let hints = if let Some(crash) = renderer_crash.as_ref().filter(|_| crash_is_latest) {
+        Line::from(vec![
+            Span::styled("renderer crashed ", Style::default().fg(RED).bg(BG)),
+            Span::styled(
+                format!(
+                    "{} code={} #{}",
+                    crash.termination_status, crash.termination_status_code, crash.tab_id
+                ),
+                d,
+            ),
+        ])
+    } else if let Some(entry) = latest_console {
         let color = if entry.level == "error" { RED } else { YELLOW };
         Line::from(vec![
             Span::styled(

@@ -538,6 +538,37 @@ pub unsafe extern "C" fn on_loading_state(
     crate::ipc::send(&msg);
 }
 
+pub unsafe extern "C" fn on_renderer_crashed(
+    wc: TsWebContents,
+    termination_status: *const std::os::raw::c_char,
+    termination_status_code: i32,
+    url: *const std::os::raw::c_char,
+    can_reload: bool,
+    _user_data: *mut c_void,
+) {
+    let Some(t) = find_by_handle(wc) else { return };
+    let termination_status = unsafe { std::ffi::CStr::from_ptr(termination_status) }
+        .to_string_lossy()
+        .into_owned();
+    let url = unsafe { std::ffi::CStr::from_ptr(url) }
+        .to_string_lossy()
+        .into_owned();
+    eprintln!(
+        "[termsurf-renderer-crash] tab_id={} status={} code={} url={} can_reload={}",
+        t.tab_id, termination_status, termination_status_code, url, can_reload
+    );
+    let msg = TermSurfMessage {
+        msg: Some(Msg::RendererCrashed(proto::termsurf::RendererCrashed {
+            tab_id: t.tab_id,
+            termination_status,
+            termination_status_code,
+            url,
+            can_reload,
+        })),
+    };
+    crate::ipc::send(&msg);
+}
+
 pub unsafe extern "C" fn on_title_changed(
     wc: TsWebContents,
     title: *const std::os::raw::c_char,

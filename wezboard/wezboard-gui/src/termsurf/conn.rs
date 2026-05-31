@@ -135,6 +135,7 @@ fn msg_type_name(msg: &TermSurfMessage) -> &'static str {
         Some(Msg::ConsoleMessage(_)) => "ConsoleMessage",
         Some(Msg::HttpAuthRequest(_)) => "HttpAuthRequest",
         Some(Msg::HttpAuthReply(_)) => "HttpAuthReply",
+        Some(Msg::RendererCrashed(_)) => "RendererCrashed",
         Some(Msg::OpenSplit(_)) => "OpenSplit",
         Some(Msg::SetDevtoolsOverlay(_)) => "SetDevtoolsOverlay",
         Some(_) => "Other",
@@ -319,6 +320,32 @@ async fn handle_message(
                 let _ = tui_tx.try_send(msg.encode_to_vec());
             } else {
                 log::debug!("ConsoleMessage: no pane for tab_id={}", c.tab_id);
+            }
+        }
+        Some(Msg::RendererCrashed(c)) => {
+            log::warn!(
+                "RendererCrashed: tab_id={} status={} code={} url={}",
+                c.tab_id,
+                c.termination_status,
+                c.termination_status_code,
+                c.url
+            );
+            let target = {
+                let st = state.lock().unwrap();
+                let skey = server_key.as_deref().unwrap_or("");
+                let lookup = (skey.to_string(), c.tab_id);
+                st.tab_to_pane
+                    .get(&lookup)
+                    .and_then(|pane_id| st.panes.get(pane_id))
+                    .map(|pane| pane.tui_tx.clone())
+            };
+            if let Some(tui_tx) = target {
+                let msg = TermSurfMessage {
+                    msg: Some(Msg::RendererCrashed(c)),
+                };
+                let _ = tui_tx.try_send(msg.encode_to_vec());
+            } else {
+                log::warn!("RendererCrashed: no pane for tab_id={}", c.tab_id);
             }
         }
         Some(Msg::HttpAuthRequest(r)) => {

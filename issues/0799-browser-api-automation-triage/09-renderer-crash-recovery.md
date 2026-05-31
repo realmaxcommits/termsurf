@@ -303,3 +303,91 @@ The experiment fails if:
   insufficient.
 - Do not use `ninja`; Chromium builds must use `autoninja`.
 - Run `cargo fmt` after Rust edits and accept its output.
+
+## Result
+
+**Result:** Pass
+
+Implemented the renderer crash recovery path end to end:
+
+- Chromium branch `148.0.7778.97-issue-799-exp9` adds
+  `TsTabObserver::PrimaryMainFrameRenderProcessGone(...)`, maps
+  `base::TerminationStatus` to a stable string, emits `RendererCrashed`, and
+  clears loading progress with `LoadingState("error")`.
+- `termsurf.proto` adds `RendererCrashed renderer_crashed = 39`.
+- Roamium registers and forwards the new Chromium callback.
+- Wezboard recognizes and routes `RendererCrashed` to the pane TUI.
+- webtui stores a user-visible crash state, displays a renderer-crashed viewport
+  message, and avoids clearing it on stale `UrlChanged` or trailing `done`
+  events from the crashed navigation.
+- The Issue 799 harness adds `renderer-crash-recovery`, drives
+  `chrome://crash/`, records expected versus unexpected crash lines, and proves
+  same-tab recovery by navigating to a local post-crash page.
+
+The focused run passed:
+
+```text
+logs/issue-799-browser-api-audit/20260531-021548-107765
+classification: renderer_crash_recovered
+status: completed
+missing_interfaces: []
+empty_interfaces: []
+expected_crash_lines: ["Received signal 11 SEGV_ACCERR 000000000000"]
+unexpected_crash_lines: []
+```
+
+The full harness passed:
+
+```text
+logs/issue-799-browser-api-audit/20260531-021630-171874
+probe_count: 24
+status: completed
+renderer-crash-recovery: renderer_crash_recovered
+missing_interfaces: []
+empty_interfaces: []
+```
+
+Build and verification gates run:
+
+- `python3 -m py_compile scripts/test-issue-799-browser-api-audit.py`
+- `git diff --check`
+- `git -C chromium/src diff --check`
+- Chromium `clang-format` on edited C++ files
+- `cargo fmt` in Roamium, webtui, and Wezboard
+- `autoninja -C out/Default libtermsurf_chromium`
+- `./scripts/build.sh roamium`
+- `./scripts/build.sh webtui`
+- `./scripts/build.sh wezboard`
+- focused `renderer-crash-recovery` probe
+- full Issue 799 harness
+
+Codex implementation review initially found one real issue: the harness's
+intentional crash whitelist was too broad and could have hidden unrelated crash
+lines in the same probe. The matcher was tightened to whitelist only
+crash-pattern lines in the narrow window after Chromium's renderer-side
+`chrome_debug_urls.cc` intentional `chrome://crash/` log. Follow-up Codex review
+reported no findings and said the experiment is ready to record as Pass.
+
+Chromium commit:
+
+```text
+53a6ebc6f534a Add renderer crash callback
+```
+
+The Chromium patch archive was regenerated and now includes:
+
+```text
+chromium/patches/issue-799/0070-Add-renderer-crash-callback.patch
+```
+
+## Conclusion
+
+Renderer crashes are now protocol-visible, user-visible in webtui, and
+automatically recoverable in the same tab. This closes the renderer crash UX
+item from Experiment 1's in-scope queue.
+
+The next Issue 799 work should move to the remaining in-scope queue:
+permission/API default-deny hardening for the generic Permissions API,
+Notifications/Push, Geolocation, WebAuthn virtual-authenticator coverage, File
+System Access, and service-worker-adjacent no-crash/default-deny checks where
+automation can prove the behavior.
