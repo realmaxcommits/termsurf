@@ -177,3 +177,66 @@ The experiment fails if:
 - the implementation expands into semantic highlighting, diagram output, parser,
   renderer, app, ABI, resize/reflow, selection, or search work;
 - tests or formatting fail.
+
+## Result
+
+**Result:** Pass
+
+Added a private `PromptIterator<'a>` that stores the owning `PageList`,
+`current` pin, optional `limit` pin, and traversal `Direction`. The iterator
+implements upstream-style `next_down` and `next_up` traversal over row semantic
+prompt flags using the existing `pin_down` and `pin_up` helpers.
+
+The implementation preserves upstream behavior:
+
+- `RightDown` skips non-prompt rows, treats both `Prompt` and
+  `PromptContinuation` as prompt starts when first encountered, skips following
+  continuation rows, and honors continuation-row limits.
+- `LeftUp` skips non-prompt rows, yields prompt rows directly, walks upward from
+  continuation rows to find the real prompt start or orphan/trimmed continuation
+  start, and handles inclusive continuation limits.
+- yielded prompt pins are normalized to `x = 0`.
+- `prompt_iterator` uses the same point resolution and direction-specific
+  top/bottom swapping as the upstream `PageList.promptIterator`.
+
+Added PageList helpers:
+
+- `prompt_iterator_from_pin`;
+- `empty_prompt_iterator`;
+- `prompt_iterator`;
+- `pin_semantic_prompt`.
+
+Tests cover:
+
+- upstream single-page `left_up` and `right_down` prompt traversal;
+- continuation at the first row, matching trimmed scrollback behavior;
+- starting inside a continuation run;
+- inclusive prompt limits in both directions;
+- cross-page continuation runs in both directions;
+- inclusive continuation-row limits in both directions;
+- history prompt iteration stopping before active rows;
+- invalid endpoint handling;
+- `x = 0` normalization and point conversion through `point_from_pin`.
+
+Verification:
+
+- `cargo fmt`
+- `cargo test -p roastty terminal::page_list` — 233 PageList tests passed, ABI
+  harness filtered out
+- `cargo test -p roastty` — 514 unit tests passed, ABI harness passed, doc-tests
+  passed
+
+Independent result review approved the experiment as a Pass with no required
+implementation findings. The review confirmed that `next_down`, `next_up`, the
+constructor behavior, continuation handling, inclusive continuation limits, and
+scope boundaries match the experiment and upstream behavior.
+
+## Conclusion
+
+Experiment 56 completed the PageList prompt-iteration layer. Roastty now has the
+prompt traversal primitive needed by later semantic-content highlighting and
+prompt-aware navigation work.
+
+The next PageList experiment can build above this by porting
+`highlightSemanticContent`, or it can first port diagram/debug output if that is
+the smaller dependency-free slice.

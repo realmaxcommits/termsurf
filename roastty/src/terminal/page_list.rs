@@ -2,7 +2,7 @@ use std::ptr::NonNull;
 
 use super::page::{
     page_layout, Capacity, CapacityAdjustment, Cell, CloneFromError, Page, PageAllocError, Row,
-    STD_CAPACITY,
+    SemanticPrompt, STD_CAPACITY,
 };
 use super::point::{self, Coordinate};
 use super::size::{
@@ -129,6 +129,14 @@ struct RowIterator<'a> {
 struct CellIterator<'a> {
     row_it: RowIterator<'a>,
     cell: Option<Pin>,
+}
+
+#[derive(Debug)]
+struct PromptIterator<'a> {
+    list: &'a PageList,
+    current: Option<Pin>,
+    limit: Option<Pin>,
+    direction: Direction,
 }
 
 #[derive(Debug, Default)]
@@ -513,6 +521,127 @@ impl Iterator for CellIterator<'_> {
         }
 
         Some(cell)
+    }
+}
+
+impl Iterator for PromptIterator<'_> {
+    type Item = Pin;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self.direction {
+            Direction::RightDown => self.next_down(),
+            Direction::LeftUp => self.next_up(),
+        }
+    }
+}
+
+impl PromptIterator<'_> {
+    fn next_down(&mut self) -> Option<Pin> {
+        let mut current = self.current?;
+
+        loop {
+            let at_limit = self.limit == Some(current);
+            match self.list.pin_semantic_prompt(current)? {
+                SemanticPrompt::None => {
+                    if at_limit {
+                        break;
+                    }
+                }
+                SemanticPrompt::Prompt | SemanticPrompt::PromptContinuation => {
+                    if at_limit {
+                        self.current = None;
+                        return Some(Pin { x: 0, ..current });
+                    }
+
+                    let mut end_pin = current;
+                    while let Some(next_pin) = self.list.pin_down(end_pin, 1) {
+                        match self.list.pin_semantic_prompt(next_pin)? {
+                            SemanticPrompt::PromptContinuation => {
+                                if self.limit == Some(next_pin) {
+                                    break;
+                                }
+                            }
+                            SemanticPrompt::Prompt | SemanticPrompt::None => {
+                                self.current = Some(next_pin);
+                                return Some(Pin { x: 0, ..current });
+                            }
+                        }
+                        end_pin = next_pin;
+                    }
+
+                    self.current = None;
+                    return Some(Pin { x: 0, ..current });
+                }
+            }
+
+            let Some(next_pin) = self.list.pin_down(current, 1) else {
+                break;
+            };
+            current = next_pin;
+        }
+
+        self.current = None;
+        None
+    }
+
+    fn next_up(&mut self) -> Option<Pin> {
+        let mut current = self.current?;
+
+        loop {
+            let at_limit = self.limit == Some(current);
+            match self.list.pin_semantic_prompt(current)? {
+                SemanticPrompt::None => {
+                    if at_limit {
+                        break;
+                    }
+                }
+                SemanticPrompt::Prompt => {
+                    self.current = if at_limit {
+                        None
+                    } else {
+                        self.list.pin_up(current, 1)
+                    };
+                    return Some(Pin { x: 0, ..current });
+                }
+                SemanticPrompt::PromptContinuation => {
+                    if at_limit {
+                        self.current = None;
+                        return Some(Pin { x: 0, ..current });
+                    }
+
+                    let mut end_pin = current;
+                    while let Some(prior) = self.list.pin_up(end_pin, 1) {
+                        if self.limit == Some(prior) {
+                            break;
+                        }
+
+                        match self.list.pin_semantic_prompt(prior)? {
+                            SemanticPrompt::None => {
+                                self.current = Some(prior);
+                                return Some(Pin { x: 0, ..end_pin });
+                            }
+                            SemanticPrompt::PromptContinuation => {}
+                            SemanticPrompt::Prompt => {
+                                self.current = self.list.pin_up(prior, 1);
+                                return Some(Pin { x: 0, ..prior });
+                            }
+                        }
+                        end_pin = prior;
+                    }
+
+                    self.current = None;
+                    return Some(Pin { x: 0, ..current });
+                }
+            }
+
+            let Some(prior) = self.list.pin_up(current, 1) else {
+                break;
+            };
+            current = prior;
+        }
+
+        self.current = None;
+        None
     }
 }
 
@@ -1106,6 +1235,51 @@ impl PageList {
         }
     }
 
+    fn prompt_iterator_from_pin(
+        &self,
+        direction: Direction,
+        pin: Pin,
+        limit: Option<Pin>,
+    ) -> PromptIterator<'_> {
+        PromptIterator {
+            list: self,
+            current: Some(pin),
+            limit,
+            direction,
+        }
+    }
+
+    fn empty_prompt_iterator(&self, direction: Direction) -> PromptIterator<'_> {
+        PromptIterator {
+            list: self,
+            current: None,
+            limit: None,
+            direction,
+        }
+    }
+
+    fn prompt_iterator(
+        &self,
+        direction: Direction,
+        top_left: point::Point,
+        bottom_left: Option<point::Point>,
+    ) -> PromptIterator<'_> {
+        let top_pin = self.pin(top_left);
+        let bottom_pin = bottom_left
+            .map(|point| self.pin(point))
+            .unwrap_or_else(|| self.get_bottom_right(top_left.tag()));
+
+        match (direction, top_pin, bottom_pin) {
+            (Direction::RightDown, Some(top_pin), Some(bottom_pin)) => {
+                self.prompt_iterator_from_pin(direction, top_pin, Some(bottom_pin))
+            }
+            (Direction::LeftUp, Some(top_pin), Some(bottom_pin)) => {
+                self.prompt_iterator_from_pin(direction, bottom_pin, Some(top_pin))
+            }
+            _ => self.empty_prompt_iterator(direction),
+        }
+    }
+
     fn clone_region(&self, mut opts: CloneOptions<'_>) -> Result<Self, CloneRegionError> {
         let chunks = self
             .page_iterator(Direction::RightDown, opts.top, opts.bottom)
@@ -1258,6 +1432,11 @@ impl PageList {
             return false;
         };
         node.page.is_dirty() || node.page.get_row(pin.y as usize).dirty()
+    }
+
+    fn pin_semantic_prompt(&self, pin: Pin) -> Option<SemanticPrompt> {
+        self.node_for_pin(&pin)
+            .map(|node| node.page.get_row(pin.y as usize).semantic_prompt())
     }
 
     fn track_pin(&mut self, pin: Pin) -> Option<NonNull<Pin>> {
@@ -2618,6 +2797,28 @@ mod tests {
             .expect("active row must exist");
         let node = list.node_for_pin(&pin).expect("active node must exist");
         row_marker(&node.page, pin.y as usize)
+    }
+
+    fn set_screen_semantic_prompt(list: &mut PageList, y: u32, prompt: SemanticPrompt) {
+        let pin = list
+            .pin(point::Point::screen(Coordinate::new(0, y)))
+            .expect("screen row must exist");
+        let index = list.node_index(pin.node).expect("screen node must exist");
+        list.pages[index]
+            .page
+            .get_row_mut(pin.y as usize)
+            .set_semantic_prompt(prompt);
+    }
+
+    fn prompt_screen_points(list: &PageList, iterator: PromptIterator<'_>) -> Vec<Coordinate> {
+        iterator
+            .map(|pin| {
+                assert_eq!(pin.x, 0);
+                list.point_from_pin(point::Tag::Screen, pin)
+                    .expect("prompt pin must map to screen point")
+                    .coord()
+            })
+            .collect()
     }
 
     fn bounded_viewport_list(page_multiplier: usize) -> (PageList, usize) {
@@ -4956,6 +5157,283 @@ mod tests {
                 Coordinate::new(2, 1),
                 Coordinate::new(3, 1)
             ]
+        );
+    }
+
+    #[test]
+    fn page_list_prompt_iterator_left_up() {
+        let mut list = PageList::init(2, 20, None).unwrap();
+        set_screen_semantic_prompt(&mut list, 3, SemanticPrompt::Prompt);
+        set_screen_semantic_prompt(&mut list, 6, SemanticPrompt::Prompt);
+        set_screen_semantic_prompt(&mut list, 7, SemanticPrompt::PromptContinuation);
+        set_screen_semantic_prompt(&mut list, 8, SemanticPrompt::PromptContinuation);
+        set_screen_semantic_prompt(&mut list, 12, SemanticPrompt::PromptContinuation);
+
+        let prompts = prompt_screen_points(
+            &list,
+            list.prompt_iterator(
+                Direction::LeftUp,
+                point::Point::screen(Coordinate::new(1, 0)),
+                None,
+            ),
+        );
+
+        assert_eq!(
+            prompts,
+            vec![
+                Coordinate::new(0, 12),
+                Coordinate::new(0, 6),
+                Coordinate::new(0, 3)
+            ]
+        );
+    }
+
+    #[test]
+    fn page_list_prompt_iterator_right_down() {
+        let mut list = PageList::init(2, 20, None).unwrap();
+        set_screen_semantic_prompt(&mut list, 3, SemanticPrompt::Prompt);
+        set_screen_semantic_prompt(&mut list, 6, SemanticPrompt::Prompt);
+        set_screen_semantic_prompt(&mut list, 7, SemanticPrompt::PromptContinuation);
+        set_screen_semantic_prompt(&mut list, 8, SemanticPrompt::PromptContinuation);
+        set_screen_semantic_prompt(&mut list, 12, SemanticPrompt::PromptContinuation);
+
+        let prompts = prompt_screen_points(
+            &list,
+            list.prompt_iterator(
+                Direction::RightDown,
+                point::Point::screen(Coordinate::new(1, 0)),
+                None,
+            ),
+        );
+
+        assert_eq!(
+            prompts,
+            vec![
+                Coordinate::new(0, 3),
+                Coordinate::new(0, 6),
+                Coordinate::new(0, 12)
+            ]
+        );
+    }
+
+    #[test]
+    fn page_list_prompt_iterator_right_down_continuation_at_start() {
+        let mut list = PageList::init(2, 20, None).unwrap();
+        set_screen_semantic_prompt(&mut list, 0, SemanticPrompt::PromptContinuation);
+        set_screen_semantic_prompt(&mut list, 1, SemanticPrompt::PromptContinuation);
+        set_screen_semantic_prompt(&mut list, 5, SemanticPrompt::Prompt);
+
+        let prompts = prompt_screen_points(
+            &list,
+            list.prompt_iterator(
+                Direction::RightDown,
+                point::Point::screen(Coordinate::new(1, 0)),
+                None,
+            ),
+        );
+
+        assert_eq!(prompts, vec![Coordinate::new(0, 0), Coordinate::new(0, 5)]);
+    }
+
+    #[test]
+    fn page_list_prompt_iterator_right_down_starts_inside_continuation() {
+        let mut list = PageList::init(2, 20, None).unwrap();
+        set_screen_semantic_prompt(&mut list, 2, SemanticPrompt::Prompt);
+        set_screen_semantic_prompt(&mut list, 3, SemanticPrompt::PromptContinuation);
+        set_screen_semantic_prompt(&mut list, 4, SemanticPrompt::PromptContinuation);
+
+        let prompts = prompt_screen_points(
+            &list,
+            list.prompt_iterator(
+                Direction::RightDown,
+                point::Point::screen(Coordinate::new(1, 3)),
+                None,
+            ),
+        );
+
+        assert_eq!(prompts, vec![Coordinate::new(0, 3)]);
+    }
+
+    #[test]
+    fn page_list_prompt_iterator_right_down_limit_prompt_inclusive() {
+        let mut list = PageList::init(2, 20, None).unwrap();
+        set_screen_semantic_prompt(&mut list, 5, SemanticPrompt::Prompt);
+        set_screen_semantic_prompt(&mut list, 10, SemanticPrompt::Prompt);
+
+        let prompts = prompt_screen_points(
+            &list,
+            list.prompt_iterator(
+                Direction::RightDown,
+                point::Point::screen(Coordinate::new(1, 0)),
+                Some(point::Point::screen(Coordinate::new(1, 5))),
+            ),
+        );
+
+        assert_eq!(prompts, vec![Coordinate::new(0, 5)]);
+    }
+
+    #[test]
+    fn page_list_prompt_iterator_left_up_limit_prompt_inclusive() {
+        let mut list = PageList::init(2, 20, None).unwrap();
+        set_screen_semantic_prompt(&mut list, 5, SemanticPrompt::Prompt);
+        set_screen_semantic_prompt(&mut list, 10, SemanticPrompt::Prompt);
+
+        let prompts = prompt_screen_points(
+            &list,
+            list.prompt_iterator(
+                Direction::LeftUp,
+                point::Point::screen(Coordinate::new(1, 10)),
+                Some(point::Point::screen(Coordinate::new(1, 15))),
+            ),
+        );
+
+        assert_eq!(prompts, vec![Coordinate::new(0, 10)]);
+    }
+
+    #[test]
+    fn page_list_prompt_iterator_cross_page_continuation_right_down() {
+        let mut list = PageList::init(2, 6, None).unwrap();
+        list.split(Pin {
+            node: list.first_node_ptr(),
+            y: 3,
+            x: 0,
+            garbage: false,
+        })
+        .unwrap();
+        set_screen_semantic_prompt(&mut list, 2, SemanticPrompt::Prompt);
+        set_screen_semantic_prompt(&mut list, 3, SemanticPrompt::PromptContinuation);
+        set_screen_semantic_prompt(&mut list, 4, SemanticPrompt::PromptContinuation);
+        set_screen_semantic_prompt(&mut list, 5, SemanticPrompt::Prompt);
+
+        let prompts = prompt_screen_points(
+            &list,
+            list.prompt_iterator(
+                Direction::RightDown,
+                point::Point::screen(Coordinate::new(1, 0)),
+                None,
+            ),
+        );
+
+        assert_eq!(prompts, vec![Coordinate::new(0, 2), Coordinate::new(0, 5)]);
+    }
+
+    #[test]
+    fn page_list_prompt_iterator_cross_page_continuation_left_up() {
+        let mut list = PageList::init(2, 6, None).unwrap();
+        list.split(Pin {
+            node: list.first_node_ptr(),
+            y: 3,
+            x: 0,
+            garbage: false,
+        })
+        .unwrap();
+        set_screen_semantic_prompt(&mut list, 2, SemanticPrompt::Prompt);
+        set_screen_semantic_prompt(&mut list, 3, SemanticPrompt::PromptContinuation);
+        set_screen_semantic_prompt(&mut list, 4, SemanticPrompt::PromptContinuation);
+        set_screen_semantic_prompt(&mut list, 5, SemanticPrompt::Prompt);
+
+        let prompts = prompt_screen_points(
+            &list,
+            list.prompt_iterator(
+                Direction::LeftUp,
+                point::Point::screen(Coordinate::new(1, 0)),
+                None,
+            ),
+        );
+
+        assert_eq!(prompts, vec![Coordinate::new(0, 5), Coordinate::new(0, 2)]);
+    }
+
+    #[test]
+    fn page_list_prompt_iterator_right_down_limit_continuation() {
+        let mut list = PageList::init(2, 10, None).unwrap();
+        set_screen_semantic_prompt(&mut list, 2, SemanticPrompt::Prompt);
+        set_screen_semantic_prompt(&mut list, 3, SemanticPrompt::PromptContinuation);
+        set_screen_semantic_prompt(&mut list, 4, SemanticPrompt::PromptContinuation);
+
+        let prompts = prompt_screen_points(
+            &list,
+            list.prompt_iterator(
+                Direction::RightDown,
+                point::Point::screen(Coordinate::new(1, 0)),
+                Some(point::Point::screen(Coordinate::new(1, 3))),
+            ),
+        );
+
+        assert_eq!(prompts, vec![Coordinate::new(0, 2)]);
+    }
+
+    #[test]
+    fn page_list_prompt_iterator_left_up_limit_continuation() {
+        let mut list = PageList::init(2, 10, None).unwrap();
+        set_screen_semantic_prompt(&mut list, 3, SemanticPrompt::PromptContinuation);
+
+        let prompts = prompt_screen_points(
+            &list,
+            list.prompt_iterator(
+                Direction::LeftUp,
+                point::Point::screen(Coordinate::new(1, 3)),
+                Some(point::Point::screen(Coordinate::new(1, 3))),
+            ),
+        );
+
+        assert_eq!(prompts, vec![Coordinate::new(0, 3)]);
+    }
+
+    #[test]
+    fn page_list_prompt_iterator_history_stops_before_active() {
+        let mut list = PageList::init(2, 2, None).unwrap();
+        list.grow_rows(2).unwrap();
+        assert_eq!(active_top_left_screen_coord(&list), Coordinate::new(0, 2));
+        set_screen_semantic_prompt(&mut list, 0, SemanticPrompt::Prompt);
+        set_screen_semantic_prompt(&mut list, 1, SemanticPrompt::Prompt);
+        set_screen_semantic_prompt(&mut list, 2, SemanticPrompt::Prompt);
+
+        let right_down = prompt_screen_points(
+            &list,
+            list.prompt_iterator(
+                Direction::RightDown,
+                point::Point::history(Coordinate::new(1, 0)),
+                None,
+            ),
+        );
+        let left_up = prompt_screen_points(
+            &list,
+            list.prompt_iterator(
+                Direction::LeftUp,
+                point::Point::history(Coordinate::new(1, 0)),
+                None,
+            ),
+        );
+
+        assert_eq!(
+            right_down,
+            vec![Coordinate::new(0, 0), Coordinate::new(0, 1)]
+        );
+        assert_eq!(left_up, vec![Coordinate::new(0, 1), Coordinate::new(0, 0)]);
+    }
+
+    #[test]
+    fn page_list_prompt_iterator_invalid_endpoint_is_empty() {
+        let list = PageList::init(2, 10, None).unwrap();
+
+        assert_eq!(
+            list.prompt_iterator(
+                Direction::RightDown,
+                point::Point::screen(Coordinate::new(2, 0)),
+                None,
+            )
+            .count(),
+            0
+        );
+        assert_eq!(
+            list.prompt_iterator(
+                Direction::RightDown,
+                point::Point::screen(Coordinate::new(0, 0)),
+                Some(point::Point::screen(Coordinate::new(2, 0))),
+            )
+            .count(),
+            0
         );
     }
 
