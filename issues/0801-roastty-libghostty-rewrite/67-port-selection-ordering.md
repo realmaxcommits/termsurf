@@ -222,3 +222,80 @@ The experiment fails if:
 - containment, adjustment, formatting, gestures, ABI, Screen, search, renderer,
   parser, app, tracking ownership, or unrelated behavior is added prematurely;
 - tests or formatting fail.
+
+## Result
+
+**Result:** Pass
+
+Implemented the selection ordering slice in `roastty/src/terminal/selection.rs`
+and `roastty/src/terminal/page_list.rs`.
+
+The change adds the terminal-internal `selection::Order` enum with the four
+upstream variants: `Forward`, `Reverse`, `MirroredForward`, and
+`MirroredReverse`.
+
+`PageList` now owns private selection helpers for the coordinate-dependent
+behavior:
+
+- `selection_order`;
+- `selection_top_left`;
+- `selection_bottom_right`;
+- `selection_ordered`.
+
+The helpers use `point_from_pin(point::Tag::Screen, pin)` as the screen
+coordinate source of truth and guard endpoints with `pin_is_valid`, so invalid
+or unmappable endpoints return `None` instead of panicking.
+
+The implementation mirrors upstream `Selection.zig` behavior:
+
+- regular selections order by screen row, then screen column;
+- rectangle selections include forward, reverse, mirrored-forward, and
+  mirrored-reverse cases;
+- top-left and bottom-right normalization preserve upstream's x/y pin
+  reconstruction;
+- `selection_ordered` returns a new untracked selection;
+- exact desired-order matches preserve original start/end, including mirrored
+  desired orders;
+- nonmatching mirrored desired orders fall back to forward ordering.
+
+Added PageList tests for:
+
+- regular selection ordering;
+- rectangle ordering, including single-row, single-column, and single-cell edge
+  cases;
+- top-left and bottom-right normalization;
+- ordered forward/reverse conversion;
+- mirrored desired-order early return;
+- nonmatching mirrored desired-order fallback to forward;
+- cross-page ordering using screen coordinates;
+- invalid start and end pins returning `None` for each helper.
+
+Verification:
+
+```bash
+cargo fmt
+cargo test -p roastty terminal::page_list::tests::selection
+cargo test -p roastty terminal::selection
+cargo test -p roastty
+```
+
+Results:
+
+- `cargo fmt` completed successfully.
+- `cargo test -p roastty terminal::page_list::tests::selection`: 10 passed.
+- `cargo test -p roastty terminal::selection`: 12 passed.
+- `cargo test -p roastty`: 587 unit tests passed, ABI harness passed, doctests
+  passed.
+
+Independent result review approved the implementation as a Pass. The reviewer
+found no blocking issues, confirmed upstream ordering semantics, confirmed the
+mirrored `ordered` early-return behavior, confirmed the invalid endpoint
+coverage, and found no scope drift.
+
+## Conclusion
+
+Roastty now has the upstream selection ordering, top-left, bottom-right, and
+ordered-conversion behavior needed by later selection containment and text
+extraction work. The behavior remains PageList-owned until a higher-level Screen
+layer exists, which keeps this port aligned with the current Roastty terminal
+architecture without adding premature selection features.

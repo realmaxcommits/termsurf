@@ -10,6 +10,14 @@ pub(super) struct Selection {
     rectangle: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Order {
+    Forward,
+    Reverse,
+    MirroredForward,
+    MirroredReverse,
+}
+
 #[derive(Debug, Clone, Copy)]
 enum Bounds {
     Untracked {

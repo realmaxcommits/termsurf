@@ -1,6 +1,5 @@
 use std::ptr::NonNull;
 
-use super::highlight;
 use super::page::{
     page_layout, Capacity, CapacityAdjustment, Cell, CloneFromError, Page, PageAllocError, Row,
     SemanticContent, SemanticPrompt, STD_CAPACITY,
@@ -9,6 +8,7 @@ use super::point::{self, Coordinate};
 use super::size::{
     CellCountInt, GraphemeBytesInt, HyperlinkCountInt, StringBytesInt, StyleCountInt, MAX_PAGE_SIZE,
 };
+use super::{highlight, selection};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum Viewport {
@@ -1104,6 +1104,118 @@ impl PageList {
             point::Tag::Viewport => point::Point::viewport(coord),
             point::Tag::Screen => point::Point::screen(coord),
             point::Tag::History => point::Point::history(coord),
+        })
+    }
+
+    fn selection_screen_points(
+        &self,
+        selection: selection::Selection,
+    ) -> Option<(point::Point, point::Point)> {
+        let start = selection.start();
+        let end = selection.end();
+        if !self.pin_is_valid(&start) || !self.pin_is_valid(&end) {
+            return None;
+        }
+
+        Some((
+            self.point_from_pin(point::Tag::Screen, start)?,
+            self.point_from_pin(point::Tag::Screen, end)?,
+        ))
+    }
+
+    fn selection_order(&self, selection: selection::Selection) -> Option<selection::Order> {
+        let (start, end) = self.selection_screen_points(selection)?;
+        let start = start.coord();
+        let end = end.coord();
+
+        if selection.rectangle() {
+            if start.y > end.y && start.x >= end.x {
+                return Some(selection::Order::Reverse);
+            }
+            if start.y >= end.y && start.x > end.x {
+                return Some(selection::Order::Reverse);
+            }
+            if start.y > end.y && start.x < end.x {
+                return Some(selection::Order::MirroredReverse);
+            }
+            if start.y < end.y && start.x > end.x {
+                return Some(selection::Order::MirroredForward);
+            }
+
+            return Some(selection::Order::Forward);
+        }
+
+        if start.y < end.y {
+            return Some(selection::Order::Forward);
+        }
+        if start.y > end.y {
+            return Some(selection::Order::Reverse);
+        }
+        if start.x <= end.x {
+            return Some(selection::Order::Forward);
+        }
+
+        Some(selection::Order::Reverse)
+    }
+
+    fn selection_top_left(&self, selection: selection::Selection) -> Option<Pin> {
+        Some(match self.selection_order(selection)? {
+            selection::Order::Forward => selection.start(),
+            selection::Order::Reverse => selection.end(),
+            selection::Order::MirroredForward => {
+                let mut pin = selection.start();
+                pin.x = selection.end().x;
+                pin
+            }
+            selection::Order::MirroredReverse => {
+                let mut pin = selection.end();
+                pin.x = selection.start().x;
+                pin
+            }
+        })
+    }
+
+    fn selection_bottom_right(&self, selection: selection::Selection) -> Option<Pin> {
+        Some(match self.selection_order(selection)? {
+            selection::Order::Forward => selection.end(),
+            selection::Order::Reverse => selection.start(),
+            selection::Order::MirroredForward => {
+                let mut pin = selection.end();
+                pin.x = selection.start().x;
+                pin
+            }
+            selection::Order::MirroredReverse => {
+                let mut pin = selection.start();
+                pin.x = selection.end().x;
+                pin
+            }
+        })
+    }
+
+    fn selection_ordered(
+        &self,
+        selection: selection::Selection,
+        desired: selection::Order,
+    ) -> Option<selection::Selection> {
+        if self.selection_order(selection)? == desired {
+            return Some(selection::Selection::new(
+                selection.start(),
+                selection.end(),
+                selection.rectangle(),
+            ));
+        }
+
+        let top_left = self.selection_top_left(selection)?;
+        let bottom_right = self.selection_bottom_right(selection)?;
+        Some(match desired {
+            selection::Order::Forward
+            | selection::Order::MirroredForward
+            | selection::Order::MirroredReverse => {
+                selection::Selection::new(top_left, bottom_right, selection.rectangle())
+            }
+            selection::Order::Reverse => {
+                selection::Selection::new(bottom_right, top_left, selection.rectangle())
+            }
         })
     }
 
@@ -2908,6 +3020,30 @@ mod tests {
             list.node_index(pin.node).expect("row node must exist"),
             pin.y,
             pin.x,
+        )
+    }
+
+    fn screen_pin(list: &PageList, x: CellCountInt, y: u32) -> Pin {
+        list.pin(point::Point::screen(Coordinate::new(x, y)))
+            .expect("screen point must map to a pin")
+    }
+
+    fn screen_coord(list: &PageList, pin: Pin) -> Coordinate {
+        list.point_from_pin(point::Tag::Screen, pin)
+            .expect("pin must map to a screen point")
+            .coord()
+    }
+
+    fn screen_selection(
+        list: &PageList,
+        start: (CellCountInt, u32),
+        end: (CellCountInt, u32),
+        rectangle: bool,
+    ) -> selection::Selection {
+        selection::Selection::new(
+            screen_pin(list, start.0, start.1),
+            screen_pin(list, end.0, end.1),
+            rectangle,
         )
     }
 
@@ -6781,6 +6917,204 @@ mod tests {
 
         list.untrack_pin(start_ptr);
         list.untrack_pin(end_ptr);
+    }
+
+    #[test]
+    fn selection_order_regular_uses_screen_coordinates() {
+        let list = PageList::init(10, 20, None).unwrap();
+
+        assert_eq!(
+            list.selection_order(screen_selection(&list, (1, 2), (8, 5), false)),
+            Some(selection::Order::Forward)
+        );
+        assert_eq!(
+            list.selection_order(screen_selection(&list, (8, 5), (1, 2), false)),
+            Some(selection::Order::Reverse)
+        );
+        assert_eq!(
+            list.selection_order(screen_selection(&list, (1, 5), (8, 5), false)),
+            Some(selection::Order::Forward)
+        );
+        assert_eq!(
+            list.selection_order(screen_selection(&list, (4, 5), (4, 5), false)),
+            Some(selection::Order::Forward)
+        );
+        assert_eq!(
+            list.selection_order(screen_selection(&list, (8, 5), (1, 5), false)),
+            Some(selection::Order::Reverse)
+        );
+    }
+
+    #[test]
+    fn selection_order_rectangle_matches_upstream_edge_cases() {
+        let list = PageList::init(10, 20, None).unwrap();
+
+        assert_eq!(
+            list.selection_order(screen_selection(&list, (1, 2), (8, 5), true)),
+            Some(selection::Order::Forward)
+        );
+        assert_eq!(
+            list.selection_order(screen_selection(&list, (8, 5), (1, 2), true)),
+            Some(selection::Order::Reverse)
+        );
+        assert_eq!(
+            list.selection_order(screen_selection(&list, (8, 2), (1, 5), true)),
+            Some(selection::Order::MirroredForward)
+        );
+        assert_eq!(
+            list.selection_order(screen_selection(&list, (1, 5), (8, 2), true)),
+            Some(selection::Order::MirroredReverse)
+        );
+        assert_eq!(
+            list.selection_order(screen_selection(&list, (1, 5), (8, 5), true)),
+            Some(selection::Order::Forward)
+        );
+        assert_eq!(
+            list.selection_order(screen_selection(&list, (8, 5), (1, 5), true)),
+            Some(selection::Order::Reverse)
+        );
+        assert_eq!(
+            list.selection_order(screen_selection(&list, (4, 2), (4, 5), true)),
+            Some(selection::Order::Forward)
+        );
+        assert_eq!(
+            list.selection_order(screen_selection(&list, (4, 5), (4, 2), true)),
+            Some(selection::Order::Reverse)
+        );
+        assert_eq!(
+            list.selection_order(screen_selection(&list, (4, 5), (4, 5), true)),
+            Some(selection::Order::Forward)
+        );
+    }
+
+    #[test]
+    fn selection_top_left_normalizes_rectangle_orders() {
+        let list = PageList::init(10, 20, None).unwrap();
+
+        let cases = [
+            (screen_selection(&list, (1, 2), (8, 5), true), (1, 2)),
+            (screen_selection(&list, (8, 5), (1, 2), true), (1, 2)),
+            (screen_selection(&list, (8, 2), (1, 5), true), (1, 2)),
+            (screen_selection(&list, (1, 5), (8, 2), true), (1, 2)),
+        ];
+
+        for (selection, expected) in cases {
+            assert_eq!(
+                screen_coord(&list, list.selection_top_left(selection).unwrap()),
+                Coordinate::new(expected.0, expected.1)
+            );
+        }
+    }
+
+    #[test]
+    fn selection_bottom_right_normalizes_rectangle_orders() {
+        let list = PageList::init(10, 20, None).unwrap();
+
+        let cases = [
+            (screen_selection(&list, (1, 2), (8, 5), true), (8, 5)),
+            (screen_selection(&list, (8, 5), (1, 2), true), (8, 5)),
+            (screen_selection(&list, (8, 2), (1, 5), true), (8, 5)),
+            (screen_selection(&list, (1, 5), (8, 2), true), (8, 5)),
+        ];
+
+        for (selection, expected) in cases {
+            assert_eq!(
+                screen_coord(&list, list.selection_bottom_right(selection).unwrap()),
+                Coordinate::new(expected.0, expected.1)
+            );
+        }
+    }
+
+    #[test]
+    fn selection_ordered_returns_untracked_forward_and_reverse() {
+        let list = PageList::init(10, 20, None).unwrap();
+        let selection = screen_selection(&list, (8, 5), (1, 2), true);
+
+        let forward = list
+            .selection_ordered(selection, selection::Order::Forward)
+            .unwrap();
+        assert!(!forward.is_tracked());
+        assert_eq!(screen_coord(&list, forward.start()), Coordinate::new(1, 2));
+        assert_eq!(screen_coord(&list, forward.end()), Coordinate::new(8, 5));
+        assert!(forward.rectangle());
+
+        let reverse = list
+            .selection_ordered(forward, selection::Order::Reverse)
+            .unwrap();
+        assert!(!reverse.is_tracked());
+        assert_eq!(screen_coord(&list, reverse.start()), Coordinate::new(8, 5));
+        assert_eq!(screen_coord(&list, reverse.end()), Coordinate::new(1, 2));
+        assert!(reverse.rectangle());
+    }
+
+    #[test]
+    fn selection_ordered_preserves_matching_mirrored_order() {
+        let list = PageList::init(10, 20, None).unwrap();
+        let selection = screen_selection(&list, (8, 2), (1, 5), true);
+
+        let ordered = list
+            .selection_ordered(selection, selection::Order::MirroredForward)
+            .unwrap();
+
+        assert!(!ordered.is_tracked());
+        assert_eq!(ordered.start(), selection.start());
+        assert_eq!(ordered.end(), selection.end());
+        assert!(ordered.rectangle());
+    }
+
+    #[test]
+    fn selection_ordered_treats_nonmatching_mirrored_desired_order_as_forward() {
+        let list = PageList::init(10, 20, None).unwrap();
+        let selection = screen_selection(&list, (8, 2), (1, 5), true);
+
+        let ordered = list
+            .selection_ordered(selection, selection::Order::MirroredReverse)
+            .unwrap();
+
+        assert!(!ordered.is_tracked());
+        assert_eq!(screen_coord(&list, ordered.start()), Coordinate::new(1, 2));
+        assert_eq!(screen_coord(&list, ordered.end()), Coordinate::new(8, 5));
+        assert!(ordered.rectangle());
+    }
+
+    #[test]
+    fn selection_order_uses_screen_rows_across_pages() {
+        let (list, page_rows) = multi_page_list(80);
+        let selection = screen_selection(
+            &list,
+            (1, page_rows as u32 + 1),
+            (2, page_rows as u32 - 1),
+            false,
+        );
+
+        assert_ne!(
+            row_tuple(&list, selection.start()).0,
+            row_tuple(&list, selection.end()).0
+        );
+        assert_eq!(
+            list.selection_order(selection),
+            Some(selection::Order::Reverse)
+        );
+    }
+
+    #[test]
+    fn selection_helpers_return_none_for_unmappable_endpoints() {
+        let list = PageList::init(10, 20, None).unwrap();
+        let other = PageList::init(10, 20, None).unwrap();
+        let invalid = Pin::new(other.first_node_ptr(), 0, 0);
+        let valid = screen_pin(&list, 2, 5);
+
+        for selection in [
+            selection::Selection::new(invalid, valid, false),
+            selection::Selection::new(valid, invalid, false),
+        ] {
+            assert!(list.selection_order(selection).is_none());
+            assert!(list.selection_top_left(selection).is_none());
+            assert!(list.selection_bottom_right(selection).is_none());
+            assert!(list
+                .selection_ordered(selection, selection::Order::Forward)
+                .is_none());
+        }
     }
 
     #[test]
