@@ -1285,14 +1285,11 @@ fn spawn_server(profile: &str, browser: &str) -> anyhow::Result<Server> {
         profile,
     );
 
-    let child = std::process::Command::new(&binary)
-        .arg(format!("--ipc-socket={}", sock))
-        .arg(format!("--user-data-dir={}", user_data_dir))
-        .arg(format!("--listen-socket={}", listen_sock))
-        .arg("--hidden")
-        .arg("--no-sandbox")
-        .arg("--enable-logging")
-        .arg(format!("--log-file={}", log_file))
+    let args = server_command_args(&sock, &user_data_dir, &listen_sock, &log_file, profile);
+    let mut command = std::process::Command::new(&binary);
+    command.args(&args);
+
+    let child = command
         .spawn()
         .with_context(|| format!("spawn {}", binary))?;
 
@@ -1312,6 +1309,28 @@ fn spawn_server(profile: &str, browser: &str) -> anyhow::Result<Server> {
         listen_socket: listen_sock,
         pane_count: 1,
     })
+}
+
+fn server_command_args(
+    sock: &str,
+    user_data_dir: &str,
+    listen_sock: &str,
+    log_file: &str,
+    profile: &str,
+) -> Vec<String> {
+    let mut args = vec![
+        format!("--ipc-socket={}", sock),
+        format!("--user-data-dir={}", user_data_dir),
+        format!("--listen-socket={}", listen_sock),
+        "--hidden".to_string(),
+        "--no-sandbox".to_string(),
+        "--enable-logging".to_string(),
+        format!("--log-file={}", log_file),
+    ];
+    if profile == "incognito" {
+        args.push("--incognito".to_string());
+    }
+    args
 }
 
 fn send_create_tab(server_tx: &Sender<Vec<u8>>, pane: &Pane) -> anyhow::Result<()> {
@@ -2071,5 +2090,42 @@ pub fn sync_overlay_visibility(active_pane_ids: &HashSet<String>) {
             let _: () = msg_send![layer, setHidden: hidden];
             let _: () = msg_send![ca, commit];
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::server_command_args;
+
+    #[test]
+    fn server_command_args_marks_incognito_profile() {
+        let args = server_command_args(
+            "/tmp/gui.sock",
+            "/tmp/profile/incognito",
+            "/tmp/listen.sock",
+            "/tmp/roamium.log",
+            "incognito",
+        );
+
+        assert!(args.iter().any(|arg| arg == "--incognito"));
+        assert!(args
+            .iter()
+            .any(|arg| arg == "--user-data-dir=/tmp/profile/incognito"));
+    }
+
+    #[test]
+    fn server_command_args_keeps_regular_profiles_persistent() {
+        let args = server_command_args(
+            "/tmp/gui.sock",
+            "/tmp/profile/default",
+            "/tmp/listen.sock",
+            "/tmp/roamium.log",
+            "default",
+        );
+
+        assert!(!args.iter().any(|arg| arg == "--incognito"));
+        assert!(args
+            .iter()
+            .any(|arg| arg == "--user-data-dir=/tmp/profile/default"));
     }
 }

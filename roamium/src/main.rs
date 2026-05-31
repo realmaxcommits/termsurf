@@ -14,6 +14,7 @@ use proto::{Msg, TermSurfMessage};
 static SOCKET_PATH: OnceLock<String> = OnceLock::new();
 static LISTEN_PATH: OnceLock<String> = OnceLock::new();
 static PROFILE_NAME: OnceLock<String> = OnceLock::new();
+static INCOGNITO: OnceLock<bool> = OnceLock::new();
 
 static mut BROWSER_CONTEXT: ffi::TsBrowserContext = ptr::null_mut();
 
@@ -26,7 +27,11 @@ pub fn browser_context() -> ffi::TsBrowserContext {
 unsafe extern "C" fn on_initialized(_user_data: *mut c_void) {
     // Create browser context.
     unsafe {
-        BROWSER_CONTEXT = ffi::ts_create_browser_context(ptr::null());
+        BROWSER_CONTEXT = if *INCOGNITO.get().unwrap_or(&false) {
+            ffi::ts_create_incognito_browser_context()
+        } else {
+            ffi::ts_create_browser_context(ptr::null())
+        };
     }
 
     // Connect to GUI socket.
@@ -73,7 +78,13 @@ fn main() {
         } else if let Some(val) = arg.strip_prefix("--user-data-dir=") {
             let name = val.rsplit('/').next().unwrap_or(val);
             let _ = PROFILE_NAME.set(name.to_string());
+        } else if arg == "--incognito" {
+            let _ = INCOGNITO.set(true);
         }
+    }
+
+    if *INCOGNITO.get().unwrap_or(&false) && PROFILE_NAME.get().is_none() {
+        let _ = PROFILE_NAME.set("incognito".to_string());
     }
 
     // Build argc/argv for ts_content_main.

@@ -324,3 +324,85 @@ Before implementation, run Codex review on this design and fix all real
 findings. After implementation and result recording, run Codex review again on
 the completed experiment and relevant diffs before closing or moving to the next
 experiment.
+
+## Result
+
+**Result:** Pass
+
+Experiment 13 added explicit TermSurf incognito routing and automated session
+isolation coverage.
+
+Implementation:
+
+- Created Chromium branch `148.0.7778.97-issue-799-exp13` from
+  `148.0.7778.97-issue-799-exp12`.
+- Committed Chromium change: `b630804bb1a33b0175dca21de282d2183227966c`
+  (`Expose incognito context`).
+- Regenerated Chromium patch archive:
+  `chromium/patches/issue-799/0073-Expose-incognito-context.patch`.
+- Added `ts_create_incognito_browser_context()` to `libtermsurf_chromium`; it
+  returns Chromium's existing off-the-record browser context.
+- Added Roamium `--incognito` parsing and FFI binding.
+- Added webtui `--incognito`; it maps to reserved profile `incognito` and
+  rejects `--incognito --profile <other>`.
+- Updated Wezboard server spawning so profile `incognito` appends `--incognito`
+  to the Roamium argv.
+- Added unit coverage for Wezboard's Roamium argv construction.
+- Added `scripts/test-issue-799-session-isolation.py`, a local deterministic
+  harness for regular profile persistence/isolation and incognito behavior.
+
+The before-change audit found an important testing detail: regular profile
+storage is persistent through Content Shell's process-level `--user-data-dir`,
+but the automation must close the tab before shutdown to let localStorage flush
+cleanly. No explicit `ts_create_browser_context(path)` change was required.
+Persistent cookie verification also required writing a persistent cookie
+(`max-age=3600`) rather than a session cookie. With those two corrections, the
+regular profile path proved correct.
+
+Verification:
+
+- `autoninja -C out/Default libtermsurf_chromium` passed.
+- `./scripts/build.sh roamium` passed.
+- `./scripts/build.sh webtui` passed.
+- `./scripts/build.sh wezboard` passed.
+- `cargo test -p wezboard-gui server_command_args` passed:
+  - `server_command_args_marks_incognito_profile`
+  - `server_command_args_keeps_regular_profiles_persistent`
+- `python3 -m py_compile scripts/test-issue-799-browser-api-audit.py scripts/test-issue-799-session-isolation.py`
+  passed.
+- `git diff --check` passed.
+- `git -C chromium/src diff --check` passed.
+- Focused session harness passed:
+  - log directory: `logs/issue-799-browser-api-audit/20260531-040949-059676`
+  - status: `pass`
+  - failures: `[]`
+  - proved regular profile A persisted localStorage and server-observed
+    persistent cookies across restart;
+  - proved profile B did not see profile A state;
+  - proved an incognito launch did not see regular profile A state;
+  - proved incognito state survived navigation within the live private session;
+  - proved incognito state disappeared after restarting incognito;
+  - proved a preexisting persistent profile directory named `incognito` was not
+    visible to or mutated by the private session.
+- Full Issue 799 harness passed:
+  - log directory: `logs/issue-799-browser-api-audit/20260531-040207-066091`
+  - status: `completed`
+  - probe count: `26`
+  - missing interfaces: `[]`
+  - empty interfaces: `[]`
+  - prior classifications remained stable, including downloads, dialogs,
+    permissions, WebAuthn, file upload, HTTP auth, crash recovery, console
+    capture, and page zoom.
+
+## Conclusion
+
+Session isolation/incognito is now covered by automation and has a minimal
+product surface:
+
+- regular named profiles persist and isolate browser storage;
+- `web --incognito` routes through the reserved `incognito` profile;
+- Wezboard launches Roamium with `--incognito` for that profile;
+- Roamium selects Chromium's off-the-record browser context;
+- incognito state is private, live-session-only, and non-persistent.
+
+This completes the last explicit in-scope queue item from Experiment 1.

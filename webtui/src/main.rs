@@ -242,6 +242,10 @@ struct Cli {
     #[arg(short, long, global = true)]
     profile: Option<String>,
 
+    /// Open an ephemeral private browser profile
+    #[arg(long, global = true)]
+    incognito: bool,
+
     /// Browser binary to use ("chromium", "plusium", or absolute path)
     #[arg(short, long, global = true)]
     browser: Option<String>,
@@ -269,7 +273,17 @@ fn main() -> io::Result<()> {
     let cli = Cli::parse();
 
     let profile_arg = cli.profile; // Option<String> — None if no --profile given
-    let mut profile = profile_arg.clone().unwrap_or_else(|| "default".to_string());
+    if cli.incognito && profile_arg.as_deref().is_some_and(|p| p != "incognito") {
+        eprintln!(
+            "Error: --incognito cannot be combined with --profile unless the profile is incognito"
+        );
+        std::process::exit(1);
+    }
+    let mut profile = if cli.incognito {
+        "incognito".to_string()
+    } else {
+        profile_arg.clone().unwrap_or_else(|| "default".to_string())
+    };
     let mut browser = cli.browser.unwrap_or_default();
 
     // Validate profile name: lowercase alphanumeric, starts with a letter.
@@ -294,7 +308,12 @@ fn main() -> io::Result<()> {
     // Handle `web last` subcommand — print last active browser pane and exit (Issue 684 Exp 4).
     if let Some(Commands::Last) = cli.command {
         if let (Some(ref conn), Some(ref pid)) = (&compositor, &pane_id) {
-            match conn.send_query_last(pid, profile_arg.as_deref().unwrap_or("")) {
+            let query_profile = if cli.incognito {
+                "incognito"
+            } else {
+                profile_arg.as_deref().unwrap_or("")
+            };
+            match conn.send_query_last(pid, query_profile) {
                 Some((prof, pane, tab)) => {
                     println!("profile: {}", prof);
                     println!("pane_id: {}", pane);

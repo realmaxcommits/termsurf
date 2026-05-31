@@ -21,6 +21,7 @@ extern "C" {
     // --- Profiles ---
 
     pub fn ts_create_browser_context(path: *const c_char) -> TsBrowserContext;
+    pub fn ts_create_incognito_browser_context() -> TsBrowserContext;
 
     // --- Tabs ---
 

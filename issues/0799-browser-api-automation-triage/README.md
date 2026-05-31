@@ -1,6 +1,7 @@
 +++
-status = "open"
+status = "closed"
 opened = "2026-05-30"
+closed = "2026-05-31"
 +++
 
 # Issue 799: Browser API Automation Triage
@@ -184,4 +185,36 @@ and reviewed.
 - [Experiment 12: Add contained file-upload selection](12-contained-file-upload-selection.md)
   — **Pass**
 - [Experiment 13: Add session isolation and incognito coverage](13-session-isolation-incognito.md)
-  — **Designed**
+  — **Pass**
+
+## Conclusion
+
+Issue 799 completed the automation-first browser API triage and implementation
+queue. The issue first inventoried missing browser API surfaces, then solved the
+automatable subset with deterministic local probes and narrow TermSurf-owned
+embedder plumbing.
+
+Completed automated surfaces:
+
+- browser-service/Mojo no-crash audit harness;
+- PaymentRequest default-deny binder coverage;
+- contained generic downloads, including blob downloads;
+- protocol-mediated JavaScript dialogs;
+- automated page zoom shortcuts;
+- protocol console capture;
+- protocol HTTP Basic Auth;
+- renderer crash recovery UX;
+- explicit default-deny permission/API behavior;
+- WebAuthn virtual-authenticator coverage;
+- contained file-upload selection and cancellation;
+- regular profile persistence/isolation and incognito non-persistence.
+
+The final full harness run completed 26 probes with no missing Mojo interfaces,
+no empty interfaces, and no renderer-crash regressions:
+`logs/issue-799-browser-api-audit/20260531-040207-066091`.
+
+Deferred items remain intentionally out of scope for this issue: native
+drag/drop, real camera/microphone and screen-capture UX, full Payment Request or
+Web Share product integration, hardware chooser APIs, bookmarks, hosted
+passwords, and other broad product surfaces. Those require separate product or
+platform issues rather than more Issue 799 automation work.
