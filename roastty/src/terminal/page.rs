@@ -305,11 +305,18 @@ pub(super) enum CloneFromError {
     SourceCellUnsupportedManagedMemory,
     DestinationCellUnsupportedManagedMemory,
     Grapheme(GraphemeError),
+    Style(super::ref_counted_set::AddError),
 }
 
 impl From<GraphemeError> for CloneFromError {
     fn from(value: GraphemeError) -> Self {
         Self::Grapheme(value)
+    }
+}
+
+impl From<super::ref_counted_set::AddError> for CloneFromError {
+    fn from(value: super::ref_counted_set::AddError) -> Self {
+        Self::Style(value)
     }
 }
 
@@ -433,7 +440,7 @@ impl Page {
         })
     }
 
-    fn clone_rows_from_without_styles_or_hyperlinks(
+    fn clone_rows_from_without_hyperlinks(
         &mut self,
         other: &Page,
         y_start: usize,
@@ -444,13 +451,13 @@ impl Page {
         assert!(y_end - y_start <= self.size.rows as usize);
 
         for (dst_y, src_y) in (y_start..y_end).enumerate() {
-            self.clone_row_from_without_styles_or_hyperlinks(other, dst_y, src_y)?;
+            self.clone_row_from_without_hyperlinks(other, dst_y, src_y)?;
         }
 
         Ok(())
     }
 
-    fn clone_row_from_without_styles_or_hyperlinks(
+    fn clone_row_from_without_hyperlinks(
         &mut self,
         other: &Page,
         dst_y: usize,
@@ -458,10 +465,10 @@ impl Page {
     ) -> Result<(), CloneFromError> {
         let src_row = *other.get_row(src_y);
         let dst_row = *self.get_row(dst_y);
-        if src_row.styled() || src_row.hyperlink() {
+        if src_row.hyperlink() {
             return Err(CloneFromError::SourceRowUnsupportedManagedMemory);
         }
-        if dst_row.styled() || dst_row.hyperlink() {
+        if dst_row.hyperlink() {
             return Err(CloneFromError::DestinationRowUnsupportedManagedMemory);
         }
 
@@ -492,6 +499,16 @@ impl Page {
                 })
                 .collect::<Vec<_>>()
         };
+        let source_styles = {
+            let src_cells = other.get_cells(other.get_row(src_y));
+            src_cells[..copy_len]
+                .iter()
+                .map(|cell| {
+                    let id = cell.style_id();
+                    (id != style::DEFAULT_ID).then(|| (id, other.get_style(id)))
+                })
+                .collect::<Vec<_>>()
+        };
         {
             let dst_cells = self.get_cells(self.get_row(dst_y));
             if dst_cells[..copy_len]
@@ -505,6 +522,14 @@ impl Page {
         for offset in dst_cell_offsets.iter().copied() {
             if unsafe { (*offset.ptr(self.memory.as_ptr())).has_grapheme() } {
                 self.clear_grapheme_at_offset(offset);
+            }
+            let style_id = unsafe { (*offset.ptr(self.memory.as_ptr())).style_id() };
+            if style_id != style::DEFAULT_ID {
+                self.release_style(style_id);
+                unsafe {
+                    // Safety: offset came from this row's valid cell range.
+                    (*offset.ptr_mut(self.memory.as_mut_ptr())).set_style_id(style::DEFAULT_ID);
+                }
             }
         }
 
@@ -527,6 +552,9 @@ impl Page {
             let src_cells = other.get_cells(other.get_row(src_y));
             let cells = self.get_cells_mut(dst_y);
             cells[..copy_len].copy_from_slice(&src_cells[..copy_len]);
+            for cell in &mut cells[..copy_len] {
+                cell.set_style_id(style::DEFAULT_ID);
+            }
 
             if should_clear_spacer_head {
                 let last = &mut cells[copy_len - 1];
@@ -536,7 +564,7 @@ impl Page {
             }
         }
 
-        for (offset, cps) in dst_cell_offsets.into_iter().zip(source_graphemes) {
+        for (offset, cps) in dst_cell_offsets.iter().copied().zip(source_graphemes) {
             if !cps.is_empty() {
                 unsafe {
                     // Safety: offset came from this row's valid cell range.
@@ -549,7 +577,26 @@ impl Page {
             }
         }
 
+        for (offset, source_style) in dst_cell_offsets.iter().copied().zip(source_styles) {
+            let Some((source_id, source_style)) = source_style else {
+                continue;
+            };
+            let dst_id = match self.add_style_with_id(source_style, source_id) {
+                Ok(id) => id,
+                Err(err) => {
+                    self.update_row_grapheme_flag(dst_y);
+                    self.update_row_styled_flag(dst_y);
+                    return Err(err.into());
+                }
+            };
+            unsafe {
+                // Safety: offset came from this row's valid cell range.
+                (*offset.ptr_mut(self.memory.as_mut_ptr())).set_style_id(dst_id);
+            }
+        }
+
         self.update_row_grapheme_flag(dst_y);
+        self.update_row_styled_flag(dst_y);
         Ok(())
     }
 
@@ -735,6 +782,14 @@ impl Page {
         self.get_row_mut(row_index).set_grapheme(has_grapheme);
     }
 
+    pub(super) fn update_row_styled_flag(&mut self, row_index: usize) {
+        let has_styling = self
+            .get_cells(self.get_row(row_index))
+            .iter()
+            .any(|cell| cell.has_styling());
+        self.get_row_mut(row_index).set_styled(has_styling);
+    }
+
     pub(super) fn grapheme_count(&self) -> usize {
         self.grapheme_map_ref()
             .map(|map| map.count() as usize)
@@ -756,6 +811,18 @@ impl Page {
             self.memory.as_mut_ptr().add(self.layout.styles_start)
         };
         self.styles.add(base, style)
+    }
+
+    pub(super) fn add_style_with_id(
+        &mut self,
+        style: style::Style,
+        id: style::Id,
+    ) -> Result<style::Id, super::ref_counted_set::AddError> {
+        let base = unsafe {
+            // Safety: styles_start is inside this page's live backing memory.
+            self.memory.as_mut_ptr().add(self.layout.styles_start)
+        };
+        Ok(self.styles.add_with_id(base, style, id)?.unwrap_or(id))
     }
 
     pub(super) fn get_style(&self, id: style::Id) -> style::Style {
@@ -1588,7 +1655,7 @@ impl Cell {
     }
 
     const fn unsupported_clone_managed_memory(self) -> bool {
-        self.has_styling() || self.hyperlink()
+        self.hyperlink()
     }
 
     pub(super) fn has_text_any(cells: &[Cell]) -> bool {
@@ -2372,7 +2439,7 @@ mod tests {
         })
         .unwrap();
         page2
-            .clone_rows_from_without_styles_or_hyperlinks(&page, 0, page.size.rows as usize)
+            .clone_rows_from_without_hyperlinks(&page, 0, page.size.rows as usize)
             .unwrap();
 
         for y in 0..page2.capacity.rows as usize {
@@ -2413,7 +2480,7 @@ mod tests {
         })
         .unwrap();
         page2
-            .clone_rows_from_without_styles_or_hyperlinks(&page, 0, page.size.rows as usize)
+            .clone_rows_from_without_hyperlinks(&page, 0, page.size.rows as usize)
             .unwrap();
         assert_eq!(page2.size.cols, 5);
 
@@ -2444,7 +2511,7 @@ mod tests {
         })
         .unwrap();
         page2
-            .clone_rows_from_without_styles_or_hyperlinks(&page, 0, 5)
+            .clone_rows_from_without_hyperlinks(&page, 0, 5)
             .unwrap();
 
         for y in 0..5 {
@@ -2469,7 +2536,7 @@ mod tests {
         *page2.get_row_and_cell_mut(4, 0).cell = Cell::init('y' as u32);
 
         page2
-            .clone_rows_from_without_styles_or_hyperlinks(&page, 0, 1)
+            .clone_rows_from_without_hyperlinks(&page, 0, 1)
             .unwrap();
         let cells = page2.get_cells(page2.get_row(0));
         assert_eq!(cells[0].codepoint(), 'a' as u32);
@@ -2481,7 +2548,7 @@ mod tests {
     }
 
     #[test]
-    fn page_clone_from_plain_rows_rejects_managed_rows_and_cells() {
+    fn page_clone_from_rejects_hyperlink_rows_and_cells() {
         let mut source = Page::init(Capacity {
             cols: 2,
             rows: 1,
@@ -2497,25 +2564,25 @@ mod tests {
         })
         .unwrap();
 
-        source.get_row_mut(0).set_styled(true);
+        source.get_row_mut(0).set_hyperlink(true);
         assert_eq!(
-            destination.clone_rows_from_without_styles_or_hyperlinks(&source, 0, 1),
+            destination.clone_rows_from_without_hyperlinks(&source, 0, 1),
             Err(CloneFromError::SourceRowUnsupportedManagedMemory)
         );
-        source.get_row_mut(0).set_styled(false);
+        source.get_row_mut(0).set_hyperlink(false);
 
         destination.get_row_mut(0).set_hyperlink(true);
         assert_eq!(
-            destination.clone_rows_from_without_styles_or_hyperlinks(&source, 0, 1),
+            destination.clone_rows_from_without_hyperlinks(&source, 0, 1),
             Err(CloneFromError::DestinationRowUnsupportedManagedMemory)
         );
         destination.get_row_mut(0).set_hyperlink(false);
 
         let mut source_cell = Cell::init('s' as u32);
-        source_cell.set_style_id(1);
+        source_cell.set_hyperlink(true);
         *source.get_row_and_cell_mut(0, 0).cell = source_cell;
         assert_eq!(
-            destination.clone_rows_from_without_styles_or_hyperlinks(&source, 0, 1),
+            destination.clone_rows_from_without_hyperlinks(&source, 0, 1),
             Err(CloneFromError::SourceCellUnsupportedManagedMemory)
         );
         *source.get_row_and_cell_mut(0, 0).cell = Cell::init('s' as u32);
@@ -2524,7 +2591,7 @@ mod tests {
         destination_cell.set_hyperlink(true);
         *destination.get_row_and_cell_mut(0, 0).cell = destination_cell;
         assert_eq!(
-            destination.clone_rows_from_without_styles_or_hyperlinks(&source, 0, 1),
+            destination.clone_rows_from_without_hyperlinks(&source, 0, 1),
             Err(CloneFromError::DestinationCellUnsupportedManagedMemory)
         );
     }
@@ -2552,7 +2619,7 @@ mod tests {
         })
         .unwrap();
         page2
-            .clone_rows_from_without_styles_or_hyperlinks(&page, 0, page.size.rows as usize)
+            .clone_rows_from_without_hyperlinks(&page, 0, page.size.rows as usize)
             .unwrap();
 
         for y in 0..page2.capacity.rows as usize {
@@ -2610,7 +2677,7 @@ mod tests {
         }
 
         page2
-            .clone_rows_from_without_styles_or_hyperlinks(&page, 0, page.size.rows as usize)
+            .clone_rows_from_without_hyperlinks(&page, 0, page.size.rows as usize)
             .unwrap();
 
         for y in 0..page2.capacity.rows as usize {
@@ -2632,7 +2699,7 @@ mod tests {
 
         let mut page2 = Page::init(Capacity::new(2, 1)).unwrap();
         page2
-            .clone_rows_from_without_styles_or_hyperlinks(&page, 0, 1)
+            .clone_rows_from_without_hyperlinks(&page, 0, 1)
             .unwrap();
 
         assert_eq!(page2.cell_copy_at(0, 0).codepoint(), 'a' as u32);
@@ -2652,7 +2719,7 @@ mod tests {
         page2.append_grapheme_at(4, 0, 0x0301).unwrap();
 
         page2
-            .clone_rows_from_without_styles_or_hyperlinks(&page, 0, 1)
+            .clone_rows_from_without_hyperlinks(&page, 0, 1)
             .unwrap();
 
         assert_eq!(page2.cell_copy_at(0, 0).codepoint(), 'a' as u32);
@@ -2674,12 +2741,310 @@ mod tests {
         assert!(!page2.get_row(0).grapheme());
 
         page2
-            .clone_rows_from_without_styles_or_hyperlinks(&page, 0, 1)
+            .clone_rows_from_without_hyperlinks(&page, 0, 1)
             .unwrap();
 
         assert!(page2.get_row(0).grapheme());
         assert!(page2.cell_copy_at(1, 0).has_grapheme());
         assert_eq!(page2.lookup_grapheme_at(1, 0), Some(vec![0x0301]));
+    }
+
+    #[test]
+    fn page_clone_from_styles_preserves_requested_id() {
+        let mut page = Page::init(Capacity {
+            cols: 4,
+            rows: 1,
+            styles: 8,
+            ..Capacity::new(4, 1)
+        })
+        .unwrap();
+        let bold = style::Style {
+            flags: style::Flags {
+                bold: true,
+                ..style::Flags::default()
+            },
+            ..style::Style::default()
+        };
+        let id = page.add_style(bold).unwrap();
+        for x in 0..page.size.cols as usize {
+            let rac = page.get_row_and_cell_mut(x, 0);
+            rac.row.set_styled(true);
+            *rac.cell = Cell::init((x + 1) as u32);
+            rac.cell.set_style_id(id);
+            page.use_style(id);
+        }
+        page.release_style(id);
+
+        let mut page2 = Page::init(Capacity {
+            cols: 4,
+            rows: 1,
+            styles: 8,
+            ..Capacity::new(4, 1)
+        })
+        .unwrap();
+        page2
+            .clone_rows_from_without_hyperlinks(&page, 0, 1)
+            .unwrap();
+
+        assert!(page2.get_row(0).styled());
+        assert_eq!(page2.style_count(), 1);
+        assert_eq!(page2.style_ref_count(id), page.size.cols);
+        assert_eq!(page2.get_style(id), bold);
+        for x in 0..page2.size.cols as usize {
+            assert_eq!(page2.cell_copy_at(x, 0).style_id(), id);
+        }
+
+        for _ in 0..page.size.cols {
+            page.release_style(id);
+        }
+        assert_eq!(page.style_count(), 0);
+        assert_eq!(page2.get_style(id), bold);
+        assert_eq!(page2.style_ref_count(id), page2.size.cols);
+    }
+
+    #[test]
+    fn page_clone_from_plain_source_releases_destination_styles() {
+        let mut page = Page::init(Capacity::new(3, 1)).unwrap();
+        for x in 0..page.size.cols as usize {
+            *page.get_row_and_cell_mut(x, 0).cell = Cell::init((x + 1) as u32);
+        }
+
+        let mut page2 = Page::init(Capacity {
+            cols: 3,
+            rows: 1,
+            styles: 8,
+            ..Capacity::new(3, 1)
+        })
+        .unwrap();
+        let italic = style::Style {
+            flags: style::Flags {
+                italic: true,
+                ..style::Flags::default()
+            },
+            ..style::Style::default()
+        };
+        let old_id = page2.add_style(italic).unwrap();
+        for x in 0..page2.size.cols as usize {
+            let rac = page2.get_row_and_cell_mut(x, 0);
+            rac.row.set_styled(true);
+            *rac.cell = Cell::init('x' as u32);
+            rac.cell.set_style_id(old_id);
+            page2.use_style(old_id);
+        }
+        page2.release_style(old_id);
+        assert_eq!(page2.style_ref_count(old_id), 3);
+
+        page2
+            .clone_rows_from_without_hyperlinks(&page, 0, 1)
+            .unwrap();
+
+        assert!(!page2.get_row(0).styled());
+        assert_eq!(page2.style_count(), 0);
+        for x in 0..page2.size.cols as usize {
+            assert_eq!(page2.cell_copy_at(x, 0).style_id(), style::DEFAULT_ID);
+            assert_eq!(page2.cell_copy_at(x, 0).codepoint(), (x + 1) as u32);
+        }
+    }
+
+    #[test]
+    fn page_clone_from_replaces_destination_style_refs() {
+        let mut page = Page::init(Capacity {
+            cols: 2,
+            rows: 1,
+            styles: 8,
+            ..Capacity::new(2, 1)
+        })
+        .unwrap();
+        let bold = style::Style {
+            flags: style::Flags {
+                bold: true,
+                ..style::Flags::default()
+            },
+            ..style::Style::default()
+        };
+        let source_id = page.add_style(bold).unwrap();
+        for x in 0..page.size.cols as usize {
+            let rac = page.get_row_and_cell_mut(x, 0);
+            rac.row.set_styled(true);
+            *rac.cell = Cell::init((x + 1) as u32);
+            rac.cell.set_style_id(source_id);
+            page.use_style(source_id);
+        }
+        page.release_style(source_id);
+
+        let mut page2 = Page::init(Capacity {
+            cols: 2,
+            rows: 1,
+            styles: 8,
+            ..Capacity::new(2, 1)
+        })
+        .unwrap();
+        let italic = style::Style {
+            flags: style::Flags {
+                italic: true,
+                ..style::Flags::default()
+            },
+            ..style::Style::default()
+        };
+        let old_id = page2.add_style(italic).unwrap();
+        for x in 0..page2.size.cols as usize {
+            let rac = page2.get_row_and_cell_mut(x, 0);
+            rac.row.set_styled(true);
+            *rac.cell = Cell::init('x' as u32);
+            rac.cell.set_style_id(old_id);
+            page2.use_style(old_id);
+        }
+        page2.release_style(old_id);
+
+        page2
+            .clone_rows_from_without_hyperlinks(&page, 0, 1)
+            .unwrap();
+
+        assert_eq!(page2.style_count(), 1);
+        assert_eq!(page2.get_style(source_id), bold);
+        assert_eq!(page2.style_ref_count(source_id), 2);
+        for x in 0..page2.size.cols as usize {
+            assert_eq!(page2.cell_copy_at(x, 0).style_id(), source_id);
+        }
+    }
+
+    #[test]
+    fn page_clone_from_preserves_trailing_destination_style() {
+        let mut page = Page::init(Capacity::new(2, 1)).unwrap();
+        *page.get_row_and_cell_mut(0, 0).cell = Cell::init('a' as u32);
+        *page.get_row_and_cell_mut(1, 0).cell = Cell::init('b' as u32);
+
+        let mut page2 = Page::init(Capacity {
+            cols: 4,
+            rows: 1,
+            styles: 8,
+            ..Capacity::new(4, 1)
+        })
+        .unwrap();
+        let underline = style::Style {
+            flags: style::Flags {
+                underline: super::super::sgr::Underline::Single,
+                ..style::Flags::default()
+            },
+            ..style::Style::default()
+        };
+        let id = page2.add_style(underline).unwrap();
+        let rac = page2.get_row_and_cell_mut(3, 0);
+        rac.row.set_styled(true);
+        *rac.cell = Cell::init('z' as u32);
+        rac.cell.set_style_id(id);
+        page2.use_style(id);
+        page2.release_style(id);
+
+        page2
+            .clone_rows_from_without_hyperlinks(&page, 0, 1)
+            .unwrap();
+
+        assert!(page2.get_row(0).styled());
+        assert_eq!(page2.cell_copy_at(0, 0).style_id(), style::DEFAULT_ID);
+        assert_eq!(page2.cell_copy_at(1, 0).style_id(), style::DEFAULT_ID);
+        assert_eq!(page2.cell_copy_at(3, 0).codepoint(), 'z' as u32);
+        assert_eq!(page2.cell_copy_at(3, 0).style_id(), id);
+        assert_eq!(page2.get_style(id), underline);
+        assert_eq!(page2.style_ref_count(id), 1);
+    }
+
+    #[test]
+    fn page_clone_from_style_alternate_id() {
+        let mut page = Page::init(Capacity {
+            cols: 1,
+            rows: 1,
+            styles: 8,
+            ..Capacity::new(1, 1)
+        })
+        .unwrap();
+        let bold = style::Style {
+            flags: style::Flags {
+                bold: true,
+                ..style::Flags::default()
+            },
+            ..style::Style::default()
+        };
+        let source_id = page.add_style(bold).unwrap();
+        let rac = page.get_row_and_cell_mut(0, 0);
+        rac.row.set_styled(true);
+        *rac.cell = Cell::init('b' as u32);
+        rac.cell.set_style_id(source_id);
+        page.use_style(source_id);
+        page.release_style(source_id);
+
+        let mut page2 = Page::init(Capacity {
+            cols: 1,
+            rows: 1,
+            styles: 8,
+            ..Capacity::new(1, 1)
+        })
+        .unwrap();
+        let italic = style::Style {
+            flags: style::Flags {
+                italic: true,
+                ..style::Flags::default()
+            },
+            ..style::Style::default()
+        };
+        let occupied_id = page2.add_style(italic).unwrap();
+        assert_eq!(occupied_id, source_id);
+
+        page2
+            .clone_rows_from_without_hyperlinks(&page, 0, 1)
+            .unwrap();
+
+        let copied_id = page2.cell_copy_at(0, 0).style_id();
+        assert_ne!(copied_id, source_id);
+        assert_eq!(page2.get_style(copied_id), bold);
+        assert_eq!(page2.style_ref_count(copied_id), 1);
+        assert_eq!(page2.get_style(source_id), italic);
+    }
+
+    #[test]
+    fn page_clone_from_style_insert_failure_leaves_valid_cells() {
+        let mut page = Page::init(Capacity {
+            cols: 1,
+            rows: 1,
+            styles: 8,
+            ..Capacity::new(1, 1)
+        })
+        .unwrap();
+        let bold = style::Style {
+            flags: style::Flags {
+                bold: true,
+                ..style::Flags::default()
+            },
+            ..style::Style::default()
+        };
+        let source_id = page.add_style(bold).unwrap();
+        let rac = page.get_row_and_cell_mut(0, 0);
+        rac.row.set_styled(true);
+        *rac.cell = Cell::init('b' as u32);
+        rac.cell.set_style_id(source_id);
+        page.use_style(source_id);
+        page.release_style(source_id);
+
+        let mut page2 = Page::init(Capacity::with_metadata(
+            1,
+            1,
+            0,
+            HYPERLINK_BYTES_DEFAULT,
+            GRAPHEME_BYTES_DEFAULT,
+            STRING_BYTES_DEFAULT,
+        ))
+        .unwrap();
+        *page2.get_row_and_cell_mut(0, 0).cell = Cell::init('x' as u32);
+
+        assert_eq!(
+            page2.clone_rows_from_without_hyperlinks(&page, 0, 1),
+            Err(CloneFromError::Style(
+                super::super::ref_counted_set::AddError::OutOfMemory
+            ))
+        );
+        assert_eq!(page2.cell_copy_at(0, 0).codepoint(), 'b' as u32);
+        assert_eq!(page2.cell_copy_at(0, 0).style_id(), style::DEFAULT_ID);
+        assert!(!page2.get_row(0).styled());
     }
 
     #[test]

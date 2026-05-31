@@ -230,3 +230,90 @@ The experiment fails if:
 This experiment design must be reviewed by Codex before implementation. Any real
 design issues must be fixed before committing the plan or implementing the
 slice.
+
+## Result
+
+**Result:** Pass
+
+Experiment 19 replaced the style portion of the temporary row-copy managed
+memory guard with real style migration. The row-copy method is now:
+
+- `Page::clone_rows_from_without_hyperlinks`
+- `Page::clone_row_from_without_hyperlinks`
+
+The name remains scoped because hyperlink migration is still missing.
+
+### Style Migration
+
+The row-copy path now:
+
+- allows source and destination styled rows;
+- allows copied source and destination cells with non-default style IDs;
+- releases destination style references in the copied range before overwrite;
+- copies source cells into the destination with default style IDs first;
+- inserts source styles into the destination style set with
+  `style::Set::add_with_id`;
+- preserves the source style ID when the requested ID is available;
+- rewrites copied destination cells to the alternate destination ID when
+  `add_with_id` cannot honor the requested ID;
+- updates the destination row styled flag after copy.
+
+Style insertion failures are handled without leaving dangling source style IDs
+in destination cells. If insertion fails after cells have been copied, the cells
+remain valid with either default style IDs or already-inserted destination style
+IDs, and the row styled flag is recomputed before the error is returned.
+
+### Remaining Unsupported Cases
+
+The row-copy path still rejects hyperlinks:
+
+- source or destination rows with `Row::hyperlink`;
+- copied source or destination cells with `Cell::hyperlink()`.
+
+Same-page row copy also remains out of scope. Roastty's current safe method
+shape uses `&mut self` plus `&Page`, which excludes the Ghostty `other == self`
+style fast path for now. That should be designed with `clonePartialRowFrom` or a
+dedicated same-page Rust API later.
+
+### Tests Added
+
+Added Page tests:
+
+- `page_clone_from_styles_preserves_requested_id`
+- `page_clone_from_plain_source_releases_destination_styles`
+- `page_clone_from_replaces_destination_style_refs`
+- `page_clone_from_preserves_trailing_destination_style`
+- `page_clone_from_style_alternate_id`
+- `page_clone_from_style_insert_failure_leaves_valid_cells`
+
+The existing hyperlink rejection test was updated for the new scope:
+
+- `page_clone_from_rejects_hyperlink_rows_and_cells`
+
+Experiment 17 and 18 plain/grapheme row-copy tests remain green.
+
+### Verification
+
+Commands run:
+
+```bash
+cargo fmt
+cargo test -p roastty terminal::page
+cargo test -p roastty terminal::style
+cargo test -p roastty
+```
+
+Results:
+
+- `cargo test -p roastty terminal::page`: 69 passed.
+- `cargo test -p roastty terminal::style`: 21 passed.
+- `cargo test -p roastty`: 178 Rust unit tests passed, ABI harness passed, doc
+  tests passed.
+
+## Conclusion
+
+Roastty's Page row-copy path now supports plain rows, graphemes, and styles. The
+remaining managed-memory gap for full `cloneFrom` is hyperlinks. Since Page
+hyperlink storage and string allocation are not implemented yet, the next work
+should likely build the hyperlink substrate before attempting hyperlink row-copy
+or full `cloneFrom` naming.
