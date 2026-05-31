@@ -152,3 +152,54 @@ The experiment fails if:
 - it expands into parser, renderer, app, ABI, resize/reflow, iterator,
   selection, or search work;
 - tests or formatting fail.
+
+## Result
+
+**Result:** Pass
+
+`PageList::scroll_clear` is implemented as a private PageList helper. It scans
+the active area from bottom to top using active-coordinate pins, so the count is
+correct even when the active area starts mid-page. A row is considered non-empty
+when any visible cell in `0..self.cols` returns false from `Cell::is_empty`.
+
+The helper computes the scroll amount as `y + 1` for the first non-empty active
+row `y`: empty active content scrolls zero rows, top active content scrolls one
+row, middle active content scrolls `y + 1` rows, and bottom active content
+scrolls `self.rows` rows. It performs the clear by calling `grow_rows`, not by
+directly blanking active rows. It does not call `fixup_viewport` and does not
+force the viewport to active.
+
+Tests cover:
+
+- empty active content;
+- non-empty history with empty active content;
+- top, middle, and bottom active content;
+- active rows spanning partial pages;
+- `Cell::is_empty` semantics for styled text, grapheme text, hyperlink text,
+  spacer cells, and background-color-only cells;
+- active, top, and pinned viewport preservation.
+
+Verification:
+
+- `cargo fmt -- roastty/src/terminal/page_list.rs`
+- `cargo test -p roastty terminal::page_list` — 192 PageList tests passed, ABI
+  harness filtered out
+- `cargo test -p roastty` — 473 unit tests passed, ABI harness passed, doc-tests
+  passed
+
+Independent result review approved the experiment as a Pass with no required
+findings. The review specifically accepted the active-only bottom-up scan,
+`y + 1` row count, `grow_rows` use, viewport preservation, `Cell::is_empty`
+coverage, and scope boundaries.
+
+## Conclusion
+
+Experiment 52 completed PageList `scrollClear` behavior. Roastty can now clear
+active content by scrolling it into history using the same grow-based model as
+upstream, while preserving viewport state and avoiding parser or renderer
+integration.
+
+The next PageList slice should move to the remaining read/iteration surfaces
+above point and pin conversion, such as `getCell`, row/cell iterators, or prompt
+iteration, depending on which upstream behavior is most useful for the next
+terminal-core layer.

@@ -1982,6 +1982,33 @@ impl PageList {
         Ok(erased)
     }
 
+    fn scroll_clear(&mut self) -> Result<(), GrowError> {
+        let mut rows_to_scroll = 0usize;
+        for active_y in (0..self.rows).rev() {
+            let Some(pin) = self.pin(point::Point::active(Coordinate::new(0, active_y as u32)))
+            else {
+                continue;
+            };
+            let Some(node) = self.node_for_pin(&pin) else {
+                continue;
+            };
+            let row = node.page.get_row(pin.y as usize);
+            let cells = node.page.get_cells(row);
+            if cells[..self.cols as usize]
+                .iter()
+                .any(|cell| !cell.is_empty())
+            {
+                rows_to_scroll = active_y as usize + 1;
+                break;
+            }
+        }
+
+        self.grow_rows(rows_to_scroll)?;
+        self.verify_integrity()
+            .expect("scroll_clear result must preserve PageList integrity");
+        Ok(())
+    }
+
     fn grow(&mut self) -> Result<Option<NonNull<Node>>, GrowError> {
         let last = self
             .pages
@@ -2187,7 +2214,7 @@ fn init_pages(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::terminal::page::{page_layout, Cell, HyperlinkSnapshot, HyperlinkSnapshotId};
+    use crate::terminal::page::{page_layout, Cell, HyperlinkSnapshot, HyperlinkSnapshotId, Wide};
     use crate::terminal::{hyperlink, style};
 
     fn simulate_history(list: &mut PageList, total_rows: CellCountInt) {
@@ -2274,6 +2301,33 @@ mod tests {
 
     fn row_marker(page: &Page, y: usize) -> u32 {
         page_cell(page, 0, y).codepoint()
+    }
+
+    fn set_active_row_marker(list: &mut PageList, y: CellCountInt, value: u32) {
+        let pin = list
+            .pin(point::Point::active(Coordinate::new(0, y as u32)))
+            .expect("active row must exist");
+        let index = list.node_index(pin.node).expect("active node must exist");
+        set_row_marker(&mut list.pages[index].page, pin.y as usize, value);
+    }
+
+    fn set_active_cell(list: &mut PageList, y: CellCountInt, cell: Cell) {
+        let pin = list
+            .pin(point::Point::active(Coordinate::new(0, y as u32)))
+            .expect("active row must exist");
+        let index = list.node_index(pin.node).expect("active node must exist");
+        *list.pages[index]
+            .page
+            .get_row_and_cell_mut(0, pin.y as usize)
+            .cell = cell;
+    }
+
+    fn active_row_marker(list: &PageList, y: CellCountInt) -> u32 {
+        let pin = list
+            .pin(point::Point::active(Coordinate::new(0, y as u32)))
+            .expect("active row must exist");
+        let node = list.node_for_pin(&pin).expect("active node must exist");
+        row_marker(&node.page, pin.y as usize)
     }
 
     fn bounded_viewport_list(page_multiplier: usize) -> (PageList, usize) {
@@ -5897,6 +5951,193 @@ mod tests {
         assert_eq!(list.viewport_pin_row_offset, Some(1));
         assert_eq!(list.viewport_pin.y, 1);
         list.verify_integrity().unwrap();
+    }
+
+    #[test]
+    fn page_list_scroll_clear_empty_active_scrolls_zero_rows() {
+        let mut list = PageList::init(10, 5, None).unwrap();
+        let total_rows = list.total_rows;
+        let page_count = list.pages.len();
+
+        list.scroll_clear().unwrap();
+
+        assert_eq!(list.total_rows, total_rows);
+        assert_eq!(list.pages.len(), page_count);
+        for y in 0..list.rows {
+            assert_eq!(active_row_marker(&list, y), 0);
+        }
+        assert_eq!(list.viewport, Viewport::Active);
+        list.verify_integrity().unwrap();
+    }
+
+    #[test]
+    fn page_list_scroll_clear_ignores_non_empty_history() {
+        let capacity_rows = initial_capacity(80).rows();
+        let mut list = PageList::init(80, capacity_rows, None).unwrap();
+        list.grow_rows(1).unwrap();
+        assert_eq!(active_top_left_screen_coord(&list), Coordinate::new(0, 1));
+        set_row_marker(&mut list.pages[0].page, 0, 99);
+        let total_rows = list.total_rows;
+
+        list.scroll_clear().unwrap();
+
+        assert_eq!(list.total_rows, total_rows);
+        assert_eq!(row_marker(&list.pages[0].page, 0), 99);
+        list.verify_integrity().unwrap();
+    }
+
+    #[test]
+    fn page_list_scroll_clear_top_active_row_scrolls_one_row() {
+        let mut list = PageList::init(10, 5, None).unwrap();
+        set_active_row_marker(&mut list, 0, 11);
+
+        list.scroll_clear().unwrap();
+
+        assert_eq!(list.total_rows, 6);
+        assert_eq!(active_top_left_screen_coord(&list), Coordinate::new(0, 1));
+        for y in 0..list.rows {
+            assert_eq!(active_row_marker(&list, y), 0);
+        }
+        list.verify_integrity().unwrap();
+    }
+
+    #[test]
+    fn page_list_scroll_clear_middle_active_row_uses_active_y() {
+        let mut list = PageList::init(10, 5, None).unwrap();
+        set_active_row_marker(&mut list, 2, 22);
+
+        list.scroll_clear().unwrap();
+
+        assert_eq!(list.total_rows, 8);
+        assert_eq!(active_top_left_screen_coord(&list), Coordinate::new(0, 3));
+        for y in 0..list.rows {
+            assert_eq!(active_row_marker(&list, y), 0);
+        }
+        list.verify_integrity().unwrap();
+    }
+
+    #[test]
+    fn page_list_scroll_clear_bottom_active_row_scrolls_all_rows() {
+        let mut list = PageList::init(10, 5, None).unwrap();
+        set_active_row_marker(&mut list, 4, 44);
+
+        list.scroll_clear().unwrap();
+
+        assert_eq!(list.total_rows, 10);
+        assert_eq!(active_top_left_screen_coord(&list), Coordinate::new(0, 5));
+        for y in 0..list.rows {
+            assert_eq!(active_row_marker(&list, y), 0);
+        }
+        list.verify_integrity().unwrap();
+    }
+
+    #[test]
+    fn page_list_scroll_clear_active_spans_partial_pages() {
+        let capacity_rows = initial_capacity(80).rows();
+        let mut list = PageList::init(80, capacity_rows, None).unwrap();
+        list.grow_rows(2).unwrap();
+        assert_eq!(active_top_left_screen_coord(&list), Coordinate::new(0, 2));
+        set_active_row_marker(&mut list, 1, 77);
+        let total_rows = list.total_rows;
+
+        list.scroll_clear().unwrap();
+
+        assert_eq!(list.total_rows, total_rows + 2);
+        assert_eq!(active_top_left_screen_coord(&list), Coordinate::new(0, 4));
+        list.verify_integrity().unwrap();
+    }
+
+    #[test]
+    fn page_list_scroll_clear_cell_empty_semantics() {
+        {
+            let mut list = PageList::init(10, 5, None).unwrap();
+            let styled = style::Style {
+                flags: style::Flags {
+                    bold: true,
+                    ..style::Flags::default()
+                },
+                ..style::Style::default()
+            };
+            let style_id = list.pages[0].page.add_style(styled).unwrap();
+            let mut cell = Cell::init('s' as u32);
+            cell.set_style_id(style_id);
+            set_active_cell(&mut list, 0, cell);
+            list.pages[0].page.use_style(style_id);
+            list.pages[0].page.release_style(style_id);
+
+            list.scroll_clear().unwrap();
+
+            assert_eq!(list.total_rows, 6);
+            list.verify_integrity().unwrap();
+        }
+
+        {
+            let mut list = PageList::init(10, 5, None).unwrap();
+            set_active_cell(&mut list, 0, Cell::init('g' as u32));
+            list.pages[0].page.append_grapheme_at(0, 0, 0x0301).unwrap();
+
+            list.scroll_clear().unwrap();
+
+            assert_eq!(list.total_rows, 6);
+            list.verify_integrity().unwrap();
+        }
+
+        {
+            let mut list = PageList::init(10, 5, None).unwrap();
+            let link_id = list.pages[0]
+                .page
+                .insert_hyperlink(hyperlink::Hyperlink {
+                    id: hyperlink::HyperlinkId::Explicit(b"scroll-clear"),
+                    uri: b"https://example.com/scroll-clear",
+                })
+                .unwrap();
+            set_active_cell(&mut list, 0, Cell::init('h' as u32));
+            list.pages[0].page.set_hyperlink(0, 0, link_id).unwrap();
+
+            list.scroll_clear().unwrap();
+
+            assert_eq!(list.total_rows, 6);
+            list.verify_integrity().unwrap();
+        }
+
+        for cell in {
+            let mut spacer = Cell::default();
+            spacer.set_wide(Wide::SpacerTail);
+            [spacer, Cell::bg_palette(1)]
+        } {
+            let mut list = PageList::init(10, 5, None).unwrap();
+            set_active_cell(&mut list, 0, cell);
+
+            list.scroll_clear().unwrap();
+
+            assert_eq!(list.total_rows, 6);
+            list.verify_integrity().unwrap();
+        }
+    }
+
+    #[test]
+    fn page_list_scroll_clear_preserves_viewport_modes() {
+        let mut active = PageList::init(10, 5, None).unwrap();
+        set_active_row_marker(&mut active, 0, 1);
+        active.scroll_clear().unwrap();
+        assert_eq!(active.viewport, Viewport::Active);
+
+        let (mut top, _) = bounded_viewport_list(2);
+        top.scroll(Scroll::Top);
+        set_active_row_marker(&mut top, 0, 1);
+        top.scroll_clear().unwrap();
+        assert_eq!(top.viewport, Viewport::Top);
+
+        let (mut pinned, _) = bounded_viewport_list(2);
+        pinned.scroll(Scroll::Row(2));
+        let _ = pinned.scrollbar();
+        assert_eq!(pinned.viewport, Viewport::Pin);
+        assert_eq!(pinned.viewport_pin_row_offset, Some(2));
+        set_active_row_marker(&mut pinned, 0, 1);
+        pinned.scroll_clear().unwrap();
+        assert_eq!(pinned.viewport, Viewport::Pin);
+        assert_eq!(pinned.viewport_pin_row_offset, Some(2));
+        pinned.verify_integrity().unwrap();
     }
 
     #[test]
