@@ -890,6 +890,111 @@ impl Page {
         Ok(())
     }
 
+    fn move_cells(
+        &mut self,
+        src_y: usize,
+        src_left: usize,
+        dst_y: usize,
+        dst_left: usize,
+        len: usize,
+    ) {
+        assert!(src_y < self.size.rows as usize);
+        assert!(dst_y < self.size.rows as usize);
+        let src_end = src_left.checked_add(len).expect("source range overflow");
+        let dst_end = dst_left
+            .checked_add(len)
+            .expect("destination range overflow");
+        assert!(src_end <= self.size.cols as usize);
+        assert!(dst_end <= self.size.cols as usize);
+
+        if src_y == dst_y && len > 0 {
+            assert!(
+                src_end <= dst_left || dst_end <= src_left,
+                "move_cells does not support same-row overlapping ranges"
+            );
+        }
+
+        self.clear_cells_range(dst_y, dst_left, dst_end);
+
+        let src_cells = self.get_row(src_y).cells();
+        let dst_cells = self.get_row(dst_y).cells();
+        for index in 0..len {
+            let src_offset = self.cell_offset_from_row_cells(src_cells, src_left + index);
+            let dst_offset = self.cell_offset_from_row_cells(dst_cells, dst_left + index);
+            let cell = self.cell_copy_at_offset(src_offset);
+
+            if cell.has_grapheme() {
+                self.move_grapheme_entry(src_offset, dst_offset);
+            }
+            if cell.hyperlink() {
+                self.move_hyperlink_entry(src_offset, dst_offset);
+            }
+
+            *self.cell_mut_at_offset(dst_offset) = cell;
+        }
+
+        for x in src_left..src_end {
+            let offset = self.cell_offset_from_row_cells(src_cells, x);
+            *self.cell_mut_at_offset(offset) = Cell::default();
+        }
+
+        self.update_row_grapheme_flag(src_y);
+        self.update_row_hyperlink_flag(src_y);
+        self.update_row_styled_flag(src_y);
+        if dst_y != src_y {
+            self.update_row_grapheme_flag(dst_y);
+            self.update_row_hyperlink_flag(dst_y);
+            self.update_row_styled_flag(dst_y);
+        }
+    }
+
+    fn clear_cells_range(&mut self, row_index: usize, left: usize, end: usize) {
+        assert!(row_index < self.size.rows as usize);
+        assert!(left <= end);
+        assert!(end <= self.size.cols as usize);
+
+        let row_cells = self.get_row(row_index).cells();
+        for x in left..end {
+            let offset = self.cell_offset_from_row_cells(row_cells, x);
+            let cell = self.cell_copy_at_offset(offset);
+            if cell.has_grapheme() {
+                self.clear_grapheme_at_offset(offset);
+            }
+            if cell.hyperlink() {
+                self.clear_hyperlink_at_offset(offset);
+            }
+            let style_id = cell.style_id();
+            if style_id != style::DEFAULT_ID {
+                self.release_style(style_id);
+            }
+            *self.cell_mut_at_offset(offset) = Cell::default();
+        }
+
+        self.update_row_grapheme_flag(row_index);
+        self.update_row_hyperlink_flag(row_index);
+        self.update_row_styled_flag(row_index);
+    }
+
+    fn move_grapheme_entry(&mut self, src_offset: Offset<Cell>, dst_offset: Offset<Cell>) {
+        let Some(mut map) = self.grapheme_map_mut() else {
+            panic!("grapheme cell must have map storage");
+        };
+        let (_, slice) = map
+            .fetch_remove(src_offset)
+            .expect("grapheme cell must have map data");
+        map.put_assume_capacity_no_clobber(dst_offset, slice);
+    }
+
+    fn move_hyperlink_entry(&mut self, src_offset: Offset<Cell>, dst_offset: Offset<Cell>) {
+        let Some(mut map) = self.hyperlink_map_mut() else {
+            panic!("hyperlink cell must have map storage");
+        };
+        let (_, id) = map
+            .fetch_remove(src_offset)
+            .expect("hyperlink cell must have map data");
+        map.put_assume_capacity_no_clobber(dst_offset, id);
+    }
+
     pub(super) fn get_row(&self, y: usize) -> &Row {
         assert!(y < self.size.rows as usize);
         unsafe {
@@ -4065,6 +4170,177 @@ mod tests {
         assert_eq!(destination.hyperlink_count(), 0);
         assert_eq!(destination.hyperlink_set_count(), set_count_before);
         assert_eq!(destination.string_used_bytes(), string_used_before);
+    }
+
+    #[test]
+    fn page_move_cells_text_only_full_row() {
+        let mut page = Page::init(Capacity::new(10, 2)).unwrap();
+        for x in 0..page.size.cols as usize {
+            *page.get_row_and_cell_mut(x, 0).cell = Cell::init((x + 1) as u32);
+        }
+
+        page.move_cells(0, 0, 1, 0, page.size.cols as usize);
+
+        for x in 0..page.size.cols as usize {
+            assert_eq!(page.cell_copy_at(x, 1).codepoint(), (x + 1) as u32);
+            assert_eq!(page.cell_copy_at(x, 0).codepoint(), 0);
+        }
+    }
+
+    #[test]
+    fn page_move_cells_text_only_partial_preserves_outside_ranges() {
+        let mut page = Page::init(Capacity::new(10, 2)).unwrap();
+        for x in 0..page.size.cols as usize {
+            *page.get_row_and_cell_mut(x, 0).cell = Cell::init((x + 1) as u32);
+            *page.get_row_and_cell_mut(x, 1).cell = Cell::init(0xbb);
+        }
+
+        page.move_cells(0, 2, 1, 3, 4);
+
+        for x in 0..page.size.cols as usize {
+            let expected_dst = if (3..7).contains(&x) { x as u32 } else { 0xbb };
+            assert_eq!(page.cell_copy_at(x, 1).codepoint(), expected_dst);
+        }
+        for x in 0..page.size.cols as usize {
+            let expected_src = if (2..6).contains(&x) {
+                0
+            } else {
+                (x + 1) as u32
+            };
+            assert_eq!(page.cell_copy_at(x, 0).codepoint(), expected_src);
+        }
+    }
+
+    #[test]
+    fn page_move_cells_graphemes_moves_map_entries_without_allocating() {
+        let mut page = Page::init(Capacity::new(10, 2)).unwrap();
+        for x in 0..page.size.cols as usize {
+            *page.get_row_and_cell_mut(x, 0).cell = Cell::init((x + 1) as u32);
+            page.append_grapheme_at(x, 0, 0x0301 + x as u32).unwrap();
+        }
+        let count_before = page.grapheme_count();
+        let used_before = page.grapheme_used_bytes();
+
+        page.move_cells(0, 0, 1, 0, page.size.cols as usize);
+
+        assert_eq!(page.grapheme_count(), count_before);
+        assert_eq!(page.grapheme_used_bytes(), used_before);
+        assert!(!page.get_row(0).grapheme());
+        assert!(page.get_row(1).grapheme());
+        for x in 0..page.size.cols as usize {
+            assert_eq!(page.lookup_grapheme_at(x, 0), None);
+            assert_eq!(page.lookup_grapheme_at(x, 1), Some(vec![0x0301 + x as u32]));
+            assert_eq!(page.cell_copy_at(x, 0), Cell::default());
+        }
+    }
+
+    #[test]
+    fn page_move_cells_styles_preserve_moved_ref_and_release_destination() {
+        let mut page = Page::init(Capacity {
+            cols: 5,
+            rows: 2,
+            styles: 8,
+            ..Capacity::new(5, 2)
+        })
+        .unwrap();
+        let bold = style::Style {
+            flags: style::Flags {
+                bold: true,
+                ..style::Flags::default()
+            },
+            ..style::Style::default()
+        };
+        let underline = style::Style {
+            flags: style::Flags {
+                underline: Underline::Single,
+                ..style::Flags::default()
+            },
+            ..style::Style::default()
+        };
+        let source_id = page.add_style(bold).unwrap();
+        let destination_id = page.add_style(underline).unwrap();
+        let rac = page.get_row_and_cell_mut(0, 0);
+        *rac.cell = Cell::init('s' as u32);
+        rac.row.set_styled(true);
+        rac.cell.set_style_id(source_id);
+        let rac = page.get_row_and_cell_mut(1, 1);
+        *rac.cell = Cell::init('d' as u32);
+        rac.row.set_styled(true);
+        rac.cell.set_style_id(destination_id);
+
+        page.move_cells(0, 0, 1, 1, 1);
+
+        assert_eq!(page.cell_copy_at(1, 1).style_id(), source_id);
+        assert_eq!(page.cell_copy_at(0, 0), Cell::default());
+        assert_eq!(page.style_ref_count(source_id), 1);
+        assert_eq!(page.style_ref_count(destination_id), 0);
+        assert!(!page.get_row(0).styled());
+        assert!(page.get_row(1).styled());
+    }
+
+    #[test]
+    fn page_move_cells_hyperlinks_preserve_moved_ref_and_release_destination() {
+        let mut page = Page::init(Capacity::new(5, 2)).unwrap();
+        let source_id = page
+            .insert_hyperlink(hyperlink::Hyperlink {
+                id: hyperlink::HyperlinkId::Implicit(1),
+                uri: b"https://example.com/source",
+            })
+            .unwrap();
+        let destination_id = page
+            .insert_hyperlink(hyperlink::Hyperlink {
+                id: hyperlink::HyperlinkId::Implicit(2),
+                uri: b"https://example.com/destination",
+            })
+            .unwrap();
+        *page.get_row_and_cell_mut(0, 0).cell = Cell::init('s' as u32);
+        page.set_hyperlink(0, 0, source_id).unwrap();
+        *page.get_row_and_cell_mut(1, 1).cell = Cell::init('d' as u32);
+        page.set_hyperlink(1, 1, destination_id).unwrap();
+
+        page.move_cells(0, 0, 1, 1, 1);
+
+        assert_eq!(page.lookup_hyperlink_at(1, 1), Some(source_id));
+        assert_eq!(page.lookup_hyperlink_at(0, 0), None);
+        assert_eq!(page.hyperlink_ref_count(source_id), 1);
+        assert_eq!(page.hyperlink_ref_count(destination_id), 0);
+        assert_eq!(page.hyperlink_count(), 1);
+        assert!(!page.get_row(0).hyperlink());
+        assert!(page.get_row(1).hyperlink());
+    }
+
+    #[test]
+    fn page_move_cells_rejects_same_row_overlap_before_mutation() {
+        let mut page = Page::init(Capacity::new(5, 1)).unwrap();
+        for x in 0..page.size.cols as usize {
+            *page.get_row_and_cell_mut(x, 0).cell = Cell::init((x + 1) as u32);
+        }
+
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            page.move_cells(0, 0, 0, 1, 3);
+        }));
+
+        assert!(result.is_err());
+        for x in 0..page.size.cols as usize {
+            assert_eq!(page.cell_copy_at(x, 0).codepoint(), (x + 1) as u32);
+        }
+    }
+
+    #[test]
+    fn page_move_cells_rejects_exact_self_move_before_mutation() {
+        let mut page = Page::init(Capacity::new(5, 1)).unwrap();
+        for x in 0..page.size.cols as usize {
+            *page.get_row_and_cell_mut(x, 0).cell = Cell::init((x + 1) as u32);
+        }
+
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            page.move_cells(0, 1, 0, 1, 2);
+        }));
+
+        assert!(result.is_err());
+        for x in 0..page.size.cols as usize {
+            assert_eq!(page.cell_copy_at(x, 0).codepoint(), (x + 1) as u32);
+        }
     }
 
     #[test]

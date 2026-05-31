@@ -192,3 +192,67 @@ The experiment fails if:
 - row flags become inconsistent with row contents;
 - the implementation expands into `swapCells`, parser/screen integration,
   reflow, scrollback, public ABI, or unrelated behavior.
+
+## Result
+
+**Result:** Pass
+
+Roastty now has internal Page cell-moving support.
+
+Implementation details:
+
+- added `Page::move_cells(src_y, src_left, dst_y, dst_left, len)`;
+- added `clear_cells_range` for releasing and zeroing only the destination range
+  before a move;
+- added no-allocation grapheme and hyperlink map-entry moves using
+  `fetch_remove` plus `put_assume_capacity_no_clobber`;
+- source cells are zeroed after their cell payloads and managed-memory map
+  entries are moved;
+- style IDs move as part of the cell payload, so moved style refcounts remain
+  stable;
+- destination styles, graphemes, and hyperlinks are released before being
+  overwritten;
+- row-level `grapheme`, `hyperlink`, and `styled` flags are recomputed after the
+  move;
+- same-row overlapping ranges, including exact self-moves with nonzero length,
+  assert before destination clearing or source mutation.
+
+Tests added:
+
+- full-row text-only move;
+- partial text-only move preserving source and destination cells outside the
+  ranges;
+- grapheme move preserving grapheme count and allocator used bytes;
+- style move preserving moved style refs while releasing destination style refs;
+- hyperlink move preserving moved hyperlink refs while releasing destination
+  hyperlink refs;
+- same-row overlap rejection before mutation;
+- exact self-move rejection before mutation.
+
+The experiment did not implement `swapCells`, terminal edit commands,
+parser/screen integration, reflow, scrollback, public ABI, or app-facing APIs.
+Those remain later Issue 801 slices.
+
+Verification run:
+
+```bash
+cargo fmt
+cargo test -p roastty terminal::page
+cargo test -p roastty
+```
+
+Results:
+
+- `cargo test -p roastty terminal::page`: 112 passed.
+- `cargo test -p roastty`: 221 unit tests passed; ABI harness passed; doc tests
+  passed.
+
+## Conclusion
+
+Experiment 24 successfully ports the core `Page.moveCells` behavior into
+Roastty's current Page storage model. The implementation keeps moved managed
+memory as moved ownership rather than clone/release churn, clears destination
+state first, and rejects ambiguous same-row overlap before mutation.
+
+The adjacent upstream operation is `swapCells`, but it should be designed as its
+own experiment because it has different same-row map-swapping semantics.
