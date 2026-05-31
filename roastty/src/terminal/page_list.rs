@@ -58,7 +58,7 @@ pub(super) struct PageList {
 }
 
 #[derive(Debug)]
-struct Node {
+pub(super) struct Node {
     page: Page,
     serial: u64,
 }
@@ -69,6 +69,17 @@ pub(super) struct Pin {
     y: CellCountInt,
     x: CellCountInt,
     garbage: bool,
+}
+
+impl Pin {
+    pub(super) fn new(node: NonNull<Node>, y: CellCountInt, x: CellCountInt) -> Self {
+        Self {
+            node,
+            y,
+            x,
+            garbage: false,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -6368,6 +6379,108 @@ mod tests {
             highlight_screen_points(&list, highlight),
             [Coordinate::new(2, 0), Coordinate::new(3, 0)]
         );
+    }
+
+    #[test]
+    fn flattened_highlight_empty_has_no_chunks_and_zero_bounds() {
+        let highlight = highlight::Flattened::empty();
+
+        assert!(highlight.chunks.is_empty());
+        assert_eq!(highlight.top_x, 0);
+        assert_eq!(highlight.bot_x, 0);
+    }
+
+    #[test]
+    fn flattened_highlight_start_end_and_untracked_pins() {
+        let mut list = PageList::init(4, 4, None).unwrap();
+        list.split(Pin {
+            node: list.first_node_ptr(),
+            y: 2,
+            x: 0,
+            garbage: false,
+        })
+        .unwrap();
+
+        let first = list.first_node_ptr();
+        let last = list.last_node_ptr();
+        let first_serial = list.node_for_ptr(first).unwrap().serial;
+        let last_serial = list.node_for_ptr(last).unwrap().serial;
+        let flattened = highlight::Flattened {
+            chunks: vec![
+                highlight::Chunk {
+                    node: first,
+                    serial: first_serial,
+                    start: 1,
+                    end: 2,
+                },
+                highlight::Chunk {
+                    node: last,
+                    serial: last_serial,
+                    start: 0,
+                    end: 1,
+                },
+            ],
+            top_x: 2,
+            bot_x: 3,
+        };
+
+        let start = flattened.start_pin();
+        let end = flattened.end_pin();
+        let untracked = flattened.untracked();
+
+        assert_eq!(start, untracked.start);
+        assert_eq!(end, untracked.end);
+        assert_eq!(
+            list.point_from_pin(point::Tag::Screen, start)
+                .unwrap()
+                .coord(),
+            Coordinate::new(2, 1)
+        );
+        assert_eq!(
+            list.point_from_pin(point::Tag::Screen, end)
+                .unwrap()
+                .coord(),
+            Coordinate::new(3, 2)
+        );
+        assert!(!start.garbage);
+        assert!(!end.garbage);
+    }
+
+    #[test]
+    fn flattened_highlight_clone_preserves_chunks_and_bounds() {
+        let list = PageList::init(4, 2, None).unwrap();
+        let node = list.first_node_ptr();
+        let serial = list.node_for_ptr(node).unwrap().serial;
+        let flattened = highlight::Flattened {
+            chunks: vec![highlight::Chunk {
+                node,
+                serial,
+                start: 0,
+                end: 1,
+            }],
+            top_x: 1,
+            bot_x: 2,
+        };
+
+        assert_eq!(flattened.clone(), flattened);
+    }
+
+    #[test]
+    #[should_panic(expected = "flattened highlight must contain at least one chunk")]
+    fn flattened_highlight_empty_start_pin_panics() {
+        let _ = highlight::Flattened::empty().start_pin();
+    }
+
+    #[test]
+    #[should_panic(expected = "flattened highlight must contain at least one chunk")]
+    fn flattened_highlight_empty_end_pin_panics() {
+        let _ = highlight::Flattened::empty().end_pin();
+    }
+
+    #[test]
+    #[should_panic(expected = "flattened highlight must contain at least one chunk")]
+    fn flattened_highlight_empty_untracked_panics() {
+        let _ = highlight::Flattened::empty().untracked();
     }
 
     #[test]

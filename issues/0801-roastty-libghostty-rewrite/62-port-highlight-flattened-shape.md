@@ -185,3 +185,63 @@ The experiment fails if:
 - `Flattened::init`, tracked highlights, search, renderer, app, public ABI, or
   selection behavior is added prematurely;
 - tests or formatting fail.
+
+## Result
+
+**Result:** Pass
+
+Experiment 62 ported the local data shape for upstream `highlight.Flattened`.
+
+Code changes:
+
+- added `highlight::Flattened` with `chunks`, `top_x`, and `bot_x`;
+- added `highlight::Chunk` with node pointer, serial, start row, and exclusive
+  end row;
+- added `Default` and `Flattened::empty`;
+- added `start_pin`, `end_pin`, and `untracked`;
+- added a clear non-empty precondition panic for `start_pin`, `end_pin`, and
+  `untracked`;
+- added `Pin::new(node, y, x)`, which sets `garbage = false`;
+- widened `Node` only to `pub(super)` so `highlight::Chunk` can name it;
+- kept `Pin` fields private.
+
+The experiment deliberately did not add `Flattened::init`, tracked highlights,
+search, renderer, parser, app, public ABI, selection, resize/reflow, diagram, or
+semantic behavior changes.
+
+Tests added:
+
+- empty flattened highlight has no chunks and zero x bounds;
+- `start_pin`, `end_pin`, and `untracked` produce expected screen points across
+  split pages;
+- cloned flattened highlights preserve chunks and x bounds;
+- empty `start_pin`, `end_pin`, and `untracked` panic with the intended
+  precondition message.
+
+Verification:
+
+```bash
+cargo fmt
+cargo test -p roastty terminal::page_list
+cargo test -p roastty
+```
+
+Results:
+
+- `cargo test -p roastty terminal::page_list`: 269 passed, 0 failed.
+- `cargo test -p roastty`: 550 unit tests passed, ABI harness 1 passed,
+  doctests 0.
+
+Independent result review approved the experiment as Pass with no required
+findings. The reviewer confirmed that `Flattened` and `Chunk` match upstream's
+shape, that local methods preserve upstream start/end semantics for this slice,
+that empty calls do not fabricate dummy pins, and that visibility stayed narrow:
+`Node` is only `pub(super)`, `Pin` fields remain private, and `Pin::new` is the
+only constructor exposed to sibling terminal modules.
+
+## Conclusion
+
+Roastty now has the untracked and flattened highlight value shapes needed by
+future search and renderer work. The next likely highlight experiment should add
+a PageList-owned `Flattened::init` equivalent, because Roastty's `Pin` does not
+own page iteration the way upstream Zig pins do.
