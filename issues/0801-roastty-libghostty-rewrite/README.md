@@ -144,6 +144,8 @@ No experiment may proceed to the next stage until the required review passes.
   — **Pass**
 - [Experiment 8: Port Packed Row and Cell Values](08-port-row-cell-values.md) —
   **Pass**
+- [Experiment 9: Port Page Capacity and Layout Arithmetic](09-port-page-layout.md)
+  — **Designed**
 
 ## Non-Goals
 
