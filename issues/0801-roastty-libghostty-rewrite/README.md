@@ -248,6 +248,8 @@ No experiment may proceed to the next stage until the required review passes.
   **Pass**
 - [Experiment 66: Port Selection Value Shape](66-port-selection-value-shape.md)
   — **Pass**
+- [Experiment 67: Port Selection Ordering](67-port-selection-ordering.md) —
+  **Designed**
 
 ## Non-Goals
 
