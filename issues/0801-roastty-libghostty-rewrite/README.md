@@ -238,6 +238,8 @@ No experiment may proceed to the next stage until the required review passes.
   — **Pass**
 - [Experiment 61: Port Highlight Untracked Module](61-port-highlight-untracked-module.md)
   — **Pass**
+- [Experiment 62: Port Highlight Flattened Shape](62-port-highlight-flattened-shape.md)
+  — **Designed**
 
 ## Non-Goals
 
