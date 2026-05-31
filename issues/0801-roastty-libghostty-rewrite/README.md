@@ -199,6 +199,8 @@ No experiment may proceed to the next stage until the required review passes.
 - [Experiment 39: Port PageList Prune Growth](39-port-pagelist-prune.md) —
   **Pass**
 - [Experiment 40: Port PageList Reset](40-port-pagelist-reset.md) — **Pass**
+- [Experiment 41: Port PageList Page Iterator](41-port-pagelist-page-iterator.md)
+  — **Designed**
 
 ## Non-Goals
 
