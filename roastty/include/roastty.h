@@ -45,6 +45,11 @@ typedef struct {
 } roastty_diagnostic_s;
 
 typedef struct {
+  const char* path;
+  bool optional;
+} roastty_config_path_s;
+
+typedef struct {
   const char* ptr;
   uintptr_t len;
   bool sentinel;
@@ -181,6 +186,10 @@ ROASTTY_API void roastty_config_load_file(roastty_config_t, const char*);
 ROASTTY_API void roastty_config_load_default_files(roastty_config_t);
 ROASTTY_API void roastty_config_load_recursive_files(roastty_config_t);
 ROASTTY_API void roastty_config_finalize(roastty_config_t);
+ROASTTY_API bool roastty_config_get(roastty_config_t,
+                                    void*,
+                                    const char*,
+                                    uintptr_t);
 ROASTTY_API uint32_t roastty_config_diagnostics_count(roastty_config_t);
 ROASTTY_API roastty_diagnostic_s roastty_config_get_diagnostic(roastty_config_t,
                                                                uint32_t);

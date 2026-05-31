@@ -291,7 +291,7 @@ Roastty and TermSurf-owned shared Rust crates while keeping Wezboard separate.
 - [Experiment 3: Replace the compatibility ABI with Roastty naming](03-roastty-renamed-abi.md)
   — **Pass**
 - [Experiment 4: Add Roastty config lookup defaults](04-config-get-defaults.md)
-  — **Designed**
+  — **Pass**
 
 ## Original Expected ABI Experiment
 

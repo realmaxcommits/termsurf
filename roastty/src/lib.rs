@@ -1,6 +1,7 @@
 use std::ffi::CString;
 use std::os::raw::{c_char, c_int, c_void};
 use std::ptr;
+use std::slice;
 
 // ABI ownership model:
 // - Config/app/surface handles returned by Roastty are heap-owned by Roastty and
@@ -27,6 +28,12 @@ pub struct RoasttyInfo {
 #[repr(C)]
 pub struct RoasttyDiagnostic {
     message: *const c_char,
+}
+
+#[repr(C)]
+pub struct RoasttyConfigPath {
+    path: *const c_char,
+    optional: bool,
 }
 
 #[repr(C)]
@@ -157,6 +164,9 @@ struct Surface {
 
 static VERSION: &[u8] = b"0.1.0-roastty\0";
 static EMPTY_DIAGNOSTIC: &[u8] = b"\0";
+static WINDOW_SAVE_STATE_DEFAULT: &[u8] = b"default\0";
+static WINDOW_DECORATION_AUTO: &[u8] = b"auto\0";
+static WINDOW_THEME_AUTO: &[u8] = b"auto\0";
 
 fn config_from_handle<'a>(handle: RoasttyConfig) -> Option<&'a mut Config> {
     if handle.is_null() {
@@ -280,6 +290,68 @@ pub extern "C" fn roastty_config_load_recursive_files(_config: RoasttyConfig) {}
 pub extern "C" fn roastty_config_finalize(config: RoasttyConfig) {
     if let Some(config) = config_from_handle(config) {
         config.finalized = true;
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn roastty_config_get(
+    config: RoasttyConfig,
+    output: *mut c_void,
+    key: *const c_char,
+    key_len: usize,
+) -> bool {
+    if config.is_null() || output.is_null() || key.is_null() {
+        return false;
+    }
+
+    let key = unsafe { slice::from_raw_parts(key.cast::<u8>(), key_len) };
+    unsafe {
+        match key {
+            b"initial-window" => {
+                output.cast::<bool>().write(true);
+                true
+            }
+            b"quit-after-last-window-closed" => {
+                output.cast::<bool>().write(false);
+                true
+            }
+            b"window-save-state" => {
+                output
+                    .cast::<*const c_char>()
+                    .write(WINDOW_SAVE_STATE_DEFAULT.as_ptr().cast());
+                true
+            }
+            b"window-decoration" => {
+                output
+                    .cast::<*const c_char>()
+                    .write(WINDOW_DECORATION_AUTO.as_ptr().cast());
+                true
+            }
+            b"window-theme" => {
+                output
+                    .cast::<*const c_char>()
+                    .write(WINDOW_THEME_AUTO.as_ptr().cast());
+                true
+            }
+            b"background-opacity" => {
+                output.cast::<f64>().write(1.0);
+                true
+            }
+            b"bell-audio-volume" => {
+                output.cast::<f64>().write(0.5);
+                true
+            }
+            b"notify-on-command-finish-after" => {
+                output.cast::<usize>().write(5000);
+                true
+            }
+            b"title" => {
+                output.cast::<*const c_char>().write(ptr::null());
+                true
+            }
+            b"window-position-x" | b"window-position-y" | b"bell-audio-path" => false,
+            _ => false,
+        }
     }
 }
 

@@ -5,7 +5,7 @@ Roastty lifecycle skeleton to the renamed Roastty ABI. Upstream names are
 reference material only. The app-facing Roastty ABI must use `roastty_*` symbols
 and `ROASTTY_` constants.
 
-## Implemented In Experiment 3
+## Implemented Through Experiment 4
 
 | Upstream reference                    | Roastty ABI                           |
 | ------------------------------------- | ------------------------------------- |
@@ -20,6 +20,7 @@ and `ROASTTY_` constants.
 | `ghostty_config_load_default_files`   | `roastty_config_load_default_files`   |
 | `ghostty_config_load_recursive_files` | `roastty_config_load_recursive_files` |
 | `ghostty_config_finalize`             | `roastty_config_finalize`             |
+| `ghostty_config_get`                  | `roastty_config_get`                  |
 | `ghostty_config_diagnostics_count`    | `roastty_config_diagnostics_count`    |
 | `ghostty_config_get_diagnostic`       | `roastty_config_get_diagnostic`       |
 | `ghostty_config_open_path`            | `roastty_config_open_path`            |
@@ -50,6 +51,21 @@ and `ROASTTY_` constants.
 | `ghostty_surface_set_color_scheme`    | `roastty_surface_set_color_scheme`    |
 | `ghostty_surface_request_close`       | `roastty_surface_request_close`       |
 
+`roastty_config_get` currently implements only these default-value keys:
+
+- `initial-window`
+- `quit-after-last-window-closed`
+- `window-save-state`
+- `window-decoration`
+- `window-theme`
+- `background-opacity`
+- `bell-audio-volume`
+- `notify-on-command-finish-after`
+- `window-position-x`
+- `window-position-y`
+- `title`
+- `bell-audio-path`
+
 ## Deferred Swift-Used Concepts
 
 These upstream symbols are referenced under `vendor/ghostty/macos/Sources/`.
@@ -61,7 +77,6 @@ equivalents are deferred.
 | `ghostty_app_key`                            | `roastty_app_key`                            |
 | `ghostty_app_keyboard_changed`               | `roastty_app_keyboard_changed`               |
 | `ghostty_app_open_config`                    | `roastty_app_open_config`                    |
-| `ghostty_config_get`                         | `roastty_config_get`                         |
 | `ghostty_config_key_is_binding`              | `roastty_config_key_is_binding`              |
 | `ghostty_config_trigger`                     | `roastty_config_trigger`                     |
 | `ghostty_inspector_free`                     | `roastty_inspector_free`                     |

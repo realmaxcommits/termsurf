@@ -274,3 +274,154 @@ Follow-up review:
 Codex confirmed the prior findings are resolved and found no remaining blockers.
 Experiment 4 is approved for implementation after this reviewed plan is
 committed as its own plan commit.
+
+## Result
+
+**Result:** Pass
+
+Implemented the first Roastty config lookup behavior behind the renamed ABI.
+
+Changes made:
+
+- Added `roastty_config_get` to `roastty/include/roastty.h` and
+  `roastty/src/lib.rs`.
+- Added the scoped `roastty_config_path_s` C type.
+- Implemented default-value lookup for the approved key subset:
+  - `initial-window`
+  - `quit-after-last-window-closed`
+  - `window-save-state`
+  - `window-decoration`
+  - `window-theme`
+  - `background-opacity`
+  - `bell-audio-volume`
+  - `notify-on-command-finish-after`
+  - `window-position-x`
+  - `window-position-y`
+  - `title`
+  - `bell-audio-path`
+- Implemented null-safe failure behavior for null config handles, output
+  pointers, and key pointers.
+- Matched keys by explicit `(key, len)` byte slices rather than assuming
+  null-terminated strings.
+- Returned static null-terminated strings for string defaults.
+- Wrote nullable string output through caller-provided `const char**` storage.
+- Extended the C ABI harness to test every approved key, unknown keys, null
+  inputs, absent optionals, nullable strings, and explicit key-length behavior.
+- Updated `roastty/ABI_INVENTORY.md` to move `roastty_config_get` into the
+  implemented set and document the current key subset.
+
+No parser, config-file loading, keybinds, recursive includes, terminal
+emulation, PTY IO, rendering, fonts, Swift app integration, or browser features
+were added.
+
+Verification run:
+
+```bash
+cargo fmt -- roastty/src/lib.rs roastty/tests/abi_harness.rs
+prettier --write --prose-wrap always --print-width 80 \
+  roastty/ABI_INVENTORY.md \
+  issues/0800-roastty-architecture/04-config-get-defaults.md
+cargo test -p roastty
+cargo build -p roastty
+cargo metadata --format-version 1 --no-deps | jq -r '.packages[] | "\(.name) \(.manifest_path)"'
+nm -gU target/debug/libroastty.dylib | rg '_roastty_config_get$'
+! nm -gU target/debug/libroastty.dylib | rg 'ghostty_'
+for sym in \
+  roastty_init \
+  roastty_info \
+  roastty_string_free \
+  roastty_config_new \
+  roastty_config_free \
+  roastty_config_clone \
+  roastty_config_load_cli_args \
+  roastty_config_load_file \
+  roastty_config_load_default_files \
+  roastty_config_load_recursive_files \
+  roastty_config_finalize \
+  roastty_config_get \
+  roastty_config_diagnostics_count \
+  roastty_config_get_diagnostic \
+  roastty_config_open_path \
+  roastty_app_new \
+  roastty_app_free \
+  roastty_app_tick \
+  roastty_app_userdata \
+  roastty_app_set_focus \
+  roastty_app_update_config \
+  roastty_app_needs_confirm_quit \
+  roastty_app_has_global_keybinds \
+  roastty_app_set_color_scheme \
+  roastty_surface_config_new \
+  roastty_surface_new \
+  roastty_surface_free \
+  roastty_surface_userdata \
+  roastty_surface_app \
+  roastty_surface_update_config \
+  roastty_surface_needs_confirm_quit \
+  roastty_surface_process_exited \
+  roastty_surface_set_content_scale \
+  roastty_surface_set_focus \
+  roastty_surface_set_occlusion \
+  roastty_surface_set_size \
+  roastty_surface_size \
+  roastty_surface_foreground_pid \
+  roastty_surface_tty_name \
+  roastty_surface_set_color_scheme \
+  roastty_surface_request_close
+do
+  nm -gU target/debug/libroastty.dylib | rg "_${sym}$"
+done
+! rg -n -i 'ghostty' roastty -g '!ABI_INVENTORY.md'
+rg -n '#include "roastty.h"|#include "roastty/include/roastty.h"' \
+  roastty/tests/abi_harness.c
+! rg -n '#include "ghostty.h"|vendor/ghostty/include/ghostty.h' \
+  roastty/tests roastty/include
+cargo check -p webtui
+cargo check -p roamium
+./scripts/build.sh webtui
+./scripts/build.sh roamium
+git status --short
+```
+
+All verification commands passed.
+
+The metadata check listed exactly the top-level TermSurf-owned workspace
+members:
+
+```text
+webtui /Users/ryan/dev/termsurf/webtui/Cargo.toml
+roamium /Users/ryan/dev/termsurf/roamium/Cargo.toml
+roastty /Users/ryan/dev/termsurf/roastty/Cargo.toml
+```
+
+The symbol checks confirmed `roastty_config_get` and all existing scoped Roastty
+lifecycle symbols are exported. The negative symbol check confirmed no
+`ghostty_*` symbols are exported. The case-insensitive forbidden-name scan found
+no disallowed upstream-name references outside `roastty/ABI_INVENTORY.md`.
+
+## AI Completion Review
+
+- `logs/codex-review/20260531-080737-281367-last-message.md`
+- Result: **Pass**
+
+Codex found no blocking implementation issues. It confirmed the ABI shape,
+`roastty_config_path_s` header layout, static string output ownership, nullable
+`title` behavior, absent optional behavior, and explicit `(key, len)` matching.
+It also confirmed the C harness covers the approved default subset, null inputs,
+unknown keys, absent optionals, nullable title, and explicit-length matching.
+
+The only requested change was wording: update the ABI inventory heading from
+"Implemented In Experiment 3" to "Implemented Through Experiment 4" because
+`roastty_config_get` was added in this experiment. That fix is included in the
+result commit.
+
+## Conclusion
+
+Roastty now has the first non-inert config behavior behind the renamed ABI. The
+config layer can answer a small, tested subset of typed default-value lookups
+with stable C-facing ownership semantics.
+
+The next experiment can continue config work by either expanding the typed key
+surface or adding the first config-file parsing behavior. It should stay focused
+on config semantics until the app/config layer is useful enough for a renamed
+Swift frontend integration experiment.

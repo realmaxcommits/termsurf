@@ -53,6 +53,39 @@ static void close_surface_cb(void *userdata, bool process_alive) {
   (void)process_alive;
 }
 
+static void assert_config_bool(roastty_config_t config,
+                               const char *key,
+                               bool expected) {
+  bool value = !expected;
+  assert(roastty_config_get(config, &value, key, strlen(key)));
+  assert(value == expected);
+}
+
+static void assert_config_string(roastty_config_t config,
+                                 const char *key,
+                                 const char *expected) {
+  const char *value = NULL;
+  assert(roastty_config_get(config, &value, key, strlen(key)));
+  assert(value != NULL);
+  assert(strcmp(value, expected) == 0);
+}
+
+static void assert_config_double(roastty_config_t config,
+                                 const char *key,
+                                 double expected) {
+  double value = -1.0;
+  assert(roastty_config_get(config, &value, key, strlen(key)));
+  assert(value == expected);
+}
+
+static void assert_config_uintptr(roastty_config_t config,
+                                  const char *key,
+                                  uintptr_t expected) {
+  uintptr_t value = 0;
+  assert(roastty_config_get(config, &value, key, strlen(key)));
+  assert(value == expected);
+}
+
 int main(int argc, char **argv) {
   assert(roastty_init((uintptr_t)argc, argv) == ROASTTY_SUCCESS);
 
@@ -107,6 +140,63 @@ int main(int argc, char **argv) {
   assert(roastty_config_diagnostics_count(config) == 0);
   roastty_diagnostic_s diagnostic = roastty_config_get_diagnostic(config, 0);
   assert(diagnostic.message != NULL);
+
+  bool bool_value = false;
+  assert(!roastty_config_get(NULL,
+                             &bool_value,
+                             "initial-window",
+                             strlen("initial-window")));
+  assert(!roastty_config_get(config,
+                             NULL,
+                             "initial-window",
+                             strlen("initial-window")));
+  assert(!roastty_config_get(config, &bool_value, NULL, strlen("initial-window")));
+  assert(!roastty_config_get(config,
+                             &bool_value,
+                             "not-a-real-key",
+                             strlen("not-a-real-key")));
+
+  assert_config_bool(config, "initial-window", true);
+  assert_config_bool(config, "quit-after-last-window-closed", false);
+  assert_config_string(config, "window-save-state", "default");
+  assert_config_string(config, "window-decoration", "auto");
+  assert_config_string(config, "window-theme", "auto");
+  assert_config_double(config, "background-opacity", 1.0);
+  assert_config_double(config, "bell-audio-volume", 0.5);
+  assert_config_uintptr(config, "notify-on-command-finish-after", 5000);
+
+  int16_t optional_position = 123;
+  assert(!roastty_config_get(config,
+                             &optional_position,
+                             "window-position-x",
+                             strlen("window-position-x")));
+  assert(optional_position == 123);
+  assert(!roastty_config_get(config,
+                             &optional_position,
+                             "window-position-y",
+                             strlen("window-position-y")));
+  assert(optional_position == 123);
+
+  const char *nullable_title = (const char *)0x1;
+  assert(roastty_config_get(config, &nullable_title, "title", strlen("title")));
+  assert(nullable_title == NULL);
+
+  roastty_config_path_s path = {
+      .path = (const char *)0x1,
+      .optional = true,
+  };
+  assert(!roastty_config_get(config,
+                             &path,
+                             "bell-audio-path",
+                             strlen("bell-audio-path")));
+  assert(path.path == (const char *)0x1);
+  assert(path.optional == true);
+
+  const char padded_key[] = "window-theme-with-extra-bytes";
+  const char *theme = NULL;
+  assert(roastty_config_get(config, &theme, padded_key, strlen("window-theme")));
+  assert(theme != NULL);
+  assert(strcmp(theme, "auto") == 0);
 
   roastty_config_t clone = roastty_config_clone(config);
   assert(clone != NULL);
