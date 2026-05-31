@@ -2867,7 +2867,7 @@ fn init_pages(
 mod tests {
     use super::*;
     use crate::terminal::page::{page_layout, Cell, HyperlinkSnapshot, HyperlinkSnapshotId, Wide};
-    use crate::terminal::{hyperlink, style};
+    use crate::terminal::{hyperlink, selection, style};
 
     fn simulate_history(list: &mut PageList, total_rows: CellCountInt) {
         list.pages[0].page.set_size_rows(total_rows);
@@ -6753,6 +6753,30 @@ mod tests {
 
         assert_eq!(tracked.start, start_ptr);
         assert_eq!(tracked.end, end_ptr);
+        assert_eq!(list.count_tracked_pins(), count);
+
+        list.untrack_pin(start_ptr);
+        list.untrack_pin(end_ptr);
+    }
+
+    #[test]
+    fn selection_tracked_wraps_page_list_pins_without_ownership_change() {
+        let mut list = PageList::init(10, 20, None).unwrap();
+        let start = list
+            .pin(point::Point::screen(Coordinate::new(2, 5)))
+            .unwrap();
+        let end = list
+            .pin(point::Point::screen(Coordinate::new(7, 5)))
+            .unwrap();
+        let start_ptr = list.track_pin(start).unwrap();
+        let end_ptr = list.track_pin(end).unwrap();
+        let count = list.count_tracked_pins();
+
+        let selection = selection::Selection::tracked(start_ptr, end_ptr, false);
+
+        assert!(selection.is_tracked());
+        assert_eq!(selection.start(), start);
+        assert_eq!(selection.end(), end);
         assert_eq!(list.count_tracked_pins(), count);
 
         list.untrack_pin(start_ptr);

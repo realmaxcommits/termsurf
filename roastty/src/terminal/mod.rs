@@ -29,6 +29,9 @@ mod ref_counted_set;
 mod selection_codepoints;
 
 #[allow(dead_code)]
+mod selection;
+
+#[allow(dead_code)]
 mod sgr;
 
 #[allow(dead_code)]

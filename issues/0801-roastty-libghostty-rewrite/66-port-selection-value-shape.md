@@ -206,3 +206,77 @@ The experiment fails if:
   ABI, search, renderer, parser, app, or unrelated behavior is added
   prematurely;
 - tests or formatting fail.
+
+## Result
+
+**Result:** Pass
+
+Experiment 66 added `roastty/src/terminal/selection.rs` and registered it in
+`roastty/src/terminal/mod.rs`.
+
+The new module ports the value-shape portion of upstream `Selection.zig`:
+
+- `Selection` stores bounds plus a rectangle flag.
+- `Bounds` supports untracked start/end pins and tracked start/end pin pointers.
+- `Selection::new` creates untracked selections.
+- `Selection::tracked` wraps already tracked pin pointers without allocating,
+  untracking, taking ownership, or changing PageList tracked pin counts.
+- `start()` and `end()` return unordered pin values.
+- `start_mut()` and `end_mut()` mutate the stored untracked pins or the pointed
+  tracked pin storage.
+- `is_tracked()` reports the active bounds variant.
+- `rectangle()` exposes the rectangle flag.
+- `PartialEq`/`Eq` is implemented manually by comparing `start()`, `end()`, and
+  `rectangle`, matching upstream `eql`.
+
+Tracked pointer access is localized to `selection.rs` and documented with safety
+comments. `Selection` has no `Drop` and does not call PageList tracking or
+untracking helpers.
+
+The tests added coverage for:
+
+- untracked construction preserving unordered bounds and rectangle state;
+- tracked construction reading pointed-to bounds;
+- untracked `start_mut`/`end_mut` mutating enum storage;
+- tracked `start_mut`/`end_mut` mutating pointed-to pin storage;
+- equality comparing start, end, and rectangle;
+- untracked-vs-tracked equality by dereferenced pin values;
+- tracked-vs-tracked equality by dereferenced pin values rather than pointer
+  identity;
+- tracked selections with different dereferenced pin values comparing unequal;
+- reversed start/end order being preserved;
+- real PageList tracked pins wrapped by `Selection::tracked` without changing
+  tracked pin counts.
+
+Verification:
+
+```bash
+cargo fmt
+cargo test -p roastty terminal::selection
+cargo test -p roastty selection_tracked_wraps_page_list_pins_without_ownership_change
+cargo test -p roastty
+```
+
+Results:
+
+- `cargo fmt` passed.
+- `cargo test -p roastty terminal::selection` passed: 12 tests, 0 failed.
+- `cargo test -p roastty selection_tracked_wraps_page_list_pins_without_ownership_change`
+  passed: 1 test, 0 failed.
+- `cargo test -p roastty` passed: 578 unit tests plus 1 ABI harness test, 0
+  failed.
+
+Independent result review approved the experiment with no blocking findings. The
+reviewer confirmed the value shape matches upstream, equality is manual and
+value-based, tracked selections remain non-owning, unsafe pointer access is
+localized, and no Screen, ordering, containment, adjustment, formatting,
+selection gesture, C ABI, search, renderer, parser, app, or terminal mutation
+behavior was introduced.
+
+## Conclusion
+
+Roastty now has the core selection value object: untracked bounds, non-owning
+tracked bounds, rectangle state, unordered accessors, mutable accessors, tracked
+state, and upstream-compatible value equality. The next selection experiment can
+build on this shape by adding the first PageList/Screen-dependent behavior in a
+separate reviewed slice.
