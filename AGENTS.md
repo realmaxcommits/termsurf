@@ -467,6 +467,44 @@ in `chromium/README.md`.
 Design and implement one experiment at a time. The result of Experiment 1
 directly informs what Experiment 2 should be.
 
+#### AI review gate
+
+Every experiment must be reviewed by another AI agent before moving to the next
+stage.
+
+1. **Design review before implementation**
+   - After writing the experiment design, ask another AI agent to review it.
+   - Fix all real issues found by the review.
+   - Record the review result in the experiment file.
+   - Do not implement the experiment until the reviewing agent approves the
+     design.
+
+2. **Result review before the next experiment**
+   - After implementation, verification, and result recording, ask another AI
+     agent to review the completed experiment and result.
+   - Fix all real issues found by the review.
+   - Record the completion-review result in the experiment file.
+   - Do not design or implement the next experiment until the reviewing agent
+     approves the completed output.
+
+The reviewing agent may be Codex, Claude, or another explicitly requested agent,
+but it must be separate from the implementation pass.
+
+#### Experiment commits
+
+Every experiment has two required commit points:
+
+1. **Plan commit** — after the experiment design is written, reviewed, fixed,
+   approved, and linked from the issue README, commit the experiment plan before
+   implementation begins.
+2. **Result commit** — after implementation, verification, result recording,
+   completion review, and any required fixes, commit the experiment result
+   before designing the next experiment.
+
+These commits must be separate. Do not combine an experiment plan and its result
+in the same commit, and do not start the next experiment before the previous
+experiment's result commit exists.
+
 #### Recording results
 
 After testing, append the result **inside the experiment's own file**, below
@@ -515,12 +553,17 @@ retrofit them.
    goal, background, analysis. No experiments yet.
 2. **Design Experiment 1** — Create `01-{slug}.md` with the experiment body, and
    add a link to it under `## Experiments` in the README (status `Designed`).
-3. **Implement Experiment 1** — Write the code.
-4. **Record the result** — Append `## Result` / `## Conclusion` inside
+3. **Review and commit the plan** — Get another AI agent to approve the design,
+   fix real findings, record the review result, and commit the experiment plan.
+4. **Implement Experiment 1** — Write the code.
+5. **Record the result** — Append `## Result` / `## Conclusion` inside
    `01-{slug}.md`, and update its status on the README index line.
-5. **Repeat** — Create `02-{slug}.md` for the next experiment (the prior result
+6. **Review and commit the result** — Get another AI agent to approve the
+   completed output, fix real findings, record the completion review, and commit
+   the experiment result.
+7. **Repeat** — Create `02-{slug}.md` for the next experiment (the prior result
    informs it), link it from the README, and continue until the goal is met.
-6. **Close the issue** — Write the `## Conclusion` in the README, update
+8. **Close the issue** — Write the `## Conclusion` in the README, update
    frontmatter, rebuild the index.
 
 ## Remember

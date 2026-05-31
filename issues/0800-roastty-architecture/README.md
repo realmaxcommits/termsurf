@@ -8,8 +8,8 @@ opened = "2026-05-31"
 ## Goal
 
 Document the planned architecture for Roastty, implement the first Rust ABI
-skeleton that can eventually replace Ghostty's `libghostty`, and set the stage
-for the remaining Ghostty-to-Rust rewrite.
+skeleton for `libroastty`, and set the stage for the remaining Ghostty-to-Rust
+rewrite.
 
 Roastty is a macOS-first Rust reimplementation of Ghostty. The initial target is
 feature parity with Ghostty as a terminal emulator, before adding TermSurf's
@@ -42,21 +42,22 @@ start of this issue, it has been updated to upstream main at:
 ## Planned Architecture
 
 Roastty should not begin as a from-scratch macOS application rewrite. The
-practical path is to keep Ghostty's Swift macOS app as the reference frontend
-and gradually replace the Zig `libghostty` implementation with a Rust
-`libroastty` implementation behind a C ABI.
+practical path is to use Ghostty's Swift macOS app as the reference frontend,
+rename/adapt it into the Roastty macOS app, and gradually replace the Zig
+`libghostty` implementation with a Rust `libroastty` implementation behind a C
+ABI.
 
 The target architecture is:
 
 ```text
 ┌────────────────────────────────────────────────────────────┐
-│ Ghostty-derived Swift macOS app                            │
+│ Roastty Swift macOS app                                    │
 │ windows, tabs, splits, menus, settings, native events      │
 └─────────────────────────────┬──────────────────────────────┘
                               │ C ABI
 ┌─────────────────────────────┴──────────────────────────────┐
 │ libroastty                                                 │
-│ Rust replacement for the parts of libghostty used by macOS │
+│ Rust replacement for the parts of Ghostty used by macOS    │
 ├────────────────────────────────────────────────────────────┤
 │ App / Surface handles                                      │
 │ Config, actions, callbacks, lifecycle                      │
@@ -76,9 +77,30 @@ The target architecture is:
 ```
 
 The first milestone is not a working terminal. It is an ABI skeleton: a Rust
-library that exposes enough `ghostty_*`-shaped C symbols for the Swift app, or a
-small compatibility harness, to load and exercise app/config/surface lifecycle
+library that exposes enough `roastty_*` C symbols for the renamed Swift app, or
+a small compatibility harness, to load and exercise app/config/surface lifecycle
 without linking Zig `libghostty`.
+
+## Naming and Attribution Policy
+
+Roastty is a faithful Rust adaptation of Ghostty where possible, but it is a
+renamed project.
+
+All new Roastty code, public C ABI symbols, Swift app calls, type names,
+filenames, bundle identifiers, product names, user-visible text, tests, and
+documentation for the new implementation must use `roastty` / `Roastty` naming.
+For example, the Rust ABI should export `roastty_app_new`,
+`roastty_surface_new`, and `roastty_config_new`, not compatibility `ghostty_*`
+symbols.
+
+The word `ghostty` should appear only when citing the original upstream project,
+vendored reference paths, or credit/attribution text. Before release, Roastty
+must include appropriate credit to the Ghostty project, but credit does not mean
+keeping Ghostty names in Roastty's app or ABI.
+
+This naming policy is a functional requirement, not cosmetic cleanup. An
+experiment that preserves `ghostty_*` as the app-facing ABI has failed the
+Roastty architecture goal, even if it compiles and passes lifecycle tests.
 
 ## Ghostty Reference Layers
 
@@ -115,9 +137,10 @@ next layer is designed.
 
 1. **ABI inventory and skeleton**
 
-   Identify the minimum `ghostty_*` API surface the macOS app needs to create an
-   app, create a surface, resize it, focus it, tick the event loop, and destroy
-   it. Implement no-op or stubbed Rust versions behind a C ABI.
+   Identify the minimum Roastty-renamed API surface the macOS app needs to
+   create an app, create a surface, resize it, focus it, tick the event loop,
+   and destroy it. Implement no-op or stubbed Rust versions behind a `roastty_*`
+   C ABI.
 
 2. **Config and lifecycle**
 
@@ -142,9 +165,8 @@ next layer is designed.
 
 6. **Minimal macOS renderer**
 
-   Render a basic text grid into the Ghostty-derived surface. The first renderer
-   can be plain; the goal is correctness and ABI integration, not final
-   performance.
+   Render a basic text grid into the Roastty surface. The first renderer can be
+   plain; the goal is correctness and ABI integration, not final performance.
 
 7. **Metal renderer parity**
 
@@ -220,25 +242,34 @@ thin ABI-compatible shell around unrelated behavior.
 
 ## Experiment Review Gate
 
-Every remaining experiment in this issue must pass Codex review before the work
-moves forward.
+Every remaining experiment in this issue must pass review by another AI agent
+before the work moves forward. Codex is the default reviewer unless the user
+explicitly asks for a different reviewing agent.
 
 For each experiment:
 
 1. **Design review before implementation**
-   - After the experiment file is written, run Codex review on the experiment
+   - After the experiment file is written, run AI review on the experiment
      design.
    - Fix all real issues found by the review.
-   - Do not implement the experiment until Codex agrees the design is good.
+   - Do not implement the experiment until the reviewing agent agrees the design
+     is good.
    - Record the review result in the experiment file.
+   - Commit the reviewed and approved experiment plan as its own commit before
+     implementation begins.
 
 2. **Completion review after implementation**
-   - After implementation, verification, and result recording, run Codex review
-     on the completed experiment.
+   - After implementation, verification, and result recording, run AI review on
+     the completed experiment.
    - Fix all real issues found by the review.
-   - Do not design or implement the next experiment until Codex agrees the
-     completed output is good.
+   - Do not design or implement the next experiment until the reviewing agent
+     agrees the completed output is good.
    - Record the completion-review result in the experiment file.
+   - Commit the reviewed and approved experiment result as its own commit before
+     designing the next experiment.
+
+The design commit and result commit must be separate. Do not combine an
+experiment plan and its result in one commit.
 
 The review gate applies starting with Experiment 2. Experiment 1 was designed,
 implemented, verified, and committed before this gate was added. A retrospective
@@ -254,6 +285,9 @@ Roastty and TermSurf-owned shared Rust crates while keeping Wezboard separate.
 
 - [Experiment 1: Create the TermSurf Rust workspace](01-termsurf-rust-workspace.md)
   — **Pass**
+- [Experiment 2: Implement the Roastty ABI skeleton](02-roastty-abi-skeleton.md)
+  — **Fail** (used `ghostty_*` compatibility symbols instead of the required
+  `roastty_*` renamed ABI)
 
 ## Original Expected ABI Experiment
 
@@ -263,8 +297,9 @@ skeleton.
 It should:
 
 - create the initial `roastty/` Rust crate layout;
-- choose the C ABI compatibility strategy;
-- inventory the `ghostty_*` symbols used by the macOS Swift app;
+- choose the C ABI naming and compatibility strategy;
+- inventory the Ghostty symbols used by the reference macOS Swift app, then map
+  them to the corresponding `roastty_*` ABI names;
 - implement opaque Rust handles for app, config, and surface lifecycle;
 - expose a minimal set of C symbols with stable ownership rules;
 - add a tiny C or Rust integration test that loads the library, creates config,
