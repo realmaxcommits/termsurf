@@ -191,7 +191,7 @@ No experiment may proceed to the next stage until the required review passes.
 - [Experiment 35: Port PageList Tracked Pins](35-port-pagelist-tracked-pins.md)
   — **Pass**
 - [Experiment 36: Port PageList Scrollbar State](36-port-pagelist-scrollbar.md)
-  — **Designed**
+  — **Pass**
 
 ## Non-Goals
 

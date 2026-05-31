@@ -207,3 +207,73 @@ The experiment fails if:
   this experiment;
 - the implementation expands into scrolling or mutation behavior;
 - tests or formatting fail.
+
+## Result
+
+**Result:** Pass
+
+Implemented read-only PageList scrollbar state in
+`roastty/src/terminal/page_list.rs`.
+
+The scrollbar value shape is an internal Rust struct:
+
+- `total: usize`;
+- `offset: usize`;
+- `len: usize`.
+
+The implementation adds:
+
+- `viewport_pin_row_offset: Option<usize>` cache storage;
+- `pin_is_active`;
+- `pin_is_top`;
+- `viewport_row_offset`;
+- `scrollbar`;
+- a direct traversal helper for the viewport pin's absolute offset.
+
+`scrollbar` matches upstream behavior for the current PageList surface:
+
+- no-scrollback mode (`explicit_max_size == 0`) reports `rows/0/rows`;
+- active viewport reports `total_rows / (total_rows - rows) / rows`;
+- top viewport reports offset zero;
+- pin viewport reports the pin's absolute row offset from the top of the
+  PageList and caches that value.
+
+The pin viewport integrity additions from the design review were implemented:
+
+- populated cached offsets must match direct traversal;
+- pinned viewports must have enough rows remaining to render a full viewport;
+- both failure modes have explicit `IntegrityError` variants and tests.
+
+Added tests for:
+
+- initial scrollbar state;
+- no-scrollback scrollbar semantics with simulated extra rows;
+- active viewport offset;
+- top viewport offset;
+- pin viewport offset within one page;
+- pin viewport offset across multiple pages;
+- pin offset cache reuse;
+- cached offset mismatch integrity failure;
+- insufficient pinned viewport rows integrity failure;
+- `pin_is_active`;
+- `pin_is_top`.
+
+Verification passed:
+
+```bash
+cargo fmt
+cargo test -p roastty terminal::page_list
+cargo test -p roastty
+```
+
+The targeted PageList suite reported 45 passing tests. The full `roastty` suite
+reported 326 unit tests, the ABI harness, and doc tests passing.
+
+## Conclusion
+
+Roastty now has the upstream PageList read-only scrollbar model for initialized
+and manually positioned viewports. The implementation reports active, top, and
+pin viewport offsets, caches pin offsets, and verifies cached pin viewport state
+without introducing scroll commands or mutation behavior. The next PageList
+slice can build on this by porting either viewport scrolling commands or another
+small read-only helper needed before grow/prune mutation.

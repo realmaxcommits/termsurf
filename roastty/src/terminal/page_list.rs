@@ -11,6 +11,13 @@ pub(super) enum Viewport {
     Pin,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Scrollbar {
+    total: usize,
+    offset: usize,
+    len: usize,
+}
+
 #[derive(Debug)]
 pub(super) struct PageList {
     cols: CellCountInt,
@@ -26,6 +33,7 @@ pub(super) struct PageList {
     tracked_pin_storage: Vec<Box<Pin>>,
     viewport: Viewport,
     viewport_pin: Box<Pin>,
+    viewport_pin_row_offset: Option<usize>,
 }
 
 #[derive(Debug)]
@@ -60,6 +68,8 @@ enum IntegrityError {
     TrackedPinInvalid,
     ViewportPinInvalid,
     ViewportPinGarbage,
+    ViewportPinOffsetMismatch,
+    ViewportPinInsufficientRows,
 }
 
 fn standard_page_size() -> usize {
@@ -122,6 +132,7 @@ impl PageList {
             tracked_pin_storage: Vec::new(),
             viewport: Viewport::Active,
             viewport_pin,
+            viewport_pin_row_offset: None,
         };
         result
             .verify_integrity()
@@ -162,6 +173,23 @@ impl PageList {
             return Err(IntegrityError::ViewportPinInvalid);
         }
 
+        if self.viewport == Viewport::Pin {
+            let Some(actual_offset) = self.viewport_pin_absolute_offset() else {
+                return Err(IntegrityError::ViewportPinOffsetMismatch);
+            };
+
+            if self
+                .viewport_pin_row_offset
+                .is_some_and(|cached_offset| cached_offset != actual_offset)
+            {
+                return Err(IntegrityError::ViewportPinOffsetMismatch);
+            }
+
+            if self.total_rows as usize - actual_offset < self.rows as usize {
+                return Err(IntegrityError::ViewportPinInsufficientRows);
+            }
+        }
+
         Ok(())
     }
 
@@ -184,6 +212,21 @@ impl PageList {
         self.pages
             .iter()
             .position(|node| NonNull::from(node.as_ref()) == node_ptr)
+    }
+
+    fn viewport_pin_absolute_offset(&self) -> Option<usize> {
+        let mut offset = 0usize;
+        for node in &self.pages {
+            if NonNull::from(node.as_ref()) == self.viewport_pin.node {
+                if self.viewport_pin.y >= node.page.size_rows() {
+                    return None;
+                }
+                return Some(offset + self.viewport_pin.y as usize);
+            }
+            offset += node.page.size_rows() as usize;
+        }
+
+        None
     }
 
     fn first_node_ptr(&self) -> NonNull<Node> {
@@ -346,6 +389,64 @@ impl PageList {
 
     fn tracked_pins(&self) -> &[NonNull<Pin>] {
         &self.tracked_pins
+    }
+
+    fn pin_is_active(&self, pin: Pin) -> bool {
+        let active = self.get_top_left(point::Tag::Active);
+        let Some(active_index) = self.node_index(active.node) else {
+            return false;
+        };
+        let Some(pin_index) = self.node_index(pin.node) else {
+            return false;
+        };
+
+        if pin_index == active_index {
+            pin.y >= active.y
+        } else {
+            pin_index > active_index
+        }
+    }
+
+    fn pin_is_top(&self, pin: Pin) -> bool {
+        pin.y == 0 && pin.node == self.first_node_ptr()
+    }
+
+    fn viewport_row_offset(&mut self) -> usize {
+        match self.viewport {
+            Viewport::Top => 0,
+            Viewport::Active => self.total_rows as usize - self.rows as usize,
+            Viewport::Pin => {
+                if let Some(offset) = self.viewport_pin_row_offset {
+                    self.verify_integrity()
+                        .expect("cached viewport pin offset must be valid");
+                    return offset;
+                }
+
+                let offset = self
+                    .viewport_pin_absolute_offset()
+                    .expect("viewport pin must point into PageList");
+                self.viewport_pin_row_offset = Some(offset);
+                self.verify_integrity()
+                    .expect("computed viewport pin offset must be valid");
+                offset
+            }
+        }
+    }
+
+    fn scrollbar(&mut self) -> Scrollbar {
+        if self.explicit_max_size == 0 {
+            return Scrollbar {
+                total: self.rows as usize,
+                offset: 0,
+                len: self.rows as usize,
+            };
+        }
+
+        Scrollbar {
+            total: self.total_rows as usize,
+            offset: self.viewport_row_offset(),
+            len: self.rows as usize,
+        }
     }
 
     fn pin_down(&self, pin: Pin, rows: usize) -> Option<Pin> {
@@ -604,6 +705,212 @@ mod tests {
         assert_eq!(list.pages[0].page.size_cols(), requested_cols);
         assert!(list.pages[0].page.backing_len() > standard_page_size());
         list.verify_integrity().unwrap();
+    }
+
+    #[test]
+    fn page_list_initial_scrollbar_matches_viewport_rows() {
+        let mut list = PageList::init(80, 24, None).unwrap();
+
+        assert_eq!(
+            list.scrollbar(),
+            Scrollbar {
+                total: 24,
+                offset: 0,
+                len: 24,
+            }
+        );
+    }
+
+    #[test]
+    fn page_list_scrollbar_max_size_zero_hides_simulated_scrollback() {
+        let mut list = PageList::init(80, 24, Some(0)).unwrap();
+        list.pages[0].page.set_size_rows(30);
+        list.total_rows = 30;
+
+        assert_eq!(
+            list.scrollbar(),
+            Scrollbar {
+                total: 24,
+                offset: 0,
+                len: 24,
+            }
+        );
+    }
+
+    #[test]
+    fn page_list_scrollbar_active_viewport_reports_bottom_offset() {
+        let mut list = PageList::init(80, 24, None).unwrap();
+        list.pages[0].page.set_size_rows(30);
+        list.total_rows = 30;
+
+        assert_eq!(
+            list.scrollbar(),
+            Scrollbar {
+                total: 30,
+                offset: 6,
+                len: 24,
+            }
+        );
+    }
+
+    #[test]
+    fn page_list_scrollbar_top_viewport_reports_zero_offset() {
+        let mut list = PageList::init(80, 24, None).unwrap();
+        list.pages[0].page.set_size_rows(30);
+        list.total_rows = 30;
+        list.viewport = Viewport::Top;
+
+        assert_eq!(
+            list.scrollbar(),
+            Scrollbar {
+                total: 30,
+                offset: 0,
+                len: 24,
+            }
+        );
+    }
+
+    #[test]
+    fn page_list_scrollbar_pin_viewport_offsets_within_single_page() {
+        let mut list = PageList::init(80, 24, None).unwrap();
+        list.pages[0].page.set_size_rows(30);
+        list.total_rows = 30;
+        list.viewport = Viewport::Pin;
+        list.viewport_pin.y = 4;
+
+        assert_eq!(
+            list.scrollbar(),
+            Scrollbar {
+                total: 30,
+                offset: 4,
+                len: 24,
+            }
+        );
+        assert_eq!(list.viewport_pin_row_offset, Some(4));
+    }
+
+    #[test]
+    fn page_list_scrollbar_pin_viewport_offsets_across_pages() {
+        let cols = 50;
+        let capacity = initial_capacity(cols);
+        let total_rows = capacity.rows() * 2;
+        let mut list = PageList::init(cols, total_rows, None).unwrap();
+        assert_eq!(list.pages.len(), 2);
+        list.rows = 24;
+        list.viewport = Viewport::Pin;
+        list.viewport_pin.node = NonNull::from(list.pages[1].as_ref());
+        list.viewport_pin.y = 5;
+        let expected_offset = capacity.rows() as usize + 5;
+
+        assert_eq!(
+            list.scrollbar(),
+            Scrollbar {
+                total: total_rows as usize,
+                offset: expected_offset,
+                len: 24,
+            }
+        );
+        assert_eq!(list.viewport_pin_row_offset, Some(expected_offset));
+    }
+
+    #[test]
+    fn page_list_scrollbar_pin_viewport_reuses_cached_offset() {
+        let mut list = PageList::init(80, 24, None).unwrap();
+        list.pages[0].page.set_size_rows(30);
+        list.total_rows = 30;
+        list.viewport = Viewport::Pin;
+        list.viewport_pin.y = 4;
+
+        assert_eq!(list.scrollbar().offset, 4);
+        assert_eq!(list.viewport_pin_row_offset, Some(4));
+        assert_eq!(list.scrollbar().offset, 4);
+        assert_eq!(list.viewport_pin_row_offset, Some(4));
+    }
+
+    #[test]
+    fn page_list_integrity_rejects_viewport_pin_offset_mismatch() {
+        let mut list = PageList::init(80, 24, None).unwrap();
+        list.pages[0].page.set_size_rows(30);
+        list.total_rows = 30;
+        list.viewport = Viewport::Pin;
+        list.viewport_pin.y = 4;
+        list.viewport_pin_row_offset = Some(5);
+
+        assert_eq!(
+            list.verify_integrity(),
+            Err(IntegrityError::ViewportPinOffsetMismatch)
+        );
+    }
+
+    #[test]
+    fn page_list_integrity_rejects_viewport_pin_without_enough_rows() {
+        let mut list = PageList::init(80, 24, None).unwrap();
+        list.pages[0].page.set_size_rows(30);
+        list.total_rows = 30;
+        list.viewport = Viewport::Pin;
+        list.viewport_pin.y = 10;
+
+        assert_eq!(
+            list.verify_integrity(),
+            Err(IntegrityError::ViewportPinInsufficientRows)
+        );
+    }
+
+    #[test]
+    fn page_list_pin_is_active_matches_active_top_left() {
+        let mut list = PageList::init(80, 24, None).unwrap();
+        list.pages[0].page.set_size_rows(30);
+        list.total_rows = 30;
+
+        let node = NonNull::from(list.pages[0].as_ref());
+        assert!(!list.pin_is_active(Pin {
+            node,
+            y: 5,
+            x: 0,
+            garbage: false,
+        }));
+        assert!(list.pin_is_active(Pin {
+            node,
+            y: 6,
+            x: 0,
+            garbage: false,
+        }));
+        assert!(list.pin_is_active(Pin {
+            node,
+            y: 29,
+            x: 0,
+            garbage: false,
+        }));
+    }
+
+    #[test]
+    fn page_list_pin_is_top_requires_first_node_row_zero() {
+        let cols = 50;
+        let capacity = initial_capacity(cols);
+        let total_rows = capacity.rows() * 2;
+        let list = PageList::init(cols, total_rows, None).unwrap();
+        assert_eq!(list.pages.len(), 2);
+
+        let first = NonNull::from(list.pages[0].as_ref());
+        let second = NonNull::from(list.pages[1].as_ref());
+        assert!(list.pin_is_top(Pin {
+            node: first,
+            y: 0,
+            x: 0,
+            garbage: false,
+        }));
+        assert!(!list.pin_is_top(Pin {
+            node: first,
+            y: 1,
+            x: 0,
+            garbage: false,
+        }));
+        assert!(!list.pin_is_top(Pin {
+            node: second,
+            y: 0,
+            x: 0,
+            garbage: false,
+        }));
     }
 
     #[test]
