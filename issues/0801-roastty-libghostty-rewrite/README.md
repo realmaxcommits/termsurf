@@ -131,7 +131,7 @@ No experiment may proceed to the next stage until the required review passes.
 ## Experiments
 
 - [Experiment 1: Audit Dependencies and Platform Readiness](01-dependency-platform-audit.md)
-  — **Designed**
+  — **Pass**
 
 ## Non-Goals
 
