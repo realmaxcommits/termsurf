@@ -174,3 +174,5 @@ and reviewed.
   — **Pass**
 - [Experiment 6: Add automated page zoom](06-page-zoom.md) — **Pass**
 - [Experiment 7: Add protocol console capture](07-console-capture.md) — **Pass**
+- [Experiment 8: Add protocol HTTP Basic Auth](08-http-basic-auth.md) —
+  **Designed**
