@@ -113,6 +113,8 @@ renderer, app integration, or public ABI.
      reports the expected offset; verify the viewport top-left row.
    - `DeltaRow` above the first row clamps to top and verifies top-left row
      zero.
+   - `DeltaRow(-1)` from active without history preserves active, matching
+     upstream's active-over-top preference when the active and top rows overlap.
    - `DeltaRow` forward from top creates a pin at the expected row and verifies
      top-left row.
    - `DeltaRow` forward into active clamps to active and verifies top-left row.
@@ -201,3 +203,82 @@ The experiment fails if:
   rows from the top of the PageList;
 - prompt scrolling is accidentally introduced;
 - tests or formatting fail.
+
+## Result
+
+**Result:** Pass
+
+Implemented bounded, non-mutating PageList viewport scrolling in
+`roastty/src/terminal/page_list.rs`.
+
+Added the internal `Scroll` enum with:
+
+- `Active`;
+- `Top`;
+- `Row(usize)`;
+- `DeltaRow(isize)`;
+- `Pin(Pin)`.
+
+Implemented `scroll` behavior for those variants:
+
+- no-scrollback mode (`explicit_max_size == 0`) forces active and cannot scroll
+  away;
+- `Active` and `Top` switch directly to those viewport modes;
+- `Pin` clamps to active/top when appropriate, otherwise stores a pinned
+  viewport and invalidates the cached row offset;
+- `Row` uses absolute rows from the top of the PageList, clamps to top/active at
+  upstream boundaries, sets exact cache values for direct row positioning, and
+  uses the cached-pin delta fast path when available;
+- `DeltaRow` moves from top, active, or pinned viewports, clamps on overflow,
+  updates cached pin offsets on fast paths, and invalidates cache when slow-path
+  pinning cannot update it exactly.
+
+Prompt scrolling remains intentionally deferred. `DeltaPrompt`, prompt
+iterators, and prompt semantic row behavior were not added because those depend
+on row metadata and iteration code outside this PageList viewport slice.
+
+Added tests for:
+
+- no-scrollback scroll rejection;
+- top and active scrolling;
+- delta row backward from active;
+- delta row backward overflow to top;
+- delta row backward without history preserving active;
+- delta row forward from top;
+- delta row forward into active;
+- pin scrolling in scrollback with `x` ignored;
+- pin scrolling into active;
+- pin scrolling to top;
+- row zero;
+- row in scrollback with cache;
+- row in the middle of scrollback;
+- row at the active boundary;
+- row beyond active;
+- row without scrollback;
+- row followed by delta;
+- cached row fast path down;
+- cached row fast path up.
+
+The tests verify both scrollbar offsets and viewport top-left screen
+coordinates, matching the design review's requirement to prove visible viewport
+position, not only scrollbar state.
+
+Verification passed:
+
+```bash
+cargo fmt
+cargo test -p roastty terminal::page_list
+cargo test -p roastty
+```
+
+The targeted PageList suite reported 65 passing tests. The full `roastty` suite
+reported 346 unit tests, the ABI harness, and doc tests passing.
+
+## Conclusion
+
+Roastty now supports the upstream PageList viewport scroll commands that operate
+only over existing rows. This completes the non-prompt, non-mutating scroll
+layer needed before later PageList mutation work. The remaining upstream
+scroll-related behavior, including prompt jumps and scroll-clear/grow/prune
+interactions, belongs in later experiments after the required row semantic and
+mutation primitives exist.

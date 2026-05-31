@@ -18,6 +18,15 @@ struct Scrollbar {
     len: usize,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Scroll {
+    Active,
+    Top,
+    Row(usize),
+    DeltaRow(isize),
+    Pin(Pin),
+}
+
 #[derive(Debug)]
 pub(super) struct PageList {
     cols: CellCountInt,
@@ -449,6 +458,174 @@ impl PageList {
         }
     }
 
+    fn scroll(&mut self, behavior: Scroll) {
+        if self.explicit_max_size == 0 {
+            self.viewport = Viewport::Active;
+            self.verify_integrity()
+                .expect("no-scrollback scroll result must be valid");
+            return;
+        }
+
+        match behavior {
+            Scroll::Active => self.viewport = Viewport::Active,
+            Scroll::Top => self.viewport = Viewport::Top,
+            Scroll::Pin(pin) => self.scroll_to_pin(pin),
+            Scroll::Row(row) => self.scroll_to_row(row),
+            Scroll::DeltaRow(delta) => self.scroll_delta_row(delta),
+        }
+
+        self.verify_integrity()
+            .expect("scroll result must preserve PageList integrity");
+    }
+
+    fn scroll_to_pin(&mut self, mut pin: Pin) {
+        pin.x = 0;
+        if self.pin_is_active(pin) {
+            self.viewport = Viewport::Active;
+        } else if self.pin_is_top(pin) {
+            self.viewport = Viewport::Top;
+        } else {
+            self.set_viewport_pin(pin);
+            self.viewport = Viewport::Pin;
+            self.viewport_pin_row_offset = None;
+        }
+    }
+
+    fn scroll_to_row(&mut self, row: usize) {
+        if row == 0 {
+            self.viewport = Viewport::Top;
+            return;
+        }
+
+        let active_offset = self.total_rows as usize - self.rows as usize;
+        if row >= active_offset {
+            self.viewport = Viewport::Active;
+            return;
+        }
+
+        if self.viewport == Viewport::Pin {
+            if let Some(cached_offset) = self.viewport_pin_row_offset {
+                let delta = row as isize - cached_offset as isize;
+                self.scroll_delta_row(delta);
+                return;
+            }
+        }
+
+        self.viewport_pin_row_offset = Some(row);
+        self.viewport = Viewport::Pin;
+
+        let midpoint = self.total_rows as usize / 2;
+        if row < midpoint {
+            let mut remaining = row;
+            for node in &self.pages {
+                let node_rows = node.page.size_rows() as usize;
+                if remaining < node_rows {
+                    self.set_viewport_pin(Pin {
+                        node: NonNull::from(node.as_ref()),
+                        y: remaining
+                            .try_into()
+                            .expect("row offset must fit CellCountInt"),
+                        x: 0,
+                        garbage: false,
+                    });
+                    return;
+                }
+                remaining -= node_rows;
+            }
+        } else {
+            let mut remaining = self.total_rows as usize - row;
+            for node in self.pages.iter().rev() {
+                let node_rows = node.page.size_rows() as usize;
+                if remaining <= node_rows {
+                    self.set_viewport_pin(Pin {
+                        node: NonNull::from(node.as_ref()),
+                        y: (node_rows - remaining)
+                            .try_into()
+                            .expect("row offset must fit CellCountInt"),
+                        x: 0,
+                        garbage: false,
+                    });
+                    return;
+                }
+                remaining -= node_rows;
+            }
+        }
+
+        self.viewport = Viewport::Active;
+    }
+
+    fn scroll_delta_row(&mut self, delta: isize) {
+        match self.viewport {
+            Viewport::Top if delta <= 0 => return,
+            Viewport::Active if delta >= 0 => return,
+            Viewport::Pin => {
+                if delta == 0 {
+                    return;
+                }
+
+                if delta < 0 {
+                    let rows = (-delta) as usize;
+                    if let Some(mut pin) = self.pin_up(*self.viewport_pin, rows) {
+                        pin.x = 0;
+                        self.set_viewport_pin(pin);
+                        if let Some(offset) = &mut self.viewport_pin_row_offset {
+                            *offset -= rows;
+                        }
+                    } else {
+                        self.viewport = Viewport::Top;
+                    }
+                } else {
+                    let rows = delta as usize;
+                    if let Some(mut pin) = self.pin_down(*self.viewport_pin, rows) {
+                        pin.x = 0;
+                        if self.pin_is_active(pin) {
+                            self.viewport = Viewport::Active;
+                        } else {
+                            self.set_viewport_pin(pin);
+                            if let Some(offset) = &mut self.viewport_pin_row_offset {
+                                *offset += rows;
+                            }
+                        }
+                    } else {
+                        self.viewport = Viewport::Active;
+                    }
+                }
+                return;
+            }
+            _ => {}
+        }
+
+        let top = self.get_top_left(point::Tag::Viewport);
+        let pin = if delta < 0 {
+            match self.pin_up(top, (-delta) as usize) {
+                Some(pin) => pin,
+                None => self.get_top_left(point::Tag::Screen),
+            }
+        } else {
+            match self.pin_down(top, delta as usize) {
+                Some(pin) => pin,
+                None => {
+                    self.viewport = Viewport::Active;
+                    return;
+                }
+            }
+        };
+
+        if self.pin_is_active(pin) {
+            self.viewport = Viewport::Active;
+        } else if self.pin_is_top(pin) {
+            self.viewport = Viewport::Top;
+        } else {
+            self.set_viewport_pin(Pin { x: 0, ..pin });
+            self.viewport = Viewport::Pin;
+            self.viewport_pin_row_offset = None;
+        }
+    }
+
+    fn set_viewport_pin(&mut self, pin: Pin) {
+        *self.viewport_pin = pin;
+    }
+
     fn pin_down(&self, pin: Pin, rows: usize) -> Option<Pin> {
         let index = self.node_index(pin.node)?;
         let node_rows = self.pages[index].page.size_rows() as usize;
@@ -557,6 +734,18 @@ fn init_pages(
 mod tests {
     use super::*;
     use crate::terminal::page::page_layout;
+
+    fn simulate_history(list: &mut PageList, total_rows: CellCountInt) {
+        list.pages[0].page.set_size_rows(total_rows);
+        list.total_rows = total_rows;
+    }
+
+    fn viewport_top_left_screen_coord(list: &PageList) -> Coordinate {
+        let pin = list.get_top_left(point::Tag::Viewport);
+        list.point_from_pin(point::Tag::Screen, pin)
+            .expect("viewport top-left must map to screen")
+            .coord()
+    }
 
     #[test]
     fn viewport_variants_compare_as_expected() {
@@ -911,6 +1100,393 @@ mod tests {
             x: 0,
             garbage: false,
         }));
+    }
+
+    #[test]
+    fn page_list_scroll_max_size_zero_stays_active() {
+        let mut list = PageList::init(80, 24, Some(0)).unwrap();
+        simulate_history(&mut list, 30);
+        let before = viewport_top_left_screen_coord(&list);
+        let pin = Pin {
+            node: NonNull::from(list.pages[0].as_ref()),
+            y: 4,
+            x: 2,
+            garbage: false,
+        };
+
+        for behavior in [
+            Scroll::Top,
+            Scroll::Pin(pin),
+            Scroll::Row(4),
+            Scroll::DeltaRow(-3),
+        ] {
+            list.scroll(behavior);
+            assert_eq!(list.viewport, Viewport::Active);
+            assert_eq!(viewport_top_left_screen_coord(&list), before);
+            assert_eq!(
+                list.scrollbar(),
+                Scrollbar {
+                    total: 24,
+                    offset: 0,
+                    len: 24,
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn page_list_scroll_top_moves_viewport_to_top() {
+        let mut list = PageList::init(80, 24, None).unwrap();
+        simulate_history(&mut list, 34);
+
+        list.scroll(Scroll::Top);
+
+        assert_eq!(list.viewport, Viewport::Top);
+        assert_eq!(viewport_top_left_screen_coord(&list), Coordinate::new(0, 0));
+        assert_eq!(
+            list.scrollbar(),
+            Scrollbar {
+                total: 34,
+                offset: 0,
+                len: 24,
+            }
+        );
+    }
+
+    #[test]
+    fn page_list_scroll_active_returns_to_active_viewport() {
+        let mut list = PageList::init(80, 24, None).unwrap();
+        simulate_history(&mut list, 34);
+        list.scroll(Scroll::Top);
+
+        list.scroll(Scroll::Active);
+
+        assert_eq!(list.viewport, Viewport::Active);
+        assert_eq!(
+            viewport_top_left_screen_coord(&list),
+            Coordinate::new(0, 10)
+        );
+        assert_eq!(
+            list.scrollbar(),
+            Scrollbar {
+                total: 34,
+                offset: 10,
+                len: 24,
+            }
+        );
+    }
+
+    #[test]
+    fn page_list_scroll_delta_row_back_from_active() {
+        let mut list = PageList::init(80, 24, None).unwrap();
+        simulate_history(&mut list, 34);
+
+        list.scroll(Scroll::DeltaRow(-1));
+
+        assert_eq!(list.viewport, Viewport::Pin);
+        assert_eq!(viewport_top_left_screen_coord(&list), Coordinate::new(0, 9));
+        assert_eq!(
+            list.scrollbar(),
+            Scrollbar {
+                total: 34,
+                offset: 9,
+                len: 24,
+            }
+        );
+    }
+
+    #[test]
+    fn page_list_scroll_delta_row_back_overflow_clamps_to_top() {
+        let mut list = PageList::init(80, 24, None).unwrap();
+        simulate_history(&mut list, 34);
+
+        list.scroll(Scroll::DeltaRow(-100));
+
+        assert_eq!(list.viewport, Viewport::Top);
+        assert_eq!(viewport_top_left_screen_coord(&list), Coordinate::new(0, 0));
+        assert_eq!(
+            list.scrollbar(),
+            Scrollbar {
+                total: 34,
+                offset: 0,
+                len: 24,
+            }
+        );
+    }
+
+    #[test]
+    fn page_list_scroll_delta_row_back_without_history_preserves_active() {
+        let mut list = PageList::init(80, 24, None).unwrap();
+
+        list.scroll(Scroll::DeltaRow(-1));
+
+        assert_eq!(list.viewport, Viewport::Active);
+        assert_eq!(viewport_top_left_screen_coord(&list), Coordinate::new(0, 0));
+        assert_eq!(
+            list.scrollbar(),
+            Scrollbar {
+                total: 24,
+                offset: 0,
+                len: 24,
+            }
+        );
+    }
+
+    #[test]
+    fn page_list_scroll_delta_row_forward_from_top_creates_pin() {
+        let mut list = PageList::init(80, 24, None).unwrap();
+        simulate_history(&mut list, 34);
+        list.scroll(Scroll::Top);
+
+        list.scroll(Scroll::DeltaRow(2));
+
+        assert_eq!(list.viewport, Viewport::Pin);
+        assert_eq!(viewport_top_left_screen_coord(&list), Coordinate::new(0, 2));
+        assert_eq!(
+            list.scrollbar(),
+            Scrollbar {
+                total: 34,
+                offset: 2,
+                len: 24,
+            }
+        );
+    }
+
+    #[test]
+    fn page_list_scroll_delta_row_forward_into_active_clamps_to_active() {
+        let mut list = PageList::init(80, 24, None).unwrap();
+        simulate_history(&mut list, 34);
+        list.scroll(Scroll::Top);
+
+        list.scroll(Scroll::DeltaRow(10));
+
+        assert_eq!(list.viewport, Viewport::Active);
+        assert_eq!(
+            viewport_top_left_screen_coord(&list),
+            Coordinate::new(0, 10)
+        );
+        assert_eq!(
+            list.scrollbar(),
+            Scrollbar {
+                total: 34,
+                offset: 10,
+                len: 24,
+            }
+        );
+    }
+
+    #[test]
+    fn page_list_scroll_to_pin_in_scrollback_ignores_x() {
+        let mut list = PageList::init(80, 24, None).unwrap();
+        simulate_history(&mut list, 34);
+        let pin = Pin {
+            node: NonNull::from(list.pages[0].as_ref()),
+            y: 4,
+            x: 2,
+            garbage: false,
+        };
+
+        list.scroll(Scroll::Pin(pin));
+
+        assert_eq!(list.viewport, Viewport::Pin);
+        assert_eq!(viewport_top_left_screen_coord(&list), Coordinate::new(0, 4));
+        assert_eq!(
+            list.scrollbar(),
+            Scrollbar {
+                total: 34,
+                offset: 4,
+                len: 24,
+            }
+        );
+    }
+
+    #[test]
+    fn page_list_scroll_to_pin_in_active_clamps_to_active() {
+        let mut list = PageList::init(80, 24, None).unwrap();
+        simulate_history(&mut list, 34);
+        let pin = Pin {
+            node: NonNull::from(list.pages[0].as_ref()),
+            y: 30,
+            x: 2,
+            garbage: false,
+        };
+
+        list.scroll(Scroll::Pin(pin));
+
+        assert_eq!(list.viewport, Viewport::Active);
+        assert_eq!(
+            viewport_top_left_screen_coord(&list),
+            Coordinate::new(0, 10)
+        );
+    }
+
+    #[test]
+    fn page_list_scroll_to_pin_at_top_clamps_to_top() {
+        let mut list = PageList::init(80, 24, None).unwrap();
+        simulate_history(&mut list, 34);
+        let pin = Pin {
+            node: NonNull::from(list.pages[0].as_ref()),
+            y: 0,
+            x: 2,
+            garbage: false,
+        };
+
+        list.scroll(Scroll::Pin(pin));
+
+        assert_eq!(list.viewport, Viewport::Top);
+        assert_eq!(viewport_top_left_screen_coord(&list), Coordinate::new(0, 0));
+    }
+
+    #[test]
+    fn page_list_scroll_to_row_zero_clamps_to_top() {
+        let mut list = PageList::init(80, 24, None).unwrap();
+        simulate_history(&mut list, 34);
+
+        list.scroll(Scroll::Row(0));
+
+        assert_eq!(list.viewport, Viewport::Top);
+        assert_eq!(viewport_top_left_screen_coord(&list), Coordinate::new(0, 0));
+        assert_eq!(list.scrollbar().offset, 0);
+    }
+
+    #[test]
+    fn page_list_scroll_to_row_in_scrollback_sets_cache() {
+        let mut list = PageList::init(80, 24, None).unwrap();
+        simulate_history(&mut list, 44);
+
+        list.scroll(Scroll::Row(5));
+
+        assert_eq!(list.viewport, Viewport::Pin);
+        assert_eq!(list.viewport_pin_row_offset, Some(5));
+        assert_eq!(viewport_top_left_screen_coord(&list), Coordinate::new(0, 5));
+        assert_eq!(
+            list.scrollbar(),
+            Scrollbar {
+                total: 44,
+                offset: 5,
+                len: 24,
+            }
+        );
+    }
+
+    #[test]
+    fn page_list_scroll_to_row_in_middle() {
+        let mut list = PageList::init(80, 24, None).unwrap();
+        simulate_history(&mut list, 74);
+
+        list.scroll(Scroll::Row(37));
+
+        assert_eq!(list.viewport, Viewport::Pin);
+        assert_eq!(list.viewport_pin_row_offset, Some(37));
+        assert_eq!(
+            viewport_top_left_screen_coord(&list),
+            Coordinate::new(0, 37)
+        );
+        assert_eq!(list.scrollbar().offset, 37);
+    }
+
+    #[test]
+    fn page_list_scroll_to_row_at_active_boundary_clamps_to_active() {
+        let mut list = PageList::init(80, 24, None).unwrap();
+        simulate_history(&mut list, 44);
+
+        list.scroll(Scroll::Row(20));
+
+        assert_eq!(list.viewport, Viewport::Active);
+        assert_eq!(
+            viewport_top_left_screen_coord(&list),
+            Coordinate::new(0, 20)
+        );
+        assert_eq!(list.scrollbar().offset, 20);
+    }
+
+    #[test]
+    fn page_list_scroll_to_row_beyond_active_clamps_to_active() {
+        let mut list = PageList::init(80, 24, None).unwrap();
+        simulate_history(&mut list, 34);
+
+        list.scroll(Scroll::Row(1000));
+
+        assert_eq!(list.viewport, Viewport::Active);
+        assert_eq!(
+            viewport_top_left_screen_coord(&list),
+            Coordinate::new(0, 10)
+        );
+        assert_eq!(list.scrollbar().offset, 10);
+    }
+
+    #[test]
+    fn page_list_scroll_to_row_without_scrollback_preserves_active() {
+        let mut list = PageList::init(80, 24, None).unwrap();
+
+        list.scroll(Scroll::Row(5));
+
+        assert_eq!(list.viewport, Viewport::Active);
+        assert_eq!(viewport_top_left_screen_coord(&list), Coordinate::new(0, 0));
+        assert_eq!(list.scrollbar().offset, 0);
+    }
+
+    #[test]
+    fn page_list_scroll_to_row_then_delta_row() {
+        let mut list = PageList::init(80, 24, None).unwrap();
+        simulate_history(&mut list, 54);
+
+        list.scroll(Scroll::Row(10));
+        assert_eq!(
+            viewport_top_left_screen_coord(&list),
+            Coordinate::new(0, 10)
+        );
+        assert_eq!(list.scrollbar().offset, 10);
+
+        list.scroll(Scroll::DeltaRow(5));
+        assert_eq!(
+            viewport_top_left_screen_coord(&list),
+            Coordinate::new(0, 15)
+        );
+        assert_eq!(list.scrollbar().offset, 15);
+
+        list.scroll(Scroll::DeltaRow(-3));
+        assert_eq!(
+            viewport_top_left_screen_coord(&list),
+            Coordinate::new(0, 12)
+        );
+        assert_eq!(list.scrollbar().offset, 12);
+    }
+
+    #[test]
+    fn page_list_scroll_to_row_uses_cache_fast_path_down() {
+        let mut list = PageList::init(80, 24, None).unwrap();
+        simulate_history(&mut list, 74);
+
+        list.scroll(Scroll::Row(10));
+        assert_eq!(list.viewport_pin_row_offset, Some(10));
+        list.scroll(Scroll::Row(20));
+
+        assert_eq!(list.viewport, Viewport::Pin);
+        assert_eq!(list.viewport_pin_row_offset, Some(20));
+        assert_eq!(
+            viewport_top_left_screen_coord(&list),
+            Coordinate::new(0, 20)
+        );
+        assert_eq!(list.scrollbar().offset, 20);
+    }
+
+    #[test]
+    fn page_list_scroll_to_row_uses_cache_fast_path_up() {
+        let mut list = PageList::init(80, 24, None).unwrap();
+        simulate_history(&mut list, 74);
+
+        list.scroll(Scroll::Row(30));
+        assert_eq!(list.viewport_pin_row_offset, Some(30));
+        list.scroll(Scroll::Row(20));
+
+        assert_eq!(list.viewport, Viewport::Pin);
+        assert_eq!(list.viewport_pin_row_offset, Some(20));
+        assert_eq!(
+            viewport_top_left_screen_coord(&list),
+            Coordinate::new(0, 20)
+        );
+        assert_eq!(list.scrollbar().offset, 20);
     }
 
     #[test]
