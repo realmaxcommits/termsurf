@@ -142,3 +142,58 @@ The experiment fails if:
 - the implementation expands into renderer highlights, search selection, diagram
   output, parser, renderer, app, ABI, resize/reflow, selection, or search work;
 - tests or formatting fail.
+
+## Result
+
+**Result:** Pass
+
+Experiment 58 ported the upstream `SemanticContent::Input` branch as a private
+`PageList::highlight_semantic_input` helper. The helper uses the prompt-zone end
+calculation from Experiment 57, scans from the caller-provided `Pin`, returns
+`None` when output appears before any input, starts on the first input cell,
+extends through later input cells, ignores nested prompt cells while scanning,
+and stops before output.
+
+The implementation deliberately remains narrow: output highlighting, renderer
+highlight flattening/tracking, search selection, diagrams, parser behavior,
+renderer delivery, app behavior, public ABI, resize/reflow, selection, and
+search work are still deferred.
+
+Tests added:
+
+- basic single-row input highlighting;
+- input followed by output stops before output;
+- multiline input with nested prompt/continuation cells;
+- output before input returns `None`;
+- no following prompt scans to the bottom prompt zone but ends at the last input
+  cell;
+- prompt-only content returns `None`;
+- nonzero `at.x` starts scanning from the provided pin;
+- cross-page input-zone highlighting;
+- returned highlight pins are untracked.
+
+Verification:
+
+```bash
+cargo fmt
+cargo test -p roastty terminal::page_list
+cargo test -p roastty
+```
+
+Results:
+
+- `cargo test -p roastty terminal::page_list`: 250 passed, 0 failed.
+- `cargo test -p roastty`: 531 unit tests passed, ABI harness 1 passed,
+  doctests 0.
+
+Independent result review approved the experiment as Pass with no required
+findings. The reviewer confirmed that the implementation matches upstream's
+two-phase input branch, preserves the nonzero-`at.x` requirement, covers the
+required cases, and does not expand beyond the intended scope.
+
+## Conclusion
+
+Roastty now has the prompt and input semantic highlight branches from upstream
+`PageList.highlightSemanticContent`. The remaining semantic branch is output
+highlighting; that should be designed as the next experiment instead of mixing
+it into this completed slice.
