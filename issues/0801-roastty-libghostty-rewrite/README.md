@@ -147,7 +147,7 @@ No experiment may proceed to the next stage until the required review passes.
 - [Experiment 9: Port Page Capacity and Layout Arithmetic](09-port-page-layout.md)
   — **Pass**
 - [Experiment 10: Port Basic Page Allocation and Access](10-port-page-init-access.md)
-  — **Designed**
+  — **Pass**
 
 ## Non-Goals
 

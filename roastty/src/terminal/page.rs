@@ -1,4 +1,6 @@
+use std::io;
 use std::mem::{align_of, size_of};
+use std::ptr::NonNull;
 
 use super::bitmap_allocator::{BitmapAllocator, Layout as BitmapAllocatorLayout};
 use super::color::Rgb;
@@ -270,6 +272,262 @@ pub(super) fn page_layout(capacity: Capacity) -> PageLayout {
         hyperlink_set_layout,
         capacity,
     }
+}
+
+#[derive(Debug)]
+pub(super) struct Page {
+    memory: PageMemory,
+    rows: Offset<Row>,
+    cells: Offset<Cell>,
+    dirty: bool,
+    size: Size,
+    capacity: Capacity,
+    layout: PageLayout,
+}
+
+impl Page {
+    pub(super) fn init(capacity: Capacity) -> Result<Self, PageAllocError> {
+        let layout = page_layout(capacity);
+        assert_eq!(layout.total_size % PAGE_SIZE_MIN, 0);
+
+        let mut memory = PageMemory::new(layout.total_size)?;
+        let buf = super::size::OffsetBuf::init(memory.as_mut_ptr());
+        let rows = buf.member::<Row>(layout.rows_start);
+        let cells = buf.member::<Cell>(layout.cells_start);
+
+        let cells_len = capacity.cols as usize * capacity.rows as usize;
+        let cells_ptr = cells.ptr(memory.as_ptr());
+        for y in 0..capacity.rows as usize {
+            let start = y * capacity.cols as usize;
+            debug_assert!(start < cells_len || cells_len == 0);
+
+            let mut row = Row::default();
+            row.set_cells(Offset::new(
+                (layout.cells_start + start * size_of::<Cell>())
+                    .try_into()
+                    .expect("cell offset must fit OffsetInt"),
+            ));
+
+            unsafe {
+                // Safety: `rows` points into the live page backing memory and
+                // `y < capacity.rows`, so this writes one initialized row.
+                *rows.ptr_mut(memory.as_mut_ptr()).add(y) = row;
+            }
+            debug_assert_eq!(row.cells().ptr(memory.as_ptr()), unsafe {
+                // Safety: `start` is within the allocated cells region.
+                cells_ptr.add(start)
+            });
+        }
+
+        Ok(Self {
+            memory,
+            rows,
+            cells,
+            dirty: false,
+            size: Size {
+                cols: capacity.cols,
+                rows: capacity.rows,
+            },
+            capacity,
+            layout,
+        })
+    }
+
+    pub(super) fn backing_len(&self) -> usize {
+        self.memory.len()
+    }
+
+    pub(super) fn backing_ptr(&self) -> *const u8 {
+        self.memory.as_ptr()
+    }
+
+    pub(super) fn is_dirty(&self) -> bool {
+        self.dirty
+    }
+
+    pub(super) fn capacity(&self) -> Capacity {
+        self.capacity
+    }
+
+    pub(super) fn get_row(&self, y: usize) -> &Row {
+        assert!(y < self.size.rows as usize);
+        unsafe {
+            // Safety: bounds were checked and rows points into live backing
+            // memory initialized during Page::init.
+            &*self.rows.ptr(self.memory.as_ptr()).add(y)
+        }
+    }
+
+    pub(super) fn get_row_mut(&mut self, y: usize) -> &mut Row {
+        assert!(y < self.size.rows as usize);
+        unsafe {
+            // Safety: bounds were checked, `&mut self` guarantees no competing
+            // mutable page access, and rows points into live backing memory.
+            &mut *self.rows.ptr_mut(self.memory.as_mut_ptr()).add(y)
+        }
+    }
+
+    pub(super) fn get_cells(&self, row: &Row) -> &[Cell] {
+        self.assert_row_provenance(row);
+        self.assert_row_cells_range(row);
+        unsafe {
+            // Safety: row provenance was checked and row.cells was initialized
+            // to a cells-region offset whose row-sized range is valid.
+            std::slice::from_raw_parts(
+                row.cells().ptr(self.memory.as_ptr()),
+                self.size.cols as usize,
+            )
+        }
+    }
+
+    pub(super) fn get_cells_mut(&mut self, row_index: usize) -> &mut [Cell] {
+        assert!(row_index < self.size.rows as usize);
+        let cells = self.get_row(row_index).cells();
+        self.assert_cells_range(cells);
+        unsafe {
+            // Safety: row_index was checked, cells offset was initialized for
+            // this page and range-checked, and `&mut self` guarantees
+            // exclusive mutable access.
+            std::slice::from_raw_parts_mut(
+                cells.ptr_mut(self.memory.as_mut_ptr()),
+                self.size.cols as usize,
+            )
+        }
+    }
+
+    pub(super) fn get_row_and_cell_mut(&mut self, x: usize, y: usize) -> RowAndCellMut<'_> {
+        assert!(y < self.size.rows as usize);
+        assert!(x < self.size.cols as usize);
+
+        unsafe {
+            // Safety: bounds were checked. Row and cell arrays occupy disjoint
+            // regions in one live page allocation. The row's cells offset is
+            // range-checked before creating the cell reference.
+            let row = &mut *self.rows.ptr_mut(self.memory.as_mut_ptr()).add(y);
+            Self::assert_cells_range_for_layout(self.layout, self.size, row.cells());
+            let cell = &mut *row.cells().ptr_mut(self.memory.as_mut_ptr()).add(x);
+            RowAndCellMut { row, cell }
+        }
+    }
+
+    fn assert_row_provenance(&self, row: &Row) {
+        let row_addr = row as *const Row as usize;
+        let rows_start = self.rows.ptr(self.memory.as_ptr()) as usize;
+        let rows_len = self.size.rows as usize * size_of::<Row>();
+        let rows_end = rows_start + rows_len;
+
+        assert!(row_addr >= rows_start);
+        assert!(row_addr < rows_end);
+        assert_eq!((row_addr - rows_start) % size_of::<Row>(), 0);
+    }
+
+    fn assert_row_cells_range(&self, row: &Row) {
+        self.assert_cells_range(row.cells());
+    }
+
+    fn assert_cells_range(&self, cells: Offset<Cell>) {
+        Self::assert_cells_range_for_layout(self.layout, self.size, cells);
+    }
+
+    fn assert_cells_range_for_layout(layout: PageLayout, size: Size, cells: Offset<Cell>) {
+        let offset = cells.offset() as usize;
+        let row_bytes = size.cols as usize * size_of::<Cell>();
+        let cells_start = layout.cells_start;
+        let cells_end = layout.cells_start + layout.cells_size;
+
+        assert!(
+            offset >= cells_start,
+            "row cell offset is before cells region"
+        );
+        assert!(
+            offset
+                .checked_add(row_bytes)
+                .is_some_and(|end| end <= cells_end),
+            "row cell range is outside cells region"
+        );
+        assert_eq!(
+            (offset - cells_start) % size_of::<Cell>(),
+            0,
+            "row cell offset is not cell aligned"
+        );
+    }
+}
+
+pub(super) struct RowAndCellMut<'a> {
+    pub(super) row: &'a mut Row,
+    pub(super) cell: &'a mut Cell,
+}
+
+#[derive(Debug)]
+struct PageMemory {
+    ptr: NonNull<u8>,
+    len: usize,
+}
+
+impl PageMemory {
+    fn new(len: usize) -> Result<Self, PageAllocError> {
+        assert!(len > 0);
+        assert_eq!(len % PAGE_SIZE_MIN, 0);
+
+        let ptr = unsafe {
+            // Safety: mmap is called with a null address hint, a non-zero
+            // length, read/write protection, anonymous private mapping, and no
+            // file descriptor. Return value is checked against MAP_FAILED.
+            libc::mmap(
+                std::ptr::null_mut(),
+                len,
+                libc::PROT_READ | libc::PROT_WRITE,
+                libc::MAP_PRIVATE | libc::MAP_ANON,
+                -1,
+                0,
+            )
+        };
+
+        if ptr == libc::MAP_FAILED {
+            return Err(PageAllocError::MmapFailed(io::Error::last_os_error()));
+        }
+
+        let ptr = NonNull::new(ptr.cast::<u8>()).ok_or_else(|| {
+            PageAllocError::MmapFailed(io::Error::new(io::ErrorKind::Other, "mmap returned null"))
+        })?;
+        Ok(Self { ptr, len })
+    }
+
+    fn as_ptr(&self) -> *const u8 {
+        self.ptr.as_ptr()
+    }
+
+    fn as_mut_ptr(&mut self) -> *mut u8 {
+        self.ptr.as_ptr()
+    }
+
+    fn len(&self) -> usize {
+        self.len
+    }
+
+    #[cfg(test)]
+    fn as_slice(&self) -> &[u8] {
+        unsafe {
+            // Safety: PageMemory owns a live mmap allocation for `len` bytes.
+            std::slice::from_raw_parts(self.as_ptr(), self.len)
+        }
+    }
+}
+
+impl Drop for PageMemory {
+    fn drop(&mut self) {
+        let result = unsafe {
+            // Safety: PageMemory only stores successful mmap mappings and Drop
+            // runs once for this owner, passing the original pointer/length.
+            libc::munmap(self.ptr.as_ptr().cast(), self.len)
+        };
+        debug_assert_eq!(result, 0);
+    }
+}
+
+#[derive(Debug)]
+pub(super) enum PageAllocError {
+    MmapFailed(io::Error),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1063,6 +1321,116 @@ mod tests {
         assert!(layout.string_alloc_start < layout.hyperlink_set_start);
         assert!(layout.hyperlink_set_start < layout.hyperlink_map_start);
         assert_eq!(layout.total_size % PAGE_SIZE_MIN, 0);
+    }
+
+    #[test]
+    fn page_memory_is_zeroed_and_aligned() {
+        let memory = PageMemory::new(PAGE_SIZE_MIN).unwrap();
+
+        assert_eq!(memory.len(), PAGE_SIZE_MIN);
+        assert_eq!(memory.as_ptr() as usize % PAGE_SIZE_MIN, 0);
+        assert!(memory.as_slice().iter().all(|byte| *byte == 0));
+    }
+
+    #[test]
+    fn page_init() {
+        let page = Page::init(Capacity {
+            cols: 120,
+            rows: 80,
+            styles: 32,
+            ..Capacity::new(120, 80)
+        })
+        .unwrap();
+
+        assert_eq!(page.backing_len(), page.layout.total_size);
+        assert_eq!(page.backing_ptr() as usize % PAGE_SIZE_MIN, 0);
+        assert!(!page.is_dirty());
+        assert_eq!(page.capacity().cols, 120);
+        assert_eq!(page.capacity().rows, 80);
+        assert_eq!(page.size.cols, 120);
+        assert_eq!(page.size.rows, 80);
+    }
+
+    #[test]
+    fn page_rows_point_to_expected_cell_ranges() {
+        let page = Page::init(Capacity {
+            cols: 10,
+            rows: 10,
+            styles: 8,
+            ..Capacity::new(10, 10)
+        })
+        .unwrap();
+
+        for y in 0..page.capacity.rows as usize {
+            let row = page.get_row(y);
+            let expected =
+                page.layout.cells_start + y * page.capacity.cols as usize * size_of::<Cell>();
+            assert_eq!(row.cells().offset() as usize, expected);
+            assert_eq!(page.get_cells(row).len(), page.size.cols as usize);
+        }
+    }
+
+    #[test]
+    fn page_read_and_write_cells() {
+        let mut page = Page::init(Capacity {
+            cols: 10,
+            rows: 10,
+            styles: 8,
+            ..Capacity::new(10, 10)
+        })
+        .unwrap();
+
+        for y in 0..page.capacity.rows as usize {
+            let rac = page.get_row_and_cell_mut(1, y);
+            *rac.cell = Cell::init(y as u32);
+        }
+
+        for y in 0..page.capacity.rows as usize {
+            let row = page.get_row(y);
+            let cells = page.get_cells(row);
+            assert_eq!(cells[1].codepoint(), y as u32);
+        }
+    }
+
+    #[test]
+    fn page_get_cells_mut() {
+        let mut page = Page::init(Capacity::new(3, 2)).unwrap();
+
+        let cells = page.get_cells_mut(1);
+        cells[2] = Cell::init('z' as u32);
+
+        assert_eq!(page.get_row_and_cell_mut(2, 1).cell.codepoint(), 'z' as u32);
+    }
+
+    #[test]
+    fn page_create_drop_loop() {
+        for _ in 0..32 {
+            let _page = Page::init(Capacity::new(5, 5)).unwrap();
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "assertion failed: y < self.size.rows as usize")]
+    fn page_get_row_rejects_out_of_bounds() {
+        let page = Page::init(Capacity::new(2, 2)).unwrap();
+        let _ = page.get_row(2);
+    }
+
+    #[test]
+    #[should_panic(expected = "assertion failed: x < self.size.cols as usize")]
+    fn page_get_row_and_cell_rejects_out_of_bounds_x() {
+        let mut page = Page::init(Capacity::new(2, 2)).unwrap();
+        let _ = page.get_row_and_cell_mut(2, 0);
+    }
+
+    #[test]
+    #[should_panic(expected = "row cell offset is before cells region")]
+    fn page_get_cells_rejects_corrupt_row_cells_offset() {
+        let mut page = Page::init(Capacity::new(2, 2)).unwrap();
+        page.get_row_mut(0).set_cells(Offset::new(0));
+
+        let row = page.get_row(0);
+        let _ = page.get_cells(row);
     }
 
     #[test]

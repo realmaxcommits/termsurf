@@ -190,3 +190,115 @@ The experiment fails if:
 This experiment design must be reviewed by Codex before implementation. Any real
 design issues must be fixed before committing the plan or implementing the
 slice.
+
+## Result
+
+**Result:** Pass
+
+Experiment 10 ported the first real `Page` owner into
+`roastty/src/terminal/page.rs`.
+
+The implementation added:
+
+- `Page`
+- `PageMemory`
+- `PageAllocError`
+- `RowAndCellMut`
+- `Page::init`
+- `Page::get_row`
+- `Page::get_row_mut`
+- `Page::get_cells`
+- `Page::get_cells_mut`
+- `Page::get_row_and_cell_mut`
+
+It also added `libc` as a direct `roastty` dependency so `PageMemory` can use
+macOS/POSIX `mmap` and `munmap`.
+
+### Allocation Strategy
+
+`PageMemory` is the narrow unsafe allocation boundary:
+
+- constructor requires non-zero, `PAGE_SIZE_MIN`-aligned lengths;
+- uses `libc::mmap` with anonymous/private read-write pages;
+- checks explicitly for `libc::MAP_FAILED`;
+- preserves the OS allocation error through `io::Error::last_os_error`;
+- stores only successful non-null mappings;
+- calls `libc::munmap(ptr, len)` exactly once in `Drop`.
+
+This matches the upstream model closely enough for the current macOS-only
+Roastty port while keeping unsafe allocation/deallocation localized.
+
+### Accessor Strategy
+
+Mutable access is restricted to `&mut self` methods:
+
+- `get_row_mut`
+- `get_cells_mut`
+- `get_row_and_cell_mut`
+
+`get_row_and_cell_mut` returns a constrained `RowAndCellMut` wrapper containing
+one row reference and one cell reference. The unsafe block is justified by the
+layout invariant that row and cell arrays occupy disjoint regions of one live
+page allocation.
+
+`get_cells(&self, row)` performs an explicit row provenance check before turning
+the row's cell offset into a slice.
+
+### Upstream Tests Ported
+
+The following upstream tests were ported:
+
+- `Page init`
+- `Page read and write cells`
+
+Additional direct tests cover:
+
+- `PageMemory` starts zeroed and is `PAGE_SIZE_MIN` aligned;
+- backing memory length equals `PageLayout.total_size`;
+- page backing pointer is `PAGE_SIZE_MIN` aligned;
+- page starts not dirty;
+- page size and capacity are initialized from capacity;
+- every row's `cells` offset points to the expected cell range;
+- `get_cells_mut`;
+- corrupted row cell offsets panic before creating slices/references;
+- simple create/drop loop;
+- out-of-bounds row access panic;
+- out-of-bounds cell access panic.
+
+### Deferred Upstream Tests
+
+The following upstream tests remain intentionally deferred:
+
+| Deferred area                                 | Reason                                                    |
+| --------------------------------------------- | --------------------------------------------------------- |
+| `Page appendGrapheme ...` / grapheme clearing | Requires grapheme map allocation and mutation behavior.   |
+| `Page clone ...` / `Page cloneFrom ...`       | Requires full metadata copy/rollback behavior.            |
+| Style tests inside `Page`                     | Require `StyleSet` / `RefCountedSet` behavior.            |
+| Hyperlink tests                               | Require hyperlink set/map behavior and string allocation. |
+| `Page moveCells ...`                          | Requires managed-memory remapping semantics.              |
+| Integrity and exact-row-capacity tests        | Require full grapheme/style/hyperlink metadata behavior.  |
+| `PageList` tests                              | Require stable `Page` behavior first.                     |
+
+### Verification
+
+Ran and passed:
+
+```bash
+cargo fmt
+cargo test -p roastty terminal::page
+cargo test -p roastty
+```
+
+The targeted page run passed 37 tests. The full `cargo test -p roastty` run
+passed 100 Rust unit tests, the C ABI harness, and doc tests.
+
+## Conclusion
+
+Experiment 10 succeeds. Roastty now has a real page backing allocation and basic
+row/cell access sufficient for the upstream `Page init` and
+`Page read and write cells` tests.
+
+The next experiment should port the first managed-memory slice: grapheme map
+layout plus append/lookup/clear behavior, enough to run the upstream
+`Page appendGrapheme small`, `Page appendGrapheme larger than chunk`, and
+`Page clearGrapheme not all cells` tests.
