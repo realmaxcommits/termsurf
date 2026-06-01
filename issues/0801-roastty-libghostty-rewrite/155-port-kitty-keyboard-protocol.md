@@ -59,13 +59,15 @@ mouse/keyboard frontend behavior.
    - Preserve existing `CSI u` restore-cursor behavior with no intermediates.
    - Parse `CSI ? u` as query.
    - Parse `CSI > Ps u` as push. Missing parameter defaults to `0`; one
-     parameter must fit in the five-bit flag range; extra parameters are invalid
-     and ignored.
-   - Parse `CSI < Ps u` as pop. Missing parameter defaults to `1`; extra
-     parameters are invalid and ignored.
+     parameter must fit in the five-bit flag range; if the parameter count is
+     not exactly one, match upstream Ghostty and default flags to `0`.
+   - Parse `CSI < Ps u` as pop. Missing parameter defaults to `1`; if the
+     parameter count is not exactly one, match upstream Ghostty and default the
+     pop count to `1`.
    - Parse `CSI = Ps ; Pm u` as set/or/not. Missing `Ps` defaults to `0`;
      missing `Pm` defaults to `1`; `Pm=1` means set, `Pm=2` means OR, and `Pm=3`
-     means NOT. Invalid flags or mode values are ignored.
+     means NOT. Invalid flags or mode values are ignored. Extra parameters after
+     `Pm` are ignored, matching upstream Ghostty.
    - Do not reinterpret unrelated CSI `u` forms as Kitty keyboard commands.
 
 4. Apply runtime behavior on the active screen.
@@ -106,8 +108,11 @@ Required test coverage:
   - `CSI = u` defaults to set flags `0`.
   - `CSI = 3 u`, `CSI = 3 ; 1 u`, `CSI = 3 ; 2 u`, and `CSI = 3 ; 3 u` dispatch
     set/set-or/set-not correctly.
-  - Invalid flag values above the five-bit range, invalid set modes, and extra
-    parameters are ignored without dispatching an action.
+  - Invalid flag values above the five-bit range, invalid set modes, and colon
+    forms are ignored without dispatching an action.
+  - Extra semicolon parameters follow upstream Ghostty's lenient behavior: query
+    ignores parameters; push/pop default when parameter count is not exactly
+    one; set uses the first two parameters and ignores later parameters.
   - `CSI u` remains restore-cursor.
 
 - Runtime tests:
@@ -155,3 +160,70 @@ This experiment fails if:
 - the patch adds key event encoding, platform input handling, public ABI,
   renderer/app behavior, PTY process behavior, browser overlay behavior, mouse
   protocol behavior, Kitty graphics, or non-macOS platform paths.
+
+## Result
+
+**Result:** Pass
+
+Implemented Kitty keyboard CSI `u` parsing and runtime state/query behavior for
+the active screen.
+
+Code changes:
+
+- `roastty/src/terminal/kitty.rs`
+  - added `KeyFlags::from_protocol_int(u16)` for five-bit protocol validation;
+  - made `KeyFlagStack::set`, `push`, and `pop` available to runtime code.
+- `roastty/src/terminal/screen.rs`
+  - added screen-level helpers for querying, setting, pushing, and popping Kitty
+    keyboard state;
+  - kept the existing test helpers as wrappers around those runtime helpers.
+- `roastty/src/terminal/stream.rs`
+  - added internal actions for Kitty keyboard query, push, pop, and set/or/not;
+  - parsed `CSI ? u`, `CSI > Ps u`, `CSI < Ps u`, and `CSI = Ps ; Pm u`;
+  - preserved plain `CSI u` as restore-cursor;
+  - rejected invalid flag values, invalid set modes, and colon forms without
+    dispatching actions;
+  - matched upstream Ghostty's lenient handling for extra semicolon parameters.
+- `roastty/src/terminal/terminal.rs`
+  - applied query/push/pop/set/or/not to `TerminalScreens::active()`;
+  - wrote query responses as `\x1b[?{flags}u`;
+  - left key event encoding, platform input, ABI, app integration, renderer,
+    browser overlay, PTY process behavior, mouse behavior, and Kitty graphics
+    untouched.
+
+Verification:
+
+```bash
+cargo fmt
+cargo test -p roastty kitty_keyboard
+cargo test -p roastty save_cursor
+cargo test -p roastty ris
+cargo test -p roastty
+```
+
+All commands passed. The final full suite reported 1707 unit tests passing, the
+ABI harness passing, and 0 doc tests.
+
+During implementation, the targeted Kitty keyboard test filter caught one real
+mistake: the first parser version rejected the required semicolon-separated
+`CSI = Ps ; Pm u` forms, so set-or/set-not did not dispatch. That was fixed
+before the required verification passed.
+
+The mandatory Codex result review then found a second real parity issue: the
+first completed parser was stricter than upstream Ghostty for extra semicolon
+parameters. Vendored Ghostty dispatches `CSI ? u` without inspecting params,
+defaults push/pop when the parameter count is not exactly one, and lets `=`
+forms use the first two params while ignoring later params. The implementation
+and tests were updated to match that behavior before this result was committed.
+
+## Conclusion
+
+Roastty now supports Ghostty's Kitty keyboard protocol state commands at the
+terminal stream layer. Applications can query and mutate the active screen's
+Kitty keyboard flag stack, primary and alternate screen state stays isolated,
+RIS clears the state, invalid forms are inert, and the existing formatter extra
+continues to emit the current state.
+
+This experiment deliberately stops before frontend key event encoding. A later
+experiment should port the actual key encoding/input side once the macOS input
+translation layer is in scope.

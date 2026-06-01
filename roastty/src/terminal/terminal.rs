@@ -825,6 +825,25 @@ impl Handler for TerminalStreamHandler<'_> {
                 let enabled = self.modes.restore(mode);
                 self.set_mode_basic(mode, enabled)
             }
+            Action::KittyKeyboardQuery => {
+                let flags = self.screens.active().kitty_keyboard_flags().int();
+                self.write_pty_response(&format!("\x1b[?{flags}u"));
+                Ok(())
+            }
+            Action::KittyKeyboardPush { flags } => {
+                self.screens.active_mut().push_kitty_keyboard(flags);
+                Ok(())
+            }
+            Action::KittyKeyboardPop { count } => {
+                self.screens
+                    .active_mut()
+                    .pop_kitty_keyboard(usize::from(count));
+                Ok(())
+            }
+            Action::KittyKeyboardSet { mode, flags } => {
+                self.screens.active_mut().set_kitty_keyboard(mode, flags);
+                Ok(())
+            }
             Action::SaveCursor => {
                 self.screens
                     .active_mut()
@@ -3126,6 +3145,129 @@ mod tests {
         assert_eq!(plain_with_unwrap(&terminal, false), "◆");
         terminal.next_slice(b"\x1b[?47l").unwrap();
         assert_eq!(terminal.cursor_hyperlink_for_tests(), None);
+    }
+
+    #[test]
+    fn terminal_stream_kitty_keyboard_query_reports_active_flags() {
+        let mut terminal = Terminal::init(10, 3, None).unwrap();
+
+        terminal.next_slice(b"\x1b[?u").unwrap();
+        assert_eq!(terminal.take_pty_response_for_tests(), b"\x1b[?0u");
+
+        terminal.next_slice(b"\x1b[>3u\x1b[?u").unwrap();
+        assert_eq!(terminal.take_pty_response_for_tests(), b"\x1b[?3u");
+    }
+
+    #[test]
+    fn terminal_stream_kitty_keyboard_push_pop_and_oversized_pop_follow_stack() {
+        let mut terminal = Terminal::init(10, 3, None).unwrap();
+
+        terminal
+            .next_slice(b"\x1b[>1u\x1b[>2u\x1b[?u\x1b[<u\x1b[?u")
+            .unwrap();
+        assert_eq!(terminal.take_pty_response_for_tests(), b"\x1b[?2u\x1b[?1u");
+
+        terminal.next_slice(b"\x1b[>4u\x1b[<100u\x1b[?u").unwrap();
+        assert_eq!(terminal.take_pty_response_for_tests(), b"\x1b[?0u");
+    }
+
+    #[test]
+    fn terminal_stream_kitty_keyboard_multiple_pop_restores_earlier_value() {
+        let mut terminal = Terminal::init(10, 3, None).unwrap();
+
+        terminal
+            .next_slice(b"\x1b[>1u\x1b[>2u\x1b[>4u\x1b[<2u\x1b[?u")
+            .unwrap();
+
+        assert_eq!(terminal.take_pty_response_for_tests(), b"\x1b[?1u");
+    }
+
+    #[test]
+    fn terminal_stream_kitty_keyboard_set_or_and_not_mutate_current_flags() {
+        let mut terminal = Terminal::init(10, 3, None).unwrap();
+
+        terminal
+            .next_slice(b"\x1b[=1u\x1b[?u\x1b[=2;2u\x1b[?u\x1b[=1;3u\x1b[?u")
+            .unwrap();
+
+        assert_eq!(
+            terminal.take_pty_response_for_tests(),
+            b"\x1b[?1u\x1b[?3u\x1b[?2u"
+        );
+    }
+
+    #[test]
+    fn terminal_stream_kitty_keyboard_primary_and_alternate_states_are_independent() {
+        let mut terminal = Terminal::init(10, 3, None).unwrap();
+
+        terminal.next_slice(b"\x1b[=1u\x1b[?47h\x1b[?u").unwrap();
+        assert_eq!(terminal.take_pty_response_for_tests(), b"\x1b[?0u");
+
+        terminal.next_slice(b"\x1b[=3u\x1b[?47l\x1b[?u").unwrap();
+        assert_eq!(terminal.take_pty_response_for_tests(), b"\x1b[?1u");
+
+        terminal.next_slice(b"\x1b[?47h\x1b[?u").unwrap();
+        assert_eq!(terminal.take_pty_response_for_tests(), b"\x1b[?3u");
+    }
+
+    #[test]
+    fn terminal_stream_kitty_keyboard_ris_clears_primary_and_future_alternate_state() {
+        let mut terminal = Terminal::init(10, 3, None).unwrap();
+
+        terminal
+            .next_slice(b"\x1b[=1u\x1b[?47h\x1b[=3u\x1bc")
+            .unwrap();
+
+        assert_eq!(
+            terminal.active_screen_key_for_tests(),
+            TerminalScreenKey::Primary
+        );
+        terminal.next_slice(b"\x1b[?u\x1b[?47h\x1b[?u").unwrap();
+        assert_eq!(terminal.take_pty_response_for_tests(), b"\x1b[?0u\x1b[?0u");
+    }
+
+    #[test]
+    fn terminal_stream_kitty_keyboard_invalid_forms_do_not_mutate_or_respond() {
+        let mut terminal = Terminal::init(10, 3, None).unwrap();
+
+        terminal
+            .next_slice(b"\x1b[=3u\x1b[>32u\x1b[=1;4u\x1b[=1:1u\x1b[?u")
+            .unwrap();
+
+        assert_eq!(terminal.take_pty_response_for_tests(), b"\x1b[?3u");
+    }
+
+    #[test]
+    fn terminal_stream_kitty_keyboard_lenient_parameter_forms_match_upstream() {
+        let mut terminal = Terminal::init(10, 3, None).unwrap();
+
+        terminal
+            .next_slice(b"\x1b[=1u\x1b[?123u\x1b[>3;4u\x1b[?u\x1b[<2;3u\x1b[?u\x1b[=3;2;1u\x1b[?u")
+            .unwrap();
+
+        assert_eq!(
+            terminal.take_pty_response_for_tests(),
+            b"\x1b[?1u\x1b[?0u\x1b[?1u\x1b[?3u"
+        );
+    }
+
+    #[test]
+    fn terminal_stream_csi_u_still_restores_cursor() {
+        let mut terminal = Terminal::init(10, 3, None).unwrap();
+
+        terminal
+            .screens
+            .active_mut()
+            .set_cursor_position_for_tests(5, 2);
+        terminal.next_slice(b"\x1b7").unwrap();
+        terminal
+            .screens
+            .active_mut()
+            .set_cursor_position_for_tests(1, 0);
+        terminal.next_slice(b"\x1b[u").unwrap();
+
+        assert_eq!(terminal.cursor_position_for_tests(), (5, 2));
+        assert!(terminal.pty_response_for_tests().is_empty());
     }
 
     #[test]

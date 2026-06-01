@@ -1,6 +1,6 @@
 //! Terminal byte stream decoding.
 
-use super::{charsets, cursor, device_attributes, device_status, modes, osc, sgr};
+use super::{charsets, cursor, device_attributes, device_status, kitty, modes, osc, sgr};
 
 const CSI_PARAM_CAPACITY: usize = 24;
 
@@ -93,6 +93,17 @@ pub(super) enum Action {
     },
     RestoreMode {
         mode: modes::Mode,
+    },
+    KittyKeyboardQuery,
+    KittyKeyboardPush {
+        flags: kitty::KeyFlags,
+    },
+    KittyKeyboardPop {
+        count: u16,
+    },
+    KittyKeyboardSet {
+        mode: kitty::KeySetMode,
+        flags: kitty::KeyFlags,
     },
     SaveCursor,
     RestoreCursor,
@@ -696,7 +707,7 @@ impl CsiState {
         }
 
         match byte {
-            b'?' | b'>' | b'='
+            b'?' | b'>' | b'<' | b'='
                 if self.private.is_none()
                     && self.params_len == 0
                     && !self.param_has_digits
@@ -814,6 +825,10 @@ impl CsiState {
 
         if let Some(dispatch) = self.mode_save_restore_dispatch(final_byte) {
             return dispatch;
+        }
+
+        if let Some(action) = self.kitty_keyboard_action(final_byte) {
+            return CsiDispatch::One(action);
         }
 
         if let Some(dispatch) = self.sgr_dispatch(final_byte) {
@@ -1199,6 +1214,47 @@ impl CsiState {
         };
 
         Some(CsiDispatch::One(action))
+    }
+
+    fn kitty_keyboard_action(&self, final_byte: u8) -> Option<Action> {
+        if final_byte != b'u' {
+            return None;
+        }
+
+        let params = self.finalized_params()?;
+        if params.colon_seen() {
+            return None;
+        }
+
+        match self.private {
+            None => Some(Action::RestoreCursor),
+            Some(b'?') => Some(Action::KittyKeyboardQuery),
+            Some(b'>') => {
+                let value = if params.len == 1 { params.values[0] } else { 0 };
+                Some(Action::KittyKeyboardPush {
+                    flags: kitty::KeyFlags::from_protocol_int(value)?,
+                })
+            }
+            Some(b'<') => {
+                let count = if params.len == 1 { params.values[0] } else { 1 };
+                Some(Action::KittyKeyboardPop { count })
+            }
+            Some(b'=') => {
+                let flags = (params.len >= 1).then_some(params.values[0]).unwrap_or(0);
+                let mode = (params.len >= 2).then_some(params.values[1]).unwrap_or(1);
+                let mode = match mode {
+                    1 => kitty::KeySetMode::Set,
+                    2 => kitty::KeySetMode::Or,
+                    3 => kitty::KeySetMode::Not,
+                    _ => return None,
+                };
+                Some(Action::KittyKeyboardSet {
+                    mode,
+                    flags: kitty::KeyFlags::from_protocol_int(flags)?,
+                })
+            }
+            Some(_) => None,
+        }
     }
 
     fn cursor_visual_style_dispatch(&self, final_byte: u8) -> Option<CsiDispatch> {
@@ -1789,6 +1845,10 @@ mod tests {
                 | Action::ResetMode { .. }
                 | Action::SaveMode { .. }
                 | Action::RestoreMode { .. }
+                | Action::KittyKeyboardQuery
+                | Action::KittyKeyboardPush { .. }
+                | Action::KittyKeyboardPop { .. }
+                | Action::KittyKeyboardSet { .. }
                 | Action::SaveCursor
                 | Action::RestoreCursor
                 | Action::ReverseIndex
@@ -1819,6 +1879,10 @@ mod tests {
 
     fn osc_actions(handler: &RecordingHandler) -> &[OwnedOscAction] {
         &handler.osc_actions
+    }
+
+    fn kitty_flags(value: u16) -> kitty::KeyFlags {
+        kitty::KeyFlags::from_protocol_int(value).unwrap()
     }
 
     fn next_slice(stream: &mut Stream, handler: &mut RecordingHandler, input: &[u8]) {
@@ -2357,6 +2421,115 @@ mod tests {
 
             assert_eq!(actions(&handler), &[Action::Print { cp: 'A' }]);
         }
+    }
+
+    #[test]
+    fn stream_csi_kitty_keyboard_dispatches_query_push_pop_and_set_forms() {
+        let mut stream = Stream::init();
+        let mut handler = RecordingHandler::default();
+
+        next_slice(
+            &mut stream,
+            &mut handler,
+            b"\x1b[?u\x1b[>u\x1b[>3u\x1b[<u\x1b[<2u\x1b[=u\x1b[=3u\x1b[=3;1u\x1b[=3;2u\x1b[=3;3u",
+        );
+
+        assert_eq!(
+            actions(&handler),
+            &[
+                Action::KittyKeyboardQuery,
+                Action::KittyKeyboardPush {
+                    flags: kitty_flags(0),
+                },
+                Action::KittyKeyboardPush {
+                    flags: kitty_flags(3),
+                },
+                Action::KittyKeyboardPop { count: 1 },
+                Action::KittyKeyboardPop { count: 2 },
+                Action::KittyKeyboardSet {
+                    mode: kitty::KeySetMode::Set,
+                    flags: kitty_flags(0),
+                },
+                Action::KittyKeyboardSet {
+                    mode: kitty::KeySetMode::Set,
+                    flags: kitty_flags(3),
+                },
+                Action::KittyKeyboardSet {
+                    mode: kitty::KeySetMode::Set,
+                    flags: kitty_flags(3),
+                },
+                Action::KittyKeyboardSet {
+                    mode: kitty::KeySetMode::Or,
+                    flags: kitty_flags(3),
+                },
+                Action::KittyKeyboardSet {
+                    mode: kitty::KeySetMode::Not,
+                    flags: kitty_flags(3),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn stream_csi_kitty_keyboard_matches_upstream_lenient_parameter_handling() {
+        let mut stream = Stream::init();
+        let mut handler = RecordingHandler::default();
+
+        next_slice(
+            &mut stream,
+            &mut handler,
+            b"\x1b[1u\x1b[?1u\x1b[>3;4u\x1b[<2;3u\x1b[=3;2;1u",
+        );
+
+        assert_eq!(
+            actions(&handler),
+            &[
+                Action::RestoreCursor,
+                Action::KittyKeyboardQuery,
+                Action::KittyKeyboardPush {
+                    flags: kitty_flags(0),
+                },
+                Action::KittyKeyboardPop { count: 1 },
+                Action::KittyKeyboardSet {
+                    mode: kitty::KeySetMode::Or,
+                    flags: kitty_flags(3),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn stream_csi_kitty_keyboard_invalid_forms_do_not_dispatch_or_leak_final_byte() {
+        for input in [
+            b"\x1b[>32uA".as_slice(),
+            b"\x1b[=32uA".as_slice(),
+            b"\x1b[=3;4uA".as_slice(),
+            b"\x1b[=3:1uA".as_slice(),
+        ] {
+            let mut stream = Stream::init();
+            let mut handler = RecordingHandler::default();
+
+            next_slice(&mut stream, &mut handler, input);
+
+            assert_eq!(actions(&handler), &[Action::Print { cp: 'A' }]);
+        }
+    }
+
+    #[test]
+    fn stream_csi_u_without_private_marker_remains_restore_cursor() {
+        let mut stream = Stream::init();
+        let mut handler = RecordingHandler::default();
+
+        next_slice(&mut stream, &mut handler, b"A\x1b[uB");
+
+        assert_eq!(
+            actions(&handler),
+            &[
+                Action::Print { cp: 'A' },
+                Action::RestoreCursor,
+                Action::Print { cp: 'B' },
+            ]
+        );
     }
 
     #[test]
@@ -7822,6 +7995,10 @@ mod tests {
                 | Action::ResetMode { .. }
                 | Action::SaveMode { .. }
                 | Action::RestoreMode { .. }
+                | Action::KittyKeyboardQuery
+                | Action::KittyKeyboardPush { .. }
+                | Action::KittyKeyboardPop { .. }
+                | Action::KittyKeyboardSet { .. }
                 | Action::SaveCursor
                 | Action::RestoreCursor
                 | Action::ReverseIndex

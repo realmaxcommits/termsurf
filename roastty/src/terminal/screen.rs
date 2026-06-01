@@ -1005,6 +1005,22 @@ impl Screen {
         self.charset = charset;
     }
 
+    pub(super) fn kitty_keyboard_flags(&self) -> kitty::KeyFlags {
+        self.kitty_keyboard.current()
+    }
+
+    pub(super) fn set_kitty_keyboard(&mut self, mode: kitty::KeySetMode, flags: kitty::KeyFlags) {
+        self.kitty_keyboard.set(mode, flags);
+    }
+
+    pub(super) fn push_kitty_keyboard(&mut self, flags: kitty::KeyFlags) {
+        self.kitty_keyboard.push(flags);
+    }
+
+    pub(super) fn pop_kitty_keyboard(&mut self, n: usize) {
+        self.kitty_keyboard.pop(n);
+    }
+
     pub(super) fn copy_cursor_from_without_hyperlink(&mut self, other: &Screen) {
         self.cursor.x = other.cursor.x;
         self.cursor.y = other.cursor.y;
@@ -1137,17 +1153,17 @@ impl Screen {
         mode: kitty::KeySetMode,
         flags: kitty::KeyFlags,
     ) {
-        self.kitty_keyboard.set(mode, flags);
+        self.set_kitty_keyboard(mode, flags);
     }
 
     #[cfg(test)]
     pub(super) fn push_kitty_keyboard_for_tests(&mut self, flags: kitty::KeyFlags) {
-        self.kitty_keyboard.push(flags);
+        self.push_kitty_keyboard(flags);
     }
 
     #[cfg(test)]
     pub(super) fn pop_kitty_keyboard_for_tests(&mut self, n: usize) {
-        self.kitty_keyboard.pop(n);
+        self.pop_kitty_keyboard(n);
     }
 
     #[cfg(test)]

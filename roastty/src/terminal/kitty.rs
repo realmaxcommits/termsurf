@@ -166,6 +166,14 @@ impl KeyFlags {
         self.int() == Self::DISABLED.int()
     }
 
+    pub(super) const fn from_protocol_int(value: u16) -> Option<Self> {
+        if value <= Self::TRUE.int() as u16 {
+            Some(Self::from_int(value as u8))
+        } else {
+            None
+        }
+    }
+
     const fn from_int(value: u8) -> Self {
         Self {
             disambiguate: value & 0b00001 != 0,
@@ -182,7 +190,6 @@ impl KeyFlagStack {
         self.flags[self.idx]
     }
 
-    #[cfg(test)]
     pub(super) fn set(&mut self, mode: KeySetMode, flags: KeyFlags) {
         let current = self.current();
         self.flags[self.idx] = match mode {
@@ -192,13 +199,11 @@ impl KeyFlagStack {
         };
     }
 
-    #[cfg(test)]
     pub(super) fn push(&mut self, flags: KeyFlags) {
         self.idx = (self.idx + 1) % self.flags.len();
         self.flags[self.idx] = flags;
     }
 
-    #[cfg(test)]
     pub(super) fn pop(&mut self, n: usize) {
         if n >= self.flags.len() {
             *self = Self::default();
