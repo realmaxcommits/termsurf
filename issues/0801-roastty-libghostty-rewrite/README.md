@@ -378,6 +378,8 @@ tests, choose the larger subsystem.
   **Pass**
 - [Experiment 124: Port CSI Delete Lines](124-port-csi-delete-lines.md) —
   **Pass**
+- [Experiment 125: Port CSI Scroll Up and Down](125-port-csi-scroll-up-down.md)
+  — **Designed**
 
 ## Non-Goals
 
