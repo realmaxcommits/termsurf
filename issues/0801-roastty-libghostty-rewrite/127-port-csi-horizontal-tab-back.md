@@ -250,3 +250,72 @@ The experiment fails if:
   formatter, PageList, or ABI behavior;
 - it adds unrelated CSI, SGR, OSC, DCS, public API, ABI, mode parser, margin
   parser, or non-macOS behavior.
+
+## Result
+
+**Result:** Pass
+
+Implemented `CSI Z` / CBT as a private `Action::HorizontalTabBack { count }`,
+with parser behavior matching the approved source-of-truth shape:
+
+- `CSI Z` defaults to count `1`;
+- `CSI 0 Z` and `CSI ; Z` dispatch count `0`;
+- `CSI 1 Z`, `CSI 1 ; Z`, and larger single numeric params dispatch the parsed
+  count, with overflow saturating to `u16::MAX`;
+- private, real multi-param, repeated-separator, colon-param, mixed-separator,
+  and invalid intermediate forms dispatch no tab-back action and do not leak the
+  final byte as printable text;
+- raw C1 CSI byte `0x9b` remains unsupported and is treated as UTF-8 replacement
+  plus printable `Z`;
+- pending invalid UTF-8 emits `U+FFFD` before same-slice and split-feed `CSI Z`;
+- handler errors from tab-back restore the parser to ground state.
+
+Execution now moves to previous tab stops using the existing tabstop set. In a
+20-column terminal with default tab stops, `19 -> 16 -> 8 -> 0`; starting on a
+tab stop skips the current position and moves to the previous one. Count `0` is
+a no-op, larger counts stop at the left limit, custom tab stops are honored, and
+cursor y is preserved.
+
+Origin mode is wired through `TerminalStreamHandler`: non-origin mode uses
+column `0` as the left limit even when margins are active, while origin mode
+uses `scrolling_region.left`. Tests cover clamping to the origin-mode left
+margin and the no-op case when the cursor starts before or at that left margin.
+
+Pending wrap is intentionally preserved, matching the existing forward-tab
+helper model. Tests cover both the no-move case and the moved case. The command
+does not modify cells or dirty rows; tests clear dirty state before tab-back and
+verify the screen content and dirty flags remain unchanged.
+
+Two existing tests that previously used `CSI Z` as an unsupported sequence were
+updated to use unsupported private `CSI ? Z` instead, because `CSI Z` is now the
+implemented command.
+
+Verification after `cargo fmt`:
+
+- `cargo test -p roastty horizontal_tab_back -- --nocapture` — passed, 21
+  matching tests.
+- `cargo test -p roastty stream` — passed, 437 matching tests.
+- `cargo test -p roastty terminal::terminal` — passed, 288 matching tests.
+- `cargo test -p roastty terminal_formatter` — passed, 67 matching tests.
+- `cargo test -p roastty screen_formatter` — passed, 55 matching tests.
+- `cargo test -p roastty page_string` — passed, 12 matching tests.
+- `cargo test -p roastty` — passed, 1360 unit tests, 1 ABI harness test, and 0
+  doctests.
+
+Codex design review approved the experiment before implementation:
+`logs/codex-review/20260601-061119-674532-last-message.md`.
+
+Codex result review found no blocking findings and approved recording and
+committing the result:
+`logs/codex-review/20260601-062004-804786-last-message.md`.
+
+## Conclusion
+
+Experiment 127 completes the backward half of tab-stop cursor movement for the
+current parser/execution layer. `CSI Z` now matches Ghostty's one-parameter
+parser behavior and left-limit execution semantics, including origin-mode
+horizontal margins, without expanding public API surface or touching unrelated
+terminal features.
+
+The next experiment can move to the next missing terminal control slice; this
+one does not leave known follow-up work.

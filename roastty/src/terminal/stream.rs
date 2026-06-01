@@ -11,6 +11,9 @@ pub(super) enum Action {
     HorizontalTab {
         count: u16,
     },
+    HorizontalTabBack {
+        count: u16,
+    },
     TabSet,
     TabClearCurrent,
     TabClearAll,
@@ -340,6 +343,10 @@ impl CsiState {
             return CsiDispatch::One(action);
         }
 
+        if let Some(action) = self.horizontal_tab_back_action(final_byte) {
+            return CsiDispatch::One(action);
+        }
+
         if let Some(action) = self.erase_display_action(final_byte) {
             return CsiDispatch::One(action);
         }
@@ -482,6 +489,14 @@ impl CsiState {
         let count = self.single_param(true)?.unwrap_or(1);
         match final_byte {
             b'I' => Some(Action::HorizontalTab { count }),
+            _ => None,
+        }
+    }
+
+    fn horizontal_tab_back_action(&self, final_byte: u8) -> Option<Action> {
+        let count = self.single_param(true)?.unwrap_or(1);
+        match final_byte {
+            b'Z' => Some(Action::HorizontalTabBack { count }),
             _ => None,
         }
     }
@@ -766,6 +781,7 @@ mod tests {
                 | Action::CarriageReturn
                 | Action::Backspace
                 | Action::HorizontalTab { .. }
+                | Action::HorizontalTabBack { .. }
                 | Action::TabSet
                 | Action::TabClearCurrent
                 | Action::TabClearAll
@@ -958,6 +974,58 @@ mod tests {
             (
                 b"\x1b[999999999999999999999999IA".as_slice(),
                 Action::HorizontalTab { count: u16::MAX },
+            ),
+        ] {
+            let mut stream = Stream::init();
+            let mut handler = RecordingHandler::default();
+
+            next_slice(&mut stream, &mut handler, input);
+
+            if input.starts_with(b"A") {
+                assert_eq!(
+                    actions(&handler),
+                    &[
+                        Action::Print { cp: 'A' },
+                        expected,
+                        Action::Print { cp: 'B' },
+                    ]
+                );
+            } else {
+                assert_eq!(actions(&handler), &[expected, Action::Print { cp: 'A' }]);
+            }
+        }
+    }
+
+    #[test]
+    fn stream_csi_horizontal_tab_back_dispatches_counts() {
+        for (input, expected) in [
+            (
+                b"A\x1b[ZB".as_slice(),
+                Action::HorizontalTabBack { count: 1 },
+            ),
+            (
+                b"\x1b[3ZA".as_slice(),
+                Action::HorizontalTabBack { count: 3 },
+            ),
+            (
+                b"\x1b[0ZA".as_slice(),
+                Action::HorizontalTabBack { count: 0 },
+            ),
+            (
+                b"\x1b[;ZA".as_slice(),
+                Action::HorizontalTabBack { count: 0 },
+            ),
+            (
+                b"\x1b[1ZA".as_slice(),
+                Action::HorizontalTabBack { count: 1 },
+            ),
+            (
+                b"\x1b[1;ZA".as_slice(),
+                Action::HorizontalTabBack { count: 1 },
+            ),
+            (
+                b"\x1b[999999999999999999999999ZA".as_slice(),
+                Action::HorizontalTabBack { count: u16::MAX },
             ),
         ] {
             let mut stream = Stream::init();
@@ -2052,6 +2120,36 @@ mod tests {
     }
 
     #[test]
+    fn stream_split_csi_horizontal_tab_back_dispatches_counts() {
+        for (first, second, expected) in [
+            (
+                b"\x1b[".as_slice(),
+                b"ZA".as_slice(),
+                Action::HorizontalTabBack { count: 1 },
+            ),
+            (
+                b"\x1b[3".as_slice(),
+                b"ZA".as_slice(),
+                Action::HorizontalTabBack { count: 3 },
+            ),
+            (
+                b"\x1b[;".as_slice(),
+                b"ZA".as_slice(),
+                Action::HorizontalTabBack { count: 0 },
+            ),
+        ] {
+            let mut stream = Stream::init();
+            let mut handler = RecordingHandler::default();
+
+            next_slice(&mut stream, &mut handler, first);
+            assert!(actions(&handler).is_empty());
+            next_slice(&mut stream, &mut handler, second);
+
+            assert_eq!(actions(&handler), &[expected, Action::Print { cp: 'A' }]);
+        }
+    }
+
+    #[test]
     fn stream_split_csi_erase_display_dispatches_modes() {
         for (first, second, expected) in [
             (
@@ -2924,6 +3022,52 @@ mod tests {
     }
 
     #[test]
+    fn stream_pending_utf8_replacement_dispatches_before_csi_horizontal_tab_back() {
+        let mut stream = Stream::init();
+        let mut handler = RecordingHandler::default();
+
+        next_slice(&mut stream, &mut handler, b"\xf0\x9f\x1b[ZA");
+
+        assert_eq!(
+            actions(&handler),
+            &[
+                Action::Print {
+                    cp: char::REPLACEMENT_CHARACTER,
+                },
+                Action::HorizontalTabBack { count: 1 },
+                Action::Print { cp: 'A' },
+            ]
+        );
+    }
+
+    #[test]
+    fn stream_pending_utf8_replacement_dispatches_before_split_csi_horizontal_tab_back() {
+        let mut stream = Stream::init();
+        let mut handler = RecordingHandler::default();
+
+        next_slice(&mut stream, &mut handler, b"\xf0\x9f\x1b[3");
+        assert_eq!(
+            actions(&handler),
+            &[Action::Print {
+                cp: char::REPLACEMENT_CHARACTER,
+            }]
+        );
+
+        next_slice(&mut stream, &mut handler, b"ZA");
+
+        assert_eq!(
+            actions(&handler),
+            &[
+                Action::Print {
+                    cp: char::REPLACEMENT_CHARACTER,
+                },
+                Action::HorizontalTabBack { count: 3 },
+                Action::Print { cp: 'A' },
+            ]
+        );
+    }
+
+    #[test]
     fn stream_pending_utf8_replacement_dispatches_before_csi_horizontal_absolute() {
         for (input, expected) in [
             (
@@ -3559,6 +3703,26 @@ mod tests {
     }
 
     #[test]
+    fn stream_unsupported_csi_horizontal_tab_back_variants_do_not_dispatch_actions() {
+        for input in [
+            b"\x1b[?ZA".as_slice(),
+            b"\x1b[>ZA".as_slice(),
+            b"\x1b[5;4ZA".as_slice(),
+            b"\x1b[5;;ZA".as_slice(),
+            b"\x1b[1:2ZA".as_slice(),
+            b"\x1b[1;2:3ZA".as_slice(),
+            b"\x1b[ ZA".as_slice(),
+        ] {
+            let mut stream = Stream::init();
+            let mut handler = RecordingHandler::default();
+
+            next_slice(&mut stream, &mut handler, input);
+
+            assert_eq!(actions(&handler), &[Action::Print { cp: 'A' }]);
+        }
+    }
+
+    #[test]
     fn stream_unsupported_csi_erase_display_variants_do_not_dispatch_actions() {
         for input in [
             b"\x1b[>3JA".as_slice(),
@@ -3794,6 +3958,24 @@ mod tests {
                     cp: char::REPLACEMENT_CHARACTER,
                 },
                 Action::Print { cp: 'I' },
+            ]
+        );
+    }
+
+    #[test]
+    fn stream_raw_c1_csi_byte_does_not_dispatch_horizontal_tab_back_action() {
+        let mut stream = Stream::init();
+        let mut handler = RecordingHandler::default();
+
+        next_slice(&mut stream, &mut handler, &[0x9b, b'Z']);
+
+        assert_eq!(
+            actions(&handler),
+            &[
+                Action::Print {
+                    cp: char::REPLACEMENT_CHARACTER,
+                },
+                Action::Print { cp: 'Z' },
             ]
         );
     }
@@ -4184,6 +4366,7 @@ mod tests {
                 | Action::CarriageReturn
                 | Action::Backspace
                 | Action::HorizontalTab { .. }
+                | Action::HorizontalTabBack { .. }
                 | Action::TabSet
                 | Action::TabClearCurrent
                 | Action::TabClearAll
@@ -4339,6 +4522,29 @@ mod tests {
             (b"\x1b[I".as_slice(), Action::HorizontalTab { count: 1 }),
             (b"\x1b[0I".as_slice(), Action::HorizontalTab { count: 0 }),
             (b"\x1b[3;I".as_slice(), Action::HorizontalTab { count: 3 }),
+        ] {
+            let mut stream = Stream::init();
+            let mut handler = ErrorOnActionHandler::new(fail);
+
+            assert_eq!(stream.next_slice(input, &mut handler), Err(()));
+            stream.next_slice(b"A", &mut handler).unwrap();
+
+            assert_eq!(handler.actions, &[Action::Print { cp: 'A' }]);
+        }
+    }
+
+    #[test]
+    fn stream_csi_horizontal_tab_back_restore_ground_before_handler_error() {
+        for (input, fail) in [
+            (b"\x1b[Z".as_slice(), Action::HorizontalTabBack { count: 1 }),
+            (
+                b"\x1b[0Z".as_slice(),
+                Action::HorizontalTabBack { count: 0 },
+            ),
+            (
+                b"\x1b[3;Z".as_slice(),
+                Action::HorizontalTabBack { count: 3 },
+            ),
         ] {
             let mut stream = Stream::init();
             let mut handler = ErrorOnActionHandler::new(fail);

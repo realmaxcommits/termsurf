@@ -624,6 +624,40 @@ impl Screen {
         }
     }
 
+    pub(super) fn horizontal_tab_back_basic(
+        &mut self,
+        tabstops: &tabstops::Tabstops,
+        left_limit: CellCountInt,
+    ) {
+        if self.cursor.x <= left_limit {
+            return;
+        }
+
+        let start = usize::from(left_limit);
+        let end = usize::from(self.cursor.x);
+        let previous_tabstop = (start..end)
+            .rev()
+            .find(|&col| tabstops.get(col))
+            .map(|col| col as CellCountInt)
+            .unwrap_or(left_limit);
+        self.cursor.x = previous_tabstop.max(left_limit);
+    }
+
+    pub(super) fn horizontal_tab_back_count_basic(
+        &mut self,
+        tabstops: &tabstops::Tabstops,
+        count: CellCountInt,
+        left_limit: CellCountInt,
+    ) {
+        for _ in 0..count {
+            let x = self.cursor.x;
+            self.horizontal_tab_back_basic(tabstops, left_limit);
+            if self.cursor.x == x {
+                break;
+            }
+        }
+    }
+
     fn clear_active_cells(
         &mut self,
         y: u32,

@@ -383,7 +383,7 @@ tests, choose the larger subsystem.
 - [Experiment 126: Port CSI Insert and Erase Characters](126-port-csi-insert-erase-characters.md)
   — **Pass**
 - [Experiment 127: Port CSI Horizontal Tab Back](127-port-csi-horizontal-tab-back.md)
-  — **Designed**
+  — **Pass**
 
 ## Non-Goals
 
