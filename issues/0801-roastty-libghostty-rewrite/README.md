@@ -309,7 +309,7 @@ No experiment may proceed to the next stage until the required review passes.
 - [Experiment 99: Port Terminal Scrolling Region Formatter Extra](99-port-terminal-scrolling-region-extra.md)
   — **Pass**
 - [Experiment 100: Port Terminal Tabstops Formatter Extra](100-port-terminal-tabstops-extra.md)
-  — **Designed**
+  — **Pass**
 
 ## Non-Goals
 

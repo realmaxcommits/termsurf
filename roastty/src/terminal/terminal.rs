@@ -9,6 +9,7 @@ use super::screen::{
     Screen, ScreenFormatter, ScreenFormatterContent, ScreenFormatterExtra, ScreenFormatterOptions,
 };
 use super::size::CellCountInt;
+use super::tabstops;
 
 #[derive(Debug)]
 pub(super) struct Terminal {
@@ -17,6 +18,7 @@ pub(super) struct Terminal {
     colors: TerminalColors,
     modes: modes::ModeState,
     scrolling_region: ScrollingRegion,
+    tabstops: tabstops::Tabstops,
 }
 
 #[derive(Debug)]
@@ -61,6 +63,7 @@ pub(super) struct TerminalFormatterExtra {
     palette: bool,
     modes: bool,
     scrolling_region: bool,
+    tabstops: bool,
     screen: ScreenFormatterExtra,
 }
 
@@ -81,6 +84,8 @@ impl Terminal {
             },
             modes: modes::ModeState::default(),
             scrolling_region: ScrollingRegion::full(size),
+            tabstops: tabstops::Tabstops::new(cols as usize, 8)
+                .map_err(|_| PageListAllocError::PageAlloc)?,
         })
     }
 
@@ -130,6 +135,31 @@ impl Terminal {
     #[cfg(test)]
     fn scrolling_region_for_tests(&self) -> ScrollingRegion {
         self.scrolling_region
+    }
+
+    #[cfg(test)]
+    pub(super) fn clear_tabstops_for_tests(&mut self) {
+        self.tabstops.reset(0);
+    }
+
+    #[cfg(test)]
+    pub(super) fn set_tabstop_for_tests(&mut self, col: usize) {
+        assert!(col < self.tabstops.cols());
+        self.tabstops.set(col);
+    }
+
+    #[cfg(test)]
+    pub(super) fn clear_tabstop_for_tests(&mut self, col: usize) {
+        assert!(col < self.tabstops.cols());
+        if self.tabstops.get(col) {
+            self.tabstops.unset(col);
+        }
+    }
+
+    #[cfg(test)]
+    pub(super) fn get_tabstop_for_tests(&self, col: usize) -> bool {
+        assert!(col < self.tabstops.cols());
+        self.tabstops.get(col)
     }
 }
 
@@ -259,7 +289,9 @@ impl<'a> TerminalFormatter<'a> {
     }
 
     fn terminal_suffix_string(&self) -> String {
-        self.scrolling_region_string()
+        let mut output = self.scrolling_region_string();
+        output.push_str(&self.tabstops_string());
+        output
     }
 
     fn palette_string(&self) -> String {
@@ -290,6 +322,14 @@ impl<'a> TerminalFormatter<'a> {
 
         scrolling_region_vt_string(self.terminal.size, self.terminal.scrolling_region)
     }
+
+    fn tabstops_string(&self) -> String {
+        if !self.extra.tabstops || self.options.screen.emit() != PageOutputFormat::Vt {
+            return String::new();
+        }
+
+        tabstops_vt_string(&self.terminal.tabstops)
+    }
 }
 
 impl TerminalFormatterExtra {
@@ -298,6 +338,7 @@ impl TerminalFormatterExtra {
             palette: false,
             modes: false,
             scrolling_region: false,
+            tabstops: false,
             screen: ScreenFormatterExtra::none(),
         }
     }
@@ -314,6 +355,11 @@ impl TerminalFormatterExtra {
 
     pub(super) const fn scrolling_region(mut self, scrolling_region: bool) -> Self {
         self.scrolling_region = scrolling_region;
+        self
+    }
+
+    pub(super) const fn tabstops(mut self, tabstops: bool) -> Self {
+        self.tabstops = tabstops;
         self
     }
 
@@ -371,6 +417,16 @@ fn scrolling_region_vt_string(size: TerminalSize, region: ScrollingRegion) -> St
     }
     if region.left != 0 || region.right != size.cols - 1 {
         output.push_str(&format!("\x1b[{};{}s", region.left + 1, region.right + 1));
+    }
+    output
+}
+
+fn tabstops_vt_string(tabstops: &tabstops::Tabstops) -> String {
+    let mut output = String::from("\x1b[3g");
+    for col in 0..tabstops.cols() {
+        if tabstops.get(col) {
+            output.push_str(&format!("\x1b[{}G\x1bH", col + 1));
+        }
     }
     output
 }
@@ -499,6 +555,10 @@ mod tests {
         TerminalFormatterExtra::none().scrolling_region(true)
     }
 
+    const fn terminal_tabstops_extra() -> TerminalFormatterExtra {
+        TerminalFormatterExtra::none().tabstops(true)
+    }
+
     fn set_test_palette_entries(terminal: &mut Terminal) {
         terminal.set_palette_entry_for_tests(0, color::Rgb::new(0x12, 0x34, 0x56));
         terminal.set_palette_entry_for_tests(1, color::Rgb::new(0xab, 0xcd, 0xef));
@@ -519,6 +579,10 @@ mod tests {
 
     fn scrolling_region_suffix_len(terminal: &Terminal) -> usize {
         scrolling_region_vt_string(terminal.size, terminal.scrolling_region).len()
+    }
+
+    fn tabstops_suffix_len(terminal: &Terminal) -> usize {
+        tabstops_vt_string(&terminal.tabstops).len()
     }
 
     #[test]
@@ -1326,6 +1390,231 @@ mod tests {
         }));
 
         assert!(invalid.is_err());
+    }
+
+    #[test]
+    fn terminal_formatter_default_path_does_not_emit_tabstops_or_change_pin_map() {
+        let mut terminal = terminal_with_lines(&["hello"]);
+        terminal.clear_tabstops_for_tests();
+        terminal.set_tabstop_for_tests(1);
+
+        let default_text = formatter(&terminal, PageOutputFormat::Vt).format();
+        let default_pin_map = formatter(&terminal, PageOutputFormat::Vt).format_with_pin_map();
+        let screen_text = screen_formatter(&terminal, PageOutputFormat::Vt).format();
+        let screen_pin_map =
+            screen_formatter(&terminal, PageOutputFormat::Vt).format_with_pin_map();
+
+        assert!(terminal.get_tabstop_for_tests(1));
+        assert_eq!(default_text, screen_text);
+        assert_eq!(default_text, "hello");
+        assert_eq!(default_pin_map, screen_pin_map);
+    }
+
+    #[test]
+    fn terminal_formatter_tabstops_default_interval_emits_clear_and_ascending_hts() {
+        let terminal = terminal_with_lines(&["0123456789abcdefghi"]);
+
+        let output = formatter(&terminal, PageOutputFormat::Vt)
+            .with_extra(terminal_tabstops_extra())
+            .format();
+
+        assert_eq!(
+            output,
+            "0123456789abcdefghi\x1b[3g\x1b[9G\x1bH\x1b[17G\x1bH"
+        );
+    }
+
+    #[test]
+    fn terminal_formatter_tabstops_custom_columns_emit_one_indexed_columns() {
+        let mut terminal = terminal_with_lines(&["0123456789012345678901234567890"]);
+        terminal.clear_tabstops_for_tests();
+        terminal.set_tabstop_for_tests(29);
+        terminal.set_tabstop_for_tests(4);
+        terminal.set_tabstop_for_tests(14);
+
+        let output = formatter(&terminal, PageOutputFormat::Vt)
+            .with_content(ScreenFormatterContent::None)
+            .with_extra(terminal_tabstops_extra())
+            .format();
+
+        assert_eq!(output, "\x1b[3g\x1b[5G\x1bH\x1b[15G\x1bH\x1b[30G\x1bH");
+    }
+
+    #[test]
+    fn terminal_formatter_tabstops_empty_state_emits_only_clear_all() {
+        let mut terminal = terminal_with_lines(&["hello"]);
+        terminal.clear_tabstops_for_tests();
+        terminal.clear_tabstop_for_tests(1);
+
+        let output = formatter(&terminal, PageOutputFormat::Vt)
+            .with_content(ScreenFormatterContent::None)
+            .with_extra(terminal_tabstops_extra())
+            .format();
+
+        assert_eq!(output, "\x1b[3g");
+        assert!(!terminal.get_tabstop_for_tests(1));
+    }
+
+    #[test]
+    fn terminal_formatter_tabstops_emit_after_content_and_screen_extras() {
+        let mut terminal = terminal_with_lines(&["hi"]);
+        terminal.clear_tabstops_for_tests();
+        terminal.set_tabstop_for_tests(1);
+        set_active_screen_extras(&mut terminal);
+
+        let output = formatter(&terminal, PageOutputFormat::Vt)
+            .with_extra(
+                TerminalFormatterExtra::none()
+                    .screen(all_screen_extras())
+                    .tabstops(true),
+            )
+            .format();
+
+        assert!(output.contains("hi\x1b[0m"));
+        assert!(output.ends_with("\x1b[3g\x1b[2G\x1bH"));
+        assert!(output.find("\x1b[3;5H").unwrap() < output.find("\x1b[3g").unwrap());
+    }
+
+    #[test]
+    fn terminal_formatter_tabstops_emit_after_scrolling_region() {
+        let mut terminal = terminal_with_lines(&["hello", "world"]);
+        terminal.set_scrolling_region_for_tests(0, 1, 1, 3);
+        terminal.clear_tabstops_for_tests();
+        terminal.set_tabstop_for_tests(4);
+
+        let output = formatter(&terminal, PageOutputFormat::Vt)
+            .with_extra(
+                TerminalFormatterExtra::none()
+                    .scrolling_region(true)
+                    .tabstops(true),
+            )
+            .format();
+
+        assert_eq!(output, "hello\r\nworld\x1b[2;4s\x1b[3g\x1b[5G\x1bH");
+    }
+
+    #[test]
+    fn terminal_formatter_all_suffix_extras_keep_upstream_order() {
+        let mut terminal = terminal_with_lines(&["hey", "you"]);
+        set_test_palette_entries(&mut terminal);
+        terminal.set_mode_for_tests(Mode::BracketedPaste, true);
+        terminal.set_scrolling_region_for_tests(0, 1, 0, 1);
+        terminal.clear_tabstops_for_tests();
+        terminal.set_tabstop_for_tests(1);
+        set_active_screen_extras(&mut terminal);
+
+        let output = formatter(&terminal, PageOutputFormat::Vt)
+            .with_extra(
+                TerminalFormatterExtra::none()
+                    .palette(true)
+                    .modes(true)
+                    .screen(all_screen_extras())
+                    .scrolling_region(true)
+                    .tabstops(true),
+            )
+            .format();
+        let palette_len = palette_vt_prefix_len(&terminal);
+        let modes_len = modes_prefix_len(&terminal);
+
+        assert_eq!(&output[palette_len..palette_len + modes_len], "\x1b[?2004h");
+        assert_eq!(
+            &output[palette_len + modes_len..palette_len + modes_len + 8],
+            "hey\r\nyou"
+        );
+        assert!(output[palette_len + modes_len + 8..].starts_with("\x1b[0m"));
+        assert!(output.find("\x1b[3;5H").unwrap() < output.find("\x1b[1;2s").unwrap());
+        assert!(output.find("\x1b[1;2s").unwrap() < output.find("\x1b[3g").unwrap());
+        assert!(output.ends_with("\x1b[3g\x1b[2G\x1bH"));
+    }
+
+    #[test]
+    fn terminal_formatter_plain_and_html_ignore_tabstops_extra() {
+        let mut terminal = terminal_with_lines(&["<hi"]);
+        terminal.clear_tabstops_for_tests();
+        terminal.set_tabstop_for_tests(1);
+
+        for emit in [PageOutputFormat::Plain, PageOutputFormat::Html] {
+            let default_output = formatter(&terminal, emit).format();
+            let tabstops_output = formatter(&terminal, emit)
+                .with_extra(terminal_tabstops_extra())
+                .format();
+
+            assert_eq!(tabstops_output, default_output);
+            assert!(!tabstops_output.contains("\x1b[3g"));
+        }
+    }
+
+    #[test]
+    fn terminal_formatter_tabstops_without_content_maps_to_top_left() {
+        let mut terminal = terminal_with_lines(&["hello"]);
+        terminal.clear_tabstops_for_tests();
+        terminal.set_tabstop_for_tests(1);
+
+        let output = formatter(&terminal, PageOutputFormat::Vt)
+            .with_content(ScreenFormatterContent::None)
+            .with_extra(terminal_tabstops_extra())
+            .format_with_pin_map();
+
+        assert_eq!(output.text, "\x1b[3g\x1b[2G\x1bH");
+        assert_eq!(output.text.len(), output.pin_map.len());
+        for pin in output.pin_map {
+            assert_eq!(pin, active_pin(&terminal, 0, 0));
+        }
+    }
+
+    #[test]
+    fn terminal_formatter_tabstops_pin_map_uses_last_content_pin() {
+        let mut terminal = terminal_with_lines(&["top", "éB"]);
+        terminal.clear_tabstops_for_tests();
+        terminal.set_tabstop_for_tests(1);
+        let selection = active_selection(&terminal, (0, 1), (1, 1));
+
+        let output = formatter(&terminal, PageOutputFormat::Vt)
+            .with_content(ScreenFormatterContent::Selection(Some(selection)))
+            .with_extra(terminal_tabstops_extra())
+            .format_with_pin_map();
+        let suffix_len = tabstops_suffix_len(&terminal);
+        let content_len = output.text.len() - suffix_len;
+
+        assert_eq!(output.text, "éB\x1b[3g\x1b[2G\x1bH");
+        assert_eq!(output.text.len(), output.pin_map.len());
+        assert_eq!(
+            &output.pin_map[..content_len],
+            pins(&terminal, &[(0, 1), (0, 1), (1, 1)])
+        );
+        for pin in &output.pin_map[content_len..] {
+            assert_eq!(*pin, active_pin(&terminal, 1, 1));
+        }
+    }
+
+    #[test]
+    fn terminal_formatter_scrolling_region_and_tabstops_pin_map_share_final_content_pin() {
+        let mut terminal = terminal_with_lines(&["top", "éB"]);
+        terminal.set_scrolling_region_for_tests(0, 1, 1, 2);
+        terminal.clear_tabstops_for_tests();
+        terminal.set_tabstop_for_tests(1);
+        let selection = active_selection(&terminal, (0, 1), (1, 1));
+
+        let output = formatter(&terminal, PageOutputFormat::Vt)
+            .with_content(ScreenFormatterContent::Selection(Some(selection)))
+            .with_extra(
+                TerminalFormatterExtra::none()
+                    .scrolling_region(true)
+                    .tabstops(true),
+            )
+            .format_with_pin_map();
+        let suffix_len = scrolling_region_suffix_len(&terminal) + tabstops_suffix_len(&terminal);
+        let content_len = output.text.len() - suffix_len;
+
+        assert_eq!(output.text, "éB\x1b[2;3s\x1b[3g\x1b[2G\x1bH");
+        assert_eq!(output.text.len(), output.pin_map.len());
+        assert_eq!(
+            &output.pin_map[..content_len],
+            pins(&terminal, &[(0, 1), (0, 1), (1, 1)])
+        );
+        for pin in &output.pin_map[content_len..] {
+            assert_eq!(*pin, active_pin(&terminal, 1, 1));
+        }
     }
 
     #[test]

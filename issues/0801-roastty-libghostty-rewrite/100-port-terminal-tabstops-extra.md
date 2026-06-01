@@ -236,3 +236,119 @@ two required design fixes:
   byte-indexed and maps to the final pre-suffix pin.
 
 Both findings were applied before implementation.
+
+## Result
+
+**Result:** Pass
+
+Implemented private terminal tabstop state and the opt-in terminal formatter
+tabstops extra.
+
+Code changes:
+
+- `Terminal` now owns private `tabstops: tabstops::Tabstops` state.
+- Tabstops initialize from the terminal column count with upstream default
+  interval 8.
+- `TabstopError::OutOfMemory` is converted to `PageListAllocError::PageAlloc`
+  inside `Terminal::init`, preserving the existing `Terminal::init` result type.
+- Test-only terminal helpers can clear all tabstops, set a tabstop,
+  deterministically clear a tabstop, and inspect a tabstop.
+- The deterministic clear helper checks `get()` before calling the
+  upstream-compatible toggling `Tabstops::unset()`.
+- `TerminalFormatterExtra` now has an opt-in `tabstops: bool` flag and
+  `.tabstops(bool)` builder.
+
+Formatter behavior:
+
+- Default `TerminalFormatter::init()` still uses
+  `TerminalFormatterExtra::none()` and emits no tabstop bytes without explicit
+  opt-in.
+- VT output emits `CSI 3 g` first:
+
+  ```text
+  \x1b[3g
+  ```
+
+- For each configured tabstop in ascending 0-indexed column order, VT output
+  emits:
+
+  ```text
+  \x1b[{column + 1}G\x1bH
+  ```
+
+  The cursor-positioning column is 1-indexed, and `ESC H` is HTS.
+
+- An empty tabstop state still emits `CSI 3 g`, matching upstream's explicit
+  clear-all behavior.
+- Plain and HTML output ignore the tabstops extra.
+- When combined with palette, modes, screen extras, and scrolling region, VT
+  ordering is
+  `palette -> modes -> content -> screen extras -> scrolling region -> tabstops`.
+
+Pin-map behavior:
+
+- Generated tabstop bytes are byte-indexed.
+- Tabstop bytes are appended after screen formatter output and any earlier
+  post-screen terminal suffixes.
+- Appended tabstop bytes map to the last existing pin when prior output exists.
+- If the formatter emits only tabstop bytes, they map to active-screen top-left.
+- Tests cover content plus both scrolling region and tabstops, proving the
+  combined post-screen suffix remains byte-indexed and maps to the final
+  pre-suffix content pin.
+
+Deferred by design:
+
+- VT parser/runtime HTS/TBC mutation.
+- Runtime tab key movement behavior.
+- Resize behavior.
+- Public API and public ABI.
+- App behavior, renderer behavior, PTY behavior, clipboard behavior, and UI
+  behavior.
+
+Verification run:
+
+```text
+cargo fmt
+cargo test -p roastty tabstops
+cargo test -p roastty terminal_formatter
+cargo test -p roastty modes
+cargo test -p roastty screen_formatter
+cargo test -p roastty styled_pin_map
+cargo test -p roastty pin_map
+cargo test -p roastty page_string
+cargo test -p roastty terminal::page_list
+cargo test -p roastty
+```
+
+Results:
+
+- `tabstops`: 17 passed.
+- `terminal_formatter`: 58 passed.
+- `modes`: 20 passed.
+- `screen_formatter`: 55 passed.
+- `styled_pin_map`: 9 passed.
+- `pin_map`: 62 passed.
+- `page_string`: 12 passed.
+- `terminal::page_list`: 524 passed.
+- full `cargo test -p roastty`: 948 unit tests passed, ABI harness passed, doc
+  tests passed.
+
+Codex reviewed the completed result before commit.
+
+Result review artifacts:
+
+- Prompt: `logs/codex-review/20260601-002206-731890-prompt.md`
+- Result: `logs/codex-review/20260601-002206-731890-last-message.md`
+
+Codex found no required changes. It confirmed the upstream-equivalent `CSI 3 g`
+and `HTS` sequence shapes, private tabstop state initialization, suffix
+ordering, pin-map coverage, default behavior preservation, plain/HTML no-op
+behavior, and result language.
+
+## Conclusion
+
+Roastty can now serialize stored tabstop state through the terminal formatter,
+preserving upstream clear-all and HTS sequence behavior while keeping runtime
+mutation and public surfaces deferred. The terminal formatter now covers
+palette, modes, screen extras, scrolling region, and tabstops in the same
+relative order as upstream.
