@@ -75,8 +75,8 @@ behavior, renderer behavior, clipboard behavior, or UI behavior.
      ```
 
    - When `pwd` is enabled and no PWD is stored, emit nothing.
-   - Match upstream's exact PWD byte behavior:
-     - `setPwd()` stores the logical PWD bytes followed by a trailing NUL byte;
+   - Match upstream's exact PWD byte behavior for valid UTF-8 PWD values:
+     - `setPwd()` stores the logical PWD text followed by a trailing NUL byte;
      - `getPwd()` exposes the logical PWD without the trailing NUL;
      - `TerminalFormatter` writes the stored `pwd.items` bytes directly, not the
        logical getter.
@@ -87,10 +87,12 @@ behavior, renderer behavior, clipboard behavior, or UI behavior.
      \x1b]7;file://host/home/user\0\x1b\
      ```
 
-   - Do not escape, sanitize, normalize, or URL-encode PWD bytes in this
+   - Roastty's formatter currently returns `String`, so this experiment's PWD
+     storage accepts valid UTF-8 text plus the stored NUL terminator. Do not
+     escape, sanitize, normalize, or URL-encode those stored UTF-8 bytes in this
      experiment. Upstream emits the stored bytes raw and terminates the OSC with
-     ST (`ESC \`). Parser-side validation and sanitization are outside this
-     formatter-only slice.
+     ST (`ESC \`). Parser-side validation, sanitization, and any future
+     arbitrary non-UTF-8 byte-output path are outside this formatter-only slice.
 
 5. Preserve post-screen pin-map semantics.
    - Keyboard and PWD bytes are generated terminal-state bytes appended after
@@ -190,8 +192,8 @@ The experiment passes if:
 - VT keyboard output emits `CSI > 4 ; 2 m` only when `modify_other_keys_2` is
   true;
 - VT PWD output emits `OSC 7` only when PWD is non-empty;
-- VT PWD output emits raw stored PWD bytes, including the stored trailing NUL
-  byte before ST;
+- VT PWD output emits stored valid UTF-8 PWD bytes without escaping or
+  normalization, including the stored trailing NUL byte before ST;
 - keyboard and PWD bytes emit after scrolling-region and tabstop bytes;
 - palette, modes, content, screen extras, scrolling region, tabstops, keyboard,
   and PWD can combine with ordering
@@ -241,8 +243,8 @@ Codex found three real design gaps:
 
 - PWD serialization had to specify the exact upstream trailing-NUL behavior
   before implementation;
-- OSC 7 output had to specify raw stored byte emission and ST termination, with
-  no escaping or sanitization in this formatter-only slice;
+- OSC 7 output had to specify raw stored valid-UTF-8 byte emission and ST
+  termination, with no escaping or sanitization in this formatter-only slice;
 - pin-map tests had to cover exact PWD bytes, including the trailing NUL byte.
 
 All three findings were applied.
@@ -253,3 +255,140 @@ Re-review artifacts:
 - Result: `logs/codex-review/20260601-002623-862778-last-message.md`
 
 Codex found no remaining real findings and approved implementation.
+
+## Result
+
+**Result:** Pass
+
+Implemented private terminal keyboard-mode and PWD state plus the opt-in
+terminal formatter extras that serialize them.
+
+Code changes:
+
+- `Terminal` now owns private `flags: TerminalFlags` state.
+- `TerminalFlags` currently contains `modify_other_keys_2: bool`, defaulting to
+  `false`.
+- `Terminal` now owns private `pwd: TerminalPwd` state.
+- `TerminalPwd` stores upstream-shaped valid UTF-8 text:
+  - empty storage means no PWD;
+  - non-empty storage is logical PWD text followed by a trailing NUL byte;
+  - the test getter exposes the logical PWD without the trailing NUL.
+- Test-only helpers can set/inspect `modify_other_keys_2`, set/clear PWD, and
+  inspect logical PWD.
+- `TerminalFormatterExtra` now has opt-in `keyboard: bool` and `pwd: bool` flags
+  with `.keyboard(bool)` and `.pwd(bool)` builders.
+
+Formatter behavior:
+
+- Default `TerminalFormatter::init()` still uses
+  `TerminalFormatterExtra::none()` and emits no keyboard/PWD bytes without
+  explicit opt-in.
+- VT output emits keyboard mode bytes only when the `keyboard` extra is enabled
+  and `modify_other_keys_2` is true:
+
+  ```text
+  \x1b[>4;2m
+  ```
+
+- VT output emits no keyboard bytes when `modify_other_keys_2` is false.
+- VT output emits PWD bytes only when the `pwd` extra is enabled and stored PWD
+  is non-empty.
+- PWD output matches upstream's raw stored-byte behavior for valid UTF-8 PWD
+  values, including the stored trailing NUL byte before ST:
+
+  ```text
+  \x1b]7;file://host/home/user\0\x1b\
+  ```
+
+- PWD bytes are not escaped, sanitized, normalized, or URL-encoded in this
+  formatter-only slice. Arbitrary non-UTF-8 PWD output remains deferred because
+  Roastty's formatter API currently returns `String`.
+- Plain and HTML output ignore both extras.
+- When combined with palette, modes, screen extras, scrolling region, tabstops,
+  keyboard, and PWD, VT ordering is
+  `palette -> modes -> content -> screen extras -> scrolling region -> tabstops -> keyboard -> pwd`.
+
+Pin-map behavior:
+
+- Generated keyboard/PWD bytes are byte-indexed.
+- Keyboard/PWD bytes are appended after screen formatter output and all earlier
+  post-screen terminal suffixes.
+- Appended keyboard/PWD bytes map to the last existing pin when prior output
+  exists.
+- If the formatter emits only keyboard/PWD bytes, they map to active-screen
+  top-left.
+- Tests cover content plus scrolling region, tabstops, keyboard, and PWD,
+  proving the combined post-screen suffix remains byte-indexed and maps to the
+  final pre-suffix content pin, including the PWD trailing NUL byte.
+
+Deferred by design:
+
+- VT parser/runtime mutation for `CSI > 4 ; 2 m`.
+- OSC parser/runtime mutation for `OSC 7`.
+- PTY integration.
+- Public API and public ABI.
+- App behavior, renderer behavior, clipboard behavior, and UI behavior.
+
+Verification run:
+
+```text
+cargo fmt
+cargo test -p roastty terminal_formatter
+cargo test -p roastty modes
+cargo test -p roastty tabstops
+cargo test -p roastty screen_formatter
+cargo test -p roastty styled_pin_map
+cargo test -p roastty pin_map
+cargo test -p roastty page_string
+cargo test -p roastty terminal::page_list
+cargo test -p roastty
+```
+
+Results:
+
+- `terminal_formatter`: 67 passed.
+- `modes`: 20 passed.
+- `tabstops`: 18 passed.
+- `screen_formatter`: 55 passed.
+- `styled_pin_map`: 9 passed.
+- `pin_map`: 65 passed.
+- `page_string`: 12 passed.
+- `terminal::page_list`: 524 passed.
+- full `cargo test -p roastty`: 957 unit tests passed, ABI harness passed, doc
+  tests passed.
+
+Codex reviewed the completed result before commit.
+
+Initial result review artifacts:
+
+- Prompt: `logs/codex-review/20260601-003022-727228-prompt.md`
+- Result: `logs/codex-review/20260601-003022-727228-last-message.md`
+
+Codex found one real issue: the first implementation stored PWD as `Vec<u8>` but
+converted it through UTF-8 before appending to the formatter `String`, while the
+experiment language claimed raw arbitrary-byte behavior. The fix was to make the
+current formatter invariant explicit:
+
+- `TerminalPwd` stores valid UTF-8 text plus the trailing NUL in a `String`;
+- formatter output appends that stored string directly;
+- the experiment records that arbitrary non-UTF-8 PWD output remains deferred
+  because the formatter API currently returns `String`.
+
+After the fix, `cargo fmt`, `cargo test -p roastty terminal_formatter`, and full
+`cargo test -p roastty` passed again.
+
+Result re-review artifacts:
+
+- Prompt: `logs/codex-review/20260601-003220-306266-prompt.md`
+- Result: `logs/codex-review/20260601-003220-306266-last-message.md`
+
+Codex found no remaining real findings and approved commit.
+
+## Conclusion
+
+Roastty's terminal formatter now covers all upstream `TerminalFormatter.Extra`
+fields currently in scope for formatter-only state: palette, modes, scrolling
+region, tabstops, keyboard, PWD, and forwarded screen extras. The remaining work
+is no longer formatter serialization for these extras; it is parser/runtime
+state mutation and the broader terminal/app subsystems that feed this state in
+normal operation.

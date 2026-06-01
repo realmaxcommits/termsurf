@@ -19,6 +19,8 @@ pub(super) struct Terminal {
     modes: modes::ModeState,
     scrolling_region: ScrollingRegion,
     tabstops: tabstops::Tabstops,
+    flags: TerminalFlags,
+    pwd: TerminalPwd,
 }
 
 #[derive(Debug)]
@@ -45,6 +47,16 @@ struct ScrollingRegion {
     right: CellCountInt,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct TerminalFlags {
+    modify_other_keys_2: bool,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct TerminalPwd {
+    text: String,
+}
+
 #[derive(Debug, Clone, Copy)]
 pub(super) struct TerminalFormatterOptions<'a> {
     screen: ScreenFormatterOptions<'a>,
@@ -64,6 +76,8 @@ pub(super) struct TerminalFormatterExtra {
     modes: bool,
     scrolling_region: bool,
     tabstops: bool,
+    keyboard: bool,
+    pwd: bool,
     screen: ScreenFormatterExtra,
 }
 
@@ -86,6 +100,8 @@ impl Terminal {
             scrolling_region: ScrollingRegion::full(size),
             tabstops: tabstops::Tabstops::new(cols as usize, 8)
                 .map_err(|_| PageListAllocError::PageAlloc)?,
+            flags: TerminalFlags::default(),
+            pwd: TerminalPwd::default(),
         })
     }
 
@@ -161,6 +177,31 @@ impl Terminal {
         assert!(col < self.tabstops.cols());
         self.tabstops.get(col)
     }
+
+    #[cfg(test)]
+    pub(super) fn set_modify_other_keys_2_for_tests(&mut self, modify_other_keys_2: bool) {
+        self.flags.modify_other_keys_2 = modify_other_keys_2;
+    }
+
+    #[cfg(test)]
+    pub(super) fn modify_other_keys_2_for_tests(&self) -> bool {
+        self.flags.modify_other_keys_2
+    }
+
+    #[cfg(test)]
+    pub(super) fn set_pwd_for_tests(&mut self, pwd: &str) {
+        self.pwd.set(pwd);
+    }
+
+    #[cfg(test)]
+    pub(super) fn clear_pwd_for_tests(&mut self) {
+        self.pwd.clear();
+    }
+
+    #[cfg(test)]
+    pub(super) fn pwd_for_tests(&self) -> Option<&str> {
+        self.pwd.logical_str()
+    }
 }
 
 impl ScrollingRegion {
@@ -184,6 +225,37 @@ impl ScrollingRegion {
         if size.cols > 1 {
             assert!(self.left < self.right);
         }
+    }
+}
+
+impl TerminalPwd {
+    fn set(&mut self, pwd: &str) {
+        self.text.clear();
+        if !pwd.is_empty() {
+            self.text.push_str(pwd);
+            self.text.push('\0');
+        }
+    }
+
+    fn clear(&mut self) {
+        self.text.clear();
+    }
+
+    fn is_empty(&self) -> bool {
+        self.text.is_empty()
+    }
+
+    fn stored_str(&self) -> &str {
+        &self.text
+    }
+
+    #[cfg(test)]
+    fn logical_str(&self) -> Option<&str> {
+        if self.text.is_empty() {
+            return None;
+        }
+
+        Some(&self.text[..self.text.len() - 1])
     }
 }
 
@@ -291,6 +363,8 @@ impl<'a> TerminalFormatter<'a> {
     fn terminal_suffix_string(&self) -> String {
         let mut output = self.scrolling_region_string();
         output.push_str(&self.tabstops_string());
+        output.push_str(&self.keyboard_string());
+        output.push_str(&self.pwd_string());
         output
     }
 
@@ -330,6 +404,22 @@ impl<'a> TerminalFormatter<'a> {
 
         tabstops_vt_string(&self.terminal.tabstops)
     }
+
+    fn keyboard_string(&self) -> String {
+        if !self.extra.keyboard || self.options.screen.emit() != PageOutputFormat::Vt {
+            return String::new();
+        }
+
+        keyboard_vt_string(self.terminal.flags)
+    }
+
+    fn pwd_string(&self) -> String {
+        if !self.extra.pwd || self.options.screen.emit() != PageOutputFormat::Vt {
+            return String::new();
+        }
+
+        pwd_vt_string(&self.terminal.pwd)
+    }
 }
 
 impl TerminalFormatterExtra {
@@ -339,6 +429,8 @@ impl TerminalFormatterExtra {
             modes: false,
             scrolling_region: false,
             tabstops: false,
+            keyboard: false,
+            pwd: false,
             screen: ScreenFormatterExtra::none(),
         }
     }
@@ -360,6 +452,16 @@ impl TerminalFormatterExtra {
 
     pub(super) const fn tabstops(mut self, tabstops: bool) -> Self {
         self.tabstops = tabstops;
+        self
+    }
+
+    pub(super) const fn keyboard(mut self, keyboard: bool) -> Self {
+        self.keyboard = keyboard;
+        self
+    }
+
+    pub(super) const fn pwd(mut self, pwd: bool) -> Self {
+        self.pwd = pwd;
         self
     }
 
@@ -428,6 +530,25 @@ fn tabstops_vt_string(tabstops: &tabstops::Tabstops) -> String {
             output.push_str(&format!("\x1b[{}G\x1bH", col + 1));
         }
     }
+    output
+}
+
+fn keyboard_vt_string(flags: TerminalFlags) -> String {
+    if flags.modify_other_keys_2 {
+        "\x1b[>4;2m".to_string()
+    } else {
+        String::new()
+    }
+}
+
+fn pwd_vt_string(pwd: &TerminalPwd) -> String {
+    if pwd.is_empty() {
+        return String::new();
+    }
+
+    let mut output = String::from("\x1b]7;");
+    output.push_str(pwd.stored_str());
+    output.push_str("\x1b\\");
     output
 }
 
@@ -559,6 +680,10 @@ mod tests {
         TerminalFormatterExtra::none().tabstops(true)
     }
 
+    const fn terminal_keyboard_pwd_extra() -> TerminalFormatterExtra {
+        TerminalFormatterExtra::none().keyboard(true).pwd(true)
+    }
+
     fn set_test_palette_entries(terminal: &mut Terminal) {
         terminal.set_palette_entry_for_tests(0, color::Rgb::new(0x12, 0x34, 0x56));
         terminal.set_palette_entry_for_tests(1, color::Rgb::new(0xab, 0xcd, 0xef));
@@ -583,6 +708,10 @@ mod tests {
 
     fn tabstops_suffix_len(terminal: &Terminal) -> usize {
         tabstops_vt_string(&terminal.tabstops).len()
+    }
+
+    fn keyboard_pwd_suffix_len(terminal: &Terminal) -> usize {
+        keyboard_vt_string(terminal.flags).len() + pwd_vt_string(&terminal.pwd).len()
     }
 
     #[test]
@@ -1607,6 +1736,237 @@ mod tests {
         let content_len = output.text.len() - suffix_len;
 
         assert_eq!(output.text, "éB\x1b[2;3s\x1b[3g\x1b[2G\x1bH");
+        assert_eq!(output.text.len(), output.pin_map.len());
+        assert_eq!(
+            &output.pin_map[..content_len],
+            pins(&terminal, &[(0, 1), (0, 1), (1, 1)])
+        );
+        for pin in &output.pin_map[content_len..] {
+            assert_eq!(*pin, active_pin(&terminal, 1, 1));
+        }
+    }
+
+    #[test]
+    fn terminal_formatter_default_path_does_not_emit_keyboard_or_pwd_or_change_pin_map() {
+        let mut terminal = terminal_with_lines(&["hello"]);
+        terminal.set_modify_other_keys_2_for_tests(true);
+        terminal.set_pwd_for_tests("file://host/home/user");
+
+        let default_text = formatter(&terminal, PageOutputFormat::Vt).format();
+        let default_pin_map = formatter(&terminal, PageOutputFormat::Vt).format_with_pin_map();
+        let screen_text = screen_formatter(&terminal, PageOutputFormat::Vt).format();
+        let screen_pin_map =
+            screen_formatter(&terminal, PageOutputFormat::Vt).format_with_pin_map();
+
+        assert!(terminal.modify_other_keys_2_for_tests());
+        assert_eq!(terminal.pwd_for_tests(), Some("file://host/home/user"));
+        assert_eq!(default_text, screen_text);
+        assert_eq!(default_text, "hello");
+        assert_eq!(default_pin_map, screen_pin_map);
+    }
+
+    #[test]
+    fn terminal_formatter_keyboard_extra_emits_modify_other_keys_2_only_when_enabled() {
+        let mut terminal = terminal_with_lines(&["hello"]);
+
+        let disabled = formatter(&terminal, PageOutputFormat::Vt)
+            .with_content(ScreenFormatterContent::None)
+            .with_extra(TerminalFormatterExtra::none().keyboard(true))
+            .format();
+        assert_eq!(disabled, "");
+
+        terminal.set_modify_other_keys_2_for_tests(true);
+        let enabled = formatter(&terminal, PageOutputFormat::Vt)
+            .with_content(ScreenFormatterContent::None)
+            .with_extra(TerminalFormatterExtra::none().keyboard(true))
+            .format();
+
+        assert_eq!(enabled, "\x1b[>4;2m");
+    }
+
+    #[test]
+    fn terminal_formatter_pwd_extra_emits_raw_stored_bytes_with_nul_and_st() {
+        let mut terminal = terminal_with_lines(&["hello"]);
+
+        let empty = formatter(&terminal, PageOutputFormat::Vt)
+            .with_content(ScreenFormatterContent::None)
+            .with_extra(TerminalFormatterExtra::none().pwd(true))
+            .format();
+        assert_eq!(empty, "");
+
+        terminal.set_pwd_for_tests("file://host/home/user");
+        let output = formatter(&terminal, PageOutputFormat::Vt)
+            .with_content(ScreenFormatterContent::None)
+            .with_extra(TerminalFormatterExtra::none().pwd(true))
+            .format();
+
+        assert_eq!(terminal.pwd_for_tests(), Some("file://host/home/user"));
+        assert_eq!(output.as_bytes(), b"\x1b]7;file://host/home/user\0\x1b\\");
+    }
+
+    #[test]
+    fn terminal_formatter_keyboard_and_pwd_emit_after_tabstops() {
+        let mut terminal = terminal_with_lines(&["hello", "world"]);
+        terminal.set_scrolling_region_for_tests(0, 1, 1, 3);
+        terminal.clear_tabstops_for_tests();
+        terminal.set_tabstop_for_tests(4);
+        terminal.set_modify_other_keys_2_for_tests(true);
+        terminal.set_pwd_for_tests("file://host/home/user");
+
+        let output = formatter(&terminal, PageOutputFormat::Vt)
+            .with_extra(
+                TerminalFormatterExtra::none()
+                    .scrolling_region(true)
+                    .tabstops(true)
+                    .keyboard(true)
+                    .pwd(true),
+            )
+            .format();
+
+        assert_eq!(
+            output.as_bytes(),
+            b"hello\r\nworld\x1b[2;4s\x1b[3g\x1b[5G\x1bH\x1b[>4;2m\x1b]7;file://host/home/user\0\x1b\\"
+        );
+    }
+
+    #[test]
+    fn terminal_formatter_all_terminal_extras_keep_upstream_order() {
+        let mut terminal = terminal_with_lines(&["hey", "you"]);
+        set_test_palette_entries(&mut terminal);
+        terminal.set_mode_for_tests(Mode::BracketedPaste, true);
+        terminal.set_scrolling_region_for_tests(0, 1, 0, 1);
+        terminal.clear_tabstops_for_tests();
+        terminal.set_tabstop_for_tests(1);
+        terminal.set_modify_other_keys_2_for_tests(true);
+        terminal.set_pwd_for_tests("file://host/home/user");
+        set_active_screen_extras(&mut terminal);
+
+        let output = formatter(&terminal, PageOutputFormat::Vt)
+            .with_extra(
+                TerminalFormatterExtra::none()
+                    .palette(true)
+                    .modes(true)
+                    .screen(all_screen_extras())
+                    .scrolling_region(true)
+                    .tabstops(true)
+                    .keyboard(true)
+                    .pwd(true),
+            )
+            .format();
+        let palette_len = palette_vt_prefix_len(&terminal);
+        let modes_len = modes_prefix_len(&terminal);
+
+        assert_eq!(&output[palette_len..palette_len + modes_len], "\x1b[?2004h");
+        assert_eq!(
+            &output[palette_len + modes_len..palette_len + modes_len + 8],
+            "hey\r\nyou"
+        );
+        assert!(output[palette_len + modes_len + 8..].starts_with("\x1b[0m"));
+        assert!(output.find("\x1b[3;5H").unwrap() < output.find("\x1b[1;2s").unwrap());
+        assert!(output.find("\x1b[1;2s").unwrap() < output.find("\x1b[3g").unwrap());
+        assert!(output.find("\x1b[3g").unwrap() < output.find("\x1b[>4;2m").unwrap());
+        assert!(output.find("\x1b[>4;2m").unwrap() < output.find("\x1b]7;").unwrap());
+        assert!(output
+            .as_bytes()
+            .ends_with(b"\x1b[3g\x1b[2G\x1bH\x1b[>4;2m\x1b]7;file://host/home/user\0\x1b\\"));
+    }
+
+    #[test]
+    fn terminal_formatter_plain_and_html_ignore_keyboard_and_pwd_extras() {
+        let mut terminal = terminal_with_lines(&["<hi"]);
+        terminal.set_modify_other_keys_2_for_tests(true);
+        terminal.set_pwd_for_tests("file://host/home/user");
+
+        for emit in [PageOutputFormat::Plain, PageOutputFormat::Html] {
+            let default_output = formatter(&terminal, emit).format();
+            let keyboard_pwd_output = formatter(&terminal, emit)
+                .with_extra(terminal_keyboard_pwd_extra())
+                .format();
+
+            assert_eq!(keyboard_pwd_output, default_output);
+            assert!(!keyboard_pwd_output.contains("\x1b[>4;2m"));
+            assert!(!keyboard_pwd_output.contains("\x1b]7;"));
+        }
+    }
+
+    #[test]
+    fn terminal_formatter_keyboard_and_pwd_without_content_maps_to_top_left() {
+        let mut terminal = terminal_with_lines(&["hello"]);
+        terminal.set_modify_other_keys_2_for_tests(true);
+        terminal.set_pwd_for_tests("file://host/home/user");
+
+        let output = formatter(&terminal, PageOutputFormat::Vt)
+            .with_content(ScreenFormatterContent::None)
+            .with_extra(terminal_keyboard_pwd_extra())
+            .format_with_pin_map();
+
+        assert_eq!(
+            output.text.as_bytes(),
+            b"\x1b[>4;2m\x1b]7;file://host/home/user\0\x1b\\"
+        );
+        assert_eq!(output.text.len(), output.pin_map.len());
+        for pin in output.pin_map {
+            assert_eq!(pin, active_pin(&terminal, 0, 0));
+        }
+    }
+
+    #[test]
+    fn terminal_formatter_keyboard_and_pwd_pin_map_uses_last_content_pin() {
+        let mut terminal = terminal_with_lines(&["top", "éB"]);
+        terminal.set_modify_other_keys_2_for_tests(true);
+        terminal.set_pwd_for_tests("file://host/home/user");
+        let selection = active_selection(&terminal, (0, 1), (1, 1));
+
+        let output = formatter(&terminal, PageOutputFormat::Vt)
+            .with_content(ScreenFormatterContent::Selection(Some(selection)))
+            .with_extra(terminal_keyboard_pwd_extra())
+            .format_with_pin_map();
+        let suffix_len = keyboard_pwd_suffix_len(&terminal);
+        let content_len = output.text.len() - suffix_len;
+
+        assert_eq!(
+            output.text.as_bytes(),
+            b"\xc3\xa9B\x1b[>4;2m\x1b]7;file://host/home/user\0\x1b\\"
+        );
+        assert_eq!(output.text.len(), output.pin_map.len());
+        assert_eq!(
+            &output.pin_map[..content_len],
+            pins(&terminal, &[(0, 1), (0, 1), (1, 1)])
+        );
+        for pin in &output.pin_map[content_len..] {
+            assert_eq!(*pin, active_pin(&terminal, 1, 1));
+        }
+    }
+
+    #[test]
+    fn terminal_formatter_prior_suffixes_keyboard_and_pwd_pin_map_share_final_content_pin() {
+        let mut terminal = terminal_with_lines(&["top", "éB"]);
+        terminal.set_scrolling_region_for_tests(0, 1, 1, 2);
+        terminal.clear_tabstops_for_tests();
+        terminal.set_tabstop_for_tests(1);
+        terminal.set_modify_other_keys_2_for_tests(true);
+        terminal.set_pwd_for_tests("file://host/home/user");
+        let selection = active_selection(&terminal, (0, 1), (1, 1));
+
+        let output = formatter(&terminal, PageOutputFormat::Vt)
+            .with_content(ScreenFormatterContent::Selection(Some(selection)))
+            .with_extra(
+                TerminalFormatterExtra::none()
+                    .scrolling_region(true)
+                    .tabstops(true)
+                    .keyboard(true)
+                    .pwd(true),
+            )
+            .format_with_pin_map();
+        let suffix_len = scrolling_region_suffix_len(&terminal)
+            + tabstops_suffix_len(&terminal)
+            + keyboard_pwd_suffix_len(&terminal);
+        let content_len = output.text.len() - suffix_len;
+
+        assert_eq!(
+            output.text.as_bytes(),
+            b"\xc3\xa9B\x1b[2;3s\x1b[3g\x1b[2G\x1bH\x1b[>4;2m\x1b]7;file://host/home/user\0\x1b\\"
+        );
         assert_eq!(output.text.len(), output.pin_map.len());
         assert_eq!(
             &output.pin_map[..content_len],
