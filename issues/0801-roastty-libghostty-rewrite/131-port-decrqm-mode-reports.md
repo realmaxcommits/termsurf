@@ -272,3 +272,75 @@ Codex also suggested a non-blocking trailing-separator parser test. The design
 now requires pinning down `CSI ? 7 ; $ p` behavior during implementation.
 
 The design is approved for implementation.
+
+## Result
+
+**Result:** Pass
+
+Implemented DEC-private DECRQM mode reports in the Roastty terminal core.
+
+The parser now recognizes `CSI ? Ps $ p` as DEC-private mode request input. It
+dispatches known DEC-private modes as `Action::RequestMode`, dispatches explicit
+unknown DEC-private values such as `CSI ? 9999 $ p` and `CSI ? 0 $ p` as
+`Action::RequestModeUnknown`, and leaves empty, malformed, ANSI, wrong-private,
+extra-param, colon-param, extra-intermediate, and raw-C1 forms as
+no-dispatch/no-leak input. Existing CSI command families now reject `$`
+intermediates instead of dispatching while silently ignoring them.
+
+The terminal now has a private terminal-core PTY response buffer. DECRQM
+execution encodes reports through the existing upstream-derived
+`ModeState::get_report(...).encode_vt()` path and appends the owned bytes to
+that buffer in dispatch order. The buffer is test-visible only through
+`#[cfg(test)]` peek/drain helpers; no public ABI structs, callbacks, headers, or
+exports changed.
+
+Verified encoded response behavior:
+
+- default wraparound query `CSI ? 7 $ p` emits `ESC [?7;1$y`;
+- reset wraparound query after `CSI ? 7 l` emits `ESC [?7;2$y`;
+- bracketed paste reports set/reset state as `ESC [?2004;1$y` and
+  `ESC [?2004;2$y`;
+- unknown DEC-private mode `CSI ? 9999 $ p` emits `ESC [?9999;0$y`;
+- multiple requests append multiple responses in order;
+- draining the test response buffer returns the prior bytes and leaves the
+  buffer empty.
+
+Response generation does not mutate visible cells, cursor position, dirty rows,
+scrolling margins, formatter output, or mode state. A reset pre-check found no
+current Roastty stream-level `ESC c` / full-reset path, so response-buffer reset
+clearing was not applicable and no reset behavior was invented in this
+experiment.
+
+Explicitly still deferred: ANSI DECRQM, device status reports, device
+attributes, size reports, XTVERSION, OSC replies, DCS replies, SGR,
+alternate-screen, mouse encoding, keypad behavior, public ABI forwarding, and
+non-macOS behavior.
+
+Verification passed:
+
+```bash
+cargo fmt
+cargo test -p roastty stream_csi_mode
+cargo test -p roastty terminal_stream_csi_mode
+cargo test -p roastty terminal::modes
+cargo test -p roastty terminal::terminal
+cargo test -p roastty stream
+cargo test -p roastty terminal_formatter
+cargo test -p roastty
+```
+
+The focused tests passed, and the full suite ended with 1426 unit tests passing,
+the ABI harness passing, and 0 doc tests.
+
+Codex reviewed the completed implementation and found no blocking correctness
+issues: `logs/codex-review/20260601-072459-955899-last-message.md`.
+
+## Conclusion
+
+Experiment 131 successfully added Roastty's first terminal-core
+response-producing stream command without exposing a public ABI contract too
+early. DECRQM now has parser coverage, execution coverage, malformed-input
+coverage, response-buffer coverage, and formatter/non-mutation coverage.
+
+The next response-producing work can build on this private response foundation,
+but forwarding responses to the app/PTY boundary remains a later ABI experiment.

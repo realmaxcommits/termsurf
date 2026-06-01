@@ -23,6 +23,7 @@ pub(super) struct Terminal {
     modes: modes::ModeState,
     scrolling_region: ScrollingRegion,
     tabstops: tabstops::Tabstops,
+    pty_response: Vec<u8>,
     stream: stream::Stream,
     flags: TerminalFlags,
     pwd: TerminalPwd,
@@ -76,6 +77,7 @@ struct TerminalStreamHandler<'a> {
     modes: &'a mut modes::ModeState,
     scrolling_region: &'a mut ScrollingRegion,
     tabstops: &'a mut tabstops::Tabstops,
+    pty_response: &'a mut Vec<u8>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -121,6 +123,7 @@ impl Terminal {
             scrolling_region: ScrollingRegion::full(size),
             tabstops: tabstops::Tabstops::new(cols as usize, TABSTOP_INTERVAL)
                 .map_err(|_| PageListAllocError::PageAlloc)?,
+            pty_response: Vec::new(),
             stream: stream::Stream::init(),
             flags: TerminalFlags::default(),
             pwd: TerminalPwd::default(),
@@ -134,6 +137,7 @@ impl Terminal {
             modes,
             scrolling_region,
             tabstops,
+            pty_response,
             stream,
             ..
         } = self;
@@ -143,8 +147,19 @@ impl Terminal {
             modes,
             scrolling_region,
             tabstops,
+            pty_response,
         };
         stream.next_slice(input, &mut handler)
+    }
+
+    #[cfg(test)]
+    pub(super) fn pty_response_for_tests(&self) -> &[u8] {
+        &self.pty_response
+    }
+
+    #[cfg(test)]
+    pub(super) fn take_pty_response_for_tests(&mut self) -> Vec<u8> {
+        std::mem::take(&mut self.pty_response)
     }
 
     #[cfg(test)]
@@ -496,6 +511,16 @@ impl Handler for TerminalStreamHandler<'_> {
                 self.set_mode_basic(mode, enabled);
                 Ok(())
             }
+            Action::RequestMode { mode } => {
+                let report = self.modes.get_report(modes::ModeTag::from_mode(mode));
+                self.write_pty_response(&report.encode_vt());
+                Ok(())
+            }
+            Action::RequestModeUnknown { value, ansi } => {
+                let report = self.modes.get_report(modes::ModeTag::new(value, ansi));
+                self.write_pty_response(&report.encode_vt());
+                Ok(())
+            }
         }
     }
 }
@@ -546,6 +571,10 @@ impl TerminalStreamHandler<'_> {
             }
             _ => {}
         }
+    }
+
+    fn write_pty_response(&mut self, bytes: &str) {
+        self.pty_response.extend_from_slice(bytes.as_bytes());
     }
 
     fn move_cursor_to_origin_home(&mut self) {
@@ -1535,6 +1564,88 @@ mod tests {
         assert!(!terminal.get_mode_for_tests(Mode::Wraparound));
         assert_eq!(plain_with_unwrap(&terminal, false), "abX");
         assert!(terminal.cursor_pending_wrap_for_tests());
+    }
+
+    #[test]
+    fn terminal_stream_csi_mode_request_reports_default_and_reset_wraparound() {
+        let mut terminal = Terminal::init(10, 2, None).unwrap();
+
+        terminal.next_slice(b"\x1b[?7$p").unwrap();
+        assert_eq!(terminal.pty_response_for_tests(), b"\x1b[?7;1$y");
+
+        assert_eq!(
+            terminal.take_pty_response_for_tests(),
+            b"\x1b[?7;1$y".to_vec()
+        );
+        assert!(terminal.pty_response_for_tests().is_empty());
+
+        terminal.next_slice(b"\x1b[?7l\x1b[?7$p").unwrap();
+        assert_eq!(terminal.pty_response_for_tests(), b"\x1b[?7;2$y");
+    }
+
+    #[test]
+    fn terminal_stream_csi_mode_request_reports_bracketed_paste_state() {
+        let mut terminal = Terminal::init(10, 2, None).unwrap();
+
+        terminal.next_slice(b"\x1b[?2004$p").unwrap();
+        assert_eq!(terminal.take_pty_response_for_tests(), b"\x1b[?2004;2$y");
+
+        terminal.next_slice(b"\x1b[?2004h\x1b[?2004$p").unwrap();
+        assert_eq!(terminal.take_pty_response_for_tests(), b"\x1b[?2004;1$y");
+    }
+
+    #[test]
+    fn terminal_stream_csi_mode_request_reports_unknown_dec_mode() {
+        let mut terminal = Terminal::init(10, 2, None).unwrap();
+
+        terminal.next_slice(b"\x1b[?9999$p").unwrap();
+
+        assert_eq!(terminal.pty_response_for_tests(), b"\x1b[?9999;0$y");
+    }
+
+    #[test]
+    fn terminal_stream_csi_mode_request_appends_multiple_responses_in_order() {
+        let mut terminal = Terminal::init(10, 2, None).unwrap();
+
+        terminal
+            .next_slice(b"\x1b[?7$p\x1b[?2004h\x1b[?2004$p\x1b[?9999$p")
+            .unwrap();
+
+        assert_eq!(
+            terminal.pty_response_for_tests(),
+            b"\x1b[?7;1$y\x1b[?2004;1$y\x1b[?9999;0$y"
+        );
+    }
+
+    #[test]
+    fn terminal_stream_csi_mode_request_does_not_mutate_terminal_display_state() {
+        let mut terminal = Terminal::init(10, 4, None).unwrap();
+
+        terminal.next_slice(b"abc").unwrap();
+        terminal.set_scrolling_region_for_tests(1, 3, 2, 8);
+        terminal.screens.active.set_cursor_position_for_tests(5, 2);
+        terminal.clear_dirty_for_tests();
+
+        terminal.next_slice(b"\x1b[?7$p").unwrap();
+
+        let region = terminal.scrolling_region_for_tests();
+        assert_eq!(plain_with_unwrap(&terminal, false), "abc");
+        assert_eq!(
+            formatter(&terminal, PageOutputFormat::Vt)
+                .with_extra(terminal_modes_extra())
+                .format(),
+            "abc"
+        );
+        assert_eq!(terminal.cursor_position_for_tests(), (5, 2));
+        assert_eq!(region.top, 1);
+        assert_eq!(region.bottom, 3);
+        assert_eq!(region.left, 2);
+        assert_eq!(region.right, 8);
+        assert!(terminal.get_mode_for_tests(Mode::Wraparound));
+        assert!(!terminal.is_dirty_for_tests(0, 0));
+        assert!(!terminal.is_dirty_for_tests(9, 0));
+        assert!(!terminal.is_dirty_for_tests(0, 1));
+        assert_eq!(terminal.pty_response_for_tests(), b"\x1b[?7;1$y");
     }
 
     #[test]

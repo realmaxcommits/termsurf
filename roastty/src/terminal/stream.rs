@@ -90,6 +90,13 @@ pub(super) enum Action {
     RestoreMode {
         mode: modes::Mode,
     },
+    RequestMode {
+        mode: modes::Mode,
+    },
+    RequestModeUnknown {
+        value: u16,
+        ansi: bool,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -144,6 +151,7 @@ struct DecodeResult {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct CsiState {
     private: Option<u8>,
+    intermediate: Option<u8>,
     params: [u16; CSI_PARAM_CAPACITY],
     params_len: u8,
     param_acc: u16,
@@ -295,6 +303,7 @@ impl CsiState {
     const fn new() -> Self {
         Self {
             private: None,
+            intermediate: None,
             params: [0; CSI_PARAM_CAPACITY],
             params_len: 0,
             param_acc: 0,
@@ -308,6 +317,10 @@ impl CsiState {
         if self.invalid {
             return;
         }
+        if self.intermediate.is_some() {
+            self.invalid = true;
+            return;
+        }
 
         match byte {
             b'?' if self.private.is_none()
@@ -317,6 +330,7 @@ impl CsiState {
             {
                 self.private = Some(byte);
             }
+            b'$' => self.intermediate = Some(byte),
             b';' => self.push_param_separator(),
             b':' => self.invalid = true,
             b'0'..=b'9' => {
@@ -342,6 +356,12 @@ impl CsiState {
     }
 
     fn dispatch(&self, final_byte: u8) -> CsiDispatch {
+        if self.intermediate.is_some() {
+            return self
+                .mode_request_dispatch(final_byte)
+                .unwrap_or(CsiDispatch::None);
+        }
+
         if let Some(dispatch) = self.line_dispatch(final_byte) {
             return dispatch;
         }
@@ -742,6 +762,26 @@ impl CsiState {
             CsiDispatch::Many(actions)
         })
     }
+
+    fn mode_request_dispatch(&self, final_byte: u8) -> Option<CsiDispatch> {
+        if final_byte != b'p' || self.private != Some(b'?') || self.intermediate != Some(b'$') {
+            return None;
+        }
+
+        let params = self.finalized_params()?;
+        if params.len != 1 || params.separator_seen {
+            return None;
+        }
+
+        let value = params.values[0];
+        let action = if let Some(mode) = modes::mode_from_int(value, false) {
+            Action::RequestMode { mode }
+        } else {
+            Action::RequestModeUnknown { value, ansi: false }
+        };
+
+        Some(CsiDispatch::One(action))
+    }
 }
 
 impl CsiDispatch {
@@ -930,7 +970,9 @@ mod tests {
                 | Action::SetMode { .. }
                 | Action::ResetMode { .. }
                 | Action::SaveMode { .. }
-                | Action::RestoreMode { .. } => None,
+                | Action::RestoreMode { .. }
+                | Action::RequestMode { .. }
+                | Action::RequestModeUnknown { .. } => None,
             })
             .collect()
     }
@@ -1523,6 +1565,131 @@ mod tests {
             );
             assert_eq!(actions(&handler).last(), Some(&Action::Print { cp: 'A' }));
         }
+    }
+
+    #[test]
+    fn stream_csi_mode_request_dispatches_known_and_unknown_dec_modes() {
+        for (input, expected) in [
+            (
+                b"\x1b[?7$pA".as_slice(),
+                Action::RequestMode {
+                    mode: modes::Mode::Wraparound,
+                },
+            ),
+            (
+                b"\x1b[?2004$pA".as_slice(),
+                Action::RequestMode {
+                    mode: modes::Mode::BracketedPaste,
+                },
+            ),
+            (
+                b"\x1b[?9999$pA".as_slice(),
+                Action::RequestModeUnknown {
+                    value: 9999,
+                    ansi: false,
+                },
+            ),
+            (
+                b"\x1b[?0$pA".as_slice(),
+                Action::RequestModeUnknown {
+                    value: 0,
+                    ansi: false,
+                },
+            ),
+        ] {
+            let mut stream = Stream::init();
+            let mut handler = RecordingHandler::default();
+
+            next_slice(&mut stream, &mut handler, input);
+
+            assert_eq!(actions(&handler), &[expected, Action::Print { cp: 'A' }]);
+        }
+    }
+
+    #[test]
+    fn stream_csi_mode_request_rejects_malformed_forms_without_leaking_final_byte() {
+        for input in [
+            b"\x1b[?$pA".as_slice(),
+            b"\x1b[?7;8$pA".as_slice(),
+            b"\x1b[?7;$pA".as_slice(),
+            b"\x1b[?7pA".as_slice(),
+            b"\x1b[4$pA".as_slice(),
+            b"\x1b[>7$pA".as_slice(),
+            b"\x1b[?7:8$pA".as_slice(),
+            b"\x1b[?7$$pA".as_slice(),
+        ] {
+            let mut stream = Stream::init();
+            let mut handler = RecordingHandler::default();
+
+            next_slice(&mut stream, &mut handler, input);
+
+            assert_eq!(actions(&handler), &[Action::Print { cp: 'A' }]);
+        }
+    }
+
+    #[test]
+    fn stream_csi_dollar_intermediate_does_not_enable_existing_command_families() {
+        for input in [
+            b"\x1b[4$hA".as_slice(),
+            b"\x1b[?7$hA".as_slice(),
+            b"\x1b[3$AA".as_slice(),
+            b"\x1b[2$JA".as_slice(),
+            b"\x1b[2$KA".as_slice(),
+            b"\x1b[0$WA".as_slice(),
+        ] {
+            let mut stream = Stream::init();
+            let mut handler = RecordingHandler::default();
+
+            next_slice(&mut stream, &mut handler, input);
+
+            assert_eq!(actions(&handler), &[Action::Print { cp: 'A' }]);
+        }
+    }
+
+    #[test]
+    fn stream_csi_mode_request_split_feed_dispatches() {
+        for parts in [
+            [b"\x1b[?7".as_slice(), b"$pA".as_slice()],
+            [b"\x1b[?7$".as_slice(), b"pA".as_slice()],
+        ] {
+            let mut stream = Stream::init();
+            let mut handler = RecordingHandler::default();
+
+            next_slice(&mut stream, &mut handler, parts[0]);
+            next_slice(&mut stream, &mut handler, parts[1]);
+
+            assert_eq!(
+                actions(&handler),
+                &[
+                    Action::RequestMode {
+                        mode: modes::Mode::Wraparound,
+                    },
+                    Action::Print { cp: 'A' },
+                ]
+            );
+        }
+    }
+
+    #[test]
+    fn stream_csi_mode_request_flushes_pending_invalid_utf8_first() {
+        let mut stream = Stream::init();
+        let mut handler = RecordingHandler::default();
+
+        next_slice(&mut stream, &mut handler, b"\xf0");
+        next_slice(&mut stream, &mut handler, b"\x1b[?7$pA");
+
+        assert_eq!(
+            actions(&handler),
+            &[
+                Action::Print {
+                    cp: char::REPLACEMENT_CHARACTER,
+                },
+                Action::RequestMode {
+                    mode: modes::Mode::Wraparound,
+                },
+                Action::Print { cp: 'A' },
+            ]
+        );
     }
 
     #[test]
@@ -4602,6 +4769,27 @@ mod tests {
     }
 
     #[test]
+    fn stream_raw_c1_csi_byte_does_not_dispatch_mode_request_action() {
+        let mut stream = Stream::init();
+        let mut handler = RecordingHandler::default();
+
+        next_slice(&mut stream, &mut handler, &[0x9b, b'?', b'7', b'$', b'p']);
+
+        assert_eq!(
+            actions(&handler),
+            &[
+                Action::Print {
+                    cp: char::REPLACEMENT_CHARACTER,
+                },
+                Action::Print { cp: '?' },
+                Action::Print { cp: '7' },
+                Action::Print { cp: '$' },
+                Action::Print { cp: 'p' },
+            ]
+        );
+    }
+
+    #[test]
     fn stream_raw_c1_csi_byte_does_not_dispatch_erase_display_action() {
         let mut stream = Stream::init();
         let mut handler = RecordingHandler::default();
@@ -5012,7 +5200,9 @@ mod tests {
                 | Action::SetMode { .. }
                 | Action::ResetMode { .. }
                 | Action::SaveMode { .. }
-                | Action::RestoreMode { .. } => unreachable!("loop only uses D/E actions"),
+                | Action::RestoreMode { .. }
+                | Action::RequestMode { .. }
+                | Action::RequestModeUnknown { .. } => unreachable!("loop only uses D/E actions"),
             };
 
             assert_eq!(stream.next_slice(input, &mut handler), Err(()));
@@ -5290,6 +5480,19 @@ mod tests {
                 &[expected_first, fail, Action::Print { cp: 'A' }]
             );
         }
+    }
+
+    #[test]
+    fn stream_csi_mode_request_restores_ground_before_handler_error() {
+        let mut stream = Stream::init();
+        let mut handler = ErrorOnActionHandler::new(Action::RequestMode {
+            mode: modes::Mode::Wraparound,
+        });
+
+        assert_eq!(stream.next_slice(b"\x1b[?7$p", &mut handler), Err(()));
+        stream.next_slice(b"A", &mut handler).unwrap();
+
+        assert_eq!(handler.actions, &[Action::Print { cp: 'A' }]);
     }
 
     #[test]
