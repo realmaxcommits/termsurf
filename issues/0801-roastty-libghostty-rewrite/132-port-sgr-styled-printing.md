@@ -313,3 +313,107 @@ Codex re-reviewed the updated design and found no blocking design issues:
 `logs/codex-review/20260601-073346-701630-last-message.md`.
 
 The design is approved for implementation.
+
+## Result
+
+**Result:** Pass
+
+Experiment 132 implemented end-to-end SGR and styled ASCII printing for the
+current Roastty terminal core.
+
+The implementation added:
+
+- SGR separator metadata that distinguishes no separator, semicolon, and colon
+  for finalized CSI params;
+- an internal SGR parser in `roastty/src/terminal/sgr.rs`;
+- stream dispatch for `CSI ... m` as ordered `SetAttribute` actions;
+- screen execution that mutates only the active cursor style;
+- style-aware active-cell printing through page storage;
+- ref-count-safe styled overwrite and default-style overwrite behavior;
+- formatter-visible VT and HTML output for styled cells.
+
+The parser now handles:
+
+- empty `CSI m` and explicit `CSI 0 m` reset;
+- basic flags and resets, including `22` clearing bold and faint;
+- underline styles, including `21` as double underline and `24` as underline
+  reset only;
+- 8-color, bright 8-color, 256-color, and direct RGB foreground/background;
+- direct RGB and 256-color underline color plus underline color reset;
+- semicolon RGB forms such as `38;2;1;2;3`;
+- colon RGB forms with optional color-space value such as `38:2:1:2:3` and
+  `38:2:0:1:2:3`;
+- Kakoune-style long SGR sequences with underline color late in the parameter
+  list;
+- malformed colon forms such as `58:4:` without leaking the final `m`.
+
+The finalized-param model does not materialize a trailing empty parameter for
+`CSI 1;m`, so Roastty applies only bold for that form. It does materialize the
+middle empty parameter in `CSI 1;;31m`, so that sequence applies bold, reset,
+then red foreground. Both behaviors are pinned by tests.
+
+Non-SGR CSI families continue to reject colon-separated params unless they
+already support a different exact form. Private or intermediate SGR forms such
+as `CSI ? 1 m` and `CSI 1 $ m` dispatch no action and do not leak visible text.
+
+Styled printing stores non-default cursor styles as page-owned style ids. When
+overwriting a styled cell:
+
+- the new non-default style is acquired before the destination cell is mutated;
+- the destination cell is replaced only after the new style id is available;
+- the old style ref is released after replacement succeeds;
+- default-style overwrite releases the old style ref, restores
+  `style::DEFAULT_ID`, and clears `row.styled` when the row has no remaining
+  styled cells;
+- no extra `use_style` call is made after `Page::add_style`, avoiding accidental
+  double refs.
+
+Styled-cell overwrite is now supported, but other managed print states remain
+unsupported for this experiment: graphemes, hyperlinks, wide cells, protected
+cells, non-output semantic cells, and non-codepoint content. Those paths still
+return the existing private `ManagedCellUnsupported` error rather than
+corrupting page state.
+
+There is no current terminal print-path failure-injection hook for
+`Page::add_style`, so this experiment could not simulate a style-add allocation
+failure directly through `Terminal::next_slice`. The implementation still uses
+the required mutation ordering, maps style-add failure to private `PageAlloc`,
+and covers the non-failure ownership path with direct style ref-count assertions
+plus full page-list integrity verification.
+
+## Verification
+
+Ran `cargo fmt`.
+
+Ran the focused verification commands:
+
+- `cargo test -p roastty terminal::sgr` — 6 tests passed.
+- `cargo test -p roastty stream_csi_sgr` — 7 tests passed.
+- `cargo test -p roastty terminal_stream_sgr` — 5 tests passed.
+- `cargo test -p roastty terminal_formatter` — 67 tests passed.
+- `cargo test -p roastty terminal::page` — 708 tests passed.
+- `cargo test -p roastty terminal::page_list` — 539 tests passed.
+- `cargo test -p roastty terminal::terminal` — 327 tests passed.
+- `cargo test -p roastty stream` — 515 tests passed.
+
+Ran full verification:
+
+- `cargo test -p roastty` — 1443 unit tests passed.
+- ABI harness — passed.
+- Doc tests — 0 tests, passed.
+
+Codex reviewed the implementation result and found no issues:
+`logs/codex-review/20260601-075231-657383-last-message.md`.
+
+Codex specifically approved recording the experiment as Pass.
+
+## Conclusion
+
+Roastty now has the first complete styled-printing path: SGR attributes parse
+from CSI, mutate cursor style, write styled ASCII cells into page storage, and
+round-trip through existing VT and HTML formatters. This connects the style
+storage and formatter work from earlier experiments to live terminal input.
+
+The next experiment can build on this by expanding terminal escape coverage
+above the now-working styled print foundation, likely toward OSC parsing/action
+dispatch or another coherent parser/execution subsystem slice.

@@ -1,6 +1,6 @@
 //! Terminal byte stream decoding.
 
-use super::modes;
+use super::{modes, sgr};
 
 const CSI_PARAM_CAPACITY: usize = 24;
 
@@ -97,6 +97,9 @@ pub(super) enum Action {
         value: u16,
         ansi: bool,
     },
+    SetAttribute {
+        attr: sgr::Attribute,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -153,18 +156,18 @@ struct CsiState {
     private: Option<u8>,
     intermediate: Option<u8>,
     params: [u16; CSI_PARAM_CAPACITY],
+    param_separators: [sgr::Separator; CSI_PARAM_CAPACITY],
     params_len: u8,
     param_acc: u16,
     param_has_digits: bool,
-    separator_seen: bool,
     invalid: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct CsiParams {
     values: [u16; CSI_PARAM_CAPACITY],
+    separators: [sgr::Separator; CSI_PARAM_CAPACITY],
     len: u8,
-    separator_seen: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -305,10 +308,10 @@ impl CsiState {
             private: None,
             intermediate: None,
             params: [0; CSI_PARAM_CAPACITY],
+            param_separators: [sgr::Separator::None; CSI_PARAM_CAPACITY],
             params_len: 0,
             param_acc: 0,
             param_has_digits: false,
-            separator_seen: false,
             invalid: false,
         }
     }
@@ -326,13 +329,13 @@ impl CsiState {
             b'?' if self.private.is_none()
                 && self.params_len == 0
                 && !self.param_has_digits
-                && !self.separator_seen =>
+                && !self.separator_seen() =>
             {
                 self.private = Some(byte);
             }
             b'$' => self.intermediate = Some(byte),
-            b';' => self.push_param_separator(),
-            b':' => self.invalid = true,
+            b';' => self.push_param_separator(sgr::Separator::Semicolon),
+            b':' => self.push_param_separator(sgr::Separator::Colon),
             b'0'..=b'9' => {
                 let digit = u16::from(byte - b'0');
                 self.param_acc = self.param_acc.saturating_mul(10).saturating_add(digit);
@@ -342,17 +345,24 @@ impl CsiState {
         }
     }
 
-    fn push_param_separator(&mut self) {
+    fn push_param_separator(&mut self, separator: sgr::Separator) {
         if usize::from(self.params_len) >= self.params.len() {
             self.invalid = true;
             return;
         }
 
-        self.params[usize::from(self.params_len)] = self.param_acc;
+        let index = usize::from(self.params_len);
+        self.params[index] = self.param_acc;
+        self.param_separators[index] = separator;
         self.params_len += 1;
         self.param_acc = 0;
         self.param_has_digits = false;
-        self.separator_seen = true;
+    }
+
+    fn separator_seen(&self) -> bool {
+        self.param_separators[..usize::from(self.params_len)]
+            .iter()
+            .any(|separator| *separator != sgr::Separator::None)
     }
 
     fn dispatch(&self, final_byte: u8) -> CsiDispatch {
@@ -434,6 +444,10 @@ impl CsiState {
             return dispatch;
         }
 
+        if let Some(dispatch) = self.sgr_dispatch(final_byte) {
+            return dispatch;
+        }
+
         if final_byte == b'W' {
             return self
                 .tab_action()
@@ -456,6 +470,7 @@ impl CsiState {
         }
 
         let mut values = self.params;
+        let separators = self.param_separators;
         let mut len = self.params_len;
         if self.param_has_digits {
             if usize::from(len) >= values.len() {
@@ -467,8 +482,8 @@ impl CsiState {
 
         Some(CsiParams {
             values,
+            separators,
             len,
-            separator_seen: self.separator_seen,
         })
     }
 
@@ -478,7 +493,7 @@ impl CsiState {
         }
 
         let params = self.finalized_params()?;
-        if params.len > 1 || (!allow_separator && params.separator_seen) {
+        if params.len > 1 || params.colon_seen() || (!allow_separator && params.separator_seen()) {
             return None;
         }
 
@@ -523,6 +538,9 @@ impl CsiState {
         }
 
         let params = self.finalized_params()?;
+        if params.colon_seen() {
+            return None;
+        }
         let (row, col) = match params.len {
             0 => (1, 1),
             1 => (params.values[0], 1),
@@ -563,6 +581,9 @@ impl CsiState {
             Some(_) => return None,
         };
         let params = self.finalized_params()?;
+        if params.colon_seen() {
+            return None;
+        }
         if params.len > 1 {
             return None;
         }
@@ -591,6 +612,9 @@ impl CsiState {
             Some(_) => return None,
         };
         let params = self.finalized_params()?;
+        if params.colon_seen() {
+            return None;
+        }
         if params.len > 1 {
             return None;
         }
@@ -686,7 +710,7 @@ impl CsiState {
 
     fn tab_action(&self) -> Option<Action> {
         let params = self.finalized_params()?;
-        if params.separator_seen || params.len > 1 {
+        if params.separator_seen() || params.len > 1 {
             return None;
         }
 
@@ -712,6 +736,9 @@ impl CsiState {
             Some(_) => return None,
         };
         let params = self.finalized_params()?;
+        if params.colon_seen() {
+            return None;
+        }
         let mut actions = CsiActionList::new();
 
         for param in params.values[..usize::from(params.len)].iter().copied() {
@@ -743,6 +770,9 @@ impl CsiState {
         }
 
         let params = self.finalized_params()?;
+        if params.colon_seen() {
+            return None;
+        }
         let mut actions = CsiActionList::new();
 
         for param in params.values[..usize::from(params.len)].iter().copied() {
@@ -769,7 +799,7 @@ impl CsiState {
         }
 
         let params = self.finalized_params()?;
-        if params.len != 1 || params.separator_seen {
+        if params.len != 1 || params.separator_seen() {
             return None;
         }
 
@@ -781,6 +811,43 @@ impl CsiState {
         };
 
         Some(CsiDispatch::One(action))
+    }
+
+    fn sgr_dispatch(&self, final_byte: u8) -> Option<CsiDispatch> {
+        if final_byte != b'm' || self.private.is_some() || self.intermediate.is_some() {
+            return None;
+        }
+
+        let params = self.finalized_params()?;
+        let len = usize::from(params.len);
+        let mut parser = sgr::Parser::new(&params.values[..len], &params.separators[..len]);
+        let mut actions = CsiActionList::new();
+
+        while let Some(attr) = parser.next() {
+            if attr != sgr::Attribute::Unknown {
+                actions.push(Action::SetAttribute { attr });
+            }
+        }
+
+        Some(if actions.is_empty() {
+            CsiDispatch::None
+        } else {
+            CsiDispatch::Many(actions)
+        })
+    }
+}
+
+impl CsiParams {
+    fn separator_seen(&self) -> bool {
+        self.separators[..usize::from(self.len)]
+            .iter()
+            .any(|separator| *separator != sgr::Separator::None)
+    }
+
+    fn colon_seen(&self) -> bool {
+        self.separators[..usize::from(self.len)]
+            .iter()
+            .any(|separator| *separator == sgr::Separator::Colon)
     }
 }
 
@@ -918,6 +985,7 @@ impl Utf8Decoder {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::terminal::color;
 
     #[derive(Debug, Default)]
     struct RecordingHandler {
@@ -972,7 +1040,8 @@ mod tests {
                 | Action::SaveMode { .. }
                 | Action::RestoreMode { .. }
                 | Action::RequestMode { .. }
-                | Action::RequestModeUnknown { .. } => None,
+                | Action::RequestModeUnknown { .. }
+                | Action::SetAttribute { .. } => None,
             })
             .collect()
     }
@@ -1644,6 +1713,212 @@ mod tests {
 
             assert_eq!(actions(&handler), &[Action::Print { cp: 'A' }]);
         }
+    }
+
+    #[test]
+    fn stream_csi_sgr_dispatches_basic_and_color_attributes() {
+        let mut stream = Stream::init();
+        let mut handler = RecordingHandler::default();
+
+        next_slice(
+            &mut stream,
+            &mut handler,
+            b"\x1b[mA\x1b[1;3;31;44mB\x1b[38;2;1;2;3mC\x1b[58;2;4;5;6mD",
+        );
+
+        assert_eq!(
+            actions(&handler),
+            &[
+                Action::SetAttribute {
+                    attr: sgr::Attribute::Unset,
+                },
+                Action::Print { cp: 'A' },
+                Action::SetAttribute {
+                    attr: sgr::Attribute::Bold,
+                },
+                Action::SetAttribute {
+                    attr: sgr::Attribute::Italic,
+                },
+                Action::SetAttribute {
+                    attr: sgr::Attribute::PaletteFg(1),
+                },
+                Action::SetAttribute {
+                    attr: sgr::Attribute::PaletteBg(4),
+                },
+                Action::Print { cp: 'B' },
+                Action::SetAttribute {
+                    attr: sgr::Attribute::DirectColorFg(color::Rgb::new(1, 2, 3)),
+                },
+                Action::Print { cp: 'C' },
+                Action::SetAttribute {
+                    attr: sgr::Attribute::UnderlineColor(color::Rgb::new(4, 5, 6)),
+                },
+                Action::Print { cp: 'D' },
+            ]
+        );
+    }
+
+    #[test]
+    fn stream_csi_sgr_dispatches_colon_forms() {
+        let mut stream = Stream::init();
+        let mut handler = RecordingHandler::default();
+
+        next_slice(
+            &mut stream,
+            &mut handler,
+            b"\x1b[4:3mA\x1b[38:2:0:1:2:3mB\x1b[58:2:0:4:5:6mC",
+        );
+
+        assert_eq!(
+            actions(&handler),
+            &[
+                Action::SetAttribute {
+                    attr: sgr::Attribute::Underline(sgr::Underline::Curly),
+                },
+                Action::Print { cp: 'A' },
+                Action::SetAttribute {
+                    attr: sgr::Attribute::DirectColorFg(color::Rgb::new(1, 2, 3)),
+                },
+                Action::Print { cp: 'B' },
+                Action::SetAttribute {
+                    attr: sgr::Attribute::UnderlineColor(color::Rgb::new(4, 5, 6)),
+                },
+                Action::Print { cp: 'C' },
+            ]
+        );
+    }
+
+    #[test]
+    fn stream_csi_sgr_pins_empty_trailing_and_malformed_forms() {
+        for (input, expected) in [
+            (
+                b"\x1b[;mA".as_slice(),
+                vec![
+                    Action::SetAttribute {
+                        attr: sgr::Attribute::Unset,
+                    },
+                    Action::Print { cp: 'A' },
+                ],
+            ),
+            (
+                b"\x1b[1;mA".as_slice(),
+                vec![
+                    Action::SetAttribute {
+                        attr: sgr::Attribute::Bold,
+                    },
+                    Action::Print { cp: 'A' },
+                ],
+            ),
+            (
+                b"\x1b[1;;31mA".as_slice(),
+                vec![
+                    Action::SetAttribute {
+                        attr: sgr::Attribute::Bold,
+                    },
+                    Action::SetAttribute {
+                        attr: sgr::Attribute::Unset,
+                    },
+                    Action::SetAttribute {
+                        attr: sgr::Attribute::PaletteFg(1),
+                    },
+                    Action::Print { cp: 'A' },
+                ],
+            ),
+            (b"\x1b[58:4:mA".as_slice(), vec![Action::Print { cp: 'A' }]),
+        ] {
+            let mut stream = Stream::init();
+            let mut handler = RecordingHandler::default();
+
+            next_slice(&mut stream, &mut handler, input);
+
+            assert_eq!(actions(&handler), expected.as_slice());
+        }
+    }
+
+    #[test]
+    fn stream_csi_sgr_dispatches_kakoune_long_underline_color_sequence() {
+        let mut stream = Stream::init();
+        let mut handler = RecordingHandler::default();
+
+        next_slice(
+            &mut stream,
+            &mut handler,
+            b"\x1b[4:3;38;2;51;51;51;48;2;170;170;170;58;2;255;97;136;0mA",
+        );
+
+        assert_eq!(
+            actions(&handler),
+            &[
+                Action::SetAttribute {
+                    attr: sgr::Attribute::Underline(sgr::Underline::Curly),
+                },
+                Action::SetAttribute {
+                    attr: sgr::Attribute::DirectColorFg(color::Rgb::new(51, 51, 51)),
+                },
+                Action::SetAttribute {
+                    attr: sgr::Attribute::DirectColorBg(color::Rgb::new(170, 170, 170)),
+                },
+                Action::SetAttribute {
+                    attr: sgr::Attribute::UnderlineColor(color::Rgb::new(255, 97, 136)),
+                },
+                Action::SetAttribute {
+                    attr: sgr::Attribute::Unset,
+                },
+                Action::Print { cp: 'A' },
+            ]
+        );
+    }
+
+    #[test]
+    fn stream_csi_sgr_rejects_private_intermediate_and_preserves_colon_rejections() {
+        for input in [
+            b"\x1b[?1mA".as_slice(),
+            b"\x1b[1$mA".as_slice(),
+            b"\x1b[3:4AA".as_slice(),
+            b"\x1b[2:3JA".as_slice(),
+            b"\x1b[4:20hA".as_slice(),
+            b"\x1b[?7:2004$pA".as_slice(),
+        ] {
+            let mut stream = Stream::init();
+            let mut handler = RecordingHandler::default();
+
+            next_slice(&mut stream, &mut handler, input);
+
+            assert_eq!(actions(&handler), &[Action::Print { cp: 'A' }]);
+        }
+    }
+
+    #[test]
+    fn stream_csi_sgr_split_feed_dispatches() {
+        let mut stream = Stream::init();
+        let mut handler = RecordingHandler::default();
+
+        next_slice(&mut stream, &mut handler, b"\x1b[38:2:");
+        next_slice(&mut stream, &mut handler, b"0:1:2:3");
+        next_slice(&mut stream, &mut handler, b"mA");
+
+        assert_eq!(
+            actions(&handler),
+            &[
+                Action::SetAttribute {
+                    attr: sgr::Attribute::DirectColorFg(color::Rgb::new(1, 2, 3)),
+                },
+                Action::Print { cp: 'A' },
+            ]
+        );
+    }
+
+    #[test]
+    fn stream_csi_sgr_restores_ground_before_handler_error() {
+        let mut stream = Stream::init();
+        let mut handler = ErrorOnActionHandler::new(Action::SetAttribute {
+            attr: sgr::Attribute::Bold,
+        });
+
+        assert_eq!(stream.next_slice(b"\x1b[1m", &mut handler), Err(()));
+        stream.next_slice(b"A", &mut handler).unwrap();
+
+        assert_eq!(handler.actions, &[Action::Print { cp: 'A' }]);
     }
 
     #[test]
@@ -5202,7 +5477,8 @@ mod tests {
                 | Action::SaveMode { .. }
                 | Action::RestoreMode { .. }
                 | Action::RequestMode { .. }
-                | Action::RequestModeUnknown { .. } => unreachable!("loop only uses D/E actions"),
+                | Action::RequestModeUnknown { .. }
+                | Action::SetAttribute { .. } => unreachable!("loop only uses D/E actions"),
             };
 
             assert_eq!(stream.next_slice(input, &mut handler), Err(()));

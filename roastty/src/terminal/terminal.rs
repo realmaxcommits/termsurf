@@ -11,6 +11,8 @@ use super::screen::{
 };
 use super::size::CellCountInt;
 use super::stream::{self, Action, Handler};
+#[cfg(test)]
+use super::style;
 use super::tabstops;
 
 const TABSTOP_INTERVAL: usize = 8;
@@ -328,6 +330,37 @@ impl Terminal {
     pub(super) fn full_screen_plain_for_tests(&self, unwrap: bool) -> String {
         self.screens.active.full_screen_plain_for_tests(unwrap)
     }
+
+    #[cfg(test)]
+    pub(super) fn cursor_style_for_tests(&self) -> style::Style {
+        self.screens.active.cursor_style_for_tests()
+    }
+
+    #[cfg(test)]
+    pub(super) fn active_cell_style_for_tests(&self, x: CellCountInt, y: u32) -> style::Style {
+        self.screens.active.active_cell_style_for_tests(x, y)
+    }
+
+    #[cfg(test)]
+    pub(super) fn active_cell_style_ref_count_for_tests(
+        &self,
+        x: CellCountInt,
+        y: u32,
+    ) -> style::Id {
+        self.screens
+            .active
+            .active_cell_style_ref_count_for_tests(x, y)
+    }
+
+    #[cfg(test)]
+    pub(super) fn active_row_styled_for_tests(&self, y: u32) -> bool {
+        self.screens.active.active_row_styled_for_tests(y)
+    }
+
+    #[cfg(test)]
+    pub(super) fn verify_integrity_for_tests(&self) {
+        self.screens.active.verify_integrity_for_tests();
+    }
 }
 
 impl Handler for TerminalStreamHandler<'_> {
@@ -519,6 +552,10 @@ impl Handler for TerminalStreamHandler<'_> {
             Action::RequestModeUnknown { value, ansi } => {
                 let report = self.modes.get_report(modes::ModeTag::new(value, ansi));
                 self.write_pty_response(&report.encode_vt());
+                Ok(())
+            }
+            Action::SetAttribute { attr } => {
+                self.screen.set_attribute_basic(attr);
                 Ok(())
             }
         }
@@ -1646,6 +1683,163 @@ mod tests {
         assert!(!terminal.is_dirty_for_tests(9, 0));
         assert!(!terminal.is_dirty_for_tests(0, 1));
         assert_eq!(terminal.pty_response_for_tests(), b"\x1b[?7;1$y");
+    }
+
+    #[test]
+    fn terminal_stream_sgr_mutates_cursor_style_without_visible_output() {
+        let mut terminal = Terminal::init(10, 2, None).unwrap();
+
+        terminal.next_slice(b"ab").unwrap();
+        terminal.clear_dirty_for_tests();
+        terminal.next_slice(b"\x1b[1;3;31m").unwrap();
+
+        assert_eq!(plain_with_unwrap(&terminal, false), "ab");
+        assert_eq!(terminal.cursor_position_for_tests(), (2, 0));
+        assert!(!terminal.is_dirty_for_tests(0, 0));
+        assert!(terminal.pty_response_for_tests().is_empty());
+        assert_eq!(
+            terminal.cursor_style_for_tests(),
+            style::Style {
+                fg_color: style::Color::Palette(1),
+                flags: style::Flags {
+                    bold: true,
+                    italic: true,
+                    ..style::Flags::default()
+                },
+                ..style::Style::default()
+            }
+        );
+    }
+
+    #[test]
+    fn terminal_stream_sgr_prints_styled_cells_and_resets() {
+        let mut terminal = Terminal::init(10, 2, None).unwrap();
+
+        terminal.next_slice(b"\x1b[1;31mA\x1b[0mB").unwrap();
+
+        let styled = style::Style {
+            fg_color: style::Color::Palette(1),
+            flags: style::Flags {
+                bold: true,
+                ..style::Flags::default()
+            },
+            ..style::Style::default()
+        };
+        assert_eq!(plain_with_unwrap(&terminal, false), "AB");
+        assert_eq!(terminal.active_cell_style_for_tests(0, 0), styled);
+        assert_eq!(terminal.active_cell_style_ref_count_for_tests(0, 0), 1);
+        assert_eq!(
+            terminal.active_cell_style_for_tests(1, 0),
+            style::Style::default()
+        );
+        terminal.verify_integrity_for_tests();
+
+        let vt = formatter(&terminal, PageOutputFormat::Vt).format();
+        assert_eq!(vt, "\x1b[0m\x1b[1m\x1b[38;5;1mA\x1b[0mB");
+        let html = formatter(&terminal, PageOutputFormat::Html).format();
+        assert!(html.contains("font-weight: bold;"));
+        assert!(html.contains("color: var(--vt-palette-1);"));
+    }
+
+    #[test]
+    fn terminal_stream_sgr_overwrites_styled_cells_with_correct_refs() {
+        let mut terminal = Terminal::init(2, 1, None).unwrap();
+
+        terminal.next_slice(b"\x1b[31mA").unwrap();
+        assert_eq!(terminal.active_cell_style_ref_count_for_tests(0, 0), 1);
+        terminal.screens.active.set_cursor_position_for_tests(0, 0);
+        terminal.next_slice(b"\x1b[32mB").unwrap();
+
+        assert_eq!(
+            terminal.active_cell_style_for_tests(0, 0),
+            style::Style {
+                fg_color: style::Color::Palette(2),
+                ..style::Style::default()
+            }
+        );
+        assert_eq!(terminal.active_cell_style_ref_count_for_tests(0, 0), 1);
+        terminal.verify_integrity_for_tests();
+
+        terminal.screens.active.set_cursor_position_for_tests(0, 0);
+        terminal.next_slice(b"\x1b[0mC").unwrap();
+
+        assert_eq!(
+            terminal.active_cell_style_for_tests(0, 0),
+            style::Style::default()
+        );
+        assert_eq!(terminal.active_cell_style_ref_count_for_tests(0, 0), 0);
+        assert!(!terminal.active_row_styled_for_tests(0));
+        terminal.verify_integrity_for_tests();
+    }
+
+    #[test]
+    fn terminal_stream_sgr_styled_printing_keeps_insert_and_wrap_behavior() {
+        let mut terminal = Terminal::init(3, 2, None).unwrap();
+
+        terminal.next_slice(b"AC").unwrap();
+        terminal.screens.active.set_cursor_position_for_tests(1, 0);
+        terminal.next_slice(b"\x1b[4h\x1b[31mB").unwrap();
+
+        assert_eq!(plain_with_unwrap(&terminal, false), "ABC");
+        assert_eq!(
+            terminal.active_cell_style_for_tests(1, 0),
+            style::Style {
+                fg_color: style::Color::Palette(1),
+                ..style::Style::default()
+            }
+        );
+
+        terminal.screens.active.set_cursor_position_for_tests(2, 0);
+        terminal.next_slice(b"X").unwrap();
+        assert!(terminal.cursor_pending_wrap_for_tests());
+        terminal.next_slice(b"Y").unwrap();
+
+        assert_eq!(terminal.cursor_position_for_tests(), (1, 1));
+        assert_eq!(
+            terminal.active_cell_style_for_tests(2, 0),
+            style::Style {
+                fg_color: style::Color::Palette(1),
+                ..style::Style::default()
+            }
+        );
+        assert_eq!(
+            terminal.active_cell_style_for_tests(0, 1),
+            style::Style {
+                fg_color: style::Color::Palette(1),
+                ..style::Style::default()
+            }
+        );
+        terminal.verify_integrity_for_tests();
+    }
+
+    #[test]
+    fn terminal_stream_sgr_pending_wrap_overwrites_styled_target_cell() {
+        let mut terminal = Terminal::init(3, 2, None).unwrap();
+
+        terminal.screens.active.set_cursor_position_for_tests(0, 1);
+        terminal.next_slice(b"\x1b[32mG").unwrap();
+        assert_eq!(
+            terminal.active_cell_style_for_tests(0, 1),
+            style::Style {
+                fg_color: style::Color::Palette(2),
+                ..style::Style::default()
+            }
+        );
+
+        terminal.screens.active.set_cursor_position_for_tests(2, 0);
+        terminal.next_slice(b"\x1b[31mX").unwrap();
+        assert!(terminal.cursor_pending_wrap_for_tests());
+        terminal.next_slice(b"Y").unwrap();
+
+        let red = style::Style {
+            fg_color: style::Color::Palette(1),
+            ..style::Style::default()
+        };
+        assert_eq!(terminal.cursor_position_for_tests(), (1, 1));
+        assert_eq!(terminal.active_cell_style_for_tests(2, 0), red);
+        assert_eq!(terminal.active_cell_style_for_tests(0, 1), red);
+        assert_eq!(terminal.active_cell_style_ref_count_for_tests(0, 1), 2);
+        terminal.verify_integrity_for_tests();
     }
 
     #[test]
@@ -5004,16 +5198,11 @@ mod tests {
     fn terminal_stream_pending_wrap_managed_destination_errors_without_mutating() {
         let mut terminal = Terminal::init(5, 3, None).unwrap();
 
+        terminal.screens.active.set_cursor_position_for_tests(0, 1);
+        terminal.next_slice(b"x").unwrap();
+        terminal.set_cell_protected_for_tests(0, 1, true);
+        terminal.screens.active.set_cursor_position_for_tests(0, 0);
         terminal.next_slice(b"hello").unwrap();
-        terminal.screens.active.set_styled_cell_for_tests(
-            0,
-            1,
-            'x',
-            style::Style {
-                fg_color: style::Color::Palette(1),
-                ..style::Style::default()
-            },
-        );
         terminal.clear_dirty_for_tests();
 
         assert_eq!(
@@ -5045,15 +5234,9 @@ mod tests {
     #[test]
     fn terminal_stream_managed_cell_overwrite_returns_private_error() {
         let mut terminal = Terminal::init(10, 2, None).unwrap();
-        terminal.screens.active.set_styled_cell_for_tests(
-            0,
-            0,
-            'x',
-            style::Style {
-                fg_color: style::Color::Palette(1),
-                ..style::Style::default()
-            },
-        );
+        terminal.next_slice(b"x").unwrap();
+        terminal.screens.active.set_cursor_position_for_tests(0, 0);
+        terminal.set_cell_protected_for_tests(0, 0, true);
 
         assert_eq!(
             terminal.next_slice(b"A"),

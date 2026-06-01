@@ -413,6 +413,12 @@ pub(super) enum BasicCellWriteError {
     ManagedCell,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum StyledCellWriteError {
+    PageAlloc,
+    Cell(BasicCellWriteError),
+}
+
 impl From<PageAllocError> for CloneRegionError {
     fn from(_: PageAllocError) -> Self {
         Self::PageAlloc
@@ -516,6 +522,15 @@ fn cell_has_managed_print_state(cell: Cell) -> bool {
     !matches!(cell.content_tag(), ContentTag::Codepoint)
         || cell.has_grapheme()
         || cell.has_styling()
+        || cell.hyperlink()
+        || !matches!(cell.wide(), Wide::Narrow)
+        || cell.protected()
+        || !matches!(cell.semantic_content(), SemanticContent::Output)
+}
+
+fn cell_has_unsupported_styled_print_state(cell: Cell) -> bool {
+    !matches!(cell.content_tag(), ContentTag::Codepoint)
+        || cell.has_grapheme()
         || cell.hyperlink()
         || !matches!(cell.wide(), Wide::Narrow)
         || cell.protected()
@@ -3826,6 +3841,72 @@ impl PageList {
         Ok(())
     }
 
+    pub(super) fn write_active_cell(
+        &mut self,
+        x: CellCountInt,
+        y: u32,
+        codepoint: char,
+        cell_style: style::Style,
+    ) -> Result<(), StyledCellWriteError> {
+        if cell_style.is_default() && self.check_basic_active_cell(x, y).is_ok() {
+            return self
+                .write_basic_active_cell(x, y, codepoint)
+                .map_err(StyledCellWriteError::Cell);
+        }
+
+        let point = point::Point::active(point::Coordinate::new(x, y));
+        let pin = self.pin(point).ok_or(StyledCellWriteError::Cell(
+            BasicCellWriteError::InvalidPoint,
+        ))?;
+        let index = self.node_index(pin.node).ok_or(StyledCellWriteError::Cell(
+            BasicCellWriteError::InvalidPoint,
+        ))?;
+        let page = &mut self.pages[index].page;
+        let old_cell = *page
+            .get_cells(page.get_row(pin.y as usize))
+            .get(pin.x as usize)
+            .ok_or(StyledCellWriteError::Cell(
+                BasicCellWriteError::InvalidPoint,
+            ))?;
+
+        if cell_has_unsupported_styled_print_state(old_cell) {
+            return Err(StyledCellWriteError::Cell(BasicCellWriteError::ManagedCell));
+        }
+
+        let new_style_id = if cell_style.is_default() {
+            style::DEFAULT_ID
+        } else {
+            page.add_style(cell_style)
+                .map_err(|_| StyledCellWriteError::PageAlloc)?
+        };
+        let old_style_id = old_cell.style_id();
+
+        {
+            let rac = page.get_row_and_cell_mut(pin.x as usize, pin.y as usize);
+            *rac.cell = Cell::init(codepoint as u32);
+            rac.cell.set_style_id(new_style_id);
+            if new_style_id != style::DEFAULT_ID {
+                rac.row.set_styled(true);
+            }
+            rac.row.set_dirty(true);
+        }
+
+        if old_style_id != style::DEFAULT_ID {
+            page.release_style(old_style_id);
+        }
+
+        if new_style_id == style::DEFAULT_ID && old_style_id != style::DEFAULT_ID {
+            let row = page.get_row(pin.y as usize);
+            let styled = page
+                .get_cells(row)
+                .iter()
+                .any(|cell| cell.style_id() != style::DEFAULT_ID);
+            page.get_row_mut(pin.y as usize).set_styled(styled);
+        }
+
+        Ok(())
+    }
+
     pub(super) fn check_basic_active_cell(
         &self,
         x: CellCountInt,
@@ -3849,6 +3930,29 @@ impl PageList {
         Ok(())
     }
 
+    pub(super) fn check_active_cell_for_styled_print(
+        &self,
+        x: CellCountInt,
+        y: u32,
+    ) -> Result<(), BasicCellWriteError> {
+        let point = point::Point::active(point::Coordinate::new(x, y));
+        let pin = self.pin(point).ok_or(BasicCellWriteError::InvalidPoint)?;
+        let node = self
+            .node_for_pin(&pin)
+            .ok_or(BasicCellWriteError::InvalidPoint)?;
+        let row = node.page.get_row(pin.y as usize);
+        let cell = node
+            .page
+            .get_cells(row)
+            .get(pin.x as usize)
+            .ok_or(BasicCellWriteError::InvalidPoint)?;
+        if cell_has_unsupported_styled_print_state(*cell) {
+            return Err(BasicCellWriteError::ManagedCell);
+        }
+
+        Ok(())
+    }
+
     #[cfg(test)]
     pub(super) fn full_screen_plain_for_tests(&self, unwrap: bool) -> String {
         let Some(bottom_right) = self.get_bottom_right(point::Tag::Screen) else {
@@ -3859,6 +3963,65 @@ impl PageList {
             Some(bottom_right),
             unwrap,
         )
+    }
+
+    #[cfg(test)]
+    pub(super) fn active_cell_style_for_tests(&self, x: CellCountInt, y: u32) -> style::Style {
+        let pin = self
+            .pin(point::Point::active(point::Coordinate::new(x, y)))
+            .expect("test active point must resolve to a pin");
+        let node = self.node_for_pin(&pin).expect("test node must exist");
+        let row = node.page.get_row(pin.y as usize);
+        let cell = node
+            .page
+            .get_cells(row)
+            .get(pin.x as usize)
+            .expect("test cell must exist");
+        let style_id = cell.style_id();
+        if style_id == style::DEFAULT_ID {
+            style::Style::default()
+        } else {
+            node.page.get_style(style_id)
+        }
+    }
+
+    #[cfg(test)]
+    pub(super) fn active_cell_style_ref_count_for_tests(
+        &self,
+        x: CellCountInt,
+        y: u32,
+    ) -> style::Id {
+        let pin = self
+            .pin(point::Point::active(point::Coordinate::new(x, y)))
+            .expect("test active point must resolve to a pin");
+        let node = self.node_for_pin(&pin).expect("test node must exist");
+        let row = node.page.get_row(pin.y as usize);
+        let cell = node
+            .page
+            .get_cells(row)
+            .get(pin.x as usize)
+            .expect("test cell must exist");
+        let style_id = cell.style_id();
+        if style_id == style::DEFAULT_ID {
+            0
+        } else {
+            node.page.style_ref_count(style_id)
+        }
+    }
+
+    #[cfg(test)]
+    pub(super) fn active_row_styled_for_tests(&self, y: u32) -> bool {
+        let pin = self
+            .pin(point::Point::active(point::Coordinate::new(0, y)))
+            .expect("test active point must resolve to a pin");
+        let node = self.node_for_pin(&pin).expect("test node must exist");
+        node.page.get_row(pin.y as usize).styled()
+    }
+
+    #[cfg(test)]
+    pub(super) fn verify_integrity_for_tests(&self) {
+        self.verify_integrity()
+            .expect("test page list must be valid");
     }
 
     fn pin_is_dirty(&self, pin: Pin) -> bool {

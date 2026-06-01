@@ -5,10 +5,11 @@ use super::color;
 use super::kitty;
 use super::page_list::{
     BasicCellWriteError, CodepointMapEntry, PageList, PageListAllocError, PageOutputFormat,
-    PageStringWithPinMap,
+    PageStringWithPinMap, StyledCellWriteError,
 };
 use super::point;
 use super::selection;
+use super::sgr;
 use super::size::CellCountInt;
 use super::style;
 use super::tabstops;
@@ -50,6 +51,15 @@ impl From<EraseDisplayError> for BasicPrintError {
         match value {
             EraseDisplayError::PageAlloc => Self::PageAlloc,
             EraseDisplayError::Cell(err) => Self::Cell(err),
+        }
+    }
+}
+
+impl From<StyledCellWriteError> for BasicPrintError {
+    fn from(value: StyledCellWriteError) -> Self {
+        match value {
+            StyledCellWriteError::PageAlloc => Self::PageAlloc,
+            StyledCellWriteError::Cell(err) => Self::Cell(err),
         }
     }
 }
@@ -174,7 +184,7 @@ impl Screen {
                 self.cursor.y = rows - 1;
             } else {
                 self.pages
-                    .check_basic_active_cell(left_margin, (self.cursor.y + 1).into())
+                    .check_active_cell_for_styled_print(left_margin, (self.cursor.y + 1).into())
                     .map_err(BasicPrintError::Cell)?;
                 if mark_wrap {
                     self.pages
@@ -198,8 +208,13 @@ impl Screen {
         }
 
         self.pages
-            .write_basic_active_cell(self.cursor.x, self.cursor.y.into(), codepoint)
-            .map_err(BasicPrintError::Cell)?;
+            .write_active_cell(
+                self.cursor.x,
+                self.cursor.y.into(),
+                codepoint,
+                self.cursor.style,
+            )
+            .map_err(BasicPrintError::from)?;
         if self.cursor.x == right_edge {
             self.cursor.pending_wrap = true;
         } else {
@@ -738,6 +753,59 @@ impl Screen {
         tabstops.unset(usize::from(self.cursor.x));
     }
 
+    pub(super) fn set_attribute_basic(&mut self, attr: sgr::Attribute) {
+        match attr {
+            sgr::Attribute::Unset => self.cursor.style = style::Style::default(),
+            sgr::Attribute::Unknown => {}
+            sgr::Attribute::Bold => self.cursor.style.flags.bold = true,
+            sgr::Attribute::ResetBold => {
+                self.cursor.style.flags.bold = false;
+                self.cursor.style.flags.faint = false;
+            }
+            sgr::Attribute::Faint => self.cursor.style.flags.faint = true,
+            sgr::Attribute::Italic => self.cursor.style.flags.italic = true,
+            sgr::Attribute::ResetItalic => self.cursor.style.flags.italic = false,
+            sgr::Attribute::Underline(underline) => {
+                self.cursor.style.flags.underline = underline;
+            }
+            sgr::Attribute::UnderlineColor(rgb) => {
+                self.cursor.style.underline_color = style::Color::Rgb(rgb);
+            }
+            sgr::Attribute::PaletteUnderlineColor(idx) => {
+                self.cursor.style.underline_color = style::Color::Palette(idx);
+            }
+            sgr::Attribute::ResetUnderlineColor => {
+                self.cursor.style.underline_color = style::Color::None;
+            }
+            sgr::Attribute::Overline => self.cursor.style.flags.overline = true,
+            sgr::Attribute::ResetOverline => self.cursor.style.flags.overline = false,
+            sgr::Attribute::Blink => self.cursor.style.flags.blink = true,
+            sgr::Attribute::ResetBlink => self.cursor.style.flags.blink = false,
+            sgr::Attribute::Inverse => self.cursor.style.flags.inverse = true,
+            sgr::Attribute::ResetInverse => self.cursor.style.flags.inverse = false,
+            sgr::Attribute::Invisible => self.cursor.style.flags.invisible = true,
+            sgr::Attribute::ResetInvisible => self.cursor.style.flags.invisible = false,
+            sgr::Attribute::Strikethrough => self.cursor.style.flags.strikethrough = true,
+            sgr::Attribute::ResetStrikethrough => {
+                self.cursor.style.flags.strikethrough = false;
+            }
+            sgr::Attribute::DirectColorFg(rgb) => {
+                self.cursor.style.fg_color = style::Color::Rgb(rgb);
+            }
+            sgr::Attribute::DirectColorBg(rgb) => {
+                self.cursor.style.bg_color = style::Color::Rgb(rgb);
+            }
+            sgr::Attribute::PaletteFg(idx) => {
+                self.cursor.style.fg_color = style::Color::Palette(idx);
+            }
+            sgr::Attribute::PaletteBg(idx) => {
+                self.cursor.style.bg_color = style::Color::Palette(idx);
+            }
+            sgr::Attribute::ResetFg => self.cursor.style.fg_color = style::Color::None,
+            sgr::Attribute::ResetBg => self.cursor.style.bg_color = style::Color::None,
+        }
+    }
+
     #[cfg(test)]
     pub(super) fn set_cursor_position_for_tests(&mut self, x: CellCountInt, y: CellCountInt) {
         self.cursor.x = x;
@@ -747,6 +815,11 @@ impl Screen {
     #[cfg(test)]
     pub(super) fn set_cursor_style_for_tests(&mut self, style: style::Style) {
         self.cursor.style = style;
+    }
+
+    #[cfg(test)]
+    pub(super) fn cursor_style_for_tests(&self) -> style::Style {
+        self.cursor.style
     }
 
     #[cfg(test)]
@@ -904,6 +977,30 @@ impl Screen {
     #[cfg(test)]
     pub(super) fn full_screen_plain_for_tests(&self, unwrap: bool) -> String {
         self.pages.full_screen_plain_for_tests(unwrap)
+    }
+
+    #[cfg(test)]
+    pub(super) fn active_cell_style_for_tests(&self, x: CellCountInt, y: u32) -> style::Style {
+        self.pages.active_cell_style_for_tests(x, y)
+    }
+
+    #[cfg(test)]
+    pub(super) fn active_cell_style_ref_count_for_tests(
+        &self,
+        x: CellCountInt,
+        y: u32,
+    ) -> style::Id {
+        self.pages.active_cell_style_ref_count_for_tests(x, y)
+    }
+
+    #[cfg(test)]
+    pub(super) fn active_row_styled_for_tests(&self, y: u32) -> bool {
+        self.pages.active_row_styled_for_tests(y)
+    }
+
+    #[cfg(test)]
+    pub(super) fn verify_integrity_for_tests(&self) {
+        self.pages.verify_integrity_for_tests();
     }
 }
 
