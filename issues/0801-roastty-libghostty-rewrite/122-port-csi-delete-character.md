@@ -310,3 +310,82 @@ The experiment fails if:
 - it silently implements incompatible placeholder delete semantics;
 - it adds unrelated insert/delete line, scroll up/down, public API, ABI, or
   non-macOS behavior.
+
+## Result
+
+**Result:** Pass
+
+Roastty now parses and executes the basic `CSI P` / DCH delete-character
+command. The stream layer accepts default `CSI P` as count `1`, accepts explicit
+single params including `0`, empty `;`, `1`, `1;`, larger values, and
+parser-clamped overflow. It rejects private, real multi-param, colon-param,
+mixed-separator, and raw C1 CSI forms without dispatching a delete-character
+action or leaking the final `P` byte as printable text. Pending invalid UTF-8
+still emits `U+FFFD` before the DCH action, including split-feed cases, and
+handler errors return the parser to ground state.
+
+The terminal layer adds a row-local DCH path that preserves the cursor position,
+honors only the horizontal left/right scrolling margins, clamps oversized counts
+to the remaining margin width, and treats count `0` and cursor-outside-margin as
+true no-ops. Actual deletes shift the suffix left inside the active horizontal
+margin, clear the vacated right-side cells to default blanks, dirty the affected
+cursor row, clear pending wrap, and reset the cursor row's soft-wrap metadata.
+If the cursor row was wrapped, the next active row's wrap-continuation metadata
+is cleared and that next row is dirtied.
+
+The implementation adds a narrow `Page::delete_chars_in_row()` helper instead of
+weakening `Page::move_cells()`'s same-row overlap rejection. The helper uses
+existing cell swap and clear primitives so moved style, grapheme, hyperlink, and
+protected-cell metadata follow the shifted source cells, while overwritten and
+cleared cells release managed memory. The new Page test verifies style,
+grapheme, hyperlink, protected-bit movement, refcounts, and page integrity after
+DCH.
+
+Rows outside the cursor row are not mutated except for the deliberate next-row
+wrap-continuation reset described above, and scrollback row count stays
+unchanged. The vertical scrolling-region bounds do not suppress DCH when the
+cursor column is inside the horizontal margin, matching upstream Ghostty's
+`deleteChars` behavior.
+
+Current-SGR blank-cell coloring remains deferred because Roastty's current basic
+print path does not yet write cells with cursor style. Wide-boundary behavior is
+also deferred until the Unicode-width and wide-cell mutation paths exist. This
+experiment adds no insert/delete line, scroll up/down, public API, ABI, or
+non-macOS behavior.
+
+Verification passed:
+
+```text
+cargo fmt
+cargo test -p roastty stream
+cargo test -p roastty terminal::terminal
+cargo test -p roastty terminal::page_list
+cargo test -p roastty terminal::page::tests::page_delete_chars_in_row_shifts_cells_and_managed_metadata_left
+cargo test -p roastty terminal_formatter
+cargo test -p roastty screen_formatter
+cargo test -p roastty page_string
+cargo test -p roastty
+```
+
+The final full package run passed 1231 unit tests, the C ABI harness, and
+doctests.
+
+Codex design review found two real issues in the first design: avoid vertical
+scrolling-region gating, and explicitly test non-managed metadata movement. The
+design was updated and the second design review reported no findings.
+
+Codex result review reported no findings:
+`logs/codex-review/20260601-045136-203273-last-message.md`. The review confirmed
+the implementation matches the approved design, the tests cover the earlier
+design-review risks, and the result text honestly records the deferred
+SGR-colored blank and wide-boundary behavior.
+
+## Conclusion
+
+Experiment 122 ports the next row-local CSI mutation from Ghostty into Roastty.
+DCH now has upstream-compatible basic parsing, horizontal-margin semantics,
+count handling, cursor preservation, wrap reset behavior, dirty tracking, and
+managed-memory-safe cell shifting. The next experiment can continue with the
+next missing stream/terminal action informed by Ghostty's upstream ordering,
+while leaving SGR-colored blanks and wide-cell boundary semantics for the later
+style and Unicode-width implementation passes.

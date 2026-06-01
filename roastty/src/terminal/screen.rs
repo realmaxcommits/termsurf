@@ -346,6 +346,28 @@ impl Screen {
         Ok(())
     }
 
+    pub(super) fn delete_chars_basic(
+        &mut self,
+        count: CellCountInt,
+        rows: CellCountInt,
+        left_margin: CellCountInt,
+        right_margin: CellCountInt,
+    ) -> Result<(), EraseDisplayError> {
+        if count == 0 {
+            return Ok(());
+        }
+        if self.cursor.x < left_margin || self.cursor.x > right_margin {
+            return Ok(());
+        }
+
+        let remaining = right_margin - self.cursor.x + 1;
+        let count = count.min(remaining);
+        self.pages
+            .delete_active_chars(self.cursor.y.into(), self.cursor.x, right_margin, count)?;
+        self.cursor_reset_wrap_basic(rows)?;
+        Ok(())
+    }
+
     pub(super) fn cursor_row_relative_basic(&mut self, rows: CellCountInt, count: CellCountInt) {
         let bottom = rows.saturating_sub(1);
         self.cursor.pending_wrap = false;
@@ -532,6 +554,11 @@ impl Screen {
     ) {
         self.pages
             .set_screen_cell_protected_for_tests(x, y, protected);
+    }
+
+    #[cfg(test)]
+    pub(super) fn cell_protected_for_tests(&self, x: CellCountInt, y: u32) -> bool {
+        self.pages.screen_cell_protected_for_tests(x, y)
     }
 
     #[cfg(test)]

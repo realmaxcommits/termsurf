@@ -1319,6 +1319,28 @@ impl Page {
         }
     }
 
+    pub(super) fn delete_chars_in_row(
+        &mut self,
+        row_index: usize,
+        left: usize,
+        right: usize,
+        count: usize,
+    ) {
+        assert!(row_index < self.size.rows as usize);
+        assert!(left <= right);
+        assert!(right < self.size.cols as usize);
+        assert!(count > 0);
+
+        let width = right - left + 1;
+        let count = count.min(width);
+        let shift = width - count;
+        for offset in 0..shift {
+            self.swap_cells(row_index, left + count + offset, row_index, left + offset);
+        }
+
+        self.clear_cells(row_index, left + shift, right + 1);
+    }
+
     fn swap_grapheme_entries(
         &mut self,
         src_offset: Offset<Cell>,
@@ -5502,6 +5524,58 @@ mod tests {
         for x in 0..page.size.cols as usize {
             assert_eq!(page.cell_copy_at(x, 0).codepoint(), (x + 1) as u32);
         }
+    }
+
+    #[test]
+    fn page_delete_chars_in_row_shifts_cells_and_managed_metadata_left() {
+        let mut page = Page::init(Capacity {
+            cols: 6,
+            rows: 1,
+            styles: 8,
+            ..Capacity::new(6, 1)
+        })
+        .unwrap();
+        for x in 0..page.size.cols as usize {
+            *page.get_row_and_cell_mut(x, 0).cell = Cell::init((b'A' + x as u8) as u32);
+        }
+        let style_id = page
+            .add_style(style::Style {
+                flags: style::Flags {
+                    bold: true,
+                    ..style::Flags::default()
+                },
+                ..style::Style::default()
+            })
+            .unwrap();
+        let link_id = page
+            .insert_hyperlink(hyperlink::Hyperlink {
+                id: hyperlink::HyperlinkId::Explicit(b"id"),
+                uri: b"https://example.com",
+            })
+            .unwrap();
+
+        let source = page.get_row_and_cell_mut(3, 0);
+        source.row.set_styled(true);
+        source.cell.set_style_id(style_id);
+        source.cell.set_protected(true);
+        page.append_grapheme_at(3, 0, 0x0301).unwrap();
+        page.set_hyperlink(3, 0, link_id).unwrap();
+
+        page.delete_chars_in_row(0, 1, 5, 2);
+
+        assert_eq!(page.cell_copy_at(1, 0).codepoint(), 'D' as u32);
+        assert_eq!(page.cell_copy_at(1, 0).style_id(), style_id);
+        assert!(page.cell_copy_at(1, 0).protected());
+        assert_eq!(page.lookup_grapheme_at(1, 0), Some(vec![0x0301]));
+        assert_eq!(page.lookup_hyperlink_at(1, 0), Some(link_id));
+        assert_eq!(page.cell_copy_at(2, 0).codepoint(), 'E' as u32);
+        assert_eq!(page.cell_copy_at(3, 0).codepoint(), 'F' as u32);
+        assert_eq!(page.cell_copy_at(4, 0), Cell::default());
+        assert_eq!(page.cell_copy_at(5, 0), Cell::default());
+        assert_eq!(page.style_ref_count(style_id), 1);
+        assert_eq!(page.grapheme_count(), 1);
+        assert_eq!(page.hyperlink_ref_count(link_id), 1);
+        assert_eq!(page.verify_integrity(), Ok(()));
     }
 
     #[test]

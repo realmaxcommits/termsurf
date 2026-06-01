@@ -50,6 +50,9 @@ pub(super) enum Action {
         mode: EraseLineMode,
         protected: bool,
     },
+    DeleteChars {
+        count: u16,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -327,6 +330,10 @@ impl CsiState {
             return CsiDispatch::One(action);
         }
 
+        if let Some(action) = self.delete_chars_action(final_byte) {
+            return CsiDispatch::One(action);
+        }
+
         if final_byte == b'W' {
             return self
                 .tab_action()
@@ -489,6 +496,15 @@ impl CsiState {
         };
 
         Some(Action::EraseLine { mode, protected })
+    }
+
+    fn delete_chars_action(&self, final_byte: u8) -> Option<Action> {
+        if final_byte != b'P' {
+            return None;
+        }
+
+        let count = self.single_param(true)?.unwrap_or(1);
+        Some(Action::DeleteChars { count })
     }
 
     fn line_dispatch(&self, final_byte: u8) -> Option<CsiDispatch> {
@@ -669,7 +685,8 @@ mod tests {
                 | Action::CursorRowRelative { .. }
                 | Action::CursorPosition { .. }
                 | Action::EraseDisplay { .. }
-                | Action::EraseLine { .. } => None,
+                | Action::EraseLine { .. }
+                | Action::DeleteChars { .. } => None,
             })
             .collect()
     }
@@ -1048,6 +1065,41 @@ mod tests {
                     mode: EraseLineMode::Complete,
                     protected: true,
                 },
+            ),
+        ] {
+            let mut stream = Stream::init();
+            let mut handler = RecordingHandler::default();
+
+            next_slice(&mut stream, &mut handler, input);
+
+            if input.starts_with(b"A") {
+                assert_eq!(
+                    actions(&handler),
+                    &[
+                        Action::Print { cp: 'A' },
+                        expected,
+                        Action::Print { cp: 'B' },
+                    ]
+                );
+            } else {
+                assert_eq!(actions(&handler), &[expected, Action::Print { cp: 'A' }]);
+            }
+        }
+    }
+
+    #[test]
+    fn stream_csi_delete_chars_dispatches_counts() {
+        for (input, expected) in [
+            (b"A\x1b[PB".as_slice(), Action::DeleteChars { count: 1 }),
+            (b"\x1b[PA".as_slice(), Action::DeleteChars { count: 1 }),
+            (b"\x1b[0PA".as_slice(), Action::DeleteChars { count: 0 }),
+            (b"\x1b[;PA".as_slice(), Action::DeleteChars { count: 0 }),
+            (b"\x1b[1PA".as_slice(), Action::DeleteChars { count: 1 }),
+            (b"\x1b[1;PA".as_slice(), Action::DeleteChars { count: 1 }),
+            (b"\x1b[3PA".as_slice(), Action::DeleteChars { count: 3 }),
+            (
+                b"\x1b[999999999999999999999999PA".as_slice(),
+                Action::DeleteChars { count: u16::MAX },
             ),
         ] {
             let mut stream = Stream::init();
@@ -1752,6 +1804,31 @@ mod tests {
                     mode: EraseLineMode::Left,
                     protected: true,
                 },
+            ),
+        ] {
+            let mut stream = Stream::init();
+            let mut handler = RecordingHandler::default();
+
+            next_slice(&mut stream, &mut handler, first);
+            assert!(actions(&handler).is_empty());
+            next_slice(&mut stream, &mut handler, second);
+
+            assert_eq!(actions(&handler), &[expected, Action::Print { cp: 'A' }]);
+        }
+    }
+
+    #[test]
+    fn stream_split_csi_delete_chars_dispatches_counts() {
+        for (first, second, expected) in [
+            (
+                b"\x1b[".as_slice(),
+                b"PA".as_slice(),
+                Action::DeleteChars { count: 1 },
+            ),
+            (
+                b"\x1b[3".as_slice(),
+                b"PA".as_slice(),
+                Action::DeleteChars { count: 3 },
             ),
         ] {
             let mut stream = Stream::init();
@@ -2516,6 +2593,25 @@ mod tests {
     }
 
     #[test]
+    fn stream_pending_utf8_replacement_dispatches_before_csi_delete_chars() {
+        let mut stream = Stream::init();
+        let mut handler = RecordingHandler::default();
+
+        next_slice(&mut stream, &mut handler, b"\xf0\x9f\x1b[PA");
+
+        assert_eq!(
+            actions(&handler),
+            &[
+                Action::Print {
+                    cp: char::REPLACEMENT_CHARACTER,
+                },
+                Action::DeleteChars { count: 1 },
+                Action::Print { cp: 'A' },
+            ]
+        );
+    }
+
+    #[test]
     fn stream_pending_utf8_replacement_dispatches_before_split_csi_erase_display() {
         let mut stream = Stream::init();
         let mut handler = RecordingHandler::default();
@@ -2570,6 +2666,33 @@ mod tests {
                     mode: EraseLineMode::Complete,
                     protected: false,
                 },
+                Action::Print { cp: 'A' },
+            ]
+        );
+    }
+
+    #[test]
+    fn stream_pending_utf8_replacement_dispatches_before_split_csi_delete_chars() {
+        let mut stream = Stream::init();
+        let mut handler = RecordingHandler::default();
+
+        next_slice(&mut stream, &mut handler, b"\xf0\x9f\x1b[3");
+        assert_eq!(
+            actions(&handler),
+            &[Action::Print {
+                cp: char::REPLACEMENT_CHARACTER,
+            }]
+        );
+
+        next_slice(&mut stream, &mut handler, b"PA");
+
+        assert_eq!(
+            actions(&handler),
+            &[
+                Action::Print {
+                    cp: char::REPLACEMENT_CHARACTER,
+                },
+                Action::DeleteChars { count: 3 },
                 Action::Print { cp: 'A' },
             ]
         );
@@ -2834,6 +2957,26 @@ mod tests {
     }
 
     #[test]
+    fn stream_unsupported_csi_delete_chars_variants_do_not_dispatch_actions() {
+        for input in [
+            b"\x1b[?PA".as_slice(),
+            b"\x1b[>PA".as_slice(),
+            b"\x1b[5;4PA".as_slice(),
+            b"\x1b[5;;PA".as_slice(),
+            b"\x1b[1:2PA".as_slice(),
+            b"\x1b[1;2:3PA".as_slice(),
+            b"\x1b[ PA".as_slice(),
+        ] {
+            let mut stream = Stream::init();
+            let mut handler = RecordingHandler::default();
+
+            next_slice(&mut stream, &mut handler, input);
+
+            assert_eq!(actions(&handler), &[Action::Print { cp: 'A' }]);
+        }
+    }
+
+    #[test]
     fn stream_unsupported_csi_cursor_position_variants_do_not_dispatch_actions() {
         for input in [
             b"\x1b[?3HA".as_slice(),
@@ -2948,6 +3091,24 @@ mod tests {
                     cp: char::REPLACEMENT_CHARACTER,
                 },
                 Action::Print { cp: 'K' },
+            ]
+        );
+    }
+
+    #[test]
+    fn stream_raw_c1_csi_byte_does_not_dispatch_delete_chars_action() {
+        let mut stream = Stream::init();
+        let mut handler = RecordingHandler::default();
+
+        next_slice(&mut stream, &mut handler, &[0x9b, b'P']);
+
+        assert_eq!(
+            actions(&handler),
+            &[
+                Action::Print {
+                    cp: char::REPLACEMENT_CHARACTER,
+                },
+                Action::Print { cp: 'P' },
             ]
         );
     }
@@ -3217,7 +3378,8 @@ mod tests {
                 | Action::CursorRowRelative { .. }
                 | Action::CursorPosition { .. }
                 | Action::EraseDisplay { .. }
-                | Action::EraseLine { .. } => unreachable!("loop only uses D/E actions"),
+                | Action::EraseLine { .. }
+                | Action::DeleteChars { .. } => unreachable!("loop only uses D/E actions"),
             };
 
             assert_eq!(stream.next_slice(input, &mut handler), Err(()));
@@ -3422,6 +3584,23 @@ mod tests {
                     protected: false,
                 },
             ),
+        ] {
+            let mut stream = Stream::init();
+            let mut handler = ErrorOnActionHandler::new(fail);
+
+            assert_eq!(stream.next_slice(input, &mut handler), Err(()));
+            stream.next_slice(b"A", &mut handler).unwrap();
+
+            assert_eq!(handler.actions, &[Action::Print { cp: 'A' }]);
+        }
+    }
+
+    #[test]
+    fn stream_csi_delete_chars_restore_ground_before_handler_error() {
+        for (input, fail) in [
+            (b"\x1b[P".as_slice(), Action::DeleteChars { count: 1 }),
+            (b"\x1b[0P".as_slice(), Action::DeleteChars { count: 0 }),
+            (b"\x1b[3P".as_slice(), Action::DeleteChars { count: 3 }),
         ] {
             let mut stream = Stream::init();
             let mut handler = ErrorOnActionHandler::new(fail);
