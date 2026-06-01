@@ -330,3 +330,111 @@ The experiment fails if:
 - it corrupts PageList integrity or leaks managed memory;
 - it silently implements incompatible placeholder delete-line semantics;
 - it adds unrelated scroll up/down, public API, ABI, or non-macOS behavior.
+
+## Result
+
+**Result:** Pass
+
+Experiment 124 ports `CSI M` delete-lines across the private Roastty terminal
+stack.
+
+The stream parser now dispatches `Action::DeleteLines { count }` for the Ghostty
+forms covered by this slice:
+
+- `CSI M` dispatches count `1`;
+- `CSI 0 M` and `CSI ; M` dispatch count `0`;
+- `CSI 1 M`, `CSI 1 ; M`, and larger single numeric params dispatch their parsed
+  count, with the existing parser accumulator clamping large values to
+  `u16::MAX`;
+- split-feed `CSI M` / `CSI 3 M` dispatch correctly;
+- pending invalid UTF-8 dispatches `U+FFFD` before same-slice and split-feed
+  delete-lines actions.
+
+The parser rejects the invalid forms required by the design:
+
+- private forms such as `CSI ? M` and `CSI > M`;
+- real multi-param forms such as `CSI 1 ; 2 M` and `CSI ;; M`;
+- colon and mixed-separator forms;
+- direct raw C1 CSI byte `0x9b`, which remains out of scope and follows the
+  current UTF-8 replacement behavior;
+- handler errors leave the parser in ground state before returning the error.
+
+The terminal execution path now routes `Action::DeleteLines` through
+`Screen::delete_lines_basic()` and a dedicated `PageList::delete_active_lines()`
+active-region shift-up primitive. The implemented behavior matches the
+experiment scope:
+
+- count `0` is a no-op and preserves pending wrap;
+- count `1` shifts rows below the cursor upward through the bottom of the active
+  vertical scrolling region and clears the vacated row;
+- oversized counts clamp to the remaining rows from the cursor through the
+  bottom margin;
+- cursor outside the active top/bottom or left/right scrolling margins is a
+  no-op;
+- top/bottom margins constrain the vertical shifted/cleared rows;
+- left/right margins constrain the copied and blanked cell range while
+  preserving cells outside the margins;
+- oversized count combined with left/right margins clamps vertically while still
+  blanking only the bounded columns;
+- actual delete clears pending wrap and restores the cursor to the left margin
+  on the original cursor row;
+- full-width deletes reset affected row wrap metadata;
+- left/right-margin deletes preserve row wrap metadata;
+- rows above the cursor, rows below the bottom margin, and scrollback content
+  are preserved.
+
+The PageList tests cover the core storage behavior:
+
+- full-width single-page delete shifts rows upward and clears vacated rows;
+- bounded left/right-margin delete preserves outside cells;
+- managed grapheme/style/hyperlink metadata moves safely with shifted cells and
+  is not left owned twice;
+- protected cell metadata moves with shifted cells;
+- managed metadata movement works across page boundaries;
+- scrollback row count and content are unchanged.
+
+Vacated cells are currently cleared to default blanks with default style, which
+matches the current basic Roastty print/style model. SGR-colored blank-cell
+behavior and Unicode-width/wide-character boundary repair remain deferred, as in
+Experiment 123, until the relevant SGR mutation and wide-cell rendering layers
+exist.
+
+Verification commands:
+
+```bash
+cargo fmt
+cargo test -p roastty stream
+cargo test -p roastty terminal::terminal
+cargo test -p roastty terminal::page_list
+cargo test -p roastty terminal_formatter
+cargo test -p roastty screen_formatter
+cargo test -p roastty page_string
+cargo test -p roastty
+```
+
+All commands passed. The full `cargo test -p roastty` run reported `1279`
+library tests passing, the ABI harness test passing, and doc-tests passing.
+
+Codex design review found one real issue in the initial design: it needed a
+combined oversized-count plus left/right-margin verification case. The design
+was updated with that case, re-reviewed, and approved before implementation:
+
+- initial design review:
+  `logs/codex-review/20260601-051625-041313-last-message.md`;
+- approved design re-review:
+  `logs/codex-review/20260601-051858-366252-last-message.md`.
+
+Codex result review reported no blocking findings:
+`logs/codex-review/20260601-052641-772673-last-message.md`.
+
+## Conclusion
+
+`CSI M` delete-lines is now implemented for the current Roastty terminal model.
+The implementation extends the parser, terminal action routing, screen behavior,
+and PageList storage primitives without adding public ABI, scroll up/down,
+non-macOS behavior, or unrelated terminal features.
+
+The next experiment can continue the related row/scroll mutation surface. The
+remaining known deferrals are still intentional foundation gaps rather than
+delete-lines-specific failures: current-SGR blank-cell coloring, Unicode-width
+boundary repair, and wide-character rendering.

@@ -377,7 +377,7 @@ tests, choose the larger subsystem.
 - [Experiment 123: Port CSI Insert Lines](123-port-csi-insert-lines.md) —
   **Pass**
 - [Experiment 124: Port CSI Delete Lines](124-port-csi-delete-lines.md) —
-  **Designed**
+  **Pass**
 
 ## Non-Goals
 
