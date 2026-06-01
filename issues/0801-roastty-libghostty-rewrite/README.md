@@ -436,6 +436,8 @@ tests, choose the larger subsystem.
   — **Pass**
 - [Experiment 154: Port Alternate-Screen Modes](154-port-alternate-screen-modes.md)
   — **Pass**
+- [Experiment 155: Port Kitty Keyboard Protocol](155-port-kitty-keyboard-protocol.md)
+  — **Designed**
 
 ## Non-Goals
 
