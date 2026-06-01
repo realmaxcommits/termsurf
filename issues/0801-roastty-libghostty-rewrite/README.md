@@ -442,6 +442,8 @@ tests, choose the larger subsystem.
   — **Pass**
 - [Experiment 157: Port Mouse Mode Runtime State](157-port-mouse-mode-runtime-state.md)
   — **Pass**
+- [Experiment 158: Port Mouse Encoder C ABI](158-port-mouse-encoder-c-abi.md) —
+  **Designed**
 
 ## Non-Goals
 
