@@ -410,6 +410,8 @@ tests, choose the larger subsystem.
   **Pass**
 - [Experiment 140: Port Kitty OSC 66 Text Sizing](140-port-kitty-osc66-text-sizing.md)
   — **Pass**
+- [Experiment 141: Port OSC Notifications](141-port-osc-notifications.md) —
+  **Designed**
 
 ## Non-Goals
 
