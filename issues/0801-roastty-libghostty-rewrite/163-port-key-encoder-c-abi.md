@@ -259,3 +259,71 @@ option payload types needed to be listed explicitly.
 
 The design was updated to address those findings. Codex's second review found no
 remaining blocking design issues and approved the experiment for implementation.
+
+## Result
+
+**Result:** Pass
+
+Implemented the public Roastty key event and key encoder C ABI:
+
+- added `roastty_key_event_t` and `roastty_key_encoder_t` handles;
+- added the full public `roastty_key_e` enum matching the internal 176-value
+  `Key` order;
+- added key action, key side, option-as-alt, key encoder option, and key
+  modifier ABI types;
+- exported key event allocation/free plus action, key, modifiers,
+  consumed-modifiers, composing, UTF-8, and unshifted-codepoint accessors;
+- exported key encoder allocation/free, option setting, and encode-to-buffer;
+- kept every enum-like C input as a raw integer at the Rust FFI boundary before
+  validation and conversion;
+- copied UTF-8 input into wrapper-owned storage, with `NULL + 0` clearing text
+  and invalid UTF-8 rejected;
+- exposed Kitty flag raw bitsets through a validated helper;
+- extended the C ABI harness to exercise allocation, mutation, invalid inputs,
+  UTF-8 ownership, legacy Ctrl+C output, Kitty output, out-of-space reporting,
+  and key enum boundary constants.
+
+Verification run:
+
+```bash
+cargo fmt -- roastty/src/lib.rs roastty/src/terminal/kitty.rs
+cargo test -p roastty key_event
+cargo test -p roastty key_encode
+cargo test -p roastty key_encoder_abi
+cargo test -p roastty c_harness_links_against_roastty_header_and_roastty_dylib
+cargo test -p roastty
+! rg -n "ghostty|Ghostty|ghostty_" roastty/src/input roastty/src/lib.rs roastty/include/roastty.h roastty/tests/abi_harness.c
+```
+
+Results:
+
+- `cargo test -p roastty key_event`: 6 passed.
+- `cargo test -p roastty key_encode`: 18 passed.
+- `cargo test -p roastty key_encoder_abi`: 2 passed.
+- `cargo test -p roastty c_harness_links_against_roastty_header_and_roastty_dylib`:
+  passed.
+- `cargo test -p roastty`: 1779 unit tests passed, C ABI harness passed, and
+  doc-tests passed.
+- The naming grep produced no matches.
+
+## Codex Result Review
+
+**Result:** Approved.
+
+Codex reviewed the implementation diff, the experiment design, and the test
+evidence. It found no blocking issues. Codex specifically confirmed that
+enum-like inputs validate from raw integers, invalid key/modifier/option values
+are rejected, UTF-8 is copied and validated without retaining caller memory, key
+encoder buffer handling matches the mouse encoder out-of-space pattern, header
+declarations and Rust exports line up, the C harness covers the required legacy
+and Kitty paths, and no public `ghostty_*` names or scope creep were introduced.
+
+## Conclusion
+
+The key event and key encoder are now usable through the renamed `roastty_*` C
+ABI. This completes the same exposure layer that Experiment 158 provided for
+mouse encoding, while preserving the separation from live input, PTY writes,
+runtime dispatch, keybindings, and config-derived terminal options.
+
+The next experiment should move to the next missing lib-facing subsystem now
+that both mouse and key encoder C ABI surfaces exist.

@@ -21,6 +21,8 @@ extern "C" {
 
 typedef void* roastty_app_t;
 typedef void* roastty_config_t;
+typedef void* roastty_key_encoder_t;
+typedef void* roastty_key_event_t;
 typedef void* roastty_mouse_encoder_t;
 typedef void* roastty_mouse_event_t;
 typedef void* roastty_surface_t;
@@ -113,6 +115,227 @@ typedef struct {
   uint32_t cell_width_px;
   uint32_t cell_height_px;
 } roastty_surface_size_s;
+
+typedef enum {
+  ROASTTY_KEY_ACTION_RELEASE = 0,
+  ROASTTY_KEY_ACTION_PRESS = 1,
+  ROASTTY_KEY_ACTION_REPEAT = 2,
+} roastty_key_action_e;
+
+typedef enum {
+  ROASTTY_KEY_UNIDENTIFIED = 0,
+  ROASTTY_KEY_BACKQUOTE = 1,
+  ROASTTY_KEY_BACKSLASH = 2,
+  ROASTTY_KEY_BRACKET_LEFT = 3,
+  ROASTTY_KEY_BRACKET_RIGHT = 4,
+  ROASTTY_KEY_COMMA = 5,
+  ROASTTY_KEY_DIGIT0 = 6,
+  ROASTTY_KEY_DIGIT1 = 7,
+  ROASTTY_KEY_DIGIT2 = 8,
+  ROASTTY_KEY_DIGIT3 = 9,
+  ROASTTY_KEY_DIGIT4 = 10,
+  ROASTTY_KEY_DIGIT5 = 11,
+  ROASTTY_KEY_DIGIT6 = 12,
+  ROASTTY_KEY_DIGIT7 = 13,
+  ROASTTY_KEY_DIGIT8 = 14,
+  ROASTTY_KEY_DIGIT9 = 15,
+  ROASTTY_KEY_EQUAL = 16,
+  ROASTTY_KEY_INTL_BACKSLASH = 17,
+  ROASTTY_KEY_INTL_RO = 18,
+  ROASTTY_KEY_INTL_YEN = 19,
+  ROASTTY_KEY_KEY_A = 20,
+  ROASTTY_KEY_KEY_B = 21,
+  ROASTTY_KEY_KEY_C = 22,
+  ROASTTY_KEY_KEY_D = 23,
+  ROASTTY_KEY_KEY_E = 24,
+  ROASTTY_KEY_KEY_F = 25,
+  ROASTTY_KEY_KEY_G = 26,
+  ROASTTY_KEY_KEY_H = 27,
+  ROASTTY_KEY_KEY_I = 28,
+  ROASTTY_KEY_KEY_J = 29,
+  ROASTTY_KEY_KEY_K = 30,
+  ROASTTY_KEY_KEY_L = 31,
+  ROASTTY_KEY_KEY_M = 32,
+  ROASTTY_KEY_KEY_N = 33,
+  ROASTTY_KEY_KEY_O = 34,
+  ROASTTY_KEY_KEY_P = 35,
+  ROASTTY_KEY_KEY_Q = 36,
+  ROASTTY_KEY_KEY_R = 37,
+  ROASTTY_KEY_KEY_S = 38,
+  ROASTTY_KEY_KEY_T = 39,
+  ROASTTY_KEY_KEY_U = 40,
+  ROASTTY_KEY_KEY_V = 41,
+  ROASTTY_KEY_KEY_W = 42,
+  ROASTTY_KEY_KEY_X = 43,
+  ROASTTY_KEY_KEY_Y = 44,
+  ROASTTY_KEY_KEY_Z = 45,
+  ROASTTY_KEY_MINUS = 46,
+  ROASTTY_KEY_PERIOD = 47,
+  ROASTTY_KEY_QUOTE = 48,
+  ROASTTY_KEY_SEMICOLON = 49,
+  ROASTTY_KEY_SLASH = 50,
+  ROASTTY_KEY_ALT_LEFT = 51,
+  ROASTTY_KEY_ALT_RIGHT = 52,
+  ROASTTY_KEY_BACKSPACE = 53,
+  ROASTTY_KEY_CAPS_LOCK = 54,
+  ROASTTY_KEY_CONTEXT_MENU = 55,
+  ROASTTY_KEY_CONTROL_LEFT = 56,
+  ROASTTY_KEY_CONTROL_RIGHT = 57,
+  ROASTTY_KEY_ENTER = 58,
+  ROASTTY_KEY_META_LEFT = 59,
+  ROASTTY_KEY_META_RIGHT = 60,
+  ROASTTY_KEY_SHIFT_LEFT = 61,
+  ROASTTY_KEY_SHIFT_RIGHT = 62,
+  ROASTTY_KEY_SPACE = 63,
+  ROASTTY_KEY_TAB = 64,
+  ROASTTY_KEY_CONVERT = 65,
+  ROASTTY_KEY_KANA_MODE = 66,
+  ROASTTY_KEY_NON_CONVERT = 67,
+  ROASTTY_KEY_DELETE = 68,
+  ROASTTY_KEY_END = 69,
+  ROASTTY_KEY_HELP = 70,
+  ROASTTY_KEY_HOME = 71,
+  ROASTTY_KEY_INSERT = 72,
+  ROASTTY_KEY_PAGE_DOWN = 73,
+  ROASTTY_KEY_PAGE_UP = 74,
+  ROASTTY_KEY_ARROW_DOWN = 75,
+  ROASTTY_KEY_ARROW_LEFT = 76,
+  ROASTTY_KEY_ARROW_RIGHT = 77,
+  ROASTTY_KEY_ARROW_UP = 78,
+  ROASTTY_KEY_NUM_LOCK = 79,
+  ROASTTY_KEY_NUMPAD0 = 80,
+  ROASTTY_KEY_NUMPAD1 = 81,
+  ROASTTY_KEY_NUMPAD2 = 82,
+  ROASTTY_KEY_NUMPAD3 = 83,
+  ROASTTY_KEY_NUMPAD4 = 84,
+  ROASTTY_KEY_NUMPAD5 = 85,
+  ROASTTY_KEY_NUMPAD6 = 86,
+  ROASTTY_KEY_NUMPAD7 = 87,
+  ROASTTY_KEY_NUMPAD8 = 88,
+  ROASTTY_KEY_NUMPAD9 = 89,
+  ROASTTY_KEY_NUMPAD_ADD = 90,
+  ROASTTY_KEY_NUMPAD_BACKSPACE = 91,
+  ROASTTY_KEY_NUMPAD_CLEAR = 92,
+  ROASTTY_KEY_NUMPAD_CLEAR_ENTRY = 93,
+  ROASTTY_KEY_NUMPAD_COMMA = 94,
+  ROASTTY_KEY_NUMPAD_DECIMAL = 95,
+  ROASTTY_KEY_NUMPAD_DIVIDE = 96,
+  ROASTTY_KEY_NUMPAD_ENTER = 97,
+  ROASTTY_KEY_NUMPAD_EQUAL = 98,
+  ROASTTY_KEY_NUMPAD_MEMORY_ADD = 99,
+  ROASTTY_KEY_NUMPAD_MEMORY_CLEAR = 100,
+  ROASTTY_KEY_NUMPAD_MEMORY_RECALL = 101,
+  ROASTTY_KEY_NUMPAD_MEMORY_STORE = 102,
+  ROASTTY_KEY_NUMPAD_MEMORY_SUBTRACT = 103,
+  ROASTTY_KEY_NUMPAD_MULTIPLY = 104,
+  ROASTTY_KEY_NUMPAD_PAREN_LEFT = 105,
+  ROASTTY_KEY_NUMPAD_PAREN_RIGHT = 106,
+  ROASTTY_KEY_NUMPAD_SUBTRACT = 107,
+  ROASTTY_KEY_NUMPAD_SEPARATOR = 108,
+  ROASTTY_KEY_NUMPAD_UP = 109,
+  ROASTTY_KEY_NUMPAD_DOWN = 110,
+  ROASTTY_KEY_NUMPAD_RIGHT = 111,
+  ROASTTY_KEY_NUMPAD_LEFT = 112,
+  ROASTTY_KEY_NUMPAD_BEGIN = 113,
+  ROASTTY_KEY_NUMPAD_HOME = 114,
+  ROASTTY_KEY_NUMPAD_END = 115,
+  ROASTTY_KEY_NUMPAD_INSERT = 116,
+  ROASTTY_KEY_NUMPAD_DELETE = 117,
+  ROASTTY_KEY_NUMPAD_PAGE_UP = 118,
+  ROASTTY_KEY_NUMPAD_PAGE_DOWN = 119,
+  ROASTTY_KEY_ESCAPE = 120,
+  ROASTTY_KEY_F1 = 121,
+  ROASTTY_KEY_F2 = 122,
+  ROASTTY_KEY_F3 = 123,
+  ROASTTY_KEY_F4 = 124,
+  ROASTTY_KEY_F5 = 125,
+  ROASTTY_KEY_F6 = 126,
+  ROASTTY_KEY_F7 = 127,
+  ROASTTY_KEY_F8 = 128,
+  ROASTTY_KEY_F9 = 129,
+  ROASTTY_KEY_F10 = 130,
+  ROASTTY_KEY_F11 = 131,
+  ROASTTY_KEY_F12 = 132,
+  ROASTTY_KEY_F13 = 133,
+  ROASTTY_KEY_F14 = 134,
+  ROASTTY_KEY_F15 = 135,
+  ROASTTY_KEY_F16 = 136,
+  ROASTTY_KEY_F17 = 137,
+  ROASTTY_KEY_F18 = 138,
+  ROASTTY_KEY_F19 = 139,
+  ROASTTY_KEY_F20 = 140,
+  ROASTTY_KEY_F21 = 141,
+  ROASTTY_KEY_F22 = 142,
+  ROASTTY_KEY_F23 = 143,
+  ROASTTY_KEY_F24 = 144,
+  ROASTTY_KEY_F25 = 145,
+  ROASTTY_KEY_FN = 146,
+  ROASTTY_KEY_FN_LOCK = 147,
+  ROASTTY_KEY_PRINT_SCREEN = 148,
+  ROASTTY_KEY_SCROLL_LOCK = 149,
+  ROASTTY_KEY_PAUSE = 150,
+  ROASTTY_KEY_BROWSER_BACK = 151,
+  ROASTTY_KEY_BROWSER_FAVORITES = 152,
+  ROASTTY_KEY_BROWSER_FORWARD = 153,
+  ROASTTY_KEY_BROWSER_HOME = 154,
+  ROASTTY_KEY_BROWSER_REFRESH = 155,
+  ROASTTY_KEY_BROWSER_SEARCH = 156,
+  ROASTTY_KEY_BROWSER_STOP = 157,
+  ROASTTY_KEY_EJECT = 158,
+  ROASTTY_KEY_LAUNCH_APP1 = 159,
+  ROASTTY_KEY_LAUNCH_APP2 = 160,
+  ROASTTY_KEY_LAUNCH_MAIL = 161,
+  ROASTTY_KEY_MEDIA_PLAY_PAUSE = 162,
+  ROASTTY_KEY_MEDIA_SELECT = 163,
+  ROASTTY_KEY_MEDIA_STOP = 164,
+  ROASTTY_KEY_MEDIA_TRACK_NEXT = 165,
+  ROASTTY_KEY_MEDIA_TRACK_PREVIOUS = 166,
+  ROASTTY_KEY_POWER = 167,
+  ROASTTY_KEY_SLEEP = 168,
+  ROASTTY_KEY_AUDIO_VOLUME_DOWN = 169,
+  ROASTTY_KEY_AUDIO_VOLUME_MUTE = 170,
+  ROASTTY_KEY_AUDIO_VOLUME_UP = 171,
+  ROASTTY_KEY_WAKE_UP = 172,
+  ROASTTY_KEY_COPY = 173,
+  ROASTTY_KEY_CUT = 174,
+  ROASTTY_KEY_PASTE = 175,
+} roastty_key_e;
+
+typedef enum {
+  ROASTTY_KEY_SIDE_LEFT = 0,
+  ROASTTY_KEY_SIDE_RIGHT = 1,
+} roastty_key_side_e;
+
+typedef enum {
+  ROASTTY_OPTION_AS_ALT_FALSE = 0,
+  ROASTTY_OPTION_AS_ALT_TRUE = 1,
+  ROASTTY_OPTION_AS_ALT_LEFT = 2,
+  ROASTTY_OPTION_AS_ALT_RIGHT = 3,
+} roastty_option_as_alt_e;
+
+typedef enum {
+  ROASTTY_KEY_ENCODER_OPTION_CURSOR_KEY_APPLICATION = 0,
+  ROASTTY_KEY_ENCODER_OPTION_KEYPAD_KEY_APPLICATION = 1,
+  ROASTTY_KEY_ENCODER_OPTION_IGNORE_KEYPAD_WITH_NUMLOCK = 2,
+  ROASTTY_KEY_ENCODER_OPTION_ALT_ESC_PREFIX = 3,
+  ROASTTY_KEY_ENCODER_OPTION_MODIFY_OTHER_KEYS_STATE_2 = 4,
+  ROASTTY_KEY_ENCODER_OPTION_KITTY_FLAGS = 5,
+  ROASTTY_KEY_ENCODER_OPTION_MACOS_OPTION_AS_ALT = 6,
+  ROASTTY_KEY_ENCODER_OPTION_BACKARROW_KEY_MODE = 7,
+} roastty_key_encoder_option_e;
+
+typedef struct {
+  bool shift;
+  bool ctrl;
+  bool alt;
+  bool super;
+  bool caps_lock;
+  bool num_lock;
+  int shift_side;
+  int ctrl_side;
+  int alt_side;
+  int super_side;
+} roastty_key_mods_s;
 
 typedef enum {
   ROASTTY_CLIPBOARD_STANDARD,
@@ -279,6 +502,47 @@ ROASTTY_API bool roastty_app_needs_confirm_quit(roastty_app_t);
 ROASTTY_API bool roastty_app_has_global_keybinds(roastty_app_t);
 ROASTTY_API void roastty_app_set_color_scheme(roastty_app_t,
                                               roastty_color_scheme_e);
+
+ROASTTY_API roastty_result_e roastty_key_event_new(roastty_key_event_t*);
+ROASTTY_API void roastty_key_event_free(roastty_key_event_t);
+ROASTTY_API roastty_result_e roastty_key_event_set_action(roastty_key_event_t,
+                                                          int);
+ROASTTY_API int roastty_key_event_get_action(roastty_key_event_t);
+ROASTTY_API roastty_result_e roastty_key_event_set_key(roastty_key_event_t,
+                                                       int);
+ROASTTY_API int roastty_key_event_get_key(roastty_key_event_t);
+ROASTTY_API roastty_result_e roastty_key_event_set_mods(roastty_key_event_t,
+                                                        roastty_key_mods_s);
+ROASTTY_API roastty_key_mods_s roastty_key_event_get_mods(roastty_key_event_t);
+ROASTTY_API roastty_result_e roastty_key_event_set_consumed_mods(
+    roastty_key_event_t,
+    roastty_key_mods_s);
+ROASTTY_API roastty_key_mods_s
+roastty_key_event_get_consumed_mods(roastty_key_event_t);
+ROASTTY_API roastty_result_e roastty_key_event_set_composing(roastty_key_event_t,
+                                                             bool);
+ROASTTY_API bool roastty_key_event_get_composing(roastty_key_event_t);
+ROASTTY_API roastty_result_e roastty_key_event_set_utf8(roastty_key_event_t,
+                                                        const uint8_t*,
+                                                        size_t);
+ROASTTY_API const uint8_t* roastty_key_event_get_utf8(roastty_key_event_t,
+                                                      size_t*);
+ROASTTY_API roastty_result_e roastty_key_event_set_unshifted_codepoint(
+    roastty_key_event_t,
+    uint32_t);
+ROASTTY_API uint32_t
+roastty_key_event_get_unshifted_codepoint(roastty_key_event_t);
+
+ROASTTY_API roastty_result_e roastty_key_encoder_new(roastty_key_encoder_t*);
+ROASTTY_API void roastty_key_encoder_free(roastty_key_encoder_t);
+ROASTTY_API roastty_result_e roastty_key_encoder_setopt(roastty_key_encoder_t,
+                                                        int,
+                                                        const void*);
+ROASTTY_API roastty_result_e roastty_key_encoder_encode(roastty_key_encoder_t,
+                                                        roastty_key_event_t,
+                                                        uint8_t*,
+                                                        size_t,
+                                                        size_t*);
 
 ROASTTY_API roastty_result_e roastty_mouse_event_new(roastty_mouse_event_t*);
 ROASTTY_API void roastty_mouse_event_free(roastty_mouse_event_t);

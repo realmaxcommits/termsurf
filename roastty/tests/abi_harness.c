@@ -86,6 +86,203 @@ static void assert_config_uintptr(roastty_config_t config,
   assert(value == expected);
 }
 
+static roastty_key_mods_s empty_key_mods(void) {
+  roastty_key_mods_s mods = {
+      .shift = false,
+      .ctrl = false,
+      .alt = false,
+      .super = false,
+      .caps_lock = false,
+      .num_lock = false,
+      .shift_side = ROASTTY_KEY_SIDE_LEFT,
+      .ctrl_side = ROASTTY_KEY_SIDE_LEFT,
+      .alt_side = ROASTTY_KEY_SIDE_LEFT,
+      .super_side = ROASTTY_KEY_SIDE_LEFT,
+  };
+  return mods;
+}
+
+static void set_key_encoder_option(roastty_key_encoder_t encoder,
+                                   roastty_key_encoder_option_e option,
+                                   const void *value) {
+  assert(roastty_key_encoder_setopt(encoder, option, value) == ROASTTY_SUCCESS);
+}
+
+static void assert_key_event_and_encoder_abi(void) {
+  roastty_key_event_free(NULL);
+  roastty_key_encoder_free(NULL);
+
+  assert(ROASTTY_KEY_UNIDENTIFIED == 0);
+  assert(ROASTTY_KEY_KEY_A == 20);
+  assert(ROASTTY_KEY_ALT_LEFT == 51);
+  assert(ROASTTY_KEY_ARROW_UP == 78);
+  assert(ROASTTY_KEY_NUMPAD0 == 80);
+  assert(ROASTTY_KEY_F1 == 121);
+  assert(ROASTTY_KEY_BROWSER_BACK == 151);
+  assert(ROASTTY_KEY_PASTE == 175);
+
+  roastty_key_event_t event = NULL;
+  assert(roastty_key_event_new(NULL) == ROASTTY_INVALID_VALUE);
+  assert(roastty_key_event_new(&event) == ROASTTY_SUCCESS);
+  assert(event != NULL);
+
+  assert(roastty_key_event_set_action(event, ROASTTY_KEY_ACTION_REPEAT) ==
+         ROASTTY_SUCCESS);
+  assert(roastty_key_event_get_action(event) == ROASTTY_KEY_ACTION_REPEAT);
+  assert(roastty_key_event_set_action(event, 9999) == ROASTTY_INVALID_VALUE);
+  assert(roastty_key_event_get_action(event) == ROASTTY_KEY_ACTION_REPEAT);
+
+  assert(roastty_key_event_set_key(event, ROASTTY_KEY_ARROW_UP) ==
+         ROASTTY_SUCCESS);
+  assert(roastty_key_event_get_key(event) == ROASTTY_KEY_ARROW_UP);
+  assert(roastty_key_event_set_key(event, 176) == ROASTTY_INVALID_VALUE);
+  assert(roastty_key_event_get_key(event) == ROASTTY_KEY_ARROW_UP);
+
+  roastty_key_mods_s mods = empty_key_mods();
+  mods.shift = true;
+  mods.ctrl = true;
+  mods.shift_side = ROASTTY_KEY_SIDE_RIGHT;
+  mods.ctrl_side = ROASTTY_KEY_SIDE_RIGHT;
+  assert(roastty_key_event_set_mods(event, mods) == ROASTTY_SUCCESS);
+  roastty_key_mods_s got_mods = roastty_key_event_get_mods(event);
+  assert(got_mods.shift);
+  assert(got_mods.ctrl);
+  assert(got_mods.shift_side == ROASTTY_KEY_SIDE_RIGHT);
+  assert(got_mods.ctrl_side == ROASTTY_KEY_SIDE_RIGHT);
+  mods.shift_side = 2;
+  assert(roastty_key_event_set_mods(event, mods) == ROASTTY_INVALID_VALUE);
+
+  roastty_key_mods_s consumed = empty_key_mods();
+  consumed.alt = true;
+  consumed.alt_side = ROASTTY_KEY_SIDE_RIGHT;
+  assert(roastty_key_event_set_consumed_mods(event, consumed) ==
+         ROASTTY_SUCCESS);
+  roastty_key_mods_s got_consumed = roastty_key_event_get_consumed_mods(event);
+  assert(got_consumed.alt);
+  assert(got_consumed.alt_side == ROASTTY_KEY_SIDE_RIGHT);
+
+  assert(roastty_key_event_set_composing(event, true) == ROASTTY_SUCCESS);
+  assert(roastty_key_event_get_composing(event));
+  assert(roastty_key_event_set_unshifted_codepoint(event, 'A') ==
+         ROASTTY_SUCCESS);
+  assert(roastty_key_event_get_unshifted_codepoint(event) == 'A');
+
+  uint8_t text[] = {'o', 'k'};
+  assert(roastty_key_event_set_utf8(event, text, sizeof(text)) ==
+         ROASTTY_SUCCESS);
+  text[0] = 'n';
+  size_t text_len = 0;
+  const uint8_t *text_ptr = roastty_key_event_get_utf8(event, &text_len);
+  assert(text_ptr != NULL);
+  assert(text_len == 2);
+  assert(memcmp(text_ptr, "ok", text_len) == 0);
+  uint8_t bad_utf8[] = {0xff};
+  assert(roastty_key_event_set_utf8(event, bad_utf8, sizeof(bad_utf8)) ==
+         ROASTTY_INVALID_VALUE);
+  assert(roastty_key_event_set_utf8(event, NULL, 1) == ROASTTY_INVALID_VALUE);
+  assert(roastty_key_event_set_utf8(event, NULL, 0) == ROASTTY_SUCCESS);
+  assert(roastty_key_event_get_utf8(event, &text_len) == NULL);
+  assert(text_len == 0);
+  assert(roastty_key_event_get_utf8(NULL, &text_len) == NULL);
+  assert(text_len == 0);
+
+  roastty_key_encoder_t encoder = NULL;
+  assert(roastty_key_encoder_new(NULL) == ROASTTY_INVALID_VALUE);
+  assert(roastty_key_encoder_new(&encoder) == ROASTTY_SUCCESS);
+  assert(encoder != NULL);
+  assert(roastty_key_encoder_setopt(encoder,
+                                    ROASTTY_KEY_ENCODER_OPTION_ALT_ESC_PREFIX,
+                                    NULL) == ROASTTY_INVALID_VALUE);
+  int invalid_option = 9999;
+  assert(roastty_key_encoder_setopt(encoder, invalid_option, &invalid_option) ==
+         ROASTTY_INVALID_VALUE);
+  uint8_t bad_flags = 0x20;
+  assert(roastty_key_encoder_setopt(encoder,
+                                    ROASTTY_KEY_ENCODER_OPTION_KITTY_FLAGS,
+                                    &bad_flags) == ROASTTY_INVALID_VALUE);
+  int bad_option_as_alt = 4;
+  assert(roastty_key_encoder_setopt(
+             encoder,
+             ROASTTY_KEY_ENCODER_OPTION_MACOS_OPTION_AS_ALT,
+             &bad_option_as_alt) == ROASTTY_INVALID_VALUE);
+
+  bool enabled = true;
+  bool disabled = false;
+  set_key_encoder_option(encoder,
+                         ROASTTY_KEY_ENCODER_OPTION_CURSOR_KEY_APPLICATION,
+                         &enabled);
+  set_key_encoder_option(encoder,
+                         ROASTTY_KEY_ENCODER_OPTION_KEYPAD_KEY_APPLICATION,
+                         &enabled);
+  set_key_encoder_option(encoder,
+                         ROASTTY_KEY_ENCODER_OPTION_IGNORE_KEYPAD_WITH_NUMLOCK,
+                         &enabled);
+  set_key_encoder_option(encoder,
+                         ROASTTY_KEY_ENCODER_OPTION_ALT_ESC_PREFIX,
+                         &enabled);
+  set_key_encoder_option(encoder,
+                         ROASTTY_KEY_ENCODER_OPTION_MODIFY_OTHER_KEYS_STATE_2,
+                         &disabled);
+  set_key_encoder_option(encoder,
+                         ROASTTY_KEY_ENCODER_OPTION_BACKARROW_KEY_MODE,
+                         &enabled);
+  int option_as_alt = ROASTTY_OPTION_AS_ALT_RIGHT;
+  set_key_encoder_option(encoder,
+                         ROASTTY_KEY_ENCODER_OPTION_MACOS_OPTION_AS_ALT,
+                         &option_as_alt);
+
+  assert(roastty_key_event_set_action(event, ROASTTY_KEY_ACTION_PRESS) ==
+         ROASTTY_SUCCESS);
+  assert(roastty_key_event_set_composing(event, false) == ROASTTY_SUCCESS);
+  assert(roastty_key_event_set_key(event, ROASTTY_KEY_KEY_C) == ROASTTY_SUCCESS);
+  mods = empty_key_mods();
+  mods.ctrl = true;
+  assert(roastty_key_event_set_mods(event, mods) == ROASTTY_SUCCESS);
+  assert(roastty_key_event_set_consumed_mods(event, empty_key_mods()) ==
+         ROASTTY_SUCCESS);
+  assert(roastty_key_event_set_utf8(event, NULL, 0) == ROASTTY_SUCCESS);
+
+  size_t written = 0;
+  assert(roastty_key_encoder_encode(NULL, event, NULL, 0, &written) ==
+         ROASTTY_INVALID_VALUE);
+  assert(roastty_key_encoder_encode(encoder, NULL, NULL, 0, &written) ==
+         ROASTTY_INVALID_VALUE);
+  assert(roastty_key_encoder_encode(encoder, event, NULL, 1, &written) ==
+         ROASTTY_INVALID_VALUE);
+  assert(roastty_key_encoder_encode(encoder, event, NULL, 0, NULL) ==
+         ROASTTY_INVALID_VALUE);
+
+  assert(roastty_key_encoder_encode(encoder, event, NULL, 0, &written) ==
+         ROASTTY_OUT_OF_SPACE);
+  assert(written == 1);
+  uint8_t buf[64] = {0};
+  assert(roastty_key_encoder_encode(encoder, event, buf, sizeof(buf), &written) ==
+         ROASTTY_SUCCESS);
+  assert(written == 1);
+  assert(buf[0] == 0x03);
+
+  uint8_t kitty_flags = 0x1f;
+  set_key_encoder_option(encoder,
+                         ROASTTY_KEY_ENCODER_OPTION_KITTY_FLAGS,
+                         &kitty_flags);
+  assert(roastty_key_event_set_action(event, ROASTTY_KEY_ACTION_RELEASE) ==
+         ROASTTY_SUCCESS);
+  assert(roastty_key_event_set_key(event, ROASTTY_KEY_CONTROL_LEFT) ==
+         ROASTTY_SUCCESS);
+  mods = empty_key_mods();
+  mods.ctrl = true;
+  assert(roastty_key_event_set_mods(event, mods) == ROASTTY_SUCCESS);
+  assert(roastty_key_encoder_encode(encoder, event, NULL, 0, &written) ==
+         ROASTTY_OUT_OF_SPACE);
+  assert(written == strlen("\x1b[57442;5:3u"));
+  assert(roastty_key_encoder_encode(encoder, event, buf, sizeof(buf), &written) ==
+         ROASTTY_SUCCESS);
+  assert(memcmp(buf, "\x1b[57442;5:3u", written) == 0);
+
+  roastty_key_encoder_free(encoder);
+  roastty_key_event_free(event);
+}
+
 static void assert_mouse_event_abi(void) {
   roastty_mouse_event_free(NULL);
 
@@ -323,6 +520,7 @@ int main(int argc, char **argv) {
   roastty_surface_request_close(NULL);
   assert_mouse_event_abi();
   assert_mouse_encoder_abi();
+  assert_key_event_and_encoder_abi();
 
   roastty_info_s info = roastty_info();
   assert(info.version != NULL);

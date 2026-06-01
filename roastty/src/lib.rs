@@ -3,6 +3,8 @@ use std::os::raw::{c_char, c_int, c_void};
 use std::ptr;
 use std::slice;
 
+use input::{key, key_encode, key_mods};
+use terminal::kitty::KeyFlags;
 use terminal::{mouse, mouse_encode, point};
 
 mod input;
@@ -18,6 +20,8 @@ mod terminal;
 //   they were returned by Roastty string-returning functions.
 pub type RoasttyApp = *mut c_void;
 pub type RoasttyConfig = *mut c_void;
+pub type RoasttyKeyEncoder = *mut c_void;
+pub type RoasttyKeyEvent = *mut c_void;
 pub type RoasttyMouseEncoder = *mut c_void;
 pub type RoasttyMouseEvent = *mut c_void;
 pub type RoasttySurface = *mut c_void;
@@ -158,6 +162,21 @@ pub struct RoasttyMouseEncoderSize {
     padding_left: u32,
 }
 
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RoasttyKeyMods {
+    shift: bool,
+    ctrl: bool,
+    alt: bool,
+    super_: bool,
+    caps_lock: bool,
+    num_lock: bool,
+    shift_side: c_int,
+    ctrl_side: c_int,
+    alt_side: c_int,
+    super_side: c_int,
+}
+
 type WakeupCallback = Option<unsafe extern "C" fn(*mut c_void)>;
 type ActionCallback =
     Option<unsafe extern "C" fn(RoasttyApp, RoasttyTarget, RoasttyAction) -> bool>;
@@ -215,6 +234,14 @@ struct MouseEncoder {
     last_cell: Option<point::Coordinate>,
 }
 
+struct KeyEvent {
+    event: key::KeyEvent,
+}
+
+struct KeyEncoder {
+    opts: key_encode::Options,
+}
+
 static VERSION: &[u8] = b"0.1.0-roastty\0";
 static EMPTY_DIAGNOSTIC: &[u8] = b"\0";
 static WINDOW_SAVE_STATE_DEFAULT: &[u8] = b"default\0";
@@ -258,6 +285,101 @@ fn mouse_encoder_from_handle<'a>(handle: RoasttyMouseEncoder) -> Option<&'a mut 
         None
     } else {
         Some(unsafe { &mut *(handle.cast::<MouseEncoder>()) })
+    }
+}
+
+fn key_event_from_handle<'a>(handle: RoasttyKeyEvent) -> Option<&'a mut KeyEvent> {
+    if handle.is_null() {
+        None
+    } else {
+        Some(unsafe { &mut *(handle.cast::<KeyEvent>()) })
+    }
+}
+
+fn key_encoder_from_handle<'a>(handle: RoasttyKeyEncoder) -> Option<&'a mut KeyEncoder> {
+    if handle.is_null() {
+        None
+    } else {
+        Some(unsafe { &mut *(handle.cast::<KeyEncoder>()) })
+    }
+}
+
+fn key_action_from_int(value: c_int) -> Option<key::KeyAction> {
+    match value {
+        0 => Some(key::KeyAction::Release),
+        1 => Some(key::KeyAction::Press),
+        2 => Some(key::KeyAction::Repeat),
+        _ => None,
+    }
+}
+
+fn key_action_to_int(value: key::KeyAction) -> c_int {
+    value as c_int
+}
+
+fn key_from_int(value: c_int) -> Option<key::Key> {
+    let index = usize::try_from(value).ok()?;
+    key::ALL_KEYS.get(index).copied()
+}
+
+fn key_to_int(value: key::Key) -> c_int {
+    value as c_int
+}
+
+fn key_side_from_int(value: c_int) -> Option<key_mods::Side> {
+    match value {
+        0 => Some(key_mods::Side::Left),
+        1 => Some(key_mods::Side::Right),
+        _ => None,
+    }
+}
+
+fn key_side_to_int(value: key_mods::Side) -> c_int {
+    match value {
+        key_mods::Side::Left => 0,
+        key_mods::Side::Right => 1,
+    }
+}
+
+fn key_mods_from_abi(value: RoasttyKeyMods) -> Option<key_mods::Mods> {
+    Some(key_mods::Mods {
+        shift: value.shift,
+        ctrl: value.ctrl,
+        alt: value.alt,
+        super_: value.super_,
+        caps_lock: value.caps_lock,
+        num_lock: value.num_lock,
+        sides: key_mods::ModSides {
+            shift: key_side_from_int(value.shift_side)?,
+            ctrl: key_side_from_int(value.ctrl_side)?,
+            alt: key_side_from_int(value.alt_side)?,
+            super_: key_side_from_int(value.super_side)?,
+        },
+    })
+}
+
+fn key_mods_to_abi(value: key_mods::Mods) -> RoasttyKeyMods {
+    RoasttyKeyMods {
+        shift: value.shift,
+        ctrl: value.ctrl,
+        alt: value.alt,
+        super_: value.super_,
+        caps_lock: value.caps_lock,
+        num_lock: value.num_lock,
+        shift_side: key_side_to_int(value.sides.shift),
+        ctrl_side: key_side_to_int(value.sides.ctrl),
+        alt_side: key_side_to_int(value.sides.alt),
+        super_side: key_side_to_int(value.sides.super_),
+    }
+}
+
+fn option_as_alt_from_int(value: c_int) -> Option<key_mods::OptionAsAlt> {
+    match value {
+        0 => Some(key_mods::OptionAsAlt::False),
+        1 => Some(key_mods::OptionAsAlt::True),
+        2 => Some(key_mods::OptionAsAlt::Left),
+        3 => Some(key_mods::OptionAsAlt::Right),
+        _ => None,
     }
 }
 
@@ -637,6 +759,308 @@ pub extern "C" fn roastty_app_set_color_scheme(app: RoasttyApp, color_scheme: c_
     if let Some(app) = app_from_handle(app) {
         app.color_scheme = color_scheme;
     }
+}
+
+#[no_mangle]
+pub extern "C" fn roastty_key_event_new(out: *mut RoasttyKeyEvent) -> c_int {
+    if out.is_null() {
+        return ROASTTY_INVALID_VALUE;
+    }
+
+    let event = Box::new(KeyEvent {
+        event: key::KeyEvent::default(),
+    });
+    unsafe {
+        out.write(Box::into_raw(event).cast());
+    }
+    ROASTTY_SUCCESS
+}
+
+#[no_mangle]
+pub extern "C" fn roastty_key_event_free(event: RoasttyKeyEvent) {
+    if !event.is_null() {
+        unsafe {
+            drop(Box::from_raw(event.cast::<KeyEvent>()));
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn roastty_key_event_set_action(event: RoasttyKeyEvent, action: c_int) -> c_int {
+    let Some(event) = key_event_from_handle(event) else {
+        return ROASTTY_INVALID_VALUE;
+    };
+    let Some(action) = key_action_from_int(action) else {
+        return ROASTTY_INVALID_VALUE;
+    };
+
+    event.event.action = action;
+    ROASTTY_SUCCESS
+}
+
+#[no_mangle]
+pub extern "C" fn roastty_key_event_get_action(event: RoasttyKeyEvent) -> c_int {
+    key_event_from_handle(event)
+        .map(|event| key_action_to_int(event.event.action))
+        .unwrap_or(0)
+}
+
+#[no_mangle]
+pub extern "C" fn roastty_key_event_set_key(event: RoasttyKeyEvent, key: c_int) -> c_int {
+    let Some(event) = key_event_from_handle(event) else {
+        return ROASTTY_INVALID_VALUE;
+    };
+    let Some(key) = key_from_int(key) else {
+        return ROASTTY_INVALID_VALUE;
+    };
+
+    event.event.key = key;
+    ROASTTY_SUCCESS
+}
+
+#[no_mangle]
+pub extern "C" fn roastty_key_event_get_key(event: RoasttyKeyEvent) -> c_int {
+    key_event_from_handle(event)
+        .map(|event| key_to_int(event.event.key))
+        .unwrap_or(0)
+}
+
+#[no_mangle]
+pub extern "C" fn roastty_key_event_set_mods(
+    event: RoasttyKeyEvent,
+    mods: RoasttyKeyMods,
+) -> c_int {
+    let Some(event) = key_event_from_handle(event) else {
+        return ROASTTY_INVALID_VALUE;
+    };
+    let Some(mods) = key_mods_from_abi(mods) else {
+        return ROASTTY_INVALID_VALUE;
+    };
+
+    event.event.mods = mods;
+    ROASTTY_SUCCESS
+}
+
+#[no_mangle]
+pub extern "C" fn roastty_key_event_get_mods(event: RoasttyKeyEvent) -> RoasttyKeyMods {
+    key_event_from_handle(event)
+        .map(|event| key_mods_to_abi(event.event.mods))
+        .unwrap_or_else(|| key_mods_to_abi(key_mods::Mods::new()))
+}
+
+#[no_mangle]
+pub extern "C" fn roastty_key_event_set_consumed_mods(
+    event: RoasttyKeyEvent,
+    mods: RoasttyKeyMods,
+) -> c_int {
+    let Some(event) = key_event_from_handle(event) else {
+        return ROASTTY_INVALID_VALUE;
+    };
+    let Some(mods) = key_mods_from_abi(mods) else {
+        return ROASTTY_INVALID_VALUE;
+    };
+
+    event.event.consumed_mods = mods;
+    ROASTTY_SUCCESS
+}
+
+#[no_mangle]
+pub extern "C" fn roastty_key_event_get_consumed_mods(event: RoasttyKeyEvent) -> RoasttyKeyMods {
+    key_event_from_handle(event)
+        .map(|event| key_mods_to_abi(event.event.consumed_mods))
+        .unwrap_or_else(|| key_mods_to_abi(key_mods::Mods::new()))
+}
+
+#[no_mangle]
+pub extern "C" fn roastty_key_event_set_composing(
+    event: RoasttyKeyEvent,
+    composing: bool,
+) -> c_int {
+    let Some(event) = key_event_from_handle(event) else {
+        return ROASTTY_INVALID_VALUE;
+    };
+
+    event.event.composing = composing;
+    ROASTTY_SUCCESS
+}
+
+#[no_mangle]
+pub extern "C" fn roastty_key_event_get_composing(event: RoasttyKeyEvent) -> bool {
+    key_event_from_handle(event)
+        .map(|event| event.event.composing)
+        .unwrap_or(false)
+}
+
+#[no_mangle]
+pub extern "C" fn roastty_key_event_set_utf8(
+    event: RoasttyKeyEvent,
+    bytes: *const u8,
+    len: usize,
+) -> c_int {
+    let Some(event) = key_event_from_handle(event) else {
+        return ROASTTY_INVALID_VALUE;
+    };
+    if bytes.is_null() {
+        if len == 0 {
+            event.event.utf8.clear();
+            return ROASTTY_SUCCESS;
+        }
+        return ROASTTY_INVALID_VALUE;
+    }
+
+    let bytes = unsafe { slice::from_raw_parts(bytes, len) };
+    if std::str::from_utf8(bytes).is_err() {
+        return ROASTTY_INVALID_VALUE;
+    }
+
+    event.event.utf8.clear();
+    event.event.utf8.extend_from_slice(bytes);
+    ROASTTY_SUCCESS
+}
+
+#[no_mangle]
+pub extern "C" fn roastty_key_event_get_utf8(event: RoasttyKeyEvent, len: *mut usize) -> *const u8 {
+    let Some(event) = key_event_from_handle(event) else {
+        if !len.is_null() {
+            unsafe {
+                len.write(0);
+            }
+        }
+        return ptr::null();
+    };
+    if !len.is_null() {
+        unsafe {
+            len.write(event.event.utf8.len());
+        }
+    }
+    if event.event.utf8.is_empty() {
+        ptr::null()
+    } else {
+        event.event.utf8.as_ptr()
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn roastty_key_event_set_unshifted_codepoint(
+    event: RoasttyKeyEvent,
+    codepoint: u32,
+) -> c_int {
+    let Some(event) = key_event_from_handle(event) else {
+        return ROASTTY_INVALID_VALUE;
+    };
+
+    event.event.unshifted_codepoint = codepoint;
+    ROASTTY_SUCCESS
+}
+
+#[no_mangle]
+pub extern "C" fn roastty_key_event_get_unshifted_codepoint(event: RoasttyKeyEvent) -> u32 {
+    key_event_from_handle(event)
+        .map(|event| event.event.unshifted_codepoint)
+        .unwrap_or(0)
+}
+
+#[no_mangle]
+pub extern "C" fn roastty_key_encoder_new(out: *mut RoasttyKeyEncoder) -> c_int {
+    if out.is_null() {
+        return ROASTTY_INVALID_VALUE;
+    }
+
+    let encoder = Box::new(KeyEncoder {
+        opts: key_encode::Options::default(),
+    });
+    unsafe {
+        out.write(Box::into_raw(encoder).cast());
+    }
+    ROASTTY_SUCCESS
+}
+
+#[no_mangle]
+pub extern "C" fn roastty_key_encoder_free(encoder: RoasttyKeyEncoder) {
+    if !encoder.is_null() {
+        unsafe {
+            drop(Box::from_raw(encoder.cast::<KeyEncoder>()));
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn roastty_key_encoder_setopt(
+    encoder: RoasttyKeyEncoder,
+    option: c_int,
+    value: *const c_void,
+) -> c_int {
+    let Some(encoder) = key_encoder_from_handle(encoder) else {
+        return ROASTTY_INVALID_VALUE;
+    };
+    if value.is_null() {
+        return ROASTTY_INVALID_VALUE;
+    }
+
+    match option {
+        0 => encoder.opts.cursor_key_application = unsafe { value.cast::<bool>().read() },
+        1 => encoder.opts.keypad_key_application = unsafe { value.cast::<bool>().read() },
+        2 => encoder.opts.ignore_keypad_with_numlock = unsafe { value.cast::<bool>().read() },
+        3 => encoder.opts.alt_esc_prefix = unsafe { value.cast::<bool>().read() },
+        4 => encoder.opts.modify_other_keys_state_2 = unsafe { value.cast::<bool>().read() },
+        5 => {
+            let value = unsafe { value.cast::<u8>().read() };
+            let Some(flags) = KeyFlags::from_raw_int(value) else {
+                return ROASTTY_INVALID_VALUE;
+            };
+            encoder.opts.kitty_flags = flags;
+        }
+        6 => {
+            let value = unsafe { value.cast::<c_int>().read() };
+            let Some(option_as_alt) = option_as_alt_from_int(value) else {
+                return ROASTTY_INVALID_VALUE;
+            };
+            encoder.opts.macos_option_as_alt = option_as_alt;
+        }
+        7 => encoder.opts.backarrow_key_mode = unsafe { value.cast::<bool>().read() },
+        _ => return ROASTTY_INVALID_VALUE,
+    }
+
+    ROASTTY_SUCCESS
+}
+
+#[no_mangle]
+pub extern "C" fn roastty_key_encoder_encode(
+    encoder: RoasttyKeyEncoder,
+    event: RoasttyKeyEvent,
+    out: *mut u8,
+    out_len: usize,
+    out_written: *mut usize,
+) -> c_int {
+    let Some(encoder) = key_encoder_from_handle(encoder) else {
+        return ROASTTY_INVALID_VALUE;
+    };
+    let Some(event) = key_event_from_handle(event) else {
+        return ROASTTY_INVALID_VALUE;
+    };
+    if out_written.is_null() {
+        return ROASTTY_INVALID_VALUE;
+    }
+    if out.is_null() && out_len != 0 {
+        return ROASTTY_INVALID_VALUE;
+    }
+
+    let encoded = key_encode::encode(&event.event, encoder.opts);
+    unsafe {
+        out_written.write(encoded.len());
+    }
+
+    if encoded.len() > out_len || (!encoded.is_empty() && out.is_null()) {
+        return ROASTTY_OUT_OF_SPACE;
+    }
+
+    if !encoded.is_empty() {
+        unsafe {
+            ptr::copy_nonoverlapping(encoded.as_ptr(), out, encoded.len());
+        }
+    }
+
+    ROASTTY_SUCCESS
 }
 
 #[no_mangle]
@@ -1082,6 +1506,35 @@ pub extern "C" fn roastty_surface_request_close(_surface: RoasttySurface) {}
 mod tests {
     use super::*;
 
+    fn new_key_event() -> RoasttyKeyEvent {
+        let mut event = ptr::null_mut();
+        assert_eq!(roastty_key_event_new(&mut event), ROASTTY_SUCCESS);
+        assert!(!event.is_null());
+        event
+    }
+
+    fn new_key_encoder() -> RoasttyKeyEncoder {
+        let mut encoder = ptr::null_mut();
+        assert_eq!(roastty_key_encoder_new(&mut encoder), ROASTTY_SUCCESS);
+        assert!(!encoder.is_null());
+        encoder
+    }
+
+    fn key_mods() -> RoasttyKeyMods {
+        RoasttyKeyMods {
+            shift: false,
+            ctrl: false,
+            alt: false,
+            super_: false,
+            caps_lock: false,
+            num_lock: false,
+            shift_side: 0,
+            ctrl_side: 0,
+            alt_side: 0,
+            super_side: 0,
+        }
+    }
+
     #[test]
     fn empty_string_shape_matches_roastty() {
         let value = empty_string();
@@ -1126,5 +1579,235 @@ mod tests {
         roastty_surface_free(surface);
         roastty_app_free(app);
         roastty_config_free(config);
+    }
+
+    #[test]
+    fn key_event_abi_sets_and_gets_fields() {
+        roastty_key_event_free(ptr::null_mut());
+        assert_eq!(
+            roastty_key_event_new(ptr::null_mut()),
+            ROASTTY_INVALID_VALUE
+        );
+
+        let event = new_key_event();
+        assert_eq!(roastty_key_event_set_action(event, 2), ROASTTY_SUCCESS);
+        assert_eq!(roastty_key_event_get_action(event), 2);
+        assert_eq!(roastty_key_event_set_key(event, 78), ROASTTY_SUCCESS);
+        assert_eq!(roastty_key_event_get_key(event), 78);
+
+        let mut mods = key_mods();
+        mods.shift = true;
+        mods.ctrl = true;
+        mods.shift_side = 1;
+        mods.ctrl_side = 1;
+        assert_eq!(roastty_key_event_set_mods(event, mods), ROASTTY_SUCCESS);
+        let got_mods = roastty_key_event_get_mods(event);
+        assert!(got_mods.shift);
+        assert!(got_mods.ctrl);
+        assert_eq!(got_mods.shift_side, 1);
+        assert_eq!(got_mods.ctrl_side, 1);
+
+        let mut consumed = key_mods();
+        consumed.alt = true;
+        consumed.alt_side = 1;
+        assert_eq!(
+            roastty_key_event_set_consumed_mods(event, consumed),
+            ROASTTY_SUCCESS
+        );
+        let got_consumed = roastty_key_event_get_consumed_mods(event);
+        assert!(got_consumed.alt);
+        assert_eq!(got_consumed.alt_side, 1);
+
+        assert_eq!(
+            roastty_key_event_set_composing(event, true),
+            ROASTTY_SUCCESS
+        );
+        assert!(roastty_key_event_get_composing(event));
+        assert_eq!(
+            roastty_key_event_set_unshifted_codepoint(event, 'A' as u32),
+            ROASTTY_SUCCESS
+        );
+        assert_eq!(roastty_key_event_get_unshifted_codepoint(event), 'A' as u32);
+
+        roastty_key_event_free(event);
+    }
+
+    #[test]
+    fn key_event_abi_rejects_invalid_values() {
+        let event = new_key_event();
+        assert_eq!(
+            roastty_key_event_set_action(event, 9999),
+            ROASTTY_INVALID_VALUE
+        );
+        assert_eq!(
+            roastty_key_event_set_key(event, key::KEY_COUNT as c_int),
+            ROASTTY_INVALID_VALUE
+        );
+        assert_eq!(roastty_key_event_set_key(event, -1), ROASTTY_INVALID_VALUE);
+
+        let mut mods = key_mods();
+        mods.shift_side = 2;
+        assert_eq!(
+            roastty_key_event_set_mods(event, mods),
+            ROASTTY_INVALID_VALUE
+        );
+        mods = key_mods();
+        mods.super_side = -1;
+        assert_eq!(
+            roastty_key_event_set_consumed_mods(event, mods),
+            ROASTTY_INVALID_VALUE
+        );
+
+        roastty_key_event_free(event);
+    }
+
+    #[test]
+    fn key_event_utf8_is_owned_and_validated() {
+        let event = new_key_event();
+        let mut bytes = b"ok".to_vec();
+        assert_eq!(
+            roastty_key_event_set_utf8(event, bytes.as_ptr(), bytes.len()),
+            ROASTTY_SUCCESS
+        );
+        bytes[0] = b'n';
+
+        let mut len = 0usize;
+        let ptr = roastty_key_event_get_utf8(event, &mut len);
+        assert_eq!(len, 2);
+        assert!(!ptr.is_null());
+        let got = unsafe { slice::from_raw_parts(ptr, len) };
+        assert_eq!(got, b"ok");
+
+        let invalid = [0xffu8];
+        assert_eq!(
+            roastty_key_event_set_utf8(event, invalid.as_ptr(), invalid.len()),
+            ROASTTY_INVALID_VALUE
+        );
+        assert_eq!(
+            roastty_key_event_set_utf8(event, ptr::null(), 1),
+            ROASTTY_INVALID_VALUE
+        );
+        assert_eq!(
+            roastty_key_event_set_utf8(event, ptr::null(), 0),
+            ROASTTY_SUCCESS
+        );
+        assert!(roastty_key_event_get_utf8(event, &mut len).is_null());
+        assert_eq!(len, 0);
+        assert!(roastty_key_event_get_utf8(ptr::null_mut(), &mut len).is_null());
+        assert_eq!(len, 0);
+
+        roastty_key_event_free(event);
+    }
+
+    #[test]
+    fn key_encoder_abi_options_and_encode() {
+        roastty_key_encoder_free(ptr::null_mut());
+        assert_eq!(
+            roastty_key_encoder_new(ptr::null_mut()),
+            ROASTTY_INVALID_VALUE
+        );
+
+        let event = new_key_event();
+        let encoder = new_key_encoder();
+        assert_eq!(
+            roastty_key_event_set_key(event, key::Key::KeyC as c_int),
+            ROASTTY_SUCCESS
+        );
+        let mut mods = key_mods();
+        mods.ctrl = true;
+        assert_eq!(roastty_key_event_set_mods(event, mods), ROASTTY_SUCCESS);
+
+        let mut written = 0usize;
+        assert_eq!(
+            roastty_key_encoder_encode(encoder, event, ptr::null_mut(), 0, &mut written),
+            ROASTTY_OUT_OF_SPACE
+        );
+        assert_eq!(written, 1);
+        let mut out = [0u8; 8];
+        assert_eq!(
+            roastty_key_encoder_encode(encoder, event, out.as_mut_ptr(), out.len(), &mut written),
+            ROASTTY_SUCCESS
+        );
+        assert_eq!(&out[..written], b"\x03");
+
+        let kitty_flags = KeyFlags::TRUE.int();
+        assert_eq!(
+            roastty_key_encoder_setopt(encoder, 5, (&kitty_flags as *const u8).cast::<c_void>()),
+            ROASTTY_SUCCESS
+        );
+        assert_eq!(
+            roastty_key_event_set_key(event, key::Key::ControlLeft as c_int),
+            ROASTTY_SUCCESS
+        );
+        assert_eq!(
+            roastty_key_event_set_action(event, key::KeyAction::Release as c_int),
+            ROASTTY_SUCCESS
+        );
+        assert_eq!(
+            roastty_key_encoder_encode(encoder, event, out.as_mut_ptr(), out.len(), &mut written),
+            ROASTTY_OUT_OF_SPACE
+        );
+        assert!(written > out.len());
+
+        roastty_key_encoder_free(encoder);
+        roastty_key_event_free(event);
+    }
+
+    #[test]
+    fn key_encoder_abi_rejects_invalid_options() {
+        let encoder = new_key_encoder();
+        let yes = true;
+        assert_eq!(
+            roastty_key_encoder_setopt(encoder, 0, ptr::null()),
+            ROASTTY_INVALID_VALUE
+        );
+        assert_eq!(
+            roastty_key_encoder_setopt(encoder, 99, (&yes as *const bool).cast()),
+            ROASTTY_INVALID_VALUE
+        );
+        let bad_flags = 0b100000u8;
+        assert_eq!(
+            roastty_key_encoder_setopt(encoder, 5, (&bad_flags as *const u8).cast()),
+            ROASTTY_INVALID_VALUE
+        );
+        let bad_option_as_alt = 4i32;
+        assert_eq!(
+            roastty_key_encoder_setopt(encoder, 6, (&bad_option_as_alt as *const i32).cast()),
+            ROASTTY_INVALID_VALUE
+        );
+
+        for option in [0, 1, 2, 3, 4, 7] {
+            assert_eq!(
+                roastty_key_encoder_setopt(encoder, option, (&yes as *const bool).cast()),
+                ROASTTY_SUCCESS
+            );
+        }
+        let option_as_alt = 3i32;
+        assert_eq!(
+            roastty_key_encoder_setopt(encoder, 6, (&option_as_alt as *const i32).cast()),
+            ROASTTY_SUCCESS
+        );
+
+        roastty_key_encoder_free(encoder);
+    }
+
+    #[test]
+    fn key_abi_discriminants_match_internal_key_values() {
+        assert_eq!(key::KEY_COUNT, 176);
+        assert_eq!(key::KeyAction::Release as c_int, 0);
+        assert_eq!(key::KeyAction::Press as c_int, 1);
+        assert_eq!(key::KeyAction::Repeat as c_int, 2);
+
+        assert_eq!(key_to_int(key::Key::Unidentified), 0);
+        assert_eq!(key_to_int(key::Key::KeyA), 20);
+        assert_eq!(key_to_int(key::Key::AltLeft), 51);
+        assert_eq!(key_to_int(key::Key::ArrowUp), 78);
+        assert_eq!(key_to_int(key::Key::Numpad0), 80);
+        assert_eq!(key_to_int(key::Key::F1), 121);
+        assert_eq!(key_to_int(key::Key::BrowserBack), 151);
+        assert_eq!(key_to_int(key::Key::Paste), 175);
+        assert_eq!(key_from_int(0), Some(key::Key::Unidentified));
+        assert_eq!(key_from_int(175), Some(key::Key::Paste));
+        assert_eq!(key_from_int(176), None);
     }
 }

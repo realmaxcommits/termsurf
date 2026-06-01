@@ -174,6 +174,14 @@ impl KeyFlags {
         }
     }
 
+    pub(crate) const fn from_raw_int(value: u8) -> Option<Self> {
+        if value <= Self::TRUE.int() {
+            Some(Self::from_int(value))
+        } else {
+            None
+        }
+    }
+
     const fn from_int(value: u8) -> Self {
         Self {
             disambiguate: value & 0b00001 != 0,
