@@ -97,7 +97,7 @@ impl Screen {
         })
     }
 
-    fn top_left_pin(&self) -> super::page_list::Pin {
+    pub(super) fn top_left_pin(&self) -> super::page_list::Pin {
         self.pages
             .pin(point::Point::screen(point::Coordinate::new(0, 0)))
             .expect("screen top-left pin must resolve")
@@ -331,6 +331,10 @@ impl<'a> ScreenFormatterOptions<'a> {
     ) -> Self {
         self.codepoint_map = codepoint_map;
         self
+    }
+
+    pub(super) const fn emit(&self) -> PageOutputFormat {
+        self.emit
     }
 }
 

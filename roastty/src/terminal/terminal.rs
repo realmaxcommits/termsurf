@@ -12,11 +12,17 @@ use super::size::CellCountInt;
 #[derive(Debug)]
 pub(super) struct Terminal {
     screens: TerminalScreens,
+    colors: TerminalColors,
 }
 
 #[derive(Debug)]
 pub(super) struct TerminalScreens {
     active: Screen,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct TerminalColors {
+    palette: color::Palette,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -34,6 +40,7 @@ pub(super) struct TerminalFormatter<'a> {
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(super) struct TerminalFormatterExtra {
+    palette: bool,
     screen: ScreenFormatterExtra,
 }
 
@@ -47,7 +54,15 @@ impl Terminal {
             screens: TerminalScreens {
                 active: Screen::init(cols, rows, max_scrollback_rows)?,
             },
+            colors: TerminalColors {
+                palette: color::DEFAULT_PALETTE,
+            },
         })
+    }
+
+    #[cfg(test)]
+    pub(super) fn set_palette_entry_for_tests(&mut self, index: usize, rgb: color::Rgb) {
+        self.colors.palette[index] = rgb;
     }
 }
 
@@ -103,31 +118,89 @@ impl<'a> TerminalFormatter<'a> {
     }
 
     pub(super) fn format(self) -> String {
-        ScreenFormatter::init(&self.terminal.screens.active, self.options.screen)
-            .with_content(self.content)
-            .with_extra(self.extra.screen)
-            .format()
+        let mut output = self.palette_string();
+        output.push_str(
+            &ScreenFormatter::init(&self.terminal.screens.active, self.options.screen)
+                .with_content(self.content)
+                .with_extra(self.extra.screen)
+                .format(),
+        );
+        output
     }
 
     pub(super) fn format_with_pin_map(self) -> PageStringWithPinMap {
-        ScreenFormatter::init(&self.terminal.screens.active, self.options.screen)
+        let prefix = self.palette_string();
+        let mut output = ScreenFormatter::init(&self.terminal.screens.active, self.options.screen)
             .with_content(self.content)
             .with_extra(self.extra.screen)
-            .format_with_pin_map()
+            .format_with_pin_map();
+
+        if !prefix.is_empty() {
+            let top_left = self.terminal.screens.active.top_left_pin();
+            let mut text = prefix;
+            let mut pin_map = vec![top_left; text.len()];
+            text.push_str(&output.text);
+            pin_map.append(&mut output.pin_map);
+            output = PageStringWithPinMap { text, pin_map };
+        }
+
+        output
+    }
+
+    fn palette_string(&self) -> String {
+        if !self.extra.palette {
+            return String::new();
+        }
+
+        let palette = &self.terminal.colors.palette;
+        match self.options.screen.emit() {
+            PageOutputFormat::Plain => String::new(),
+            PageOutputFormat::Vt => palette_vt_string(palette),
+            PageOutputFormat::Html => palette_html_string(palette),
+        }
     }
 }
 
 impl TerminalFormatterExtra {
     pub(super) const fn none() -> Self {
         Self {
+            palette: false,
             screen: ScreenFormatterExtra::none(),
         }
+    }
+
+    pub(super) const fn palette(mut self, palette: bool) -> Self {
+        self.palette = palette;
+        self
     }
 
     pub(super) const fn screen(mut self, screen: ScreenFormatterExtra) -> Self {
         self.screen = screen;
         self
     }
+}
+
+fn palette_vt_string(palette: &color::Palette) -> String {
+    let mut output = String::new();
+    for (index, rgb) in palette.iter().enumerate() {
+        output.push_str(&format!(
+            "\x1b]4;{};rgb:{:02x}/{:02x}/{:02x}\x1b\\",
+            index, rgb.r, rgb.g, rgb.b
+        ));
+    }
+    output
+}
+
+fn palette_html_string(palette: &color::Palette) -> String {
+    let mut output = String::from("<style>:root{");
+    for (index, rgb) in palette.iter().enumerate() {
+        output.push_str(&format!(
+            "--vt-palette-{}: #{:02x}{:02x}{:02x};",
+            index, rgb.r, rgb.g, rgb.b
+        ));
+    }
+    output.push_str("}</style>");
+    output
 }
 
 #[cfg(test)]
@@ -235,6 +308,24 @@ mod tests {
 
     const fn terminal_screen_extras() -> TerminalFormatterExtra {
         TerminalFormatterExtra::none().screen(all_screen_extras())
+    }
+
+    const fn terminal_palette_extra() -> TerminalFormatterExtra {
+        TerminalFormatterExtra::none().palette(true)
+    }
+
+    fn set_test_palette_entries(terminal: &mut Terminal) {
+        terminal.set_palette_entry_for_tests(0, color::Rgb::new(0x12, 0x34, 0x56));
+        terminal.set_palette_entry_for_tests(1, color::Rgb::new(0xab, 0xcd, 0xef));
+        terminal.set_palette_entry_for_tests(255, color::Rgb::new(0xff, 0x00, 0xff));
+    }
+
+    fn palette_vt_prefix_len(terminal: &Terminal) -> usize {
+        palette_vt_string(&terminal.colors.palette).len()
+    }
+
+    fn palette_html_prefix_len(terminal: &Terminal) -> usize {
+        palette_html_string(&terminal.colors.palette).len()
     }
 
     #[test]
@@ -445,6 +536,7 @@ mod tests {
     #[test]
     fn terminal_formatter_default_path_does_not_emit_screen_extras() {
         let mut terminal = terminal_with_lines(&["hi"]);
+        set_test_palette_entries(&mut terminal);
         terminal.screens.active.set_cursor_position_for_tests(4, 2);
         terminal
             .screens
@@ -479,11 +571,14 @@ mod tests {
 
         assert_eq!(terminal_output, screen_output);
         assert_eq!(terminal_output, "hi");
+        assert!(!terminal_output.contains("\x1b]4;"));
+        assert!(!terminal_output.contains("--vt-palette-"));
     }
 
     #[test]
     fn terminal_formatter_default_pin_map_does_not_emit_screen_extras() {
         let mut terminal = terminal_with_lines(&["hi"]);
+        set_test_palette_entries(&mut terminal);
         terminal.screens.active.set_cursor_position_for_tests(4, 2);
         terminal.screens.active.set_cursor_protected_for_tests(true);
         terminal
@@ -509,6 +604,180 @@ mod tests {
         assert_eq!(terminal_output, screen_output);
         assert_eq!(terminal_output.text, "hi");
         assert_eq!(terminal_output.pin_map, pins(&terminal, &[(0, 0), (1, 0)]));
+    }
+
+    #[test]
+    fn terminal_formatter_vt_palette_extra_emits_before_content() {
+        let mut terminal = terminal_with_lines(&["content"]);
+        set_test_palette_entries(&mut terminal);
+
+        let output = formatter(&terminal, PageOutputFormat::Vt)
+            .with_extra(terminal_palette_extra())
+            .format();
+
+        assert!(output.starts_with("\x1b]4;0;rgb:12/34/56\x1b\\"));
+        assert_eq!(output.matches("\x1b]4;").count(), 256);
+        assert!(output.contains("\x1b]4;1;rgb:ab/cd/ef\x1b\\"));
+        assert!(output.contains("\x1b]4;255;rgb:ff/00/ff\x1b\\"));
+        assert!(output.ends_with("content"));
+        assert!(output.find("\x1b]4;255;").unwrap() < output.find("content").unwrap());
+    }
+
+    #[test]
+    fn terminal_formatter_html_palette_extra_emits_before_content() {
+        let mut terminal = terminal_with_lines(&["<content"]);
+        set_test_palette_entries(&mut terminal);
+
+        let output = formatter(&terminal, PageOutputFormat::Html)
+            .with_extra(terminal_palette_extra())
+            .format();
+
+        assert!(output.starts_with("<style>:root{"));
+        assert_eq!(output.matches("--vt-palette-").count(), 256);
+        assert!(output.contains("--vt-palette-0: #123456;"));
+        assert!(output.contains("--vt-palette-1: #abcdef;"));
+        assert!(output.contains("--vt-palette-255: #ff00ff;"));
+        assert!(output.contains("}</style><div"));
+        assert!(output.ends_with("&lt;content</div>"));
+    }
+
+    #[test]
+    fn terminal_formatter_plain_ignores_palette_extra() {
+        let mut terminal = terminal_with_lines(&["plain"]);
+        set_test_palette_entries(&mut terminal);
+
+        let default_output = formatter(&terminal, PageOutputFormat::Plain).format();
+        let palette_output = formatter(&terminal, PageOutputFormat::Plain)
+            .with_extra(terminal_palette_extra())
+            .format();
+        let palette_pin_map = formatter(&terminal, PageOutputFormat::Plain)
+            .with_extra(terminal_palette_extra())
+            .format_with_pin_map();
+
+        assert_eq!(palette_output, default_output);
+        assert_eq!(palette_output, "plain");
+        assert_eq!(palette_pin_map.text, "plain");
+        assert_eq!(
+            palette_pin_map.pin_map,
+            pins(&terminal, &[(0, 0), (1, 0), (2, 0), (3, 0), (4, 0)])
+        );
+    }
+
+    #[test]
+    fn terminal_formatter_palette_extra_without_content_emits_for_vt_and_html() {
+        let mut terminal = terminal_with_lines(&["ignored"]);
+        set_test_palette_entries(&mut terminal);
+
+        let vt = formatter(&terminal, PageOutputFormat::Vt)
+            .with_content(ScreenFormatterContent::None)
+            .with_extra(terminal_palette_extra())
+            .format();
+        let html = formatter(&terminal, PageOutputFormat::Html)
+            .with_content(ScreenFormatterContent::None)
+            .with_extra(terminal_palette_extra())
+            .format();
+        let plain = formatter(&terminal, PageOutputFormat::Plain)
+            .with_content(ScreenFormatterContent::None)
+            .with_extra(terminal_palette_extra())
+            .format();
+
+        assert_eq!(vt.matches("\x1b]4;").count(), 256);
+        assert!(vt.ends_with("\x1b]4;255;rgb:ff/00/ff\x1b\\"));
+        assert_eq!(html.matches("--vt-palette-").count(), 256);
+        assert!(html.ends_with("--vt-palette-255: #ff00ff;}</style>"));
+        assert_eq!(plain, "");
+    }
+
+    #[test]
+    fn terminal_formatter_vt_palette_pin_map_uses_top_left_before_selected_content() {
+        let mut terminal = terminal_with_lines(&["top", "éB"]);
+        set_test_palette_entries(&mut terminal);
+        let selection = active_selection(&terminal, (0, 1), (1, 1));
+
+        let output = formatter(&terminal, PageOutputFormat::Vt)
+            .with_content(ScreenFormatterContent::Selection(Some(selection)))
+            .with_extra(terminal_palette_extra())
+            .format_with_pin_map();
+        let prefix_len = palette_vt_prefix_len(&terminal);
+
+        assert_eq!(output.text.len(), output.pin_map.len());
+        assert!(output.text.starts_with("\x1b]4;0;rgb:12/34/56\x1b\\"));
+        assert!(output.text.ends_with("éB"));
+        assert!(prefix_len < output.text.len());
+        for pin in &output.pin_map[..prefix_len] {
+            assert_eq!(*pin, active_pin(&terminal, 0, 0));
+        }
+        assert_eq!(
+            &output.pin_map[prefix_len..],
+            pins(&terminal, &[(0, 1), (0, 1), (1, 1)])
+        );
+    }
+
+    #[test]
+    fn terminal_formatter_html_palette_pin_map_uses_top_left_before_selected_content() {
+        let mut terminal = terminal_with_lines(&["top", "<B"]);
+        set_test_palette_entries(&mut terminal);
+        let selection = active_selection(&terminal, (0, 1), (1, 1));
+
+        let output = formatter(&terminal, PageOutputFormat::Html)
+            .with_content(ScreenFormatterContent::Selection(Some(selection)))
+            .with_extra(terminal_palette_extra())
+            .format_with_pin_map();
+        let prefix_len = palette_html_prefix_len(&terminal);
+
+        assert_eq!(output.text.len(), output.pin_map.len());
+        assert!(output.text.starts_with("<style>:root{"));
+        assert!(output.text.ends_with("&lt;B</div>"));
+        assert!(prefix_len < output.text.len());
+        for pin in &output.pin_map[..prefix_len] {
+            assert_eq!(*pin, active_pin(&terminal, 0, 0));
+        }
+        let content_start = output.text.find("&lt;B").unwrap();
+        assert_eq!(output.pin_map[content_start], active_pin(&terminal, 0, 1));
+        assert_eq!(
+            output.pin_map.last().copied(),
+            Some(active_pin(&terminal, 1, 1))
+        );
+    }
+
+    #[test]
+    fn terminal_formatter_palette_pin_map_without_content_uses_top_left() {
+        let mut terminal = terminal_with_lines(&["ignored"]);
+        set_test_palette_entries(&mut terminal);
+
+        for emit in [PageOutputFormat::Vt, PageOutputFormat::Html] {
+            let output = formatter(&terminal, emit)
+                .with_content(ScreenFormatterContent::None)
+                .with_extra(terminal_palette_extra())
+                .format_with_pin_map();
+
+            assert!(!output.text.is_empty());
+            assert_eq!(output.text.len(), output.pin_map.len());
+            for pin in output.pin_map {
+                assert_eq!(pin, active_pin(&terminal, 0, 0));
+            }
+        }
+    }
+
+    #[test]
+    fn terminal_formatter_vt_palette_combines_before_screen_extras() {
+        let mut terminal = terminal_with_lines(&["hi"]);
+        set_test_palette_entries(&mut terminal);
+        set_active_screen_extras(&mut terminal);
+
+        let output = formatter(&terminal, PageOutputFormat::Vt)
+            .with_extra(
+                TerminalFormatterExtra::none()
+                    .palette(true)
+                    .screen(all_screen_extras()),
+            )
+            .format();
+        let prefix_len = palette_vt_prefix_len(&terminal);
+
+        assert_eq!(output.matches("\x1b]4;").count(), 256);
+        assert_eq!(&output[prefix_len..prefix_len + 2], "hi");
+        assert!(output[prefix_len + 2..].starts_with("\x1b[0m"));
+        assert!(output.ends_with("\x1b[3;5H"));
     }
 
     #[test]
