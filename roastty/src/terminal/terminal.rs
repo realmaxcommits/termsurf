@@ -2,6 +2,7 @@
 
 use super::color;
 use super::modes;
+use super::mouse;
 use super::osc;
 use super::page_list::{
     CodepointMapEntry, PageListAllocError, PageOutputFormat, PageStringWithPinMap,
@@ -31,6 +32,7 @@ pub(super) struct Terminal {
     flags: TerminalFlags,
     title: TerminalTitle,
     pwd: TerminalPwd,
+    mouse_shape: mouse::MouseShape,
     next_implicit_hyperlink_id: u32,
 }
 
@@ -94,6 +96,7 @@ struct TerminalStreamHandler<'a> {
     pty_response: &'a mut Vec<u8>,
     title: &'a mut TerminalTitle,
     pwd: &'a mut TerminalPwd,
+    mouse_shape: &'a mut mouse::MouseShape,
     next_implicit_hyperlink_id: &'a mut u32,
 }
 
@@ -148,6 +151,7 @@ impl Terminal {
             flags: TerminalFlags::default(),
             title: TerminalTitle::default(),
             pwd: TerminalPwd::default(),
+            mouse_shape: mouse::MouseShape::Text,
             next_implicit_hyperlink_id: 0,
         })
     }
@@ -164,6 +168,7 @@ impl Terminal {
             stream,
             title,
             pwd,
+            mouse_shape,
             next_implicit_hyperlink_id,
             ..
         } = self;
@@ -177,6 +182,7 @@ impl Terminal {
             pty_response,
             title,
             pwd,
+            mouse_shape,
             next_implicit_hyperlink_id,
         };
         stream.next_slice(input, &mut handler)
@@ -293,6 +299,11 @@ impl Terminal {
     #[cfg(test)]
     pub(super) fn pwd_for_tests(&self) -> Option<&str> {
         self.pwd.logical_str()
+    }
+
+    #[cfg(test)]
+    pub(super) fn mouse_shape_for_tests(&self) -> mouse::MouseShape {
+        self.mouse_shape
     }
 
     #[cfg(test)]
@@ -634,6 +645,9 @@ impl Handler for TerminalStreamHandler<'_> {
             }
             stream::OscAction::ReportPwd { url } => {
                 self.pwd.set(url);
+            }
+            stream::OscAction::MouseShape { shape } => {
+                *self.mouse_shape = shape;
             }
             stream::OscAction::StartHyperlink { id, uri } => {
                 let id = match id {
@@ -2056,6 +2070,43 @@ mod tests {
         assert_eq!(terminal.title_for_tests(), "original");
         assert_eq!(terminal.pwd_for_tests(), Some("file://host/original"));
         assert_eq!(terminal.cursor_hyperlink_for_tests(), None);
+        assert_eq!(plain_with_unwrap(&terminal, false), "");
+    }
+
+    #[test]
+    fn terminal_stream_osc22_updates_mouse_shape() {
+        let mut terminal = Terminal::init(10, 2, None).unwrap();
+
+        assert_eq!(terminal.mouse_shape_for_tests(), mouse::MouseShape::Text);
+
+        terminal.next_slice(b"\x1b]22;pointer\x07").unwrap();
+        assert_eq!(terminal.mouse_shape_for_tests(), mouse::MouseShape::Pointer);
+
+        terminal.next_slice(b"\x1b]22;pointer\x1b\\").unwrap();
+        assert_eq!(terminal.mouse_shape_for_tests(), mouse::MouseShape::Pointer);
+
+        terminal.next_slice(b"\x1b]22;left_ptr\x07").unwrap();
+        assert_eq!(terminal.mouse_shape_for_tests(), mouse::MouseShape::Default);
+    }
+
+    #[test]
+    fn terminal_stream_osc22_unknown_shape_does_not_mutate_state() {
+        let mut terminal = Terminal::init(10, 2, None).unwrap();
+
+        terminal.next_slice(b"\x1b]22;crosshair\x07").unwrap();
+        assert_eq!(
+            terminal.mouse_shape_for_tests(),
+            mouse::MouseShape::Crosshair
+        );
+
+        terminal.next_slice(b"\x1b]22;Crosshair\x07").unwrap();
+        terminal.next_slice(b"\x1b]22;not-a-shape\x07").unwrap();
+
+        assert_eq!(
+            terminal.mouse_shape_for_tests(),
+            mouse::MouseShape::Crosshair
+        );
+        assert!(terminal.pty_response_for_tests().is_empty());
         assert_eq!(plain_with_unwrap(&terminal, false), "");
     }
 

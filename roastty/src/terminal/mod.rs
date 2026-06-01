@@ -23,6 +23,9 @@ mod kitty;
 mod modes;
 
 #[allow(dead_code)]
+mod mouse;
+
+#[allow(dead_code)]
 mod offset_hash_map;
 
 #[allow(dead_code)]

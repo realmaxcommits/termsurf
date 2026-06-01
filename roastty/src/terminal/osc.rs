@@ -9,6 +9,9 @@ pub(super) enum Command<'a> {
     ReportPwd {
         url: &'a str,
     },
+    MouseShape {
+        shape: super::mouse::MouseShape,
+    },
     StartHyperlink {
         id: Option<&'a str>,
         uri: &'a str,
@@ -197,6 +200,9 @@ impl Parser {
                 requests,
                 terminator,
             }),
+            b"22" => {
+                super::mouse::MouseShape::parse(rest).map(|shape| Command::MouseShape { shape })
+            }
             b"104" => parse_osc104(rest).map(|requests| Command::ColorOperation { requests }),
             b"110" => parse_dynamic_reset(rest, DynamicColor::Foreground)
                 .map(|requests| Command::ColorOperation { requests }),
@@ -409,6 +415,9 @@ mod tests {
         ReportPwd {
             url: String,
         },
+        MouseShape {
+            shape: super::super::mouse::MouseShape,
+        },
         StartHyperlink {
             id: Option<String>,
             uri: String,
@@ -432,6 +441,7 @@ mod tests {
                 Command::ReportPwd { url } => Self::ReportPwd {
                     url: url.to_string(),
                 },
+                Command::MouseShape { shape } => Self::MouseShape { shape },
                 Command::StartHyperlink { id, uri } => Self::StartHyperlink {
                     id: id.map(ToString::to_string),
                     uri: uri.to_string(),
@@ -503,6 +513,24 @@ mod tests {
             })
         );
         assert_eq!(parse(b"8;;"), Some(OwnedCommand::EndHyperlink));
+    }
+
+    #[test]
+    fn osc_parser_mouse_shape() {
+        assert_eq!(
+            parse(b"22;pointer"),
+            Some(OwnedCommand::MouseShape {
+                shape: super::super::mouse::MouseShape::Pointer,
+            })
+        );
+        assert_eq!(
+            parse(b"22;left_ptr"),
+            Some(OwnedCommand::MouseShape {
+                shape: super::super::mouse::MouseShape::Default,
+            })
+        );
+        assert_eq!(parse(b"22;Pointer"), None);
+        assert_eq!(parse(b"22;unknown"), None);
     }
 
     #[test]

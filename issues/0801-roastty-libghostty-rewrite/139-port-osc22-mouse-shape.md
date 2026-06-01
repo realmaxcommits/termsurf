@@ -165,3 +165,60 @@ that the experiment follows Ghostty's OSC 22 flow at the current Roastty
 boundary: exact shape parsing, unknown-shape ignore behavior, terminal-owned
 state only, and deferred surface/app cursor delivery. The design was approved
 for implementation.
+
+## Result
+
+**Result:** Pass
+
+Roastty now models Ghostty's terminal mouse shape list and parses OSC 22 mouse
+shape requests into terminal-owned state.
+
+The implementation added `terminal::mouse::MouseShape` with Ghostty's W3C shape
+names and xterm/foot aliases. Parsing is exact and case-sensitive. Unknown shape
+names are consumed without dispatching a mutating action, matching Ghostty's
+stream behavior.
+
+OSC 22 is wired through the OSC parser, stream dispatcher, and terminal runtime.
+`Terminal` now defaults `mouse_shape` to `Text`, matching Ghostty's
+`Terminal.mouse_shape = .text`, and valid OSC 22 sequences update that field.
+The experiment did not add public ABI, renderer behavior, app/surface cursor
+messages, or macOS cursor integration.
+
+Verification passed:
+
+```text
+cargo fmt
+completed successfully
+
+cargo test -p roastty mouse_shape
+6 passed; 0 failed
+
+cargo test -p roastty osc
+62 passed; 0 failed
+
+cargo test -p roastty terminal_stream_osc
+24 passed; 0 failed
+
+cargo test -p roastty
+1525 unit tests passed; 0 failed
+1 ABI harness test passed; 0 failed
+```
+
+## Result Review
+
+Codex reviewed the completed implementation and result record and found no real
+issues. The review confirmed exact and case-sensitive shape parsing, full W3C
+and xterm/foot alias coverage, unknown-shape ignore behavior, terminal-owned
+state defaulting to `Text`, and no app/surface/renderer/public-ABI drift. The
+only commit hygiene note was to include the new `roastty/src/terminal/mouse.rs`
+file in the result commit.
+
+## Conclusion
+
+Experiment 139 completes the terminal-owned OSC 22 mouse-shape slice. Roastty
+can now preserve the same terminal state Ghostty would set from shell-provided
+cursor-shape control sequences, while leaving delivery to the future app/surface
+message boundary out of scope.
+
+The next experiment can continue with the next self-contained Ghostty terminal
+protocol slice.

@@ -1083,7 +1083,7 @@ impl Utf8Decoder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::terminal::{color, kitty};
+    use crate::terminal::{color, kitty, mouse};
 
     #[derive(Debug, Default)]
     struct RecordingHandler {
@@ -1113,6 +1113,9 @@ mod tests {
         ReportPwd {
             url: String,
         },
+        MouseShape {
+            shape: mouse::MouseShape,
+        },
         StartHyperlink {
             id: Option<String>,
             uri: String,
@@ -1136,6 +1139,7 @@ mod tests {
                 OscAction::ReportPwd { url } => Self::ReportPwd {
                     url: url.to_string(),
                 },
+                OscAction::MouseShape { shape } => Self::MouseShape { shape },
                 OscAction::StartHyperlink { id, uri } => Self::StartHyperlink {
                     id: id.map(ToString::to_string),
                     uri: uri.to_string(),
@@ -5580,6 +5584,31 @@ mod tests {
                     uri: "https://explicit".to_string(),
                 },
                 OwnedOscAction::EndHyperlink,
+            ]
+        );
+        assert_eq!(actions(&handler), &[]);
+    }
+
+    #[test]
+    fn stream_osc_dispatches_mouse_shape() {
+        let mut stream = Stream::init();
+        let mut handler = RecordingHandler::default();
+
+        next_slice(
+            &mut stream,
+            &mut handler,
+            b"\x1b]22;pointer\x07\x1b]22;Pointer\x07\x1b]22;left_ptr\x1b\\",
+        );
+
+        assert_eq!(
+            osc_actions(&handler),
+            &[
+                OwnedOscAction::MouseShape {
+                    shape: mouse::MouseShape::Pointer,
+                },
+                OwnedOscAction::MouseShape {
+                    shape: mouse::MouseShape::Default,
+                },
             ]
         );
         assert_eq!(actions(&handler), &[]);

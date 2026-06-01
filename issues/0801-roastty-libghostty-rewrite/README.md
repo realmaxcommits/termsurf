@@ -407,7 +407,7 @@ tests, choose the larger subsystem.
 - [Experiment 138: Port Kitty OSC 21 Colors](138-port-kitty-osc21-colors.md) —
   **Pass**
 - [Experiment 139: Port OSC 22 Mouse Shape](139-port-osc22-mouse-shape.md) —
-  **Designed**
+  **Pass**
 
 ## Non-Goals
 
