@@ -302,6 +302,8 @@ No experiment may proceed to the next stage until the required review passes.
   — **Pass**
 - [Experiment 96: Port Terminal Formatter Screen Extra Forwarding](96-port-terminal-formatter-screen-extra-forwarding.md)
   — **Pass**
+- [Experiment 97: Port Terminal Formatter Palette Extra](97-port-terminal-formatter-palette-extra.md)
+  — **Designed**
 
 ## Non-Goals
 
