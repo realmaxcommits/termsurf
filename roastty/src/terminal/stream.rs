@@ -15,6 +15,7 @@ pub(super) enum Action {
     LineFeed,
     CarriageReturn,
     Backspace,
+    Bell,
     Enquiry,
     HorizontalTab {
         count: u16,
@@ -355,6 +356,7 @@ impl Stream {
             b'\n' | 0x0b | 0x0c => handler.vt(Action::LineFeed)?,
             b'\r' => handler.vt(Action::CarriageReturn)?,
             0x05 => handler.vt(Action::Enquiry)?,
+            0x07 => handler.vt(Action::Bell)?,
             0x0e => handler.vt(Action::InvokeCharset {
                 bank: charsets::CharsetBank::Gl,
                 slot: charsets::CharsetSlot::G1,
@@ -365,7 +367,7 @@ impl Stream {
                 slot: charsets::CharsetSlot::G0,
                 single: false,
             })?,
-            0x00..=0x04 | 0x06..=0x07 | 0x10..=0x1a | 0x1c..=0x1f | 0x7f => {}
+            0x00..=0x04 | 0x06 | 0x10..=0x1a | 0x1c..=0x1f | 0x7f => {}
             _ => self.next_utf8(byte, handler)?,
         }
         Ok(())
@@ -1838,7 +1840,8 @@ mod tests {
             .iter()
             .filter_map(|action| match action {
                 Action::Print { cp } => Some(*cp),
-                Action::Enquiry
+                Action::Bell
+                | Action::Enquiry
                 | Action::LineFeed
                 | Action::CarriageReturn
                 | Action::Backspace
@@ -8051,6 +8054,7 @@ mod tests {
                 Action::NextLine => b"\x1bE".as_slice(),
                 Action::Print { .. }
                 | Action::PrintRepeat { .. }
+                | Action::Bell
                 | Action::Enquiry
                 | Action::LineFeed
                 | Action::CarriageReturn

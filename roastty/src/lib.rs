@@ -6,7 +6,9 @@ use std::slice;
 use input::{key, key_encode, key_mods};
 use terminal::kitty::KeyFlags;
 use terminal::terminal::{
-    Terminal as InnerTerminal, TerminalColorKind, TerminalScreen, TerminalStreamError,
+    Terminal as InnerTerminal, TerminalBellCallback, TerminalColorKind, TerminalEnquiryCallback,
+    TerminalScreen, TerminalStreamError, TerminalTitleChangedCallback, TerminalWritePtyCallback,
+    TerminalXtversionCallback,
 };
 use terminal::{mouse, mouse_encode, osc, point};
 
@@ -80,6 +82,12 @@ const ROASTTY_TERMINAL_DATA_VIEWPORT_ACTIVE: c_int = 32;
 const ROASTTY_TERMINAL_SCREEN_PRIMARY: c_int = 0;
 const ROASTTY_TERMINAL_SCREEN_ALTERNATE: c_int = 1;
 
+const ROASTTY_TERMINAL_OPTION_USERDATA: c_int = 0;
+const ROASTTY_TERMINAL_OPTION_WRITE_PTY: c_int = 1;
+const ROASTTY_TERMINAL_OPTION_BELL: c_int = 2;
+const ROASTTY_TERMINAL_OPTION_ENQUIRY: c_int = 3;
+const ROASTTY_TERMINAL_OPTION_XTVERSION: c_int = 4;
+const ROASTTY_TERMINAL_OPTION_TITLE_CHANGED: c_int = 5;
 const ROASTTY_TERMINAL_OPTION_TITLE: c_int = 9;
 const ROASTTY_TERMINAL_OPTION_PWD: c_int = 10;
 const ROASTTY_TERMINAL_OPTION_COLOR_FOREGROUND: c_int = 11;
@@ -1211,8 +1219,11 @@ pub extern "C" fn roastty_terminal_new(
         Err(_) => return ROASTTY_OUT_OF_MEMORY,
     };
 
+    let mut terminal = Box::new(Terminal { terminal });
+    let handle = (&mut *terminal) as *mut Terminal as RoasttyTerminal;
+    terminal.terminal.set_effect_handle(handle);
     unsafe {
-        out.write(Box::into_raw(Box::new(Terminal { terminal })).cast());
+        out.write(Box::into_raw(terminal).cast());
     }
     ROASTTY_SUCCESS
 }
@@ -1267,6 +1278,50 @@ pub extern "C" fn roastty_terminal_set(
     };
 
     match option {
+        ROASTTY_TERMINAL_OPTION_USERDATA => {
+            terminal.terminal.set_effect_userdata(value.cast_mut());
+            ROASTTY_SUCCESS
+        }
+        ROASTTY_TERMINAL_OPTION_WRITE_PTY => {
+            terminal
+                .terminal
+                .set_write_pty_callback((!value.is_null()).then(|| unsafe {
+                    std::mem::transmute::<*const c_void, TerminalWritePtyCallback>(value)
+                }));
+            ROASTTY_SUCCESS
+        }
+        ROASTTY_TERMINAL_OPTION_BELL => {
+            terminal
+                .terminal
+                .set_bell_callback((!value.is_null()).then(|| unsafe {
+                    std::mem::transmute::<*const c_void, TerminalBellCallback>(value)
+                }));
+            ROASTTY_SUCCESS
+        }
+        ROASTTY_TERMINAL_OPTION_ENQUIRY => {
+            terminal
+                .terminal
+                .set_enquiry_callback((!value.is_null()).then(|| unsafe {
+                    std::mem::transmute::<*const c_void, TerminalEnquiryCallback>(value)
+                }));
+            ROASTTY_SUCCESS
+        }
+        ROASTTY_TERMINAL_OPTION_XTVERSION => {
+            terminal
+                .terminal
+                .set_xtversion_callback((!value.is_null()).then(|| unsafe {
+                    std::mem::transmute::<*const c_void, TerminalXtversionCallback>(value)
+                }));
+            ROASTTY_SUCCESS
+        }
+        ROASTTY_TERMINAL_OPTION_TITLE_CHANGED => {
+            terminal
+                .terminal
+                .set_title_changed_callback((!value.is_null()).then(|| unsafe {
+                    std::mem::transmute::<*const c_void, TerminalTitleChangedCallback>(value)
+                }));
+            ROASTTY_SUCCESS
+        }
         ROASTTY_TERMINAL_OPTION_TITLE => match staged_terminal_string(value) {
             Ok(value) => {
                 terminal.terminal.set_title(value);
@@ -2335,6 +2390,96 @@ pub extern "C" fn roastty_surface_request_close(_surface: RoasttySurface) {}
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::RefCell;
+
+    #[derive(Default)]
+    struct EffectState {
+        write_calls: Vec<Vec<u8>>,
+        bell_count: usize,
+        title_changed_count: usize,
+        last_terminal: RoasttyTerminal,
+        last_userdata: *mut c_void,
+        enquiry_ptr: *const c_char,
+        enquiry_len: usize,
+        xtversion_ptr: *const c_char,
+        xtversion_len: usize,
+    }
+
+    thread_local! {
+        static EFFECT_STATE: RefCell<EffectState> = RefCell::new(EffectState::default());
+    }
+
+    fn reset_effect_state() {
+        EFFECT_STATE.with(|state| *state.borrow_mut() = EffectState::default());
+    }
+
+    fn with_effect_state<R>(f: impl FnOnce(&mut EffectState) -> R) -> R {
+        EFFECT_STATE.with(|state| f(&mut state.borrow_mut()))
+    }
+
+    unsafe extern "C" fn write_pty_cb(
+        terminal: RoasttyTerminal,
+        userdata: *mut c_void,
+        ptr: *const u8,
+        len: usize,
+    ) {
+        let bytes = if ptr.is_null() || len == 0 {
+            Vec::new()
+        } else {
+            slice::from_raw_parts(ptr, len).to_vec()
+        };
+        with_effect_state(|state| {
+            state.last_terminal = terminal;
+            state.last_userdata = userdata;
+            state.write_calls.push(bytes);
+        });
+    }
+
+    unsafe extern "C" fn bell_cb(terminal: RoasttyTerminal, userdata: *mut c_void) {
+        with_effect_state(|state| {
+            state.last_terminal = terminal;
+            state.last_userdata = userdata;
+            state.bell_count += 1;
+        });
+    }
+
+    unsafe extern "C" fn enquiry_cb(
+        terminal: RoasttyTerminal,
+        userdata: *mut c_void,
+    ) -> RoasttyString {
+        with_effect_state(|state| {
+            state.last_terminal = terminal;
+            state.last_userdata = userdata;
+            RoasttyString {
+                ptr: state.enquiry_ptr,
+                len: state.enquiry_len,
+                sentinel: false,
+            }
+        })
+    }
+
+    unsafe extern "C" fn xtversion_cb(
+        terminal: RoasttyTerminal,
+        userdata: *mut c_void,
+    ) -> RoasttyString {
+        with_effect_state(|state| {
+            state.last_terminal = terminal;
+            state.last_userdata = userdata;
+            RoasttyString {
+                ptr: state.xtversion_ptr,
+                len: state.xtversion_len,
+                sentinel: false,
+            }
+        })
+    }
+
+    unsafe extern "C" fn title_changed_cb(terminal: RoasttyTerminal, userdata: *mut c_void) {
+        with_effect_state(|state| {
+            state.last_terminal = terminal;
+            state.last_userdata = userdata;
+            state.title_changed_count += 1;
+        });
+    }
 
     fn new_key_event() -> RoasttyKeyEvent {
         let mut event = ptr::null_mut();
@@ -2748,6 +2893,12 @@ mod tests {
 
     #[test]
     fn terminal_metadata_setters_abi_option_values_are_stable() {
+        assert_eq!(ROASTTY_TERMINAL_OPTION_USERDATA, 0);
+        assert_eq!(ROASTTY_TERMINAL_OPTION_WRITE_PTY, 1);
+        assert_eq!(ROASTTY_TERMINAL_OPTION_BELL, 2);
+        assert_eq!(ROASTTY_TERMINAL_OPTION_ENQUIRY, 3);
+        assert_eq!(ROASTTY_TERMINAL_OPTION_XTVERSION, 4);
+        assert_eq!(ROASTTY_TERMINAL_OPTION_TITLE_CHANGED, 5);
         assert_eq!(ROASTTY_TERMINAL_OPTION_TITLE, 9);
         assert_eq!(ROASTTY_TERMINAL_OPTION_PWD, 10);
         assert_eq!(ROASTTY_TERMINAL_OPTION_COLOR_FOREGROUND, 11);
@@ -2787,7 +2938,7 @@ mod tests {
             ROASTTY_INVALID_VALUE
         );
         assert_eq!(
-            roastty_terminal_set(terminal, 0, &title as *const _ as *const c_void),
+            roastty_terminal_set(terminal, 6, &title as *const _ as *const c_void),
             ROASTTY_INVALID_VALUE
         );
         assert_eq!(
@@ -3008,6 +3159,216 @@ mod tests {
             terminal_string(terminal, roastty_terminal_pwd),
             b"file://host/direct"
         );
+
+        roastty_terminal_free(terminal);
+    }
+
+    #[test]
+    fn terminal_basic_effects_abi_write_pty_and_bell_callbacks() {
+        reset_effect_state();
+        let terminal = new_terminal(5, 3);
+        let userdata = 0x1234usize as *const c_void;
+
+        assert_eq!(
+            roastty_terminal_set(terminal, ROASTTY_TERMINAL_OPTION_USERDATA, userdata),
+            ROASTTY_SUCCESS
+        );
+        assert_eq!(
+            roastty_terminal_set(
+                terminal,
+                ROASTTY_TERMINAL_OPTION_WRITE_PTY,
+                write_pty_cb as *const c_void,
+            ),
+            ROASTTY_SUCCESS
+        );
+
+        write_terminal(terminal, b"\x1b[6n");
+        with_effect_state(|state| {
+            assert_eq!(state.last_terminal, terminal);
+            assert_eq!(state.last_userdata, userdata.cast_mut());
+            assert_eq!(state.write_calls, vec![b"\x1b[1;1R".to_vec()]);
+        });
+        assert_eq!(
+            terminal_string(terminal, roastty_terminal_take_pty_response),
+            b"\x1b[1;1R"
+        );
+
+        assert_eq!(
+            roastty_terminal_set(terminal, ROASTTY_TERMINAL_OPTION_WRITE_PTY, ptr::null()),
+            ROASTTY_SUCCESS
+        );
+        write_terminal(terminal, b"\x1b[6n");
+        with_effect_state(|state| assert_eq!(state.write_calls.len(), 1));
+        assert_eq!(
+            terminal_string(terminal, roastty_terminal_take_pty_response),
+            b"\x1b[1;1R"
+        );
+
+        assert_eq!(
+            roastty_terminal_set(
+                terminal,
+                ROASTTY_TERMINAL_OPTION_BELL,
+                bell_cb as *const c_void,
+            ),
+            ROASTTY_SUCCESS
+        );
+        let before_bell_plain = terminal_plain_string(terminal);
+        write_terminal(terminal, b"\x07");
+        with_effect_state(|state| assert_eq!(state.bell_count, 1));
+        assert_eq!(terminal_plain_string(terminal), before_bell_plain);
+        assert!(terminal_string(terminal, roastty_terminal_take_pty_response).is_empty());
+
+        assert_eq!(
+            roastty_terminal_set(terminal, ROASTTY_TERMINAL_OPTION_BELL, ptr::null()),
+            ROASTTY_SUCCESS
+        );
+        write_terminal(terminal, b"\x07");
+        with_effect_state(|state| assert_eq!(state.bell_count, 1));
+
+        roastty_terminal_free(terminal);
+    }
+
+    #[test]
+    fn terminal_basic_effects_abi_enquiry_and_xtversion_callbacks() {
+        reset_effect_state();
+        let terminal = new_terminal(5, 3);
+        let userdata = 0x5678usize as *const c_void;
+        let enquiry = b"ENQ";
+        let xtversion = b"roastty-test";
+        let long_enquiry = [b'x'; 256];
+        let long_xtversion = [b'y'; 257];
+
+        assert_eq!(
+            roastty_terminal_set(terminal, ROASTTY_TERMINAL_OPTION_USERDATA, userdata),
+            ROASTTY_SUCCESS
+        );
+        assert_eq!(
+            roastty_terminal_set(
+                terminal,
+                ROASTTY_TERMINAL_OPTION_WRITE_PTY,
+                write_pty_cb as *const c_void,
+            ),
+            ROASTTY_SUCCESS
+        );
+        assert_eq!(
+            roastty_terminal_set(
+                terminal,
+                ROASTTY_TERMINAL_OPTION_ENQUIRY,
+                enquiry_cb as *const c_void,
+            ),
+            ROASTTY_SUCCESS
+        );
+        with_effect_state(|state| {
+            state.enquiry_ptr = enquiry.as_ptr().cast::<c_char>();
+            state.enquiry_len = enquiry.len();
+        });
+        write_terminal(terminal, b"\x05");
+        assert_eq!(
+            terminal_string(terminal, roastty_terminal_take_pty_response),
+            enquiry
+        );
+        with_effect_state(|state| {
+            assert_eq!(state.last_terminal, terminal);
+            assert_eq!(state.last_userdata, userdata.cast_mut());
+            assert_eq!(state.write_calls.last().unwrap(), enquiry);
+        });
+
+        for (ptr, len) in [
+            (ptr::null(), 1),
+            (enquiry.as_ptr().cast::<c_char>(), 0),
+            (long_enquiry.as_ptr().cast::<c_char>(), long_enquiry.len()),
+        ] {
+            with_effect_state(|state| {
+                state.enquiry_ptr = ptr;
+                state.enquiry_len = len;
+            });
+            write_terminal(terminal, b"\x05");
+            assert!(terminal_string(terminal, roastty_terminal_take_pty_response).is_empty());
+        }
+
+        assert_eq!(
+            roastty_terminal_set(
+                terminal,
+                ROASTTY_TERMINAL_OPTION_XTVERSION,
+                xtversion_cb as *const c_void,
+            ),
+            ROASTTY_SUCCESS
+        );
+        with_effect_state(|state| {
+            state.xtversion_ptr = xtversion.as_ptr().cast::<c_char>();
+            state.xtversion_len = xtversion.len();
+        });
+        write_terminal(terminal, b"\x1b[>0q");
+        assert_eq!(
+            terminal_string(terminal, roastty_terminal_take_pty_response),
+            b"\x1bP>|roastty-test\x1b\\"
+        );
+
+        for (ptr, len) in [
+            (ptr::null(), 1),
+            (xtversion.as_ptr().cast::<c_char>(), 0),
+            (
+                long_xtversion.as_ptr().cast::<c_char>(),
+                long_xtversion.len(),
+            ),
+        ] {
+            with_effect_state(|state| {
+                state.xtversion_ptr = ptr;
+                state.xtversion_len = len;
+            });
+            write_terminal(terminal, b"\x1b[>0q");
+            assert_eq!(
+                terminal_string(terminal, roastty_terminal_take_pty_response),
+                b"\x1bP>|libroastty\x1b\\"
+            );
+        }
+
+        roastty_terminal_free(terminal);
+    }
+
+    #[test]
+    fn terminal_basic_effects_abi_title_changed_only_fires_for_stream_title() {
+        reset_effect_state();
+        let terminal = new_terminal(8, 3);
+        let userdata = 0xabcdusize as *const c_void;
+        let direct_title = borrowed_roastty_string(b"direct");
+
+        assert_eq!(
+            roastty_terminal_set(terminal, ROASTTY_TERMINAL_OPTION_USERDATA, userdata),
+            ROASTTY_SUCCESS
+        );
+        assert_eq!(
+            roastty_terminal_set(
+                terminal,
+                ROASTTY_TERMINAL_OPTION_TITLE_CHANGED,
+                title_changed_cb as *const c_void,
+            ),
+            ROASTTY_SUCCESS
+        );
+        assert_eq!(
+            roastty_terminal_set(
+                terminal,
+                ROASTTY_TERMINAL_OPTION_TITLE,
+                &direct_title as *const _ as *const c_void,
+            ),
+            ROASTTY_SUCCESS
+        );
+        with_effect_state(|state| assert_eq!(state.title_changed_count, 0));
+
+        write_terminal(terminal, b"\x1b]0;stream\x07");
+        assert_eq!(terminal_string(terminal, roastty_terminal_title), b"stream");
+        with_effect_state(|state| {
+            assert_eq!(state.title_changed_count, 1);
+            assert_eq!(state.last_terminal, terminal);
+            assert_eq!(state.last_userdata, userdata.cast_mut());
+        });
+
+        assert_eq!(
+            roastty_terminal_set(terminal, ROASTTY_TERMINAL_OPTION_TITLE_CHANGED, ptr::null(),),
+            ROASTTY_SUCCESS
+        );
+        write_terminal(terminal, b"\x1b]2;stream 2\x07");
+        with_effect_state(|state| assert_eq!(state.title_changed_count, 1));
 
         roastty_terminal_free(terminal);
     }

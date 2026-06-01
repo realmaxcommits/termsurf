@@ -53,6 +53,84 @@ static void close_surface_cb(void *userdata, bool process_alive) {
   (void)process_alive;
 }
 
+static roastty_terminal_t effect_terminal = NULL;
+static void *effect_userdata = NULL;
+static uint8_t effect_write_bytes[256] = {0};
+static size_t effect_write_len = 0;
+static size_t effect_write_count = 0;
+static size_t effect_bell_count = 0;
+static size_t effect_title_changed_count = 0;
+static const char *effect_enquiry = NULL;
+static size_t effect_enquiry_len = 0;
+static const char *effect_xtversion = NULL;
+static size_t effect_xtversion_len = 0;
+
+static void reset_effect_state(void) {
+  effect_terminal = NULL;
+  effect_userdata = NULL;
+  memset(effect_write_bytes, 0, sizeof(effect_write_bytes));
+  effect_write_len = 0;
+  effect_write_count = 0;
+  effect_bell_count = 0;
+  effect_title_changed_count = 0;
+  effect_enquiry = NULL;
+  effect_enquiry_len = 0;
+  effect_xtversion = NULL;
+  effect_xtversion_len = 0;
+}
+
+static void terminal_write_pty_cb(roastty_terminal_t terminal,
+                                  void *userdata,
+                                  const uint8_t *ptr,
+                                  size_t len) {
+  effect_terminal = terminal;
+  effect_userdata = userdata;
+  effect_write_len = len;
+  effect_write_count++;
+  assert(len <= sizeof(effect_write_bytes));
+  if (len > 0) {
+    assert(ptr != NULL);
+    memcpy(effect_write_bytes, ptr, len);
+  }
+}
+
+static void terminal_bell_cb(roastty_terminal_t terminal, void *userdata) {
+  effect_terminal = terminal;
+  effect_userdata = userdata;
+  effect_bell_count++;
+}
+
+static roastty_string_s terminal_enquiry_cb(roastty_terminal_t terminal,
+                                            void *userdata) {
+  effect_terminal = terminal;
+  effect_userdata = userdata;
+  roastty_string_s value = {
+      .ptr = effect_enquiry,
+      .len = effect_enquiry_len,
+      .sentinel = false,
+  };
+  return value;
+}
+
+static roastty_string_s terminal_xtversion_cb(roastty_terminal_t terminal,
+                                              void *userdata) {
+  effect_terminal = terminal;
+  effect_userdata = userdata;
+  roastty_string_s value = {
+      .ptr = effect_xtversion,
+      .len = effect_xtversion_len,
+      .sentinel = false,
+  };
+  return value;
+}
+
+static void terminal_title_changed_cb(roastty_terminal_t terminal,
+                                      void *userdata) {
+  effect_terminal = terminal;
+  effect_userdata = userdata;
+  effect_title_changed_count++;
+}
+
 static void assert_config_bool(roastty_config_t config,
                                const char *key,
                                bool expected) {
@@ -623,6 +701,12 @@ static void assert_terminal_abi(void) {
   assert(ROASTTY_TERMINAL_DATA_VIEWPORT_ACTIVE == 32);
   assert(ROASTTY_TERMINAL_SCREEN_PRIMARY == 0);
   assert(ROASTTY_TERMINAL_SCREEN_ALTERNATE == 1);
+  assert(ROASTTY_TERMINAL_OPTION_USERDATA == 0);
+  assert(ROASTTY_TERMINAL_OPTION_WRITE_PTY == 1);
+  assert(ROASTTY_TERMINAL_OPTION_BELL == 2);
+  assert(ROASTTY_TERMINAL_OPTION_ENQUIRY == 3);
+  assert(ROASTTY_TERMINAL_OPTION_XTVERSION == 4);
+  assert(ROASTTY_TERMINAL_OPTION_TITLE_CHANGED == 5);
   assert(ROASTTY_TERMINAL_OPTION_TITLE == 9);
   assert(ROASTTY_TERMINAL_OPTION_PWD == 10);
   assert(sizeof(roastty_mode_tag_t) == sizeof(uint16_t));
@@ -659,7 +743,7 @@ static void assert_terminal_abi(void) {
                               (roastty_terminal_option_e)9999,
                               &title_input) == ROASTTY_INVALID_VALUE);
   assert(roastty_terminal_set(terminal,
-                              (roastty_terminal_option_e)0,
+                              (roastty_terminal_option_e)6,
                               &title_input) == ROASTTY_INVALID_VALUE);
   assert(roastty_terminal_set(terminal,
                               (roastty_terminal_option_e)15,
@@ -1074,6 +1158,124 @@ static void assert_terminal_abi(void) {
   assert(roastty_terminal_take_pty_response(terminal, &response) ==
          ROASTTY_SUCCESS);
   assert_roastty_string_eq(response, "");
+
+  reset_effect_state();
+  void *effect_user = (void *)0x1234;
+  assert(roastty_terminal_set(terminal,
+                              ROASTTY_TERMINAL_OPTION_USERDATA,
+                              effect_user) == ROASTTY_SUCCESS);
+  assert(roastty_terminal_set(
+             terminal,
+             ROASTTY_TERMINAL_OPTION_WRITE_PTY,
+             (const void *)(roastty_terminal_write_pty_cb)terminal_write_pty_cb) ==
+         ROASTTY_SUCCESS);
+  terminal_write(terminal, "\x1b[6n");
+  assert(effect_terminal == terminal);
+  assert(effect_userdata == effect_user);
+  assert(effect_write_count == 1);
+  assert(effect_write_len == strlen("\x1b[1;5R"));
+  assert(memcmp(effect_write_bytes, "\x1b[1;5R", effect_write_len) == 0);
+  response = (roastty_string_s){0};
+  assert(roastty_terminal_take_pty_response(terminal, &response) ==
+         ROASTTY_SUCCESS);
+  assert_roastty_string_eq(response, "\x1b[1;5R");
+  assert(roastty_terminal_set(terminal,
+                              ROASTTY_TERMINAL_OPTION_WRITE_PTY,
+                              NULL) == ROASTTY_SUCCESS);
+  terminal_write(terminal, "\x1b[6n");
+  assert(effect_write_count == 1);
+  response = (roastty_string_s){0};
+  assert(roastty_terminal_take_pty_response(terminal, &response) ==
+         ROASTTY_SUCCESS);
+  assert_roastty_string_eq(response, "\x1b[1;5R");
+
+  assert(roastty_terminal_set(
+             terminal,
+             ROASTTY_TERMINAL_OPTION_BELL,
+             (const void *)(roastty_terminal_bell_cb)terminal_bell_cb) ==
+         ROASTTY_SUCCESS);
+  terminal_write(terminal, "\x07");
+  assert(effect_bell_count == 1);
+  assert(effect_terminal == terminal);
+  assert(effect_userdata == effect_user);
+  assert(roastty_terminal_set(terminal,
+                              ROASTTY_TERMINAL_OPTION_BELL,
+                              NULL) == ROASTTY_SUCCESS);
+  terminal_write(terminal, "\x07");
+  assert(effect_bell_count == 1);
+
+  const char enquiry[] = "CENQ";
+  effect_enquiry = enquiry;
+  effect_enquiry_len = strlen(enquiry);
+  assert(roastty_terminal_set(
+             terminal,
+             ROASTTY_TERMINAL_OPTION_ENQUIRY,
+             (const void *)(roastty_terminal_enquiry_cb)terminal_enquiry_cb) ==
+         ROASTTY_SUCCESS);
+  assert(roastty_terminal_set(
+             terminal,
+             ROASTTY_TERMINAL_OPTION_WRITE_PTY,
+             (const void *)(roastty_terminal_write_pty_cb)terminal_write_pty_cb) ==
+         ROASTTY_SUCCESS);
+  effect_write_count = 0;
+  terminal_write(terminal, "\x05");
+  assert(effect_write_count == 1);
+  assert(effect_write_len == strlen(enquiry));
+  assert(memcmp(effect_write_bytes, enquiry, effect_write_len) == 0);
+  response = (roastty_string_s){0};
+  assert(roastty_terminal_take_pty_response(terminal, &response) ==
+         ROASTTY_SUCCESS);
+  assert_roastty_string_eq(response, enquiry);
+  char long_enquiry[256];
+  memset(long_enquiry, 'x', sizeof(long_enquiry));
+  effect_enquiry = long_enquiry;
+  effect_enquiry_len = sizeof(long_enquiry);
+  terminal_write(terminal, "\x05");
+  response = (roastty_string_s){0};
+  assert(roastty_terminal_take_pty_response(terminal, &response) ==
+         ROASTTY_SUCCESS);
+  assert_roastty_string_eq(response, "");
+
+  const char xtversion[] = "roastty-c";
+  effect_xtversion = xtversion;
+  effect_xtversion_len = strlen(xtversion);
+  assert(roastty_terminal_set(
+             terminal,
+             ROASTTY_TERMINAL_OPTION_XTVERSION,
+             (const void *)(roastty_terminal_xtversion_cb)terminal_xtversion_cb) ==
+         ROASTTY_SUCCESS);
+  terminal_write(terminal, "\x1b[>0q");
+  response = (roastty_string_s){0};
+  assert(roastty_terminal_take_pty_response(terminal, &response) ==
+         ROASTTY_SUCCESS);
+  assert_roastty_string_eq(response, "\x1bP>|roastty-c\x1b\\");
+  effect_xtversion = NULL;
+  effect_xtversion_len = 1;
+  terminal_write(terminal, "\x1b[>0q");
+  response = (roastty_string_s){0};
+  assert(roastty_terminal_take_pty_response(terminal, &response) ==
+         ROASTTY_SUCCESS);
+  assert_roastty_string_eq(response, "\x1bP>|libroastty\x1b\\");
+
+  assert(roastty_terminal_set(
+             terminal,
+             ROASTTY_TERMINAL_OPTION_TITLE_CHANGED,
+             (const void *)(roastty_terminal_title_changed_cb)
+                 terminal_title_changed_cb) == ROASTTY_SUCCESS);
+  effect_title_changed_count = 0;
+  assert(roastty_terminal_set(terminal,
+                              ROASTTY_TERMINAL_OPTION_TITLE,
+                              &title_input) == ROASTTY_SUCCESS);
+  assert(effect_title_changed_count == 0);
+  terminal_write(terminal, "\x1b]2;from callback\x07");
+  assert(effect_title_changed_count == 1);
+  assert(effect_terminal == terminal);
+  assert(effect_userdata == effect_user);
+  assert(roastty_terminal_set(terminal,
+                              ROASTTY_TERMINAL_OPTION_TITLE_CHANGED,
+                              NULL) == ROASTTY_SUCCESS);
+  terminal_write(terminal, "\x1b]2;from callback 2\x07");
+  assert(effect_title_changed_count == 1);
 
   assert(roastty_terminal_title(NULL, &title) == ROASTTY_INVALID_VALUE);
   assert(title.ptr == NULL);

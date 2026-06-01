@@ -87,6 +87,12 @@ typedef enum {
 } roastty_terminal_screen_e;
 
 typedef enum {
+  ROASTTY_TERMINAL_OPTION_USERDATA = 0,
+  ROASTTY_TERMINAL_OPTION_WRITE_PTY = 1,
+  ROASTTY_TERMINAL_OPTION_BELL = 2,
+  ROASTTY_TERMINAL_OPTION_ENQUIRY = 3,
+  ROASTTY_TERMINAL_OPTION_XTVERSION = 4,
+  ROASTTY_TERMINAL_OPTION_TITLE_CHANGED = 5,
   ROASTTY_TERMINAL_OPTION_TITLE = 9,
   ROASTTY_TERMINAL_OPTION_PWD = 10,
   ROASTTY_TERMINAL_OPTION_COLOR_FOREGROUND = 11,
@@ -122,6 +128,21 @@ typedef struct {
   uintptr_t len;
   bool sentinel;
 } roastty_string_s;
+
+typedef void (*roastty_terminal_write_pty_cb)(roastty_terminal_t terminal,
+                                              void* userdata,
+                                              const uint8_t* ptr,
+                                              size_t len);
+typedef void (*roastty_terminal_bell_cb)(roastty_terminal_t terminal,
+                                         void* userdata);
+typedef roastty_string_s (*roastty_terminal_enquiry_cb)(
+    roastty_terminal_t terminal,
+    void* userdata);
+typedef roastty_string_s (*roastty_terminal_xtversion_cb)(
+    roastty_terminal_t terminal,
+    void* userdata);
+typedef void (*roastty_terminal_title_changed_cb)(roastty_terminal_t terminal,
+                                                  void* userdata);
 
 typedef struct {
   uint8_t r;

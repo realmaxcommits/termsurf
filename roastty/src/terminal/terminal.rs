@@ -1,5 +1,7 @@
 //! Terminal state.
 
+use std::ffi::{c_char, c_void};
+
 use super::charsets;
 use super::color;
 #[cfg(test)]
@@ -35,6 +37,7 @@ pub(crate) struct Terminal {
     scrolling_region: ScrollingRegion,
     tabstops: tabstops::Tabstops,
     pty_response: Vec<u8>,
+    effects: TerminalEffects,
     stream: stream::Stream,
     dcs: dcs::Handler,
     flags: TerminalFlags,
@@ -62,6 +65,71 @@ enum TerminalScreenKey {
 pub(crate) enum TerminalScreen {
     Primary,
     Alternate,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct TerminalEffectString {
+    pub(crate) ptr: *const c_char,
+    pub(crate) len: usize,
+    pub(crate) sentinel: bool,
+}
+
+pub(crate) type TerminalWritePtyCallback =
+    unsafe extern "C" fn(*mut c_void, *mut c_void, *const u8, usize);
+pub(crate) type TerminalBellCallback = unsafe extern "C" fn(*mut c_void, *mut c_void);
+pub(crate) type TerminalEnquiryCallback =
+    unsafe extern "C" fn(*mut c_void, *mut c_void) -> TerminalEffectString;
+pub(crate) type TerminalXtversionCallback =
+    unsafe extern "C" fn(*mut c_void, *mut c_void) -> TerminalEffectString;
+pub(crate) type TerminalTitleChangedCallback = unsafe extern "C" fn(*mut c_void, *mut c_void);
+
+#[derive(Clone, Copy)]
+pub(crate) struct TerminalEffects {
+    handle: *mut c_void,
+    userdata: *mut c_void,
+    write_pty: Option<TerminalWritePtyCallback>,
+    bell: Option<TerminalBellCallback>,
+    enquiry: Option<TerminalEnquiryCallback>,
+    xtversion: Option<TerminalXtversionCallback>,
+    title_changed: Option<TerminalTitleChangedCallback>,
+}
+
+impl std::fmt::Debug for TerminalEffects {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TerminalEffects")
+            .field("handle", &self.handle)
+            .field("userdata", &self.userdata)
+            .field("write_pty", &self.write_pty.is_some())
+            .field("bell", &self.bell.is_some())
+            .field("enquiry", &self.enquiry.is_some())
+            .field("xtversion", &self.xtversion.is_some())
+            .field("title_changed", &self.title_changed.is_some())
+            .finish()
+    }
+}
+
+impl Default for TerminalEffects {
+    fn default() -> Self {
+        Self {
+            handle: std::ptr::null_mut(),
+            userdata: std::ptr::null_mut(),
+            write_pty: None,
+            bell: None,
+            enquiry: None,
+            xtversion: None,
+            title_changed: None,
+        }
+    }
+}
+
+fn copied_effect_string<const MAX_LEN: usize>(value: TerminalEffectString) -> Option<Vec<u8>> {
+    if value.ptr.is_null() || value.len == 0 || value.len > MAX_LEN {
+        return None;
+    }
+
+    let bytes = unsafe { std::slice::from_raw_parts(value.ptr.cast::<u8>(), value.len) };
+    Some(bytes.to_vec())
 }
 
 impl TerminalScreens {
@@ -246,6 +314,7 @@ struct TerminalStreamHandler<'a> {
     scrolling_region: &'a mut ScrollingRegion,
     tabstops: &'a mut tabstops::Tabstops,
     pty_response: &'a mut Vec<u8>,
+    effects: &'a mut TerminalEffects,
     title: &'a mut TerminalTitle,
     pwd: &'a mut TerminalPwd,
     mouse_shape: &'a mut mouse::MouseShape,
@@ -301,6 +370,7 @@ impl Terminal {
             tabstops: tabstops::Tabstops::new(cols as usize, TABSTOP_INTERVAL)
                 .map_err(|_| TerminalInitError::PageAlloc)?,
             pty_response: Vec::new(),
+            effects: TerminalEffects::default(),
             stream: stream::Stream::init(),
             dcs: dcs::Handler::new(),
             flags: TerminalFlags::default(),
@@ -321,6 +391,7 @@ impl Terminal {
             scrolling_region,
             tabstops,
             pty_response,
+            effects,
             stream,
             dcs,
             title,
@@ -339,6 +410,7 @@ impl Terminal {
             scrolling_region,
             tabstops,
             pty_response,
+            effects,
             title,
             pwd,
             mouse_shape,
@@ -376,6 +448,37 @@ impl Terminal {
 
     pub(crate) fn set_pwd(&mut self, stored_value: Option<String>) {
         self.pwd.text = stored_value.unwrap_or_default();
+    }
+
+    pub(crate) fn set_effect_handle(&mut self, handle: *mut c_void) {
+        self.effects.handle = handle;
+    }
+
+    pub(crate) fn set_effect_userdata(&mut self, userdata: *mut c_void) {
+        self.effects.userdata = userdata;
+    }
+
+    pub(crate) fn set_write_pty_callback(&mut self, callback: Option<TerminalWritePtyCallback>) {
+        self.effects.write_pty = callback;
+    }
+
+    pub(crate) fn set_bell_callback(&mut self, callback: Option<TerminalBellCallback>) {
+        self.effects.bell = callback;
+    }
+
+    pub(crate) fn set_enquiry_callback(&mut self, callback: Option<TerminalEnquiryCallback>) {
+        self.effects.enquiry = callback;
+    }
+
+    pub(crate) fn set_xtversion_callback(&mut self, callback: Option<TerminalXtversionCallback>) {
+        self.effects.xtversion = callback;
+    }
+
+    pub(crate) fn set_title_changed_callback(
+        &mut self,
+        callback: Option<TerminalTitleChangedCallback>,
+    ) {
+        self.effects.title_changed = callback;
     }
 
     pub(crate) fn color_effective(&self, kind: TerminalColorKind) -> Option<(u8, u8, u8)> {
@@ -810,7 +913,14 @@ impl Handler for TerminalStreamHandler<'_> {
         match action {
             Action::Print { cp } => self.print(cp),
             Action::PrintRepeat { count } => self.print_repeat(count),
-            Action::Enquiry => Ok(()),
+            Action::Bell => {
+                self.bell();
+                Ok(())
+            }
+            Action::Enquiry => {
+                self.enquiry();
+                Ok(())
+            }
             Action::LineFeed => self.line_feed(),
             Action::CarriageReturn => {
                 self.screens.active_mut().carriage_return_basic();
@@ -1097,7 +1207,7 @@ impl Handler for TerminalStreamHandler<'_> {
                 Ok(())
             }
             Action::XtVersion => {
-                self.write_pty_response("\x1bP>|libroastty\x1b\\");
+                self.xtversion();
                 Ok(())
             }
             Action::SetAttribute { attr } => {
@@ -1111,6 +1221,7 @@ impl Handler for TerminalStreamHandler<'_> {
         match action {
             stream::OscAction::WindowTitle { title } => {
                 self.title.set(title);
+                self.title_changed();
             }
             stream::OscAction::ReportPwd { url } => {
                 self.pwd.set(url);
@@ -1338,11 +1449,64 @@ impl TerminalStreamHandler<'_> {
     }
 
     fn write_pty_response(&mut self, bytes: &str) {
-        self.pty_response.extend_from_slice(bytes.as_bytes());
+        self.write_pty_response_bytes(bytes.as_bytes());
     }
 
     fn write_pty_response_bytes(&mut self, bytes: &[u8]) {
         self.pty_response.extend_from_slice(bytes);
+        if let Some(callback) = self.effects.write_pty {
+            unsafe {
+                callback(
+                    self.effects.handle,
+                    self.effects.userdata,
+                    bytes.as_ptr(),
+                    bytes.len(),
+                );
+            }
+        }
+    }
+
+    fn bell(&mut self) {
+        if let Some(callback) = self.effects.bell {
+            unsafe {
+                callback(self.effects.handle, self.effects.userdata);
+            }
+        }
+    }
+
+    fn enquiry(&mut self) {
+        let Some(callback) = self.effects.enquiry else {
+            return;
+        };
+        let response = unsafe { callback(self.effects.handle, self.effects.userdata) };
+        let Some(bytes) = copied_effect_string::<255>(response) else {
+            return;
+        };
+        self.write_pty_response_bytes(&bytes);
+    }
+
+    fn xtversion(&mut self) {
+        const DEFAULT: &str = "libroastty";
+
+        let value = self
+            .effects
+            .xtversion
+            .and_then(|callback| {
+                let response = unsafe { callback(self.effects.handle, self.effects.userdata) };
+                copied_effect_string::<256>(response)
+            })
+            .and_then(|bytes| std::str::from_utf8(&bytes).ok().map(ToOwned::to_owned))
+            .unwrap_or_else(|| DEFAULT.to_string());
+
+        self.write_pty_response(&format!("\x1bP>|{value}\x1b\\"));
+    }
+
+    fn title_changed(&mut self) {
+        if let Some(callback) = self.effects.title_changed {
+            unsafe {
+                callback(self.effects.handle, self.effects.userdata);
+            }
+        }
     }
 
     fn dcs_command(&mut self, command: dcs::Command) {

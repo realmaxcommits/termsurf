@@ -277,3 +277,53 @@ This experiment fails if:
   Verification;
 - unrelated terminal option constants are exposed;
 - the design or result proceeds without the required Codex review gate.
+
+## Result
+
+**Result:** Pass
+
+Implemented the terminal basic effects C ABI:
+
+- added public callback typedefs and option constants `0..5` for `userdata`,
+  `write_pty`, `bell`, `enquiry`, `xtversion`, and `title_changed`;
+- stored callback state on the terminal core and assigned the public terminal
+  handle during terminal allocation;
+- routed generated PTY responses through the retained internal response buffer
+  and the optional `write_pty` callback without draining the buffer;
+- dispatched BEL from the stream parser and invoked `bell` only when configured;
+- wired ENQ to the optional `enquiry` callback with the documented null, empty,
+  and length-limit handling;
+- wired XTVERSION to the optional `xtversion` callback with the documented
+  fallback to `libroastty`;
+- invoked `title_changed` only for OSC title changes after title state is
+  updated, while direct `roastty_terminal_set(TITLE, ...)` remains silent;
+- added Rust ABI tests and C harness coverage for option values, callback
+  setting/clearing, userdata delivery, PTY response retention, ENQ/XTVERSION
+  callback returns, BEL, and title callback behavior.
+
+Verification passed:
+
+```bash
+cargo fmt -- roastty/src/lib.rs roastty/src/terminal/terminal.rs roastty/src/terminal/stream.rs
+cargo test -p roastty terminal_basic_effects_abi
+cargo test -p roastty terminal_metadata_setters_abi
+cargo test -p roastty terminal_get_abi
+cargo test -p roastty c_harness_links_against_roastty_header_and_roastty_dylib
+cargo test -p roastty terminal_stream
+cargo test -p roastty
+! rg -n "ghostty|Ghostty|ghostty_" roastty/src/lib.rs roastty/include/roastty.h roastty/tests/abi_harness.c
+```
+
+Codex reviewed the implementation result and found no blocking issues. The
+review concluded that the implementation matches the approved design, the new
+ABI paths are covered by Rust tests and the C harness, and the experiment can be
+marked Pass after recording the full verification set, which was completed
+above.
+
+## Conclusion
+
+Roastty now exposes the first terminal host-effect callback ABI slice while
+preserving the existing buffered PTY response API. The next experiment should
+continue porting terminal ABI surface area from the upstream boundary, choosing
+the next coherent slice based on the remaining deferred callbacks or terminal
+data accessors rather than splitting off one tiny behavior at a time.

@@ -467,7 +467,7 @@ tests, choose the larger subsystem.
 - [Experiment 169: Port Terminal Color Set/Get C ABI](169-port-terminal-color-set-get-c-abi.md)
   — **Pass**
 - [Experiment 170: Port Terminal Basic Effects C ABI](170-port-terminal-basic-effects-c-abi.md)
-  — **Designed**
+  — **Pass**
 
 ## Non-Goals
 
