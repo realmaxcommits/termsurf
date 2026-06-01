@@ -303,3 +303,92 @@ Final review artifacts:
 
 Codex approved the corrected design with no findings and said it is ready to
 commit before implementation.
+
+## Result
+
+**Result:** Pass
+
+Experiment 118 ports the basic full-screen forms of `CSI H` / CUP and `CSI f` /
+HVP into Roastty.
+
+Accepted forms:
+
+- `CSI H` and `CSI f` dispatch `Action::CursorPosition { row: 1, col: 1 }`.
+- `CSI n H` dispatches row `n`, column `1`.
+- `CSI row ; col H` and `CSI row ; col f` dispatch the explicit row and column.
+- Explicit zero params are preserved by the parser and resolved by terminal
+  positioning to the top/left edges.
+- Leading and interior empty semicolon params are represented as explicit zero.
+- Trailing semicolon params are omitted, matching Ghostty's parser finalization:
+  - `CSI ; H` dispatches row `0`, col `1`;
+  - `CSI 5 ; H` dispatches row `5`, col `1`;
+  - `CSI ; 7 H` dispatches row `0`, col `7`;
+  - `CSI ; ; H` dispatches row `0`, col `0`;
+  - `CSI 5 ; ; H` dispatches row `5`, col `0`;
+  - `CSI 5 ; 6 ; H` dispatches row `5`, col `6`.
+- Oversized row and column params saturate to `u16::MAX` in the parser and clamp
+  to the bottom/right edges in the terminal.
+
+Rejected forms:
+
+- private variants such as `CSI ? 3 H` / `CSI ? 3 f`;
+- non-standard private variants such as `CSI > 3 H` / `CSI > 3 f`;
+- colon or mixed-separator variants such as `CSI 1 : 2 H` and `CSI 1 ; 2 : 3 H`;
+- real three-param variants such as `CSI 5 ; 6 ; 7 H`;
+- intermediate-bearing forms;
+- raw C1 `0x9b` followed by `H` or `f`, which remains out of scope and keeps the
+  current replacement-character behavior.
+
+The implementation replaces the old single-parameter `CsiState` storage with a
+narrow two-parameter parser that records semicolon-finalized params,
+leading/interior empty params, trailing omitted params, and separator presence.
+One-param CSI actions still use `single_param(false)`, so separator-bearing
+forms outside `H` / `f` remain invalid for this experiment. `CSI W` keeps its
+existing behavior, including `CSI ? 5 W`.
+
+Terminal behavior is routed through a private `cursor_position_basic()` helper.
+It clears pending wrap, resolves zero via saturating-sub semantics, clamps to
+the full-screen row/column bounds, and does not write cells, dirty rows, or
+scroll.
+
+Parser error behavior was preserved: if a handler fails on `CursorPosition`, the
+stream is already back in ground state and the next printable byte is parsed
+normally. Pending invalid UTF-8 still emits `U+FFFD` before same-slice and
+split-feed `CSI H` / `CSI f` actions.
+
+Existing behavior for `CSI A/B/C/D/E/F/G/k/a/j/backtick/d/e` and `CSI W`
+continued to pass. This experiment did not add origin mode,
+scrolling-region-aware positioning, direct C1 CSI, public API, or ABI behavior.
+
+Verification passed:
+
+```text
+cargo fmt
+cargo test -p roastty stream
+cargo test -p roastty terminal::terminal
+cargo test -p roastty terminal_formatter
+cargo test -p roastty screen_formatter
+cargo test -p roastty page_string
+cargo test -p roastty terminal::page_list
+cargo test -p roastty
+```
+
+The full package test run passed with 1158 unit tests and the ABI harness.
+
+Codex reviewed the completed implementation with no findings.
+
+Result review artifacts:
+
+- Prompt: `logs/codex-review/20260601-034516-060667-prompt.md`
+- Result: `logs/codex-review/20260601-034516-060667-last-message.md`
+
+## Conclusion
+
+Roastty now has Ghostty's basic two-axis cursor-positioning forms for the
+current full-screen terminal model. The useful foundation from this experiment
+is the CSI parameter parser shape: it can now represent the subset needed for
+cursor positioning while still preserving the intentionally narrow input surface
+for earlier one-param CSI slices.
+
+Remaining cursor-positioning parity still depends on future origin-mode and
+scrolling-region-aware `setCursorPos` behavior.

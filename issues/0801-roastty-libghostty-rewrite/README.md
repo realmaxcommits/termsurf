@@ -341,7 +341,7 @@ No experiment may proceed to the next stage until the required review passes.
 - [Experiment 117: Port CSI Vertical Positioning](117-port-csi-vertical-positioning.md)
   — **Pass**
 - [Experiment 118: Port CSI Cursor Position](118-port-csi-cursor-position.md) —
-  **Designed**
+  **Pass**
 
 ## Non-Goals
 

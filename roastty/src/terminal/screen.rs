@@ -227,6 +227,20 @@ impl Screen {
         self.cursor.y = row.saturating_sub(1).min(bottom);
     }
 
+    pub(super) fn cursor_position_basic(
+        &mut self,
+        row: CellCountInt,
+        col: CellCountInt,
+        rows: CellCountInt,
+        cols: CellCountInt,
+    ) {
+        let bottom = rows.saturating_sub(1);
+        let right = cols.saturating_sub(1);
+        self.cursor.pending_wrap = false;
+        self.cursor.y = row.saturating_sub(1).min(bottom);
+        self.cursor.x = col.saturating_sub(1).min(right);
+    }
+
     pub(super) fn cursor_row_relative_basic(&mut self, rows: CellCountInt, count: CellCountInt) {
         let bottom = rows.saturating_sub(1);
         self.cursor.pending_wrap = false;

@@ -20,6 +20,7 @@ pub(super) enum Action {
     CursorColumn { col: u16 },
     CursorRow { row: u16 },
     CursorRowRelative { rows: u16 },
+    CursorPosition { row: u16, col: u16 },
 }
 
 pub(super) trait Handler {
@@ -58,8 +59,19 @@ struct DecodeResult {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct CsiState {
     private: Option<u8>,
-    param: Option<u16>,
+    params: [u16; 2],
+    params_len: u8,
+    param_acc: u16,
+    param_has_digits: bool,
+    separator_seen: bool,
     invalid: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct CsiParams {
+    values: [u16; 2],
+    len: u8,
+    separator_seen: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -191,7 +203,11 @@ impl CsiState {
     const fn new() -> Self {
         Self {
             private: None,
-            param: None,
+            params: [0; 2],
+            params_len: 0,
+            param_acc: 0,
+            param_has_digits: false,
+            separator_seen: false,
             invalid: false,
         }
     }
@@ -202,20 +218,35 @@ impl CsiState {
         }
 
         match byte {
-            b'?' if self.private.is_none() && self.param.is_none() => {
+            b'?' if self.private.is_none()
+                && self.params_len == 0
+                && !self.param_has_digits
+                && !self.separator_seen =>
+            {
                 self.private = Some(byte);
             }
+            b';' => self.push_param_separator(),
+            b':' => self.invalid = true,
             b'0'..=b'9' => {
                 let digit = u16::from(byte - b'0');
-                self.param = Some(
-                    self.param
-                        .unwrap_or(0)
-                        .saturating_mul(10)
-                        .saturating_add(digit),
-                );
+                self.param_acc = self.param_acc.saturating_mul(10).saturating_add(digit);
+                self.param_has_digits = true;
             }
             _ => self.invalid = true,
         }
+    }
+
+    fn push_param_separator(&mut self) {
+        if usize::from(self.params_len) >= self.params.len() {
+            self.invalid = true;
+            return;
+        }
+
+        self.params[usize::from(self.params_len)] = self.param_acc;
+        self.params_len += 1;
+        self.param_acc = 0;
+        self.param_has_digits = false;
+        self.separator_seen = true;
     }
 
     fn dispatch(&self, final_byte: u8) -> CsiDispatch {
@@ -228,6 +259,10 @@ impl CsiState {
         }
 
         if let Some(action) = self.row_action(final_byte) {
+            return CsiDispatch::One(action);
+        }
+
+        if let Some(action) = self.cursor_position_action(final_byte) {
             return CsiDispatch::One(action);
         }
 
@@ -246,11 +281,44 @@ impl CsiState {
     }
 
     fn movement_count(&self) -> Option<u16> {
-        if self.invalid || self.private.is_some() {
+        let param = self.single_param(false)?;
+
+        Some(param.unwrap_or(1).max(1))
+    }
+
+    fn finalized_params(&self) -> Option<CsiParams> {
+        if self.invalid {
             return None;
         }
 
-        Some(self.param.unwrap_or(1).max(1))
+        let mut values = self.params;
+        let mut len = self.params_len;
+        if self.param_has_digits {
+            if usize::from(len) >= values.len() {
+                return None;
+            }
+            values[usize::from(len)] = self.param_acc;
+            len += 1;
+        }
+
+        Some(CsiParams {
+            values,
+            len,
+            separator_seen: self.separator_seen,
+        })
+    }
+
+    fn single_param(&self, allow_separator: bool) -> Option<Option<u16>> {
+        if self.private.is_some() {
+            return None;
+        }
+
+        let params = self.finalized_params()?;
+        if params.len > 1 || (!allow_separator && params.separator_seen) {
+            return None;
+        }
+
+        Some((params.len == 1).then_some(params.values[0]))
     }
 
     fn cursor_action(&self, final_byte: u8) -> Option<Action> {
@@ -265,11 +333,7 @@ impl CsiState {
     }
 
     fn position_value(&self) -> Option<u16> {
-        if self.invalid || self.private.is_some() {
-            return None;
-        }
-
-        Some(self.param.unwrap_or(1))
+        Some(self.single_param(false)?.unwrap_or(1))
     }
 
     fn column_action(&self, final_byte: u8) -> Option<Action> {
@@ -285,6 +349,25 @@ impl CsiState {
         match final_byte {
             b'd' => Some(Action::CursorRow { row: value }),
             b'e' => Some(Action::CursorRowRelative { rows: value }),
+            _ => None,
+        }
+    }
+
+    fn cursor_position_action(&self, final_byte: u8) -> Option<Action> {
+        if self.private.is_some() {
+            return None;
+        }
+
+        let params = self.finalized_params()?;
+        let (row, col) = match params.len {
+            0 => (1, 1),
+            1 => (params.values[0], 1),
+            2 => (params.values[0], params.values[1]),
+            _ => return None,
+        };
+
+        match final_byte {
+            b'H' | b'f' => Some(Action::CursorPosition { row, col }),
             _ => None,
         }
     }
@@ -305,11 +388,13 @@ impl CsiState {
     }
 
     fn tab_action(&self) -> Option<Action> {
-        if self.invalid {
+        let params = self.finalized_params()?;
+        if params.separator_seen || params.len > 1 {
             return None;
         }
 
-        match (self.private, self.param) {
+        let param = (params.len == 1).then_some(params.values[0]);
+        match (self.private, param) {
             (None, None | Some(0)) => Some(Action::TabSet),
             (None, Some(2)) => Some(Action::TabClearCurrent),
             (None, Some(5)) => Some(Action::TabClearAll),
@@ -462,7 +547,8 @@ mod tests {
                 | Action::CursorLeft { .. }
                 | Action::CursorColumn { .. }
                 | Action::CursorRow { .. }
-                | Action::CursorRowRelative { .. } => None,
+                | Action::CursorRowRelative { .. }
+                | Action::CursorPosition { .. } => None,
             })
             .collect()
     }
@@ -1417,6 +1503,85 @@ mod tests {
     }
 
     #[test]
+    fn stream_csi_cursor_position_dispatches_default_values() {
+        for input in [b"A\x1b[HB".as_slice(), b"A\x1b[fB".as_slice()] {
+            let mut stream = Stream::init();
+            let mut handler = RecordingHandler::default();
+
+            next_slice(&mut stream, &mut handler, input);
+
+            assert_eq!(
+                actions(&handler),
+                &[
+                    Action::Print { cp: 'A' },
+                    Action::CursorPosition { row: 1, col: 1 },
+                    Action::Print { cp: 'B' },
+                ]
+            );
+        }
+    }
+
+    #[test]
+    fn stream_csi_cursor_position_dispatches_params_and_empty_semantics() {
+        for (input, expected) in [
+            (
+                b"\x1b[5HA".as_slice(),
+                Action::CursorPosition { row: 5, col: 1 },
+            ),
+            (
+                b"\x1b[5;6HA".as_slice(),
+                Action::CursorPosition { row: 5, col: 6 },
+            ),
+            (
+                b"\x1b[5;6fA".as_slice(),
+                Action::CursorPosition { row: 5, col: 6 },
+            ),
+            (
+                b"\x1b[0;0HA".as_slice(),
+                Action::CursorPosition { row: 0, col: 0 },
+            ),
+            (
+                b"\x1b[;HA".as_slice(),
+                Action::CursorPosition { row: 0, col: 1 },
+            ),
+            (
+                b"\x1b[5;HA".as_slice(),
+                Action::CursorPosition { row: 5, col: 1 },
+            ),
+            (
+                b"\x1b[;7HA".as_slice(),
+                Action::CursorPosition { row: 0, col: 7 },
+            ),
+            (
+                b"\x1b[;;HA".as_slice(),
+                Action::CursorPosition { row: 0, col: 0 },
+            ),
+            (
+                b"\x1b[5;;HA".as_slice(),
+                Action::CursorPosition { row: 5, col: 0 },
+            ),
+            (
+                b"\x1b[5;6;HA".as_slice(),
+                Action::CursorPosition { row: 5, col: 6 },
+            ),
+            (
+                b"\x1b[999999999999999999999999;999999999999999999999999HA".as_slice(),
+                Action::CursorPosition {
+                    row: u16::MAX,
+                    col: u16::MAX,
+                },
+            ),
+        ] {
+            let mut stream = Stream::init();
+            let mut handler = RecordingHandler::default();
+
+            next_slice(&mut stream, &mut handler, input);
+
+            assert_eq!(actions(&handler), &[expected, Action::Print { cp: 'A' }]);
+        }
+    }
+
+    #[test]
     fn stream_csi_cursor_movement_saturates_overflowing_count() {
         let mut stream = Stream::init();
         let mut handler = RecordingHandler::default();
@@ -1566,6 +1731,41 @@ mod tests {
                 b"\x1b[0".as_slice(),
                 b"eA".as_slice(),
                 Action::CursorRowRelative { rows: 0 },
+            ),
+        ] {
+            let mut stream = Stream::init();
+            let mut handler = RecordingHandler::default();
+
+            next_slice(&mut stream, &mut handler, first);
+            assert!(actions(&handler).is_empty());
+            next_slice(&mut stream, &mut handler, second);
+
+            assert_eq!(actions(&handler), &[expected, Action::Print { cp: 'A' }]);
+        }
+    }
+
+    #[test]
+    fn stream_split_csi_cursor_position_dispatches_actions() {
+        for (first, second, expected) in [
+            (
+                b"\x1b[".as_slice(),
+                b"HA".as_slice(),
+                Action::CursorPosition { row: 1, col: 1 },
+            ),
+            (
+                b"\x1b[5".as_slice(),
+                b"HA".as_slice(),
+                Action::CursorPosition { row: 5, col: 1 },
+            ),
+            (
+                b"\x1b[5;".as_slice(),
+                b"6HA".as_slice(),
+                Action::CursorPosition { row: 5, col: 6 },
+            ),
+            (
+                b"\x1b[;".as_slice(),
+                b"fA".as_slice(),
+                Action::CursorPosition { row: 0, col: 1 },
             ),
         ] {
             let mut stream = Stream::init();
@@ -1809,11 +2009,60 @@ mod tests {
     }
 
     #[test]
+    fn stream_pending_utf8_replacement_dispatches_before_csi_cursor_position() {
+        for input in [b"\xf0\x9f\x1b[HA".as_slice(), b"\xf0\x9f\x1b[fA".as_slice()] {
+            let mut stream = Stream::init();
+            let mut handler = RecordingHandler::default();
+
+            next_slice(&mut stream, &mut handler, input);
+
+            assert_eq!(
+                actions(&handler),
+                &[
+                    Action::Print {
+                        cp: char::REPLACEMENT_CHARACTER,
+                    },
+                    Action::CursorPosition { row: 1, col: 1 },
+                    Action::Print { cp: 'A' },
+                ]
+            );
+        }
+    }
+
+    #[test]
+    fn stream_pending_utf8_replacement_dispatches_before_split_csi_cursor_position() {
+        let mut stream = Stream::init();
+        let mut handler = RecordingHandler::default();
+
+        next_slice(&mut stream, &mut handler, b"\xf0\x9f\x1b[5;");
+        assert_eq!(
+            actions(&handler),
+            &[Action::Print {
+                cp: char::REPLACEMENT_CHARACTER,
+            }]
+        );
+
+        next_slice(&mut stream, &mut handler, b"6HA");
+
+        assert_eq!(
+            actions(&handler),
+            &[
+                Action::Print {
+                    cp: char::REPLACEMENT_CHARACTER,
+                },
+                Action::CursorPosition { row: 5, col: 6 },
+                Action::Print { cp: 'A' },
+            ]
+        );
+    }
+
+    #[test]
     fn stream_unsupported_csi_cursor_variants_do_not_dispatch_actions() {
         for input in [
             b"\x1b[?3CA".as_slice(),
             b"\x1b[>3CA".as_slice(),
             b"\x1b[5;4CA".as_slice(),
+            b"\x1b[5;CA".as_slice(),
             b"\x1b[ CA".as_slice(),
             b"\x1b[?AA".as_slice(),
         ] {
@@ -1835,6 +2084,8 @@ mod tests {
             b"\x1b[>3FA".as_slice(),
             b"\x1b[5;4EA".as_slice(),
             b"\x1b[5;4FA".as_slice(),
+            b"\x1b[5;EA".as_slice(),
+            b"\x1b[5;FA".as_slice(),
             b"\x1b[1:2EA".as_slice(),
             b"\x1b[1:2FA".as_slice(),
             b"\x1b[ EA".as_slice(),
@@ -1858,6 +2109,8 @@ mod tests {
             b"\x1b[>3`A".as_slice(),
             b"\x1b[5;4GA".as_slice(),
             b"\x1b[5;4`A".as_slice(),
+            b"\x1b[5;GA".as_slice(),
+            b"\x1b[5;`A".as_slice(),
             b"\x1b[1:2GA".as_slice(),
             b"\x1b[1:2`A".as_slice(),
             b"\x1b[ GA".as_slice(),
@@ -1881,10 +2134,37 @@ mod tests {
             b"\x1b[>3eA".as_slice(),
             b"\x1b[5;4dA".as_slice(),
             b"\x1b[5;4eA".as_slice(),
+            b"\x1b[5;dA".as_slice(),
+            b"\x1b[5;eA".as_slice(),
             b"\x1b[1:2dA".as_slice(),
             b"\x1b[1:2eA".as_slice(),
             b"\x1b[ dA".as_slice(),
             b"\x1b[ eA".as_slice(),
+        ] {
+            let mut stream = Stream::init();
+            let mut handler = RecordingHandler::default();
+
+            next_slice(&mut stream, &mut handler, input);
+
+            assert_eq!(actions(&handler), &[Action::Print { cp: 'A' }]);
+        }
+    }
+
+    #[test]
+    fn stream_unsupported_csi_cursor_position_variants_do_not_dispatch_actions() {
+        for input in [
+            b"\x1b[?3HA".as_slice(),
+            b"\x1b[?3fA".as_slice(),
+            b"\x1b[>3HA".as_slice(),
+            b"\x1b[>3fA".as_slice(),
+            b"\x1b[5;6;7HA".as_slice(),
+            b"\x1b[5;6;7fA".as_slice(),
+            b"\x1b[1:2HA".as_slice(),
+            b"\x1b[1:2fA".as_slice(),
+            b"\x1b[1;2:3HA".as_slice(),
+            b"\x1b[1;2:3fA".as_slice(),
+            b"\x1b[ HA".as_slice(),
+            b"\x1b[ fA".as_slice(),
         ] {
             let mut stream = Stream::init();
             let mut handler = RecordingHandler::default();
@@ -1960,6 +2240,28 @@ mod tests {
     #[test]
     fn stream_raw_c1_csi_byte_does_not_dispatch_vertical_positioning_actions() {
         for final_byte in [b'd', b'e'] {
+            let mut stream = Stream::init();
+            let mut handler = RecordingHandler::default();
+
+            next_slice(&mut stream, &mut handler, &[0x9b, final_byte]);
+
+            assert_eq!(
+                actions(&handler),
+                &[
+                    Action::Print {
+                        cp: char::REPLACEMENT_CHARACTER,
+                    },
+                    Action::Print {
+                        cp: final_byte as char,
+                    },
+                ]
+            );
+        }
+    }
+
+    #[test]
+    fn stream_raw_c1_csi_byte_does_not_dispatch_cursor_position_actions() {
+        for final_byte in [b'H', b'f'] {
             let mut stream = Stream::init();
             let mut handler = RecordingHandler::default();
 
@@ -2175,7 +2477,8 @@ mod tests {
                 | Action::CursorLeft { .. }
                 | Action::CursorColumn { .. }
                 | Action::CursorRow { .. }
-                | Action::CursorRowRelative { .. } => unreachable!("loop only uses D/E actions"),
+                | Action::CursorRowRelative { .. }
+                | Action::CursorPosition { .. } => unreachable!("loop only uses D/E actions"),
             };
 
             assert_eq!(stream.next_slice(input, &mut handler), Err(()));
@@ -2227,6 +2530,36 @@ mod tests {
             (b"\x1b[e".as_slice(), Action::CursorRowRelative { rows: 1 }),
             (b"\x1b[0d".as_slice(), Action::CursorRow { row: 0 }),
             (b"\x1b[0e".as_slice(), Action::CursorRowRelative { rows: 0 }),
+        ] {
+            let mut stream = Stream::init();
+            let mut handler = ErrorOnActionHandler::new(fail);
+
+            assert_eq!(stream.next_slice(input, &mut handler), Err(()));
+            stream.next_slice(b"A", &mut handler).unwrap();
+
+            assert_eq!(handler.actions, &[Action::Print { cp: 'A' }]);
+        }
+    }
+
+    #[test]
+    fn stream_csi_cursor_position_restore_ground_before_handler_error() {
+        for (input, fail) in [
+            (
+                b"\x1b[H".as_slice(),
+                Action::CursorPosition { row: 1, col: 1 },
+            ),
+            (
+                b"\x1b[f".as_slice(),
+                Action::CursorPosition { row: 1, col: 1 },
+            ),
+            (
+                b"\x1b[0;0H".as_slice(),
+                Action::CursorPosition { row: 0, col: 0 },
+            ),
+            (
+                b"\x1b[5;6f".as_slice(),
+                Action::CursorPosition { row: 5, col: 6 },
+            ),
         ] {
             let mut stream = Stream::init();
             let mut handler = ErrorOnActionHandler::new(fail);
