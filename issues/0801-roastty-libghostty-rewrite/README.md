@@ -322,6 +322,8 @@ No experiment may proceed to the next stage until the required review passes.
   **Pass**
 - [Experiment 106: Port Basic LF and CR](106-port-basic-lf-cr.md) — **Pass**
 - [Experiment 107: Port Basic Backspace](107-port-basic-backspace.md) — **Pass**
+- [Experiment 108: Port Basic Horizontal Tab](108-port-basic-horizontal-tab.md)
+  — **Designed**
 
 ## Non-Goals
 
