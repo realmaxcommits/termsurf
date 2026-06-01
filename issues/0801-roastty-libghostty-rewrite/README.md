@@ -312,6 +312,8 @@ No experiment may proceed to the next stage until the required review passes.
   — **Pass**
 - [Experiment 101: Port Terminal Keyboard and Pwd Formatter Extra](101-port-terminal-keyboard-pwd-extra.md)
   — **Pass**
+- [Experiment 102: Port Stream UTF-8 Print Core](102-port-stream-utf8-print-core.md)
+  — **Designed**
 
 ## Non-Goals
 
