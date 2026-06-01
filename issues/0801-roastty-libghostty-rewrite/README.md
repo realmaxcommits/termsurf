@@ -451,7 +451,7 @@ tests, choose the larger subsystem.
 - [Experiment 161: Complete Key Encoder Tables](161-complete-key-encoder-tables.md)
   — **Pass**
 - [Experiment 162: Port Legacy Ctrl/CSI-u/Alt Matrix](162-port-legacy-ctrl-csiu-alt-matrix.md)
-  — **Designed**
+  — **Pass**
 
 ## Non-Goals
 

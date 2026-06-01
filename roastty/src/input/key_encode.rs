@@ -1513,18 +1513,17 @@ fn ctrl_seq(key: Key, utf8: &[u8], unshifted_codepoint: u32, mods: Mods) -> Opti
     }
     let mut unset_mods = mods.binding();
     unset_mods.alt = false;
+    let ctrl_only = Mods {
+        ctrl: true,
+        ..Mods::new()
+    }
+    .int();
 
-    let char_byte = if utf8.len() == 1 {
+    let mut char_byte = if utf8.len() == 1 {
         utf8[0]
     } else if let Some(cp) = key.codepoint() {
         if cp <= u8::MAX as u32 {
-            if unset_mods.int()
-                == (Mods {
-                    ctrl: true,
-                    ..Mods::new()
-                })
-                .int()
-            {
+            if unset_mods.int() == ctrl_only {
                 cp as u8
             } else {
                 return None;
@@ -1532,43 +1531,49 @@ fn ctrl_seq(key: Key, utf8: &[u8], unshifted_codepoint: u32, mods: Mods) -> Opti
         } else {
             return None;
         }
-    } else if unshifted_codepoint <= u8::MAX as u32 {
-        unshifted_codepoint as u8
     } else {
         return None;
     };
 
+    if unset_mods.shift && !(b'A'..=b'Z').contains(&char_byte) {
+        if char_byte != b'@' {
+            unset_mods.shift = false;
+        }
+    }
+
+    if (b'A'..=b'Z').contains(&char_byte) && unshifted_codepoint > 0 {
+        if unshifted_codepoint <= u8::MAX as u32 {
+            char_byte = unshifted_codepoint as u8;
+        }
+    }
+
+    if unset_mods.int() != ctrl_only {
+        return None;
+    }
+
     match char_byte {
-        b'a'..=b'z'
-            if unset_mods.int()
-                == Mods {
-                    ctrl: true,
-                    ..Mods::new()
-                }
-                .int() =>
-        {
-            Some(char_byte - b'a' + 1)
-        }
-        b'A'..=b'Z'
-            if unset_mods.int()
-                == Mods {
-                    ctrl: true,
-                    ..Mods::new()
-                }
-                .int() =>
-        {
-            Some(char_byte - b'A' + 1)
-        }
-        b' ' if unset_mods.int()
-            == Mods {
-                ctrl: true,
-                ..Mods::new()
-            }
-            .int() =>
-        {
-            Some(0)
-        }
-        b'_' if mods.shift && mods.ctrl => Some(0x1f),
+        b' ' => Some(0),
+        b'/' => Some(31),
+        b'0' => Some(48),
+        b'1' => Some(49),
+        b'2' => Some(0),
+        b'3' => Some(27),
+        b'4' => Some(28),
+        b'5' => Some(29),
+        b'6' => Some(30),
+        b'7' => Some(31),
+        b'8' => Some(127),
+        b'9' => Some(57),
+        b'?' => Some(127),
+        b'@' => Some(0),
+        b'\\' => Some(28),
+        b']' => Some(29),
+        b'^' => Some(30),
+        b'_' => Some(31),
+        b'a'..=b'h' => Some(char_byte - b'a' + 1),
+        b'j'..=b'l' => Some(char_byte - b'a' + 1),
+        b'n'..=b'z' => Some(char_byte - b'a' + 1),
+        b'~' => Some(30),
         _ => None,
     }
 }
@@ -2723,6 +2728,348 @@ mod tests {
                 Options::default()
             ),
             "\0"
+        );
+    }
+
+    #[test]
+    fn key_encode_legacy_ctrl_seq_full_c0_table() {
+        let ctrl = Mods {
+            ctrl: true,
+            ..Mods::new()
+        };
+        let cases = [
+            (Key::Space, " ", ' ' as u32, 0),
+            (Key::Slash, "/", '/' as u32, 31),
+            (Key::Digit0, "0", '0' as u32, 48),
+            (Key::Digit1, "1", '1' as u32, 49),
+            (Key::Digit2, "2", '2' as u32, 0),
+            (Key::Digit3, "3", '3' as u32, 27),
+            (Key::Digit4, "4", '4' as u32, 28),
+            (Key::Digit5, "5", '5' as u32, 29),
+            (Key::Digit6, "6", '6' as u32, 30),
+            (Key::Digit7, "7", '7' as u32, 31),
+            (Key::Digit8, "8", '8' as u32, 127),
+            (Key::Digit9, "9", '9' as u32, 57),
+            (Key::Slash, "?", '?' as u32, 127),
+            (Key::Digit2, "@", '2' as u32, 0),
+            (Key::Backslash, "\\", '\\' as u32, 28),
+            (Key::BracketRight, "]", ']' as u32, 29),
+            (Key::Digit6, "^", '6' as u32, 30),
+            (Key::Minus, "_", '-' as u32, 31),
+            (Key::Backquote, "~", '`' as u32, 30),
+        ];
+
+        for (key, text, unshifted, expected) in cases {
+            assert_eq!(
+                ctrl_seq(key, text.as_bytes(), unshifted, ctrl),
+                Some(expected),
+                "failed ctrl sequence for {key:?}"
+            );
+        }
+
+        for byte in b'a'..=b'z' {
+            let key = Key::from_ascii(byte).expect("ascii letter must map to a key");
+            let text = [byte];
+            let expected = match byte {
+                b'i' | b'm' => None,
+                _ => Some(byte - b'a' + 1),
+            };
+            assert_eq!(ctrl_seq(key, &text, byte as u32, ctrl), expected);
+        }
+
+        assert_eq!(ctrl_seq(Key::BracketLeft, b"[", '[' as u32, ctrl), None);
+    }
+
+    #[test]
+    fn key_encode_legacy_ctrl_seq_modifiers_layouts_and_csiu_fallthrough() {
+        assert_eq!(
+            ctrl_seq(
+                Key::KeyC,
+                b"c",
+                'c' as u32,
+                Mods {
+                    ctrl: true,
+                    sides: ModSides {
+                        ctrl: Side::Right,
+                        ..ModSides::default()
+                    },
+                    ..Mods::new()
+                }
+            ),
+            Some(3)
+        );
+        assert_eq!(
+            ctrl_seq(
+                Key::KeyC,
+                b"C",
+                'c' as u32,
+                Mods {
+                    ctrl: true,
+                    caps_lock: true,
+                    ..Mods::new()
+                }
+            ),
+            Some(3)
+        );
+        assert_eq!(
+            ctrl_seq(
+                Key::KeyC,
+                b"C",
+                'c' as u32,
+                Mods {
+                    ctrl: true,
+                    shift: true,
+                    ..Mods::new()
+                }
+            ),
+            None
+        );
+        assert_eq!(
+            ctrl_seq(
+                Key::KeyC,
+                "с".as_bytes(),
+                0x0441,
+                Mods {
+                    ctrl: true,
+                    ..Mods::new()
+                }
+            ),
+            Some(3)
+        );
+        assert_eq!(
+            ctrl_seq(
+                Key::KeyC,
+                "с".as_bytes(),
+                0x0441,
+                Mods {
+                    ctrl: true,
+                    alt: true,
+                    ..Mods::new()
+                }
+            ),
+            Some(3)
+        );
+        assert_eq!(
+            encoded(
+                KeyEvent {
+                    key: Key::KeyI,
+                    mods: Mods {
+                        ctrl: true,
+                        ..Mods::new()
+                    },
+                    utf8: b"i".to_vec(),
+                    ..KeyEvent::default()
+                },
+                Options::default()
+            ),
+            "\x1b[105;5u"
+        );
+        assert_eq!(
+            encoded(
+                KeyEvent {
+                    key: Key::KeyM,
+                    mods: Mods {
+                        ctrl: true,
+                        ..Mods::new()
+                    },
+                    utf8: b"m".to_vec(),
+                    ..KeyEvent::default()
+                },
+                Options::default()
+            ),
+            "\x1b[109;5u"
+        );
+        assert_eq!(
+            encoded(
+                KeyEvent {
+                    key: Key::BracketLeft,
+                    mods: Mods {
+                        ctrl: true,
+                        ..Mods::new()
+                    },
+                    utf8: b"[".to_vec(),
+                    ..KeyEvent::default()
+                },
+                Options::default()
+            ),
+            "\x1b[91;5u"
+        );
+        assert_eq!(
+            encoded(
+                KeyEvent {
+                    key: Key::KeyM,
+                    mods: Mods {
+                        ctrl: true,
+                        shift: true,
+                        ..Mods::new()
+                    },
+                    utf8: b"M".to_vec(),
+                    unshifted_codepoint: 'm' as u32,
+                    ..KeyEvent::default()
+                },
+                Options::default()
+            ),
+            "\x1b[109;6u"
+        );
+        assert_eq!(
+            encoded(
+                KeyEvent {
+                    key: Key::Digit2,
+                    mods: Mods {
+                        ctrl: true,
+                        shift: true,
+                        ..Mods::new()
+                    },
+                    utf8: b"@".to_vec(),
+                    unshifted_codepoint: '2' as u32,
+                    ..KeyEvent::default()
+                },
+                Options::default()
+            ),
+            "\x1b[64;5u"
+        );
+        assert_eq!(
+            encoded(
+                KeyEvent {
+                    key: Key::BracketLeft,
+                    mods: Mods {
+                        ctrl: true,
+                        ..Mods::new()
+                    },
+                    utf8: "ő".as_bytes().to_vec(),
+                    unshifted_codepoint: 337,
+                    ..KeyEvent::default()
+                },
+                Options::default()
+            ),
+            "\x1b[337;5u"
+        );
+    }
+
+    #[test]
+    fn key_encode_legacy_dead_key_and_alt_prefix_edge_cases() {
+        assert_eq!(
+            encoded(
+                KeyEvent {
+                    key: Key::Backspace,
+                    utf8: b"A".to_vec(),
+                    unshifted_codepoint: 0x0d,
+                    ..KeyEvent::default()
+                },
+                Options::default()
+            ),
+            ""
+        );
+        assert_eq!(
+            encoded(
+                KeyEvent {
+                    key: Key::Enter,
+                    utf8: b"A".to_vec(),
+                    unshifted_codepoint: 0x0d,
+                    ..KeyEvent::default()
+                },
+                Options::default()
+            ),
+            "A"
+        );
+        assert_eq!(
+            encoded(
+                KeyEvent {
+                    key: Key::Escape,
+                    utf8: b"A".to_vec(),
+                    unshifted_codepoint: 0x0d,
+                    ..KeyEvent::default()
+                },
+                Options::default()
+            ),
+            "A"
+        );
+        assert_eq!(
+            encoded(
+                KeyEvent {
+                    key: Key::Backspace,
+                    utf8: b"\x7f".to_vec(),
+                    ..KeyEvent::default()
+                },
+                Options {
+                    backarrow_key_mode: false,
+                    ..Options::default()
+                }
+            ),
+            "\x7f"
+        );
+        assert_eq!(
+            encoded(
+                KeyEvent {
+                    key: Key::Backspace,
+                    utf8: b"\x7f".to_vec(),
+                    ..KeyEvent::default()
+                },
+                Options {
+                    backarrow_key_mode: true,
+                    ..Options::default()
+                }
+            ),
+            "\x08"
+        );
+        assert_eq!(
+            encoded(
+                KeyEvent {
+                    key: Key::KeyE,
+                    mods: Mods {
+                        alt: true,
+                        ..Mods::new()
+                    },
+                    unshifted_codepoint: 'e' as u32,
+                    ..KeyEvent::default()
+                },
+                Options {
+                    alt_esc_prefix: true,
+                    macos_option_as_alt: OptionAsAlt::True,
+                    ..Options::default()
+                }
+            ),
+            "\x1be"
+        );
+        assert_eq!(
+            encoded(
+                KeyEvent {
+                    key: Key::Period,
+                    mods: Mods {
+                        shift: true,
+                        alt: true,
+                        ..Mods::new()
+                    },
+                    utf8: b">".to_vec(),
+                    unshifted_codepoint: '.' as u32,
+                    ..KeyEvent::default()
+                },
+                Options {
+                    alt_esc_prefix: true,
+                    macos_option_as_alt: OptionAsAlt::True,
+                    ..Options::default()
+                }
+            ),
+            "\x1b>"
+        );
+        assert_eq!(
+            encoded(
+                KeyEvent {
+                    key: Key::KeyF,
+                    mods: Mods {
+                        alt: true,
+                        ..Mods::new()
+                    },
+                    utf8: "ф".as_bytes().to_vec(),
+                    ..KeyEvent::default()
+                },
+                Options {
+                    alt_esc_prefix: true,
+                    macos_option_as_alt: OptionAsAlt::True,
+                    ..Options::default()
+                }
+            ),
+            "ф"
         );
     }
 

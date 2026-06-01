@@ -192,3 +192,81 @@ Clean design re-review artifacts:
 
 Codex found no remaining design blockers and approved the experiment for
 implementation.
+
+## Result
+
+**Result:** Pass
+
+Implemented the legacy non-table key-encoding parity slice in
+`roastty/src/input/key_encode.rs`.
+
+The `ctrl_seq(...)` helper now follows the upstream finite C0 mapping for:
+
+- space, slash, digits `0`-`9`, question mark, at sign, backslash, right
+  bracket, caret, underscore, `a`-`z`, and tilde;
+- Alt+Ctrl, side-specific modifiers, and caps-lock lowercase recovery through
+  `unshifted_codepoint`;
+- non-ASCII layout cases where the logical key still supplies the ASCII control
+  intent;
+- explicit fallthrough for Ctrl+I, Ctrl+M, and Ctrl+left bracket so those encode
+  through CSI-u/fixterm.
+
+The legacy path also now has focused tests for:
+
+- dead-key UTF-8 behavior for backspace, enter, and escape;
+- DEL UTF-8 backspace behavior with DECBKM reset and set;
+- Ctrl+Shift+minus / underscore;
+- Ctrl+Alt+C;
+- Ctrl+Shift letters and Ctrl+Shift+`@` through CSI-u/fixterm;
+- Hungarian/Cyrillic non-ASCII layout behavior;
+- Alt-prefix cases with single-byte text, unshifted-codepoint-only input,
+  translated macOS Option text, Shift+Alt+period, and non-ASCII text without an
+  ASCII fallback.
+
+No public key ABI, live input path, PTY writes, runtime dispatch, keybindings,
+keymaps, config parsing, renderer behavior, browser overlay behavior, or
+`Options::from_terminal` wiring was added.
+
+Verification run:
+
+```bash
+cargo fmt -- roastty/src/input/key_encode.rs
+cargo test -p roastty key_encode
+cargo test -p roastty key_event
+cargo test -p roastty kitty_keyboard
+cargo test -p roastty
+! rg -n "ghostty|Ghostty|ghostty_" roastty/src/input roastty/src/lib.rs
+```
+
+Results:
+
+- `cargo test -p roastty key_encode`: 16 passed.
+- `cargo test -p roastty key_event`: 3 passed.
+- `cargo test -p roastty kitty_keyboard`: 20 passed.
+- `cargo test -p roastty`: 1773 unit tests passed, ABI harness passed, doc tests
+  passed.
+- Naming grep: no implementation-facing `ghostty` references in
+  `roastty/src/input` or `roastty/src/lib.rs`.
+
+## Conclusion
+
+Experiment 162 completes the major non-table legacy key-encoding matrix on top
+of the value types, encoder core, and lookup tables from Experiments 159-161.
+The key encoder is now ready for a later reviewed integration slice, unless the
+next experiment chooses to port the remaining Kitty alternate-layout matrix
+before wiring it into a terminal/runtime boundary.
+
+## Codex Result Review
+
+Codex reviewed the completed implementation and result before commit.
+
+Result-review artifacts:
+
+- Prompt: `logs/codex-review/20260601-144357-646897-prompt.md`
+- Result: `logs/codex-review/20260601-144357-646897-last-message.md`
+
+Codex found no findings. It confirmed that the implementation stays within the
+pure internal legacy key-encoder scope, adds no public ABI or runtime wiring,
+covers the full C0 table, negative CSI-u fallthrough cases, dead-key/DEL
+backspace behavior, layout cases, and alt-prefix edges. Codex also reran
+`cargo test -p roastty key_encode`, which passed with 16 tests.
