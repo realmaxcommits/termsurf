@@ -272,6 +272,8 @@ No experiment may proceed to the next stage until the required review passes.
 - [Experiment 80: Port Prompt Click Movement](80-port-prompt-click-movement.md)
   — **Pass**
 - [Experiment 81: Port Dump String Helpers](81-port-dump-string.md) — **Pass**
+- [Experiment 82: Port Styled Page Formatter Core](82-port-styled-page-formatter-core.md)
+  — **Designed**
 
 ## Non-Goals
 
