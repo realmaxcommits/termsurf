@@ -187,6 +187,12 @@ struct PageStringWithMap {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+struct PageStringWithPinMap {
+    text: String,
+    pin_map: Vec<Pin>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum CodepointReplacement {
     Codepoint(char),
     String(String),
@@ -1263,7 +1269,7 @@ fn push_blank_cells_plain(
     };
 
     let mut x = before_x;
-    let mut y = before_y;
+    let mut y = screen_y_base + before_y as u32;
     for _ in 0..count {
         if x == 0 {
             if y == 0 {
@@ -1277,7 +1283,7 @@ fn push_blank_cells_plain(
         }
         point_map.push(point::Coordinate::new(
             x.try_into().expect("page cell x must fit CellCountInt"),
-            screen_y_base + y as u32,
+            y,
         ));
     }
 }
@@ -2514,6 +2520,28 @@ impl PageList {
             &mut point_map,
         );
         PageStringWithMap { text, point_map }
+    }
+
+    fn plain_string_with_pin_map(
+        &self,
+        options: PlainStringWithMapOptions<'_>,
+    ) -> PageStringWithPinMap {
+        let mapped = self.plain_string_with_point_map(options);
+        let mut pin_map = Vec::with_capacity(mapped.point_map.len());
+        for coord in mapped.point_map {
+            let Some(pin) = self.pin(point::Point::screen(coord)) else {
+                return PageStringWithPinMap {
+                    text: String::new(),
+                    pin_map: Vec::new(),
+                };
+            };
+            pin_map.push(pin);
+        }
+
+        PageStringWithPinMap {
+            text: mapped.text,
+            pin_map,
+        }
     }
 
     fn page_string(&self, options: PageStringOptions<'_>) -> String {
@@ -5432,10 +5460,57 @@ mod tests {
         assert_eq!(actual.text.len(), actual.point_map.len());
     }
 
+    fn assert_plain_pin_map(
+        list: &PageList,
+        start: (CellCountInt, u32),
+        end: (CellCountInt, u32),
+        trim: bool,
+        unwrap: bool,
+        codepoint_map: Option<&[CodepointMapEntry]>,
+        expected_text: &str,
+        expected_pins: &[Pin],
+    ) {
+        let actual = list.plain_string_with_pin_map(PlainStringWithMapOptions {
+            selection: Some(screen_selection(list, start, end, false)),
+            trim,
+            unwrap,
+            codepoint_map,
+        });
+        assert_eq!(actual.text, expected_text);
+        assert_eq!(actual.pin_map, expected_pins);
+        assert_eq!(actual.text.len(), actual.pin_map.len());
+    }
+
+    fn assert_plain_pin_map_for_selection(
+        list: &PageList,
+        selection: Option<selection::Selection>,
+        trim: bool,
+        unwrap: bool,
+        expected_text: &str,
+        expected_pins: &[Pin],
+    ) {
+        let actual = list.plain_string_with_pin_map(PlainStringWithMapOptions {
+            selection,
+            trim,
+            unwrap,
+            codepoint_map: None,
+        });
+        assert_eq!(actual.text, expected_text);
+        assert_eq!(actual.pin_map, expected_pins);
+        assert_eq!(actual.text.len(), actual.pin_map.len());
+    }
+
     fn coords(points: &[(CellCountInt, u32)]) -> Vec<point::Coordinate> {
         points
             .iter()
             .map(|&(x, y)| point::Coordinate::new(x, y))
+            .collect()
+    }
+
+    fn pins(list: &PageList, points: &[(CellCountInt, u32)]) -> Vec<Pin> {
+        points
+            .iter()
+            .map(|&(x, y)| screen_pin(list, x, y))
             .collect()
     }
 
@@ -14921,6 +14996,291 @@ mod tests {
         assert_selection_string(&list, (0, 0), (2, 0), false, false, "A B");
         assert_dump_string(&list, (0, 0), Some((2, 0)), true, "A B");
         assert_page_string(&list, (0, 0), (2, 0), PageOutputFormat::Plain, None, "A B");
+    }
+
+    #[test]
+    fn pin_map_plain_single_line_ascii() {
+        let mut list = PageList::init(8, 2, None).unwrap();
+        set_screen_text_lines(&mut list, &["hello"]);
+
+        assert_plain_pin_map(
+            &list,
+            (0, 0),
+            (4, 0),
+            true,
+            true,
+            None,
+            "hello",
+            &pins(&list, &[(0, 0), (1, 0), (2, 0), (3, 0), (4, 0)]),
+        );
+    }
+
+    #[test]
+    fn pin_map_plain_unicode_bytes_share_source_pin() {
+        let mut list = PageList::init(4, 2, None).unwrap();
+        set_screen_cell(&mut list, 0, 0, 'é');
+
+        assert_plain_pin_map(
+            &list,
+            (0, 0),
+            (0, 0),
+            true,
+            true,
+            None,
+            "é",
+            &pins(&list, &[(0, 0), (0, 0)]),
+        );
+    }
+
+    #[test]
+    fn pin_map_plain_wide_character_spacer_tail_start() {
+        let mut list = PageList::init(6, 2, None).unwrap();
+        let mut wide = Cell::init('⚡' as u32);
+        wide.set_wide(Wide::Wide);
+        set_screen_cell_raw(&mut list, 2, 0, wide);
+        let mut tail = Cell::init(0);
+        tail.set_wide(Wide::SpacerTail);
+        set_screen_cell_raw(&mut list, 3, 0, tail);
+
+        assert_plain_pin_map(
+            &list,
+            (3, 0),
+            (3, 0),
+            true,
+            true,
+            None,
+            "⚡",
+            &pins(&list, &[(2, 0), (2, 0), (2, 0)]),
+        );
+    }
+
+    #[test]
+    fn pin_map_plain_generated_blanks_use_reverse_order() {
+        let mut list = PageList::init(5, 2, None).unwrap();
+        set_screen_cell(&mut list, 0, 0, 'A');
+        set_screen_cell(&mut list, 3, 0, 'C');
+
+        assert_plain_pin_map(
+            &list,
+            (0, 0),
+            (3, 0),
+            false,
+            true,
+            None,
+            "A  C",
+            &pins(&list, &[(0, 0), (2, 0), (1, 0), (3, 0)]),
+        );
+    }
+
+    #[test]
+    fn pin_map_plain_explicit_spaces_and_trimmed_spaces() {
+        let mut list = PageList::init(8, 2, None).unwrap();
+        set_screen_text_lines(&mut list, &["hi  "]);
+
+        assert_plain_pin_map(
+            &list,
+            (0, 0),
+            (3, 0),
+            false,
+            true,
+            None,
+            "hi  ",
+            &pins(&list, &[(0, 0), (1, 0), (2, 0), (3, 0)]),
+        );
+        assert_plain_pin_map(
+            &list,
+            (0, 0),
+            (3, 0),
+            true,
+            true,
+            None,
+            "hi",
+            &pins(&list, &[(0, 0), (1, 0)]),
+        );
+    }
+
+    #[test]
+    fn pin_map_plain_multiline_and_leading_blank_rows() {
+        let mut list = PageList::init(5, 4, None).unwrap();
+        set_screen_cell(&mut list, 0, 1, 'A');
+        set_screen_cell(&mut list, 0, 3, 'B');
+
+        assert_plain_pin_map(
+            &list,
+            (0, 0),
+            (0, 3),
+            true,
+            true,
+            None,
+            "\nA\n\nB",
+            &pins(&list, &[(0, 0), (0, 1), (0, 1), (0, 2), (0, 3)]),
+        );
+    }
+
+    #[test]
+    fn pin_map_plain_wrap_continuation_trailing_state_cells() {
+        let mut list = PageList::init(5, 2, None).unwrap();
+        set_screen_cell(&mut list, 0, 0, 'A');
+        set_screen_cell(&mut list, 2, 1, 'B');
+        set_screen_row_wrap(&mut list, 0, true);
+        set_screen_row_wrap_continuation(&mut list, 1, true);
+
+        assert_plain_pin_map(
+            &list,
+            (0, 0),
+            (2, 1),
+            false,
+            true,
+            None,
+            "A      B",
+            &pins(
+                &list,
+                &[
+                    (0, 0),
+                    (1, 1),
+                    (0, 1),
+                    (4, 0),
+                    (3, 0),
+                    (2, 0),
+                    (1, 0),
+                    (2, 1),
+                ],
+            ),
+        );
+    }
+
+    #[test]
+    fn pin_map_plain_codepoint_replacements_map_original_pin() {
+        let mut list = PageList::init(4, 2, None).unwrap();
+        set_screen_text_lines(&mut list, &["ao"]);
+        let string_map = [codepoint_map_entry(
+            'o',
+            'o',
+            CodepointReplacement::String("XYZ".to_string()),
+        )];
+        assert_plain_pin_map(
+            &list,
+            (0, 0),
+            (1, 0),
+            true,
+            true,
+            Some(&string_map),
+            "aXYZ",
+            &pins(&list, &[(0, 0), (1, 0), (1, 0), (1, 0)]),
+        );
+
+        let char_map = [codepoint_map_entry(
+            'o',
+            'o',
+            CodepointReplacement::Codepoint('é'),
+        )];
+        assert_plain_pin_map(
+            &list,
+            (0, 0),
+            (1, 0),
+            true,
+            true,
+            Some(&char_map),
+            "aé",
+            &pins(&list, &[(0, 0), (1, 0), (1, 0)]),
+        );
+    }
+
+    #[test]
+    fn pin_map_plain_multi_page_preserves_source_nodes() {
+        let (mut list, page_rows) = multi_page_list(80);
+        let first_y = page_rows as u32 - 1;
+        set_screen_cell(&mut list, 0, first_y, 'A');
+        set_screen_cell(&mut list, 0, first_y + 1, 'B');
+
+        let actual = list.plain_string_with_pin_map(PlainStringWithMapOptions {
+            selection: Some(screen_selection(
+                &list,
+                (0, first_y),
+                (0, first_y + 1),
+                false,
+            )),
+            trim: true,
+            unwrap: true,
+            codepoint_map: None,
+        });
+        let expected = pins(&list, &[(0, first_y), (0, first_y), (0, first_y + 1)]);
+        assert_eq!(actual.text, "A\nB");
+        assert_eq!(actual.pin_map, expected);
+        assert_ne!(actual.pin_map[0].node, actual.pin_map[2].node);
+    }
+
+    #[test]
+    fn pin_map_plain_multi_page_wrap_continuation_trailing_cells() {
+        let (mut list, page_rows) = multi_page_list(80);
+        let first_y = page_rows as u32 - 1;
+        let second_y = first_y + 1;
+        set_screen_cell(&mut list, 0, first_y, 'A');
+        set_screen_cell(&mut list, 2, second_y, 'B');
+        set_screen_row_wrap(&mut list, first_y, true);
+        set_screen_row_wrap_continuation(&mut list, second_y, true);
+
+        let actual = list.plain_string_with_pin_map(PlainStringWithMapOptions {
+            selection: Some(screen_selection(&list, (0, first_y), (2, second_y), false)),
+            trim: false,
+            unwrap: true,
+            codepoint_map: None,
+        });
+
+        let mut expected_points = vec![(0, first_y), (1, second_y), (0, second_y)];
+        for x in (1..list.cols).rev() {
+            expected_points.push((x, first_y));
+        }
+        expected_points.push((2, second_y));
+        let expected_text = format!("A{}B", " ".repeat(expected_points.len() - 2));
+
+        assert_eq!(actual.text, expected_text);
+        assert_eq!(actual.pin_map, pins(&list, &expected_points));
+        assert_ne!(actual.pin_map[0].node, actual.pin_map[1].node);
+        assert_ne!(
+            actual.pin_map[0].node,
+            actual.pin_map[expected_points.len() - 1].node
+        );
+    }
+
+    #[test]
+    fn pin_map_plain_invalid_or_garbage_endpoints_are_empty() {
+        let mut list = PageList::init(5, 2, None).unwrap();
+        set_screen_text_lines(&mut list, &["hello"]);
+        let other = PageList::init(5, 2, None).unwrap();
+        let invalid = Pin::new(other.first_node_ptr(), 0, 0);
+        let valid = screen_pin(&list, 0, 0);
+        let mut garbage = valid;
+        garbage.garbage = true;
+
+        for selection in [
+            selection::Selection::new(invalid, valid, false),
+            selection::Selection::new(valid, invalid, false),
+            selection::Selection::new(garbage, valid, false),
+            selection::Selection::new(valid, garbage, false),
+        ] {
+            assert_plain_pin_map_for_selection(&list, Some(selection), true, true, "", &[]);
+        }
+    }
+
+    #[test]
+    fn pin_map_plain_no_map_and_point_map_formatters_are_unchanged() {
+        let mut list = PageList::init(6, 2, None).unwrap();
+        set_screen_text_lines(&mut list, &["A B"]);
+
+        assert_selection_string(&list, (0, 0), (2, 0), false, false, "A B");
+        assert_dump_string(&list, (0, 0), Some((2, 0)), true, "A B");
+        assert_page_string(&list, (0, 0), (2, 0), PageOutputFormat::Plain, None, "A B");
+        assert_plain_point_map(
+            &list,
+            (0, 0),
+            (2, 0),
+            false,
+            true,
+            None,
+            "A B",
+            &coords(&[(0, 0), (1, 0), (2, 0)]),
+        );
     }
 
     #[test]

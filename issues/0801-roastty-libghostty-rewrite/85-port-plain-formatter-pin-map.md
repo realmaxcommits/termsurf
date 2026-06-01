@@ -197,3 +197,72 @@ regression suite plus derivation from point maps.
 
 The design now requires those pin-map tests directly. Follow-up Codex review
 found no blockers and approved the plan for implementation.
+
+## Result
+
+**Result:** Pass
+
+Implemented the private plain formatter pin-map layer in
+`roastty/src/terminal/page_list.rs`.
+
+The new private `PageStringWithPinMap` result type carries `text` plus a
+byte-indexed `pin_map`, and the new private
+`PageList::plain_string_with_pin_map(...)` helper derives its map from
+`PageList::plain_string_with_point_map(...)`. Each point-map coordinate is
+converted with `PageList::pin(point::Point::screen(...))`; if any coordinate
+cannot become a valid pin, the helper returns empty text and an empty map rather
+than producing a partial result.
+
+The implementation ports the plain upstream pin-map behavior for:
+
+- single-line ASCII;
+- Unicode and grapheme bytes sharing the source pin;
+- wide cells and spacer-tail selection starts;
+- generated blank-cell spaces using the same reverse-walk source cells as the
+  point map;
+- explicit spaces and trimmed trailing spaces;
+- multiline output, leading blank rows, and newline mapping;
+- prior trailing state across wrapped rows and page chunks;
+- string and single-codepoint codepoint-map replacements;
+- multi-page source-node preservation;
+- invalid and garbage selection endpoints.
+
+While adding the cross-page pin-map test, the implementation found and fixed a
+supporting point-map bug from Experiment 84: generated blank cells carried into
+the first row of the next PageList page were reverse-walking in page-local
+coordinates. `push_blank_cells_plain(...)` now walks backward in screen-domain
+coordinates before creating point-map entries, so carried blank cells can cross
+page boundaries correctly.
+
+No VT/HTML point maps, VT/HTML pin maps, `ScreenFormatter`, `TerminalFormatter`,
+`Screen`, `Terminal`, parser state, cursor state, terminal extras, hyperlinks,
+writer abstraction, public ABI, app, renderer, clipboard, PTY, or UI behavior
+was added.
+
+Verification passed:
+
+```text
+cargo fmt: passed
+cargo test -p roastty pin_map: passed, 12 tests
+cargo test -p roastty point_map: passed, 32 tests
+cargo test -p roastty page_string: passed, 12 tests
+cargo test -p roastty dump_string: passed, 13 tests
+cargo test -p roastty selection_string: passed, 22 tests
+cargo test -p roastty terminal::page_list: passed, 494 tests
+cargo test -p roastty: passed, 787 unit tests, ABI harness, and doctests
+```
+
+Codex design review approved the narrowed private plain pin-map plan after the
+test list was tightened to require explicit source spaces, trimmed trailing
+spaces, and prior trailing-state rows/cells.
+
+Codex result review found no blockers. It specifically noted that the cross-page
+wrap-continuation test covers the earlier missing case and that the
+implementation stays derived from the point-map path without scope creep.
+
+## Conclusion
+
+Experiment 85 completes the private plain PageList pin-map layer for Roastty.
+The next formatter work can build on a byte-indexed plain point map and pin map,
+while styled VT/HTML maps and the higher-level upstream formatter wrappers
+remain deferred to later experiments.
