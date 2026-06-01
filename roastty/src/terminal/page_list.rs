@@ -181,6 +181,26 @@ struct PlainPageFormat<'a> {
     trailing_state: Option<PlainTrailingState>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct PromptClickMove {
+    left: usize,
+    right: usize,
+}
+
+impl PromptClickMove {
+    const ZERO: Self = Self { left: 0, right: 0 };
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PromptClickMode {
+    None,
+    ClickEvents,
+    Line,
+    Multiple,
+    ConservativeVertical,
+    SmartVertical,
+}
+
 #[derive(Debug, Default)]
 struct TrackedPinsRemap {
     entries: Vec<(NonNull<Pin>, NonNull<Pin>)>,
@@ -1946,6 +1966,167 @@ impl PageList {
         }
 
         output
+    }
+
+    fn prompt_click_move(
+        &self,
+        cursor_pin: Pin,
+        cursor_state_semantic: SemanticContent,
+        click_pin: Pin,
+        mode: PromptClickMode,
+    ) -> PromptClickMove {
+        if cursor_pin.garbage
+            || click_pin.garbage
+            || !self.pin_is_valid(&cursor_pin)
+            || !self.pin_is_valid(&click_pin)
+        {
+            return PromptClickMove::ZERO;
+        }
+
+        let Some(cursor_cell_semantic) = self
+            .pin_cell(cursor_pin)
+            .map(|cell| cell.semantic_content())
+        else {
+            return PromptClickMove::ZERO;
+        };
+
+        if cursor_state_semantic != SemanticContent::Input
+            && cursor_cell_semantic != SemanticContent::Input
+        {
+            return PromptClickMove::ZERO;
+        }
+
+        match mode {
+            PromptClickMode::None | PromptClickMode::ClickEvents => PromptClickMove::ZERO,
+            PromptClickMode::Line
+            | PromptClickMode::Multiple
+            | PromptClickMode::ConservativeVertical
+            | PromptClickMode::SmartVertical => {
+                self.prompt_click_line(cursor_pin, cursor_cell_semantic, click_pin)
+            }
+        }
+    }
+
+    fn prompt_click_line(
+        &self,
+        cursor_pin: Pin,
+        cursor_cell_semantic: SemanticContent,
+        click_pin: Pin,
+    ) -> PromptClickMove {
+        if cursor_pin == click_pin {
+            return PromptClickMove::ZERO;
+        }
+
+        if self.pin_before(cursor_pin, click_pin).unwrap_or(false) {
+            return self.prompt_click_line_right(cursor_pin, cursor_cell_semantic, click_pin);
+        }
+
+        self.prompt_click_line_left(cursor_pin, click_pin)
+    }
+
+    fn prompt_click_line_right(
+        &self,
+        cursor_pin: Pin,
+        cursor_cell_semantic: SemanticContent,
+        click_pin: Pin,
+    ) -> PromptClickMove {
+        let mut count = 0usize;
+        let rows = self.row_iterator_from_pin(Direction::RightDown, cursor_pin, Some(click_pin));
+
+        for row_pin in rows {
+            let Some(node) = self.node_for_pin(&row_pin) else {
+                break;
+            };
+            let row = node.page.get_row(row_pin.y as usize);
+            let cells = node.page.get_cells(row);
+            let is_cursor_row = row_pin.node == cursor_pin.node && row_pin.y == cursor_pin.y;
+
+            if !is_cursor_row && row.semantic_prompt() != SemanticPrompt::PromptContinuation {
+                break;
+            }
+
+            let start_x = if is_cursor_row {
+                cursor_pin.x as usize + 1
+            } else {
+                cells
+                    .iter()
+                    .position(|cell| cell.semantic_content() == SemanticContent::Input)
+                    .unwrap_or(cells.len())
+            };
+
+            for (x, cell) in cells.iter().enumerate().skip(start_x) {
+                if cell.semantic_content() != SemanticContent::Input {
+                    continue;
+                }
+
+                count += 1;
+                if row_pin.node == click_pin.node
+                    && row_pin.y == click_pin.y
+                    && x == click_pin.x as usize
+                {
+                    return PromptClickMove {
+                        left: 0,
+                        right: count,
+                    };
+                }
+            }
+
+            if !row.wrap() {
+                if cursor_cell_semantic == SemanticContent::Input {
+                    count += 1;
+                }
+                break;
+            }
+        }
+
+        PromptClickMove {
+            left: 0,
+            right: count,
+        }
+    }
+
+    fn prompt_click_line_left(&self, cursor_pin: Pin, click_pin: Pin) -> PromptClickMove {
+        let mut count = 0usize;
+        let rows = self.row_iterator_from_pin(Direction::LeftUp, cursor_pin, Some(click_pin));
+
+        for row_pin in rows {
+            let Some(node) = self.node_for_pin(&row_pin) else {
+                break;
+            };
+            let row = node.page.get_row(row_pin.y as usize);
+            let cells = node.page.get_cells(row);
+            let end_len = if row_pin.node == cursor_pin.node && row_pin.y == cursor_pin.y {
+                cursor_pin.x as usize
+            } else {
+                cells.len()
+            };
+
+            for x in (0..end_len).rev() {
+                if cells[x].semantic_content() != SemanticContent::Input {
+                    continue;
+                }
+
+                count += 1;
+                if row_pin.node == click_pin.node
+                    && row_pin.y == click_pin.y
+                    && x == click_pin.x as usize
+                {
+                    return PromptClickMove {
+                        left: count,
+                        right: 0,
+                    };
+                }
+            }
+
+            if !row.wrap_continuation() {
+                break;
+            }
+        }
+
+        PromptClickMove {
+            left: count,
+            right: 0,
+        }
     }
 
     fn semantic_prompt_zone_end(&self, at: Pin) -> Option<Pin> {
@@ -4571,6 +4752,24 @@ mod tests {
             .expect("screen cell must exist");
         let index = list.node_index(pin.node).expect("screen node must exist");
         let mut cell = Cell::init(codepoint as u32);
+        cell.set_semantic_content(semantic);
+        *list.pages[index]
+            .page
+            .get_row_and_cell_mut(pin.x as usize, pin.y as usize)
+            .cell = cell;
+    }
+
+    fn set_screen_blank_semantic(
+        list: &mut PageList,
+        x: CellCountInt,
+        y: u32,
+        semantic: SemanticContent,
+    ) {
+        let pin = list
+            .pin(point::Point::screen(Coordinate::new(x, y)))
+            .expect("screen cell must exist");
+        let index = list.node_index(pin.node).expect("screen node must exist");
+        let mut cell = Cell::init(0);
         cell.set_semantic_content(semantic);
         *list.pages[index]
             .page
@@ -13095,6 +13294,418 @@ mod tests {
                 trim: false,
             }),
             "3ABCD"
+        );
+    }
+
+    fn assert_prompt_click(
+        list: &PageList,
+        cursor: (CellCountInt, u32),
+        cursor_state: SemanticContent,
+        click: (CellCountInt, u32),
+        mode: PromptClickMode,
+        expected: PromptClickMove,
+    ) {
+        assert_eq!(
+            list.prompt_click_move(
+                screen_pin(list, cursor.0, cursor.1),
+                cursor_state,
+                screen_pin(list, click.0, click.1),
+                mode,
+            ),
+            expected
+        );
+    }
+
+    fn set_prompt_and_input(list: &mut PageList, prompt: &str, input: &str) {
+        set_screen_semantic_text(list, 0, 0, prompt, SemanticContent::Prompt);
+        set_screen_semantic_text(
+            list,
+            prompt
+                .len()
+                .try_into()
+                .expect("prompt len must fit CellCountInt"),
+            0,
+            input,
+            SemanticContent::Input,
+        );
+    }
+
+    #[test]
+    fn prompt_click_move_line_right_basic() {
+        let mut list = PageList::init(20, 5, None).unwrap();
+        set_prompt_and_input(&mut list, "> ", "hello");
+
+        assert_prompt_click(
+            &list,
+            (2, 0),
+            SemanticContent::Input,
+            (4, 0),
+            PromptClickMode::Line,
+            PromptClickMove { left: 0, right: 2 },
+        );
+    }
+
+    #[test]
+    fn prompt_click_move_line_right_cursor_not_on_input() {
+        let mut list = PageList::init(20, 5, None).unwrap();
+        set_prompt_and_input(&mut list, "> ", "hello");
+
+        assert_prompt_click(
+            &list,
+            (0, 0),
+            SemanticContent::Output,
+            (4, 0),
+            PromptClickMode::Line,
+            PromptClickMove::ZERO,
+        );
+    }
+
+    #[test]
+    fn prompt_click_move_line_right_click_on_same_position() {
+        let mut list = PageList::init(20, 5, None).unwrap();
+        set_prompt_and_input(&mut list, "> ", "hello");
+
+        assert_prompt_click(
+            &list,
+            (4, 0),
+            SemanticContent::Input,
+            (4, 0),
+            PromptClickMode::Line,
+            PromptClickMove::ZERO,
+        );
+    }
+
+    #[test]
+    fn prompt_click_move_line_right_skips_non_input_cells() {
+        let mut list = PageList::init(20, 5, None).unwrap();
+        set_screen_semantic_text(&mut list, 0, 0, "> ", SemanticContent::Prompt);
+        set_screen_semantic_text(&mut list, 2, 0, "h", SemanticContent::Input);
+        set_screen_semantic_text(&mut list, 3, 0, "X", SemanticContent::Output);
+        set_screen_semantic_text(&mut list, 4, 0, "llo", SemanticContent::Input);
+
+        assert_prompt_click(
+            &list,
+            (2, 0),
+            SemanticContent::Input,
+            (5, 0),
+            PromptClickMode::Line,
+            PromptClickMove { left: 0, right: 2 },
+        );
+    }
+
+    #[test]
+    fn prompt_click_move_line_right_soft_wrapped_line() {
+        let mut list = PageList::init(10, 5, None).unwrap();
+        set_screen_semantic_text(&mut list, 0, 0, "> ", SemanticContent::Prompt);
+        set_screen_semantic_text(&mut list, 2, 0, "abcdefgh", SemanticContent::Input);
+        set_screen_semantic_text(&mut list, 0, 1, "ij", SemanticContent::Input);
+        set_screen_row_wrap(&mut list, 0, true);
+        set_screen_row_wrap_continuation(&mut list, 1, true);
+        set_screen_semantic_prompt(&mut list, 1, SemanticPrompt::PromptContinuation);
+
+        assert_prompt_click(
+            &list,
+            (2, 0),
+            SemanticContent::Input,
+            (1, 1),
+            PromptClickMode::Line,
+            PromptClickMove { left: 0, right: 9 },
+        );
+    }
+
+    #[test]
+    fn prompt_click_move_disabled_modes_return_zero() {
+        let mut list = PageList::init(20, 5, None).unwrap();
+        set_prompt_and_input(&mut list, "> ", "hello");
+
+        for mode in [PromptClickMode::None, PromptClickMode::ClickEvents] {
+            assert_prompt_click(
+                &list,
+                (2, 0),
+                SemanticContent::Input,
+                (4, 0),
+                mode,
+                PromptClickMove::ZERO,
+            );
+        }
+    }
+
+    #[test]
+    fn prompt_click_move_line_right_stops_at_hard_wrap() {
+        let mut list = PageList::init(20, 5, None).unwrap();
+        set_prompt_and_input(&mut list, "> ", "hello");
+        set_screen_semantic_text(&mut list, 0, 1, "world", SemanticContent::Input);
+
+        assert_prompt_click(
+            &list,
+            (2, 0),
+            SemanticContent::Input,
+            (0, 1),
+            PromptClickMode::Line,
+            PromptClickMove { left: 0, right: 5 },
+        );
+    }
+
+    #[test]
+    fn prompt_click_move_line_right_stops_at_non_continuation_row() {
+        let mut list = PageList::init(20, 5, None).unwrap();
+        set_screen_semantic_text(&mut list, 0, 0, "> ", SemanticContent::Prompt);
+        set_screen_semantic_text(&mut list, 2, 0, "hello", SemanticContent::Input);
+        set_screen_semantic_text(&mut list, 0, 1, "world", SemanticContent::Input);
+        set_screen_semantic_prompt(&mut list, 1, SemanticPrompt::PromptContinuation);
+        set_screen_semantic_text(&mut list, 0, 2, "> ", SemanticContent::Prompt);
+        set_screen_semantic_text(&mut list, 2, 2, "again", SemanticContent::Input);
+
+        assert_prompt_click(
+            &list,
+            (0, 1),
+            SemanticContent::Input,
+            (2, 2),
+            PromptClickMode::Line,
+            PromptClickMove { left: 0, right: 5 },
+        );
+    }
+
+    #[test]
+    fn prompt_click_move_line_left_basic() {
+        let mut list = PageList::init(20, 5, None).unwrap();
+        set_prompt_and_input(&mut list, "> ", "hello");
+
+        assert_prompt_click(
+            &list,
+            (6, 0),
+            SemanticContent::Input,
+            (2, 0),
+            PromptClickMode::Line,
+            PromptClickMove { left: 4, right: 0 },
+        );
+    }
+
+    #[test]
+    fn prompt_click_move_line_left_skips_non_input_cells() {
+        let mut list = PageList::init(20, 5, None).unwrap();
+        set_screen_semantic_text(&mut list, 0, 0, "> ", SemanticContent::Prompt);
+        set_screen_semantic_text(&mut list, 2, 0, "h", SemanticContent::Input);
+        set_screen_semantic_text(&mut list, 3, 0, "X", SemanticContent::Output);
+        set_screen_semantic_text(&mut list, 4, 0, "llo", SemanticContent::Input);
+
+        assert_prompt_click(
+            &list,
+            (6, 0),
+            SemanticContent::Input,
+            (2, 0),
+            PromptClickMode::Line,
+            PromptClickMove { left: 3, right: 0 },
+        );
+    }
+
+    #[test]
+    fn prompt_click_move_line_left_soft_wrapped_line() {
+        let mut list = PageList::init(10, 5, None).unwrap();
+        set_screen_semantic_text(&mut list, 0, 0, "> ", SemanticContent::Prompt);
+        set_screen_semantic_text(&mut list, 2, 0, "abcdefgh", SemanticContent::Input);
+        set_screen_semantic_text(&mut list, 0, 1, "ij", SemanticContent::Input);
+        set_screen_row_wrap(&mut list, 0, true);
+        set_screen_row_wrap_continuation(&mut list, 1, true);
+
+        assert_prompt_click(
+            &list,
+            (1, 1),
+            SemanticContent::Input,
+            (2, 0),
+            PromptClickMode::Line,
+            PromptClickMove { left: 9, right: 0 },
+        );
+    }
+
+    #[test]
+    fn prompt_click_move_line_left_stops_at_hard_wrap() {
+        let mut list = PageList::init(20, 5, None).unwrap();
+        set_prompt_and_input(&mut list, "> ", "hello");
+        set_screen_semantic_text(&mut list, 0, 1, "world", SemanticContent::Input);
+
+        assert_prompt_click(
+            &list,
+            (4, 1),
+            SemanticContent::Input,
+            (2, 0),
+            PromptClickMode::Line,
+            PromptClickMove { left: 4, right: 0 },
+        );
+    }
+
+    #[test]
+    fn prompt_click_move_click_right_of_input_same_line() {
+        let mut list = PageList::init(20, 5, None).unwrap();
+        set_prompt_and_input(&mut list, "> ", "hello");
+
+        assert_prompt_click(
+            &list,
+            (2, 0),
+            SemanticContent::Input,
+            (15, 0),
+            PromptClickMode::Line,
+            PromptClickMove { left: 0, right: 5 },
+        );
+    }
+
+    #[test]
+    fn prompt_click_move_click_right_of_input_cursor_at_end() {
+        let mut list = PageList::init(20, 5, None).unwrap();
+        set_prompt_and_input(&mut list, "> ", "hello");
+
+        assert_prompt_click(
+            &list,
+            (7, 0),
+            SemanticContent::Input,
+            (15, 0),
+            PromptClickMode::Line,
+            PromptClickMove::ZERO,
+        );
+    }
+
+    #[test]
+    fn prompt_click_move_click_right_of_input_on_lower_line() {
+        let mut list = PageList::init(20, 5, None).unwrap();
+        set_prompt_and_input(&mut list, "> ", "hello");
+
+        assert_prompt_click(
+            &list,
+            (2, 0),
+            SemanticContent::Input,
+            (5, 1),
+            PromptClickMode::Line,
+            PromptClickMove { left: 0, right: 5 },
+        );
+    }
+
+    #[test]
+    fn prompt_click_move_click_right_of_input_cursor_at_end_lower_line() {
+        let mut list = PageList::init(20, 5, None).unwrap();
+        set_prompt_and_input(&mut list, "> ", "hello");
+
+        assert_prompt_click(
+            &list,
+            (7, 0),
+            SemanticContent::Input,
+            (5, 1),
+            PromptClickMode::Line,
+            PromptClickMove::ZERO,
+        );
+    }
+
+    #[test]
+    fn prompt_click_move_click_right_of_input_cursor_on_last_char() {
+        let mut list = PageList::init(20, 5, None).unwrap();
+        set_prompt_and_input(&mut list, "> ", "hello");
+
+        assert_prompt_click(
+            &list,
+            (6, 0),
+            SemanticContent::Input,
+            (15, 0),
+            PromptClickMode::Line,
+            PromptClickMove { left: 0, right: 1 },
+        );
+    }
+
+    #[test]
+    fn prompt_click_move_split_cursor_state_and_page_cell_semantics() {
+        let mut list = PageList::init(20, 5, None).unwrap();
+        set_prompt_and_input(&mut list, "> ", "hello");
+
+        assert_prompt_click(
+            &list,
+            (7, 0),
+            SemanticContent::Input,
+            (2, 0),
+            PromptClickMode::Line,
+            PromptClickMove { left: 5, right: 0 },
+        );
+        assert_prompt_click(
+            &list,
+            (7, 0),
+            SemanticContent::Input,
+            (15, 0),
+            PromptClickMode::Line,
+            PromptClickMove::ZERO,
+        );
+        assert_prompt_click(
+            &list,
+            (2, 0),
+            SemanticContent::Output,
+            (4, 0),
+            PromptClickMode::Line,
+            PromptClickMove { left: 0, right: 2 },
+        );
+    }
+
+    #[test]
+    fn prompt_click_move_line_mode_aliases_match_upstream() {
+        let mut list = PageList::init(20, 5, None).unwrap();
+        set_prompt_and_input(&mut list, "> ", "hello");
+
+        for mode in [
+            PromptClickMode::Multiple,
+            PromptClickMode::ConservativeVertical,
+            PromptClickMode::SmartVertical,
+        ] {
+            assert_prompt_click(
+                &list,
+                (2, 0),
+                SemanticContent::Input,
+                (4, 0),
+                mode,
+                PromptClickMove { left: 0, right: 2 },
+            );
+        }
+    }
+
+    #[test]
+    fn prompt_click_move_invalid_or_garbage_pins_return_zero() {
+        let mut list = PageList::init(20, 5, None).unwrap();
+        set_prompt_and_input(&mut list, "> ", "hello");
+        let other = PageList::init(20, 5, None).unwrap();
+        let invalid = Pin::new(other.first_node_ptr(), 0, 0);
+        let valid = screen_pin(&list, 2, 0);
+        let mut garbage = valid;
+        garbage.garbage = true;
+
+        for (cursor, click) in [
+            (invalid, valid),
+            (valid, invalid),
+            (garbage, valid),
+            (valid, garbage),
+        ] {
+            assert_eq!(
+                list.prompt_click_move(
+                    cursor,
+                    SemanticContent::Input,
+                    click,
+                    PromptClickMode::Line
+                ),
+                PromptClickMove::ZERO
+            );
+        }
+    }
+
+    #[test]
+    fn prompt_click_move_cross_page_wrapped_input() {
+        let (mut list, page_rows) = multi_page_list(100);
+        let first_y = page_rows as u32 - 1;
+        set_screen_semantic_text(&mut list, 0, first_y, "abcdef", SemanticContent::Input);
+        set_screen_semantic_text(&mut list, 0, first_y + 1, "gh", SemanticContent::Input);
+        set_screen_row_wrap(&mut list, first_y, true);
+        set_screen_row_wrap_continuation(&mut list, first_y + 1, true);
+        set_screen_semantic_prompt(&mut list, first_y + 1, SemanticPrompt::PromptContinuation);
+
+        assert_prompt_click(
+            &list,
+            (0, first_y),
+            SemanticContent::Input,
+            (1, first_y + 1),
+            PromptClickMode::Line,
+            PromptClickMove { left: 0, right: 7 },
         );
     }
 

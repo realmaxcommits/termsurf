@@ -270,7 +270,7 @@ No experiment may proceed to the next stage until the required review passes.
 - [Experiment 79: Port Plain Selection String](79-port-plain-selection-string.md)
   — **Pass**
 - [Experiment 80: Port Prompt Click Movement](80-port-prompt-click-movement.md)
-  — **Designed**
+  — **Pass**
 
 ## Non-Goals
 

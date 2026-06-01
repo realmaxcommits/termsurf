@@ -239,3 +239,80 @@ content from `cursor_pin`, and requires split-state tests for:
 - non-input cursor state plus input cursor page-cell.
 
 Follow-up Codex review approved the updated design with no remaining blockers.
+
+## Result
+
+**Result:** Pass
+
+Implemented private PageList prompt-click movement in
+`roastty/src/terminal/page_list.rs`:
+
+- `PromptClickMove` stores left/right cursor-key counts and exposes `ZERO`.
+- `PromptClickMode` represents the upstream disabled, click-events, line,
+  multiple, conservative-vertical, and smart-vertical modes.
+- `PageList::prompt_click_move()` validates cursor/click pins, derives the
+  cursor page-cell semantic content from the cursor pin, applies upstream's
+  current-cursor-state OR page-cell semantic input gate, keeps disabled modes
+  inert, and routes the line-like modes through the line movement core.
+- `PageList::prompt_click_line()`, `prompt_click_line_right()`, and
+  `prompt_click_line_left()` port the line-based movement calculation over
+  PageList pins and rows.
+
+The implementation remains private to the terminal module. It does not add
+`Screen`, `Terminal`, cursor structs, parser state, OSC 133 parser/config
+parsing, keyboard event emission, mouse event handling, public ABI, app,
+renderer, clipboard, or UI wiring.
+
+Ported or covered the upstream-equivalent prompt-click behavior for:
+
+- line-right basic movement;
+- cursor not on input;
+- same-position zero movement;
+- skipping non-input cells;
+- soft-wrapped line movement in both directions;
+- disabled `None` and `ClickEvents` modes;
+- hard-wrap and prompt-continuation stops;
+- line-left basic movement;
+- lower-line and right-of-input clicks;
+- cursor-at-end and cursor-on-last-character edge cases.
+
+Added Roastty-specific guard coverage for:
+
+- invalid and garbage cursor/click pins returning zero;
+- `Multiple`, `ConservativeVertical`, and `SmartVertical` modes reusing the line
+  movement core, matching upstream today;
+- split cursor semantic state vs cursor page-cell semantic behavior;
+- cross-page wrapped input movement.
+
+Verification passed:
+
+```bash
+cargo fmt
+cargo test -p roastty prompt_click
+cargo test -p roastty terminal::page_list
+cargo test -p roastty
+```
+
+Observed results:
+
+- `cargo test -p roastty prompt_click`: 21 passed.
+- `cargo test -p roastty terminal::page_list`: 426 passed.
+- `cargo test -p roastty`: 719 unit tests passed, ABI harness passed, and
+  doctests passed.
+
+Codex reviewed the completed implementation and found no blockers. It confirmed
+that the implementation matches the upstream split between cursor semantic state
+and cursor page-cell semantic behavior, preserves the page-cell-only hard-row
+`+1`, keeps disabled modes inert, routes the line-like modes through the line
+core, and covers the required wrap/continuation and cross-page cases.
+
+## Conclusion
+
+Experiment 80 successfully ports the prompt-click movement core into Roastty's
+PageList layer. Roastty can now compute upstream-style left/right movement
+counts for semantic prompt input clicks without needing the later `Screen`,
+cursor, parser, keyboard-emission, or UI integration layers.
+
+The next experiment can continue with the following upstream terminal helper
+after `promptClickMove()`, or it can begin splitting the remaining formatter
+surface into VT/HTML/pin-map slices now that copied plain text is in place.
