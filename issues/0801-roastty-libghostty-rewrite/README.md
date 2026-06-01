@@ -349,6 +349,8 @@ No experiment may proceed to the next stage until the required review passes.
 - [Experiment 121: Port CSI Erase Line](121-port-csi-erase-line.md) — **Pass**
 - [Experiment 122: Port CSI Delete Character](122-port-csi-delete-character.md)
   — **Pass**
+- [Experiment 123: Port CSI Insert Lines](123-port-csi-insert-lines.md) —
+  **Designed**
 
 ## Non-Goals
 
