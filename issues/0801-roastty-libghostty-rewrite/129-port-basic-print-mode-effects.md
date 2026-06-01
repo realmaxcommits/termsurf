@@ -248,3 +248,97 @@ Codex re-reviewed the updated design and found no blocking design findings:
 `logs/codex-review/20260601-064703-396868-last-message.md`.
 
 The design is approved for implementation.
+
+## Result
+
+**Result:** Pass
+
+Roastty's basic single-cell ASCII print path now honors the runtime mode effects
+made reachable by Experiment 128:
+
+- `CSI 4 h/l` toggles insert-mode printing;
+- `CSI 20 h/l` toggles linefeed-mode carriage return behavior;
+- `CSI ? 7 h/l` toggles wraparound behavior for pending-wrap printing.
+
+Insert mode now shifts existing cells right before writing when the cursor is
+not at the active right edge. It uses the same row-mutation primitive as
+`CSI @`, so shifted-off content is discarded instead of wrapped. Horizontal
+margins are preserved: printing inside a left/right margin shifts only through
+the right margin, while printing outside the margin does not shift cells. Insert
+mode at the right edge follows the print/wrap path instead of shifting.
+
+Linefeed mode now follows Ghostty's ordering: the terminal performs linefeed
+movement first, then carriage return if `Mode::Linefeed` is enabled. Because
+Roastty's stream parser maps LF, VT, and FF to `Action::LineFeed`, all three
+honor linefeed mode. `ESC D` / IND now uses an index-only helper and ignores
+linefeed-mode carriage return behavior. `ESC E` / NEL remains linefeed plus
+carriage return by definition.
+
+Disabled wraparound now prevents pending-wrap movement for single-cell ASCII
+printing. A printable byte written while pending wrap is set overwrites the
+current right-edge cell, does not move to the next row, does not scroll, and
+leaves pending wrap set. Repeated printable bytes keep overwriting the right
+edge. Re-enabling wraparound while pending wrap remains set makes the next print
+wrap normally. When the active right edge comes from a horizontal margin,
+wraparound moves to the scrolling region's left margin and does not set
+full-screen soft-wrap metadata.
+
+Dirty and scroll behavior is covered:
+
+- insert-mode shifts dirty only the affected row;
+- insert mode outside horizontal margins clears pending wrap without shifting;
+- disabled-wraparound right-edge overwrite dirties the current row but not the
+  next row;
+- disabled-wraparound bottom-right overwrite does not create scrollback or
+  scroll-related dirty rows.
+
+The following behavior remains intentionally deferred:
+
+- wide-character insert and disabled-wraparound behavior;
+- grapheme-cluster printing;
+- current-SGR blank-cell coloring;
+- styled printing from stream input;
+- alternate-screen, save/restore cursor, DECCOLM, mouse, keypad, OSC, DCS,
+  public ABI, and non-macOS behavior.
+
+Verification commands passed:
+
+```bash
+cargo fmt
+cargo test -p roastty terminal_stream_csi_mode
+cargo test -p roastty terminal_stream_lf
+cargo test -p roastty terminal_stream_pending_wrap
+cargo test -p roastty terminal_stream_right_edge
+cargo test -p roastty terminal::terminal
+cargo test -p roastty stream
+cargo test -p roastty terminal_formatter
+cargo test -p roastty screen_formatter
+cargo test -p roastty page_string
+cargo test -p roastty
+```
+
+The final full `cargo test -p roastty` run passed: 1393 unit tests, 1 ABI
+harness test, and 0 doc tests.
+
+Codex design review passed after the design updates recorded above. The first
+Codex result review found two real issues:
+`logs/codex-review/20260601-065209-384091-last-message.md`.
+
+Those were fixed by:
+
+- wrapping from a horizontal right margin to the scrolling region's left margin
+  and marking soft-wrap metadata only when the wrap starts at the full screen
+  edge;
+- adding explicit coverage for insert-mode printing outside horizontal margins
+  clearing pending wrap without shifting cells.
+
+Codex re-reviewed the fixed result and found no blocking findings:
+`logs/codex-review/20260601-065626-390453-last-message.md`.
+
+## Conclusion
+
+Experiment 129 converts the basic insert, linefeed, and wraparound modes from
+stored state into observable runtime behavior for Roastty's current ASCII/basic
+cell print path. This keeps the implementation aligned with Ghostty where the
+current core has enough primitives, while leaving Unicode width, grapheme, SGR,
+and styled-printing behavior for their own subsystem experiments.

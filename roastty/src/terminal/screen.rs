@@ -45,6 +45,15 @@ impl From<PageListAllocError> for EraseDisplayError {
     }
 }
 
+impl From<EraseDisplayError> for BasicPrintError {
+    fn from(value: EraseDisplayError) -> Self {
+        match value {
+            EraseDisplayError::PageAlloc => Self::PageAlloc,
+            EraseDisplayError::Cell(err) => Self::Cell(err),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ScreenCursor {
     x: CellCountInt,
@@ -135,8 +144,20 @@ impl Screen {
         cols: CellCountInt,
         rows: CellCountInt,
         codepoint: char,
+        insert_mode: bool,
+        wraparound: bool,
+        left_margin: CellCountInt,
+        right_margin: CellCountInt,
     ) -> Result<(), BasicPrintError> {
-        if self.cursor.pending_wrap {
+        let right_limit = if self.cursor.x > right_margin {
+            cols
+        } else {
+            right_margin.saturating_add(1)
+        };
+        let right_edge = right_limit.saturating_sub(1);
+
+        if self.cursor.pending_wrap && wraparound {
+            let mark_wrap = self.cursor.x == cols.saturating_sub(1);
             if self.cursor.y == rows - 1 {
                 let old_row = self
                     .pages
@@ -145,30 +166,41 @@ impl Screen {
                 self.pages
                     .grow_active()
                     .map_err(|_| BasicPrintError::PageAlloc)?;
-                self.pages
-                    .set_row_wrap_at_pin(old_row, true)
-                    .map_err(BasicPrintError::Cell)?;
+                if mark_wrap {
+                    self.pages
+                        .set_row_wrap_at_pin(old_row, true)
+                        .map_err(BasicPrintError::Cell)?;
+                }
                 self.cursor.y = rows - 1;
             } else {
                 self.pages
-                    .check_basic_active_cell(0, (self.cursor.y + 1).into())
+                    .check_basic_active_cell(left_margin, (self.cursor.y + 1).into())
                     .map_err(BasicPrintError::Cell)?;
-                self.pages
-                    .set_active_row_wrap(self.cursor.y.into(), true)
-                    .map_err(BasicPrintError::Cell)?;
+                if mark_wrap {
+                    self.pages
+                        .set_active_row_wrap(self.cursor.y.into(), true)
+                        .map_err(BasicPrintError::Cell)?;
+                }
                 self.cursor.y += 1;
             }
-            self.cursor.x = 0;
+            self.cursor.x = left_margin;
             self.cursor.pending_wrap = false;
-            self.pages
-                .set_active_row_wrap_continuation(self.cursor.y.into(), true)
-                .map_err(BasicPrintError::Cell)?;
+            if mark_wrap {
+                self.pages
+                    .set_active_row_wrap_continuation(self.cursor.y.into(), true)
+                    .map_err(BasicPrintError::Cell)?;
+            }
+        }
+
+        if insert_mode && self.cursor.x.saturating_add(1) < right_limit {
+            self.insert_chars_basic(1, left_margin, right_margin)
+                .map_err(BasicPrintError::from)?;
         }
 
         self.pages
             .write_basic_active_cell(self.cursor.x, self.cursor.y.into(), codepoint)
             .map_err(BasicPrintError::Cell)?;
-        if self.cursor.x == cols - 1 {
+        if self.cursor.x == right_edge {
             self.cursor.pending_wrap = true;
         } else {
             self.cursor.x += 1;
