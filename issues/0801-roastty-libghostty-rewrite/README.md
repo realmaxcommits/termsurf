@@ -449,7 +449,7 @@ tests, choose the larger subsystem.
 - [Experiment 160: Port Key Encoder Core](160-port-key-encoder-core.md) —
   **Pass**
 - [Experiment 161: Complete Key Encoder Tables](161-complete-key-encoder-tables.md)
-  — **Designed**
+  — **Pass**
 
 ## Non-Goals
 

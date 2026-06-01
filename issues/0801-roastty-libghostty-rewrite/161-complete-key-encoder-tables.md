@@ -220,3 +220,84 @@ Clean design re-review artifacts:
 
 Codex found no remaining design blockers and approved the experiment for
 implementation.
+
+## Result
+
+**Result:** Pass
+
+Implemented the Experiment 161 key-encoder table expansion in
+`roastty/src/input/key_encode.rs`.
+
+The Kitty lookup is now a static table covering every upstream
+`vendor/ghostty/src/input/kitty.zig` entry that has an existing Roastty `Key`
+variant:
+
+- base control/special keys;
+- insert/delete/arrows/page/home/end;
+- caps/scroll/num lock, print screen, and pause;
+- F1-F25;
+- numpad digits, operators, navigation, insert/delete, page, home/end/begin;
+- left/right shift, control, meta, and alt.
+
+The legacy PC-style lookup is now driven by internal key specs rather than the
+minimal Experiment 160 match. It covers:
+
+- cursor and application-mode arrows/home/end;
+- insert/delete/page up/page down tilde sequences;
+- F1-F12 plain and modified forms;
+- keypad digits/operators/navigation with keypad-application mode and
+  `ignore_keypad_with_numlock`;
+- backspace, tab, enter, and escape special behavior, including DECBKM and
+  modifyOtherKeys state 2 forms.
+
+No public key ABI, live input path, PTY writes, runtime dispatch, keybindings,
+keymaps, config parsing, renderer behavior, browser overlay behavior, or
+`Options::from_terminal` wiring was added.
+
+No upstream Kitty entries were omitted among keys that already exist in Roastty.
+The PC-style table remains scoped to upstream `function_keys.zig` entries whose
+keys exist in Roastty and to the existing Experiment 160 option model; broader
+non-table ctrl-sequence and CSI-u character fallback parity remains deferred.
+
+Verification run:
+
+```bash
+cargo fmt -- roastty/src/input/key_encode.rs roastty/src/input/mod.rs roastty/src/terminal/kitty.rs roastty/src/terminal/mod.rs
+cargo test -p roastty key_encode
+cargo test -p roastty key_event
+cargo test -p roastty kitty_keyboard
+cargo test -p roastty
+! rg -n "ghostty|Ghostty|ghostty_" roastty/src/input roastty/src/lib.rs
+```
+
+Results:
+
+- `cargo test -p roastty key_encode`: 13 passed.
+- `cargo test -p roastty key_event`: 3 passed.
+- `cargo test -p roastty kitty_keyboard`: 20 passed.
+- `cargo test -p roastty`: 1770 unit tests passed, ABI harness passed, doc tests
+  passed.
+- Naming grep: no implementation-facing `ghostty` references in
+  `roastty/src/input` or `roastty/src/lib.rs`.
+
+## Conclusion
+
+Experiment 161 completes the table-parity layer on top of Experiment 160's pure
+key encoder core. The remaining key-input work should now move to non-table
+encoding parity, such as the full upstream `ctrlSeq`/CSI-u edge-case matrix, or
+to a later reviewed integration slice once a real terminal/runtime input
+boundary exists.
+
+## Codex Result Review
+
+Codex reviewed the completed implementation and result before commit.
+
+Result-review artifacts:
+
+- Prompt: `logs/codex-review/20260601-143543-752759-prompt.md`
+- Result: `logs/codex-review/20260601-143543-752759-last-message.md`
+
+Codex found no findings. It confirmed that the implementation matches the
+experiment scope, keeps the encoder pure/internal, avoids public ABI and runtime
+wiring, satisfies the omission-proof Kitty and legacy table coverage
+requirements, and is ready to commit.

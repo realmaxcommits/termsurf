@@ -192,7 +192,7 @@ fn legacy(output: &mut String, event: &KeyEvent, opts: Options) {
                 return;
             }
         } else {
-            output.push_str(sequence);
+            output.push_str(&sequence);
             return;
         }
     }
@@ -259,7 +259,7 @@ fn legacy(output: &mut String, event: &KeyEvent, opts: Options) {
     push_utf8(output, &event.utf8);
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct KittyEntry {
     key: Key,
     code: u32,
@@ -268,34 +268,501 @@ struct KittyEntry {
 }
 
 fn kitty_entry(event: &KeyEvent) -> Option<KittyEntry> {
-    let (code, final_byte, modifier) = match event.key {
-        Key::Escape => (27, 'u', false),
-        Key::Enter => (13, 'u', false),
-        Key::Tab => (9, 'u', false),
-        Key::Backspace => (127, 'u', false),
-        Key::Delete => (3, '~', false),
-        Key::ArrowUp => (1, 'A', false),
-        Key::ArrowDown => (1, 'B', false),
-        Key::ArrowRight => (1, 'C', false),
-        Key::ArrowLeft => (1, 'D', false),
-        Key::Numpad1 => (57400, 'u', false),
-        Key::ShiftLeft => (57441, 'u', true),
-        Key::ControlLeft => (57442, 'u', true),
-        Key::AltLeft => (57443, 'u', true),
-        Key::MetaLeft => (57444, 'u', true),
-        Key::ShiftRight => (57447, 'u', true),
-        Key::ControlRight => (57448, 'u', true),
-        Key::AltRight => (57449, 'u', true),
-        Key::MetaRight => (57450, 'u', true),
-        _ => return None,
-    };
-    Some(KittyEntry {
-        key: event.key,
-        code,
-        final_byte,
-        modifier,
-    })
+    kitty_entry_for_key(event.key)
 }
+
+fn kitty_entry_for_key(key: Key) -> Option<KittyEntry> {
+    KITTY_ENTRIES.iter().copied().find(|entry| entry.key == key)
+}
+
+const KITTY_ENTRIES: &[KittyEntry] = &[
+    KittyEntry {
+        key: Key::Escape,
+        code: 27,
+        final_byte: 'u',
+        modifier: false,
+    },
+    KittyEntry {
+        key: Key::Enter,
+        code: 13,
+        final_byte: 'u',
+        modifier: false,
+    },
+    KittyEntry {
+        key: Key::Tab,
+        code: 9,
+        final_byte: 'u',
+        modifier: false,
+    },
+    KittyEntry {
+        key: Key::Backspace,
+        code: 127,
+        final_byte: 'u',
+        modifier: false,
+    },
+    KittyEntry {
+        key: Key::Insert,
+        code: 2,
+        final_byte: '~',
+        modifier: false,
+    },
+    KittyEntry {
+        key: Key::Delete,
+        code: 3,
+        final_byte: '~',
+        modifier: false,
+    },
+    KittyEntry {
+        key: Key::ArrowLeft,
+        code: 1,
+        final_byte: 'D',
+        modifier: false,
+    },
+    KittyEntry {
+        key: Key::ArrowRight,
+        code: 1,
+        final_byte: 'C',
+        modifier: false,
+    },
+    KittyEntry {
+        key: Key::ArrowUp,
+        code: 1,
+        final_byte: 'A',
+        modifier: false,
+    },
+    KittyEntry {
+        key: Key::ArrowDown,
+        code: 1,
+        final_byte: 'B',
+        modifier: false,
+    },
+    KittyEntry {
+        key: Key::PageUp,
+        code: 5,
+        final_byte: '~',
+        modifier: false,
+    },
+    KittyEntry {
+        key: Key::PageDown,
+        code: 6,
+        final_byte: '~',
+        modifier: false,
+    },
+    KittyEntry {
+        key: Key::Home,
+        code: 1,
+        final_byte: 'H',
+        modifier: false,
+    },
+    KittyEntry {
+        key: Key::End,
+        code: 1,
+        final_byte: 'F',
+        modifier: false,
+    },
+    KittyEntry {
+        key: Key::CapsLock,
+        code: 57358,
+        final_byte: 'u',
+        modifier: true,
+    },
+    KittyEntry {
+        key: Key::ScrollLock,
+        code: 57359,
+        final_byte: 'u',
+        modifier: false,
+    },
+    KittyEntry {
+        key: Key::NumLock,
+        code: 57360,
+        final_byte: 'u',
+        modifier: true,
+    },
+    KittyEntry {
+        key: Key::PrintScreen,
+        code: 57361,
+        final_byte: 'u',
+        modifier: false,
+    },
+    KittyEntry {
+        key: Key::Pause,
+        code: 57362,
+        final_byte: 'u',
+        modifier: false,
+    },
+    KittyEntry {
+        key: Key::F1,
+        code: 1,
+        final_byte: 'P',
+        modifier: false,
+    },
+    KittyEntry {
+        key: Key::F2,
+        code: 1,
+        final_byte: 'Q',
+        modifier: false,
+    },
+    KittyEntry {
+        key: Key::F3,
+        code: 13,
+        final_byte: '~',
+        modifier: false,
+    },
+    KittyEntry {
+        key: Key::F4,
+        code: 1,
+        final_byte: 'S',
+        modifier: false,
+    },
+    KittyEntry {
+        key: Key::F5,
+        code: 15,
+        final_byte: '~',
+        modifier: false,
+    },
+    KittyEntry {
+        key: Key::F6,
+        code: 17,
+        final_byte: '~',
+        modifier: false,
+    },
+    KittyEntry {
+        key: Key::F7,
+        code: 18,
+        final_byte: '~',
+        modifier: false,
+    },
+    KittyEntry {
+        key: Key::F8,
+        code: 19,
+        final_byte: '~',
+        modifier: false,
+    },
+    KittyEntry {
+        key: Key::F9,
+        code: 20,
+        final_byte: '~',
+        modifier: false,
+    },
+    KittyEntry {
+        key: Key::F10,
+        code: 21,
+        final_byte: '~',
+        modifier: false,
+    },
+    KittyEntry {
+        key: Key::F11,
+        code: 23,
+        final_byte: '~',
+        modifier: false,
+    },
+    KittyEntry {
+        key: Key::F12,
+        code: 24,
+        final_byte: '~',
+        modifier: false,
+    },
+    KittyEntry {
+        key: Key::F13,
+        code: 57376,
+        final_byte: 'u',
+        modifier: false,
+    },
+    KittyEntry {
+        key: Key::F14,
+        code: 57377,
+        final_byte: 'u',
+        modifier: false,
+    },
+    KittyEntry {
+        key: Key::F15,
+        code: 57378,
+        final_byte: 'u',
+        modifier: false,
+    },
+    KittyEntry {
+        key: Key::F16,
+        code: 57379,
+        final_byte: 'u',
+        modifier: false,
+    },
+    KittyEntry {
+        key: Key::F17,
+        code: 57380,
+        final_byte: 'u',
+        modifier: false,
+    },
+    KittyEntry {
+        key: Key::F18,
+        code: 57381,
+        final_byte: 'u',
+        modifier: false,
+    },
+    KittyEntry {
+        key: Key::F19,
+        code: 57382,
+        final_byte: 'u',
+        modifier: false,
+    },
+    KittyEntry {
+        key: Key::F20,
+        code: 57383,
+        final_byte: 'u',
+        modifier: false,
+    },
+    KittyEntry {
+        key: Key::F21,
+        code: 57384,
+        final_byte: 'u',
+        modifier: false,
+    },
+    KittyEntry {
+        key: Key::F22,
+        code: 57385,
+        final_byte: 'u',
+        modifier: false,
+    },
+    KittyEntry {
+        key: Key::F23,
+        code: 57386,
+        final_byte: 'u',
+        modifier: false,
+    },
+    KittyEntry {
+        key: Key::F24,
+        code: 57387,
+        final_byte: 'u',
+        modifier: false,
+    },
+    KittyEntry {
+        key: Key::F25,
+        code: 57388,
+        final_byte: 'u',
+        modifier: false,
+    },
+    KittyEntry {
+        key: Key::Numpad0,
+        code: 57399,
+        final_byte: 'u',
+        modifier: false,
+    },
+    KittyEntry {
+        key: Key::Numpad1,
+        code: 57400,
+        final_byte: 'u',
+        modifier: false,
+    },
+    KittyEntry {
+        key: Key::Numpad2,
+        code: 57401,
+        final_byte: 'u',
+        modifier: false,
+    },
+    KittyEntry {
+        key: Key::Numpad3,
+        code: 57402,
+        final_byte: 'u',
+        modifier: false,
+    },
+    KittyEntry {
+        key: Key::Numpad4,
+        code: 57403,
+        final_byte: 'u',
+        modifier: false,
+    },
+    KittyEntry {
+        key: Key::Numpad5,
+        code: 57404,
+        final_byte: 'u',
+        modifier: false,
+    },
+    KittyEntry {
+        key: Key::Numpad6,
+        code: 57405,
+        final_byte: 'u',
+        modifier: false,
+    },
+    KittyEntry {
+        key: Key::Numpad7,
+        code: 57406,
+        final_byte: 'u',
+        modifier: false,
+    },
+    KittyEntry {
+        key: Key::Numpad8,
+        code: 57407,
+        final_byte: 'u',
+        modifier: false,
+    },
+    KittyEntry {
+        key: Key::Numpad9,
+        code: 57408,
+        final_byte: 'u',
+        modifier: false,
+    },
+    KittyEntry {
+        key: Key::NumpadDecimal,
+        code: 57409,
+        final_byte: 'u',
+        modifier: false,
+    },
+    KittyEntry {
+        key: Key::NumpadDivide,
+        code: 57410,
+        final_byte: 'u',
+        modifier: false,
+    },
+    KittyEntry {
+        key: Key::NumpadMultiply,
+        code: 57411,
+        final_byte: 'u',
+        modifier: false,
+    },
+    KittyEntry {
+        key: Key::NumpadSubtract,
+        code: 57412,
+        final_byte: 'u',
+        modifier: false,
+    },
+    KittyEntry {
+        key: Key::NumpadAdd,
+        code: 57413,
+        final_byte: 'u',
+        modifier: false,
+    },
+    KittyEntry {
+        key: Key::NumpadEnter,
+        code: 57414,
+        final_byte: 'u',
+        modifier: false,
+    },
+    KittyEntry {
+        key: Key::NumpadEqual,
+        code: 57415,
+        final_byte: 'u',
+        modifier: false,
+    },
+    KittyEntry {
+        key: Key::NumpadSeparator,
+        code: 57416,
+        final_byte: 'u',
+        modifier: false,
+    },
+    KittyEntry {
+        key: Key::NumpadLeft,
+        code: 57417,
+        final_byte: 'u',
+        modifier: false,
+    },
+    KittyEntry {
+        key: Key::NumpadRight,
+        code: 57418,
+        final_byte: 'u',
+        modifier: false,
+    },
+    KittyEntry {
+        key: Key::NumpadUp,
+        code: 57419,
+        final_byte: 'u',
+        modifier: false,
+    },
+    KittyEntry {
+        key: Key::NumpadDown,
+        code: 57420,
+        final_byte: 'u',
+        modifier: false,
+    },
+    KittyEntry {
+        key: Key::NumpadPageUp,
+        code: 57421,
+        final_byte: 'u',
+        modifier: false,
+    },
+    KittyEntry {
+        key: Key::NumpadPageDown,
+        code: 57422,
+        final_byte: 'u',
+        modifier: false,
+    },
+    KittyEntry {
+        key: Key::NumpadHome,
+        code: 57423,
+        final_byte: 'u',
+        modifier: false,
+    },
+    KittyEntry {
+        key: Key::NumpadEnd,
+        code: 57424,
+        final_byte: 'u',
+        modifier: false,
+    },
+    KittyEntry {
+        key: Key::NumpadInsert,
+        code: 57425,
+        final_byte: 'u',
+        modifier: false,
+    },
+    KittyEntry {
+        key: Key::NumpadDelete,
+        code: 57426,
+        final_byte: 'u',
+        modifier: false,
+    },
+    KittyEntry {
+        key: Key::NumpadBegin,
+        code: 57427,
+        final_byte: 'u',
+        modifier: false,
+    },
+    KittyEntry {
+        key: Key::ShiftLeft,
+        code: 57441,
+        final_byte: 'u',
+        modifier: true,
+    },
+    KittyEntry {
+        key: Key::ShiftRight,
+        code: 57447,
+        final_byte: 'u',
+        modifier: true,
+    },
+    KittyEntry {
+        key: Key::ControlLeft,
+        code: 57442,
+        final_byte: 'u',
+        modifier: true,
+    },
+    KittyEntry {
+        key: Key::ControlRight,
+        code: 57448,
+        final_byte: 'u',
+        modifier: true,
+    },
+    KittyEntry {
+        key: Key::MetaLeft,
+        code: 57444,
+        final_byte: 'u',
+        modifier: true,
+    },
+    KittyEntry {
+        key: Key::MetaRight,
+        code: 57450,
+        final_byte: 'u',
+        modifier: true,
+    },
+    KittyEntry {
+        key: Key::AltLeft,
+        code: 57443,
+        final_byte: 'u',
+        modifier: true,
+    },
+    KittyEntry {
+        key: Key::AltRight,
+        code: 57449,
+        final_byte: 'u',
+        modifier: true,
+    },
+];
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum KittyEvent {
@@ -441,31 +908,602 @@ impl KittySequence {
     }
 }
 
-fn pc_style_function_key(key: Key, mods: Mods, opts: Options) -> Option<&'static str> {
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum CursorMode {
+    Normal,
+    Application,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PcKeyKind {
+    Cursor {
+        normal: &'static str,
+        application: &'static str,
+        final_byte: char,
+    },
+    Tilde {
+        number: u8,
+        normal: &'static str,
+    },
+    Function {
+        normal: &'static str,
+        modifier_number: u8,
+        final_byte: char,
+    },
+    Keypad {
+        suffix: char,
+        fallback: Option<&'static str>,
+    },
+    Special,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct PcKeySpec {
+    key: Key,
+    kind: PcKeyKind,
+}
+
+fn pc_style_function_key(key: Key, mods: Mods, opts: Options) -> Option<String> {
     let mods = mods.binding();
-    match key {
-        Key::Backspace => match (opts.backarrow_key_mode, mods.ctrl) {
-            (false, false) => Some("\x7f"),
-            (false, true) => Some("\x08"),
-            (true, false) => Some("\x08"),
-            (true, true) => Some("\x7f"),
+    let spec = pc_key_spec(key)?;
+
+    match spec.kind {
+        PcKeyKind::Special => pc_special_key(key, mods, opts),
+        PcKeyKind::Cursor {
+            normal,
+            application,
+            final_byte,
+        } => pc_modified_csi(mods, 1, final_byte).or_else(|| {
+            Some(match cursor_mode(opts) {
+                CursorMode::Normal => normal.to_string(),
+                CursorMode::Application => application.to_string(),
+            })
+        }),
+        PcKeyKind::Tilde { number, normal } => pc_modified_tilde(mods, number)
+            .or_else(|| (!mods.empty()).then(|| None).flatten())
+            .or_else(|| Some(normal.to_string())),
+        PcKeyKind::Function {
+            normal,
+            modifier_number,
+            final_byte,
+        } => pc_modified_function(mods, modifier_number, final_byte)
+            .or_else(|| Some(normal.to_string())),
+        PcKeyKind::Keypad { suffix, fallback } => pc_keypad_key(mods, opts, suffix, fallback),
+    }
+}
+
+fn pc_key_spec(key: Key) -> Option<PcKeySpec> {
+    PC_KEY_SPECS.iter().copied().find(|spec| spec.key == key)
+}
+
+const PC_KEY_SPECS: &[PcKeySpec] = &[
+    PcKeySpec {
+        key: Key::ArrowUp,
+        kind: PcKeyKind::Cursor {
+            normal: "\x1b[A",
+            application: "\x1bOA",
+            final_byte: 'A',
         },
-        Key::Tab if mods.shift => Some("\x1b[Z"),
-        Key::Enter if !mods.shift && !mods.ctrl && !mods.alt && !mods.super_ => Some("\r"),
-        Key::Escape if !mods.shift && !mods.ctrl && !mods.alt && !mods.super_ => Some("\x1b"),
-        Key::ArrowUp if mods.shift => Some("\x1b[1;2A"),
-        Key::ArrowUp if opts.cursor_key_application => Some("\x1bOA"),
-        Key::ArrowUp => Some("\x1b[A"),
-        Key::Delete if !mods.shift && !mods.ctrl && !mods.alt && !mods.super_ => Some("\x1b[3~"),
-        Key::F1 if mods.shift => Some("\x1b[1;2P"),
-        Key::F1 if mods.ctrl => Some("\x1b[1;5P"),
-        Key::F1 if !mods.shift && !mods.ctrl && !mods.alt && !mods.super_ => Some("\x1bOP"),
-        Key::F2 if mods.ctrl => Some("\x1b[1;5Q"),
-        Key::NumpadEnter => Some("\r"),
-        Key::Numpad1 if opts.keypad_key_application && !opts.ignore_keypad_with_numlock => {
-            Some("\x1bOq")
+    },
+    PcKeySpec {
+        key: Key::ArrowDown,
+        kind: PcKeyKind::Cursor {
+            normal: "\x1b[B",
+            application: "\x1bOB",
+            final_byte: 'B',
+        },
+    },
+    PcKeySpec {
+        key: Key::ArrowRight,
+        kind: PcKeyKind::Cursor {
+            normal: "\x1b[C",
+            application: "\x1bOC",
+            final_byte: 'C',
+        },
+    },
+    PcKeySpec {
+        key: Key::ArrowLeft,
+        kind: PcKeyKind::Cursor {
+            normal: "\x1b[D",
+            application: "\x1bOD",
+            final_byte: 'D',
+        },
+    },
+    PcKeySpec {
+        key: Key::Home,
+        kind: PcKeyKind::Cursor {
+            normal: "\x1b[H",
+            application: "\x1bOH",
+            final_byte: 'H',
+        },
+    },
+    PcKeySpec {
+        key: Key::End,
+        kind: PcKeyKind::Cursor {
+            normal: "\x1b[F",
+            application: "\x1bOF",
+            final_byte: 'F',
+        },
+    },
+    PcKeySpec {
+        key: Key::Insert,
+        kind: PcKeyKind::Tilde {
+            number: 2,
+            normal: "\x1b[2~",
+        },
+    },
+    PcKeySpec {
+        key: Key::Delete,
+        kind: PcKeyKind::Tilde {
+            number: 3,
+            normal: "\x1b[3~",
+        },
+    },
+    PcKeySpec {
+        key: Key::PageUp,
+        kind: PcKeyKind::Tilde {
+            number: 5,
+            normal: "\x1b[5~",
+        },
+    },
+    PcKeySpec {
+        key: Key::PageDown,
+        kind: PcKeyKind::Tilde {
+            number: 6,
+            normal: "\x1b[6~",
+        },
+    },
+    PcKeySpec {
+        key: Key::F1,
+        kind: PcKeyKind::Function {
+            normal: "\x1bOP",
+            modifier_number: 1,
+            final_byte: 'P',
+        },
+    },
+    PcKeySpec {
+        key: Key::F2,
+        kind: PcKeyKind::Function {
+            normal: "\x1bOQ",
+            modifier_number: 1,
+            final_byte: 'Q',
+        },
+    },
+    PcKeySpec {
+        key: Key::F3,
+        kind: PcKeyKind::Function {
+            normal: "\x1bOR",
+            modifier_number: 13,
+            final_byte: '~',
+        },
+    },
+    PcKeySpec {
+        key: Key::F4,
+        kind: PcKeyKind::Function {
+            normal: "\x1bOS",
+            modifier_number: 1,
+            final_byte: 'S',
+        },
+    },
+    PcKeySpec {
+        key: Key::F5,
+        kind: PcKeyKind::Function {
+            normal: "\x1b[15~",
+            modifier_number: 15,
+            final_byte: '~',
+        },
+    },
+    PcKeySpec {
+        key: Key::F6,
+        kind: PcKeyKind::Function {
+            normal: "\x1b[17~",
+            modifier_number: 17,
+            final_byte: '~',
+        },
+    },
+    PcKeySpec {
+        key: Key::F7,
+        kind: PcKeyKind::Function {
+            normal: "\x1b[18~",
+            modifier_number: 18,
+            final_byte: '~',
+        },
+    },
+    PcKeySpec {
+        key: Key::F8,
+        kind: PcKeyKind::Function {
+            normal: "\x1b[19~",
+            modifier_number: 19,
+            final_byte: '~',
+        },
+    },
+    PcKeySpec {
+        key: Key::F9,
+        kind: PcKeyKind::Function {
+            normal: "\x1b[20~",
+            modifier_number: 20,
+            final_byte: '~',
+        },
+    },
+    PcKeySpec {
+        key: Key::F10,
+        kind: PcKeyKind::Function {
+            normal: "\x1b[21~",
+            modifier_number: 21,
+            final_byte: '~',
+        },
+    },
+    PcKeySpec {
+        key: Key::F11,
+        kind: PcKeyKind::Function {
+            normal: "\x1b[23~",
+            modifier_number: 23,
+            final_byte: '~',
+        },
+    },
+    PcKeySpec {
+        key: Key::F12,
+        kind: PcKeyKind::Function {
+            normal: "\x1b[24~",
+            modifier_number: 24,
+            final_byte: '~',
+        },
+    },
+    PcKeySpec {
+        key: Key::Numpad0,
+        kind: PcKeyKind::Keypad {
+            suffix: 'p',
+            fallback: None,
+        },
+    },
+    PcKeySpec {
+        key: Key::Numpad1,
+        kind: PcKeyKind::Keypad {
+            suffix: 'q',
+            fallback: None,
+        },
+    },
+    PcKeySpec {
+        key: Key::Numpad2,
+        kind: PcKeyKind::Keypad {
+            suffix: 'r',
+            fallback: None,
+        },
+    },
+    PcKeySpec {
+        key: Key::Numpad3,
+        kind: PcKeyKind::Keypad {
+            suffix: 's',
+            fallback: None,
+        },
+    },
+    PcKeySpec {
+        key: Key::Numpad4,
+        kind: PcKeyKind::Keypad {
+            suffix: 't',
+            fallback: None,
+        },
+    },
+    PcKeySpec {
+        key: Key::Numpad5,
+        kind: PcKeyKind::Keypad {
+            suffix: 'u',
+            fallback: None,
+        },
+    },
+    PcKeySpec {
+        key: Key::Numpad6,
+        kind: PcKeyKind::Keypad {
+            suffix: 'v',
+            fallback: None,
+        },
+    },
+    PcKeySpec {
+        key: Key::Numpad7,
+        kind: PcKeyKind::Keypad {
+            suffix: 'w',
+            fallback: None,
+        },
+    },
+    PcKeySpec {
+        key: Key::Numpad8,
+        kind: PcKeyKind::Keypad {
+            suffix: 'x',
+            fallback: None,
+        },
+    },
+    PcKeySpec {
+        key: Key::Numpad9,
+        kind: PcKeyKind::Keypad {
+            suffix: 'y',
+            fallback: None,
+        },
+    },
+    PcKeySpec {
+        key: Key::NumpadDecimal,
+        kind: PcKeyKind::Keypad {
+            suffix: 'n',
+            fallback: None,
+        },
+    },
+    PcKeySpec {
+        key: Key::NumpadDivide,
+        kind: PcKeyKind::Keypad {
+            suffix: 'o',
+            fallback: None,
+        },
+    },
+    PcKeySpec {
+        key: Key::NumpadMultiply,
+        kind: PcKeyKind::Keypad {
+            suffix: 'j',
+            fallback: None,
+        },
+    },
+    PcKeySpec {
+        key: Key::NumpadSubtract,
+        kind: PcKeyKind::Keypad {
+            suffix: 'm',
+            fallback: None,
+        },
+    },
+    PcKeySpec {
+        key: Key::NumpadAdd,
+        kind: PcKeyKind::Keypad {
+            suffix: 'k',
+            fallback: None,
+        },
+    },
+    PcKeySpec {
+        key: Key::NumpadEnter,
+        kind: PcKeyKind::Keypad {
+            suffix: 'M',
+            fallback: Some("\r"),
+        },
+    },
+    PcKeySpec {
+        key: Key::NumpadUp,
+        kind: PcKeyKind::Cursor {
+            normal: "\x1b[A",
+            application: "\x1bOA",
+            final_byte: 'A',
+        },
+    },
+    PcKeySpec {
+        key: Key::NumpadDown,
+        kind: PcKeyKind::Cursor {
+            normal: "\x1b[B",
+            application: "\x1bOB",
+            final_byte: 'B',
+        },
+    },
+    PcKeySpec {
+        key: Key::NumpadRight,
+        kind: PcKeyKind::Cursor {
+            normal: "\x1b[C",
+            application: "\x1bOC",
+            final_byte: 'C',
+        },
+    },
+    PcKeySpec {
+        key: Key::NumpadLeft,
+        kind: PcKeyKind::Cursor {
+            normal: "\x1b[D",
+            application: "\x1bOD",
+            final_byte: 'D',
+        },
+    },
+    PcKeySpec {
+        key: Key::NumpadBegin,
+        kind: PcKeyKind::Cursor {
+            normal: "\x1b[E",
+            application: "\x1bOE",
+            final_byte: 'E',
+        },
+    },
+    PcKeySpec {
+        key: Key::NumpadHome,
+        kind: PcKeyKind::Cursor {
+            normal: "\x1b[H",
+            application: "\x1bOH",
+            final_byte: 'H',
+        },
+    },
+    PcKeySpec {
+        key: Key::NumpadEnd,
+        kind: PcKeyKind::Cursor {
+            normal: "\x1b[F",
+            application: "\x1bOF",
+            final_byte: 'F',
+        },
+    },
+    PcKeySpec {
+        key: Key::NumpadInsert,
+        kind: PcKeyKind::Tilde {
+            number: 2,
+            normal: "\x1b[2~",
+        },
+    },
+    PcKeySpec {
+        key: Key::NumpadDelete,
+        kind: PcKeyKind::Tilde {
+            number: 3,
+            normal: "\x1b[3~",
+        },
+    },
+    PcKeySpec {
+        key: Key::NumpadPageUp,
+        kind: PcKeyKind::Tilde {
+            number: 5,
+            normal: "\x1b[5~",
+        },
+    },
+    PcKeySpec {
+        key: Key::NumpadPageDown,
+        kind: PcKeyKind::Tilde {
+            number: 6,
+            normal: "\x1b[6~",
+        },
+    },
+    PcKeySpec {
+        key: Key::Backspace,
+        kind: PcKeyKind::Special,
+    },
+    PcKeySpec {
+        key: Key::Tab,
+        kind: PcKeyKind::Special,
+    },
+    PcKeySpec {
+        key: Key::Enter,
+        kind: PcKeyKind::Special,
+    },
+    PcKeySpec {
+        key: Key::Escape,
+        kind: PcKeyKind::Special,
+    },
+];
+
+fn cursor_mode(opts: Options) -> CursorMode {
+    if opts.cursor_key_application {
+        CursorMode::Application
+    } else {
+        CursorMode::Normal
+    }
+}
+
+fn pc_modified_csi(mods: Mods, number: u8, final_byte: char) -> Option<String> {
+    if mods.empty() {
+        return None;
+    }
+    modifier_code(mods).map(|code| format!("\x1b[{number};{code}{final_byte}"))
+}
+
+fn pc_modified_tilde(mods: Mods, number: u8) -> Option<String> {
+    if mods.empty() {
+        return None;
+    }
+    modifier_code(mods).map(|code| format!("\x1b[{number};{code}~"))
+}
+
+fn pc_modified_function(mods: Mods, number: u8, final_byte: char) -> Option<String> {
+    if final_byte == '~' {
+        pc_modified_tilde(mods, number)
+    } else {
+        pc_modified_csi(mods, number, final_byte)
+    }
+}
+
+fn pc_keypad_key(
+    mods: Mods,
+    opts: Options,
+    suffix: char,
+    fallback: Option<&'static str>,
+) -> Option<String> {
+    let keypad_application = opts.keypad_key_application && !opts.ignore_keypad_with_numlock;
+    if keypad_application {
+        if mods.empty() {
+            return Some(format!("\x1bO{suffix}"));
         }
+        return modifier_code(mods).map(|code| format!("\x1bO{code}{suffix}"));
+    }
+
+    fallback.map(str::to_string)
+}
+
+fn pc_special_key(key: Key, mods: Mods, opts: Options) -> Option<String> {
+    match key {
+        Key::Backspace => pc_backspace(mods, opts),
+        Key::Tab => pc_tab(mods, opts),
+        Key::Enter => pc_enter(mods, opts),
+        Key::Escape => pc_escape(mods),
         _ => None,
+    }
+}
+
+fn pc_backspace(mods: Mods, opts: Options) -> Option<String> {
+    if opts.modify_other_keys_state_2 {
+        if let Some(code) = modifier_code(mods) {
+            if code != 5 {
+                return Some(format!("\x1b[27;{code};127~"));
+            }
+        }
+    } else {
+        match (mods.shift, mods.alt, mods.ctrl, mods.super_) {
+            (true, false, false, false) => return Some("\x7f".to_string()),
+            (false, true, false, false) | (true, true, false, false) => {
+                return Some("\x1b\x7f".to_string());
+            }
+            (true, false, true, false) => return Some("\x08".to_string()),
+            (false, true, true, false) => return Some("\x1b\x08".to_string()),
+            (false, false, false, true) | (true, false, false, true) => {
+                return Some("\x7f".to_string());
+            }
+            (false, true, false, true) | (true, true, false, true) => {
+                return Some("\x1b\x7f".to_string());
+            }
+            (false, false, true, true) | (true, false, true, true) => {
+                return Some("\x08".to_string());
+            }
+            (false, true, true, true) | (true, true, true, true) => {
+                return Some("\x1b\x08".to_string());
+            }
+            _ => {}
+        }
+    }
+
+    match (opts.backarrow_key_mode, mods.ctrl) {
+        (false, false) => Some("\x7f".to_string()),
+        (false, true) => Some("\x08".to_string()),
+        (true, false) => Some("\x08".to_string()),
+        (true, true) => Some("\x7f".to_string()),
+    }
+}
+
+fn pc_tab(mods: Mods, opts: Options) -> Option<String> {
+    if opts.modify_other_keys_state_2 {
+        if let Some(code) = modifier_code(mods) {
+            return Some(format!("\x1b[27;{code};9~"));
+        }
+    } else {
+        match (mods.shift, mods.alt, mods.ctrl, mods.super_) {
+            (true, false, false, false) => return Some("\x1b[Z".to_string()),
+            (false, true, false, false) => return Some("\x1b\t".to_string()),
+            _ if !mods.empty() => {
+                if let Some(code) = modifier_code(mods) {
+                    return Some(format!("\x1b[27;{code};9~"));
+                }
+            }
+            _ => {}
+        }
+    }
+    Some("\t".to_string())
+}
+
+fn pc_enter(mods: Mods, opts: Options) -> Option<String> {
+    if opts.modify_other_keys_state_2 {
+        if let Some(code) = modifier_code(mods) {
+            return Some(format!("\x1b[27;{code};13~"));
+        }
+    } else {
+        match (mods.shift, mods.alt, mods.ctrl, mods.super_) {
+            (true, false, false, false) => return Some("\x1b[27;2;13~".to_string()),
+            (false, true, false, false) => return Some("\x1b\r".to_string()),
+            _ if !mods.empty() => {
+                if let Some(code) = modifier_code(mods) {
+                    return Some(format!("\x1b[27;{code};13~"));
+                }
+            }
+            _ => {}
+        }
+    }
+    Some("\r".to_string())
+}
+
+fn pc_escape(mods: Mods) -> Option<String> {
+    match (mods.shift, mods.alt, mods.ctrl, mods.super_) {
+        (false, false, false, false) => Some("\x1b".to_string()),
+        (false, true, false, false) => Some("\x1b\x1b".to_string()),
+        _ => modifier_code(mods).map(|code| format!("\x1b[27;{code};27~")),
     }
 }
 
@@ -677,6 +1715,570 @@ mod tests {
     }
 
     #[test]
+    fn key_encode_kitty_table_covers_upstream_supported_entries() {
+        let expected = [
+            KittyEntry {
+                key: Key::Escape,
+                code: 27,
+                final_byte: 'u',
+                modifier: false,
+            },
+            KittyEntry {
+                key: Key::Enter,
+                code: 13,
+                final_byte: 'u',
+                modifier: false,
+            },
+            KittyEntry {
+                key: Key::Tab,
+                code: 9,
+                final_byte: 'u',
+                modifier: false,
+            },
+            KittyEntry {
+                key: Key::Backspace,
+                code: 127,
+                final_byte: 'u',
+                modifier: false,
+            },
+            KittyEntry {
+                key: Key::Insert,
+                code: 2,
+                final_byte: '~',
+                modifier: false,
+            },
+            KittyEntry {
+                key: Key::Delete,
+                code: 3,
+                final_byte: '~',
+                modifier: false,
+            },
+            KittyEntry {
+                key: Key::ArrowLeft,
+                code: 1,
+                final_byte: 'D',
+                modifier: false,
+            },
+            KittyEntry {
+                key: Key::ArrowRight,
+                code: 1,
+                final_byte: 'C',
+                modifier: false,
+            },
+            KittyEntry {
+                key: Key::ArrowUp,
+                code: 1,
+                final_byte: 'A',
+                modifier: false,
+            },
+            KittyEntry {
+                key: Key::ArrowDown,
+                code: 1,
+                final_byte: 'B',
+                modifier: false,
+            },
+            KittyEntry {
+                key: Key::PageUp,
+                code: 5,
+                final_byte: '~',
+                modifier: false,
+            },
+            KittyEntry {
+                key: Key::PageDown,
+                code: 6,
+                final_byte: '~',
+                modifier: false,
+            },
+            KittyEntry {
+                key: Key::Home,
+                code: 1,
+                final_byte: 'H',
+                modifier: false,
+            },
+            KittyEntry {
+                key: Key::End,
+                code: 1,
+                final_byte: 'F',
+                modifier: false,
+            },
+            KittyEntry {
+                key: Key::CapsLock,
+                code: 57358,
+                final_byte: 'u',
+                modifier: true,
+            },
+            KittyEntry {
+                key: Key::ScrollLock,
+                code: 57359,
+                final_byte: 'u',
+                modifier: false,
+            },
+            KittyEntry {
+                key: Key::NumLock,
+                code: 57360,
+                final_byte: 'u',
+                modifier: true,
+            },
+            KittyEntry {
+                key: Key::PrintScreen,
+                code: 57361,
+                final_byte: 'u',
+                modifier: false,
+            },
+            KittyEntry {
+                key: Key::Pause,
+                code: 57362,
+                final_byte: 'u',
+                modifier: false,
+            },
+            KittyEntry {
+                key: Key::F1,
+                code: 1,
+                final_byte: 'P',
+                modifier: false,
+            },
+            KittyEntry {
+                key: Key::F2,
+                code: 1,
+                final_byte: 'Q',
+                modifier: false,
+            },
+            KittyEntry {
+                key: Key::F3,
+                code: 13,
+                final_byte: '~',
+                modifier: false,
+            },
+            KittyEntry {
+                key: Key::F4,
+                code: 1,
+                final_byte: 'S',
+                modifier: false,
+            },
+            KittyEntry {
+                key: Key::F5,
+                code: 15,
+                final_byte: '~',
+                modifier: false,
+            },
+            KittyEntry {
+                key: Key::F6,
+                code: 17,
+                final_byte: '~',
+                modifier: false,
+            },
+            KittyEntry {
+                key: Key::F7,
+                code: 18,
+                final_byte: '~',
+                modifier: false,
+            },
+            KittyEntry {
+                key: Key::F8,
+                code: 19,
+                final_byte: '~',
+                modifier: false,
+            },
+            KittyEntry {
+                key: Key::F9,
+                code: 20,
+                final_byte: '~',
+                modifier: false,
+            },
+            KittyEntry {
+                key: Key::F10,
+                code: 21,
+                final_byte: '~',
+                modifier: false,
+            },
+            KittyEntry {
+                key: Key::F11,
+                code: 23,
+                final_byte: '~',
+                modifier: false,
+            },
+            KittyEntry {
+                key: Key::F12,
+                code: 24,
+                final_byte: '~',
+                modifier: false,
+            },
+            KittyEntry {
+                key: Key::F13,
+                code: 57376,
+                final_byte: 'u',
+                modifier: false,
+            },
+            KittyEntry {
+                key: Key::F14,
+                code: 57377,
+                final_byte: 'u',
+                modifier: false,
+            },
+            KittyEntry {
+                key: Key::F15,
+                code: 57378,
+                final_byte: 'u',
+                modifier: false,
+            },
+            KittyEntry {
+                key: Key::F16,
+                code: 57379,
+                final_byte: 'u',
+                modifier: false,
+            },
+            KittyEntry {
+                key: Key::F17,
+                code: 57380,
+                final_byte: 'u',
+                modifier: false,
+            },
+            KittyEntry {
+                key: Key::F18,
+                code: 57381,
+                final_byte: 'u',
+                modifier: false,
+            },
+            KittyEntry {
+                key: Key::F19,
+                code: 57382,
+                final_byte: 'u',
+                modifier: false,
+            },
+            KittyEntry {
+                key: Key::F20,
+                code: 57383,
+                final_byte: 'u',
+                modifier: false,
+            },
+            KittyEntry {
+                key: Key::F21,
+                code: 57384,
+                final_byte: 'u',
+                modifier: false,
+            },
+            KittyEntry {
+                key: Key::F22,
+                code: 57385,
+                final_byte: 'u',
+                modifier: false,
+            },
+            KittyEntry {
+                key: Key::F23,
+                code: 57386,
+                final_byte: 'u',
+                modifier: false,
+            },
+            KittyEntry {
+                key: Key::F24,
+                code: 57387,
+                final_byte: 'u',
+                modifier: false,
+            },
+            KittyEntry {
+                key: Key::F25,
+                code: 57388,
+                final_byte: 'u',
+                modifier: false,
+            },
+            KittyEntry {
+                key: Key::Numpad0,
+                code: 57399,
+                final_byte: 'u',
+                modifier: false,
+            },
+            KittyEntry {
+                key: Key::Numpad1,
+                code: 57400,
+                final_byte: 'u',
+                modifier: false,
+            },
+            KittyEntry {
+                key: Key::Numpad2,
+                code: 57401,
+                final_byte: 'u',
+                modifier: false,
+            },
+            KittyEntry {
+                key: Key::Numpad3,
+                code: 57402,
+                final_byte: 'u',
+                modifier: false,
+            },
+            KittyEntry {
+                key: Key::Numpad4,
+                code: 57403,
+                final_byte: 'u',
+                modifier: false,
+            },
+            KittyEntry {
+                key: Key::Numpad5,
+                code: 57404,
+                final_byte: 'u',
+                modifier: false,
+            },
+            KittyEntry {
+                key: Key::Numpad6,
+                code: 57405,
+                final_byte: 'u',
+                modifier: false,
+            },
+            KittyEntry {
+                key: Key::Numpad7,
+                code: 57406,
+                final_byte: 'u',
+                modifier: false,
+            },
+            KittyEntry {
+                key: Key::Numpad8,
+                code: 57407,
+                final_byte: 'u',
+                modifier: false,
+            },
+            KittyEntry {
+                key: Key::Numpad9,
+                code: 57408,
+                final_byte: 'u',
+                modifier: false,
+            },
+            KittyEntry {
+                key: Key::NumpadDecimal,
+                code: 57409,
+                final_byte: 'u',
+                modifier: false,
+            },
+            KittyEntry {
+                key: Key::NumpadDivide,
+                code: 57410,
+                final_byte: 'u',
+                modifier: false,
+            },
+            KittyEntry {
+                key: Key::NumpadMultiply,
+                code: 57411,
+                final_byte: 'u',
+                modifier: false,
+            },
+            KittyEntry {
+                key: Key::NumpadSubtract,
+                code: 57412,
+                final_byte: 'u',
+                modifier: false,
+            },
+            KittyEntry {
+                key: Key::NumpadAdd,
+                code: 57413,
+                final_byte: 'u',
+                modifier: false,
+            },
+            KittyEntry {
+                key: Key::NumpadEnter,
+                code: 57414,
+                final_byte: 'u',
+                modifier: false,
+            },
+            KittyEntry {
+                key: Key::NumpadEqual,
+                code: 57415,
+                final_byte: 'u',
+                modifier: false,
+            },
+            KittyEntry {
+                key: Key::NumpadSeparator,
+                code: 57416,
+                final_byte: 'u',
+                modifier: false,
+            },
+            KittyEntry {
+                key: Key::NumpadLeft,
+                code: 57417,
+                final_byte: 'u',
+                modifier: false,
+            },
+            KittyEntry {
+                key: Key::NumpadRight,
+                code: 57418,
+                final_byte: 'u',
+                modifier: false,
+            },
+            KittyEntry {
+                key: Key::NumpadUp,
+                code: 57419,
+                final_byte: 'u',
+                modifier: false,
+            },
+            KittyEntry {
+                key: Key::NumpadDown,
+                code: 57420,
+                final_byte: 'u',
+                modifier: false,
+            },
+            KittyEntry {
+                key: Key::NumpadPageUp,
+                code: 57421,
+                final_byte: 'u',
+                modifier: false,
+            },
+            KittyEntry {
+                key: Key::NumpadPageDown,
+                code: 57422,
+                final_byte: 'u',
+                modifier: false,
+            },
+            KittyEntry {
+                key: Key::NumpadHome,
+                code: 57423,
+                final_byte: 'u',
+                modifier: false,
+            },
+            KittyEntry {
+                key: Key::NumpadEnd,
+                code: 57424,
+                final_byte: 'u',
+                modifier: false,
+            },
+            KittyEntry {
+                key: Key::NumpadInsert,
+                code: 57425,
+                final_byte: 'u',
+                modifier: false,
+            },
+            KittyEntry {
+                key: Key::NumpadDelete,
+                code: 57426,
+                final_byte: 'u',
+                modifier: false,
+            },
+            KittyEntry {
+                key: Key::NumpadBegin,
+                code: 57427,
+                final_byte: 'u',
+                modifier: false,
+            },
+            KittyEntry {
+                key: Key::ShiftLeft,
+                code: 57441,
+                final_byte: 'u',
+                modifier: true,
+            },
+            KittyEntry {
+                key: Key::ShiftRight,
+                code: 57447,
+                final_byte: 'u',
+                modifier: true,
+            },
+            KittyEntry {
+                key: Key::ControlLeft,
+                code: 57442,
+                final_byte: 'u',
+                modifier: true,
+            },
+            KittyEntry {
+                key: Key::ControlRight,
+                code: 57448,
+                final_byte: 'u',
+                modifier: true,
+            },
+            KittyEntry {
+                key: Key::MetaLeft,
+                code: 57444,
+                final_byte: 'u',
+                modifier: true,
+            },
+            KittyEntry {
+                key: Key::MetaRight,
+                code: 57450,
+                final_byte: 'u',
+                modifier: true,
+            },
+            KittyEntry {
+                key: Key::AltLeft,
+                code: 57443,
+                final_byte: 'u',
+                modifier: true,
+            },
+            KittyEntry {
+                key: Key::AltRight,
+                code: 57449,
+                final_byte: 'u',
+                modifier: true,
+            },
+        ];
+
+        assert_eq!(KITTY_ENTRIES.len(), expected.len());
+        for entry in expected {
+            assert_eq!(kitty_entry_for_key(entry.key), Some(entry));
+        }
+    }
+
+    #[test]
+    fn key_encode_legacy_pc_table_covers_supported_groups() {
+        let expected_keys = [
+            Key::ArrowUp,
+            Key::ArrowDown,
+            Key::ArrowRight,
+            Key::ArrowLeft,
+            Key::Home,
+            Key::End,
+            Key::Insert,
+            Key::Delete,
+            Key::PageUp,
+            Key::PageDown,
+            Key::F1,
+            Key::F2,
+            Key::F3,
+            Key::F4,
+            Key::F5,
+            Key::F6,
+            Key::F7,
+            Key::F8,
+            Key::F9,
+            Key::F10,
+            Key::F11,
+            Key::F12,
+            Key::Numpad0,
+            Key::Numpad1,
+            Key::Numpad2,
+            Key::Numpad3,
+            Key::Numpad4,
+            Key::Numpad5,
+            Key::Numpad6,
+            Key::Numpad7,
+            Key::Numpad8,
+            Key::Numpad9,
+            Key::NumpadDecimal,
+            Key::NumpadDivide,
+            Key::NumpadMultiply,
+            Key::NumpadSubtract,
+            Key::NumpadAdd,
+            Key::NumpadEnter,
+            Key::NumpadUp,
+            Key::NumpadDown,
+            Key::NumpadRight,
+            Key::NumpadLeft,
+            Key::NumpadBegin,
+            Key::NumpadHome,
+            Key::NumpadEnd,
+            Key::NumpadInsert,
+            Key::NumpadDelete,
+            Key::NumpadPageUp,
+            Key::NumpadPageDown,
+            Key::Backspace,
+            Key::Tab,
+            Key::Enter,
+            Key::Escape,
+        ];
+
+        assert_eq!(PC_KEY_SPECS.len(), expected_keys.len());
+        for key in expected_keys {
+            assert!(
+                pc_key_spec(key).is_some(),
+                "missing PC key spec for {key:?}"
+            );
+        }
+    }
+
+    #[test]
     fn key_encode_options_default_to_upstream_values() {
         assert_eq!(Options::default().kitty_flags, KeyFlags::DISABLED);
         assert!(!Options::default().cursor_key_application);
@@ -872,6 +2474,51 @@ mod tests {
                 }
             ),
             "\x1b[57400;;49u"
+        );
+    }
+
+    #[test]
+    fn key_encode_kitty_completed_table_representatives() {
+        let opts = Options {
+            kitty_flags: kitty_flags(),
+            ..Options::default()
+        };
+        assert_eq!(encoded(event(Key::Insert), opts), "\x1b[2~");
+        assert_eq!(encoded(event(Key::PageUp), opts), "\x1b[5~");
+        assert_eq!(encoded(event(Key::Home), opts), "\x1b[H");
+        assert_eq!(encoded(event(Key::End), opts), "\x1b[F");
+        assert_eq!(encoded(event(Key::F1), opts), "\x1b[P");
+        assert_eq!(encoded(event(Key::F3), opts), "\x1b[13~");
+        assert_eq!(encoded(event(Key::F5), opts), "\x1b[15~");
+        assert_eq!(encoded(event(Key::F12), opts), "\x1b[24~");
+        assert_eq!(encoded(event(Key::F13), opts), "\x1b[57376u");
+        assert_eq!(encoded(event(Key::F25), opts), "\x1b[57388u");
+        assert_eq!(encoded(event(Key::PrintScreen), opts), "\x1b[57361u");
+        assert_eq!(encoded(event(Key::Pause), opts), "\x1b[57362u");
+        assert_eq!(encoded(event(Key::NumpadAdd), opts), "\x1b[57413u");
+        assert_eq!(encoded(event(Key::NumpadEqual), opts), "\x1b[57415u");
+        assert_eq!(encoded(event(Key::NumpadBegin), opts), "\x1b[57427u");
+        assert_eq!(encoded(event(Key::CapsLock), opts), "");
+        assert_eq!(
+            encoded(
+                KeyEvent {
+                    key: Key::CapsLock,
+                    mods: Mods {
+                        caps_lock: true,
+                        ..Mods::new()
+                    },
+                    ..KeyEvent::default()
+                },
+                Options {
+                    kitty_flags: KeyFlags {
+                        disambiguate: true,
+                        report_all: true,
+                        ..KeyFlags::DISABLED
+                    },
+                    ..Options::default()
+                }
+            ),
+            "\x1b[57358;65u"
         );
     }
 
@@ -1186,6 +2833,269 @@ mod tests {
                 }
             ),
             "\x1bOA"
+        );
+    }
+
+    #[test]
+    fn key_encode_legacy_completed_cursor_edit_and_function_tables() {
+        assert_eq!(encoded(event(Key::ArrowDown), Options::default()), "\x1b[B");
+        assert_eq!(
+            encoded(
+                event(Key::ArrowDown),
+                Options {
+                    cursor_key_application: true,
+                    ..Options::default()
+                }
+            ),
+            "\x1bOB"
+        );
+        assert_eq!(
+            encoded(
+                KeyEvent {
+                    key: Key::Home,
+                    mods: Mods {
+                        shift: true,
+                        ..Mods::new()
+                    },
+                    ..KeyEvent::default()
+                },
+                Options::default()
+            ),
+            "\x1b[1;2H"
+        );
+        assert_eq!(encoded(event(Key::Insert), Options::default()), "\x1b[2~");
+        assert_eq!(
+            encoded(
+                KeyEvent {
+                    key: Key::Delete,
+                    mods: Mods {
+                        ctrl: true,
+                        ..Mods::new()
+                    },
+                    ..KeyEvent::default()
+                },
+                Options::default()
+            ),
+            "\x1b[3;5~"
+        );
+        assert_eq!(
+            encoded(
+                KeyEvent {
+                    key: Key::PageDown,
+                    mods: Mods {
+                        alt: true,
+                        ..Mods::new()
+                    },
+                    ..KeyEvent::default()
+                },
+                Options::default()
+            ),
+            "\x1b[6;3~"
+        );
+
+        let plain = [
+            (Key::F1, "\x1bOP"),
+            (Key::F2, "\x1bOQ"),
+            (Key::F3, "\x1bOR"),
+            (Key::F4, "\x1bOS"),
+            (Key::F5, "\x1b[15~"),
+            (Key::F6, "\x1b[17~"),
+            (Key::F7, "\x1b[18~"),
+            (Key::F8, "\x1b[19~"),
+            (Key::F9, "\x1b[20~"),
+            (Key::F10, "\x1b[21~"),
+            (Key::F11, "\x1b[23~"),
+            (Key::F12, "\x1b[24~"),
+        ];
+        for (key, expected) in plain {
+            assert_eq!(encoded(event(key), Options::default()), expected);
+        }
+
+        let ctrl = [
+            (Key::F1, "\x1b[1;5P"),
+            (Key::F2, "\x1b[1;5Q"),
+            (Key::F3, "\x1b[13;5~"),
+            (Key::F4, "\x1b[1;5S"),
+            (Key::F5, "\x1b[15;5~"),
+            (Key::F6, "\x1b[17;5~"),
+            (Key::F7, "\x1b[18;5~"),
+            (Key::F8, "\x1b[19;5~"),
+            (Key::F9, "\x1b[20;5~"),
+            (Key::F10, "\x1b[21;5~"),
+            (Key::F11, "\x1b[23;5~"),
+            (Key::F12, "\x1b[24;5~"),
+        ];
+        for (key, expected) in ctrl {
+            assert_eq!(
+                encoded(
+                    KeyEvent {
+                        key,
+                        mods: Mods {
+                            ctrl: true,
+                            ..Mods::new()
+                        },
+                        ..KeyEvent::default()
+                    },
+                    Options::default()
+                ),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn key_encode_legacy_completed_keypad_and_special_tables() {
+        assert_eq!(
+            encoded(
+                text_event(Key::NumpadAdd, "+"),
+                Options {
+                    keypad_key_application: true,
+                    ..Options::default()
+                }
+            ),
+            "\x1bOk"
+        );
+        assert_eq!(
+            encoded(
+                KeyEvent {
+                    key: Key::NumpadAdd,
+                    mods: Mods {
+                        shift: true,
+                        ..Mods::new()
+                    },
+                    utf8: b"+".to_vec(),
+                    ..KeyEvent::default()
+                },
+                Options {
+                    keypad_key_application: true,
+                    ..Options::default()
+                }
+            ),
+            "\x1bO2k"
+        );
+        assert_eq!(
+            encoded(
+                event(Key::NumpadEnter),
+                Options {
+                    keypad_key_application: true,
+                    ..Options::default()
+                }
+            ),
+            "\x1bOM"
+        );
+        assert_eq!(
+            encoded(
+                event(Key::NumpadBegin),
+                Options {
+                    cursor_key_application: true,
+                    ..Options::default()
+                }
+            ),
+            "\x1bOE"
+        );
+        assert_eq!(
+            encoded(
+                text_event(Key::NumpadDecimal, "."),
+                Options {
+                    keypad_key_application: true,
+                    ignore_keypad_with_numlock: true,
+                    ..Options::default()
+                }
+            ),
+            "."
+        );
+        assert_eq!(
+            encoded(
+                KeyEvent {
+                    key: Key::Backspace,
+                    mods: Mods {
+                        alt: true,
+                        ..Mods::new()
+                    },
+                    ..KeyEvent::default()
+                },
+                Options {
+                    modify_other_keys_state_2: true,
+                    ..Options::default()
+                }
+            ),
+            "\x1b[27;3;127~"
+        );
+        assert_eq!(
+            encoded(
+                KeyEvent {
+                    key: Key::Tab,
+                    mods: Mods {
+                        alt: true,
+                        ..Mods::new()
+                    },
+                    ..KeyEvent::default()
+                },
+                Options::default()
+            ),
+            "\x1b\t"
+        );
+        assert_eq!(
+            encoded(
+                KeyEvent {
+                    key: Key::Tab,
+                    mods: Mods {
+                        alt: true,
+                        ..Mods::new()
+                    },
+                    ..KeyEvent::default()
+                },
+                Options {
+                    modify_other_keys_state_2: true,
+                    ..Options::default()
+                }
+            ),
+            "\x1b[27;3;9~"
+        );
+        assert_eq!(
+            encoded(
+                KeyEvent {
+                    key: Key::Enter,
+                    mods: Mods {
+                        alt: true,
+                        ..Mods::new()
+                    },
+                    ..KeyEvent::default()
+                },
+                Options::default()
+            ),
+            "\x1b\r"
+        );
+        assert_eq!(
+            encoded(
+                KeyEvent {
+                    key: Key::Enter,
+                    mods: Mods {
+                        alt: true,
+                        ..Mods::new()
+                    },
+                    ..KeyEvent::default()
+                },
+                Options {
+                    modify_other_keys_state_2: true,
+                    ..Options::default()
+                }
+            ),
+            "\x1b[27;3;13~"
+        );
+        assert_eq!(
+            encoded(
+                KeyEvent {
+                    key: Key::Escape,
+                    mods: Mods {
+                        alt: true,
+                        ..Mods::new()
+                    },
+                    ..KeyEvent::default()
+                },
+                Options::default()
+            ),
+            "\x1b\x1b"
         );
     }
 
