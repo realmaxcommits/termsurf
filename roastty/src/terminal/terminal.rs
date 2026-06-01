@@ -6,8 +6,8 @@ use super::page_list::{
     CodepointMapEntry, PageListAllocError, PageOutputFormat, PageStringWithPinMap,
 };
 use super::screen::{
-    BasicPrintError, Screen, ScreenFormatter, ScreenFormatterContent, ScreenFormatterExtra,
-    ScreenFormatterOptions,
+    BasicPrintError, EraseDisplayError, Screen, ScreenFormatter, ScreenFormatterContent,
+    ScreenFormatterExtra, ScreenFormatterOptions,
 };
 use super::size::CellCountInt;
 use super::stream::{self, Action, Handler};
@@ -260,6 +260,23 @@ impl Terminal {
     }
 
     #[cfg(test)]
+    pub(super) fn set_cell_protected_for_tests(
+        &mut self,
+        x: CellCountInt,
+        y: u32,
+        protected: bool,
+    ) {
+        self.screens
+            .active
+            .set_cell_protected_for_tests(x, y, protected);
+    }
+
+    #[cfg(test)]
+    pub(super) fn scrollback_rows_for_tests(&self) -> usize {
+        self.screens.active.scrollback_rows_for_tests()
+    }
+
+    #[cfg(test)]
     pub(super) fn row_wrap_for_tests(&self, y: u32) -> bool {
         self.screens.active.row_wrap_for_tests(y)
     }
@@ -267,6 +284,18 @@ impl Terminal {
     #[cfg(test)]
     pub(super) fn row_wrap_continuation_for_tests(&self, y: u32) -> bool {
         self.screens.active.row_wrap_continuation_for_tests(y)
+    }
+
+    #[cfg(test)]
+    pub(super) fn set_row_wrap_for_tests(&mut self, y: u32, wrap: bool) {
+        self.screens.active.set_row_wrap_for_tests(y, wrap);
+    }
+
+    #[cfg(test)]
+    pub(super) fn set_row_wrap_continuation_for_tests(&mut self, y: u32, wrap: bool) {
+        self.screens
+            .active
+            .set_row_wrap_continuation_for_tests(y, wrap);
     }
 
     #[cfg(test)]
@@ -350,6 +379,10 @@ impl Handler for TerminalStreamHandler<'_> {
                     .cursor_position_basic(row, col, self.size.rows, self.size.cols);
                 Ok(())
             }
+            Action::EraseDisplay { mode, protected } => self
+                .screen
+                .erase_display_basic(mode, self.size.rows, self.size.cols, protected)
+                .map_err(TerminalStreamError::from),
         }
     }
 }
@@ -377,6 +410,18 @@ impl From<BasicPrintError> for TerminalStreamError {
         match err {
             BasicPrintError::PageAlloc => Self::PageAlloc,
             BasicPrintError::Cell(err) => match err {
+                super::page_list::BasicCellWriteError::InvalidPoint => Self::InvalidPoint,
+                super::page_list::BasicCellWriteError::ManagedCell => Self::ManagedCellUnsupported,
+            },
+        }
+    }
+}
+
+impl From<EraseDisplayError> for TerminalStreamError {
+    fn from(err: EraseDisplayError) -> Self {
+        match err {
+            EraseDisplayError::PageAlloc => Self::PageAlloc,
+            EraseDisplayError::Cell(err) => match err {
                 super::page_list::BasicCellWriteError::InvalidPoint => Self::InvalidPoint,
                 super::page_list::BasicCellWriteError::ManagedCell => Self::ManagedCellUnsupported,
             },
@@ -2048,6 +2093,150 @@ mod tests {
         assert!(!terminal.is_dirty_for_tests(0, 0));
         assert!(!terminal.is_dirty_for_tests(9, 0));
         assert!(!terminal.is_dirty_for_tests(0, 1));
+    }
+
+    #[test]
+    fn terminal_stream_csi_erase_display_below_clears_cursor_to_end() {
+        let mut terminal = Terminal::init(5, 3, None).unwrap();
+        terminal
+            .screens
+            .active
+            .set_text_lines_for_tests(&["ABCDE", "FGHIJ", "KLMNO"]);
+        terminal.screens.active.set_cursor_position_for_tests(2, 1);
+
+        terminal.next_slice(b"\x1b[J").unwrap();
+
+        assert_eq!(plain_with_unwrap(&terminal, false), "ABCDE\nFG");
+        assert_eq!(terminal.cursor_position_for_tests(), (2, 1));
+        assert!(!terminal.cursor_pending_wrap_for_tests());
+    }
+
+    #[test]
+    fn terminal_stream_csi_erase_display_above_clears_start_to_cursor() {
+        let mut terminal = Terminal::init(5, 3, None).unwrap();
+        terminal
+            .screens
+            .active
+            .set_text_lines_for_tests(&["ABCDE", "FGHIJ", "KLMNO"]);
+        terminal.screens.active.set_cursor_position_for_tests(2, 1);
+
+        terminal.next_slice(b"\x1b[1J").unwrap();
+
+        assert_eq!(plain_with_unwrap(&terminal, false), "\n   IJ\nKLMNO");
+        assert_eq!(terminal.cursor_position_for_tests(), (2, 1));
+        assert!(!terminal.cursor_pending_wrap_for_tests());
+    }
+
+    #[test]
+    fn terminal_stream_csi_erase_display_complete_clears_screen() {
+        let mut terminal = Terminal::init(5, 3, None).unwrap();
+
+        terminal.next_slice(b"ABCDE").unwrap();
+        terminal.set_row_wrap_for_tests(0, true);
+        terminal.set_row_wrap_continuation_for_tests(1, true);
+        assert!(terminal.cursor_pending_wrap_for_tests());
+        terminal.next_slice(b"\x1b[2J").unwrap();
+
+        assert_eq!(plain_with_unwrap(&terminal, false), "");
+        assert_eq!(terminal.cursor_position_for_tests(), (4, 0));
+        assert!(!terminal.cursor_pending_wrap_for_tests());
+        assert!(!terminal.row_wrap_for_tests(0));
+        assert!(!terminal.row_wrap_continuation_for_tests(1));
+    }
+
+    #[test]
+    fn terminal_stream_csi_erase_display_scrollback_preserves_active_screen() {
+        let mut terminal = Terminal::init(5, 2, Some(10)).unwrap();
+
+        terminal.next_slice(b"A\nB\nC").unwrap();
+        let active_before = plain_with_unwrap(&terminal, false);
+        assert!(terminal.scrollback_rows_for_tests() > 0);
+
+        terminal.next_slice(b"\x1b[3J").unwrap();
+
+        assert_eq!(plain_with_unwrap(&terminal, false), active_before);
+        assert_eq!(terminal.scrollback_rows_for_tests(), 0);
+    }
+
+    #[test]
+    fn terminal_stream_csi_erase_display_scroll_complete_clears_active_and_resets_cursor() {
+        let mut terminal = Terminal::init(5, 3, Some(10)).unwrap();
+
+        terminal.next_slice(b"A\nB").unwrap();
+        terminal.next_slice(b"\x1b[22J").unwrap();
+
+        assert_eq!(plain_with_unwrap(&terminal, false), "");
+        assert_eq!(terminal.cursor_position_for_tests(), (0, 0));
+        assert!(!terminal.cursor_pending_wrap_for_tests());
+    }
+
+    #[test]
+    fn terminal_stream_csi_erase_display_dirty_rows_match_affected_range() {
+        let mut terminal = Terminal::init(5, 3, None).unwrap();
+        terminal
+            .screens
+            .active
+            .set_text_lines_for_tests(&["ABCDE", "FGHIJ", "KLMNO"]);
+        terminal.screens.active.set_cursor_position_for_tests(2, 1);
+        terminal.clear_dirty_for_tests();
+
+        terminal.next_slice(b"\x1b[J").unwrap();
+
+        assert!(!terminal.is_dirty_for_tests(0, 0));
+        assert!(terminal.is_dirty_for_tests(0, 1));
+        assert!(terminal.is_dirty_for_tests(0, 2));
+    }
+
+    #[test]
+    fn terminal_stream_csi_erase_display_full_rows_clear_wrap_metadata() {
+        let mut terminal = Terminal::init(5, 3, None).unwrap();
+        terminal
+            .screens
+            .active
+            .set_text_lines_for_tests(&["ABCDE", "FGHIJ", "KLMNO"]);
+        terminal.set_row_wrap_for_tests(2, true);
+        terminal.set_row_wrap_continuation_for_tests(2, true);
+        terminal.screens.active.set_cursor_position_for_tests(2, 1);
+
+        terminal.next_slice(b"\x1b[J").unwrap();
+
+        assert!(!terminal.row_wrap_for_tests(2));
+        assert!(!terminal.row_wrap_continuation_for_tests(2));
+    }
+
+    #[test]
+    fn terminal_stream_csi_erase_display_protected_cells_survive() {
+        let mut terminal = Terminal::init(5, 2, None).unwrap();
+        terminal
+            .screens
+            .active
+            .set_text_lines_for_tests(&["ABCDE", "FGHIJ"]);
+        terminal.set_cell_protected_for_tests(2, 0, true);
+        terminal.screens.active.set_cursor_position_for_tests(0, 0);
+
+        terminal.next_slice(b"\x1b[?J").unwrap();
+
+        assert_eq!(plain_with_unwrap(&terminal, false), "  C");
+    }
+
+    #[test]
+    fn terminal_stream_unsupported_csi_erase_display_does_not_mutate_state() {
+        let mut terminal = Terminal::init(5, 2, None).unwrap();
+
+        terminal.next_slice(b"AB\x1b[4JCD").unwrap();
+
+        assert_eq!(plain_with_unwrap(&terminal, false), "ABCD");
+    }
+
+    #[test]
+    fn terminal_stream_split_feed_csi_erase_display_clears_screen() {
+        let mut terminal = Terminal::init(5, 2, None).unwrap();
+
+        terminal.next_slice(b"AB").unwrap();
+        terminal.next_slice(b"\x1b[").unwrap();
+        terminal.next_slice(b"2J").unwrap();
+
+        assert_eq!(plain_with_unwrap(&terminal, false), "");
     }
 
     #[test]

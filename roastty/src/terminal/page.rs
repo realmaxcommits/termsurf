@@ -1206,6 +1206,45 @@ impl Page {
         self.update_row_styled_flag(row_index);
     }
 
+    pub(super) fn clear_unprotected_cells(&mut self, row_index: usize, left: usize, end: usize) {
+        assert!(row_index < self.size.rows as usize);
+        assert!(left <= end);
+        assert!(end <= self.size.cols as usize);
+
+        let row_cells = self.get_row(row_index).cells();
+        for x in left..end {
+            let offset = self.cell_offset_from_row_cells(row_cells, x);
+            let cell = self.cell_copy_at_offset(offset);
+            if cell.protected() {
+                continue;
+            }
+            if cell.has_grapheme() {
+                self.clear_grapheme_at_offset(offset);
+            }
+            if cell.hyperlink() {
+                self.clear_hyperlink_at_offset(offset);
+            }
+            let style_id = cell.style_id();
+            if style_id != style::DEFAULT_ID {
+                self.release_style(style_id);
+            }
+            *self.cell_mut_at_offset(offset) = Cell::default();
+        }
+
+        self.update_row_grapheme_flag(row_index);
+        self.update_row_hyperlink_flag(row_index);
+        self.update_row_styled_flag(row_index);
+    }
+
+    pub(super) fn reset_cleared_row_metadata(&mut self, row_index: usize) {
+        assert!(row_index < self.size.rows as usize);
+        let cells = self.get_row(row_index).cells();
+        let mut row = Row::default();
+        row.set_cells(cells);
+        row.set_dirty(true);
+        *self.get_row_mut(row_index) = row;
+    }
+
     pub(super) fn rotate_rows_left(&mut self, start: usize, end: usize) {
         assert!(start < end);
         assert!(end <= self.size.rows as usize);
@@ -5896,6 +5935,59 @@ mod tests {
         assert_eq!(page.hyperlink_ref_count(link_id), 0);
         assert_eq!(page.hyperlink_count(), 0);
         assert!(!page.get_row(0).managed_memory());
+    }
+
+    #[test]
+    fn page_clear_unprotected_cells_skips_protected_and_releases_managed_memory() {
+        let mut page = Page::init(Capacity {
+            cols: 6,
+            rows: 1,
+            styles: 8,
+            ..Capacity::new(6, 1)
+        })
+        .unwrap();
+        let style_id = page
+            .add_style(style::Style {
+                flags: style::Flags {
+                    italic: true,
+                    ..style::Flags::default()
+                },
+                ..style::Style::default()
+            })
+            .unwrap();
+        let link_id = page
+            .insert_hyperlink(hyperlink::Hyperlink {
+                id: hyperlink::HyperlinkId::Explicit(b"id"),
+                uri: b"https://example.com",
+            })
+            .unwrap();
+
+        let rac = page.get_row_and_cell_mut(1, 0);
+        *rac.cell = Cell::init('s' as u32);
+        rac.row.set_styled(true);
+        rac.cell.set_style_id(style_id);
+        *page.get_row_and_cell_mut(2, 0).cell = Cell::init('g' as u32);
+        page.append_grapheme_at(2, 0, 0x0301).unwrap();
+        *page.get_row_and_cell_mut(3, 0).cell = Cell::init('h' as u32);
+        page.set_hyperlink(3, 0, link_id).unwrap();
+        let protected = page.get_row_and_cell_mut(4, 0);
+        *protected.cell = Cell::init('p' as u32);
+        protected.cell.set_protected(true);
+
+        page.clear_unprotected_cells(0, 1, 5);
+
+        assert_eq!(page.cell_copy_at(1, 0), Cell::default());
+        assert_eq!(page.cell_copy_at(2, 0), Cell::default());
+        assert_eq!(page.cell_copy_at(3, 0), Cell::default());
+        assert_eq!(page.cell_copy_at(4, 0).codepoint(), 'p' as u32);
+        assert!(page.cell_copy_at(4, 0).protected());
+        assert_eq!(page.style_ref_count(style_id), 0);
+        assert_eq!(page.grapheme_count(), 0);
+        assert_eq!(page.hyperlink_ref_count(link_id), 0);
+        assert_eq!(page.hyperlink_count(), 0);
+        assert!(!page.get_row(0).grapheme());
+        assert!(!page.get_row(0).hyperlink());
+        assert!(!page.get_row(0).styled());
     }
 
     #[test]

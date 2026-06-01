@@ -329,3 +329,114 @@ The experiment fails if:
 - it silently implements incompatible placeholder erase semantics;
 - it adds unrelated `CSI K`, line insertion/deletion, public API, ABI, or
   non-macOS behavior.
+
+## Result
+
+**Result:** Pass
+
+Implemented Roastty's private `CSI J` erase-display path for the current basic
+full-screen terminal model.
+
+Accepted stream forms:
+
+- `CSI J`, `CSI 0 J`, and `CSI ; J` dispatch erase below;
+- `CSI 1 J` and `CSI 1 ; J` dispatch erase above;
+- `CSI 2 J` dispatches complete erase;
+- `CSI 3 J` dispatches scrollback erase;
+- `CSI 22 J` dispatches scroll-complete clear;
+- the same forms with `?` after `CSI` dispatch protected erase requests.
+
+Rejected forms include unsupported modes, real multi-param forms, colon/mixed
+separators, invalid private markers, and raw C1 CSI. Invalid forms do not leak
+their final byte as printable text. Pending invalid UTF-8 emits `U+FFFD` before
+the erase-display action, including split-feed cases. Handler errors restore the
+parser to ground state before the next byte.
+
+Terminal behavior now covers:
+
+- erase below: cursor cell through the end of the cursor row, plus all rows
+  below;
+- erase above: all rows above, plus start of cursor row through cursor cell;
+- complete: all active rows;
+- scrollback: history only, preserving active cells;
+- scroll complete: existing `scroll_clear()` path, empty active screen, cursor
+  reset to `(0, 0)`, pending wrap cleared.
+
+Unprotected full-row erases now reset row metadata while preserving the row's
+cell offset, matching Ghostty's `clearRows` behavior. This clears stale
+soft-wrap metadata on complete erase and on fully-cleared rows below/above the
+cursor. Protected erase skips cells with the per-cell protection bit and
+preserves row metadata, matching the conservative protected-clear scope from the
+design.
+
+Implemented code changes:
+
+- `roastty/src/terminal/stream.rs`
+  - added private `EraseDisplayMode`;
+  - added `Action::EraseDisplay { mode, protected }`;
+  - added `CSI J` dispatch with Ghostty mode values and semicolon-finalized
+    one-param behavior.
+- `roastty/src/terminal/page.rs`
+  - added `clear_unprotected_cells()`;
+  - added `reset_cleared_row_metadata()`;
+  - added managed-memory/protected-cell tests.
+- `roastty/src/terminal/page_list.rs`
+  - added active-cell clear helper;
+  - added narrow wrappers for history erase and scroll clear;
+  - added test-only protected-cell and scrollback helpers.
+- `roastty/src/terminal/screen.rs`
+  - added `erase_display_basic()`;
+  - added test helpers for protected cells, row wrap metadata, and scrollback
+    count.
+- `roastty/src/terminal/terminal.rs`
+  - routed erase-display actions;
+  - added terminal tests for every implemented erase-display mode and regression
+    surface.
+
+Verification passed after `cargo fmt`:
+
+```bash
+cargo test -p roastty stream
+cargo test -p roastty terminal::terminal
+cargo test -p roastty terminal::page_list
+cargo test -p roastty terminal::page::tests::page_clear_unprotected_cells_skips_protected_and_releases_managed_memory
+cargo test -p roastty terminal_formatter
+cargo test -p roastty screen_formatter
+cargo test -p roastty page_string
+cargo test -p roastty
+```
+
+The final full package run passed `1192` unit tests plus the ABI harness.
+
+Codex result review:
+
+- First result review:
+  `logs/codex-review/20260601-041610-790107-last-message.md`
+  - Found one real blocker: full-row unprotected erase cleared cells but left
+    soft-wrap row metadata behind.
+  - Fixed by adding `Page::reset_cleared_row_metadata()` and using it for
+    unprotected full-row active clears.
+- Second result review:
+  `logs/codex-review/20260601-041846-662471-last-message.md`
+  - Reported no findings.
+  - Confirmed the result is good enough to record as Pass.
+
+Deferred:
+
+- `CSI K` erase-line;
+- line insertion/deletion and scroll commands after `CSI J`;
+- scroll-region/origin/margin-aware erase behavior;
+- semantic prompt heuristic for complete erase;
+- Kitty graphics deletion side effects;
+- global ISO/DEC protected-mode stream semantics beyond explicit protected `?J`
+  requests and already-stored per-cell protection bits.
+
+## Conclusion
+
+Experiment 120 successfully ports the next Ghostty stream action, `CSI J`, into
+Roastty's current basic terminal model. The implementation is intentionally
+private/internal, covered by parser and terminal tests, and keeps the broader
+libghostty rewrite moving without adding public API or ABI surface.
+
+The next experiment should continue in upstream stream order with `CSI K` erase
+line, reusing the same Page/PageList clearing primitives where appropriate.

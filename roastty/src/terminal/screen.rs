@@ -27,6 +27,24 @@ pub(super) enum BasicPrintError {
     Cell(BasicCellWriteError),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum EraseDisplayError {
+    PageAlloc,
+    Cell(BasicCellWriteError),
+}
+
+impl From<BasicCellWriteError> for EraseDisplayError {
+    fn from(value: BasicCellWriteError) -> Self {
+        Self::Cell(value)
+    }
+}
+
+impl From<PageListAllocError> for EraseDisplayError {
+    fn from(_: PageListAllocError) -> Self {
+        Self::PageAlloc
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ScreenCursor {
     x: CellCountInt,
@@ -241,6 +259,53 @@ impl Screen {
         self.cursor.x = col.saturating_sub(1).min(right);
     }
 
+    pub(super) fn erase_display_basic(
+        &mut self,
+        mode: super::stream::EraseDisplayMode,
+        rows: CellCountInt,
+        cols: CellCountInt,
+        protected: bool,
+    ) -> Result<(), EraseDisplayError> {
+        match mode {
+            super::stream::EraseDisplayMode::Below => {
+                self.clear_active_cells(self.cursor.y.into(), self.cursor.x, cols, protected)?;
+                for y in self.cursor.y + 1..rows {
+                    self.clear_active_cells(y.into(), 0, cols, protected)?;
+                }
+                self.cursor.pending_wrap = false;
+            }
+            super::stream::EraseDisplayMode::Above => {
+                for y in 0..self.cursor.y {
+                    self.clear_active_cells(y.into(), 0, cols, protected)?;
+                }
+                self.clear_active_cells(
+                    self.cursor.y.into(),
+                    0,
+                    self.cursor.x.saturating_add(1).min(cols),
+                    protected,
+                )?;
+                self.cursor.pending_wrap = false;
+            }
+            super::stream::EraseDisplayMode::Complete => {
+                for y in 0..rows {
+                    self.clear_active_cells(y.into(), 0, cols, protected)?;
+                }
+                self.cursor.pending_wrap = false;
+            }
+            super::stream::EraseDisplayMode::Scrollback => {
+                self.pages.erase_history_basic()?;
+            }
+            super::stream::EraseDisplayMode::ScrollComplete => {
+                self.pages.scroll_clear_basic()?;
+                self.cursor.x = 0;
+                self.cursor.y = 0;
+                self.cursor.pending_wrap = false;
+            }
+        }
+
+        Ok(())
+    }
+
     pub(super) fn cursor_row_relative_basic(&mut self, rows: CellCountInt, count: CellCountInt) {
         let bottom = rows.saturating_sub(1);
         self.cursor.pending_wrap = false;
@@ -280,6 +345,17 @@ impl Screen {
                 break;
             }
         }
+    }
+
+    fn clear_active_cells(
+        &mut self,
+        y: u32,
+        left: CellCountInt,
+        end: CellCountInt,
+        protected: bool,
+    ) -> Result<(), BasicCellWriteError> {
+        self.pages.clear_active_cells(y, left, end, protected)?;
+        Ok(())
     }
 
     pub(super) fn tab_set_basic(&self, tabstops: &mut tabstops::Tabstops) {
@@ -379,6 +455,17 @@ impl Screen {
     }
 
     #[cfg(test)]
+    pub(super) fn set_cell_protected_for_tests(
+        &mut self,
+        x: CellCountInt,
+        y: u32,
+        protected: bool,
+    ) {
+        self.pages
+            .set_screen_cell_protected_for_tests(x, y, protected);
+    }
+
+    #[cfg(test)]
     pub(super) fn pin_for_tests(&self, x: CellCountInt, y: u32) -> super::page_list::Pin {
         self.pages
             .pin(super::point::Point::active(super::point::Coordinate::new(
@@ -409,6 +496,11 @@ impl Screen {
     }
 
     #[cfg(test)]
+    pub(super) fn scrollback_rows_for_tests(&self) -> usize {
+        self.pages.scrollback_rows_for_tests()
+    }
+
+    #[cfg(test)]
     pub(super) fn row_wrap_for_tests(&self, y: u32) -> bool {
         self.pages.active_row_wrap_for_tests(y)
     }
@@ -416,6 +508,20 @@ impl Screen {
     #[cfg(test)]
     pub(super) fn row_wrap_continuation_for_tests(&self, y: u32) -> bool {
         self.pages.active_row_wrap_continuation_for_tests(y)
+    }
+
+    #[cfg(test)]
+    pub(super) fn set_row_wrap_for_tests(&mut self, y: u32, wrap: bool) {
+        self.pages
+            .set_active_row_wrap(y, wrap)
+            .expect("test active row must resolve");
+    }
+
+    #[cfg(test)]
+    pub(super) fn set_row_wrap_continuation_for_tests(&mut self, y: u32, wrap: bool) {
+        self.pages
+            .set_active_row_wrap_continuation(y, wrap)
+            .expect("test active row must resolve");
     }
 
     #[cfg(test)]

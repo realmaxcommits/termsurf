@@ -2735,6 +2735,24 @@ impl PageList {
     }
 
     #[cfg(test)]
+    pub(super) fn set_screen_cell_protected_for_tests(
+        &mut self,
+        x: CellCountInt,
+        y: u32,
+        protected: bool,
+    ) {
+        let pin = self
+            .pin(point::Point::screen(point::Coordinate::new(x, y)))
+            .expect("test screen point must resolve to a pin");
+        let index = self.node_index(pin.node).expect("screen node must exist");
+        self.pages[index]
+            .page
+            .get_row_and_cell_mut(pin.x as usize, pin.y as usize)
+            .cell
+            .set_protected(protected);
+    }
+
+    #[cfg(test)]
     pub(super) fn set_screen_text_lines_for_tests(&mut self, lines: &[&str]) {
         for (y, line) in lines.iter().enumerate() {
             for (x, ch) in line.chars().enumerate() {
@@ -3375,6 +3393,11 @@ impl PageList {
         self.clear_dirty();
     }
 
+    #[cfg(test)]
+    pub(super) fn scrollback_rows_for_tests(&self) -> usize {
+        self.total_rows().saturating_sub(self.rows as usize)
+    }
+
     fn mark_dirty(&mut self, point: point::Point) {
         if let Some(pin) = self.pin(point) {
             pin.mark_dirty(self);
@@ -3387,6 +3410,46 @@ impl PageList {
             .ok_or(BasicCellWriteError::InvalidPoint)?;
         pin.mark_dirty(self);
         Ok(())
+    }
+
+    pub(super) fn clear_active_cells(
+        &mut self,
+        y: u32,
+        left: CellCountInt,
+        end: CellCountInt,
+        protected: bool,
+    ) -> Result<(), BasicCellWriteError> {
+        assert!(left <= end);
+        assert!(end <= self.cols);
+
+        let pin = self
+            .pin(point::Point::active(point::Coordinate::new(left, y)))
+            .ok_or(BasicCellWriteError::InvalidPoint)?;
+        let index = self
+            .node_index(pin.node)
+            .ok_or(BasicCellWriteError::InvalidPoint)?;
+        let page = &mut self.pages[index].page;
+        if protected {
+            page.clear_unprotected_cells(pin.y as usize, left as usize, end as usize);
+        } else {
+            page.clear_cells(pin.y as usize, left as usize, end as usize);
+            if left == 0 && end == self.cols {
+                page.reset_cleared_row_metadata(pin.y as usize);
+                return Ok(());
+            }
+        }
+        page.get_row_mut(pin.y as usize).set_dirty(true);
+        Ok(())
+    }
+
+    pub(super) fn erase_history_basic(&mut self) -> Result<(), BasicCellWriteError> {
+        self.erase_history(None)
+            .map_err(|_| BasicCellWriteError::InvalidPoint)
+    }
+
+    pub(super) fn scroll_clear_basic(&mut self) -> Result<(), PageListAllocError> {
+        self.scroll_clear()
+            .map_err(|_| PageListAllocError::PageAlloc)
     }
 
     pub(super) fn set_active_row_wrap(

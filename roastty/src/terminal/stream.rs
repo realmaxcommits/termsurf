@@ -2,25 +2,59 @@
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum Action {
-    Print { cp: char },
+    Print {
+        cp: char,
+    },
     LineFeed,
     CarriageReturn,
     Backspace,
-    HorizontalTab { count: u16 },
+    HorizontalTab {
+        count: u16,
+    },
     TabSet,
     TabClearCurrent,
     TabClearAll,
     TabReset,
     Index,
     NextLine,
-    CursorUp { count: u16 },
-    CursorDown { count: u16 },
-    CursorRight { count: u16 },
-    CursorLeft { count: u16 },
-    CursorColumn { col: u16 },
-    CursorRow { row: u16 },
-    CursorRowRelative { rows: u16 },
-    CursorPosition { row: u16, col: u16 },
+    CursorUp {
+        count: u16,
+    },
+    CursorDown {
+        count: u16,
+    },
+    CursorRight {
+        count: u16,
+    },
+    CursorLeft {
+        count: u16,
+    },
+    CursorColumn {
+        col: u16,
+    },
+    CursorRow {
+        row: u16,
+    },
+    CursorRowRelative {
+        rows: u16,
+    },
+    CursorPosition {
+        row: u16,
+        col: u16,
+    },
+    EraseDisplay {
+        mode: EraseDisplayMode,
+        protected: bool,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum EraseDisplayMode {
+    Below,
+    Above,
+    Complete,
+    Scrollback,
+    ScrollComplete,
 }
 
 pub(super) trait Handler {
@@ -274,6 +308,10 @@ impl CsiState {
             return CsiDispatch::One(action);
         }
 
+        if let Some(action) = self.erase_display_action(final_byte) {
+            return CsiDispatch::One(action);
+        }
+
         if final_byte == b'W' {
             return self
                 .tab_action()
@@ -382,6 +420,34 @@ impl CsiState {
             b'I' => Some(Action::HorizontalTab { count }),
             _ => None,
         }
+    }
+
+    fn erase_display_action(&self, final_byte: u8) -> Option<Action> {
+        if final_byte != b'J' {
+            return None;
+        }
+
+        let protected = match self.private {
+            None => false,
+            Some(b'?') => true,
+            Some(_) => return None,
+        };
+        let params = self.finalized_params()?;
+        if params.len > 1 {
+            return None;
+        }
+
+        let param = (params.len == 1).then_some(params.values[0]).unwrap_or(0);
+        let mode = match param {
+            0 => EraseDisplayMode::Below,
+            1 => EraseDisplayMode::Above,
+            2 => EraseDisplayMode::Complete,
+            3 => EraseDisplayMode::Scrollback,
+            22 => EraseDisplayMode::ScrollComplete,
+            _ => return None,
+        };
+
+        Some(Action::EraseDisplay { mode, protected })
     }
 
     fn line_dispatch(&self, final_byte: u8) -> Option<CsiDispatch> {
@@ -560,7 +626,8 @@ mod tests {
                 | Action::CursorColumn { .. }
                 | Action::CursorRow { .. }
                 | Action::CursorRowRelative { .. }
-                | Action::CursorPosition { .. } => None,
+                | Action::CursorPosition { .. }
+                | Action::EraseDisplay { .. } => None,
             })
             .collect()
     }
@@ -730,6 +797,107 @@ mod tests {
             (
                 b"\x1b[999999999999999999999999IA".as_slice(),
                 Action::HorizontalTab { count: u16::MAX },
+            ),
+        ] {
+            let mut stream = Stream::init();
+            let mut handler = RecordingHandler::default();
+
+            next_slice(&mut stream, &mut handler, input);
+
+            if input.starts_with(b"A") {
+                assert_eq!(
+                    actions(&handler),
+                    &[
+                        Action::Print { cp: 'A' },
+                        expected,
+                        Action::Print { cp: 'B' },
+                    ]
+                );
+            } else {
+                assert_eq!(actions(&handler), &[expected, Action::Print { cp: 'A' }]);
+            }
+        }
+    }
+
+    #[test]
+    fn stream_csi_erase_display_dispatches_modes() {
+        for (input, expected) in [
+            (
+                b"A\x1b[JB".as_slice(),
+                Action::EraseDisplay {
+                    mode: EraseDisplayMode::Below,
+                    protected: false,
+                },
+            ),
+            (
+                b"\x1b[0JA".as_slice(),
+                Action::EraseDisplay {
+                    mode: EraseDisplayMode::Below,
+                    protected: false,
+                },
+            ),
+            (
+                b"\x1b[;JA".as_slice(),
+                Action::EraseDisplay {
+                    mode: EraseDisplayMode::Below,
+                    protected: false,
+                },
+            ),
+            (
+                b"\x1b[1JA".as_slice(),
+                Action::EraseDisplay {
+                    mode: EraseDisplayMode::Above,
+                    protected: false,
+                },
+            ),
+            (
+                b"\x1b[1;JA".as_slice(),
+                Action::EraseDisplay {
+                    mode: EraseDisplayMode::Above,
+                    protected: false,
+                },
+            ),
+            (
+                b"\x1b[2JA".as_slice(),
+                Action::EraseDisplay {
+                    mode: EraseDisplayMode::Complete,
+                    protected: false,
+                },
+            ),
+            (
+                b"\x1b[3JA".as_slice(),
+                Action::EraseDisplay {
+                    mode: EraseDisplayMode::Scrollback,
+                    protected: false,
+                },
+            ),
+            (
+                b"\x1b[22JA".as_slice(),
+                Action::EraseDisplay {
+                    mode: EraseDisplayMode::ScrollComplete,
+                    protected: false,
+                },
+            ),
+            (
+                b"\x1b[?2JA".as_slice(),
+                Action::EraseDisplay {
+                    mode: EraseDisplayMode::Complete,
+                    protected: true,
+                },
+            ),
+            (
+                b"\x1b[?;JA".as_slice(),
+                Action::EraseDisplay {
+                    mode: EraseDisplayMode::Below,
+                    protected: true,
+                },
+            ),
+            (
+                b"\x1b[?1;JA".as_slice(),
+                Action::EraseDisplay {
+                    mode: EraseDisplayMode::Above,
+                    protected: true,
+                },
             ),
         ] {
             let mut stream = Stream::init();
@@ -1356,6 +1524,45 @@ mod tests {
                 b"\x1b[;".as_slice(),
                 b"IA".as_slice(),
                 Action::HorizontalTab { count: 0 },
+            ),
+        ] {
+            let mut stream = Stream::init();
+            let mut handler = RecordingHandler::default();
+
+            next_slice(&mut stream, &mut handler, first);
+            assert!(actions(&handler).is_empty());
+            next_slice(&mut stream, &mut handler, second);
+
+            assert_eq!(actions(&handler), &[expected, Action::Print { cp: 'A' }]);
+        }
+    }
+
+    #[test]
+    fn stream_split_csi_erase_display_dispatches_modes() {
+        for (first, second, expected) in [
+            (
+                b"\x1b[".as_slice(),
+                b"JA".as_slice(),
+                Action::EraseDisplay {
+                    mode: EraseDisplayMode::Below,
+                    protected: false,
+                },
+            ),
+            (
+                b"\x1b[22".as_slice(),
+                b"JA".as_slice(),
+                Action::EraseDisplay {
+                    mode: EraseDisplayMode::ScrollComplete,
+                    protected: false,
+                },
+            ),
+            (
+                b"\x1b[?".as_slice(),
+                b"2JA".as_slice(),
+                Action::EraseDisplay {
+                    mode: EraseDisplayMode::Complete,
+                    protected: true,
+                },
             ),
         ] {
             let mut stream = Stream::init();
@@ -2076,6 +2283,58 @@ mod tests {
     }
 
     #[test]
+    fn stream_pending_utf8_replacement_dispatches_before_csi_erase_display() {
+        let mut stream = Stream::init();
+        let mut handler = RecordingHandler::default();
+
+        next_slice(&mut stream, &mut handler, b"\xf0\x9f\x1b[JA");
+
+        assert_eq!(
+            actions(&handler),
+            &[
+                Action::Print {
+                    cp: char::REPLACEMENT_CHARACTER,
+                },
+                Action::EraseDisplay {
+                    mode: EraseDisplayMode::Below,
+                    protected: false,
+                },
+                Action::Print { cp: 'A' },
+            ]
+        );
+    }
+
+    #[test]
+    fn stream_pending_utf8_replacement_dispatches_before_split_csi_erase_display() {
+        let mut stream = Stream::init();
+        let mut handler = RecordingHandler::default();
+
+        next_slice(&mut stream, &mut handler, b"\xf0\x9f\x1b[22");
+        assert_eq!(
+            actions(&handler),
+            &[Action::Print {
+                cp: char::REPLACEMENT_CHARACTER,
+            }]
+        );
+
+        next_slice(&mut stream, &mut handler, b"JA");
+
+        assert_eq!(
+            actions(&handler),
+            &[
+                Action::Print {
+                    cp: char::REPLACEMENT_CHARACTER,
+                },
+                Action::EraseDisplay {
+                    mode: EraseDisplayMode::ScrollComplete,
+                    protected: false,
+                },
+                Action::Print { cp: 'A' },
+            ]
+        );
+    }
+
+    #[test]
     fn stream_pending_utf8_replacement_dispatches_before_split_csi_horizontal_absolute() {
         let mut stream = Stream::init();
         let mut handler = RecordingHandler::default();
@@ -2291,6 +2550,27 @@ mod tests {
     }
 
     #[test]
+    fn stream_unsupported_csi_erase_display_variants_do_not_dispatch_actions() {
+        for input in [
+            b"\x1b[>3JA".as_slice(),
+            b"\x1b[5;4JA".as_slice(),
+            b"\x1b[5;;JA".as_slice(),
+            b"\x1b[1:2JA".as_slice(),
+            b"\x1b[1;2:3JA".as_slice(),
+            b"\x1b[4JA".as_slice(),
+            b"\x1b[23JA".as_slice(),
+            b"\x1b[ JA".as_slice(),
+        ] {
+            let mut stream = Stream::init();
+            let mut handler = RecordingHandler::default();
+
+            next_slice(&mut stream, &mut handler, input);
+
+            assert_eq!(actions(&handler), &[Action::Print { cp: 'A' }]);
+        }
+    }
+
+    #[test]
     fn stream_unsupported_csi_cursor_position_variants_do_not_dispatch_actions() {
         for input in [
             b"\x1b[?3HA".as_slice(),
@@ -2369,6 +2649,24 @@ mod tests {
                     cp: char::REPLACEMENT_CHARACTER,
                 },
                 Action::Print { cp: 'I' },
+            ]
+        );
+    }
+
+    #[test]
+    fn stream_raw_c1_csi_byte_does_not_dispatch_erase_display_action() {
+        let mut stream = Stream::init();
+        let mut handler = RecordingHandler::default();
+
+        next_slice(&mut stream, &mut handler, &[0x9b, b'J']);
+
+        assert_eq!(
+            actions(&handler),
+            &[
+                Action::Print {
+                    cp: char::REPLACEMENT_CHARACTER,
+                },
+                Action::Print { cp: 'J' },
             ]
         );
     }
@@ -2636,7 +2934,8 @@ mod tests {
                 | Action::CursorColumn { .. }
                 | Action::CursorRow { .. }
                 | Action::CursorRowRelative { .. }
-                | Action::CursorPosition { .. } => unreachable!("loop only uses D/E actions"),
+                | Action::CursorPosition { .. }
+                | Action::EraseDisplay { .. } => unreachable!("loop only uses D/E actions"),
             };
 
             assert_eq!(stream.next_slice(input, &mut handler), Err(()));
@@ -2771,6 +3070,41 @@ mod tests {
             (b"\x1b[I".as_slice(), Action::HorizontalTab { count: 1 }),
             (b"\x1b[0I".as_slice(), Action::HorizontalTab { count: 0 }),
             (b"\x1b[3;I".as_slice(), Action::HorizontalTab { count: 3 }),
+        ] {
+            let mut stream = Stream::init();
+            let mut handler = ErrorOnActionHandler::new(fail);
+
+            assert_eq!(stream.next_slice(input, &mut handler), Err(()));
+            stream.next_slice(b"A", &mut handler).unwrap();
+
+            assert_eq!(handler.actions, &[Action::Print { cp: 'A' }]);
+        }
+    }
+
+    #[test]
+    fn stream_csi_erase_display_restore_ground_before_handler_error() {
+        for (input, fail) in [
+            (
+                b"\x1b[J".as_slice(),
+                Action::EraseDisplay {
+                    mode: EraseDisplayMode::Below,
+                    protected: false,
+                },
+            ),
+            (
+                b"\x1b[?2J".as_slice(),
+                Action::EraseDisplay {
+                    mode: EraseDisplayMode::Complete,
+                    protected: true,
+                },
+            ),
+            (
+                b"\x1b[22J".as_slice(),
+                Action::EraseDisplay {
+                    mode: EraseDisplayMode::ScrollComplete,
+                    protected: false,
+                },
+            ),
         ] {
             let mut stream = Stream::init();
             let mut handler = ErrorOnActionHandler::new(fail);
