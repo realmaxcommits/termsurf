@@ -187,3 +187,94 @@ Clean design re-review artifacts:
 - Result: `logs/codex-review/20260601-020258-599631-last-message.md`
 
 Codex found no remaining blockers and approved implementation.
+
+## Result
+
+**Result:** Pass.
+
+Implemented stream `VT` and `FF` as aliases for the existing private
+`Action::LineFeed`.
+
+Stream action changes:
+
+- Ground-state `0x0b` (`VT`) now dispatches `Action::LineFeed`.
+- Ground-state `0x0c` (`FF`) now dispatches `Action::LineFeed`.
+- LF (`0x0a`) dispatch is unchanged.
+- Other C0 controls outside `BS`, `HT`, `LF`, `VT`, `FF`, and `CR` remain
+  ignored.
+- Pending invalid UTF-8 dispatches `U+FFFD` before interrupting `VT` and `FF`
+  bytes.
+
+VT/FF alias behavior:
+
+- `VT` and `FF` reach the same `TerminalStreamHandler::line_feed()` path as
+  stream `LF`.
+- They preserve the current column like LF/index.
+- They clear pending wrap through the same LF/index movement.
+- They scroll at the bottom row through the same LF path.
+- They bypass `Mode::Linefeed` automatic carriage return, matching Ghostty's
+  stream handler behavior.
+
+Tested behavior:
+
+- `A\x0bB\x0cC` dispatches print, linefeed, print, linefeed, print.
+- `A\x0bB` and `A\x0cB` format like `A\nB` with column preservation.
+- With `Mode::Linefeed` enabled, `A\x0bB` and `A\x0cB` still format as `A\n B`,
+  proving stream `VT` and `FF` bypass automatic CR.
+- `VT` and `FF` clear pending wrap without soft-wrapping first.
+- `VT` and `FF` scroll from the bottom row while preserving the current column.
+- Split-feed `VT` and `FF` behave like same-slice input.
+
+This experiment did not implement `Terminal.linefeed()` mode semantics, CSI mode
+set/reset parsing, newline preprocessing, NEL, IND, RI, margins, origin mode,
+no-scrollback rotation, styles, hyperlinks, wide/Unicode handling, public API,
+or public ABI.
+
+Verification run:
+
+```text
+cargo fmt
+cargo test -p roastty stream
+cargo test -p roastty terminal_formatter
+cargo test -p roastty terminal::terminal
+cargo test -p roastty screen_formatter
+cargo test -p roastty page_string
+cargo test -p roastty terminal::page_list
+cargo test -p roastty
+```
+
+Results:
+
+- `cargo fmt` passed.
+- `cargo test -p roastty stream` passed 128 tests.
+- `cargo test -p roastty terminal_formatter` passed 67 tests.
+- `cargo test -p roastty terminal::terminal` passed 114 tests.
+- `cargo test -p roastty screen_formatter` passed 55 tests.
+- `cargo test -p roastty page_string` passed 12 tests.
+- `cargo test -p roastty terminal::page_list` passed 524 tests.
+- Full `cargo test -p roastty` passed 1029 unit tests, the ABI harness, and
+  doc-tests.
+
+Codex design review passed after the linefeed-mode divergence was rejected and
+the revised VT/FF design added explicit linefeed-mode-bypass coverage.
+
+Result-review artifacts:
+
+- Prompt: `logs/codex-review/20260601-020520-142776-prompt.md`
+- Result: `logs/codex-review/20260601-020520-142776-last-message.md`
+
+Codex found no blocking correctness, upstream-fidelity, linefeed-mode-bypass,
+test-coverage, scope, public API, or public ABI findings. Codex approved the
+result for commit.
+
+## Conclusion
+
+Roastty now matches Ghostty's stream linefeed grouping for LF, VT, and FF in the
+narrow active full-width path. The important detail is that this is stream
+`index()` behavior, not `Terminal.linefeed()` mode behavior: all three controls
+move down while preserving the current column, and VT/FF continue to bypass
+automatic CR even when `Mode::Linefeed` is enabled.
+
+The next execute-action experiment should continue with the next small upstream
+stream action, while keeping mode-setting, NEL/IND/RI, margins, and public API
+work separate.
