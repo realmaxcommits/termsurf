@@ -248,3 +248,95 @@ Codex found no remaining design blockers and approved implementation. It also
 suggested making the `0x9b` negative assertion concrete; the design now states
 that `0x9b A` should follow raw-C1 UTF-8 replacement behavior and dispatch
 `U+FFFD` plus printable `A`, not `CursorUp`.
+
+## Result
+
+**Result:** Pass
+
+Implemented the basic CSI cardinal cursor movement slice:
+
+- `CSI A` and `CSI k` dispatch private `Action::CursorUp`.
+- `CSI B` dispatches private `Action::CursorDown`.
+- `CSI C` and `CSI a` dispatch private `Action::CursorRight`.
+- `CSI D` and `CSI j` dispatch private `Action::CursorLeft`.
+
+The CSI parameter parser now supports no params, a single numeric param, and a
+leading `?` private marker for the existing tab reset case. Numeric params
+saturate at `u16::MAX`, matching Ghostty's parser behavior for oversized counts.
+Missing and zero cursor counts become `1`; oversized counts clamp at the
+terminal edge in the terminal helper.
+
+Rejected cursor CSI forms:
+
+- private forms such as `CSI ? 3 C`;
+- unsupported private markers such as `CSI > 3 C`;
+- multi-param forms such as `CSI 5 ; 4 C`;
+- intermediate-bearing forms such as `CSI SP C`.
+
+Those forms dispatch no cursor action and do not leak printable final bytes.
+Direct C1 CSI byte `0x9b` remains out of scope and follows the existing raw-C1
+UTF-8 replacement path.
+
+Terminal behavior:
+
+- cursor movement clamps to the full-screen top, bottom, left, and right edges;
+- all four directions clear pending wrap;
+- movement does not write cells, dirty rows, or scroll;
+- cursor-left clamps at column zero and does not implement reverse wrap;
+- cursor-up/down do not implement scrolling regions or origin mode;
+- split-feed CSI movement mutates terminal state correctly.
+
+Existing `CSI W` tab behavior from Experiments 111 and 112 still passes,
+including tab set, clear-current, clear-all, reset, unsupported variants, and
+overflowing `W` params producing no tab action.
+
+Deferred behavior remains unchanged:
+
+- `CSI E` / `CSI F` next/previous line;
+- `CSI G` / `CSI H` absolute positioning;
+- scrolling-region-aware movement;
+- origin mode;
+- left/right margins;
+- reverse wrap and reverse-wrap-extended cursor-left behavior;
+- direct C1 CSI parsing;
+- public API and ABI changes.
+
+Verification passed:
+
+```bash
+cargo fmt
+cargo test -p roastty stream
+cargo test -p roastty terminal::terminal
+cargo test -p roastty terminal_formatter
+cargo test -p roastty screen_formatter
+cargo test -p roastty page_string
+cargo test -p roastty terminal::page_list
+cargo test -p roastty
+```
+
+Observed results:
+
+- `cargo test -p roastty stream`: 197 passed.
+- `cargo test -p roastty terminal::terminal`: 146 passed.
+- `cargo test -p roastty terminal_formatter`: 67 passed.
+- `cargo test -p roastty screen_formatter`: 55 passed.
+- `cargo test -p roastty page_string`: 12 passed.
+- `cargo test -p roastty terminal::page_list`: 524 passed.
+- `cargo test -p roastty`: 1098 unit tests passed, ABI harness 1 passed,
+  doc-tests 0.
+
+Codex result review artifacts:
+
+- Prompt: `logs/codex-review/20260601-025902-314571-prompt.md`
+- Result: `logs/codex-review/20260601-025902-314571-last-message.md`
+
+Codex found no required fixes and approved marking the experiment as `Pass`.
+
+## Conclusion
+
+Roastty now has Ghostty-shaped basic CSI cardinal cursor movement for the
+full-screen movement model currently ported. The shared CSI parser can support
+the existing tab actions and these single-parameter cursor actions without
+regressing either family. More complete Ghostty movement semantics should be
+ported in later slices once scrolling regions, origin mode, margins, and reverse
+wrap are available.

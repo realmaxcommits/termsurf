@@ -13,6 +13,10 @@ pub(super) enum Action {
     TabReset,
     Index,
     NextLine,
+    CursorUp { count: u16 },
+    CursorDown { count: u16 },
+    CursorRight { count: u16 },
+    CursorLeft { count: u16 },
 }
 
 pub(super) trait Handler {
@@ -50,16 +54,9 @@ struct DecodeResult {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct CsiState {
-    tab: CsiWState,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum CsiWState {
-    NoParams,
-    QuestionNoParams,
-    Param(u16),
-    QuestionParam(u16),
-    Invalid,
+    private: Option<u8>,
+    param: Option<u16>,
+    invalid: bool,
 }
 
 impl Stream {
@@ -162,10 +159,8 @@ impl Stream {
     ) -> Result<(), H::Error> {
         if (0x40..=0x7e).contains(&byte) {
             self.escape = EscapeState::Ground;
-            if byte == b'W' {
-                if let Some(action) = state.tab_action() {
-                    return handler.vt(action);
-                }
+            if let Some(action) = state.action(byte) {
+                return handler.vt(action);
             }
             return Ok(());
         }
@@ -188,46 +183,72 @@ impl Stream {
 impl CsiState {
     const fn new() -> Self {
         Self {
-            tab: CsiWState::NoParams,
+            private: None,
+            param: None,
+            invalid: false,
         }
     }
 
     fn push(&mut self, byte: u8) {
-        self.tab.push(byte);
+        if self.invalid {
+            return;
+        }
+
+        match byte {
+            b'?' if self.private.is_none() && self.param.is_none() => {
+                self.private = Some(byte);
+            }
+            b'0'..=b'9' => {
+                let digit = u16::from(byte - b'0');
+                self.param = Some(
+                    self.param
+                        .unwrap_or(0)
+                        .saturating_mul(10)
+                        .saturating_add(digit),
+                );
+            }
+            _ => self.invalid = true,
+        }
+    }
+
+    fn action(&self, final_byte: u8) -> Option<Action> {
+        if let Some(action) = self.cursor_action(final_byte) {
+            return Some(action);
+        }
+
+        if final_byte == b'W' {
+            return self.tab_action();
+        }
+
+        None
+    }
+
+    fn cursor_action(&self, final_byte: u8) -> Option<Action> {
+        if self.invalid || self.private.is_some() {
+            return None;
+        }
+
+        let count = self.param.unwrap_or(1).max(1);
+        match final_byte {
+            b'A' | b'k' => Some(Action::CursorUp { count }),
+            b'B' => Some(Action::CursorDown { count }),
+            b'C' | b'a' => Some(Action::CursorRight { count }),
+            b'D' | b'j' => Some(Action::CursorLeft { count }),
+            _ => None,
+        }
     }
 
     fn tab_action(&self) -> Option<Action> {
-        self.tab.action()
-    }
-}
+        if self.invalid {
+            return None;
+        }
 
-impl CsiWState {
-    fn push(&mut self, byte: u8) {
-        *self = match (*self, byte) {
-            (Self::NoParams, b'?') => Self::QuestionNoParams,
-            (Self::NoParams, b'0'..=b'9') => Self::Param(u16::from(byte - b'0')),
-            (Self::QuestionNoParams, b'0'..=b'9') => Self::QuestionParam(u16::from(byte - b'0')),
-            (Self::Param(value), b'0'..=b'9') => value
-                .checked_mul(10)
-                .and_then(|value| value.checked_add(u16::from(byte - b'0')))
-                .map_or(Self::Invalid, Self::Param),
-            (Self::QuestionParam(value), b'0'..=b'9') => value
-                .checked_mul(10)
-                .and_then(|value| value.checked_add(u16::from(byte - b'0')))
-                .map_or(Self::Invalid, Self::QuestionParam),
-            _ => Self::Invalid,
-        };
-    }
-
-    fn action(&self) -> Option<Action> {
-        match self {
-            Self::NoParams | Self::Param(0) => Some(Action::TabSet),
-            Self::Param(2) => Some(Action::TabClearCurrent),
-            Self::Param(5) => Some(Action::TabClearAll),
-            Self::QuestionParam(5) => Some(Action::TabReset),
-            Self::QuestionNoParams | Self::Param(_) | Self::QuestionParam(_) | Self::Invalid => {
-                None
-            }
+        match (self.private, self.param) {
+            (None, None | Some(0)) => Some(Action::TabSet),
+            (None, Some(2)) => Some(Action::TabClearCurrent),
+            (None, Some(5)) => Some(Action::TabClearAll),
+            (Some(b'?'), Some(5)) => Some(Action::TabReset),
+            (Some(_), _) | (None, Some(_)) => None,
         }
     }
 }
@@ -355,7 +376,11 @@ mod tests {
                 | Action::TabClearAll
                 | Action::TabReset
                 | Action::Index
-                | Action::NextLine => None,
+                | Action::NextLine
+                | Action::CursorUp { .. }
+                | Action::CursorDown { .. }
+                | Action::CursorRight { .. }
+                | Action::CursorLeft { .. } => None,
             })
             .collect()
     }
@@ -878,7 +903,7 @@ mod tests {
         let mut stream = Stream::init();
         let mut handler = RecordingHandler::default();
 
-        next_slice(&mut stream, &mut handler, b"\xf0\x9f\x1b[CA");
+        next_slice(&mut stream, &mut handler, b"\xf0\x9f\x1b[ZA");
 
         assert_eq!(
             print_chars(&handler),
@@ -972,7 +997,7 @@ mod tests {
         let mut stream = Stream::init();
         let mut handler = RecordingHandler::default();
 
-        next_slice(&mut stream, &mut handler, b"A\x1b[CB");
+        next_slice(&mut stream, &mut handler, b"A\x1b[ZB");
 
         assert_eq!(print_chars(&handler), vec!['A', 'B']);
     }
@@ -1099,6 +1124,216 @@ mod tests {
                 ]
             );
         }
+    }
+
+    #[test]
+    fn stream_csi_cardinal_cursor_movement_dispatches_default_count() {
+        for (input, expected) in [
+            (b"A\x1b[AB".as_slice(), Action::CursorUp { count: 1 }),
+            (b"A\x1b[BB".as_slice(), Action::CursorDown { count: 1 }),
+            (b"A\x1b[CB".as_slice(), Action::CursorRight { count: 1 }),
+            (b"A\x1b[DB".as_slice(), Action::CursorLeft { count: 1 }),
+        ] {
+            let mut stream = Stream::init();
+            let mut handler = RecordingHandler::default();
+
+            next_slice(&mut stream, &mut handler, input);
+
+            assert_eq!(
+                actions(&handler),
+                &[
+                    Action::Print { cp: 'A' },
+                    expected,
+                    Action::Print { cp: 'B' },
+                ]
+            );
+        }
+    }
+
+    #[test]
+    fn stream_csi_cursor_movement_aliases_dispatch_actions() {
+        for (input, expected) in [
+            (b"\x1b[kA".as_slice(), Action::CursorUp { count: 1 }),
+            (b"\x1b[aA".as_slice(), Action::CursorRight { count: 1 }),
+            (b"\x1b[jA".as_slice(), Action::CursorLeft { count: 1 }),
+        ] {
+            let mut stream = Stream::init();
+            let mut handler = RecordingHandler::default();
+
+            next_slice(&mut stream, &mut handler, input);
+
+            assert_eq!(actions(&handler), &[expected, Action::Print { cp: 'A' }]);
+        }
+    }
+
+    #[test]
+    fn stream_csi_cursor_movement_dispatches_explicit_and_zero_counts() {
+        for (input, expected) in [
+            (b"\x1b[5CA".as_slice(), Action::CursorRight { count: 5 }),
+            (b"\x1b[0CA".as_slice(), Action::CursorRight { count: 1 }),
+            (b"\x1b[12AA".as_slice(), Action::CursorUp { count: 12 }),
+            (b"\x1b[0DA".as_slice(), Action::CursorLeft { count: 1 }),
+        ] {
+            let mut stream = Stream::init();
+            let mut handler = RecordingHandler::default();
+
+            next_slice(&mut stream, &mut handler, input);
+
+            assert_eq!(actions(&handler), &[expected, Action::Print { cp: 'A' }]);
+        }
+    }
+
+    #[test]
+    fn stream_csi_cursor_movement_saturates_overflowing_count() {
+        let mut stream = Stream::init();
+        let mut handler = RecordingHandler::default();
+
+        next_slice(
+            &mut stream,
+            &mut handler,
+            b"\x1b[999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999CA",
+        );
+
+        assert_eq!(
+            actions(&handler),
+            &[
+                Action::CursorRight { count: u16::MAX },
+                Action::Print { cp: 'A' },
+            ]
+        );
+    }
+
+    #[test]
+    fn stream_split_csi_cursor_movement_dispatches_actions() {
+        for (first, second, expected) in [
+            (
+                b"\x1b[".as_slice(),
+                b"AA".as_slice(),
+                Action::CursorUp { count: 1 },
+            ),
+            (
+                b"\x1b[5".as_slice(),
+                b"BA".as_slice(),
+                Action::CursorDown { count: 5 },
+            ),
+            (
+                b"\x1b[12".as_slice(),
+                b"CA".as_slice(),
+                Action::CursorRight { count: 12 },
+            ),
+            (
+                b"\x1b[0".as_slice(),
+                b"DA".as_slice(),
+                Action::CursorLeft { count: 1 },
+            ),
+        ] {
+            let mut stream = Stream::init();
+            let mut handler = RecordingHandler::default();
+
+            next_slice(&mut stream, &mut handler, first);
+            assert!(actions(&handler).is_empty());
+            next_slice(&mut stream, &mut handler, second);
+
+            assert_eq!(actions(&handler), &[expected, Action::Print { cp: 'A' }]);
+        }
+    }
+
+    #[test]
+    fn stream_pending_utf8_replacement_dispatches_before_csi_cursor_movement() {
+        for (input, expected) in [
+            (b"\xf0\x9f\x1b[AA".as_slice(), Action::CursorUp { count: 1 }),
+            (
+                b"\xf0\x9f\x1b[BA".as_slice(),
+                Action::CursorDown { count: 1 },
+            ),
+            (
+                b"\xf0\x9f\x1b[CA".as_slice(),
+                Action::CursorRight { count: 1 },
+            ),
+            (
+                b"\xf0\x9f\x1b[DA".as_slice(),
+                Action::CursorLeft { count: 1 },
+            ),
+        ] {
+            let mut stream = Stream::init();
+            let mut handler = RecordingHandler::default();
+
+            next_slice(&mut stream, &mut handler, input);
+
+            assert_eq!(
+                actions(&handler),
+                &[
+                    Action::Print {
+                        cp: char::REPLACEMENT_CHARACTER,
+                    },
+                    expected,
+                    Action::Print { cp: 'A' },
+                ]
+            );
+        }
+    }
+
+    #[test]
+    fn stream_pending_utf8_replacement_dispatches_before_split_csi_cursor_movement() {
+        let mut stream = Stream::init();
+        let mut handler = RecordingHandler::default();
+
+        next_slice(&mut stream, &mut handler, b"\xf0\x9f\x1b[");
+        assert_eq!(
+            actions(&handler),
+            &[Action::Print {
+                cp: char::REPLACEMENT_CHARACTER,
+            }]
+        );
+
+        next_slice(&mut stream, &mut handler, b"CA");
+
+        assert_eq!(
+            actions(&handler),
+            &[
+                Action::Print {
+                    cp: char::REPLACEMENT_CHARACTER,
+                },
+                Action::CursorRight { count: 1 },
+                Action::Print { cp: 'A' },
+            ]
+        );
+    }
+
+    #[test]
+    fn stream_unsupported_csi_cursor_variants_do_not_dispatch_actions() {
+        for input in [
+            b"\x1b[?3CA".as_slice(),
+            b"\x1b[>3CA".as_slice(),
+            b"\x1b[5;4CA".as_slice(),
+            b"\x1b[ CA".as_slice(),
+            b"\x1b[?AA".as_slice(),
+        ] {
+            let mut stream = Stream::init();
+            let mut handler = RecordingHandler::default();
+
+            next_slice(&mut stream, &mut handler, input);
+
+            assert_eq!(actions(&handler), &[Action::Print { cp: 'A' }]);
+        }
+    }
+
+    #[test]
+    fn stream_raw_c1_csi_byte_does_not_dispatch_cursor_actions() {
+        let mut stream = Stream::init();
+        let mut handler = RecordingHandler::default();
+
+        next_slice(&mut stream, &mut handler, &[0x9b, b'A']);
+
+        assert_eq!(
+            actions(&handler),
+            &[
+                Action::Print {
+                    cp: char::REPLACEMENT_CHARACTER,
+                },
+                Action::Print { cp: 'A' },
+            ]
+        );
     }
 
     #[test]
@@ -1264,7 +1499,29 @@ mod tests {
                 | Action::TabClearCurrent
                 | Action::TabClearAll
                 | Action::TabReset => unreachable!("loop only uses D/E actions"),
+                Action::CursorUp { .. }
+                | Action::CursorDown { .. }
+                | Action::CursorRight { .. }
+                | Action::CursorLeft { .. } => unreachable!("loop only uses D/E actions"),
             };
+
+            assert_eq!(stream.next_slice(input, &mut handler), Err(()));
+            stream.next_slice(b"A", &mut handler).unwrap();
+
+            assert_eq!(handler.actions, &[Action::Print { cp: 'A' }]);
+        }
+    }
+
+    #[test]
+    fn stream_csi_cursor_actions_restore_ground_before_handler_error() {
+        for (input, fail) in [
+            (b"\x1b[A".as_slice(), Action::CursorUp { count: 1 }),
+            (b"\x1b[B".as_slice(), Action::CursorDown { count: 1 }),
+            (b"\x1b[C".as_slice(), Action::CursorRight { count: 1 }),
+            (b"\x1b[D".as_slice(), Action::CursorLeft { count: 1 }),
+        ] {
+            let mut stream = Stream::init();
+            let mut handler = ErrorOnActionHandler::new(fail);
 
             assert_eq!(stream.next_slice(input, &mut handler), Err(()));
             stream.next_slice(b"A", &mut handler).unwrap();
@@ -1306,7 +1563,7 @@ mod tests {
         let mut stream = Stream::init();
         let mut handler = RecordingHandler::default();
 
-        next_slice(&mut stream, &mut handler, b"\xffA\x1b[CB");
+        next_slice(&mut stream, &mut handler, b"\xffA\x1b[ZB");
 
         assert_eq!(
             print_chars(&handler),
