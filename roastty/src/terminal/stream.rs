@@ -20,7 +20,7 @@ pub(super) trait Handler {
 enum EscapeState {
     Ground,
     Escape,
-    Csi,
+    Csi(CsiState),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -40,6 +40,18 @@ struct Utf8Decoder {
 struct DecodeResult {
     cp: Option<char>,
     consumed: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct CsiState {
+    tab_set: CsiTabSetState,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CsiTabSetState {
+    NoParams,
+    Param(u16),
+    Invalid,
 }
 
 impl Stream {
@@ -65,10 +77,7 @@ impl Stream {
         match self.escape {
             EscapeState::Ground => self.next_ground(byte, handler),
             EscapeState::Escape => self.next_escape(byte, handler),
-            EscapeState::Csi => {
-                self.next_csi(byte);
-                Ok(())
-            }
+            EscapeState::Csi(state) => self.next_csi(byte, state, handler),
         }
     }
 
@@ -101,7 +110,7 @@ impl Stream {
     fn next_escape<H: Handler>(&mut self, byte: u8, handler: &mut H) -> Result<(), H::Error> {
         match byte {
             b'[' => {
-                self.escape = EscapeState::Csi;
+                self.escape = EscapeState::Csi(CsiState::new());
                 Ok(())
             }
             b'H' => {
@@ -115,10 +124,23 @@ impl Stream {
         }
     }
 
-    fn next_csi(&mut self, byte: u8) {
+    fn next_csi<H: Handler>(
+        &mut self,
+        byte: u8,
+        mut state: CsiState,
+        handler: &mut H,
+    ) -> Result<(), H::Error> {
         if (0x40..=0x7e).contains(&byte) {
             self.escape = EscapeState::Ground;
+            if byte == b'W' && state.dispatches_tab_set() {
+                return handler.vt(Action::TabSet);
+            }
+            return Ok(());
         }
+
+        state.push(byte);
+        self.escape = EscapeState::Csi(state);
+        Ok(())
     }
 
     fn next_utf8<H: Handler>(&mut self, byte: u8, handler: &mut H) -> Result<(), H::Error> {
@@ -128,6 +150,38 @@ impl Stream {
         }
         debug_assert!(result.consumed);
         Ok(())
+    }
+}
+
+impl CsiState {
+    const fn new() -> Self {
+        Self {
+            tab_set: CsiTabSetState::NoParams,
+        }
+    }
+
+    fn push(&mut self, byte: u8) {
+        self.tab_set.push(byte);
+    }
+
+    fn dispatches_tab_set(&self) -> bool {
+        matches!(
+            self.tab_set,
+            CsiTabSetState::NoParams | CsiTabSetState::Param(0)
+        )
+    }
+}
+
+impl CsiTabSetState {
+    fn push(&mut self, byte: u8) {
+        *self = match (*self, byte) {
+            (Self::NoParams, b'0'..=b'9') => Self::Param(u16::from(byte - b'0')),
+            (Self::Param(value), b'0'..=b'9') => value
+                .checked_mul(10)
+                .and_then(|value| value.checked_add(u16::from(byte - b'0')))
+                .map_or(Self::Invalid, Self::Param),
+            _ => Self::Invalid,
+        };
     }
 }
 
@@ -710,15 +764,156 @@ mod tests {
     }
 
     #[test]
-    fn stream_csi_w_sequences_remain_unsupported() {
-        for input in [b"\x1b[W".as_slice(), b"\x1b[0W".as_slice()] {
+    fn stream_csi_w_dispatches_tab_set_action() {
+        let mut stream = Stream::init();
+        let mut handler = RecordingHandler::default();
+
+        next_slice(&mut stream, &mut handler, b"A\x1b[WB");
+
+        assert_eq!(
+            actions(&handler),
+            &[
+                Action::Print { cp: 'A' },
+                Action::TabSet,
+                Action::Print { cp: 'B' },
+            ]
+        );
+    }
+
+    #[test]
+    fn stream_csi_zero_w_dispatches_tab_set_action() {
+        let mut stream = Stream::init();
+        let mut handler = RecordingHandler::default();
+
+        next_slice(&mut stream, &mut handler, b"A\x1b[0WB");
+
+        assert_eq!(
+            actions(&handler),
+            &[
+                Action::Print { cp: 'A' },
+                Action::TabSet,
+                Action::Print { cp: 'B' },
+            ]
+        );
+    }
+
+    #[test]
+    fn stream_split_csi_w_dispatches_tab_set_action() {
+        let mut stream = Stream::init();
+        let mut handler = RecordingHandler::default();
+
+        next_slice(&mut stream, &mut handler, b"A\x1b[");
+        assert_eq!(actions(&handler), &[Action::Print { cp: 'A' }]);
+        next_slice(&mut stream, &mut handler, b"WB");
+
+        assert_eq!(
+            actions(&handler),
+            &[
+                Action::Print { cp: 'A' },
+                Action::TabSet,
+                Action::Print { cp: 'B' },
+            ]
+        );
+    }
+
+    #[test]
+    fn stream_split_csi_zero_w_dispatches_tab_set_action() {
+        let mut stream = Stream::init();
+        let mut handler = RecordingHandler::default();
+
+        next_slice(&mut stream, &mut handler, b"A\x1b[0");
+        assert_eq!(actions(&handler), &[Action::Print { cp: 'A' }]);
+        next_slice(&mut stream, &mut handler, b"WB");
+
+        assert_eq!(
+            actions(&handler),
+            &[
+                Action::Print { cp: 'A' },
+                Action::TabSet,
+                Action::Print { cp: 'B' },
+            ]
+        );
+    }
+
+    #[test]
+    fn stream_pending_utf8_replacement_dispatches_before_csi_w_tab_set() {
+        let mut stream = Stream::init();
+        let mut handler = RecordingHandler::default();
+
+        next_slice(&mut stream, &mut handler, b"\xf0\x9f\x1b[WA");
+
+        assert_eq!(
+            actions(&handler),
+            &[
+                Action::Print {
+                    cp: char::REPLACEMENT_CHARACTER,
+                },
+                Action::TabSet,
+                Action::Print { cp: 'A' },
+            ]
+        );
+    }
+
+    #[test]
+    fn stream_pending_utf8_replacement_dispatches_before_split_csi_w_tab_set() {
+        let mut stream = Stream::init();
+        let mut handler = RecordingHandler::default();
+
+        next_slice(&mut stream, &mut handler, b"\xf0\x9f\x1b[");
+        assert_eq!(
+            actions(&handler),
+            &[Action::Print {
+                cp: char::REPLACEMENT_CHARACTER,
+            }]
+        );
+
+        next_slice(&mut stream, &mut handler, b"WA");
+
+        assert_eq!(
+            actions(&handler),
+            &[
+                Action::Print {
+                    cp: char::REPLACEMENT_CHARACTER,
+                },
+                Action::TabSet,
+                Action::Print { cp: 'A' },
+            ]
+        );
+    }
+
+    #[test]
+    fn stream_unsupported_csi_w_variants_do_not_dispatch_tab_set() {
+        for input in [
+            b"\x1b[>WA".as_slice(),
+            b"\x1b[?WA".as_slice(),
+            b"\x1b[99WA".as_slice(),
+            b"\x1b[1WA".as_slice(),
+            b"\x1b[0;0WA".as_slice(),
+            b"\x1b[2WA".as_slice(),
+            b"\x1b[5WA".as_slice(),
+            b"\x1b[?5WA".as_slice(),
+        ] {
             let mut stream = Stream::init();
             let mut handler = RecordingHandler::default();
 
             next_slice(&mut stream, &mut handler, input);
 
-            assert!(actions(&handler).is_empty());
+            assert_eq!(actions(&handler), &[Action::Print { cp: 'A' }]);
         }
+    }
+
+    #[test]
+    fn stream_overflowing_csi_w_parameter_does_not_dispatch_tab_set() {
+        let mut stream = Stream::init();
+        let mut handler = RecordingHandler::default();
+
+        next_slice(
+            &mut stream,
+            &mut handler,
+            b"\x1b[999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999WZ",
+        );
+
+        assert_eq!(actions(&handler), &[Action::Print { cp: 'Z' }]);
     }
 
     #[derive(Debug, Default)]
@@ -745,6 +940,17 @@ mod tests {
         let mut handler = ErrorOnTabSetHandler::default();
 
         assert_eq!(stream.next_slice(b"\x1bH", &mut handler), Err(()));
+        stream.next_slice(b"A", &mut handler).unwrap();
+
+        assert_eq!(handler.actions, &[Action::Print { cp: 'A' }]);
+    }
+
+    #[test]
+    fn stream_csi_w_restores_ground_before_handler_error() {
+        let mut stream = Stream::init();
+        let mut handler = ErrorOnTabSetHandler::default();
+
+        assert_eq!(stream.next_slice(b"\x1b[W", &mut handler), Err(()));
         stream.next_slice(b"A", &mut handler).unwrap();
 
         assert_eq!(handler.actions, &[Action::Print { cp: 'A' }]);

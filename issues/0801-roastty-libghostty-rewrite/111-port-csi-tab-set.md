@@ -198,3 +198,107 @@ Clean design re-review artifacts:
 - Result: `logs/codex-review/20260601-021944-123196-last-message.md`
 
 Codex found no remaining blockers and approved implementation.
+
+## Result
+
+**Result:** Pass.
+
+Implemented the upstream-compatible CSI tab-set forms:
+
+- `CSI W`
+- `CSI 0 W`
+
+CSI tracking shape:
+
+- `EscapeState::Csi` now carries a small private `CsiState`.
+- `CsiState` only tracks enough parameter state to decide whether CSI final `W`
+  should dispatch the existing private `Action::TabSet`.
+- The accepted parameter states are empty params and a single numeric parameter
+  whose parsed value is zero.
+- Numeric parameters are parsed into `u16` with checked arithmetic, so
+  overflowing numeric parameters become invalid instead of accidentally
+  dispatching tab-set.
+- Unsupported CSI finals are still consumed and ignored.
+- No public CSI parser API was added.
+
+Accepted and rejected CSI `W` forms:
+
+- Accepted: `CSI W`, `CSI 0 W`, and zero-valued numeric spellings such as
+  `CSI 00 W`.
+- Rejected in this experiment: private-marker forms (`CSI > W`, `CSI ? W`),
+  non-zero params (`CSI 1 W`, `CSI 99 W`), multiple params (`CSI 0 ; 0 W`),
+  overflowing numeric params, and the deferred upstream neighbor forms
+  `CSI 2 W`, `CSI 5 W`, and `CSI ? 5 W`.
+- Rejected forms do not dispatch `TabSet` or any new action, and the parser
+  recovers for the next printable byte.
+
+Stream parser behavior:
+
+- `A\x1b[WB` dispatches print, tab-set, print.
+- `A\x1b[0WB` dispatches print, tab-set, print.
+- Split-feed `CSI W` and `CSI 0 W` dispatch the same `TabSet` action.
+- Pending invalid UTF-8 dispatches `U+FFFD` before same-slice and split-feed CSI
+  tab-set.
+- The parser returns to ground before invoking the handler for CSI tab-set, so a
+  handler error cannot leave it stuck in CSI state.
+- Existing unsupported CSI no-leak behavior remains intact.
+
+Terminal tabstop behavior:
+
+- `CSI W` sets a tabstop at the active cursor column.
+- `CSI 0 W` sets a tabstop at the active cursor column.
+- A later `HT` can use the tabstop set by `CSI W`.
+- CSI tab-set leaves cursor position unchanged.
+- CSI tab-set leaves pending wrap unchanged, including at the right edge.
+- CSI tab-set does not dirty rows or modify cells by itself.
+
+This experiment did not implement tab clear/reset (`CSI 2 W`, `CSI 5 W`,
+`CSI ? 5 W`), horizontal-tab-back, margins, origin mode, no-scrollback rotation,
+styles, hyperlinks, wide/Unicode handling, public API, or public ABI.
+
+Verification run:
+
+```text
+cargo fmt
+cargo test -p roastty stream
+cargo test -p roastty terminal_formatter
+cargo test -p roastty terminal::terminal
+cargo test -p roastty screen_formatter
+cargo test -p roastty page_string
+cargo test -p roastty terminal::page_list
+cargo test -p roastty
+```
+
+Results:
+
+- `cargo fmt` passed.
+- `cargo test -p roastty stream` passed 152 tests.
+- `cargo test -p roastty terminal_formatter` passed 67 tests.
+- `cargo test -p roastty terminal::terminal` passed 124 tests.
+- `cargo test -p roastty screen_formatter` passed 55 tests.
+- `cargo test -p roastty page_string` passed 12 tests.
+- `cargo test -p roastty terminal::page_list` passed 524 tests.
+- Full `cargo test -p roastty` passed 1053 unit tests, the ABI harness, and
+  doc-tests.
+
+Codex design review passed after the missing negative-test requirements for
+deferred `W` forms and overflow recovery were added.
+
+Result-review artifacts:
+
+- Prompt: `logs/codex-review/20260601-022357-598766-prompt.md`
+- Result: `logs/codex-review/20260601-022357-598766-last-message.md`
+
+Codex found no implementation or result-text findings and approved the result
+for commit.
+
+## Conclusion
+
+Roastty now supports Ghostty's basic CSI cursor-tabulation-control tab-set path.
+Applications can set a tabstop with either `ESC H`, `CSI W`, or `CSI 0 W`, and
+the same existing `HT` movement consumes that tabstop state.
+
+The next tabstop experiment should likely cover tab clear/reset forms
+(`CSI 2 W`, `CSI 5 W`, and `CSI ? 5 W`) as their own reviewed slice, because
+they introduce new actions and mutation behavior beyond setting the active
+cursor column.
