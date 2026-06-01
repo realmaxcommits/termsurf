@@ -193,3 +193,64 @@ implementation:
 
 Those requirements are incorporated above. Follow-up Codex review approved the
 updated design for implementation with no remaining blockers.
+
+## Result
+
+**Result:** Pass
+
+Roastty now has private PageList-local word-selection helpers in
+`roastty/src/terminal/page_list.rs`:
+
+- `PageList::select_word`
+- `PageList::select_word_between`
+
+Both helpers return untracked, non-rectangular `selection::Selection` values and
+remain private to the terminal implementation. No full `SelectionGesture`,
+press/release state, line selection, output selection, Screen, Terminal, public
+C ABI, renderer, parser, app, platform input, autoscroll, deep-press, or mouse
+event behavior was added.
+
+Coverage added:
+
+- upstream `selectWord` basic cases for start/middle/end clicks inside a word;
+- upstream whitespace and single-whitespace boundary-run cases;
+- empty/unwritten cell cases returning `None`;
+- end-of-written-screen content selection;
+- soft-wrapped non-boundary word selection across rows;
+- soft-wrapped whitespace boundary-run selection across rows;
+- hard row-boundary stops;
+- all upstream default punctuation boundary characters, including the current
+  upstream behavior where clicking the boundary character selects the
+  surrounding boundary run;
+- focused `select_word` invalid and garbage pin checks;
+- focused `select_word_between` forward, backward, equal start/end inclusive,
+  empty-cell scan, no-match, invalid-pin, and garbage-pin checks.
+
+Verification passed:
+
+```bash
+cargo fmt
+cargo test -p roastty select_word
+cargo test -p roastty terminal::page_list
+cargo test -p roastty
+```
+
+The targeted word-selection run passed 8 tests. The PageList run passed 354
+tests. The full Roastty run passed 647 unit tests, the ABI harness, and
+doctests.
+
+Codex result review found no code blockers. Its only findings were that this
+result/conclusion and the README status still needed to be recorded, which this
+section and the README update complete.
+
+## Conclusion
+
+Experiment 74 successfully ports upstream word selection into Roastty's current
+PageList model. Word selection can now classify boundary and non-boundary text,
+cross soft-wrapped rows, stop at hard row boundaries, skip empty cells when
+searching between two pins, and preserve upstream's nearest-to-start
+`selectWordBetween` behavior.
+
+The next experiment can continue the selection stack by porting the next
+content-aware selection slice, most likely line selection, before higher-level
+word/line drag gesture behavior is wired together.

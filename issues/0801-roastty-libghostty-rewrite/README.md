@@ -262,7 +262,7 @@ No experiment may proceed to the next stage until the required review passes.
   — **Pass**
 - [Experiment 73: Port Cell Drag Selection](73-port-cell-drag-selection.md) —
   **Pass**
-- [Experiment 74: Port Word Selection](74-port-word-selection.md) — **Designed**
+- [Experiment 74: Port Word Selection](74-port-word-selection.md) — **Pass**
 
 ## Non-Goals
 

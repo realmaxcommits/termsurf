@@ -3309,6 +3309,121 @@ impl PageList {
         self.pin_at_absolute_row(target_row, target_x, pin.garbage)
     }
 
+    fn select_word(&self, pin: Pin, boundary_codepoints: &[u32]) -> Option<selection::Selection> {
+        if pin.garbage || !self.pin_is_valid(&pin) {
+            return None;
+        }
+
+        let start_cell = self.pin_cell(pin)?;
+        if !start_cell.has_text() {
+            return None;
+        }
+
+        let expect_boundary = boundary_codepoints.contains(&start_cell.codepoint());
+
+        let end = {
+            let mut it = self.cell_iterator_from_pin(Direction::RightDown, pin, None);
+            let mut prev = it.next()?;
+            let mut end = prev;
+            for next in it {
+                let node = self.node_for_pin(&next)?;
+                let row = node.page.get_row(next.y as usize);
+                let cell = self.pin_cell(next)?;
+
+                if !cell.has_text() {
+                    end = prev;
+                    break;
+                }
+
+                let this_boundary = boundary_codepoints.contains(&cell.codepoint());
+                if this_boundary != expect_boundary {
+                    end = prev;
+                    break;
+                }
+
+                if next.x == node.page.size_cols() - 1 && !row.wrap() {
+                    end = next;
+                    break;
+                }
+
+                prev = next;
+                end = next;
+            }
+            end
+        };
+
+        let start = {
+            let mut it = self.cell_iterator_from_pin(Direction::LeftUp, pin, None);
+            let mut prev = it.next()?;
+            let mut start = prev;
+            for next in it {
+                let node = self.node_for_pin(&next)?;
+                let row = node.page.get_row(next.y as usize);
+
+                if next.x == node.page.size_cols() - 1 && !row.wrap() {
+                    start = prev;
+                    break;
+                }
+
+                let cell = self.pin_cell(next)?;
+                if !cell.has_text() {
+                    start = prev;
+                    break;
+                }
+
+                let this_boundary = boundary_codepoints.contains(&cell.codepoint());
+                if this_boundary != expect_boundary {
+                    start = prev;
+                    break;
+                }
+
+                prev = next;
+                start = next;
+            }
+            start
+        };
+
+        Some(selection::Selection::new(start, end, false))
+    }
+
+    fn select_word_between(
+        &self,
+        start: Pin,
+        end: Pin,
+        boundary_codepoints: &[u32],
+    ) -> Option<selection::Selection> {
+        if start.garbage || end.garbage || !self.pin_is_valid(&start) || !self.pin_is_valid(&end) {
+            return None;
+        }
+
+        let direction = if self.pin_before(start, end).unwrap_or(false) {
+            Direction::RightDown
+        } else {
+            Direction::LeftUp
+        };
+
+        for pin in self.cell_iterator_from_pin(direction, start, Some(end)) {
+            match direction {
+                Direction::RightDown => {
+                    if self.pin_before(end, pin).unwrap_or(true) {
+                        return None;
+                    }
+                }
+                Direction::LeftUp => {
+                    if self.pin_before(pin, end).unwrap_or(true) {
+                        return None;
+                    }
+                }
+            }
+
+            if let Some(selection) = self.select_word(pin, boundary_codepoints) {
+                return Some(selection);
+            }
+        }
+
+        None
+    }
+
     fn drag_selection(
         &self,
         click_pin: Pin,
@@ -3457,7 +3572,7 @@ fn init_pages(
 mod tests {
     use super::*;
     use crate::terminal::page::{page_layout, Cell, HyperlinkSnapshot, HyperlinkSnapshotId, Wide};
-    use crate::terminal::{hyperlink, selection, style};
+    use crate::terminal::{hyperlink, selection, selection_codepoints, style};
 
     fn simulate_history(list: &mut PageList, total_rows: CellCountInt) {
         list.pages[0].page.set_size_rows(total_rows);
@@ -3545,6 +3660,15 @@ mod tests {
                 );
             }
         }
+    }
+
+    fn set_screen_row_wrap(list: &mut PageList, y: u32, wrap: bool) {
+        let pin = screen_pin(list, 0, y);
+        let index = list.node_index(pin.node).expect("screen node must exist");
+        list.pages[index]
+            .page
+            .get_row_mut(pin.y as usize)
+            .set_wrap(wrap);
     }
 
     fn assert_selection_screen_points(
@@ -3667,6 +3791,40 @@ mod tests {
             ),
             None
         );
+    }
+
+    fn assert_word_selection(
+        list: &PageList,
+        pin: (CellCountInt, u32),
+        start: (CellCountInt, u32),
+        end: (CellCountInt, u32),
+    ) {
+        let selection = list
+            .select_word(
+                screen_pin(list, pin.0, pin.1),
+                selection_codepoints::DEFAULT_WORD_BOUNDARIES,
+            )
+            .expect("word selection must exist");
+        assert!(!selection.rectangle());
+        assert_selection_screen_points(list, selection, start, end);
+    }
+
+    fn assert_word_between_selection(
+        list: &PageList,
+        scan_start: (CellCountInt, u32),
+        scan_end: (CellCountInt, u32),
+        start: (CellCountInt, u32),
+        end: (CellCountInt, u32),
+    ) {
+        let selection = list
+            .select_word_between(
+                screen_pin(list, scan_start.0, scan_start.1),
+                screen_pin(list, scan_end.0, scan_end.1),
+                selection_codepoints::DEFAULT_WORD_BOUNDARIES,
+            )
+            .expect("word-between selection must exist");
+        assert!(!selection.rectangle());
+        assert_selection_screen_points(list, selection, start, end);
     }
 
     fn page_cell(page: &Page, x: usize, y: usize) -> Cell {
@@ -11699,6 +11857,174 @@ mod tests {
             .is_none());
         assert!(list
             .drag_selection(valid, garbage, 35, 45, false, geometry)
+            .is_none());
+    }
+
+    #[test]
+    fn select_word_matches_upstream_basic_cases() {
+        let mut list = PageList::init(10, 10, None).unwrap();
+        set_screen_text_lines(&mut list, &["ABC  DEF", " 123", "456"]);
+
+        assert_word_selection(&list, (0, 0), (0, 0), (2, 0));
+        assert_word_selection(&list, (2, 0), (0, 0), (2, 0));
+        assert_word_selection(&list, (1, 0), (0, 0), (2, 0));
+        assert_word_selection(&list, (3, 0), (3, 0), (4, 0));
+        assert_word_selection(&list, (0, 1), (0, 1), (0, 1));
+        assert_word_selection(&list, (1, 2), (0, 2), (2, 2));
+        assert!(list
+            .select_word(
+                screen_pin(&list, 9, 0),
+                selection_codepoints::DEFAULT_WORD_BOUNDARIES,
+            )
+            .is_none());
+        assert!(list
+            .select_word(
+                screen_pin(&list, 0, 5),
+                selection_codepoints::DEFAULT_WORD_BOUNDARIES,
+            )
+            .is_none());
+    }
+
+    #[test]
+    fn select_word_crosses_soft_wrap_like_upstream() {
+        let mut list = PageList::init(5, 10, None).unwrap();
+        set_screen_text_lines(&mut list, &[" 1234", "012", " 123"]);
+        set_screen_row_wrap(&mut list, 0, true);
+
+        assert_word_selection(&list, (1, 0), (1, 0), (2, 1));
+        assert_word_selection(&list, (1, 1), (1, 0), (2, 1));
+        assert_word_selection(&list, (3, 0), (1, 0), (2, 1));
+    }
+
+    #[test]
+    fn select_word_whitespace_crosses_soft_wrap_like_upstream() {
+        let mut list = PageList::init(5, 10, None).unwrap();
+        set_screen_text_lines(&mut list, &["1    ", "   1", " 123"]);
+        set_screen_row_wrap(&mut list, 0, true);
+
+        assert_word_selection(&list, (1, 0), (1, 0), (2, 1));
+        assert_word_selection(&list, (1, 1), (1, 0), (2, 1));
+        assert_word_selection(&list, (3, 0), (1, 0), (2, 1));
+    }
+
+    #[test]
+    fn select_word_stops_at_hard_row_boundaries() {
+        let mut list = PageList::init(5, 10, None).unwrap();
+        set_screen_text_lines(&mut list, &["12345", "678"]);
+
+        assert_word_selection(&list, (1, 0), (0, 0), (4, 0));
+        assert_word_selection(&list, (1, 1), (0, 1), (2, 1));
+    }
+
+    #[test]
+    fn select_word_matches_upstream_character_boundaries() {
+        let cases = [
+            " 'abc' ",
+            " \"abc\" ",
+            " │abc│ ",
+            " `abc` ",
+            " |abc| ",
+            " :abc: ",
+            " ;abc; ",
+            " ,abc, ",
+            " (abc( ",
+            " )abc) ",
+            " [abc[ ",
+            " ]abc] ",
+            " {abc{ ",
+            " }abc} ",
+            " <abc< ",
+            " >abc> ",
+            " $abc$ ",
+        ];
+
+        for case in cases {
+            let mut list = PageList::init(20, 10, None).unwrap();
+            set_screen_text_lines(&mut list, &[case, "123"]);
+
+            assert_word_selection(&list, (2, 0), (2, 0), (4, 0));
+            assert_word_selection(&list, (4, 0), (2, 0), (4, 0));
+            assert_word_selection(&list, (3, 0), (2, 0), (4, 0));
+            assert_word_selection(&list, (1, 0), (0, 0), (1, 0));
+        }
+    }
+
+    #[test]
+    fn select_word_rejects_invalid_or_garbage_pins() {
+        let mut list = PageList::init(10, 5, None).unwrap();
+        let other = PageList::init(10, 5, None).unwrap();
+        set_screen_text_lines(&mut list, &["hello"]);
+        let invalid = Pin::new(other.first_node_ptr(), 0, 0);
+        let mut garbage = screen_pin(&list, 0, 0);
+        garbage.garbage = true;
+
+        assert!(list
+            .select_word(invalid, selection_codepoints::DEFAULT_WORD_BOUNDARIES)
+            .is_none());
+        assert!(list
+            .select_word(garbage, selection_codepoints::DEFAULT_WORD_BOUNDARIES)
+            .is_none());
+    }
+
+    #[test]
+    fn select_word_between_finds_nearest_word_in_direction() {
+        let mut list = PageList::init(10, 3, None).unwrap();
+        set_screen_cell(&mut list, 3, 0, 'a');
+        set_screen_cell(&mut list, 4, 0, 'b');
+        set_screen_cell(&mut list, 5, 0, 'c');
+        set_screen_cell(&mut list, 7, 0, 'd');
+        set_screen_cell(&mut list, 8, 0, 'e');
+        set_screen_cell(&mut list, 9, 0, 'f');
+
+        assert_word_between_selection(&list, (0, 0), (9, 0), (3, 0), (5, 0));
+        assert_word_between_selection(&list, (9, 0), (0, 0), (7, 0), (9, 0));
+        assert_word_between_selection(&list, (4, 0), (4, 0), (3, 0), (5, 0));
+        assert!(list
+            .select_word_between(
+                screen_pin(&list, 0, 1),
+                screen_pin(&list, 9, 1),
+                selection_codepoints::DEFAULT_WORD_BOUNDARIES,
+            )
+            .is_none());
+    }
+
+    #[test]
+    fn select_word_between_rejects_invalid_or_garbage_pins() {
+        let mut list = PageList::init(10, 5, None).unwrap();
+        let other = PageList::init(10, 5, None).unwrap();
+        set_screen_text_lines(&mut list, &["hello"]);
+        let valid = screen_pin(&list, 0, 0);
+        let invalid = Pin::new(other.first_node_ptr(), 0, 0);
+        let mut garbage = valid;
+        garbage.garbage = true;
+
+        assert!(list
+            .select_word_between(
+                invalid,
+                valid,
+                selection_codepoints::DEFAULT_WORD_BOUNDARIES
+            )
+            .is_none());
+        assert!(list
+            .select_word_between(
+                valid,
+                invalid,
+                selection_codepoints::DEFAULT_WORD_BOUNDARIES
+            )
+            .is_none());
+        assert!(list
+            .select_word_between(
+                garbage,
+                valid,
+                selection_codepoints::DEFAULT_WORD_BOUNDARIES
+            )
+            .is_none());
+        assert!(list
+            .select_word_between(
+                valid,
+                garbage,
+                selection_codepoints::DEFAULT_WORD_BOUNDARIES
+            )
             .is_none());
     }
 
