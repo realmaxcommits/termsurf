@@ -429,6 +429,8 @@ tests, choose the larger subsystem.
   **Pass**
 - [Experiment 150: Port ESC Cursor State Controls](150-port-esc-cursor-state-controls.md)
   — **Pass**
+- [Experiment 151: Port RIS Full Reset](151-port-ris-full-reset.md) —
+  **Designed**
 
 ## Non-Goals
 
