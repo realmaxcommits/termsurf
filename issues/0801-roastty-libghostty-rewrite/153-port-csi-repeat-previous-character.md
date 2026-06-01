@@ -166,3 +166,64 @@ During implementation planning, the raw-C1 requirement was tightened: raw C1 CSI
 bytes remain out of scope and should preserve existing raw-C1 behavior while
 dispatching no REP action. Codex reviewed and approved that correction with no
 findings.
+
+## Result
+
+**Result:** Pass
+
+Roastty now parses and executes Ghostty's repeat-previous-character control
+(`REP`, `CSI Ps b`).
+
+Implemented:
+
+- added `Action::PrintRepeat { count }`;
+- parsed `CSI b`, `CSI 0 b`, and `CSI n b`;
+- rejected multiple-param, private, intermediate, colon, mixed-separator, and
+  parser-invalid REP forms without leaking the final byte;
+- preserved existing raw-C1 behavior while ensuring raw C1 `0x9b b` dispatches
+  no REP action;
+- added terminal-global `previous_char` state;
+- stored the unmapped printable input character before normal cell printing;
+- repeated `previous_char` through the normal print path with runtime
+  `max(count, 1)` clamping;
+- reset `previous_char` during RIS/full reset;
+- left save/restore cursor as a cursor-state operation that does not restore
+  stale `previous_char`.
+
+The implementation intentionally uses the normal print path for REP, so the
+existing insert mode, wraparound mode, pending wrap, horizontal margins, style,
+hyperlink, charset mapping, and error behavior are reused instead of duplicated.
+
+Verification:
+
+```bash
+cargo fmt
+cargo test -p roastty print_repeat
+cargo test -p roastty repeat_previous
+cargo test -p roastty ris
+cargo test -p roastty
+```
+
+Results:
+
+- `cargo test -p roastty print_repeat`: 12 passed
+- `cargo test -p roastty repeat_previous`: 2 passed
+- `cargo test -p roastty ris`: 4 passed
+- `cargo test -p roastty`: 1686 unit tests passed, 1 ABI harness test passed, 0
+  doc tests
+
+## Conclusion
+
+Experiment 153 completes the previous-character / REP state that RIS explicitly
+left deferred in Experiment 151. The behavior matches Ghostty's split between
+unmapped previous input and mapped printed cells: REP repeats the saved input
+character through whatever print state is active at repeat time.
+
+The next experiment can continue with another terminal-control slice. Remaining
+reset-deferred areas include alternate-screen storage, status-display state, and
+Kitty graphics.
+
+## Result Review
+
+Codex reviewed the completed implementation, result text, verification counts,
+and diff. It reported no findings and approved the result for commit.

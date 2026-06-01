@@ -42,6 +42,7 @@ pub(super) struct Terminal {
     pwd: TerminalPwd,
     mouse_shape: mouse::MouseShape,
     next_implicit_hyperlink_id: u32,
+    previous_char: Option<char>,
 }
 
 #[derive(Debug)]
@@ -106,6 +107,7 @@ struct TerminalStreamHandler<'a> {
     pwd: &'a mut TerminalPwd,
     mouse_shape: &'a mut mouse::MouseShape,
     next_implicit_hyperlink_id: &'a mut u32,
+    previous_char: &'a mut Option<char>,
     dcs: &'a mut dcs::Handler,
     flags: &'a mut TerminalFlags,
 }
@@ -164,6 +166,7 @@ impl Terminal {
             pwd: TerminalPwd::default(),
             mouse_shape: mouse::MouseShape::Text,
             next_implicit_hyperlink_id: 0,
+            previous_char: None,
         })
     }
 
@@ -182,6 +185,7 @@ impl Terminal {
             pwd,
             mouse_shape,
             next_implicit_hyperlink_id,
+            previous_char,
             flags,
             ..
         } = self;
@@ -197,6 +201,7 @@ impl Terminal {
             pwd,
             mouse_shape,
             next_implicit_hyperlink_id,
+            previous_char,
             dcs,
             flags,
         };
@@ -487,6 +492,7 @@ impl Handler for TerminalStreamHandler<'_> {
     fn vt(&mut self, action: Action) -> Result<(), Self::Error> {
         match action {
             Action::Print { cp } => self.print(cp),
+            Action::PrintRepeat { count } => self.print_repeat(count),
             Action::Enquiry => Ok(()),
             Action::LineFeed => self.line_feed(),
             Action::CarriageReturn => {
@@ -794,6 +800,7 @@ impl TerminalStreamHandler<'_> {
             return Err(TerminalStreamError::UnsupportedCodepoint(cp));
         }
 
+        *self.previous_char = Some(cp);
         self.screen
             .print_basic_cell(
                 self.size.cols,
@@ -805,6 +812,17 @@ impl TerminalStreamHandler<'_> {
                 self.scrolling_region.right,
             )
             .map_err(TerminalStreamError::from)
+    }
+
+    fn print_repeat(&mut self, count: u16) -> Result<(), TerminalStreamError> {
+        let Some(cp) = *self.previous_char else {
+            return Ok(());
+        };
+
+        for _ in 0..count.max(1) {
+            self.print(cp)?;
+        }
+        Ok(())
     }
 
     fn line_feed(&mut self) -> Result<(), TerminalStreamError> {
@@ -883,6 +901,7 @@ impl TerminalStreamHandler<'_> {
         self.pwd.clear();
         *self.dcs = dcs::Handler::new();
         *self.flags = TerminalFlags::default();
+        *self.previous_char = None;
     }
 
     fn configure_charset(&mut self, slot: charsets::CharsetSlot, charset: charsets::Charset) {
@@ -2345,6 +2364,111 @@ mod tests {
 
         terminal.next_slice(b"`").unwrap();
         assert!(terminal.is_dirty_for_tests(0, 0));
+    }
+
+    #[test]
+    fn terminal_stream_print_repeat_without_previous_char_is_noop() {
+        let mut terminal = Terminal::init(10, 2, None).unwrap();
+
+        terminal.clear_dirty_for_tests();
+        terminal.next_slice(b"\x1b[b").unwrap();
+
+        assert_eq!(plain_with_unwrap(&terminal, false), "");
+        assert!(!terminal.is_dirty_for_tests(0, 0));
+        assert!(!terminal.is_dirty_for_tests(9, 1));
+    }
+
+    #[test]
+    fn terminal_stream_print_repeat_uses_default_and_explicit_counts() {
+        for (input, expected) in [
+            (b"A\x1b[b".as_slice(), "AA"),
+            (b"A\x1b[0b".as_slice(), "AA"),
+            (b"A\x1b[3b".as_slice(), "AAAA"),
+        ] {
+            let mut terminal = Terminal::init(10, 2, None).unwrap();
+
+            terminal.next_slice(input).unwrap();
+
+            assert_eq!(plain_with_unwrap(&terminal, false), expected);
+        }
+    }
+
+    #[test]
+    fn terminal_stream_print_repeat_uses_normal_wrap_path() {
+        let mut terminal = Terminal::init(5, 2, None).unwrap();
+
+        terminal.next_slice(b"    A\x1b[b").unwrap();
+
+        assert_eq!(plain_with_unwrap(&terminal, false), "    A\nA");
+    }
+
+    #[test]
+    fn terminal_stream_print_repeat_respects_disabled_wraparound() {
+        let mut terminal = Terminal::init(5, 2, None).unwrap();
+
+        terminal.next_slice(b"\x1b[?7l    A\x1b[3b").unwrap();
+
+        assert_eq!(plain_with_unwrap(&terminal, false), "    A");
+    }
+
+    #[test]
+    fn terminal_stream_print_repeat_uses_current_style_and_hyperlink() {
+        let mut terminal = Terminal::init(10, 2, None).unwrap();
+
+        terminal
+            .next_slice(b"A\x1b[1m\x1b]8;;https://rep\x1b\\\x1b[b")
+            .unwrap();
+
+        assert_eq!(plain_with_unwrap(&terminal, false), "AA");
+        assert_eq!(
+            terminal.active_cell_style_for_tests(0, 0),
+            style::Style::default()
+        );
+        assert!(terminal.active_cell_style_for_tests(1, 0).flags.bold);
+        assert!(!terminal.active_cell_hyperlink_for_tests(0, 0));
+        assert_eq!(
+            terminal
+                .active_cell_hyperlink_snapshot_for_tests(1, 0)
+                .unwrap()
+                .uri,
+            b"https://rep"
+        );
+    }
+
+    #[test]
+    fn terminal_stream_print_repeat_maps_unmapped_char_through_current_charset() {
+        let mut terminal = Terminal::init(10, 2, None).unwrap();
+
+        terminal.next_slice(b"\x1b(0`\x1b(B\x1b[b").unwrap();
+
+        assert_eq!(plain_with_unwrap(&terminal, false), "◆`");
+    }
+
+    #[test]
+    fn terminal_stream_print_repeat_consumes_pending_single_shift_once() {
+        let mut terminal = Terminal::init(10, 2, None).unwrap();
+
+        terminal.next_slice(b"\x1b*0`\x1bN\x1b[b\x1b[b").unwrap();
+
+        assert_eq!(plain_with_unwrap(&terminal, false), "`◆`");
+    }
+
+    #[test]
+    fn terminal_stream_repeat_previous_save_restore_cursor_does_not_restore_previous_char() {
+        let mut terminal = Terminal::init(10, 2, None).unwrap();
+
+        terminal.next_slice(b"A\x1b7B\x1b8\x1b[b").unwrap();
+
+        assert_eq!(plain_with_unwrap(&terminal, false), "AB");
+    }
+
+    #[test]
+    fn terminal_stream_repeat_previous_ris_resets_previous_char() {
+        let mut terminal = Terminal::init(10, 2, None).unwrap();
+
+        terminal.next_slice(b"A\x1bc\x1b[b").unwrap();
+
+        assert_eq!(plain_with_unwrap(&terminal, false), "");
     }
 
     #[test]

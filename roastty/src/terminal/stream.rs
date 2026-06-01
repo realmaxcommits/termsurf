@@ -9,6 +9,9 @@ pub(super) enum Action {
     Print {
         cp: char,
     },
+    PrintRepeat {
+        count: u16,
+    },
     LineFeed,
     CarriageReturn,
     Backspace,
@@ -829,6 +832,10 @@ impl CsiState {
             return CsiDispatch::One(action);
         }
 
+        if let Some(action) = self.print_repeat_action(final_byte) {
+            return CsiDispatch::One(action);
+        }
+
         if final_byte == b'W' {
             return self
                 .tab_action()
@@ -1293,6 +1300,15 @@ impl CsiState {
         } else {
             None
         }
+    }
+
+    fn print_repeat_action(&self, final_byte: u8) -> Option<Action> {
+        if final_byte != b'b' || self.intermediate.is_some() {
+            return None;
+        }
+
+        let count = self.single_param(false)?.unwrap_or(1);
+        Some(Action::PrintRepeat { count })
     }
 }
 
@@ -1777,6 +1793,7 @@ mod tests {
                 | Action::RestoreCursor
                 | Action::ReverseIndex
                 | Action::FullReset
+                | Action::PrintRepeat { .. }
                 | Action::ConfigureCharset { .. }
                 | Action::InvokeCharset { .. }
                 | Action::CursorVisualStyle { .. }
@@ -2405,6 +2422,98 @@ mod tests {
 
             assert_eq!(actions(&handler), &[Action::Print { cp: 'A' }]);
         }
+    }
+
+    #[test]
+    fn stream_csi_print_repeat_dispatches_counts() {
+        for (input, expected) in [
+            (b"\x1b[b".as_slice(), Action::PrintRepeat { count: 1 }),
+            (b"\x1b[0b".as_slice(), Action::PrintRepeat { count: 0 }),
+            (b"\x1b[3b".as_slice(), Action::PrintRepeat { count: 3 }),
+        ] {
+            let mut stream = Stream::init();
+            let mut handler = RecordingHandler::default();
+
+            next_slice(&mut stream, &mut handler, input);
+
+            assert_eq!(actions(&handler), &[expected]);
+        }
+    }
+
+    #[test]
+    fn stream_split_feed_csi_print_repeat_dispatches_action() {
+        let mut stream = Stream::init();
+        let mut handler = RecordingHandler::default();
+
+        next_slice(&mut stream, &mut handler, b"\x1b[");
+        assert_eq!(actions(&handler), &[]);
+        next_slice(&mut stream, &mut handler, b"3bA");
+
+        assert_eq!(
+            actions(&handler),
+            &[Action::PrintRepeat { count: 3 }, Action::Print { cp: 'A' }]
+        );
+    }
+
+    #[test]
+    fn stream_csi_print_repeat_rejects_malformed_forms_without_leaking() {
+        let mut too_many_params = b"A\x1b[1".to_vec();
+        for _ in 0..CSI_PARAM_CAPACITY {
+            too_many_params.extend_from_slice(b";1");
+        }
+        too_many_params.extend_from_slice(b"bB");
+
+        for input in [
+            b"A\x1b[1;2bB".to_vec(),
+            b"A\x1b[;bB".to_vec(),
+            b"A\x1b[3;bB".to_vec(),
+            b"A\x1b[1:2bB".to_vec(),
+            b"A\x1b[1;2:3bB".to_vec(),
+            b"A\x1b[?1bB".to_vec(),
+            b"A\x1b[1 bB".to_vec(),
+            too_many_params,
+        ] {
+            let mut stream = Stream::init();
+            let mut handler = RecordingHandler::default();
+
+            next_slice(&mut stream, &mut handler, &input);
+
+            assert_eq!(
+                actions(&handler),
+                &[Action::Print { cp: 'A' }, Action::Print { cp: 'B' }]
+            );
+        }
+    }
+
+    #[test]
+    fn stream_csi_print_repeat_raw_c1_preserves_existing_behavior() {
+        let mut stream = Stream::init();
+        let mut handler = RecordingHandler::default();
+
+        next_slice(&mut stream, &mut handler, &[b'A', 0x9b, b'b', b'B']);
+
+        assert_eq!(
+            actions(&handler),
+            &[
+                Action::Print { cp: 'A' },
+                Action::Print {
+                    cp: char::REPLACEMENT_CHARACTER,
+                },
+                Action::Print { cp: 'b' },
+                Action::Print { cp: 'B' },
+            ]
+        );
+    }
+
+    #[test]
+    fn stream_csi_print_repeat_restores_ground_before_handler_error() {
+        let mut stream = Stream::init();
+        let mut handler = ErrorOnActionHandler::new(Action::PrintRepeat { count: 1 });
+
+        assert_eq!(stream.next_slice(b"\x1b[b", &mut handler), Err(()));
+        stream.next_slice(b"A", &mut handler).unwrap();
+
+        assert_eq!(handler.actions, &[Action::Print { cp: 'A' }]);
     }
 
     #[test]
@@ -7681,6 +7790,7 @@ mod tests {
                 Action::Index => b"\x1bD".as_slice(),
                 Action::NextLine => b"\x1bE".as_slice(),
                 Action::Print { .. }
+                | Action::PrintRepeat { .. }
                 | Action::Enquiry
                 | Action::LineFeed
                 | Action::CarriageReturn

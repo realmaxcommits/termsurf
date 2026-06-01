@@ -433,7 +433,7 @@ tests, choose the larger subsystem.
 - [Experiment 152: Port Charset Escape Controls](152-port-charset-escape-controls.md)
   — **Pass**
 - [Experiment 153: Port CSI Repeat Previous Character](153-port-csi-repeat-previous-character.md)
-  — **Designed**
+  — **Pass**
 
 ## Non-Goals
 
