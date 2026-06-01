@@ -363,6 +363,14 @@ impl Terminal {
         self.pwd.logical_str()
     }
 
+    pub(crate) fn set_title(&mut self, value: Option<String>) {
+        self.title.text = value.unwrap_or_default();
+    }
+
+    pub(crate) fn set_pwd(&mut self, stored_value: Option<String>) {
+        self.pwd.text = stored_value.unwrap_or_default();
+    }
+
     pub(crate) fn cursor_position(&self) -> (CellCountInt, CellCountInt) {
         self.screens.active().cursor_position()
     }

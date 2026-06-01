@@ -87,6 +87,11 @@ typedef enum {
 } roastty_terminal_screen_e;
 
 typedef enum {
+  ROASTTY_TERMINAL_OPTION_TITLE = 9,
+  ROASTTY_TERMINAL_OPTION_PWD = 10,
+} roastty_terminal_option_e;
+
+typedef enum {
   ROASTTY_BUILD_MODE_DEBUG,
   ROASTTY_BUILD_MODE_RELEASE_SAFE,
   ROASTTY_BUILD_MODE_RELEASE_FAST,
@@ -602,6 +607,9 @@ ROASTTY_API void roastty_terminal_reset(roastty_terminal_t);
 ROASTTY_API roastty_result_e roastty_terminal_vt_write(roastty_terminal_t,
                                                        const uint8_t*,
                                                        size_t);
+ROASTTY_API roastty_result_e roastty_terminal_set(roastty_terminal_t,
+                                                  roastty_terminal_option_e,
+                                                  const void*);
 ROASTTY_API roastty_result_e roastty_terminal_mode_get(roastty_terminal_t,
                                                        roastty_mode_tag_t,
                                                        bool*);

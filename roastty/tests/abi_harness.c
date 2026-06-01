@@ -623,6 +623,8 @@ static void assert_terminal_abi(void) {
   assert(ROASTTY_TERMINAL_DATA_VIEWPORT_ACTIVE == 32);
   assert(ROASTTY_TERMINAL_SCREEN_PRIMARY == 0);
   assert(ROASTTY_TERMINAL_SCREEN_ALTERNATE == 1);
+  assert(ROASTTY_TERMINAL_OPTION_TITLE == 9);
+  assert(ROASTTY_TERMINAL_OPTION_PWD == 10);
   assert(sizeof(roastty_mode_tag_t) == sizeof(uint16_t));
   assert(ROASTTY_MODE_TAG_VALUE_MASK == 0x7fff);
   assert(ROASTTY_MODE_TAG_ANSI_BIT == 0x8000);
@@ -643,6 +645,76 @@ static void assert_terminal_abi(void) {
   assert(roastty_terminal_vt_write(terminal, NULL, 1) ==
          ROASTTY_INVALID_VALUE);
   assert(roastty_terminal_vt_write(terminal, NULL, 0) == ROASTTY_SUCCESS);
+
+  char title_buf[] = "c title";
+  roastty_string_s title_input = {
+      .ptr = title_buf,
+      .len = strlen(title_buf),
+      .sentinel = false,
+  };
+  assert(roastty_terminal_set(NULL,
+                              ROASTTY_TERMINAL_OPTION_TITLE,
+                              &title_input) == ROASTTY_INVALID_VALUE);
+  assert(roastty_terminal_set(terminal,
+                              (roastty_terminal_option_e)9999,
+                              &title_input) == ROASTTY_INVALID_VALUE);
+  assert(roastty_terminal_set(terminal,
+                              (roastty_terminal_option_e)0,
+                              &title_input) == ROASTTY_INVALID_VALUE);
+  assert(roastty_terminal_set(terminal,
+                              (roastty_terminal_option_e)11,
+                              &title_input) == ROASTTY_INVALID_VALUE);
+  assert(roastty_terminal_set(terminal,
+                              ROASTTY_TERMINAL_OPTION_TITLE,
+                              &title_input) == ROASTTY_SUCCESS);
+  memset(title_buf, 'x', strlen(title_buf));
+  roastty_string_s title = {0};
+  assert(roastty_terminal_title(terminal, &title) == ROASTTY_SUCCESS);
+  assert_roastty_string_eq(title, "c title");
+
+  char pwd_buf[] = "file://host/c-pwd";
+  roastty_string_s pwd_input = {
+      .ptr = pwd_buf,
+      .len = strlen(pwd_buf),
+      .sentinel = false,
+  };
+  assert(roastty_terminal_set(terminal,
+                              ROASTTY_TERMINAL_OPTION_PWD,
+                              &pwd_input) == ROASTTY_SUCCESS);
+  memset(pwd_buf, 'y', strlen(pwd_buf));
+  roastty_string_s pwd = {0};
+  assert(roastty_terminal_pwd(terminal, &pwd) == ROASTTY_SUCCESS);
+  assert_roastty_string_eq(pwd, "file://host/c-pwd");
+
+  roastty_string_s empty_input = {
+      .ptr = NULL,
+      .len = 0,
+      .sentinel = false,
+  };
+  assert(roastty_terminal_set(terminal,
+                              ROASTTY_TERMINAL_OPTION_TITLE,
+                              &empty_input) == ROASTTY_SUCCESS);
+  assert(roastty_terminal_title(terminal, &title) == ROASTTY_SUCCESS);
+  assert_roastty_string_eq(title, "");
+  assert(roastty_terminal_set(terminal,
+                              ROASTTY_TERMINAL_OPTION_PWD,
+                              NULL) == ROASTTY_SUCCESS);
+  assert(roastty_terminal_pwd(terminal, &pwd) == ROASTTY_SUCCESS);
+  assert_roastty_string_eq(pwd, "");
+
+  assert(roastty_terminal_set(terminal,
+                              ROASTTY_TERMINAL_OPTION_TITLE,
+                              &title_input) == ROASTTY_SUCCESS);
+  roastty_string_s invalid_inner_null = {
+      .ptr = NULL,
+      .len = 1,
+      .sentinel = false,
+  };
+  assert(roastty_terminal_set(terminal,
+                              ROASTTY_TERMINAL_OPTION_TITLE,
+                              &invalid_inner_null) == ROASTTY_INVALID_VALUE);
+  assert(roastty_terminal_title(terminal, &title) == ROASTTY_SUCCESS);
+  assert_roastty_string_eq(title, "xxxxxxx");
 
   terminal_write(terminal, "abc");
   roastty_string_s plain = {0};
@@ -900,13 +972,13 @@ static void assert_terminal_abi(void) {
 
   terminal_write(terminal, "\x1b]0;from ");
   terminal_write(terminal, "c\x07");
-  roastty_string_s title = {0};
+  title = (roastty_string_s){0};
   assert(roastty_terminal_title(terminal, &title) == ROASTTY_SUCCESS);
   assert_roastty_string_eq(title, "from c");
 
   terminal_write(terminal, "\x1b]1337;CurrentDir=file://host/");
   terminal_write(terminal, "c\x07");
-  roastty_string_s pwd = {0};
+  pwd = (roastty_string_s){0};
   assert(roastty_terminal_pwd(terminal, &pwd) == ROASTTY_SUCCESS);
   assert_roastty_string_eq(pwd, "file://host/c");
 

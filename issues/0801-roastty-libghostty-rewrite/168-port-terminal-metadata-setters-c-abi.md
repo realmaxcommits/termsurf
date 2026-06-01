@@ -233,3 +233,69 @@ the terminal helpers take ownership of that staged value.
 
 Codex's final review found no blocking findings and approved the experiment for
 implementation.
+
+## Result
+
+**Result:** Pass
+
+Experiment 168 implemented the first `roastty_terminal_set` C ABI slice:
+
+- added `roastty_terminal_option_e` with the upstream-compatible implemented
+  values `ROASTTY_TERMINAL_OPTION_TITLE = 9` and
+  `ROASTTY_TERMINAL_OPTION_PWD = 10`;
+- added `roastty_terminal_set`;
+- implemented direct terminal-owned title and PWD metadata updates;
+- rejected all unsupported option values, including representative
+  upstream-known but unimplemented options `0` and `11`;
+- validated `roastty_string_s` pointer/length inputs without using `strlen`;
+- copied caller strings into terminal-owned storage before mutation;
+- staged PWD's internal trailing-NUL representation before committing it to
+  terminal state.
+
+Verification passed:
+
+```bash
+cargo fmt -- roastty/src/lib.rs roastty/src/terminal/terminal.rs
+cargo test -p roastty terminal_metadata_setters_abi
+cargo test -p roastty terminal_get_abi
+cargo test -p roastty terminal_mode_control_abi
+cargo test -p roastty c_harness_links_against_roastty_header_and_roastty_dylib
+cargo test -p roastty terminal_stream
+cargo test -p roastty
+! rg -n "ghostty|Ghostty|ghostty_" roastty/src/lib.rs roastty/include/roastty.h roastty/tests/abi_harness.c
+```
+
+Observed results:
+
+- `terminal_metadata_setters_abi`: 5 passed;
+- `terminal_get_abi`: 6 passed;
+- `terminal_mode_control_abi`: 6 passed;
+- C ABI harness: passed;
+- `terminal_stream`: 381 passed;
+- full `roastty`: 1804 unit tests, C harness, and doc-tests passed;
+- forbidden public/source name grep over touched ABI files passed.
+
+## Codex Result Review
+
+**Result:** Approved after revision.
+
+Codex's first result review found one real implementation bug: `lib.rs` staged
+an owned `String`, but `terminal.rs` then copied that string again into
+`TerminalTitle` / `TerminalPwd` after clearing the old value. That second copy
+could allocate after mutation, violating the experiment's
+`ROASTTY_OUT_OF_MEMORY` and no-prior-state-mutation contract.
+
+The implementation was fixed so terminal helpers move owned strings directly
+into terminal storage. For PWD, `lib.rs` now stages the internal trailing-NUL
+representation before mutation, then commits that owned storage by move.
+
+Codex's second result review found no blocking findings and approved recording
+the result as Pass.
+
+## Conclusion
+
+Roastty now has the first safe `roastty_terminal_set` slice. Title and PWD can
+be set directly from C using upstream-compatible option numbers without
+advertising unsupported callback, color, Kitty graphics, APC, selection, or
+resize options. The string boundary is explicit: invalid inputs are rejected
+without mutation, and committed metadata is terminal-owned.

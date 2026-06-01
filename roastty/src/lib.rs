@@ -78,6 +78,9 @@ const ROASTTY_TERMINAL_DATA_VIEWPORT_ACTIVE: c_int = 32;
 const ROASTTY_TERMINAL_SCREEN_PRIMARY: c_int = 0;
 const ROASTTY_TERMINAL_SCREEN_ALTERNATE: c_int = 1;
 
+const ROASTTY_TERMINAL_OPTION_TITLE: c_int = 9;
+const ROASTTY_TERMINAL_OPTION_PWD: c_int = 10;
+
 #[repr(C)]
 pub struct RoasttyInfo {
     build_mode: c_int,
@@ -729,6 +732,47 @@ fn mode_tag_parts(tag: u16) -> (u16, bool) {
     )
 }
 
+fn staged_terminal_string(value: *const c_void) -> Result<Option<String>, c_int> {
+    if value.is_null() {
+        return Ok(None);
+    }
+
+    let value = unsafe { value.cast::<RoasttyString>().read() };
+    if value.ptr.is_null() {
+        return if value.len == 0 {
+            Ok(Some(String::new()))
+        } else {
+            Err(ROASTTY_INVALID_VALUE)
+        };
+    }
+
+    let bytes = unsafe { slice::from_raw_parts(value.ptr.cast::<u8>(), value.len) };
+    let text = std::str::from_utf8(bytes).map_err(|_| ROASTTY_INVALID_VALUE)?;
+    let mut owned = String::new();
+    owned
+        .try_reserve_exact(text.len())
+        .map_err(|_| ROASTTY_OUT_OF_MEMORY)?;
+    owned.push_str(text);
+    Ok(Some(owned))
+}
+
+fn staged_terminal_pwd(value: *const c_void) -> Result<Option<String>, c_int> {
+    let Some(text) = staged_terminal_string(value)? else {
+        return Ok(None);
+    };
+    if text.is_empty() {
+        return Ok(Some(text));
+    }
+
+    let mut stored = String::new();
+    stored
+        .try_reserve_exact(text.len() + 1)
+        .map_err(|_| ROASTTY_OUT_OF_MEMORY)?;
+    stored.push_str(&text);
+    stored.push('\0');
+    Ok(Some(stored))
+}
+
 unsafe fn terminal_get_write(terminal: &InnerTerminal, data: c_int, out: *mut c_void) -> c_int {
     match data {
         ROASTTY_TERMINAL_DATA_COLS => out.cast::<u16>().write(terminal.columns()),
@@ -1108,6 +1152,35 @@ pub extern "C" fn roastty_terminal_vt_write(
     match terminal.terminal.next_slice(input) {
         Ok(()) => ROASTTY_SUCCESS,
         Err(error) => terminal_stream_error_result(error),
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn roastty_terminal_set(
+    terminal: RoasttyTerminal,
+    option: c_int,
+    value: *const c_void,
+) -> c_int {
+    let Some(terminal) = terminal_from_handle(terminal) else {
+        return ROASTTY_INVALID_VALUE;
+    };
+
+    match option {
+        ROASTTY_TERMINAL_OPTION_TITLE => match staged_terminal_string(value) {
+            Ok(value) => {
+                terminal.terminal.set_title(value);
+                ROASTTY_SUCCESS
+            }
+            Err(error) => error,
+        },
+        ROASTTY_TERMINAL_OPTION_PWD => match staged_terminal_pwd(value) {
+            Ok(value) => {
+                terminal.terminal.set_pwd(value);
+                ROASTTY_SUCCESS
+            }
+            Err(error) => error,
+        },
+        _ => ROASTTY_INVALID_VALUE,
     }
 }
 
@@ -2205,6 +2278,14 @@ mod tests {
         take_roastty_string(out)
     }
 
+    fn borrowed_roastty_string(bytes: &[u8]) -> RoasttyString {
+        RoasttyString {
+            ptr: bytes.as_ptr().cast::<c_char>(),
+            len: bytes.len(),
+            sentinel: false,
+        }
+    }
+
     fn feed_osc(parser: RoasttyOscParser, bytes: &[u8]) {
         for &byte in bytes {
             roastty_osc_next(parser, byte);
@@ -2455,6 +2536,268 @@ mod tests {
         assert!(terminal_string(terminal, roastty_terminal_title).is_empty());
         assert!(terminal_string(terminal, roastty_terminal_pwd).is_empty());
         assert!(terminal_string(terminal, roastty_terminal_take_pty_response).is_empty());
+
+        roastty_terminal_free(terminal);
+    }
+
+    #[test]
+    fn terminal_metadata_setters_abi_option_values_are_stable() {
+        assert_eq!(ROASTTY_TERMINAL_OPTION_TITLE, 9);
+        assert_eq!(ROASTTY_TERMINAL_OPTION_PWD, 10);
+    }
+
+    #[test]
+    fn terminal_metadata_setters_abi_validate_inputs_without_mutation() {
+        let terminal = new_terminal(5, 3);
+        let title = borrowed_roastty_string(b"old title");
+        let pwd = borrowed_roastty_string(b"file://host/old");
+        assert_eq!(
+            roastty_terminal_set(
+                terminal,
+                ROASTTY_TERMINAL_OPTION_TITLE,
+                &title as *const _ as *const c_void,
+            ),
+            ROASTTY_SUCCESS
+        );
+        assert_eq!(
+            roastty_terminal_set(
+                terminal,
+                ROASTTY_TERMINAL_OPTION_PWD,
+                &pwd as *const _ as *const c_void,
+            ),
+            ROASTTY_SUCCESS
+        );
+
+        assert_eq!(
+            roastty_terminal_set(ptr::null_mut(), ROASTTY_TERMINAL_OPTION_TITLE, ptr::null()),
+            ROASTTY_INVALID_VALUE
+        );
+        assert_eq!(
+            roastty_terminal_set(terminal, 9999, &title as *const _ as *const c_void),
+            ROASTTY_INVALID_VALUE
+        );
+        assert_eq!(
+            roastty_terminal_set(terminal, 0, &title as *const _ as *const c_void),
+            ROASTTY_INVALID_VALUE
+        );
+        assert_eq!(
+            roastty_terminal_set(terminal, 11, &title as *const _ as *const c_void),
+            ROASTTY_INVALID_VALUE
+        );
+
+        let invalid_null = RoasttyString {
+            ptr: ptr::null(),
+            len: 1,
+            sentinel: false,
+        };
+        assert_eq!(
+            roastty_terminal_set(
+                terminal,
+                ROASTTY_TERMINAL_OPTION_TITLE,
+                &invalid_null as *const _ as *const c_void,
+            ),
+            ROASTTY_INVALID_VALUE
+        );
+        assert_eq!(
+            terminal_string(terminal, roastty_terminal_title),
+            b"old title"
+        );
+
+        let invalid_utf8 = borrowed_roastty_string(&[0xff]);
+        assert_eq!(
+            roastty_terminal_set(
+                terminal,
+                ROASTTY_TERMINAL_OPTION_PWD,
+                &invalid_utf8 as *const _ as *const c_void,
+            ),
+            ROASTTY_INVALID_VALUE
+        );
+        assert_eq!(
+            terminal_string(terminal, roastty_terminal_pwd),
+            b"file://host/old"
+        );
+
+        roastty_terminal_free(terminal);
+    }
+
+    #[test]
+    fn terminal_metadata_setters_abi_set_clear_and_copy_strings() {
+        let terminal = new_terminal(5, 3);
+
+        let mut title_bytes = b"new title".to_vec();
+        let title = borrowed_roastty_string(&title_bytes);
+        assert_eq!(
+            roastty_terminal_set(
+                terminal,
+                ROASTTY_TERMINAL_OPTION_TITLE,
+                &title as *const _ as *const c_void,
+            ),
+            ROASTTY_SUCCESS
+        );
+        title_bytes.fill(b'X');
+        assert_eq!(
+            terminal_string(terminal, roastty_terminal_title),
+            b"new title"
+        );
+
+        let mut pwd_bytes = b"file://host/new".to_vec();
+        let pwd = borrowed_roastty_string(&pwd_bytes);
+        assert_eq!(
+            roastty_terminal_set(
+                terminal,
+                ROASTTY_TERMINAL_OPTION_PWD,
+                &pwd as *const _ as *const c_void,
+            ),
+            ROASTTY_SUCCESS
+        );
+        pwd_bytes.fill(b'Y');
+        assert_eq!(
+            terminal_string(terminal, roastty_terminal_pwd),
+            b"file://host/new"
+        );
+
+        let nul_title = borrowed_roastty_string(b"a\0b");
+        assert_eq!(
+            roastty_terminal_set(
+                terminal,
+                ROASTTY_TERMINAL_OPTION_TITLE,
+                &nul_title as *const _ as *const c_void,
+            ),
+            ROASTTY_SUCCESS
+        );
+        assert_eq!(terminal_string(terminal, roastty_terminal_title), b"a\0b");
+
+        let empty = RoasttyString {
+            ptr: ptr::null(),
+            len: 0,
+            sentinel: false,
+        };
+        assert_eq!(
+            roastty_terminal_set(
+                terminal,
+                ROASTTY_TERMINAL_OPTION_TITLE,
+                &empty as *const _ as *const c_void,
+            ),
+            ROASTTY_SUCCESS
+        );
+        assert!(terminal_string(terminal, roastty_terminal_title).is_empty());
+
+        assert_eq!(
+            roastty_terminal_set(terminal, ROASTTY_TERMINAL_OPTION_PWD, ptr::null()),
+            ROASTTY_SUCCESS
+        );
+        assert!(terminal_string(terminal, roastty_terminal_pwd).is_empty());
+
+        roastty_terminal_free(terminal);
+    }
+
+    #[test]
+    fn terminal_metadata_setters_abi_do_not_mutate_terminal_state() {
+        let terminal = new_terminal(5, 3);
+        write_terminal(terminal, b"abc");
+        write_terminal(terminal, b"\x1b[?1049hALT");
+        write_terminal(terminal, b"\x1b[?7l");
+
+        let before_plain = terminal_plain_string(terminal);
+        let before_cursor = {
+            let mut x = 0u16;
+            let mut y = 0u16;
+            assert!(roastty_terminal_cursor_position(terminal, &mut x, &mut y));
+            (x, y)
+        };
+        let before_screen = terminal_get_screen(terminal);
+        let before_wraparound = terminal_mode_get(terminal, dec_mode_tag(7));
+
+        let title = borrowed_roastty_string(b"metadata only");
+        assert_eq!(
+            roastty_terminal_set(
+                terminal,
+                ROASTTY_TERMINAL_OPTION_TITLE,
+                &title as *const _ as *const c_void,
+            ),
+            ROASTTY_SUCCESS
+        );
+        let pwd = borrowed_roastty_string(b"file://host/metadata");
+        assert_eq!(
+            roastty_terminal_set(
+                terminal,
+                ROASTTY_TERMINAL_OPTION_PWD,
+                &pwd as *const _ as *const c_void,
+            ),
+            ROASTTY_SUCCESS
+        );
+
+        assert_eq!(terminal_plain_string(terminal), before_plain);
+        let mut x = 0u16;
+        let mut y = 0u16;
+        assert!(roastty_terminal_cursor_position(terminal, &mut x, &mut y));
+        assert_eq!((x, y), before_cursor);
+        assert_eq!(terminal_get_screen(terminal), before_screen);
+        assert_eq!(
+            terminal_mode_get(terminal, dec_mode_tag(7)),
+            before_wraparound
+        );
+
+        roastty_terminal_free(terminal);
+    }
+
+    #[test]
+    fn terminal_metadata_setters_abi_interoperate_with_osc_updates() {
+        let terminal = new_terminal(10, 3);
+        let direct_title = borrowed_roastty_string(b"direct title");
+        let direct_pwd = borrowed_roastty_string(b"file://host/direct");
+
+        assert_eq!(
+            roastty_terminal_set(
+                terminal,
+                ROASTTY_TERMINAL_OPTION_TITLE,
+                &direct_title as *const _ as *const c_void,
+            ),
+            ROASTTY_SUCCESS
+        );
+        assert_eq!(
+            roastty_terminal_set(
+                terminal,
+                ROASTTY_TERMINAL_OPTION_PWD,
+                &direct_pwd as *const _ as *const c_void,
+            ),
+            ROASTTY_SUCCESS
+        );
+        write_terminal(terminal, b"\x1b]0;osc title\x07");
+        write_terminal(terminal, b"\x1b]1337;CurrentDir=file://host/osc\x07");
+        assert_eq!(
+            terminal_string(terminal, roastty_terminal_title),
+            b"osc title"
+        );
+        assert_eq!(
+            terminal_string(terminal, roastty_terminal_pwd),
+            b"file://host/osc"
+        );
+
+        assert_eq!(
+            roastty_terminal_set(
+                terminal,
+                ROASTTY_TERMINAL_OPTION_TITLE,
+                &direct_title as *const _ as *const c_void,
+            ),
+            ROASTTY_SUCCESS
+        );
+        assert_eq!(
+            roastty_terminal_set(
+                terminal,
+                ROASTTY_TERMINAL_OPTION_PWD,
+                &direct_pwd as *const _ as *const c_void,
+            ),
+            ROASTTY_SUCCESS
+        );
+        assert_eq!(
+            terminal_string(terminal, roastty_terminal_title),
+            b"direct title"
+        );
+        assert_eq!(
+            terminal_string(terminal, roastty_terminal_pwd),
+            b"file://host/direct"
+        );
 
         roastty_terminal_free(terminal);
     }

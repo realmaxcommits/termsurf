@@ -463,7 +463,7 @@ tests, choose the larger subsystem.
 - [Experiment 167: Port Terminal Mode Control C ABI](167-port-terminal-mode-control-c-abi.md)
   — **Pass**
 - [Experiment 168: Port Terminal Metadata Setters C ABI](168-port-terminal-metadata-setters-c-abi.md)
-  — **Designed**
+  — **Pass**
 
 ## Non-Goals
 
