@@ -84,6 +84,12 @@ pub(super) enum Action {
     ResetMode {
         mode: modes::Mode,
     },
+    SaveMode {
+        mode: modes::Mode,
+    },
+    RestoreMode {
+        mode: modes::Mode,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -404,6 +410,10 @@ impl CsiState {
             return dispatch;
         }
 
+        if let Some(dispatch) = self.mode_save_restore_dispatch(final_byte) {
+            return dispatch;
+        }
+
         if final_byte == b'W' {
             return self
                 .tab_action()
@@ -701,6 +711,37 @@ impl CsiState {
             CsiDispatch::Many(actions)
         })
     }
+
+    fn mode_save_restore_dispatch(&self, final_byte: u8) -> Option<CsiDispatch> {
+        let save = match final_byte {
+            b's' => true,
+            b'r' => false,
+            _ => return None,
+        };
+        if self.private != Some(b'?') {
+            return None;
+        }
+
+        let params = self.finalized_params()?;
+        let mut actions = CsiActionList::new();
+
+        for param in params.values[..usize::from(params.len)].iter().copied() {
+            let Some(mode) = modes::mode_from_int(param, false) else {
+                continue;
+            };
+            actions.push(if save {
+                Action::SaveMode { mode }
+            } else {
+                Action::RestoreMode { mode }
+            });
+        }
+
+        Some(if actions.is_empty() {
+            CsiDispatch::None
+        } else {
+            CsiDispatch::Many(actions)
+        })
+    }
 }
 
 impl CsiDispatch {
@@ -887,7 +928,9 @@ mod tests {
                 | Action::ScrollUp { .. }
                 | Action::ScrollDown { .. }
                 | Action::SetMode { .. }
-                | Action::ResetMode { .. } => None,
+                | Action::ResetMode { .. }
+                | Action::SaveMode { .. }
+                | Action::RestoreMode { .. } => None,
             })
             .collect()
     }
@@ -1247,6 +1290,239 @@ mod tests {
                 Action::Print { cp: 'A' },
             ]
         );
+    }
+
+    #[test]
+    fn stream_csi_mode_save_and_restore_dispatch_known_dec_modes() {
+        for (input, expected) in [
+            (
+                b"\x1b[?7sA".as_slice(),
+                Action::SaveMode {
+                    mode: modes::Mode::Wraparound,
+                },
+            ),
+            (
+                b"\x1b[?7rA".as_slice(),
+                Action::RestoreMode {
+                    mode: modes::Mode::Wraparound,
+                },
+            ),
+        ] {
+            let mut stream = Stream::init();
+            let mut handler = RecordingHandler::default();
+
+            next_slice(&mut stream, &mut handler, input);
+
+            assert_eq!(actions(&handler), &[expected, Action::Print { cp: 'A' }]);
+        }
+    }
+
+    #[test]
+    fn stream_csi_mode_save_and_restore_dispatch_multi_params_in_order() {
+        let mut stream = Stream::init();
+        let mut handler = RecordingHandler::default();
+
+        next_slice(
+            &mut stream,
+            &mut handler,
+            b"\x1b[?1;7;2004sA\x1b[?1;7;2004rB",
+        );
+
+        assert_eq!(
+            actions(&handler),
+            &[
+                Action::SaveMode {
+                    mode: modes::Mode::CursorKeys,
+                },
+                Action::SaveMode {
+                    mode: modes::Mode::Wraparound,
+                },
+                Action::SaveMode {
+                    mode: modes::Mode::BracketedPaste,
+                },
+                Action::Print { cp: 'A' },
+                Action::RestoreMode {
+                    mode: modes::Mode::CursorKeys,
+                },
+                Action::RestoreMode {
+                    mode: modes::Mode::Wraparound,
+                },
+                Action::RestoreMode {
+                    mode: modes::Mode::BracketedPaste,
+                },
+                Action::Print { cp: 'B' },
+            ]
+        );
+    }
+
+    #[test]
+    fn stream_csi_mode_save_and_restore_skip_unknown_modes_without_aborting_known_modes() {
+        for (input, expected) in [
+            (
+                b"\x1b[?9999;7;9998;2004sA".as_slice(),
+                [
+                    Action::SaveMode {
+                        mode: modes::Mode::Wraparound,
+                    },
+                    Action::SaveMode {
+                        mode: modes::Mode::BracketedPaste,
+                    },
+                    Action::Print { cp: 'A' },
+                ],
+            ),
+            (
+                b"\x1b[?9999;7;9998;2004rA".as_slice(),
+                [
+                    Action::RestoreMode {
+                        mode: modes::Mode::Wraparound,
+                    },
+                    Action::RestoreMode {
+                        mode: modes::Mode::BracketedPaste,
+                    },
+                    Action::Print { cp: 'A' },
+                ],
+            ),
+        ] {
+            let mut stream = Stream::init();
+            let mut handler = RecordingHandler::default();
+
+            next_slice(&mut stream, &mut handler, input);
+
+            assert_eq!(actions(&handler), &expected);
+        }
+    }
+
+    #[test]
+    fn stream_csi_mode_save_and_restore_empty_params_dispatch_no_action() {
+        for input in [b"\x1b[?sA".as_slice(), b"\x1b[?rA".as_slice()] {
+            let mut stream = Stream::init();
+            let mut handler = RecordingHandler::default();
+
+            next_slice(&mut stream, &mut handler, input);
+
+            assert_eq!(actions(&handler), &[Action::Print { cp: 'A' }]);
+        }
+    }
+
+    #[test]
+    fn stream_csi_mode_save_and_restore_dispatch_exactly_twenty_four_params() {
+        for (final_byte, expected_mode_action) in [(b's', true), (b'r', false)] {
+            let input = format!("\x1b[?{}{}A", ["7"; 24].join(";"), final_byte as char);
+            let mut stream = Stream::init();
+            let mut handler = RecordingHandler::default();
+
+            next_slice(&mut stream, &mut handler, input.as_bytes());
+
+            assert_eq!(actions(&handler).len(), 25);
+            assert!(actions(&handler)[..24].iter().all(|action| {
+                *action
+                    == if expected_mode_action {
+                        Action::SaveMode {
+                            mode: modes::Mode::Wraparound,
+                        }
+                    } else {
+                        Action::RestoreMode {
+                            mode: modes::Mode::Wraparound,
+                        }
+                    }
+            }));
+            assert_eq!(actions(&handler)[24], Action::Print { cp: 'A' });
+        }
+    }
+
+    #[test]
+    fn stream_csi_mode_save_and_restore_over_capacity_params_do_not_dispatch_or_leak_final_byte() {
+        for final_byte in [b's', b'r'] {
+            let input = format!("\x1b[?{}{}A", ["7"; 25].join(";"), final_byte as char);
+            let mut stream = Stream::init();
+            let mut handler = RecordingHandler::default();
+
+            next_slice(&mut stream, &mut handler, input.as_bytes());
+
+            assert_eq!(actions(&handler), &[Action::Print { cp: 'A' }]);
+        }
+    }
+
+    #[test]
+    fn stream_csi_plain_s_and_r_remain_unsupported_without_leaking_final_byte() {
+        for input in [
+            b"\x1b[sA".as_slice(),
+            b"\x1b[rA".as_slice(),
+            b"\x1b[2rA".as_slice(),
+            b"\x1b[1;3rA".as_slice(),
+        ] {
+            let mut stream = Stream::init();
+            let mut handler = RecordingHandler::default();
+
+            next_slice(&mut stream, &mut handler, input);
+
+            assert_eq!(actions(&handler), &[Action::Print { cp: 'A' }]);
+        }
+    }
+
+    #[test]
+    fn stream_csi_mode_save_and_restore_invalid_forms_do_not_dispatch_or_leak_final_byte() {
+        for input in [
+            b"\x1b[>7sA".as_slice(),
+            b"\x1b[>7rA".as_slice(),
+            b"\x1b[?7:8sA".as_slice(),
+            b"\x1b[?7:8rA".as_slice(),
+        ] {
+            let mut stream = Stream::init();
+            let mut handler = RecordingHandler::default();
+
+            next_slice(&mut stream, &mut handler, input);
+
+            assert_eq!(actions(&handler), &[Action::Print { cp: 'A' }]);
+        }
+    }
+
+    #[test]
+    fn stream_csi_mode_save_and_restore_split_feed_dispatches() {
+        for (parts, expected) in [
+            (
+                [b"\x1b[?".as_slice(), b"7sA".as_slice()],
+                Action::SaveMode {
+                    mode: modes::Mode::Wraparound,
+                },
+            ),
+            (
+                [b"\x1b[?7".as_slice(), b"rA".as_slice()],
+                Action::RestoreMode {
+                    mode: modes::Mode::Wraparound,
+                },
+            ),
+        ] {
+            let mut stream = Stream::init();
+            let mut handler = RecordingHandler::default();
+
+            next_slice(&mut stream, &mut handler, parts[0]);
+            next_slice(&mut stream, &mut handler, parts[1]);
+
+            assert_eq!(actions(&handler), &[expected, Action::Print { cp: 'A' }]);
+        }
+    }
+
+    #[test]
+    fn stream_csi_mode_save_and_restore_flush_pending_invalid_utf8_first() {
+        for input in [
+            [b"\xf0".as_slice(), b"\x1b[?7sA".as_slice()],
+            [b"\xf0\x1b[?".as_slice(), b"7rA".as_slice()],
+        ] {
+            let mut stream = Stream::init();
+            let mut handler = RecordingHandler::default();
+
+            next_slice(&mut stream, &mut handler, input[0]);
+            next_slice(&mut stream, &mut handler, input[1]);
+
+            assert_eq!(
+                actions(&handler)[0],
+                Action::Print {
+                    cp: char::REPLACEMENT_CHARACTER
+                }
+            );
+            assert_eq!(actions(&handler).last(), Some(&Action::Print { cp: 'A' }));
+        }
     }
 
     #[test]
@@ -4302,6 +4578,30 @@ mod tests {
     }
 
     #[test]
+    fn stream_raw_c1_csi_byte_does_not_dispatch_mode_save_restore_actions() {
+        for final_byte in [b's', b'r'] {
+            let mut stream = Stream::init();
+            let mut handler = RecordingHandler::default();
+
+            next_slice(&mut stream, &mut handler, &[0x9b, b'?', b'7', final_byte]);
+
+            assert_eq!(
+                actions(&handler),
+                &[
+                    Action::Print {
+                        cp: char::REPLACEMENT_CHARACTER,
+                    },
+                    Action::Print { cp: '?' },
+                    Action::Print { cp: '7' },
+                    Action::Print {
+                        cp: final_byte as char,
+                    },
+                ]
+            );
+        }
+    }
+
+    #[test]
     fn stream_raw_c1_csi_byte_does_not_dispatch_erase_display_action() {
         let mut stream = Stream::init();
         let mut handler = RecordingHandler::default();
@@ -4710,7 +5010,9 @@ mod tests {
                 | Action::ScrollUp { .. }
                 | Action::ScrollDown { .. }
                 | Action::SetMode { .. }
-                | Action::ResetMode { .. } => unreachable!("loop only uses D/E actions"),
+                | Action::ResetMode { .. }
+                | Action::SaveMode { .. }
+                | Action::RestoreMode { .. } => unreachable!("loop only uses D/E actions"),
             };
 
             assert_eq!(stream.next_slice(input, &mut handler), Err(()));
@@ -4906,6 +5208,32 @@ mod tests {
     }
 
     #[test]
+    fn stream_csi_mode_save_and_restore_restore_ground_before_handler_error() {
+        for (input, fail) in [
+            (
+                b"\x1b[?7s".as_slice(),
+                Action::SaveMode {
+                    mode: modes::Mode::Wraparound,
+                },
+            ),
+            (
+                b"\x1b[?7r".as_slice(),
+                Action::RestoreMode {
+                    mode: modes::Mode::Wraparound,
+                },
+            ),
+        ] {
+            let mut stream = Stream::init();
+            let mut handler = ErrorOnActionHandler::new(fail);
+
+            assert_eq!(stream.next_slice(input, &mut handler), Err(()));
+            stream.next_slice(b"A", &mut handler).unwrap();
+
+            assert_eq!(handler.actions, &[Action::Print { cp: 'A' }]);
+        }
+    }
+
+    #[test]
     fn stream_csi_mode_multi_action_dispatch_stops_after_first_failing_action() {
         let mut stream = Stream::init();
         let mut handler = ErrorOnActionWithAttemptsHandler::new(Action::SetMode {
@@ -4927,6 +5255,41 @@ mod tests {
                 Action::Print { cp: 'A' },
             ]
         );
+    }
+
+    #[test]
+    fn stream_csi_mode_save_restore_multi_action_dispatch_stops_after_first_failing_action() {
+        for (input, fail, expected_first) in [
+            (
+                b"\x1b[?1;7;2004s".as_slice(),
+                Action::SaveMode {
+                    mode: modes::Mode::Wraparound,
+                },
+                Action::SaveMode {
+                    mode: modes::Mode::CursorKeys,
+                },
+            ),
+            (
+                b"\x1b[?1;7;2004r".as_slice(),
+                Action::RestoreMode {
+                    mode: modes::Mode::Wraparound,
+                },
+                Action::RestoreMode {
+                    mode: modes::Mode::CursorKeys,
+                },
+            ),
+        ] {
+            let mut stream = Stream::init();
+            let mut handler = ErrorOnActionWithAttemptsHandler::new(fail);
+
+            assert_eq!(stream.next_slice(input, &mut handler), Err(()));
+            stream.next_slice(b"A", &mut handler).unwrap();
+
+            assert_eq!(
+                handler.attempts,
+                &[expected_first, fail, Action::Print { cp: 'A' }]
+            );
+        }
     }
 
     #[test]

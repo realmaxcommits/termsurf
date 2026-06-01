@@ -389,7 +389,7 @@ tests, choose the larger subsystem.
 - [Experiment 129: Port Basic Print Mode Effects](129-port-basic-print-mode-effects.md)
   — **Pass**
 - [Experiment 130: Port CSI Mode Save and Restore](130-port-csi-mode-save-restore.md)
-  — **Designed**
+  — **Pass**
 
 ## Non-Goals
 

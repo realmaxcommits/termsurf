@@ -262,3 +262,93 @@ Codex re-reviewed the updated design and found no remaining blocking design
 issues: `logs/codex-review/20260601-070435-251268-last-message.md`.
 
 The design is approved for implementation.
+
+## Result
+
+**Result:** Pass
+
+Roastty now parses and executes Ghostty-style DEC-private CSI mode save and
+restore commands:
+
+- `CSI ? ... s` dispatches one `SaveMode` action per known DEC-private mode;
+- `CSI ? ... r` dispatches one `RestoreMode` action per known DEC-private mode;
+- unknown DEC-private modes are skipped without blocking later known params;
+- multi-param save/restore preserves action order and uses the existing
+  fixed-capacity CSI action machinery.
+
+Plain `CSI s` and plain `CSI r` behavior is intentionally unchanged from current
+Roastty: unsupported/no-dispatch with no final-byte leak. This preserves the
+approved scope and defers upstream Ghostty's plain save-cursor,
+left/right-margin, and top/bottom-margin commands to later cursor/margin work.
+
+Terminal execution follows upstream ordering:
+
+1. `SaveMode` stores the current mode boolean with `ModeState::save(mode)` and
+   performs no immediate terminal side effects.
+2. `RestoreMode` calls `ModeState::restore(mode)` first, then routes the
+   restored boolean through the same `set_mode_basic()` helper used by set/reset
+   mode commands.
+
+The implemented current-core restore side effects are:
+
+- origin mode restore moves the cursor to the restored origin-home position and
+  clears pending wrap through the cursor move;
+- restoring left/right margin mode to `false` clears horizontal margins to full
+  width;
+- wraparound restore is observable through the pending-wrap print behavior from
+  Experiment 129;
+- bracketed paste and other supported state-only DEC-private modes restore their
+  stored mode state without faking deferred behavior.
+
+The implementation adds parser coverage for known mode dispatch, multi-param
+ordering, unknown-mode skipping, empty params, exactly 24 params, over-capacity
+params, invalid forms, split feed, pending invalid UTF-8, raw C1 behavior,
+handler-error ground restoration, and multi-action stop-on-error behavior.
+
+It adds terminal coverage for wraparound restore in both directions, origin
+restore side effects, left/right margin restore-to-false side effects,
+bracketed-paste state restore, multi-param save/restore, no-side-effect save for
+origin and left/right margin modes, and never-saved restore using Roastty's
+current saved-default `false` storage.
+
+The following behavior remains intentionally deferred:
+
+- DECRQM / mode request and report replies;
+- upstream plain `CSI s/r` cursor and margin commands;
+- alternate-screen switching;
+- save/restore cursor side effects;
+- DECCOLM resize;
+- mouse encoding;
+- keypad behavior;
+- public ABI exposure;
+- non-macOS behavior.
+
+Verification commands passed:
+
+```bash
+cargo fmt
+cargo test -p roastty stream_csi_mode
+cargo test -p roastty terminal_stream_csi_mode
+cargo test -p roastty terminal_stream_pending_wrap
+cargo test -p roastty terminal_stream_lf
+cargo test -p roastty terminal::modes
+cargo test -p roastty terminal::terminal
+cargo test -p roastty stream
+cargo test -p roastty terminal_formatter
+cargo test -p roastty
+```
+
+The final full `cargo test -p roastty` run passed: 1414 unit tests, 1 ABI
+harness test, and 0 doc tests.
+
+Codex result review found no blocking correctness issues:
+`logs/codex-review/20260601-071034-733757-last-message.md`.
+
+## Conclusion
+
+Experiment 130 completes the DEC-private mode save/restore slice. Roastty now
+has real parser and terminal execution for `CSI ? ... s/r`, including restore
+side effects for the current-core modes that can be represented honestly. The
+work deliberately leaves response-producing mode requests and upstream plain
+cursor/margin `CSI s/r` forms for later experiments, because they require
+different terminal surfaces than mode-state save/restore.
