@@ -240,3 +240,85 @@ Clean design re-review artifacts:
 - Result: `logs/codex-review/20260601-023908-334281-last-message.md`
 
 Codex found no remaining blockers and approved implementation.
+
+## Result
+
+**Result:** Pass
+
+Implemented the narrow escape movement port:
+
+- `ESC D` now dispatches private `Action::Index`.
+- `ESC E` now dispatches private `Action::NextLine`.
+- `Action::Index` routes to Roastty's existing basic full-screen linefeed/index
+  helper.
+- `Action::NextLine` routes to the same helper and then the existing
+  carriage-return helper.
+
+The parser restores ground state before invoking handlers for both new actions,
+so handler errors do not leave the stream stuck in escape state. Pending invalid
+UTF-8 still emits `U+FFFD` before same-slice and split-feed `ESC D` / `ESC E`.
+
+Accepted forms:
+
+- `ESC D`
+- `ESC E`
+
+Explicitly deferred or ignored forms:
+
+- `ESC M` remains unsupported.
+- Direct C1 IND/NEL bytes `0x84` and `0x85` remain out of scope and continue
+  through the existing UTF-8 replacement path.
+- Intermediate-bearing forms such as `ESC ( D` and `ESC # E` are consumed as
+  invalid escape sequences and do not leak `D` / `E` as printable text.
+- Scrolling-region-aware index, left/right margins, semantic prompt
+  continuation, no-scrollback rotation, public API, and ABI changes remain
+  deferred.
+
+Terminal behavior:
+
+- `ESC D` moves down one row, preserves the column, clears pending wrap, and
+  scrolls at the bottom through the existing LF path.
+- `ESC E` moves down one row, resets the column to zero, clears pending wrap,
+  and scrolls at the bottom through the existing LF path.
+- `ESC E` bypasses linefeed mode and behaves as index plus carriage return.
+- Dirty-row behavior for both actions matches the reused basic linefeed path.
+- Split-feed `ESC D` and `ESC E` mutate terminal state correctly.
+
+Verification passed:
+
+```bash
+cargo fmt
+cargo test -p roastty stream
+cargo test -p roastty terminal_formatter
+cargo test -p roastty terminal::terminal
+cargo test -p roastty screen_formatter
+cargo test -p roastty page_string
+cargo test -p roastty terminal::page_list
+cargo test -p roastty
+```
+
+Observed results:
+
+- `cargo test -p roastty stream`: 180 passed.
+- `cargo test -p roastty terminal_formatter`: 67 passed.
+- `cargo test -p roastty terminal::terminal`: 139 passed.
+- `cargo test -p roastty screen_formatter`: 55 passed.
+- `cargo test -p roastty page_string`: 12 passed.
+- `cargo test -p roastty terminal::page_list`: 524 passed.
+- `cargo test -p roastty`: 1081 unit tests passed, ABI harness 1 passed,
+  doc-tests 0.
+
+Codex result review artifacts:
+
+- Prompt: `logs/codex-review/20260601-024630-583875-prompt.md`
+- Result: `logs/codex-review/20260601-024630-583875-last-message.md`
+
+Codex found no blocking issues and approved marking the experiment as `Pass`.
+
+## Conclusion
+
+Roastty now covers Ghostty's direct `ESC D` / `ESC E` stream actions within the
+currently-ported basic full-screen movement model. The work deliberately stops
+short of Ghostty's full `Terminal.index()` semantics; scrolling regions,
+horizontal margins, semantic prompt behavior, and no-scrollback rotation remain
+future ports.

@@ -11,6 +11,8 @@ pub(super) enum Action {
     TabClearCurrent,
     TabClearAll,
     TabReset,
+    Index,
+    NextLine,
 }
 
 pub(super) trait Handler {
@@ -23,6 +25,7 @@ pub(super) trait Handler {
 enum EscapeState {
     Ground,
     Escape,
+    EscapeInvalidIntermediate,
     Csi(CsiState),
 }
 
@@ -82,6 +85,10 @@ impl Stream {
         match self.escape {
             EscapeState::Ground => self.next_ground(byte, handler),
             EscapeState::Escape => self.next_escape(byte, handler),
+            EscapeState::EscapeInvalidIntermediate => {
+                self.next_escape_invalid_intermediate(byte);
+                Ok(())
+            }
             EscapeState::Csi(state) => self.next_csi(byte, state, handler),
         }
     }
@@ -114,9 +121,21 @@ impl Stream {
 
     fn next_escape<H: Handler>(&mut self, byte: u8, handler: &mut H) -> Result<(), H::Error> {
         match byte {
+            0x20..=0x2f => {
+                self.escape = EscapeState::EscapeInvalidIntermediate;
+                Ok(())
+            }
             b'[' => {
                 self.escape = EscapeState::Csi(CsiState::new());
                 Ok(())
+            }
+            b'D' => {
+                self.escape = EscapeState::Ground;
+                handler.vt(Action::Index)
+            }
+            b'E' => {
+                self.escape = EscapeState::Ground;
+                handler.vt(Action::NextLine)
             }
             b'H' => {
                 self.escape = EscapeState::Ground;
@@ -126,6 +145,12 @@ impl Stream {
                 self.escape = EscapeState::Ground;
                 Ok(())
             }
+        }
+    }
+
+    fn next_escape_invalid_intermediate(&mut self, byte: u8) {
+        if (0x30..=0x7e).contains(&byte) {
+            self.escape = EscapeState::Ground;
         }
     }
 
@@ -328,7 +353,9 @@ mod tests {
                 | Action::TabSet
                 | Action::TabClearCurrent
                 | Action::TabClearAll
-                | Action::TabReset => None,
+                | Action::TabReset
+                | Action::Index
+                | Action::NextLine => None,
             })
             .collect()
     }
@@ -524,6 +551,40 @@ mod tests {
     }
 
     #[test]
+    fn stream_escape_d_dispatches_index_action() {
+        let mut stream = Stream::init();
+        let mut handler = RecordingHandler::default();
+
+        next_slice(&mut stream, &mut handler, b"A\x1bDB");
+
+        assert_eq!(
+            actions(&handler),
+            &[
+                Action::Print { cp: 'A' },
+                Action::Index,
+                Action::Print { cp: 'B' },
+            ]
+        );
+    }
+
+    #[test]
+    fn stream_escape_e_dispatches_next_line_action() {
+        let mut stream = Stream::init();
+        let mut handler = RecordingHandler::default();
+
+        next_slice(&mut stream, &mut handler, b"A\x1bEB");
+
+        assert_eq!(
+            actions(&handler),
+            &[
+                Action::Print { cp: 'A' },
+                Action::NextLine,
+                Action::Print { cp: 'B' },
+            ]
+        );
+    }
+
+    #[test]
     fn stream_other_c0_controls_do_not_dispatch_print_actions() {
         let mut stream = Stream::init();
         let mut handler = RecordingHandler::default();
@@ -548,6 +609,26 @@ mod tests {
             print_chars(&handler),
             vec![char::REPLACEMENT_CHARACTER, 'A']
         );
+    }
+
+    #[test]
+    fn stream_raw_c1_ind_and_nel_bytes_do_not_dispatch_escape_actions() {
+        for byte in [0x84, 0x85] {
+            let mut stream = Stream::init();
+            let mut handler = RecordingHandler::default();
+
+            next_slice(&mut stream, &mut handler, &[byte, b'A']);
+
+            assert_eq!(
+                actions(&handler),
+                &[
+                    Action::Print {
+                        cp: char::REPLACEMENT_CHARACTER,
+                    },
+                    Action::Print { cp: 'A' },
+                ]
+            );
+        }
     }
 
     #[test]
@@ -684,6 +765,30 @@ mod tests {
     }
 
     #[test]
+    fn stream_pending_utf8_replacement_dispatches_before_escape_d_and_e() {
+        for (input, expected) in [
+            (b"\xf0\x9f\x1bDA".as_slice(), Action::Index),
+            (b"\xf0\x9f\x1bEA".as_slice(), Action::NextLine),
+        ] {
+            let mut stream = Stream::init();
+            let mut handler = RecordingHandler::default();
+
+            next_slice(&mut stream, &mut handler, input);
+
+            assert_eq!(
+                actions(&handler),
+                &[
+                    Action::Print {
+                        cp: char::REPLACEMENT_CHARACTER,
+                    },
+                    expected,
+                    Action::Print { cp: 'A' },
+                ]
+            );
+        }
+    }
+
+    #[test]
     fn stream_pending_utf8_replacement_dispatches_before_split_escape_h_tab_set() {
         let mut stream = Stream::init();
         let mut handler = RecordingHandler::default();
@@ -708,6 +813,38 @@ mod tests {
                 Action::Print { cp: 'A' },
             ]
         );
+    }
+
+    #[test]
+    fn stream_pending_utf8_replacement_dispatches_before_split_escape_d_and_e() {
+        for (second, expected) in [
+            (b"DA".as_slice(), Action::Index),
+            (b"EA".as_slice(), Action::NextLine),
+        ] {
+            let mut stream = Stream::init();
+            let mut handler = RecordingHandler::default();
+
+            next_slice(&mut stream, &mut handler, b"\xf0\x9f\x1b");
+            assert_eq!(
+                actions(&handler),
+                &[Action::Print {
+                    cp: char::REPLACEMENT_CHARACTER,
+                }]
+            );
+
+            next_slice(&mut stream, &mut handler, second);
+
+            assert_eq!(
+                actions(&handler),
+                &[
+                    Action::Print {
+                        cp: char::REPLACEMENT_CHARACTER,
+                    },
+                    expected,
+                    Action::Print { cp: 'A' },
+                ]
+            );
+        }
     }
 
     #[test]
@@ -760,6 +897,34 @@ mod tests {
     }
 
     #[test]
+    fn stream_intermediate_escape_forms_do_not_leak_or_dispatch_d_and_e() {
+        for input in [b"A\x1b(DB".as_slice(), b"A\x1b#EB".as_slice()] {
+            let mut stream = Stream::init();
+            let mut handler = RecordingHandler::default();
+
+            next_slice(&mut stream, &mut handler, input);
+
+            assert_eq!(
+                actions(&handler),
+                &[Action::Print { cp: 'A' }, Action::Print { cp: 'B' }]
+            );
+        }
+    }
+
+    #[test]
+    fn stream_escape_m_remains_unsupported() {
+        let mut stream = Stream::init();
+        let mut handler = RecordingHandler::default();
+
+        next_slice(&mut stream, &mut handler, b"A\x1bMB");
+
+        assert_eq!(
+            actions(&handler),
+            &[Action::Print { cp: 'A' }, Action::Print { cp: 'B' }]
+        );
+    }
+
+    #[test]
     fn stream_split_escape_h_dispatches_tab_set_action() {
         let mut stream = Stream::init();
         let mut handler = RecordingHandler::default();
@@ -776,6 +941,30 @@ mod tests {
                 Action::Print { cp: 'B' },
             ]
         );
+    }
+
+    #[test]
+    fn stream_split_escape_d_and_e_dispatch_actions() {
+        for (second, expected) in [
+            (b"DB".as_slice(), Action::Index),
+            (b"EB".as_slice(), Action::NextLine),
+        ] {
+            let mut stream = Stream::init();
+            let mut handler = RecordingHandler::default();
+
+            next_slice(&mut stream, &mut handler, b"A\x1b");
+            assert_eq!(actions(&handler), &[Action::Print { cp: 'A' }]);
+            next_slice(&mut stream, &mut handler, second);
+
+            assert_eq!(
+                actions(&handler),
+                &[
+                    Action::Print { cp: 'A' },
+                    expected,
+                    Action::Print { cp: 'B' },
+                ]
+            );
+        }
     }
 
     #[test]
@@ -1056,6 +1245,32 @@ mod tests {
         stream.next_slice(b"A", &mut handler).unwrap();
 
         assert_eq!(handler.actions, &[Action::Print { cp: 'A' }]);
+    }
+
+    #[test]
+    fn stream_escape_d_and_e_restore_ground_before_handler_error() {
+        for fail in [Action::Index, Action::NextLine] {
+            let mut stream = Stream::init();
+            let mut handler = ErrorOnActionHandler::new(fail);
+            let input = match fail {
+                Action::Index => b"\x1bD".as_slice(),
+                Action::NextLine => b"\x1bE".as_slice(),
+                Action::Print { .. }
+                | Action::LineFeed
+                | Action::CarriageReturn
+                | Action::Backspace
+                | Action::HorizontalTab
+                | Action::TabSet
+                | Action::TabClearCurrent
+                | Action::TabClearAll
+                | Action::TabReset => unreachable!("loop only uses D/E actions"),
+            };
+
+            assert_eq!(stream.next_slice(input, &mut handler), Err(()));
+            stream.next_slice(b"A", &mut handler).unwrap();
+
+            assert_eq!(handler.actions, &[Action::Print { cp: 'A' }]);
+        }
     }
 
     #[test]

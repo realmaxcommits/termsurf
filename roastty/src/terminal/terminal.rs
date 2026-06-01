@@ -311,6 +311,12 @@ impl Handler for TerminalStreamHandler<'_> {
                 self.tabstops.reset(TABSTOP_INTERVAL);
                 Ok(())
             }
+            Action::Index => self.line_feed(),
+            Action::NextLine => {
+                self.line_feed()?;
+                self.screen.carriage_return_basic();
+                Ok(())
+            }
         }
     }
 }
@@ -955,6 +961,26 @@ mod tests {
     }
 
     #[test]
+    fn terminal_stream_escape_d_moves_down_and_preserves_column() {
+        let mut terminal = Terminal::init(4, 3, None).unwrap();
+
+        terminal.next_slice(b"A\x1bDB").unwrap();
+
+        assert_eq!(plain_with_unwrap(&terminal, false), "A\n B");
+        assert_eq!(terminal.cursor_position_for_tests(), (2, 1));
+    }
+
+    #[test]
+    fn terminal_stream_escape_e_moves_down_and_carriage_returns() {
+        let mut terminal = Terminal::init(4, 3, None).unwrap();
+
+        terminal.next_slice(b"A\x1bEB").unwrap();
+
+        assert_eq!(plain_with_unwrap(&terminal, false), "A\nB");
+        assert_eq!(terminal.cursor_position_for_tests(), (1, 1));
+    }
+
+    #[test]
     fn terminal_stream_vt_bypasses_linefeed_mode() {
         let mut terminal = Terminal::init(4, 3, None).unwrap();
         terminal.set_mode_for_tests(Mode::Linefeed, true);
@@ -974,6 +1000,17 @@ mod tests {
 
         assert_eq!(plain_with_unwrap(&terminal, false), "A\n B");
         assert_eq!(terminal.cursor_position_for_tests(), (2, 1));
+    }
+
+    #[test]
+    fn terminal_stream_escape_e_bypasses_linefeed_mode() {
+        let mut terminal = Terminal::init(4, 3, None).unwrap();
+        terminal.set_mode_for_tests(Mode::Linefeed, true);
+
+        terminal.next_slice(b"A\x1bEB").unwrap();
+
+        assert_eq!(plain_with_unwrap(&terminal, false), "A\nB");
+        assert_eq!(terminal.cursor_position_for_tests(), (1, 1));
     }
 
     #[test]
@@ -1009,6 +1046,25 @@ mod tests {
     }
 
     #[test]
+    fn terminal_stream_escape_d_and_e_clear_pending_wrap_without_soft_wrap() {
+        for (input, expected_cursor) in
+            [(b"\x1bD".as_slice(), (4, 1)), (b"\x1bE".as_slice(), (0, 1))]
+        {
+            let mut terminal = Terminal::init(5, 3, None).unwrap();
+
+            terminal.next_slice(b"hello").unwrap();
+            assert!(terminal.cursor_pending_wrap_for_tests());
+            terminal.next_slice(input).unwrap();
+
+            assert_eq!(plain_with_unwrap(&terminal, false), "hello");
+            assert_eq!(terminal.cursor_position_for_tests(), expected_cursor);
+            assert!(!terminal.cursor_pending_wrap_for_tests());
+            assert!(!terminal.row_wrap_for_tests(0));
+            assert!(!terminal.row_wrap_continuation_for_tests(1));
+        }
+    }
+
+    #[test]
     fn terminal_stream_lf_marks_old_and_new_rows_dirty() {
         let mut terminal = Terminal::init(5, 3, None).unwrap();
 
@@ -1021,6 +1077,29 @@ mod tests {
         assert!(terminal.is_dirty_for_tests(0, 1));
         assert!(terminal.is_dirty_for_tests(4, 1));
         assert!(!terminal.is_dirty_for_tests(0, 2));
+    }
+
+    #[test]
+    fn terminal_stream_escape_d_and_e_mark_same_rows_dirty_as_lf() {
+        for input in [b"\x1bD".as_slice(), b"\x1bE".as_slice()] {
+            let mut lf = Terminal::init(5, 3, None).unwrap();
+            lf.next_slice(b"A").unwrap();
+            lf.clear_dirty_for_tests();
+            lf.next_slice(b"\n").unwrap();
+
+            let mut terminal = Terminal::init(5, 3, None).unwrap();
+            terminal.next_slice(b"A").unwrap();
+            terminal.clear_dirty_for_tests();
+            terminal.next_slice(input).unwrap();
+
+            for point in [(0, 0), (4, 0), (0, 1), (4, 1), (0, 2)] {
+                assert_eq!(
+                    terminal.is_dirty_for_tests(point.0, point.1),
+                    lf.is_dirty_for_tests(point.0, point.1),
+                    "dirty state mismatch for {input:?} at {point:?}",
+                );
+            }
+        }
     }
 
     #[test]
@@ -1070,6 +1149,34 @@ mod tests {
     }
 
     #[test]
+    fn terminal_stream_bottom_row_escape_d_scrolls_and_preserves_column() {
+        let mut terminal = Terminal::init(5, 2, None).unwrap();
+
+        terminal.next_slice(b"ab\r\ncd").unwrap();
+        assert_eq!(terminal.cursor_position_for_tests(), (2, 1));
+        terminal.next_slice(b"\x1bD").unwrap();
+
+        assert_eq!(plain_with_unwrap(&terminal, false), "cd");
+        assert_eq!(terminal.full_screen_plain_for_tests(false), "ab\ncd");
+        assert_eq!(terminal.cursor_position_for_tests(), (2, 1));
+        assert!(!terminal.cursor_pending_wrap_for_tests());
+    }
+
+    #[test]
+    fn terminal_stream_bottom_row_escape_e_scrolls_and_carriage_returns() {
+        let mut terminal = Terminal::init(5, 2, None).unwrap();
+
+        terminal.next_slice(b"ab\r\ncd").unwrap();
+        assert_eq!(terminal.cursor_position_for_tests(), (2, 1));
+        terminal.next_slice(b"\x1bE").unwrap();
+
+        assert_eq!(plain_with_unwrap(&terminal, false), "cd");
+        assert_eq!(terminal.full_screen_plain_for_tests(false), "ab\ncd");
+        assert_eq!(terminal.cursor_position_for_tests(), (0, 1));
+        assert!(!terminal.cursor_pending_wrap_for_tests());
+    }
+
+    #[test]
     fn terminal_stream_bottom_row_lf_marks_visible_rows_dirty() {
         let mut terminal = Terminal::init(5, 2, None).unwrap();
 
@@ -1081,6 +1188,22 @@ mod tests {
         assert!(terminal.is_dirty_for_tests(4, 0));
         assert!(terminal.is_dirty_for_tests(0, 1));
         assert!(terminal.is_dirty_for_tests(4, 1));
+    }
+
+    #[test]
+    fn terminal_stream_bottom_row_escape_d_and_e_mark_visible_rows_dirty() {
+        for input in [b"\x1bD".as_slice(), b"\x1bE".as_slice()] {
+            let mut terminal = Terminal::init(5, 2, None).unwrap();
+
+            terminal.next_slice(b"ab\r\ncd").unwrap();
+            terminal.clear_dirty_for_tests();
+            terminal.next_slice(input).unwrap();
+
+            assert!(terminal.is_dirty_for_tests(0, 0));
+            assert!(terminal.is_dirty_for_tests(4, 0));
+            assert!(terminal.is_dirty_for_tests(0, 1));
+            assert!(terminal.is_dirty_for_tests(4, 1));
+        }
     }
 
     #[test]
@@ -1105,6 +1228,22 @@ mod tests {
             assert_eq!(plain_with_unwrap(&terminal, false), "hello\n     world");
             assert_eq!(terminal.cursor_position_for_tests(), (9, 1));
             assert!(terminal.cursor_pending_wrap_for_tests());
+        }
+    }
+
+    #[test]
+    fn terminal_stream_split_feed_escape_d_and_e_move_down() {
+        for (second, expected_plain, expected_cursor) in [
+            (b"Dworld".as_slice(), "hello\n     world", (9, 1)),
+            (b"Eworld".as_slice(), "hello\nworld", (5, 1)),
+        ] {
+            let mut terminal = Terminal::init(10, 3, None).unwrap();
+
+            terminal.next_slice(b"hello\x1b").unwrap();
+            terminal.next_slice(second).unwrap();
+
+            assert_eq!(plain_with_unwrap(&terminal, false), expected_plain);
+            assert_eq!(terminal.cursor_position_for_tests(), expected_cursor);
         }
     }
 

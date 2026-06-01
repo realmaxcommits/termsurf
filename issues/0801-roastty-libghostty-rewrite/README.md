@@ -331,7 +331,7 @@ No experiment may proceed to the next stage until the required review passes.
 - [Experiment 112: Port CSI Tab Clear and Reset](112-port-csi-tab-clear-reset.md)
   — **Pass**
 - [Experiment 113: Port Escape Index and Next Line](113-port-escape-index-next-line.md)
-  — **Designed**
+  — **Pass**
 
 ## Non-Goals
 
