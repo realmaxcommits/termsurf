@@ -425,6 +425,8 @@ tests, choose the larger subsystem.
   **Pass**
 - [Experiment 148: Port DCS Command Handling](148-port-dcs-command-handling.md)
   — **Pass**
+- [Experiment 149: Port Cursor Visual Style](149-port-cursor-visual-style.md) —
+  **Designed**
 
 ## Non-Goals
 
