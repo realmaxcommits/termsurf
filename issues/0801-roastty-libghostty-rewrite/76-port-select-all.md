@@ -149,3 +149,65 @@ Codex reviewed the design and found no blockers. It approved the scope, upstream
 `Screen.selectAll` semantic match, screen-domain/scrollback distinction,
 verification plan, and result-recording requirements as good enough to commit
 before implementation.
+
+## Result
+
+**Result:** Pass
+
+Implemented private PageList select-all calculation in
+`roastty/src/terminal/page_list.rs`:
+
+- `SELECT_ALL_WHITESPACE` stores upstream's exact select-all trimming table:
+  `0`, space, and tab.
+- `PageList::select_all()` scans forward from the top-left screen cell for the
+  first non-whitespace text cell, scans backward from the bottom-right screen
+  cell for the last non-whitespace text cell, and returns an untracked
+  non-rectangular `Selection`.
+- The helper returns `None` for empty, unwritten, or all-whitespace screen
+  content.
+
+The implementation stays private to PageList. It does not add `Screen`,
+`Terminal`, `ScreenFormatter`, `selectionString`, string-map support,
+`LineIterator`, gesture state, public ABI, renderer, parser, app, platform
+input, mouse behavior, clipboard behavior, or UI wiring.
+
+The tests cover:
+
+- both upstream `Screen: selectAll` cases;
+- empty PageLists;
+- all-space, all-tab, and unwritten content returning `None`;
+- trimming leading/trailing spaces and tabs while preserving the internal
+  selected span;
+- selecting across the full screen coordinate domain when scrollback/history
+  rows exist;
+- untracked non-rectangular selection shape.
+
+Verification passed:
+
+```bash
+cargo fmt
+cargo test -p roastty select_all
+cargo test -p roastty terminal::page_list
+cargo test -p roastty
+```
+
+Observed results:
+
+- `cargo test -p roastty select_all`: 4 passed.
+- `cargo test -p roastty terminal::page_list`: 373 passed.
+- `cargo test -p roastty`: 666 unit tests passed, ABI harness passed, and
+  doctests passed.
+
+Codex reviewed the implementation and found no implementation blockers. Its only
+finding was to record this result and update the README status.
+
+## Conclusion
+
+Experiment 76 successfully ports upstream `selectAll` into Roastty's
+PageList-centered terminal layer. Roastty can now compute a private
+screen-domain select-all range with upstream trimming behavior and scrollback
+coverage, without adding string extraction, formatter, gesture, or public API
+surface.
+
+The next experiment can continue the selection stack with the next primitive
+that depends on the completed selection helpers.

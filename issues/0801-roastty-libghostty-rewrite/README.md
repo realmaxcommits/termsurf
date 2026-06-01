@@ -264,7 +264,7 @@ No experiment may proceed to the next stage until the required review passes.
   **Pass**
 - [Experiment 74: Port Word Selection](74-port-word-selection.md) — **Pass**
 - [Experiment 75: Port Line Selection](75-port-line-selection.md) — **Pass**
-- [Experiment 76: Port Select All](76-port-select-all.md) — **Designed**
+- [Experiment 76: Port Select All](76-port-select-all.md) — **Pass**
 
 ## Non-Goals
 

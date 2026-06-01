@@ -200,6 +200,8 @@ impl<'a> SelectLineOptions<'a> {
     }
 }
 
+const SELECT_ALL_WHITESPACE: [u32; 3] = [0, ' ' as u32, '\t' as u32];
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CloneRegionError {
     Empty,
@@ -3326,6 +3328,46 @@ impl PageList {
         self.pin_at_absolute_row(target_row, target_x, pin.garbage)
     }
 
+    fn select_all(&self) -> Option<selection::Selection> {
+        let start = {
+            let mut result = None;
+            for pin in self.cell_iterator(
+                Direction::RightDown,
+                point::Point::screen(Coordinate::new(0, 0)),
+                None,
+            ) {
+                let cell = self.pin_cell(pin)?;
+                if !cell.has_text() || SELECT_ALL_WHITESPACE.contains(&cell.codepoint()) {
+                    continue;
+                }
+
+                result = Some(pin);
+                break;
+            }
+            result?
+        };
+
+        let end = {
+            let mut result = None;
+            for pin in self.cell_iterator(
+                Direction::LeftUp,
+                point::Point::screen(Coordinate::new(0, 0)),
+                None,
+            ) {
+                let cell = self.pin_cell(pin)?;
+                if !cell.has_text() || SELECT_ALL_WHITESPACE.contains(&cell.codepoint()) {
+                    continue;
+                }
+
+                result = Some(pin);
+                break;
+            }
+            result?
+        };
+
+        Some(selection::Selection::new(start, end, false))
+    }
+
     fn select_line(&self, options: SelectLineOptions<'_>) -> Option<selection::Selection> {
         let pin = options.pin;
         if pin.garbage || !self.pin_is_valid(&pin) {
@@ -4037,6 +4079,13 @@ mod tests {
         let selection = list
             .select_line(options)
             .expect("line selection must exist");
+        assert!(!selection.is_tracked());
+        assert!(!selection.rectangle());
+        assert_selection_screen_points(list, selection, start, end);
+    }
+
+    fn assert_select_all(list: &PageList, start: (CellCountInt, u32), end: (CellCountInt, u32)) {
+        let selection = list.select_all().expect("select all must exist");
         assert!(!selection.is_tracked());
         assert!(!selection.rectangle());
         assert_selection_screen_points(list, selection, start, end);
@@ -12073,6 +12122,57 @@ mod tests {
         assert!(list
             .drag_selection(valid, garbage, 35, 45, false, geometry)
             .is_none());
+    }
+
+    #[test]
+    fn select_all_matches_upstream_cases() {
+        let mut list = PageList::init(10, 10, None).unwrap();
+        set_screen_text_lines(&mut list, &["ABC  DEF", " 123", "456"]);
+        assert_select_all(&list, (0, 0), (2, 2));
+
+        let mut list = PageList::init(10, 10, None).unwrap();
+        set_screen_text_lines(
+            &mut list,
+            &[
+                "ABC  DEF",
+                " 123",
+                "456",
+                "FOO",
+                " BAR",
+                " BAZ",
+                " QWERTY",
+                " 12345678",
+            ],
+        );
+        assert_select_all(&list, (0, 0), (8, 7));
+    }
+
+    #[test]
+    fn select_all_returns_none_for_empty_or_whitespace_only() {
+        let empty = PageList::init(10, 3, None).unwrap();
+        assert!(empty.select_all().is_none());
+
+        let mut whitespace = PageList::init(10, 3, None).unwrap();
+        set_screen_text_lines(&mut whitespace, &["   ", "\t\t", " \t "]);
+        assert!(whitespace.select_all().is_none());
+    }
+
+    #[test]
+    fn select_all_trims_edges_but_preserves_internal_span() {
+        let mut list = PageList::init(10, 3, None).unwrap();
+        set_screen_text_lines(&mut list, &["  \tA B\t  "]);
+
+        assert_select_all(&list, (3, 0), (5, 0));
+    }
+
+    #[test]
+    fn select_all_uses_screen_domain_across_scrollback() {
+        let mut list = PageList::init(3, 3, None).unwrap();
+        list.grow_rows(2).unwrap();
+        set_screen_text_lines(&mut list, &["1  ", "2B ", "3  ", "4D ", "5E "]);
+
+        assert_eq!(active_top_left_screen_coord(&list), Coordinate::new(0, 2));
+        assert_select_all(&list, (0, 0), (1, 4));
     }
 
     #[test]
