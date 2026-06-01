@@ -430,6 +430,8 @@ tests, choose the larger subsystem.
 - [Experiment 150: Port ESC Cursor State Controls](150-port-esc-cursor-state-controls.md)
   — **Pass**
 - [Experiment 151: Port RIS Full Reset](151-port-ris-full-reset.md) — **Pass**
+- [Experiment 152: Port Charset Escape Controls](152-port-charset-escape-controls.md)
+  — **Designed**
 
 ## Non-Goals
 
