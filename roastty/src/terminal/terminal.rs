@@ -4,7 +4,9 @@ use super::color;
 use super::page_list::{
     CodepointMapEntry, PageListAllocError, PageOutputFormat, PageStringWithPinMap,
 };
-use super::screen::{Screen, ScreenFormatter, ScreenFormatterContent, ScreenFormatterOptions};
+use super::screen::{
+    Screen, ScreenFormatter, ScreenFormatterContent, ScreenFormatterExtra, ScreenFormatterOptions,
+};
 use super::size::CellCountInt;
 
 #[derive(Debug)]
@@ -27,6 +29,12 @@ pub(super) struct TerminalFormatter<'a> {
     terminal: &'a Terminal,
     options: TerminalFormatterOptions<'a>,
     content: ScreenFormatterContent,
+    extra: TerminalFormatterExtra,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(super) struct TerminalFormatterExtra {
+    screen: ScreenFormatterExtra,
 }
 
 impl Terminal {
@@ -80,6 +88,7 @@ impl<'a> TerminalFormatter<'a> {
             terminal,
             options,
             content: ScreenFormatterContent::Selection(None),
+            extra: TerminalFormatterExtra::none(),
         }
     }
 
@@ -88,16 +97,36 @@ impl<'a> TerminalFormatter<'a> {
         self
     }
 
+    pub(super) const fn with_extra(mut self, extra: TerminalFormatterExtra) -> Self {
+        self.extra = extra;
+        self
+    }
+
     pub(super) fn format(self) -> String {
         ScreenFormatter::init(&self.terminal.screens.active, self.options.screen)
             .with_content(self.content)
+            .with_extra(self.extra.screen)
             .format()
     }
 
     pub(super) fn format_with_pin_map(self) -> PageStringWithPinMap {
         ScreenFormatter::init(&self.terminal.screens.active, self.options.screen)
             .with_content(self.content)
+            .with_extra(self.extra.screen)
             .format_with_pin_map()
+    }
+}
+
+impl TerminalFormatterExtra {
+    pub(super) const fn none() -> Self {
+        Self {
+            screen: ScreenFormatterExtra::none(),
+        }
+    }
+
+    pub(super) const fn screen(mut self, screen: ScreenFormatterExtra) -> Self {
+        self.screen = screen;
+        self
     }
 }
 
@@ -165,6 +194,48 @@ mod tests {
         report_events: true,
         ..KeyFlags::DISABLED
     };
+
+    fn set_active_screen_extras(terminal: &mut Terminal) {
+        terminal.screens.active.set_cursor_position_for_tests(4, 2);
+        terminal.screens.active.set_cursor_protected_for_tests(true);
+        terminal
+            .screens
+            .active
+            .set_cursor_style_for_tests(style::Style {
+                fg_color: style::Color::Palette(1),
+                ..style::Style::default()
+            });
+        terminal.screens.active.set_cursor_hyperlink_for_tests(
+            ScreenCursorHyperlinkId::Explicit("idé".to_string()),
+            "https://e.test/é",
+        );
+        terminal
+            .screens
+            .active
+            .set_kitty_keyboard_for_tests(KeySetMode::Set, KITTY_FLAGS_3);
+        terminal
+            .screens
+            .active
+            .set_charset_for_tests(charsets::CharsetSlot::G0, charsets::Charset::DecSpecial);
+        terminal
+            .screens
+            .active
+            .set_charset_gl_for_tests(charsets::CharsetSlot::G1);
+    }
+
+    const fn all_screen_extras() -> ScreenFormatterExtra {
+        ScreenFormatterExtra::none()
+            .style(true)
+            .hyperlink(true)
+            .protection(true)
+            .kitty_keyboard(true)
+            .charsets(true)
+            .cursor(true)
+    }
+
+    const fn terminal_screen_extras() -> TerminalFormatterExtra {
+        TerminalFormatterExtra::none().screen(all_screen_extras())
+    }
 
     #[test]
     fn terminal_formatter_plain_full_active_screen_single_line() {
@@ -438,6 +509,108 @@ mod tests {
         assert_eq!(terminal_output, screen_output);
         assert_eq!(terminal_output.text, "hi");
         assert_eq!(terminal_output.pin_map, pins(&terminal, &[(0, 0), (1, 0)]));
+    }
+
+    #[test]
+    fn terminal_formatter_forwards_screen_extras_to_vt_content() {
+        let mut terminal = terminal_with_lines(&["hi"]);
+        set_active_screen_extras(&mut terminal);
+
+        let terminal_output = formatter(&terminal, PageOutputFormat::Vt)
+            .with_extra(terminal_screen_extras())
+            .format();
+        let screen_output = screen_formatter(&terminal, PageOutputFormat::Vt)
+            .with_extra(all_screen_extras())
+            .format();
+
+        assert_eq!(terminal_output, screen_output);
+        assert_eq!(
+            terminal_output,
+            "hi\x1b[0m\x1b[38;5;1m\x1b]8;id=idé;https://e.test/é\x1b\\\x1b[1\"q\x1b[=3;1u\x1b(0\x0e\x1b[3;5H"
+        );
+    }
+
+    #[test]
+    fn terminal_formatter_forwards_screen_extras_with_no_content() {
+        let mut terminal = terminal_with_lines(&["hi"]);
+        set_active_screen_extras(&mut terminal);
+
+        let terminal_output = formatter(&terminal, PageOutputFormat::Vt)
+            .with_content(ScreenFormatterContent::None)
+            .with_extra(terminal_screen_extras())
+            .format();
+        let screen_output = screen_formatter(&terminal, PageOutputFormat::Vt)
+            .with_content(ScreenFormatterContent::None)
+            .with_extra(all_screen_extras())
+            .format();
+
+        assert_eq!(terminal_output, screen_output);
+        assert_eq!(
+            terminal_output,
+            "\x1b[0m\x1b[38;5;1m\x1b]8;id=idé;https://e.test/é\x1b\\\x1b[1\"q\x1b[=3;1u\x1b(0\x0e\x1b[3;5H"
+        );
+    }
+
+    #[test]
+    fn terminal_formatter_forwards_screen_extra_pin_maps_with_content() {
+        let mut terminal = terminal_with_lines(&["hi"]);
+        set_active_screen_extras(&mut terminal);
+
+        let terminal_output = formatter(&terminal, PageOutputFormat::Vt)
+            .with_extra(terminal_screen_extras())
+            .format_with_pin_map();
+        let screen_output = screen_formatter(&terminal, PageOutputFormat::Vt)
+            .with_extra(all_screen_extras())
+            .format_with_pin_map();
+
+        assert_eq!(terminal_output, screen_output);
+        assert_eq!(terminal_output.text.len(), terminal_output.pin_map.len());
+        assert!(terminal_output.text.chars().count() < terminal_output.text.len());
+        assert_eq!(terminal_output.pin_map[0], active_pin(&terminal, 0, 0));
+        assert_eq!(terminal_output.pin_map[1], active_pin(&terminal, 1, 0));
+        for pin in &terminal_output.pin_map[2..] {
+            assert_eq!(*pin, active_pin(&terminal, 1, 0));
+        }
+    }
+
+    #[test]
+    fn terminal_formatter_forwards_screen_extra_pin_maps_without_content() {
+        let mut terminal = terminal_with_lines(&["hi"]);
+        set_active_screen_extras(&mut terminal);
+
+        let terminal_output = formatter(&terminal, PageOutputFormat::Vt)
+            .with_content(ScreenFormatterContent::None)
+            .with_extra(terminal_screen_extras())
+            .format_with_pin_map();
+        let screen_output = screen_formatter(&terminal, PageOutputFormat::Vt)
+            .with_content(ScreenFormatterContent::None)
+            .with_extra(all_screen_extras())
+            .format_with_pin_map();
+
+        assert_eq!(terminal_output, screen_output);
+        assert_eq!(terminal_output.text.len(), terminal_output.pin_map.len());
+        for pin in terminal_output.pin_map {
+            assert_eq!(pin, active_pin(&terminal, 0, 0));
+        }
+    }
+
+    #[test]
+    fn terminal_formatter_forwarded_screen_extras_follow_screen_formatter_for_plain_and_html() {
+        let mut terminal = terminal_with_lines(&["<hi"]);
+        set_active_screen_extras(&mut terminal);
+
+        for emit in [PageOutputFormat::Plain, PageOutputFormat::Html] {
+            let terminal_output = formatter(&terminal, emit)
+                .with_extra(terminal_screen_extras())
+                .format();
+            let screen_output = screen_formatter(&terminal, emit)
+                .with_extra(all_screen_extras())
+                .format();
+            let default_output = formatter(&terminal, emit).format();
+
+            assert_eq!(terminal_output, screen_output);
+            assert_eq!(terminal_output, default_output);
+        }
     }
 
     #[test]

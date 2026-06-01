@@ -301,7 +301,7 @@ No experiment may proceed to the next stage until the required review passes.
 - [Experiment 95: Port Screen Formatter Hyperlink Extra](95-port-screen-formatter-hyperlink-extra.md)
   — **Pass**
 - [Experiment 96: Port Terminal Formatter Screen Extra Forwarding](96-port-terminal-formatter-screen-extra-forwarding.md)
-  — **Designed**
+  — **Pass**
 
 ## Non-Goals
 
