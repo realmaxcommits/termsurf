@@ -3745,6 +3745,10 @@ impl PageList {
         Ok(())
     }
 
+    pub(super) fn scrollback_disabled(&self) -> bool {
+        self.explicit_max_size == 0
+    }
+
     pub(super) fn active_row_pin(&self, y: u32) -> Result<Pin, BasicCellWriteError> {
         self.pin(point::Point::active(point::Coordinate::new(0, y)))
             .ok_or(BasicCellWriteError::InvalidPoint)
@@ -12687,6 +12691,106 @@ mod tests {
         assert_eq!(
             [history_cell_at(&list, 0, 0), history_cell_at(&list, 0, 1)],
             cells_before
+        );
+        list.verify_integrity().unwrap();
+    }
+
+    #[test]
+    fn page_list_scroll_up_composition_moves_managed_metadata_into_scrollback() {
+        let mut list = PageList::init(5, 3, Some(10)).unwrap();
+        let pin = list
+            .pin(point::Point::active(Coordinate::new(0, 0)))
+            .unwrap();
+        let index = list.node_index(pin.node).unwrap();
+        let page = &mut list.pages[index].page;
+        let style_id = page
+            .add_style(style::Style {
+                flags: style::Flags {
+                    bold: true,
+                    ..style::Flags::default()
+                },
+                ..style::Style::default()
+            })
+            .unwrap();
+        let link_id = page
+            .insert_hyperlink(hyperlink::Hyperlink {
+                id: hyperlink::HyperlinkId::Explicit(b"scroll-up"),
+                uri: b"https://example.com/scroll-up",
+            })
+            .unwrap();
+        {
+            let rac = page.get_row_and_cell_mut(pin.x as usize, pin.y as usize);
+            rac.row.set_styled(true);
+            *rac.cell = Cell::init('S' as u32);
+            rac.cell.set_style_id(style_id);
+        }
+        page.append_grapheme_at(pin.x as usize, pin.y as usize, 0x0301)
+            .unwrap();
+        page.set_hyperlink(pin.x as usize, pin.y as usize, link_id)
+            .unwrap();
+
+        list.grow_active().unwrap();
+        list.insert_active_lines(2, 2, 0, 4, 1, true).unwrap();
+
+        let history_pin = list
+            .pin(point::Point::history(Coordinate::new(0, 0)))
+            .unwrap();
+        let history_node = list.node_for_pin(&history_pin).unwrap();
+        let history_page = &history_node.page;
+        let history_cell = page_cell(history_page, history_pin.x as usize, history_pin.y as usize);
+        assert_eq!(history_cell.codepoint(), 'S' as u32);
+        assert_eq!(history_cell.style_id(), style_id);
+        assert_eq!(
+            history_page.lookup_grapheme_at(history_pin.x as usize, history_pin.y as usize),
+            Some(vec![0x0301])
+        );
+        assert_eq!(
+            history_page.lookup_hyperlink_at(history_pin.x as usize, history_pin.y as usize),
+            Some(link_id)
+        );
+        assert_eq!(history_page.style_ref_count(style_id), 1);
+        assert_eq!(history_page.grapheme_count(), 1);
+        assert_eq!(history_page.hyperlink_ref_count(link_id), 1);
+        list.verify_integrity().unwrap();
+    }
+
+    #[test]
+    fn page_list_scroll_up_composition_preserves_integrity_across_page_boundary() {
+        let (mut list, page_rows) = multi_page_list(6);
+        assert!(page_rows < list.rows);
+        for y in 0..list.rows {
+            set_active_row_marker(&mut list, y, u32::from(b'A') + u32::from(y));
+        }
+
+        let bottom = list.rows - 2;
+        let count = 2;
+        for _ in 0..count {
+            list.grow_active().unwrap();
+        }
+        let insert_start = bottom + 1 - count;
+        list.insert_active_lines(
+            insert_start.into(),
+            list.rows - 1,
+            0,
+            list.cols - 1,
+            count,
+            true,
+        )
+        .unwrap();
+
+        assert_eq!(list.scrollback_rows_for_tests(), usize::from(count));
+        assert_eq!(history_cell_at(&list, 0, 0).codepoint(), u32::from(b'A'));
+        assert_eq!(history_cell_at(&list, 0, 1).codepoint(), u32::from(b'B'));
+        assert_eq!(active_row_marker(&list, 0), u32::from(b'C'));
+        assert_eq!(
+            active_row_marker(&list, bottom - count),
+            u32::from(b'A') + u32::from(bottom)
+        );
+        assert_eq!(active_row_marker(&list, bottom - count + 1), 0);
+        assert_eq!(active_row_marker(&list, bottom), 0);
+        assert_eq!(
+            active_row_marker(&list, list.rows - 1),
+            u32::from(b'A') + u32::from(list.rows - 1)
         );
         list.verify_integrity().unwrap();
     }

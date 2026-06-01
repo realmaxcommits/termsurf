@@ -327,3 +327,131 @@ Codex re-reviewed the updated design and reported no remaining blocking
 findings: `logs/codex-review/20260601-053457-547975-last-message.md`.
 
 The design is ready to commit before implementation.
+
+## Result
+
+**Result:** Pass
+
+Experiment 125 ports Ghostty's `CSI S` / `CSI T` scroll-up and scroll-down
+commands across the current private Roastty terminal stack.
+
+The stream parser now dispatches:
+
+- `Action::ScrollUp { count }` for final `S`;
+- `Action::ScrollDown { count }` for final `T`;
+- default count `1` for `CSI S` and `CSI T`;
+- exact count `0` for `CSI 0 S`, `CSI ; S`, `CSI 0 T`, and `CSI ; T`;
+- exact count `1` for `CSI 1 S`, `CSI 1 ; S`, `CSI 1 T`, and `CSI 1 ; T`;
+- larger single numeric params using the existing `u16::MAX` parser clamp.
+
+The parser rejects the invalid forms required by the design:
+
+- private forms such as `CSI ? S`, `CSI > S`, `CSI ? T`, and `CSI > T`;
+- real multi-param forms such as `CSI 1 ; 2 S` and `CSI 1 ; 2 T`;
+- colon and mixed-separator forms;
+- direct raw C1 CSI byte `0x9b`, which remains out of scope and follows the
+  current UTF-8 replacement behavior;
+- handler errors leave the parser in ground state before returning the error;
+- pending invalid UTF-8 dispatches `U+FFFD` before same-slice and split-feed
+  scroll actions.
+
+The terminal execution path now implements both commands:
+
+- `CSI T` preserves the original cursor and pending-wrap state, temporarily
+  moves to the top-left of the configured scrolling region, reuses
+  `insert_lines_basic()`, and restores the original cursor state;
+- `CSI T` is not gated by the original cursor location; tests cover the original
+  cursor outside the vertical region and outside the horizontal margins;
+- `CSI S` preserves the original cursor and pending-wrap state;
+- `CSI S` uses the scrollback-preserving path when the region starts at the top
+  and is full-width;
+- `CSI S` creates scrollback when `max_scrollback > 0`;
+- `CSI S` visually scrolls but retains no history when `max_scrollback = 0`;
+- `CSI S` preserves rows below a partial bottom margin by growing scrollback and
+  then inserting blanks at the bottom-margin boundary;
+- `CSI S` falls back to the delete-lines path for non-zero top margins and for
+  left/right margins, so bounded margin behavior stays aligned with Experiment
+  124;
+- both commands preserve pending wrap, preserve absolute cursor position, treat
+  count `0` as a no-op, and clamp oversized counts to the active region height.
+
+The implementation adds one narrow PageList query:
+`PageList::scrollback_disabled()`. It is used only so `CSI S` can implement
+Ghostty's `max_scrollback = 0` behavior: visual scroll without retained history.
+No public API or ABI surface was added.
+
+The scrollback path is covered by Screen and PageList tests for:
+
+- full-width top-region scroll-up creating scrollback;
+- partial bottom-margin scroll-up preserving rows below the margin;
+- `max_scrollback = 0` discarding history while still scrolling visually;
+- styled cells moving into scrollback without breaking the current managed-cell
+  model.
+- the exact PageList composition used by the scrollback path preserving style,
+  grapheme, and hyperlink metadata with one live reference each;
+- the same grow-plus-insert composition preserving integrity across a PageList
+  page boundary.
+
+Terminal tests cover simple `CSI S`, simple `CSI T`, margin-constrained paths,
+oversized counts, count `0`, split-feed execution, original cursor restoration,
+pending-wrap preservation, scrollback creation, and invalid forms not mutating
+state. The non-scrollback margin paths reuse the existing insert/delete-line
+semantics from Experiments 123 and 124.
+
+Current-SGR blank-cell coloring, Unicode-width boundary repair, wide-character
+rendering, alternate-screen semantics, Kitty graphics, and broader public ABI
+work remain deferred. None of those were added or required for this slice.
+
+Verification commands:
+
+```bash
+cargo fmt
+cargo test -p roastty stream
+cargo test -p roastty terminal::terminal
+cargo test -p roastty terminal::page_list
+cargo test -p roastty terminal_formatter
+cargo test -p roastty screen_formatter
+cargo test -p roastty page_string
+cargo test -p roastty
+```
+
+All commands passed. The full `cargo test -p roastty` run reported `1311`
+library tests passing, the ABI harness test passing, and doc-tests passing.
+
+Codex design review found one real issue in the initial design: explicit `CSI T`
+coverage was needed for original-cursor-outside-margin cases. The design was
+updated with those requirements and re-reviewed successfully before
+implementation:
+
+- initial design review:
+  `logs/codex-review/20260601-053053-626817-last-message.md`;
+- approved design re-review:
+  `logs/codex-review/20260601-053457-547975-last-message.md`.
+
+Codex result review found two real coverage gaps in the first completed result:
+`logs/codex-review/20260601-054400-717810-last-message.md`.
+
+- The managed metadata proof was too indirect: the Screen styled-cell test
+  checked visible text and scrollback count, but not style/grapheme/hyperlink
+  ownership.
+- The scrollback path lacked a targeted page-boundary test for the PageList
+  grow-plus-insert composition.
+
+Both findings were fixed by adding PageList tests for managed metadata ownership
+and page-boundary integrity, then rerunning the full verification chain above.
+Codex re-reviewed the updated result and found no remaining blocking issues:
+`logs/codex-review/20260601-054920-781576-last-message.md`. The re-review
+explicitly confirmed that both prior blockers were resolved and that this
+experiment is good enough to commit as `Pass`.
+
+## Conclusion
+
+`CSI S` and `CSI T` are now implemented for the current Roastty terminal model.
+The row/scroll mutation surface now includes insert lines, delete lines, scroll
+up, and scroll down, with scroll-up preserving xterm-style scrollback for
+top-origin full-width regions.
+
+The next experiment can continue to a neighboring CSI subsystem rather than
+another line-mutation primitive. The likely candidates are the remaining basic
+CSI mutation commands such as insert characters / erase characters, or a grouped
+slice of small CSI reports/settings if those share one implementation surface.

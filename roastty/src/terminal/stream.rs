@@ -59,6 +59,12 @@ pub(super) enum Action {
     DeleteLines {
         count: u16,
     },
+    ScrollUp {
+        count: u16,
+    },
+    ScrollDown {
+        count: u16,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -348,6 +354,14 @@ impl CsiState {
             return CsiDispatch::One(action);
         }
 
+        if let Some(action) = self.scroll_up_action(final_byte) {
+            return CsiDispatch::One(action);
+        }
+
+        if let Some(action) = self.scroll_down_action(final_byte) {
+            return CsiDispatch::One(action);
+        }
+
         if final_byte == b'W' {
             return self
                 .tab_action()
@@ -539,6 +553,24 @@ impl CsiState {
         Some(Action::DeleteLines { count })
     }
 
+    fn scroll_up_action(&self, final_byte: u8) -> Option<Action> {
+        if final_byte != b'S' {
+            return None;
+        }
+
+        let count = self.single_param(true)?.unwrap_or(1);
+        Some(Action::ScrollUp { count })
+    }
+
+    fn scroll_down_action(&self, final_byte: u8) -> Option<Action> {
+        if final_byte != b'T' {
+            return None;
+        }
+
+        let count = self.single_param(true)?.unwrap_or(1);
+        Some(Action::ScrollDown { count })
+    }
+
     fn line_dispatch(&self, final_byte: u8) -> Option<CsiDispatch> {
         let count = self.movement_count()?;
         match final_byte {
@@ -720,7 +752,9 @@ mod tests {
                 | Action::EraseLine { .. }
                 | Action::DeleteChars { .. }
                 | Action::InsertLines { .. }
-                | Action::DeleteLines { .. } => None,
+                | Action::DeleteLines { .. }
+                | Action::ScrollUp { .. }
+                | Action::ScrollDown { .. } => None,
             })
             .collect()
     }
@@ -1204,6 +1238,76 @@ mod tests {
             (
                 b"\x1b[999999999999999999999999MA".as_slice(),
                 Action::DeleteLines { count: u16::MAX },
+            ),
+        ] {
+            let mut stream = Stream::init();
+            let mut handler = RecordingHandler::default();
+
+            next_slice(&mut stream, &mut handler, input);
+
+            if input.starts_with(b"A") {
+                assert_eq!(
+                    actions(&handler),
+                    &[
+                        Action::Print { cp: 'A' },
+                        expected,
+                        Action::Print { cp: 'B' },
+                    ]
+                );
+            } else {
+                assert_eq!(actions(&handler), &[expected, Action::Print { cp: 'A' }]);
+            }
+        }
+    }
+
+    #[test]
+    fn stream_csi_scroll_up_dispatches_counts() {
+        for (input, expected) in [
+            (b"A\x1b[SB".as_slice(), Action::ScrollUp { count: 1 }),
+            (b"\x1b[SA".as_slice(), Action::ScrollUp { count: 1 }),
+            (b"\x1b[0SA".as_slice(), Action::ScrollUp { count: 0 }),
+            (b"\x1b[;SA".as_slice(), Action::ScrollUp { count: 0 }),
+            (b"\x1b[1SA".as_slice(), Action::ScrollUp { count: 1 }),
+            (b"\x1b[1;SA".as_slice(), Action::ScrollUp { count: 1 }),
+            (b"\x1b[3SA".as_slice(), Action::ScrollUp { count: 3 }),
+            (
+                b"\x1b[999999999999999999999999SA".as_slice(),
+                Action::ScrollUp { count: u16::MAX },
+            ),
+        ] {
+            let mut stream = Stream::init();
+            let mut handler = RecordingHandler::default();
+
+            next_slice(&mut stream, &mut handler, input);
+
+            if input.starts_with(b"A") {
+                assert_eq!(
+                    actions(&handler),
+                    &[
+                        Action::Print { cp: 'A' },
+                        expected,
+                        Action::Print { cp: 'B' },
+                    ]
+                );
+            } else {
+                assert_eq!(actions(&handler), &[expected, Action::Print { cp: 'A' }]);
+            }
+        }
+    }
+
+    #[test]
+    fn stream_csi_scroll_down_dispatches_counts() {
+        for (input, expected) in [
+            (b"A\x1b[TB".as_slice(), Action::ScrollDown { count: 1 }),
+            (b"\x1b[TA".as_slice(), Action::ScrollDown { count: 1 }),
+            (b"\x1b[0TA".as_slice(), Action::ScrollDown { count: 0 }),
+            (b"\x1b[;TA".as_slice(), Action::ScrollDown { count: 0 }),
+            (b"\x1b[1TA".as_slice(), Action::ScrollDown { count: 1 }),
+            (b"\x1b[1;TA".as_slice(), Action::ScrollDown { count: 1 }),
+            (b"\x1b[3TA".as_slice(), Action::ScrollDown { count: 3 }),
+            (
+                b"\x1b[999999999999999999999999TA".as_slice(),
+                Action::ScrollDown { count: u16::MAX },
             ),
         ] {
             let mut stream = Stream::init();
@@ -1983,6 +2087,41 @@ mod tests {
                 b"\x1b[3".as_slice(),
                 b"MA".as_slice(),
                 Action::DeleteLines { count: 3 },
+            ),
+        ] {
+            let mut stream = Stream::init();
+            let mut handler = RecordingHandler::default();
+
+            next_slice(&mut stream, &mut handler, first);
+            assert!(actions(&handler).is_empty());
+            next_slice(&mut stream, &mut handler, second);
+
+            assert_eq!(actions(&handler), &[expected, Action::Print { cp: 'A' }]);
+        }
+    }
+
+    #[test]
+    fn stream_split_csi_scroll_up_and_down_dispatch_counts() {
+        for (first, second, expected) in [
+            (
+                b"\x1b[".as_slice(),
+                b"SA".as_slice(),
+                Action::ScrollUp { count: 1 },
+            ),
+            (
+                b"\x1b[3".as_slice(),
+                b"SA".as_slice(),
+                Action::ScrollUp { count: 3 },
+            ),
+            (
+                b"\x1b[".as_slice(),
+                b"TA".as_slice(),
+                Action::ScrollDown { count: 1 },
+            ),
+            (
+                b"\x1b[3".as_slice(),
+                b"TA".as_slice(),
+                Action::ScrollDown { count: 3 },
             ),
         ] {
             let mut stream = Stream::init();
@@ -2804,6 +2943,33 @@ mod tests {
     }
 
     #[test]
+    fn stream_pending_utf8_replacement_dispatches_before_csi_scroll_up_and_down() {
+        for (input, expected) in [
+            (b"\xf0\x9f\x1b[SA".as_slice(), Action::ScrollUp { count: 1 }),
+            (
+                b"\xf0\x9f\x1b[TA".as_slice(),
+                Action::ScrollDown { count: 1 },
+            ),
+        ] {
+            let mut stream = Stream::init();
+            let mut handler = RecordingHandler::default();
+
+            next_slice(&mut stream, &mut handler, input);
+
+            assert_eq!(
+                actions(&handler),
+                &[
+                    Action::Print {
+                        cp: char::REPLACEMENT_CHARACTER,
+                    },
+                    expected,
+                    Action::Print { cp: 'A' },
+                ]
+            );
+        }
+    }
+
+    #[test]
     fn stream_pending_utf8_replacement_dispatches_before_split_csi_erase_display() {
         let mut stream = Stream::init();
         let mut handler = RecordingHandler::default();
@@ -2942,6 +3108,38 @@ mod tests {
                 Action::Print { cp: 'A' },
             ]
         );
+    }
+
+    #[test]
+    fn stream_pending_utf8_replacement_dispatches_before_split_csi_scroll_up_and_down() {
+        for (second, expected) in [
+            (b"SA".as_slice(), Action::ScrollUp { count: 3 }),
+            (b"TA".as_slice(), Action::ScrollDown { count: 3 }),
+        ] {
+            let mut stream = Stream::init();
+            let mut handler = RecordingHandler::default();
+
+            next_slice(&mut stream, &mut handler, b"\xf0\x9f\x1b[3");
+            assert_eq!(
+                actions(&handler),
+                &[Action::Print {
+                    cp: char::REPLACEMENT_CHARACTER,
+                }]
+            );
+
+            next_slice(&mut stream, &mut handler, second);
+
+            assert_eq!(
+                actions(&handler),
+                &[
+                    Action::Print {
+                        cp: char::REPLACEMENT_CHARACTER,
+                    },
+                    expected,
+                    Action::Print { cp: 'A' },
+                ]
+            );
+        }
     }
 
     #[test]
@@ -3263,6 +3461,33 @@ mod tests {
     }
 
     #[test]
+    fn stream_unsupported_csi_scroll_up_and_down_variants_do_not_dispatch_actions() {
+        for input in [
+            b"\x1b[?SA".as_slice(),
+            b"\x1b[>SA".as_slice(),
+            b"\x1b[5;4SA".as_slice(),
+            b"\x1b[5;;SA".as_slice(),
+            b"\x1b[1:2SA".as_slice(),
+            b"\x1b[1;2:3SA".as_slice(),
+            b"\x1b[ SA".as_slice(),
+            b"\x1b[?TA".as_slice(),
+            b"\x1b[>TA".as_slice(),
+            b"\x1b[5;4TA".as_slice(),
+            b"\x1b[5;;TA".as_slice(),
+            b"\x1b[1:2TA".as_slice(),
+            b"\x1b[1;2:3TA".as_slice(),
+            b"\x1b[ TA".as_slice(),
+        ] {
+            let mut stream = Stream::init();
+            let mut handler = RecordingHandler::default();
+
+            next_slice(&mut stream, &mut handler, input);
+
+            assert_eq!(actions(&handler), &[Action::Print { cp: 'A' }]);
+        }
+    }
+
+    #[test]
     fn stream_unsupported_csi_cursor_position_variants_do_not_dispatch_actions() {
         for input in [
             b"\x1b[?3HA".as_slice(),
@@ -3433,6 +3658,28 @@ mod tests {
                 Action::Print { cp: 'M' },
             ]
         );
+    }
+
+    #[test]
+    fn stream_raw_c1_csi_byte_does_not_dispatch_scroll_up_or_down_action() {
+        for final_byte in [b'S', b'T'] {
+            let mut stream = Stream::init();
+            let mut handler = RecordingHandler::default();
+
+            next_slice(&mut stream, &mut handler, &[0x9b, final_byte]);
+
+            assert_eq!(
+                actions(&handler),
+                &[
+                    Action::Print {
+                        cp: char::REPLACEMENT_CHARACTER,
+                    },
+                    Action::Print {
+                        cp: char::from(final_byte),
+                    },
+                ]
+            );
+        }
     }
 
     #[test]
@@ -3703,7 +3950,9 @@ mod tests {
                 | Action::EraseLine { .. }
                 | Action::DeleteChars { .. }
                 | Action::InsertLines { .. }
-                | Action::DeleteLines { .. } => unreachable!("loop only uses D/E actions"),
+                | Action::DeleteLines { .. }
+                | Action::ScrollUp { .. }
+                | Action::ScrollDown { .. } => unreachable!("loop only uses D/E actions"),
             };
 
             assert_eq!(stream.next_slice(input, &mut handler), Err(()));
@@ -3959,6 +4208,26 @@ mod tests {
             (b"\x1b[M".as_slice(), Action::DeleteLines { count: 1 }),
             (b"\x1b[0M".as_slice(), Action::DeleteLines { count: 0 }),
             (b"\x1b[3M".as_slice(), Action::DeleteLines { count: 3 }),
+        ] {
+            let mut stream = Stream::init();
+            let mut handler = ErrorOnActionHandler::new(fail);
+
+            assert_eq!(stream.next_slice(input, &mut handler), Err(()));
+            stream.next_slice(b"A", &mut handler).unwrap();
+
+            assert_eq!(handler.actions, &[Action::Print { cp: 'A' }]);
+        }
+    }
+
+    #[test]
+    fn stream_csi_scroll_up_and_down_restore_ground_before_handler_error() {
+        for (input, fail) in [
+            (b"\x1b[S".as_slice(), Action::ScrollUp { count: 1 }),
+            (b"\x1b[0S".as_slice(), Action::ScrollUp { count: 0 }),
+            (b"\x1b[3S".as_slice(), Action::ScrollUp { count: 3 }),
+            (b"\x1b[T".as_slice(), Action::ScrollDown { count: 1 }),
+            (b"\x1b[0T".as_slice(), Action::ScrollDown { count: 0 }),
+            (b"\x1b[3T".as_slice(), Action::ScrollDown { count: 3 }),
         ] {
             let mut stream = Stream::init();
             let mut handler = ErrorOnActionHandler::new(fail);

@@ -442,6 +442,100 @@ impl Screen {
         Ok(())
     }
 
+    pub(super) fn scroll_down_basic(
+        &mut self,
+        count: CellCountInt,
+        top_margin: CellCountInt,
+        bottom_margin: CellCountInt,
+        left_margin: CellCountInt,
+        right_margin: CellCountInt,
+        full_width: bool,
+    ) -> Result<(), EraseDisplayError> {
+        let old_x = self.cursor.x;
+        let old_y = self.cursor.y;
+        let old_wrap = self.cursor.pending_wrap;
+        self.cursor.x = left_margin;
+        self.cursor.y = top_margin;
+        let result = self.insert_lines_basic(
+            count,
+            top_margin,
+            bottom_margin,
+            left_margin,
+            right_margin,
+            full_width,
+        );
+        self.cursor.x = old_x;
+        self.cursor.y = old_y;
+        self.cursor.pending_wrap = old_wrap;
+        result
+    }
+
+    pub(super) fn scroll_up_basic(
+        &mut self,
+        count: CellCountInt,
+        rows: CellCountInt,
+        cols: CellCountInt,
+        top_margin: CellCountInt,
+        bottom_margin: CellCountInt,
+        left_margin: CellCountInt,
+        right_margin: CellCountInt,
+        full_width: bool,
+    ) -> Result<(), EraseDisplayError> {
+        if count == 0 {
+            return Ok(());
+        }
+
+        let old_x = self.cursor.x;
+        let old_y = self.cursor.y;
+        let old_wrap = self.cursor.pending_wrap;
+        let result = if top_margin == 0 && left_margin == 0 && right_margin == cols - 1 {
+            self.scroll_up_with_scrollback_basic(count, rows, cols, bottom_margin)
+        } else {
+            self.cursor.x = left_margin;
+            self.cursor.y = top_margin;
+            self.delete_lines_basic(
+                count,
+                top_margin,
+                bottom_margin,
+                left_margin,
+                right_margin,
+                full_width,
+            )
+        };
+        self.cursor.x = old_x;
+        self.cursor.y = old_y;
+        self.cursor.pending_wrap = old_wrap;
+        result
+    }
+
+    fn scroll_up_with_scrollback_basic(
+        &mut self,
+        count: CellCountInt,
+        rows: CellCountInt,
+        cols: CellCountInt,
+        bottom_margin: CellCountInt,
+    ) -> Result<(), EraseDisplayError> {
+        let region_height = bottom_margin + 1;
+        let count = count.min(region_height);
+        if self.pages.scrollback_disabled() {
+            self.pages
+                .delete_active_lines(0, bottom_margin, 0, cols - 1, count, true)?;
+            return Ok(());
+        }
+
+        for _ in 0..count {
+            self.pages.grow_active()?;
+        }
+
+        let insert_start = bottom_margin + 1 - count;
+        self.pages
+            .insert_active_lines(insert_start.into(), rows - 1, 0, cols - 1, count, true)?;
+        for y in 0..rows {
+            self.pages.mark_active_row_dirty(y.into())?;
+        }
+        Ok(())
+    }
+
     pub(super) fn cursor_row_relative_basic(&mut self, rows: CellCountInt, count: CellCountInt) {
         let bottom = rows.saturating_sub(1);
         self.cursor.pending_wrap = false;
@@ -1125,6 +1219,91 @@ mod tests {
             screen_output,
             "<div style=\"font-family: monospace; white-space: pre;\">&lt;hi</div>"
         );
+    }
+
+    #[test]
+    fn screen_scroll_up_full_width_top_region_creates_scrollback() {
+        let mut screen = Screen::init(5, 5, Some(10)).unwrap();
+        screen
+            .pages
+            .set_screen_text_lines_for_tests(&["AAAAA", "BBBBB", "CCCCC", "DDDDD", "EEEEE"]);
+
+        screen.scroll_up_basic(1, 5, 5, 0, 4, 0, 4, true).unwrap();
+
+        assert_eq!(
+            formatter(&screen, PageOutputFormat::Plain).format(),
+            "BBBBB\nCCCCC\nDDDDD\nEEEEE"
+        );
+        assert_eq!(
+            screen.full_screen_plain_for_tests(false),
+            "AAAAA\nBBBBB\nCCCCC\nDDDDD\nEEEEE"
+        );
+        assert_eq!(screen.scrollback_rows_for_tests(), 1);
+    }
+
+    #[test]
+    fn screen_scroll_up_preserves_rows_below_partial_bottom_margin() {
+        let mut screen = Screen::init(5, 5, Some(10)).unwrap();
+        screen
+            .pages
+            .set_screen_text_lines_for_tests(&["AAAAA", "BBBBB", "CCCCC", "DDDDD", "EEEEE"]);
+
+        screen.scroll_up_basic(2, 5, 5, 0, 2, 0, 4, true).unwrap();
+
+        assert_eq!(
+            formatter(&screen, PageOutputFormat::Plain).format(),
+            "CCCCC\n\n\nDDDDD\nEEEEE"
+        );
+        assert_eq!(
+            screen.full_screen_plain_for_tests(false),
+            "AAAAA\nBBBBB\nCCCCC\n\n\nDDDDD\nEEEEE"
+        );
+        assert_eq!(screen.scrollback_rows_for_tests(), 2);
+    }
+
+    #[test]
+    fn screen_scroll_up_max_scrollback_zero_discards_history() {
+        let mut screen = Screen::init(5, 5, Some(0)).unwrap();
+        screen
+            .pages
+            .set_screen_text_lines_for_tests(&["AAAAA", "BBBBB", "CCCCC"]);
+
+        screen.scroll_up_basic(1, 5, 5, 0, 4, 0, 4, true).unwrap();
+
+        assert_eq!(
+            formatter(&screen, PageOutputFormat::Plain).format(),
+            "BBBBB\nCCCCC"
+        );
+        assert_eq!(screen.full_screen_plain_for_tests(false), "BBBBB\nCCCCC");
+        assert_eq!(screen.scrollback_rows_for_tests(), 0);
+    }
+
+    #[test]
+    fn screen_scroll_up_moves_styled_cells_into_scrollback() {
+        let mut screen = Screen::init(5, 3, Some(10)).unwrap();
+        screen
+            .pages
+            .set_screen_text_lines_for_tests(&["AAAAA", "BBBBB", "CCCCC"]);
+        screen.set_styled_cell_for_tests(
+            0,
+            0,
+            'Z',
+            style::Style {
+                flags: style::Flags {
+                    bold: true,
+                    ..style::Flags::default()
+                },
+                ..style::Style::default()
+            },
+        );
+
+        screen.scroll_up_basic(1, 3, 5, 0, 2, 0, 4, true).unwrap();
+
+        assert_eq!(
+            screen.full_screen_plain_for_tests(false),
+            "ZAAAA\nBBBBB\nCCCCC"
+        );
+        assert_eq!(screen.scrollback_rows_for_tests(), 1);
     }
 
     #[test]

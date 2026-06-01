@@ -428,6 +428,32 @@ impl Handler for TerminalStreamHandler<'_> {
                         && self.scrolling_region.right == self.size.cols - 1,
                 )
                 .map_err(TerminalStreamError::from),
+            Action::ScrollUp { count } => self
+                .screen
+                .scroll_up_basic(
+                    count,
+                    self.size.rows,
+                    self.size.cols,
+                    self.scrolling_region.top,
+                    self.scrolling_region.bottom,
+                    self.scrolling_region.left,
+                    self.scrolling_region.right,
+                    self.scrolling_region.left == 0
+                        && self.scrolling_region.right == self.size.cols - 1,
+                )
+                .map_err(TerminalStreamError::from),
+            Action::ScrollDown { count } => self
+                .screen
+                .scroll_down_basic(
+                    count,
+                    self.scrolling_region.top,
+                    self.scrolling_region.bottom,
+                    self.scrolling_region.left,
+                    self.scrolling_region.right,
+                    self.scrolling_region.left == 0
+                        && self.scrolling_region.right == self.size.cols - 1,
+                )
+                .map_err(TerminalStreamError::from),
         }
     }
 }
@@ -3062,6 +3088,325 @@ mod tests {
         terminal.next_slice(b"M").unwrap();
 
         assert_eq!(plain_with_unwrap(&terminal, false), "AAAAA\nCCCCC");
+    }
+
+    #[test]
+    fn terminal_stream_csi_scroll_up_creates_scrollback() {
+        let mut terminal = Terminal::init(5, 5, Some(10)).unwrap();
+        terminal
+            .screens
+            .active
+            .set_text_lines_for_tests(&["AAAAA", "BBBBB", "CCCCC", "DDDDD", "EEEEE"]);
+        terminal.screens.active.set_cursor_position_for_tests(2, 2);
+        terminal.clear_dirty_for_tests();
+
+        terminal.next_slice(b"\x1b[S").unwrap();
+
+        assert_eq!(
+            plain_with_unwrap(&terminal, false),
+            "BBBBB\nCCCCC\nDDDDD\nEEEEE"
+        );
+        assert_eq!(
+            terminal.full_screen_plain_for_tests(false),
+            "AAAAA\nBBBBB\nCCCCC\nDDDDD\nEEEEE"
+        );
+        assert_eq!(terminal.scrollback_rows_for_tests(), 1);
+        assert_eq!(terminal.cursor_position_for_tests(), (2, 2));
+        assert!(!terminal.cursor_pending_wrap_for_tests());
+        for y in 0..5 {
+            assert!(terminal.is_dirty_for_tests(0, y));
+        }
+    }
+
+    #[test]
+    fn terminal_stream_csi_scroll_up_max_scrollback_zero_scrolls_without_history() {
+        let mut terminal = Terminal::init(5, 5, Some(0)).unwrap();
+        terminal
+            .screens
+            .active
+            .set_text_lines_for_tests(&["AAAAA", "BBBBB", "CCCCC"]);
+
+        terminal.next_slice(b"\x1b[S").unwrap();
+
+        assert_eq!(plain_with_unwrap(&terminal, false), "BBBBB\nCCCCC");
+        assert_eq!(terminal.full_screen_plain_for_tests(false), "BBBBB\nCCCCC");
+        assert_eq!(terminal.scrollback_rows_for_tests(), 0);
+    }
+
+    #[test]
+    fn terminal_stream_csi_scroll_up_clamps_to_region_height() {
+        let mut terminal = Terminal::init(5, 3, Some(10)).unwrap();
+        terminal
+            .screens
+            .active
+            .set_text_lines_for_tests(&["AAAAA", "BBBBB", "CCCCC"]);
+
+        terminal.next_slice(b"\x1b[99S").unwrap();
+
+        assert_eq!(plain_with_unwrap(&terminal, false), "");
+        assert_eq!(
+            terminal.full_screen_plain_for_tests(false),
+            "AAAAA\nBBBBB\nCCCCC"
+        );
+        assert_eq!(terminal.scrollback_rows_for_tests(), 3);
+    }
+
+    #[test]
+    fn terminal_stream_csi_scroll_up_preserves_rows_below_bottom_margin() {
+        let mut terminal = Terminal::init(5, 5, Some(10)).unwrap();
+        terminal
+            .screens
+            .active
+            .set_text_lines_for_tests(&["AAAAA", "BBBBB", "CCCCC", "DDDDD", "EEEEE"]);
+        terminal.set_scrolling_region_for_tests(0, 2, 0, 4);
+
+        terminal.next_slice(b"\x1b[2S").unwrap();
+
+        assert_eq!(
+            plain_with_unwrap(&terminal, false),
+            "CCCCC\n\n\nDDDDD\nEEEEE"
+        );
+        assert_eq!(terminal.scrollback_rows_for_tests(), 2);
+        assert_eq!(
+            terminal.full_screen_plain_for_tests(false),
+            "AAAAA\nBBBBB\nCCCCC\n\n\nDDDDD\nEEEEE"
+        );
+    }
+
+    #[test]
+    fn terminal_stream_csi_scroll_up_with_top_margin_uses_delete_lines_path() {
+        let mut terminal = Terminal::init(5, 4, Some(10)).unwrap();
+        terminal
+            .screens
+            .active
+            .set_text_lines_for_tests(&["AAAAA", "BBBBB", "CCCCC", "DDDDD"]);
+        terminal.set_scrolling_region_for_tests(1, 3, 0, 4);
+        terminal.screens.active.set_cursor_position_for_tests(3, 0);
+
+        terminal.next_slice(b"\x1b[S").unwrap();
+
+        assert_eq!(plain_with_unwrap(&terminal, false), "AAAAA\nCCCCC\nDDDDD");
+        assert_eq!(terminal.scrollback_rows_for_tests(), 0);
+        assert_eq!(terminal.cursor_position_for_tests(), (3, 0));
+    }
+
+    #[test]
+    fn terminal_stream_csi_scroll_up_with_left_right_margin_uses_delete_lines_path() {
+        let mut terminal = Terminal::init(6, 3, Some(10)).unwrap();
+        terminal
+            .screens
+            .active
+            .set_text_lines_for_tests(&["ABC123", "DEF456", "GHI789"]);
+        terminal.set_scrolling_region_for_tests(0, 2, 1, 3);
+        terminal.screens.active.set_cursor_position_for_tests(5, 2);
+
+        terminal.next_slice(b"\x1b[S").unwrap();
+
+        assert_eq!(
+            plain_with_unwrap(&terminal, false),
+            "AEF423\nDHI756\nG   89"
+        );
+        assert_eq!(terminal.scrollback_rows_for_tests(), 0);
+        assert_eq!(terminal.cursor_position_for_tests(), (5, 2));
+    }
+
+    #[test]
+    fn terminal_stream_csi_scroll_up_preserves_pending_wrap() {
+        let mut terminal = Terminal::init(5, 5, Some(10)).unwrap();
+        terminal
+            .screens
+            .active
+            .set_text_lines_for_tests(&["AAAAA", "BBBBB", "CCCCC"]);
+        terminal.screens.active.set_cursor_position_for_tests(4, 2);
+        terminal.next_slice(b"Z").unwrap();
+        assert!(terminal.cursor_pending_wrap_for_tests());
+
+        terminal.next_slice(b"\x1b[S").unwrap();
+
+        assert_eq!(terminal.cursor_position_for_tests(), (4, 2));
+        assert!(terminal.cursor_pending_wrap_for_tests());
+    }
+
+    #[test]
+    fn terminal_stream_csi_scroll_up_zero_count_is_noop() {
+        let mut terminal = Terminal::init(5, 2, Some(10)).unwrap();
+        terminal.next_slice(b"ABCDE").unwrap();
+        assert!(terminal.cursor_pending_wrap_for_tests());
+        terminal.clear_dirty_for_tests();
+
+        terminal.next_slice(b"\x1b[0S").unwrap();
+
+        assert_eq!(plain_with_unwrap(&terminal, false), "ABCDE");
+        assert_eq!(terminal.scrollback_rows_for_tests(), 0);
+        assert_eq!(terminal.cursor_position_for_tests(), (4, 0));
+        assert!(terminal.cursor_pending_wrap_for_tests());
+        assert!(!terminal.is_dirty_for_tests(0, 0));
+    }
+
+    #[test]
+    fn terminal_stream_csi_scroll_down_count_one_shifts_rows_down() {
+        let mut terminal = Terminal::init(5, 5, None).unwrap();
+        terminal
+            .screens
+            .active
+            .set_text_lines_for_tests(&["ABC", "DEF", "GHI"]);
+        terminal.screens.active.set_cursor_position_for_tests(2, 2);
+        terminal.clear_dirty_for_tests();
+
+        terminal.next_slice(b"\x1b[T").unwrap();
+
+        assert_eq!(plain_with_unwrap(&terminal, false), "\nABC\nDEF\nGHI");
+        assert_eq!(terminal.cursor_position_for_tests(), (2, 2));
+        assert!(!terminal.cursor_pending_wrap_for_tests());
+        for y in 0..4 {
+            assert!(terminal.is_dirty_for_tests(0, y));
+        }
+    }
+
+    #[test]
+    fn terminal_stream_csi_scroll_down_honors_top_bottom_region() {
+        let mut terminal = Terminal::init(5, 4, None).unwrap();
+        terminal
+            .screens
+            .active
+            .set_text_lines_for_tests(&["AAAAA", "BBBBB", "CCCCC", "DDDDD"]);
+        terminal.set_scrolling_region_for_tests(1, 2, 0, 4);
+        terminal.screens.active.set_cursor_position_for_tests(3, 0);
+
+        terminal.next_slice(b"\x1b[T").unwrap();
+
+        assert_eq!(plain_with_unwrap(&terminal, false), "AAAAA\n\nBBBBB\nDDDDD");
+        assert_eq!(terminal.cursor_position_for_tests(), (3, 0));
+    }
+
+    #[test]
+    fn terminal_stream_csi_scroll_down_honors_left_right_region() {
+        let mut terminal = Terminal::init(6, 3, None).unwrap();
+        terminal
+            .screens
+            .active
+            .set_text_lines_for_tests(&["ABC123", "DEF456", "GHI789"]);
+        terminal.set_scrolling_region_for_tests(0, 2, 1, 3);
+        terminal.screens.active.set_cursor_position_for_tests(5, 2);
+
+        terminal.next_slice(b"\x1b[T").unwrap();
+
+        assert_eq!(
+            plain_with_unwrap(&terminal, false),
+            "A   23\nDBC156\nGEF489"
+        );
+        assert_eq!(terminal.cursor_position_for_tests(), (5, 2));
+    }
+
+    #[test]
+    fn terminal_stream_csi_scroll_down_original_cursor_outside_vertical_margin_still_scrolls() {
+        let mut terminal = Terminal::init(5, 4, None).unwrap();
+        terminal
+            .screens
+            .active
+            .set_text_lines_for_tests(&["AAAAA", "BBBBB", "CCCCC", "DDDDD"]);
+        terminal.set_scrolling_region_for_tests(2, 3, 0, 4);
+        terminal.screens.active.set_cursor_position_for_tests(4, 0);
+        terminal.next_slice(b"Z").unwrap();
+        assert!(terminal.cursor_pending_wrap_for_tests());
+
+        terminal.next_slice(b"\x1b[T").unwrap();
+
+        assert_eq!(plain_with_unwrap(&terminal, false), "AAAAZ\nBBBBB\n\nCCCCC");
+        assert_eq!(terminal.cursor_position_for_tests(), (4, 0));
+        assert!(terminal.cursor_pending_wrap_for_tests());
+    }
+
+    #[test]
+    fn terminal_stream_csi_scroll_down_original_cursor_outside_horizontal_margin_still_scrolls() {
+        let mut terminal = Terminal::init(6, 3, None).unwrap();
+        terminal
+            .screens
+            .active
+            .set_text_lines_for_tests(&["ABC123", "DEF456", "GHI789"]);
+        terminal.set_scrolling_region_for_tests(0, 2, 1, 3);
+        terminal.screens.active.set_cursor_position_for_tests(5, 0);
+
+        terminal.next_slice(b"\x1b[T").unwrap();
+
+        assert_eq!(
+            plain_with_unwrap(&terminal, false),
+            "A   23\nDBC156\nGEF489"
+        );
+        assert_eq!(terminal.cursor_position_for_tests(), (5, 0));
+    }
+
+    #[test]
+    fn terminal_stream_csi_scroll_down_preserves_pending_wrap() {
+        let mut terminal = Terminal::init(5, 5, None).unwrap();
+        terminal
+            .screens
+            .active
+            .set_text_lines_for_tests(&["AAAAA", "BBBBB", "CCCCC"]);
+        terminal.screens.active.set_cursor_position_for_tests(4, 2);
+        terminal.next_slice(b"Z").unwrap();
+        assert!(terminal.cursor_pending_wrap_for_tests());
+
+        terminal.next_slice(b"\x1b[T").unwrap();
+
+        assert_eq!(terminal.cursor_position_for_tests(), (4, 2));
+        assert!(terminal.cursor_pending_wrap_for_tests());
+    }
+
+    #[test]
+    fn terminal_stream_csi_scroll_down_zero_count_is_noop() {
+        let mut terminal = Terminal::init(5, 2, None).unwrap();
+        terminal.next_slice(b"ABCDE").unwrap();
+        assert!(terminal.cursor_pending_wrap_for_tests());
+        terminal.clear_dirty_for_tests();
+
+        terminal.next_slice(b"\x1b[0T").unwrap();
+
+        assert_eq!(plain_with_unwrap(&terminal, false), "ABCDE");
+        assert_eq!(terminal.cursor_position_for_tests(), (4, 0));
+        assert!(terminal.cursor_pending_wrap_for_tests());
+        assert!(!terminal.is_dirty_for_tests(0, 0));
+    }
+
+    #[test]
+    fn terminal_stream_csi_scroll_down_clamps_to_region_height() {
+        let mut terminal = Terminal::init(5, 3, None).unwrap();
+        terminal
+            .screens
+            .active
+            .set_text_lines_for_tests(&["AAAAA", "BBBBB", "CCCCC"]);
+
+        terminal.next_slice(b"\x1b[99T").unwrap();
+
+        assert_eq!(plain_with_unwrap(&terminal, false), "");
+    }
+
+    #[test]
+    fn terminal_stream_unsupported_csi_scroll_up_and_down_does_not_mutate_state() {
+        for input in [b"\x1b[?S".as_slice(), b"\x1b[?T".as_slice()] {
+            let mut terminal = terminal_with_lines(&["abc"]);
+
+            terminal.next_slice(input).unwrap();
+
+            assert_eq!(plain_with_unwrap(&terminal, false), "abc");
+        }
+    }
+
+    #[test]
+    fn terminal_stream_split_feed_csi_scroll_up_and_down_mutates_rows() {
+        let mut terminal = Terminal::init(5, 4, Some(10)).unwrap();
+        terminal
+            .screens
+            .active
+            .set_text_lines_for_tests(&["AAAAA", "BBBBB", "CCCCC"]);
+
+        terminal.next_slice(b"\x1b[").unwrap();
+        terminal.next_slice(b"S").unwrap();
+        assert_eq!(plain_with_unwrap(&terminal, false), "BBBBB\nCCCCC");
+
+        terminal.next_slice(b"\x1b[").unwrap();
+        terminal.next_slice(b"T").unwrap();
+        assert_eq!(plain_with_unwrap(&terminal, false), "\nBBBBB\nCCCCC");
     }
 
     #[test]
