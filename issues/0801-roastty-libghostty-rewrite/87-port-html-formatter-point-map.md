@@ -198,3 +198,74 @@ The design now keeps hyperlink tag emission out of scope and instead requires a
 guard that hyperlinked cells continue to emit and map visible text bytes without
 adding `<a>` tags. Follow-up Codex review found no blockers and approved the
 experiment for implementation.
+
+## Result
+
+**Result:** Pass
+
+Implemented private HTML point-map support in
+`roastty/src/terminal/page_list.rs`.
+
+`StyledPageFormat` now uses the existing point-map sink for both VT and HTML
+output. HTML point maps are byte-indexed: the returned map has one screen-domain
+`point::Coordinate` per emitted output byte. Existing HTML output strings remain
+unchanged.
+
+The implementation maps:
+
+- the opening wrapper `<div style="font-family: monospace; white-space: pre;">`
+  to the current page chunk's screen row base;
+- normal text bytes to the source cell;
+- escaped ASCII entities (`&lt;`, `&gt;`, `&amp;`, `&quot;`, `&#39;`) to the
+  original source cell;
+- non-ASCII numeric entities such as `&#233;` and grapheme numeric entities to
+  the original/base source cell;
+- style-open bytes to the cell that caused the style transition;
+- style-close bytes to the previous emitted coordinate;
+- generated blank-cell spaces with the same reverse-walk mapping used by plain
+  and VT point maps;
+- background-only and styled-empty emitted spaces to their styled source cell;
+- codepoint-map replacement bytes to the original source cell after HTML
+  escaping or numeric-entity expansion;
+- the final closing wrapper `</div>` to the previous emitted coordinate;
+- multi-page chunks with PageList screen-domain coordinates.
+
+Hyperlink `<a>` emission remains deferred. This experiment preserves the current
+behavior where hyperlinked cells emit visible text without an anchor wrapper and
+maps those visible text bytes normally.
+
+No HTML pin maps, VT pin maps, `ScreenFormatter`, `TerminalFormatter`, `Screen`,
+`Terminal`, parser state, cursor state, terminal extras, writer abstraction,
+public ABI, app, renderer, clipboard, PTY, or UI behavior was added.
+
+Verification passed:
+
+```text
+cargo fmt: passed
+cargo test -p roastty html_point_map: passed, 10 tests
+cargo test -p roastty vt_point_map: passed, 11 tests
+cargo test -p roastty point_map: passed, 53 tests
+cargo test -p roastty pin_map: passed, 12 tests
+cargo test -p roastty page_string: passed, 12 tests
+cargo test -p roastty terminal::page_list: passed, 515 tests
+cargo test -p roastty: passed, 808 unit tests, ABI harness, and doctests
+```
+
+Codex design review found one blocker in the initial plan: hyperlink tag mapping
+contradicted the requirement to preserve current no-`<a>` HTML output. The
+design was updated to keep hyperlink tag emission out of scope, and follow-up
+review approved it.
+
+Codex result review found one blocker in the first implementation: styled empty
+cells with a later visible cell emitted a mapped HTML space without a
+corresponding point-map entry. The implementation now maps that emitted blank
+before returning, and `html_point_map_styled_empty_cell_maps_emitted_space`
+covers the case. Follow-up Codex review found no remaining blockers.
+
+## Conclusion
+
+Experiment 87 completes the HTML point-map layer for PageList formatter output.
+Roastty now has byte-indexed point maps for plain, VT, and HTML output, plus
+plain pin maps. The next formatter map slice can derive styled pin maps from the
+completed styled point maps, while higher-level `ScreenFormatter` and
+`TerminalFormatter` wrappers remain deferred.

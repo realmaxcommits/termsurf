@@ -893,7 +893,12 @@ impl StyledPageFormat<'_> {
         let mut current_style = style::Style::default();
 
         if self.emit == PageOutputFormat::Html {
+            let start_len = output.len();
             output.push_str("<div style=\"font-family: monospace; white-space: pre;\">");
+            self.push_map_entries(
+                point::Coordinate::new(0, self.screen_y_base),
+                output.len() - start_len,
+            );
         }
 
         if let Some(state) = self.trailing_state {
@@ -1058,7 +1063,9 @@ impl StyledPageFormat<'_> {
             self.push_style_close(output);
         }
         if self.emit == PageOutputFormat::Html {
+            let start_len = output.len();
             output.push_str("</div>");
+            self.push_previous_map_entries(output.len() - start_len);
         }
     }
 
@@ -1071,7 +1078,7 @@ impl StyledPageFormat<'_> {
     }
 
     fn push_pending_newlines(&mut self, output: &mut String, count: usize) {
-        if self.emit != PageOutputFormat::Vt {
+        if self.point_map.is_none() {
             for _ in 0..count {
                 self.push_newline_text(output);
             }
@@ -1089,8 +1096,9 @@ impl StyledPageFormat<'_> {
             } else {
                 point::Coordinate::new(0, source.y + row_offset as u32)
             };
+            let start_len = output.len();
             self.push_newline_text(output);
-            self.push_map_entries(coord, 2);
+            self.push_map_entries(coord, output.len() - start_len);
         }
     }
 
@@ -1122,9 +1130,7 @@ impl StyledPageFormat<'_> {
             }
             PageOutputFormat::Plain => unreachable!(),
         }
-        if self.emit == PageOutputFormat::Vt {
-            self.push_map_entries(source, output.len() - start_len);
-        }
+        self.push_map_entries(source, output.len() - start_len);
     }
 
     fn push_style_close(&mut self, output: &mut String) {
@@ -1134,9 +1140,7 @@ impl StyledPageFormat<'_> {
             PageOutputFormat::Html => output.push_str("</div>"),
             PageOutputFormat::Plain => unreachable!(),
         }
-        if self.emit == PageOutputFormat::Vt {
-            self.push_previous_map_entries(output.len() - start_len);
-        }
+        self.push_previous_map_entries(output.len() - start_len);
     }
 
     fn cell_style(&self, page: &Page, cell: &Cell) -> style::Style {
@@ -1173,6 +1177,7 @@ impl StyledPageFormat<'_> {
             ContentTag::Codepoint | ContentTag::CodepointGrapheme => {
                 if !cell.has_text() {
                     output.push(' ');
+                    self.push_map_entries(source, output.len() - start_len);
                     return;
                 }
 
@@ -1187,9 +1192,7 @@ impl StyledPageFormat<'_> {
             }
             ContentTag::BgColorPalette | ContentTag::BgColorRgb => output.push(' '),
         }
-        if self.emit == PageOutputFormat::Vt {
-            self.push_map_entries(source, output.len() - start_len);
-        }
+        self.push_map_entries(source, output.len() - start_len);
     }
 
     fn push_codepoint(&self, codepoint: u32, output: &mut String) {
@@ -2747,11 +2750,7 @@ impl PageList {
                         palette: options.palette,
                         trailing_state,
                         codepoint_map: options.codepoint_map,
-                        point_map: if options.emit == PageOutputFormat::Vt {
-                            point_map.as_mut().map(|map| &mut **map)
-                        } else {
-                            None
-                        },
+                        point_map: point_map.as_mut().map(|map| &mut **map),
                     };
                     formatter.format(&mut output)
                 }
@@ -5597,6 +5596,58 @@ mod tests {
         assert_eq!(actual.len(), point_map.len());
     }
 
+    fn assert_html_point_map(
+        list: &PageList,
+        start: (CellCountInt, u32),
+        end: (CellCountInt, u32),
+        trim: bool,
+        unwrap: bool,
+        codepoint_map: Option<&[CodepointMapEntry]>,
+        expected_text: &str,
+        expected_points: &[point::Coordinate],
+    ) {
+        let mut point_map = Vec::new();
+        let actual = list.page_string_with_point_map(
+            PageStringOptions {
+                selection: Some(screen_selection(list, start, end, false)),
+                trim,
+                unwrap,
+                emit: PageOutputFormat::Html,
+                palette: None,
+                codepoint_map,
+            },
+            &mut point_map,
+        );
+        assert_eq!(actual, expected_text);
+        assert_eq!(point_map, expected_points);
+        assert_eq!(actual.len(), point_map.len());
+    }
+
+    fn assert_html_point_map_for_selection(
+        list: &PageList,
+        selection: Option<selection::Selection>,
+        trim: bool,
+        unwrap: bool,
+        expected_text: &str,
+        expected_points: &[point::Coordinate],
+    ) {
+        let mut point_map = Vec::new();
+        let actual = list.page_string_with_point_map(
+            PageStringOptions {
+                selection,
+                trim,
+                unwrap,
+                emit: PageOutputFormat::Html,
+                palette: None,
+                codepoint_map: None,
+            },
+            &mut point_map,
+        );
+        assert_eq!(actual, expected_text);
+        assert_eq!(point_map, expected_points);
+        assert_eq!(actual.len(), point_map.len());
+    }
+
     fn assert_plain_pin_map(
         list: &PageList,
         start: (CellCountInt, u32),
@@ -5686,6 +5737,25 @@ mod tests {
             let rac = page.get_row_and_cell_mut(pin.x as usize, pin.y as usize);
             rac.row.set_styled(true);
             *rac.cell = Cell::init(ch as u32);
+            rac.cell.set_style_id(style_id);
+        }
+        page.use_style(style_id);
+    }
+
+    fn set_screen_styled_empty_cell(
+        list: &mut PageList,
+        x: CellCountInt,
+        y: u32,
+        cell_style: style::Style,
+    ) {
+        let pin = screen_pin(list, x, y);
+        let index = list.node_index(pin.node).expect("screen node must exist");
+        let page = &mut list.pages[index].page;
+        let style_id = page.add_style(cell_style).unwrap();
+        {
+            let rac = page.get_row_and_cell_mut(pin.x as usize, pin.y as usize);
+            rac.row.set_styled(true);
+            *rac.cell = Cell::init(0);
             rac.cell.set_style_id(style_id);
         }
         page.use_style(style_id);
@@ -15691,28 +15761,335 @@ mod tests {
     }
 
     #[test]
-    fn vt_point_map_html_helper_path_is_deferred() {
+    fn html_point_map_wrapper_single_line() {
         let mut list = PageList::init(8, 2, None).unwrap();
         set_screen_text_lines(&mut list, &["hi"]);
 
-        let mut point_map = Vec::new();
-        let actual = list.page_string_with_point_map(
-            PageStringOptions {
-                selection: Some(screen_selection(&list, (0, 0), (1, 0), false)),
-                trim: true,
-                unwrap: true,
-                emit: PageOutputFormat::Html,
-                palette: None,
-                codepoint_map: None,
-            },
-            &mut point_map,
+        let expected = "<div style=\"font-family: monospace; white-space: pre;\">hi</div>";
+        let mut expected_points = Vec::new();
+        repeat_coords(
+            &mut expected_points,
+            (0, 0),
+            "<div style=\"font-family: monospace; white-space: pre;\">".len(),
         );
+        expected_points.extend(coords(&[(0, 0), (1, 0)]));
+        repeat_coords(&mut expected_points, (1, 0), "</div>".len());
 
-        assert_eq!(
-            actual,
-            "<div style=\"font-family: monospace; white-space: pre;\">hi</div>"
+        assert_html_point_map(
+            &list,
+            (0, 0),
+            (1, 0),
+            true,
+            true,
+            None,
+            expected,
+            &expected_points,
         );
-        assert!(point_map.is_empty());
+    }
+
+    #[test]
+    fn html_point_map_escapes_and_numeric_entities() {
+        let mut list = PageList::init(12, 2, None).unwrap();
+        set_screen_text_lines(&mut list, &["<>&\"'é"]);
+
+        let expected =
+            "<div style=\"font-family: monospace; white-space: pre;\">&lt;&gt;&amp;&quot;&#39;&#233;</div>";
+        let mut expected_points = Vec::new();
+        repeat_coords(
+            &mut expected_points,
+            (0, 0),
+            "<div style=\"font-family: monospace; white-space: pre;\">".len(),
+        );
+        for (point, count) in [
+            ((0, 0), "&lt;".len()),
+            ((1, 0), "&gt;".len()),
+            ((2, 0), "&amp;".len()),
+            ((3, 0), "&quot;".len()),
+            ((4, 0), "&#39;".len()),
+            ((5, 0), "&#233;".len()),
+        ] {
+            repeat_coords(&mut expected_points, point, count);
+        }
+        repeat_coords(&mut expected_points, (5, 0), "</div>".len());
+
+        assert_html_point_map(
+            &list,
+            (0, 0),
+            (5, 0),
+            true,
+            true,
+            None,
+            expected,
+            &expected_points,
+        );
+    }
+
+    #[test]
+    fn html_point_map_grapheme_entity_maps_base_cell() {
+        let mut list = PageList::init(8, 2, None).unwrap();
+        set_screen_cell(&mut list, 0, 0, 'e');
+        append_screen_grapheme(&mut list, 0, 0, 0x0301);
+
+        let expected = "<div style=\"font-family: monospace; white-space: pre;\">e&#769;</div>";
+        let mut expected_points = Vec::new();
+        repeat_coords(
+            &mut expected_points,
+            (0, 0),
+            "<div style=\"font-family: monospace; white-space: pre;\">".len(),
+        );
+        repeat_coords(&mut expected_points, (0, 0), "e".len());
+        repeat_coords(&mut expected_points, (0, 0), "&#769;".len());
+        repeat_coords(&mut expected_points, (0, 0), "</div>".len());
+
+        assert_html_point_map(
+            &list,
+            (0, 0),
+            (0, 0),
+            true,
+            true,
+            None,
+            expected,
+            &expected_points,
+        );
+    }
+
+    #[test]
+    fn html_point_map_styles_background_and_closes() {
+        let mut list = PageList::init(5, 2, None).unwrap();
+        let styled = style::Style {
+            fg_color: style::Color::Palette(1),
+            bg_color: style::Color::Palette(4),
+            flags: style::Flags {
+                bold: true,
+                ..style::Flags::default()
+            },
+            ..style::Style::default()
+        };
+        set_screen_styled_cell(&mut list, 0, 0, 'R', styled);
+        set_screen_cell_raw(&mut list, 1, 0, Cell::bg_palette(4));
+        set_screen_cell(&mut list, 2, 0, 'X');
+
+        let expected = "<div style=\"font-family: monospace; white-space: pre;\"><div style=\"display: inline;color: var(--vt-palette-1);background-color: var(--vt-palette-4);font-weight: bold;\">R</div><div style=\"display: inline;background-color: var(--vt-palette-4);\"> </div>X</div>";
+        let mut expected_points = Vec::new();
+        repeat_coords(
+            &mut expected_points,
+            (0, 0),
+            "<div style=\"font-family: monospace; white-space: pre;\">".len(),
+        );
+        repeat_coords(
+            &mut expected_points,
+            (0, 0),
+            "<div style=\"display: inline;color: var(--vt-palette-1);background-color: var(--vt-palette-4);font-weight: bold;\">".len(),
+        );
+        repeat_coords(&mut expected_points, (0, 0), 1);
+        repeat_coords(&mut expected_points, (0, 0), "</div>".len());
+        repeat_coords(
+            &mut expected_points,
+            (1, 0),
+            "<div style=\"display: inline;background-color: var(--vt-palette-4);\">".len(),
+        );
+        repeat_coords(&mut expected_points, (1, 0), 1);
+        repeat_coords(&mut expected_points, (1, 0), "</div>".len());
+        repeat_coords(&mut expected_points, (2, 0), 1);
+        repeat_coords(&mut expected_points, (2, 0), "</div>".len());
+
+        assert_html_point_map(
+            &list,
+            (0, 0),
+            (2, 0),
+            true,
+            true,
+            None,
+            expected,
+            &expected_points,
+        );
+    }
+
+    #[test]
+    fn html_point_map_styled_empty_cell_maps_emitted_space() {
+        let mut list = PageList::init(5, 2, None).unwrap();
+        let styled = style::Style {
+            bg_color: style::Color::Palette(4),
+            ..style::Style::default()
+        };
+        set_screen_styled_empty_cell(&mut list, 0, 0, styled);
+        set_screen_cell(&mut list, 1, 0, 'X');
+
+        let expected = "<div style=\"font-family: monospace; white-space: pre;\"><div style=\"display: inline;background-color: var(--vt-palette-4);\"> </div>X</div>";
+        let mut expected_points = Vec::new();
+        repeat_coords(
+            &mut expected_points,
+            (0, 0),
+            "<div style=\"font-family: monospace; white-space: pre;\">".len(),
+        );
+        repeat_coords(
+            &mut expected_points,
+            (0, 0),
+            "<div style=\"display: inline;background-color: var(--vt-palette-4);\">".len(),
+        );
+        repeat_coords(&mut expected_points, (0, 0), 1);
+        repeat_coords(&mut expected_points, (0, 0), "</div>".len());
+        repeat_coords(&mut expected_points, (1, 0), 1);
+        repeat_coords(&mut expected_points, (1, 0), "</div>".len());
+
+        assert_html_point_map(
+            &list,
+            (0, 0),
+            (1, 0),
+            true,
+            true,
+            None,
+            expected,
+            &expected_points,
+        );
+    }
+
+    #[test]
+    fn html_point_map_generated_blanks_use_reverse_order() {
+        let mut list = PageList::init(5, 2, None).unwrap();
+        set_screen_cell(&mut list, 0, 0, 'A');
+        set_screen_cell(&mut list, 3, 0, 'C');
+
+        let expected = "<div style=\"font-family: monospace; white-space: pre;\">A  C</div>";
+        let mut expected_points = Vec::new();
+        repeat_coords(
+            &mut expected_points,
+            (0, 0),
+            "<div style=\"font-family: monospace; white-space: pre;\">".len(),
+        );
+        expected_points.extend(coords(&[(0, 0), (2, 0), (1, 0), (3, 0)]));
+        repeat_coords(&mut expected_points, (3, 0), "</div>".len());
+
+        assert_html_point_map(
+            &list,
+            (0, 0),
+            (3, 0),
+            false,
+            true,
+            None,
+            expected,
+            &expected_points,
+        );
+    }
+
+    #[test]
+    fn html_point_map_codepoint_replacements_map_original_cell() {
+        let mut list = PageList::init(4, 2, None).unwrap();
+        set_screen_text_lines(&mut list, &["ao"]);
+        let map = [codepoint_map_entry(
+            'o',
+            'o',
+            CodepointReplacement::String("<é".to_string()),
+        )];
+
+        let expected = "<div style=\"font-family: monospace; white-space: pre;\">a&lt;&#233;</div>";
+        let mut expected_points = Vec::new();
+        repeat_coords(
+            &mut expected_points,
+            (0, 0),
+            "<div style=\"font-family: monospace; white-space: pre;\">".len(),
+        );
+        repeat_coords(&mut expected_points, (0, 0), 1);
+        repeat_coords(&mut expected_points, (1, 0), "&lt;".len());
+        repeat_coords(&mut expected_points, (1, 0), "&#233;".len());
+        repeat_coords(&mut expected_points, (1, 0), "</div>".len());
+
+        assert_html_point_map(
+            &list,
+            (0, 0),
+            (1, 0),
+            true,
+            true,
+            Some(&map),
+            expected,
+            &expected_points,
+        );
+    }
+
+    #[test]
+    fn html_point_map_hyperlinked_cell_text_without_anchor() {
+        let mut list = PageList::init(8, 2, None).unwrap();
+        set_screen_cell(&mut list, 0, 0, 'L');
+        let link_id = list.pages[0]
+            .page
+            .insert_hyperlink(hyperlink::Hyperlink {
+                id: hyperlink::HyperlinkId::Explicit(b"guard"),
+                uri: b"https://example.com",
+            })
+            .unwrap();
+        list.pages[0].page.set_hyperlink(0, 0, link_id).unwrap();
+
+        let expected = "<div style=\"font-family: monospace; white-space: pre;\">L</div>";
+        let mut expected_points = Vec::new();
+        repeat_coords(
+            &mut expected_points,
+            (0, 0),
+            "<div style=\"font-family: monospace; white-space: pre;\">".len(),
+        );
+        repeat_coords(&mut expected_points, (0, 0), 1);
+        repeat_coords(&mut expected_points, (0, 0), "</div>".len());
+
+        assert_html_point_map(
+            &list,
+            (0, 0),
+            (0, 0),
+            true,
+            true,
+            None,
+            expected,
+            &expected_points,
+        );
+    }
+
+    #[test]
+    fn html_point_map_multi_page_screen_domain_coordinates() {
+        let (mut list, page_rows) = multi_page_list(80);
+        let first_y = page_rows as u32 - 1;
+        let second_y = first_y + 1;
+        set_screen_cell(&mut list, 0, first_y, 'A');
+        set_screen_cell(&mut list, 0, second_y, 'B');
+
+        let wrapper = "<div style=\"font-family: monospace; white-space: pre;\">";
+        let expected = format!("{wrapper}A</div>{wrapper}\nB</div>");
+        let mut expected_points = Vec::new();
+        repeat_coords(&mut expected_points, (0, 0), wrapper.len());
+        repeat_coords(&mut expected_points, (0, first_y), 1);
+        repeat_coords(&mut expected_points, (0, first_y), "</div>".len());
+        repeat_coords(&mut expected_points, (0, second_y), wrapper.len());
+        repeat_coords(&mut expected_points, (0, second_y), 1);
+        repeat_coords(&mut expected_points, (0, second_y), 1);
+        repeat_coords(&mut expected_points, (0, second_y), "</div>".len());
+
+        assert_html_point_map(
+            &list,
+            (0, first_y),
+            (0, second_y),
+            true,
+            true,
+            None,
+            &expected,
+            &expected_points,
+        );
+    }
+
+    #[test]
+    fn html_point_map_invalid_or_garbage_endpoints_are_empty() {
+        let mut list = PageList::init(5, 2, None).unwrap();
+        set_screen_text_lines(&mut list, &["hello"]);
+        let other = PageList::init(5, 2, None).unwrap();
+        let invalid = Pin::new(other.first_node_ptr(), 0, 0);
+        let valid = screen_pin(&list, 0, 0);
+        let mut garbage = valid;
+        garbage.garbage = true;
+
+        for selection in [
+            selection::Selection::new(invalid, valid, false),
+            selection::Selection::new(valid, invalid, false),
+            selection::Selection::new(garbage, valid, false),
+            selection::Selection::new(valid, garbage, false),
+        ] {
+            assert_html_point_map_for_selection(&list, Some(selection), true, true, "", &[]);
+        }
     }
 
     #[test]
