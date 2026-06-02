@@ -190,6 +190,38 @@ reviewable, testable progress toward full `libroastty` parity. If an experiment
 can cover a larger subsystem without blurring failure diagnosis or weakening
 tests, choose the larger subsystem.
 
+### Sizing each experiment
+
+Size each experiment by **risk, not by count or line total**. Choose the largest
+slice that still satisfies all of:
+
+1. **One coherent implementation surface** — the change lives in one
+   subsystem/file cluster, not spread across unrelated layers.
+2. **Predictable tests** — you can write the experiment's tests and reasonably
+   expect them to pass before implementing. If you cannot predict the outcome,
+   the slice carries too much uncertainty.
+3. **At most one novel mechanism** — only one genuinely new or uncertain
+   technique per experiment (a new unsafe pattern, a new framework binding, a
+   new ownership model). Two independent unknowns means two experiments.
+4. **Localized failure** — if it fails, the cause narrows to a single behavior.
+
+If a candidate breaks any of these, split it at the point of uncertainty. If it
+satisfies all of them and a sibling behavior shares the same surface and tests
+with no independent risk, fold the sibling in rather than spending a separate
+design + review + result cycle on it.
+
+When unsure, bias by risk: prefer the **larger** slice for mechanical, low-risk
+work (leaf control-sequence handlers, value types, lookup tables, scalar ABI
+getters), and the **smaller** slice for high-risk work (unsafe memory,
+ownership/lifetime, reflow, framework lifecycle — anything whose bug corrupts
+later layers).
+
+The remaining subsystems — font/CoreText, the live Metal renderer, config
+loading, PTY/termio, and the Swift frontend — involve macOS framework
+integration that is harder to test one-to-one than the terminal control-sequence
+tail. Treat those as higher-risk and keep their slices smaller even though they
+are past the correctness-critical foundation.
+
 ## Experiments
 
 - [Experiment 1: Audit Dependencies and Platform Readiness](01-dependency-platform-audit.md)
