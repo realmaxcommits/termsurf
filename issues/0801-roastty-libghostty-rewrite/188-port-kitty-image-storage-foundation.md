@@ -117,3 +117,53 @@ execution, deletion geometry, rendering, and C ABI remain untouched.
 - Do not skip Codex design review. If the design review finds a real issue, fix
   it and re-review before committing this experiment design.
 - Do not skip Codex result review after implementation.
+
+## Result
+
+**Result:** Pass
+
+The experiment added `roastty/src/terminal/kitty/graphics_storage.rs` and wired
+it through `roastty/src/terminal/kitty/mod.rs`. The new internal storage module
+ports the Kitty image-storage foundation without adding placements, terminal
+mutation, renderer integration, PNG decoding, non-direct media, or public C ABI.
+
+The implementation includes:
+
+- `ImageStorage` with upstream-style defaults;
+- image map ownership keyed by image ID;
+- borrowed `image_by_id` and `image_by_number` lookups;
+- `enabled()` and `set_limit()` behavior;
+- `add_image()` ownership transfer, replacement, byte accounting, and dirty
+  marking;
+- eviction of oldest currently-unused images;
+- replacement accounting that subtracts the existing image before deciding
+  whether eviction is needed;
+- exact-fit eviction using `evicted_bytes >= required_bytes`.
+
+Verification passed:
+
+```bash
+cargo fmt -- roastty/src/terminal/kitty/mod.rs roastty/src/terminal/kitty/graphics_image.rs roastty/src/terminal/kitty/graphics_storage.rs
+cargo test -p roastty kitty_graphics_storage
+cargo test -p roastty kitty_graphics_image
+cargo test -p roastty
+if rg -n 'ghostty|Ghostty|GHOSTTY' roastty/src/lib.rs roastty/include/roastty.h roastty/tests/abi_harness.c; then exit 1; else exit 0; fi
+git diff --check
+```
+
+The full `roastty` suite passed with 1936 Rust tests plus the C harness.
+
+Codex result review found one real issue: deriving `Default` for `ImageStorage`
+gave Rust's zero defaults instead of upstream storage defaults. The
+implementation was fixed so `ImageStorage::default()` delegates to
+`ImageStorage::new()`, and the defaults test now covers both paths. A follow-up
+Codex review found no blocking issues and approved recording the experiment as
+Pass.
+
+## Conclusion
+
+Roastty now has a real internal storage foundation for Kitty graphics images.
+Validated `Image` values from Experiment 187 can be owned, replaced, looked up,
+limited, and evicted without cloning payloads. The remaining Kitty graphics work
+can now proceed toward placements and execution on top of this storage layer,
+rather than inventing storage behavior inside those later experiments.

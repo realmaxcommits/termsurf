@@ -501,7 +501,7 @@ tests, choose the larger subsystem.
 - [Experiment 187: Port Direct Kitty Image Loading](187-port-direct-kitty-image-loading.md)
   — **Pass**
 - [Experiment 188: Port Kitty Image Storage Foundation](188-port-kitty-image-storage-foundation.md)
-  — **Designed**
+  — **Pass**
 
 ## Non-Goals
 
