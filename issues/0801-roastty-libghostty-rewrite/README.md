@@ -144,6 +144,13 @@ a different agent than the implementer.
   high)** as a controlled trial; both review gates remain **Codex (GPT-5.5,
   medium)**. This is the first time implementer and reviewer differ.
 
+Each `## Experiments` line is also tagged after its status with the agents for
+all three roles, in order — `implementer/design-review/result-review` (e.g.
+`— **Pass** · Codex/Codex/Codex`, or `· Claude/Codex/Codex` from Experiment 223
+on) — so the implementer and reviewers are scannable from the index. The tags
+must match that experiment's `[implementer]`, `[review.design]`, and
+`[review.result]` frontmatter.
+
 Frontmatter schema:
 
 ```toml
@@ -186,420 +193,449 @@ tests, choose the larger subsystem.
 ## Experiments
 
 - [Experiment 1: Audit Dependencies and Platform Readiness](01-dependency-platform-audit.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 2: Define Zig-to-Rust Porting Patterns](02-zig-rust-porting-patterns.md)
-  — **Pass**
-- [Experiment 3: Port Terminal Tabstops](03-port-tabstops.md) — **Pass**
+  — **Pass** · Codex/Codex/Codex
+- [Experiment 3: Port Terminal Tabstops](03-port-tabstops.md) — **Pass** ·
+  Codex/Codex/Codex
 - [Experiment 4: Port Terminal Size Offsets](04-port-terminal-size.md) —
-  **Pass**
+  **Pass** · Codex/Codex/Codex
 - [Experiment 5: Decompose Page Storage Port](05-decompose-page-storage.md) —
-  **Pass**
+  **Pass** · Codex/Codex/Codex
 - [Experiment 6: Port Bitmap Allocator](06-port-bitmap-allocator.md) — **Pass**
+  · Codex/Codex/Codex
 - [Experiment 7: Port Terminal Style Value Types](07-port-style-value-types.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 8: Port Packed Row and Cell Values](08-port-row-cell-values.md) —
-  **Pass**
+  **Pass** · Codex/Codex/Codex
 - [Experiment 9: Port Page Capacity and Layout Arithmetic](09-port-page-layout.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 10: Port Basic Page Allocation and Access](10-port-page-init-access.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 11: Port Offset Hash Map Storage](11-port-offset-hash-map.md) —
-  **Pass**
+  **Pass** · Codex/Codex/Codex
 - [Experiment 12: Port Page Grapheme Storage](12-port-page-graphemes.md) —
-  **Pass**
+  **Pass** · Codex/Codex/Codex
 - [Experiment 13: Port Page Clone for Text and Graphemes](13-port-page-clone.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 14: Port Ref-Counted Set Storage](14-port-ref-counted-set.md) —
-  **Pass**
+  **Pass** · Codex/Codex/Codex
 - [Experiment 15: Port Style Hashing and Set Storage](15-port-style-set.md) —
-  **Pass**
+  **Pass** · Codex/Codex/Codex
 - [Experiment 16: Port Page Style Storage and Clone](16-port-page-style-clone.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 17: Port Page CloneFrom Plain Rows](17-port-page-clone-from-plain.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 18: Port Page CloneFrom Graphemes](18-port-page-clone-from-graphemes.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 19: Port Page CloneFrom Styles](19-port-page-clone-from-styles.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 20: Port Page Hyperlink Storage](20-port-page-hyperlink-storage.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 21: Port Page CloneFrom Hyperlinks](21-port-page-hyperlink-row-copy.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 22: Port Page Exact Row Capacity](22-port-page-exact-row-capacity.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 23: Port Page Partial Row Clone](23-port-page-partial-row-clone.md)
-  — **Pass**
-- [Experiment 24: Port Page Move Cells](24-port-page-move-cells.md) — **Pass**
-- [Experiment 25: Port Page Swap Cells](25-port-page-swap-cells.md) — **Pass**
+  — **Pass** · Codex/Codex/Codex
+- [Experiment 24: Port Page Move Cells](24-port-page-move-cells.md) — **Pass** ·
+  Codex/Codex/Codex
+- [Experiment 25: Port Page Swap Cells](25-port-page-swap-cells.md) — **Pass** ·
+  Codex/Codex/Codex
 - [Experiment 26: Port Page Clear Cells](26-port-page-clear-cells.md) — **Pass**
-- [Experiment 27: Port Page Reinit](27-port-page-reinit.md) — **Pass**
+  · Codex/Codex/Codex
+- [Experiment 27: Port Page Reinit](27-port-page-reinit.md) — **Pass** ·
+  Codex/Codex/Codex
 - [Experiment 28: Port Page Integrity Checks](28-port-page-integrity-checks.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 29: Port Page Set Graphemes](29-port-page-set-graphemes.md) —
-  **Pass**
+  **Pass** · Codex/Codex/Codex
 - [Experiment 30: Port Page Move Grapheme](30-port-page-move-grapheme.md) —
-  **Pass**
-- [Experiment 31: Port Terminal Points](31-port-terminal-points.md) — **Pass**
-- [Experiment 32: Port PageList Sizing](32-port-pagelist-sizing.md) — **Pass**
-- [Experiment 33: Port PageList Init](33-port-pagelist-init.md) — **Pass**
-- [Experiment 34: Port PageList Points](34-port-pagelist-points.md) — **Pass**
+  **Pass** · Codex/Codex/Codex
+- [Experiment 31: Port Terminal Points](31-port-terminal-points.md) — **Pass** ·
+  Codex/Codex/Codex
+- [Experiment 32: Port PageList Sizing](32-port-pagelist-sizing.md) — **Pass** ·
+  Codex/Codex/Codex
+- [Experiment 33: Port PageList Init](33-port-pagelist-init.md) — **Pass** ·
+  Codex/Codex/Codex
+- [Experiment 34: Port PageList Points](34-port-pagelist-points.md) — **Pass** ·
+  Codex/Codex/Codex
 - [Experiment 35: Port PageList Tracked Pins](35-port-pagelist-tracked-pins.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 36: Port PageList Scrollbar State](36-port-pagelist-scrollbar.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 37: Port PageList Viewport Scrolling](37-port-pagelist-scroll.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 38: Port PageList Basic Growth](38-port-pagelist-grow.md) —
-  **Pass**
+  **Pass** · Codex/Codex/Codex
 - [Experiment 39: Port PageList Prune Growth](39-port-pagelist-prune.md) —
-  **Pass**
-- [Experiment 40: Port PageList Reset](40-port-pagelist-reset.md) — **Pass**
+  **Pass** · Codex/Codex/Codex
+- [Experiment 40: Port PageList Reset](40-port-pagelist-reset.md) — **Pass** ·
+  Codex/Codex/Codex
 - [Experiment 41: Port PageList Page Iterator](41-port-pagelist-page-iterator.md)
-  — **Pass**
-- [Experiment 42: Port PageList Clone](42-port-pagelist-clone.md) — **Pass**
+  — **Pass** · Codex/Codex/Codex
+- [Experiment 42: Port PageList Clone](42-port-pagelist-clone.md) — **Pass** ·
+  Codex/Codex/Codex
 - [Experiment 43: Port PageList Dirty Helpers](43-port-pagelist-dirty-helpers.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 44: Port PageList Increase Capacity](44-port-pagelist-increase-capacity.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 45: Port PageList Compact](45-port-pagelist-compact.md) — **Pass**
-- [Experiment 46: Port PageList Split](46-port-pagelist-split.md) — **Pass**
+  · Codex/Codex/Codex
+- [Experiment 46: Port PageList Split](46-port-pagelist-split.md) — **Pass** ·
+  Codex/Codex/Codex
 - [Experiment 47: Port PageList Viewport Fixup](47-port-pagelist-viewport-fixup.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 48: Port PageList Erase Row](48-port-pagelist-erase-row.md) —
-  **Pass**
+  **Pass** · Codex/Codex/Codex
 - [Experiment 49: Port PageList Erase Row Bounded](49-port-pagelist-erase-row-bounded.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 50: Port PageList Erase Page](50-port-pagelist-erase-page.md) —
-  **Pass**
+  **Pass** · Codex/Codex/Codex
 - [Experiment 51: Port PageList Erase Rows](51-port-pagelist-erase-rows.md) —
-  **Pass**
+  **Pass** · Codex/Codex/Codex
 - [Experiment 52: Port PageList Scroll Clear](52-port-pagelist-scroll-clear.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 53: Port PageList Cell Lookup](53-port-pagelist-cell-lookup.md) —
-  **Pass**
+  **Pass** · Codex/Codex/Codex
 - [Experiment 54: Port PageList Row Iterator](54-port-pagelist-row-iterator.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 55: Port PageList Cell Iterator](55-port-pagelist-cell-iterator.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 56: Port PageList Prompt Iterator](56-port-pagelist-prompt-iterator.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 57: Port Semantic Prompt Highlight](57-port-semantic-prompt-highlight.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 58: Port Semantic Input Highlight](58-port-semantic-input-highlight.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 59: Port Semantic Output Highlight](59-port-semantic-output-highlight.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 60: Port Semantic Highlight Dispatcher](60-port-semantic-highlight-dispatcher.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 61: Port Highlight Untracked Module](61-port-highlight-untracked-module.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 62: Port Highlight Flattened Shape](62-port-highlight-flattened-shape.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 63: Port Flattened Highlight Constructor](63-port-flattened-highlight-constructor.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 64: Port Tracked Highlight](64-port-tracked-highlight.md) —
-  **Pass**
+  **Pass** · Codex/Codex/Codex
 - [Experiment 65: Port Selection Codepoints](65-port-selection-codepoints.md) —
-  **Pass**
+  **Pass** · Codex/Codex/Codex
 - [Experiment 66: Port Selection Value Shape](66-port-selection-value-shape.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 67: Port Selection Ordering](67-port-selection-ordering.md) —
-  **Pass**
+  **Pass** · Codex/Codex/Codex
 - [Experiment 68: Port Selection Containment](68-port-selection-containment.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 69: Port Selection Contained Row](69-port-selection-contained-row.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 70: Port Selection Adjustment](70-port-selection-adjustment.md) —
-  **Pass**
+  **Pass** · Codex/Codex/Codex
 - [Experiment 71: Port Selection Tracking Ownership](71-port-selection-tracking-ownership.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 72: Port Selection Pin Navigation](72-port-selection-pin-navigation.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 73: Port Cell Drag Selection](73-port-cell-drag-selection.md) —
-  **Pass**
-- [Experiment 74: Port Word Selection](74-port-word-selection.md) — **Pass**
-- [Experiment 75: Port Line Selection](75-port-line-selection.md) — **Pass**
-- [Experiment 76: Port Select All](76-port-select-all.md) — **Pass**
-- [Experiment 77: Port Select Output](77-port-select-output.md) — **Pass**
-- [Experiment 78: Port Line Iterator](78-port-line-iterator.md) — **Pass**
+  **Pass** · Codex/Codex/Codex
+- [Experiment 74: Port Word Selection](74-port-word-selection.md) — **Pass** ·
+  Codex/Codex/Codex
+- [Experiment 75: Port Line Selection](75-port-line-selection.md) — **Pass** ·
+  Codex/Codex/Codex
+- [Experiment 76: Port Select All](76-port-select-all.md) — **Pass** ·
+  Codex/Codex/Codex
+- [Experiment 77: Port Select Output](77-port-select-output.md) — **Pass** ·
+  Codex/Codex/Codex
+- [Experiment 78: Port Line Iterator](78-port-line-iterator.md) — **Pass** ·
+  Codex/Codex/Codex
 - [Experiment 79: Port Plain Selection String](79-port-plain-selection-string.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 80: Port Prompt Click Movement](80-port-prompt-click-movement.md)
-  — **Pass**
-- [Experiment 81: Port Dump String Helpers](81-port-dump-string.md) — **Pass**
+  — **Pass** · Codex/Codex/Codex
+- [Experiment 81: Port Dump String Helpers](81-port-dump-string.md) — **Pass** ·
+  Codex/Codex/Codex
 - [Experiment 82: Port Styled Page Formatter Core](82-port-styled-page-formatter-core.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 83: Port Formatter Codepoint Map](83-port-codepoint-map.md) —
-  **Pass**
+  **Pass** · Codex/Codex/Codex
 - [Experiment 84: Port Plain Formatter Point Map](84-port-plain-formatter-point-map.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 85: Port Plain Formatter Pin Map](85-port-plain-formatter-pin-map.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 86: Port VT Formatter Point Map](86-port-vt-formatter-point-map.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 87: Port HTML Formatter Point Map](87-port-html-formatter-point-map.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 88: Port Styled Formatter Pin Maps](88-port-styled-formatter-pin-maps.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 89: Port Screen Formatter Content](89-port-screen-formatter-content.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 90: Port Terminal Formatter Content](90-port-terminal-formatter-content.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 91: Port Screen Formatter Cursor and Style Extras](91-port-screen-formatter-cursor-style-extras.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 92: Port Screen Formatter Protection Extra](92-port-screen-formatter-protection-extra.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 93: Port Screen Formatter Charset Extra](93-port-screen-formatter-charset-extra.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 94: Port Screen Formatter Kitty Keyboard Extra](94-port-screen-formatter-kitty-keyboard-extra.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 95: Port Screen Formatter Hyperlink Extra](95-port-screen-formatter-hyperlink-extra.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 96: Port Terminal Formatter Screen Extra Forwarding](96-port-terminal-formatter-screen-extra-forwarding.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 97: Port Terminal Formatter Palette Extra](97-port-terminal-formatter-palette-extra.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 98: Port Terminal Modes and Formatter Extra](98-port-terminal-modes-extra.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 99: Port Terminal Scrolling Region Formatter Extra](99-port-terminal-scrolling-region-extra.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 100: Port Terminal Tabstops Formatter Extra](100-port-terminal-tabstops-extra.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 101: Port Terminal Keyboard and Pwd Formatter Extra](101-port-terminal-keyboard-pwd-extra.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 102: Port Stream UTF-8 Print Core](102-port-stream-utf8-print-core.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 103: Port Basic Stream Print Mutation](103-port-basic-stream-print-mutation.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 104: Port Basic Pending Wrap](104-port-basic-pending-wrap.md) —
-  **Pass**
+  **Pass** · Codex/Codex/Codex
 - [Experiment 105: Port Basic Wrap Scroll](105-port-basic-wrap-scroll.md) —
-  **Pass**
-- [Experiment 106: Port Basic LF and CR](106-port-basic-lf-cr.md) — **Pass**
+  **Pass** · Codex/Codex/Codex
+- [Experiment 106: Port Basic LF and CR](106-port-basic-lf-cr.md) — **Pass** ·
+  Codex/Codex/Codex
 - [Experiment 107: Port Basic Backspace](107-port-basic-backspace.md) — **Pass**
+  · Codex/Codex/Codex
 - [Experiment 108: Port Basic Horizontal Tab](108-port-basic-horizontal-tab.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 109: Port VT and FF Linefeed Aliases](109-port-vt-ff-linefeed-aliases.md)
-  — **Pass**
-- [Experiment 110: Port Escape Tab Set](110-port-escape-tab-set.md) — **Pass**
-- [Experiment 111: Port CSI Tab Set](111-port-csi-tab-set.md) — **Pass**
+  — **Pass** · Codex/Codex/Codex
+- [Experiment 110: Port Escape Tab Set](110-port-escape-tab-set.md) — **Pass** ·
+  Codex/Codex/Codex
+- [Experiment 111: Port CSI Tab Set](111-port-csi-tab-set.md) — **Pass** ·
+  Codex/Codex/Codex
 - [Experiment 112: Port CSI Tab Clear and Reset](112-port-csi-tab-clear-reset.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 113: Port Escape Index and Next Line](113-port-escape-index-next-line.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 114: Port Basic CSI Cursor Movement](114-port-basic-csi-cursor-movement.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 115: Port CSI Next and Previous Line](115-port-csi-next-previous-line.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 116: Port CSI Horizontal Absolute](116-port-csi-horizontal-absolute.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 117: Port CSI Vertical Positioning](117-port-csi-vertical-positioning.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 118: Port CSI Cursor Position](118-port-csi-cursor-position.md) —
-  **Pass**
+  **Pass** · Codex/Codex/Codex
 - [Experiment 119: Port CSI Horizontal Tabulation](119-port-csi-horizontal-tabulation.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 120: Port CSI Erase Display](120-port-csi-erase-display.md) —
-  **Pass**
-- [Experiment 121: Port CSI Erase Line](121-port-csi-erase-line.md) — **Pass**
+  **Pass** · Codex/Codex/Codex
+- [Experiment 121: Port CSI Erase Line](121-port-csi-erase-line.md) — **Pass** ·
+  Codex/Codex/Codex
 - [Experiment 122: Port CSI Delete Character](122-port-csi-delete-character.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 123: Port CSI Insert Lines](123-port-csi-insert-lines.md) —
-  **Pass**
+  **Pass** · Codex/Codex/Codex
 - [Experiment 124: Port CSI Delete Lines](124-port-csi-delete-lines.md) —
-  **Pass**
+  **Pass** · Codex/Codex/Codex
 - [Experiment 125: Port CSI Scroll Up and Down](125-port-csi-scroll-up-down.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 126: Port CSI Insert and Erase Characters](126-port-csi-insert-erase-characters.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 127: Port CSI Horizontal Tab Back](127-port-csi-horizontal-tab-back.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 128: Port CSI Mode Set and Reset](128-port-csi-mode-set-reset.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 129: Port Basic Print Mode Effects](129-port-basic-print-mode-effects.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 130: Port CSI Mode Save and Restore](130-port-csi-mode-save-restore.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 131: Port DECRQM Mode Reports](131-port-decrqm-mode-reports.md) —
-  **Pass**
+  **Pass** · Codex/Codex/Codex
 - [Experiment 132: Port SGR and Styled Printing](132-port-sgr-styled-printing.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 133: Port Basic OSC Runtime](133-port-basic-osc-runtime.md) —
-  **Pass**
+  **Pass** · Codex/Codex/Codex
 - [Experiment 134: Port OSC 8 Printed Cell Hyperlinks](134-port-osc8-cell-hyperlinks.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 135: Port OSC ANSI Palette Operations](135-port-osc-ansi-palette.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 136: Port OSC Dynamic Colors](136-port-osc-dynamic-colors.md) —
-  **Pass**
+  **Pass** · Codex/Codex/Codex
 - [Experiment 137: Port RGB Parser Parity](137-port-rgb-parser-parity.md) —
-  **Pass**
+  **Pass** · Codex/Codex/Codex
 - [Experiment 138: Port Kitty OSC 21 Colors](138-port-kitty-osc21-colors.md) —
-  **Pass**
+  **Pass** · Codex/Codex/Codex
 - [Experiment 139: Port OSC 22 Mouse Shape](139-port-osc22-mouse-shape.md) —
-  **Pass**
+  **Pass** · Codex/Codex/Codex
 - [Experiment 140: Port Kitty OSC 66 Text Sizing](140-port-kitty-osc66-text-sizing.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 141: Port OSC Notifications](141-port-osc-notifications.md) —
-  **Pass**
+  **Pass** · Codex/Codex/Codex
 - [Experiment 142: Port OSC Clipboard Protocols](142-port-osc-clipboard-protocols.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 143: Port OSC 3008 Context Signals](143-port-osc3008-context-signals.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 144: Port OSC 133 Semantic Prompts](144-port-osc133-semantic-prompts.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 145: Port iTerm2 OSC 1337](145-port-iterm2-osc1337.md) — **Pass**
+  · Codex/Codex/Codex
 - [Experiment 146: Port Terminal Query Responses](146-port-terminal-query-responses.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 147: Port DCS and APC Framing](147-port-dcs-apc-framing.md) —
-  **Pass**
+  **Pass** · Codex/Codex/Codex
 - [Experiment 148: Port DCS Command Handling](148-port-dcs-command-handling.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 149: Port Cursor Visual Style](149-port-cursor-visual-style.md) —
-  **Pass**
+  **Pass** · Codex/Codex/Codex
 - [Experiment 150: Port ESC Cursor State Controls](150-port-esc-cursor-state-controls.md)
-  — **Pass**
-- [Experiment 151: Port RIS Full Reset](151-port-ris-full-reset.md) — **Pass**
+  — **Pass** · Codex/Codex/Codex
+- [Experiment 151: Port RIS Full Reset](151-port-ris-full-reset.md) — **Pass** ·
+  Codex/Codex/Codex
 - [Experiment 152: Port Charset Escape Controls](152-port-charset-escape-controls.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 153: Port CSI Repeat Previous Character](153-port-csi-repeat-previous-character.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 154: Port Alternate-Screen Modes](154-port-alternate-screen-modes.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 155: Port Kitty Keyboard Protocol](155-port-kitty-keyboard-protocol.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 156: Port Mouse Event Encoding](156-port-mouse-event-encoding.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 157: Port Mouse Mode Runtime State](157-port-mouse-mode-runtime-state.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 158: Port Mouse Encoder C ABI](158-port-mouse-encoder-c-abi.md) —
-  **Pass**
+  **Pass** · Codex/Codex/Codex
 - [Experiment 159: Port Key Event Value Types](159-port-key-event-value-types.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 160: Port Key Encoder Core](160-port-key-encoder-core.md) —
-  **Pass**
+  **Pass** · Codex/Codex/Codex
 - [Experiment 161: Complete Key Encoder Tables](161-complete-key-encoder-tables.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 162: Port Legacy Ctrl/CSI-u/Alt Matrix](162-port-legacy-ctrl-csiu-alt-matrix.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 163: Port Key Encoder C ABI](163-port-key-encoder-c-abi.md) —
-  **Pass**
+  **Pass** · Codex/Codex/Codex
 - [Experiment 164: Port OSC Parser C ABI](164-port-osc-parser-c-abi.md) —
-  **Pass**
+  **Pass** · Codex/Codex/Codex
 - [Experiment 165: Port Terminal Stream C ABI](165-port-terminal-stream-c-abi.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 166: Port Terminal Scalar Getters C ABI](166-port-terminal-scalar-getters-c-abi.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 167: Port Terminal Mode Control C ABI](167-port-terminal-mode-control-c-abi.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 168: Port Terminal Metadata Setters C ABI](168-port-terminal-metadata-setters-c-abi.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 169: Port Terminal Color Set/Get C ABI](169-port-terminal-color-set-get-c-abi.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 170: Port Terminal Basic Effects C ABI](170-port-terminal-basic-effects-c-abi.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 171: Port Terminal Query Callback C ABI](171-port-terminal-query-callbacks-c-abi.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 172: Port Terminal Grid Reference C ABI](172-port-terminal-grid-reference-c-abi.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 173: Port Terminal Selection C ABI](173-port-terminal-selection-c-abi.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 174: Port Selection Gesture C ABI](174-port-selection-gesture-c-abi.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 175: Port Tracked Grid Reference C ABI](175-port-tracked-grid-reference-c-abi.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 176: Port Row and Cell C ABI](176-port-row-cell-c-abi.md) —
-  **Pass**
-- [Experiment 177: Port Style C ABI](177-port-style-c-abi.md) — **Pass**
+  **Pass** · Codex/Codex/Codex
+- [Experiment 177: Port Style C ABI](177-port-style-c-abi.md) — **Pass** ·
+  Codex/Codex/Codex
 - [Experiment 178: Port Render State Scalar C ABI](178-port-render-state-scalar-c-abi.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 179: Port Render State Row Iterator C ABI](179-port-render-state-row-iterator-c-abi.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 180: Port Render State Row Cells Basic C ABI](180-port-render-state-row-cells-basic-c-abi.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 181: Complete Render State Row Cells Selectors](181-complete-render-state-row-cells-selectors.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 182: Port Grid Ref Accessors C ABI](182-port-grid-ref-accessors-c-abi.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 183: Port Terminal Formatter C ABI](183-port-terminal-formatter-c-abi.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 184: Port Standalone Terminal Encoding C ABI](184-port-standalone-terminal-encoding-c-abi.md)
-  — **Pass**
-- [Experiment 185: Port Support C ABI](185-port-support-c-abi.md) — **Pass**
+  — **Pass** · Codex/Codex/Codex
+- [Experiment 185: Port Support C ABI](185-port-support-c-abi.md) — **Pass** ·
+  Codex/Codex/Codex
 - [Experiment 186: Port Kitty Graphics Command Parser](186-port-kitty-graphics-command-parser.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 187: Port Direct Kitty Image Loading](187-port-direct-kitty-image-loading.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 188: Port Kitty Image Storage Foundation](188-port-kitty-image-storage-foundation.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 189: Port Kitty Transmit and Query Execution](189-port-kitty-transmit-query-execution.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 190: Port Kitty Placement Storage Foundation](190-port-kitty-placement-storage-foundation.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 191: Port Kitty Display Storage Execution](191-port-kitty-display-storage-execution.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 192: Port Kitty Graphics Terminal Dispatch](192-port-kitty-graphics-terminal-dispatch.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 193: Port Kitty Tracked Placement Ownership](193-port-kitty-tracked-placement-ownership.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 194: Port Kitty Delete Execution](194-port-kitty-delete-execution.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 195: Port Kitty Transmit-Display and Cursor-After](195-port-kitty-transmit-display-cursor-after.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 196: Port Kitty Graphics C ABI Handles](196-port-kitty-graphics-c-abi-handles.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 197: Port Kitty Placement Render Info ABI](197-port-kitty-placement-render-info-abi.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 198: Port Kitty Graphics Terminal Options](198-port-kitty-graphics-terminal-options.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 199: Port Kitty Graphics File Media](199-port-kitty-graphics-file-media.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 200: Port Kitty Graphics Shared Memory](200-port-kitty-graphics-shared-memory.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 201: Port Kitty Graphics PNG Decode Hook](201-port-kitty-graphics-png-decode-hook.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 202: Port Kitty Virtual Placeholder Foundation](202-port-kitty-virtual-placeholder-foundation.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 203: Port Kitty Terminal Render Placement ABI](203-port-kitty-terminal-render-placement-abi.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 204: Attach Kitty Render Placements to Render State](204-attach-kitty-render-placements-to-render-state.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 205: Port Renderer Image State Foundation](205-port-renderer-image-state-foundation.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 206: Port Renderer Image Upload and Draw Contract](206-port-renderer-image-upload-draw-contract.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 207: Port Metal Image Texture Values](207-port-metal-image-texture-values.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 208: Port Metal Texture Upload Backend](208-port-metal-texture-upload-backend.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 209: Port Image Draw Command Contract](209-port-image-draw-command-contract.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 210: Port Metal Buffer Wrapper](210-port-metal-buffer-wrapper.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 211: Port Metal Vertex Descriptor Mapping](211-port-metal-vertex-descriptor-mapping.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 212: Port Metal Pipeline Attachment Values](212-port-metal-pipeline-attachment-values.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 213: Port Standard Metal Pipeline Descriptions](213-port-standard-metal-pipeline-descriptions.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 214: Port Metal Pipeline State Builder](214-port-metal-pipeline-state-builder.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 215: Port Standard Metal Shader Library](215-port-standard-metal-shader-library.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 216: Port Offscreen Metal Render Pass Readback](216-port-offscreen-metal-render-pass-readback.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 217: Port Offscreen Metal Cell Background Readback](217-port-offscreen-metal-cell-background-readback.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 218: Port Offscreen Metal Image Texture Readback](218-port-offscreen-metal-image-texture-readback.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 219: Port Offscreen Metal Background Image Readback](219-port-offscreen-metal-background-image-readback.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 220: Port Offscreen Metal Cell Text Grayscale Readback](220-port-offscreen-metal-cell-text-grayscale-readback.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 221: Port Offscreen Metal Cell Text Color Readback](221-port-offscreen-metal-cell-text-color-readback.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 - [Experiment 222: Port Offscreen Metal Cell Text Cursor Readback](222-port-offscreen-metal-cell-text-cursor-readback.md)
-  — **Pass**
+  — **Pass** · Codex/Codex/Codex
 
 ## Non-Goals
 
