@@ -310,3 +310,93 @@ Three findings, all fixed in the design above before this commit:
 3. **Low — no saturation coverage.** The five upstream tests exercise only
    ordinary add/subtract. Added a direct `add_float_to_int_saturates` test for
    the saturating-add (to `u32::MAX`) and saturating-subtract (to `0`) paths.
+
+## Result
+
+**Result:** Pass
+
+Added `Metrics::apply(&mut self, mods: &ModifierSet)` to `impl Metrics`, the
+module-private `add_float_to_int` and `zeroed` helpers, and the
+`pub(crate) const Key::ALL` (lifted from the test-only `ALL_KEYS`) to
+`roastty/src/font/metrics.rs`, and refreshed the module doc comment. `apply`
+iterates `Key::ALL` in discriminant order, looking each key up in the set:
+`CellWidth`/`CellHeight` clamp to a minimum of 1 and skip when unchanged, a
+`CellHeight` change re-centers the baseline-relative positions (the
+`diff_top`/`diff_bottom` ceil/floor split, `cell_baseline`/`face_y`
+bottom-relative, `underline`/`strikethrough`/`overline_position` top-relative,
+`cursor_height` untouched), `IconHeight` fans out to both icon fields, and every
+other key applies the field's typed `apply_*`; then a trailing `clamp`.
+`zeroed()` sets `cursor_thickness: 1` (rest `0`/`0.0`) to mirror upstream
+`init()`.
+
+Tests added (6): the five upstream `Metrics` modifier tests (`apply_modifiers`,
+`apply_cell_height_smaller`, `apply_cell_height_larger`,
+`apply_icon_height_percent`, `apply_icon_height_absolute`) and the direct
+`add_float_to_int_saturates` helper test. `face_y` comparisons use the `1e-9`
+epsilon helper.
+
+### Verification
+
+```bash
+cargo fmt -p roastty
+cargo test -p roastty font
+cargo test -p roastty
+```
+
+Observed:
+
+- `font`: 42 passed (36 prior + 6 new).
+- Full `roastty`: 2318 unit tests passed (2312 prior + 6 new), plus the C ABI
+  harness passed.
+- `cargo fmt -p roastty -- --check`: clean.
+- `cargo build -p roastty`: no warnings.
+- No-`ghostty`-name gates passed for `roastty/src/font` and for
+  `roastty/src/lib.rs`, `roastty/include/roastty.h`,
+  `roastty/tests/abi_harness.c`.
+- `git diff --check`: clean.
+
+All five upstream expected value sets reproduced exactly (smaller:
+`face_y ≈ -12.67`, `cell_height 75`, `cell_baseline 37`, `underline 43`,
+`strikethrough 18`, `overline -12`, `cursor 100`; larger: `face_y ≈ 37.33`,
+`175`, `87`, `93`, `68`, `38`, `100`; icon percent `75/60`, icon absolute
+`95/75`, face untouched). No C ABI, header, or ABI inventory changes; no
+`parseCLI`/`formatEntry`/`hash`/constraint scope pulled in.
+
+### Completion Review
+
+Codex reviewed the completed implementation and found **no issues** ("nothing
+needs to change before the result commit").
+
+Review artifacts:
+
+- Prompt: `logs/codex-review/20260602-090824-566698-prompt.md`
+- Result: `logs/codex-review/20260602-090824-566698-last-message.md`
+
+Codex verified against upstream and the approved design that `apply` iterates
+`Key::ALL` in deterministic discriminant order with map lookups, that the
+`cell_width`/`cell_height` `max(…, 1)`-and-skip and the `cell_height` ceil/floor
+re-centering update the correct top/bottom-relative fields with `cursor_height`
+untouched, that `IconHeight` fans out to both icon fields, that the per-field
+dispatch is exhaustive with no wildcard, that `add_float_to_int` matches the
+upstream saturating add/subtract, that `zeroed()` preserves the implicit
+`cursor_thickness = 1`, and that `apply` ends with `clamp()`. It confirmed the
+six tests' expected values match upstream.
+
+## Conclusion
+
+Experiment 242 succeeds, completing the `font/Metrics.zig` behavior: the full
+metric-modifier path — `Modifier`/`parse`/`apply_*` (239–240),
+`Key`/`ModifierSet` (241), and now `Metrics::apply` with its cell-height
+re-centering — is ported, along with the `addFloatToInt` helper and the `init`
+zero-constructor. Both Codex gates passed (three design findings fixed — the
+deterministic `Key::ALL` iteration, the `cursor_thickness: 1` default, and the
+saturation test; zero result findings). The design-review catch of the `HashMap`
+non-determinism made the port stricter than a literal transliteration would have
+been.
+
+With `Metrics.zig` complete, the next slice moves to the remaining font layer.
+The candidates are the font `Collection`/`face` plumbing and the CoreText face
+metrics extraction that feeds `FaceMetrics` into `calc`, then glyph
+rasterization and the Atlas. The next experiment will port the smallest coherent
+next type in that path (likely the face/`FaceMetrics` source or the `Collection`
+entry types), keeping the same one-surface, predictable-tests sizing.

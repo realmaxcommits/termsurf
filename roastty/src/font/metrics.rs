@@ -1,9 +1,10 @@
 //! Font metrics: recommended cell dimensions and decoration positions.
 //!
 //! Faithful port of upstream `font/Metrics.zig`: the `Metrics` and `FaceMetrics`
-//! value types and their accessors, the `calc` derivation and `clamp`, and the
-//! `Modifier`/`Key`/`ModifierSet` metric-modifier types. `Metrics::apply` and
-//! constraint application are ported in later slices.
+//! value types and their accessors, the `calc` derivation and `clamp`, the
+//! `Modifier`/`Key`/`ModifierSet` metric-modifier types, and `Metrics::apply`
+//! (modifier dispatch and cell-height re-centering). Constraint application is
+//! ported in later slices.
 
 use std::collections::HashMap;
 
@@ -300,6 +301,138 @@ impl Metrics {
         self.face_height = self.face_height.max(1.0);
         self.face_width = self.face_width.max(1.0);
     }
+
+    /// Apply a set of user modifiers to these metrics, then re-clamp.
+    ///
+    /// Keys are visited in a fixed order ([`Key::ALL`]) so the result is
+    /// deterministic regardless of the `HashMap`'s iteration order. Most keys
+    /// adjust a single field, but `CellWidth`/`CellHeight` are clamped to a
+    /// minimum of 1 and skipped when unchanged, a `CellHeight` change re-centers
+    /// the baseline-relative positions, and `IconHeight` adjusts both icon
+    /// fields.
+    pub(crate) fn apply(&mut self, mods: &ModifierSet) {
+        for key in Key::ALL {
+            let Some(modifier) = mods.get(&key) else {
+                continue;
+            };
+            match key {
+                // Clamp to a minimum of 1 to prevent divide-by-zero downstream.
+                Key::CellWidth | Key::CellHeight => {
+                    let is_height = key == Key::CellHeight;
+                    let original = if is_height {
+                        self.cell_height
+                    } else {
+                        self.cell_width
+                    };
+                    let new = modifier.apply_u32(original).max(1);
+                    if new == original {
+                        continue;
+                    }
+                    if is_height {
+                        self.cell_height = new;
+                        // Re-center the baseline so text stays vertically
+                        // centered after the cell height changes.
+                        let original_f64 = original as f64;
+                        let new_f64 = new as f64;
+                        let half_diff = (new_f64 - original_f64) / 2.0;
+                        // If the face is higher than perfectly centered, the odd
+                        // extra pixel goes to the top; otherwise to the bottom.
+                        let position_with_respect_to_center =
+                            self.face_y - (original_f64 - self.face_height) / 2.0;
+                        let (diff_top, diff_bottom) = if position_with_respect_to_center > 0.0 {
+                            (half_diff.ceil(), half_diff.floor())
+                        } else {
+                            (half_diff.floor(), half_diff.ceil())
+                        };
+                        // Bottom-relative positions get the bottom diff.
+                        add_float_to_int(&mut self.cell_baseline, diff_bottom);
+                        self.face_y += diff_bottom;
+                        // Top-relative positions get the top diff.
+                        add_float_to_int(&mut self.underline_position, diff_top);
+                        add_float_to_int(&mut self.strikethrough_position, diff_top);
+                        self.overline_position =
+                            self.overline_position.saturating_add(diff_top as i32);
+                    } else {
+                        self.cell_width = new;
+                    }
+                }
+                // The one key that fans out to two fields.
+                Key::IconHeight => {
+                    self.icon_height = modifier.apply_f64(self.icon_height);
+                    self.icon_height_single = modifier.apply_f64(self.icon_height_single);
+                }
+                Key::CellBaseline => self.cell_baseline = modifier.apply_u32(self.cell_baseline),
+                Key::UnderlinePosition => {
+                    self.underline_position = modifier.apply_u32(self.underline_position)
+                }
+                Key::UnderlineThickness => {
+                    self.underline_thickness = modifier.apply_u32(self.underline_thickness)
+                }
+                Key::StrikethroughPosition => {
+                    self.strikethrough_position = modifier.apply_u32(self.strikethrough_position)
+                }
+                Key::StrikethroughThickness => {
+                    self.strikethrough_thickness = modifier.apply_u32(self.strikethrough_thickness)
+                }
+                Key::OverlinePosition => {
+                    self.overline_position = modifier.apply_i32(self.overline_position)
+                }
+                Key::OverlineThickness => {
+                    self.overline_thickness = modifier.apply_u32(self.overline_thickness)
+                }
+                Key::BoxThickness => self.box_thickness = modifier.apply_u32(self.box_thickness),
+                Key::CursorThickness => {
+                    self.cursor_thickness = modifier.apply_u32(self.cursor_thickness)
+                }
+                Key::CursorHeight => self.cursor_height = modifier.apply_u32(self.cursor_height),
+                Key::IconHeightSingle => {
+                    self.icon_height_single = modifier.apply_f64(self.icon_height_single)
+                }
+                Key::FaceWidth => self.face_width = modifier.apply_f64(self.face_width),
+                Key::FaceHeight => self.face_height = modifier.apply_f64(self.face_height),
+                Key::FaceY => self.face_y = modifier.apply_f64(self.face_y),
+            }
+        }
+
+        self.clamp();
+    }
+}
+
+/// Saturating add of an integer-valued `f64` to a `u32` (subtracting when the
+/// float is negative). Mirrors upstream `addFloatToInt`.
+fn add_float_to_int(int: &mut u32, float: f64) {
+    debug_assert!(float.floor() == float);
+    *int = if float >= 0.0 {
+        int.saturating_add(float as u32)
+    } else {
+        int.saturating_sub((-float) as u32)
+    };
+}
+
+/// An all-zero `Metrics` (except `cursor_thickness`, which defaults to `1`).
+///
+/// Mirrors upstream's private `init()`, used by the modifier tests as a base to
+/// set individual fields on before applying modifiers.
+fn zeroed() -> Metrics {
+    Metrics {
+        cell_width: 0,
+        cell_height: 0,
+        cell_baseline: 0,
+        underline_position: 0,
+        underline_thickness: 0,
+        strikethrough_position: 0,
+        strikethrough_thickness: 0,
+        overline_position: 0,
+        overline_thickness: 0,
+        box_thickness: 0,
+        cursor_thickness: 1,
+        cursor_height: 0,
+        icon_height: 0.0,
+        icon_height_single: 0.0,
+        face_width: 0.0,
+        face_height: 0.0,
+        face_y: 0.0,
+    }
 }
 
 /// An error parsing a [`Modifier`].
@@ -406,6 +539,31 @@ pub(crate) enum Key {
     FaceWidth = 14,
     FaceHeight = 15,
     FaceY = 16,
+}
+
+impl Key {
+    /// All variants in discriminant (i.e. `Metrics` field) order. `Metrics::apply`
+    /// iterates this fixed order so modifier application is deterministic even
+    /// though [`ModifierSet`] is an unordered `HashMap`.
+    pub(crate) const ALL: [Key; 17] = [
+        Key::CellWidth,
+        Key::CellHeight,
+        Key::CellBaseline,
+        Key::UnderlinePosition,
+        Key::UnderlineThickness,
+        Key::StrikethroughPosition,
+        Key::StrikethroughThickness,
+        Key::OverlinePosition,
+        Key::OverlineThickness,
+        Key::BoxThickness,
+        Key::CursorThickness,
+        Key::CursorHeight,
+        Key::IconHeight,
+        Key::IconHeightSingle,
+        Key::FaceWidth,
+        Key::FaceHeight,
+        Key::FaceY,
+    ];
 }
 
 /// A set of modifiers to apply to metrics, keyed by [`Key`]. Most metrics are
@@ -838,39 +996,19 @@ mod tests {
         assert_eq!(Modifier::Percent(-1.0).apply_f64(10.0), 0.0);
     }
 
-    const ALL_KEYS: [Key; 17] = [
-        Key::CellWidth,
-        Key::CellHeight,
-        Key::CellBaseline,
-        Key::UnderlinePosition,
-        Key::UnderlineThickness,
-        Key::StrikethroughPosition,
-        Key::StrikethroughThickness,
-        Key::OverlinePosition,
-        Key::OverlineThickness,
-        Key::BoxThickness,
-        Key::CursorThickness,
-        Key::CursorHeight,
-        Key::IconHeight,
-        Key::IconHeightSingle,
-        Key::FaceWidth,
-        Key::FaceHeight,
-        Key::FaceY,
-    ];
-
     #[test]
     fn key_discriminants() {
-        for (i, key) in ALL_KEYS.iter().enumerate() {
+        for (i, key) in Key::ALL.iter().enumerate() {
             assert_eq!(*key as u8, i as u8);
         }
     }
 
     #[test]
     fn key_matches_metrics_field_count() {
-        assert_eq!(ALL_KEYS.len(), 17);
+        assert_eq!(Key::ALL.len(), 17);
         // An exhaustive, wildcard-free match: adding or removing a `Metrics`
         // field (hence a `Key` variant) forces this to be updated.
-        for key in ALL_KEYS {
+        for key in Key::ALL {
             match key {
                 Key::CellWidth
                 | Key::CellHeight
@@ -906,5 +1044,127 @@ mod tests {
             Some(Modifier::Percent(p)) => assert!(approx(*p, 1.2)),
             other => panic!("unexpected {other:?}"),
         }
+    }
+
+    #[test]
+    fn add_float_to_int_saturates() {
+        // Ordinary add and subtract.
+        let mut v = 10u32;
+        add_float_to_int(&mut v, 5.0);
+        assert_eq!(v, 15);
+        add_float_to_int(&mut v, -3.0);
+        assert_eq!(v, 12);
+        // Positive overflow saturates to u32::MAX.
+        let mut hi = u32::MAX - 1;
+        add_float_to_int(&mut hi, 2.0);
+        assert_eq!(hi, u32::MAX);
+        // Negative underflow saturates to 0.
+        let mut lo = 1u32;
+        add_float_to_int(&mut lo, -3.0);
+        assert_eq!(lo, 0);
+    }
+
+    #[test]
+    fn apply_modifiers() {
+        let mut set = ModifierSet::new();
+        set.insert(Key::CellWidth, Modifier::Percent(1.2));
+
+        let mut m = zeroed();
+        m.cell_width = 100;
+        m.apply(&set);
+        assert_eq!(m.cell_width, 120);
+    }
+
+    #[test]
+    fn apply_cell_height_smaller() {
+        // Remove 25 px (odd): 13 on the bottom, 12 on top, because the face sits
+        // 0.33px higher than perfectly centered.
+        let mut set = ModifierSet::new();
+        set.insert(Key::CellHeight, Modifier::Percent(0.75));
+
+        let mut m = zeroed();
+        m.face_y = 0.33;
+        m.cell_baseline = 50;
+        m.underline_position = 55;
+        m.strikethrough_position = 30;
+        m.overline_position = 0;
+        m.cell_height = 100;
+        m.face_height = 99.67;
+        m.cursor_height = 100;
+        m.apply(&set);
+
+        assert!(approx(m.face_y, -12.67));
+        assert_eq!(m.cell_height, 75);
+        assert_eq!(m.cell_baseline, 37);
+        assert_eq!(m.underline_position, 43);
+        assert_eq!(m.strikethrough_position, 18);
+        assert_eq!(m.overline_position, -12);
+        // Cursor height is separate from cell height and does not follow it.
+        assert_eq!(m.cursor_height, 100);
+    }
+
+    #[test]
+    fn apply_cell_height_larger() {
+        // Add 75 px (odd): 37 on the bottom, 38 on top, because the face sits
+        // 0.33px higher than perfectly centered.
+        let mut set = ModifierSet::new();
+        set.insert(Key::CellHeight, Modifier::Percent(1.75));
+
+        let mut m = zeroed();
+        m.face_y = 0.33;
+        m.cell_baseline = 50;
+        m.underline_position = 55;
+        m.strikethrough_position = 30;
+        m.overline_position = 0;
+        m.cell_height = 100;
+        m.face_height = 99.67;
+        m.cursor_height = 100;
+        m.apply(&set);
+
+        assert!(approx(m.face_y, 37.33));
+        assert_eq!(m.cell_height, 175);
+        assert_eq!(m.cell_baseline, 87);
+        assert_eq!(m.underline_position, 93);
+        assert_eq!(m.strikethrough_position, 68);
+        assert_eq!(m.overline_position, 38);
+        assert_eq!(m.cursor_height, 100);
+    }
+
+    #[test]
+    fn apply_icon_height_percent() {
+        let mut set = ModifierSet::new();
+        set.insert(Key::IconHeight, Modifier::Percent(0.75));
+
+        let mut m = zeroed();
+        m.icon_height = 100.0;
+        m.icon_height_single = 80.0;
+        m.face_height = 100.0;
+        m.face_y = 1.0;
+        m.apply(&set);
+
+        assert_eq!(m.icon_height, 75.0);
+        assert_eq!(m.icon_height_single, 60.0);
+        // Face metrics are not affected.
+        assert_eq!(m.face_height, 100.0);
+        assert_eq!(m.face_y, 1.0);
+    }
+
+    #[test]
+    fn apply_icon_height_absolute() {
+        let mut set = ModifierSet::new();
+        set.insert(Key::IconHeight, Modifier::Absolute(-5));
+
+        let mut m = zeroed();
+        m.icon_height = 100.0;
+        m.icon_height_single = 80.0;
+        m.face_height = 100.0;
+        m.face_y = 1.0;
+        m.apply(&set);
+
+        assert_eq!(m.icon_height, 95.0);
+        assert_eq!(m.icon_height_single, 75.0);
+        // Face metrics are not affected.
+        assert_eq!(m.face_height, 100.0);
+        assert_eq!(m.face_y, 1.0);
     }
 }
