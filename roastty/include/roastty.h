@@ -36,6 +36,9 @@ typedef void* roastty_tracked_grid_ref_t;
 typedef void* roastty_render_state_t;
 typedef void* roastty_render_state_row_iterator_t;
 typedef void* roastty_render_state_row_cells_t;
+typedef void* roastty_kitty_graphics_t;
+typedef void* roastty_kitty_graphics_image_t;
+typedef void* roastty_kitty_graphics_placement_iterator_t;
 
 typedef uint16_t roastty_mode_tag_t;
 
@@ -92,6 +95,63 @@ typedef enum {
   ROASTTY_TERMINAL_SCREEN_PRIMARY = 0,
   ROASTTY_TERMINAL_SCREEN_ALTERNATE = 1,
 } roastty_terminal_screen_e;
+
+typedef enum {
+  ROASTTY_KITTY_GRAPHICS_DATA_INVALID = 0,
+  ROASTTY_KITTY_GRAPHICS_DATA_PLACEMENT_ITERATOR = 1,
+} roastty_kitty_graphics_data_e;
+
+typedef enum {
+  ROASTTY_KITTY_GRAPHICS_PLACEMENT_DATA_INVALID = 0,
+  ROASTTY_KITTY_GRAPHICS_PLACEMENT_DATA_IMAGE_ID = 1,
+  ROASTTY_KITTY_GRAPHICS_PLACEMENT_DATA_PLACEMENT_ID = 2,
+  ROASTTY_KITTY_GRAPHICS_PLACEMENT_DATA_IS_VIRTUAL = 3,
+  ROASTTY_KITTY_GRAPHICS_PLACEMENT_DATA_X_OFFSET = 4,
+  ROASTTY_KITTY_GRAPHICS_PLACEMENT_DATA_Y_OFFSET = 5,
+  ROASTTY_KITTY_GRAPHICS_PLACEMENT_DATA_SOURCE_X = 6,
+  ROASTTY_KITTY_GRAPHICS_PLACEMENT_DATA_SOURCE_Y = 7,
+  ROASTTY_KITTY_GRAPHICS_PLACEMENT_DATA_SOURCE_WIDTH = 8,
+  ROASTTY_KITTY_GRAPHICS_PLACEMENT_DATA_SOURCE_HEIGHT = 9,
+  ROASTTY_KITTY_GRAPHICS_PLACEMENT_DATA_COLUMNS = 10,
+  ROASTTY_KITTY_GRAPHICS_PLACEMENT_DATA_ROWS = 11,
+  ROASTTY_KITTY_GRAPHICS_PLACEMENT_DATA_Z = 12,
+} roastty_kitty_graphics_placement_data_e;
+
+typedef enum {
+  ROASTTY_KITTY_PLACEMENT_LAYER_ALL = 0,
+  ROASTTY_KITTY_PLACEMENT_LAYER_BELOW_BG = 1,
+  ROASTTY_KITTY_PLACEMENT_LAYER_BELOW_TEXT = 2,
+  ROASTTY_KITTY_PLACEMENT_LAYER_ABOVE_TEXT = 3,
+} roastty_kitty_placement_layer_e;
+
+typedef enum {
+  ROASTTY_KITTY_GRAPHICS_PLACEMENT_ITERATOR_OPTION_LAYER = 0,
+} roastty_kitty_graphics_placement_iterator_option_e;
+
+typedef enum {
+  ROASTTY_KITTY_IMAGE_FORMAT_RGB = 0,
+  ROASTTY_KITTY_IMAGE_FORMAT_RGBA = 1,
+  ROASTTY_KITTY_IMAGE_FORMAT_PNG = 2,
+  ROASTTY_KITTY_IMAGE_FORMAT_GRAY_ALPHA = 3,
+  ROASTTY_KITTY_IMAGE_FORMAT_GRAY = 4,
+} roastty_kitty_image_format_e;
+
+typedef enum {
+  ROASTTY_KITTY_IMAGE_COMPRESSION_NONE = 0,
+  ROASTTY_KITTY_IMAGE_COMPRESSION_ZLIB_DEFLATE = 1,
+} roastty_kitty_image_compression_e;
+
+typedef enum {
+  ROASTTY_KITTY_GRAPHICS_IMAGE_DATA_INVALID = 0,
+  ROASTTY_KITTY_GRAPHICS_IMAGE_DATA_ID = 1,
+  ROASTTY_KITTY_GRAPHICS_IMAGE_DATA_NUMBER = 2,
+  ROASTTY_KITTY_GRAPHICS_IMAGE_DATA_WIDTH = 3,
+  ROASTTY_KITTY_GRAPHICS_IMAGE_DATA_HEIGHT = 4,
+  ROASTTY_KITTY_GRAPHICS_IMAGE_DATA_FORMAT = 5,
+  ROASTTY_KITTY_GRAPHICS_IMAGE_DATA_COMPRESSION = 6,
+  ROASTTY_KITTY_GRAPHICS_IMAGE_DATA_DATA_PTR = 7,
+  ROASTTY_KITTY_GRAPHICS_IMAGE_DATA_DATA_LEN = 8,
+} roastty_kitty_graphics_image_data_e;
 
 typedef enum {
   ROASTTY_FOCUS_EVENT_GAINED = 0,
@@ -1317,6 +1377,46 @@ ROASTTY_API roastty_result_e roastty_terminal_get_multi(
     roastty_terminal_t,
     size_t,
     const roastty_terminal_data_e*,
+    void**,
+    size_t*);
+ROASTTY_API roastty_result_e roastty_kitty_graphics_get(
+    roastty_kitty_graphics_t,
+    roastty_kitty_graphics_data_e,
+    void*);
+ROASTTY_API roastty_kitty_graphics_image_t
+roastty_kitty_graphics_image(roastty_kitty_graphics_t, uint32_t);
+ROASTTY_API void
+roastty_kitty_graphics_image_free(roastty_kitty_graphics_image_t);
+ROASTTY_API roastty_result_e roastty_kitty_graphics_image_get(
+    roastty_kitty_graphics_image_t,
+    roastty_kitty_graphics_image_data_e,
+    void*);
+ROASTTY_API roastty_result_e roastty_kitty_graphics_image_get_multi(
+    roastty_kitty_graphics_image_t,
+    size_t,
+    const roastty_kitty_graphics_image_data_e*,
+    void**,
+    size_t*);
+ROASTTY_API roastty_result_e
+roastty_kitty_graphics_placement_iterator_new(
+    roastty_kitty_graphics_placement_iterator_t*);
+ROASTTY_API void roastty_kitty_graphics_placement_iterator_free(
+    roastty_kitty_graphics_placement_iterator_t);
+ROASTTY_API roastty_result_e
+roastty_kitty_graphics_placement_iterator_set(
+    roastty_kitty_graphics_placement_iterator_t,
+    roastty_kitty_graphics_placement_iterator_option_e,
+    const void*);
+ROASTTY_API bool roastty_kitty_graphics_placement_next(
+    roastty_kitty_graphics_placement_iterator_t);
+ROASTTY_API roastty_result_e roastty_kitty_graphics_placement_get(
+    roastty_kitty_graphics_placement_iterator_t,
+    roastty_kitty_graphics_placement_data_e,
+    void*);
+ROASTTY_API roastty_result_e roastty_kitty_graphics_placement_get_multi(
+    roastty_kitty_graphics_placement_iterator_t,
+    size_t,
+    const roastty_kitty_graphics_placement_data_e*,
     void**,
     size_t*);
 ROASTTY_API roastty_result_e

@@ -737,6 +737,42 @@ static void assert_render_state_abi(void) {
   assert(ROASTTY_RENDER_STATE_ROW_CELLS_DATA_SELECTED == 7);
   assert(ROASTTY_RENDER_STATE_ROW_CELLS_DATA_HAS_STYLING == 8);
   assert(ROASTTY_RENDER_STATE_ROW_CELLS_DATA_GRAPHEMES_UTF8 == 9);
+  assert(ROASTTY_KITTY_GRAPHICS_DATA_INVALID == 0);
+  assert(ROASTTY_KITTY_GRAPHICS_DATA_PLACEMENT_ITERATOR == 1);
+  assert(ROASTTY_KITTY_GRAPHICS_PLACEMENT_DATA_INVALID == 0);
+  assert(ROASTTY_KITTY_GRAPHICS_PLACEMENT_DATA_IMAGE_ID == 1);
+  assert(ROASTTY_KITTY_GRAPHICS_PLACEMENT_DATA_PLACEMENT_ID == 2);
+  assert(ROASTTY_KITTY_GRAPHICS_PLACEMENT_DATA_IS_VIRTUAL == 3);
+  assert(ROASTTY_KITTY_GRAPHICS_PLACEMENT_DATA_X_OFFSET == 4);
+  assert(ROASTTY_KITTY_GRAPHICS_PLACEMENT_DATA_Y_OFFSET == 5);
+  assert(ROASTTY_KITTY_GRAPHICS_PLACEMENT_DATA_SOURCE_X == 6);
+  assert(ROASTTY_KITTY_GRAPHICS_PLACEMENT_DATA_SOURCE_Y == 7);
+  assert(ROASTTY_KITTY_GRAPHICS_PLACEMENT_DATA_SOURCE_WIDTH == 8);
+  assert(ROASTTY_KITTY_GRAPHICS_PLACEMENT_DATA_SOURCE_HEIGHT == 9);
+  assert(ROASTTY_KITTY_GRAPHICS_PLACEMENT_DATA_COLUMNS == 10);
+  assert(ROASTTY_KITTY_GRAPHICS_PLACEMENT_DATA_ROWS == 11);
+  assert(ROASTTY_KITTY_GRAPHICS_PLACEMENT_DATA_Z == 12);
+  assert(ROASTTY_KITTY_PLACEMENT_LAYER_ALL == 0);
+  assert(ROASTTY_KITTY_PLACEMENT_LAYER_BELOW_BG == 1);
+  assert(ROASTTY_KITTY_PLACEMENT_LAYER_BELOW_TEXT == 2);
+  assert(ROASTTY_KITTY_PLACEMENT_LAYER_ABOVE_TEXT == 3);
+  assert(ROASTTY_KITTY_GRAPHICS_PLACEMENT_ITERATOR_OPTION_LAYER == 0);
+  assert(ROASTTY_KITTY_IMAGE_FORMAT_RGB == 0);
+  assert(ROASTTY_KITTY_IMAGE_FORMAT_RGBA == 1);
+  assert(ROASTTY_KITTY_IMAGE_FORMAT_PNG == 2);
+  assert(ROASTTY_KITTY_IMAGE_FORMAT_GRAY_ALPHA == 3);
+  assert(ROASTTY_KITTY_IMAGE_FORMAT_GRAY == 4);
+  assert(ROASTTY_KITTY_IMAGE_COMPRESSION_NONE == 0);
+  assert(ROASTTY_KITTY_IMAGE_COMPRESSION_ZLIB_DEFLATE == 1);
+  assert(ROASTTY_KITTY_GRAPHICS_IMAGE_DATA_INVALID == 0);
+  assert(ROASTTY_KITTY_GRAPHICS_IMAGE_DATA_ID == 1);
+  assert(ROASTTY_KITTY_GRAPHICS_IMAGE_DATA_NUMBER == 2);
+  assert(ROASTTY_KITTY_GRAPHICS_IMAGE_DATA_WIDTH == 3);
+  assert(ROASTTY_KITTY_GRAPHICS_IMAGE_DATA_HEIGHT == 4);
+  assert(ROASTTY_KITTY_GRAPHICS_IMAGE_DATA_FORMAT == 5);
+  assert(ROASTTY_KITTY_GRAPHICS_IMAGE_DATA_COMPRESSION == 6);
+  assert(ROASTTY_KITTY_GRAPHICS_IMAGE_DATA_DATA_PTR == 7);
+  assert(ROASTTY_KITTY_GRAPHICS_IMAGE_DATA_DATA_LEN == 8);
 
   assert(sizeof(roastty_render_state_colors_s) == 792);
   assert(_Alignof(roastty_render_state_colors_s) == 8);
@@ -2901,6 +2937,11 @@ static void assert_terminal_abi(void) {
                               ROASTTY_TERMINAL_DATA_MOUSE_TRACKING,
                               &mouse_tracking) == ROASTTY_SUCCESS);
   assert(!mouse_tracking);
+  roastty_kitty_graphics_t graphics = NULL;
+  assert(roastty_terminal_get(terminal,
+                              ROASTTY_TERMINAL_DATA_KITTY_GRAPHICS,
+                              &graphics) == ROASTTY_SUCCESS);
+  assert(graphics != NULL);
   size_t total_rows = 0;
   size_t scrollback_rows = 99;
   assert(roastty_terminal_get(terminal,
@@ -3174,6 +3215,119 @@ static void assert_terminal_abi(void) {
   assert(roastty_terminal_get_multi(terminal, 1, keys, NULL, &written) ==
          ROASTTY_INVALID_VALUE);
 
+  roastty_string_s response = {0};
+  terminal_write(
+      terminal,
+      "\x1b_Ga=T,f=32,s=1,v=1,i=7,p=4,c=3,r=2,z=1,C=1;AQIDBA==\x1b\\");
+  response = (roastty_string_s){0};
+  assert(roastty_terminal_take_pty_response(terminal, &response) ==
+         ROASTTY_SUCCESS);
+  assert_roastty_string_eq(response, "\x1b_Gi=7,p=4;OK\x1b\\");
+
+  roastty_kitty_graphics_image_t image =
+      roastty_kitty_graphics_image(graphics, 7);
+  assert(image != NULL);
+  uint32_t image_id = 0;
+  uint32_t image_number = 99;
+  uint32_t image_width = 0;
+  uint32_t image_height = 0;
+  roastty_kitty_image_format_e image_format =
+      ROASTTY_KITTY_IMAGE_FORMAT_RGB;
+  roastty_kitty_image_compression_e image_compression =
+      ROASTTY_KITTY_IMAGE_COMPRESSION_ZLIB_DEFLATE;
+  const uint8_t *image_data = NULL;
+  size_t image_data_len = 0;
+  roastty_kitty_graphics_image_data_e image_keys[] = {
+      ROASTTY_KITTY_GRAPHICS_IMAGE_DATA_ID,
+      ROASTTY_KITTY_GRAPHICS_IMAGE_DATA_NUMBER,
+      ROASTTY_KITTY_GRAPHICS_IMAGE_DATA_WIDTH,
+      ROASTTY_KITTY_GRAPHICS_IMAGE_DATA_HEIGHT,
+      ROASTTY_KITTY_GRAPHICS_IMAGE_DATA_FORMAT,
+      ROASTTY_KITTY_GRAPHICS_IMAGE_DATA_COMPRESSION,
+      ROASTTY_KITTY_GRAPHICS_IMAGE_DATA_DATA_PTR,
+      ROASTTY_KITTY_GRAPHICS_IMAGE_DATA_DATA_LEN,
+  };
+  void *image_values[] = {
+      &image_id,
+      &image_number,
+      &image_width,
+      &image_height,
+      &image_format,
+      &image_compression,
+      &image_data,
+      &image_data_len,
+  };
+  written = 99;
+  assert(roastty_kitty_graphics_image_get_multi(image,
+                                                8,
+                                                image_keys,
+                                                image_values,
+                                                &written) == ROASTTY_SUCCESS);
+  assert(written == 8);
+  assert(image_id == 7);
+  assert(image_number == 0);
+  assert(image_width == 1);
+  assert(image_height == 1);
+  assert(image_format == ROASTTY_KITTY_IMAGE_FORMAT_RGBA);
+  assert(image_compression == ROASTTY_KITTY_IMAGE_COMPRESSION_NONE);
+  assert(image_data_len == 4);
+  assert(image_data != NULL);
+  assert(memcmp(image_data, "\x01\x02\x03\x04", 4) == 0);
+
+  roastty_kitty_graphics_placement_iterator_t placement_iterator = NULL;
+  assert(roastty_kitty_graphics_placement_iterator_new(&placement_iterator) ==
+         ROASTTY_SUCCESS);
+  assert(placement_iterator != NULL);
+  assert(roastty_kitty_graphics_get(
+             graphics,
+             ROASTTY_KITTY_GRAPHICS_DATA_PLACEMENT_ITERATOR,
+             &placement_iterator) == ROASTTY_SUCCESS);
+  roastty_kitty_placement_layer_e layer =
+      ROASTTY_KITTY_PLACEMENT_LAYER_ABOVE_TEXT;
+  assert(roastty_kitty_graphics_placement_iterator_set(
+             placement_iterator,
+             ROASTTY_KITTY_GRAPHICS_PLACEMENT_ITERATOR_OPTION_LAYER,
+             &layer) == ROASTTY_SUCCESS);
+  assert(roastty_kitty_graphics_placement_next(placement_iterator));
+  uint32_t placement_image_id = 0;
+  uint32_t placement_id = 0;
+  bool placement_virtual = true;
+  uint32_t placement_columns = 0;
+  uint32_t placement_rows = 0;
+  int32_t placement_z = 0;
+  roastty_kitty_graphics_placement_data_e placement_keys[] = {
+      ROASTTY_KITTY_GRAPHICS_PLACEMENT_DATA_IMAGE_ID,
+      ROASTTY_KITTY_GRAPHICS_PLACEMENT_DATA_PLACEMENT_ID,
+      ROASTTY_KITTY_GRAPHICS_PLACEMENT_DATA_IS_VIRTUAL,
+      ROASTTY_KITTY_GRAPHICS_PLACEMENT_DATA_COLUMNS,
+      ROASTTY_KITTY_GRAPHICS_PLACEMENT_DATA_ROWS,
+      ROASTTY_KITTY_GRAPHICS_PLACEMENT_DATA_Z,
+  };
+  void *placement_values[] = {
+      &placement_image_id,
+      &placement_id,
+      &placement_virtual,
+      &placement_columns,
+      &placement_rows,
+      &placement_z,
+  };
+  written = 99;
+  assert(roastty_kitty_graphics_placement_get_multi(placement_iterator,
+                                                    6,
+                                                    placement_keys,
+                                                    placement_values,
+                                                    &written) == ROASTTY_SUCCESS);
+  assert(written == 6);
+  assert(placement_image_id == 7);
+  assert(placement_id == 4);
+  assert(!placement_virtual);
+  assert(placement_columns == 3);
+  assert(placement_rows == 2);
+  assert(placement_z == 1);
+  assert(!roastty_kitty_graphics_placement_next(placement_iterator));
+  roastty_kitty_graphics_placement_iterator_free(placement_iterator);
+  roastty_kitty_graphics_image_free(image);
+
   uint8_t utf8_a = 0xc3;
   uint8_t utf8_b = 0xa9;
   assert(roastty_terminal_vt_write(terminal, &utf8_a, 1) == ROASTTY_SUCCESS);
@@ -3193,7 +3347,7 @@ static void assert_terminal_abi(void) {
 
   terminal_write(terminal, "\x1b[");
   terminal_write(terminal, "6n");
-  roastty_string_s response = {0};
+  response = (roastty_string_s){0};
   assert(roastty_terminal_take_pty_response(terminal, &response) ==
          ROASTTY_SUCCESS);
   assert_roastty_string_eq(response, "\x1b[1;5R");

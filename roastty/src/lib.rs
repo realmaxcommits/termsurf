@@ -11,6 +11,13 @@ use input::{key, key_encode, key_mods, paste};
 use terminal::color;
 use terminal::cursor;
 use terminal::focus;
+use terminal::kitty::graphics_command::{TransmissionCompression, TransmissionFormat};
+use terminal::kitty::graphics_image::Image as KittyImage;
+use terminal::kitty::graphics_storage::{
+    ImageStorage as KittyImageStorage, Placement as KittyPlacement,
+    PlacementId as KittyPlacementId, PlacementKey as KittyPlacementKey,
+    PlacementLocation as KittyPlacementLocation,
+};
 use terminal::kitty::KeyFlags;
 use terminal::modes;
 use terminal::selection_gesture::{
@@ -57,6 +64,9 @@ pub type RoasttyTrackedGridRef = *mut c_void;
 pub type RoasttyRenderStateHandle = *mut c_void;
 pub type RoasttyRenderStateRowIterator = *mut c_void;
 pub type RoasttyRenderStateRowCells = *mut c_void;
+pub type RoasttyKittyGraphics = *mut c_void;
+pub type RoasttyKittyGraphicsImage = *mut c_void;
+pub type RoasttyKittyGraphicsPlacementIterator = *mut c_void;
 type RoasttyCell = u64;
 type RoasttyRow = u64;
 
@@ -135,6 +145,49 @@ const ROASTTY_TERMINAL_DATA_VIEWPORT_ACTIVE: c_int = 32;
 
 const ROASTTY_TERMINAL_SCREEN_PRIMARY: c_int = 0;
 const ROASTTY_TERMINAL_SCREEN_ALTERNATE: c_int = 1;
+
+const ROASTTY_KITTY_GRAPHICS_DATA_INVALID: c_int = 0;
+const ROASTTY_KITTY_GRAPHICS_DATA_PLACEMENT_ITERATOR: c_int = 1;
+
+const ROASTTY_KITTY_GRAPHICS_PLACEMENT_DATA_INVALID: c_int = 0;
+const ROASTTY_KITTY_GRAPHICS_PLACEMENT_DATA_IMAGE_ID: c_int = 1;
+const ROASTTY_KITTY_GRAPHICS_PLACEMENT_DATA_PLACEMENT_ID: c_int = 2;
+const ROASTTY_KITTY_GRAPHICS_PLACEMENT_DATA_IS_VIRTUAL: c_int = 3;
+const ROASTTY_KITTY_GRAPHICS_PLACEMENT_DATA_X_OFFSET: c_int = 4;
+const ROASTTY_KITTY_GRAPHICS_PLACEMENT_DATA_Y_OFFSET: c_int = 5;
+const ROASTTY_KITTY_GRAPHICS_PLACEMENT_DATA_SOURCE_X: c_int = 6;
+const ROASTTY_KITTY_GRAPHICS_PLACEMENT_DATA_SOURCE_Y: c_int = 7;
+const ROASTTY_KITTY_GRAPHICS_PLACEMENT_DATA_SOURCE_WIDTH: c_int = 8;
+const ROASTTY_KITTY_GRAPHICS_PLACEMENT_DATA_SOURCE_HEIGHT: c_int = 9;
+const ROASTTY_KITTY_GRAPHICS_PLACEMENT_DATA_COLUMNS: c_int = 10;
+const ROASTTY_KITTY_GRAPHICS_PLACEMENT_DATA_ROWS: c_int = 11;
+const ROASTTY_KITTY_GRAPHICS_PLACEMENT_DATA_Z: c_int = 12;
+
+const ROASTTY_KITTY_PLACEMENT_LAYER_ALL: c_int = 0;
+const ROASTTY_KITTY_PLACEMENT_LAYER_BELOW_BG: c_int = 1;
+const ROASTTY_KITTY_PLACEMENT_LAYER_BELOW_TEXT: c_int = 2;
+const ROASTTY_KITTY_PLACEMENT_LAYER_ABOVE_TEXT: c_int = 3;
+
+const ROASTTY_KITTY_GRAPHICS_PLACEMENT_ITERATOR_OPTION_LAYER: c_int = 0;
+
+const ROASTTY_KITTY_IMAGE_FORMAT_RGB: c_int = 0;
+const ROASTTY_KITTY_IMAGE_FORMAT_RGBA: c_int = 1;
+const ROASTTY_KITTY_IMAGE_FORMAT_PNG: c_int = 2;
+const ROASTTY_KITTY_IMAGE_FORMAT_GRAY_ALPHA: c_int = 3;
+const ROASTTY_KITTY_IMAGE_FORMAT_GRAY: c_int = 4;
+
+const ROASTTY_KITTY_IMAGE_COMPRESSION_NONE: c_int = 0;
+const ROASTTY_KITTY_IMAGE_COMPRESSION_ZLIB_DEFLATE: c_int = 1;
+
+const ROASTTY_KITTY_GRAPHICS_IMAGE_DATA_INVALID: c_int = 0;
+const ROASTTY_KITTY_GRAPHICS_IMAGE_DATA_ID: c_int = 1;
+const ROASTTY_KITTY_GRAPHICS_IMAGE_DATA_NUMBER: c_int = 2;
+const ROASTTY_KITTY_GRAPHICS_IMAGE_DATA_WIDTH: c_int = 3;
+const ROASTTY_KITTY_GRAPHICS_IMAGE_DATA_HEIGHT: c_int = 4;
+const ROASTTY_KITTY_GRAPHICS_IMAGE_DATA_FORMAT: c_int = 5;
+const ROASTTY_KITTY_GRAPHICS_IMAGE_DATA_COMPRESSION: c_int = 6;
+const ROASTTY_KITTY_GRAPHICS_IMAGE_DATA_DATA_PTR: c_int = 7;
+const ROASTTY_KITTY_GRAPHICS_IMAGE_DATA_DATA_LEN: c_int = 8;
 
 const ROASTTY_TERMINAL_OPTION_USERDATA: c_int = 0;
 const ROASTTY_TERMINAL_OPTION_WRITE_PTY: c_int = 1;
@@ -521,6 +574,40 @@ struct RenderStateCellSnapshot {
     raw: RoasttyCell,
     style: Option<style::Style>,
     graphemes: Vec<u32>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct KittyGraphicsImageSnapshot {
+    id: u32,
+    number: u32,
+    width: u32,
+    height: u32,
+    format: c_int,
+    compression: c_int,
+    data: Vec<u8>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct KittyGraphicsPlacementSnapshot {
+    key: KittyPlacementKey,
+    placement: KittyPlacement,
+}
+
+#[derive(Debug)]
+struct KittyGraphicsPlacementIterator {
+    entries: Vec<KittyGraphicsPlacementSnapshot>,
+    selected: Option<usize>,
+    layer_filter: c_int,
+}
+
+impl Default for KittyGraphicsPlacementIterator {
+    fn default() -> Self {
+        Self {
+            entries: Vec::new(),
+            selected: None,
+            layer_filter: ROASTTY_KITTY_PLACEMENT_LAYER_ALL,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -1726,6 +1813,81 @@ fn render_state_row_cells_mut_from_handle(
     Some(unsafe { &mut *handle.cast::<RenderStateRowCells>() })
 }
 
+fn kitty_graphics_from_handle(handle: RoasttyKittyGraphics) -> Option<&'static KittyImageStorage> {
+    if handle.is_null() {
+        return None;
+    }
+    Some(unsafe { &*handle.cast::<KittyImageStorage>() })
+}
+
+fn kitty_graphics_image_from_handle(
+    handle: RoasttyKittyGraphicsImage,
+) -> Option<&'static KittyGraphicsImageSnapshot> {
+    if handle.is_null() {
+        return None;
+    }
+    Some(unsafe { &*handle.cast::<KittyGraphicsImageSnapshot>() })
+}
+
+fn kitty_graphics_placement_iterator_mut_from_handle(
+    handle: RoasttyKittyGraphicsPlacementIterator,
+) -> Option<&'static mut KittyGraphicsPlacementIterator> {
+    if handle.is_null() {
+        return None;
+    }
+    Some(unsafe { &mut *handle.cast::<KittyGraphicsPlacementIterator>() })
+}
+
+fn kitty_image_format_value(format: TransmissionFormat) -> c_int {
+    match format {
+        TransmissionFormat::Rgb => ROASTTY_KITTY_IMAGE_FORMAT_RGB,
+        TransmissionFormat::Rgba => ROASTTY_KITTY_IMAGE_FORMAT_RGBA,
+        TransmissionFormat::Png => ROASTTY_KITTY_IMAGE_FORMAT_PNG,
+        TransmissionFormat::GrayAlpha => ROASTTY_KITTY_IMAGE_FORMAT_GRAY_ALPHA,
+        TransmissionFormat::Gray => ROASTTY_KITTY_IMAGE_FORMAT_GRAY,
+    }
+}
+
+fn kitty_image_compression_value(compression: TransmissionCompression) -> c_int {
+    match compression {
+        TransmissionCompression::None => ROASTTY_KITTY_IMAGE_COMPRESSION_NONE,
+        TransmissionCompression::ZlibDeflate => ROASTTY_KITTY_IMAGE_COMPRESSION_ZLIB_DEFLATE,
+    }
+}
+
+fn kitty_image_snapshot(image: &KittyImage) -> Result<KittyGraphicsImageSnapshot, c_int> {
+    let mut data = Vec::new();
+    data.try_reserve_exact(image.data.len())
+        .map_err(|_| ROASTTY_OUT_OF_MEMORY)?;
+    data.extend_from_slice(&image.data);
+    Ok(KittyGraphicsImageSnapshot {
+        id: image.id,
+        number: image.number,
+        width: image.width,
+        height: image.height,
+        format: kitty_image_format_value(image.format),
+        compression: kitty_image_compression_value(image.compression),
+        data,
+    })
+}
+
+fn kitty_placement_public_id(id: KittyPlacementId) -> u32 {
+    match id {
+        KittyPlacementId::External(id) => id,
+        KittyPlacementId::Internal(_) => 0,
+    }
+}
+
+fn kitty_placement_layer_matches(layer: c_int, z: i32) -> bool {
+    match layer {
+        ROASTTY_KITTY_PLACEMENT_LAYER_ALL => true,
+        ROASTTY_KITTY_PLACEMENT_LAYER_BELOW_BG => z < i32::MIN / 2,
+        ROASTTY_KITTY_PLACEMENT_LAYER_BELOW_TEXT => z >= i32::MIN / 2 && z < 0,
+        ROASTTY_KITTY_PLACEMENT_LAYER_ABOVE_TEXT => z >= 0,
+        _ => false,
+    }
+}
+
 fn render_dirty_from_raw(value: c_int) -> Option<c_int> {
     match value {
         ROASTTY_RENDER_STATE_DIRTY_FALSE
@@ -1751,6 +1913,41 @@ fn valid_render_state_row_data(data: c_int) -> bool {
 
 fn valid_render_state_row_option(option: c_int) -> bool {
     option == ROASTTY_RENDER_STATE_ROW_OPTION_DIRTY
+}
+
+fn valid_kitty_graphics_data(data: c_int) -> bool {
+    matches!(
+        data,
+        ROASTTY_KITTY_GRAPHICS_DATA_INVALID..=ROASTTY_KITTY_GRAPHICS_DATA_PLACEMENT_ITERATOR
+    )
+}
+
+fn valid_kitty_graphics_image_data(data: c_int) -> bool {
+    matches!(
+        data,
+        ROASTTY_KITTY_GRAPHICS_IMAGE_DATA_INVALID..=ROASTTY_KITTY_GRAPHICS_IMAGE_DATA_DATA_LEN
+    )
+}
+
+fn valid_kitty_graphics_placement_data(data: c_int) -> bool {
+    matches!(
+        data,
+        ROASTTY_KITTY_GRAPHICS_PLACEMENT_DATA_INVALID..=ROASTTY_KITTY_GRAPHICS_PLACEMENT_DATA_Z
+    )
+}
+
+fn valid_kitty_graphics_placement_layer(layer: c_int) -> bool {
+    matches!(
+        layer,
+        ROASTTY_KITTY_PLACEMENT_LAYER_ALL
+            | ROASTTY_KITTY_PLACEMENT_LAYER_BELOW_BG
+            | ROASTTY_KITTY_PLACEMENT_LAYER_BELOW_TEXT
+            | ROASTTY_KITTY_PLACEMENT_LAYER_ABOVE_TEXT
+    )
+}
+
+fn valid_kitty_graphics_placement_iterator_option(option: c_int) -> bool {
+    option == ROASTTY_KITTY_GRAPHICS_PLACEMENT_ITERATOR_OPTION_LAYER
 }
 
 fn valid_render_state_row_cells_data(data: c_int) -> bool {
@@ -1842,8 +2039,10 @@ unsafe fn terminal_get_write(terminal: &InnerTerminal, data: c_int, out: *mut c_
         | ROASTTY_TERMINAL_DATA_KITTY_IMAGE_MEDIUM_FILE
         | ROASTTY_TERMINAL_DATA_KITTY_IMAGE_MEDIUM_TEMP_FILE
         | ROASTTY_TERMINAL_DATA_KITTY_IMAGE_MEDIUM_SHARED_MEM
-        | ROASTTY_TERMINAL_DATA_KITTY_GRAPHICS
         | ROASTTY_TERMINAL_DATA_VIEWPORT_ACTIVE => return ROASTTY_NO_VALUE,
+        ROASTTY_TERMINAL_DATA_KITTY_GRAPHICS => out
+            .cast::<RoasttyKittyGraphics>()
+            .write(terminal.kitty_images() as *const KittyImageStorage as RoasttyKittyGraphics),
         _ => return ROASTTY_INVALID_VALUE,
     }
 
@@ -4447,6 +4646,336 @@ pub extern "C" fn roastty_terminal_get_multi(
 }
 
 #[no_mangle]
+pub extern "C" fn roastty_kitty_graphics_get(
+    graphics: RoasttyKittyGraphics,
+    data: c_int,
+    out: *mut c_void,
+) -> c_int {
+    let Some(storage) = kitty_graphics_from_handle(graphics) else {
+        return ROASTTY_INVALID_VALUE;
+    };
+    if !valid_kitty_graphics_data(data) || out.is_null() {
+        return ROASTTY_INVALID_VALUE;
+    }
+
+    match data {
+        ROASTTY_KITTY_GRAPHICS_DATA_INVALID => ROASTTY_INVALID_VALUE,
+        ROASTTY_KITTY_GRAPHICS_DATA_PLACEMENT_ITERATOR => {
+            let iterator_handle =
+                unsafe { out.cast::<RoasttyKittyGraphicsPlacementIterator>().read() };
+            let Some(iterator) = kitty_graphics_placement_iterator_mut_from_handle(iterator_handle)
+            else {
+                return ROASTTY_INVALID_VALUE;
+            };
+            iterator.entries = storage
+                .placement_snapshots()
+                .into_iter()
+                .map(|(key, placement)| KittyGraphicsPlacementSnapshot { key, placement })
+                .collect();
+            iterator.selected = None;
+            ROASTTY_SUCCESS
+        }
+        _ => ROASTTY_INVALID_VALUE,
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn roastty_kitty_graphics_image(
+    graphics: RoasttyKittyGraphics,
+    image_id: u32,
+) -> RoasttyKittyGraphicsImage {
+    let Some(storage) = kitty_graphics_from_handle(graphics) else {
+        return ptr::null_mut();
+    };
+    let Some(image) = storage.image_by_id(image_id) else {
+        return ptr::null_mut();
+    };
+    let Ok(snapshot) = kitty_image_snapshot(image) else {
+        return ptr::null_mut();
+    };
+    Box::into_raw(Box::new(snapshot)).cast()
+}
+
+#[no_mangle]
+pub extern "C" fn roastty_kitty_graphics_image_free(image: RoasttyKittyGraphicsImage) {
+    if image.is_null() {
+        return;
+    }
+    unsafe {
+        drop(Box::from_raw(image.cast::<KittyGraphicsImageSnapshot>()));
+    }
+}
+
+unsafe fn kitty_graphics_image_get_write(
+    image: &KittyGraphicsImageSnapshot,
+    data: c_int,
+    out: *mut c_void,
+) -> c_int {
+    match data {
+        ROASTTY_KITTY_GRAPHICS_IMAGE_DATA_ID => out.cast::<u32>().write(image.id),
+        ROASTTY_KITTY_GRAPHICS_IMAGE_DATA_NUMBER => out.cast::<u32>().write(image.number),
+        ROASTTY_KITTY_GRAPHICS_IMAGE_DATA_WIDTH => out.cast::<u32>().write(image.width),
+        ROASTTY_KITTY_GRAPHICS_IMAGE_DATA_HEIGHT => out.cast::<u32>().write(image.height),
+        ROASTTY_KITTY_GRAPHICS_IMAGE_DATA_FORMAT => out.cast::<c_int>().write(image.format),
+        ROASTTY_KITTY_GRAPHICS_IMAGE_DATA_COMPRESSION => {
+            out.cast::<c_int>().write(image.compression)
+        }
+        ROASTTY_KITTY_GRAPHICS_IMAGE_DATA_DATA_PTR => {
+            out.cast::<*const u8>().write(image.data.as_ptr())
+        }
+        ROASTTY_KITTY_GRAPHICS_IMAGE_DATA_DATA_LEN => out.cast::<usize>().write(image.data.len()),
+        ROASTTY_KITTY_GRAPHICS_IMAGE_DATA_INVALID => return ROASTTY_INVALID_VALUE,
+        _ => return ROASTTY_INVALID_VALUE,
+    }
+    ROASTTY_SUCCESS
+}
+
+#[no_mangle]
+pub extern "C" fn roastty_kitty_graphics_image_get(
+    image: RoasttyKittyGraphicsImage,
+    data: c_int,
+    out: *mut c_void,
+) -> c_int {
+    let Some(image) = kitty_graphics_image_from_handle(image) else {
+        return ROASTTY_INVALID_VALUE;
+    };
+    if !valid_kitty_graphics_image_data(data) || out.is_null() {
+        return ROASTTY_INVALID_VALUE;
+    }
+
+    unsafe { kitty_graphics_image_get_write(image, data, out) }
+}
+
+#[no_mangle]
+pub extern "C" fn roastty_kitty_graphics_image_get_multi(
+    image: RoasttyKittyGraphicsImage,
+    count: usize,
+    keys: *const c_int,
+    values: *mut *mut c_void,
+    out_written: *mut usize,
+) -> c_int {
+    if !out_written.is_null() {
+        unsafe {
+            out_written.write(0);
+        }
+    }
+    if kitty_graphics_image_from_handle(image).is_none() || keys.is_null() || values.is_null() {
+        return ROASTTY_INVALID_VALUE;
+    }
+    if count == 0 {
+        return ROASTTY_SUCCESS;
+    }
+
+    for index in 0..count {
+        let key = unsafe { *keys.add(index) };
+        if !valid_kitty_graphics_image_data(key) {
+            return ROASTTY_INVALID_VALUE;
+        }
+        let value = unsafe { *values.add(index) };
+        if value.is_null() {
+            return ROASTTY_INVALID_VALUE;
+        }
+        let result = roastty_kitty_graphics_image_get(image, key, value);
+        if result != ROASTTY_SUCCESS {
+            return result;
+        }
+        if !out_written.is_null() {
+            unsafe {
+                out_written.write(index + 1);
+            }
+        }
+    }
+
+    ROASTTY_SUCCESS
+}
+
+#[no_mangle]
+pub extern "C" fn roastty_kitty_graphics_placement_iterator_new(
+    out: *mut RoasttyKittyGraphicsPlacementIterator,
+) -> c_int {
+    if out.is_null() {
+        return ROASTTY_INVALID_VALUE;
+    }
+    unsafe {
+        out.write(Box::into_raw(Box::new(KittyGraphicsPlacementIterator::default())).cast());
+    }
+    ROASTTY_SUCCESS
+}
+
+#[no_mangle]
+pub extern "C" fn roastty_kitty_graphics_placement_iterator_free(
+    iterator: RoasttyKittyGraphicsPlacementIterator,
+) {
+    if iterator.is_null() {
+        return;
+    }
+    unsafe {
+        drop(Box::from_raw(
+            iterator.cast::<KittyGraphicsPlacementIterator>(),
+        ));
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn roastty_kitty_graphics_placement_iterator_set(
+    iterator: RoasttyKittyGraphicsPlacementIterator,
+    option: c_int,
+    value: *const c_void,
+) -> c_int {
+    let Some(iterator) = kitty_graphics_placement_iterator_mut_from_handle(iterator) else {
+        return ROASTTY_INVALID_VALUE;
+    };
+    if !valid_kitty_graphics_placement_iterator_option(option) || value.is_null() {
+        return ROASTTY_INVALID_VALUE;
+    }
+
+    match option {
+        ROASTTY_KITTY_GRAPHICS_PLACEMENT_ITERATOR_OPTION_LAYER => {
+            let layer = unsafe { value.cast::<c_int>().read() };
+            if !valid_kitty_graphics_placement_layer(layer) {
+                return ROASTTY_INVALID_VALUE;
+            }
+            iterator.layer_filter = layer;
+            iterator.selected = None;
+            ROASTTY_SUCCESS
+        }
+        _ => ROASTTY_INVALID_VALUE,
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn roastty_kitty_graphics_placement_next(
+    iterator: RoasttyKittyGraphicsPlacementIterator,
+) -> bool {
+    let Some(iterator) = kitty_graphics_placement_iterator_mut_from_handle(iterator) else {
+        return false;
+    };
+    let start = iterator.selected.map_or(0, |index| index + 1);
+    for index in start..iterator.entries.len() {
+        if kitty_placement_layer_matches(iterator.layer_filter, iterator.entries[index].placement.z)
+        {
+            iterator.selected = Some(index);
+            return true;
+        }
+    }
+    iterator.selected = None;
+    false
+}
+
+unsafe fn kitty_graphics_placement_get_write(
+    item: &KittyGraphicsPlacementSnapshot,
+    data: c_int,
+    out: *mut c_void,
+) -> c_int {
+    match data {
+        ROASTTY_KITTY_GRAPHICS_PLACEMENT_DATA_IMAGE_ID => {
+            out.cast::<u32>().write(item.key.image_id)
+        }
+        ROASTTY_KITTY_GRAPHICS_PLACEMENT_DATA_PLACEMENT_ID => out
+            .cast::<u32>()
+            .write(kitty_placement_public_id(item.key.placement_id)),
+        ROASTTY_KITTY_GRAPHICS_PLACEMENT_DATA_IS_VIRTUAL => out.cast::<bool>().write(matches!(
+            item.placement.location,
+            KittyPlacementLocation::Virtual
+        )),
+        ROASTTY_KITTY_GRAPHICS_PLACEMENT_DATA_X_OFFSET => {
+            out.cast::<u32>().write(item.placement.x_offset)
+        }
+        ROASTTY_KITTY_GRAPHICS_PLACEMENT_DATA_Y_OFFSET => {
+            out.cast::<u32>().write(item.placement.y_offset)
+        }
+        ROASTTY_KITTY_GRAPHICS_PLACEMENT_DATA_SOURCE_X => {
+            out.cast::<u32>().write(item.placement.source_x)
+        }
+        ROASTTY_KITTY_GRAPHICS_PLACEMENT_DATA_SOURCE_Y => {
+            out.cast::<u32>().write(item.placement.source_y)
+        }
+        ROASTTY_KITTY_GRAPHICS_PLACEMENT_DATA_SOURCE_WIDTH => {
+            out.cast::<u32>().write(item.placement.source_width)
+        }
+        ROASTTY_KITTY_GRAPHICS_PLACEMENT_DATA_SOURCE_HEIGHT => {
+            out.cast::<u32>().write(item.placement.source_height)
+        }
+        ROASTTY_KITTY_GRAPHICS_PLACEMENT_DATA_COLUMNS => {
+            out.cast::<u32>().write(item.placement.columns)
+        }
+        ROASTTY_KITTY_GRAPHICS_PLACEMENT_DATA_ROWS => out.cast::<u32>().write(item.placement.rows),
+        ROASTTY_KITTY_GRAPHICS_PLACEMENT_DATA_Z => out.cast::<i32>().write(item.placement.z),
+        ROASTTY_KITTY_GRAPHICS_PLACEMENT_DATA_INVALID => return ROASTTY_INVALID_VALUE,
+        _ => return ROASTTY_INVALID_VALUE,
+    }
+    ROASTTY_SUCCESS
+}
+
+#[no_mangle]
+pub extern "C" fn roastty_kitty_graphics_placement_get(
+    iterator: RoasttyKittyGraphicsPlacementIterator,
+    data: c_int,
+    out: *mut c_void,
+) -> c_int {
+    let Some(iterator) = kitty_graphics_placement_iterator_mut_from_handle(iterator) else {
+        return ROASTTY_INVALID_VALUE;
+    };
+    if !valid_kitty_graphics_placement_data(data) || out.is_null() {
+        return ROASTTY_INVALID_VALUE;
+    }
+    let Some(selected) = iterator.selected else {
+        return ROASTTY_NO_VALUE;
+    };
+    let Some(item) = iterator.entries.get(selected) else {
+        return ROASTTY_NO_VALUE;
+    };
+
+    unsafe { kitty_graphics_placement_get_write(item, data, out) }
+}
+
+#[no_mangle]
+pub extern "C" fn roastty_kitty_graphics_placement_get_multi(
+    iterator: RoasttyKittyGraphicsPlacementIterator,
+    count: usize,
+    keys: *const c_int,
+    values: *mut *mut c_void,
+    out_written: *mut usize,
+) -> c_int {
+    if !out_written.is_null() {
+        unsafe {
+            out_written.write(0);
+        }
+    }
+    if kitty_graphics_placement_iterator_mut_from_handle(iterator).is_none()
+        || keys.is_null()
+        || values.is_null()
+    {
+        return ROASTTY_INVALID_VALUE;
+    }
+    if count == 0 {
+        return ROASTTY_SUCCESS;
+    }
+
+    for index in 0..count {
+        let key = unsafe { *keys.add(index) };
+        if !valid_kitty_graphics_placement_data(key) {
+            return ROASTTY_INVALID_VALUE;
+        }
+        let value = unsafe { *values.add(index) };
+        if value.is_null() {
+            return ROASTTY_INVALID_VALUE;
+        }
+        let result = roastty_kitty_graphics_placement_get(iterator, key, value);
+        if result != ROASTTY_SUCCESS {
+            return result;
+        }
+        if !out_written.is_null() {
+            unsafe {
+                out_written.write(index + 1);
+            }
+        }
+    }
+
+    ROASTTY_SUCCESS
+}
+
+#[no_mangle]
 pub extern "C" fn roastty_terminal_take_pty_response(
     terminal: RoasttyTerminal,
     out: *mut RoasttyString,
@@ -6752,6 +7281,36 @@ mod tests {
             roastty_terminal_vt_write(terminal, bytes.as_ptr(), bytes.len()),
             ROASTTY_SUCCESS
         );
+    }
+
+    fn kitty_graphics_handle(terminal: RoasttyTerminal) -> RoasttyKittyGraphics {
+        let mut graphics: RoasttyKittyGraphics = ptr::null_mut();
+        assert_eq!(
+            roastty_terminal_get(
+                terminal,
+                ROASTTY_TERMINAL_DATA_KITTY_GRAPHICS,
+                (&mut graphics as *mut RoasttyKittyGraphics).cast()
+            ),
+            ROASTTY_SUCCESS
+        );
+        assert!(!graphics.is_null());
+        graphics
+    }
+
+    fn write_kitty_transmit_display(
+        terminal: RoasttyTerminal,
+        image_id: u32,
+        placement_id: u32,
+        z: i32,
+    ) {
+        write_terminal(
+            terminal,
+            format!(
+                "\x1b_Ga=T,f=32,s=1,v=1,i={image_id},p={placement_id},x=2,y=3,w=4,h=5,X=6,Y=7,c=3,r=2,z={z},C=1;AQIDBA==\x1b\\"
+            )
+            .as_bytes(),
+        );
+        let _ = terminal_string(terminal, roastty_terminal_take_pty_response);
     }
 
     fn c_point(tag: c_int, x: u16, y: u32) -> RoasttyPoint {
@@ -11298,6 +11857,42 @@ mod tests {
         assert_eq!(ROASTTY_TERMINAL_DATA_VIEWPORT_ACTIVE, 32);
         assert_eq!(ROASTTY_TERMINAL_SCREEN_PRIMARY, 0);
         assert_eq!(ROASTTY_TERMINAL_SCREEN_ALTERNATE, 1);
+        assert_eq!(ROASTTY_KITTY_GRAPHICS_DATA_INVALID, 0);
+        assert_eq!(ROASTTY_KITTY_GRAPHICS_DATA_PLACEMENT_ITERATOR, 1);
+        assert_eq!(ROASTTY_KITTY_GRAPHICS_PLACEMENT_DATA_INVALID, 0);
+        assert_eq!(ROASTTY_KITTY_GRAPHICS_PLACEMENT_DATA_IMAGE_ID, 1);
+        assert_eq!(ROASTTY_KITTY_GRAPHICS_PLACEMENT_DATA_PLACEMENT_ID, 2);
+        assert_eq!(ROASTTY_KITTY_GRAPHICS_PLACEMENT_DATA_IS_VIRTUAL, 3);
+        assert_eq!(ROASTTY_KITTY_GRAPHICS_PLACEMENT_DATA_X_OFFSET, 4);
+        assert_eq!(ROASTTY_KITTY_GRAPHICS_PLACEMENT_DATA_Y_OFFSET, 5);
+        assert_eq!(ROASTTY_KITTY_GRAPHICS_PLACEMENT_DATA_SOURCE_X, 6);
+        assert_eq!(ROASTTY_KITTY_GRAPHICS_PLACEMENT_DATA_SOURCE_Y, 7);
+        assert_eq!(ROASTTY_KITTY_GRAPHICS_PLACEMENT_DATA_SOURCE_WIDTH, 8);
+        assert_eq!(ROASTTY_KITTY_GRAPHICS_PLACEMENT_DATA_SOURCE_HEIGHT, 9);
+        assert_eq!(ROASTTY_KITTY_GRAPHICS_PLACEMENT_DATA_COLUMNS, 10);
+        assert_eq!(ROASTTY_KITTY_GRAPHICS_PLACEMENT_DATA_ROWS, 11);
+        assert_eq!(ROASTTY_KITTY_GRAPHICS_PLACEMENT_DATA_Z, 12);
+        assert_eq!(ROASTTY_KITTY_PLACEMENT_LAYER_ALL, 0);
+        assert_eq!(ROASTTY_KITTY_PLACEMENT_LAYER_BELOW_BG, 1);
+        assert_eq!(ROASTTY_KITTY_PLACEMENT_LAYER_BELOW_TEXT, 2);
+        assert_eq!(ROASTTY_KITTY_PLACEMENT_LAYER_ABOVE_TEXT, 3);
+        assert_eq!(ROASTTY_KITTY_GRAPHICS_PLACEMENT_ITERATOR_OPTION_LAYER, 0);
+        assert_eq!(ROASTTY_KITTY_IMAGE_FORMAT_RGB, 0);
+        assert_eq!(ROASTTY_KITTY_IMAGE_FORMAT_RGBA, 1);
+        assert_eq!(ROASTTY_KITTY_IMAGE_FORMAT_PNG, 2);
+        assert_eq!(ROASTTY_KITTY_IMAGE_FORMAT_GRAY_ALPHA, 3);
+        assert_eq!(ROASTTY_KITTY_IMAGE_FORMAT_GRAY, 4);
+        assert_eq!(ROASTTY_KITTY_IMAGE_COMPRESSION_NONE, 0);
+        assert_eq!(ROASTTY_KITTY_IMAGE_COMPRESSION_ZLIB_DEFLATE, 1);
+        assert_eq!(ROASTTY_KITTY_GRAPHICS_IMAGE_DATA_INVALID, 0);
+        assert_eq!(ROASTTY_KITTY_GRAPHICS_IMAGE_DATA_ID, 1);
+        assert_eq!(ROASTTY_KITTY_GRAPHICS_IMAGE_DATA_NUMBER, 2);
+        assert_eq!(ROASTTY_KITTY_GRAPHICS_IMAGE_DATA_WIDTH, 3);
+        assert_eq!(ROASTTY_KITTY_GRAPHICS_IMAGE_DATA_HEIGHT, 4);
+        assert_eq!(ROASTTY_KITTY_GRAPHICS_IMAGE_DATA_FORMAT, 5);
+        assert_eq!(ROASTTY_KITTY_GRAPHICS_IMAGE_DATA_COMPRESSION, 6);
+        assert_eq!(ROASTTY_KITTY_GRAPHICS_IMAGE_DATA_DATA_PTR, 7);
+        assert_eq!(ROASTTY_KITTY_GRAPHICS_IMAGE_DATA_DATA_LEN, 8);
         assert_eq!(ROASTTY_POINT_ACTIVE, 0);
         assert_eq!(ROASTTY_POINT_VIEWPORT, 1);
         assert_eq!(ROASTTY_POINT_SCREEN, 2);
@@ -13008,7 +13603,6 @@ mod tests {
             ROASTTY_TERMINAL_DATA_KITTY_IMAGE_MEDIUM_FILE,
             ROASTTY_TERMINAL_DATA_KITTY_IMAGE_MEDIUM_TEMP_FILE,
             ROASTTY_TERMINAL_DATA_KITTY_IMAGE_MEDIUM_SHARED_MEM,
-            ROASTTY_TERMINAL_DATA_KITTY_GRAPHICS,
             ROASTTY_TERMINAL_DATA_SELECTION,
             ROASTTY_TERMINAL_DATA_VIEWPORT_ACTIVE,
         ] {
@@ -13021,6 +13615,442 @@ mod tests {
         assert!(terminal_string(terminal, roastty_terminal_title).is_empty());
         assert!(terminal_string(terminal, roastty_terminal_pwd).is_empty());
 
+        roastty_terminal_free(terminal);
+    }
+
+    #[test]
+    fn kitty_graphics_c_abi_returns_image_snapshot_handles() {
+        let terminal = new_terminal(10, 3);
+        write_kitty_transmit_display(terminal, 7, 4, 1);
+        let graphics = kitty_graphics_handle(terminal);
+
+        assert!(roastty_kitty_graphics_image(ptr::null_mut(), 7).is_null());
+        assert!(roastty_kitty_graphics_image(graphics, 99).is_null());
+        let image = roastty_kitty_graphics_image(graphics, 7);
+        assert!(!image.is_null());
+
+        let mut image_id = 0u32;
+        let mut number = 99u32;
+        let mut width = 0u32;
+        let mut height = 0u32;
+        let mut format = -1;
+        let mut compression = -1;
+        let mut data_ptr = ptr::null();
+        let mut data_len = 0usize;
+        assert_eq!(
+            roastty_kitty_graphics_image_get(
+                image,
+                ROASTTY_KITTY_GRAPHICS_IMAGE_DATA_ID,
+                (&mut image_id as *mut u32).cast()
+            ),
+            ROASTTY_SUCCESS
+        );
+        assert_eq!(
+            roastty_kitty_graphics_image_get(
+                image,
+                ROASTTY_KITTY_GRAPHICS_IMAGE_DATA_NUMBER,
+                (&mut number as *mut u32).cast()
+            ),
+            ROASTTY_SUCCESS
+        );
+        assert_eq!(
+            roastty_kitty_graphics_image_get(
+                image,
+                ROASTTY_KITTY_GRAPHICS_IMAGE_DATA_WIDTH,
+                (&mut width as *mut u32).cast()
+            ),
+            ROASTTY_SUCCESS
+        );
+        assert_eq!(
+            roastty_kitty_graphics_image_get(
+                image,
+                ROASTTY_KITTY_GRAPHICS_IMAGE_DATA_HEIGHT,
+                (&mut height as *mut u32).cast()
+            ),
+            ROASTTY_SUCCESS
+        );
+        assert_eq!(
+            roastty_kitty_graphics_image_get(
+                image,
+                ROASTTY_KITTY_GRAPHICS_IMAGE_DATA_FORMAT,
+                (&mut format as *mut c_int).cast()
+            ),
+            ROASTTY_SUCCESS
+        );
+        assert_eq!(
+            roastty_kitty_graphics_image_get(
+                image,
+                ROASTTY_KITTY_GRAPHICS_IMAGE_DATA_COMPRESSION,
+                (&mut compression as *mut c_int).cast()
+            ),
+            ROASTTY_SUCCESS
+        );
+        assert_eq!(
+            roastty_kitty_graphics_image_get(
+                image,
+                ROASTTY_KITTY_GRAPHICS_IMAGE_DATA_DATA_PTR,
+                (&mut data_ptr as *mut *const u8).cast()
+            ),
+            ROASTTY_SUCCESS
+        );
+        assert_eq!(
+            roastty_kitty_graphics_image_get(
+                image,
+                ROASTTY_KITTY_GRAPHICS_IMAGE_DATA_DATA_LEN,
+                (&mut data_len as *mut usize).cast()
+            ),
+            ROASTTY_SUCCESS
+        );
+
+        assert_eq!((image_id, number, width, height), (7, 0, 1, 1));
+        assert_eq!(format, ROASTTY_KITTY_IMAGE_FORMAT_RGBA);
+        assert_eq!(compression, ROASTTY_KITTY_IMAGE_COMPRESSION_NONE);
+        assert_eq!(data_len, 4);
+        assert_eq!(
+            unsafe { slice::from_raw_parts(data_ptr, data_len) },
+            &[1u8, 2, 3, 4]
+        );
+
+        write_kitty_transmit_display(terminal, 7, 5, 1);
+        assert_eq!(
+            unsafe { slice::from_raw_parts(data_ptr, data_len) },
+            &[1u8, 2, 3, 4]
+        );
+        roastty_kitty_graphics_image_free(image);
+        roastty_kitty_graphics_image_free(ptr::null_mut());
+        roastty_terminal_free(terminal);
+    }
+
+    #[test]
+    fn kitty_graphics_c_abi_image_get_multi_reports_partial_counts() {
+        let terminal = new_terminal(10, 3);
+        write_kitty_transmit_display(terminal, 7, 4, 1);
+        let image = roastty_kitty_graphics_image(kitty_graphics_handle(terminal), 7);
+        assert!(!image.is_null());
+
+        let mut image_id = 0u32;
+        let mut width = 0u32;
+        let mut height = 0u32;
+        let keys = [
+            ROASTTY_KITTY_GRAPHICS_IMAGE_DATA_ID,
+            ROASTTY_KITTY_GRAPHICS_IMAGE_DATA_WIDTH,
+            ROASTTY_KITTY_GRAPHICS_IMAGE_DATA_HEIGHT,
+        ];
+        let mut values = [
+            (&mut image_id as *mut u32).cast(),
+            (&mut width as *mut u32).cast(),
+            (&mut height as *mut u32).cast(),
+        ];
+        let mut written = 99usize;
+        assert_eq!(
+            roastty_kitty_graphics_image_get_multi(
+                image,
+                keys.len(),
+                keys.as_ptr(),
+                values.as_mut_ptr(),
+                &mut written
+            ),
+            ROASTTY_SUCCESS
+        );
+        assert_eq!(written, 3);
+        assert_eq!((image_id, width, height), (7, 1, 1));
+
+        let invalid_keys = [
+            ROASTTY_KITTY_GRAPHICS_IMAGE_DATA_ID,
+            ROASTTY_KITTY_GRAPHICS_IMAGE_DATA_INVALID,
+        ];
+        written = 99;
+        assert_eq!(
+            roastty_kitty_graphics_image_get_multi(
+                image,
+                invalid_keys.len(),
+                invalid_keys.as_ptr(),
+                values.as_mut_ptr(),
+                &mut written
+            ),
+            ROASTTY_INVALID_VALUE
+        );
+        assert_eq!(written, 1);
+        assert_eq!(
+            roastty_kitty_graphics_image_get_multi(
+                image,
+                1,
+                keys.as_ptr(),
+                ptr::null_mut(),
+                &mut written
+            ),
+            ROASTTY_INVALID_VALUE
+        );
+
+        roastty_kitty_graphics_image_free(image);
+        roastty_terminal_free(terminal);
+    }
+
+    #[test]
+    fn kitty_graphics_c_abi_iterates_owned_placement_snapshots() {
+        let terminal = new_terminal(10, 3);
+        write_kitty_transmit_display(terminal, 7, 4, 1);
+        write_kitty_transmit_display(terminal, 8, 5, -1);
+        let graphics = kitty_graphics_handle(terminal);
+        let mut iterator = ptr::null_mut();
+        assert_eq!(
+            roastty_kitty_graphics_placement_iterator_new(&mut iterator),
+            ROASTTY_SUCCESS
+        );
+        assert!(!iterator.is_null());
+        assert_eq!(
+            roastty_kitty_graphics_placement_get(
+                iterator,
+                ROASTTY_KITTY_GRAPHICS_PLACEMENT_DATA_IMAGE_ID,
+                (&mut 0u32 as *mut u32).cast()
+            ),
+            ROASTTY_NO_VALUE
+        );
+        assert_eq!(
+            roastty_kitty_graphics_get(
+                graphics,
+                ROASTTY_KITTY_GRAPHICS_DATA_PLACEMENT_ITERATOR,
+                (&mut iterator as *mut RoasttyKittyGraphicsPlacementIterator).cast()
+            ),
+            ROASTTY_SUCCESS
+        );
+
+        let layer = ROASTTY_KITTY_PLACEMENT_LAYER_ABOVE_TEXT;
+        assert_eq!(
+            roastty_kitty_graphics_placement_iterator_set(
+                iterator,
+                ROASTTY_KITTY_GRAPHICS_PLACEMENT_ITERATOR_OPTION_LAYER,
+                (&layer as *const c_int).cast()
+            ),
+            ROASTTY_SUCCESS
+        );
+        assert!(roastty_kitty_graphics_placement_next(iterator));
+
+        let mut image_id = 0u32;
+        let mut placement_id = 0u32;
+        let mut virtual_placement = true;
+        let mut x_offset = 0u32;
+        let mut y_offset = 0u32;
+        let mut source_x = 0u32;
+        let mut source_y = 0u32;
+        let mut source_width = 0u32;
+        let mut source_height = 0u32;
+        let mut columns = 0u32;
+        let mut rows = 0u32;
+        let mut z = i32::MIN;
+        let keys = [
+            ROASTTY_KITTY_GRAPHICS_PLACEMENT_DATA_IMAGE_ID,
+            ROASTTY_KITTY_GRAPHICS_PLACEMENT_DATA_PLACEMENT_ID,
+            ROASTTY_KITTY_GRAPHICS_PLACEMENT_DATA_IS_VIRTUAL,
+            ROASTTY_KITTY_GRAPHICS_PLACEMENT_DATA_X_OFFSET,
+            ROASTTY_KITTY_GRAPHICS_PLACEMENT_DATA_Y_OFFSET,
+            ROASTTY_KITTY_GRAPHICS_PLACEMENT_DATA_SOURCE_X,
+            ROASTTY_KITTY_GRAPHICS_PLACEMENT_DATA_SOURCE_Y,
+            ROASTTY_KITTY_GRAPHICS_PLACEMENT_DATA_SOURCE_WIDTH,
+            ROASTTY_KITTY_GRAPHICS_PLACEMENT_DATA_SOURCE_HEIGHT,
+            ROASTTY_KITTY_GRAPHICS_PLACEMENT_DATA_COLUMNS,
+            ROASTTY_KITTY_GRAPHICS_PLACEMENT_DATA_ROWS,
+            ROASTTY_KITTY_GRAPHICS_PLACEMENT_DATA_Z,
+        ];
+        let mut values = [
+            (&mut image_id as *mut u32).cast(),
+            (&mut placement_id as *mut u32).cast(),
+            (&mut virtual_placement as *mut bool).cast(),
+            (&mut x_offset as *mut u32).cast(),
+            (&mut y_offset as *mut u32).cast(),
+            (&mut source_x as *mut u32).cast(),
+            (&mut source_y as *mut u32).cast(),
+            (&mut source_width as *mut u32).cast(),
+            (&mut source_height as *mut u32).cast(),
+            (&mut columns as *mut u32).cast(),
+            (&mut rows as *mut u32).cast(),
+            (&mut z as *mut i32).cast(),
+        ];
+        let mut written = 99usize;
+        assert_eq!(
+            roastty_kitty_graphics_placement_get_multi(
+                iterator,
+                keys.len(),
+                keys.as_ptr(),
+                values.as_mut_ptr(),
+                &mut written
+            ),
+            ROASTTY_SUCCESS
+        );
+        assert_eq!(written, 12);
+        assert_eq!((image_id, placement_id, virtual_placement), (7, 4, false));
+        assert_eq!((x_offset, y_offset), (6, 7));
+        assert_eq!((source_x, source_y), (2, 3));
+        assert_eq!((source_width, source_height), (4, 5));
+        assert_eq!((columns, rows, z), (3, 2, 1));
+
+        let invalid_keys = [
+            ROASTTY_KITTY_GRAPHICS_PLACEMENT_DATA_IMAGE_ID,
+            ROASTTY_KITTY_GRAPHICS_PLACEMENT_DATA_INVALID,
+        ];
+        let mut invalid_values = [
+            (&mut image_id as *mut u32).cast(),
+            (&mut placement_id as *mut u32).cast(),
+        ];
+        written = 99;
+        assert_eq!(
+            roastty_kitty_graphics_placement_get_multi(
+                iterator,
+                invalid_keys.len(),
+                invalid_keys.as_ptr(),
+                invalid_values.as_mut_ptr(),
+                &mut written
+            ),
+            ROASTTY_INVALID_VALUE
+        );
+        assert_eq!(written, 1);
+
+        write_kitty_transmit_display(terminal, 9, 6, 1);
+        assert!(!roastty_kitty_graphics_placement_next(iterator));
+        roastty_kitty_graphics_placement_iterator_free(iterator);
+        roastty_kitty_graphics_placement_iterator_free(ptr::null_mut());
+        roastty_terminal_free(terminal);
+    }
+
+    #[test]
+    fn kitty_graphics_c_abi_placement_layers_and_internal_ids() {
+        let terminal = new_terminal(10, 3);
+        write_kitty_transmit_display(terminal, 7, 4, 1);
+        write_kitty_transmit_display(terminal, 8, 5, -1);
+        write_kitty_transmit_display(terminal, 9, 6, -1_500_000_000);
+        write_kitty_transmit_display(terminal, 10, 0, 1);
+        let graphics = kitty_graphics_handle(terminal);
+        let mut iterator = ptr::null_mut();
+        assert_eq!(
+            roastty_kitty_graphics_placement_iterator_new(&mut iterator),
+            ROASTTY_SUCCESS
+        );
+        assert_eq!(
+            roastty_kitty_graphics_get(
+                graphics,
+                ROASTTY_KITTY_GRAPHICS_DATA_PLACEMENT_ITERATOR,
+                (&mut iterator as *mut RoasttyKittyGraphicsPlacementIterator).cast()
+            ),
+            ROASTTY_SUCCESS
+        );
+
+        for (layer, expected) in [
+            (ROASTTY_KITTY_PLACEMENT_LAYER_BELOW_BG, vec![9u32]),
+            (ROASTTY_KITTY_PLACEMENT_LAYER_BELOW_TEXT, vec![8u32]),
+            (ROASTTY_KITTY_PLACEMENT_LAYER_ABOVE_TEXT, vec![7u32, 10]),
+        ] {
+            assert_eq!(
+                roastty_kitty_graphics_placement_iterator_set(
+                    iterator,
+                    ROASTTY_KITTY_GRAPHICS_PLACEMENT_ITERATOR_OPTION_LAYER,
+                    (&layer as *const c_int).cast()
+                ),
+                ROASTTY_SUCCESS
+            );
+            let mut got = Vec::new();
+            while roastty_kitty_graphics_placement_next(iterator) {
+                let mut image_id = 0u32;
+                assert_eq!(
+                    roastty_kitty_graphics_placement_get(
+                        iterator,
+                        ROASTTY_KITTY_GRAPHICS_PLACEMENT_DATA_IMAGE_ID,
+                        (&mut image_id as *mut u32).cast()
+                    ),
+                    ROASTTY_SUCCESS
+                );
+                got.push(image_id);
+            }
+            got.sort_unstable();
+            assert_eq!(got, expected);
+        }
+
+        let all = ROASTTY_KITTY_PLACEMENT_LAYER_ALL;
+        assert_eq!(
+            roastty_kitty_graphics_placement_iterator_set(
+                iterator,
+                ROASTTY_KITTY_GRAPHICS_PLACEMENT_ITERATOR_OPTION_LAYER,
+                (&all as *const c_int).cast()
+            ),
+            ROASTTY_SUCCESS
+        );
+        let mut found_internal = false;
+        while roastty_kitty_graphics_placement_next(iterator) {
+            let mut image_id = 0u32;
+            let mut placement_id = u32::MAX;
+            assert_eq!(
+                roastty_kitty_graphics_placement_get(
+                    iterator,
+                    ROASTTY_KITTY_GRAPHICS_PLACEMENT_DATA_IMAGE_ID,
+                    (&mut image_id as *mut u32).cast()
+                ),
+                ROASTTY_SUCCESS
+            );
+            assert_eq!(
+                roastty_kitty_graphics_placement_get(
+                    iterator,
+                    ROASTTY_KITTY_GRAPHICS_PLACEMENT_DATA_PLACEMENT_ID,
+                    (&mut placement_id as *mut u32).cast()
+                ),
+                ROASTTY_SUCCESS
+            );
+            if image_id == 10 {
+                assert_eq!(placement_id, 0);
+                found_internal = true;
+            }
+        }
+        assert!(found_internal);
+
+        roastty_kitty_graphics_placement_iterator_free(iterator);
+        roastty_terminal_free(terminal);
+    }
+
+    #[test]
+    fn kitty_graphics_c_abi_validates_graphics_and_iterator_handles() {
+        let terminal = new_terminal(10, 3);
+        let mut iterator = ptr::null_mut();
+        assert_eq!(
+            roastty_kitty_graphics_placement_iterator_new(&mut iterator),
+            ROASTTY_SUCCESS
+        );
+        assert_eq!(
+            roastty_kitty_graphics_get(
+                ptr::null_mut(),
+                ROASTTY_KITTY_GRAPHICS_DATA_PLACEMENT_ITERATOR,
+                (&mut iterator as *mut RoasttyKittyGraphicsPlacementIterator).cast()
+            ),
+            ROASTTY_INVALID_VALUE
+        );
+        assert_eq!(
+            roastty_kitty_graphics_get(
+                kitty_graphics_handle(terminal),
+                ROASTTY_KITTY_GRAPHICS_DATA_INVALID,
+                (&mut iterator as *mut RoasttyKittyGraphicsPlacementIterator).cast()
+            ),
+            ROASTTY_INVALID_VALUE
+        );
+        assert_eq!(
+            roastty_kitty_graphics_get(
+                kitty_graphics_handle(terminal),
+                ROASTTY_KITTY_GRAPHICS_DATA_PLACEMENT_ITERATOR,
+                ptr::null_mut()
+            ),
+            ROASTTY_INVALID_VALUE
+        );
+        let bad_layer = 99;
+        assert_eq!(
+            roastty_kitty_graphics_placement_iterator_set(
+                iterator,
+                ROASTTY_KITTY_GRAPHICS_PLACEMENT_ITERATOR_OPTION_LAYER,
+                (&bad_layer as *const c_int).cast()
+            ),
+            ROASTTY_INVALID_VALUE
+        );
+        assert_eq!(
+            roastty_kitty_graphics_placement_iterator_set(iterator, 99, ptr::null()),
+            ROASTTY_INVALID_VALUE
+        );
+        assert!(!roastty_kitty_graphics_placement_next(ptr::null_mut()));
+        roastty_kitty_graphics_placement_iterator_free(iterator);
         roastty_terminal_free(terminal);
     }
 

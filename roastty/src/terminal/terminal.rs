@@ -1040,6 +1040,10 @@ impl Terminal {
         self.screens.active().kitty_keyboard_flags().int()
     }
 
+    pub(crate) fn kitty_images(&self) -> &super::kitty::graphics_storage::ImageStorage {
+        self.screens.active().kitty_images()
+    }
+
     pub(crate) fn mouse_tracking(&self) -> bool {
         self.modes.get(modes::Mode::MouseEventX10)
             || self.modes.get(modes::Mode::MouseEventNormal)

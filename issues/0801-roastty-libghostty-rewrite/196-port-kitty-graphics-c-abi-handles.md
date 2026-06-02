@@ -308,3 +308,50 @@ The experiment passes when:
 - Do not skip Codex design review. If the design review finds a real issue, fix
   it and re-review before committing this experiment design.
 - Do not skip Codex result review after implementation.
+
+## Result
+
+**Result:** Pass
+
+Experiment 196 implemented the first renderer-facing Kitty graphics C ABI slice.
+`ROASTTY_TERMINAL_DATA_KITTY_GRAPHICS` now returns the active screen's Kitty
+graphics storage handle, image handles are owned snapshots with
+`roastty_kitty_graphics_image_free`, and placement iterators own snapshot
+entries rather than borrowed Rust map iterators.
+
+The implementation exposes:
+
+- image snapshot lookup by image ID;
+- image getters for ID, number, width, height, format, compression, data
+  pointer, and data length;
+- placement iterator allocation, reset from storage, layer filtering, next,
+  single-get, multi-get, and free;
+- placement getters for image ID, public placement ID, virtual flag, offsets,
+  source rectangle, columns, rows, and z;
+- stable enum values in both Rust tests and the C ABI harness.
+
+Codex result review initially found missing verification for offset/source
+placement fields, all layer filters, internal `p=0` placement IDs, and placement
+multi-get partial progress. Those gaps were fixed, the suite was rerun, and
+Codex re-reviewed the updated diff with no blocking findings.
+
+Verification passed:
+
+```bash
+cargo fmt -- roastty/src/lib.rs roastty/src/terminal/terminal.rs
+cargo test -p roastty kitty_graphics_c_abi
+cargo test -p roastty terminal_get_abi
+cargo test -p roastty terminal_stream_kitty_graphics
+cargo test -p roastty --test abi_harness
+cargo test -p roastty
+if rg -n 'ghostty|Ghostty|GHOSTTY' roastty/src/lib.rs roastty/include/roastty.h roastty/tests/abi_harness.c; then exit 1; else exit 0; fi
+git diff --check
+```
+
+## Conclusion
+
+The C ABI can now see the Kitty graphics state produced by the terminal parser
+and execution layer without exposing live image references or live map iterators
+across the ABI boundary. The next experiment can build on this by exposing the
+geometry/render-info helper slice that renderer code needs to turn placement
+metadata into concrete draw commands.
