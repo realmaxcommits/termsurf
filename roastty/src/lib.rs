@@ -46,6 +46,8 @@ pub type RoasttySelectionGestureEvent = *mut c_void;
 pub type RoasttySurface = *mut c_void;
 pub type RoasttyTerminal = *mut c_void;
 pub type RoasttyTrackedGridRef = *mut c_void;
+type RoasttyCell = u64;
+type RoasttyRow = u64;
 
 const ROASTTY_MODE_TAG_VALUE_MASK: u16 = 0x7fff;
 const ROASTTY_MODE_TAG_ANSI_BIT: u16 = 0x8000;
@@ -203,6 +205,57 @@ const ROASTTY_POINT_VIEWPORT: c_int = 1;
 const ROASTTY_POINT_SCREEN: c_int = 2;
 #[allow(dead_code)]
 const ROASTTY_POINT_HISTORY: c_int = 3;
+
+const ROASTTY_CELL_CONTENT_CODEPOINT: c_int = 0;
+const ROASTTY_CELL_CONTENT_CODEPOINT_GRAPHEME: c_int = 1;
+const ROASTTY_CELL_CONTENT_BG_COLOR_PALETTE: c_int = 2;
+const ROASTTY_CELL_CONTENT_BG_COLOR_RGB: c_int = 3;
+
+#[allow(dead_code)]
+const ROASTTY_CELL_WIDE_NARROW: c_int = 0;
+#[allow(dead_code)]
+const ROASTTY_CELL_WIDE_WIDE: c_int = 1;
+#[allow(dead_code)]
+const ROASTTY_CELL_WIDE_SPACER_TAIL: c_int = 2;
+#[allow(dead_code)]
+const ROASTTY_CELL_WIDE_SPACER_HEAD: c_int = 3;
+
+#[allow(dead_code)]
+const ROASTTY_CELL_SEMANTIC_OUTPUT: c_int = 0;
+#[allow(dead_code)]
+const ROASTTY_CELL_SEMANTIC_INPUT: c_int = 1;
+#[allow(dead_code)]
+const ROASTTY_CELL_SEMANTIC_PROMPT: c_int = 2;
+
+const ROASTTY_CELL_DATA_INVALID: c_int = 0;
+const ROASTTY_CELL_DATA_CODEPOINT: c_int = 1;
+const ROASTTY_CELL_DATA_CONTENT_TAG: c_int = 2;
+const ROASTTY_CELL_DATA_WIDE: c_int = 3;
+const ROASTTY_CELL_DATA_HAS_TEXT: c_int = 4;
+const ROASTTY_CELL_DATA_HAS_STYLING: c_int = 5;
+const ROASTTY_CELL_DATA_STYLE_ID: c_int = 6;
+const ROASTTY_CELL_DATA_HAS_HYPERLINK: c_int = 7;
+const ROASTTY_CELL_DATA_PROTECTED: c_int = 8;
+const ROASTTY_CELL_DATA_SEMANTIC: c_int = 9;
+const ROASTTY_CELL_DATA_COLOR_PALETTE: c_int = 10;
+const ROASTTY_CELL_DATA_COLOR_RGB: c_int = 11;
+
+#[allow(dead_code)]
+const ROASTTY_ROW_SEMANTIC_NONE: c_int = 0;
+#[allow(dead_code)]
+const ROASTTY_ROW_SEMANTIC_PROMPT: c_int = 1;
+#[allow(dead_code)]
+const ROASTTY_ROW_SEMANTIC_PROMPT_CONTINUATION: c_int = 2;
+
+const ROASTTY_ROW_DATA_INVALID: c_int = 0;
+const ROASTTY_ROW_DATA_WRAP: c_int = 1;
+const ROASTTY_ROW_DATA_WRAP_CONTINUATION: c_int = 2;
+const ROASTTY_ROW_DATA_GRAPHEME: c_int = 3;
+const ROASTTY_ROW_DATA_STYLED: c_int = 4;
+const ROASTTY_ROW_DATA_HYPERLINK: c_int = 5;
+const ROASTTY_ROW_DATA_SEMANTIC_PROMPT: c_int = 6;
+const ROASTTY_ROW_DATA_KITTY_VIRTUAL_PLACEHOLDER: c_int = 7;
+const ROASTTY_ROW_DATA_DIRTY: c_int = 8;
 
 #[repr(C)]
 pub struct RoasttyInfo {
@@ -1565,6 +1618,150 @@ fn grid_ref_error_result(error: TerminalGridRefPointError) -> c_int {
     }
 }
 
+fn packed_bits(value: u64, shift: u32, mask: u64) -> u64 {
+    (value >> shift) & mask
+}
+
+fn packed_bit(value: u64, shift: u32) -> bool {
+    packed_bits(value, shift, 1) == 1
+}
+
+fn cell_content_tag(cell: RoasttyCell) -> c_int {
+    packed_bits(cell, 0, 0b11) as c_int
+}
+
+fn cell_codepoint(cell: RoasttyCell) -> u32 {
+    match cell_content_tag(cell) {
+        ROASTTY_CELL_CONTENT_CODEPOINT | ROASTTY_CELL_CONTENT_CODEPOINT_GRAPHEME => {
+            packed_bits(cell, 2, 0x001f_ffff) as u32
+        }
+        ROASTTY_CELL_CONTENT_BG_COLOR_PALETTE | ROASTTY_CELL_CONTENT_BG_COLOR_RGB => 0,
+        _ => 0,
+    }
+}
+
+fn cell_has_text(cell: RoasttyCell) -> bool {
+    matches!(
+        cell_content_tag(cell),
+        ROASTTY_CELL_CONTENT_CODEPOINT | ROASTTY_CELL_CONTENT_CODEPOINT_GRAPHEME
+    ) && cell_codepoint(cell) != 0
+}
+
+fn cell_rgb(cell: RoasttyCell) -> RoasttyRgb {
+    let bits = packed_bits(cell, 2, 0x00ff_ffff);
+    RoasttyRgb {
+        r: ((bits >> 16) & 0xff) as u8,
+        g: ((bits >> 8) & 0xff) as u8,
+        b: (bits & 0xff) as u8,
+    }
+}
+
+fn row_semantic_prompt(row: RoasttyRow) -> c_int {
+    packed_bits(row, 37, 0b11) as c_int
+}
+
+unsafe fn cell_get_write(cell: RoasttyCell, data: c_int, out: *mut c_void) -> c_int {
+    if out.is_null() {
+        return ROASTTY_INVALID_VALUE;
+    }
+
+    match data {
+        ROASTTY_CELL_DATA_INVALID => ROASTTY_INVALID_VALUE,
+        ROASTTY_CELL_DATA_CODEPOINT => {
+            out.cast::<u32>().write(cell_codepoint(cell));
+            ROASTTY_SUCCESS
+        }
+        ROASTTY_CELL_DATA_CONTENT_TAG => {
+            out.cast::<c_int>().write(cell_content_tag(cell));
+            ROASTTY_SUCCESS
+        }
+        ROASTTY_CELL_DATA_WIDE => {
+            out.cast::<c_int>()
+                .write(packed_bits(cell, 42, 0b11) as c_int);
+            ROASTTY_SUCCESS
+        }
+        ROASTTY_CELL_DATA_HAS_TEXT => {
+            out.cast::<bool>().write(cell_has_text(cell));
+            ROASTTY_SUCCESS
+        }
+        ROASTTY_CELL_DATA_HAS_STYLING => {
+            out.cast::<bool>()
+                .write(packed_bits(cell, 26, u16::MAX as u64) != 0);
+            ROASTTY_SUCCESS
+        }
+        ROASTTY_CELL_DATA_STYLE_ID => {
+            out.cast::<u16>()
+                .write(packed_bits(cell, 26, u16::MAX as u64) as u16);
+            ROASTTY_SUCCESS
+        }
+        ROASTTY_CELL_DATA_HAS_HYPERLINK => {
+            out.cast::<bool>().write(packed_bit(cell, 45));
+            ROASTTY_SUCCESS
+        }
+        ROASTTY_CELL_DATA_PROTECTED => {
+            out.cast::<bool>().write(packed_bit(cell, 44));
+            ROASTTY_SUCCESS
+        }
+        ROASTTY_CELL_DATA_SEMANTIC => {
+            out.cast::<c_int>()
+                .write(packed_bits(cell, 46, 0b11) as c_int);
+            ROASTTY_SUCCESS
+        }
+        ROASTTY_CELL_DATA_COLOR_PALETTE => {
+            out.cast::<u8>().write(packed_bits(cell, 2, 0xff) as u8);
+            ROASTTY_SUCCESS
+        }
+        ROASTTY_CELL_DATA_COLOR_RGB => {
+            out.cast::<RoasttyRgb>().write(cell_rgb(cell));
+            ROASTTY_SUCCESS
+        }
+        _ => ROASTTY_INVALID_VALUE,
+    }
+}
+
+unsafe fn row_get_write(row: RoasttyRow, data: c_int, out: *mut c_void) -> c_int {
+    if out.is_null() {
+        return ROASTTY_INVALID_VALUE;
+    }
+
+    match data {
+        ROASTTY_ROW_DATA_INVALID => ROASTTY_INVALID_VALUE,
+        ROASTTY_ROW_DATA_WRAP => {
+            out.cast::<bool>().write(packed_bit(row, 32));
+            ROASTTY_SUCCESS
+        }
+        ROASTTY_ROW_DATA_WRAP_CONTINUATION => {
+            out.cast::<bool>().write(packed_bit(row, 33));
+            ROASTTY_SUCCESS
+        }
+        ROASTTY_ROW_DATA_GRAPHEME => {
+            out.cast::<bool>().write(packed_bit(row, 34));
+            ROASTTY_SUCCESS
+        }
+        ROASTTY_ROW_DATA_STYLED => {
+            out.cast::<bool>().write(packed_bit(row, 35));
+            ROASTTY_SUCCESS
+        }
+        ROASTTY_ROW_DATA_HYPERLINK => {
+            out.cast::<bool>().write(packed_bit(row, 36));
+            ROASTTY_SUCCESS
+        }
+        ROASTTY_ROW_DATA_SEMANTIC_PROMPT => {
+            out.cast::<c_int>().write(row_semantic_prompt(row));
+            ROASTTY_SUCCESS
+        }
+        ROASTTY_ROW_DATA_KITTY_VIRTUAL_PLACEHOLDER => {
+            out.cast::<bool>().write(packed_bit(row, 39));
+            ROASTTY_SUCCESS
+        }
+        ROASTTY_ROW_DATA_DIRTY => {
+            out.cast::<bool>().write(packed_bit(row, 40));
+            ROASTTY_SUCCESS
+        }
+        _ => ROASTTY_INVALID_VALUE,
+    }
+}
+
 fn allocated_c_string(value: &str) -> RoasttyString {
     let c_string = CString::new(value).expect("static strings must not contain interior nuls");
     let len = c_string.as_bytes().len();
@@ -1574,6 +1771,100 @@ fn allocated_c_string(value: &str) -> RoasttyString {
         len,
         sentinel: true,
     }
+}
+
+#[no_mangle]
+pub extern "C" fn roastty_cell_get(cell: RoasttyCell, data: c_int, out: *mut c_void) -> c_int {
+    unsafe { cell_get_write(cell, data, out) }
+}
+
+#[no_mangle]
+pub extern "C" fn roastty_cell_get_multi(
+    cell: RoasttyCell,
+    count: usize,
+    keys: *const c_int,
+    values: *mut *mut c_void,
+    out_written: *mut usize,
+) -> c_int {
+    if !out_written.is_null() {
+        unsafe {
+            out_written.write(0);
+        }
+    }
+    if keys.is_null() || values.is_null() {
+        return ROASTTY_INVALID_VALUE;
+    }
+    if count == 0 {
+        return ROASTTY_SUCCESS;
+    }
+
+    for index in 0..count {
+        let key = unsafe { *keys.add(index) };
+        let value = unsafe { *values.add(index) };
+        let result = roastty_cell_get(cell, key, value);
+        if result != ROASTTY_SUCCESS {
+            if !out_written.is_null() {
+                unsafe {
+                    out_written.write(index);
+                }
+            }
+            return result;
+        }
+        if !out_written.is_null() {
+            unsafe {
+                out_written.write(index + 1);
+            }
+        }
+    }
+
+    ROASTTY_SUCCESS
+}
+
+#[no_mangle]
+pub extern "C" fn roastty_row_get(row: RoasttyRow, data: c_int, out: *mut c_void) -> c_int {
+    unsafe { row_get_write(row, data, out) }
+}
+
+#[no_mangle]
+pub extern "C" fn roastty_row_get_multi(
+    row: RoasttyRow,
+    count: usize,
+    keys: *const c_int,
+    values: *mut *mut c_void,
+    out_written: *mut usize,
+) -> c_int {
+    if !out_written.is_null() {
+        unsafe {
+            out_written.write(0);
+        }
+    }
+    if keys.is_null() || values.is_null() {
+        return ROASTTY_INVALID_VALUE;
+    }
+    if count == 0 {
+        return ROASTTY_SUCCESS;
+    }
+
+    for index in 0..count {
+        let key = unsafe { *keys.add(index) };
+        let value = unsafe { *values.add(index) };
+        let result = roastty_row_get(row, key, value);
+        if result != ROASTTY_SUCCESS {
+            if !out_written.is_null() {
+                unsafe {
+                    out_written.write(index);
+                }
+            }
+            return result;
+        }
+        if !out_written.is_null() {
+            unsafe {
+                out_written.write(index + 1);
+            }
+        }
+    }
+
+    ROASTTY_SUCCESS
 }
 
 #[no_mangle]
@@ -4409,6 +4700,111 @@ mod tests {
         out
     }
 
+    fn packed_cell(tag: c_int, content: u64) -> RoasttyCell {
+        (tag as u64) | (content << 2)
+    }
+
+    fn packed_cell_with_flags(
+        mut cell: RoasttyCell,
+        style_id: u16,
+        wide: c_int,
+        protected: bool,
+        hyperlink: bool,
+        semantic: c_int,
+    ) -> RoasttyCell {
+        cell |= (style_id as u64) << 26;
+        cell |= (wide as u64) << 42;
+        if protected {
+            cell |= 1_u64 << 44;
+        }
+        if hyperlink {
+            cell |= 1_u64 << 45;
+        }
+        cell | ((semantic as u64) << 46)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn packed_row(
+        wrap: bool,
+        wrap_continuation: bool,
+        grapheme: bool,
+        styled: bool,
+        hyperlink: bool,
+        semantic_prompt: c_int,
+        kitty_virtual_placeholder: bool,
+        dirty: bool,
+    ) -> RoasttyRow {
+        let mut row = 0_u64;
+        if wrap {
+            row |= 1_u64 << 32;
+        }
+        if wrap_continuation {
+            row |= 1_u64 << 33;
+        }
+        if grapheme {
+            row |= 1_u64 << 34;
+        }
+        if styled {
+            row |= 1_u64 << 35;
+        }
+        if hyperlink {
+            row |= 1_u64 << 36;
+        }
+        row |= (semantic_prompt as u64) << 37;
+        if kitty_virtual_placeholder {
+            row |= 1_u64 << 39;
+        }
+        if dirty {
+            row |= 1_u64 << 40;
+        }
+        row
+    }
+
+    fn cell_get_u32(cell: RoasttyCell, data: c_int) -> u32 {
+        let mut out = 999_u32;
+        assert_eq!(
+            roastty_cell_get(cell, data, &mut out as *mut _ as *mut c_void),
+            ROASTTY_SUCCESS
+        );
+        out
+    }
+
+    fn cell_get_i32(cell: RoasttyCell, data: c_int) -> c_int {
+        let mut out = -1;
+        assert_eq!(
+            roastty_cell_get(cell, data, &mut out as *mut _ as *mut c_void),
+            ROASTTY_SUCCESS
+        );
+        out
+    }
+
+    fn cell_get_bool(cell: RoasttyCell, data: c_int) -> bool {
+        let mut out = false;
+        assert_eq!(
+            roastty_cell_get(cell, data, &mut out as *mut _ as *mut c_void),
+            ROASTTY_SUCCESS
+        );
+        out
+    }
+
+    fn row_get_i32(row: RoasttyRow, data: c_int) -> c_int {
+        let mut out = -1;
+        assert_eq!(
+            roastty_row_get(row, data, &mut out as *mut _ as *mut c_void),
+            ROASTTY_SUCCESS
+        );
+        out
+    }
+
+    fn row_get_bool(row: RoasttyRow, data: c_int) -> bool {
+        let mut out = false;
+        assert_eq!(
+            roastty_row_get(row, data, &mut out as *mut _ as *mut c_void),
+            ROASTTY_SUCCESS
+        );
+        out
+    }
+
     fn assert_rgb_override_survives_default_path(
         option: c_int,
         effective_data: c_int,
@@ -5552,6 +5948,340 @@ mod tests {
         );
 
         roastty_terminal_free(terminal);
+    }
+
+    #[test]
+    fn cell_c_abi_layout_and_values_are_stable() {
+        assert_eq!(std::mem::size_of::<RoasttyCell>(), 8);
+        assert_eq!(std::mem::align_of::<RoasttyCell>(), 8);
+        assert_eq!(ROASTTY_CELL_CONTENT_CODEPOINT, 0);
+        assert_eq!(ROASTTY_CELL_CONTENT_CODEPOINT_GRAPHEME, 1);
+        assert_eq!(ROASTTY_CELL_CONTENT_BG_COLOR_PALETTE, 2);
+        assert_eq!(ROASTTY_CELL_CONTENT_BG_COLOR_RGB, 3);
+        assert_eq!(ROASTTY_CELL_WIDE_NARROW, 0);
+        assert_eq!(ROASTTY_CELL_WIDE_WIDE, 1);
+        assert_eq!(ROASTTY_CELL_WIDE_SPACER_TAIL, 2);
+        assert_eq!(ROASTTY_CELL_WIDE_SPACER_HEAD, 3);
+        assert_eq!(ROASTTY_CELL_SEMANTIC_OUTPUT, 0);
+        assert_eq!(ROASTTY_CELL_SEMANTIC_INPUT, 1);
+        assert_eq!(ROASTTY_CELL_SEMANTIC_PROMPT, 2);
+        assert_eq!(ROASTTY_CELL_DATA_INVALID, 0);
+        assert_eq!(ROASTTY_CELL_DATA_CODEPOINT, 1);
+        assert_eq!(ROASTTY_CELL_DATA_CONTENT_TAG, 2);
+        assert_eq!(ROASTTY_CELL_DATA_WIDE, 3);
+        assert_eq!(ROASTTY_CELL_DATA_HAS_TEXT, 4);
+        assert_eq!(ROASTTY_CELL_DATA_HAS_STYLING, 5);
+        assert_eq!(ROASTTY_CELL_DATA_STYLE_ID, 6);
+        assert_eq!(ROASTTY_CELL_DATA_HAS_HYPERLINK, 7);
+        assert_eq!(ROASTTY_CELL_DATA_PROTECTED, 8);
+        assert_eq!(ROASTTY_CELL_DATA_SEMANTIC, 9);
+        assert_eq!(ROASTTY_CELL_DATA_COLOR_PALETTE, 10);
+        assert_eq!(ROASTTY_CELL_DATA_COLOR_RGB, 11);
+    }
+
+    #[test]
+    fn cell_c_abi_get_reads_packed_fields() {
+        let cell = packed_cell_with_flags(
+            packed_cell(ROASTTY_CELL_CONTENT_CODEPOINT, 'A' as u64),
+            7,
+            ROASTTY_CELL_WIDE_WIDE,
+            true,
+            true,
+            ROASTTY_CELL_SEMANTIC_PROMPT,
+        );
+
+        assert_eq!(cell_get_u32(cell, ROASTTY_CELL_DATA_CODEPOINT), 'A' as u32);
+        assert_eq!(cell_get_i32(cell, ROASTTY_CELL_DATA_CONTENT_TAG), 0);
+        assert_eq!(
+            cell_get_i32(cell, ROASTTY_CELL_DATA_WIDE),
+            ROASTTY_CELL_WIDE_WIDE
+        );
+        assert!(cell_get_bool(cell, ROASTTY_CELL_DATA_HAS_TEXT));
+        assert!(cell_get_bool(cell, ROASTTY_CELL_DATA_HAS_STYLING));
+        let mut style_id = 0u16;
+        assert_eq!(
+            roastty_cell_get(
+                cell,
+                ROASTTY_CELL_DATA_STYLE_ID,
+                &mut style_id as *mut _ as *mut c_void
+            ),
+            ROASTTY_SUCCESS
+        );
+        assert_eq!(style_id, 7);
+        assert!(cell_get_bool(cell, ROASTTY_CELL_DATA_HAS_HYPERLINK));
+        assert!(cell_get_bool(cell, ROASTTY_CELL_DATA_PROTECTED));
+        assert_eq!(
+            cell_get_i32(cell, ROASTTY_CELL_DATA_SEMANTIC),
+            ROASTTY_CELL_SEMANTIC_PROMPT
+        );
+
+        let empty = packed_cell(ROASTTY_CELL_CONTENT_CODEPOINT, 0);
+        assert!(!cell_get_bool(empty, ROASTTY_CELL_DATA_HAS_TEXT));
+        let grapheme = packed_cell(ROASTTY_CELL_CONTENT_CODEPOINT_GRAPHEME, 'B' as u64);
+        assert!(cell_get_bool(grapheme, ROASTTY_CELL_DATA_HAS_TEXT));
+
+        let palette = packed_cell(ROASTTY_CELL_CONTENT_BG_COLOR_PALETTE, 0xab);
+        assert_eq!(cell_get_u32(palette, ROASTTY_CELL_DATA_CODEPOINT), 0);
+        let mut palette_out = 0u8;
+        assert_eq!(
+            roastty_cell_get(
+                palette,
+                ROASTTY_CELL_DATA_COLOR_PALETTE,
+                &mut palette_out as *mut _ as *mut c_void
+            ),
+            ROASTTY_SUCCESS
+        );
+        assert_eq!(palette_out, 0xab);
+
+        let rgb = packed_cell(ROASTTY_CELL_CONTENT_BG_COLOR_RGB, 0x11_22_33);
+        let mut rgb_out = RoasttyRgb::default();
+        assert_eq!(
+            roastty_cell_get(
+                rgb,
+                ROASTTY_CELL_DATA_COLOR_RGB,
+                &mut rgb_out as *mut _ as *mut c_void
+            ),
+            ROASTTY_SUCCESS
+        );
+        assert_eq!(
+            rgb_out,
+            RoasttyRgb {
+                r: 0x11,
+                g: 0x22,
+                b: 0x33,
+            }
+        );
+        assert_eq!(cell_get_u32(rgb, ROASTTY_CELL_DATA_CODEPOINT), 0);
+        assert!(!cell_get_bool(rgb, ROASTTY_CELL_DATA_HAS_TEXT));
+    }
+
+    #[test]
+    fn cell_c_abi_validates_inputs_and_multi_reports_progress() {
+        let cell = packed_cell(ROASTTY_CELL_CONTENT_CODEPOINT, 'C' as u64);
+        let mut codepoint = 0u32;
+        assert_eq!(
+            roastty_cell_get(
+                cell,
+                ROASTTY_CELL_DATA_INVALID,
+                &mut codepoint as *mut _ as *mut c_void
+            ),
+            ROASTTY_INVALID_VALUE
+        );
+        assert_eq!(
+            roastty_cell_get(cell, ROASTTY_CELL_DATA_CODEPOINT, ptr::null_mut()),
+            ROASTTY_INVALID_VALUE
+        );
+        assert_eq!(
+            roastty_cell_get(cell, 99, &mut codepoint as *mut _ as *mut c_void),
+            ROASTTY_INVALID_VALUE
+        );
+
+        let mut has_text = false;
+        let keys = [ROASTTY_CELL_DATA_CODEPOINT, ROASTTY_CELL_DATA_HAS_TEXT];
+        let mut values = [
+            &mut codepoint as *mut _ as *mut c_void,
+            &mut has_text as *mut _ as *mut c_void,
+        ];
+        let mut written = 99usize;
+        assert_eq!(
+            roastty_cell_get_multi(
+                cell,
+                keys.len(),
+                keys.as_ptr(),
+                values.as_mut_ptr(),
+                &mut written,
+            ),
+            ROASTTY_SUCCESS
+        );
+        assert_eq!(written, 2);
+        assert_eq!(codepoint, 'C' as u32);
+        assert!(has_text);
+        assert_eq!(
+            roastty_cell_get_multi(cell, 0, keys.as_ptr(), values.as_mut_ptr(), &mut written),
+            ROASTTY_SUCCESS
+        );
+        assert_eq!(written, 0);
+        assert_eq!(
+            roastty_cell_get_multi(
+                cell,
+                keys.len(),
+                ptr::null(),
+                values.as_mut_ptr(),
+                &mut written
+            ),
+            ROASTTY_INVALID_VALUE
+        );
+        assert_eq!(written, 0);
+
+        let partial_keys = [ROASTTY_CELL_DATA_CODEPOINT, ROASTTY_CELL_DATA_INVALID];
+        written = 99;
+        assert_eq!(
+            roastty_cell_get_multi(
+                cell,
+                partial_keys.len(),
+                partial_keys.as_ptr(),
+                values.as_mut_ptr(),
+                &mut written,
+            ),
+            ROASTTY_INVALID_VALUE
+        );
+        assert_eq!(written, 1);
+        assert_eq!(
+            roastty_cell_get_multi(
+                cell,
+                partial_keys.len(),
+                partial_keys.as_ptr(),
+                values.as_mut_ptr(),
+                ptr::null_mut(),
+            ),
+            ROASTTY_INVALID_VALUE
+        );
+    }
+
+    #[test]
+    fn row_c_abi_layout_and_values_are_stable() {
+        assert_eq!(std::mem::size_of::<RoasttyRow>(), 8);
+        assert_eq!(std::mem::align_of::<RoasttyRow>(), 8);
+        assert_eq!(ROASTTY_ROW_SEMANTIC_NONE, 0);
+        assert_eq!(ROASTTY_ROW_SEMANTIC_PROMPT, 1);
+        assert_eq!(ROASTTY_ROW_SEMANTIC_PROMPT_CONTINUATION, 2);
+        assert_eq!(ROASTTY_ROW_DATA_INVALID, 0);
+        assert_eq!(ROASTTY_ROW_DATA_WRAP, 1);
+        assert_eq!(ROASTTY_ROW_DATA_WRAP_CONTINUATION, 2);
+        assert_eq!(ROASTTY_ROW_DATA_GRAPHEME, 3);
+        assert_eq!(ROASTTY_ROW_DATA_STYLED, 4);
+        assert_eq!(ROASTTY_ROW_DATA_HYPERLINK, 5);
+        assert_eq!(ROASTTY_ROW_DATA_SEMANTIC_PROMPT, 6);
+        assert_eq!(ROASTTY_ROW_DATA_KITTY_VIRTUAL_PLACEHOLDER, 7);
+        assert_eq!(ROASTTY_ROW_DATA_DIRTY, 8);
+    }
+
+    #[test]
+    fn row_c_abi_get_reads_packed_fields() {
+        let row = packed_row(
+            true,
+            true,
+            true,
+            true,
+            true,
+            ROASTTY_ROW_SEMANTIC_PROMPT_CONTINUATION,
+            true,
+            true,
+        );
+
+        assert!(row_get_bool(row, ROASTTY_ROW_DATA_WRAP));
+        assert!(row_get_bool(row, ROASTTY_ROW_DATA_WRAP_CONTINUATION));
+        assert!(row_get_bool(row, ROASTTY_ROW_DATA_GRAPHEME));
+        assert!(row_get_bool(row, ROASTTY_ROW_DATA_STYLED));
+        assert!(row_get_bool(row, ROASTTY_ROW_DATA_HYPERLINK));
+        assert_eq!(
+            row_get_i32(row, ROASTTY_ROW_DATA_SEMANTIC_PROMPT),
+            ROASTTY_ROW_SEMANTIC_PROMPT_CONTINUATION
+        );
+        assert!(row_get_bool(
+            row,
+            ROASTTY_ROW_DATA_KITTY_VIRTUAL_PLACEHOLDER
+        ));
+        assert!(row_get_bool(row, ROASTTY_ROW_DATA_DIRTY));
+
+        let empty = packed_row(false, false, false, false, false, 0, false, false);
+        assert!(!row_get_bool(empty, ROASTTY_ROW_DATA_WRAP));
+        assert_eq!(
+            row_get_i32(empty, ROASTTY_ROW_DATA_SEMANTIC_PROMPT),
+            ROASTTY_ROW_SEMANTIC_NONE
+        );
+    }
+
+    #[test]
+    fn row_c_abi_validates_inputs_and_multi_reports_progress() {
+        let row = packed_row(
+            true,
+            false,
+            false,
+            false,
+            false,
+            ROASTTY_ROW_SEMANTIC_PROMPT,
+            false,
+            true,
+        );
+        let mut wrap = false;
+        assert_eq!(
+            roastty_row_get(
+                row,
+                ROASTTY_ROW_DATA_INVALID,
+                &mut wrap as *mut _ as *mut c_void
+            ),
+            ROASTTY_INVALID_VALUE
+        );
+        assert_eq!(
+            roastty_row_get(row, ROASTTY_ROW_DATA_WRAP, ptr::null_mut()),
+            ROASTTY_INVALID_VALUE
+        );
+        assert_eq!(
+            roastty_row_get(row, 99, &mut wrap as *mut _ as *mut c_void),
+            ROASTTY_INVALID_VALUE
+        );
+
+        let mut dirty = false;
+        let keys = [ROASTTY_ROW_DATA_WRAP, ROASTTY_ROW_DATA_DIRTY];
+        let mut values = [
+            &mut wrap as *mut _ as *mut c_void,
+            &mut dirty as *mut _ as *mut c_void,
+        ];
+        let mut written = 99usize;
+        assert_eq!(
+            roastty_row_get_multi(
+                row,
+                keys.len(),
+                keys.as_ptr(),
+                values.as_mut_ptr(),
+                &mut written,
+            ),
+            ROASTTY_SUCCESS
+        );
+        assert_eq!(written, 2);
+        assert!(wrap);
+        assert!(dirty);
+        assert_eq!(
+            roastty_row_get_multi(row, 0, keys.as_ptr(), values.as_mut_ptr(), &mut written),
+            ROASTTY_SUCCESS
+        );
+        assert_eq!(written, 0);
+        assert_eq!(
+            roastty_row_get_multi(
+                row,
+                keys.len(),
+                ptr::null(),
+                values.as_mut_ptr(),
+                &mut written
+            ),
+            ROASTTY_INVALID_VALUE
+        );
+        assert_eq!(written, 0);
+
+        let partial_keys = [ROASTTY_ROW_DATA_WRAP, ROASTTY_ROW_DATA_INVALID];
+        written = 99;
+        assert_eq!(
+            roastty_row_get_multi(
+                row,
+                partial_keys.len(),
+                partial_keys.as_ptr(),
+                values.as_mut_ptr(),
+                &mut written,
+            ),
+            ROASTTY_INVALID_VALUE
+        );
+        assert_eq!(written, 1);
+        assert_eq!(
+            roastty_row_get_multi(
+                row,
+                partial_keys.len(),
+                partial_keys.as_ptr(),
+                values.as_mut_ptr(),
+                ptr::null_mut(),
+            ),
+            ROASTTY_INVALID_VALUE
+        );
     }
 
     #[test]

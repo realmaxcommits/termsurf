@@ -383,6 +383,62 @@ typedef struct {
 
 typedef roastty_rgb_s roastty_palette_t[256];
 
+typedef uint64_t roastty_cell_t;
+typedef uint64_t roastty_row_t;
+
+typedef enum {
+  ROASTTY_CELL_CONTENT_CODEPOINT = 0,
+  ROASTTY_CELL_CONTENT_CODEPOINT_GRAPHEME = 1,
+  ROASTTY_CELL_CONTENT_BG_COLOR_PALETTE = 2,
+  ROASTTY_CELL_CONTENT_BG_COLOR_RGB = 3,
+} roastty_cell_content_tag_e;
+
+typedef enum {
+  ROASTTY_CELL_WIDE_NARROW = 0,
+  ROASTTY_CELL_WIDE_WIDE = 1,
+  ROASTTY_CELL_WIDE_SPACER_TAIL = 2,
+  ROASTTY_CELL_WIDE_SPACER_HEAD = 3,
+} roastty_cell_wide_e;
+
+typedef enum {
+  ROASTTY_CELL_SEMANTIC_OUTPUT = 0,
+  ROASTTY_CELL_SEMANTIC_INPUT = 1,
+  ROASTTY_CELL_SEMANTIC_PROMPT = 2,
+} roastty_cell_semantic_content_e;
+
+typedef enum {
+  ROASTTY_CELL_DATA_INVALID = 0,
+  ROASTTY_CELL_DATA_CODEPOINT = 1,
+  ROASTTY_CELL_DATA_CONTENT_TAG = 2,
+  ROASTTY_CELL_DATA_WIDE = 3,
+  ROASTTY_CELL_DATA_HAS_TEXT = 4,
+  ROASTTY_CELL_DATA_HAS_STYLING = 5,
+  ROASTTY_CELL_DATA_STYLE_ID = 6,
+  ROASTTY_CELL_DATA_HAS_HYPERLINK = 7,
+  ROASTTY_CELL_DATA_PROTECTED = 8,
+  ROASTTY_CELL_DATA_SEMANTIC = 9,
+  ROASTTY_CELL_DATA_COLOR_PALETTE = 10,
+  ROASTTY_CELL_DATA_COLOR_RGB = 11,
+} roastty_cell_data_e;
+
+typedef enum {
+  ROASTTY_ROW_SEMANTIC_NONE = 0,
+  ROASTTY_ROW_SEMANTIC_PROMPT = 1,
+  ROASTTY_ROW_SEMANTIC_PROMPT_CONTINUATION = 2,
+} roastty_row_semantic_prompt_e;
+
+typedef enum {
+  ROASTTY_ROW_DATA_INVALID = 0,
+  ROASTTY_ROW_DATA_WRAP = 1,
+  ROASTTY_ROW_DATA_WRAP_CONTINUATION = 2,
+  ROASTTY_ROW_DATA_GRAPHEME = 3,
+  ROASTTY_ROW_DATA_STYLED = 4,
+  ROASTTY_ROW_DATA_HYPERLINK = 5,
+  ROASTTY_ROW_DATA_SEMANTIC_PROMPT = 6,
+  ROASTTY_ROW_DATA_KITTY_VIRTUAL_PLACEHOLDER = 7,
+  ROASTTY_ROW_DATA_DIRTY = 8,
+} roastty_row_data_e;
+
 typedef struct {
   const char* key;
   const char* value;
@@ -827,6 +883,22 @@ typedef struct {
 ROASTTY_API int roastty_init(uintptr_t, char**);
 ROASTTY_API roastty_info_s roastty_info(void);
 ROASTTY_API void roastty_string_free(roastty_string_s);
+ROASTTY_API roastty_result_e roastty_cell_get(roastty_cell_t,
+                                              roastty_cell_data_e,
+                                              void*);
+ROASTTY_API roastty_result_e roastty_cell_get_multi(roastty_cell_t,
+                                                    size_t,
+                                                    const roastty_cell_data_e*,
+                                                    void**,
+                                                    size_t*);
+ROASTTY_API roastty_result_e roastty_row_get(roastty_row_t,
+                                             roastty_row_data_e,
+                                             void*);
+ROASTTY_API roastty_result_e roastty_row_get_multi(roastty_row_t,
+                                                   size_t,
+                                                   const roastty_row_data_e*,
+                                                   void**,
+                                                   size_t*);
 
 ROASTTY_API roastty_config_t roastty_config_new(void);
 ROASTTY_API void roastty_config_free(roastty_config_t);

@@ -222,3 +222,49 @@ approves it.
 
 After implementation and result recording, the completed result must also be
 reviewed with Codex and approved before the result commit.
+
+## Result
+
+**Result:** Pass
+
+Implemented the packed row and cell value C ABI:
+
+- added `roastty_cell_t` and `roastty_row_t` as `uint64_t` value types;
+- added Roastty-named content, wide-cell, semantic-content, row-semantic, and
+  selector enums in `roastty/include/roastty.h`;
+- added `roastty_cell_get`, `roastty_cell_get_multi`, `roastty_row_get`, and
+  `roastty_row_get_multi`;
+- decoded row/cell values from the existing packed bit layout without exposing
+  page storage, node pointers, render iterators, formatter objects, style
+  lookup, hyperlink lookup, grapheme extraction, or Kitty graphics;
+- added Rust ABI tests for selector values, packed field decoding, invalid
+  selector/null-output behavior, count-zero multi-get behavior, and partial
+  progress reporting;
+- added C harness coverage for enum numeric values, `sizeof`/`_Alignof`, scalar
+  getter calls, multi-get success, and multi-get partial failure.
+
+Verification passed:
+
+```bash
+cargo fmt -- roastty/src/lib.rs
+cargo test -p roastty cell_c_abi
+cargo test -p roastty row_c_abi
+cargo test -p roastty c_harness_links_against_roastty_header_and_roastty_dylib
+cargo test -p roastty
+if rg -n 'ghostty|Ghostty|GHOSTTY' roastty/src/lib.rs roastty/include/roastty.h roastty/tests/abi_harness.c; then exit 1; else exit 0; fi
+git diff --check
+```
+
+The full `roastty` test run passed with 1853 Rust tests, the C ABI harness, and
+doc tests.
+
+## Conclusion
+
+Roastty now exposes the packed row/cell value inspection ABI that later renderer
+and formatter iterator work can hand to C callers. The implementation keeps the
+ABI as a raw packed-field view, matching the experiment design, while preserving
+ownership boundaries by not exposing live storage or lookup objects.
+
+The next experiment can build on this by designing the next coherent ABI slice
+that consumes row/cell values, most likely render or formatter iteration,
+depending on the next upstream surface needed.

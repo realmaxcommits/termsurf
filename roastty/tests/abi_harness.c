@@ -234,6 +234,236 @@ static void assert_roastty_string_eq(roastty_string_s value,
   roastty_string_free(value);
 }
 
+static roastty_cell_t packed_cell(roastty_cell_content_tag_e tag,
+                                  uint64_t content);
+static roastty_cell_t packed_cell_with_flags(
+    roastty_cell_t cell,
+    uint16_t style_id,
+    roastty_cell_wide_e wide,
+    bool protected,
+    bool hyperlink,
+    roastty_cell_semantic_content_e semantic);
+static roastty_row_t packed_row(bool wrap,
+                                bool wrap_continuation,
+                                bool grapheme,
+                                bool styled,
+                                bool hyperlink,
+                                roastty_row_semantic_prompt_e semantic_prompt,
+                                bool kitty_virtual_placeholder,
+                                bool dirty);
+
+static void assert_row_cell_abi(void) {
+  assert(sizeof(roastty_cell_t) == 8);
+  assert(_Alignof(roastty_cell_t) == 8);
+  assert(sizeof(roastty_row_t) == 8);
+  assert(_Alignof(roastty_row_t) == 8);
+
+  assert(ROASTTY_CELL_CONTENT_CODEPOINT == 0);
+  assert(ROASTTY_CELL_CONTENT_CODEPOINT_GRAPHEME == 1);
+  assert(ROASTTY_CELL_CONTENT_BG_COLOR_PALETTE == 2);
+  assert(ROASTTY_CELL_CONTENT_BG_COLOR_RGB == 3);
+  assert(ROASTTY_CELL_WIDE_NARROW == 0);
+  assert(ROASTTY_CELL_WIDE_WIDE == 1);
+  assert(ROASTTY_CELL_WIDE_SPACER_TAIL == 2);
+  assert(ROASTTY_CELL_WIDE_SPACER_HEAD == 3);
+  assert(ROASTTY_CELL_SEMANTIC_OUTPUT == 0);
+  assert(ROASTTY_CELL_SEMANTIC_INPUT == 1);
+  assert(ROASTTY_CELL_SEMANTIC_PROMPT == 2);
+  assert(ROASTTY_CELL_DATA_INVALID == 0);
+  assert(ROASTTY_CELL_DATA_CODEPOINT == 1);
+  assert(ROASTTY_CELL_DATA_CONTENT_TAG == 2);
+  assert(ROASTTY_CELL_DATA_WIDE == 3);
+  assert(ROASTTY_CELL_DATA_HAS_TEXT == 4);
+  assert(ROASTTY_CELL_DATA_HAS_STYLING == 5);
+  assert(ROASTTY_CELL_DATA_STYLE_ID == 6);
+  assert(ROASTTY_CELL_DATA_HAS_HYPERLINK == 7);
+  assert(ROASTTY_CELL_DATA_PROTECTED == 8);
+  assert(ROASTTY_CELL_DATA_SEMANTIC == 9);
+  assert(ROASTTY_CELL_DATA_COLOR_PALETTE == 10);
+  assert(ROASTTY_CELL_DATA_COLOR_RGB == 11);
+  assert(ROASTTY_ROW_SEMANTIC_NONE == 0);
+  assert(ROASTTY_ROW_SEMANTIC_PROMPT == 1);
+  assert(ROASTTY_ROW_SEMANTIC_PROMPT_CONTINUATION == 2);
+  assert(ROASTTY_ROW_DATA_INVALID == 0);
+  assert(ROASTTY_ROW_DATA_WRAP == 1);
+  assert(ROASTTY_ROW_DATA_WRAP_CONTINUATION == 2);
+  assert(ROASTTY_ROW_DATA_GRAPHEME == 3);
+  assert(ROASTTY_ROW_DATA_STYLED == 4);
+  assert(ROASTTY_ROW_DATA_HYPERLINK == 5);
+  assert(ROASTTY_ROW_DATA_SEMANTIC_PROMPT == 6);
+  assert(ROASTTY_ROW_DATA_KITTY_VIRTUAL_PLACEHOLDER == 7);
+  assert(ROASTTY_ROW_DATA_DIRTY == 8);
+
+  roastty_cell_t cell = packed_cell_with_flags(
+      packed_cell(ROASTTY_CELL_CONTENT_CODEPOINT, 'A'),
+      0x1234,
+      ROASTTY_CELL_WIDE_SPACER_HEAD,
+      true,
+      true,
+      ROASTTY_CELL_SEMANTIC_PROMPT);
+  uint32_t codepoint = 0;
+  roastty_cell_content_tag_e content_tag = ROASTTY_CELL_CONTENT_BG_COLOR_RGB;
+  roastty_cell_wide_e wide = ROASTTY_CELL_WIDE_NARROW;
+  bool flag = false;
+  uint16_t style_id = 0;
+  roastty_cell_semantic_content_e semantic = ROASTTY_CELL_SEMANTIC_OUTPUT;
+
+  assert(roastty_cell_get(cell,
+                          ROASTTY_CELL_DATA_CODEPOINT,
+                          &codepoint) == ROASTTY_SUCCESS);
+  assert(codepoint == 'A');
+  assert(roastty_cell_get(cell,
+                          ROASTTY_CELL_DATA_CONTENT_TAG,
+                          &content_tag) == ROASTTY_SUCCESS);
+  assert(content_tag == ROASTTY_CELL_CONTENT_CODEPOINT);
+  assert(roastty_cell_get(cell, ROASTTY_CELL_DATA_WIDE, &wide) ==
+         ROASTTY_SUCCESS);
+  assert(wide == ROASTTY_CELL_WIDE_SPACER_HEAD);
+  assert(roastty_cell_get(cell, ROASTTY_CELL_DATA_HAS_TEXT, &flag) ==
+         ROASTTY_SUCCESS);
+  assert(flag);
+  flag = false;
+  assert(roastty_cell_get(cell, ROASTTY_CELL_DATA_HAS_STYLING, &flag) ==
+         ROASTTY_SUCCESS);
+  assert(flag);
+  assert(roastty_cell_get(cell, ROASTTY_CELL_DATA_STYLE_ID, &style_id) ==
+         ROASTTY_SUCCESS);
+  assert(style_id == 0x1234);
+  flag = false;
+  assert(roastty_cell_get(cell, ROASTTY_CELL_DATA_HAS_HYPERLINK, &flag) ==
+         ROASTTY_SUCCESS);
+  assert(flag);
+  flag = false;
+  assert(roastty_cell_get(cell, ROASTTY_CELL_DATA_PROTECTED, &flag) ==
+         ROASTTY_SUCCESS);
+  assert(flag);
+  assert(roastty_cell_get(cell, ROASTTY_CELL_DATA_SEMANTIC, &semantic) ==
+         ROASTTY_SUCCESS);
+  assert(semantic == ROASTTY_CELL_SEMANTIC_PROMPT);
+
+  roastty_cell_t rgb_cell =
+      packed_cell(ROASTTY_CELL_CONTENT_BG_COLOR_RGB, 0x00112233);
+  roastty_rgb_s rgb = {0};
+  assert(roastty_cell_get(rgb_cell, ROASTTY_CELL_DATA_COLOR_RGB, &rgb) ==
+         ROASTTY_SUCCESS);
+  assert(rgb.r == 0x11);
+  assert(rgb.g == 0x22);
+  assert(rgb.b == 0x33);
+  uint8_t palette = 0;
+  assert(roastty_cell_get(rgb_cell, ROASTTY_CELL_DATA_COLOR_PALETTE, &palette) ==
+         ROASTTY_SUCCESS);
+  assert(palette == 0x33);
+  assert(roastty_cell_get(cell, ROASTTY_CELL_DATA_INVALID, &flag) ==
+         ROASTTY_INVALID_VALUE);
+  assert(roastty_cell_get(cell, ROASTTY_CELL_DATA_CODEPOINT, NULL) ==
+         ROASTTY_INVALID_VALUE);
+
+  roastty_cell_data_e cell_keys[] = {
+      ROASTTY_CELL_DATA_CODEPOINT,
+      ROASTTY_CELL_DATA_WIDE,
+      ROASTTY_CELL_DATA_INVALID,
+  };
+  codepoint = 0;
+  wide = ROASTTY_CELL_WIDE_NARROW;
+  void *cell_values[] = {&codepoint, &wide, &flag};
+  size_t written = 99;
+  assert(roastty_cell_get_multi(cell,
+                                2,
+                                cell_keys,
+                                cell_values,
+                                &written) == ROASTTY_SUCCESS);
+  assert(written == 2);
+  assert(codepoint == 'A');
+  assert(wide == ROASTTY_CELL_WIDE_SPACER_HEAD);
+  written = 99;
+  assert(roastty_cell_get_multi(cell,
+                                3,
+                                cell_keys,
+                                cell_values,
+                                &written) == ROASTTY_INVALID_VALUE);
+  assert(written == 2);
+  written = 99;
+  assert(roastty_cell_get_multi(cell, 0, cell_keys, cell_values, &written) ==
+         ROASTTY_SUCCESS);
+  assert(written == 0);
+  assert(roastty_cell_get_multi(cell, 1, cell_keys, NULL, &written) ==
+         ROASTTY_INVALID_VALUE);
+
+  roastty_row_t row = packed_row(true,
+                                 true,
+                                 true,
+                                 true,
+                                 true,
+                                 ROASTTY_ROW_SEMANTIC_PROMPT_CONTINUATION,
+                                 true,
+                                 true);
+  roastty_row_semantic_prompt_e row_semantic = ROASTTY_ROW_SEMANTIC_NONE;
+  assert(roastty_row_get(row, ROASTTY_ROW_DATA_WRAP, &flag) == ROASTTY_SUCCESS);
+  assert(flag);
+  flag = false;
+  assert(roastty_row_get(row, ROASTTY_ROW_DATA_WRAP_CONTINUATION, &flag) ==
+         ROASTTY_SUCCESS);
+  assert(flag);
+  flag = false;
+  assert(roastty_row_get(row, ROASTTY_ROW_DATA_GRAPHEME, &flag) ==
+         ROASTTY_SUCCESS);
+  assert(flag);
+  flag = false;
+  assert(roastty_row_get(row, ROASTTY_ROW_DATA_STYLED, &flag) ==
+         ROASTTY_SUCCESS);
+  assert(flag);
+  flag = false;
+  assert(roastty_row_get(row, ROASTTY_ROW_DATA_HYPERLINK, &flag) ==
+         ROASTTY_SUCCESS);
+  assert(flag);
+  assert(roastty_row_get(row,
+                         ROASTTY_ROW_DATA_SEMANTIC_PROMPT,
+                         &row_semantic) == ROASTTY_SUCCESS);
+  assert(row_semantic == ROASTTY_ROW_SEMANTIC_PROMPT_CONTINUATION);
+  flag = false;
+  assert(roastty_row_get(row,
+                         ROASTTY_ROW_DATA_KITTY_VIRTUAL_PLACEHOLDER,
+                         &flag) == ROASTTY_SUCCESS);
+  assert(flag);
+  flag = false;
+  assert(roastty_row_get(row, ROASTTY_ROW_DATA_DIRTY, &flag) ==
+         ROASTTY_SUCCESS);
+  assert(flag);
+  assert(roastty_row_get(row, ROASTTY_ROW_DATA_INVALID, &flag) ==
+         ROASTTY_INVALID_VALUE);
+  assert(roastty_row_get(row, ROASTTY_ROW_DATA_WRAP, NULL) ==
+         ROASTTY_INVALID_VALUE);
+
+  roastty_row_data_e row_keys[] = {
+      ROASTTY_ROW_DATA_WRAP,
+      ROASTTY_ROW_DATA_SEMANTIC_PROMPT,
+      ROASTTY_ROW_DATA_INVALID,
+  };
+  bool wrap = false;
+  row_semantic = ROASTTY_ROW_SEMANTIC_NONE;
+  void *row_values[] = {&wrap, &row_semantic, &flag};
+  written = 99;
+  assert(roastty_row_get_multi(row,
+                               2,
+                               row_keys,
+                               row_values,
+                               &written) == ROASTTY_SUCCESS);
+  assert(written == 2);
+  assert(wrap);
+  assert(row_semantic == ROASTTY_ROW_SEMANTIC_PROMPT_CONTINUATION);
+  written = 99;
+  assert(roastty_row_get_multi(row,
+                               3,
+                               row_keys,
+                               row_values,
+                               &written) == ROASTTY_INVALID_VALUE);
+  assert(written == 2);
+  assert(roastty_row_get_multi(row, 1, NULL, row_values, &written) ==
+         ROASTTY_INVALID_VALUE);
+  assert(roastty_row_get_multi(row, 1, row_keys, NULL, &written) ==
+         ROASTTY_INVALID_VALUE);
+}
+
 static void terminal_write(roastty_terminal_t terminal, const char *bytes) {
   assert(roastty_terminal_vt_write(terminal,
                                    (const uint8_t *)bytes,
@@ -263,6 +493,63 @@ terminal_tracked_grid_ref_at(roastty_terminal_t terminal, uint16_t x, uint32_t y
          ROASTTY_SUCCESS);
   assert(ref != NULL);
   return ref;
+}
+
+static roastty_cell_t packed_cell(roastty_cell_content_tag_e tag,
+                                  uint64_t content) {
+  return ((uint64_t)tag) | (content << 2);
+}
+
+static roastty_cell_t packed_cell_with_flags(roastty_cell_t cell,
+                                             uint16_t style_id,
+                                             roastty_cell_wide_e wide,
+                                             bool protected,
+                                             bool hyperlink,
+                                             roastty_cell_semantic_content_e semantic) {
+  cell |= ((uint64_t)style_id) << 26;
+  cell |= ((uint64_t)wide) << 42;
+  if (protected) {
+    cell |= ((uint64_t)1) << 44;
+  }
+  if (hyperlink) {
+    cell |= ((uint64_t)1) << 45;
+  }
+  cell |= ((uint64_t)semantic) << 46;
+  return cell;
+}
+
+static roastty_row_t packed_row(bool wrap,
+                                bool wrap_continuation,
+                                bool grapheme,
+                                bool styled,
+                                bool hyperlink,
+                                roastty_row_semantic_prompt_e semantic_prompt,
+                                bool kitty_virtual_placeholder,
+                                bool dirty) {
+  roastty_row_t row = 0;
+  if (wrap) {
+    row |= ((uint64_t)1) << 32;
+  }
+  if (wrap_continuation) {
+    row |= ((uint64_t)1) << 33;
+  }
+  if (grapheme) {
+    row |= ((uint64_t)1) << 34;
+  }
+  if (styled) {
+    row |= ((uint64_t)1) << 35;
+  }
+  if (hyperlink) {
+    row |= ((uint64_t)1) << 36;
+  }
+  row |= ((uint64_t)semantic_prompt) << 37;
+  if (kitty_virtual_placeholder) {
+    row |= ((uint64_t)1) << 39;
+  }
+  if (dirty) {
+    row |= ((uint64_t)1) << 40;
+  }
+  return row;
 }
 
 static roastty_key_mods_s empty_key_mods(void) {
@@ -2138,6 +2425,7 @@ int main(int argc, char **argv) {
   assert_mouse_encoder_abi();
   assert_key_event_and_encoder_abi();
   assert_osc_parser_abi();
+  assert_row_cell_abi();
   assert_terminal_abi();
 
   roastty_info_s info = roastty_info();
