@@ -554,6 +554,8 @@ tests, choose the larger subsystem.
   — **Pass**
 - [Experiment 214: Port Metal Pipeline State Builder](214-port-metal-pipeline-state-builder.md)
   — **Pass**
+- [Experiment 215: Port Standard Metal Shader Library](215-port-standard-metal-shader-library.md)
+  — **Designed**
 
 ## Non-Goals
 
