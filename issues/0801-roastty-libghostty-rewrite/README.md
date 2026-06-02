@@ -512,6 +512,8 @@ tests, choose the larger subsystem.
   — **Pass**
 - [Experiment 193: Port Kitty Tracked Placement Ownership](193-port-kitty-tracked-placement-ownership.md)
   — **Pass**
+- [Experiment 194: Port Kitty Delete Execution](194-port-kitty-delete-execution.md)
+  — **Designed**
 
 ## Non-Goals
 
