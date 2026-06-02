@@ -199,3 +199,85 @@ Two real findings, fixed in the design above before this commit:
 2. **(Low)** added the upstream NBSP case (a symbol followed by `U+00A0` returns
    1), which guards that `is_space` stays the narrow predicate rather than
    general Unicode whitespace.
+
+## Result
+
+**Result:** Pass
+
+Extended `roastty/src/renderer/cell.rs` with
+`pub(crate) struct CellInfo { codepoint: u32, grid_width: u8 }` and
+`pub(crate) fn constraint_width(raw_slice: &[CellInfo], x, cols) -> u8`,
+reproducing the upstream branch order exactly: wide cells return their grid
+width; non-symbols return their grid width; a symbol at the last column returns
+1; a symbol after a non-graphics symbol returns 1; a symbol before a blank
+(`codepoint == 0`) or `is_space` cell returns 2; otherwise 1. `x + 1` is read
+only when `x != cols - 1`. No `terminal` module changes (Option 2).
+
+Tests added (9): wide cell; non-symbol grid width; symbol at last column; symbol
+after non-graphics symbol (→1); symbol after a graphics-element symbol
+(Powerline `0xE0B0`, which is both a PUA symbol and a graphics element, so the
+previous-symbol rule is skipped and the next-blank check yields 2); symbol
+before blank/space (→2); symbol before a non-space (→1); and symbol before NBSP
+`U+00A0` (→1, the narrow-`is_space` guard).
+
+### Verification
+
+```bash
+cargo fmt -p roastty
+cargo test -p roastty renderer::cell
+cargo test -p roastty renderer
+cargo test -p roastty
+```
+
+Observed:
+
+- `renderer::cell`: 20 passed (11 from Exp 227–228 + 9 new).
+- Full `roastty`: 2256 unit tests passed (2247 prior + 9 new), plus the C ABI
+  harness passed.
+- `cargo fmt -p roastty -- --check`: clean.
+- `cargo build -p roastty`: no warnings.
+- No-`ghostty`-name gates passed for `roastty/src/renderer/cell.rs` and for
+  `roastty/src/lib.rs`, `roastty/include/roastty.h`,
+  `roastty/tests/abi_harness.c`.
+- `git diff --check`: clean.
+
+No C ABI, header, or ABI inventory changes; no `terminal` module change; no
+`Contents`/`Key`/`CellType` scope pulled in.
+
+### Completion Review
+
+Codex reviewed the completed implementation and found **no issues** ("nothing
+should change before the result commit").
+
+Review artifacts:
+
+- Prompt: `logs/codex-review/20260602-074917-611639-prompt.md`
+- Result: `logs/codex-review/20260602-074917-611639-last-message.md`
+
+Codex confirmed `constraint_width` preserves the upstream branch order and
+return behavior exactly, that the `x + 1` access bound is preserved (it follows
+the last-column return), that `GRAPHICS_SYMBOL = 0xE0B0` genuinely satisfies
+both `is_symbol` (BMP PUA) and `is_graphics_element` (Powerline) so the
+exemption branch is correctly exercised, that the NBSP case correctly returns 1,
+and that Option 2 is sound for this pure helper with no
+bounds/visibility/dead-code concerns.
+
+## Conclusion
+
+Experiment 229 succeeds. With `constraint_width`, **all of `renderer/cell.zig`'s
+standalone functions are now ported** — the codepoint-classification predicates
+(227), `is_symbol` (228), and `constraint_width` (229). Both Codex gates passed
+(two design findings fixed; zero result findings).
+
+The cell-access decision was the substantive one: rather than prematurely widen
+`terminal::page::Cell` visibility for a helper with no consumer yet,
+`constraint_width` operates on a renderer-local `CellInfo` view, deferring the
+real page-cell binding to the slice that actually needs it.
+
+The only remaining piece of `cell.zig` is the `Contents` cell-render-data
+builder (with `Key`/`CellType`), which depends on the shader cell-vertex types
+(`renderer::shader`, already present) and the font API, and is the largest
+renderer slice so far — it will likely split across several experiments (the
+`Contents` storage/resize/reset, then cursor glyph handling, then
+`add`/`clear`). That is the natural next direction, alongside the font stack it
+depends on.

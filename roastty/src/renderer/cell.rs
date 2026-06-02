@@ -77,6 +77,62 @@ fn is_private_use(cp: u32) -> bool {
     matches!(cp, 0xE000..=0xF8FF | 0xF0000..=0xFFFFD | 0x100000..=0x10FFFD)
 }
 
+/// The per-cell data `constraint_width` reads from a row of cells: a codepoint
+/// and a grid width. The renderer maps its real cell source into this view at
+/// the call site (a faithful adaptation of upstream operating on
+/// `[]const terminal.page.Cell`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CellInfo {
+    pub codepoint: u32,
+    pub grid_width: u8,
+}
+
+/// Returns the appropriate constraint width for the cell at `x` when rendering
+/// its glyph(s). Symbol-like glyphs may extend to two cells when there is room
+/// and the previous glyph was not also a non-graphics symbol.
+///
+/// `x` must be `< cols` and `raw_slice` must have at least `cols` entries;
+/// `x + 1` is read only when `x != cols - 1`, matching upstream's access bounds.
+pub(crate) fn constraint_width(raw_slice: &[CellInfo], x: usize, cols: usize) -> u8 {
+    let cell = raw_slice[x];
+    let cp = cell.codepoint;
+    let grid_width = cell.grid_width;
+
+    // If the grid width of the cell is 2, the constraint width is always 2.
+    if grid_width > 1 {
+        return grid_width;
+    }
+
+    // Only "symbol-like" glyphs may extend to 2 cells; others use the grid
+    // width.
+    if !is_symbol(cp) {
+        return grid_width;
+    }
+
+    // At the end of the screen it must be constrained to one cell.
+    if x == cols - 1 {
+        return 1;
+    }
+
+    // If the previous cell was a symbol (but not a graphics element such as a
+    // block element or Powerline glyph), constrain so multiple PUA glyphs align.
+    if x > 0 {
+        let prev_cp = raw_slice[x - 1].codepoint;
+        if is_symbol(prev_cp) && !is_graphics_element(prev_cp) {
+            return 1;
+        }
+    }
+
+    // If the next cell is whitespace, allow the glyph to be up to two cells.
+    let next_cp = raw_slice[x + 1].codepoint;
+    if next_cp == 0 || is_space(next_cp) {
+        return 2;
+    }
+
+    // Otherwise, this has to be 1 cell wide.
+    1
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -224,5 +280,77 @@ mod tests {
         assert!(!is_symbol('+' as u32));
         assert!(!is_symbol('$' as u32));
         assert!(!is_symbol('a' as u32));
+    }
+
+    fn ci(codepoint: u32, grid_width: u8) -> CellInfo {
+        CellInfo {
+            codepoint,
+            grid_width,
+        }
+    }
+
+    // A non-graphics symbol (Arrows block): is_symbol true, is_graphics false.
+    const SYMBOL: u32 = 0x2190;
+    // A symbol that is also a graphics element: Powerline is inside the PUA, so
+    // is_symbol true AND is_graphics_element true.
+    const GRAPHICS_SYMBOL: u32 = 0xE0B0;
+
+    #[test]
+    fn constraint_width_wide_cell_is_two() {
+        // Wide cells return 2 regardless of being a symbol or of neighbors.
+        let row = [ci(SYMBOL, 2), ci(0, 1)];
+        assert_eq!(constraint_width(&row, 0, 2), 2);
+    }
+
+    #[test]
+    fn constraint_width_non_symbol_uses_grid_width() {
+        let row = [ci('a' as u32, 1)];
+        assert_eq!(constraint_width(&row, 0, 1), 1);
+    }
+
+    #[test]
+    fn constraint_width_symbol_at_last_column_is_one() {
+        let row = [ci('a' as u32, 1), ci(SYMBOL, 1)];
+        assert_eq!(constraint_width(&row, 1, 2), 1);
+    }
+
+    #[test]
+    fn constraint_width_symbol_after_non_graphics_symbol_is_one() {
+        let row = [ci(SYMBOL, 1), ci(0x2191, 1), ci(0, 1)];
+        assert_eq!(constraint_width(&row, 1, 3), 1);
+    }
+
+    #[test]
+    fn constraint_width_symbol_after_graphics_symbol_not_constrained() {
+        // Previous cell is a graphics-element symbol, so the previous-symbol
+        // rule does not apply; the next-cell check (blank) yields 2.
+        let row = [ci(GRAPHICS_SYMBOL, 1), ci(SYMBOL, 1), ci(0, 1)];
+        assert_eq!(constraint_width(&row, 1, 3), 2);
+    }
+
+    #[test]
+    fn constraint_width_symbol_before_blank_is_two() {
+        let row = [ci('a' as u32, 1), ci(SYMBOL, 1), ci(0, 1)];
+        assert_eq!(constraint_width(&row, 1, 3), 2);
+    }
+
+    #[test]
+    fn constraint_width_symbol_before_space_is_two() {
+        let row = [ci('a' as u32, 1), ci(SYMBOL, 1), ci(0x0020, 1)];
+        assert_eq!(constraint_width(&row, 1, 3), 2);
+    }
+
+    #[test]
+    fn constraint_width_symbol_before_non_space_is_one() {
+        let row = [ci('a' as u32, 1), ci(SYMBOL, 1), ci('b' as u32, 1)];
+        assert_eq!(constraint_width(&row, 1, 3), 1);
+    }
+
+    #[test]
+    fn constraint_width_symbol_before_nbsp_is_one() {
+        // No-break space (U+00A0) is not `is_space`, so it does not expand the
+        // glyph — guards that `is_space` stays the narrow predicate.
+        let row = [ci('a' as u32, 1), ci(SYMBOL, 1), ci(0x00A0, 1)];
+        assert_eq!(constraint_width(&row, 1, 3), 1);
     }
 }

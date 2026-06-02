@@ -681,7 +681,7 @@ are past the correctness-critical foundation.
 - [Experiment 228: Port Renderer `is_symbol` Predicate](228-port-renderer-is-symbol.md)
   — **Pass** · Claude/Codex/Codex
 - [Experiment 229: Port Renderer `constraint_width`](229-port-renderer-constraint-width.md)
-  — **Designed** · Claude/Codex/Codex
+  — **Pass** · Claude/Codex/Codex
 
 ## Non-Goals
 
