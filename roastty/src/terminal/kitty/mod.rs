@@ -1,5 +1,7 @@
 //! Kitty protocol state.
 
+pub(crate) mod graphics_command;
+
 use super::color;
 
 const KEY_FLAG_STACK_LEN: usize = 8;

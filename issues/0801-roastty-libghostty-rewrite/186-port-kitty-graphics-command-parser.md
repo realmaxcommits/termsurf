@@ -138,3 +138,49 @@ keyboard/color behavior is unchanged after the module refactor.
 - Do not skip Codex design review. If the design review finds a real issue, fix
   it and re-review before committing this experiment design.
 - Do not skip Codex result review after implementation.
+
+## Result
+
+**Result:** Pass
+
+The experiment ported the Kitty graphics command parser and response encoder
+into `roastty/src/terminal/kitty/graphics_command.rs`. The existing Kitty module
+was moved from `roastty/src/terminal/kitty.rs` to
+`roastty/src/terminal/kitty/mod.rs`, with existing Kitty keyboard and color APIs
+preserved.
+
+The Rust port includes the parser state machine, command/control model,
+transmission/display/delete/animation parsing, response encoding, configurable
+payload byte limit enforcement before base64 decode, and Rust-owned decoded
+payload storage. The ported tests cover the upstream `graphics_command.zig`
+cases plus additional invalid-base64 padding checks and explicit `max_bytes`
+coverage.
+
+Verification passed:
+
+```bash
+cargo fmt -- roastty/src/terminal/mod.rs roastty/src/terminal/kitty/mod.rs roastty/src/terminal/kitty/graphics_command.rs
+cargo test -p roastty kitty_graphics_command
+cargo test -p roastty kitty_keyboard
+cargo test -p roastty kitty_color
+cargo test -p roastty
+if rg -n 'ghostty|Ghostty|GHOSTTY' roastty/src/lib.rs roastty/include/roastty.h roastty/tests/abi_harness.c; then exit 1; else exit 0; fi
+git diff --check
+```
+
+The full `roastty` suite passed with 1909 Rust tests plus the C harness.
+
+Codex result review found one real implementation issue: the initial local
+base64 decoder accepted malformed padding such as `QU=F`. The decoder was
+tightened to reject padding before the third quartet slot and reject any
+non-padding byte after padding starts. Regression tests for `QU=F`, `Q=UF`, and
+`QU==AA` were added. A follow-up Codex review found no remaining code issues.
+
+## Conclusion
+
+Roastty now has a self-contained Kitty graphics command decoder and response
+encoder, matching the upstream parser behavior needed by later Kitty graphics
+execution and image-storage experiments. No terminal APC wiring, image loading,
+storage, decoding, rendering, or public C ABI was added in this experiment, so
+the next experiment can choose the next coherent Kitty graphics layer without
+debugging command parsing at the same time.
