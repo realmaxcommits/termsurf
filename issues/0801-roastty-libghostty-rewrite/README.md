@@ -708,6 +708,8 @@ are past the correctness-critical foundation.
   — **Pass** · Claude/Codex/Codex
 - [Experiment 242: Port `Metrics::apply` (modifier dispatch + cell-height re-centering)](242-port-metrics-apply.md)
   — **Pass** · Claude/Codex/Codex
+- [Experiment 243: Port the Atlas core (skyline packing: `reserve`/`fit`/`merge`/`set`)](243-port-atlas-core.md)
+  — **Designed** · Claude/Codex/Codex
 
 ## Non-Goals
 
