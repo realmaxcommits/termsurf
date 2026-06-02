@@ -9,11 +9,11 @@ pub(super) type Id = StyleCountInt;
 pub(super) const DEFAULT_ID: Id = 0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) struct Style {
-    pub(super) fg_color: Color,
-    pub(super) bg_color: Color,
-    pub(super) underline_color: Color,
-    pub(super) flags: Flags,
+pub(crate) struct Style {
+    pub(crate) fg_color: Color,
+    pub(crate) bg_color: Color,
+    pub(crate) underline_color: Color,
+    pub(crate) flags: Flags,
 }
 
 impl Style {
@@ -362,7 +362,7 @@ impl Set {
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub(super) enum Color {
+pub(crate) enum Color {
     #[default]
     None,
     Palette(u8),
@@ -370,16 +370,16 @@ pub(super) enum Color {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) struct Flags {
-    pub(super) bold: bool,
-    pub(super) italic: bool,
-    pub(super) faint: bool,
-    pub(super) blink: bool,
-    pub(super) inverse: bool,
-    pub(super) invisible: bool,
-    pub(super) strikethrough: bool,
-    pub(super) overline: bool,
-    pub(super) underline: Underline,
+pub(crate) struct Flags {
+    pub(crate) bold: bool,
+    pub(crate) italic: bool,
+    pub(crate) faint: bool,
+    pub(crate) blink: bool,
+    pub(crate) inverse: bool,
+    pub(crate) invisible: bool,
+    pub(crate) strikethrough: bool,
+    pub(crate) overline: bool,
+    pub(crate) underline: Underline,
 }
 
 impl Flags {

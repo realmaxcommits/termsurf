@@ -9,7 +9,7 @@ pub(super) enum Separator {
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub(super) enum Underline {
+pub(crate) enum Underline {
     #[default]
     None,
     Single,

@@ -252,6 +252,111 @@ static roastty_row_t packed_row(bool wrap,
                                 bool kitty_virtual_placeholder,
                                 bool dirty);
 
+static void assert_style_abi(void) {
+  assert(ROASTTY_STYLE_COLOR_NONE == 0);
+  assert(ROASTTY_STYLE_COLOR_PALETTE == 1);
+  assert(ROASTTY_STYLE_COLOR_RGB == 2);
+
+  assert(sizeof(roastty_style_color_value_u) == 8);
+  assert(_Alignof(roastty_style_color_value_u) == 8);
+  assert(sizeof(roastty_style_color_s) == 16);
+  assert(_Alignof(roastty_style_color_s) == 8);
+  assert(offsetof(roastty_style_color_s, tag) == 0);
+  assert(offsetof(roastty_style_color_s, value) == 8);
+  assert(sizeof(roastty_style_s) == 72);
+  assert(_Alignof(roastty_style_s) == 8);
+  assert(offsetof(roastty_style_s, size) == 0);
+  assert(offsetof(roastty_style_s, fg_color) == 8);
+  assert(offsetof(roastty_style_s, bg_color) == 24);
+  assert(offsetof(roastty_style_s, underline_color) == 40);
+  assert(offsetof(roastty_style_s, bold) == 56);
+  assert(offsetof(roastty_style_s, italic) == 57);
+  assert(offsetof(roastty_style_s, faint) == 58);
+  assert(offsetof(roastty_style_s, blink) == 59);
+  assert(offsetof(roastty_style_s, inverse) == 60);
+  assert(offsetof(roastty_style_s, invisible) == 61);
+  assert(offsetof(roastty_style_s, strikethrough) == 62);
+  assert(offsetof(roastty_style_s, overline) == 63);
+  assert(offsetof(roastty_style_s, underline) == 64);
+
+  roastty_style_default(NULL);
+  assert(!roastty_style_is_default(NULL));
+
+  roastty_style_s style = {0};
+  roastty_style_default(&style);
+  assert(style.size == sizeof(roastty_style_s));
+  assert(style.fg_color.tag == ROASTTY_STYLE_COLOR_NONE);
+  assert(style.bg_color.tag == ROASTTY_STYLE_COLOR_NONE);
+  assert(style.underline_color.tag == ROASTTY_STYLE_COLOR_NONE);
+  assert(!style.bold);
+  assert(!style.italic);
+  assert(!style.faint);
+  assert(!style.blink);
+  assert(!style.inverse);
+  assert(!style.invisible);
+  assert(!style.strikethrough);
+  assert(!style.overline);
+  assert(style.underline == 0);
+  assert(roastty_style_is_default(&style));
+
+  style.size = sizeof(roastty_style_s) - 1;
+  assert(!roastty_style_is_default(&style));
+  roastty_style_default(&style);
+
+  style.fg_color.tag = ROASTTY_STYLE_COLOR_PALETTE;
+  style.fg_color.value.palette = 7;
+  assert(style.fg_color.value.palette == 7);
+  assert(!roastty_style_is_default(&style));
+  roastty_style_default(&style);
+
+  style.bg_color.tag = ROASTTY_STYLE_COLOR_RGB;
+  style.bg_color.value.rgb = (roastty_rgb_s){.r = 1, .g = 2, .b = 3};
+  assert(style.bg_color.value.rgb.r == 1);
+  assert(style.bg_color.value.rgb.g == 2);
+  assert(style.bg_color.value.rgb.b == 3);
+  assert(!roastty_style_is_default(&style));
+  roastty_style_default(&style);
+
+  style.underline_color.tag = ROASTTY_STYLE_COLOR_RGB;
+  style.underline_color.value.rgb = (roastty_rgb_s){.r = 4, .g = 5, .b = 6};
+  assert(style.underline_color.value.rgb.r == 4);
+  assert(style.underline_color.value.rgb.g == 5);
+  assert(style.underline_color.value.rgb.b == 6);
+  assert(!roastty_style_is_default(&style));
+  roastty_style_default(&style);
+
+  style.bold = true;
+  assert(!roastty_style_is_default(&style));
+  roastty_style_default(&style);
+  style.italic = true;
+  assert(!roastty_style_is_default(&style));
+  roastty_style_default(&style);
+  style.faint = true;
+  assert(!roastty_style_is_default(&style));
+  roastty_style_default(&style);
+  style.blink = true;
+  assert(!roastty_style_is_default(&style));
+  roastty_style_default(&style);
+  style.inverse = true;
+  assert(!roastty_style_is_default(&style));
+  roastty_style_default(&style);
+  style.invisible = true;
+  assert(!roastty_style_is_default(&style));
+  roastty_style_default(&style);
+  style.strikethrough = true;
+  assert(!roastty_style_is_default(&style));
+  roastty_style_default(&style);
+  style.overline = true;
+  assert(!roastty_style_is_default(&style));
+  roastty_style_default(&style);
+
+  for (int underline = 1; underline <= 5; underline++) {
+    style.underline = underline;
+    assert(!roastty_style_is_default(&style));
+    roastty_style_default(&style);
+  }
+}
+
 static void assert_row_cell_abi(void) {
   assert(sizeof(roastty_cell_t) == 8);
   assert(_Alignof(roastty_cell_t) == 8);
@@ -2425,6 +2530,7 @@ int main(int argc, char **argv) {
   assert_mouse_encoder_abi();
   assert_key_event_and_encoder_abi();
   assert_osc_parser_abi();
+  assert_style_abi();
   assert_row_cell_abi();
   assert_terminal_abi();
 

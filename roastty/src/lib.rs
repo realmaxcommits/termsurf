@@ -5,6 +5,8 @@ use std::ptr::NonNull;
 use std::slice;
 
 use input::{key, key_encode, key_mods};
+#[cfg(test)]
+use terminal::color;
 use terminal::kitty::KeyFlags;
 use terminal::selection_gesture::{
     SelectionGesture, SelectionGestureAutoscroll, SelectionGestureAutoscrollTick,
@@ -20,7 +22,7 @@ use terminal::terminal::{
     TerminalTitleChangedCallback, TerminalTrackedGridRef, TerminalWritePtyCallback,
     TerminalXtversionCallback,
 };
-use terminal::{mouse, mouse_encode, osc, point, size_report};
+use terminal::{mouse, mouse_encode, osc, point, sgr, size_report, style};
 
 mod input;
 mod terminal;
@@ -206,6 +208,10 @@ const ROASTTY_POINT_SCREEN: c_int = 2;
 #[allow(dead_code)]
 const ROASTTY_POINT_HISTORY: c_int = 3;
 
+const ROASTTY_STYLE_COLOR_NONE: c_int = 0;
+const ROASTTY_STYLE_COLOR_PALETTE: c_int = 1;
+const ROASTTY_STYLE_COLOR_RGB: c_int = 2;
+
 const ROASTTY_CELL_CONTENT_CODEPOINT: c_int = 0;
 const ROASTTY_CELL_CONTENT_CODEPOINT_GRAPHEME: c_int = 1;
 const ROASTTY_CELL_CONTENT_BG_COLOR_PALETTE: c_int = 2;
@@ -291,6 +297,39 @@ pub struct RoasttyRgb {
 }
 
 type RoasttyPalette = [RoasttyRgb; 256];
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub union RoasttyStyleColorValue {
+    palette: u8,
+    rgb: RoasttyRgb,
+    _padding: u64,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RoasttyStyleColor {
+    tag: c_int,
+    value: RoasttyStyleColorValue,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RoasttyStyle {
+    size: usize,
+    fg_color: RoasttyStyleColor,
+    bg_color: RoasttyStyleColor,
+    underline_color: RoasttyStyleColor,
+    bold: bool,
+    italic: bool,
+    faint: bool,
+    blink: bool,
+    inverse: bool,
+    invisible: bool,
+    strikethrough: bool,
+    overline: bool,
+    underline: c_int,
+}
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -1618,6 +1657,78 @@ fn grid_ref_error_result(error: TerminalGridRefPointError) -> c_int {
     }
 }
 
+fn underline_to_int(value: sgr::Underline) -> c_int {
+    match value {
+        sgr::Underline::None => 0,
+        sgr::Underline::Single => 1,
+        sgr::Underline::Double => 2,
+        sgr::Underline::Curly => 3,
+        sgr::Underline::Dotted => 4,
+        sgr::Underline::Dashed => 5,
+    }
+}
+
+fn style_color_to_c(value: style::Color) -> RoasttyStyleColor {
+    match value {
+        style::Color::None => RoasttyStyleColor {
+            tag: ROASTTY_STYLE_COLOR_NONE,
+            value: RoasttyStyleColorValue { _padding: 0 },
+        },
+        style::Color::Palette(palette) => RoasttyStyleColor {
+            tag: ROASTTY_STYLE_COLOR_PALETTE,
+            value: RoasttyStyleColorValue { palette },
+        },
+        style::Color::Rgb(rgb) => RoasttyStyleColor {
+            tag: ROASTTY_STYLE_COLOR_RGB,
+            value: RoasttyStyleColorValue {
+                rgb: RoasttyRgb {
+                    r: rgb.r,
+                    g: rgb.g,
+                    b: rgb.b,
+                },
+            },
+        },
+    }
+}
+
+fn style_to_c(value: style::Style) -> RoasttyStyle {
+    RoasttyStyle {
+        size: std::mem::size_of::<RoasttyStyle>(),
+        fg_color: style_color_to_c(value.fg_color),
+        bg_color: style_color_to_c(value.bg_color),
+        underline_color: style_color_to_c(value.underline_color),
+        bold: value.flags.bold,
+        italic: value.flags.italic,
+        faint: value.flags.faint,
+        blink: value.flags.blink,
+        inverse: value.flags.inverse,
+        invisible: value.flags.invisible,
+        strikethrough: value.flags.strikethrough,
+        overline: value.flags.overline,
+        underline: underline_to_int(value.flags.underline),
+    }
+}
+
+fn style_color_is_none(value: RoasttyStyleColor) -> bool {
+    value.tag == ROASTTY_STYLE_COLOR_NONE
+}
+
+fn style_is_default(value: RoasttyStyle) -> bool {
+    value.size == std::mem::size_of::<RoasttyStyle>()
+        && style_color_is_none(value.fg_color)
+        && style_color_is_none(value.bg_color)
+        && style_color_is_none(value.underline_color)
+        && !value.bold
+        && !value.italic
+        && !value.faint
+        && !value.blink
+        && !value.inverse
+        && !value.invisible
+        && !value.strikethrough
+        && !value.overline
+        && value.underline == 0
+}
+
 fn packed_bits(value: u64, shift: u32, mask: u64) -> u64 {
     (value >> shift) & mask
 }
@@ -1865,6 +1976,32 @@ pub extern "C" fn roastty_row_get_multi(
     }
 
     ROASTTY_SUCCESS
+}
+
+#[no_mangle]
+pub extern "C" fn roastty_style_default(out: *mut RoasttyStyle) {
+    if out.is_null() {
+        return;
+    }
+
+    unsafe {
+        out.write(style_to_c(style::Style::default()));
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn roastty_style_is_default(value: *const RoasttyStyle) -> bool {
+    if value.is_null() {
+        return false;
+    }
+
+    unsafe {
+        if ptr::addr_of!((*value).size).read() != std::mem::size_of::<RoasttyStyle>() {
+            return false;
+        }
+
+        style_is_default(value.read())
+    }
 }
 
 #[no_mangle]
@@ -4805,6 +4942,14 @@ mod tests {
         out
     }
 
+    fn style_color_palette(color: RoasttyStyleColor) -> u8 {
+        unsafe { color.value.palette }
+    }
+
+    fn style_color_rgb(color: RoasttyStyleColor) -> RoasttyRgb {
+        unsafe { color.value.rgb }
+    }
+
     fn assert_rgb_override_survives_default_path(
         option: c_int,
         effective_data: c_int,
@@ -5948,6 +6093,165 @@ mod tests {
         );
 
         roastty_terminal_free(terminal);
+    }
+
+    #[test]
+    fn style_c_abi_layout_and_values_are_stable() {
+        assert_eq!(ROASTTY_STYLE_COLOR_NONE, 0);
+        assert_eq!(ROASTTY_STYLE_COLOR_PALETTE, 1);
+        assert_eq!(ROASTTY_STYLE_COLOR_RGB, 2);
+
+        assert_eq!(std::mem::size_of::<RoasttyStyleColorValue>(), 8);
+        assert_eq!(std::mem::align_of::<RoasttyStyleColorValue>(), 8);
+        assert_eq!(std::mem::size_of::<RoasttyStyleColor>(), 16);
+        assert_eq!(std::mem::align_of::<RoasttyStyleColor>(), 8);
+        assert_eq!(std::mem::offset_of!(RoasttyStyleColor, tag), 0);
+        assert_eq!(std::mem::offset_of!(RoasttyStyleColor, value), 8);
+        assert_eq!(std::mem::size_of::<RoasttyStyle>(), 72);
+        assert_eq!(std::mem::align_of::<RoasttyStyle>(), 8);
+        assert_eq!(std::mem::offset_of!(RoasttyStyle, size), 0);
+        assert_eq!(std::mem::offset_of!(RoasttyStyle, fg_color), 8);
+        assert_eq!(std::mem::offset_of!(RoasttyStyle, bg_color), 24);
+        assert_eq!(std::mem::offset_of!(RoasttyStyle, underline_color), 40);
+        assert_eq!(std::mem::offset_of!(RoasttyStyle, bold), 56);
+        assert_eq!(std::mem::offset_of!(RoasttyStyle, italic), 57);
+        assert_eq!(std::mem::offset_of!(RoasttyStyle, faint), 58);
+        assert_eq!(std::mem::offset_of!(RoasttyStyle, blink), 59);
+        assert_eq!(std::mem::offset_of!(RoasttyStyle, inverse), 60);
+        assert_eq!(std::mem::offset_of!(RoasttyStyle, invisible), 61);
+        assert_eq!(std::mem::offset_of!(RoasttyStyle, strikethrough), 62);
+        assert_eq!(std::mem::offset_of!(RoasttyStyle, overline), 63);
+        assert_eq!(std::mem::offset_of!(RoasttyStyle, underline), 64);
+
+        assert_eq!(underline_to_int(sgr::Underline::None), 0);
+        assert_eq!(underline_to_int(sgr::Underline::Single), 1);
+        assert_eq!(underline_to_int(sgr::Underline::Double), 2);
+        assert_eq!(underline_to_int(sgr::Underline::Curly), 3);
+        assert_eq!(underline_to_int(sgr::Underline::Dotted), 4);
+        assert_eq!(underline_to_int(sgr::Underline::Dashed), 5);
+    }
+
+    #[test]
+    fn style_c_abi_default_and_non_default_conversion() {
+        let mut out = RoasttyStyle {
+            size: 0,
+            fg_color: RoasttyStyleColor {
+                tag: ROASTTY_STYLE_COLOR_RGB,
+                value: RoasttyStyleColorValue { _padding: u64::MAX },
+            },
+            bg_color: RoasttyStyleColor {
+                tag: ROASTTY_STYLE_COLOR_RGB,
+                value: RoasttyStyleColorValue { _padding: u64::MAX },
+            },
+            underline_color: RoasttyStyleColor {
+                tag: ROASTTY_STYLE_COLOR_RGB,
+                value: RoasttyStyleColorValue { _padding: u64::MAX },
+            },
+            bold: true,
+            italic: true,
+            faint: true,
+            blink: true,
+            inverse: true,
+            invisible: true,
+            strikethrough: true,
+            overline: true,
+            underline: 5,
+        };
+        roastty_style_default(&mut out);
+        assert_eq!(out.size, std::mem::size_of::<RoasttyStyle>());
+        assert_eq!(out.fg_color.tag, ROASTTY_STYLE_COLOR_NONE);
+        assert_eq!(out.bg_color.tag, ROASTTY_STYLE_COLOR_NONE);
+        assert_eq!(out.underline_color.tag, ROASTTY_STYLE_COLOR_NONE);
+        assert!(!out.bold);
+        assert!(!out.italic);
+        assert!(!out.faint);
+        assert!(!out.blink);
+        assert!(!out.inverse);
+        assert!(!out.invisible);
+        assert!(!out.strikethrough);
+        assert!(!out.overline);
+        assert_eq!(out.underline, 0);
+        assert!(roastty_style_is_default(&out));
+
+        let converted = style_to_c(style::Style {
+            fg_color: style::Color::Palette(42),
+            bg_color: style::Color::Rgb(color::Rgb::new(1, 2, 3)),
+            underline_color: style::Color::Rgb(color::Rgb::new(4, 5, 6)),
+            flags: style::Flags {
+                bold: true,
+                italic: true,
+                faint: true,
+                blink: true,
+                inverse: true,
+                invisible: true,
+                strikethrough: true,
+                overline: true,
+                underline: sgr::Underline::Curly,
+            },
+        });
+        assert_eq!(converted.size, std::mem::size_of::<RoasttyStyle>());
+        assert_eq!(converted.fg_color.tag, ROASTTY_STYLE_COLOR_PALETTE);
+        assert_eq!(style_color_palette(converted.fg_color), 42);
+        assert_eq!(converted.bg_color.tag, ROASTTY_STYLE_COLOR_RGB);
+        assert_eq!(
+            style_color_rgb(converted.bg_color),
+            RoasttyRgb { r: 1, g: 2, b: 3 }
+        );
+        assert_eq!(converted.underline_color.tag, ROASTTY_STYLE_COLOR_RGB);
+        assert_eq!(
+            style_color_rgb(converted.underline_color),
+            RoasttyRgb { r: 4, g: 5, b: 6 }
+        );
+        assert!(converted.bold);
+        assert!(converted.italic);
+        assert!(converted.faint);
+        assert!(converted.blink);
+        assert!(converted.inverse);
+        assert!(converted.invisible);
+        assert!(converted.strikethrough);
+        assert!(converted.overline);
+        assert_eq!(converted.underline, 3);
+        assert!(!roastty_style_is_default(&converted));
+    }
+
+    #[test]
+    fn style_c_abi_default_checks_validate_null_size_and_fields() {
+        roastty_style_default(ptr::null_mut());
+        assert!(!roastty_style_is_default(ptr::null()));
+
+        let mut style = style_to_c(style::Style::default());
+        assert!(roastty_style_is_default(&style));
+        style.size -= 1;
+        assert!(!roastty_style_is_default(&style));
+
+        let mut cases = Vec::new();
+        macro_rules! push_case {
+            ($field:ident, $value:expr) => {{
+                let mut value = style_to_c(style::Style::default());
+                value.$field = $value;
+                cases.push(value);
+            }};
+        }
+        push_case!(
+            fg_color,
+            RoasttyStyleColor {
+                tag: ROASTTY_STYLE_COLOR_PALETTE,
+                value: RoasttyStyleColorValue { palette: 1 }
+            }
+        );
+        push_case!(bold, true);
+        push_case!(italic, true);
+        push_case!(faint, true);
+        push_case!(blink, true);
+        push_case!(inverse, true);
+        push_case!(invisible, true);
+        push_case!(strikethrough, true);
+        push_case!(overline, true);
+        push_case!(underline, 1);
+
+        for case in cases {
+            assert!(!roastty_style_is_default(&case));
+        }
     }
 
     #[test]

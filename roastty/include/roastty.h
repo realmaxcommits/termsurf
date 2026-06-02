@@ -383,6 +383,39 @@ typedef struct {
 
 typedef roastty_rgb_s roastty_palette_t[256];
 
+typedef enum {
+  ROASTTY_STYLE_COLOR_NONE = 0,
+  ROASTTY_STYLE_COLOR_PALETTE = 1,
+  ROASTTY_STYLE_COLOR_RGB = 2,
+} roastty_style_color_tag_e;
+
+typedef union {
+  uint8_t palette;
+  roastty_rgb_s rgb;
+  uint64_t _padding;
+} roastty_style_color_value_u;
+
+typedef struct {
+  roastty_style_color_tag_e tag;
+  roastty_style_color_value_u value;
+} roastty_style_color_s;
+
+typedef struct {
+  size_t size;
+  roastty_style_color_s fg_color;
+  roastty_style_color_s bg_color;
+  roastty_style_color_s underline_color;
+  bool bold;
+  bool italic;
+  bool faint;
+  bool blink;
+  bool inverse;
+  bool invisible;
+  bool strikethrough;
+  bool overline;
+  int underline;
+} roastty_style_s;
+
 typedef uint64_t roastty_cell_t;
 typedef uint64_t roastty_row_t;
 
@@ -883,6 +916,8 @@ typedef struct {
 ROASTTY_API int roastty_init(uintptr_t, char**);
 ROASTTY_API roastty_info_s roastty_info(void);
 ROASTTY_API void roastty_string_free(roastty_string_s);
+ROASTTY_API void roastty_style_default(roastty_style_s*);
+ROASTTY_API bool roastty_style_is_default(const roastty_style_s*);
 ROASTTY_API roastty_result_e roastty_cell_get(roastty_cell_t,
                                               roastty_cell_data_e,
                                               void*);

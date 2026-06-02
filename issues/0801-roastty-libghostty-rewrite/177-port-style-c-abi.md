@@ -191,3 +191,54 @@ approves it.
 
 After implementation and result recording, the completed result must also be
 reviewed with Codex and approved before the result commit.
+
+## Result
+
+**Result:** Pass
+
+Implemented the Roastty style C ABI:
+
+- added `roastty_style_color_tag_e`, `roastty_style_color_value_u`,
+  `roastty_style_color_s`, and `roastty_style_s`;
+- added `roastty_style_default` and `roastty_style_is_default`;
+- added internal conversion from `terminal::style::Style` into the public C
+  style struct;
+- widened `terminal::color`, `terminal::sgr`, and `terminal::style` visibility
+  to `pub(crate)` where needed so the crate-level C ABI can convert internal
+  style values without exposing public Rust API;
+- added Rust ABI tests for enum values, size/alignment, every required offset,
+  default conversion, non-default palette/RGB/flag/underline conversion, null
+  handling, and size mismatch handling;
+- added C harness coverage for compile/link, enum values, layout, default
+  behavior, false cases, null handling, and size mismatch handling.
+
+The implementation intentionally hardens upstream's assert-based
+`style_is_default` helper for the Rust C ABI boundary:
+
+- `roastty_style_default(NULL)` is a no-op;
+- `roastty_style_is_default(NULL)` returns `false`;
+- `roastty_style_is_default` returns `false` for a `size` mismatch instead of
+  panicking or asserting across the C boundary.
+
+Verification passed:
+
+```bash
+cargo fmt -- roastty/src/lib.rs roastty/src/terminal/mod.rs roastty/src/terminal/color.rs roastty/src/terminal/sgr.rs roastty/src/terminal/style.rs
+cargo test -p roastty style_c_abi
+cargo test -p roastty c_harness_links_against_roastty_header_and_roastty_dylib
+cargo test -p roastty
+if rg -n 'ghostty|Ghostty|GHOSTTY' roastty/src/lib.rs roastty/include/roastty.h roastty/tests/abi_harness.c; then exit 1; else exit 0; fi
+git diff --check
+```
+
+The full `roastty` test run passed with 1856 Rust tests, the C ABI harness, and
+doc tests.
+
+## Conclusion
+
+Roastty now has the public style C struct that upstream render row-cell data
+uses for its `style` selector. This removes the main dependency that would have
+forced a partial render-state ABI port after Experiment 176.
+
+The next experiment can target render-state C ABI with the style output type
+available, while still keeping formatter objects and Kitty graphics separate.

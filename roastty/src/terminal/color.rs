@@ -1,8 +1,8 @@
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct Rgb {
-    pub(super) r: u8,
-    pub(super) g: u8,
-    pub(super) b: u8,
+    pub(crate) r: u8,
+    pub(crate) g: u8,
+    pub(crate) b: u8,
 }
 
 #[repr(C)]
@@ -34,7 +34,7 @@ struct PaletteMask {
 }
 
 impl Rgb {
-    pub(super) const fn new(r: u8, g: u8, b: u8) -> Self {
+    pub(crate) const fn new(r: u8, g: u8, b: u8) -> Self {
         Self { r, g, b }
     }
 

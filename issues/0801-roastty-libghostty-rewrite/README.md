@@ -480,7 +480,7 @@ tests, choose the larger subsystem.
   — **Pass**
 - [Experiment 176: Port Row and Cell C ABI](176-port-row-cell-c-abi.md) —
   **Pass**
-- [Experiment 177: Port Style C ABI](177-port-style-c-abi.md) — **Designed**
+- [Experiment 177: Port Style C ABI](177-port-style-c-abi.md) — **Pass**
 
 ## Non-Goals
 

@@ -11,7 +11,7 @@ mod clipboard;
 mod context_signal;
 
 #[allow(dead_code)]
-mod color;
+pub(crate) mod color;
 
 #[allow(dead_code)]
 mod cursor;
@@ -80,7 +80,7 @@ mod semantic_prompt;
 mod screen;
 
 #[allow(dead_code)]
-mod sgr;
+pub(crate) mod sgr;
 
 #[allow(dead_code)]
 mod size;
@@ -89,7 +89,7 @@ mod size;
 pub(crate) mod size_report;
 
 #[allow(dead_code)]
-mod style;
+pub(crate) mod style;
 
 #[allow(dead_code)]
 mod stream;
