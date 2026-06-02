@@ -532,6 +532,8 @@ tests, choose the larger subsystem.
   — **Pass**
 - [Experiment 203: Port Kitty Terminal Render Placement ABI](203-port-kitty-terminal-render-placement-abi.md)
   — **Pass**
+- [Experiment 204: Attach Kitty Render Placements to Render State](204-attach-kitty-render-placements-to-render-state.md)
+  — **Designed**
 
 ## Non-Goals
 
