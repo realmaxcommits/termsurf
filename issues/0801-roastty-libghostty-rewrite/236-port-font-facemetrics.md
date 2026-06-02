@@ -165,3 +165,76 @@ Two Low findings, fixed in the design above before this commit:
 2. the tests covered the `> 0` fallback for `cap_height` but not `ex_height` —
    added `Some(0.0)` and negative `ex_height` fallback cases (upstream applies
    the same guard to `ex_height`).
+
+## Result
+
+**Result:** Pass
+
+Added `pub(crate) struct FaceMetrics` (5 required + 8 `Option<f64>` fields, with
+upstream doc comments) and `impl FaceMetrics` with `line_height`,
+`effective_cap_height`, and `effective_ex_height` to
+`roastty/src/font/metrics.rs`. `line_height` = `ascent - descent + line_gap`;
+`effective_cap_height` returns `cap_height` when `Some` and `> 0` else
+`0.75 * ascent`; `effective_ex_height` returns `ex_height` when `Some` and `> 0`
+else `0.75 * effective_cap_height()`. Derives `Debug, Clone, Copy, PartialEq`
+(not `Eq`).
+
+Tests added (6): `face_metrics_holds_fields`, `face_metrics_line_height`,
+`effective_cap_height_uses_value_when_positive`,
+`effective_cap_height_estimates_when_absent_or_nonpositive` (None/`0.0`/negative
+all fall back), `effective_ex_height_uses_value_when_positive`, and
+`effective_ex_height_estimates_when_absent_or_nonpositive` (None/`0.0`/negative
+all fall back to the chained `0.75 * (0.75 * ascent)` estimate).
+
+### Verification
+
+```bash
+cargo fmt -p roastty
+cargo test -p roastty font
+cargo test -p roastty
+```
+
+Observed:
+
+- `font`: 13 passed (7 prior + 6 new).
+- Full `roastty`: 2289 unit tests passed (2283 prior + 6 new), plus the C ABI
+  harness passed.
+- `cargo fmt -p roastty -- --check`: clean.
+- `cargo build -p roastty`: no warnings.
+- No-`ghostty`-name gates passed for `roastty/src/font` and for
+  `roastty/src/lib.rs`, `roastty/include/roastty.h`,
+  `roastty/tests/abi_harness.c`.
+- `git diff --check`: clean.
+
+No C ABI, header, or ABI inventory changes; no `Minimums`/`calc`/constraint
+scope pulled in.
+
+### Completion Review
+
+Codex reviewed the completed implementation and found **no issues** ("nothing
+needs to change before the result commit").
+
+Review artifacts:
+
+- Prompt: `logs/codex-review/20260602-082559-470875-prompt.md`
+- Result: `logs/codex-review/20260602-082559-470875-last-message.md`
+
+Codex confirmed `FaceMetrics` matches upstream (5 required `f64` + 8
+`Option<f64>`, `PartialEq` not `Eq`), that the three methods are faithful
+including the exact `> 0` guard, and that the six tests cover the field storage,
+line height, positive values, non-positive fallbacks, and the chained `ex → cap`
+estimate.
+
+## Conclusion
+
+Experiment 236 succeeds. The font module now has `FaceMetrics` (the raw
+font-input metrics) with its line-height and effective cap/ex-height accessors —
+the input the deferred `calc` consumes. Both Codex gates passed (two design
+findings fixed; zero result findings).
+
+The remaining `font/Metrics.zig` work is the substantive part: the `Minimums`
+constraint table and `calc` (which derives a `Metrics` from a `FaceMetrics` with
+rounding, the minimum clamps, and the cell-size logic — carrying the bulk of the
+upstream tests), then constraint application. `calc` is the next font
+experiment, with `Metrics` (235) and `FaceMetrics` (236) now both in place as
+its output and input types.

@@ -62,6 +62,88 @@ pub(crate) struct Metrics {
     pub face_y: f64,
 }
 
+/// The raw metrics read from a font face — the input to `calc`, which derives a
+/// `Metrics`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct FaceMetrics {
+    /// Pixels per em. Dividing the other values by this yields sizes in ems, to
+    /// allow comparing metrics from faces of different sizes.
+    pub px_per_em: f64,
+
+    /// The minimum cell width that can contain any glyph in the ASCII range,
+    /// measured over all printable ASCII glyphs.
+    pub cell_width: f64,
+
+    /// Typographic ascent: the maximum vertical position of the highest
+    /// ascender, relative to the baseline (px, +Y up).
+    pub ascent: f64,
+
+    /// Typographic descent: the minimum vertical position of the lowest
+    /// descender, relative to the baseline (px, +Y up). Typically negative.
+    pub descent: f64,
+
+    /// Typographic line gap ("leading"): additional space between lines beyond
+    /// the ascent/descent (positive px).
+    pub line_gap: f64,
+
+    /// The TOP of the underline stroke, relative to the baseline (px, +Y up).
+    pub underline_position: Option<f64>,
+
+    /// The thickness of the underline stroke (px).
+    pub underline_thickness: Option<f64>,
+
+    /// The TOP of the strikethrough stroke, relative to the baseline (px, +Y up).
+    pub strikethrough_position: Option<f64>,
+
+    /// The thickness of the strikethrough stroke (px).
+    pub strikethrough_thickness: Option<f64>,
+
+    /// The height of capital letters, from a provided cap-height metric or the
+    /// capital "H" glyph.
+    pub cap_height: Option<f64>,
+
+    /// The height of lowercase letters, from a provided ex-height metric or the
+    /// lowercase "x" glyph.
+    pub ex_height: Option<f64>,
+
+    /// The measured bounding-box height of all printable ASCII characters
+    /// (positive px); can differ from ascent − descent.
+    pub ascii_height: Option<f64>,
+
+    /// The width of "水" (CJK water ideograph, U+6C34) if present, used to
+    /// normalize CJK font widths mixed with latin fonts.
+    pub ic_width: Option<f64>,
+}
+
+impl FaceMetrics {
+    /// The line height: `ascent - descent + line_gap`.
+    pub(crate) fn line_height(&self) -> f64 {
+        self.ascent - self.descent + self.line_gap
+    }
+
+    /// The effective cap height: the stored `cap_height` when present and
+    /// positive, otherwise an estimate of `0.75 * ascent`.
+    pub(crate) fn effective_cap_height(&self) -> f64 {
+        if let Some(value) = self.cap_height {
+            if value > 0.0 {
+                return value;
+            }
+        }
+        0.75 * self.ascent
+    }
+
+    /// The effective ex height: the stored `ex_height` when present and
+    /// positive, otherwise an estimate of `0.75 * effective_cap_height()`.
+    pub(crate) fn effective_ex_height(&self) -> f64 {
+        if let Some(value) = self.ex_height {
+            if value > 0.0 {
+                return value;
+            }
+        }
+        0.75 * self.effective_cap_height()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -124,5 +206,84 @@ mod tests {
         m.icon_height = 0.5;
         assert_eq!(m.face_width, 7.3);
         assert_eq!(m.icon_height, 0.5);
+    }
+
+    fn face_sample() -> FaceMetrics {
+        FaceMetrics {
+            px_per_em: 16.0,
+            cell_width: 8.0,
+            ascent: 12.0,
+            descent: -4.0,
+            line_gap: 2.0,
+            underline_position: Some(-1.0),
+            underline_thickness: Some(1.0),
+            strikethrough_position: None,
+            strikethrough_thickness: None,
+            cap_height: None,
+            ex_height: None,
+            ascii_height: None,
+            ic_width: None,
+        }
+    }
+
+    #[test]
+    fn face_metrics_holds_fields() {
+        let f = face_sample();
+        assert_eq!(f.px_per_em, 16.0);
+        assert_eq!(f.cell_width, 8.0);
+        assert_eq!(f.ascent, 12.0);
+        assert_eq!(f.descent, -4.0);
+        assert_eq!(f.line_gap, 2.0);
+        assert_eq!(f.underline_position, Some(-1.0));
+        assert_eq!(f.strikethrough_position, None);
+        assert_eq!(f.ic_width, None);
+    }
+
+    #[test]
+    fn face_metrics_line_height() {
+        let mut f = face_sample();
+        f.ascent = 10.0;
+        f.descent = -2.0;
+        f.line_gap = 1.0;
+        // 10 - (-2) + 1 = 13
+        assert_eq!(f.line_height(), 13.0);
+    }
+
+    #[test]
+    fn effective_cap_height_uses_value_when_positive() {
+        let mut f = face_sample();
+        f.cap_height = Some(9.0);
+        assert_eq!(f.effective_cap_height(), 9.0);
+    }
+
+    #[test]
+    fn effective_cap_height_estimates_when_absent_or_nonpositive() {
+        let mut f = face_sample(); // ascent = 12 -> estimate 9.0
+        f.cap_height = None;
+        assert_eq!(f.effective_cap_height(), 9.0);
+        f.cap_height = Some(0.0);
+        assert_eq!(f.effective_cap_height(), 9.0);
+        f.cap_height = Some(-1.0);
+        assert_eq!(f.effective_cap_height(), 9.0);
+    }
+
+    #[test]
+    fn effective_ex_height_uses_value_when_positive() {
+        let mut f = face_sample();
+        f.ex_height = Some(5.0);
+        assert_eq!(f.effective_ex_height(), 5.0);
+    }
+
+    #[test]
+    fn effective_ex_height_estimates_when_absent_or_nonpositive() {
+        // ascent 12 -> cap estimate 9.0 -> ex estimate 0.75 * 9.0 = 6.75.
+        let mut f = face_sample();
+        f.ex_height = None;
+        f.cap_height = None;
+        assert_eq!(f.effective_ex_height(), 6.75);
+        f.ex_height = Some(0.0);
+        assert_eq!(f.effective_ex_height(), 6.75);
+        f.ex_height = Some(-1.0);
+        assert_eq!(f.effective_ex_height(), 6.75);
     }
 }
