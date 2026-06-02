@@ -72,10 +72,16 @@ pub(crate) struct RenderRowSelectionSnapshot {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct RenderCellSnapshot {
+    pub(crate) raw: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct RenderRowSnapshot {
     pub(crate) raw: u64,
     pub(crate) dirty: bool,
     pub(crate) selection: Option<RenderRowSelectionSnapshot>,
+    pub(crate) cells: Vec<RenderCellSnapshot>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2047,6 +2053,12 @@ impl PageList {
                 raw: row.cval(),
                 dirty: node.page.is_dirty() || row.dirty(),
                 selection,
+                cells: node
+                    .page
+                    .get_cells(row)
+                    .iter()
+                    .map(|cell| RenderCellSnapshot { raw: cell.cval() })
+                    .collect(),
             });
         }
 

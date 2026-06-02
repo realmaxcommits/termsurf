@@ -610,6 +610,16 @@ static void assert_render_state_abi(void) {
   assert(ROASTTY_RENDER_STATE_ROW_DATA_CELLS == 3);
   assert(ROASTTY_RENDER_STATE_ROW_DATA_SELECTION == 4);
   assert(ROASTTY_RENDER_STATE_ROW_OPTION_DIRTY == 0);
+  assert(ROASTTY_RENDER_STATE_ROW_CELLS_DATA_INVALID == 0);
+  assert(ROASTTY_RENDER_STATE_ROW_CELLS_DATA_RAW == 1);
+  assert(ROASTTY_RENDER_STATE_ROW_CELLS_DATA_STYLE == 2);
+  assert(ROASTTY_RENDER_STATE_ROW_CELLS_DATA_GRAPHEMES_LEN == 3);
+  assert(ROASTTY_RENDER_STATE_ROW_CELLS_DATA_GRAPHEMES_BUF == 4);
+  assert(ROASTTY_RENDER_STATE_ROW_CELLS_DATA_BG_COLOR == 5);
+  assert(ROASTTY_RENDER_STATE_ROW_CELLS_DATA_FG_COLOR == 6);
+  assert(ROASTTY_RENDER_STATE_ROW_CELLS_DATA_SELECTED == 7);
+  assert(ROASTTY_RENDER_STATE_ROW_CELLS_DATA_HAS_STYLING == 8);
+  assert(ROASTTY_RENDER_STATE_ROW_CELLS_DATA_GRAPHEMES_UTF8 == 9);
 
   assert(sizeof(roastty_render_state_colors_s) == 792);
   assert(_Alignof(roastty_render_state_colors_s) == 8);
@@ -636,6 +646,12 @@ static void assert_render_state_abi(void) {
   assert(iterator != NULL);
   assert(!roastty_render_state_row_iterator_next(NULL));
   assert(!roastty_render_state_row_iterator_next(iterator));
+  roastty_render_state_row_cells_t cells = NULL;
+  assert(roastty_render_state_row_cells_new(NULL) == ROASTTY_INVALID_VALUE);
+  assert(roastty_render_state_row_cells_new(&cells) == ROASTTY_SUCCESS);
+  assert(cells != NULL);
+  assert(!roastty_render_state_row_cells_next(NULL));
+  assert(!roastty_render_state_row_cells_next(cells));
 
   uint16_t dim = 999;
   assert(roastty_render_state_get(state, ROASTTY_RENDER_STATE_DATA_COLS, &dim) ==
@@ -853,14 +869,44 @@ static void assert_render_state_abi(void) {
     assert(roastty_row_get(raw, ROASTTY_ROW_DATA_DIRTY, &raw_dirty) ==
            ROASTTY_SUCCESS);
     assert(row_dirty == raw_dirty);
-    roastty_render_state_row_cells_t cells = NULL;
+    roastty_render_state_row_cells_t null_cells = NULL;
     assert(roastty_render_state_row_get(iterator,
                                         ROASTTY_RENDER_STATE_ROW_DATA_CELLS,
-                                        &cells) == ROASTTY_NO_VALUE);
+                                        &null_cells) == ROASTTY_INVALID_VALUE);
+    assert(roastty_render_state_row_get(iterator,
+                                        ROASTTY_RENDER_STATE_ROW_DATA_CELLS,
+                                        &cells) == ROASTTY_SUCCESS);
+    assert(roastty_render_state_row_cells_next(cells));
+    roastty_cell_t cell = 0;
+    assert(roastty_render_state_row_cells_get(cells,
+                                              ROASTTY_RENDER_STATE_ROW_CELLS_DATA_RAW,
+                                              &cell) == ROASTTY_SUCCESS);
+    bool cell_selected = true;
+    assert(roastty_render_state_row_cells_get(cells,
+                                              ROASTTY_RENDER_STATE_ROW_CELLS_DATA_SELECTED,
+                                              &cell_selected) == ROASTTY_SUCCESS);
+    assert(!cell_selected);
+    bool has_styling = true;
+    assert(roastty_render_state_row_cells_get(
+               cells,
+               ROASTTY_RENDER_STATE_ROW_CELLS_DATA_HAS_STYLING,
+               &has_styling) == ROASTTY_SUCCESS);
+    assert(!has_styling);
+    assert(roastty_render_state_row_cells_get(cells,
+                                              ROASTTY_RENDER_STATE_ROW_CELLS_DATA_STYLE,
+                                              &cell) == ROASTTY_NO_VALUE);
     row_count++;
   }
   assert(row_count == 24);
   size_t row_written = 999;
+  row_written = 999;
+  assert(roastty_render_state_row_cells_get_multi(cells,
+                                                  0,
+                                                  NULL,
+                                                  NULL,
+                                                  &row_written) == ROASTTY_SUCCESS);
+  assert(row_written == 0);
+  row_written = 999;
   assert(roastty_render_state_row_get_multi(iterator,
                                             0,
                                             NULL,
@@ -882,6 +928,8 @@ static void assert_render_state_abi(void) {
   assert(!row_dirty);
 
   roastty_terminal_free(terminal);
+  roastty_render_state_row_cells_free(cells);
+  roastty_render_state_row_cells_free(NULL);
   roastty_render_state_row_iterator_free(iterator);
   roastty_render_state_row_iterator_free(NULL);
   roastty_render_state_free(state);

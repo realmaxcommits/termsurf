@@ -452,6 +452,19 @@ typedef enum {
 } roastty_render_state_row_option_e;
 
 typedef enum {
+  ROASTTY_RENDER_STATE_ROW_CELLS_DATA_INVALID = 0,
+  ROASTTY_RENDER_STATE_ROW_CELLS_DATA_RAW = 1,
+  ROASTTY_RENDER_STATE_ROW_CELLS_DATA_STYLE = 2,
+  ROASTTY_RENDER_STATE_ROW_CELLS_DATA_GRAPHEMES_LEN = 3,
+  ROASTTY_RENDER_STATE_ROW_CELLS_DATA_GRAPHEMES_BUF = 4,
+  ROASTTY_RENDER_STATE_ROW_CELLS_DATA_BG_COLOR = 5,
+  ROASTTY_RENDER_STATE_ROW_CELLS_DATA_FG_COLOR = 6,
+  ROASTTY_RENDER_STATE_ROW_CELLS_DATA_SELECTED = 7,
+  ROASTTY_RENDER_STATE_ROW_CELLS_DATA_HAS_STYLING = 8,
+  ROASTTY_RENDER_STATE_ROW_CELLS_DATA_GRAPHEMES_UTF8 = 9,
+} roastty_render_state_row_cells_data_e;
+
+typedef enum {
   ROASTTY_STYLE_COLOR_NONE = 0,
   ROASTTY_STYLE_COLOR_PALETTE = 1,
   ROASTTY_STYLE_COLOR_RGB = 2,
@@ -1012,6 +1025,15 @@ roastty_render_state_row_iterator_free(roastty_render_state_row_iterator_t);
 ROASTTY_API bool
 roastty_render_state_row_iterator_next(roastty_render_state_row_iterator_t);
 ROASTTY_API roastty_result_e
+roastty_render_state_row_cells_new(roastty_render_state_row_cells_t*);
+ROASTTY_API void
+roastty_render_state_row_cells_free(roastty_render_state_row_cells_t);
+ROASTTY_API bool
+roastty_render_state_row_cells_next(roastty_render_state_row_cells_t);
+ROASTTY_API roastty_result_e
+roastty_render_state_row_cells_select(roastty_render_state_row_cells_t,
+                                      uint16_t);
+ROASTTY_API roastty_result_e
 roastty_render_state_update(roastty_render_state_t, roastty_terminal_t);
 ROASTTY_API roastty_result_e
 roastty_render_state_get(roastty_render_state_t,
@@ -1042,6 +1064,17 @@ ROASTTY_API roastty_result_e
 roastty_render_state_row_set(roastty_render_state_row_iterator_t,
                              roastty_render_state_row_option_e,
                              const void*);
+ROASTTY_API roastty_result_e
+roastty_render_state_row_cells_get(roastty_render_state_row_cells_t,
+                                   roastty_render_state_row_cells_data_e,
+                                   void*);
+ROASTTY_API roastty_result_e
+roastty_render_state_row_cells_get_multi(
+    roastty_render_state_row_cells_t,
+    size_t,
+    const roastty_render_state_row_cells_data_e*,
+    void**,
+    size_t*);
 ROASTTY_API roastty_result_e
 roastty_render_state_colors_get(roastty_render_state_t,
                                 roastty_render_state_colors_s*);

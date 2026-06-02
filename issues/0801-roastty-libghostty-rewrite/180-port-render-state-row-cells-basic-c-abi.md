@@ -273,3 +273,55 @@ approves it.
 
 After implementation and result recording, the completed result must also be
 reviewed with Codex and approved before the result commit.
+
+## Result
+
+**Result:** Pass
+
+Experiment 180 implemented the basic row-cells C ABI slice:
+
+- added `roastty_render_state_row_cells_data_e` selector values to the public
+  header and mirrored Rust constants;
+- added row-cells lifecycle, `next`, `select`, `get`, and `get_multi`;
+- changed row `CELLS` from a deferred selector into a binding operation for an
+  existing non-null row-cells handle;
+- extended render-state row snapshots so each row owns cloned cell snapshots;
+- implemented row-cells `RAW`, `SELECTED`, and `HAS_STYLING`;
+- kept `STYLE`, grapheme, and resolved-color selectors as explicit
+  `ROASTTY_NO_VALUE`;
+- covered the new ABI in Rust tests and the C harness.
+
+Verification run:
+
+```bash
+cargo fmt -- roastty/src/lib.rs roastty/src/terminal/page_list.rs roastty/src/terminal/screen.rs roastty/src/terminal/terminal.rs
+cargo test -p roastty render_state_row_cells_c_abi
+cargo test -p roastty render_state_row_c_abi
+cargo test -p roastty c_harness_links_against_roastty_header_and_roastty_dylib
+cargo test -p roastty
+if rg -n 'ghostty|Ghostty|GHOSTTY' roastty/src/lib.rs roastty/include/roastty.h roastty/tests/abi_harness.c; then exit 1; else exit 0; fi
+git diff --check
+```
+
+Observed results:
+
+- focused row-cells ABI tests: 3 passed;
+- row iterator ABI tests: 4 passed;
+- C harness link test: passed;
+- full `roastty` suite: 1866 Rust tests passed, 1 C harness test passed, 0
+  doctests;
+- strict no-`ghostty` check on public ABI/code files: passed;
+- `git diff --check`: passed.
+- Codex completed-result review: approved after fixing deferred-selector
+  validation precedence for null, unbound, and unselected row-cells handles.
+
+## Conclusion
+
+The render-state row path now exposes a usable row-cells iterator without
+leaking live page storage into the C ABI. Binding clones the selected row's
+snapshot into the row-cells handle, so the handle remains stable after terminal
+mutation, render-state update, row iterator free, and render-state free.
+
+The richer row-cell data remains intentionally deferred. The next render-state
+slice should make style, grapheme, and resolved-color cell selectors real by
+expanding the snapshot data they need, not by synthesizing placeholders.

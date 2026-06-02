@@ -249,6 +249,17 @@ const ROASTTY_RENDER_STATE_ROW_DATA_SELECTION: c_int = 4;
 
 const ROASTTY_RENDER_STATE_ROW_OPTION_DIRTY: c_int = 0;
 
+const ROASTTY_RENDER_STATE_ROW_CELLS_DATA_INVALID: c_int = 0;
+const ROASTTY_RENDER_STATE_ROW_CELLS_DATA_RAW: c_int = 1;
+const ROASTTY_RENDER_STATE_ROW_CELLS_DATA_STYLE: c_int = 2;
+const ROASTTY_RENDER_STATE_ROW_CELLS_DATA_GRAPHEMES_LEN: c_int = 3;
+const ROASTTY_RENDER_STATE_ROW_CELLS_DATA_GRAPHEMES_BUF: c_int = 4;
+const ROASTTY_RENDER_STATE_ROW_CELLS_DATA_BG_COLOR: c_int = 5;
+const ROASTTY_RENDER_STATE_ROW_CELLS_DATA_FG_COLOR: c_int = 6;
+const ROASTTY_RENDER_STATE_ROW_CELLS_DATA_SELECTED: c_int = 7;
+const ROASTTY_RENDER_STATE_ROW_CELLS_DATA_HAS_STYLING: c_int = 8;
+const ROASTTY_RENDER_STATE_ROW_CELLS_DATA_GRAPHEMES_UTF8: c_int = 9;
+
 const ROASTTY_STYLE_COLOR_NONE: c_int = 0;
 const ROASTTY_STYLE_COLOR_PALETTE: c_int = 1;
 const ROASTTY_STYLE_COLOR_RGB: c_int = 2;
@@ -387,6 +398,7 @@ struct RenderStateRowSnapshot {
     raw: RoasttyRow,
     dirty: bool,
     selection: Option<RenderStateRowSelectionRange>,
+    cells: Vec<RenderStateCellSnapshot>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -395,10 +407,23 @@ struct RenderStateRowSelectionRange {
     end_x: u16,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct RenderStateCellSnapshot {
+    raw: RoasttyCell,
+}
+
 #[derive(Debug, Default)]
 struct RenderStateRowIterator {
     rows: Vec<RenderStateRowSnapshot>,
     selected: Option<usize>,
+    bound: bool,
+}
+
+#[derive(Debug, Default)]
+struct RenderStateRowCells {
+    cells: Vec<RenderStateCellSnapshot>,
+    selected: Option<usize>,
+    selection: Option<RenderStateRowSelectionRange>,
     bound: bool,
 }
 
@@ -1461,6 +1486,11 @@ fn render_state_from_terminal(terminal: &InnerTerminal) -> RenderStateScalar {
                     start_x: selection.start_x,
                     end_x: selection.end_x,
                 }),
+                cells: row
+                    .cells
+                    .into_iter()
+                    .map(|cell| RenderStateCellSnapshot { raw: cell.raw })
+                    .collect(),
             })
             .collect(),
     }
@@ -1493,6 +1523,15 @@ fn render_state_row_iterator_mut_from_handle(
     Some(unsafe { &mut *handle.cast::<RenderStateRowIterator>() })
 }
 
+fn render_state_row_cells_mut_from_handle(
+    handle: RoasttyRenderStateRowCells,
+) -> Option<&'static mut RenderStateRowCells> {
+    if handle.is_null() {
+        return None;
+    }
+    Some(unsafe { &mut *handle.cast::<RenderStateRowCells>() })
+}
+
 fn render_dirty_from_raw(value: c_int) -> Option<c_int> {
     match value {
         ROASTTY_RENDER_STATE_DIRTY_FALSE
@@ -1518,6 +1557,14 @@ fn valid_render_state_row_data(data: c_int) -> bool {
 
 fn valid_render_state_row_option(option: c_int) -> bool {
     option == ROASTTY_RENDER_STATE_ROW_OPTION_DIRTY
+}
+
+fn valid_render_state_row_cells_data(data: c_int) -> bool {
+    matches!(
+        data,
+        ROASTTY_RENDER_STATE_ROW_CELLS_DATA_INVALID
+            ..=ROASTTY_RENDER_STATE_ROW_CELLS_DATA_GRAPHEMES_UTF8
+    )
 }
 
 unsafe fn terminal_get_write(terminal: &InnerTerminal, data: c_int, out: *mut c_void) -> c_int {
@@ -2238,7 +2285,17 @@ unsafe fn render_state_row_get_write(
             out.cast::<RoasttyRow>().write(row.raw);
             ROASTTY_SUCCESS
         }
-        ROASTTY_RENDER_STATE_ROW_DATA_CELLS => ROASTTY_NO_VALUE,
+        ROASTTY_RENDER_STATE_ROW_DATA_CELLS => {
+            let cells_handle = out.cast::<RoasttyRenderStateRowCells>().read();
+            let Some(cells) = render_state_row_cells_mut_from_handle(cells_handle) else {
+                return ROASTTY_INVALID_VALUE;
+            };
+            cells.cells.clone_from(&row.cells);
+            cells.selected = None;
+            cells.selection = row.selection;
+            cells.bound = true;
+            ROASTTY_SUCCESS
+        }
         ROASTTY_RENDER_STATE_ROW_DATA_SELECTION => {
             let out = out.cast::<RoasttyRenderStateRowSelection>();
             if ptr::addr_of!((*out).size).read()
@@ -2251,6 +2308,63 @@ unsafe fn render_state_row_get_write(
             };
             ptr::addr_of_mut!((*out).start_x).write(selection.start_x);
             ptr::addr_of_mut!((*out).end_x).write(selection.end_x);
+            ROASTTY_SUCCESS
+        }
+        _ => ROASTTY_INVALID_VALUE,
+    }
+}
+
+unsafe fn render_state_row_cells_get_write(
+    cells: RoasttyRenderStateRowCells,
+    data: c_int,
+    out: *mut c_void,
+) -> c_int {
+    if out.is_null() {
+        return ROASTTY_INVALID_VALUE;
+    }
+    if !valid_render_state_row_cells_data(data)
+        || data == ROASTTY_RENDER_STATE_ROW_CELLS_DATA_INVALID
+    {
+        return ROASTTY_INVALID_VALUE;
+    }
+
+    let Some(cells) = render_state_row_cells_mut_from_handle(cells) else {
+        return ROASTTY_INVALID_VALUE;
+    };
+    if !cells.bound {
+        return ROASTTY_INVALID_VALUE;
+    }
+    let Some(index) = cells.selected else {
+        return ROASTTY_INVALID_VALUE;
+    };
+    let Some(cell) = cells.cells.get(index) else {
+        return ROASTTY_INVALID_VALUE;
+    };
+
+    match data {
+        ROASTTY_RENDER_STATE_ROW_CELLS_DATA_RAW => {
+            out.cast::<RoasttyCell>().write(cell.raw);
+            ROASTTY_SUCCESS
+        }
+        ROASTTY_RENDER_STATE_ROW_CELLS_DATA_STYLE
+        | ROASTTY_RENDER_STATE_ROW_CELLS_DATA_GRAPHEMES_LEN
+        | ROASTTY_RENDER_STATE_ROW_CELLS_DATA_GRAPHEMES_BUF
+        | ROASTTY_RENDER_STATE_ROW_CELLS_DATA_BG_COLOR
+        | ROASTTY_RENDER_STATE_ROW_CELLS_DATA_FG_COLOR
+        | ROASTTY_RENDER_STATE_ROW_CELLS_DATA_GRAPHEMES_UTF8 => ROASTTY_NO_VALUE,
+        ROASTTY_RENDER_STATE_ROW_CELLS_DATA_SELECTED => {
+            let selected = cells
+                .selection
+                .map(|selection| {
+                    index >= selection.start_x as usize && index <= selection.end_x as usize
+                })
+                .unwrap_or(false);
+            out.cast::<bool>().write(selected);
+            ROASTTY_SUCCESS
+        }
+        ROASTTY_RENDER_STATE_ROW_CELLS_DATA_HAS_STYLING => {
+            out.cast::<bool>()
+                .write(packed_bits(cell.raw, 26, u16::MAX as u64) != 0);
             ROASTTY_SUCCESS
         }
         _ => ROASTTY_INVALID_VALUE,
@@ -2458,6 +2572,64 @@ pub extern "C" fn roastty_render_state_row_iterator_next(
 }
 
 #[no_mangle]
+pub extern "C" fn roastty_render_state_row_cells_new(
+    out: *mut RoasttyRenderStateRowCells,
+) -> c_int {
+    if out.is_null() {
+        return ROASTTY_INVALID_VALUE;
+    }
+
+    let cells = Box::new(RenderStateRowCells::default());
+    unsafe {
+        out.write(Box::into_raw(cells).cast());
+    }
+    ROASTTY_SUCCESS
+}
+
+#[no_mangle]
+pub extern "C" fn roastty_render_state_row_cells_free(cells: RoasttyRenderStateRowCells) {
+    if cells.is_null() {
+        return;
+    }
+
+    unsafe {
+        drop(Box::from_raw(cells.cast::<RenderStateRowCells>()));
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn roastty_render_state_row_cells_next(cells: RoasttyRenderStateRowCells) -> bool {
+    let Some(cells) = render_state_row_cells_mut_from_handle(cells) else {
+        return false;
+    };
+    if !cells.bound {
+        return false;
+    }
+
+    let next = cells.selected.map_or(0, |index| index + 1);
+    if next >= cells.cells.len() {
+        return false;
+    }
+    cells.selected = Some(next);
+    true
+}
+
+#[no_mangle]
+pub extern "C" fn roastty_render_state_row_cells_select(
+    cells: RoasttyRenderStateRowCells,
+    x: u16,
+) -> c_int {
+    let Some(cells) = render_state_row_cells_mut_from_handle(cells) else {
+        return ROASTTY_INVALID_VALUE;
+    };
+    if !cells.bound || x as usize >= cells.cells.len() {
+        return ROASTTY_INVALID_VALUE;
+    }
+    cells.selected = Some(x as usize);
+    ROASTTY_SUCCESS
+}
+
+#[no_mangle]
 pub extern "C" fn roastty_render_state_update(
     state: RoasttyRenderStateHandle,
     terminal: RoasttyTerminal,
@@ -2633,6 +2805,63 @@ pub extern "C" fn roastty_render_state_row_set(
         }
         _ => ROASTTY_INVALID_VALUE,
     }
+}
+
+#[no_mangle]
+pub extern "C" fn roastty_render_state_row_cells_get(
+    cells: RoasttyRenderStateRowCells,
+    data: c_int,
+    out: *mut c_void,
+) -> c_int {
+    if !valid_render_state_row_cells_data(data)
+        || data == ROASTTY_RENDER_STATE_ROW_CELLS_DATA_INVALID
+    {
+        return ROASTTY_INVALID_VALUE;
+    }
+
+    unsafe { render_state_row_cells_get_write(cells, data, out) }
+}
+
+#[no_mangle]
+pub extern "C" fn roastty_render_state_row_cells_get_multi(
+    cells: RoasttyRenderStateRowCells,
+    count: usize,
+    keys: *const c_int,
+    values: *mut *mut c_void,
+    out_written: *mut usize,
+) -> c_int {
+    if count == 0 {
+        if !out_written.is_null() {
+            unsafe {
+                out_written.write(0);
+            }
+        }
+        return ROASTTY_SUCCESS;
+    }
+    if keys.is_null() || values.is_null() {
+        return ROASTTY_INVALID_VALUE;
+    }
+
+    for index in 0..count {
+        let key = unsafe { keys.add(index).read() };
+        let value = unsafe { values.add(index).read() };
+        let result = roastty_render_state_row_cells_get(cells, key, value);
+        if result != ROASTTY_SUCCESS {
+            if !out_written.is_null() {
+                unsafe {
+                    out_written.write(index);
+                }
+            }
+            return result;
+        }
+    }
+
+    if !out_written.is_null() {
+        unsafe {
+            out_written.write(count);
+        }
+    }
+    ROASTTY_SUCCESS
 }
 
 #[no_mangle]
@@ -5549,6 +5778,16 @@ mod tests {
         iterator
     }
 
+    fn new_render_state_row_cells() -> RoasttyRenderStateRowCells {
+        let mut cells: RoasttyRenderStateRowCells = ptr::null_mut();
+        assert_eq!(
+            roastty_render_state_row_cells_new(&mut cells),
+            ROASTTY_SUCCESS
+        );
+        assert!(!cells.is_null());
+        cells
+    }
+
     fn bind_render_state_rows(
         state: RoasttyRenderStateHandle,
         iterator: RoasttyRenderStateRowIterator,
@@ -5563,6 +5802,22 @@ mod tests {
             ROASTTY_SUCCESS
         );
         assert_eq!(iterator_handle, iterator);
+    }
+
+    fn bind_render_state_row_cells(
+        iterator: RoasttyRenderStateRowIterator,
+        cells: RoasttyRenderStateRowCells,
+    ) {
+        let mut cells_handle = cells;
+        assert_eq!(
+            roastty_render_state_row_get(
+                iterator,
+                ROASTTY_RENDER_STATE_ROW_DATA_CELLS,
+                &mut cells_handle as *mut _ as *mut c_void,
+            ),
+            ROASTTY_SUCCESS
+        );
+        assert_eq!(cells_handle, cells);
     }
 
     fn render_state_get_u16(state: RoasttyRenderStateHandle, data: c_int) -> u16 {
@@ -7065,6 +7320,16 @@ mod tests {
         assert_eq!(ROASTTY_RENDER_STATE_ROW_DATA_CELLS, 3);
         assert_eq!(ROASTTY_RENDER_STATE_ROW_DATA_SELECTION, 4);
         assert_eq!(ROASTTY_RENDER_STATE_ROW_OPTION_DIRTY, 0);
+        assert_eq!(ROASTTY_RENDER_STATE_ROW_CELLS_DATA_INVALID, 0);
+        assert_eq!(ROASTTY_RENDER_STATE_ROW_CELLS_DATA_RAW, 1);
+        assert_eq!(ROASTTY_RENDER_STATE_ROW_CELLS_DATA_STYLE, 2);
+        assert_eq!(ROASTTY_RENDER_STATE_ROW_CELLS_DATA_GRAPHEMES_LEN, 3);
+        assert_eq!(ROASTTY_RENDER_STATE_ROW_CELLS_DATA_GRAPHEMES_BUF, 4);
+        assert_eq!(ROASTTY_RENDER_STATE_ROW_CELLS_DATA_BG_COLOR, 5);
+        assert_eq!(ROASTTY_RENDER_STATE_ROW_CELLS_DATA_FG_COLOR, 6);
+        assert_eq!(ROASTTY_RENDER_STATE_ROW_CELLS_DATA_SELECTED, 7);
+        assert_eq!(ROASTTY_RENDER_STATE_ROW_CELLS_DATA_HAS_STYLING, 8);
+        assert_eq!(ROASTTY_RENDER_STATE_ROW_CELLS_DATA_GRAPHEMES_UTF8, 9);
 
         assert_eq!(std::mem::size_of::<RoasttyRenderStateColors>(), 792);
         assert_eq!(std::mem::align_of::<RoasttyRenderStateColors>(), 8);
@@ -7369,15 +7634,19 @@ mod tests {
                 ),
                 ROASTTY_INVALID_VALUE
             );
-            let mut cells = ptr::null_mut::<c_void>();
+            let cells = new_render_state_row_cells();
+            let mut cells_handle = cells;
             assert_eq!(
                 roastty_render_state_row_get(
                     iterator,
                     ROASTTY_RENDER_STATE_ROW_DATA_CELLS,
-                    &mut cells as *mut _ as *mut c_void,
+                    &mut cells_handle as *mut _ as *mut c_void,
                 ),
-                ROASTTY_NO_VALUE
+                ROASTTY_SUCCESS
             );
+            assert_eq!(cells_handle, cells);
+            assert!(roastty_render_state_row_cells_next(cells));
+            roastty_render_state_row_cells_free(cells);
             rows.push(raw);
         }
         assert_eq!(rows.len(), 3);
@@ -7662,8 +7931,14 @@ mod tests {
         );
         let partial_keys = [
             ROASTTY_RENDER_STATE_ROW_DATA_DIRTY,
-            ROASTTY_RENDER_STATE_ROW_DATA_CELLS,
+            ROASTTY_RENDER_STATE_ROW_DATA_SELECTION,
         ];
+        let mut row_selection = RoasttyRenderStateRowSelection {
+            size: std::mem::size_of::<RoasttyRenderStateRowSelection>(),
+            start_x: 0,
+            end_x: 0,
+        };
+        values[1] = &mut row_selection as *mut _ as *mut c_void;
         assert_eq!(
             roastty_render_state_row_get_multi(
                 iterator,
@@ -7678,6 +7953,296 @@ mod tests {
 
         roastty_render_state_row_iterator_free(iterator);
         roastty_render_state_free(state);
+        roastty_terminal_free(terminal);
+    }
+
+    #[test]
+    fn render_state_row_cells_c_abi_iterates_raw_selected_and_styling() {
+        let terminal = new_terminal(6, 2);
+        write_terminal(terminal, b"A\x1b[31mB\x1b[0mC");
+        let selection = terminal_selection(terminal, (1, 0), (2, 0), false);
+        assert_eq!(
+            roastty_terminal_set(
+                terminal,
+                ROASTTY_TERMINAL_OPTION_SELECTION,
+                &selection as *const _ as *const c_void,
+            ),
+            ROASTTY_SUCCESS
+        );
+
+        let state = new_render_state();
+        assert_eq!(
+            roastty_render_state_update(state, terminal),
+            ROASTTY_SUCCESS
+        );
+        let iterator = new_render_state_row_iterator();
+        bind_render_state_rows(state, iterator);
+        assert!(roastty_render_state_row_iterator_next(iterator));
+        let cells = new_render_state_row_cells();
+        bind_render_state_row_cells(iterator, cells);
+
+        let mut raw_cells = Vec::new();
+        let mut selected = Vec::new();
+        let mut styled = Vec::new();
+        while roastty_render_state_row_cells_next(cells) {
+            let mut raw: RoasttyCell = 0;
+            let mut is_selected = false;
+            let mut has_styling = false;
+            assert_eq!(
+                roastty_render_state_row_cells_get(
+                    cells,
+                    ROASTTY_RENDER_STATE_ROW_CELLS_DATA_RAW,
+                    &mut raw as *mut _ as *mut c_void,
+                ),
+                ROASTTY_SUCCESS
+            );
+            assert_eq!(
+                roastty_render_state_row_cells_get(
+                    cells,
+                    ROASTTY_RENDER_STATE_ROW_CELLS_DATA_SELECTED,
+                    &mut is_selected as *mut _ as *mut c_void,
+                ),
+                ROASTTY_SUCCESS
+            );
+            assert_eq!(
+                roastty_render_state_row_cells_get(
+                    cells,
+                    ROASTTY_RENDER_STATE_ROW_CELLS_DATA_HAS_STYLING,
+                    &mut has_styling as *mut _ as *mut c_void,
+                ),
+                ROASTTY_SUCCESS
+            );
+            raw_cells.push(raw);
+            selected.push(is_selected);
+            styled.push(has_styling);
+        }
+
+        assert_eq!(raw_cells.len(), 6);
+        assert_eq!(cell_codepoint(raw_cells[0]), 'A' as u32);
+        assert_eq!(cell_codepoint(raw_cells[1]), 'B' as u32);
+        assert_eq!(cell_codepoint(raw_cells[2]), 'C' as u32);
+        assert_eq!(selected, vec![false, true, true, false, false, false]);
+        assert_eq!(styled, vec![false, true, false, false, false, false]);
+
+        roastty_render_state_row_cells_free(cells);
+        roastty_render_state_row_iterator_free(iterator);
+        roastty_render_state_free(state);
+        roastty_terminal_free(terminal);
+    }
+
+    #[test]
+    fn render_state_row_cells_c_abi_select_get_multi_and_deferred_values() {
+        let terminal = new_terminal(4, 1);
+        write_terminal(terminal, b"WXYZ");
+        let state = new_render_state();
+        assert_eq!(
+            roastty_render_state_update(state, terminal),
+            ROASTTY_SUCCESS
+        );
+        let iterator = new_render_state_row_iterator();
+        bind_render_state_rows(state, iterator);
+        assert!(roastty_render_state_row_iterator_next(iterator));
+        let cells = new_render_state_row_cells();
+
+        let mut raw: RoasttyCell = 0;
+        assert_eq!(
+            roastty_render_state_row_get(
+                iterator,
+                ROASTTY_RENDER_STATE_ROW_DATA_CELLS,
+                ptr::null_mut(),
+            ),
+            ROASTTY_INVALID_VALUE
+        );
+        let mut null_cells: RoasttyRenderStateRowCells = ptr::null_mut();
+        assert_eq!(
+            roastty_render_state_row_get(
+                iterator,
+                ROASTTY_RENDER_STATE_ROW_DATA_CELLS,
+                &mut null_cells as *mut _ as *mut c_void,
+            ),
+            ROASTTY_INVALID_VALUE
+        );
+        assert_eq!(
+            roastty_render_state_row_cells_select(cells, 0),
+            ROASTTY_INVALID_VALUE
+        );
+        assert_eq!(
+            roastty_render_state_row_cells_get(
+                cells,
+                ROASTTY_RENDER_STATE_ROW_CELLS_DATA_RAW,
+                &mut raw as *mut _ as *mut c_void,
+            ),
+            ROASTTY_INVALID_VALUE
+        );
+        assert_eq!(
+            roastty_render_state_row_cells_get(
+                ptr::null_mut(),
+                ROASTTY_RENDER_STATE_ROW_CELLS_DATA_STYLE,
+                &mut raw as *mut _ as *mut c_void,
+            ),
+            ROASTTY_INVALID_VALUE
+        );
+        assert_eq!(
+            roastty_render_state_row_cells_get(
+                cells,
+                ROASTTY_RENDER_STATE_ROW_CELLS_DATA_STYLE,
+                &mut raw as *mut _ as *mut c_void,
+            ),
+            ROASTTY_INVALID_VALUE
+        );
+
+        bind_render_state_row_cells(iterator, cells);
+        assert_eq!(
+            roastty_render_state_row_cells_get(
+                cells,
+                ROASTTY_RENDER_STATE_ROW_CELLS_DATA_STYLE,
+                &mut raw as *mut _ as *mut c_void,
+            ),
+            ROASTTY_INVALID_VALUE
+        );
+        assert_eq!(
+            roastty_render_state_row_cells_select(cells, 2),
+            ROASTTY_SUCCESS
+        );
+        assert_eq!(
+            roastty_render_state_row_cells_get(
+                cells,
+                ROASTTY_RENDER_STATE_ROW_CELLS_DATA_RAW,
+                &mut raw as *mut _ as *mut c_void,
+            ),
+            ROASTTY_SUCCESS
+        );
+        assert_eq!(cell_codepoint(raw), 'Y' as u32);
+        assert_eq!(
+            roastty_render_state_row_cells_select(cells, 4),
+            ROASTTY_INVALID_VALUE
+        );
+
+        let deferred = [
+            ROASTTY_RENDER_STATE_ROW_CELLS_DATA_STYLE,
+            ROASTTY_RENDER_STATE_ROW_CELLS_DATA_GRAPHEMES_LEN,
+            ROASTTY_RENDER_STATE_ROW_CELLS_DATA_GRAPHEMES_BUF,
+            ROASTTY_RENDER_STATE_ROW_CELLS_DATA_BG_COLOR,
+            ROASTTY_RENDER_STATE_ROW_CELLS_DATA_FG_COLOR,
+            ROASTTY_RENDER_STATE_ROW_CELLS_DATA_GRAPHEMES_UTF8,
+        ];
+        for data in deferred {
+            assert_eq!(
+                roastty_render_state_row_cells_get(cells, data, &mut raw as *mut _ as *mut c_void,),
+                ROASTTY_NO_VALUE
+            );
+        }
+
+        let keys = [
+            ROASTTY_RENDER_STATE_ROW_CELLS_DATA_RAW,
+            ROASTTY_RENDER_STATE_ROW_CELLS_DATA_SELECTED,
+        ];
+        let mut selected = true;
+        let mut values = [
+            &mut raw as *mut _ as *mut c_void,
+            &mut selected as *mut _ as *mut c_void,
+        ];
+        let mut written = 99;
+        assert_eq!(
+            roastty_render_state_row_cells_get_multi(
+                cells,
+                2,
+                keys.as_ptr(),
+                values.as_mut_ptr(),
+                &mut written,
+            ),
+            ROASTTY_SUCCESS
+        );
+        assert_eq!(written, 2);
+        written = 99;
+        assert_eq!(
+            roastty_render_state_row_cells_get_multi(
+                cells,
+                0,
+                ptr::null(),
+                ptr::null_mut(),
+                &mut written,
+            ),
+            ROASTTY_SUCCESS
+        );
+        assert_eq!(written, 0);
+        assert_eq!(
+            roastty_render_state_row_cells_get_multi(
+                cells,
+                1,
+                ptr::null(),
+                values.as_mut_ptr(),
+                &mut written,
+            ),
+            ROASTTY_INVALID_VALUE
+        );
+        let partial_keys = [
+            ROASTTY_RENDER_STATE_ROW_CELLS_DATA_RAW,
+            ROASTTY_RENDER_STATE_ROW_CELLS_DATA_STYLE,
+        ];
+        assert_eq!(
+            roastty_render_state_row_cells_get_multi(
+                cells,
+                2,
+                partial_keys.as_ptr(),
+                values.as_mut_ptr(),
+                &mut written,
+            ),
+            ROASTTY_NO_VALUE
+        );
+        assert_eq!(written, 1);
+
+        roastty_render_state_row_cells_free(cells);
+        roastty_render_state_row_iterator_free(iterator);
+        roastty_render_state_free(state);
+        roastty_terminal_free(terminal);
+    }
+
+    #[test]
+    fn render_state_row_cells_c_abi_snapshot_survives_rebind_and_frees() {
+        let terminal = new_terminal(3, 1);
+        write_terminal(terminal, b"abc");
+        let state = new_render_state();
+        assert_eq!(
+            roastty_render_state_update(state, terminal),
+            ROASTTY_SUCCESS
+        );
+        let iterator = new_render_state_row_iterator();
+        bind_render_state_rows(state, iterator);
+        assert!(roastty_render_state_row_iterator_next(iterator));
+        let cells = new_render_state_row_cells();
+        bind_render_state_row_cells(iterator, cells);
+        assert!(roastty_render_state_row_cells_next(cells));
+        let mut before: RoasttyCell = 0;
+        assert_eq!(
+            roastty_render_state_row_cells_get(
+                cells,
+                ROASTTY_RENDER_STATE_ROW_CELLS_DATA_RAW,
+                &mut before as *mut _ as *mut c_void,
+            ),
+            ROASTTY_SUCCESS
+        );
+
+        write_terminal(terminal, b"\rXYZ");
+        assert_eq!(
+            roastty_render_state_update(state, terminal),
+            ROASTTY_SUCCESS
+        );
+        roastty_render_state_row_iterator_free(iterator);
+        roastty_render_state_free(state);
+
+        let mut after: RoasttyCell = 0;
+        assert_eq!(
+            roastty_render_state_row_cells_get(
+                cells,
+                ROASTTY_RENDER_STATE_ROW_CELLS_DATA_RAW,
+                &mut after as *mut _ as *mut c_void,
+            ),
+            ROASTTY_SUCCESS
+        );
+        assert_eq!(after, before);
+
+        roastty_render_state_row_cells_free(cells);
         roastty_terminal_free(terminal);
     }
 
