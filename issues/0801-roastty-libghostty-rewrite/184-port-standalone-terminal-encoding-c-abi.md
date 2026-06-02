@@ -146,3 +146,45 @@ Required edge-case coverage:
   purely mechanical.
 - Do not skip Codex result review. If the result review finds a real gap, fix it
   and re-review before recording the result.
+
+## Result
+
+**Result:** Pass
+
+The experiment added the standalone terminal encoding C ABI helpers:
+
+- `roastty_focus_encode` with `roastty_focus_event_e`;
+- `roastty_paste_is_safe` and `roastty_paste_encode`;
+- `roastty_mode_report_encode` with `roastty_mode_report_state_e`.
+
+The implementation preserves the upstream byte sequences for focus reporting,
+paste wrapping and mutation, and mode report replies. The paste C ABI treats
+null input as an empty paste, mutates non-null caller input before output
+capacity checks, and preserves the caller-buffer measurement contract. The mode
+report C ABI decodes packed raw tags through the existing ANSI bit/value-mask
+helper, accepts unknown mode values, and rejects only invalid report states.
+
+Verification passed:
+
+```bash
+cargo fmt -- roastty/src/lib.rs roastty/src/input/mod.rs roastty/src/input/paste.rs roastty/src/terminal/mod.rs roastty/src/terminal/focus.rs roastty/src/terminal/modes.rs
+cargo test -p roastty focus
+cargo test -p roastty paste
+cargo test -p roastty mode_report
+cargo test -p roastty c_harness_links_against_roastty_header_and_roastty_dylib
+cargo test -p roastty
+if rg -n 'ghostty|Ghostty|GHOSTTY' roastty/src/lib.rs roastty/include/roastty.h roastty/tests/abi_harness.c; then exit 1; else exit 0; fi
+git diff --check
+```
+
+Codex result review also passed with no findings. The review explicitly checked
+the focus, paste, mode-report, null-pointer, buffer-contract, packed-tag, and
+test-coverage requirements and concluded that Experiment 184 can be recorded as
+Pass.
+
+## Conclusion
+
+The standalone focus, paste, and mode-report encoding helpers are now available
+through the `roastty` C ABI with C harness coverage and full Rust test coverage.
+This closes another deterministic ABI gap without adding runtime focus behavior,
+clipboard integration, paste delivery, or terminal mode mutation.

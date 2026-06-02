@@ -94,6 +94,19 @@ typedef enum {
 } roastty_terminal_screen_e;
 
 typedef enum {
+  ROASTTY_FOCUS_EVENT_GAINED = 0,
+  ROASTTY_FOCUS_EVENT_LOST = 1,
+} roastty_focus_event_e;
+
+typedef enum {
+  ROASTTY_MODE_REPORT_NOT_RECOGNIZED = 0,
+  ROASTTY_MODE_REPORT_SET = 1,
+  ROASTTY_MODE_REPORT_RESET = 2,
+  ROASTTY_MODE_REPORT_PERMANENTLY_SET = 3,
+  ROASTTY_MODE_REPORT_PERMANENTLY_RESET = 4,
+} roastty_mode_report_state_e;
+
+typedef enum {
   ROASTTY_TERMINAL_OPTION_USERDATA = 0,
   ROASTTY_TERMINAL_OPTION_WRITE_PTY = 1,
   ROASTTY_TERMINAL_OPTION_BELL = 2,
@@ -1142,6 +1155,23 @@ ROASTTY_API roastty_result_e
 roastty_size_report_encode(roastty_size_report_style_e,
                            roastty_size_report_size_s,
                            char*,
+                           size_t,
+                           size_t*);
+ROASTTY_API roastty_result_e roastty_focus_encode(roastty_focus_event_e,
+                                                  uint8_t*,
+                                                  size_t,
+                                                  size_t*);
+ROASTTY_API bool roastty_paste_is_safe(const uint8_t*, size_t);
+ROASTTY_API roastty_result_e roastty_paste_encode(uint8_t*,
+                                                  size_t,
+                                                  bool,
+                                                  uint8_t*,
+                                                  size_t,
+                                                  size_t*);
+ROASTTY_API roastty_result_e
+roastty_mode_report_encode(roastty_mode_tag_t,
+                           roastty_mode_report_state_e,
+                           uint8_t*,
                            size_t,
                            size_t*);
 

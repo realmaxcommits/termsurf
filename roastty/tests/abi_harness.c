@@ -1695,6 +1695,13 @@ static void assert_terminal_abi(void) {
   assert(ROASTTY_FORMATTER_FORMAT_PLAIN == 0);
   assert(ROASTTY_FORMATTER_FORMAT_VT == 1);
   assert(ROASTTY_FORMATTER_FORMAT_HTML == 2);
+  assert(ROASTTY_FOCUS_EVENT_GAINED == 0);
+  assert(ROASTTY_FOCUS_EVENT_LOST == 1);
+  assert(ROASTTY_MODE_REPORT_NOT_RECOGNIZED == 0);
+  assert(ROASTTY_MODE_REPORT_SET == 1);
+  assert(ROASTTY_MODE_REPORT_RESET == 2);
+  assert(ROASTTY_MODE_REPORT_PERMANENTLY_SET == 3);
+  assert(ROASTTY_MODE_REPORT_PERMANENTLY_RESET == 4);
   assert(sizeof(roastty_formatter_t) == sizeof(void *));
   assert(sizeof(roastty_formatter_screen_extra_s) == 16);
   assert(_Alignof(roastty_formatter_screen_extra_s) == 8);
@@ -1788,6 +1795,114 @@ static void assert_terminal_abi(void) {
                                     sizeof(report_buf),
                                     &report_written) == ROASTTY_INVALID_VALUE);
   assert(report_written == 0);
+
+  uint8_t encode_buf[64] = {0};
+  size_t encode_written = 0;
+  assert(roastty_focus_encode(ROASTTY_FOCUS_EVENT_GAINED,
+                              encode_buf,
+                              sizeof(encode_buf),
+                              &encode_written) == ROASTTY_SUCCESS);
+  assert(encode_written == strlen("\x1b[I"));
+  assert(memcmp(encode_buf, "\x1b[I", encode_written) == 0);
+  assert(roastty_focus_encode(ROASTTY_FOCUS_EVENT_LOST,
+                              encode_buf,
+                              sizeof(encode_buf),
+                              &encode_written) == ROASTTY_SUCCESS);
+  assert(encode_written == strlen("\x1b[O"));
+  assert(memcmp(encode_buf, "\x1b[O", encode_written) == 0);
+  encode_written = 0;
+  assert(roastty_focus_encode(ROASTTY_FOCUS_EVENT_GAINED,
+                              NULL,
+                              1,
+                              &encode_written) == ROASTTY_OUT_OF_SPACE);
+  assert(encode_written == strlen("\x1b[I"));
+  assert(roastty_focus_encode((roastty_focus_event_e)99,
+                              encode_buf,
+                              sizeof(encode_buf),
+                              &encode_written) == ROASTTY_INVALID_VALUE);
+  assert(encode_written == 0);
+
+  assert(roastty_paste_is_safe((const uint8_t *)"hello", 5));
+  assert(roastty_paste_is_safe(NULL, 42));
+  assert(!roastty_paste_is_safe((const uint8_t *)"hello\n", 6));
+  assert(!roastty_paste_is_safe((const uint8_t *)"he\x1b[201~llo", 10));
+  uint8_t paste_data[] = "hello\nworld";
+  assert(roastty_paste_encode(paste_data,
+                              strlen((char *)paste_data),
+                              false,
+                              encode_buf,
+                              sizeof(encode_buf),
+                              &encode_written) == ROASTTY_SUCCESS);
+  assert(memcmp(encode_buf, "hello\rworld", encode_written) == 0);
+  assert(memcmp(paste_data, "hello\rworld", encode_written) == 0);
+  uint8_t bracketed_paste[] = "hello";
+  assert(roastty_paste_encode(bracketed_paste,
+                              strlen((char *)bracketed_paste),
+                              true,
+                              encode_buf,
+                              sizeof(encode_buf),
+                              &encode_written) == ROASTTY_SUCCESS);
+  assert(encode_written == strlen("\x1b[200~hello\x1b[201~"));
+  assert(memcmp(encode_buf, "\x1b[200~hello\x1b[201~", encode_written) == 0);
+
+  uint8_t unsafe_paste[] = {'a', 0x1b, 'b', 0x03, 'c', 0x7f, '\0'};
+  assert(roastty_paste_encode(unsafe_paste,
+                              6,
+                              true,
+                              NULL,
+                              9,
+                              &encode_written) == ROASTTY_OUT_OF_SPACE);
+  assert(memcmp(unsafe_paste, "a b c ", 6) == 0);
+  assert(encode_written == strlen("\x1b[200~a b c \x1b[201~"));
+  assert(roastty_paste_encode(NULL,
+                              99,
+                              false,
+                              NULL,
+                              0,
+                              &encode_written) == ROASTTY_SUCCESS);
+  assert(encode_written == 0);
+  assert(roastty_paste_encode(NULL,
+                              99,
+                              true,
+                              NULL,
+                              0,
+                              &encode_written) == ROASTTY_OUT_OF_SPACE);
+  assert(encode_written == strlen("\x1b[200~\x1b[201~"));
+
+  assert(roastty_mode_report_encode(1,
+                                    ROASTTY_MODE_REPORT_SET,
+                                    encode_buf,
+                                    sizeof(encode_buf),
+                                    &encode_written) == ROASTTY_SUCCESS);
+  assert(encode_written == strlen("\x1b[?1;1$y"));
+  assert(memcmp(encode_buf, "\x1b[?1;1$y", encode_written) == 0);
+  assert(roastty_mode_report_encode(ROASTTY_MODE_TAG_ANSI_BIT | 4,
+                                    ROASTTY_MODE_REPORT_RESET,
+                                    encode_buf,
+                                    sizeof(encode_buf),
+                                    &encode_written) == ROASTTY_SUCCESS);
+  assert(encode_written == strlen("\x1b[4;2$y"));
+  assert(memcmp(encode_buf, "\x1b[4;2$y", encode_written) == 0);
+  assert(roastty_mode_report_encode(9999,
+                                    ROASTTY_MODE_REPORT_NOT_RECOGNIZED,
+                                    encode_buf,
+                                    sizeof(encode_buf),
+                                    &encode_written) == ROASTTY_SUCCESS);
+  assert(encode_written == strlen("\x1b[?9999;0$y"));
+  assert(memcmp(encode_buf, "\x1b[?9999;0$y", encode_written) == 0);
+  assert(roastty_mode_report_encode(ROASTTY_MODE_TAG_VALUE_MASK,
+                                    ROASTTY_MODE_REPORT_PERMANENTLY_RESET,
+                                    encode_buf,
+                                    sizeof(encode_buf),
+                                    &encode_written) == ROASTTY_SUCCESS);
+  assert(encode_written == strlen("\x1b[?32767;4$y"));
+  assert(memcmp(encode_buf, "\x1b[?32767;4$y", encode_written) == 0);
+  assert(roastty_mode_report_encode(1,
+                                    (roastty_mode_report_state_e)99,
+                                    encode_buf,
+                                    sizeof(encode_buf),
+                                    &encode_written) == ROASTTY_INVALID_VALUE);
+  assert(encode_written == 0);
 
   roastty_terminal_t terminal = NULL;
   assert(roastty_terminal_new(5, 3, SIZE_MAX, NULL) == ROASTTY_INVALID_VALUE);

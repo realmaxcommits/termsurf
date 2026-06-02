@@ -47,9 +47,9 @@ pub(super) enum Mode {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) struct ModeTag {
-    pub(super) value: u16,
-    pub(super) ansi: bool,
+pub(crate) struct ModeTag {
+    pub(crate) value: u16,
+    pub(crate) ansi: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -70,13 +70,13 @@ pub(super) struct ModeState {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) struct Report {
+pub(crate) struct Report {
     tag: ModeTag,
     state: ReportState,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum ReportState {
+pub(crate) enum ReportState {
     NotRecognized = 0,
     Set = 1,
     Reset = 2,
@@ -198,7 +198,7 @@ impl Mode {
 }
 
 impl ModeTag {
-    pub(super) const fn new(value: u16, ansi: bool) -> Self {
+    pub(crate) const fn new(value: u16, ansi: bool) -> Self {
         Self { value, ansi }
     }
 
@@ -265,11 +265,11 @@ impl ModeState {
 }
 
 impl Report {
-    pub(super) const fn new(tag: ModeTag, state: ReportState) -> Self {
+    pub(crate) const fn new(tag: ModeTag, state: ReportState) -> Self {
         Self { tag, state }
     }
 
-    pub(super) fn encode_vt(self) -> String {
+    pub(crate) fn encode_vt(self) -> String {
         format!(
             "\x1b[{}{};{}$y",
             if self.tag.ansi { "" } else { "?" },

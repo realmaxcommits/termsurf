@@ -3,3 +3,4 @@
 pub(crate) mod key;
 pub(crate) mod key_encode;
 pub(crate) mod key_mods;
+pub(crate) mod paste;

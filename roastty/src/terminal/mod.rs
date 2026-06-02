@@ -29,6 +29,9 @@ mod dcs;
 mod x11_color;
 
 #[allow(dead_code)]
+pub(crate) mod focus;
+
+#[allow(dead_code)]
 mod hyperlink;
 
 #[allow(dead_code)]
@@ -38,7 +41,7 @@ mod highlight;
 pub(crate) mod kitty;
 
 #[allow(dead_code)]
-mod modes;
+pub(crate) mod modes;
 
 #[allow(dead_code)]
 pub(crate) mod mouse;

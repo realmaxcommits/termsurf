@@ -4,10 +4,12 @@ use std::ptr;
 use std::ptr::NonNull;
 use std::slice;
 
-use input::{key, key_encode, key_mods};
+use input::{key, key_encode, key_mods, paste};
 use terminal::color;
 use terminal::cursor;
+use terminal::focus;
 use terminal::kitty::KeyFlags;
+use terminal::modes;
 use terminal::selection_gesture::{
     SelectionGesture, SelectionGestureAutoscroll, SelectionGestureAutoscrollTick,
     SelectionGestureBehavior, SelectionGestureDeepPress, SelectionGestureDrag,
@@ -119,6 +121,15 @@ const ROASTTY_TERMINAL_OPTION_COLOR_BACKGROUND: c_int = 12;
 const ROASTTY_TERMINAL_OPTION_COLOR_CURSOR: c_int = 13;
 const ROASTTY_TERMINAL_OPTION_COLOR_PALETTE: c_int = 14;
 const ROASTTY_TERMINAL_OPTION_SELECTION: c_int = 21;
+
+const ROASTTY_FOCUS_EVENT_GAINED: c_int = 0;
+const ROASTTY_FOCUS_EVENT_LOST: c_int = 1;
+
+const ROASTTY_MODE_REPORT_NOT_RECOGNIZED: c_int = 0;
+const ROASTTY_MODE_REPORT_SET: c_int = 1;
+const ROASTTY_MODE_REPORT_RESET: c_int = 2;
+const ROASTTY_MODE_REPORT_PERMANENTLY_SET: c_int = 3;
+const ROASTTY_MODE_REPORT_PERMANENTLY_RESET: c_int = 4;
 
 #[allow(dead_code)]
 const ROASTTY_SELECTION_FORMAT_PLAIN: c_int = 0;
@@ -3454,6 +3465,127 @@ pub extern "C" fn roastty_size_report_encode(
         ptr::copy_nonoverlapping(encoded.as_ptr(), buf.cast::<u8>(), encoded.len());
     }
     ROASTTY_SUCCESS
+}
+
+fn write_byte_segments(
+    segments: &[&[u8]],
+    out: *mut u8,
+    out_len: usize,
+    out_written: *mut usize,
+) -> c_int {
+    if out_written.is_null() {
+        return ROASTTY_INVALID_VALUE;
+    }
+
+    let required = segments.iter().map(|segment| segment.len()).sum::<usize>();
+    unsafe {
+        out_written.write(required);
+    }
+
+    if (out.is_null() && required > 0) || out_len < required {
+        return ROASTTY_OUT_OF_SPACE;
+    }
+
+    let mut offset = 0;
+    for segment in segments {
+        if !segment.is_empty() {
+            unsafe {
+                ptr::copy_nonoverlapping(segment.as_ptr(), out.add(offset), segment.len());
+            }
+        }
+        offset += segment.len();
+    }
+
+    ROASTTY_SUCCESS
+}
+
+fn focus_event_from_raw(event: c_int) -> Option<focus::FocusEvent> {
+    match event {
+        ROASTTY_FOCUS_EVENT_GAINED => Some(focus::FocusEvent::Gained),
+        ROASTTY_FOCUS_EVENT_LOST => Some(focus::FocusEvent::Lost),
+        _ => None,
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn roastty_focus_encode(
+    event: c_int,
+    out: *mut u8,
+    out_len: usize,
+    out_written: *mut usize,
+) -> c_int {
+    if out_written.is_null() {
+        return ROASTTY_INVALID_VALUE;
+    }
+    let Some(event) = focus_event_from_raw(event) else {
+        unsafe {
+            out_written.write(0);
+        }
+        return ROASTTY_INVALID_VALUE;
+    };
+    write_byte_segments(&[focus::encode(event)], out, out_len, out_written)
+}
+
+#[no_mangle]
+pub extern "C" fn roastty_paste_is_safe(data: *const u8, len: usize) -> bool {
+    if data.is_null() {
+        return true;
+    }
+    paste::is_safe(unsafe { slice::from_raw_parts(data, len) })
+}
+
+#[no_mangle]
+pub extern "C" fn roastty_paste_encode(
+    data: *mut u8,
+    data_len: usize,
+    bracketed: bool,
+    out: *mut u8,
+    out_len: usize,
+    out_written: *mut usize,
+) -> c_int {
+    if out_written.is_null() {
+        return ROASTTY_INVALID_VALUE;
+    }
+    let data = if data.is_null() {
+        &mut []
+    } else {
+        unsafe { slice::from_raw_parts_mut(data, data_len) }
+    };
+    let segments = paste::encode(data, paste::PasteOptions { bracketed });
+    write_byte_segments(&segments, out, out_len, out_written)
+}
+
+fn mode_report_state_from_raw(state: c_int) -> Option<modes::ReportState> {
+    match state {
+        ROASTTY_MODE_REPORT_NOT_RECOGNIZED => Some(modes::ReportState::NotRecognized),
+        ROASTTY_MODE_REPORT_SET => Some(modes::ReportState::Set),
+        ROASTTY_MODE_REPORT_RESET => Some(modes::ReportState::Reset),
+        ROASTTY_MODE_REPORT_PERMANENTLY_SET => Some(modes::ReportState::PermanentlySet),
+        ROASTTY_MODE_REPORT_PERMANENTLY_RESET => Some(modes::ReportState::PermanentlyReset),
+        _ => None,
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn roastty_mode_report_encode(
+    tag: u16,
+    state: c_int,
+    out: *mut u8,
+    out_len: usize,
+    out_written: *mut usize,
+) -> c_int {
+    if out_written.is_null() {
+        return ROASTTY_INVALID_VALUE;
+    }
+    let Some(state) = mode_report_state_from_raw(state) else {
+        unsafe {
+            out_written.write(0);
+        }
+        return ROASTTY_INVALID_VALUE;
+    };
+    let (value, ansi) = mode_tag_parts(tag);
+    let output = modes::Report::new(modes::ModeTag::new(value, ansi), state).encode_vt();
+    write_byte_segments(&[output.as_bytes()], out, out_len, out_written)
 }
 
 #[no_mangle]
@@ -7629,6 +7761,229 @@ mod tests {
             ROASTTY_INVALID_VALUE
         );
         assert_eq!(written, 0);
+    }
+
+    #[test]
+    fn focus_encoder_abi_matches_upstream_layout() {
+        let mut buf = [0u8; 8];
+        let mut written = usize::MAX;
+
+        assert_eq!(
+            roastty_focus_encode(
+                ROASTTY_FOCUS_EVENT_GAINED,
+                buf.as_mut_ptr(),
+                buf.len(),
+                &mut written
+            ),
+            ROASTTY_SUCCESS
+        );
+        assert_eq!(&buf[..written], b"\x1b[I");
+
+        assert_eq!(
+            roastty_focus_encode(
+                ROASTTY_FOCUS_EVENT_LOST,
+                buf.as_mut_ptr(),
+                buf.len(),
+                &mut written
+            ),
+            ROASTTY_SUCCESS
+        );
+        assert_eq!(&buf[..written], b"\x1b[O");
+
+        assert_eq!(
+            roastty_focus_encode(
+                ROASTTY_FOCUS_EVENT_GAINED,
+                ptr::null_mut(),
+                99,
+                &mut written
+            ),
+            ROASTTY_OUT_OF_SPACE
+        );
+        assert_eq!(written, focus::MAX_ENCODE_SIZE);
+
+        assert_eq!(
+            roastty_focus_encode(99, buf.as_mut_ptr(), buf.len(), &mut written),
+            ROASTTY_INVALID_VALUE
+        );
+        assert_eq!(written, 0);
+        assert_eq!(
+            roastty_focus_encode(
+                ROASTTY_FOCUS_EVENT_GAINED,
+                buf.as_mut_ptr(),
+                buf.len(),
+                ptr::null_mut()
+            ),
+            ROASTTY_INVALID_VALUE
+        );
+    }
+
+    #[test]
+    fn paste_c_abi_checks_safety_and_encodes_with_mutation() {
+        assert!(roastty_paste_is_safe(b"hello".as_ptr(), 5));
+        assert!(roastty_paste_is_safe(ptr::null(), 0));
+        assert!(roastty_paste_is_safe(ptr::null(), 99));
+        assert!(!roastty_paste_is_safe(b"hello\n".as_ptr(), 6));
+        assert!(!roastty_paste_is_safe(b"he\x1b[201~llo".as_ptr(), 10));
+
+        let mut buf = [0u8; 64];
+        let mut written = usize::MAX;
+        let mut data = b"hello".to_vec();
+        assert_eq!(
+            roastty_paste_encode(
+                data.as_mut_ptr(),
+                data.len(),
+                true,
+                buf.as_mut_ptr(),
+                buf.len(),
+                &mut written
+            ),
+            ROASTTY_SUCCESS
+        );
+        assert_eq!(&buf[..written], b"\x1b[200~hello\x1b[201~");
+        assert_eq!(data, b"hello");
+
+        let mut data = b"hello\nworld".to_vec();
+        assert_eq!(
+            roastty_paste_encode(
+                data.as_mut_ptr(),
+                data.len(),
+                false,
+                buf.as_mut_ptr(),
+                buf.len(),
+                &mut written
+            ),
+            ROASTTY_SUCCESS
+        );
+        assert_eq!(&buf[..written], b"hello\rworld");
+        assert_eq!(data, b"hello\rworld");
+
+        let mut data = b"hel\x1blo\x00wor\x03ld\x7f".to_vec();
+        assert_eq!(
+            roastty_paste_encode(
+                data.as_mut_ptr(),
+                data.len(),
+                true,
+                ptr::null_mut(),
+                99,
+                &mut written
+            ),
+            ROASTTY_OUT_OF_SPACE
+        );
+        assert_eq!(data, b"hel lo wor ld ");
+        assert_eq!(written, b"\x1b[200~hel lo wor ld \x1b[201~".len());
+
+        let mut data = b"hello\nworld".to_vec();
+        assert_eq!(
+            roastty_paste_encode(
+                data.as_mut_ptr(),
+                data.len(),
+                false,
+                buf.as_mut_ptr(),
+                1,
+                &mut written
+            ),
+            ROASTTY_OUT_OF_SPACE
+        );
+        assert_eq!(data, b"hello\rworld");
+        assert_eq!(written, b"hello\rworld".len());
+
+        assert_eq!(
+            roastty_paste_encode(ptr::null_mut(), 99, false, ptr::null_mut(), 0, &mut written),
+            ROASTTY_SUCCESS
+        );
+        assert_eq!(written, 0);
+        assert_eq!(
+            roastty_paste_encode(ptr::null_mut(), 99, true, ptr::null_mut(), 0, &mut written),
+            ROASTTY_OUT_OF_SPACE
+        );
+        assert_eq!(written, b"\x1b[200~\x1b[201~".len());
+        assert_eq!(
+            roastty_paste_encode(
+                ptr::null_mut(),
+                0,
+                false,
+                ptr::null_mut(),
+                0,
+                ptr::null_mut()
+            ),
+            ROASTTY_INVALID_VALUE
+        );
+    }
+
+    #[test]
+    fn mode_report_encoder_abi_decodes_packed_tags() {
+        let mut buf = [0u8; 32];
+        let mut written = usize::MAX;
+
+        assert_eq!(
+            roastty_mode_report_encode(
+                dec_mode_tag(1),
+                ROASTTY_MODE_REPORT_SET,
+                buf.as_mut_ptr(),
+                buf.len(),
+                &mut written
+            ),
+            ROASTTY_SUCCESS
+        );
+        assert_eq!(&buf[..written], b"\x1b[?1;1$y");
+
+        assert_eq!(
+            roastty_mode_report_encode(
+                ansi_mode_tag(4),
+                ROASTTY_MODE_REPORT_RESET,
+                buf.as_mut_ptr(),
+                buf.len(),
+                &mut written
+            ),
+            ROASTTY_SUCCESS
+        );
+        assert_eq!(&buf[..written], b"\x1b[4;2$y");
+
+        assert_eq!(
+            roastty_mode_report_encode(
+                dec_mode_tag(9999),
+                ROASTTY_MODE_REPORT_NOT_RECOGNIZED,
+                ptr::null_mut(),
+                42,
+                &mut written
+            ),
+            ROASTTY_OUT_OF_SPACE
+        );
+        assert_eq!(written, b"\x1b[?9999;0$y".len());
+
+        assert_eq!(
+            roastty_mode_report_encode(
+                dec_mode_tag(ROASTTY_MODE_TAG_VALUE_MASK),
+                ROASTTY_MODE_REPORT_PERMANENTLY_RESET,
+                buf.as_mut_ptr(),
+                buf.len(),
+                &mut written
+            ),
+            ROASTTY_SUCCESS
+        );
+        assert_eq!(&buf[..written], b"\x1b[?32767;4$y");
+
+        assert_eq!(
+            roastty_mode_report_encode(
+                dec_mode_tag(1),
+                99,
+                buf.as_mut_ptr(),
+                buf.len(),
+                &mut written
+            ),
+            ROASTTY_INVALID_VALUE
+        );
+        assert_eq!(written, 0);
+        assert_eq!(
+            roastty_mode_report_encode(
+                dec_mode_tag(1),
+                ROASTTY_MODE_REPORT_SET,
+                buf.as_mut_ptr(),
+                buf.len(),
+                ptr::null_mut()
+            ),
+            ROASTTY_INVALID_VALUE
+        );
     }
 
     #[test]
