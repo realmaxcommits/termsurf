@@ -515,7 +515,7 @@ tests, choose the larger subsystem.
 - [Experiment 194: Port Kitty Delete Execution](194-port-kitty-delete-execution.md)
   — **Pass**
 - [Experiment 195: Port Kitty Transmit-Display and Cursor-After](195-port-kitty-transmit-display-cursor-after.md)
-  — **Designed**
+  — **Pass**
 
 ## Non-Goals
 

@@ -2204,7 +2204,7 @@ impl Handler for TerminalStreamHandler<'_> {
             }
             Action::ApcEnd => {
                 if let Some(command) = self.kitty_graphics.end() {
-                    self.kitty_graphics_command(command);
+                    self.kitty_graphics_command(command)?;
                 }
                 Ok(())
             }
@@ -2491,10 +2491,91 @@ impl TerminalStreamHandler<'_> {
         }
     }
 
-    fn kitty_graphics_command(&mut self, command: Command) {
+    fn kitty_graphics_command(&mut self, command: Command) -> Result<(), TerminalStreamError> {
         let metrics = self.kitty_graphics.cell_metrics(self.size);
-        let response = graphics_exec::execute_screen(self.screens.active_mut(), &command, metrics);
-        self.write_kitty_graphics_response(response);
+        let execution = graphics_exec::execute_screen(self.screens.active_mut(), &command, metrics);
+        if let Some(cursor_after) = execution.cursor_after {
+            self.apply_kitty_cursor_after(cursor_after)?;
+        }
+        self.write_kitty_graphics_response(execution.response);
+        Ok(())
+    }
+
+    fn apply_kitty_cursor_after(
+        &mut self,
+        cursor_after: graphics_exec::CursorAfter,
+    ) -> Result<(), TerminalStreamError> {
+        for _ in 0..cursor_after.rows {
+            self.index_for_kitty_cursor_after()?;
+        }
+
+        let (_, row) = self.screens.active().cursor_position();
+        let col = cursor_after
+            .pin_x
+            .saturating_add(cursor_after.columns)
+            .saturating_add(1);
+        self.set_cursor_pos_compat(row.into(), col as usize);
+        Ok(())
+    }
+
+    fn index_for_kitty_cursor_after(&mut self) -> Result<(), TerminalStreamError> {
+        let (x, y) = self.screens.active().cursor_position();
+        if y < self.scrolling_region.top || y > self.scrolling_region.bottom {
+            self.screens
+                .active_mut()
+                .cursor_down_basic(self.size.rows, 1);
+            return Ok(());
+        }
+
+        if y == self.scrolling_region.bottom
+            && x >= self.scrolling_region.left
+            && x <= self.scrolling_region.right
+        {
+            self.screens
+                .active_mut()
+                .scroll_up_basic(
+                    1,
+                    self.size.rows,
+                    self.size.cols,
+                    self.scrolling_region.top,
+                    self.scrolling_region.bottom,
+                    self.scrolling_region.left,
+                    self.scrolling_region.right,
+                    self.scrolling_region.left == 0
+                        && self.scrolling_region.right == self.size.cols - 1,
+                )
+                .map_err(TerminalStreamError::from)?;
+            return Ok(());
+        }
+
+        self.screens
+            .active_mut()
+            .cursor_down_basic(self.size.rows, 1);
+        Ok(())
+    }
+
+    fn set_cursor_pos_compat(&mut self, row_req: usize, col_req: usize) {
+        let (x_offset, y_offset, x_max, y_max) = if self.modes.get(modes::Mode::Origin) {
+            (
+                self.scrolling_region.left,
+                self.scrolling_region.top,
+                self.scrolling_region.right + 1,
+                self.scrolling_region.bottom + 1,
+            )
+        } else {
+            (0, 0, self.size.cols, self.size.rows)
+        };
+
+        let row = CellCountInt::try_from(row_req.max(1)).unwrap_or(CellCountInt::MAX);
+        let col = CellCountInt::try_from(col_req.max(1)).unwrap_or(CellCountInt::MAX);
+        let x = x_max.min(col.saturating_add(x_offset)).saturating_sub(1);
+        let y = y_max.min(row.saturating_add(y_offset)).saturating_sub(1);
+        self.screens.active_mut().cursor_position_basic(
+            y.saturating_add(1),
+            x.saturating_add(1),
+            self.size.rows,
+            self.size.cols,
+        );
     }
 
     fn write_kitty_graphics_response(&mut self, response: Option<Response<'static>>) {
@@ -3648,12 +3729,16 @@ mod tests {
         format!("\x1b_Ga=t,f=32,s=1,v=1,I={image_number};AQIDBA==\x1b\\").into_bytes()
     }
 
+    fn kitty_implicit_transmit_display_apc(placement_id: u32) -> Vec<u8> {
+        format!("\x1b_Ga=T,f=32,s=1,v=1,p={placement_id},C=1;AQIDBA==\x1b\\").into_bytes()
+    }
+
     fn kitty_query_apc(image_id: u32) -> Vec<u8> {
         format!("\x1b_Ga=q,f=32,s=1,v=1,i={image_id};AQIDBA==\x1b\\").into_bytes()
     }
 
     fn kitty_display_apc(image_id: u32, placement_id: u32) -> Vec<u8> {
-        format!("\x1b_Ga=p,i={image_id},p={placement_id}\x1b\\").into_bytes()
+        format!("\x1b_Ga=p,i={image_id},p={placement_id},C=1\x1b\\").into_bytes()
     }
 
     fn kitty_display_sized_apc(
@@ -3663,24 +3748,82 @@ mod tests {
         rows: u32,
         z: i32,
     ) -> Vec<u8> {
-        format!("\x1b_Ga=p,i={image_id},p={placement_id},c={columns},r={rows},z={z}\x1b\\")
+        format!("\x1b_Ga=p,i={image_id},p={placement_id},c={columns},r={rows},z={z},C=1\x1b\\")
             .into_bytes()
     }
 
     fn kitty_display_number_apc(image_number: u32, placement_id: u32) -> Vec<u8> {
-        format!("\x1b_Ga=p,I={image_number},p={placement_id}\x1b\\").into_bytes()
+        format!("\x1b_Ga=p,I={image_number},p={placement_id},C=1\x1b\\").into_bytes()
     }
 
     fn kitty_quiet_display_apc(image_id: u32, placement_id: u32, quiet: u32) -> Vec<u8> {
-        format!("\x1b_Ga=p,i={image_id},p={placement_id},q={quiet}\x1b\\").into_bytes()
+        format!("\x1b_Ga=p,i={image_id},p={placement_id},q={quiet},C=1\x1b\\").into_bytes()
     }
 
     fn kitty_virtual_display_apc(image_id: u32, placement_id: u32) -> Vec<u8> {
-        format!("\x1b_Ga=p,i={image_id},p={placement_id},U=1\x1b\\").into_bytes()
+        format!("\x1b_Ga=p,i={image_id},p={placement_id},U=1,C=1\x1b\\").into_bytes()
     }
 
     fn kitty_cursor_after_display_apc(image_id: u32, placement_id: u32) -> Vec<u8> {
         format!("\x1b_Ga=p,i={image_id},p={placement_id},C=0\x1b\\").into_bytes()
+    }
+
+    fn kitty_cursor_after_display_sized_apc(
+        image_id: u32,
+        placement_id: u32,
+        columns: u32,
+        rows: u32,
+    ) -> Vec<u8> {
+        format!("\x1b_Ga=p,i={image_id},p={placement_id},c={columns},r={rows},C=0\x1b\\")
+            .into_bytes()
+    }
+
+    fn kitty_transmit_display_apc(image_id: u32, placement_id: u32, cursor_after: bool) -> Vec<u8> {
+        let cursor = if cursor_after { 0 } else { 1 };
+        format!("\x1b_Ga=T,f=32,s=1,v=1,i={image_id},p={placement_id},C={cursor};AQIDBA==\x1b\\")
+            .into_bytes()
+    }
+
+    fn kitty_transmit_display_sized_apc(
+        image_id: u32,
+        placement_id: u32,
+        columns: u32,
+        rows: u32,
+        cursor_after: bool,
+    ) -> Vec<u8> {
+        let cursor = if cursor_after { 0 } else { 1 };
+        format!("\x1b_Ga=T,f=32,s=1,v=1,i={image_id},p={placement_id},c={columns},r={rows},C={cursor};AQIDBA==\x1b\\")
+            .into_bytes()
+    }
+
+    fn kitty_numbered_transmit_display_apc(image_number: u32, placement_id: u32) -> Vec<u8> {
+        format!("\x1b_Ga=T,f=32,s=1,v=1,I={image_number},p={placement_id},C=1;AQIDBA==\x1b\\")
+            .into_bytes()
+    }
+
+    fn kitty_transmit_display_chunk_apc(
+        image_id: u32,
+        placement_id: u32,
+        more_chunks: bool,
+        data: &str,
+    ) -> Vec<u8> {
+        let more = if more_chunks { 1 } else { 0 };
+        format!("\x1b_Ga=T,f=32,s=1,v=1,i={image_id},p={placement_id},C=0,m={more};{data}\x1b\\")
+            .into_bytes()
+    }
+
+    fn kitty_quiet_transmit_display_chunk_apc(
+        image_id: u32,
+        placement_id: u32,
+        more_chunks: bool,
+        quiet: u32,
+        data: &str,
+    ) -> Vec<u8> {
+        let more = if more_chunks { 1 } else { 0 };
+        format!(
+            "\x1b_Ga=T,f=32,s=1,v=1,i={image_id},p={placement_id},C=1,q={quiet},m={more};{data}\x1b\\"
+        )
+        .into_bytes()
     }
 
     fn kitty_delete_apc(args: &str) -> Vec<u8> {
@@ -5860,6 +6003,183 @@ mod tests {
     }
 
     #[test]
+    fn terminal_stream_kitty_graphics_transmit_display_stores_image_and_placement() {
+        let mut terminal = Terminal::init(10, 3, None).unwrap();
+
+        terminal
+            .next_slice(&kitty_transmit_display_apc(7, 4, false))
+            .unwrap();
+
+        assert_eq!(
+            terminal.take_pty_response_for_tests(),
+            b"\x1b_Gi=7,p=4;OK\x1b\\"
+        );
+        assert!(terminal
+            .screens
+            .active()
+            .kitty_images()
+            .image_by_id(7)
+            .is_some());
+        assert_eq!(
+            tracked_placement_at_cursor(&terminal, 7, 4),
+            active_pin(&terminal, 0, 0)
+        );
+        assert_eq!(terminal.cursor_position_for_tests(), (0, 0));
+    }
+
+    #[test]
+    fn terminal_stream_kitty_graphics_transmit_display_maps_display_fields() {
+        let mut terminal = Terminal::init(10, 3, None).unwrap();
+
+        terminal
+            .next_slice(&kitty_transmit_display_sized_apc(7, 4, 3, 2, false))
+            .unwrap();
+
+        let placement = terminal
+            .screens
+            .active()
+            .kitty_images()
+            .placement_by_key(kitty_placement_key(7, 4))
+            .unwrap();
+        assert_eq!(placement.columns, 3);
+        assert_eq!(placement.rows, 2);
+    }
+
+    #[test]
+    fn terminal_stream_kitty_graphics_numbered_transmit_display_gets_auto_id() {
+        let mut terminal = Terminal::init(10, 3, None).unwrap();
+
+        terminal
+            .next_slice(&kitty_numbered_transmit_display_apc(5, 4))
+            .unwrap();
+        let image_id = terminal.screens.active().kitty_images().next_image_id - 1;
+
+        assert_eq!(
+            terminal.take_pty_response_for_tests(),
+            format!("\x1b_Gi={image_id},I=5,p=4;OK\x1b\\").as_bytes()
+        );
+        assert!(terminal
+            .screens
+            .active()
+            .kitty_images()
+            .image_by_id(image_id)
+            .is_some());
+        assert!(terminal
+            .screens
+            .active()
+            .kitty_images()
+            .placement_by_key(kitty_placement_key(image_id, 4))
+            .is_some());
+    }
+
+    #[test]
+    fn terminal_stream_kitty_graphics_implicit_transmit_display_suppresses_response() {
+        let mut terminal = Terminal::init(10, 3, None).unwrap();
+
+        terminal
+            .next_slice(&kitty_implicit_transmit_display_apc(4))
+            .unwrap();
+        let image_id = terminal.screens.active().kitty_images().next_image_id - 1;
+
+        assert!(terminal.pty_response_for_tests().is_empty());
+        assert!(terminal
+            .screens
+            .active()
+            .kitty_images()
+            .image_by_id(image_id)
+            .is_some());
+        assert!(terminal
+            .screens
+            .active()
+            .kitty_images()
+            .placement_by_key(kitty_placement_key(image_id, 4))
+            .is_some());
+    }
+
+    #[test]
+    fn terminal_stream_kitty_graphics_chunked_transmit_display_displays_on_final_chunk() {
+        let mut terminal = Terminal::init(10, 3, None).unwrap();
+
+        terminal
+            .next_slice(&kitty_transmit_display_chunk_apc(7, 4, true, "AQID"))
+            .unwrap();
+        assert!(terminal.pty_response_for_tests().is_empty());
+        assert!(terminal
+            .screens
+            .active()
+            .kitty_images()
+            .placement_by_key(kitty_placement_key(7, 4))
+            .is_none());
+
+        terminal
+            .next_slice(&kitty_transmit_display_chunk_apc(7, 4, false, "BA=="))
+            .unwrap();
+
+        assert_eq!(
+            terminal.take_pty_response_for_tests(),
+            b"\x1b_Gi=7,p=4;OK\x1b\\"
+        );
+        assert!(terminal
+            .screens
+            .active()
+            .kitty_images()
+            .placement_by_key(kitty_placement_key(7, 4))
+            .is_some());
+    }
+
+    #[test]
+    fn terminal_stream_kitty_graphics_chunked_transmit_display_inherits_quiet() {
+        let mut terminal = Terminal::init(10, 3, None).unwrap();
+
+        terminal
+            .next_slice(&kitty_quiet_transmit_display_chunk_apc(
+                7, 4, true, 2, "AQID",
+            ))
+            .unwrap();
+        assert!(terminal.pty_response_for_tests().is_empty());
+
+        terminal
+            .next_slice(&kitty_quiet_transmit_display_chunk_apc(
+                7, 4, false, 0, "BA==",
+            ))
+            .unwrap();
+
+        assert!(terminal.pty_response_for_tests().is_empty());
+        assert!(terminal
+            .screens
+            .active()
+            .kitty_images()
+            .placement_by_key(kitty_placement_key(7, 4))
+            .is_some());
+    }
+
+    #[test]
+    fn terminal_stream_kitty_graphics_transmit_display_failure_keeps_image() {
+        let mut terminal = Terminal::init(10, 3, None).unwrap();
+
+        terminal
+            .next_slice(b"\x1b_Ga=T,f=32,s=1,v=1,i=7,p=4,U=1,P=9;AQIDBA==\x1b\\")
+            .unwrap();
+
+        assert_eq!(
+            terminal.take_pty_response_for_tests(),
+            b"\x1b_Gi=7,p=4;EINVAL: virtual placement cannot refer to a parent\x1b\\"
+        );
+        assert!(terminal
+            .screens
+            .active()
+            .kitty_images()
+            .image_by_id(7)
+            .is_some());
+        assert!(terminal
+            .screens
+            .active()
+            .kitty_images()
+            .placement_by_key(kitty_placement_key(7, 4))
+            .is_none());
+    }
+
+    #[test]
     fn terminal_stream_kitty_graphics_external_replacement_untracks_old_pin() {
         let mut terminal = Terminal::init(10, 3, None).unwrap();
 
@@ -6139,7 +6459,7 @@ mod tests {
     }
 
     #[test]
-    fn terminal_stream_kitty_graphics_cursor_after_does_not_move_cursor_yet() {
+    fn terminal_stream_kitty_graphics_cursor_after_moves_right_of_one_row_placement() {
         let mut terminal = Terminal::init(10, 3, None).unwrap();
 
         terminal.next_slice(&kitty_transmit_apc(7)).unwrap();
@@ -6152,7 +6472,7 @@ mod tests {
             .next_slice(&kitty_cursor_after_display_apc(7, 4))
             .unwrap();
 
-        assert_eq!(terminal.cursor_position_for_tests(), (5, 1));
+        assert_eq!(terminal.cursor_position_for_tests(), (6, 1));
         assert!(terminal
             .screens
             .active()
@@ -6162,6 +6482,165 @@ mod tests {
                 placement_id: PlacementId::External(4),
             })
             .is_some());
+    }
+
+    #[test]
+    fn terminal_stream_kitty_graphics_transmit_display_cursor_after_moves_after_display() {
+        let mut terminal = Terminal::init(10, 3, None).unwrap();
+
+        terminal
+            .screens
+            .active_mut()
+            .set_cursor_position_for_tests(5, 1);
+        terminal
+            .next_slice(&kitty_transmit_display_apc(7, 4, true))
+            .unwrap();
+
+        assert_eq!(
+            terminal.take_pty_response_for_tests(),
+            b"\x1b_Gi=7,p=4;OK\x1b\\"
+        );
+        assert_eq!(terminal.cursor_position_for_tests(), (6, 1));
+        assert_eq!(
+            tracked_placement_at_cursor(&terminal, 7, 4),
+            active_pin(&terminal, 5, 1)
+        );
+    }
+
+    #[test]
+    fn terminal_stream_kitty_graphics_chunked_transmit_display_cursor_after_waits_for_final_chunk()
+    {
+        let mut terminal = Terminal::init(10, 3, None).unwrap();
+
+        terminal
+            .screens
+            .active_mut()
+            .set_cursor_position_for_tests(5, 1);
+        terminal
+            .next_slice(&kitty_transmit_display_chunk_apc(7, 4, true, "AQID"))
+            .unwrap();
+
+        assert_eq!(terminal.cursor_position_for_tests(), (5, 1));
+        assert!(terminal.pty_response_for_tests().is_empty());
+
+        terminal
+            .next_slice(&kitty_transmit_display_chunk_apc(7, 4, false, "BA=="))
+            .unwrap();
+
+        assert_eq!(terminal.cursor_position_for_tests(), (6, 1));
+        assert_eq!(
+            terminal.take_pty_response_for_tests(),
+            b"\x1b_Gi=7,p=4;OK\x1b\\"
+        );
+    }
+
+    #[test]
+    fn terminal_stream_kitty_graphics_cursor_after_indexes_once_per_row() {
+        let mut terminal = Terminal::init(10, 5, None).unwrap();
+
+        terminal.next_slice(&kitty_transmit_apc(7)).unwrap();
+        terminal.clear_pty_response();
+        terminal
+            .screens
+            .active_mut()
+            .set_cursor_position_for_tests(2, 0);
+        terminal
+            .next_slice(&kitty_cursor_after_display_sized_apc(7, 4, 3, 3))
+            .unwrap();
+
+        assert_eq!(terminal.cursor_position_for_tests(), (5, 2));
+    }
+
+    #[test]
+    fn terminal_stream_kitty_graphics_cursor_after_scrolls_at_bottom_row() {
+        let mut terminal = terminal_with_lines(&["aaaa", "bbbb", "cccc"]);
+
+        terminal.next_slice(&kitty_transmit_apc(7)).unwrap();
+        terminal.clear_pty_response();
+        terminal
+            .screens
+            .active_mut()
+            .set_cursor_position_for_tests(1, 2);
+        terminal
+            .next_slice(&kitty_cursor_after_display_apc(7, 4))
+            .unwrap();
+
+        assert_eq!(terminal.cursor_position_for_tests(), (2, 1));
+        assert!(plain_with_unwrap(&terminal, false).contains("bbbb"));
+    }
+
+    #[test]
+    fn terminal_stream_kitty_graphics_cursor_after_honors_origin_vertical_margins() {
+        let mut terminal = Terminal::init(10, 5, None).unwrap();
+
+        terminal.next_slice(&kitty_transmit_apc(7)).unwrap();
+        terminal.clear_pty_response();
+        terminal.set_scrolling_region_for_tests(1, 3, 0, 9);
+        terminal.set_mode_for_tests(Mode::Origin, true);
+        terminal
+            .screens
+            .active_mut()
+            .set_cursor_position_for_tests(1, 3);
+        terminal
+            .next_slice(&kitty_cursor_after_display_apc(7, 4))
+            .unwrap();
+
+        assert_eq!(terminal.cursor_position_for_tests(), (2, 3));
+    }
+
+    #[test]
+    fn terminal_stream_kitty_graphics_cursor_after_honors_origin_horizontal_margins() {
+        let mut terminal = Terminal::init(10, 5, None).unwrap();
+
+        terminal.next_slice(&kitty_transmit_apc(7)).unwrap();
+        terminal.clear_pty_response();
+        terminal.set_scrolling_region_for_tests(0, 4, 2, 5);
+        terminal.set_mode_for_tests(Mode::Origin, true);
+        terminal
+            .screens
+            .active_mut()
+            .set_cursor_position_for_tests(4, 1);
+        terminal
+            .next_slice(&kitty_cursor_after_display_sized_apc(7, 4, 4, 1))
+            .unwrap();
+
+        assert_eq!(terminal.cursor_position_for_tests(), (5, 1));
+    }
+
+    #[test]
+    fn terminal_stream_kitty_graphics_virtual_cursor_after_does_not_move_cursor() {
+        let mut terminal = Terminal::init(10, 3, None).unwrap();
+
+        terminal.next_slice(&kitty_transmit_apc(7)).unwrap();
+        terminal.clear_pty_response();
+        terminal
+            .screens
+            .active_mut()
+            .set_cursor_position_for_tests(5, 1);
+        terminal
+            .next_slice(b"\x1b_Ga=p,i=7,p=4,U=1,C=0\x1b\\")
+            .unwrap();
+
+        assert_eq!(terminal.cursor_position_for_tests(), (5, 1));
+    }
+
+    #[test]
+    fn terminal_stream_kitty_graphics_failed_cursor_after_display_does_not_move_cursor() {
+        let mut terminal = Terminal::init(10, 3, None).unwrap();
+
+        terminal
+            .screens
+            .active_mut()
+            .set_cursor_position_for_tests(5, 1);
+        terminal
+            .next_slice(&kitty_cursor_after_display_apc(99, 4))
+            .unwrap();
+
+        assert_eq!(terminal.cursor_position_for_tests(), (5, 1));
+        assert_eq!(
+            terminal.take_pty_response_for_tests(),
+            b"\x1b_Gi=99,p=4;ENOENT: image not found\x1b\\"
+        );
     }
 
     #[test]

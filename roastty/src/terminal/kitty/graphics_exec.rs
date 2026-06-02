@@ -4,11 +4,12 @@ use super::super::point::{Coordinate, Point};
 use super::super::screen::Screen;
 use super::graphics_command::{
     AnimationControl, AnimationFrameComposition, AnimationFrameLoading, Command, CommandControl,
-    Delete, Display, Quiet, Response, Transmission,
+    CursorMovement, Delete, Display, Quiet, Response, Transmission,
 };
 use super::graphics_image::{ImageLoadError, LoadingImage};
 use super::graphics_storage::{
-    CellMetrics, ImageStorage, Placement, PlacementError, PlacementLocation,
+    CellMetrics, ImageStorage, Placement, PlacementError, PlacementId, PlacementKey,
+    PlacementLocation,
 };
 
 pub(crate) fn execute(storage: &mut ImageStorage, command: &Command) -> Option<Response<'static>> {
@@ -47,31 +48,60 @@ pub(crate) fn execute(storage: &mut ImageStorage, command: &Command) -> Option<R
     filter_response(response, quiet)
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(in crate::terminal) struct ScreenExecution {
+    pub(in crate::terminal) response: Option<Response<'static>>,
+    pub(in crate::terminal) cursor_after: Option<CursorAfter>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::terminal) struct CursorAfter {
+    pub(in crate::terminal) pin_x: u32,
+    pub(in crate::terminal) columns: u32,
+    pub(in crate::terminal) rows: u32,
+}
+
 pub(in crate::terminal) fn execute_screen(
     screen: &mut Screen,
     command: &Command,
     metrics: CellMetrics,
-) -> Option<Response<'static>> {
+) -> ScreenExecution {
     if !screen.kitty_images().enabled() {
-        return None;
+        return ScreenExecution::default();
     }
 
     let mut quiet = command.quiet;
+    if matches!(
+        &command.control,
+        CommandControl::Transmit(_) | CommandControl::TransmitAndDisplay { .. }
+    ) {
+        if let Some(loading) = screen.kitty_images_mut().loading.as_mut() {
+            match command.quiet {
+                Quiet::No => quiet = loading.quiet,
+                Quiet::Ok | Quiet::Failures => loading.quiet = command.quiet,
+            }
+        }
+    }
+
+    let mut cursor_after = None;
     let response = match &command.control {
         CommandControl::Query(transmission) => query(screen.kitty_images(), command, *transmission),
         CommandControl::Transmit(_) => {
-            if let Some(loading) = screen.kitty_images_mut().loading.as_mut() {
-                match command.quiet {
-                    Quiet::No => quiet = loading.quiet,
-                    Quiet::Ok | Quiet::Failures => loading.quiet = command.quiet,
-                }
+            let (response, _) = transmit_screen(screen, command, metrics);
+            Some(response)
+        }
+        CommandControl::TransmitAndDisplay { .. } => {
+            let (result, after) = transmit_screen(screen, command, metrics);
+            cursor_after = after;
+            Some(result)
+        }
+        CommandControl::Display(display) => {
+            let result = display_on_screen(screen, *display);
+            if result.ok() {
+                cursor_after = cursor_after_for_display(screen, *display, metrics);
             }
-            Some(transmit_screen(screen, command))
+            Some(result)
         }
-        CommandControl::TransmitAndDisplay { transmission, .. } => {
-            Some(unimplemented_response_for_transmission(*transmission))
-        }
-        CommandControl::Display(display) => Some(display_on_screen(screen, *display)),
         CommandControl::Delete(delete) => {
             screen.delete_kitty(*delete, metrics);
             None
@@ -87,7 +117,10 @@ pub(in crate::terminal) fn execute_screen(
         ),
     };
 
-    filter_response(response, quiet)
+    ScreenExecution {
+        response: filter_response(response, quiet),
+        cursor_after,
+    }
 }
 
 fn query(
@@ -140,9 +173,13 @@ fn transmit(storage: &mut ImageStorage, command: &Command) -> Response<'static> 
     }
 }
 
-fn transmit_screen(screen: &mut Screen, command: &Command) -> Response<'static> {
+fn transmit_screen(
+    screen: &mut Screen,
+    command: &Command,
+    metrics: CellMetrics,
+) -> (Response<'static>, Option<CursorAfter>) {
     let Some(transmission) = command.transmission() else {
-        return error_response(b"EINVAL: invalid data");
+        return (error_response(b"EINVAL: invalid data"), None);
     };
     let mut response = response_for_transmission(transmission);
     if let Some(loading) = screen.kitty_images().loading.as_ref() {
@@ -152,25 +189,83 @@ fn transmit_screen(screen: &mut Screen, command: &Command) -> Response<'static> 
 
     if transmission.image_id > 0 && transmission.image_number > 0 {
         response.message = b"EINVAL: image ID and number are mutually exclusive";
-        return response;
+        return (response, None);
     }
 
     match load_and_add_image_screen(screen, command, transmission) {
         Ok(load) => {
+            let mut cursor_after = None;
+            let mut response = if !load.more {
+                if let Some(mut display) = load.display {
+                    display.image_id = load.id;
+                    let response = display_on_screen(screen, display);
+                    if response.ok() {
+                        cursor_after = cursor_after_for_display(screen, display, metrics);
+                    }
+                    response
+                } else {
+                    response
+                }
+            } else {
+                response
+            };
+
             if load.more || load.implicit_id {
-                return Response::default();
+                return (Response::default(), cursor_after);
             }
 
             response.id = load.id;
             response.image_number = load.image_number;
-            response.placement_id = load.placement_id;
-            response
+            (response, cursor_after)
         }
         Err(err) => {
             encode_error(&mut response, err);
-            response
+            (response, None)
         }
     }
+}
+
+fn cursor_after_for_display(
+    screen: &Screen,
+    display: Display,
+    metrics: CellMetrics,
+) -> Option<CursorAfter> {
+    if display.cursor_movement != CursorMovement::After || display.virtual_placement {
+        return None;
+    }
+
+    let image_id = if display.image_id != 0 {
+        display.image_id
+    } else {
+        screen
+            .kitty_images()
+            .image_by_number(display.image_number)?
+            .id
+    };
+    let placement_id = if display.placement_id == 0 {
+        PlacementId::Internal(
+            screen
+                .kitty_images()
+                .next_internal_placement_id
+                .wrapping_sub(1),
+        )
+    } else {
+        PlacementId::External(display.placement_id)
+    };
+    let key = PlacementKey {
+        image_id,
+        placement_id,
+    };
+    let placement = screen.kitty_images().placement_by_key(key)?;
+    let pin = placement.tracked_pin()?;
+    let pin_x = screen.tracked_pin_value(pin)?.x();
+    let image = screen.kitty_images().image_by_id(image_id)?;
+    let grid = placement.grid_size(image, metrics);
+    Some(CursorAfter {
+        pin_x: pin_x.into(),
+        columns: grid.columns,
+        rows: grid.rows,
+    })
 }
 
 fn display_on_screen(screen: &mut Screen, display: Display) -> Response<'static> {
@@ -315,6 +410,7 @@ struct LoadResult {
     placement_id: u32,
     implicit_id: bool,
     more: bool,
+    display: Option<Display>,
 }
 
 fn load_and_add_image(
@@ -331,8 +427,9 @@ fn load_and_add_image(
             return Ok(result);
         }
 
+        let display = loading.display;
         let mut image = loading.complete()?;
-        let result = load_result_from_image(&image, false);
+        let result = load_result_from_image(&image, display, false);
         let _ = storage.add_image(std::mem::take(&mut image))?;
         return Ok(result);
     }
@@ -346,8 +443,9 @@ fn load_and_add_image(
         return Ok(result);
     }
 
+    let display = loading.display;
     let mut image = loading.complete()?;
-    let result = load_result_from_image(&image, false);
+    let result = load_result_from_image(&image, display, false);
     let _ = storage.add_image(std::mem::take(&mut image))?;
     Ok(result)
 }
@@ -366,8 +464,9 @@ fn load_and_add_image_screen(
             return Ok(result);
         }
 
+        let display = loading.display;
         let mut image = loading.complete()?;
-        let result = load_result_from_image(&image, false);
+        let result = load_result_from_image(&image, display, false);
         screen.add_kitty_image(std::mem::take(&mut image))?;
         return Ok(result);
     }
@@ -381,8 +480,9 @@ fn load_and_add_image_screen(
         return Ok(result);
     }
 
+    let display = loading.display;
     let mut image = loading.complete()?;
-    let result = load_result_from_image(&image, false);
+    let result = load_result_from_image(&image, display, false);
     screen.add_kitty_image(std::mem::take(&mut image))?;
     Ok(result)
 }
@@ -406,16 +506,22 @@ fn load_result_from_loading(loading: &LoadingImage, more: bool) -> LoadResult {
         placement_id: 0,
         implicit_id: loading.image.implicit_id,
         more,
+        display: loading.display,
     }
 }
 
-fn load_result_from_image(image: &super::graphics_image::Image, more: bool) -> LoadResult {
+fn load_result_from_image(
+    image: &super::graphics_image::Image,
+    display: Option<Display>,
+    more: bool,
+) -> LoadResult {
     LoadResult {
         id: image.id,
         image_number: image.number,
         placement_id: 0,
         implicit_id: image.implicit_id,
         more,
+        display,
     }
 }
 

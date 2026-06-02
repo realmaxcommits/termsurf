@@ -176,3 +176,63 @@ dispatch tests still pass.
 - Do not skip Codex design review. If the design review finds a real issue, fix
   it and re-review before committing this experiment design.
 - Do not skip Codex result review after implementation.
+
+## Result
+
+**Result:** Pass
+
+Implemented Kitty graphics `TransmitAndDisplay` (`a=T`) on the terminal/screen
+execution path. A completed transmit-display command now stores the image,
+creates the placement using the same placement logic as display, preserves the
+normal Kitty response fields, and supports chunked direct transmissions. The
+chunked path now shares quiet inheritance with plain transmit, so a quiet value
+set on an earlier chunk is honored by the final `a=T` chunk.
+
+Implemented `CursorMovement::After` (`C=0`) for screen-executed display and
+transmit-display commands. Graphics execution returns a `CursorAfter` request,
+and the terminal stream handler performs the actual movement with terminal-owned
+index/set-cursor behavior. Storage-only execution still does not move the
+cursor.
+
+Added regression coverage for:
+
+- explicit `a=T` image and placement storage;
+- display field mapping through `a=T`;
+- numbered `a=T` auto-ID response behavior;
+- implicit `a=T` response suppression;
+- chunked `a=T` display on the final chunk;
+- chunked `a=T` quiet inheritance;
+- failed `a=T` placement after successful image load;
+- cursor-after movement for display and transmit-display;
+- delayed cursor-after movement until the final chunk;
+- cursor-after scroll/index behavior, origin-mode margins, virtual placement,
+  and failed-display no-move behavior.
+
+Verification passed:
+
+```bash
+cargo fmt -- roastty/src/terminal/terminal.rs roastty/src/terminal/kitty/graphics_exec.rs
+cargo test -p roastty terminal_stream_kitty_graphics
+cargo test -p roastty kitty_graphics_exec
+cargo test -p roastty terminal_stream_kitty_graphics_delete
+cargo test -p roastty terminal_stream_csi_scroll_up
+cargo test -p roastty terminal_stream_split_feed_csi_scroll_up_and_down
+cargo test -p roastty
+if rg -n 'ghostty|Ghostty|GHOSTTY' roastty/src/lib.rs roastty/include/roastty.h roastty/tests/abi_harness.c; then exit 1; else exit 0; fi
+git diff --check
+```
+
+The full `cargo test -p roastty` run passed 2023 Rust tests plus the C ABI
+harness and doc tests.
+
+Codex result review initially found one real issue: chunked `a=T` was not
+sharing the plain transmit quiet-inheritance path, and tests for numbered and
+implicit `a=T` were missing. Those findings were fixed. The follow-up Codex
+review reported no blocking findings and marked the implementation pass-ready.
+
+## Conclusion
+
+Experiment 195 completes the direct in-terminal Kitty graphics execution slice
+through transmit, display, delete, transmit-display, and cursor-after movement.
+The remaining Kitty graphics work can proceed to the next coherent subsystem
+without revisiting the terminal-owned cursor movement boundary established here.
