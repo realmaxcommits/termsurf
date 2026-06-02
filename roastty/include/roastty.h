@@ -32,6 +32,8 @@ typedef void* roastty_selection_gesture_event_t;
 typedef void* roastty_surface_t;
 typedef void* roastty_terminal_t;
 typedef void* roastty_tracked_grid_ref_t;
+typedef void* roastty_render_state_t;
+typedef void* roastty_render_state_row_iterator_t;
 
 typedef uint16_t roastty_mode_tag_t;
 
@@ -382,6 +384,53 @@ typedef struct {
 } roastty_rgb_s;
 
 typedef roastty_rgb_s roastty_palette_t[256];
+
+typedef enum {
+  ROASTTY_RENDER_STATE_DIRTY_FALSE = 0,
+  ROASTTY_RENDER_STATE_DIRTY_PARTIAL = 1,
+  ROASTTY_RENDER_STATE_DIRTY_FULL = 2,
+} roastty_render_state_dirty_e;
+
+typedef enum {
+  ROASTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_BAR = 0,
+  ROASTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_BLOCK = 1,
+  ROASTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_UNDERLINE = 2,
+  ROASTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_BLOCK_HOLLOW = 3,
+} roastty_render_state_cursor_visual_style_e;
+
+typedef enum {
+  ROASTTY_RENDER_STATE_DATA_INVALID = 0,
+  ROASTTY_RENDER_STATE_DATA_COLS = 1,
+  ROASTTY_RENDER_STATE_DATA_ROWS = 2,
+  ROASTTY_RENDER_STATE_DATA_DIRTY = 3,
+  ROASTTY_RENDER_STATE_DATA_ROW_ITERATOR = 4,
+  ROASTTY_RENDER_STATE_DATA_COLOR_BACKGROUND = 5,
+  ROASTTY_RENDER_STATE_DATA_COLOR_FOREGROUND = 6,
+  ROASTTY_RENDER_STATE_DATA_COLOR_CURSOR = 7,
+  ROASTTY_RENDER_STATE_DATA_COLOR_CURSOR_HAS_VALUE = 8,
+  ROASTTY_RENDER_STATE_DATA_COLOR_PALETTE = 9,
+  ROASTTY_RENDER_STATE_DATA_CURSOR_VISUAL_STYLE = 10,
+  ROASTTY_RENDER_STATE_DATA_CURSOR_VISIBLE = 11,
+  ROASTTY_RENDER_STATE_DATA_CURSOR_BLINKING = 12,
+  ROASTTY_RENDER_STATE_DATA_CURSOR_PASSWORD_INPUT = 13,
+  ROASTTY_RENDER_STATE_DATA_CURSOR_VIEWPORT_HAS_VALUE = 14,
+  ROASTTY_RENDER_STATE_DATA_CURSOR_VIEWPORT_X = 15,
+  ROASTTY_RENDER_STATE_DATA_CURSOR_VIEWPORT_Y = 16,
+  ROASTTY_RENDER_STATE_DATA_CURSOR_VIEWPORT_WIDE_TAIL = 17,
+} roastty_render_state_data_e;
+
+typedef enum {
+  ROASTTY_RENDER_STATE_OPTION_DIRTY = 0,
+} roastty_render_state_option_e;
+
+typedef struct {
+  size_t size;
+  roastty_rgb_s background;
+  roastty_rgb_s foreground;
+  roastty_rgb_s cursor;
+  bool cursor_has_value;
+  roastty_palette_t palette;
+} roastty_render_state_colors_s;
 
 typedef enum {
   ROASTTY_STYLE_COLOR_NONE = 0,
@@ -934,6 +983,28 @@ ROASTTY_API roastty_result_e roastty_row_get_multi(roastty_row_t,
                                                    const roastty_row_data_e*,
                                                    void**,
                                                    size_t*);
+ROASTTY_API roastty_result_e
+roastty_render_state_new(roastty_render_state_t*);
+ROASTTY_API void roastty_render_state_free(roastty_render_state_t);
+ROASTTY_API roastty_result_e
+roastty_render_state_update(roastty_render_state_t, roastty_terminal_t);
+ROASTTY_API roastty_result_e
+roastty_render_state_get(roastty_render_state_t,
+                         roastty_render_state_data_e,
+                         void*);
+ROASTTY_API roastty_result_e
+roastty_render_state_get_multi(roastty_render_state_t,
+                               size_t,
+                               const roastty_render_state_data_e*,
+                               void**,
+                               size_t*);
+ROASTTY_API roastty_result_e
+roastty_render_state_set(roastty_render_state_t,
+                         roastty_render_state_option_e,
+                         const void*);
+ROASTTY_API roastty_result_e
+roastty_render_state_colors_get(roastty_render_state_t,
+                                roastty_render_state_colors_s*);
 
 ROASTTY_API roastty_config_t roastty_config_new(void);
 ROASTTY_API void roastty_config_free(roastty_config_t);

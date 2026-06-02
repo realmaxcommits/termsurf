@@ -569,6 +569,255 @@ static void assert_row_cell_abi(void) {
          ROASTTY_INVALID_VALUE);
 }
 
+static void assert_rgb_eq(roastty_rgb_s value, uint8_t r, uint8_t g, uint8_t b) {
+  assert(value.r == r);
+  assert(value.g == g);
+  assert(value.b == b);
+}
+
+static void assert_render_state_abi(void) {
+  assert(ROASTTY_RENDER_STATE_DIRTY_FALSE == 0);
+  assert(ROASTTY_RENDER_STATE_DIRTY_PARTIAL == 1);
+  assert(ROASTTY_RENDER_STATE_DIRTY_FULL == 2);
+
+  assert(ROASTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_BAR == 0);
+  assert(ROASTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_BLOCK == 1);
+  assert(ROASTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_UNDERLINE == 2);
+  assert(ROASTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_BLOCK_HOLLOW == 3);
+
+  assert(ROASTTY_RENDER_STATE_DATA_INVALID == 0);
+  assert(ROASTTY_RENDER_STATE_DATA_COLS == 1);
+  assert(ROASTTY_RENDER_STATE_DATA_ROWS == 2);
+  assert(ROASTTY_RENDER_STATE_DATA_DIRTY == 3);
+  assert(ROASTTY_RENDER_STATE_DATA_ROW_ITERATOR == 4);
+  assert(ROASTTY_RENDER_STATE_DATA_COLOR_BACKGROUND == 5);
+  assert(ROASTTY_RENDER_STATE_DATA_COLOR_FOREGROUND == 6);
+  assert(ROASTTY_RENDER_STATE_DATA_COLOR_CURSOR == 7);
+  assert(ROASTTY_RENDER_STATE_DATA_COLOR_CURSOR_HAS_VALUE == 8);
+  assert(ROASTTY_RENDER_STATE_DATA_COLOR_PALETTE == 9);
+  assert(ROASTTY_RENDER_STATE_DATA_CURSOR_VISUAL_STYLE == 10);
+  assert(ROASTTY_RENDER_STATE_DATA_CURSOR_VISIBLE == 11);
+  assert(ROASTTY_RENDER_STATE_DATA_CURSOR_BLINKING == 12);
+  assert(ROASTTY_RENDER_STATE_DATA_CURSOR_PASSWORD_INPUT == 13);
+  assert(ROASTTY_RENDER_STATE_DATA_CURSOR_VIEWPORT_HAS_VALUE == 14);
+  assert(ROASTTY_RENDER_STATE_DATA_CURSOR_VIEWPORT_X == 15);
+  assert(ROASTTY_RENDER_STATE_DATA_CURSOR_VIEWPORT_Y == 16);
+  assert(ROASTTY_RENDER_STATE_DATA_CURSOR_VIEWPORT_WIDE_TAIL == 17);
+  assert(ROASTTY_RENDER_STATE_OPTION_DIRTY == 0);
+
+  assert(sizeof(roastty_render_state_colors_s) == 792);
+  assert(_Alignof(roastty_render_state_colors_s) == 8);
+  assert(offsetof(roastty_render_state_colors_s, size) == 0);
+  assert(offsetof(roastty_render_state_colors_s, background) == 8);
+  assert(offsetof(roastty_render_state_colors_s, foreground) == 11);
+  assert(offsetof(roastty_render_state_colors_s, cursor) == 14);
+  assert(offsetof(roastty_render_state_colors_s, cursor_has_value) == 17);
+  assert(offsetof(roastty_render_state_colors_s, palette) == 18);
+
+  roastty_render_state_t state = NULL;
+  assert(roastty_render_state_new(NULL) == ROASTTY_INVALID_VALUE);
+  assert(roastty_render_state_new(&state) == ROASTTY_SUCCESS);
+  assert(state != NULL);
+
+  uint16_t dim = 999;
+  assert(roastty_render_state_get(state, ROASTTY_RENDER_STATE_DATA_COLS, &dim) ==
+         ROASTTY_SUCCESS);
+  assert(dim == 0);
+  dim = 999;
+  assert(roastty_render_state_get(state, ROASTTY_RENDER_STATE_DATA_ROWS, &dim) ==
+         ROASTTY_SUCCESS);
+  assert(dim == 0);
+
+  roastty_render_state_dirty_e dirty = ROASTTY_RENDER_STATE_DIRTY_FULL;
+  assert(roastty_render_state_get(state, ROASTTY_RENDER_STATE_DATA_DIRTY, &dirty) ==
+         ROASTTY_SUCCESS);
+  assert(dirty == ROASTTY_RENDER_STATE_DIRTY_FALSE);
+
+  roastty_rgb_s rgb = {9, 9, 9};
+  assert(roastty_render_state_get(state,
+                                  ROASTTY_RENDER_STATE_DATA_COLOR_BACKGROUND,
+                                  &rgb) == ROASTTY_SUCCESS);
+  assert_rgb_eq(rgb, 0, 0, 0);
+  assert(roastty_render_state_get(state,
+                                  ROASTTY_RENDER_STATE_DATA_COLOR_FOREGROUND,
+                                  &rgb) == ROASTTY_SUCCESS);
+  assert_rgb_eq(rgb, 255, 255, 255);
+  assert(roastty_render_state_get(state, ROASTTY_RENDER_STATE_DATA_COLOR_CURSOR, &rgb) ==
+         ROASTTY_NO_VALUE);
+
+  bool flag = true;
+  assert(roastty_render_state_get(state,
+                                  ROASTTY_RENDER_STATE_DATA_COLOR_CURSOR_HAS_VALUE,
+                                  &flag) == ROASTTY_SUCCESS);
+  assert(!flag);
+  flag = false;
+  assert(roastty_render_state_get(state,
+                                  ROASTTY_RENDER_STATE_DATA_CURSOR_VISIBLE,
+                                  &flag) == ROASTTY_SUCCESS);
+  assert(flag);
+  flag = true;
+  assert(roastty_render_state_get(state,
+                                  ROASTTY_RENDER_STATE_DATA_CURSOR_BLINKING,
+                                  &flag) == ROASTTY_SUCCESS);
+  assert(!flag);
+  flag = true;
+  assert(roastty_render_state_get(state,
+                                  ROASTTY_RENDER_STATE_DATA_CURSOR_PASSWORD_INPUT,
+                                  &flag) == ROASTTY_SUCCESS);
+  assert(!flag);
+  flag = true;
+  assert(roastty_render_state_get(state,
+                                  ROASTTY_RENDER_STATE_DATA_CURSOR_VIEWPORT_HAS_VALUE,
+                                  &flag) == ROASTTY_SUCCESS);
+  assert(!flag);
+  assert(roastty_render_state_get(state,
+                                  ROASTTY_RENDER_STATE_DATA_CURSOR_VIEWPORT_X,
+                                  &dim) == ROASTTY_NO_VALUE);
+  assert(roastty_render_state_get(state,
+                                  ROASTTY_RENDER_STATE_DATA_ROW_ITERATOR,
+                                  &state) == ROASTTY_NO_VALUE);
+  assert(roastty_render_state_get(state,
+                                  ROASTTY_RENDER_STATE_DATA_INVALID,
+                                  &dim) == ROASTTY_INVALID_VALUE);
+  assert(roastty_render_state_get(state, 99, &dim) == ROASTTY_INVALID_VALUE);
+  assert(roastty_render_state_get(NULL,
+                                  ROASTTY_RENDER_STATE_DATA_COLS,
+                                  &dim) == ROASTTY_INVALID_VALUE);
+  assert(roastty_render_state_get(state,
+                                  ROASTTY_RENDER_STATE_DATA_COLS,
+                                  NULL) == ROASTTY_INVALID_VALUE);
+
+  roastty_render_state_colors_s colors = {0};
+  colors.size = sizeof(colors);
+  colors.cursor.r = 9;
+  assert(roastty_render_state_colors_get(NULL, &colors) == ROASTTY_INVALID_VALUE);
+  assert(roastty_render_state_colors_get(state, NULL) == ROASTTY_INVALID_VALUE);
+  colors.size = sizeof(size_t) - 1;
+  assert(roastty_render_state_colors_get(state, &colors) == ROASTTY_INVALID_VALUE);
+  colors.size = sizeof(colors);
+  assert(roastty_render_state_colors_get(state, &colors) == ROASTTY_SUCCESS);
+  assert(colors.size == sizeof(colors));
+  assert_rgb_eq(colors.background, 0, 0, 0);
+  assert_rgb_eq(colors.foreground, 255, 255, 255);
+  assert(!colors.cursor_has_value);
+  assert(colors.cursor.r == 9);
+
+  roastty_render_state_colors_s partial = {0};
+  partial.size = offsetof(roastty_render_state_colors_s, cursor_has_value) +
+                 sizeof(bool);
+  assert(roastty_render_state_colors_get(state, &partial) == ROASTTY_SUCCESS);
+  assert(partial.size == offsetof(roastty_render_state_colors_s, cursor_has_value) +
+                             sizeof(bool));
+  assert_rgb_eq(partial.background, 0, 0, 0);
+  assert_rgb_eq(partial.foreground, 255, 255, 255);
+  assert(!partial.cursor_has_value);
+
+  roastty_render_state_dirty_e partial_dirty = ROASTTY_RENDER_STATE_DIRTY_PARTIAL;
+  assert(roastty_render_state_set(NULL,
+                                  ROASTTY_RENDER_STATE_OPTION_DIRTY,
+                                  &partial_dirty) == ROASTTY_INVALID_VALUE);
+  assert(roastty_render_state_set(state,
+                                  ROASTTY_RENDER_STATE_OPTION_DIRTY,
+                                  NULL) == ROASTTY_INVALID_VALUE);
+  assert(roastty_render_state_set(state, 99, &partial_dirty) ==
+         ROASTTY_INVALID_VALUE);
+  assert(roastty_render_state_set(state,
+                                  ROASTTY_RENDER_STATE_OPTION_DIRTY,
+                                  &partial_dirty) == ROASTTY_SUCCESS);
+  dirty = ROASTTY_RENDER_STATE_DIRTY_FALSE;
+  assert(roastty_render_state_get(state, ROASTTY_RENDER_STATE_DATA_DIRTY, &dirty) ==
+         ROASTTY_SUCCESS);
+  assert(dirty == ROASTTY_RENDER_STATE_DIRTY_PARTIAL);
+  int invalid_dirty = 99;
+  assert(roastty_render_state_set(state,
+                                  ROASTTY_RENDER_STATE_OPTION_DIRTY,
+                                  &invalid_dirty) == ROASTTY_INVALID_VALUE);
+  dirty = ROASTTY_RENDER_STATE_DIRTY_FALSE;
+  assert(roastty_render_state_get(state, ROASTTY_RENDER_STATE_DATA_DIRTY, &dirty) ==
+         ROASTTY_SUCCESS);
+  assert(dirty == ROASTTY_RENDER_STATE_DIRTY_PARTIAL);
+
+  roastty_render_state_data_e keys[] = {
+      ROASTTY_RENDER_STATE_DATA_COLS,
+      ROASTTY_RENDER_STATE_DATA_ROWS,
+      ROASTTY_RENDER_STATE_DATA_CURSOR_VIEWPORT_X,
+  };
+  uint16_t cols = 1;
+  uint16_t rows = 2;
+  uint16_t viewport_x = 3;
+  void *values[] = {&cols, &rows, &viewport_x};
+  size_t written = 999;
+  assert(roastty_render_state_get_multi(state,
+                                        2,
+                                        keys,
+                                        values,
+                                        &written) == ROASTTY_SUCCESS);
+  assert(written == 2);
+  assert(cols == 0);
+  assert(rows == 0);
+  written = 999;
+  assert(roastty_render_state_get_multi(state,
+                                        3,
+                                        keys,
+                                        values,
+                                        &written) == ROASTTY_NO_VALUE);
+  assert(written == 2);
+  assert(roastty_render_state_get_multi(state, 0, keys, values, &written) ==
+         ROASTTY_SUCCESS);
+  assert(written == 0);
+  assert(roastty_render_state_get_multi(state, 1, NULL, values, &written) ==
+         ROASTTY_INVALID_VALUE);
+  assert(roastty_render_state_get_multi(state, 1, keys, NULL, &written) ==
+         ROASTTY_INVALID_VALUE);
+
+  roastty_terminal_t terminal = NULL;
+  assert(roastty_terminal_new(80, 24, 10, &terminal) == ROASTTY_SUCCESS);
+  assert(terminal != NULL);
+  assert(roastty_render_state_update(NULL, terminal) == ROASTTY_INVALID_VALUE);
+  assert(roastty_render_state_update(state, NULL) == ROASTTY_INVALID_VALUE);
+  assert(roastty_render_state_update(state, terminal) == ROASTTY_SUCCESS);
+  assert(roastty_render_state_get(state, ROASTTY_RENDER_STATE_DATA_COLS, &cols) ==
+         ROASTTY_SUCCESS);
+  assert(cols == 80);
+  assert(roastty_render_state_get(state, ROASTTY_RENDER_STATE_DATA_ROWS, &rows) ==
+         ROASTTY_SUCCESS);
+  assert(rows == 24);
+  assert(roastty_render_state_get(state,
+                                  ROASTTY_RENDER_STATE_DATA_CURSOR_VIEWPORT_HAS_VALUE,
+                                  &flag) == ROASTTY_SUCCESS);
+  assert(flag);
+  assert(roastty_render_state_get(state,
+                                  ROASTTY_RENDER_STATE_DATA_CURSOR_VIEWPORT_X,
+                                  &viewport_x) == ROASTTY_SUCCESS);
+  assert(viewport_x == 0);
+  uint16_t viewport_y = 7;
+  assert(roastty_render_state_get(state,
+                                  ROASTTY_RENDER_STATE_DATA_CURSOR_VIEWPORT_Y,
+                                  &viewport_y) == ROASTTY_SUCCESS);
+  assert(viewport_y == 0);
+  assert(roastty_render_state_get(state,
+                                  ROASTTY_RENDER_STATE_DATA_CURSOR_VIEWPORT_WIDE_TAIL,
+                                  &flag) == ROASTTY_SUCCESS);
+  assert(!flag);
+  int visual = -1;
+  assert(roastty_render_state_get(state,
+                                  ROASTTY_RENDER_STATE_DATA_CURSOR_VISUAL_STYLE,
+                                  &visual) == ROASTTY_SUCCESS);
+  assert(visual == ROASTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_BLOCK);
+  assert(roastty_render_state_get(state,
+                                  ROASTTY_RENDER_STATE_DATA_CURSOR_VISIBLE,
+                                  &flag) == ROASTTY_SUCCESS);
+  assert(flag);
+  assert(roastty_render_state_get(state,
+                                  ROASTTY_RENDER_STATE_DATA_CURSOR_BLINKING,
+                                  &flag) == ROASTTY_SUCCESS);
+  assert(!flag);
+
+  roastty_terminal_free(terminal);
+  roastty_render_state_free(state);
+  roastty_render_state_free(NULL);
+}
+
 static void terminal_write(roastty_terminal_t terminal, const char *bytes) {
   assert(roastty_terminal_vt_write(terminal,
                                    (const uint8_t *)bytes,
@@ -2532,6 +2781,7 @@ int main(int argc, char **argv) {
   assert_osc_parser_abi();
   assert_style_abi();
   assert_row_cell_abi();
+  assert_render_state_abi();
   assert_terminal_abi();
 
   roastty_info_s info = roastty_info();

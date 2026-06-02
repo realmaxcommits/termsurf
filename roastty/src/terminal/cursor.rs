@@ -1,7 +1,7 @@
 //! Cursor visual style state.
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub(super) enum VisualStyle {
+pub(crate) enum VisualStyle {
     Bar,
     #[default]
     Block,
@@ -10,7 +10,7 @@ pub(super) enum VisualStyle {
 }
 
 impl VisualStyle {
-    pub(super) const fn decscusr_report(self, blinking: bool) -> u8 {
+    pub(crate) const fn decscusr_report(self, blinking: bool) -> u8 {
         match self {
             Self::Block | Self::BlockHollow => {
                 if blinking {

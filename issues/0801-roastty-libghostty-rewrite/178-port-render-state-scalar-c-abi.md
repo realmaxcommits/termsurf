@@ -332,3 +332,69 @@ approves it.
 
 After implementation and result recording, the completed result must also be
 reviewed with Codex and approved before the result commit.
+
+## Result
+
+**Result:** Pass
+
+Implemented the scalar render-state C ABI foundation:
+
+- added opaque `roastty_render_state_t` and
+  `roastty_render_state_row_iterator_t` handle types;
+- added Roastty-named render-state dirty, cursor visual style, data selector,
+  and option selector enums matching upstream numeric order;
+- added `roastty_render_state_colors_s` with the specified macOS C layout;
+- added `roastty_render_state_new`, `roastty_render_state_free`,
+  `roastty_render_state_update`, `roastty_render_state_get`,
+  `roastty_render_state_get_multi`, `roastty_render_state_set`, and
+  `roastty_render_state_colors_get`;
+- added private scalar render-state storage initialized to upstream empty
+  defaults;
+- added update from a live `roastty_terminal_t` for dimensions, colors, palette,
+  cursor visual style, cursor visibility, cursor blinking, and cursor viewport
+  position;
+- added narrow internal terminal accessors for cursor visual style and cursor
+  blinking;
+- added Rust tests for layout, enum values, pre-update defaults, update
+  snapshots, dirty set validation/no-mutation behavior, `get_multi`, deferred
+  row iterator behavior, and colors size-capacity behavior;
+- added C harness coverage for the same public ABI surface.
+
+Two fields remain intentionally conservative in this scalar slice:
+
+- `cursor_password_input` is always `false` until the password-input detector is
+  ported;
+- `cursor_viewport_wide_tail` is always `false` until wide-tail cursor detection
+  is ported.
+
+`ROASTTY_RENDER_STATE_DATA_ROW_ITERATOR` returns `ROASTTY_NO_VALUE` as designed.
+No fake iterator, row snapshot storage, row-cell iterator, formatter object,
+renderer backend, Swift integration, browser overlay behavior, raw page pointer,
+or node pointer exposure was added.
+
+Verification passed:
+
+```bash
+cargo fmt -- roastty/src/lib.rs roastty/src/terminal/mod.rs roastty/src/terminal/color.rs roastty/src/terminal/cursor.rs roastty/src/terminal/terminal.rs
+cargo test -p roastty render_state_c_abi
+cargo test -p roastty c_harness_links_against_roastty_header_and_roastty_dylib
+cargo test -p roastty
+if rg -n 'ghostty|Ghostty|GHOSTTY' roastty/src/lib.rs roastty/include/roastty.h roastty/tests/abi_harness.c; then exit 1; else exit 0; fi
+git diff --check
+```
+
+The full `roastty` test run passed with 1859 Rust tests, the C ABI harness, and
+doc tests.
+
+## Conclusion
+
+Roastty now has the scalar render-state handle and getters needed before the
+full row iterator API can be ported. The ABI can allocate/free render state,
+snapshot scalar terminal state, expose colors and cursor state, and round-trip
+dirty state without exposing page storage or inventing partial row iteration.
+
+The next experiment should port render-state row iterators and row getters on
+top of this handle. That experiment should add real row snapshot storage and
+selection/dirty/raw-row access, while keeping row-cell iteration and grapheme
+extraction as the following slice unless the design review shows they can be
+verified together without weakening failure diagnosis.

@@ -5,8 +5,8 @@ use std::ptr::NonNull;
 use std::slice;
 
 use input::{key, key_encode, key_mods};
-#[cfg(test)]
 use terminal::color;
+use terminal::cursor;
 use terminal::kitty::KeyFlags;
 use terminal::selection_gesture::{
     SelectionGesture, SelectionGestureAutoscroll, SelectionGestureAutoscrollTick,
@@ -48,6 +48,8 @@ pub type RoasttySelectionGestureEvent = *mut c_void;
 pub type RoasttySurface = *mut c_void;
 pub type RoasttyTerminal = *mut c_void;
 pub type RoasttyTrackedGridRef = *mut c_void;
+pub type RoasttyRenderStateHandle = *mut c_void;
+pub type RoasttyRenderStateRowIterator = *mut c_void;
 type RoasttyCell = u64;
 type RoasttyRow = u64;
 
@@ -208,6 +210,36 @@ const ROASTTY_POINT_SCREEN: c_int = 2;
 #[allow(dead_code)]
 const ROASTTY_POINT_HISTORY: c_int = 3;
 
+const ROASTTY_RENDER_STATE_DIRTY_FALSE: c_int = 0;
+const ROASTTY_RENDER_STATE_DIRTY_PARTIAL: c_int = 1;
+const ROASTTY_RENDER_STATE_DIRTY_FULL: c_int = 2;
+
+const ROASTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_BAR: c_int = 0;
+const ROASTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_BLOCK: c_int = 1;
+const ROASTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_UNDERLINE: c_int = 2;
+const ROASTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_BLOCK_HOLLOW: c_int = 3;
+
+const ROASTTY_RENDER_STATE_DATA_INVALID: c_int = 0;
+const ROASTTY_RENDER_STATE_DATA_COLS: c_int = 1;
+const ROASTTY_RENDER_STATE_DATA_ROWS: c_int = 2;
+const ROASTTY_RENDER_STATE_DATA_DIRTY: c_int = 3;
+const ROASTTY_RENDER_STATE_DATA_ROW_ITERATOR: c_int = 4;
+const ROASTTY_RENDER_STATE_DATA_COLOR_BACKGROUND: c_int = 5;
+const ROASTTY_RENDER_STATE_DATA_COLOR_FOREGROUND: c_int = 6;
+const ROASTTY_RENDER_STATE_DATA_COLOR_CURSOR: c_int = 7;
+const ROASTTY_RENDER_STATE_DATA_COLOR_CURSOR_HAS_VALUE: c_int = 8;
+const ROASTTY_RENDER_STATE_DATA_COLOR_PALETTE: c_int = 9;
+const ROASTTY_RENDER_STATE_DATA_CURSOR_VISUAL_STYLE: c_int = 10;
+const ROASTTY_RENDER_STATE_DATA_CURSOR_VISIBLE: c_int = 11;
+const ROASTTY_RENDER_STATE_DATA_CURSOR_BLINKING: c_int = 12;
+const ROASTTY_RENDER_STATE_DATA_CURSOR_PASSWORD_INPUT: c_int = 13;
+const ROASTTY_RENDER_STATE_DATA_CURSOR_VIEWPORT_HAS_VALUE: c_int = 14;
+const ROASTTY_RENDER_STATE_DATA_CURSOR_VIEWPORT_X: c_int = 15;
+const ROASTTY_RENDER_STATE_DATA_CURSOR_VIEWPORT_Y: c_int = 16;
+const ROASTTY_RENDER_STATE_DATA_CURSOR_VIEWPORT_WIDE_TAIL: c_int = 17;
+
+const ROASTTY_RENDER_STATE_OPTION_DIRTY: c_int = 0;
+
 const ROASTTY_STYLE_COLOR_NONE: c_int = 0;
 const ROASTTY_STYLE_COLOR_PALETTE: c_int = 1;
 const ROASTTY_STYLE_COLOR_RGB: c_int = 2;
@@ -297,6 +329,40 @@ pub struct RoasttyRgb {
 }
 
 type RoasttyPalette = [RoasttyRgb; 256];
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RoasttyRenderStateColors {
+    size: usize,
+    background: RoasttyRgb,
+    foreground: RoasttyRgb,
+    cursor: RoasttyRgb,
+    cursor_has_value: bool,
+    palette: RoasttyPalette,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct RenderStateScalar {
+    cols: u16,
+    rows: u16,
+    background: RoasttyRgb,
+    foreground: RoasttyRgb,
+    cursor: Option<RoasttyRgb>,
+    palette: RoasttyPalette,
+    dirty: c_int,
+    cursor_visual_style: c_int,
+    cursor_visible: bool,
+    cursor_blinking: bool,
+    cursor_password_input: bool,
+    cursor_viewport: Option<RenderStateCursorViewport>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct RenderStateCursorViewport {
+    x: u16,
+    y: u16,
+    wide_tail: bool,
+}
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -1245,13 +1311,29 @@ fn palette_from_tuples(palette: [(u8, u8, u8); 256]) -> RoasttyPalette {
     result
 }
 
+fn roastty_rgb(rgb: (u8, u8, u8)) -> RoasttyRgb {
+    RoasttyRgb {
+        r: rgb.0,
+        g: rgb.1,
+        b: rgb.2,
+    }
+}
+
+fn palette_from_color(palette: color::Palette) -> RoasttyPalette {
+    let mut result = [RoasttyRgb::default(); 256];
+    for (index, rgb) in palette.into_iter().enumerate() {
+        result[index] = RoasttyRgb {
+            r: rgb.r,
+            g: rgb.g,
+            b: rgb.b,
+        };
+    }
+    result
+}
+
 fn write_rgb(out: *mut c_void, rgb: (u8, u8, u8)) {
     unsafe {
-        out.cast::<RoasttyRgb>().write(RoasttyRgb {
-            r: rgb.0,
-            g: rgb.1,
-            b: rgb.2,
-        });
+        out.cast::<RoasttyRgb>().write(roastty_rgb(rgb));
     }
 }
 
@@ -1260,6 +1342,111 @@ fn write_palette(out: *mut c_void, palette: [(u8, u8, u8); 256]) {
         out.cast::<RoasttyPalette>()
             .write(palette_from_tuples(palette));
     }
+}
+
+fn render_state_default() -> RenderStateScalar {
+    RenderStateScalar {
+        cols: 0,
+        rows: 0,
+        background: RoasttyRgb { r: 0, g: 0, b: 0 },
+        foreground: RoasttyRgb {
+            r: 0xff,
+            g: 0xff,
+            b: 0xff,
+        },
+        cursor: None,
+        palette: palette_from_color(color::DEFAULT_PALETTE),
+        dirty: ROASTTY_RENDER_STATE_DIRTY_FALSE,
+        cursor_visual_style: ROASTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_BLOCK,
+        cursor_visible: true,
+        cursor_blinking: false,
+        cursor_password_input: false,
+        cursor_viewport: None,
+    }
+}
+
+fn render_cursor_visual_style(value: cursor::VisualStyle) -> c_int {
+    match value {
+        cursor::VisualStyle::Bar => ROASTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_BAR,
+        cursor::VisualStyle::Block => ROASTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_BLOCK,
+        cursor::VisualStyle::Underline => ROASTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_UNDERLINE,
+        cursor::VisualStyle::BlockHollow => ROASTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_BLOCK_HOLLOW,
+    }
+}
+
+fn render_state_from_terminal(terminal: &InnerTerminal) -> RenderStateScalar {
+    let background = terminal
+        .color_effective(TerminalColorKind::Background)
+        .map(roastty_rgb)
+        .unwrap_or(RoasttyRgb { r: 0, g: 0, b: 0 });
+    let foreground = terminal
+        .color_effective(TerminalColorKind::Foreground)
+        .map(roastty_rgb)
+        .unwrap_or(RoasttyRgb {
+            r: 0xff,
+            g: 0xff,
+            b: 0xff,
+        });
+    let cursor = terminal
+        .color_effective(TerminalColorKind::Cursor)
+        .map(roastty_rgb);
+    let (cursor_x, cursor_y) = terminal.cursor_position();
+    let cursor_viewport = (cursor_x < terminal.columns() && cursor_y < terminal.rows()).then_some(
+        RenderStateCursorViewport {
+            x: cursor_x,
+            y: cursor_y,
+            wide_tail: false,
+        },
+    );
+
+    RenderStateScalar {
+        cols: terminal.columns(),
+        rows: terminal.rows(),
+        background,
+        foreground,
+        cursor,
+        palette: palette_from_tuples(terminal.palette_current()),
+        dirty: ROASTTY_RENDER_STATE_DIRTY_FULL,
+        cursor_visual_style: render_cursor_visual_style(terminal.cursor_visual_style()),
+        cursor_visible: terminal.cursor_visible(),
+        cursor_blinking: terminal.cursor_blinking(),
+        cursor_password_input: false,
+        cursor_viewport,
+    }
+}
+
+fn render_state_from_handle(
+    handle: RoasttyRenderStateHandle,
+) -> Option<&'static RenderStateScalar> {
+    if handle.is_null() {
+        return None;
+    }
+    Some(unsafe { &*handle.cast::<RenderStateScalar>() })
+}
+
+fn render_state_mut_from_handle(
+    handle: RoasttyRenderStateHandle,
+) -> Option<&'static mut RenderStateScalar> {
+    if handle.is_null() {
+        return None;
+    }
+    Some(unsafe { &mut *handle.cast::<RenderStateScalar>() })
+}
+
+fn render_dirty_from_raw(value: c_int) -> Option<c_int> {
+    match value {
+        ROASTTY_RENDER_STATE_DIRTY_FALSE
+        | ROASTTY_RENDER_STATE_DIRTY_PARTIAL
+        | ROASTTY_RENDER_STATE_DIRTY_FULL => Some(value),
+        _ => None,
+    }
+}
+
+fn valid_render_state_data(data: c_int) -> bool {
+    matches!(
+        data,
+        ROASTTY_RENDER_STATE_DATA_INVALID..=ROASTTY_RENDER_STATE_DATA_CURSOR_VIEWPORT_WIDE_TAIL
+    )
 }
 
 unsafe fn terminal_get_write(terminal: &InnerTerminal, data: c_int, out: *mut c_void) -> c_int {
@@ -1345,6 +1532,71 @@ unsafe fn terminal_get_write(terminal: &InnerTerminal, data: c_int, out: *mut c_
         | ROASTTY_TERMINAL_DATA_KITTY_IMAGE_MEDIUM_SHARED_MEM
         | ROASTTY_TERMINAL_DATA_KITTY_GRAPHICS
         | ROASTTY_TERMINAL_DATA_VIEWPORT_ACTIVE => return ROASTTY_NO_VALUE,
+        _ => return ROASTTY_INVALID_VALUE,
+    }
+
+    ROASTTY_SUCCESS
+}
+
+unsafe fn render_state_get_write(
+    state: &RenderStateScalar,
+    data: c_int,
+    out: *mut c_void,
+) -> c_int {
+    match data {
+        ROASTTY_RENDER_STATE_DATA_COLS => out.cast::<u16>().write(state.cols),
+        ROASTTY_RENDER_STATE_DATA_ROWS => out.cast::<u16>().write(state.rows),
+        ROASTTY_RENDER_STATE_DATA_DIRTY => out.cast::<c_int>().write(state.dirty),
+        ROASTTY_RENDER_STATE_DATA_ROW_ITERATOR => return ROASTTY_NO_VALUE,
+        ROASTTY_RENDER_STATE_DATA_COLOR_BACKGROUND => {
+            out.cast::<RoasttyRgb>().write(state.background)
+        }
+        ROASTTY_RENDER_STATE_DATA_COLOR_FOREGROUND => {
+            out.cast::<RoasttyRgb>().write(state.foreground)
+        }
+        ROASTTY_RENDER_STATE_DATA_COLOR_CURSOR => {
+            let Some(cursor) = state.cursor else {
+                return ROASTTY_NO_VALUE;
+            };
+            out.cast::<RoasttyRgb>().write(cursor);
+        }
+        ROASTTY_RENDER_STATE_DATA_COLOR_CURSOR_HAS_VALUE => {
+            out.cast::<bool>().write(state.cursor.is_some())
+        }
+        ROASTTY_RENDER_STATE_DATA_COLOR_PALETTE => {
+            out.cast::<RoasttyPalette>().write(state.palette)
+        }
+        ROASTTY_RENDER_STATE_DATA_CURSOR_VISUAL_STYLE => {
+            out.cast::<c_int>().write(state.cursor_visual_style)
+        }
+        ROASTTY_RENDER_STATE_DATA_CURSOR_VISIBLE => out.cast::<bool>().write(state.cursor_visible),
+        ROASTTY_RENDER_STATE_DATA_CURSOR_BLINKING => {
+            out.cast::<bool>().write(state.cursor_blinking)
+        }
+        ROASTTY_RENDER_STATE_DATA_CURSOR_PASSWORD_INPUT => {
+            out.cast::<bool>().write(state.cursor_password_input)
+        }
+        ROASTTY_RENDER_STATE_DATA_CURSOR_VIEWPORT_HAS_VALUE => {
+            out.cast::<bool>().write(state.cursor_viewport.is_some())
+        }
+        ROASTTY_RENDER_STATE_DATA_CURSOR_VIEWPORT_X => {
+            let Some(viewport) = state.cursor_viewport else {
+                return ROASTTY_NO_VALUE;
+            };
+            out.cast::<u16>().write(viewport.x);
+        }
+        ROASTTY_RENDER_STATE_DATA_CURSOR_VIEWPORT_Y => {
+            let Some(viewport) = state.cursor_viewport else {
+                return ROASTTY_NO_VALUE;
+            };
+            out.cast::<u16>().write(viewport.y);
+        }
+        ROASTTY_RENDER_STATE_DATA_CURSOR_VIEWPORT_WIDE_TAIL => {
+            let Some(viewport) = state.cursor_viewport else {
+                return ROASTTY_NO_VALUE;
+            };
+            out.cast::<bool>().write(viewport.wide_tail);
+        }
         _ => return ROASTTY_INVALID_VALUE,
     }
 
@@ -2002,6 +2254,189 @@ pub extern "C" fn roastty_style_is_default(value: *const RoasttyStyle) -> bool {
 
         style_is_default(value.read())
     }
+}
+
+#[no_mangle]
+pub extern "C" fn roastty_render_state_new(out: *mut RoasttyRenderStateHandle) -> c_int {
+    if out.is_null() {
+        return ROASTTY_INVALID_VALUE;
+    }
+
+    let state = Box::new(render_state_default());
+    unsafe {
+        out.write(Box::into_raw(state).cast());
+    }
+    ROASTTY_SUCCESS
+}
+
+#[no_mangle]
+pub extern "C" fn roastty_render_state_free(state: RoasttyRenderStateHandle) {
+    if state.is_null() {
+        return;
+    }
+
+    unsafe {
+        drop(Box::from_raw(state.cast::<RenderStateScalar>()));
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn roastty_render_state_update(
+    state: RoasttyRenderStateHandle,
+    terminal: RoasttyTerminal,
+) -> c_int {
+    let Some(state) = render_state_mut_from_handle(state) else {
+        return ROASTTY_INVALID_VALUE;
+    };
+    let Some(terminal) = terminal_from_handle(terminal) else {
+        return ROASTTY_INVALID_VALUE;
+    };
+
+    *state = render_state_from_terminal(&terminal.terminal);
+    ROASTTY_SUCCESS
+}
+
+#[no_mangle]
+pub extern "C" fn roastty_render_state_get(
+    state: RoasttyRenderStateHandle,
+    data: c_int,
+    out: *mut c_void,
+) -> c_int {
+    if !valid_render_state_data(data) || data == ROASTTY_RENDER_STATE_DATA_INVALID {
+        return ROASTTY_INVALID_VALUE;
+    }
+    if out.is_null() {
+        return ROASTTY_INVALID_VALUE;
+    }
+    let Some(state) = render_state_from_handle(state) else {
+        return ROASTTY_INVALID_VALUE;
+    };
+
+    unsafe { render_state_get_write(state, data, out) }
+}
+
+#[no_mangle]
+pub extern "C" fn roastty_render_state_get_multi(
+    state: RoasttyRenderStateHandle,
+    count: usize,
+    keys: *const c_int,
+    values: *mut *mut c_void,
+    out_written: *mut usize,
+) -> c_int {
+    if keys.is_null() || values.is_null() {
+        return ROASTTY_INVALID_VALUE;
+    }
+
+    for index in 0..count {
+        let key = unsafe { keys.add(index).read() };
+        let value = unsafe { values.add(index).read() };
+        let result = roastty_render_state_get(state, key, value);
+        if result != ROASTTY_SUCCESS {
+            if !out_written.is_null() {
+                unsafe {
+                    out_written.write(index);
+                }
+            }
+            return result;
+        }
+    }
+
+    if !out_written.is_null() {
+        unsafe {
+            out_written.write(count);
+        }
+    }
+    ROASTTY_SUCCESS
+}
+
+#[no_mangle]
+pub extern "C" fn roastty_render_state_set(
+    state: RoasttyRenderStateHandle,
+    option: c_int,
+    value: *const c_void,
+) -> c_int {
+    let Some(state) = render_state_mut_from_handle(state) else {
+        return ROASTTY_INVALID_VALUE;
+    };
+    if value.is_null() {
+        return ROASTTY_INVALID_VALUE;
+    }
+
+    match option {
+        ROASTTY_RENDER_STATE_OPTION_DIRTY => {
+            let raw = unsafe { value.cast::<c_int>().read() };
+            let Some(dirty) = render_dirty_from_raw(raw) else {
+                return ROASTTY_INVALID_VALUE;
+            };
+            state.dirty = dirty;
+            ROASTTY_SUCCESS
+        }
+        _ => ROASTTY_INVALID_VALUE,
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn roastty_render_state_colors_get(
+    state: RoasttyRenderStateHandle,
+    out: *mut RoasttyRenderStateColors,
+) -> c_int {
+    let Some(state) = render_state_from_handle(state) else {
+        return ROASTTY_INVALID_VALUE;
+    };
+    if out.is_null() {
+        return ROASTTY_INVALID_VALUE;
+    }
+
+    let out_size = unsafe { ptr::addr_of!((*out).size).read() };
+    if out_size < std::mem::size_of::<usize>() {
+        return ROASTTY_INVALID_VALUE;
+    }
+
+    unsafe {
+        if out_size
+            >= std::mem::offset_of!(RoasttyRenderStateColors, background)
+                + std::mem::size_of::<RoasttyRgb>()
+        {
+            ptr::addr_of_mut!((*out).background).write(state.background);
+        }
+        if out_size
+            >= std::mem::offset_of!(RoasttyRenderStateColors, foreground)
+                + std::mem::size_of::<RoasttyRgb>()
+        {
+            ptr::addr_of_mut!((*out).foreground).write(state.foreground);
+        }
+        if let Some(cursor) = state.cursor {
+            if out_size
+                >= std::mem::offset_of!(RoasttyRenderStateColors, cursor)
+                    + std::mem::size_of::<RoasttyRgb>()
+            {
+                ptr::addr_of_mut!((*out).cursor).write(cursor);
+            }
+        }
+        if out_size
+            >= std::mem::offset_of!(RoasttyRenderStateColors, cursor_has_value)
+                + std::mem::size_of::<bool>()
+        {
+            ptr::addr_of_mut!((*out).cursor_has_value).write(state.cursor.is_some());
+        }
+
+        let palette_offset = std::mem::offset_of!(RoasttyRenderStateColors, palette);
+        if out_size > palette_offset {
+            let available = out_size - palette_offset;
+            let entries = std::cmp::min(
+                state.palette.len(),
+                available / std::mem::size_of::<RoasttyRgb>(),
+            );
+            for index in 0..entries {
+                ptr::addr_of_mut!((*out).palette)
+                    .cast::<RoasttyRgb>()
+                    .add(index)
+                    .write(state.palette[index]);
+            }
+        }
+    }
+
+    ROASTTY_SUCCESS
 }
 
 #[no_mangle]
@@ -4837,6 +5272,62 @@ mod tests {
         out
     }
 
+    fn new_render_state() -> RoasttyRenderStateHandle {
+        let mut state = ptr::null_mut();
+        assert_eq!(roastty_render_state_new(&mut state), ROASTTY_SUCCESS);
+        assert!(!state.is_null());
+        state
+    }
+
+    fn render_state_get_u16(state: RoasttyRenderStateHandle, data: c_int) -> u16 {
+        let mut out = u16::MAX;
+        assert_eq!(
+            roastty_render_state_get(state, data, &mut out as *mut _ as *mut c_void),
+            ROASTTY_SUCCESS
+        );
+        out
+    }
+
+    fn render_state_get_i32(state: RoasttyRenderStateHandle, data: c_int) -> c_int {
+        let mut out = -1;
+        assert_eq!(
+            roastty_render_state_get(state, data, &mut out as *mut _ as *mut c_void),
+            ROASTTY_SUCCESS
+        );
+        out
+    }
+
+    fn render_state_get_bool(state: RoasttyRenderStateHandle, data: c_int) -> bool {
+        let mut out = false;
+        assert_eq!(
+            roastty_render_state_get(state, data, &mut out as *mut _ as *mut c_void),
+            ROASTTY_SUCCESS
+        );
+        out
+    }
+
+    fn render_state_get_rgb(state: RoasttyRenderStateHandle, data: c_int) -> RoasttyRgb {
+        let mut out = RoasttyRgb::default();
+        assert_eq!(
+            roastty_render_state_get(state, data, &mut out as *mut _ as *mut c_void),
+            ROASTTY_SUCCESS
+        );
+        out
+    }
+
+    fn render_state_get_palette(state: RoasttyRenderStateHandle) -> RoasttyPalette {
+        let mut out = [RoasttyRgb::default(); 256];
+        assert_eq!(
+            roastty_render_state_get(
+                state,
+                ROASTTY_RENDER_STATE_DATA_COLOR_PALETTE,
+                &mut out as *mut _ as *mut c_void,
+            ),
+            ROASTTY_SUCCESS
+        );
+        out
+    }
+
     fn packed_cell(tag: c_int, content: u64) -> RoasttyCell {
         (tag as u64) | (content << 2)
     }
@@ -6252,6 +6743,448 @@ mod tests {
         for case in cases {
             assert!(!roastty_style_is_default(&case));
         }
+    }
+
+    #[test]
+    fn render_state_c_abi_layout_values_and_pre_update_defaults() {
+        assert_eq!(ROASTTY_RENDER_STATE_DIRTY_FALSE, 0);
+        assert_eq!(ROASTTY_RENDER_STATE_DIRTY_PARTIAL, 1);
+        assert_eq!(ROASTTY_RENDER_STATE_DIRTY_FULL, 2);
+        assert_eq!(ROASTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_BAR, 0);
+        assert_eq!(ROASTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_BLOCK, 1);
+        assert_eq!(ROASTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_UNDERLINE, 2);
+        assert_eq!(ROASTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_BLOCK_HOLLOW, 3);
+        assert_eq!(ROASTTY_RENDER_STATE_DATA_INVALID, 0);
+        assert_eq!(ROASTTY_RENDER_STATE_DATA_COLS, 1);
+        assert_eq!(ROASTTY_RENDER_STATE_DATA_ROWS, 2);
+        assert_eq!(ROASTTY_RENDER_STATE_DATA_DIRTY, 3);
+        assert_eq!(ROASTTY_RENDER_STATE_DATA_ROW_ITERATOR, 4);
+        assert_eq!(ROASTTY_RENDER_STATE_DATA_COLOR_BACKGROUND, 5);
+        assert_eq!(ROASTTY_RENDER_STATE_DATA_COLOR_FOREGROUND, 6);
+        assert_eq!(ROASTTY_RENDER_STATE_DATA_COLOR_CURSOR, 7);
+        assert_eq!(ROASTTY_RENDER_STATE_DATA_COLOR_CURSOR_HAS_VALUE, 8);
+        assert_eq!(ROASTTY_RENDER_STATE_DATA_COLOR_PALETTE, 9);
+        assert_eq!(ROASTTY_RENDER_STATE_DATA_CURSOR_VISUAL_STYLE, 10);
+        assert_eq!(ROASTTY_RENDER_STATE_DATA_CURSOR_VISIBLE, 11);
+        assert_eq!(ROASTTY_RENDER_STATE_DATA_CURSOR_BLINKING, 12);
+        assert_eq!(ROASTTY_RENDER_STATE_DATA_CURSOR_PASSWORD_INPUT, 13);
+        assert_eq!(ROASTTY_RENDER_STATE_DATA_CURSOR_VIEWPORT_HAS_VALUE, 14);
+        assert_eq!(ROASTTY_RENDER_STATE_DATA_CURSOR_VIEWPORT_X, 15);
+        assert_eq!(ROASTTY_RENDER_STATE_DATA_CURSOR_VIEWPORT_Y, 16);
+        assert_eq!(ROASTTY_RENDER_STATE_DATA_CURSOR_VIEWPORT_WIDE_TAIL, 17);
+        assert_eq!(ROASTTY_RENDER_STATE_OPTION_DIRTY, 0);
+
+        assert_eq!(std::mem::size_of::<RoasttyRenderStateColors>(), 792);
+        assert_eq!(std::mem::align_of::<RoasttyRenderStateColors>(), 8);
+        assert_eq!(std::mem::offset_of!(RoasttyRenderStateColors, size), 0);
+        assert_eq!(
+            std::mem::offset_of!(RoasttyRenderStateColors, background),
+            8
+        );
+        assert_eq!(
+            std::mem::offset_of!(RoasttyRenderStateColors, foreground),
+            11
+        );
+        assert_eq!(std::mem::offset_of!(RoasttyRenderStateColors, cursor), 14);
+        assert_eq!(
+            std::mem::offset_of!(RoasttyRenderStateColors, cursor_has_value),
+            17
+        );
+        assert_eq!(std::mem::offset_of!(RoasttyRenderStateColors, palette), 18);
+
+        assert_eq!(
+            roastty_render_state_new(ptr::null_mut()),
+            ROASTTY_INVALID_VALUE
+        );
+        let state = new_render_state();
+        assert_eq!(
+            render_state_get_u16(state, ROASTTY_RENDER_STATE_DATA_COLS),
+            0
+        );
+        assert_eq!(
+            render_state_get_u16(state, ROASTTY_RENDER_STATE_DATA_ROWS),
+            0
+        );
+        assert_eq!(
+            render_state_get_i32(state, ROASTTY_RENDER_STATE_DATA_DIRTY),
+            ROASTTY_RENDER_STATE_DIRTY_FALSE
+        );
+        assert_eq!(
+            render_state_get_rgb(state, ROASTTY_RENDER_STATE_DATA_COLOR_BACKGROUND),
+            RoasttyRgb { r: 0, g: 0, b: 0 }
+        );
+        assert_eq!(
+            render_state_get_rgb(state, ROASTTY_RENDER_STATE_DATA_COLOR_FOREGROUND),
+            RoasttyRgb {
+                r: 0xff,
+                g: 0xff,
+                b: 0xff
+            }
+        );
+        let mut rgb = RoasttyRgb::default();
+        assert_eq!(
+            roastty_render_state_get(
+                state,
+                ROASTTY_RENDER_STATE_DATA_COLOR_CURSOR,
+                &mut rgb as *mut _ as *mut c_void,
+            ),
+            ROASTTY_NO_VALUE
+        );
+        assert!(!render_state_get_bool(
+            state,
+            ROASTTY_RENDER_STATE_DATA_COLOR_CURSOR_HAS_VALUE
+        ));
+        assert_eq!(
+            render_state_get_i32(state, ROASTTY_RENDER_STATE_DATA_CURSOR_VISUAL_STYLE),
+            ROASTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_BLOCK
+        );
+        assert!(render_state_get_bool(
+            state,
+            ROASTTY_RENDER_STATE_DATA_CURSOR_VISIBLE
+        ));
+        assert!(!render_state_get_bool(
+            state,
+            ROASTTY_RENDER_STATE_DATA_CURSOR_BLINKING
+        ));
+        assert!(!render_state_get_bool(
+            state,
+            ROASTTY_RENDER_STATE_DATA_CURSOR_PASSWORD_INPUT
+        ));
+        assert!(!render_state_get_bool(
+            state,
+            ROASTTY_RENDER_STATE_DATA_CURSOR_VIEWPORT_HAS_VALUE
+        ));
+        assert_eq!(
+            roastty_render_state_get(
+                state,
+                ROASTTY_RENDER_STATE_DATA_CURSOR_VIEWPORT_X,
+                &mut rgb as *mut _ as *mut c_void,
+            ),
+            ROASTTY_NO_VALUE
+        );
+        assert_eq!(
+            render_state_get_palette(state),
+            palette_from_color(color::DEFAULT_PALETTE)
+        );
+
+        roastty_render_state_free(state);
+        roastty_render_state_free(ptr::null_mut());
+    }
+
+    #[test]
+    fn render_state_c_abi_update_snapshots_terminal_scalars() {
+        let terminal = new_terminal(80, 24);
+        let foreground = RoasttyRgb { r: 1, g: 2, b: 3 };
+        let background = RoasttyRgb { r: 4, g: 5, b: 6 };
+        let cursor = RoasttyRgb { r: 7, g: 8, b: 9 };
+        assert_eq!(
+            roastty_terminal_set(
+                terminal,
+                ROASTTY_TERMINAL_OPTION_COLOR_FOREGROUND,
+                &foreground as *const _ as *const c_void,
+            ),
+            ROASTTY_SUCCESS
+        );
+        assert_eq!(
+            roastty_terminal_set(
+                terminal,
+                ROASTTY_TERMINAL_OPTION_COLOR_BACKGROUND,
+                &background as *const _ as *const c_void,
+            ),
+            ROASTTY_SUCCESS
+        );
+        assert_eq!(
+            roastty_terminal_set(
+                terminal,
+                ROASTTY_TERMINAL_OPTION_COLOR_CURSOR,
+                &cursor as *const _ as *const c_void,
+            ),
+            ROASTTY_SUCCESS
+        );
+        write_terminal(terminal, b"\x1b[3 q");
+
+        let state = new_render_state();
+        assert_eq!(
+            roastty_render_state_update(ptr::null_mut(), terminal),
+            ROASTTY_INVALID_VALUE
+        );
+        assert_eq!(
+            roastty_render_state_update(state, ptr::null_mut()),
+            ROASTTY_INVALID_VALUE
+        );
+        assert_eq!(
+            roastty_render_state_update(state, terminal),
+            ROASTTY_SUCCESS
+        );
+
+        assert_eq!(
+            render_state_get_u16(state, ROASTTY_RENDER_STATE_DATA_COLS),
+            80
+        );
+        assert_eq!(
+            render_state_get_u16(state, ROASTTY_RENDER_STATE_DATA_ROWS),
+            24
+        );
+        assert_eq!(
+            render_state_get_i32(state, ROASTTY_RENDER_STATE_DATA_DIRTY),
+            ROASTTY_RENDER_STATE_DIRTY_FULL
+        );
+        assert_eq!(
+            render_state_get_rgb(state, ROASTTY_RENDER_STATE_DATA_COLOR_FOREGROUND),
+            foreground
+        );
+        assert_eq!(
+            render_state_get_rgb(state, ROASTTY_RENDER_STATE_DATA_COLOR_BACKGROUND),
+            background
+        );
+        assert_eq!(
+            render_state_get_rgb(state, ROASTTY_RENDER_STATE_DATA_COLOR_CURSOR),
+            cursor
+        );
+        assert!(render_state_get_bool(
+            state,
+            ROASTTY_RENDER_STATE_DATA_COLOR_CURSOR_HAS_VALUE
+        ));
+        assert_eq!(
+            render_state_get_i32(state, ROASTTY_RENDER_STATE_DATA_CURSOR_VISUAL_STYLE),
+            ROASTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_UNDERLINE
+        );
+        assert!(render_state_get_bool(
+            state,
+            ROASTTY_RENDER_STATE_DATA_CURSOR_BLINKING
+        ));
+        assert!(render_state_get_bool(
+            state,
+            ROASTTY_RENDER_STATE_DATA_CURSOR_VIEWPORT_HAS_VALUE
+        ));
+        assert_eq!(
+            render_state_get_u16(state, ROASTTY_RENDER_STATE_DATA_CURSOR_VIEWPORT_X),
+            0
+        );
+        assert_eq!(
+            render_state_get_u16(state, ROASTTY_RENDER_STATE_DATA_CURSOR_VIEWPORT_Y),
+            0
+        );
+        assert!(!render_state_get_bool(
+            state,
+            ROASTTY_RENDER_STATE_DATA_CURSOR_VIEWPORT_WIDE_TAIL
+        ));
+        assert!(!render_state_get_bool(
+            state,
+            ROASTTY_RENDER_STATE_DATA_CURSOR_PASSWORD_INPUT
+        ));
+
+        let mut colors = RoasttyRenderStateColors {
+            size: std::mem::size_of::<RoasttyRenderStateColors>(),
+            background: RoasttyRgb::default(),
+            foreground: RoasttyRgb::default(),
+            cursor: RoasttyRgb::default(),
+            cursor_has_value: false,
+            palette: [RoasttyRgb::default(); 256],
+        };
+        assert_eq!(
+            roastty_render_state_colors_get(state, &mut colors),
+            ROASTTY_SUCCESS
+        );
+        assert_eq!(colors.background, background);
+        assert_eq!(colors.foreground, foreground);
+        assert_eq!(colors.cursor, cursor);
+        assert!(colors.cursor_has_value);
+        assert_eq!(
+            colors.palette,
+            terminal_get_palette(terminal, ROASTTY_TERMINAL_DATA_COLOR_PALETTE)
+        );
+
+        roastty_render_state_free(state);
+        roastty_terminal_free(terminal);
+    }
+
+    #[test]
+    fn render_state_c_abi_validation_multi_and_colors_capacity() {
+        let state = new_render_state();
+        let mut out_u16 = 77u16;
+        assert_eq!(
+            roastty_render_state_get(
+                ptr::null_mut(),
+                ROASTTY_RENDER_STATE_DATA_COLS,
+                &mut out_u16 as *mut _ as *mut c_void,
+            ),
+            ROASTTY_INVALID_VALUE
+        );
+        assert_eq!(
+            roastty_render_state_get(state, ROASTTY_RENDER_STATE_DATA_COLS, ptr::null_mut(),),
+            ROASTTY_INVALID_VALUE
+        );
+        assert_eq!(
+            roastty_render_state_get(
+                state,
+                ROASTTY_RENDER_STATE_DATA_INVALID,
+                &mut out_u16 as *mut _ as *mut c_void,
+            ),
+            ROASTTY_INVALID_VALUE
+        );
+        assert_eq!(
+            roastty_render_state_get(state, 99, &mut out_u16 as *mut _ as *mut c_void),
+            ROASTTY_INVALID_VALUE
+        );
+        assert_eq!(
+            roastty_render_state_get(
+                state,
+                ROASTTY_RENDER_STATE_DATA_ROW_ITERATOR,
+                &mut out_u16 as *mut _ as *mut c_void,
+            ),
+            ROASTTY_NO_VALUE
+        );
+
+        let partial = ROASTTY_RENDER_STATE_DIRTY_PARTIAL;
+        assert_eq!(
+            roastty_render_state_set(
+                ptr::null_mut(),
+                ROASTTY_RENDER_STATE_OPTION_DIRTY,
+                &partial as *const _ as *const c_void,
+            ),
+            ROASTTY_INVALID_VALUE
+        );
+        assert_eq!(
+            roastty_render_state_set(state, ROASTTY_RENDER_STATE_OPTION_DIRTY, ptr::null(),),
+            ROASTTY_INVALID_VALUE
+        );
+        assert_eq!(
+            roastty_render_state_set(state, 99, &partial as *const _ as *const c_void),
+            ROASTTY_INVALID_VALUE
+        );
+        assert_eq!(
+            roastty_render_state_set(
+                state,
+                ROASTTY_RENDER_STATE_OPTION_DIRTY,
+                &partial as *const _ as *const c_void,
+            ),
+            ROASTTY_SUCCESS
+        );
+        assert_eq!(
+            render_state_get_i32(state, ROASTTY_RENDER_STATE_DATA_DIRTY),
+            ROASTTY_RENDER_STATE_DIRTY_PARTIAL
+        );
+        let invalid_dirty = 99;
+        assert_eq!(
+            roastty_render_state_set(
+                state,
+                ROASTTY_RENDER_STATE_OPTION_DIRTY,
+                &invalid_dirty as *const _ as *const c_void,
+            ),
+            ROASTTY_INVALID_VALUE
+        );
+        assert_eq!(
+            render_state_get_i32(state, ROASTTY_RENDER_STATE_DATA_DIRTY),
+            ROASTTY_RENDER_STATE_DIRTY_PARTIAL
+        );
+
+        let keys = [
+            ROASTTY_RENDER_STATE_DATA_COLS,
+            ROASTTY_RENDER_STATE_DATA_ROWS,
+            ROASTTY_RENDER_STATE_DATA_CURSOR_VIEWPORT_X,
+        ];
+        let mut cols = 1u16;
+        let mut rows = 2u16;
+        let mut viewport_x = 3u16;
+        let mut values = [
+            &mut cols as *mut _ as *mut c_void,
+            &mut rows as *mut _ as *mut c_void,
+            &mut viewport_x as *mut _ as *mut c_void,
+        ];
+        let mut written = usize::MAX;
+        assert_eq!(
+            roastty_render_state_get_multi(
+                state,
+                2,
+                keys.as_ptr(),
+                values.as_mut_ptr(),
+                &mut written,
+            ),
+            ROASTTY_SUCCESS
+        );
+        assert_eq!(written, 2);
+        assert_eq!(cols, 0);
+        assert_eq!(rows, 0);
+        written = usize::MAX;
+        assert_eq!(
+            roastty_render_state_get_multi(
+                state,
+                3,
+                keys.as_ptr(),
+                values.as_mut_ptr(),
+                &mut written,
+            ),
+            ROASTTY_NO_VALUE
+        );
+        assert_eq!(written, 2);
+        written = usize::MAX;
+        assert_eq!(
+            roastty_render_state_get_multi(
+                state,
+                0,
+                keys.as_ptr(),
+                values.as_mut_ptr(),
+                &mut written,
+            ),
+            ROASTTY_SUCCESS
+        );
+        assert_eq!(written, 0);
+        assert_eq!(
+            roastty_render_state_get_multi(
+                state,
+                1,
+                ptr::null(),
+                values.as_mut_ptr(),
+                &mut written,
+            ),
+            ROASTTY_INVALID_VALUE
+        );
+        assert_eq!(
+            roastty_render_state_get_multi(state, 1, keys.as_ptr(), ptr::null_mut(), &mut written,),
+            ROASTTY_INVALID_VALUE
+        );
+
+        let mut colors = RoasttyRenderStateColors {
+            size: std::mem::size_of::<usize>() - 1,
+            background: RoasttyRgb { r: 9, g: 9, b: 9 },
+            foreground: RoasttyRgb { r: 9, g: 9, b: 9 },
+            cursor: RoasttyRgb { r: 9, g: 9, b: 9 },
+            cursor_has_value: true,
+            palette: [RoasttyRgb { r: 9, g: 9, b: 9 }; 256],
+        };
+        assert_eq!(
+            roastty_render_state_colors_get(ptr::null_mut(), &mut colors),
+            ROASTTY_INVALID_VALUE
+        );
+        assert_eq!(
+            roastty_render_state_colors_get(state, ptr::null_mut()),
+            ROASTTY_INVALID_VALUE
+        );
+        assert_eq!(
+            roastty_render_state_colors_get(state, &mut colors),
+            ROASTTY_INVALID_VALUE
+        );
+        colors.size = std::mem::offset_of!(RoasttyRenderStateColors, cursor_has_value)
+            + std::mem::size_of::<bool>();
+        assert_eq!(
+            roastty_render_state_colors_get(state, &mut colors),
+            ROASTTY_SUCCESS
+        );
+        assert_eq!(colors.background, RoasttyRgb { r: 0, g: 0, b: 0 });
+        assert_eq!(
+            colors.foreground,
+            RoasttyRgb {
+                r: 0xff,
+                g: 0xff,
+                b: 0xff
+            }
+        );
+        assert_eq!(colors.cursor, RoasttyRgb { r: 9, g: 9, b: 9 });
+        assert!(!colors.cursor_has_value);
+        assert_eq!(colors.palette[0], RoasttyRgb { r: 9, g: 9, b: 9 });
+
+        roastty_render_state_free(state);
     }
 
     #[test]

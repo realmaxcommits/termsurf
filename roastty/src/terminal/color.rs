@@ -13,7 +13,7 @@ pub(super) struct CRgb {
     b: u8,
 }
 
-pub(super) type Palette = [Rgb; 256];
+pub(crate) type Palette = [Rgb; 256];
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(super) struct DynamicRgb {
@@ -259,7 +259,7 @@ impl PaletteMask {
     }
 }
 
-pub(super) const DEFAULT_PALETTE: Palette = default_palette();
+pub(crate) const DEFAULT_PALETTE: Palette = default_palette();
 
 const fn default_palette() -> Palette {
     let mut result = [Rgb::new(0, 0, 0); 256];

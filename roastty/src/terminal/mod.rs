@@ -14,7 +14,7 @@ mod context_signal;
 pub(crate) mod color;
 
 #[allow(dead_code)]
-mod cursor;
+pub(crate) mod cursor;
 
 #[allow(dead_code)]
 mod device_attributes;

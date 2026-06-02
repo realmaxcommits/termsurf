@@ -5,7 +5,6 @@ use std::ptr::NonNull;
 
 use super::charsets;
 use super::color;
-#[cfg(test)]
 use super::cursor;
 use super::dcs;
 use super::device_attributes;
@@ -907,6 +906,14 @@ impl Terminal {
 
     pub(crate) fn cursor_visible(&self) -> bool {
         self.modes.get(modes::Mode::CursorVisible)
+    }
+
+    pub(crate) fn cursor_blinking(&self) -> bool {
+        self.modes.get(modes::Mode::CursorBlinking)
+    }
+
+    pub(crate) fn cursor_visual_style(&self) -> cursor::VisualStyle {
+        self.screens.active().cursor_visual_style()
     }
 
     pub(crate) fn kitty_keyboard_flags(&self) -> u8 {
