@@ -706,6 +706,8 @@ are past the correctness-critical foundation.
   — **Pass** · Claude/Codex/Codex
 - [Experiment 241: Port Font `Key` and `ModifierSet`](241-port-font-key-modifierset.md)
   — **Pass** · Claude/Codex/Codex
+- [Experiment 242: Port `Metrics::apply` (modifier dispatch + cell-height re-centering)](242-port-metrics-apply.md)
+  — **Designed** · Claude/Codex/Codex
 
 ## Non-Goals
 
