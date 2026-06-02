@@ -201,3 +201,82 @@ Two findings, fixed in the design above before this commit:
 2. **(Low)** added `clamp_raises_all_twelve_minimum_fields`, a direct test that
    all twelve hand-written clamp fields are raised and the five un-clamped
    fields are untouched, guarding the hand-written list against omissions.
+
+## Result
+
+**Result:** Pass
+
+Added `impl Metrics` with `pub(crate) fn calc(face: FaceMetrics) -> Metrics` and
+private `fn clamp(&mut self)`, plus the private `f64_to_u32` helper
+(debug-asserts finite/in-domain before truncating), to
+`roastty/src/font/metrics.rs`. `calc` reproduces the upstream derivation exactly
+— `round`ed cell sizes, the line-gap split and baseline centering,
+`max(1, ceil(...))` thicknesses, the position derivations, `overline`/`box`
+thickness = underline thickness, `cursor_thickness = 1`, the icon-height formula
+— then calls `clamp`, which raises the twelve `Minimums` fields and leaves the
+five un-clamped ones (`cell_baseline`, the positions, `face_y`) untouched.
+
+Tests added (4): `calc_derives_clean_metrics` (a known face → all derived fields
+hand-verified, e.g. `cell_baseline 4`, `underline_position 13`,
+`strikethrough_position 8`, `icon_height_single 34/3`), `calc_clamps_minimums`
+(degenerate face → minimums applied), `calc_line_gap_splits_evenly` (a 4px gap
+grows cell height by 4 and shifts the baseline by 2), and
+`clamp_raises_all_twelve_minimum_fields` (direct clamp test of all twelve fields
+plus the five un-clamped). All hand-computed expectations passed on the first
+run.
+
+### Verification
+
+```bash
+cargo fmt -p roastty
+cargo test -p roastty font
+cargo test -p roastty
+```
+
+Observed:
+
+- `font`: 23 passed (19 prior + 4 new).
+- Full `roastty`: 2299 unit tests passed (2295 prior + 4 new), plus the C ABI
+  harness passed.
+- `cargo fmt -p roastty -- --check`: clean.
+- `cargo build -p roastty`: no warnings.
+- No-`ghostty`-name gates passed for `roastty/src/font` and for
+  `roastty/src/lib.rs`, `roastty/include/roastty.h`,
+  `roastty/tests/abi_harness.c`.
+- `git diff --check`: clean.
+
+No C ABI, header, or ABI inventory changes; no `apply`/`ModifierSet`/constraint
+scope pulled in.
+
+### Completion Review
+
+Codex reviewed the completed implementation and found **no issues** ("nothing
+needs to change before the result commit").
+
+Review artifacts:
+
+- Prompt: `logs/codex-review/20260602-083949-010383-prompt.md`
+- Result: `logs/codex-review/20260602-083949-010383-last-message.md`
+
+Codex confirmed `calc` matches upstream (unrounded face metrics, rounded cell
+dimensions, baseline centering, `ceil(...).max(1.0)` thicknesses, rounded
+positions, the icon-height formula, `cursor_thickness = 1`, final `clamp`), that
+`clamp` clamps exactly the twelve `Minimums` fields and leaves the five
+unclamped, that `f64_to_u32` is a sound scoped helper used for all unsigned
+conversions, and that the four tests (including the hand-computed clean values)
+are correct.
+
+## Conclusion
+
+Experiment 238 succeeds — the substantive derivation core of `font/Metrics.zig`
+is ported. `Metrics::calc` turns a `FaceMetrics` into a `Metrics` with the
+upstream rounding/centering/clamping, validated by hand-computed equivalent
+tests (upstream has no isolated `calc` test). Both Codex gates passed (two
+design findings fixed; zero result findings).
+
+What remains of `font/Metrics.zig` is the `ModifierSet`/`Modifier` config types
+and `Metrics::apply` (the runtime metric-adjustment path, which carries the
+file's actual upstream tests), plus the font-constraint application. Those
+depend on a config-modifier representation and are the next Metrics slices.
+Beyond `Metrics`, the font stack continues toward the glyph `Atlas` and the
+CoreText face/rasterization core.

@@ -204,6 +204,101 @@ impl FaceMetrics {
     }
 }
 
+/// Convert an integer-valued, non-negative `f64` metric to `u32`. The sources are
+/// `round`/`ceil`/`max(1, …)` outputs, so the truncation is exact; the
+/// `debug_assert!` catches an out-of-domain derivation in debug/test builds
+/// instead of letting `as u32` silently saturate it to `0`.
+fn f64_to_u32(value: f64) -> u32 {
+    debug_assert!(
+        value.is_finite() && value >= 0.0 && value <= u32::MAX as f64,
+        "metric out of u32 domain: {value}"
+    );
+    value as u32
+}
+
+impl Metrics {
+    /// Calculate metrics from values extracted from a font face. Pass values with
+    /// as much precision as possible — do not round them before calling. Nullable
+    /// inputs use the `FaceMetrics` effective-accessor estimates.
+    pub(crate) fn calc(face: FaceMetrics) -> Metrics {
+        // Unrounded advance width and line height, retained separately for
+        // scaling calculations.
+        let face_width = face.cell_width;
+        let face_height = face.line_height();
+
+        // Cell pixel dimensions. We round to keep within 0.5px of the true size.
+        let cell_width = face_width.round();
+        let cell_height = face_height.round();
+
+        // Split the line gap evenly between the top and bottom of the cell.
+        let half_line_gap = face.line_gap / 2.0;
+
+        // NOTE: `cell_baseline` is relative to the BOTTOM of the cell.
+        let face_baseline = half_line_gap - face.descent;
+        // Center the face vertically in the pixel-rounded cell height.
+        let cell_baseline = (face_baseline - (cell_height - face_height) / 2.0).round();
+
+        // Offset from the cell bottom to the face's "true" bounding-box bottom.
+        let face_y = cell_baseline - face_baseline;
+
+        let top_to_baseline = cell_height - cell_baseline;
+
+        let cap_height = face.effective_cap_height();
+        let underline_thickness = face.effective_underline_thickness().ceil().max(1.0);
+        let strikethrough_thickness = face.effective_strikethrough_thickness().ceil().max(1.0);
+        let underline_position = (top_to_baseline - face.effective_underline_position()).round();
+        let strikethrough_position =
+            (top_to_baseline - face.effective_strikethrough_position()).round();
+
+        // `icon_height` is kept separate from `face_height` so modifiers can apply
+        // to the former without affecting the latter.
+        let icon_height = face_height;
+        let icon_height_single = (2.0 * cap_height + face_height) / 3.0;
+
+        let mut result = Metrics {
+            cell_width: f64_to_u32(cell_width),
+            cell_height: f64_to_u32(cell_height),
+            cell_baseline: f64_to_u32(cell_baseline),
+            underline_position: f64_to_u32(underline_position),
+            underline_thickness: f64_to_u32(underline_thickness),
+            strikethrough_position: f64_to_u32(strikethrough_position),
+            strikethrough_thickness: f64_to_u32(strikethrough_thickness),
+            overline_position: 0,
+            overline_thickness: f64_to_u32(underline_thickness),
+            box_thickness: f64_to_u32(underline_thickness),
+            // Not determined by fonts; the upstream `Metrics` struct default is 1.
+            cursor_thickness: 1,
+            cursor_height: f64_to_u32(cell_height),
+            icon_height,
+            icon_height_single,
+            face_width,
+            face_height,
+            face_y,
+        };
+
+        // Ensure all metrics are within their allowable range.
+        result.clamp();
+        result
+    }
+
+    /// Ensure all metrics are within their allowable range (the `Minimums`).
+    /// `cell_baseline`, the positions, and `face_y` have no minimum.
+    fn clamp(&mut self) {
+        self.cell_width = self.cell_width.max(1);
+        self.cell_height = self.cell_height.max(1);
+        self.underline_thickness = self.underline_thickness.max(1);
+        self.strikethrough_thickness = self.strikethrough_thickness.max(1);
+        self.overline_thickness = self.overline_thickness.max(1);
+        self.box_thickness = self.box_thickness.max(1);
+        self.cursor_thickness = self.cursor_thickness.max(1);
+        self.cursor_height = self.cursor_height.max(1);
+        self.icon_height = self.icon_height.max(1.0);
+        self.icon_height_single = self.icon_height_single.max(1.0);
+        self.face_height = self.face_height.max(1.0);
+        self.face_width = self.face_width.max(1.0);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -432,5 +527,127 @@ mod tests {
         f.strikethrough_position = None;
         let expected = (f.effective_ex_height() + f.effective_strikethrough_thickness()) * 0.5;
         assert!(approx(f.effective_strikethrough_position(), expected));
+    }
+
+    fn clean_face() -> FaceMetrics {
+        FaceMetrics {
+            px_per_em: 16.0,
+            cell_width: 8.0,
+            ascent: 12.0,
+            descent: -4.0,
+            line_gap: 0.0,
+            underline_position: None,
+            underline_thickness: None,
+            strikethrough_position: None,
+            strikethrough_thickness: None,
+            cap_height: None,
+            ex_height: None,
+            ascii_height: None,
+            ic_width: None,
+        }
+    }
+
+    #[test]
+    fn calc_derives_clean_metrics() {
+        let m = Metrics::calc(clean_face());
+        assert_eq!(m.cell_width, 8);
+        assert_eq!(m.cell_height, 16);
+        assert_eq!(m.cell_baseline, 4);
+        assert_eq!(m.underline_position, 13);
+        assert_eq!(m.underline_thickness, 2);
+        assert_eq!(m.strikethrough_position, 8);
+        assert_eq!(m.strikethrough_thickness, 2);
+        assert_eq!(m.overline_position, 0);
+        assert_eq!(m.overline_thickness, 2);
+        assert_eq!(m.box_thickness, 2);
+        assert_eq!(m.cursor_thickness, 1);
+        assert_eq!(m.cursor_height, 16);
+        assert!(approx(m.icon_height, 16.0));
+        assert!(approx(m.icon_height_single, 34.0 / 3.0)); // (2*9 + 16) / 3
+        assert!(approx(m.face_width, 8.0));
+        assert!(approx(m.face_height, 16.0));
+        assert!(approx(m.face_y, 0.0));
+    }
+
+    #[test]
+    fn calc_clamps_minimums() {
+        let face = FaceMetrics {
+            px_per_em: 16.0,
+            cell_width: 0.0,
+            ascent: 0.0,
+            descent: 0.0,
+            line_gap: 0.0,
+            underline_position: None,
+            underline_thickness: None,
+            strikethrough_position: None,
+            strikethrough_thickness: None,
+            cap_height: None,
+            ex_height: None,
+            ascii_height: None,
+            ic_width: None,
+        };
+        let m = Metrics::calc(face);
+        assert!(m.cell_width >= 1);
+        assert!(m.cell_height >= 1);
+        assert!(m.cursor_height >= 1);
+        assert!(m.icon_height >= 1.0);
+        assert!(m.icon_height_single >= 1.0);
+        assert!(m.face_width >= 1.0);
+        assert!(m.face_height >= 1.0);
+    }
+
+    #[test]
+    fn calc_line_gap_splits_evenly() {
+        let m0 = Metrics::calc(clean_face());
+        let mut face = clean_face();
+        face.line_gap = 4.0;
+        let m4 = Metrics::calc(face);
+        // The full 4px line gap grows the cell height; half (2px) is added above
+        // the baseline.
+        assert_eq!(m4.cell_height - m0.cell_height, 4);
+        assert_eq!(m4.cell_baseline - m0.cell_baseline, 2);
+    }
+
+    #[test]
+    fn clamp_raises_all_twelve_minimum_fields() {
+        let mut m = Metrics {
+            cell_width: 0,
+            cell_height: 0,
+            cell_baseline: 7,
+            underline_position: 8,
+            underline_thickness: 0,
+            strikethrough_position: 9,
+            strikethrough_thickness: 0,
+            overline_position: -3,
+            overline_thickness: 0,
+            box_thickness: 0,
+            cursor_thickness: 0,
+            cursor_height: 0,
+            icon_height: 0.0,
+            icon_height_single: 0.0,
+            face_width: 0.0,
+            face_height: 0.0,
+            face_y: 2.5,
+        };
+        m.clamp();
+        // All twelve clamped fields raised to their minimum.
+        assert_eq!(m.cell_width, 1);
+        assert_eq!(m.cell_height, 1);
+        assert_eq!(m.underline_thickness, 1);
+        assert_eq!(m.strikethrough_thickness, 1);
+        assert_eq!(m.overline_thickness, 1);
+        assert_eq!(m.box_thickness, 1);
+        assert_eq!(m.cursor_thickness, 1);
+        assert_eq!(m.cursor_height, 1);
+        assert_eq!(m.icon_height, 1.0);
+        assert_eq!(m.icon_height_single, 1.0);
+        assert_eq!(m.face_width, 1.0);
+        assert_eq!(m.face_height, 1.0);
+        // The five un-clamped fields are untouched.
+        assert_eq!(m.cell_baseline, 7);
+        assert_eq!(m.underline_position, 8);
+        assert_eq!(m.strikethrough_position, 9);
+        assert_eq!(m.overline_position, -3);
+        assert_eq!(m.face_y, 2.5);
     }
 }

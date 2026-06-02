@@ -699,7 +699,7 @@ are past the correctness-critical foundation.
 - [Experiment 237: Port the Remaining `FaceMetrics` Accessors](237-port-facemetrics-accessors.md)
   — **Pass** · Claude/Codex/Codex
 - [Experiment 238: Port Font `Metrics::calc` and `clamp`](238-port-font-metrics-calc.md)
-  — **Designed** · Claude/Codex/Codex
+  — **Pass** · Claude/Codex/Codex
 
 ## Non-Goals
 
