@@ -491,6 +491,8 @@ tests, choose the larger subsystem.
   — **Pass**
 - [Experiment 182: Port Grid Ref Accessors C ABI](182-port-grid-ref-accessors-c-abi.md)
   — **Pass**
+- [Experiment 183: Port Terminal Formatter C ABI](183-port-terminal-formatter-c-abi.md)
+  — **Designed**
 
 ## Non-Goals
 
