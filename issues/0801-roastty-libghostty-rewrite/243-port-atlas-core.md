@@ -265,3 +265,91 @@ Two findings, both fixed in the design above before this commit:
    `width = width.saturating_sub(shrink)`; upstream trims the **overlapped
    node's** width (`node.width -|= shrink`). Corrected to
    `node.width = node.width.saturating_sub(shrink)`.
+
+## Result
+
+**Result:** Pass
+
+Added `roastty/src/font/atlas.rs` (and `pub(crate) mod atlas;` in `font/mod.rs`)
+with `Format` (+`depth`), `Node`, `Region`, `AtlasError`, and the `Atlas` struct
+(`Vec<u8>` data, `size`, `Vec<Node>`, `format`, `AtomicUsize`
+`modified`/`resized`), plus `new`, `clear`, `fit`, `reserve`, `merge`, `set`,
+the `modified`/`resized` accessors, and `NODE_PREALLOC`. The skyline packer is
+ported verbatim — the exact best-fit tie-break guard
+(`(y+height) == best_height && node.width > 0 && node.width < best_width`), the
+`size - 1` border checks in `fit`, the forward overlap-trim that mutates the
+overlapped node's width and removes zero-width nodes, and the equal-`y` `merge`.
+`reserve` does not touch `modified`; `clear`/`set` bump it via
+`fetch_add(1, Relaxed)`. Offsets are computed in `usize`; `set` bounds are
+`debug_assert!`ed.
+
+The trim loop's index is a non-`mut` `let` (the `unused_mut` the compiler
+flagged): on a removal it `continue`s at the same index so the shifted node is
+reprocessed, and any surviving node breaks — so the index is never reassigned,
+exactly matching upstream's `i -= 1; continue` over a `+= 1` loop step.
+
+Tests added (6): `format_depth`, `exact_fit`, `doesnt_fit`, `fit_multiple`,
+`writing_data`, `writing_bgr_data` — the upstream allocation/write tests that do
+not need `grow`/`set_from_larger`. The OOM-injection tests
+(`init error`/`reserve error`) are not ported (infallible `Vec` allocation, per
+the Faithfulness notes).
+
+### Verification
+
+```bash
+cargo fmt -p roastty
+cargo test -p roastty atlas
+cargo test -p roastty
+```
+
+Observed:
+
+- `atlas`: 6 passed.
+- Full `roastty`: 2324 unit tests passed (2318 prior + 6 new), plus the C ABI
+  harness passed.
+- `cargo fmt -p roastty -- --check`: clean.
+- `cargo build -p roastty`: no warnings.
+- No-`ghostty`-name gates passed for `roastty/src/font` and for
+  `roastty/src/lib.rs`, `roastty/include/roastty.h`,
+  `roastty/tests/abi_harness.c`.
+- `git diff --check`: clean.
+
+No C ABI, header, or ABI inventory changes; `grow`/`set_from_larger`/`dump`
+cleanly deferred to Experiment 244.
+
+### Completion Review
+
+Codex reviewed the completed implementation and found **no issues** ("nothing
+needs to change before the result commit").
+
+Review artifacts:
+
+- Prompt: `logs/codex-review/20260602-091849-428558-prompt.md`
+- Result: `logs/codex-review/20260602-091849-428558-last-message.md`
+
+Codex verified against upstream and the approved design that the types and
+`AtomicUsize` counters match the scoped port, that `new`/`clear` seed
+`{ x: 1, y: 1, width: size - 2 }` and bump `modified`, that `reserve` preserves
+the zero-size return, the exact `node.width > 0` tie-break, the node insert, the
+fixed-index overlap trim, and `merge` while not bumping `modified`, that `fit`
+and `merge` match the upstream border/skyline behavior, and that `set` copies
+packed rows at the correct `usize` offsets and bumps `modified`. It confirmed
+the six tests assert the expected upstream values (border offsets, BGR depth)
+and that omitting the OOM-path tests is correct for the Rust allocation model.
+
+## Conclusion
+
+Experiment 243 succeeds. The atlas allocation core — the skyline packer
+(`reserve`/`fit`/`merge`), `new`/`clear`, and `set` — is ported faithfully, with
+the exact best-fit tie-break and the 1px-border geometry, and the
+`modified`/`resized` atomics in place for a future GPU-upload consumer. Both
+Codex gates passed (two design findings fixed; zero result findings).
+
+Experiment 244 completes `Atlas.zig`: `grow` (allocate a larger buffer, copy the
+old rows accounting for the new stride, reset the node list, bump `resized`),
+`set_from_larger` (the strided copy from a larger source buffer), and `dump`
+(the PPM debug writer). It carries the remaining upstream tests — `grow`,
+`grow BGR`, and `writing data from a larger source` — and the
+`grow OOM`/`grow error` tests join the documented not-ported set. With the atlas
+complete, the font layer can move on to the face/`FaceMetrics` source and glyph
+rasterization that feed it.

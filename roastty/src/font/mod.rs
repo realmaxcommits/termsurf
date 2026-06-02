@@ -3,10 +3,11 @@
 
 //! Font subsystem.
 //!
-//! Faithful port of upstream `font/`. This slice establishes the module and the
-//! `Glyph` value type; rasterization, atlas, faces, metrics, and shaping land in
-//! later experiments.
+//! Faithful port of upstream `font/`. This slice establishes the module, the
+//! `Glyph` value type, the `Metrics` derivation, and the texture `Atlas`;
+//! rasterization, faces, and shaping land in later experiments.
 
+pub(crate) mod atlas;
 pub(crate) mod glyph;
 pub(crate) mod metrics;
 
