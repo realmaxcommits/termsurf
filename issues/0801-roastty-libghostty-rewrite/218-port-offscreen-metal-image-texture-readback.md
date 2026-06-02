@@ -237,8 +237,73 @@ All public names must use Roastty naming.
 
 ## Result
 
-Not run yet.
+**Result:** Pass
+
+Experiment 218 added the upstream-compatible `TriangleStrip` primitive and
+extended `MetalRenderPassStep` with the supported texture-binding subset.
+
+Implementation details:
+
+- `MetalPrimitiveType::TriangleStrip` now maps to raw value `4` and
+  `objc2_metal::MTLPrimitiveType::TriangleStrip`;
+- each present render-pass texture binds to both vertex and fragment texture
+  index `i`;
+- the zero-instance early return remains before pipeline, buffer, texture,
+  uniform, or draw work;
+- existing `bg_color` and `cell_bg` steps now pass empty texture slices and keep
+  their prior behavior.
+
+The production `image` shader now has automated offscreen read-back coverage.
+The tests upload RGBA textures, upload an `ImageVertex` buffer at `buffers[0]`,
+bind the texture at `textures[0]`, bind uniforms at Metal buffer index `1`, draw
+`pipelines.image` with `TriangleStrip`, and verify BGRA target pixels after
+`commit_and_wait(...)`.
+
+The image tests use endpoint-only texture channels (`0` / `255`) so exact byte
+expectations are deterministic through the production shader's
+`use_linear_blending = false` / `unlinearize(...)` path.
+
+Verification passed:
+
+```bash
+cargo fmt -- roastty/src/renderer/metal/api.rs roastty/src/renderer/metal/render_pass.rs
+cargo test -p roastty renderer::metal::api
+cargo test -p roastty renderer::metal::render_pass
+cargo test -p roastty renderer::metal::texture
+cargo test -p roastty renderer::metal::pipeline
+cargo test -p roastty
+if rg -n 'ghostty|Ghostty|GHOSTTY' roastty/src/lib.rs roastty/include/roastty.h roastty/tests/abi_harness.c; then exit 1; else exit 0; fi
+if rg -n 'ghostty|Ghostty|GHOSTTY' roastty/src/renderer/metal; then exit 1; else exit 0; fi
+git diff --check
+```
+
+Observed results:
+
+- `renderer::metal::api`: 20 passed.
+- `renderer::metal::render_pass`: 11 passed.
+- `renderer::metal::texture`: 10 passed.
+- `renderer::metal::pipeline`: 17 passed.
+- Full `roastty`: 2195 library tests passed, plus the C ABI harness passed.
+- Both no-`ghostty` gates passed.
+- `git diff --check` passed.
+
+Codex reviewed the completed implementation and found no blocking issues. It
+confirmed that the `TriangleStrip` value, texture binding, image read-back
+tests, placement test, zero-instance behavior, and scope boundaries satisfy the
+experiment. Codex also confirmed the intended proof boundary: this experiment's
+read-back tests prove fragment-stage texture sampling through production
+`image`; vertex-stage texture binding is structurally implemented but will be
+observably tested by a later `bg_image` slice.
 
 ## Conclusion
 
-Pending.
+Roastty now has the render-pass texture-binding primitive needed for production
+image rendering. Together with Experiment 217's buffer mapping, the Metal
+offscreen path can now bind vertex buffers, uniforms, content buffers, and
+textures, then verify production shader output by exact pixel read-back.
+
+The next renderer experiment can either exercise the production `bg_image`
+shader, which will make vertex-stage texture consumption observable, or move
+toward the next resource class needed for terminal text rendering. The
+`bg_image` path is the natural continuation if we want to finish the generic
+texture-binding proof before adding glyph atlas complexity.

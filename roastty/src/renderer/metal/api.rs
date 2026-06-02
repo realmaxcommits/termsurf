@@ -105,6 +105,7 @@ impl MetalStoreAction {
 #[repr(u64)]
 pub(crate) enum MetalPrimitiveType {
     Triangle = 3,
+    TriangleStrip = 4,
 }
 
 impl MetalPrimitiveType {
@@ -115,6 +116,7 @@ impl MetalPrimitiveType {
     pub(crate) fn to_objc(self) -> objc2_metal::MTLPrimitiveType {
         match self {
             MetalPrimitiveType::Triangle => objc2_metal::MTLPrimitiveType::Triangle,
+            MetalPrimitiveType::TriangleStrip => objc2_metal::MTLPrimitiveType::TriangleStrip,
         }
     }
 }
@@ -499,9 +501,14 @@ mod tests {
     #[test]
     fn metal_primitive_type_values_match_upstream_subset() {
         assert_eq!(MetalPrimitiveType::Triangle.raw(), 3);
+        assert_eq!(MetalPrimitiveType::TriangleStrip.raw(), 4);
         assert_eq!(
             MetalPrimitiveType::Triangle.to_objc().0 as u64,
             MetalPrimitiveType::Triangle.raw()
+        );
+        assert_eq!(
+            MetalPrimitiveType::TriangleStrip.to_objc().0 as u64,
+            MetalPrimitiveType::TriangleStrip.raw()
         );
     }
 

@@ -99,6 +99,7 @@ impl MetalRenderPass {
 
         self.encoder.setRenderPipelineState(step.pipeline.state());
         bind_step_buffers(&self.encoder, step.buffers);
+        bind_step_textures(&self.encoder, step.textures);
         if let Some(uniforms) = step.uniforms {
             unsafe {
                 self.encoder
@@ -149,6 +150,20 @@ fn bind_step_buffer(
     }
 }
 
+fn bind_step_textures(
+    encoder: &ProtocolObject<dyn MTLRenderCommandEncoder>,
+    textures: &[Option<&MetalTexture>],
+) {
+    for (index, texture) in textures.iter().enumerate() {
+        if let Some(texture) = texture {
+            unsafe {
+                encoder.setVertexTexture_atIndex(Some(texture.texture()), index);
+                encoder.setFragmentTexture_atIndex(Some(texture.texture()), index);
+            }
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum MetalRenderPassError {
     EncoderCreationFailed,
@@ -162,6 +177,7 @@ pub(crate) struct MetalRenderPassAttachment<'a> {
 pub(crate) struct MetalRenderPassStep<'a> {
     pub(crate) pipeline: &'a MetalPipeline,
     pub(crate) buffers: &'a [Option<&'a ProtocolObject<dyn objc2_metal::MTLBuffer>>],
+    pub(crate) textures: &'a [Option<&'a MetalTexture>],
     pub(crate) uniforms: Option<&'a ProtocolObject<dyn objc2_metal::MTLBuffer>>,
     pub(crate) draw: MetalDraw,
 }
@@ -182,8 +198,10 @@ mod tests {
     use crate::renderer::metal::api::{MetalPixelFormat, MetalResourceOptions, MetalStorageMode};
     use crate::renderer::metal::buffer::{MetalBuffer, MetalBufferOptions};
     use crate::renderer::metal::shaders::{MetalStandardPipelines, MetalUniforms};
-    use crate::renderer::metal::texture::render_target_texture_options;
-    use crate::renderer::shader::CellBg;
+    use crate::renderer::metal::texture::{
+        image_texture_options, render_target_texture_options, ImageTextureFormat,
+    };
+    use crate::renderer::shader::{CellBg, ImageVertex};
 
     fn metal_device() -> Retained<ProtocolObject<dyn MTLDevice>> {
         MTLCreateSystemDefaultDevice().expect("Roastty requires a Metal device")
@@ -250,6 +268,30 @@ mod tests {
         .expect("uniform buffer should be created")
     }
 
+    fn image_uniforms(width: u16, height: u16) -> MetalUniforms {
+        let mut uniforms = MetalUniforms::test_with_grid(
+            [width, height],
+            [width, height],
+            [1.0, 1.0],
+            [0.0; 4],
+            0,
+            [0, 0, 0, 0],
+        );
+        uniforms.projection_matrix = ortho2d(0.0, width as f32, height as f32, 0.0);
+        uniforms
+    }
+
+    fn ortho2d(left: f32, right: f32, bottom: f32, top: f32) -> [[f32; 4]; 4] {
+        let width = right - left;
+        let height = top - bottom;
+        [
+            [2.0 / width, 0.0, 0.0, 0.0],
+            [0.0, 2.0 / height, 0.0, 0.0],
+            [0.0, 0.0, -1.0, 0.0],
+            [-(right + left) / width, -(top + bottom) / height, 0.0, 1.0],
+        ]
+    }
+
     fn cell_bg_buffer(
         device: &ProtocolObject<dyn MTLDevice>,
         cells: &[CellBg],
@@ -262,6 +304,50 @@ mod tests {
             cells,
         )
         .expect("cell background buffer should be created")
+    }
+
+    fn image_vertex_buffer(
+        device: &ProtocolObject<dyn MTLDevice>,
+        vertex: ImageVertex,
+    ) -> MetalBuffer<ImageVertex> {
+        MetalBuffer::init_fill(
+            MetalBufferOptions {
+                device,
+                resource_options: MetalResourceOptions::image(MetalStorageMode::Shared),
+            },
+            &[vertex],
+        )
+        .expect("image vertex buffer should be created")
+    }
+
+    fn image_texture(
+        device: &ProtocolObject<dyn MTLDevice>,
+        width: usize,
+        height: usize,
+        rgba: &[u8],
+    ) -> MetalTexture {
+        MetalTexture::new(
+            device,
+            image_texture_options(ImageTextureFormat::Rgba, false, MetalStorageMode::Shared),
+            width,
+            height,
+            Some(rgba),
+        )
+        .expect("image texture should be created")
+    }
+
+    fn image_vertex(
+        grid_pos: [f32; 2],
+        cell_offset: [f32; 2],
+        source_rect: [f32; 4],
+        dest_size: [f32; 2],
+    ) -> ImageVertex {
+        ImageVertex {
+            grid_pos,
+            cell_offset,
+            source_rect,
+            dest_size,
+        }
     }
 
     #[test]
@@ -348,6 +434,7 @@ mod tests {
         pass.step(MetalRenderPassStep {
             pipeline: &pipelines.bg_color,
             buffers: &[],
+            textures: &[],
             uniforms: Some(uniforms.buffer()),
             draw: MetalDraw {
                 primitive_type: MetalPrimitiveType::Triangle,
@@ -393,6 +480,7 @@ mod tests {
         pass.step(MetalRenderPassStep {
             pipeline: &pipelines.cell_bg,
             buffers: &[None, Some(cells.buffer())],
+            textures: &[],
             uniforms: Some(uniforms.buffer()),
             draw: MetalDraw {
                 primitive_type: MetalPrimitiveType::Triangle,
@@ -456,6 +544,7 @@ mod tests {
         pass.step(MetalRenderPassStep {
             pipeline: &pipelines.cell_bg,
             buffers: &[None, Some(cells.buffer())],
+            textures: &[],
             uniforms: Some(uniforms.buffer()),
             draw: MetalDraw {
                 primitive_type: MetalPrimitiveType::Triangle,
@@ -529,10 +618,191 @@ mod tests {
         pass.step(MetalRenderPassStep {
             pipeline: &pipelines.cell_bg,
             buffers: &[None, Some(cells.buffer())],
+            textures: &[],
             uniforms: Some(uniforms.buffer()),
             draw: MetalDraw {
                 primitive_type: MetalPrimitiveType::Triangle,
                 vertex_count: 3,
+                instance_count: 0,
+            },
+        });
+        pass.complete();
+        frame
+            .commit_and_wait()
+            .expect("command frame should complete");
+
+        assert_pixels(&target.read_bytes(), [0, 255, 0, 255]);
+    }
+
+    #[test]
+    fn image_render_pass_draws_uploaded_texture_pixels() {
+        let device = metal_device();
+        let queue = device
+            .newCommandQueue()
+            .expect("command queue should be created");
+        let pipelines = MetalStandardPipelines::new(&device, MetalPixelFormat::Bgra8Unorm)
+            .expect("standard pipelines should compile");
+        let uniforms = uniform_buffer(&device, image_uniforms(2, 2));
+        let vertices = image_vertex_buffer(
+            &device,
+            image_vertex([0.0, 0.0], [0.0, 0.0], [0.0, 0.0, 2.0, 2.0], [2.0, 2.0]),
+        );
+        let image = image_texture(
+            &device,
+            2,
+            2,
+            &[
+                255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 255, 255,
+            ],
+        );
+        let target = render_target(&device, 2, 2);
+        let frame = MetalCommandFrame::begin(&queue).expect("command frame should begin");
+        let pass = frame
+            .render_pass(&[MetalRenderPassAttachment {
+                texture: &target,
+                clear_color: Some(MetalClearColor {
+                    red: 0.0,
+                    green: 0.0,
+                    blue: 0.0,
+                    alpha: 0.0,
+                }),
+            }])
+            .expect("render pass should begin");
+
+        pass.step(MetalRenderPassStep {
+            pipeline: &pipelines.image,
+            buffers: &[Some(vertices.buffer())],
+            textures: &[Some(&image)],
+            uniforms: Some(uniforms.buffer()),
+            draw: MetalDraw {
+                primitive_type: MetalPrimitiveType::TriangleStrip,
+                vertex_count: 4,
+                instance_count: 1,
+            },
+        });
+        pass.complete();
+        frame
+            .commit_and_wait()
+            .expect("command frame should complete");
+
+        assert_pixel_grid(
+            &target.read_bytes(),
+            2,
+            &[
+                [0, 0, 255, 255],
+                [0, 255, 0, 255],
+                [255, 0, 0, 255],
+                [255, 255, 255, 255],
+            ],
+        );
+    }
+
+    #[test]
+    fn image_render_pass_respects_cell_offset_and_dest_size() {
+        let device = metal_device();
+        let queue = device
+            .newCommandQueue()
+            .expect("command queue should be created");
+        let pipelines = MetalStandardPipelines::new(&device, MetalPixelFormat::Bgra8Unorm)
+            .expect("standard pipelines should compile");
+        let uniforms = uniform_buffer(&device, image_uniforms(4, 4));
+        let vertices = image_vertex_buffer(
+            &device,
+            image_vertex([0.0, 0.0], [1.0, 1.0], [0.0, 0.0, 1.0, 1.0], [2.0, 2.0]),
+        );
+        let image = image_texture(&device, 1, 1, &[255, 0, 0, 255]);
+        let target = render_target(&device, 4, 4);
+        let frame = MetalCommandFrame::begin(&queue).expect("command frame should begin");
+        let pass = frame
+            .render_pass(&[MetalRenderPassAttachment {
+                texture: &target,
+                clear_color: Some(MetalClearColor {
+                    red: 0.0,
+                    green: 0.0,
+                    blue: 0.0,
+                    alpha: 0.0,
+                }),
+            }])
+            .expect("render pass should begin");
+
+        pass.step(MetalRenderPassStep {
+            pipeline: &pipelines.image,
+            buffers: &[Some(vertices.buffer())],
+            textures: &[Some(&image)],
+            uniforms: Some(uniforms.buffer()),
+            draw: MetalDraw {
+                primitive_type: MetalPrimitiveType::TriangleStrip,
+                vertex_count: 4,
+                instance_count: 1,
+            },
+        });
+        pass.complete();
+        frame
+            .commit_and_wait()
+            .expect("command frame should complete");
+
+        let transparent = [0, 0, 0, 0];
+        let red = [0, 0, 255, 255];
+        assert_pixel_grid(
+            &target.read_bytes(),
+            4,
+            &[
+                transparent,
+                transparent,
+                transparent,
+                transparent,
+                transparent,
+                red,
+                red,
+                transparent,
+                transparent,
+                red,
+                red,
+                transparent,
+                transparent,
+                transparent,
+                transparent,
+                transparent,
+            ],
+        );
+    }
+
+    #[test]
+    fn image_zero_instance_step_does_not_bind_or_draw() {
+        let device = metal_device();
+        let queue = device
+            .newCommandQueue()
+            .expect("command queue should be created");
+        let pipelines = MetalStandardPipelines::new(&device, MetalPixelFormat::Bgra8Unorm)
+            .expect("standard pipelines should compile");
+        let uniforms = uniform_buffer(&device, image_uniforms(2, 2));
+        let vertices = image_vertex_buffer(
+            &device,
+            image_vertex([0.0, 0.0], [0.0, 0.0], [0.0, 0.0, 1.0, 1.0], [2.0, 2.0]),
+        );
+        let image = image_texture(&device, 1, 1, &[255, 0, 0, 255]);
+        let target = render_target(&device, 2, 2);
+        let frame = MetalCommandFrame::begin(&queue).expect("command frame should begin");
+        let pass = frame
+            .render_pass(&[MetalRenderPassAttachment {
+                texture: &target,
+                clear_color: Some(MetalClearColor {
+                    red: 0.0,
+                    green: 1.0,
+                    blue: 0.0,
+                    alpha: 1.0,
+                }),
+            }])
+            .expect("render pass should begin");
+
+        pass.step(MetalRenderPassStep {
+            pipeline: &pipelines.image,
+            buffers: &[Some(vertices.buffer())],
+            textures: &[Some(&image)],
+            uniforms: Some(uniforms.buffer()),
+            draw: MetalDraw {
+                primitive_type: MetalPrimitiveType::TriangleStrip,
+                vertex_count: 4,
                 instance_count: 0,
             },
         });
@@ -578,6 +848,7 @@ mod tests {
         pass.step(MetalRenderPassStep {
             pipeline: &pipelines.bg_color,
             buffers: &[],
+            textures: &[],
             uniforms: Some(uniforms.buffer()),
             draw: MetalDraw {
                 primitive_type: MetalPrimitiveType::Triangle,
