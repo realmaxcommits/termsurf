@@ -153,6 +153,31 @@ impl MetalVertexStepFunction {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u64)]
+pub(crate) enum MetalBlendFactor {
+    One = 1,
+    OneMinusSourceAlpha = 5,
+}
+
+impl MetalBlendFactor {
+    pub(crate) fn raw(self) -> u64 {
+        self as u64
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u64)]
+pub(crate) enum MetalBlendOperation {
+    Add = 0,
+}
+
+impl MetalBlendOperation {
+    pub(crate) fn raw(self) -> u64 {
+        self as u64
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -315,5 +340,16 @@ mod tests {
     fn metal_vertex_step_function_raw_values_match_upstream_subset() {
         assert_eq!(MetalVertexStepFunction::PerVertex.raw(), 1);
         assert_eq!(MetalVertexStepFunction::PerInstance.raw(), 2);
+    }
+
+    #[test]
+    fn metal_blend_factor_raw_values_match_upstream_subset() {
+        assert_eq!(MetalBlendFactor::One.raw(), 1);
+        assert_eq!(MetalBlendFactor::OneMinusSourceAlpha.raw(), 5);
+    }
+
+    #[test]
+    fn metal_blend_operation_raw_values_match_upstream_subset() {
+        assert_eq!(MetalBlendOperation::Add.raw(), 0);
     }
 }

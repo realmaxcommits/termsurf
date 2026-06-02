@@ -1,7 +1,10 @@
 #![allow(dead_code)]
 // Pipeline descriptor values are consumed by later renderer slices.
 
-use crate::renderer::metal::api::{MetalVertexFormat, MetalVertexStepFunction};
+use crate::renderer::metal::api::{
+    MetalBlendFactor, MetalBlendOperation, MetalPixelFormat, MetalVertexFormat,
+    MetalVertexStepFunction,
+};
 use crate::renderer::shader::ImageVertex;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -21,6 +24,52 @@ pub(crate) struct MetalVertexLayout {
 pub(crate) struct MetalVertexDescriptor {
     pub(crate) attributes: Vec<MetalVertexAttribute>,
     pub(crate) layout: MetalVertexLayout,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct MetalPipelineAttachmentOptions {
+    pub(crate) pixel_format: MetalPixelFormat,
+    pub(crate) blending_enabled: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct MetalPipelineAttachmentDescriptor {
+    pub(crate) pixel_format: MetalPixelFormat,
+    pub(crate) blending_enabled: bool,
+    pub(crate) blend: Option<MetalBlendDescriptor>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct MetalBlendDescriptor {
+    pub(crate) rgb_operation: MetalBlendOperation,
+    pub(crate) alpha_operation: MetalBlendOperation,
+    pub(crate) source_rgb_factor: MetalBlendFactor,
+    pub(crate) source_alpha_factor: MetalBlendFactor,
+    pub(crate) destination_rgb_factor: MetalBlendFactor,
+    pub(crate) destination_alpha_factor: MetalBlendFactor,
+}
+
+pub(crate) fn pipeline_attachment_descriptor(
+    options: MetalPipelineAttachmentOptions,
+) -> MetalPipelineAttachmentDescriptor {
+    MetalPipelineAttachmentDescriptor {
+        pixel_format: options.pixel_format,
+        blending_enabled: options.blending_enabled,
+        blend: options
+            .blending_enabled
+            .then_some(premultiplied_alpha_blend()),
+    }
+}
+
+fn premultiplied_alpha_blend() -> MetalBlendDescriptor {
+    MetalBlendDescriptor {
+        rgb_operation: MetalBlendOperation::Add,
+        alpha_operation: MetalBlendOperation::Add,
+        source_rgb_factor: MetalBlendFactor::One,
+        source_alpha_factor: MetalBlendFactor::One,
+        destination_rgb_factor: MetalBlendFactor::OneMinusSourceAlpha,
+        destination_alpha_factor: MetalBlendFactor::OneMinusSourceAlpha,
+    }
 }
 
 pub(crate) trait MetalVertexInput {
@@ -115,6 +164,67 @@ mod tests {
         assert_eq!(
             per_instance.layout.step_function,
             MetalVertexStepFunction::PerInstance
+        );
+    }
+
+    #[test]
+    fn enabled_attachment_uses_upstream_premultiplied_alpha_blend() {
+        let descriptor = pipeline_attachment_descriptor(MetalPipelineAttachmentOptions {
+            pixel_format: MetalPixelFormat::Rgba8Unorm,
+            blending_enabled: true,
+        });
+
+        assert_eq!(
+            descriptor,
+            MetalPipelineAttachmentDescriptor {
+                pixel_format: MetalPixelFormat::Rgba8Unorm,
+                blending_enabled: true,
+                blend: Some(MetalBlendDescriptor {
+                    rgb_operation: MetalBlendOperation::Add,
+                    alpha_operation: MetalBlendOperation::Add,
+                    source_rgb_factor: MetalBlendFactor::One,
+                    source_alpha_factor: MetalBlendFactor::One,
+                    destination_rgb_factor: MetalBlendFactor::OneMinusSourceAlpha,
+                    destination_alpha_factor: MetalBlendFactor::OneMinusSourceAlpha,
+                }),
+            }
+        );
+    }
+
+    #[test]
+    fn disabled_attachment_has_no_blend_descriptor() {
+        let descriptor = pipeline_attachment_descriptor(MetalPipelineAttachmentOptions {
+            pixel_format: MetalPixelFormat::Bgra8Unorm,
+            blending_enabled: false,
+        });
+
+        assert_eq!(
+            descriptor,
+            MetalPipelineAttachmentDescriptor {
+                pixel_format: MetalPixelFormat::Bgra8Unorm,
+                blending_enabled: false,
+                blend: None,
+            }
+        );
+    }
+
+    #[test]
+    fn attachment_pixel_formats_pass_through_unchanged() {
+        assert_eq!(
+            pipeline_attachment_descriptor(MetalPipelineAttachmentOptions {
+                pixel_format: MetalPixelFormat::Rgba8Unorm,
+                blending_enabled: true,
+            })
+            .pixel_format,
+            MetalPixelFormat::Rgba8Unorm
+        );
+        assert_eq!(
+            pipeline_attachment_descriptor(MetalPipelineAttachmentOptions {
+                pixel_format: MetalPixelFormat::Bgra8Unorm,
+                blending_enabled: true,
+            })
+            .pixel_format,
+            MetalPixelFormat::Bgra8Unorm
         );
     }
 }

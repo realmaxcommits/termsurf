@@ -166,8 +166,51 @@ All public names must use Roastty naming.
 
 ## Result
 
-Not run yet.
+**Result:** Pass
+
+Experiment 212 added the internal Metal attachment value layer for Roastty's
+pipeline module.
+
+The implementation added:
+
+- `MetalBlendFactor` values for `One` and `OneMinusSourceAlpha`, with raw values
+  matching upstream Metal constants;
+- `MetalBlendOperation::Add`, with the upstream raw value;
+- `MetalPipelineAttachmentOptions`;
+- `MetalPipelineAttachmentDescriptor`;
+- `MetalBlendDescriptor`;
+- `pipeline_attachment_descriptor(...)`, which copies the pixel format and
+  blending flag, emits the upstream premultiplied-alpha blend configuration when
+  blending is enabled, and leaves disabled attachments with `blend = None`.
+
+Verification passed:
+
+```bash
+cargo fmt -- roastty/src/renderer/metal/api.rs roastty/src/renderer/metal/pipeline.rs
+cargo test -p roastty renderer::metal::pipeline
+cargo test -p roastty renderer::metal::api
+cargo test -p roastty
+if rg -n 'ghostty|Ghostty|GHOSTTY' roastty/src/lib.rs roastty/include/roastty.h roastty/tests/abi_harness.c; then exit 1; else exit 0; fi
+git diff --check
+```
+
+Observed test results:
+
+- `cargo test -p roastty renderer::metal::pipeline`: 5 passed, 0 failed;
+- `cargo test -p roastty renderer::metal::api`: 11 passed, 0 failed;
+- `cargo test -p roastty`: 2145 library tests passed, 1 ABI harness test passed,
+  0 doc tests.
+
+Codex reviewed the implementation result and reported no blocking findings. The
+review explicitly approved recording Experiment 212 as Pass.
 
 ## Conclusion
 
-Pending.
+The pipeline module now has the value-level color attachment behavior needed
+before real Metal pipeline descriptor creation. This keeps the renderer rewrite
+moving in dependency order: vertex descriptor values, attachment values, then
+eventually actual Objective-C pipeline objects.
+
+The later standard pipeline option builder must preserve upstream's
+`Attachment.blending_enabled = true` default when it starts composing these
+value types into real pipeline state.
