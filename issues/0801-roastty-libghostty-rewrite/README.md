@@ -1114,7 +1114,7 @@ are past the correctness-critical foundation.
 - [Experiment 333: the resolver's discovery-based fallback](333-resolver-discovery-fallback.md)
   — **Pass** · Claude/Codex/Codex
 - [Experiment 334: discover a font for a codepoint (CTFontCreateForString)](334-discover-codepoint.md)
-  — **Designed** · Claude/Codex/Codex
+  — **Pass** · Claude/Codex/Codex
 
 ## Non-Goals
 

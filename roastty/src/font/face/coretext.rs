@@ -8,7 +8,7 @@
 
 use std::ptr::NonNull;
 
-use objc2_core_foundation::{CFRetained, CFString, CGAffineTransform, CGPoint, CGSize};
+use objc2_core_foundation::{CFRange, CFRetained, CFString, CGAffineTransform, CGPoint, CGSize};
 use objc2_core_graphics::{
     kCGColorSpaceDisplayP3, CGBitmapContextCreate, CGColorSpace, CGContext, CGImageAlphaInfo,
     CGImageByteOrderInfo, CGTextDrawingMode,
@@ -254,6 +254,32 @@ impl Face {
         // For a surrogate pair the trailing unit decodes to `0`; the glyph is in
         // slot 0.
         Some(glyphs[0])
+    }
+
+    /// Discover the font CoreText would use to render `cp`, starting from this
+    /// (original) face, or `None` if only the `LastResort` (replacement-glyph)
+    /// font matches. Faithful port of the CoreText call of upstream's
+    /// `discoverCodepoint` (`CTFontCreateForString`). The caller selects the
+    /// original face by style; this performs the codepoint search on it.
+    pub(crate) fn font_for_codepoint(&self, cp: u32) -> Option<Face> {
+        let c = char::from_u32(cp)?;
+        let s = CFString::from_str(&c.to_string());
+        // The `CTFontCreateForString` range is in UTF-16 units (1 for a BMP
+        // scalar, 2 for a supplementary scalar's surrogate pair).
+        let range = CFRange {
+            location: 0,
+            length: c.len_utf16() as isize,
+        };
+        // SAFETY: `s` is a live `CFString`; the range is within it.
+        let font = unsafe { self.font.for_string(&s, range) };
+
+        // Reject CoreText's `LastResort` font (it renders only replacement
+        // boxes) — that means "no real font covers the codepoint".
+        // SAFETY: `font` is a live `CTFont`.
+        if unsafe { font.post_script_name() }.to_string() == "LastResort" {
+            return None;
+        }
+        Some(Face::from_ct_font(font))
     }
 
     /// Create a synthetic-bold face for the named font — a convenience for
@@ -1468,5 +1494,48 @@ mod tests {
             svg: None,
         };
         assert!(cs_sbix.is_color_glyph(99), "sbix colors every glyph");
+    }
+
+    #[test]
+    fn font_for_codepoint_cjk() {
+        // Menlo lacks CJK; CoreText's CTFontCreateForString finds a CJK font.
+        let menlo = Face::new("Menlo", 24.0);
+        let face = menlo
+            .font_for_codepoint(0x4E00)
+            .expect("a CJK font for U+4E00");
+        assert!(
+            face.glyph_index(0x4E00).is_some(),
+            "the discovered font renders U+4E00"
+        );
+    }
+
+    #[test]
+    fn font_for_codepoint_ascii() {
+        let menlo = Face::new("Menlo", 24.0);
+        let face = menlo
+            .font_for_codepoint('M' as u32)
+            .expect("a font for 'M'");
+        assert!(face.glyph_index('M' as u32).is_some(), "renders 'M'");
+    }
+
+    #[test]
+    fn font_for_codepoint_supplementary() {
+        // U+1F600 is a supplementary scalar (UTF-16 surrogate pair, len 2).
+        let menlo = Face::new("Menlo", 24.0);
+        let face = menlo
+            .font_for_codepoint(0x1F600)
+            .expect("a font for the emoji");
+        assert!(face.glyph_index(0x1F600).is_some(), "renders the emoji");
+    }
+
+    #[test]
+    fn font_for_codepoint_none() {
+        // U+FDD0 is a permanent noncharacter no font covers; CoreText returns
+        // its LastResort font, which `font_for_codepoint` rejects as `None`.
+        let menlo = Face::new("Menlo", 24.0);
+        assert!(
+            menlo.font_for_codepoint(0xFDD0).is_none(),
+            "a noncharacter resolves to no real font"
+        );
     }
 }

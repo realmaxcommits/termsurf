@@ -173,3 +173,65 @@ Review artifacts:
 
 - Prompt: `logs/codex-review/20260603-122831-868161-prompt.md`
 - Result: `logs/codex-review/20260603-122831-868161-last-message.md`
+
+## Result
+
+**Result:** Pass
+
+The codepoint font search lands.
+
+- `roastty/src/font/face/coretext.rs`:
+  `Face::font_for_codepoint(&self, cp: u32) -> Option<Face>` — `CFString` of the
+  scalar, a `CFRange` of `c.len_utf16()` UTF-16 units, `CTFont::for_string`
+  (`CTFontCreateForString`), and the `LastResort` PostScript-name rejection; the
+  discovered font is wrapped via `Face::from_ct_font` (preserving color
+  detection). The caller supplies the original face (style selection deferred).
+  Added the `CFRange` import.
+
+Tests: `font_for_codepoint_cjk` (Menlo → a CJK font for `U+4E00`, which renders
+it), `font_for_codepoint_ascii` (`'M'` → a font rendering it),
+`font_for_codepoint_supplementary` (the emoji `U+1F600`, surrogate pair `len 2`,
+→ a font rendering it), `font_for_codepoint_none` (the noncharacter `U+FDD0` →
+`None` via the `LastResort` rejection).
+
+Gate results:
+
+- `cargo fmt -p roastty` accepted; `--check` clean.
+- `cargo test -p roastty` → 2728 passed, 0 failed (+4, no regressions).
+- `cargo build -p roastty` → no warnings.
+- No-`ghostty`-name gates clean; `git diff --check` clean.
+
+## Conclusion
+
+roastty can now ask CoreText for the font that renders a specific codepoint
+(`CTFontCreateForString`), rejecting the replacement-glyph `LastResort` font —
+the capability the general `CTFontCollection` match lacks for CJK and other
+hard-to-match codepoints.
+
+The next experiment is the **`discoverFallback` orchestration**: the
+original-font style selection (bold_italic → bold → italic → regular) plus the
+dispatch — use `font_for_codepoint` directly for the CJK block
+(`0x4E00..=0x9FFF`), else the general `discover_faces`, falling back to
+`font_for_codepoint` when the general match is empty — and then wiring it into
+the resolver's discovery fallback (replacing the plain `discover_faces`). After
+that: codepoint overrides, the variation-axis score, and the shaper.
+
+## Completion Review
+
+Codex reviewed the completed implementation and result and **approved** with
+**no Required findings**. It confirmed the implementation faithfully ports the
+scoped `discoverCodepoint` CoreText call (the scalar → `CFString`, the
+`CFRange { location: 0, length: c.len_utf16() }` UTF-16-unit range, the
+`CTFont::for_string` call, and the `LastResort` PostScript-name rejection as the
+right no-real-font signal for the non-`Option` binding), that
+`Face::from_ct_font` is the right return path (preserving color detection via
+`detect_color`), that lifetimes are sound (the `CFString` lives through
+`for_string`, the returned font is retained and moved into `Face`), that
+`U+FDD0` is a reasonable deterministic `LastResort` test (with the
+host-dependence caveat documented), and that deferring the original-font style
+selection and the `discoverFallback` orchestration is correctly scoped. No
+Optional findings.
+
+Review artifacts:
+
+- Result review: `logs/codex-review/20260603-123106-095329-last-message.md`
