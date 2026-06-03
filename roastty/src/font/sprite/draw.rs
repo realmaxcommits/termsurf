@@ -1046,6 +1046,40 @@ pub(crate) fn draw_powerline_triangle(
     true
 }
 
+/// The outlined powerline chevrons (`E0B1` `>`, `E0B3` `<`) — a stroked open
+/// two-segment arrowhead. `E0B3` is `E0B1` mirrored. Faithful port of upstream
+/// `powerline.zig`'s `drawE0B1`/`drawE0B3` (which use the glyph `width`/`height`
+/// and the light box thickness). Returns `false` for any other codepoint.
+pub(crate) fn draw_powerline_chevron(
+    cp: u32,
+    width: u32,
+    height: u32,
+    metrics: &Metrics,
+    canvas: &mut Canvas,
+) -> bool {
+    let flip = match cp {
+        0xe0b1 => false,
+        0xe0b3 => true,
+        _ => return false,
+    };
+
+    let w = width as f64;
+    let h = height as f64;
+    // The open `>` chevron path.
+    let nodes = [
+        raster::PathNode::MoveTo(raster::Point::new(0.0, 0.0)),
+        raster::PathNode::LineTo(raster::Point::new(w, h / 2.0)),
+        raster::PathNode::LineTo(raster::Point::new(0.0, h)),
+    ];
+    let thick = Thickness::Light.height(metrics.box_thickness) as f64;
+    canvas.stroke_path(&nodes, thick, raster::CapMode::Butt);
+
+    if flip {
+        canvas.flip_horizontal();
+    }
+    true
+}
+
 /// The block cursor: a full-cell rect. Faithful port of upstream `special.zig`'s
 /// `cursor_rect`.
 pub(crate) fn draw_cursor_rect(canvas: &mut Canvas, width: u32, height: u32, _metrics: &Metrics) {
@@ -3496,6 +3530,55 @@ mod tests {
                 "{cp:#06x} not a solid powerline triangle"
             );
             let m = fixture_metrics();
+            assert!(all_alpha(&c, &m, 0), "{cp:#06x} drew ink");
+        }
+    }
+
+    // The outlined powerline chevrons (Canvas::stroke_path + flip_horizontal).
+
+    #[test]
+    fn powerline_e0b1_chevron() {
+        // The `>` chevron: the tip is near the right, the interior is hollow,
+        // and the vertical mid-left is empty (the arms start at the corners).
+        let m = fixture_metrics();
+        let mut c = cell_canvas();
+        assert!(draw_powerline_chevron(0xe0b1, 9, 18, &m, &mut c));
+        assert!(inked(&c, 8, 9), "right tip inked");
+        assert!(!inked(&c, 4, 9), "interior hollow");
+        assert!(!inked(&c, 0, 9), "mid-left empty");
+    }
+
+    #[test]
+    fn powerline_e0b3_flipped() {
+        // The `<` chevron is E0B1 mirrored: the tip is now near the left.
+        let m = fixture_metrics();
+        let mut c = cell_canvas();
+        assert!(draw_powerline_chevron(0xe0b3, 9, 18, &m, &mut c));
+        assert!(inked(&c, 0, 9), "left tip inked");
+        assert!(!inked(&c, 4, 9), "interior hollow");
+        assert!(!inked(&c, 8, 9), "mid-right empty");
+    }
+
+    #[test]
+    fn flip_horizontal_mirrors() {
+        // On a padded canvas, an asymmetric mark at cell (0,0) mirrors to the
+        // opposite cell column (8,0) after flip_horizontal.
+        let mut c = Canvas::new(9, 18, 1, 0);
+        c.pixel(0, 0, Color::ON);
+        c.flip_horizontal();
+        assert!(inked(&c, 8, 0), "mark mirrored to the right edge");
+        assert!(!inked(&c, 0, 0), "original column cleared");
+    }
+
+    #[test]
+    fn draw_powerline_chevron_excludes() {
+        let m = fixture_metrics();
+        for cp in [0x2500u32, 0xe0b0, 'M' as u32] {
+            let mut c = cell_canvas();
+            assert!(
+                !draw_powerline_chevron(cp, 9, 18, &m, &mut c),
+                "{cp:#06x} not a chevron"
+            );
             assert!(all_alpha(&c, &m, 0), "{cp:#06x} drew ink");
         }
     }
