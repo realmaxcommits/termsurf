@@ -2,9 +2,21 @@
 //!
 //! Faithful port of the font-search data types from upstream `font/discovery.zig`
 //! (and the `Variation` from `font/face.zig`). A [`Descriptor`] describes a font
-//! to search for; a [`Variation`] is a font-variation axis setting. The discovery
-//! logic that turns a descriptor into a loaded face (CoreText font matching) is a
-//! later sub-area.
+//! to search for; a [`Variation`] is a font-variation axis setting.
+//! [`Descriptor::to_core_text_descriptor`] turns one into a CoreText
+//! `CTFontDescriptor` (the query object); the `discover`/`discoverFallback`
+//! matching that consumes it is a later sub-area.
+
+use std::ffi::c_void;
+
+use objc2_core_foundation::{
+    CFCharacterSet, CFMutableDictionary, CFNumber, CFRange, CFRetained, CFString, CFType,
+};
+use objc2_core_text::{
+    kCTFontCharacterSetAttribute, kCTFontFamilyNameAttribute, kCTFontSizeAttribute,
+    kCTFontStyleNameAttribute, kCTFontSymbolicTrait, kCTFontTraitsAttribute, CTFontDescriptor,
+    CTFontSymbolicTraits,
+};
 
 /// A font-variation axis setting (e.g. weight `wght`, slant `slnt`).
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -46,6 +58,107 @@ pub(crate) struct Descriptor {
     pub variations: Vec<Variation>,
 }
 
+impl Descriptor {
+    /// Convert this descriptor to a CoreText `CTFontDescriptor` — the query
+    /// object CoreText's font-matching APIs consume. Faithful port of upstream
+    /// `Descriptor.toCoreTextDescriptor`: only the present fields are set, the
+    /// size is rounded to an `i32`, and the bold/italic/monospace symbolic traits
+    /// go in a nested dictionary keyed by `kCTFontSymbolicTrait`.
+    pub(crate) fn to_core_text_descriptor(&self) -> CFRetained<CTFontDescriptor> {
+        let attrs = CFMutableDictionary::<CFString, CFType>::empty();
+
+        // Set `value` under the CF string `key` in `attrs`. The dictionary uses
+        // CF-type callbacks, so it retains both for its lifetime.
+        let set = |key: &CFString, value: *const c_void| {
+            // SAFETY: `key`/`value` are live CF objects (retained by the
+            // dictionary on insertion); `attrs` is a mutable CF dictionary.
+            unsafe {
+                CFMutableDictionary::set_value(
+                    Some(attrs.as_opaque()),
+                    (key as *const CFString).cast::<c_void>(),
+                    value,
+                );
+            }
+        };
+
+        // Family.
+        if let Some(family) = &self.family {
+            let s = CFString::from_str(family);
+            // SAFETY: `kCTFontFamilyNameAttribute` is a static CF string key.
+            set(unsafe { kCTFontFamilyNameAttribute }, ct_ptr(&*s));
+        }
+
+        // Style.
+        if let Some(style) = &self.style {
+            let s = CFString::from_str(style);
+            // SAFETY: `kCTFontStyleNameAttribute` is a static CF string key.
+            set(unsafe { kCTFontStyleNameAttribute }, ct_ptr(&*s));
+        }
+
+        // Codepoint support: a character set holding the single codepoint.
+        if self.codepoint > 0 {
+            // SAFETY: a single-codepoint range; a null allocator is valid.
+            if let Some(cs) = unsafe {
+                CFCharacterSet::with_characters_in_range(
+                    None,
+                    CFRange {
+                        location: self.codepoint as isize,
+                        length: 1,
+                    },
+                )
+            } {
+                // SAFETY: `kCTFontCharacterSetAttribute` is a static CF string key.
+                set(unsafe { kCTFontCharacterSetAttribute }, ct_ptr(&*cs));
+            }
+        }
+
+        // Size (rounded to an `SInt32`).
+        if self.size > 0.0 {
+            let n = CFNumber::new_i32(self.size.round() as i32);
+            // SAFETY: `kCTFontSizeAttribute` is a static CF string key.
+            set(unsafe { kCTFontSizeAttribute }, ct_ptr(&*n));
+        }
+
+        // Symbolic traits (bold/italic/monospace), in a nested dictionary.
+        let mut traits = CTFontSymbolicTraits(0);
+        if self.bold {
+            traits |= CTFontSymbolicTraits::TraitBold;
+        }
+        if self.italic {
+            traits |= CTFontSymbolicTraits::TraitItalic;
+        }
+        if self.monospace {
+            traits |= CTFontSymbolicTraits::TraitMonoSpace;
+        }
+        if traits.0 != 0 {
+            let traits_dict = CFMutableDictionary::<CFString, CFType>::empty();
+            let n = CFNumber::new_i32(traits.0 as i32);
+            // SAFETY: `kCTFontSymbolicTrait` is a static CF string key; the
+            // nested dict retains the number.
+            unsafe {
+                CFMutableDictionary::set_value(
+                    Some(traits_dict.as_opaque()),
+                    (kCTFontSymbolicTrait as *const CFString).cast::<c_void>(),
+                    ct_ptr(&*n),
+                );
+            }
+            // SAFETY: `kCTFontTraitsAttribute` is a static CF string key.
+            set(
+                unsafe { kCTFontTraitsAttribute },
+                ct_ptr(traits_dict.as_opaque()),
+            );
+        }
+
+        // SAFETY: `attrs` is a valid attributes dictionary.
+        unsafe { CTFontDescriptor::with_attributes(attrs.as_opaque()) }
+    }
+}
+
+/// A `*const c_void` to a CF object, for the raw `set_value` calls.
+fn ct_ptr<T>(obj: &T) -> *const c_void {
+    (obj as *const T).cast::<c_void>()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -65,5 +178,96 @@ mod tests {
         assert!(!d.bold && !d.italic && !d.monospace);
         assert!(d.variations.is_empty());
         assert!(d.family.is_none() && d.style.is_none());
+    }
+
+    #[test]
+    fn descriptor_family_round_trips() {
+        let d = Descriptor {
+            family: Some("Menlo".into()),
+            ..Default::default()
+        };
+        let desc = d.to_core_text_descriptor();
+        // SAFETY: a static CF string key; `desc` is live.
+        let v = unsafe { desc.attribute(kCTFontFamilyNameAttribute) }.expect("family is set");
+        let s = v.downcast::<CFString>().expect("the family is a CFString");
+        assert_eq!(s.to_string(), "Menlo");
+    }
+
+    #[test]
+    fn descriptor_size_rounded() {
+        let d = Descriptor {
+            size: 12.6,
+            ..Default::default()
+        };
+        let desc = d.to_core_text_descriptor();
+        // SAFETY: a static CF string key; `desc` is live.
+        let v = unsafe { desc.attribute(kCTFontSizeAttribute) }.expect("size is set");
+        let n = v.downcast::<CFNumber>().expect("the size is a CFNumber");
+        // 12.6 rounds to 13 and is stored as an SInt32.
+        assert_eq!(n.as_i32(), Some(13));
+    }
+
+    #[test]
+    fn descriptor_traits_symbolic_bits() {
+        use objc2_core_foundation::CFDictionary;
+        // CoreText resolves a descriptor's attributes (it may infer values we did
+        // not set), so we assert the symbolic-trait *content* rather than the
+        // mere presence/absence of the traits attribute.
+        let d = Descriptor {
+            bold: true,
+            italic: true,
+            ..Default::default()
+        };
+        let desc = d.to_core_text_descriptor();
+        // SAFETY: a static CF string key; the descriptor is live.
+        let attr = unsafe { desc.attribute(kCTFontTraitsAttribute) }.expect("traits set");
+        let dict = attr
+            .downcast::<CFDictionary>()
+            .expect("the traits are a dict");
+        // SAFETY: a static CF string key; the stored value is the CFNumber we set.
+        let v = unsafe { dict.value((kCTFontSymbolicTrait as *const CFString).cast::<c_void>()) };
+        assert!(!v.is_null(), "the symbolic trait is present");
+        // SAFETY: the value is the `CFNumber` we stored under this key.
+        let n = unsafe { &*(v as *const CFNumber) };
+        let bits = n.as_i32().expect("an i32 symbolic-trait value") as u32;
+        assert!(
+            bits & CTFontSymbolicTraits::TraitBold.0 != 0,
+            "bold bit set"
+        );
+        assert!(
+            bits & CTFontSymbolicTraits::TraitItalic.0 != 0,
+            "italic bit set"
+        );
+        assert!(
+            bits & CTFontSymbolicTraits::TraitMonoSpace.0 == 0,
+            "monospace bit not set"
+        );
+    }
+
+    #[test]
+    fn descriptor_codepoint_charset_contains() {
+        // The character set the descriptor carries holds the requested codepoint
+        // and is not a catch-all (a BMP codepoint keeps the membership check on
+        // the `u16` `is_character_member`).
+        let d = Descriptor {
+            codepoint: 0x00C0, // À
+            ..Default::default()
+        };
+        let desc = d.to_core_text_descriptor();
+        // SAFETY: a static CF string key; the descriptor is live.
+        let attr = unsafe { desc.attribute(kCTFontCharacterSetAttribute) }.expect("charset set");
+        let cs = attr.downcast::<CFCharacterSet>().expect("a CFCharacterSet");
+        assert!(
+            cs.is_character_member(0x00C0),
+            "holds the requested codepoint"
+        );
+        assert!(!cs.is_character_member(0x41), "is not a catch-all set");
+    }
+
+    #[test]
+    fn descriptor_builds_empty() {
+        // An all-default descriptor builds a valid (empty-attributes) descriptor
+        // without panicking.
+        let _ = Descriptor::default().to_core_text_descriptor();
     }
 }

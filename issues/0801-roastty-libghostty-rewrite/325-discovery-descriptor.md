@@ -183,3 +183,95 @@ Review artifacts:
 
 - Prompt: `logs/codex-review/20260603-111719-992826-prompt.md`
 - Result: `logs/codex-review/20260603-111719-992826-last-message.md`
+
+## Result
+
+**Result:** Pass
+
+The discovery descriptor lands — discovery's first stone.
+
+- `roastty/Cargo.toml`: enabled `CFCharacterSet`/`CFDictionary`/`CFNumber`
+  (`objc2-core-foundation`) and `CTFontTraits` (`objc2-core-text`).
+- `roastty/src/font/discovery.rs`:
+  `Descriptor::to_core_text_descriptor(&self) -> CFRetained<CTFontDescriptor>`
+  builds a `CFMutableDictionary`, sets the present-only family/style
+  (`CFString`), the single-codepoint character set
+  (`CFCharacterSet::with_characters_in_range`), the rounded `SInt32` size
+  (`CFNumber::new_i32(size.round() as i32)`), and the bold/italic/monospace
+  symbolic traits OR'd into a **nested** dictionary under
+  `kCTFontTraitsAttribute` keyed by `kCTFontSymbolicTrait` (only when non-zero);
+  then `CTFontDescriptor::with_attributes(attrs.as_opaque())`. Variations are
+  not set (faithful to upstream). A small `ct_ptr(&T)` helper produces the CF
+  object pointers for the raw `set_value` calls.
+
+Tests: `descriptor_family_round_trips` (`"Menlo"` read back via
+`attribute(kCTFontFamilyNameAttribute).downcast::<CFString>()`),
+`descriptor_size_rounded` (`12.6 → 13`, downcast `CFNumber::as_i32`),
+`descriptor_traits_symbolic_bits` (the nested traits dict's
+`kCTFontSymbolicTrait` `CFNumber` has the bold + italic bits set, monospace
+unset), `descriptor_codepoint_charset_contains` (`0x00C0` is a member, `0x41` is
+not), `descriptor_builds_empty` (an all-default descriptor builds without
+panic).
+
+Gate results:
+
+- `cargo fmt -p roastty` accepted; `--check` clean.
+- `cargo test -p roastty` → 2700 passed, 0 failed (+5, no regressions).
+- `cargo build -p roastty` → no warnings.
+- No-`ghostty`-name gates clean; `git diff --check` clean.
+
+### Implementation note — a SIGSEGV caught and fixed
+
+The first implementation passed `ct_ptr(&s)` where `s: CFRetained<CFString>` —
+the address of the Rust smart-pointer **wrapper**, not the CF object — so
+`set_value` received garbage and the test process crashed with `SIGSEGV`. Fixed
+by dereferencing the `CFRetained` to the CF object at every value site
+(`ct_ptr(&*s)`, `ct_ptr(&*cs)`, `ct_ptr(&*n)`) and using
+`ct_ptr(traits_dict.as_opaque())` for the nested dictionary. The completion
+review confirmed the fix is correct (the CF temporaries live across the
+`set_value` call that retains them).
+
+### A note on the tests
+
+The design's absence-based assertions (an unset field ⇒ no attribute) were
+**dropped**: `CTFontDescriptorCopyAttribute` reflects CoreText's _resolved_
+attributes (it may infer values that were never in the input dictionary), so an
+absence assertion tests CoreText's normalization rather than this code. The
+tests were switched to **positive content** assertions (read back the family
+string, the rounded size, the symbolic-trait bits, the charset membership),
+which are unambiguous. This is the test-expressibility caveat the design
+anticipated; the result is **Pass**, not Partial.
+
+## Conclusion
+
+A `Descriptor` now converts to the CoreText `CTFontDescriptor` query object,
+faithfully reproducing upstream's attribute dictionary (present-only fields,
+rounded `SInt32` size, nested symbolic traits). This is the dependency the rest
+of discovery needs.
+
+The next discovery experiment is `discover`/`discoverFallback` — building a
+`CTFontCollection` from this descriptor (and the `discoverCodepoint` fallback
+matching) to yield candidate faces — followed by the resolver wiring (the
+discovery-based fallback in `get_index`, then codepoint overrides).
+
+## Completion Review
+
+Codex reviewed the completed implementation and result and **approved** with
+**no Required findings**. It confirmed the implementation is faithful to
+upstream `toCoreTextDescriptor` (present-only
+family/style/codepoint/size/traits, no variation attributes, rounded `SInt32`
+size via `CFNumber::new_i32`, the symbolic traits correctly OR'd in a nested
+dictionary under `kCTFontTraitsAttribute` keyed by `kCTFontSymbolicTrait`). It
+confirmed the **pointer fix is correct** —
+`ct_ptr(&*s)`/`ct_ptr(&*cs)`/`ct_ptr(&*n)` pass the CF object address (not the
+`CFRetained` wrapper), the inserted objects live through each `set_value` call,
+and the dictionaries' CFType callbacks retain the keys/values before the
+temporaries drop; passing `traits_dict.as_opaque()` is likewise sound (the outer
+dict retains it). It confirmed
+`CTFontDescriptor::with_attributes(attrs.as_opaque())` is sound and that the
+positive-content tests are appropriate (avoiding absence assertions is correct
+because readback reflects CoreText normalization). No Optional findings.
+
+Review artifacts:
+
+- Result review: `logs/codex-review/20260603-112834-640302-last-message.md`
