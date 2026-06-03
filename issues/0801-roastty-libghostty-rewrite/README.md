@@ -1025,6 +1025,8 @@ are past the correctness-critical foundation.
   — **Pass** · Claude/Codex/Codex
 - [Experiment 289: z2d port — the path-node representation](289-z2d-path-nodes.md)
   — **Pass** · Claude/Codex/Codex
+- [Experiment 290: z2d port — the Spline cubic-Bézier flattener](290-z2d-spline.md)
+  — **Designed** · Claude/Codex/Codex
 
 ## Non-Goals
 
