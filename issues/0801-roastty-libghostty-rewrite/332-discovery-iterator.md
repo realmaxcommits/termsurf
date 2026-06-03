@@ -172,3 +172,67 @@ Review artifacts:
 
 - Prompt: `logs/codex-review/20260603-121042-701325-prompt.md`
 - Result: `logs/codex-review/20260603-121042-701325-last-message.md`
+
+## Result
+
+**Result:** Pass
+
+The discovery iterator lands — `CoreText.discover` is now ported end-to-end.
+
+- `roastty/src/font/face/coretext.rs`: `Face::from_ct_font` widened to
+  `pub(crate)`.
+- `roastty/src/font/discovery.rs`:
+  `discover_faces(&self) -> impl Iterator<Item = Face>` maps the best-first
+  descriptor list through `deferred_face`, which copies each descriptor with
+  `kCTFontCharacterSetAttribute → kCFNull` (dropping the search filter), creates
+  a `CTFont` at size 12, and wraps it in a `Face`. The `.map` is lazy — each
+  face is built only when the iterator advances. The module doc was updated.
+
+Tests: `discover_faces_first_renders` (the first Menlo face renders `'M'`),
+`discover_faces_charset_removed` (a codepoint-filtered request yields a first
+face that renders `'A'`/`'z'` too — the full font, not a
+character-set-restricted one), `discover_faces_lazy_smoke` (the first face of a
+monospace search is usable).
+
+Gate results:
+
+- `cargo fmt -p roastty` accepted; `--check` clean.
+- `cargo test -p roastty` → 2721 passed, 0 failed (+3, no regressions).
+- `cargo build -p roastty` → no warnings.
+- No-`ghostty`-name gates clean; `git diff --check` clean.
+
+## Conclusion
+
+`Descriptor::discover_faces` completes `CoreText.discover`: a `Descriptor` now
+yields usable `Face`s, best-first, with the character-set filter removed — the
+full pipeline from query to ranked, loadable faces. `DeferredFace`'s laziness is
+preserved by the iterator; its wrapper collapses to roastty's single-backend
+`Face`.
+
+The remaining discovery work is `discoverFallback`/`discoverCodepoint` (the
+codepoint-driven fallback search — a `discoverCodepoint` that scores candidates
+by codepoint coverage), the deferred **variation-axis** score refinement, and
+applying **variations** to the produced face. After discovery: the resolver's
+discovery-based fallback and codepoint overrides in `get_index` (where a
+codepoint with no loaded face triggers a `discover` and the result is added to
+the collection), then the shaper.
+
+## Completion Review
+
+Codex reviewed the completed implementation and result and **approved** with
+**no Required findings**. It confirmed the implementation is faithful to
+upstream's `DiscoverIterator.next` (copy each sorted descriptor with
+`kCTFontCharacterSetAttribute → kCFNull`, create a `CTFont` at size 12, wrap as
+a `Face` only when the iterator advances), that the `kCFNull` usage is sound
+(the singleton is a live CF object passed as a raw value pointer into a
+value-retaining CF dictionary that stays live through `copy_with_attributes`,
+the copied descriptor is retained, and the `CTFont` is retained by `Face` — no
+lifetime hazards after `attrs`/the copy go out of scope), that the lazy iterator
+preserves upstream's eager-discover/lazy-create structure, and that widening
+`Face::from_ct_font` to `pub(crate)` is the minimal access change. It agreed the
+behavioral charset test is appropriate (a direct attribute inspection would be
+unreliable given CoreText's resolved-attribute behavior). No Optional findings.
+
+Review artifacts:
+
+- Result review: `logs/codex-review/20260603-121345-528363-last-message.md`

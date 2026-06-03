@@ -1110,7 +1110,7 @@ are past the correctness-critical foundation.
 - [Experiment 331: font discovery — sorting the candidates](331-discovery-sort.md)
   — **Pass** · Claude/Codex/Codex
 - [Experiment 332: font discovery — the iterator (deferred faces)](332-discovery-iterator.md)
-  — **Designed** · Claude/Codex/Codex
+  — **Pass** · Claude/Codex/Codex
 
 ## Non-Goals
 

@@ -141,7 +141,7 @@ impl Face {
 
     /// Build a face wrapping an existing `CTFont`, detecting its color state.
     /// `synthetic_bold` starts unset.
-    fn from_ct_font(font: CFRetained<CTFont>) -> Face {
+    pub(crate) fn from_ct_font(font: CFRetained<CTFont>) -> Face {
         let mut face = Face {
             font,
             synthetic_bold: None,

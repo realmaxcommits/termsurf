@@ -4,17 +4,18 @@
 //! (and the `Variation` from `font/face.zig`). A [`Descriptor`] describes a font
 //! to search for; a [`Variation`] is a font-variation axis setting.
 //! [`Descriptor::to_core_text_descriptor`] turns one into a CoreText
-//! `CTFontDescriptor` (the query object), and
-//! [`Descriptor::discover_descriptors`] runs the collection match to find
-//! candidate faces. The `Score` sort, the `DiscoverIterator`/`DeferredFace`, and
-//! `discoverFallback` are later sub-areas.
+//! `CTFontDescriptor` (the query object), [`Descriptor::discover_descriptors`]
+//! runs the collection match and ranks the candidates best-first by [`Score`],
+//! and [`Descriptor::discover_faces`] lazily turns those into [`Face`]s. The
+//! variation-axis score refinement, `discoverFallback`, and the resolver wiring
+//! are later sub-areas.
 
 use std::ffi::c_void;
 use std::ptr::NonNull;
 
 use objc2_core_foundation::{
-    CFArray, CFCharacterSet, CFDictionary, CFMutableDictionary, CFNumber, CFRange, CFRetained,
-    CFString, CFType,
+    kCFNull, CFArray, CFCharacterSet, CFDictionary, CFMutableDictionary, CFNumber, CFRange,
+    CFRetained, CFString, CFType,
 };
 use objc2_core_text::{
     kCTFontCharacterSetAttribute, kCTFontFamilyNameAttribute, kCTFontSizeAttribute,
@@ -22,6 +23,7 @@ use objc2_core_text::{
     CTFontCollection, CTFontDescriptor, CTFontSymbolicTraits, CTFontTableOptions,
 };
 
+use crate::font::face::coretext::Face;
 use crate::font::opentype::{head::Head, os2::Os2};
 
 /// A font-variation axis setting (e.g. weight `wght`, slant `slnt`).
@@ -208,6 +210,41 @@ impl Descriptor {
         scored.sort_by(|a, b| b.0.cmp(&a.0));
         scored.into_iter().map(|(_, d)| d).collect()
     }
+
+    /// Discover the matching faces, ranked best-first, as a **lazy** iterator.
+    /// Faithful port of upstream `DiscoverIterator.next`: each sorted candidate
+    /// descriptor has its character-set attribute removed (it was a search
+    /// filter, not a render constraint) and is turned into a [`Face`]. The face
+    /// is produced only when the iterator advances. (Applying the requested
+    /// variations to the face is deferred.)
+    pub(crate) fn discover_faces(&self) -> impl Iterator<Item = Face> {
+        self.discover_descriptors().into_iter().map(deferred_face)
+    }
+}
+
+/// Turn a sorted candidate descriptor into a [`Face`], **removing** the
+/// character-set attribute first (upstream's `DiscoverIterator.next`).
+fn deferred_face(desc: CFRetained<CTFontDescriptor>) -> Face {
+    // Drop the character-set filter by copying the descriptor with the attribute
+    // set to `kCFNull` (CoreText removes a null-valued attribute from the copy).
+    let attrs = CFMutableDictionary::<CFString, CFType>::empty();
+    // SAFETY: `kCTFontCharacterSetAttribute` is a static key; `kCFNull` is a
+    // live singleton; the mutable dict retains both.
+    unsafe {
+        let null = kCFNull.expect("kCFNull is available");
+        CFMutableDictionary::set_value(
+            Some(attrs.as_opaque()),
+            (kCTFontCharacterSetAttribute as *const CFString).cast::<c_void>(),
+            (null as *const objc2_core_foundation::CFNull).cast::<c_void>(),
+        );
+    }
+    // SAFETY: `desc` is live; `attrs` is a valid attributes dictionary.
+    let desc = unsafe { desc.copy_with_attributes(attrs.as_opaque()) };
+
+    // Create the font (size 12; resized later when actually used).
+    // SAFETY: `desc` is live; a null matrix is valid.
+    let font = unsafe { CTFont::with_font_descriptor(&desc, 12.0, std::ptr::null()) };
+    Face::from_ct_font(font)
 }
 
 /// The ranking score for a discovery candidate. Faithful port of upstream's
@@ -982,5 +1019,43 @@ mod tests {
             req.score(&list[0]).bold,
             "the bold variant ranks first for a bold request"
         );
+    }
+
+    #[test]
+    fn discover_faces_first_renders() {
+        let req = Descriptor {
+            family: Some("Menlo".into()),
+            ..Default::default()
+        };
+        let face = req.discover_faces().next().expect("a discovered face");
+        assert!(
+            face.glyph_index('M' as u32).is_some(),
+            "the face renders 'M'"
+        );
+    }
+
+    #[test]
+    fn discover_faces_charset_removed() {
+        // A codepoint-filtered search still yields the full font (the character
+        // set was dropped): the face renders codepoints beyond the search one.
+        let req = Descriptor {
+            family: Some("Menlo".into()),
+            codepoint: 'M' as u32,
+            ..Default::default()
+        };
+        let face = req.discover_faces().next().expect("a discovered face");
+        assert!(face.glyph_index('A' as u32).is_some(), "renders 'A'");
+        assert!(face.glyph_index('z' as u32).is_some(), "renders 'z'");
+    }
+
+    #[test]
+    fn discover_faces_lazy_smoke() {
+        // The first face of a multi-candidate (monospace) search is usable.
+        let req = Descriptor {
+            monospace: true,
+            ..Default::default()
+        };
+        let face = req.discover_faces().next().expect("a discovered face");
+        assert!(face.glyph_index('M' as u32).is_some());
     }
 }
