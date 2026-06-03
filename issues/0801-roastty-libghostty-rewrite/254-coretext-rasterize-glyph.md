@@ -166,3 +166,63 @@ deferred bottom-up flip is appropriate for the spike, and that the `< 0.25`
 guard matches upstream. Scope is clean (no constraints/color/bold/atlas) and the
 tests are robust (inked glyph has nonzero coverage without pixel pinning; space
 allows `None` or all-zero).
+
+## Result
+
+**Result:** Pass
+
+`RasterizedGlyph` and `rasterize_glyph` landed in
+`roastty/src/font/face/coretext.rs`, with `objc2-core-graphics` gaining the
+`CGBitmapContext`/`CGColorSpace`/`CGContext` features. The implementation built
+on the first try (no warnings) and both live CoreText tests pass:
+
+- `rasterize_glyph_has_ink` — `Face::new("Menlo", 32.0)`, `'M'` → glyph →
+  `rasterize_glyph` returns `Some(rg)` with `rg.width > 0`, `rg.height > 0`,
+  `rg.bitmap.len() == width * height`, and a non-trivial inked fraction
+  (`inked * 20 > len`). The bitmap-context → `draw_glyphs` → buffer-readback
+  path produces real coverage values.
+- `rasterize_space_is_empty_or_none` — the space glyph either returns `None` (no
+  outline) or an all-zero bitmap.
+
+Gate results:
+
+- `cargo fmt -p roastty` accepted; `--check` clean.
+- `cargo test -p roastty face` → 13 passed, 0 failed.
+- `cargo test -p roastty` → 2364 passed, 0 failed (no regressions; +2 from the
+  new tests).
+- `cargo build -p roastty` → no warnings.
+- No-`ghostty`-name gates (`roastty/src/font`, `lib.rs`, header,
+  `abi_harness.c`) clean.
+- `git diff --check` clean.
+
+The critical unknown — whether the `CGBitmapContext` + `CTFontDrawGlyphs` +
+buffer-readback path actually produces ink under objc2 — is resolved: it does.
+
+## Conclusion
+
+The CoreText rasterization path is proven end-to-end on live fonts. The next
+experiment layers the full `renderGlyph` semantics on top of this spike: cell
+**constraints** (the CTM scale/translate that fits a glyph into its target
+cell), the color/sbix branch (`CGImageAlphaPremultipliedFirst` RGBA for emoji),
+synthetic bold, and finally the **atlas write** (the bottom-up → top-down
+vertical flip while copying coverage into the already-ported `Atlas` via
+`set`/`set_from_larger`). The `RasterizedGlyph` shape (width/height/bitmap) is
+the foundation those layers extend.
+
+## Completion Review
+
+Codex reviewed the completed implementation and result and found **no required
+changes**.
+
+Review artifacts:
+
+- Prompt: `logs/codex-review/20260602-203415-709954-prompt.md`
+- Result: `logs/codex-review/20260602-203415-709954-last-message.md`
+
+Codex confirmed `ctx` is dropped before `buf` is moved into `RasterizedGlyph`,
+the one-element `NonNull` inputs are non-null and live through the calls, the
+raw bitmap buffer matches the grayscale no-alpha context parameters, and the
+implementation matches the intended spike scope (bounding-rect sizing, `< 0.25`
+guard, negated-bearing draw position, antialiased white-on-black coverage, no
+constraints/color/bold/atlas). The tests are appropriately behavior-based rather
+than pixel-pinned.

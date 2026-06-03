@@ -8,7 +8,8 @@
 
 use std::ptr::NonNull;
 
-use objc2_core_foundation::{CFRetained, CFString, CGSize};
+use objc2_core_foundation::{CFRetained, CFString, CGPoint, CGSize};
+use objc2_core_graphics::{CGBitmapContextCreate, CGColorSpace, CGContext};
 use objc2_core_text::{CTFont, CTFontOrientation, CTFontTableOptions};
 
 use crate::font::metrics::FaceMetrics;
@@ -18,6 +19,15 @@ use crate::font::opentype::{head::Head, hhea::Hhea, os2::Os2, post::Post};
 /// underlying CoreFoundation retain/release.
 pub(crate) struct Face {
     font: CFRetained<CTFont>,
+}
+
+/// A rasterized glyph: a grayscale coverage bitmap (`width * height` bytes, one
+/// byte per pixel, in CoreGraphics' native bottom-up row order — the vertical
+/// flip is applied when copying into the atlas).
+pub(crate) struct RasterizedGlyph {
+    pub width: u32,
+    pub height: u32,
+    pub bitmap: Vec<u8>,
 }
 
 impl Face {
@@ -300,6 +310,77 @@ impl Face {
             ic_width,
         }
     }
+
+    /// Rasterize a single glyph to a grayscale coverage bitmap sized to its
+    /// natural bounding box, or `None` if the glyph has no (or a sub-pixel)
+    /// outline. Minimal: no cell constraints, color, or synthetic bold.
+    pub(crate) fn rasterize_glyph(&self, glyph: u16) -> Option<RasterizedGlyph> {
+        let glyphs = [glyph];
+        let glyphs_ptr = NonNull::new(glyphs.as_ptr() as *mut u16).unwrap();
+        // SAFETY: `glyphs` is a 1-element slice; a null per-glyph buffer requests
+        // only the overall rect.
+        let rect = unsafe {
+            self.font.bounding_rects_for_glyphs(
+                CTFontOrientation::Horizontal,
+                glyphs_ptr,
+                std::ptr::null_mut(),
+                1,
+            )
+        };
+
+        // No outline (or one too small to render) -> empty glyph.
+        if rect.size.width < 0.25 || rect.size.height < 0.25 {
+            return None;
+        }
+
+        let px_w = rect.size.width.ceil() as usize;
+        let px_h = rect.size.height.ceil() as usize;
+
+        let colorspace = CGColorSpace::new_device_gray()?;
+        let mut buf = vec![0u8; px_w * px_h];
+
+        // SAFETY: `buf` is a `px_w * px_h` byte buffer (1 byte/px) matching the
+        // grayscale, no-alpha (`kCGImageAlphaNone` = 0) context; the colorspace
+        // is live.
+        let ctx = unsafe {
+            CGBitmapContextCreate(
+                buf.as_mut_ptr().cast(),
+                px_w,
+                px_h,
+                8,
+                px_w,
+                Some(&colorspace),
+                0,
+            )
+        }?;
+
+        CGContext::set_should_antialias(Some(&ctx), true);
+        CGContext::set_allows_antialiasing(Some(&ctx), true);
+        // White glyph on the zeroed (black) buffer; the gray value is coverage.
+        CGContext::set_gray_fill_color(Some(&ctx), 1.0, 1.0);
+
+        // Negate the bearing so the glyph's bounding box maps to the bitmap
+        // origin.
+        let positions = [CGPoint {
+            x: -rect.origin.x,
+            y: -rect.origin.y,
+        }];
+        let positions_ptr = NonNull::new(positions.as_ptr() as *mut CGPoint).unwrap();
+        // SAFETY: `glyphs`/`positions` are 1-element; `ctx` is the live grayscale
+        // context drawn into.
+        unsafe {
+            self.font.draw_glyphs(glyphs_ptr, positions_ptr, 1, &ctx);
+        }
+
+        // Release the context before moving `buf`: it holds a raw pointer into it.
+        drop(ctx);
+
+        Some(RasterizedGlyph {
+            width: px_w as u32,
+            height: px_h as u32,
+            bitmap: buf,
+        })
+    }
 }
 
 #[cfg(test)]
@@ -393,5 +474,33 @@ mod tests {
         assert!(m.cell_height > 0);
         assert!(m.cell_baseline <= m.cell_height);
         assert!(m.underline_thickness >= 1);
+    }
+
+    #[test]
+    fn rasterize_glyph_has_ink() {
+        let face = Face::new("Menlo", 32.0);
+        let glyph = face.glyphs_for_characters(&[b'M' as u16])[0];
+        let rg = face.rasterize_glyph(glyph).expect("'M' should rasterize");
+        assert!(rg.width > 0);
+        assert!(rg.height > 0);
+        assert_eq!(rg.bitmap.len(), (rg.width * rg.height) as usize);
+        // The glyph has ink: a non-trivial fraction of pixels are non-zero.
+        let inked = rg.bitmap.iter().filter(|&&b| b != 0).count();
+        assert!(inked > 0, "rasterized 'M' has no ink");
+        assert!(
+            inked * 20 > rg.bitmap.len(),
+            "'M' coverage implausibly sparse"
+        );
+    }
+
+    #[test]
+    fn rasterize_space_is_empty_or_none() {
+        let face = Face::new("Menlo", 32.0);
+        let glyph = face.glyphs_for_characters(&[b' ' as u16])[0];
+        // Space has no outline: either None or an all-zero bitmap.
+        match face.rasterize_glyph(glyph) {
+            None => {}
+            Some(rg) => assert!(rg.bitmap.iter().all(|&b| b == 0), "space has ink"),
+        }
     }
 }
