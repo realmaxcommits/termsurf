@@ -1150,7 +1150,7 @@ are past the correctness-critical foundation.
 - [Experiment 351: the run iterator's grapheme font resolution](351-runiter-grapheme-index.md)
   — **Pass** · Claude/Codex/Codex
 - [Experiment 352: the run iterator's break-and-style helpers](352-runiter-break-helpers.md)
-  — **Designed** · Claude/Codex/Codex
+  — **Pass** · Claude/Codex/Codex
 
 ## Non-Goals
 

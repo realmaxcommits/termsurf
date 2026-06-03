@@ -199,3 +199,55 @@ Review artifacts:
 
 - Prompt: `logs/codex-review/20260603-145612-857941-prompt.md` (design)
 - Result: `logs/codex-review/20260603-145612-857941-last-message.md` (design)
+
+## Result
+
+**Result:** Pass
+
+The run iterator's pure break-and-style helpers are ported.
+
+- `roastty/src/font/run.rs` (new, registered as `pub(crate) mod run`):
+  `font_style(bold, italic)` (the bold/italic → `Style` mapping,
+  bold-with-italic → `BoldItalic`), `is_bad_ligature_break(prev_cp, cp)` (the
+  directional `fl`/ `fi`/`st` split, via `const` letter patterns), and
+  `presentation_for_grapheme(first_cp)` (`FE0E` → `Text`, `FE0F` → `Emoji`, else
+  `None`).
+
+Tests: `font_style_combinations` (all four flag pairs), `bad_ligature_breaks`
+(`fl`/`fi`/`st` → `true`; non-pairs and the reverse direction → `false`),
+`presentation_for_grapheme_selectors` (`FE0E`/`FE0F`/other). All pass.
+
+Gate results:
+
+- `cargo fmt -p roastty` accepted; `--check` clean.
+- `cargo test -p roastty` → 2783 passed, 0 failed (+3, no regressions).
+- `cargo build -p roastty` → no warnings.
+- No-`ghostty`-name gates clean; `git diff --check` clean.
+
+## Conclusion
+
+The `RunIterator.next()`'s pure decision helpers are ported into the new
+`font/run.rs` module — the future home of the `RunIterator`. The font-side
+derivations (style, ligature break, presentation) are now in place.
+
+The remaining `RunIterator` work is the cell-walking `next()` loop itself: it
+reads a terminal row's cells, extracts each cell's style flags / codepoint /
+graphemes (roastty's `terminal/page.rs` `Cell`), applies these helpers plus
+`comparableStyle` and the selection/cursor/spacer breaks, resolves the font
+index (`index_for_grapheme`, Exp 351), and emits a `TextRun`. That step needs a
+`RunOptions`/grid input modeled over the terminal/render-state cells.
+
+## Completion Review
+
+Codex reviewed the completed implementation and result and **approved** with
+**no Required findings**. It confirmed the helpers match the upstream decisions:
+`font_style` preserves the bold+italic precedence, `is_bad_ligature_break` is
+limited to directional `fl`/`fi`/`st`, and `presentation_for_grapheme` maps only
+`FE0E`/`FE0F`; the `const`-pattern fix is valid Rust and readable; the module
+registration is correctly scoped; and the cell walking, `comparableStyle`,
+selection/cursor/spacer logic, and `TextRun` remain deferred. It ran the three
+targeted tests — all passed.
+
+Review artifacts:
+
+- Result review: `logs/codex-review/20260603-145806-978953-last-message.md`
