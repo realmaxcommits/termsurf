@@ -15,7 +15,7 @@
 //! rest of legacy-computing, geometric) are later experiments.
 
 use crate::font::metrics::Metrics;
-use crate::font::sprite::canvas::{Canvas, Color, Rect};
+use crate::font::sprite::canvas::{Canvas, Color, Point, Rect, Triangle};
 use crate::font::sprite::raster;
 
 /// Stroke thickness class. Faithful port of upstream `common.Thickness`.
@@ -1017,6 +1017,33 @@ pub(crate) fn draw_underline_dotted(
         x += float_width / dot_count;
     }
     canvas.fill_path(&nodes);
+}
+
+/// The solid powerline triangles (`E0B0` right arrow, `E0B2` left arrow, and the
+/// four half-cell triangles `E0B8`/`E0BA`/`E0BC`/`E0BE`) — the filled powerline
+/// separators. Faithful port of upstream `powerline.zig`'s solid triangles,
+/// which use the glyph `width`/`height` (not the cell metrics). Returns `false`
+/// for any other codepoint.
+pub(crate) fn draw_powerline_triangle(
+    cp: u32,
+    width: u32,
+    height: u32,
+    canvas: &mut Canvas,
+) -> bool {
+    let w = width as f64;
+    let h = height as f64;
+    let p = |x: f64, y: f64| Point { x, y };
+    let (p0, p1, p2) = match cp {
+        0xe0b0 => (p(0.0, 0.0), p(w, h / 2.0), p(0.0, h)),
+        0xe0b2 => (p(w, 0.0), p(0.0, h / 2.0), p(w, h)),
+        0xe0b8 => (p(0.0, 0.0), p(w, h), p(0.0, h)),
+        0xe0ba => (p(w, 0.0), p(w, h), p(0.0, h)),
+        0xe0bc => (p(0.0, 0.0), p(w, 0.0), p(0.0, h)),
+        0xe0be => (p(0.0, 0.0), p(w, 0.0), p(w, h)),
+        _ => return false,
+    };
+    canvas.triangle(Triangle { p0, p1, p2 });
+    true
 }
 
 /// The block cursor: a full-cell rect. Faithful port of upstream `special.zig`'s
@@ -3407,6 +3434,69 @@ mod tests {
         // The upper cell is empty.
         for x in 0..9 {
             assert!(!inked(&c, x, 10), "upper cell empty at x={x}");
+        }
+    }
+
+    // The solid powerline triangles (Canvas::triangle + fill). The fixture 9×18
+    // cell; each fills its region and leaves the opposite empty.
+
+    #[test]
+    fn powerline_e0b0_right() {
+        // Right arrow: full left base, tapering to the right point.
+        let mut c = cell_canvas();
+        assert!(draw_powerline_triangle(0xe0b0, 9, 18, &mut c));
+        assert!(inked(&c, 0, 9), "left base inked");
+        assert!(!inked(&c, 8, 1), "top-right empty");
+    }
+
+    #[test]
+    fn powerline_e0b2_left() {
+        // Left arrow: full right base, tapering to the left point.
+        let mut c = cell_canvas();
+        assert!(draw_powerline_triangle(0xe0b2, 9, 18, &mut c));
+        assert!(inked(&c, 8, 9), "right base inked");
+        assert!(!inked(&c, 0, 1), "top-left empty");
+    }
+
+    #[test]
+    fn powerline_half_cell_triangles() {
+        for (cp, inked_pt, empty_pt) in [
+            (0xe0bcu32, (1, 1), (7, 16)), // upper-left
+            (0xe0be, (7, 1), (1, 16)),    // upper-right
+            (0xe0b8, (1, 16), (7, 1)),    // lower-left
+            (0xe0ba, (7, 16), (1, 1)),    // lower-right
+        ] {
+            let mut c = cell_canvas();
+            assert!(draw_powerline_triangle(cp, 9, 18, &mut c));
+            assert!(inked(&c, inked_pt.0, inked_pt.1), "{cp:#06x} corner inked");
+            assert!(
+                !inked(&c, empty_pt.0, empty_pt.1),
+                "{cp:#06x} opposite empty"
+            );
+        }
+    }
+
+    #[test]
+    fn powerline_uses_dimensions() {
+        // E0BC (upper-left) at width/height 6 on a larger canvas fills only the
+        // 6×6 triangle — a point inside it inked, a point past (6,6) empty —
+        // confirming it uses the width/height parameters, not the cell metrics.
+        let mut c = Canvas::new(11, 11, 0, 0);
+        assert!(draw_powerline_triangle(0xe0bc, 6, 6, &mut c));
+        assert!(inked(&c, 1, 1), "inside the 6x6 triangle");
+        assert!(!inked(&c, 8, 8), "past the 6x6 region empty");
+    }
+
+    #[test]
+    fn draw_powerline_triangle_excludes() {
+        for cp in [0x2500u32, 0xe0b1, 'M' as u32] {
+            let mut c = cell_canvas();
+            assert!(
+                !draw_powerline_triangle(cp, 9, 18, &mut c),
+                "{cp:#06x} not a solid powerline triangle"
+            );
+            let m = fixture_metrics();
+            assert!(all_alpha(&c, &m, 0), "{cp:#06x} drew ink");
         }
     }
 

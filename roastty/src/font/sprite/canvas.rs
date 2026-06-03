@@ -342,6 +342,19 @@ impl Canvas {
         }
     }
 
+    /// Fill an anti-aliased triangle (in unpadded cell coordinates) with the
+    /// opaque (`.on`) source. Faithful port of upstream `Canvas.triangle`: a
+    /// closed 3-point path filled via [`fill_path`](Self::fill_path).
+    pub(crate) fn triangle(&mut self, t: Triangle<f64>) {
+        let nodes = [
+            raster::PathNode::MoveTo(raster::Point::new(t.p0.x, t.p0.y)),
+            raster::PathNode::LineTo(raster::Point::new(t.p1.x, t.p1.y)),
+            raster::PathNode::LineTo(raster::Point::new(t.p2.x, t.p2.y)),
+            raster::PathNode::ClosePath,
+        ];
+        self.fill_path(&nodes);
+    }
+
     /// Offset a path node's point(s) by the surface padding (the upstream
     /// translation-only CTM).
     fn translate_node(&self, node: raster::PathNode) -> raster::PathNode {

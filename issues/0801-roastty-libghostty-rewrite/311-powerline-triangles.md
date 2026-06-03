@@ -141,3 +141,67 @@ Review artifacts:
 
 - Prompt: `logs/codex-review/20260603-085659-036423-prompt.md`
 - Result: `logs/codex-review/20260603-085659-036423-last-message.md`
+
+## Result
+
+**Result:** Pass
+
+`roastty/src/font/sprite/canvas.rs` gained `Canvas::triangle` (a `MoveTo`/
+`LineTo`/`LineTo`/`ClosePath` closed path from the three vertices, filled via
+`Canvas::fill_path`). `roastty/src/font/sprite/draw.rs` gained
+`draw_powerline_triangle(cp, width, height, canvas)` using
+`w = width`/`h = height` (the glyph dimensions, not the cell metrics), with the
+six vertex sets (`E0B0` right arrow, `E0B2` left arrow,
+`E0B8`/`E0BA`/`E0BC`/`E0BE` half-cell triangles) and `_ => false`.
+
+Tests (the fixture `9×18` cell), confirmed against the render:
+
+- `powerline_e0b0_right` — left base `(0,9)` inked, top-right `(8,1)` empty.
+- `powerline_e0b2_left` — right base `(8,9)` inked, top-left `(0,1)` empty.
+- `powerline_half_cell_triangles` — each of `E0BC`/`E0BE`/`E0B8`/`E0BA` inks its
+  corner `(1,1)`/`(7,1)`/`(1,16)`/`(7,16)` and leaves the opposite empty.
+- `powerline_uses_dimensions` — `E0BC` at `6×6` inks `(1,1)` and leaves `(8,8)`
+  empty, proving the `width`/`height` parameters drive the geometry (not the
+  cell metrics).
+- `draw_powerline_triangle_excludes` — `0x2500`, `0xE0B1`, `'M'` return `false`
+  and draw nothing.
+
+Gate results:
+
+- `cargo fmt -p roastty` accepted; `--check` clean.
+- `cargo test -p roastty` → 2642 passed, 0 failed (+5, no regressions).
+- `cargo build -p roastty` → no warnings.
+- No-`ghostty`-name gates clean; `git diff --check` clean.
+
+## Conclusion
+
+The solid powerline triangles render faithfully — the first powerline glyphs,
+and the first consumers of `Canvas::triangle` (the `fill_path` triangle
+wrapper). The sprite font now covers the box diagonals/arcs, the geometric
+corner triangles, the entire underline/special-sprite family, the cursors, and
+these powerline separators.
+
+The remaining powerline glyphs are the **outlined** arrows (`E0B1`/`E0B3` and
+`E0B9`/`E0BB`/`E0BD`/`E0BF` — inner strokes, which reuse
+`Canvas::inner_stroke_path`), the **rounded** separators (`E0B4`–`E0B7` —
+half-discs via the `arc` primitive), and the **flames** (`E0D2`/`E0D4`). The
+larger remaining integration is the unifying sprite `has_codepoint`/draw and
+**sprite-kind dispatch** (mapping the codepoint tables and a `Sprite` enum to
+all the standalone `draw_*` functions, filling the resolver's deferred
+`SpriteUnavailable` arm). After the sprite font: the discovery consumer, the UCD
+emoji-presentation default, codepoint overrides, the shaper, the Nerd Font
+attribute table, and SVG color detection.
+
+## Completion Review
+
+Codex reviewed the completed implementation and result and found **no Required
+changes**. It confirmed `Canvas::triangle` is a faithful thin wrapper over
+`fill_path`, and `draw_powerline_triangle` correctly uses the glyph
+`width`/`height` parameters rather than the metrics; that the six vertex sets
+and the dispatch match upstream; that the NonZero fill is fine for single closed
+triangles; and that the dimension regression test covers the design finding that
+was fixed. No Optional findings.
+
+Review artifacts:
+
+- Result review: `logs/codex-review/20260603-085951-037645-last-message.md`
