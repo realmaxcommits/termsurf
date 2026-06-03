@@ -1167,6 +1167,8 @@ are past the correctness-critical foundation.
   — **Pass** · Claude/Codex/Codex
 - [Experiment 360: the Screen/Terminal-facing shape entry](360-render-screen-entry.md)
   — **Pass** · Claude/Codex/Codex
+- [Experiment 361: the shape-a-row driver](361-shape-row-driver.md) —
+  **Designed** · Claude/Codex/Codex
 
 ## Non-Goals
 
