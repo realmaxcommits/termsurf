@@ -4,13 +4,14 @@
 //! Font subsystem.
 //!
 //! Faithful port of upstream `font/`. This slice establishes the module, the
-//! `Glyph` value type, the `Metrics` derivation, the texture `Atlas`, and the
-//! `sprite` geometric primitives; rasterization, faces, and shaping land in
-//! later experiments.
+//! `Glyph` value type, the `Metrics` derivation, the texture `Atlas`, the
+//! `sprite` geometric primitives, and the `opentype` table parsers;
+//! rasterization, faces, and shaping land in later experiments.
 
 pub(crate) mod atlas;
 pub(crate) mod glyph;
 pub(crate) mod metrics;
+pub(crate) mod opentype;
 pub(crate) mod sprite;
 
 /// The style (weight/slant) of a font face.

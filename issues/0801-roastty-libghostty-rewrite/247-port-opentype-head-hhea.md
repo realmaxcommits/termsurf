@@ -192,3 +192,84 @@ and `0.05499267578125 * 65536 == 3604` exactly; and that deferring the SFNT
 directory reader, `os2`/`post`, `F26Dot6`, and the CoreText FFI is sound because
 CoreText supplies individual tables via `CTFontCopyTable`. Hand-built test bytes
 were endorsed as tighter coverage than the embedded-font fixture.
+
+## Result
+
+**Result:** Pass
+
+Added the `roastty/src/font/opentype/` module (`pub(crate) mod opentype;` in
+`font/mod.rs`) with `sfnt.rs` (`OpenTypeError`, `Fixed` 16.16 with
+`to_f64`/`from_f64`, and the big-endian `Reader` with
+`read_u16`/`read_i16`/`read_u32`/`read_i32`/`read_i64`, each returning
+`EndOfStream` on short input), `head.rs` (`Head`, 18 fields, `from_bytes`
+reading in spec order), and `hhea.rs` (`Hhea`, 18 fields incl. the four
+reserved, same). The `opentype/mod.rs` declares the three submodules (the
+re-exports were dropped to avoid unused-import warnings until a consumer lands).
+
+Tests added (7): `fixed_round_trip` (`0.05499267578125 → 3604`, `1.0 → 65536`),
+`reader_big_endian`, `reader_end_of_stream`, `parse_head` (hand-built 54-byte
+table → all 18 fields, incl. `units_per_em = 2048`, `font_revision = 1.0`,
+`magic_number = 0x5F0F3CF5`, negatives), `head_truncated` (53 bytes →
+`EndOfStream`), `parse_hhea` (hand-built 36-byte table → `ascender = 1900`,
+`descender = -450`, `min_right_side_bearing = -1889`, `number_of_h_metrics = 2`,
+…), `hhea_truncated`.
+
+### Verification
+
+```bash
+cargo fmt -p roastty
+cargo test -p roastty opentype
+cargo test -p roastty
+```
+
+Observed:
+
+- `opentype`: 7 passed.
+- Full `roastty`: 2346 unit tests passed (2339 prior + 7 new), plus the C ABI
+  harness passed.
+- `cargo fmt -p roastty -- --check`: clean.
+- `cargo build -p roastty`: no warnings.
+- No-`ghostty`-name gates passed for `roastty/src/font` and for
+  `roastty/src/lib.rs`, `roastty/include/roastty.h`,
+  `roastty/tests/abi_harness.c`.
+- `git diff --check`: clean.
+
+No C ABI, header, or ABI inventory changes; the SFNT directory reader,
+`os2`/`post`, `F26Dot6`, and CoreText FFI cleanly deferred.
+
+### Completion Review
+
+Codex reviewed the completed implementation and found **no issues** ("nothing
+needs to change before the result commit").
+
+Review artifacts:
+
+- Prompt: `logs/codex-review/20260602-194258-893987-prompt.md`
+- Result: `logs/codex-review/20260602-194258-893987-last-message.md`
+
+Codex verified `sfnt.rs` (`OpenTypeError`, `Fixed` math, the bounds-checking
+big-endian `Reader` with correct `from_be_bytes`), that `Head` reads all 18
+fields in the correct OpenType order/widths for a 54-byte table (`font_revision`
+via `read_i32`, `created`/`modified` as `i64`, the final three signed `i16`),
+that `Hhea` reads all 18 in the correct 36-byte layout (`advance_width_max` as
+`u16`, the four reserved `i16` before `metric_data_format`), that every
+hand-built fixture byte is correctly encoded big-endian, and that truncating by
+one byte returns `EndOfStream`. It judged the dropped re-exports a minor,
+documented, non-blocking deviation (they avoid warnings until a consumer
+exists).
+
+## Conclusion
+
+Experiment 247 succeeds, opening the font **face** path with its pure-Rust
+foundation: the SFNT scalar types (`Fixed`, the big-endian `Reader`,
+`OpenTypeError`) and the `head` and `hhea` table parsers. Both Codex gates
+passed with zero findings.
+
+The next slice is the remaining two metric tables `getMetrics` reads: **`os2`**
+(the `sTypoAscender`/`sTypoDescender`, `usWinAscent`/`usWinDescent`,
+`sxHeight`/`sCapHeight` fields — the preferred vertical metrics and the cap/ex
+heights, with the version-gated optional fields) and **`post`** (the
+`underlinePosition`/`underlineThickness`). With `head` + `hhea` + `os2` + `post`
+in place, the CoreText `Face` FFI (`CTFontCopyTable` → these parsers →
+`FaceMetrics` → the already-ported `Metrics::calc`) becomes the next experiment
+— the first FFI-heavy slice, adding `objc2-core-text`/`objc2-core-graphics`.
