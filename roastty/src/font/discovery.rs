@@ -166,13 +166,12 @@ fn ct_ptr<T>(obj: &T) -> *const c_void {
 }
 
 impl Descriptor {
-    /// Discover the candidate CoreText font descriptors matching this descriptor.
-    /// Faithful port of upstream `CoreText.discover` through
-    /// `copyMatchingDescriptors`: wrap the query descriptor in a one-element
-    /// `CFArray`, build a `CTFontCollection`, ask it for the matching descriptors,
-    /// and copy them into an owned (retained) `Vec`. The list is returned
-    /// **unsorted** — the `Score` sort that orders discovery results is a later
-    /// experiment. An empty result means no matches.
+    /// Discover the candidate CoreText font descriptors matching this descriptor,
+    /// ranked **best-first**. Faithful port of upstream `CoreText.discover`: wrap
+    /// the query descriptor in a one-element `CFArray`, build a
+    /// `CTFontCollection`, ask it for the matching descriptors, copy them into an
+    /// owned (retained) `Vec`, and sort by the request's [`Score`]
+    /// (`sortMatchingDescriptors`). An empty result means no matches.
     pub(crate) fn discover_descriptors(&self) -> Vec<CFRetained<CTFontDescriptor>> {
         let ct_desc = self.to_core_text_descriptor();
         let query = CFArray::from_retained_objects(&[ct_desc]);
@@ -200,7 +199,14 @@ impl Descriptor {
                 out.push(d);
             }
         }
-        out
+
+        // Sort best-first by the request's score (`sortMatchingDescriptors`).
+        // Each candidate is scored once (upstream recomputes per comparison, but
+        // the order is identical since the comparator only depends on `int()`).
+        let mut scored: Vec<(u32, CFRetained<CTFontDescriptor>)> =
+            out.into_iter().map(|d| (self.score(&d).int(), d)).collect();
+        scored.sort_by(|a, b| b.0.cmp(&a.0));
+        scored.into_iter().map(|(_, d)| d).collect()
     }
 }
 
@@ -943,6 +949,38 @@ mod tests {
         assert!(
             default_score.fuzzy_style > bold_score.fuzzy_style,
             "the default desire consumes more of the name"
+        );
+    }
+
+    #[test]
+    fn discover_sorted_descending() {
+        // The candidates come back ranked best-first by the request's score.
+        let req = Descriptor {
+            monospace: true,
+            ..Default::default()
+        };
+        let list = req.discover_descriptors();
+        assert!(!list.is_empty(), "monospace search yields candidates");
+        let ints: Vec<u32> = list.iter().map(|c| req.score(c).int()).collect();
+        assert!(
+            ints.windows(2).all(|w| w[0] >= w[1]),
+            "scores are non-increasing (best-first): {ints:?}"
+        );
+    }
+
+    #[test]
+    fn discover_bold_ranks_bold_first() {
+        // A bold Menlo request puts a bold candidate first.
+        let req = Descriptor {
+            family: Some("Menlo".into()),
+            bold: true,
+            ..Default::default()
+        };
+        let list = req.discover_descriptors();
+        assert!(!list.is_empty(), "Menlo bold search yields candidates");
+        assert!(
+            req.score(&list[0]).bold,
+            "the bold variant ranks first for a bold request"
         );
     }
 }

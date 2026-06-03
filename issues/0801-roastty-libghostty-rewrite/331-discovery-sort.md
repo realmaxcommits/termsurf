@@ -154,3 +154,62 @@ Review artifacts:
 
 - Prompt: `logs/codex-review/20260603-120452-746623-prompt.md`
 - Result: `logs/codex-review/20260603-120452-746623-last-message.md`
+
+## Result
+
+**Result:** Pass
+
+The candidate sort lands — `discover_descriptors` now returns its matches
+**best-first**.
+
+- `roastty/src/font/discovery.rs`: after collecting the candidate `Vec`,
+  `discover_descriptors` scores each candidate once against the request and
+  sorts descending by `Score::int()` (`scored.sort_by(|a, b| b.0.cmp(&a.0))`).
+  The doc comment now describes the best-first ordering.
+
+Tests: `discover_sorted_descending` (the returned list is non-increasing in
+`req.score(c).int()` for a monospace request — the public ordering invariant),
+`discover_bold_ranks_bold_first` (a bold Menlo request ranks a bold candidate
+first). The existing `discover_descriptors_*` tests still pass (sorting
+preserves membership).
+
+Gate results:
+
+- `cargo fmt -p roastty` accepted; `--check` clean.
+- `cargo test -p roastty` → 2718 passed, 0 failed (+2, no regressions).
+- `cargo build -p roastty` → no warnings.
+- No-`ghostty`-name gates clean; `git diff --check` clean.
+
+## Conclusion
+
+`CoreText.discover` is now ported end-to-end up to the iterator: a `Descriptor`
+yields its candidate font descriptors ranked best-first by the full `Score`
+(glyph count, codepoint coverage, monospace, head/OS-2-refined bold/italic, and
+the style match). Only the variation-axis score refinement remains deferred.
+
+The next discovery experiment is the **`DiscoverIterator`/`DeferredFace`** —
+upstream turns each sorted descriptor into a lazily-loaded face, **removing the
+character-set attribute** first (it was a filter, not a render constraint) via
+`createCopyWithAttributes` with `kCFNull`, then
+`CTFontCreateWithFontDescriptor`. After that:
+`discoverFallback`/`discoverCodepoint`, then the resolver's discovery-based
+fallback and codepoint overrides in `get_index`, and finally the shaper.
+
+## Completion Review
+
+Codex reviewed the completed implementation and result and **approved** with
+**no Required findings**. It confirmed the wiring matches upstream ordering
+(each candidate's `Score::int()` computed once, `b.0.cmp(&a.0)` sorting higher
+first — equivalent to upstream's score-per-comparison comparator for all
+non-ties, with the stable tie behavior acceptable since upstream leaves
+equal-score order unspecified), that ownership is correct (`out` moved into
+`(score, descriptor)` tuples, sorted without dropping the retained descriptors,
+mapped back into the returned `Vec`), that the doc update is accurate, and that
+the tests are meaningful (`discover_sorted_descending` verifies the public
+ordering invariant; `discover_bold_ranks_bold_first` exercises an observable
+ranking effect, within the experiment's stated system-font test tolerance). No
+Optional findings.
+
+Review artifacts:
+
+- Result review: `logs/codex-review/20260603-120734-443077-last-message.md`
