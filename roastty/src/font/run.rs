@@ -12,7 +12,7 @@ use std::hash::{Hash, Hasher};
 
 use crate::font::codepoint_resolver::CodepointResolver;
 use crate::font::collection::Index;
-use crate::font::shape::Codepoint;
+use crate::font::shape::{self, Codepoint};
 use crate::font::{Presentation, Style};
 use crate::terminal::kitty::graphics_unicode::PLACEHOLDER;
 use crate::terminal::style::{Color, Style as TermStyle};
@@ -175,6 +175,54 @@ pub(crate) fn presentation_for_grapheme(first_cp: u32) -> Option<Presentation> {
 pub(crate) struct RunOutput {
     pub run: TextRun,
     pub codepoints: Vec<Codepoint>,
+}
+
+/// One run's shaped output: the run descriptor (with its `offset` column and
+/// content `hash`) and the positioned glyph cells `Face::shape_run` produced.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct ShapedRun {
+    pub run: TextRun,
+    pub glyphs: Vec<shape::Cell>,
+}
+
+/// Shape a terminal row end to end: drive the [`RunIterator`] over `opts`, then
+/// shape each run's codepoints with its resolved face. Returns one [`ShapedRun`]
+/// per text run, in column order. Runs whose font index is **special**
+/// (sprite/box-drawing) are skipped — that draw path is separate (deferred).
+/// Faithful port of upstream's renderer per-row driver loop
+/// (`while (run_iter.next()) |run| shape(run)`).
+pub(crate) fn shape_row(opts: &RunOptions, resolver: &mut CodepointResolver) -> Vec<ShapedRun> {
+    // Drain the iterator first so its `&mut resolver` borrow is released before we
+    // re-borrow the resolver's collection to fetch faces.
+    let mut runs = Vec::new();
+    let mut iter = RunIterator::new(opts, resolver);
+    while let Some(out) = iter.next() {
+        runs.push(out);
+    }
+    drop(iter);
+
+    let mut shaped = Vec::with_capacity(runs.len());
+    for out in runs {
+        // Special (sprite/box-drawing) indices have no face — the sprite draw path
+        // shapes them separately (a later experiment).
+        if out.run.font_index.special_kind().is_some() {
+            continue;
+        }
+        // A non-special index from the run iterator must be face-backed
+        // (`resolve_font` resolves it through the resolver, and `get_face` only
+        // rejects special/out-of-bounds indices). A non-special error means a
+        // broken invariant, not skippable text — fail loudly rather than drop it.
+        let face = resolver
+            .collection()
+            .get_face(out.run.font_index)
+            .expect("a text run's font index must be face-backed");
+        let glyphs = face.shape_run(&out.codepoints);
+        shaped.push(ShapedRun {
+            run: out.run,
+            glyphs,
+        });
+    }
+    shaped
 }
 
 /// Groups a terminal row's cells into shaping runs. Faithful port of upstream
@@ -606,6 +654,31 @@ mod tests {
         assert_eq!(out.run.cells, 2);
         assert_eq!(cps(&out), vec![('A' as u32, 0), ('B' as u32, 1)]);
         assert!(it.next().is_none(), "the row has one run");
+    }
+
+    #[test]
+    fn shape_row_drives_iterator_and_shapes() {
+        let opts = RunOptions {
+            cells: vec![narrow('A' as u32), narrow('B' as u32)],
+            ..Default::default()
+        };
+        let mut r = menlo_resolver();
+        let shaped = shape_row(&opts, &mut r);
+
+        // `A`/`B` share Menlo and the default style → one run.
+        assert_eq!(shaped.len(), 1);
+        let sr = &shaped[0];
+        assert_eq!(sr.run.offset, 0);
+        assert_eq!(sr.run.cells, 2);
+
+        // The run shaped two real glyphs at run-relative columns 0 and 1.
+        assert_eq!(sr.glyphs.len(), 2);
+        assert!(
+            sr.glyphs.iter().all(|g| g.glyph_index != 0),
+            "Menlo has glyphs for A and B"
+        );
+        assert_eq!(sr.glyphs[0].x, 0);
+        assert_eq!(sr.glyphs[1].x, 1);
     }
 
     #[test]

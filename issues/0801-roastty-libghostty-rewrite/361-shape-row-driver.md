@@ -200,3 +200,70 @@ Review artifacts:
 
 - Prompt: `logs/codex-review/20260603-172148-968800-prompt.md` (design)
 - Result: `logs/codex-review/20260603-172148-968800-last-message.md` (design)
+
+## Result
+
+**Result:** Pass
+
+The shape-a-row driver ties the run iterator to the shaper — the loop that has
+been missing between them.
+
+- `roastty/src/font/run.rs`:
+  - `ShapedRun { run: TextRun, glyphs: Vec<shape::Cell> }` — one run's
+    descriptor plus its positioned glyph cells.
+  - `shape_row(opts, resolver) -> Vec<ShapedRun>` drains the `RunIterator` over
+    a row's `RunOptions` into `Vec<RunOutput>` (releasing the `&mut resolver`
+    borrow), then shapes each run: skips special (sprite/box-drawing) indices,
+    `expect`s a face for every non-special index (a non-special `get_face` error
+    is a broken invariant, not skippable text), and shapes its codepoints via
+    `Face::shape_run`. Returns the `ShapedRun`s in column order, each carrying
+    the `TextRun` (with `offset`/`hash`) for placement and caching. Imported
+    `crate::font::shape` (`use crate::font::shape::{self, Codepoint};`).
+
+Test (in `run.rs`): `shape_row_drives_iterator_and_shapes` builds a narrow
+`"AB"` `RunOptions` (no selection, no cursor) with the `menlo_resolver()` helper
+and asserts `shape_row` returns exactly one `ShapedRun` (`A`/`B` share Menlo and
+style), with `run.offset == 0`, `run.cells == 2`, and two shaped glyph cells
+with nonzero `glyph_index` at run-relative `x == 0` and `x == 1`.
+
+Gate results:
+
+- `cargo fmt -p roastty` accepted; `--check` clean.
+- `cargo test -p roastty` → 2808 passed, 0 failed (+1, no regressions).
+- `cargo build -p roastty` → no warnings.
+- No-`ghostty`-name gates clean; `git diff --check` clean.
+
+## Conclusion
+
+The font subsystem can now shape a whole terminal row end to end: `shape_row`
+turns a `RunOptions` (decoded cells + selection + cursor) into positioned
+glyphs, run by run. Combined with Experiments 358–360, the path is complete from
+a live terminal page row all the way to shaped glyphs:
+`Terminal::shape_run_options` → `RunIterator` → `Face::shape_run` →
+`Vec<ShapedRun>`.
+
+The remaining renderer↔font work is the **Metal draw-path wiring**: place each
+`ShapedRun`'s glyphs into the renderer's cell buffer at `run.offset + glyph.x`
+(rasterizing each glyph into the atlas, with the cell's foreground/background
+colors), plus the deferred sprite/box-drawing draw path and the shaped-run
+cache.
+
+## Completion Review
+
+Codex reviewed the completed implementation and result and **approved** with
+**no findings**. It confirmed the implementation matches the approved design and
+upstream's per-row driver loop: it drains `RunIterator` in column order,
+releases the mutable resolver borrow, then shapes each owned
+`RunOutput.codepoints` with the resolved face; `ShapedRun` carries `TextRun`
+through unchanged, so glyph `x` stays run-relative and the caller keeps
+`run.offset` for placement. It confirmed the `expect()` is correct (after the
+explicit `special_kind()` skip, a non-special index must be face-backed; a
+non-special `get_face` error is an internal invariant failure, not a legitimate
+drop), and that the test adequately proves the bridge's happy path (iterator
+grouping, face lookup, shaping, carried run metadata, run-relative glyph
+columns), with special-index skipping and cache behavior explicitly deferred.
+Nothing needed to change before the result commit.
+
+Review artifacts:
+
+- Result review: `logs/codex-review/20260603-172418-662029-last-message.md`
