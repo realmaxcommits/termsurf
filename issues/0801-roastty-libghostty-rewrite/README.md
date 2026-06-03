@@ -1105,6 +1105,8 @@ are past the correctness-critical foundation.
   — **Pass** · Claude/Codex/Codex
 - [Experiment 329: font discovery — bold/italic refinement](329-discovery-score-bold-italic.md)
   — **Pass** · Claude/Codex/Codex
+- [Experiment 330: font discovery — the style match](330-discovery-score-style.md)
+  — **Designed** · Claude/Codex/Codex
 
 ## Non-Goals
 
