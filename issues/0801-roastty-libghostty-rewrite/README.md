@@ -956,7 +956,7 @@ are past the correctness-critical foundation.
 - [Experiment 254: CoreText glyph rasterization spike — glyph → alpha bitmap](254-coretext-rasterize-glyph.md)
   — **Pass** · Claude/Codex/Codex
 - [Experiment 255: CoreText render_glyph — rasterize into the atlas, return a Glyph](255-coretext-render-glyph.md)
-  — **Designed** · Claude/Codex/Codex
+  — **Pass** · Claude/Codex/Codex
 
 ## Non-Goals
 

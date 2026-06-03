@@ -225,3 +225,63 @@ downstream), that `Result<Glyph, AtlasError>` with the grayscale `debug_assert`
 is the right shape while color/depth branches are deferred, and that the
 zero-glyph path and `offset_y = px_y + px_height` match the scoped upstream
 behavior.
+
+## Result
+
+**Result:** Pass
+
+`RasterizedGlyph` gained `bearing_x`/`bearing_y`, `rasterize_glyph` became
+faithful (whole-pixel bearings, `frac_x`/`frac_y`, `ceil(size + frac)` canvas,
+`translate_ctm(frac_x, frac_y)` before the draw), and `render_glyph` landed,
+reserving an atlas region, writing the coverage row-for-row, and returning a
+`Glyph` with `offset_x = px_x` / `offset_y = px_y + px_height` and the atlas
+coordinates. The misleading "flip in the atlas write" doc from Experiment 254
+was corrected.
+
+Both new live-CoreText tests pass:
+
+- `render_glyph_places_m_in_atlas` — `'M'` renders into a `512×512` grayscale
+  atlas with `width > 0`, `height > 0`, a positive top bearing (`offset_y > 0`),
+  and a reserved region inside the atlas bounds.
+- `render_glyph_space_is_zero` — the space glyph returns a zero `Glyph` (all
+  fields `0`) with no atlas reservation.
+
+Gate results:
+
+- `cargo fmt -p roastty` accepted; `--check` clean.
+- `cargo test -p roastty face` → 15 passed, 0 failed (the Experiment 254
+  rasterization tests still pass under the fractional-translate change).
+- `cargo test -p roastty` → 2366 passed, 0 failed (no regressions; +2).
+- `cargo build -p roastty` → no warnings.
+- No-`ghostty`-name gates (`roastty/src/font`, `lib.rs`, header,
+  `abi_harness.c`) clean.
+- `git diff --check` clean.
+
+## Conclusion
+
+The glyph path now runs end-to-end from glyph index to an atlas-resident `Glyph`
+for the monochrome, unconstrained case. The next experiments layer the deferred
+branches of upstream `renderGlyph` onto this core: cell **constraints** (the
+`constrain` geometry plus the `scaleCTM` stretch and the re-centering `dx`,
+which brings in `RenderOptions`/`grid_metrics` and the baseline term), then the
+**color/sbix** path (P3 RGBA depth-4 atlas), **synthetic bold**, and
+**thicken/font-smoothing**. Constraints are the natural next slice because they
+unlock correct cell placement for the shaper.
+
+## Completion Review
+
+Codex reviewed the completed implementation and result and found **no required
+changes**.
+
+Review artifacts:
+
+- Prompt: `logs/codex-review/20260602-204252-329108-prompt.md`
+- Result: `logs/codex-review/20260602-204252-329108-last-message.md`
+
+Codex found no real correctness, geometry, memory-safety, or faithfulness issues
+in the bearing math (`px_x`/`px_y`, `frac_x`/`frac_y`, `ceil(size + frac)`
+canvas, `translate_ctm`, the negated-bearing draw, and
+`offset_y = bearing_y + height`), the bitmap-context lifetime (`ctx` dropped
+before `buf` is moved), the no-flip atlas write, or the
+`Result<Glyph, AtlasError>` shape with its zero-glyph path and grayscale
+`debug_assert`.

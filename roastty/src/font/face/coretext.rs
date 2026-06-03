@@ -12,6 +12,8 @@ use objc2_core_foundation::{CFRetained, CFString, CGPoint, CGSize};
 use objc2_core_graphics::{CGBitmapContextCreate, CGColorSpace, CGContext};
 use objc2_core_text::{CTFont, CTFontOrientation, CTFontTableOptions};
 
+use crate::font::atlas::{Atlas, AtlasError, Format};
+use crate::font::glyph::Glyph;
 use crate::font::metrics::FaceMetrics;
 use crate::font::opentype::{head::Head, hhea::Hhea, os2::Os2, post::Post};
 
@@ -22,12 +24,17 @@ pub(crate) struct Face {
 }
 
 /// A rasterized glyph: a grayscale coverage bitmap (`width * height` bytes, one
-/// byte per pixel, in CoreGraphics' native bottom-up row order — the vertical
-/// flip is applied when copying into the atlas).
+/// byte per pixel) plus its whole-pixel bottom-left bearings. The bitmap is
+/// written into the atlas row-for-row (no vertical flip — the texture
+/// orientation is the renderer's concern, matching upstream `renderGlyph`).
 pub(crate) struct RasterizedGlyph {
     pub width: u32,
     pub height: u32,
     pub bitmap: Vec<u8>,
+    /// Whole-pixel left bearing (`floor(origin.x)`).
+    pub bearing_x: i32,
+    /// Whole-pixel bottom bearing (`floor(origin.y)`).
+    pub bearing_y: i32,
 }
 
 impl Face {
@@ -312,8 +319,10 @@ impl Face {
     }
 
     /// Rasterize a single glyph to a grayscale coverage bitmap sized to its
-    /// natural bounding box, or `None` if the glyph has no (or a sub-pixel)
-    /// outline. Minimal: no cell constraints, color, or synthetic bold.
+    /// natural bounding box (with sub-pixel positioning), plus its whole-pixel
+    /// bearings, or `None` if the glyph has no (or a sub-pixel) outline.
+    /// Monochrome and unconstrained: no cell constraints, color, or synthetic
+    /// bold (the deferred branches of upstream `renderGlyph`).
     pub(crate) fn rasterize_glyph(&self, glyph: u16) -> Option<RasterizedGlyph> {
         let glyphs = [glyph];
         let glyphs_ptr = NonNull::new(glyphs.as_ptr() as *mut u16).unwrap();
@@ -333,8 +342,15 @@ impl Face {
             return None;
         }
 
-        let px_w = rect.size.width.ceil() as usize;
-        let px_h = rect.size.height.ceil() as usize;
+        // Whole-pixel bottom-left bearings, with the fractional remainder kept
+        // for sub-pixel positioning. The canvas is sized to fit the glyph plus
+        // that fractional offset.
+        let px_x = rect.origin.x.floor() as i32;
+        let px_y = rect.origin.y.floor() as i32;
+        let frac_x = rect.origin.x - rect.origin.x.floor();
+        let frac_y = rect.origin.y - rect.origin.y.floor();
+        let px_w = (rect.size.width + frac_x).ceil() as usize;
+        let px_h = (rect.size.height + frac_y).ceil() as usize;
 
         let colorspace = CGColorSpace::new_device_gray()?;
         let mut buf = vec![0u8; px_w * px_h];
@@ -359,6 +375,10 @@ impl Face {
         // White glyph on the zeroed (black) buffer; the gray value is coverage.
         CGContext::set_gray_fill_color(Some(&ctx), 1.0, 1.0);
 
+        // Shift the drawing by the fractional bearing so the glyph lands at the
+        // correct sub-pixel position within the canvas.
+        CGContext::translate_ctm(Some(&ctx), frac_x, frac_y);
+
         // Negate the bearing so the glyph's bounding box maps to the bitmap
         // origin.
         let positions = [CGPoint {
@@ -379,6 +399,42 @@ impl Face {
             width: px_w as u32,
             height: px_h as u32,
             bitmap: buf,
+            bearing_x: px_x,
+            bearing_y: px_y,
+        })
+    }
+
+    /// Render a glyph into the grayscale `atlas` and return its [`Glyph`]
+    /// (pixel size, whole-pixel bearings, and atlas coordinates). Faithful port
+    /// of the monochrome, unconstrained core of upstream `renderGlyph`: no cell
+    /// constraints, color/sbix, synthetic bold, or thicken.
+    pub(crate) fn render_glyph(&self, atlas: &mut Atlas, glyph: u16) -> Result<Glyph, AtlasError> {
+        debug_assert_eq!(atlas.format(), Format::Grayscale);
+
+        // No outline (or one too small to render) -> a zero glyph, matching
+        // upstream. Nothing is reserved in the atlas.
+        let Some(rg) = self.rasterize_glyph(glyph) else {
+            return Ok(Glyph {
+                width: 0,
+                height: 0,
+                offset_x: 0,
+                offset_y: 0,
+                atlas_x: 0,
+                atlas_y: 0,
+            });
+        };
+
+        let region = atlas.reserve(rg.width, rg.height)?;
+        atlas.set(region, &rg.bitmap);
+
+        Ok(Glyph {
+            width: rg.width,
+            height: rg.height,
+            // Left bearing; top bearing = bottom bearing + height.
+            offset_x: rg.bearing_x,
+            offset_y: rg.bearing_y + rg.height as i32,
+            atlas_x: region.x,
+            atlas_y: region.y,
         })
     }
 }
@@ -502,5 +558,42 @@ mod tests {
             None => {}
             Some(rg) => assert!(rg.bitmap.iter().all(|&b| b == 0), "space has ink"),
         }
+    }
+
+    #[test]
+    fn render_glyph_places_m_in_atlas() {
+        let mut atlas = Atlas::new(512, Format::Grayscale);
+        let face = Face::new("Menlo", 32.0);
+        let glyph = face.glyphs_for_characters(&[b'M' as u16])[0];
+        let g = face
+            .render_glyph(&mut atlas, glyph)
+            .expect("'M' should render into the atlas");
+        assert!(g.width > 0);
+        assert!(g.height > 0);
+        // 'M' sits above the baseline, so its top bearing is positive.
+        assert!(
+            g.offset_y > 0,
+            "'M' top bearing should be above the baseline"
+        );
+        // The reserved region fits inside the atlas.
+        assert!((g.atlas_x + g.width) as usize <= 512);
+        assert!((g.atlas_y + g.height) as usize <= 512);
+    }
+
+    #[test]
+    fn render_glyph_space_is_zero() {
+        let mut atlas = Atlas::new(512, Format::Grayscale);
+        let face = Face::new("Menlo", 32.0);
+        let glyph = face.glyphs_for_characters(&[b' ' as u16])[0];
+        let g = face
+            .render_glyph(&mut atlas, glyph)
+            .expect("space should render (as a zero glyph)");
+        // No outline -> a zero glyph, no atlas reservation.
+        assert_eq!(g.width, 0);
+        assert_eq!(g.height, 0);
+        assert_eq!(g.offset_x, 0);
+        assert_eq!(g.offset_y, 0);
+        assert_eq!(g.atlas_x, 0);
+        assert_eq!(g.atlas_y, 0);
     }
 }
