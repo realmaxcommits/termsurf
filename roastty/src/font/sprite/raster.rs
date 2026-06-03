@@ -1233,6 +1233,18 @@ impl Contour {
     pub(crate) fn concat(&mut self, other: &mut Contour) {
         self.corners.append(&mut other.corners);
     }
+
+    /// Insert `point` (scaled) at `index`. Faithful port of `plot(point, before)`
+    /// with `before` an interior position. (Repeated inserts at increasing
+    /// indices `0, 1, …` reproduce the upstream `insertBefore(first, …)`
+    /// order-preserving prefix insertion.)
+    pub(crate) fn plot_at(&mut self, index: usize, point: Point) {
+        assert!(point.x.is_finite() && point.y.is_finite());
+        self.corners.insert(
+            index,
+            Point::new(point.x * self.scale, point.y * self.scale),
+        );
+    }
 }
 
 impl Polygon {
@@ -1282,6 +1294,271 @@ pub(crate) fn stroke_line(p0: Point, p1: Point, thickness: f64, scale: f64) -> P
     let mut result = Polygon::new(1.0);
     result.add_edges_from_contour(&outer);
     result
+}
+
+/// A multi-segment open-path stroker (line segments, butt caps, miter/bevel
+/// joins). Faithful port of z2d's `stroke_plotter` for the line-only open-path
+/// case. It walks the path nodes, building the `outer` (convex, appended) and
+/// `inner` (concave, prepended) contours with a join between each consecutive
+/// segment pair, then caps the ends and assembles the result. `CurveTo`, round
+/// joins/caps (`Pen`), and closed paths are deferred.
+struct StrokePlotter {
+    thickness: f64,
+    scale: f64,
+    miter_limit: f64,
+    points: PointBuffer<2, 5>,
+    /// The polygon's winding direction, fixed on the first join.
+    clockwise: Option<bool>,
+    result: Polygon,
+    outer: Contour,
+    inner: Contour,
+}
+
+impl StrokePlotter {
+    fn new(thickness: f64, scale: f64, miter_limit: f64) -> StrokePlotter {
+        StrokePlotter {
+            thickness,
+            scale,
+            miter_limit,
+            points: PointBuffer::new(),
+            clockwise: None,
+            // The contours scale the points, so the result polygon stays at 1.
+            result: Polygon::new(1.0),
+            outer: Contour::new(scale),
+            inner: Contour::new(scale),
+        }
+    }
+
+    fn run(&mut self, nodes: &[PathNode]) {
+        for node in nodes {
+            match *node {
+                PathNode::MoveTo(p) => {
+                    if self.points.len > 0 {
+                        self.finish();
+                    }
+                    self.points.reset();
+                    self.points.add(p);
+                }
+                PathNode::LineTo(p) => self.run_line_to(p),
+                PathNode::CurveTo { .. } => {
+                    unreachable!("stroke_path: curve_to needs Pen/round joins (deferred)")
+                }
+                PathNode::ClosePath => {
+                    unreachable!("stroke_path: close_path needs the closed-path stroke (deferred)")
+                }
+            }
+        }
+        self.finish();
+    }
+
+    fn run_line_to(&mut self, point: Point) {
+        let current = self
+            .points
+            .last()
+            .expect("stroke_path: line_to with no current point");
+        // Consume degenerate (zero-length) segments.
+        if point == current {
+            return;
+        }
+        self.points.add(point);
+        if self.points.len > 2 {
+            let p0 = self.points.tail(3).unwrap();
+            let p1 = self.points.tail(2).unwrap();
+            let p2 = self.points.tail(1).unwrap();
+            self.join(p0, p1, p2);
+        }
+    }
+
+    /// Plot a point on the outer contour, or the inner if the join direction was
+    /// switched (the `outer_joiner`). The walk-time `before` is always append.
+    fn plot_outer(&mut self, direction_switched: bool, point: Point) {
+        if direction_switched {
+            self.inner.plot_reverse(point);
+        } else {
+            self.outer.plot(point);
+        }
+    }
+
+    /// Plot a point on the inner contour, or the outer if switched (the
+    /// `inner_joiner`).
+    fn plot_inner(&mut self, direction_switched: bool, point: Point) {
+        if direction_switched {
+            self.outer.plot(point);
+        } else {
+            self.inner.plot_reverse(point);
+        }
+    }
+
+    /// Join the segments `p0→p1` and `p1→p2`. Faithful port of `join` for the
+    /// miter/bevel (default) join mode.
+    fn join(&mut self, p0: Point, p1: Point, p2: Point) {
+        // Degenerate segments: nothing to join.
+        if p0 == p1 || p1 == p2 {
+            if self.clockwise.is_none() {
+                self.clockwise = Some(false);
+            }
+            return;
+        }
+
+        let in_f = Face::init(p0, p1, self.thickness);
+        let out_f = Face::init(p1, p2, self.thickness);
+        let cmp = Slope::compare(in_f.dev_slope, out_f.dev_slope);
+        let join_clockwise = cmp < 0;
+        let poly_clockwise = self.clockwise.unwrap_or(join_clockwise);
+        let direction_switched = join_clockwise != poly_clockwise;
+
+        // Co-linear: only plot the inbound face end.
+        if cmp == 0 {
+            let outer_pt = if join_clockwise {
+                in_f.p1_ccw
+            } else {
+                in_f.p1_cw
+            };
+            let inner_pt = if join_clockwise {
+                in_f.p1_cw
+            } else {
+                in_f.p1_ccw
+            };
+            self.plot_outer(direction_switched, outer_pt);
+            self.plot_inner(direction_switched, inner_pt);
+            if self.clockwise.is_none() {
+                self.clockwise = Some(poly_clockwise);
+            }
+            return;
+        }
+
+        // Outer join: miter within the limit, else bevel.
+        if Slope::compare_for_miter_limit(in_f.dev_slope, out_f.dev_slope, self.miter_limit) {
+            self.plot_outer(
+                direction_switched,
+                Face::intersect(&in_f, &out_f, join_clockwise),
+            );
+        } else {
+            self.plot_outer(
+                direction_switched,
+                if join_clockwise {
+                    in_f.p1_ccw
+                } else {
+                    in_f.p1_cw
+                },
+            );
+            self.plot_outer(
+                direction_switched,
+                if join_clockwise {
+                    out_f.p0_ccw
+                } else {
+                    out_f.p0_cw
+                },
+            );
+        }
+
+        // Inner join: through the midpoint.
+        self.plot_inner(
+            direction_switched,
+            if join_clockwise {
+                in_f.p1_cw
+            } else {
+                in_f.p1_ccw
+            },
+        );
+        self.plot_inner(direction_switched, p1);
+        self.plot_inner(
+            direction_switched,
+            if join_clockwise {
+                out_f.p0_cw
+            } else {
+                out_f.p0_ccw
+            },
+        );
+
+        if self.clockwise.is_none() {
+            self.clockwise = Some(poly_clockwise);
+        }
+    }
+
+    fn finish(&mut self) {
+        match self.points.len {
+            0 | 1 => {}
+            2 => {
+                let a = self.points.head(0).unwrap();
+                let b = self.points.head(1).unwrap();
+                self.plot_single(a, b);
+                self.reset_subpath();
+            }
+            _ => {
+                let start0 = self.points.head(0).unwrap();
+                let end0 = self.points.head(1).unwrap();
+                let start1 = self.points.tail(2).unwrap();
+                let end1 = self.points.tail(1).unwrap();
+                self.plot_open_joined(start0, end0, start1, end1);
+                self.reset_subpath();
+            }
+        }
+    }
+
+    /// Reset the per-subpath state after a subpath's edges are assembled into
+    /// `result`, matching upstream's contour deinit/reinit and `clockwise_`
+    /// clear so a following subpath (a second `MoveTo`) starts clean instead of
+    /// re-emitting the prior subpath's corners.
+    fn reset_subpath(&mut self) {
+        self.outer = Contour::new(self.scale);
+        self.inner = Contour::new(self.scale);
+        self.clockwise = None;
+    }
+
+    /// A single-segment stroke (`plotSingle`): both caps into `outer`.
+    fn plot_single(&mut self, start: Point, end: Point) {
+        let face = Face::init(start, end, self.thickness);
+        let reversed = Face::init(end, start, self.thickness);
+        let mut pts = Vec::new();
+        reversed.cap_butt(true, &mut pts);
+        face.cap_butt(true, &mut pts);
+        for p in pts {
+            self.outer.plot(p);
+        }
+        self.result.add_edges_from_contour(&self.outer);
+    }
+
+    /// Cap and assemble an open multi-segment stroke (`plotOpenJoined`).
+    fn plot_open_joined(&mut self, start0: Point, end0: Point, start1: Point, end1: Point) {
+        let clockwise = self.clockwise.unwrap_or(true);
+
+        // Start cap = the first face's cap_p0 (the reversed face's butt cap),
+        // inserted before the original first outer node — i.e. prepended
+        // preserving emission order.
+        let mut start_pts = Vec::new();
+        Face::init(end0, start0, self.thickness).cap_butt(clockwise, &mut start_pts);
+        for (i, p) in start_pts.into_iter().enumerate() {
+            self.outer.plot_at(i, p);
+        }
+
+        // End cap = the last face's cap_p1, appended.
+        let cap_end = Face::init(start1, end1, self.thickness);
+        let mut end_pts = Vec::new();
+        cap_end.cap_butt(clockwise, &mut end_pts);
+        for p in end_pts {
+            self.outer.plot(p);
+        }
+
+        // Concatenate inner onto outer and convert to edges.
+        self.outer.concat(&mut self.inner);
+        self.result.add_edges_from_contour(&self.outer);
+    }
+}
+
+/// Stroke a multi-segment open path (line segments, butt caps, miter/bevel
+/// joins) into a fill `Polygon`. Faithful port of z2d's line-only open-path
+/// stroke. `CurveTo`/`ClosePath` are `unreachable!` (deferred with `Pen`/the
+/// closed-path stroke).
+pub(crate) fn stroke_path(
+    nodes: &[PathNode],
+    thickness: f64,
+    scale: f64,
+    miter_limit: f64,
+) -> Polygon {
+    let mut plotter = StrokePlotter::new(thickness, scale, miter_limit);
+    plotter.run(nodes);
+    plotter.result
 }
 
 #[cfg(test)]
@@ -2222,5 +2499,99 @@ mod tests {
             poly.edges,
             vec![edge(4.0, -4.0, 0.0, 0.0), edge(-4.0, 4.0, 40.0, 0.0)]
         );
+    }
+
+    #[test]
+    fn stroke_path_single() {
+        // A 2-node path (move,line) strokes to the same polygon as the
+        // single-segment stroke_line fallback (plotSingle).
+        let nodes = [mv(0.0, 0.0), ln(10.0, 0.0)];
+        let path = stroke_path(&nodes, 2.0, 1.0, 10.0);
+        let line = stroke_line(pt(0.0, 0.0), pt(10.0, 0.0), 2.0, 1.0);
+        assert_eq!(path.edges, line.edges);
+        assert_eq!(path.extent_left, line.extent_left);
+        assert_eq!(path.extent_right, line.extent_right);
+        assert_eq!(path.extent_top, line.extent_top);
+        assert_eq!(path.extent_bottom, line.extent_bottom);
+    }
+
+    #[test]
+    fn stroke_path_l_miter() {
+        // An L-shaped path: right along the top, then down the right side. The
+        // convex (top-right) corner mitres to a sharp point at (11,-1) — past
+        // the bend point (10,0) — so the right extent reaches 11, proving the
+        // miter join fired (a single bar would stop at x=10). thickness 2 ->
+        // half-width 1.
+        let nodes = [mv(0.0, 0.0), ln(10.0, 0.0), ln(10.0, 10.0)];
+        let poly = stroke_path(&nodes, 2.0, 1.0, 10.0);
+        assert_eq!(poly.extent_left, 0.0);
+        assert_eq!(poly.extent_right, 11.0);
+        assert_eq!(poly.extent_top, -1.0);
+        assert_eq!(poly.extent_bottom, 10.0);
+        // The L-bend body needs at least the 4 non-horizontal edges of a bar.
+        assert!(poly.edges.len() >= 4);
+    }
+
+    #[test]
+    fn stroke_path_collinear() {
+        // A straight line through a redundant midpoint: the co-linear join plots
+        // only the inbound end, so the result is the same 2-edge bar as a single
+        // 10-wide horizontal segment.
+        let nodes = [mv(0.0, 0.0), ln(5.0, 0.0), ln(10.0, 0.0)];
+        let poly = stroke_path(&nodes, 2.0, 1.0, 10.0);
+        assert_eq!(poly.edges.len(), 2);
+        assert_eq!(poly.extent_left, 0.0);
+        assert_eq!(poly.extent_right, 10.0);
+        assert_eq!(poly.extent_top, -1.0);
+        assert_eq!(poly.extent_bottom, 1.0);
+    }
+
+    #[test]
+    fn stroke_path_zigzag() {
+        // A 3-segment path (two miter joins): right, down, left. The first bend
+        // (10,0) mitres the top-right to (11,-1); the second bend (10,10) mitres
+        // the bottom-right to (11,11). The path's far side ends in a butt cap at
+        // x=0. thickness 2 -> half-width 1.
+        let nodes = [mv(0.0, 0.0), ln(10.0, 0.0), ln(10.0, 10.0), ln(0.0, 10.0)];
+        let poly = stroke_path(&nodes, 2.0, 1.0, 10.0);
+        // Both miters push the right/bottom past the raw points (10 -> 11),
+        // proving two joins fired; the start/end butt caps sit at x=0 / y=-1.
+        assert_eq!(poly.extent_left, 0.0);
+        assert_eq!(poly.extent_right, 11.0);
+        assert_eq!(poly.extent_top, -1.0);
+        assert_eq!(poly.extent_bottom, 11.0);
+        // Two joins worth of geometry: more than a single bar's 4 edges.
+        assert!(poly.edges.len() > 4);
+    }
+
+    #[test]
+    fn stroke_path_direction_switch() {
+        // right -> down -> right: the first join turns clockwise, the second
+        // counter-clockwise, exercising the direction-switch (outer/inner
+        // swap). The outline still encloses every point with the miters.
+        let nodes = [mv(0.0, 0.0), ln(10.0, 0.0), ln(10.0, 10.0), ln(20.0, 10.0)];
+        let poly = stroke_path(&nodes, 2.0, 1.0, 10.0);
+        // The far cap reaches x=20; the first miter pushes the top to y=-1.
+        assert_eq!(poly.extent_left, 0.0);
+        assert_eq!(poly.extent_right, 20.0);
+        assert_eq!(poly.extent_top, -1.0);
+        assert_eq!(poly.extent_bottom, 11.0);
+        assert!(poly.edges.len() > 4);
+    }
+
+    #[test]
+    fn stroke_path_two_subpaths() {
+        // Two separate single-segment subpaths (two move_to's). The second
+        // subpath must not re-emit the first's corners: the result is exactly
+        // the two bars' edges, i.e. twice a single horizontal bar (2 + 2).
+        let nodes = [mv(0.0, 0.0), ln(10.0, 0.0), mv(0.0, 20.0), ln(10.0, 20.0)];
+        let poly = stroke_path(&nodes, 2.0, 1.0, 10.0);
+        // Two 2-edge bars, no duplication from a stale contour.
+        assert_eq!(poly.edges.len(), 4);
+        // The extents span both bars: x[0,10], y[-1,21].
+        assert_eq!(poly.extent_left, 0.0);
+        assert_eq!(poly.extent_right, 10.0);
+        assert_eq!(poly.extent_top, -1.0);
+        assert_eq!(poly.extent_bottom, 21.0);
     }
 }

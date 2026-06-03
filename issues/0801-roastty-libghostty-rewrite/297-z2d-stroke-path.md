@@ -161,3 +161,85 @@ Review artifacts:
 - Prompt: `logs/codex-review/20260603-071004-664426-prompt.md`
 - Result: `logs/codex-review/20260603-071004-664426-last-message.md`
 - Follow-up: `logs/codex-review/20260603-071213-846307-last-message.md`
+
+## Result
+
+**Result:** Pass
+
+`roastty/src/font/sprite/raster.rs` gained the `StrokePlotter` and the
+`stroke_path(nodes, thickness, scale, miter_limit) -> Polygon` entry point — the
+faithful line-only open-path port of z2d's `stroke_plotter`:
+
+- `run` walks the nodes: `MoveTo` finishes any prior subpath then resets and
+  seeds the point buffer; `LineTo` calls `run_line_to`; `CurveTo`/`ClosePath`
+  are `unreachable!` (the narrowed line-only scope).
+- `run_line_to` consumes degenerate (zero-length) segments and, once 3+ points
+  exist, joins the last three.
+- `join` builds the inbound/outbound `Face`s, computes `join_clockwise` from
+  `Slope::compare`, fixes the polygon `clockwise` on the first join, and swaps
+  the outer/inner plotters on a `direction_switched` join. It plots the
+  co-linear case (inbound end only), the miter point (`Face::intersect` within
+  `Slope::compare_for_miter_limit`) or the bevel pair, and the inner join
+  through the shared midpoint.
+- `finish` dispatches to `plot_single` (2 points: both butt caps into `outer`)
+  or `plot_open_joined` (≥3: the order-preserving start-cap prefix insert via
+  `Contour::plot_at`, the appended end cap, `outer.concat(inner)`), then
+  `reset_subpath` clears `outer`/`inner`/`clockwise` for any following subpath.
+
+Tests (deterministic geometry, thickness 2 → half-width 1, scale 1):
+
+- `stroke_path_single` — a 2-node path equals the `stroke_line` fallback.
+- `stroke_path_l_miter` — the L-bend mitres the convex corner to (11,−1), so the
+  right extent reaches 11 (a single bar stops at 10).
+- `stroke_path_collinear` — a redundant midpoint collapses to the same 2-edge
+  bar (the co-linear join plots only the inbound end).
+- `stroke_path_zigzag` — two same-direction miters push the right/bottom to 11.
+- `stroke_path_direction_switch` — right→down→right exercises the outer/inner
+  swap; the far cap reaches x=20.
+- `stroke_path_two_subpaths` — two `MoveTo` subpaths yield exactly the two bars'
+  4 edges (the `reset_subpath` fix: no stale-contour duplication).
+
+Gate results:
+
+- `cargo fmt -p roastty` accepted; `--check` clean.
+- `cargo test -p roastty` → 2582 passed, 0 failed (+6, no regressions).
+- `cargo build -p roastty` → no warnings.
+- No-`ghostty`-name gates clean; `git diff --check` clean.
+
+## Conclusion
+
+The line-only multi-segment open-path stroke renders faithfully: the
+`move_to`/`line_to` walk, the miter/bevel/co-linear joins with the
+direction-switch, the butt-cap `plotOpenJoined` assembly (order-preserving
+start-cap prefix), the `plotSingle` fallback, and per-subpath reset. This is the
+join foundation for the box-drawing pieces built from straight segments.
+
+The next z2d-dependent step is the **`Pen`** (round joins/caps via a circle
+approximation) plus the cubic-curve stroke (`runCurveTo` flattens a spline and
+joins the points with round joins) — together they unlock the box-drawing
+**arcs** (`U+256D`–`U+2570`) and the circle/ellipse pieces. After the stroke
+families: the unifying sprite `has_codepoint`/draw entry point (filling the
+resolver's deferred `SpriteUnavailable` arm), then the discovery consumer, the
+UCD emoji-presentation default, codepoint overrides, the shaper, the Nerd Font
+attribute table, and SVG color detection.
+
+## Completion Review
+
+Codex reviewed the completed implementation and result. It raised one
+**Required** finding: `finish()` did not reset `outer`/`inner`/`clockwise`
+between subpaths, so a second `MoveTo` subpath would re-emit the prior subpath's
+corners into `add_edges_from_contour`. Fixed: `StrokePlotter` now stores `scale`
+and `finish()` calls `reset_subpath()` after `plot_single`/`plot_open_joined`,
+recreating both contours at the stored scale and clearing `clockwise` — matching
+upstream's contour deinit/reinit and `clockwise_` clear. Two of Codex's optional
+tests were added (`stroke_path_direction_switch`, `stroke_path_two_subpaths`,
+the latter directly covering the stale-contour failure mode). Codex re-reviewed
+the fix and **approved**: the Required finding is resolved, no new Required
+findings remain, the direction-switch test closes the main optional coverage
+gap, and `CurveTo`/`ClosePath` remain correctly deferred for the line-only
+scope.
+
+Review artifacts:
+
+- Result review: `logs/codex-review/20260603-072029-435850-last-message.md`
+- Fix confirmation: `logs/codex-review/20260603-072213-755072-last-message.md`
