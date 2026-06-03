@@ -150,3 +150,78 @@ Review artifacts:
 
 - Prompt: `logs/codex-review/20260603-101141-360109-prompt.md`
 - Result: `logs/codex-review/20260603-101141-360109-last-message.md`
+
+## Result
+
+**Result:** Pass
+
+`roastty/src/font/codepoint_resolver.rs` wires the sprite face into the
+resolver, filling the previously-deferred `SpriteUnavailable` arm:
+
+- `ResolverRenderError` gained an `Atlas(AtlasError)` variant (+
+  `From<AtlasError>`) for the sprite render's atlas reservation, and
+  `SpriteUnavailable` now means "sprite drawing disabled" rather than
+  "deferred".
+- A `sprite_metrics: Option<Metrics>` field — the analog of upstream's optional
+  `sprite: ?SpriteFace` — with `set_sprite_metrics` (`None` disables sprites).
+- `get_index` now checks sprites **before** the collection lookup: when
+  `sprite_metrics` is set and `sprite::draw::has_codepoint(cp, m)` is true, it
+  returns `Index::special(Special::Sprite)`, so a sprite codepoint always wins.
+- `render_glyph`'s glyph parameter widened from `glyph: u16` to
+  `glyph_index: u32` (sprite glyph indices are codepoints that exceed `u16`).
+  The sprite arm calls `sprite::render_codepoint(glyph_index, m, atlas)` and
+  falls back to `BLANK_GLYPH` on `None` (defensive, unreachable for a resolved
+  sprite); the face arm passes `glyph_index as u16`.
+
+Tests (in `codepoint_resolver.rs`): `get_index_sprite_enabled` /
+`get_index_sprite_disabled` (the `0x2500` box codepoint resolves to the sprite
+index only when enabled); `render_glyph_sprite_enabled` (`0x2500` → non-empty
+`Glyph`); `render_glyph_sprite_high_codepoint` (`0x1FB00`, a sextant **above
+`u16`**, resolves to the sprite index and renders a real non-blank `Glyph` —
+proving the `u32` glyph index is not truncated);
+`render_glyph_sprite_unavailable` (sprites disabled → `Err(SpriteUnavailable)`);
+and `render_glyph_via_resolver` updated to pass the face glyph id as `u32`.
+
+Gate results:
+
+- `cargo fmt -p roastty` accepted; `--check` clean.
+- `cargo test -p roastty` → 2672 passed, 0 failed (+4, no regressions).
+- `cargo build -p roastty` → no warnings.
+- No-`ghostty`-name gates clean; `git diff --check` clean.
+
+## Conclusion
+
+The resolver now resolves and renders sprite codepoints end-to-end: a
+box-drawing or legacy-computing codepoint resolves to the sprite face via
+`get_index` and renders through `render_codepoint` via `render_glyph`, gated by
+the `sprite_metrics` toggle — the faithful Rust shape of upstream's
+`?SpriteFace`. The `SpriteUnavailable` arm is no longer a placeholder; it is the
+sprites-disabled path.
+
+The remaining sprite-adjacent work is: the **wide-glyph `cell_width` factoring**
+(a `Canvas` `width = cell_width × cell_count` for double-width sprites), the
+**sprite-kind special glyphs** (underlines/strikethrough/overline/cursors, keyed
+by a `Sprite` enum — a parallel render entry point that takes the kind), a
+**range-only `has_codepoint` fast path**, and the collection's sprite-coverage
+in its own `has_codepoint`. After the sprite font: the discovery consumer, the
+UCD emoji-presentation default, codepoint overrides, the shaper, the Nerd Font
+attribute table, and SVG color detection.
+
+## Completion Review
+
+Codex reviewed the completed implementation and result and **approved** with
+**no Required changes**. It confirmed the wiring faithfully matches upstream's
+resolver behavior for this slice: optional sprite metrics enable/disable the
+sprite face; `get_index` checks sprites before the collection lookup so sprite
+codepoints win; `render_glyph` treats sprite glyph indices as `u32` codepoints
+while leaving face glyphs on the CoreText `u16` path; and the
+`None → BLANK_GLYPH` fallback is the right defensive match for upstream
+(unreachable from a proper sprite resolution). It confirmed the `0x1FB00` test
+covers the required widening behavior. One **Optional** finding — a now-stale
+module-level comment still saying the sprite face is "deferred to later
+experiments" — was fixed (the module doc and the `SpriteUnavailable` variant doc
+now describe the wired-in behavior).
+
+Review artifacts:
+
+- Result review: `logs/codex-review/20260603-101727-325921-last-message.md`

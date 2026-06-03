@@ -3,31 +3,52 @@
 //! Faithful port of the core resolution chain of upstream
 //! `font/CodepointResolver.zig`. The resolver sits on top of a [`Collection`]
 //! and adds style-disabled fallback, presentation defaults, and the
-//! regular-style fallback chain. The sprite face, codepoint overrides, the UCD
-//! emoji-presentation default, and discovery-based fallback are deferred to
-//! later experiments.
+//! regular-style fallback chain, and resolves sprite codepoints to the
+//! procedurally-drawn sprite face when sprite drawing is enabled. Codepoint
+//! overrides, the UCD emoji-presentation default, and discovery-based fallback
+//! are deferred to later experiments.
 
-use crate::font::atlas::Atlas;
-use crate::font::collection::{Collection, EntryError, Index, PresentationMode};
+use crate::font::atlas::{Atlas, AtlasError};
+use crate::font::collection::{Collection, EntryError, Index, PresentationMode, Special};
 use crate::font::face::coretext::{RenderGlyphError, RenderOptions};
 use crate::font::glyph::Glyph;
+use crate::font::metrics::Metrics;
 use crate::font::{Presentation, Style};
+
+/// An all-zero [`Glyph`]: the upstream fallback when a resolved sprite index has
+/// no draw function (defensive; should not occur for a properly-resolved index).
+const BLANK_GLYPH: Glyph = Glyph {
+    width: 0,
+    height: 0,
+    offset_x: 0,
+    offset_y: 0,
+    atlas_x: 0,
+    atlas_y: 0,
+};
 
 /// An error rendering a resolved glyph through the [`CodepointResolver`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ResolverRenderError {
-    /// The index is a sprite glyph, whose JIT rendering is deferred to the
-    /// sprite-font sub-area.
+    /// The index is a sprite glyph, but sprite drawing is disabled (no grid
+    /// metrics were set via [`CodepointResolver::set_sprite_metrics`]).
     SpriteUnavailable,
     /// The index couldn't be resolved to a face.
     Entry(EntryError),
     /// The face failed to render the glyph.
     Render(RenderGlyphError),
+    /// The sprite render failed to reserve atlas space.
+    Atlas(AtlasError),
 }
 
 impl From<EntryError> for ResolverRenderError {
     fn from(err: EntryError) -> Self {
         ResolverRenderError::Entry(err)
+    }
+}
+
+impl From<AtlasError> for ResolverRenderError {
+    fn from(err: AtlasError) -> Self {
+        ResolverRenderError::Atlas(err)
     }
 }
 
@@ -45,15 +66,26 @@ pub(crate) struct CodepointResolver {
     /// non-regular style falls back to regular. Faithful port of upstream's
     /// `StyleStatus` (`EnumArray(Style, bool)`).
     styles: [bool; 4],
+    /// The grid metrics for sprite rendering. `None` disables sprite drawing —
+    /// the analog of upstream's optional `sprite: ?SpriteFace`.
+    sprite_metrics: Option<Metrics>,
 }
 
 impl CodepointResolver {
-    /// Create a resolver over `collection` with all styles enabled.
+    /// Create a resolver over `collection` with all styles enabled and sprite
+    /// drawing disabled.
     pub(crate) fn new(collection: Collection) -> CodepointResolver {
         CodepointResolver {
             collection,
             styles: [true; 4],
+            sprite_metrics: None,
         }
+    }
+
+    /// Enable sprite drawing with the given grid `metrics`, or disable it with
+    /// `None`. Faithful analog of setting upstream's `sprite: ?SpriteFace`.
+    pub(crate) fn set_sprite_metrics(&mut self, metrics: Option<Metrics>) {
+        self.sprite_metrics = metrics;
     }
 
     /// The underlying collection.
@@ -87,7 +119,14 @@ impl CodepointResolver {
             return self.get_index(cp, Style::Regular, p);
         }
 
-        // (Codepoint overrides and the sprite face check are deferred here.)
+        // (Codepoint overrides are deferred here.)
+
+        // A sprite codepoint always resolves to the sprite face (when enabled).
+        if let Some(m) = &self.sprite_metrics {
+            if crate::font::sprite::draw::has_codepoint(cp, m) {
+                return Some(Index::special(Special::Sprite));
+            }
+        }
 
         // Build the presentation mode. With an explicit presentation we use it;
         // otherwise we'd consult the Unicode Character Database for the default
@@ -143,23 +182,33 @@ impl CodepointResolver {
         })
     }
 
-    /// Render the glyph at `index` into `atlas`, returning its [`Glyph`].
-    /// Faithful port of upstream `renderGlyph`'s non-sprite path: a sprite index
-    /// would render via the (deferred) sprite font, so it returns
-    /// [`ResolverRenderError::SpriteUnavailable`].
+    /// Render the glyph `glyph_index` at `index` into `atlas`, returning its
+    /// [`Glyph`]. For a sprite index the `glyph_index` is the codepoint (hence
+    /// `u32`, which holds the high sprite ranges); it renders via the sprite
+    /// font when enabled, else returns
+    /// [`ResolverRenderError::SpriteUnavailable`]. Faithful port of upstream
+    /// `renderGlyph`.
     pub(crate) fn render_glyph(
         &self,
         atlas: &mut Atlas,
         index: Index,
-        glyph: u16,
+        glyph_index: u32,
         opts: &RenderOptions,
     ) -> Result<Glyph, ResolverRenderError> {
         if index.special_kind().is_some() {
-            // Sprite glyph rendering is deferred to the sprite-font sub-area.
-            return Err(ResolverRenderError::SpriteUnavailable);
+            // The sprite glyph index is its codepoint.
+            let m = self
+                .sprite_metrics
+                .as_ref()
+                .ok_or(ResolverRenderError::SpriteUnavailable)?;
+            return Ok(
+                crate::font::sprite::render_codepoint(glyph_index, m, atlas)?
+                    .unwrap_or(BLANK_GLYPH),
+            );
         }
         let face = self.collection.get_face(index)?;
-        Ok(face.render_glyph(atlas, glyph, opts)?)
+        // CoreText glyph ids fit in `u16`.
+        Ok(face.render_glyph(atlas, glyph_index as u16, opts)?)
     }
 }
 
@@ -300,7 +349,7 @@ mod tests {
         let glyph = face_glyph.glyph_index('M' as u32).unwrap();
         let opts = none_opts(r.collection().get_face(idx).unwrap());
         let g = r
-            .render_glyph(&mut atlas, idx, glyph, &opts)
+            .render_glyph(&mut atlas, idx, glyph as u32, &opts)
             .expect("render");
         assert!(g.width > 0 && g.height > 0);
     }
@@ -315,14 +364,85 @@ mod tests {
                 .get_face(Index::new(Style::Regular, 0))
                 .unwrap(),
         );
+        // Sprite drawing is disabled by default.
         assert_eq!(
             r.render_glyph(
                 &mut atlas,
                 Index::special(crate::font::collection::Special::Sprite),
-                0,
+                0x2500,
                 &opts
             ),
             Err(ResolverRenderError::SpriteUnavailable)
         );
+    }
+
+    /// A resolver with sprite drawing enabled (grid metrics from the primary
+    /// face).
+    fn menlo_resolver_sprites() -> CodepointResolver {
+        let mut r = menlo_resolver();
+        r.collection_mut().update_metrics().expect("metrics");
+        let m = r.collection().metrics().cloned();
+        assert!(m.is_some(), "primary face yields grid metrics");
+        r.set_sprite_metrics(m);
+        r
+    }
+
+    #[test]
+    fn get_index_sprite_enabled() {
+        let r = menlo_resolver_sprites();
+        // A box-drawing codepoint resolves to the sprite face.
+        assert_eq!(
+            r.get_index(0x2500, Style::Regular, None),
+            Some(Index::special(Special::Sprite))
+        );
+    }
+
+    #[test]
+    fn get_index_sprite_disabled() {
+        let r = menlo_resolver();
+        // With sprites disabled, the box-drawing codepoint does not resolve to
+        // the sprite face.
+        assert_ne!(
+            r.get_index(0x2500, Style::Regular, None),
+            Some(Index::special(Special::Sprite))
+        );
+    }
+
+    #[test]
+    fn render_glyph_sprite_enabled() {
+        use crate::font::atlas::Format;
+        let r = menlo_resolver_sprites();
+        let mut atlas = Atlas::new(512, Format::Grayscale);
+        let opts = none_opts(
+            r.collection()
+                .get_face(Index::new(Style::Regular, 0))
+                .unwrap(),
+        );
+        let g = r
+            .render_glyph(&mut atlas, Index::special(Special::Sprite), 0x2500, &opts)
+            .expect("sprite renders");
+        assert!(g.width > 0 && g.height > 0, "box line glyph is non-empty");
+    }
+
+    #[test]
+    fn render_glyph_sprite_high_codepoint() {
+        use crate::font::atlas::Format;
+        let r = menlo_resolver_sprites();
+        let mut atlas = Atlas::new(512, Format::Grayscale);
+        let opts = none_opts(
+            r.collection()
+                .get_face(Index::new(Style::Regular, 0))
+                .unwrap(),
+        );
+        // 0x1FB00 (a sextant) is above u16: the u32 glyph index must not be
+        // truncated. It resolves to and renders as a non-empty sprite.
+        assert_eq!(
+            r.get_index(0x1fb00, Style::Regular, None),
+            Some(Index::special(Special::Sprite))
+        );
+        let g = r
+            .render_glyph(&mut atlas, Index::special(Special::Sprite), 0x1fb00, &opts)
+            .expect("high sprite renders");
+        assert!(g.width > 0 && g.height > 0, "sextant glyph is non-empty");
     }
 }

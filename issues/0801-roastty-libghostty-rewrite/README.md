@@ -1084,7 +1084,7 @@ are past the correctness-critical foundation.
 - [Experiment 318: the sprite render-to-atlas (renderGlyph)](318-sprite-render-glyph.md)
   — **Pass** · Claude/Codex/Codex
 - [Experiment 319: wiring the sprite font into the resolver](319-sprite-resolver-wiring.md)
-  — **Designed** · Claude/Codex/Codex
+  — **Pass** · Claude/Codex/Codex
 
 ## Non-Goals
 
