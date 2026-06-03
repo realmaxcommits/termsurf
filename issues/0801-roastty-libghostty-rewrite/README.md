@@ -1099,6 +1099,8 @@ are past the correctness-critical foundation.
   — **Pass** · Claude/Codex/Codex
 - [Experiment 326: font discovery — the collection match](326-discovery-collection-match.md)
   — **Pass** · Claude/Codex/Codex
+- [Experiment 327: font discovery — the ranking score](327-discovery-score.md) —
+  **Designed** · Claude/Codex/Codex
 
 ## Non-Goals
 
