@@ -166,3 +166,71 @@ Review artifacts:
 
 - Prompt: `logs/codex-review/20260603-092259-788283-prompt.md`
 - Result: `logs/codex-review/20260603-092259-788283-last-message.md`
+
+## Result
+
+**Result:** Pass
+
+`roastty/src/font/sprite/draw.rs` gained
+`draw_codepoint(cp, metrics, canvas) -> bool`: a short-circuit `||` chain over
+all 16 codepoint-keyed families (the four box families, braille, the four
+legacy-computing families, the two geometric corner triangles, and the five
+powerline families), passing `cell_width`/ `cell_height` to the powerline
+functions that need them. The first family that matches draws and stops the
+chain; an un-handled codepoint leaves the canvas untouched and returns `false`.
+
+Tests:
+
+- `draw_codepoint_dispatches` — one representative codepoint per family
+  (`0x2500` box line, `0x2504` box dashes, `0x2571` diagonal, `0x2570` arc,
+  `0x2802` braille, `0x1FB00` sextant, `0x1CD00` octant, `0x1CC21` separated
+  quadrant, `0x2588` block, `0x25E2` corner triangle, `0x25F8` outlined
+  triangle, `0xE0B0` powerline triangle, `0xE0B1` chevron, `0xE0B4` rounded,
+  `0xE0B9` powerline diagonal, `0xE0D2` flame): `draw_codepoint`'s buffer (fresh
+  canvas) equals the direct family call's buffer (second fresh canvas), pixel
+  for pixel.
+- `draw_codepoint_excludes` — `'M'`, `0x0041`, `0x20` return `false` and leave
+  the canvas blank.
+
+Gate results:
+
+- `cargo fmt -p roastty` accepted; `--check` clean.
+- `cargo test -p roastty` → 2661 passed, 0 failed (+2, no regressions).
+- `cargo build -p roastty` → no warnings.
+- No-`ghostty`-name gates clean; `git diff --check` clean.
+
+## Conclusion
+
+The unifying codepoint dispatch lands: a single `draw_codepoint` entry point now
+routes any sprite codepoint to its drawing family — the dispatch upstream's
+sprite `Face` uses. With it, every codepoint-keyed sprite glyph (box drawing,
+braille, the legacy-computing families, the geometric triangles, and the entire
+powerline block) is reachable through one call.
+
+The remaining sprite-font work is: a non-rendering **`has_codepoint`** predicate
+(the codepoint-range classification, so the collection's sprite-coverage check
+does not have to render); the **sprite-kind special glyphs** (the
+underlines/strikethrough/overline/cursors, keyed by a `Sprite` enum rather than
+a codepoint — they need a separate dispatch and the cursor/underline-style
+plumbing); and the **resolver/atlas wiring** (a sprite `Face`-equivalent that
+sizes a `Canvas`, calls `draw_codepoint`, and writes to the atlas, filling the
+resolver's deferred `SpriteUnavailable` arm). After the sprite font: the
+discovery consumer, the UCD emoji-presentation default, codepoint overrides, the
+shaper, the Nerd Font attribute table, and SVG color detection.
+
+## Completion Review
+
+Codex reviewed the completed implementation and result and found **no Required
+changes** (and no Optional). It confirmed `draw_codepoint` is faithful: it
+short-circuits across the complete set of 16 codepoint-keyed families, uses
+`metrics.cell_width`/`cell_height` for the powerline width/height arguments, and
+keeps the special sprite-kind glyphs out of this codepoint path; and that the
+test coverage addresses the prior design finding (one representative per family,
+fresh-canvas pixel equality against the direct dispatcher, plus the false/blank
+behavior for unsupported codepoints), with valid per-family codepoints and no
+shadowing given the dispatchers' disjoint match sets and false-before-draw
+behavior.
+
+Review artifacts:
+
+- Result review: `logs/codex-review/20260603-092539-863133-last-message.md`

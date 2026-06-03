@@ -1198,6 +1198,34 @@ pub(crate) fn draw_powerline_flame(
     true
 }
 
+/// The unifying codepoint sprite dispatch: render the glyph for `cp` (if any
+/// sprite family covers it) into `canvas`, returning whether one did. Tries each
+/// codepoint-keyed family in turn — each draws nothing and returns `false` when
+/// `cp` is outside its range, so the short-circuit `||` chain routes each
+/// codepoint to exactly one family. The faithful equivalent of upstream's sprite
+/// `Face` codepoint switch. (The sprite-kind special glyphs — underlines,
+/// cursors — are keyed separately, not by codepoint.)
+pub(crate) fn draw_codepoint(cp: u32, metrics: &Metrics, canvas: &mut Canvas) -> bool {
+    let w = metrics.cell_width;
+    let h = metrics.cell_height;
+    draw_box_lines(cp, metrics, canvas)
+        || draw_box_dashes(cp, metrics, canvas)
+        || draw_box_diagonal(cp, metrics, canvas)
+        || draw_box_arc(cp, metrics, canvas)
+        || draw_braille(cp, metrics, canvas)
+        || draw_sextant(cp, metrics, canvas)
+        || draw_octant(cp, metrics, canvas)
+        || draw_separated_quadrant(cp, metrics, canvas)
+        || draw_block(cp, metrics, canvas)
+        || draw_corner_triangle(cp, metrics, canvas)
+        || draw_corner_triangle_outline(cp, metrics, canvas)
+        || draw_powerline_triangle(cp, w, h, canvas)
+        || draw_powerline_chevron(cp, w, h, metrics, canvas)
+        || draw_powerline_rounded(cp, w, h, metrics, canvas)
+        || draw_powerline_diagonal(cp, metrics, canvas)
+        || draw_powerline_flame(cp, w, h, metrics, canvas)
+}
+
 /// The block cursor: a full-cell rect. Faithful port of upstream `special.zig`'s
 /// `cursor_rect`.
 pub(crate) fn draw_cursor_rect(canvas: &mut Canvas, width: u32, height: u32, _metrics: &Metrics) {
@@ -3567,6 +3595,87 @@ mod tests {
         c.fill_path(&nodes);
         assert!(inked(&c, 5, 5), "disc center inked");
         assert!(!inked(&c, 0, 0), "outside the radius empty");
+    }
+
+    // The unifying codepoint sprite dispatch.
+
+    /// Assert `draw_codepoint(cp)` renders identically to the `direct` family
+    /// call — each on its own fresh canvas.
+    fn assert_dispatch(cp: u32, m: &Metrics, direct: impl Fn(&mut Canvas)) {
+        let mut a = cell_canvas();
+        assert!(draw_codepoint(cp, m, &mut a), "{cp:#07x} not dispatched");
+        let mut b = cell_canvas();
+        direct(&mut b);
+        for y in 0..18 {
+            for x in 0..9 {
+                assert_eq!(a.get(x, y), b.get(x, y), "{cp:#07x} mismatch at ({x},{y})");
+            }
+        }
+    }
+
+    #[test]
+    fn draw_codepoint_dispatches() {
+        let m = fixture_metrics();
+        let w = m.cell_width;
+        let h = m.cell_height;
+        assert_dispatch(0x2500, &m, |c| {
+            draw_box_lines(0x2500, &m, c);
+        });
+        assert_dispatch(0x2504, &m, |c| {
+            draw_box_dashes(0x2504, &m, c);
+        });
+        assert_dispatch(0x2571, &m, |c| {
+            draw_box_diagonal(0x2571, &m, c);
+        });
+        assert_dispatch(0x2570, &m, |c| {
+            draw_box_arc(0x2570, &m, c);
+        });
+        assert_dispatch(0x2802, &m, |c| {
+            draw_braille(0x2802, &m, c);
+        });
+        assert_dispatch(0x1fb00, &m, |c| {
+            draw_sextant(0x1fb00, &m, c);
+        });
+        assert_dispatch(0x1cd00, &m, |c| {
+            draw_octant(0x1cd00, &m, c);
+        });
+        assert_dispatch(0x1cc21, &m, |c| {
+            draw_separated_quadrant(0x1cc21, &m, c);
+        });
+        assert_dispatch(0x2588, &m, |c| {
+            draw_block(0x2588, &m, c);
+        });
+        assert_dispatch(0x25e2, &m, |c| {
+            draw_corner_triangle(0x25e2, &m, c);
+        });
+        assert_dispatch(0x25f8, &m, |c| {
+            draw_corner_triangle_outline(0x25f8, &m, c);
+        });
+        assert_dispatch(0xe0b0, &m, |c| {
+            draw_powerline_triangle(0xe0b0, w, h, c);
+        });
+        assert_dispatch(0xe0b1, &m, |c| {
+            draw_powerline_chevron(0xe0b1, w, h, &m, c);
+        });
+        assert_dispatch(0xe0b4, &m, |c| {
+            draw_powerline_rounded(0xe0b4, w, h, &m, c);
+        });
+        assert_dispatch(0xe0b9, &m, |c| {
+            draw_powerline_diagonal(0xe0b9, &m, c);
+        });
+        assert_dispatch(0xe0d2, &m, |c| {
+            draw_powerline_flame(0xe0d2, w, h, &m, c);
+        });
+    }
+
+    #[test]
+    fn draw_codepoint_excludes() {
+        let m = fixture_metrics();
+        for cp in ['M' as u32, 0x0041, 0x20] {
+            let mut c = cell_canvas();
+            assert!(!draw_codepoint(cp, &m, &mut c), "{cp:#06x} is not a sprite");
+            assert!(all_alpha(&c, &m, 0), "{cp:#06x} drew ink");
+        }
     }
 
     #[test]
