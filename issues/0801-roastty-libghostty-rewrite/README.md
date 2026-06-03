@@ -1171,6 +1171,8 @@ are past the correctness-critical foundation.
   Claude/Codex/Codex
 - [Experiment 362: shaping the whole viewport](362-shape-viewport.md) — **Pass**
   · Claude/Codex/Codex
+- [Experiment 363: the shared font grid (render path)](363-shared-grid.md) —
+  **Designed** · Claude/Codex/Codex
 
 ## Non-Goals
 
