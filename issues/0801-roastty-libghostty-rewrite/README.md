@@ -1069,6 +1069,8 @@ are past the correctness-critical foundation.
   — **Pass** · Claude/Codex/Codex
 - [Experiment 311: Canvas::triangle + the solid powerline triangles (E0B0–E0BE)](311-powerline-triangles.md)
   — **Pass** · Claude/Codex/Codex
+- [Experiment 312: Canvas::flip_horizontal + the outlined powerline chevrons (E0B1/E0B3)](312-powerline-chevrons.md)
+  — **Designed** · Claude/Codex/Codex
 
 ## Non-Goals
 
