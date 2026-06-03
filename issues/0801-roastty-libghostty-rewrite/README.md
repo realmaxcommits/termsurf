@@ -1085,6 +1085,8 @@ are past the correctness-critical foundation.
   — **Pass** · Claude/Codex/Codex
 - [Experiment 319: wiring the sprite font into the resolver](319-sprite-resolver-wiring.md)
   — **Pass** · Claude/Codex/Codex
+- [Experiment 320: the wide-glyph cell-width factoring](320-wide-glyph-cell-width.md)
+  — **Designed** · Claude/Codex/Codex
 
 ## Non-Goals
 
