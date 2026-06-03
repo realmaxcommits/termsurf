@@ -171,3 +171,78 @@ Review artifacts:
 
 - Prompt: `logs/codex-review/20260603-082347-320397-prompt.md`
 - Result: `logs/codex-review/20260603-082347-320397-last-message.md`
+
+## Result
+
+**Result:** Pass
+
+`roastty/src/font/sprite/raster.rs` made `src_over_alpha8` `pub(crate)`.
+`roastty/src/font/sprite/canvas.rs` gained `Canvas::inner_stroke_path`:
+translate the nodes once; build `mask_nodes` (the translated nodes + `ClosePath`
+if not already closed — closing only the mask copy); `fill_plot(mask_nodes)` →
+`fill_polygon` `NonZero` into a zeroed `mask` buffer (the solid interior);
+`stroke_path(translated, 2·thickness, …, Miter, Butt)` → `fill_polygon` into a
+zeroed `stroke_buf` (the double-width stroke); multiply
+`mask[i] = round(255 · (stroke_buf[i]/255) · (mask[i]/255))`; composite
+`self.buf[i] = src_over_alpha8(self.buf[i], mask[i])`.
+`roastty/src/font/sprite/draw.rs` gained `draw_corner_triangle_outline` (the
+four-corner triangle vertices, `thick = Thickness::Light.height(box_thickness)`,
+dispatch `0x25F8 → Tl`, `0x25F9 → Tr`, `0x25FA → Bl`, `0x25FF → Br`,
+`_ => false`).
+
+Tests (the fixture `9×18` cell), confirmed against the render:
+
+- `corner_outline_25f8_tl` / `_25f9_tr` / `_25fa_bl` / `_25ff_br` — each inks an
+  edge of its triangle, leaves the **interior hollow** (a point the _filled_
+  version inks — e.g. tl `(3,3)`), and the opposite corner empty.
+- `inner_stroke_hollow` — a closed square's border is inked, its center hole
+  empty, and the stroke does **not** spill past the outer edge (`(1,4)` empty),
+  distinguishing the inner stroke (clipped to cols 2–7) from a plain closed
+  stroke (which spills to cols 1–9).
+- `draw_corner_triangle_outline_excludes` — `0x2500`, `0x25E2` (a filled
+  triangle), `'M'` return `false` and draw nothing.
+
+Gate results:
+
+- `cargo fmt -p roastty` accepted; `--check` clean.
+- `cargo test -p roastty` → 2621 passed, 0 failed (+6, no regressions).
+- `cargo build -p roastty` → no warnings.
+- No-`ghostty`-name gates clean; `git diff --check` clean.
+
+## Conclusion
+
+The outlined corner triangles (`U+25F8`–`U+25FA`, `U+25FF`) render end to end,
+completing the corner-triangle family. `Canvas::inner_stroke_path` ports the
+fill-mask × double-width-stroke multiply composite — the first multi-buffer
+sprite primitive — exercising both the closed-path stroke (Experiment 304) and
+the fill (Experiment 305) in one operation. The sprite font now covers the
+diagonals, box arcs, undercurl, and both filled and outlined corner triangles.
+
+The next geometric glyphs are the **circle/ellipse** shapes and the **shaded**
+fills (medium/light alpha — which need `fill_polygon` to composite a source
+alpha < 255, broadly used by the block/quadrant shade variants). The larger
+remaining integration is the unifying sprite `has_codepoint`/draw and
+sprite-kind dispatch (filling the resolver's deferred `SpriteUnavailable` arm),
+then the discovery consumer, the UCD emoji-presentation default, codepoint
+overrides, the shaper, the Nerd Font attribute table, and SVG color detection.
+
+## Completion Review
+
+Codex reviewed the completed implementation and result and found **no Required
+changes**. It confirmed `inner_stroke_path` closes only the mask copy, fills it
+into a zeroed mask, strokes the original translated path at `2 · thickness` into
+a zeroed stroke buffer, multiplies with upstream's rounded alpha formula, then
+composites with `src_over_alpha8(dst, source)`; that the temp buffers are
+equivalent to upstream's fresh alpha8 surfaces for this opaque `.on` path; that
+`draw_corner_triangle_outline` matches the upstream geometry, thickness, and
+dispatch; and that the tests cover the hollow outlines, the clipped inner-stroke
+behavior, and the exclusions. One **Optional** note: a future caller passing a
+multi-subpath path, or one with a trailing post-`close` `MoveTo`, would want the
+existing closed-node-set logic rather than the `last() == ClosePath` check when
+deciding whether to append the mask close — for these single-subpath triangles
+the current shape is correct, so this is recorded as a future refinement if an
+open/multi-subpath `inner_stroke_path` caller arrives.
+
+Review artifacts:
+
+- Result review: `logs/codex-review/20260603-082806-092260-last-message.md`

@@ -287,6 +287,61 @@ impl Canvas {
         );
     }
 
+    /// Stroke an anti-aliased path with an **inner** stroke (the stroke clipped
+    /// to the shape's interior so the outline never spills past the shape's
+    /// edge), painting the opaque (`.on`) source. Faithful port of upstream
+    /// `Canvas.innerStrokePath`: fill a closed copy of the path as a mask, stroke
+    /// the path at **double** the width, multiply the two (keeping only the
+    /// stroke inside the shape), and composite the result. Butt caps, miter
+    /// joins (z2d's `StrokeOptions` defaults).
+    pub(crate) fn inner_stroke_path(&mut self, nodes: &[raster::PathNode], thickness: f64) {
+        let translated: Vec<raster::PathNode> =
+            nodes.iter().map(|n| self.translate_node(*n)).collect();
+        let w = self.width as i32;
+        let h = self.height as i32;
+
+        // Fill mask: a closed copy of the path (the solid interior). Close only
+        // the mask copy — the stroke uses the original path — so the primitive
+        // is faithful for open inputs too.
+        let mut mask_nodes = translated.clone();
+        if !matches!(mask_nodes.last(), Some(raster::PathNode::ClosePath)) {
+            mask_nodes.push(raster::PathNode::ClosePath);
+        }
+        let mut mask = vec![0u8; self.buf.len()];
+        let fill_poly = raster::fill_plot(&mask_nodes, raster::MSAA_SCALE as f64, 0.1);
+        raster::fill_polygon(&mut mask, w, h, &fill_poly, raster::FillRule::NonZero);
+
+        // Double-width stroke of the original path.
+        let mut stroke_buf = vec![0u8; self.buf.len()];
+        let stroke_poly = raster::stroke_path(
+            &translated,
+            2.0 * thickness,
+            raster::MSAA_SCALE as f64,
+            10.0,
+            0.1,
+            raster::JoinMode::Miter,
+            raster::CapMode::Butt,
+        );
+        raster::fill_polygon(
+            &mut stroke_buf,
+            w,
+            h,
+            &stroke_poly,
+            raster::FillRule::NonZero,
+        );
+
+        // Multiply the stroke onto the mask: keep only the stroke inside the
+        // shape (the inner half of the double-width stroke).
+        for (m, &s) in mask.iter_mut().zip(stroke_buf.iter()) {
+            *m = (255.0 * (s as f64 / 255.0) * (*m as f64 / 255.0)).round() as u8;
+        }
+
+        // Composite the result onto the surface (src_over).
+        for (d, &s) in self.buf.iter_mut().zip(mask.iter()) {
+            *d = raster::src_over_alpha8(*d, s);
+        }
+    }
+
     /// Offset a path node's point(s) by the surface padding (the upstream
     /// translation-only CTM).
     fn translate_node(&self, node: raster::PathNode) -> raster::PathNode {

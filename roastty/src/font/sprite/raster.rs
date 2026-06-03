@@ -524,7 +524,7 @@ fn add_supersampled_span(cb: &mut SparseCoverageBuffer, x: u32, len: u32) {
 /// destination alpha8 value `dst`. Faithful port of z2d's integer `srcOver` for
 /// the single-channel case: `out = alpha + dst - trunc(alpha * dst / 255)`
 /// (z2d's `mul` truncates).
-fn src_over_alpha8(dst: u8, alpha: u8) -> u8 {
+pub(crate) fn src_over_alpha8(dst: u8, alpha: u8) -> u8 {
     (alpha as u32 + dst as u32 - (alpha as u32 * dst as u32) / 255) as u8
 }
 

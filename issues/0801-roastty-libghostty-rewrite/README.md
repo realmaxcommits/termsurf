@@ -1058,7 +1058,7 @@ are past the correctness-critical foundation.
 - [Experiment 305: Canvas::fill_path + the filled corner triangles (U+25E2–25E5)](305-corner-triangles.md)
   — **Pass** · Claude/Codex/Codex
 - [Experiment 306: Canvas::inner_stroke_path + the outlined corner triangles (U+25F8–25FA, 25FF)](306-outlined-triangles.md)
-  — **Designed** · Claude/Codex/Codex
+  — **Pass** · Claude/Codex/Codex
 
 ## Non-Goals
 

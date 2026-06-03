@@ -841,6 +841,45 @@ pub(crate) fn draw_corner_triangle(cp: u32, metrics: &Metrics, canvas: &mut Canv
     true
 }
 
+/// The outlined corner triangles (`◸ U+25F8`, `◹ U+25F9`, `◺ U+25FA`,
+/// `◿ U+25FF`) — the right-triangle outlines, drawn with an **inner** stroke so
+/// the outline stays inside the cell. Faithful port of upstream
+/// `geometric_shapes.zig`'s `cornerTriangleOutline`. Returns `false` for any
+/// other codepoint.
+pub(crate) fn draw_corner_triangle_outline(
+    cp: u32,
+    metrics: &Metrics,
+    canvas: &mut Canvas,
+) -> bool {
+    let corner = match cp {
+        0x25f8 => Corner::Tl,
+        0x25f9 => Corner::Tr,
+        0x25fa => Corner::Bl,
+        0x25ff => Corner::Br,
+        _ => return false,
+    };
+
+    let w = metrics.cell_width as f64;
+    let h = metrics.cell_height as f64;
+    let (v0, v1, v2) = match corner {
+        Corner::Tl => ((0.0, 0.0), (0.0, h), (w, 0.0)),
+        Corner::Tr => ((0.0, 0.0), (w, h), (w, 0.0)),
+        Corner::Bl => ((0.0, 0.0), (0.0, h), (w, h)),
+        Corner::Br => ((0.0, h), (w, h), (w, 0.0)),
+    };
+
+    let nodes = [
+        raster::PathNode::MoveTo(raster::Point::new(v0.0, v0.1)),
+        raster::PathNode::LineTo(raster::Point::new(v1.0, v1.1)),
+        raster::PathNode::LineTo(raster::Point::new(v2.0, v2.1)),
+        raster::PathNode::ClosePath,
+    ];
+
+    let thick = Thickness::Light.height(metrics.box_thickness) as f64;
+    canvas.inner_stroke_path(&nodes, thick);
+    true
+}
+
 /// Horizontal line with the top edge at `y`, from `x1` to `x2`, `thick` pixels
 /// tall. Faithful port of upstream `common.hline`.
 fn hline(canvas: &mut Canvas, x1: i32, x2: i32, y: i32, thick: u32) {
@@ -2857,6 +2896,88 @@ mod tests {
             assert!(
                 !draw_corner_triangle(cp, &m, &mut c),
                 "{cp:#06x} not a corner triangle"
+            );
+            assert!(all_alpha(&c, &m, 0), "{cp:#06x} drew ink");
+        }
+    }
+
+    // The outlined corner triangles (Canvas::inner_stroke_path). The fixture
+    // 9×18 cell: each inks its three sides but leaves the interior hollow (a
+    // point the *filled* version inks) and the opposite corner empty.
+
+    #[test]
+    fn corner_outline_25f8_tl() {
+        // ◸ : top-left outline.
+        let m = fixture_metrics();
+        let mut c = cell_canvas();
+        assert!(draw_corner_triangle_outline(0x25f8, &m, &mut c));
+        assert!(inked(&c, 1, 1), "top edge inked");
+        assert!(!inked(&c, 3, 3), "interior hollow");
+        assert!(!inked(&c, 7, 16), "opposite corner empty");
+    }
+
+    #[test]
+    fn corner_outline_25f9_tr() {
+        // ◹ : top-right outline.
+        let m = fixture_metrics();
+        let mut c = cell_canvas();
+        assert!(draw_corner_triangle_outline(0x25f9, &m, &mut c));
+        assert!(inked(&c, 7, 1), "top edge inked");
+        assert!(!inked(&c, 5, 3), "interior hollow");
+        assert!(!inked(&c, 1, 16), "opposite corner empty");
+    }
+
+    #[test]
+    fn corner_outline_25fa_bl() {
+        // ◺ : bottom-left outline.
+        let m = fixture_metrics();
+        let mut c = cell_canvas();
+        assert!(draw_corner_triangle_outline(0x25fa, &m, &mut c));
+        assert!(inked(&c, 1, 16), "bottom edge inked");
+        assert!(!inked(&c, 3, 14), "interior hollow");
+        assert!(!inked(&c, 7, 1), "opposite corner empty");
+    }
+
+    #[test]
+    fn corner_outline_25ff_br() {
+        // ◿ : bottom-right outline.
+        let m = fixture_metrics();
+        let mut c = cell_canvas();
+        assert!(draw_corner_triangle_outline(0x25ff, &m, &mut c));
+        assert!(inked(&c, 7, 16), "bottom edge inked");
+        assert!(!inked(&c, 5, 13), "interior hollow");
+        assert!(!inked(&c, 1, 1), "opposite corner empty");
+    }
+
+    #[test]
+    fn inner_stroke_hollow() {
+        // The inner stroke of a closed square (2,2)-(8,8) clips to the interior:
+        // the border is inked, the center hole is empty, AND the stroke does not
+        // spill past the outer edge (col 1 stays empty) — unlike a plain closed
+        // stroke, which would spill outward by the half-width.
+        let nodes = [
+            raster::PathNode::MoveTo(raster::Point::new(2.0, 2.0)),
+            raster::PathNode::LineTo(raster::Point::new(8.0, 2.0)),
+            raster::PathNode::LineTo(raster::Point::new(8.0, 8.0)),
+            raster::PathNode::LineTo(raster::Point::new(2.0, 8.0)),
+            raster::PathNode::ClosePath,
+        ];
+        let mut c = Canvas::new(11, 11, 0, 0);
+        c.inner_stroke_path(&nodes, 2.0);
+        assert!(inked(&c, 2, 4), "left border inked");
+        assert!(inked(&c, 4, 2), "top border inked");
+        assert!(!inked(&c, 5, 5), "center hole empty");
+        assert!(!inked(&c, 1, 4), "no outward spill past the edge");
+    }
+
+    #[test]
+    fn draw_corner_triangle_outline_excludes() {
+        let m = fixture_metrics();
+        for cp in [0x2500u32, 0x25e2, 'M' as u32] {
+            let mut c = cell_canvas();
+            assert!(
+                !draw_corner_triangle_outline(cp, &m, &mut c),
+                "{cp:#06x} not an outlined triangle"
             );
             assert!(all_alpha(&c, &m, 0), "{cp:#06x} drew ink");
         }
