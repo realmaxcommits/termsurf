@@ -953,6 +953,8 @@ are past the correctness-critical foundation.
   — **Pass** · Claude/Codex/Codex
 - [Experiment 253: `Face::get_metrics` — assemble `FaceMetrics` from a CoreText font](253-coretext-get-metrics.md)
   — **Pass** · Claude/Codex/Codex
+- [Experiment 254: CoreText glyph rasterization spike — glyph → alpha bitmap](254-coretext-rasterize-glyph.md)
+  — **Designed** · Claude/Codex/Codex
 
 ## Non-Goals
 
