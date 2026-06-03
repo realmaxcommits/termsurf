@@ -140,3 +140,61 @@ Review artifacts:
 
 - Prompt: `logs/codex-review/20260603-172613-875252-prompt.md` (design)
 - Result: `logs/codex-review/20260603-172613-875252-last-message.md` (design)
+
+## Result
+
+**Result:** Pass
+
+The font-side viewport entry is in place — the renderer can now shape an entire
+viewport in one call.
+
+- `roastty/src/font/run.rs`:
+  `shape_viewport(rows, resolver) -> Vec<Vec<ShapedRun>>` runs `shape_row` over
+  each row's `RunOptions` with the shared resolver, in row order, returning one
+  `Vec<ShapedRun>` per input row. A thin composition over the per-row driver —
+  the resolver's font cache accumulates across rows, matching upstream's shared
+  font grid.
+
+Test (in `run.rs`): `shape_viewport_shapes_every_row` builds a two-row viewport
+(`"AB"`, `"CD"`) with `menlo_resolver()` and asserts two output rows in order,
+each one `ShapedRun` with `cells == 2` and two nonzero-`glyph_index` cells at
+run-relative `x == 0`/`x == 1`, and that the two rows' glyph sequences differ —
+proving each row is shaped from its own cells.
+
+Gate results:
+
+- `cargo fmt -p roastty` accepted; `--check` clean.
+- `cargo test -p roastty` → 2809 passed, 0 failed (+1, no regressions).
+- `cargo build -p roastty` → no warnings.
+- No-`ghostty`-name gates clean; `git diff --check` clean.
+
+## Conclusion
+
+The full font-side path is now a single composition:
+`Terminal::shape_run_options()` produces the viewport's `Vec<RunOptions>`
+(Experiments 358–360), and `shape_viewport` turns it into `Vec<Vec<ShapedRun>>`
+— every row's positioned glyphs (Experiments 361–362). From a live terminal
+screen to shaped glyphs, the font subsystem is complete and renderer-ready.
+
+The remaining renderer↔font work is entirely on the **Metal draw path**: take
+the `Vec<Vec<ShapedRun>>`, place each glyph into the renderer's cell buffer at
+`run.offset + glyph.x` (rasterizing each glyph into the atlas with the cell's
+foreground/background colors), plus the deferred sprite/box-drawing draw path
+and the shaped-run cache.
+
+## Completion Review
+
+Codex reviewed the completed implementation and result and **approved** with
+**no findings**. It confirmed the implementation is faithful to the approved
+design and upstream's `rebuildCells` row walk (one `shape_row` call per input
+row, same order and length, one shared resolver threaded across the viewport),
+that the `map` closure borrow is sound (each `shape_row` completes before the
+next item is evaluated, so the mutable resolver borrow is reborrowed
+sequentially rather than held across rows), and that the test adequately proves
+the thin composition (two input rows → two output rows, each shaped
+independently, run-relative glyph `x`, distinct glyph sequences for `"AB"` vs
+`"CD"`). Nothing needed to change before the result commit.
+
+Review artifacts:
+
+- Result review: `logs/codex-review/20260603-172732-076725-last-message.md`

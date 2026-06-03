@@ -225,6 +225,18 @@ pub(crate) fn shape_row(opts: &RunOptions, resolver: &mut CodepointResolver) -> 
     shaped
 }
 
+/// Shape every row of the viewport: run [`shape_row`] over each row's
+/// [`RunOptions`] with the shared `resolver`, in row order. Returns one
+/// `Vec<ShapedRun>` per input row (same length and order as `rows`) — the
+/// complete shaped viewport. Faithful port of upstream's renderer `rebuildCells`
+/// row loop (the per-row driver is `shape_row`).
+pub(crate) fn shape_viewport(
+    rows: &[RunOptions],
+    resolver: &mut CodepointResolver,
+) -> Vec<Vec<ShapedRun>> {
+    rows.iter().map(|row| shape_row(row, resolver)).collect()
+}
+
 /// Groups a terminal row's cells into shaping runs. Faithful port of upstream
 /// `RunIterator` (its common path): each [`RunIterator::next`] yields the next run
 /// of cells that share a font and a comparable style. The spacer skip and the
@@ -679,6 +691,40 @@ mod tests {
         );
         assert_eq!(sr.glyphs[0].x, 0);
         assert_eq!(sr.glyphs[1].x, 1);
+    }
+
+    #[test]
+    fn shape_viewport_shapes_every_row() {
+        let rows = vec![
+            RunOptions {
+                cells: vec![narrow('A' as u32), narrow('B' as u32)],
+                ..Default::default()
+            },
+            RunOptions {
+                cells: vec![narrow('C' as u32), narrow('D' as u32)],
+                ..Default::default()
+            },
+        ];
+        let mut r = menlo_resolver();
+        let shaped = shape_viewport(&rows, &mut r);
+
+        // One output row per input row, in order.
+        assert_eq!(shaped.len(), 2);
+
+        for row in &shaped {
+            assert_eq!(row.len(), 1, "one run per row");
+            let sr = &row[0];
+            assert_eq!(sr.run.cells, 2);
+            assert_eq!(sr.glyphs.len(), 2);
+            assert!(sr.glyphs.iter().all(|g| g.glyph_index != 0));
+            assert_eq!(sr.glyphs[0].x, 0);
+            assert_eq!(sr.glyphs[1].x, 1);
+        }
+
+        // Each row is shaped from its own cells: "AB" and "CD" glyphs differ.
+        let row0: Vec<u32> = shaped[0][0].glyphs.iter().map(|g| g.glyph_index).collect();
+        let row1: Vec<u32> = shaped[1][0].glyphs.iter().map(|g| g.glyph_index).collect();
+        assert_ne!(row0, row1);
     }
 
     #[test]
