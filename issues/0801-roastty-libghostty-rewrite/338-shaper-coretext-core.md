@@ -166,3 +166,68 @@ Review artifacts:
 
 - Prompt: `logs/codex-review/20260603-125533-079572-prompt.md`
 - Result: `logs/codex-review/20260603-125533-079572-last-message.md`
+
+## Result
+
+**Result:** Pass
+
+The CoreText shaping core lands — roastty now shapes text.
+
+- `roastty/Cargo.toml`: enabled `CTLine`/`CTRun`/`CTStringAttributes`
+  (`objc2-core-text`) and `CFAttributedString` (`objc2-core-foundation`).
+- `roastty/src/font/face/coretext.rs`:
+  `Face::shape_codepoints(&self, codepoints: &[u32]) -> Vec<shape::Cell>` builds
+  a `CFString` over the run, a `CFAttributedString` binding the face's font
+  (`kCTFontAttributeName`), a `CTLine`, and reads each `CTRun`'s glyphs + source
+  string indices (via the fast `glyphs_ptr`/`string_indices_ptr` or a copy
+  fallback) into `shape::Cell`s (`x` = the UTF-16 string index, `glyph_index` =
+  the shaped glyph). Two free helpers `run_glyphs`/`run_string_indices` factor
+  the ptr-or-copy reads.
+
+Tests: `shape_ascii_monospace` (Menlo `'A'`/`'B'`/`'C'` → 3 cells whose
+`glyph_index` each equal `face.glyph_index(cp)` and whose `x` are `0, 1, 2`),
+`shape_single` (`'Z'`), `shape_empty` (`[]` → empty).
+
+Gate results:
+
+- `cargo fmt -p roastty` accepted; `--check` clean.
+- `cargo test -p roastty` → 2742 passed, 0 failed (+3, no regressions).
+- `cargo build -p roastty` → no warnings.
+- No-`ghostty`-name gates clean; `git diff --check` clean.
+
+## Conclusion
+
+The shaper now performs **real CoreText shaping**: a run of codepoints becomes
+positioned glyphs through `CFAttributedString → CTLine → CTRun → shape::Cell`,
+applying the font's cmap and ligatures. This is the heart of `Shaper.shape`.
+
+The remaining shaper work builds the orchestration around this core: **advance-
+based `x`** positioning and the cluster→cell mapping; the **special-font** fast
+path (codepoint == glyph); **RTL/non-monotonic** run sorting; the
+**`x_offset`/`y_offset`** glyph offsets; and the `Shaper` struct with its run
+state, caching, and the **`RunIterator`** over terminal cells (which threads in
+the terminal grid/render-state types). The deferred **variation-axis** `score()`
+refinement and **variations** application also remain.
+
+## Completion Review
+
+Codex reviewed the completed implementation and result and **approved** with
+**no Required findings**. It verified: `CFAttributedString` with
+`kCTFontAttributeName → &*self.font` binds the actual `CTFont` CF object (not
+the `CFRetained` wrapper); the `CTLine`/`CTRun` extraction matches the intended
+upstream core (glyphs + CoreText string indices → `shape::Cell`); the
+`glyphs_ptr`/ `string_indices_ptr` fast paths are sound (`n` from `glyph_count`,
+the run stays live, the raw slices are copied immediately) and the copy
+fallbacks are sound (`vec![0; n]` initialized storage, valid `NonNull` since
+`n > 0`, `CFRange { location: 0, length: n }` covers the run);
+`CFRetained::cast_unchecked` to `CFArray<CTRun>` is appropriate for
+`CTLineGetGlyphRuns`; the lifetimes are fine
+(`cf_str`/`attrs`/`attr_str`/`line`/`runs`/each run stay alive through the
+reads, and the copied vectors/cells do not borrow CoreText storage); and the
+simplifications (string index as `x`, no advances/offsets, no RTL sorting, no
+special-font path, no full `Shaper`) remain correctly scoped. No Optional
+findings.
+
+Review artifacts:
+
+- Result review: `logs/codex-review/20260603-125945-530164-last-message.md`

@@ -6,20 +6,27 @@
 //! `Face::get_metrics` will use to read `head`/`hhea`/`OS/2`/`post`. The full
 //! metric assembly and glyph rasterization land in later experiments.
 
+use std::ffi::c_void;
 use std::ptr::NonNull;
 
-use objc2_core_foundation::{CFRange, CFRetained, CFString, CGAffineTransform, CGPoint, CGSize};
-use objc2_core_graphics::{
-    kCGColorSpaceDisplayP3, CGBitmapContextCreate, CGColorSpace, CGContext, CGImageAlphaInfo,
-    CGImageByteOrderInfo, CGTextDrawingMode,
+use objc2_core_foundation::{
+    CFArray, CFAttributedString, CFIndex, CFMutableDictionary, CFRange, CFRetained, CFString,
+    CFType, CGAffineTransform, CGPoint, CGSize,
 };
-use objc2_core_text::{CTFont, CTFontOrientation, CTFontTableOptions};
+use objc2_core_graphics::{
+    kCGColorSpaceDisplayP3, CGBitmapContextCreate, CGColorSpace, CGContext, CGGlyph,
+    CGImageAlphaInfo, CGImageByteOrderInfo, CGTextDrawingMode,
+};
+use objc2_core_text::{
+    kCTFontAttributeName, CTFont, CTFontOrientation, CTFontTableOptions, CTLine, CTRun,
+};
 
 use super::constraint::{Constraint, GlyphSize, Size};
 use crate::font::atlas::{Atlas, AtlasError, Format};
 use crate::font::glyph::Glyph;
 use crate::font::metrics::{FaceMetrics, Metrics};
 use crate::font::opentype::{head::Head, hhea::Hhea, os2::Os2, post::Post, svg::Svg};
+use crate::font::shape;
 
 /// The horizontal-shear transform used to synthesize an italic (oblique) face.
 /// `c ≈ tan(15°)` slants the glyphs to the right. Faithful to upstream's
@@ -254,6 +261,74 @@ impl Face {
         // For a surrogate pair the trailing unit decodes to `0`; the glyph is in
         // slot 0.
         Some(glyphs[0])
+    }
+
+    /// Shape a run of Unicode codepoints into positioned glyphs with this face,
+    /// via CoreText (`CFAttributedString` → `CTLine` → `CTRun`). Faithful port of
+    /// the core of upstream `Shaper.shape`: the glyph + cluster (string-index)
+    /// extraction. Each [`shape::Cell`]'s `x` is the source UTF-16 string index
+    /// (the advance-based positioning, the special-font path, RTL sorting, and the
+    /// glyph offsets are deferred to the full `Shaper`).
+    pub(crate) fn shape_codepoints(&self, codepoints: &[u32]) -> Vec<shape::Cell> {
+        if codepoints.is_empty() {
+            return Vec::new();
+        }
+        // Build the run's string. The CoreText string indices index into its
+        // UTF-16 storage, which a `CFString` from this `String` preserves.
+        let text: String = codepoints
+            .iter()
+            .filter_map(|&c| char::from_u32(c))
+            .collect();
+        if text.is_empty() {
+            return Vec::new();
+        }
+        let cf_str = CFString::from_str(&text);
+
+        // The attributed string binds the face's font to the run.
+        let attrs = CFMutableDictionary::<CFString, CFType>::empty();
+        // SAFETY: `kCTFontAttributeName` is a static key; `self.font` is live and
+        // retained by the dictionary on insertion.
+        unsafe {
+            CFMutableDictionary::set_value(
+                Some(attrs.as_opaque()),
+                (kCTFontAttributeName as *const CFString).cast::<c_void>(),
+                (&*self.font as *const CTFont).cast::<c_void>(),
+            );
+        }
+        // SAFETY: `cf_str`/`attrs` are live; CoreText reads them.
+        let Some(attr_str) =
+            (unsafe { CFAttributedString::new(None, Some(&cf_str), Some(attrs.as_opaque())) })
+        else {
+            return Vec::new();
+        };
+
+        // Shape the line and read each run's glyphs and string indices.
+        // SAFETY: `attr_str` is a live attributed string.
+        let line = unsafe { CTLine::with_attributed_string(&attr_str) };
+        // SAFETY: `line` is live; the runs array's elements are `CTRun`s.
+        let runs = unsafe { line.glyph_runs() };
+        let runs: CFRetained<CFArray<CTRun>> = unsafe { CFRetained::cast_unchecked(runs) };
+
+        let mut cells = Vec::new();
+        for i in 0..runs.len() {
+            let Some(run) = runs.get(i) else { continue };
+            // SAFETY: `run` is live.
+            let n = unsafe { run.glyph_count() }.max(0) as usize;
+            if n == 0 {
+                continue;
+            }
+            let glyphs = run_glyphs(&run, n);
+            let indices = run_string_indices(&run, n);
+            for k in 0..n {
+                cells.push(shape::Cell {
+                    x: indices[k].max(0) as u16,
+                    x_offset: 0,
+                    y_offset: 0,
+                    glyph_index: glyphs[k] as u32,
+                });
+            }
+        }
+        cells
     }
 
     /// Discover the font CoreText would use to render `cp`, starting from this
@@ -910,6 +985,51 @@ impl Face {
     }
 }
 
+/// Read a `CTRun`'s `n` glyph ids — via the fast direct pointer, or a copy into
+/// an owned buffer if CoreText does not expose one.
+fn run_glyphs(run: &CTRun, n: usize) -> Vec<CGGlyph> {
+    // SAFETY: `run` is live; the fast-path pointer is valid for `n` glyphs while
+    // the run is alive.
+    let ptr = unsafe { run.glyphs_ptr() };
+    if !ptr.is_null() {
+        return unsafe { std::slice::from_raw_parts(ptr, n) }.to_vec();
+    }
+    let mut buf = vec![0 as CGGlyph; n];
+    // SAFETY: `buf` holds `n` elements; the range covers the whole run.
+    unsafe {
+        run.glyphs(
+            CFRange {
+                location: 0,
+                length: n as isize,
+            },
+            NonNull::new(buf.as_mut_ptr()).unwrap(),
+        );
+    }
+    buf
+}
+
+/// Read a `CTRun`'s `n` source string indices (the cluster of each glyph) — via
+/// the fast direct pointer, or a copy if CoreText does not expose one.
+fn run_string_indices(run: &CTRun, n: usize) -> Vec<CFIndex> {
+    // SAFETY: see `run_glyphs`.
+    let ptr = unsafe { run.string_indices_ptr() };
+    if !ptr.is_null() {
+        return unsafe { std::slice::from_raw_parts(ptr, n) }.to_vec();
+    }
+    let mut buf = vec![0 as CFIndex; n];
+    // SAFETY: `buf` holds `n` elements; the range covers the whole run.
+    unsafe {
+        run.string_indices(
+            CFRange {
+                location: 0,
+                length: n as isize,
+            },
+            NonNull::new(buf.as_mut_ptr()).unwrap(),
+        );
+    }
+    buf
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1537,5 +1657,40 @@ mod tests {
             menlo.font_for_codepoint(0xFDD0).is_none(),
             "a noncharacter resolves to no real font"
         );
+    }
+
+    #[test]
+    fn shape_ascii_monospace() {
+        // Menlo is monospace with no ASCII ligatures: 3 codepoints → 3 glyphs in
+        // order, each glyph matching the face's direct cmap lookup.
+        let face = Face::new("Menlo", 24.0);
+        let cps = ['A' as u32, 'B' as u32, 'C' as u32];
+        let cells = face.shape_codepoints(&cps);
+        assert_eq!(cells.len(), 3, "one cell per codepoint");
+        for (i, &cp) in cps.iter().enumerate() {
+            assert_eq!(
+                cells[i].glyph_index as u16,
+                face.glyph_index(cp).expect("a glyph"),
+                "cell {i} shapes to the cmap glyph"
+            );
+            assert_eq!(cells[i].x, i as u16, "x is the source string index");
+        }
+    }
+
+    #[test]
+    fn shape_single() {
+        let face = Face::new("Menlo", 24.0);
+        let cells = face.shape_codepoints(&['Z' as u32]);
+        assert_eq!(cells.len(), 1);
+        assert_eq!(
+            cells[0].glyph_index as u16,
+            face.glyph_index('Z' as u32).expect("a glyph")
+        );
+    }
+
+    #[test]
+    fn shape_empty() {
+        let face = Face::new("Menlo", 24.0);
+        assert!(face.shape_codepoints(&[]).is_empty());
     }
 }
