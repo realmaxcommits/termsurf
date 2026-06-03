@@ -135,6 +135,63 @@ Review artifacts:
 - Prompt: `logs/codex-review/20260602-230133-037811-prompt.md`
 - Result: `logs/codex-review/20260602-230133-037811-last-message.md`
 
+## Result
+
+**Result:** Pass
+
+`roastty/src/font/discovery.rs` holds `Variation` (+ `id_from_tag`) and
+`Descriptor` (+ `Default`); `roastty/src/font/codepoint_map.rs` holds
+`MapEntry`, `CodepointMap`, `add` (inverted-range `assert`), and `get`
+(reverse-priority range scan). Both declared in `font/mod.rs`.
+
+Tests:
+
+- `variation_id_from_tag` — `b"wght"` → `2003265652`, `b"slnt"` → `1936486004`.
+- `descriptor_default` — the upstream defaults (`codepoint 0`, `size 0`, bools
+  `false`, empty variations, `None` names).
+- `codepoint_map_get` — boundary inclusion (`0x41`/`0x5A`) and exclusion
+  (`0x40`/`0x5B`).
+- `codepoint_map_reverse_priority` — the later `[0x41,0x41]` entry wins over the
+  broad `[0,0xFFFF]` for `0x41`; `0x42` still resolves to the broad one.
+- `codepoint_map_rejects_inverted_range` — `add([0x5A, 0x41], …)` panics.
+
+Gate results:
+
+- `cargo fmt -p roastty` accepted; `--check` clean.
+- `cargo test -p roastty` → 2434 passed, 0 failed (no regressions; +5).
+- `cargo build -p roastty` → no warnings.
+- No-`ghostty`-name gates clean; `git diff --check` clean.
+
+## Conclusion
+
+The font-search data layer (`Descriptor`, `Variation`, `CodepointMap`) is
+ported. It underpins two of the resolver's deferred dependencies: **codepoint
+overrides** (`getIndexCodepointOverride` — map a codepoint to a descriptor,
+discover a font, add it) and the **discovery-based fallback**. Both now need the
+**discovery** consumer: turning a `Descriptor` into a `DeferredFace`/`Face` via
+CoreText font matching (`CTFontDescriptor`/`CTFontCollection`) — the heavier FFI
+sub-area. Alongside remain the sprite font (box-drawing), the UCD
+emoji-presentation default (`uucode`), the shaper, the Nerd Font attribute
+table, and SVG color detection.
+
+## Completion Review
+
+Codex reviewed the completed implementation and result and found **no required
+changes**.
+
+Review artifacts:
+
+- Prompt: `logs/codex-review/20260602-230351-437648-prompt.md`
+- Result: `logs/codex-review/20260602-230351-437648-last-message.md`
+
+Codex confirmed `CodepointMap::get` matches upstream's reverse-scan semantics
+(`.iter().rev().find(...)` makes later entries win for overlapping ranges),
+`add` preserves the inverted-range assertion, `Descriptor::default()` via derive
+gives the upstream defaults, and `Variation::id_from_tag` uses the correct
+big-endian four-character packing — with tests covering boundary
+inclusion/exclusion, reverse priority, the panic path, defaults, and the known
+`wght`/`slnt` values.
+
 Codex confirmed the reverse-priority lookup matches upstream (later entries win
 via a reverse scan returning the first containing range), the inverted-range
 `assert!` matches the upstream `add` guard, the `Descriptor` fields/defaults

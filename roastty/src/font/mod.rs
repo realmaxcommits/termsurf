@@ -9,8 +9,10 @@
 //! rasterization, faces, and shaping land in later experiments.
 
 pub(crate) mod atlas;
+pub(crate) mod codepoint_map;
 pub(crate) mod codepoint_resolver;
 pub(crate) mod collection;
+pub(crate) mod discovery;
 pub(crate) mod face;
 pub(crate) mod glyph;
 pub(crate) mod metrics;
