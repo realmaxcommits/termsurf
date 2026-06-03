@@ -1190,6 +1190,75 @@ impl Face {
     }
 }
 
+/// A polyline of corner points (scaled on insertion) that is later assembled
+/// into `Polygon` edges. Faithful port of z2d's `Polygon.Contour`. Upstream
+/// backs this with a doubly-linked list; this port uses a `Vec<Point>`, which is
+/// behaviorally identical for the append/prepend/concat/iterate operations the
+/// single-segment butt-cap stroke needs (the mid-list join insert is deferred).
+pub(crate) struct Contour {
+    pub corners: Vec<Point>,
+    pub scale: f64,
+}
+
+impl Contour {
+    /// An empty contour with the given `scale`.
+    pub(crate) fn new(scale: f64) -> Contour {
+        Contour {
+            corners: Vec::new(),
+            scale,
+        }
+    }
+
+    /// The number of corners.
+    pub(crate) fn len(&self) -> usize {
+        self.corners.len()
+    }
+
+    /// Append `point` (scaled by `scale`). Faithful port of `plot` (append).
+    pub(crate) fn plot(&mut self, point: Point) {
+        assert!(point.x.is_finite() && point.y.is_finite());
+        self.corners
+            .push(Point::new(point.x * self.scale, point.y * self.scale));
+    }
+
+    /// Prepend `point` (scaled by `scale`). Faithful port of `plotReverse`.
+    pub(crate) fn plot_reverse(&mut self, point: Point) {
+        assert!(point.x.is_finite() && point.y.is_finite());
+        self.corners
+            .insert(0, Point::new(point.x * self.scale, point.y * self.scale));
+    }
+
+    /// Move `other`'s corners onto the end of `self`, emptying `other`. Faithful
+    /// port of `concat`.
+    pub(crate) fn concat(&mut self, other: &mut Contour) {
+        self.corners.append(&mut other.corners);
+    }
+}
+
+impl Polygon {
+    /// Add edges from a [`Contour`]: an edge between each consecutive pair of
+    /// corners, then a closing edge from the last corner back to the first.
+    /// Faithful port of z2d's `Polygon.addEdgesFromContour`. (The corner points
+    /// are already scaled by the contour; the receiving polygon should use
+    /// `scale = 1.0` to avoid double-scaling via `add_edge`.)
+    pub(crate) fn add_edges_from_contour(&mut self, contour: &Contour) {
+        let mut initial: Option<Point> = None;
+        let mut last: Option<Point> = None;
+        for &current in &contour.corners {
+            if initial.is_none() {
+                initial = Some(current);
+            }
+            if let Some(l) = last {
+                self.add_edge(l, current);
+            }
+            last = Some(current);
+        }
+        if let (Some(i), Some(l)) = (initial, last) {
+            self.add_edge(l, i);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2041,5 +2110,44 @@ mod tests {
         let out_face = Face::init(pt(10.0, 0.0), pt(10.0, 10.0), 2.0);
         let p = Face::intersect(&in_face, &out_face, false);
         assert_eq!(p, pt(9.0, 1.0));
+    }
+
+    // Contour.
+
+    #[test]
+    fn contour_plot_scales() {
+        let mut c = Contour::new(4.0);
+        c.plot(pt(1.0, 2.0));
+        assert_eq!(c.corners, vec![pt(4.0, 8.0)]);
+        c.plot_reverse(pt(0.0, 0.0));
+        assert_eq!(c.corners, vec![pt(0.0, 0.0), pt(4.0, 8.0)]);
+        assert_eq!(c.len(), 2);
+    }
+
+    #[test]
+    fn contour_concat() {
+        let mut a = Contour::new(1.0);
+        a.plot(pt(1.0, 1.0));
+        let mut b = Contour::new(1.0);
+        b.plot(pt(2.0, 2.0));
+        b.plot(pt(3.0, 3.0));
+        a.concat(&mut b);
+        assert_eq!(a.corners, vec![pt(1.0, 1.0), pt(2.0, 2.0), pt(3.0, 3.0)]);
+        assert_eq!(b.len(), 0);
+    }
+
+    #[test]
+    fn add_edges_from_contour_square() {
+        let mut c = Contour::new(4.0);
+        c.plot(pt(0.0, 0.0));
+        c.plot(pt(4.0, 0.0));
+        c.plot(pt(4.0, 4.0));
+        c.plot(pt(0.0, 4.0));
+        let mut poly = Polygon::new(1.0);
+        poly.add_edges_from_contour(&c);
+        assert_eq!(
+            poly.edges,
+            vec![edge(0.0, 16.0, 16.0, 0.0), edge(16.0, 0.0, 0.0, 0.0)]
+        );
     }
 }

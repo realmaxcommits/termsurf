@@ -125,3 +125,59 @@ Review artifacts:
 
 - Prompt: `logs/codex-review/20260603-065227-846314-prompt.md`
 - Result: `logs/codex-review/20260603-065227-846314-last-message.md`
+
+## Result
+
+**Result:** Pass
+
+`roastty/src/font/sprite/raster.rs` gained `Contour` (`new`/`len`/`plot`/
+`plot_reverse`/`concat`, a `Vec<Point>` of scaled corners) and
+`Polygon::add_edges_from_contour` (consecutive-pair edges + the closing edge).
+
+Tests (deterministic):
+
+- `contour_plot_scales` — `plot((1,2))` at scale 4 stores `(4,8)`;
+  `plot_reverse((0,0))` prepends; `len == 2`.
+- `contour_concat` — drains the other contour onto self (`len` → 0).
+- `add_edges_from_contour_square` — a `(0,0),(4,0),(4,4),(0,4)` contour at scale
+  4 into a `Polygon::new(1.0)` → the two vertical edges `{0,16,16,0}` /
+  `{16,0,0,0}` (horizontals filtered).
+
+Gate results:
+
+- `cargo fmt -p roastty` accepted; `--check` clean.
+- `cargo test -p roastty raster` → 66 passed (3 new).
+- `cargo test -p roastty` → 2567 passed, 0 failed (no regressions; +3).
+- `cargo build -p roastty` → no warnings.
+- No-`ghostty`-name gates clean; `git diff --check` clean.
+
+## Conclusion
+
+`Contour` — the last stroke-assembly foundation — is in place. Every z2d
+ingredient the single-segment stroke needs now exists: `Slope`, `Face`
+(corners + butt cap), `PointBuffer`,
+`Polygon`/`Contour`/`add_edges_from_contour`, and `fill_polygon`. The next slice
+is the **single-segment stroke** — building the outline `Polygon` for a 2-point
+butt-cap line from its `Face` (the `p0_cw → p1_cw`, butt cap at `p1`,
+`p1_ccw → p0_ccw`, butt cap at `p0` ring) — and then a `Canvas::line` that
+applies the padding translation and calls `fill_polygon`. That renders the
+box-drawing **diagonals** (`0x2571`–`0x2573`). The multi-segment joins (the
+stroke plotter's mid-list insert), round caps/joins (`Pen`), and curve strokes
+come after. Alongside the sprite font remain the discovery consumer, the UCD
+emoji-presentation default, codepoint overrides, the shaper, the Nerd Font
+attribute table, and SVG color detection.
+
+## Completion Review
+
+Codex reviewed the completed implementation and result and found **no required
+changes**. It confirmed `plot`/`plot_reverse`/`concat`/`len`/ordered iteration
+match the upstream linked-list behavior for the needed operations (only the
+mid-list insert deferred), that `add_edges_from_contour` matches the
+consecutive-pair + closing-edge flow, and that the three tests correctly cover
+scaling/prepending, concat draining, and the scaled square's two vertical edges.
+It judged the gates clean.
+
+Review artifacts:
+
+- Prompt: `logs/codex-review/20260603-065430-394556-prompt.md`
+- Result: `logs/codex-review/20260603-065430-394556-last-message.md`
