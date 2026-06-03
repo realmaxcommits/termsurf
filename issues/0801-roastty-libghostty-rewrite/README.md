@@ -1021,6 +1021,8 @@ are past the correctness-critical foundation.
   — **Pass** · Claude/Codex/Codex
 - [Experiment 287: z2d port — the MSAA supersampled-span distributor](287-z2d-supersample-span.md)
   — **Pass** · Claude/Codex/Codex
+- [Experiment 288: z2d port — the multisample rasterizer run](288-z2d-multisample-run.md)
+  — **Designed** · Claude/Codex/Codex
 
 ## Non-Goals
 
