@@ -944,6 +944,89 @@ pub(crate) fn draw_overline(canvas: &mut Canvas, width: u32, _height: u32, metri
     hline(canvas, 0, width as i32, y, metrics.overline_thickness);
 }
 
+/// The block cursor: a full-cell rect. Faithful port of upstream `special.zig`'s
+/// `cursor_rect`.
+pub(crate) fn draw_cursor_rect(canvas: &mut Canvas, width: u32, height: u32, _metrics: &Metrics) {
+    canvas.rect(
+        Rect {
+            x: 0,
+            y: 0,
+            width: width as i32,
+            height: height as i32,
+        },
+        Color::ON,
+    );
+}
+
+/// The hollow (outline) cursor: a full-cell rect with the interior punched
+/// transparent, leaving a box outline. Faithful port of upstream `special.zig`'s
+/// `cursor_hollow_rect`.
+pub(crate) fn draw_cursor_hollow_rect(
+    canvas: &mut Canvas,
+    width: u32,
+    height: u32,
+    metrics: &Metrics,
+) {
+    canvas.rect(
+        Rect {
+            x: 0,
+            y: 0,
+            width: width as i32,
+            height: height as i32,
+        },
+        Color::ON,
+    );
+    let thick = metrics.cursor_thickness;
+    canvas.rect(
+        Rect {
+            x: thick as i32,
+            y: thick as i32,
+            width: width.saturating_sub(thick.saturating_mul(2)) as i32,
+            height: height.saturating_sub(thick.saturating_mul(2)) as i32,
+        },
+        Color::OFF,
+    );
+}
+
+/// The bar cursor: a vertical bar shifted half its thickness (rounded up) over
+/// the left cell edge, so it sits centered between cells. Faithful port of
+/// upstream `special.zig`'s `cursor_bar`.
+pub(crate) fn draw_cursor_bar(canvas: &mut Canvas, _width: u32, height: u32, metrics: &Metrics) {
+    canvas.rect(
+        Rect {
+            x: -(((metrics.cursor_thickness + 1) / 2) as i32),
+            y: 0,
+            width: metrics.cursor_thickness as i32,
+            height: height as i32,
+        },
+        Color::ON,
+    );
+}
+
+/// The underline cursor: a full-width bar at the (clamped) underline position,
+/// `cursor_thickness` tall. Faithful port of upstream `special.zig`'s
+/// `cursor_underline`.
+pub(crate) fn draw_cursor_underline(
+    canvas: &mut Canvas,
+    width: u32,
+    height: u32,
+    metrics: &Metrics,
+) {
+    let limit = height
+        .saturating_add(canvas.padding_y())
+        .saturating_sub(metrics.underline_thickness);
+    let y = metrics.underline_position.min(limit);
+    canvas.rect(
+        Rect {
+            x: 0,
+            y: y as i32,
+            width: width as i32,
+            height: metrics.cursor_thickness as i32,
+        },
+        Color::ON,
+    );
+}
+
 /// Horizontal line with the top edge at `y`, from `x1` to `x2`, `thick` pixels
 /// tall. Faithful port of upstream `common.hline`.
 fn hline(canvas: &mut Canvas, x1: i32, x2: i32, y: i32, thick: u32) {
@@ -3118,6 +3201,73 @@ mod tests {
         for x in 0..9 {
             assert!(!inked(&c, x, 0), "cell top row clear");
         }
+    }
+
+    // The cursor sprites (block / hollow / bar / underline).
+
+    #[test]
+    fn cursor_rect_full() {
+        let m = fixture_metrics();
+        let mut c = cell_canvas();
+        draw_cursor_rect(&mut c, 9, 18, &m);
+        for y in 0..18 {
+            for x in 0..9 {
+                assert!(inked(&c, x, y), "block filled at ({x},{y})");
+            }
+        }
+    }
+
+    #[test]
+    fn cursor_hollow_border() {
+        // cursor_thickness 1: the border is inked, the interior (1..8 × 1..17)
+        // is punched off.
+        let m = fixture_metrics();
+        let mut c = cell_canvas();
+        draw_cursor_hollow_rect(&mut c, 9, 18, &m);
+        // The four edges.
+        assert!(inked(&c, 0, 0), "top-left");
+        assert!(inked(&c, 8, 0), "top-right");
+        assert!(inked(&c, 0, 17), "bottom-left");
+        assert!(inked(&c, 8, 17), "bottom-right");
+        assert!(row_inked(&c, 0, 9), "top edge full width");
+        // The interior is hollow.
+        assert!(!inked(&c, 4, 9), "center empty");
+        assert!(!inked(&c, 1, 1), "just inside the corner empty");
+    }
+
+    #[test]
+    fn cursor_bar_left() {
+        // cursor_thickness 1 -> x = -1, width 1: the bar sits entirely over the
+        // left cell edge (cell x = -1, in the left padding), the cell itself
+        // empty.
+        let m = fixture_metrics();
+        let mut c = Canvas::new(9, 18, 1, 0);
+        draw_cursor_bar(&mut c, 9, 18, &m);
+        assert!(inked(&c, -1, 0), "bar at the left edge");
+        assert!(inked(&c, -1, 9), "bar spans the height");
+        for y in 0..18 {
+            assert!(!inked(&c, 0, y), "cell col 0 empty");
+            assert!(!inked(&c, 4, y), "cell interior empty");
+        }
+    }
+
+    #[test]
+    fn cursor_underline_row() {
+        let m = fixture_metrics();
+        let mut c = cell_canvas();
+        draw_cursor_underline(&mut c, 9, 18, &m);
+        assert!(row_inked(&c, 15, 9), "underline bar at y=15");
+    }
+
+    #[test]
+    fn cursor_underline_clamp() {
+        // A large underline_position clamps to the saturating limit (18 - 1 =
+        // 17) instead of drawing off the bottom.
+        let mut m = fixture_metrics();
+        m.underline_position = 100;
+        let mut c = cell_canvas();
+        draw_cursor_underline(&mut c, 9, 18, &m);
+        assert!(row_inked(&c, 17, 9), "clamped to row 17");
     }
 
     #[test]

@@ -147,3 +147,61 @@ Review artifacts:
 
 - Prompt: `logs/codex-review/20260603-083740-655197-prompt.md`
 - Result: `logs/codex-review/20260603-083740-655197-last-message.md`
+
+## Result
+
+**Result:** Pass
+
+`roastty/src/font/sprite/draw.rs` gained the four cursor sprites:
+`draw_cursor_rect` (the full-cell `.on` block), `draw_cursor_hollow_rect` (the
+`.on` block with an `.off` inner punch at `(thick, thick)` of size
+`width -| 2·thick × height -| 2·thick`), `draw_cursor_bar` (a vertical bar at
+`x = -((cursor_thickness + 1) / 2)`, width `cursor_thickness`, full height), and
+`draw_cursor_underline` (a full-width bar at the clamped underline position,
+`cursor_thickness` tall).
+
+Tests (the fixture `9×18` cell, `cursor_thickness 1`):
+
+- `cursor_rect_full` — every cell pixel inked.
+- `cursor_hollow_border` — the four edges inked, the interior (and `(1,1)`)
+  empty (the `.off` punch).
+- `cursor_bar_left` — on a `padding_x = 1` canvas, the 1px bar sits at cell
+  `x = -1` (over the left edge), with cols `0` and `4` empty.
+- `cursor_underline_row` — the underline bar at `y = 15`.
+- `cursor_underline_clamp` — a large `underline_position` clamps to row 17.
+
+Gate results:
+
+- `cargo fmt -p roastty` accepted; `--check` clean.
+- `cargo test -p roastty` → 2632 passed, 0 failed (+5, no regressions).
+- `cargo build -p roastty` → no warnings.
+- No-`ghostty`-name gates clean; `git diff --check` clean.
+
+## Conclusion
+
+The cursor sprites render faithfully, completing the rect-based special-sprite
+family. The sprite font's special sprites now cover the underlines (plain,
+double, curly), strikethrough, overline, and the four cursors — only the
+dotted/dashed underlines (which need the dash stroke) remain.
+
+The remaining sprite-font work is the **dotted/dashed** decorations (the dash
+stroke — z2d's `dashed_plotter`, the one deferred stroke feature) and then the
+unifying sprite `has_codepoint`/draw and **sprite-kind dispatch** (mapping a
+`Sprite` enum and the box/braille/etc. codepoint tables to all the standalone
+`draw_*` functions, filling the resolver's deferred `SpriteUnavailable` arm).
+After the sprite font: the discovery consumer, the UCD emoji-presentation
+default, codepoint overrides, the shaper, the Nerd Font attribute table, and SVG
+color detection.
+
+## Completion Review
+
+Codex reviewed the completed implementation and result and found **no Required
+changes**. It confirmed the cursor implementations are faithful to upstream: the
+full block, the hollow punch with `OFF`, the left-shifted bar, and the underline
+cursor using the underline clamp but the `cursor_thickness` height; and that the
+tests cover the important geometry, including the 1px bar living at cell
+`x = -1` and the underline clamp. No Optional findings.
+
+Review artifacts:
+
+- Result review: `logs/codex-review/20260603-084004-824921-last-message.md`
