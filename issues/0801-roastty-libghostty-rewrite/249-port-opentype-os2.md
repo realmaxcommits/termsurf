@@ -187,3 +187,84 @@ bit 9) and that `getMetrics` needs the typo/win metrics,
 `fsSelection.use_typo_metrics`, the optional v2+ cap/ex heights, and the
 strikeout size/position (in the v0 common block). `Reader::read_bytes<N>` /
 `read_u8` were endorsed as the right additions.
+
+## Result
+
+**Result:** Pass
+
+Added `OpenTypeError::UnsupportedVersion`, `Reader::read_u8`, and
+`Reader::read_bytes<const N>` to `opentype/sfnt.rs`, and the `os2` parser
+(`opentype/os2.rs`, `pub(crate) mod os2;` in `opentype/mod.rs`). `FsSelection`
+is a `u16` newtype with the ten named bit accessors (`use_typo_metrics` = bit
+7); `Os2::from_bytes` reads `version` (rejecting `> 5` with
+`UnsupportedVersion`), the 78-byte v0 common block in spec order
+(`panose`/`ach_vend_id` via `read_bytes`, `fs_selection` via `read_u16`), then
+the version-gated trailing blocks (v1 code-page ranges, v2+
+`sx_height`/`s_cap_height`/`us_*_char`/ `us_max_context`, v5 optical sizes) into
+`Option` fields. The module doc was updated to note all four metric tables are
+now ported.
+
+Tests added (6): `fs_selection_bits` (bit positions), `parse_os2_v4` (common
+fields + code-page/sx/cap `Some`, optical `None`), `parse_os2_v0` (all optionals
+`None`), `parse_os2_v5` (optical `Some`), `os2_unsupported_version` (version 6 →
+`UnsupportedVersion`), `os2_truncated` (cut in the trailing block →
+`EndOfStream`). Fixtures are built programmatically (big-endian appends) with a
+`78`-byte assertion on the common block.
+
+### Verification
+
+```bash
+cargo fmt -p roastty
+cargo test -p roastty opentype
+cargo test -p roastty
+```
+
+Observed:
+
+- `opentype`: 16 passed (10 prior + 6 new).
+- Full `roastty`: 2355 unit tests passed (2349 prior + 6 new), plus the C ABI
+  harness passed.
+- `cargo fmt -p roastty -- --check`: clean.
+- `cargo build -p roastty`: no warnings.
+- No-`ghostty`-name gates passed for `roastty/src/font` and for
+  `roastty/src/lib.rs`, `roastty/include/roastty.h`,
+  `roastty/tests/abi_harness.c`.
+- `git diff --check`: clean.
+
+No C ABI, header, or ABI inventory changes; the CoreText FFI cleanly deferred.
+
+### Completion Review
+
+Codex reviewed the completed implementation and found **no issues** ("nothing
+needs to change before the result commit").
+
+Review artifacts:
+
+- Prompt: `logs/codex-review/20260602-195629-465625-prompt.md`
+- Result: `logs/codex-review/20260602-195629-465625-last-message.md`
+
+Codex confirmed the `FsSelection` bit order (0–9 → `italic`…`oblique`,
+`use_typo_metrics` = bit 7), the full v0 common block in spec order/types plus
+the 9 version-gated optionals, that `from_bytes` rejects `version > 5` and reads
+the 78-byte common block then the v1/v2+/v5 tails at the right thresholds with
+correct bounds-checked truncation, that the fixture builder and the six tests
+line up (78-byte assertion; v4 code-page + sx/cap but no optical; v0 no
+optionals; v5 optical; version 6 → `UnsupportedVersion`; v4 cut at 80 →
+`EndOfStream`), and that the `sfnt.rs` additions are minimal and correct (no
+unsafe, no FFI).
+
+## Conclusion
+
+Experiment 249 succeeds. `os2` — the largest, version-gated metric table — is
+ported, completing **all four tables `getMetrics` reads** (`head`/`hhea`/`post`/
+`os2`). Both Codex gates passed with zero findings.
+
+The OpenType prerequisite is done; the next experiment is the **CoreText `Face`
+FFI** — the first FFI-heavy slice. It adds
+`objc2-core-text`/`objc2-core-graphics`, creates a `CTFont` from a system font
+(e.g. Menlo) at a size, copies the `head`/`hhea`/`os2`/`post` tables via
+`CTFontCopyTable` into these parsers, and assembles a `FaceMetrics`
+(units-per-em from `head`; ascent/descent/line-gap with the
+os2-typo-vs-hhea-vs-win fallback chain; underline from `post`; cap/ex heights
+from `os2`) to feed the already-ported `Metrics::calc`. Glyph rasterization
+(CGBitmapContext → alpha bitmap → `Glyph` → atlas) follows as a separate slice.

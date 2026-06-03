@@ -11,6 +11,9 @@
 pub(crate) enum OpenTypeError {
     /// The input ended before a field could be read in full.
     EndOfStream,
+    /// A table declared a version this parser does not support (e.g. an `OS/2`
+    /// version above 5). The analog of upstream `OS2VersionNotSupported`.
+    UnsupportedVersion,
 }
 
 /// A 16.16 signed fixed-point number (`Fixed` in the spec), stored as its raw
@@ -79,6 +82,15 @@ impl<'a> Reader<'a> {
         buf.copy_from_slice(&self.data[self.pos..end]);
         self.pos = end;
         Ok(buf)
+    }
+
+    pub(crate) fn read_u8(&mut self) -> Result<u8, OpenTypeError> {
+        Ok(self.take::<1>()?[0])
+    }
+
+    /// Read the next `N` bytes verbatim (e.g. `panose [10]`, `achVendID [4]`).
+    pub(crate) fn read_bytes<const N: usize>(&mut self) -> Result<[u8; N], OpenTypeError> {
+        self.take::<N>()
     }
 
     pub(crate) fn read_u16(&mut self) -> Result<u16, OpenTypeError> {
