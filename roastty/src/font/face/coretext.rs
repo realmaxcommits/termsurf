@@ -8,7 +8,7 @@
 
 use std::ptr::NonNull;
 
-use objc2_core_foundation::{CFRetained, CFString, CGPoint, CGSize};
+use objc2_core_foundation::{CFRetained, CFString, CGAffineTransform, CGPoint, CGSize};
 use objc2_core_graphics::{
     kCGColorSpaceDisplayP3, CGBitmapContextCreate, CGColorSpace, CGContext, CGImageAlphaInfo,
     CGImageByteOrderInfo, CGTextDrawingMode,
@@ -20,6 +20,18 @@ use crate::font::atlas::{Atlas, AtlasError, Format};
 use crate::font::glyph::Glyph;
 use crate::font::metrics::{FaceMetrics, Metrics};
 use crate::font::opentype::{head::Head, hhea::Hhea, os2::Os2, post::Post};
+
+/// The horizontal-shear transform used to synthesize an italic (oblique) face.
+/// `c ≈ tan(15°)` slants the glyphs to the right. Faithful to upstream's
+/// `italic_skew`.
+const ITALIC_SKEW: CGAffineTransform = CGAffineTransform {
+    a: 1.0,
+    b: 0.0,
+    c: 0.267949,
+    d: 1.0,
+    tx: 0.0,
+    ty: 0.0,
+};
 
 /// Color-font state for a face. Faithful (sbix) port of upstream `ColorState`.
 /// SVG-table detection is deferred, so non-sbix color fonts are not yet flagged.
@@ -113,6 +125,12 @@ impl Face {
         // SAFETY: `cf_name` is a valid `CFString` that lives through the call,
         // and a null `matrix` pointer is documented as valid (no transform).
         let font = unsafe { CTFont::with_name(&cf_name, size, std::ptr::null()) };
+        Face::from_ct_font(font)
+    }
+
+    /// Build a face wrapping an existing `CTFont`, detecting its color state.
+    /// `synthetic_bold` starts unset.
+    fn from_ct_font(font: CFRetained<CTFont>) -> Face {
         let mut face = Face {
             font,
             synthetic_bold: None,
@@ -120,6 +138,27 @@ impl Face {
         };
         face.color = face.detect_color();
         face
+    }
+
+    /// Synthesize a bold face from this one — a size-preserving copy marked with
+    /// the synthetic-bold line width. Faithful port of upstream `syntheticBold`.
+    pub(crate) fn synthetic_bold(&self) -> Face {
+        // SAFETY: `self.font` is a live `CTFont`; size `0.0` preserves the source
+        // size and a null matrix/attributes leaves the font otherwise unchanged.
+        let copy = unsafe { self.font.copy_with_attributes(0.0, std::ptr::null(), None) };
+        let mut face = Face::from_ct_font(copy);
+        face.synthetic_bold = Some((self.size() / 14.0).max(1.0));
+        face
+    }
+
+    /// Synthesize an italic (oblique) face from this one — a copy sheared by the
+    /// [`ITALIC_SKEW`] matrix. Faithful port of upstream `syntheticItalic`.
+    pub(crate) fn synthetic_italic(&self) -> Face {
+        // SAFETY: `self.font` is a live `CTFont`; size `0.0` preserves the source
+        // size and `&ITALIC_SKEW` is a valid transform that lives through the
+        // call.
+        let copy = unsafe { self.font.copy_with_attributes(0.0, &ITALIC_SKEW, None) };
+        Face::from_ct_font(copy)
     }
 
     /// Detect color-font state from the font's tables. A non-empty `sbix` table
@@ -169,13 +208,10 @@ impl Face {
         Some(glyphs[0])
     }
 
-    /// Create a face that applies a synthetic-bold effect — a faux bold for
-    /// fonts without a real bold variant. The line width scales with the point
-    /// size (`max(size / 14, 1)`), the heuristic from upstream `syntheticBold`.
+    /// Create a synthetic-bold face for the named font — a convenience for
+    /// `Face::new(name, size).synthetic_bold()`.
     pub(crate) fn new_synthetic_bold(name: &str, size: f64) -> Face {
-        let mut face = Face::new(name, size);
-        face.synthetic_bold = Some((size / 14.0).max(1.0));
-        face
+        Face::new(name, size).synthetic_bold()
     }
 
     /// Copy the raw bytes of an OpenType table identified by its four-character
@@ -1270,5 +1306,60 @@ mod tests {
         // A non-BMP emoji resolves via the surrogate-pair path in its font.
         let emoji = Face::new("Apple Color Emoji", 32.0);
         assert!(emoji.glyph_index(0x1F600).is_some_and(|g| g != 0));
+    }
+
+    /// Total ink (sum of grayscale coverage) of `'M'` rendered by `face`.
+    fn m_ink(face: &Face) -> u64 {
+        let mut atlas = Atlas::new(512, Format::Grayscale);
+        let opts = none_opts(face);
+        let glyph = face.glyphs_for_characters(&[b'M' as u16])[0];
+        let g = face
+            .render_glyph(&mut atlas, glyph, &opts)
+            .expect("'M' should render");
+        let size = 512usize;
+        let data = atlas.data();
+        let mut sum = 0u64;
+        for row in 0..g.height {
+            for col in 0..g.width {
+                sum +=
+                    data[((g.atlas_y + row) as usize) * size + (g.atlas_x + col) as usize] as u64;
+            }
+        }
+        sum
+    }
+
+    #[test]
+    fn synthetic_bold_method_sets_width() {
+        let menlo = Face::new("Menlo", 28.0);
+        let bold = menlo.synthetic_bold();
+        assert_eq!(bold.synthetic_bold, Some((28.0_f64 / 14.0).max(1.0)));
+        // The synthetic-bold 'M' is heavier than the plain one.
+        assert!(m_ink(&bold) > m_ink(&menlo));
+    }
+
+    #[test]
+    fn synthetic_italic_renders() {
+        let italic = Face::new("Menlo", 32.0).synthetic_italic();
+        assert_eq!(italic.synthetic_bold, None);
+        assert!(italic.glyph_index('M' as u32).is_some());
+        // It renders with ink.
+        assert!(m_ink(&italic) > 0);
+
+        // The skew matrix was actually applied (not a null matrix).
+        // SAFETY: `italic.font` is a live `CTFont`.
+        let m = unsafe { italic.font.matrix() };
+        assert_eq!(m.a, ITALIC_SKEW.a);
+        assert_eq!(m.b, ITALIC_SKEW.b);
+        assert_eq!(m.c, ITALIC_SKEW.c);
+        assert_eq!(m.d, ITALIC_SKEW.d);
+        assert_eq!(m.tx, ITALIC_SKEW.tx);
+        assert_eq!(m.ty, ITALIC_SKEW.ty);
+    }
+
+    #[test]
+    fn synthetic_face_inherits_color_detection() {
+        // A text font's synthetic variants are still non-color.
+        assert!(!Face::new("Menlo", 32.0).synthetic_italic().has_color());
+        assert!(!Face::new("Menlo", 32.0).synthetic_bold().has_color());
     }
 }

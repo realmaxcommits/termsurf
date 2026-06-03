@@ -143,3 +143,65 @@ Review artifacts:
 
 - Prompt: `logs/codex-review/20260602-221813-458858-prompt.md`
 - Result: `logs/codex-review/20260602-221813-458858-last-message.md`
+
+## Result
+
+**Result:** Pass
+
+`coretext.rs` gained the `ITALIC_SKEW` `CGAffineTransform`, a `from_ct_font`
+helper (color-detecting `CTFont` → `Face`), and the `synthetic_bold` /
+`synthetic_italic` instance methods (size-preserving
+`copy_with_attributes(0.0, …)`). `new` and `new_synthetic_bold` are re-expressed
+via the helper/method.
+
+Tests (live CoreText):
+
+- `synthetic_bold_method_sets_width` —
+  `Face::new("Menlo", 28.0).synthetic_bold()` has
+  `synthetic_bold == Some((28/14).max(1))` and renders `'M'` with more ink than
+  plain Menlo.
+- `synthetic_italic_renders` — the italic face has no bold, resolves
+  `glyph_index('M')`, renders ink, and its `CTFont::matrix()` equals
+  `ITALIC_SKEW` (proving the skew was applied, not a null matrix).
+- `synthetic_face_inherits_color_detection` — Menlo's synthetic italic/bold are
+  non-color (color re-detected from the copy).
+- The Experiment 259 `new_synthetic_bold` tests still pass.
+
+Gate results:
+
+- `cargo fmt -p roastty` accepted; `--check` clean.
+- `cargo test -p roastty face` → 37 passed, 0 failed.
+- `cargo test -p roastty` → 2409 passed, 0 failed (no regressions; +3).
+- `cargo build -p roastty` → no warnings.
+- No-`ghostty`-name gates clean; `git diff --check` clean.
+
+## Conclusion
+
+The synthetic-face primitives are ported. The next experiment wires them into
+`completeStyles`: a `FontSyntheticStyle`-style config (`italic`/`bold`/
+`bold-italic` toggles) selects synthesize-vs-alias per missing style, with the
+bold-italic preference (synthesize italic-on-bold, else bold-on-italic, else
+alias). After that the Collection's remaining work is the per-entry
+`scale_factor`
+
+- `load_options`/`setSize` size normalization and `setSize`/`updateMetrics`;
+  then the `DeferredFace` + `discovery` lazy-loading sub-area, the
+  `CodepointResolver`, the shaper, and the Nerd Font attribute table.
+
+## Completion Review
+
+Codex reviewed the completed implementation and result and found **no required
+changes**.
+
+Review artifacts:
+
+- Prompt: `logs/codex-review/20260602-222157-734571-prompt.md`
+- Result: `logs/codex-review/20260602-222157-734571-last-message.md`
+
+Codex confirmed the implementation matches upstream: `synthetic_bold` makes a
+size-preserving copy with a null matrix and applies `max(self.size()/14, 1)`,
+`synthetic_italic` passes the exact `ITALIC_SKEW`, and `from_ct_font` re-runs
+color detection on copied fonts. The `&ITALIC_SKEW` raw-pointer use is sound for
+the call duration and `CTFont::matrix()` is used safely in the test;
+`new_synthetic_bold` preserves prior behavior; and the matrix-equality assertion
+closes the earlier test gap by proving the skew was applied.
