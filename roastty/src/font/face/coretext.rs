@@ -18,7 +18,9 @@ use objc2_core_graphics::{
     CGImageAlphaInfo, CGImageByteOrderInfo, CGTextDrawingMode,
 };
 use objc2_core_text::{
-    kCTFontAttributeName, CTFont, CTFontOrientation, CTFontTableOptions, CTLine, CTRun, CTRunStatus,
+    kCTFontAttributeName, kCTFontFeatureSettingsAttribute, kCTFontOpenTypeFeatureTag,
+    kCTFontOpenTypeFeatureValue, CTFont, CTFontDescriptor, CTFontOrientation, CTFontTableOptions,
+    CTLine, CTRun, CTRunStatus,
 };
 
 use super::constraint::{Constraint, GlyphSize, Size};
@@ -351,15 +353,28 @@ impl Face {
         }
         let cf_str = CFString::from_str(&text);
 
-        // The attributed string binds the face's font to the run.
+        // Apply the default OpenType features (e.g. `liga`) by copying the face's
+        // font with a feature-settings descriptor; that font drives shaping.
+        let features = shape::default_features();
+        let run_font = match feature_settings_descriptor(&features) {
+            // SAFETY: `self.font`/`desc` are live; a null matrix is valid; size
+            // `0.0` preserves the current size.
+            Some(desc) => unsafe {
+                self.font
+                    .copy_with_attributes(0.0, std::ptr::null(), Some(&desc))
+            },
+            None => self.font.clone(),
+        };
+
+        // The attributed string binds the (feature-applied) font to the run.
         let attrs = CFMutableDictionary::<CFString, CFType>::empty();
-        // SAFETY: `kCTFontAttributeName` is a static key; `self.font` is live and
+        // SAFETY: `kCTFontAttributeName` is a static key; `run_font` is live and
         // retained by the dictionary on insertion.
         unsafe {
             CFMutableDictionary::set_value(
                 Some(attrs.as_opaque()),
                 (kCTFontAttributeName as *const CFString).cast::<c_void>(),
-                (&*self.font as *const CTFont).cast::<c_void>(),
+                (&*run_font as *const CTFont).cast::<c_void>(),
             );
         }
         // SAFETY: `cf_str`/`attrs` are live; CoreText reads them.
@@ -1101,6 +1116,62 @@ impl Face {
             atlas_y: region.y,
         })
     }
+}
+
+/// Build a `CTFontDescriptor` carrying the OpenType feature settings for
+/// `features` (`None` for an empty list). Faithful port of upstream
+/// `makeFeaturesDict`: an array of per-feature dictionaries
+/// `{ kCTFontOpenTypeFeatureTag: <tag>, kCTFontOpenTypeFeatureValue: <value> }`,
+/// stored under `kCTFontFeatureSettingsAttribute`. Applying this descriptor to a
+/// font (via `copy_with_attributes`) yields a font that shapes with those
+/// features.
+fn feature_settings_descriptor(
+    features: &[shape::Feature],
+) -> Option<CFRetained<CTFontDescriptor>> {
+    if features.is_empty() {
+        return None;
+    }
+    let dicts: Vec<CFRetained<CFMutableDictionary<CFString, CFType>>> = features
+        .iter()
+        .map(|f| {
+            let dict = CFMutableDictionary::<CFString, CFType>::empty();
+            // OpenType feature tags are 4 ASCII bytes by construction (upstream
+            // builds the string from exactly these bytes).
+            let tag = CFString::from_str(
+                std::str::from_utf8(&f.tag).expect("an OpenType feature tag is 4 ASCII bytes"),
+            );
+            let value = CFNumber::new_i32(f.value as i32);
+            // SAFETY: the keys are static CF strings; the dict retains both values
+            // on insertion.
+            unsafe {
+                CFMutableDictionary::set_value(
+                    Some(dict.as_opaque()),
+                    (kCTFontOpenTypeFeatureTag as *const CFString).cast::<c_void>(),
+                    (&*tag as *const CFString).cast::<c_void>(),
+                );
+                CFMutableDictionary::set_value(
+                    Some(dict.as_opaque()),
+                    (kCTFontOpenTypeFeatureValue as *const CFString).cast::<c_void>(),
+                    (&*value as *const CFNumber).cast::<c_void>(),
+                );
+            }
+            dict
+        })
+        .collect();
+    let list = CFArray::from_retained_objects(&dicts);
+
+    let settings = CFMutableDictionary::<CFString, CFType>::empty();
+    // SAFETY: `kCTFontFeatureSettingsAttribute` is a static key; the dict retains
+    // the array on insertion.
+    unsafe {
+        CFMutableDictionary::set_value(
+            Some(settings.as_opaque()),
+            (kCTFontFeatureSettingsAttribute as *const CFString).cast::<c_void>(),
+            (&*list as *const CFArray<CFMutableDictionary<CFString, CFType>>).cast::<c_void>(),
+        );
+    }
+    // SAFETY: `settings` is a live attributes dictionary.
+    Some(unsafe { CTFontDescriptor::with_attributes(settings.as_opaque()) })
 }
 
 /// Whether the glyph at UTF-16 index `idx` is the first codepoint of `cluster` in
@@ -2086,6 +2157,43 @@ mod tests {
         assert_eq!(cells.len(), 3);
         for (i, c) in cells.iter().enumerate() {
             assert_eq!(c.x, i as u16, "cell {i} keeps its forward cluster");
+        }
+    }
+
+    #[test]
+    fn feature_settings_descriptor_some_none() {
+        assert!(
+            feature_settings_descriptor(&[]).is_none(),
+            "an empty feature list yields no descriptor"
+        );
+        let desc = feature_settings_descriptor(&[shape::Feature {
+            tag: *b"liga",
+            value: 1,
+        }]);
+        assert!(
+            desc.is_some(),
+            "a non-empty feature list yields a descriptor"
+        );
+    }
+
+    #[test]
+    fn shape_run_with_default_features() {
+        // Shaping now copies the font with the default-feature descriptor; plain
+        // monospace shaping is unaffected (Menlo has no `liga`).
+        let face = Face::new("Menlo", 24.0);
+        let cps = ['A' as u32, 'B' as u32, 'C' as u32];
+        let cells = face.shape_codepoints(&cps);
+        assert_eq!(
+            cells.len(),
+            3,
+            "default features do not break plain shaping"
+        );
+        for (i, &cp) in cps.iter().enumerate() {
+            assert_eq!(
+                cells[i].glyph_index as u16,
+                face.glyph_index(cp).expect("a glyph"),
+                "cell {i} still shapes to the cmap glyph"
+            );
         }
     }
 

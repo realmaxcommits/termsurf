@@ -204,3 +204,72 @@ Review artifacts:
 
 - Prompt: `logs/codex-review/20260603-141207-751340-prompt.md` (design)
 - Result: `logs/codex-review/20260603-141207-751340-last-message.md` (design)
+
+## Result
+
+**Result:** Pass
+
+Shaping now applies the default OpenType features.
+
+- `roastty/src/font/shape.rs`: added `Feature { tag: [u8; 4], value: u32 }` and
+  `default_features() -> Vec<Feature>` (`[liga = 1]`).
+- `roastty/src/font/face/coretext.rs`: `feature_settings_descriptor(features)`
+  builds, per feature, a `CFMutableDictionary` with `kCTFontOpenTypeFeatureTag`
+  → the tag `CFString` and `kCTFontOpenTypeFeatureValue` → the value `CFNumber`,
+  collects them into a `CFArray` (`from_retained_objects`) stored under
+  `kCTFontFeatureSettingsAttribute`, and returns a
+  `CTFontDescriptor::with_attributes` (`None` for an empty list). `shape_run`
+  applies `default_features()` by copying the face's font with that descriptor
+  (`copy_with_attributes(0.0, …)`, size preserved) and binds the resulting
+  `run_font` to the attributed string.
+
+Tests: `feature_settings_descriptor_some_none` (`None` for `&[]`, `Some` for
+`[liga]`), `shape_run_with_default_features` (Menlo `"ABC"` still shapes to
+three cmap-matching glyphs), `default_features_is_liga`. All pass.
+
+Gate results:
+
+- `cargo fmt -p roastty` accepted; `--check` clean.
+- `cargo test -p roastty` → 2762 passed, 0 failed (+3, no regressions).
+- `cargo build -p roastty` → no warnings.
+- No-`ghostty`-name gates clean; `git diff --check` clean.
+
+## Conclusion
+
+The shaper now applies the always-on default OpenType features (`liga`) by
+copying the run font with a `kCTFontFeatureSettingsAttribute` descriptor —
+upstream's `makeFeaturesDict`/`getFont` mechanism. The `Feature` type and the
+feature-dict construction are in place.
+
+The follow-ups: the **feature-string parser** (`Feature::from_str`, the
+HarfBuzz-syntax state machine — Experiment 348); threading shaping **`Options`**
+(user features) and the `features_no_default` variant through `shape_run`; the
+**special-font** fast path; and the `Shaper` struct + **`RunIterator`**.
+
+## Completion Review
+
+Codex reviewed the completed implementation and result and **approved** with one
+**Required finding (fixed)** and no other findings:
+
+- **Required (fixed):** the tag `CFString` was built with
+  `std::str::from_utf8(&f.tag).unwrap_or("")`, which silently maps an invalid
+  tag to `""` — diverging from upstream's exact-4-ASCII-bytes string creation,
+  and a latent issue once the parser (Exp 348) feeds arbitrary tags. Changed to
+  `.expect("an OpenType feature tag is 4 ASCII bytes")`, documenting the
+  invariant (tags are ASCII by construction) and failing loudly rather than
+  silently.
+
+Codex confirmed the rest: the feature-settings structure matches upstream
+(per-feature dicts under `kCTFontFeatureSettingsAttribute`, descriptor via
+`CTFontDescriptor::with_attributes`, applied with
+`copy_with_attributes(0.0, null, Some(&desc))`); binding `run_font` (not
+`self.font`) under `kCTFontAttributeName` is correct (else the descriptor is
+discarded); the CF ownership is sound (dict insertions retain values,
+`from_retained_objects` makes a retaining array, the settings dict retains the
+array, and the attributed-string path retains the font through line/run
+creation); the deferred scope is a clean split; and nothing is left dead
+(`default_features()` is used by `shape_run`).
+
+Review artifacts:
+
+- Result review: `logs/codex-review/20260603-141549-258305-last-message.md`

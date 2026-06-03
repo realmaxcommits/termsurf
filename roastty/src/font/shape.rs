@@ -34,6 +34,26 @@ pub(crate) struct Codepoint {
     pub cluster: u32,
 }
 
+/// An OpenType feature setting: a 4-byte tag and a numeric value (`0`/`1` for
+/// boolean features; higher for alternates such as `cv01`). Faithful port of
+/// upstream `shaper.Feature`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Feature {
+    /// The 4-byte ASCII feature tag (e.g. `b"liga"`).
+    pub tag: [u8; 4],
+    /// The feature value (boolean features use `0`/`1`).
+    pub value: u32,
+}
+
+/// The OpenType features hardcoded on by default. Users can disable them (e.g.
+/// `-liga`). Faithful port of upstream `shape.default_features`.
+pub(crate) fn default_features() -> Vec<Feature> {
+    vec![Feature {
+        tag: *b"liga",
+        value: 1,
+    }]
+}
+
 /// Options controlling shaping. Faithful port of upstream `shape.Options`.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct Options {
@@ -92,6 +112,17 @@ mod tests {
         let mut c = a;
         c.glyph_index = 10;
         assert_ne!(a, c, "a differing glyph index is unequal");
+    }
+
+    #[test]
+    fn default_features_is_liga() {
+        assert_eq!(
+            default_features(),
+            vec![Feature {
+                tag: *b"liga",
+                value: 1
+            }]
+        );
     }
 
     #[test]
