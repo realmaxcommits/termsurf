@@ -134,6 +134,145 @@ C-origin libraries → Rust:
 Out of scope (non-macOS): gobject/GTK, gtk4-layer-shell, wayland (and
 protocols), opengl, libintl, and the Android/SDK packages.
 
+## Subsystem checklist
+
+A living, file-verified progress tracker for the whole rewrite: every libghostty
+subsystem and every reimplemented dependency. **As items are completed, check
+them off** (`[ ]` → `[x]`). An item is only checked when it is a complete,
+faithful, tested port; partial subsystems leave the finished sub-items checked
+and the rest unchecked with a note. Keep this in sync as experiments land — the
+per-experiment detail lives in the [Experiments](#experiments) index below.
+
+Status verified file-by-file against `vendor/ghostty/src/` on 2026-06-02 (after
+Experiment 246).
+
+### Terminal core — largely complete
+
+- [x] Page / datastruct layer (`bitmap_allocator`, `page`, `page_list`, `point`,
+      `ref_counted_set`, `offset_hash_map`)
+- [x] VT parser + stream
+      (`Parser`/`parse_table`/`ansi`/`apc`/`csi`/`UTF8Decoder` folded into
+      `stream.rs`)
+- [x] `Screen`, `Terminal`, `cursor`, `style`, `color` (named/SGR/x11),
+      `charsets`, `tabstops`, `modes`
+- [x] `SGR`, `OSC`, `DCS`, device attributes & status
+- [x] Selection (+ codepoints, gestures), mouse (+ encoding), focus, clipboard,
+      context signal, size / size-report, semantic prompt
+- [x] Kitty graphics + Kitty keyboard
+- [ ] `highlight`, `hyperlink` — ported but untested (finish + add tests)
+- [ ] `formatter` / terminal `render`, `ScreenSet`, `stream_terminal` — partial
+      / folded into `screen.rs`/`terminal.rs` (confirm parity)
+- [ ] Scrollback `search` + `StringMap` — missing (needs `oniguruma`)
+- [ ] `tmux` control mode — missing
+- [ ] `sys` (PNG-decode abstraction) — missing
+
+### Renderer — data + Metal primitives only; no live render loop
+
+- [x] Cell contents builder (`cell.rs`), cursor style (`cursor.rs`),
+      size/padding types (`size.rs`), shader vertex/uniform types (`shader.rs`)
+- [x] Metal primitives — `api`, `buffer`, `shaders` (MSL), `render_pass`,
+      `texture`
+- [ ] Render `state` — partial (only `Preedit`; full `State` + `Mouse` missing)
+- [ ] Image state (`image.rs`) — partial (data only, no GPU upload)
+- [ ] Metal `pipeline` (partial), `Sampler`, `Frame`, `Target`, `IOSurfaceLayer`
+      — missing
+- [ ] Main render loop (`generic.zig`: frame build, dirty tracking, glyph
+      upload, draw calls, pacing) — missing (critical)
+- [ ] z2d debug `Overlay`, link highlighting, render `Thread`, custom shaders —
+      missing
+
+### Font & text — foundations only
+
+- [x] `Metrics` (Metrics.zig complete)
+- [x] `Atlas` (Atlas.zig complete, minus WASM)
+- [x] `Glyph` value type
+- [ ] Sprite `Canvas` — partial (exact-pixel ops done; z2d path rendering
+      missing)
+- [ ] Sprite `draw/` glyph tables (box/block/braille/powerline/geometric/legacy)
+      — missing
+- [ ] CoreText `Face` (rasterization + face-metric extraction) — missing
+- [ ] Shaper (CoreText shaping, run, cache, feature) — missing
+- [ ] `Collection` / `CodepointResolver` / `CodepointMap` / `DeferredFace` /
+      `discovery` / `library` / `backend` — missing
+- [ ] `SharedGrid` / `SharedGridSet` — missing
+- [ ] `opentype/` (SFNT table parsing), `embedded`, `nerd_font_attributes` —
+      missing
+
+### Input — encoding only
+
+- [x] Key codes/events, key encoding (VT/Kitty), key mods, bracketed paste
+- [ ] Keybinding system (`Binding`, `command`/action dispatch) — missing
+- [ ] Keymaps (`keycodes`, `function_keys`, `KeymapDarwin`, layouts) — missing
+- [ ] Kitty keyboard protocol details (`input/kitty`), `Link`, mouse input
+      structs — missing (note: mouse SGR/x11 _encoding_ exists in
+      `terminal/mouse_encode.rs`)
+
+### Configuration — skeleton only
+
+- [ ] `Config` struct (full field set) — only a `finalized` flag exists
+- [ ] Option parsing, CLI args, file / default / recursive loading — stubbed
+- [ ] Validation / finalization / diagnostics — stubbed
+- [ ] Keybind parsing, theme loading, conditionals, key-remap, clipboard maps,
+      `formatter`/export — missing
+
+### C ABI (`libroastty` boundary)
+
+- [x] Init / string / lifecycle; terminal cells / rows / styles / render-state /
+      colors / modes / IO / grid / selection / formatting
+- [x] Key-event + key-encoder ABI, mouse event/encoder ABI, OSC parser ABI,
+      selection-gesture ABI, Kitty-graphics ABI
+- [x] Config / app / surface lifecycle handles (new/free/clone/userdata/basic
+      setters)
+- [ ] `config_get` (12 defaults only) + keybind triggers — partial
+- [ ] App/surface key dispatch, surface draw/refresh, IME/text/preedit, surface
+      mouse dispatch, selection read, splits — missing
+- [ ] Inspector ABI — missing
+
+### App / Surface / IO — not started (stubs only)
+
+- [ ] `App` lifecycle (init, tick, focus, quit-confirm, color-scheme, global
+      keybinds, mailbox / events) — skeleton struct + stubbed fns
+- [ ] `Surface` lifecycle (create, config-inherit, draw/refresh, sizing, scale,
+      display-id, occlusion, quicklook, inspector, splits, selection + text
+      reads) — skeleton + basic setters only
+- [ ] `pty` + `termio` (shell spawn, read/write loops, resize, fg pid, tty name,
+      exit) — missing (placeholder returns)
+- [ ] `os/` utilities (tmpdir / file / env / hostname / locale) — ad hoc Rust
+      stdlib; no dedicated module
+
+### Supporting subsystems
+
+- [ ] `unicode/` (grapheme break, width/wcwidth, properties) — missing (no
+      tables; widths currently implicit)
+- [x] Datastruct: `OffsetHashMap`, `PageList`, `BitmapAllocator`,
+      `RefCountedSet` (in `terminal/`)
+- [ ] Datastruct: `CircBuf`, `IntrusiveLinkedList`, other utilities — as needed
+- [ ] `cli/` (+list-\* tools), `inspector/` (imgui), `crash/` (sentry),
+      `terminfo/`, `synthetic/`
+- [ ] Swift macOS frontend integration
+
+Out of scope / tooling: `build/`, `benchmark/`, `extra/`, `simd/`, `stb/`,
+`lib/`, and all non-macOS paths (Linux/GTK/Wayland/OpenGL).
+
+### Dependencies (reimplemented in Rust)
+
+- [x] `zig-objc` → satisfied by `objc2`
+- [ ] `uucode` (Unicode tables) — not started (no Unicode tables exist yet)
+- [ ] `z2d` (sprite path rasterizer) — in progress (exact-pixel Canvas done;
+      path rendering pending)
+- [ ] `libxev` (event loop) — not started
+- [ ] `zf` (fuzzy match) — not started
+- [ ] `wuffs` / `libpng` / `zlib` (image decode + inflate) — not started
+- [ ] `oniguruma` (regex) — not started (also gates terminal `search`)
+- [ ] `simdutf` (UTF-8 validation/transcoding) — not started
+- [ ] `highway` (SIMD) — not started
+- [ ] `sentry` (crash reporting) — not started
+- [ ] `dcimgui` (inspector UI) — not started
+- [ ] `glslang` / `spirv-cross` (shader translation) — not started
+
+Resolved by decision (no reimplementation): `harfbuzz` / `freetype` /
+`fontconfig` — superseded by macOS CoreText/CoreGraphics (bound via `objc2`).
+
 ## Architecture
 
 Roastty should be a faithful macOS adaptation of Ghostty's architecture, not a
