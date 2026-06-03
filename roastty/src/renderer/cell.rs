@@ -21,7 +21,7 @@ use crate::font::face::constraint::{Constraint, Size};
 use crate::font::face::coretext::RenderOptions;
 use crate::font::face::nerd_font_attributes::get_constraint;
 use crate::font::metrics::Metrics;
-use crate::font::run::{RunCell, ShapedRun, Wide};
+use crate::font::run::{shape_row, RunCell, RunOptions, ShapedRun, Wide};
 use crate::font::shape;
 use crate::font::shared_grid::SharedGrid;
 use crate::font::Presentation;
@@ -515,6 +515,45 @@ pub(crate) fn rebuild_row(
     Ok(())
 }
 
+/// Rebuild every viewport row's foreground text into `contents` from the
+/// viewport's per-row [`RunOptions`] (from `Terminal::shape_run_options`). For
+/// each row, shape it into [`ShapedRun`]s ([`shape_row`] over the grid's resolver)
+/// and assemble it ([`rebuild_row`]) with the row's cells. The row loop of upstream
+/// `rebuildCells` (foreground text).
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn rebuild_viewport(
+    contents: &mut Contents,
+    grid: &mut SharedGrid,
+    rows: &[RunOptions],
+    default_fg: Rgb,
+    palette: &Palette,
+    bold: Option<BoldColor>,
+    alpha: u8,
+    thicken: bool,
+    thicken_strength: u8,
+) -> Result<(), ResolverRenderError> {
+    for (y, opts) in rows.iter().enumerate() {
+        let y = u16::try_from(y).expect("viewport row fits u16");
+        // Shape the row first (this borrows the grid's resolver) — `runs` is owned,
+        // releasing that borrow before `rebuild_row` borrows the grid.
+        let runs = shape_row(opts, &mut grid.resolver);
+        rebuild_row(
+            contents,
+            grid,
+            y,
+            &runs,
+            &opts.cells,
+            default_fg,
+            palette,
+            bold,
+            alpha,
+            thicken,
+            thicken_strength,
+        )?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -965,6 +1004,59 @@ mod tests {
         assert_eq!(v0.color, [200, 200, 200, 255]);
         assert_eq!(v1.color, [11, 22, 33, 255]);
         assert_ne!(v1.color, [200, 200, 200, 255]);
+    }
+
+    #[test]
+    fn rebuild_viewport_fills_each_row() {
+        use crate::terminal::color::{Rgb, DEFAULT_PALETTE};
+        use crate::terminal::style::Style as TermStyle;
+
+        let mut shared = menlo_grid();
+        let mut c = Contents::default();
+        c.resize(grid(2, 2));
+
+        let cell = |cp: u32, is_empty: bool| RunCell {
+            codepoint: cp,
+            graphemes: vec![],
+            style: TermStyle::default(),
+            style_id: 0,
+            wide: Wide::Narrow,
+            is_empty,
+            is_codepoint: !is_empty,
+        };
+        // Row 0 "AB" (two visible glyphs); row 1 "C " (one visible glyph — the
+        // empty cell shapes to a 0-size glyph and is skipped). Distinct rows.
+        let rows = vec![
+            RunOptions {
+                cells: vec![cell('A' as u32, false), cell('B' as u32, false)],
+                ..Default::default()
+            },
+            RunOptions {
+                cells: vec![cell('C' as u32, false), cell(0, true)],
+                ..Default::default()
+            },
+        ];
+
+        rebuild_viewport(
+            &mut c,
+            &mut shared,
+            &rows,
+            Rgb::new(200, 200, 200),
+            &DEFAULT_PALETTE,
+            None,
+            255,
+            false,
+            255,
+        )
+        .expect("rebuild_viewport");
+
+        // Row 0 -> fg_rows[1] (two glyphs); row 1 -> fg_rows[2] (one glyph). The
+        // distinct counts prove each row is shaped from its own RunOptions.
+        assert_eq!(c.fg_rows[1].len(), 2);
+        assert_eq!(c.fg_rows[2].len(), 1);
+        assert_eq!(c.fg_rows[1][0].grid_pos, [0, 0]);
+        assert_eq!(c.fg_rows[1][1].grid_pos, [1, 0]);
+        assert_eq!(c.fg_rows[2][0].grid_pos, [0, 1]);
     }
 
     #[test]

@@ -178,3 +178,72 @@ Review artifacts:
 
 - Prompt: `logs/codex-review/20260603-183040-241273-prompt.md` (design)
 - Result: `logs/codex-review/20260603-183040-241273-last-message.md` (design)
+
+## Result
+
+**Result:** Pass
+
+The whole viewport's foreground text now rebuilds in one call — the capstone of
+the text-rendering path.
+
+- `roastty/src/renderer/cell.rs`:
+  `rebuild_viewport(contents, grid, rows, default_fg, palette, bold, alpha, thicken, thicken_strength)`
+  iterates the viewport's per-row `RunOptions` in order; for each row it checks
+  the row index (`u16::try_from`), shapes the row into `ShapedRun`s (`shape_row`
+  over `grid.resolver` — owned, releasing the borrow), and calls `rebuild_row`
+  at that `y` with the row's `opts.cells`. Imported
+  `font::run::{shape_row, RunOptions}`.
+
+Test (in `cell.rs`): `rebuild_viewport_fills_each_row` builds a 2×2 viewport
+with observably different rows — row 0 `'A'`/`'B'` (two visible glyphs), row 1
+`'C'` + an empty cell (one visible glyph; the empty shapes to a 0-size glyph and
+is skipped) — and asserts `fg_rows[1].len() == 2` and `fg_rows[2].len() == 1`
+with grid positions `[0,0]`/`[1,0]` (row 0) and `[0,1]` (row 1) — the distinct
+counts prove each row is shaped from its own `RunOptions`.
+
+Gate results:
+
+- `cargo fmt -p roastty` accepted; `--check` clean.
+- `cargo test -p roastty` → 2822 passed, 0 failed (+1, no regressions).
+- `cargo build -p roastty` → no warnings.
+- No-`ghostty`-name gates (font + renderer) clean; `git diff --check` clean.
+
+## Conclusion
+
+The text-rendering path is complete end to end: a live terminal screen's
+`RunOptions` (from `Terminal::shape_run_options`) → `rebuild_viewport` → a
+`Contents` whose foreground rows are filled with correctly-placed,
+correctly-colored `CellTextVertex`es. Every primitive in the chain — shaping,
+rasterization, the glyph cache, the per-glyph/per-run/per-row/per-viewport
+assembly — is ported and gated:
+
+```
+Terminal::shape_run_options() → Vec<RunOptions>
+  → rebuild_viewport → (per row) shape_row + rebuild_row
+      → cell_infos + resolve_fg + add_run → add_glyph → SharedGrid::render_glyph
+  → Contents (whole viewport foreground)
+```
+
+The remaining renderer-bridge work is no longer on the foreground-text critical
+path: the renderer-layer color adjustments (reverse-video, selection,
+min-contrast, faint/dim alpha), the **background** cells, the **decorations**
+(underline/strikethrough/overline), the **cursor** cell, and the **Metal
+upload** of `Contents` to the GPU. Each is a separate, independently-gateable
+experiment.
+
+## Completion Review
+
+Codex reviewed the completed implementation and result and **approved** with
+**no findings**. It confirmed `rebuild_viewport` is faithful to the approved row
+loop (iterates `rows` in order, checks the row index with `u16::try_from`,
+shapes each row with `shape_row(opts, &mut grid.resolver)`, then passes the
+owned runs and the same `opts.cells` into `rebuild_row` at that `y`), with sound
+borrow ordering (`shape_row` returns owned `ShapedRun`s before `rebuild_row`
+borrows the whole grid). It confirmed the Required test fix is applied — the
+rows are observably different (row 0 → two visible glyphs, row 1 → one), so
+reusing the first row's `RunOptions` would fail the `fg_rows` count assertions.
+Nothing needed to change before the result commit.
+
+Review artifacts:
+
+- Result review: `logs/codex-review/20260603-183307-229808-last-message.md`
