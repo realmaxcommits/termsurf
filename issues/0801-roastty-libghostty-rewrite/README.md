@@ -1051,6 +1051,8 @@ are past the correctness-critical foundation.
   **Pass** · Claude/Codex/Codex
 - [Experiment 302: z2d port — round and square line caps](302-z2d-caps.md) —
   **Pass** · Claude/Codex/Codex
+- [Experiment 303: the curly underline (the first round-cap glyph)](303-curly-underline.md)
+  — **Designed** · Claude/Codex/Codex
 
 ## Non-Goals
 
