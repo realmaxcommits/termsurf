@@ -1134,7 +1134,7 @@ are past the correctness-critical foundation.
 - [Experiment 343: the shaper's reorder guard](343-shaper-reorder-guard.md) —
   **Pass** · Claude/Codex/Codex
 - [Experiment 344: the shaper's `is_first` term](344-shaper-is-first-term.md) —
-  **Designed** · Claude/Codex/Codex
+  **Pass** · Claude/Codex/Codex
 
 ## Non-Goals
 

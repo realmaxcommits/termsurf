@@ -233,3 +233,75 @@ Review artifacts:
 
 - Prompt: `logs/codex-review/20260603-134109-330535-prompt.md` (design)
 - Result: `logs/codex-review/20260603-134109-330535-last-message.md` (design)
+
+## Result
+
+**Result:** Pass
+
+The cluster→cell reset heuristic is now complete.
+
+- `roastty/src/font/face/coretext.rs`: `shape_run` builds a `pads: Vec<bool>`
+  parallel to `clusters`
+  (`pads.push(if u == 0 { cp.codepoint == 0 } else { true })` per UTF-16 unit —
+  padding exactly when the codepoint is `0`, covering both a surrogate low half
+  and a real `U+0000`). A free
+  `is_first_codepoint_in_cluster(clusters, pads, idx, cluster)` walks backward
+  from `idx`, skips padding units, and returns whether the nearest real
+  predecessor has a different cluster (`true` for `idx == 0` or all-padding
+  predecessors) — a byte-faithful port of upstream's walk. The reset is gated on
+  the full condition `is_first && !is_after`.
+
+Tests: `is_first_codepoint_in_cluster_walk` (synthetic vectors covering
+`idx == 0`, different/same-cluster predecessors, pad-skipping, and
+all-padding-precedes), `shape_run_full_condition_regression` (reorder
+`[2, 1, 0]` → cell 2, forward `[0, 1, 2]` → `0/1/2`, combining `[0, 0, 0, 1]` →
+folds). All prior `shape_*` tests pass unchanged; the surrogate-collapse test
+now also exercises the pad-skipping walk at runtime. The stale Exp 343
+reorder-test comment ("the deferred term does not affect this case") was
+updated.
+
+Gate results:
+
+- `cargo fmt -p roastty` accepted; `--check` clean.
+- `cargo test -p roastty` → 2754 passed, 0 failed (+2, no regressions).
+- `cargo build -p roastty` → no warnings.
+- No-`ghostty`-name gates clean; `git diff --check` clean.
+
+## Conclusion
+
+The full upstream `Shaper.shape` reset condition
+`is_first_codepoint_in_cluster && !is_after_glyph_from_current_or_next_clusters`
+is now ported. Combined with Experiments 338–343, the CoreText shaping core is
+complete: a clustered `(codepoint, cluster)` run shapes to positioned,
+cell-mapped glyphs with the full ligature/reorder cell-offset heuristic, glyph
+offsets, and the non-LTR sort.
+
+The remaining shaper work is the orchestration around this core: the
+**special-font** fast path (codepoint == glyph, skipping shaping); and the
+`Shaper` struct with its run state, caching, and the **`RunIterator`** over
+terminal cells (which supplies real grapheme clusters and would let the ligature
+`is_first` path be exercised end-to-end). The deferred **variation-axis**
+`score()` refinement and **variations** application also remain.
+
+## Completion Review
+
+Codex reviewed the completed implementation and result and **approved** with
+**no Required findings**. It confirmed: the `pads` construction is faithful
+(first unit padding only for `codepoint == 0`, later units surrogate padding —
+matching upstream's `codepoint == 0` skip including real `U+0000`); the
+extracted walk matches upstream (backward from `idx`, skip padding, compare the
+nearest real predecessor's cluster, `true` for `idx == 0`/all-padding);
+`is_first && !is_after` is the complete upstream reset condition, with
+`pads.len() == clusters.len()` and the same UTF-16 `idx` used to load `cluster`
+and evaluate `is_first`; the existing tests are unchanged for the right reason
+(`is_first` true at reset-relevant transitions; later same-cluster glyphs may be
+non-first but never enter the reset branch); and the synthetic walk vectors
+match upstream semantics. The deferred scope (special-font,
+`Shaper`/`RunIterator`, variations) is intact. Its only note — the stale Exp 343
+reorder-test comment — was fixed before the result commit. Codex concluded the
+cluster→cell reset heuristic is now complete relative to upstream's CoreText
+`Shaper.shape` condition.
+
+Review artifacts:
+
+- Result review: `logs/codex-review/20260603-134440-881099-last-message.md`

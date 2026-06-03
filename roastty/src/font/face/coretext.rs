@@ -297,16 +297,22 @@ impl Face {
         // indices index into the UTF-16 storage a `CFString` from this `String`
         // preserves; pushing each codepoint's supplied cluster once per UTF-16
         // unit keeps `clusters` aligned with those indices and lets both halves of
-        // a surrogate pair share one cluster (mirroring upstream's padding).
+        // a surrogate pair share one cluster (mirroring upstream's padding). The
+        // parallel `pads` marks which units are padding (codepoint `0`): the first
+        // unit carries the real codepoint, any extra unit (a surrogate low half)
+        // is padding — and a real `U+0000` is padding too, matching upstream's
+        // `codepoint == 0` skip in the `is_first` walk.
         let mut text = String::new();
         let mut clusters: Vec<u32> = Vec::new();
+        let mut pads: Vec<bool> = Vec::new();
         for cp in run {
             let Some(ch) = char::from_u32(cp.codepoint) else {
                 continue;
             };
             text.push(ch);
-            for _ in 0..ch.len_utf16() {
+            for u in 0..ch.len_utf16() {
                 clusters.push(cp.cluster);
+                pads.push(if u == 0 { cp.codepoint == 0 } else { true });
             }
         }
         if text.is_empty() {
@@ -375,18 +381,19 @@ impl Face {
             let advances = run_advances(&run, n);
             for k in 0..n {
                 // Map the glyph back to its cluster (cell). On a new cluster,
-                // reset the cell origin to the current pen — unless this glyph is
-                // from a cluster we've already passed (`cluster <=
-                // run_offset_cluster`), i.e. a reordered glyph: it inherits the
-                // current cell instead of snapping the origin back. (The companion
-                // `is_first` term is deferred to Exp 344; it is always true for
-                // the runs this covers.)
+                // reset the cell origin to the current pen — but skip the reset
+                // when the glyph is from a cluster we've already passed (`is_after`,
+                // a reordered glyph) or is not its cluster's first codepoint
+                // (`!is_first`, a ligature/within-cluster-reordered glyph). In
+                // either case it inherits the current cell instead of snapping the
+                // origin back.
                 let idx = indices[k].max(0) as usize;
                 debug_assert!(idx < clusters.len());
                 let cluster = clusters.get(idx).copied().unwrap_or(0);
                 if cell_cluster != cluster {
                     let is_after = cluster <= run_offset_cluster;
-                    if !is_after {
+                    let is_first = is_first_codepoint_in_cluster(&clusters, &pads, idx, cluster);
+                    if is_first && !is_after {
                         cell_cluster = cluster;
                         cell_x = pen;
                     }
@@ -1063,6 +1070,28 @@ impl Face {
             atlas_y: region.y,
         })
     }
+}
+
+/// Whether the glyph at UTF-16 index `idx` is the first codepoint of `cluster` in
+/// the input stream: walk backward from `idx`, skip surrogate-pad units (`pads[j]`
+/// true, i.e. codepoint `0`), and report whether the nearest real predecessor has
+/// a different cluster. No real predecessor (start of run, or only padding before)
+/// ⇒ first. Faithful port of upstream's `is_first_codepoint_in_cluster`.
+fn is_first_codepoint_in_cluster(
+    clusters: &[u32],
+    pads: &[bool],
+    idx: usize,
+    cluster: u32,
+) -> bool {
+    let mut j = idx;
+    while j > 0 {
+        j -= 1;
+        if pads[j] {
+            continue;
+        }
+        return clusters[j] != cluster;
+    }
+    true
 }
 
 /// Read a `CTRun`'s `n` glyph ids — via the fast direct pointer, or a copy into
@@ -1975,8 +2004,9 @@ mod tests {
         // resets to cell 2, then 'B' (1 ≤ 2) and 'C' (0 ≤ 2) are from clusters
         // already passed, so their resets are skipped and they inherit cell 2.
         // Under the unconditional reset this would have been [2, 1, 0]. Menlo
-        // emits one glyph per ASCII scalar in order, so `is_first` is true
-        // throughout (the deferred term does not affect this case).
+        // emits one glyph per ASCII scalar in order, so `is_first` is true at each
+        // transition (it does not change this case); the `is_after` guard alone
+        // drives the skips.
         let face = Face::new("Menlo", 24.0);
         let run = [
             shape::Codepoint {
@@ -2026,5 +2056,82 @@ mod tests {
         for (i, c) in cells.iter().enumerate() {
             assert_eq!(c.x, i as u16, "cell {i} keeps its forward cluster");
         }
+    }
+
+    #[test]
+    fn is_first_codepoint_in_cluster_walk() {
+        // The extracted backward walk, over synthetic clusters/pads arrays.
+        // No predecessor → first.
+        assert!(is_first_codepoint_in_cluster(&[5], &[false], 0, 5));
+        // Nearest real predecessor in a different cluster → first.
+        assert!(is_first_codepoint_in_cluster(
+            &[3, 5],
+            &[false, false],
+            1,
+            5
+        ));
+        // Nearest real predecessor in the same cluster → not first.
+        assert!(!is_first_codepoint_in_cluster(
+            &[5, 5],
+            &[false, false],
+            1,
+            5
+        ));
+        // A surrogate-pad unit is skipped to reach the real predecessor.
+        assert!(!is_first_codepoint_in_cluster(
+            &[5, 5, 5],
+            &[false, true, false],
+            2,
+            5
+        ));
+        assert!(is_first_codepoint_in_cluster(
+            &[3, 3, 5],
+            &[false, true, false],
+            2,
+            5
+        ));
+        // Only padding precedes → first (the lone predecessor is skipped).
+        assert!(is_first_codepoint_in_cluster(&[9, 9], &[true, false], 1, 9));
+    }
+
+    #[test]
+    fn shape_run_full_condition_regression() {
+        // The full `is_first && !is_after` condition leaves the Exp 343 outcomes
+        // intact: `is_first` is true at each reset-relevant cluster transition.
+        let face = Face::new("Menlo", 24.0);
+        let mk = |cps: &[(u32, u32)]| -> Vec<shape::Codepoint> {
+            cps.iter()
+                .map(|&(codepoint, cluster)| shape::Codepoint { codepoint, cluster })
+                .collect()
+        };
+
+        // Reorder [2, 1, 0] still folds to cell 2.
+        let cells = face.shape_run(&mk(&[('A' as u32, 2), ('B' as u32, 1), ('C' as u32, 0)]));
+        assert_eq!(cells.len(), 3);
+        assert!(
+            cells.iter().all(|c| c.x == 2),
+            "reorder still inherits cell 2"
+        );
+
+        // Forward [0, 1, 2] still maps 1:1.
+        let cells = face.shape_run(&mk(&[('A' as u32, 0), ('B' as u32, 1), ('C' as u32, 2)]));
+        assert_eq!(cells.len(), 3);
+        for (i, c) in cells.iter().enumerate() {
+            assert_eq!(c.x, i as u16, "forward cell {i} unchanged");
+        }
+
+        // Combining marks [0, 0, 0, 1] still fold into cell 0, with 'a' in cell 1.
+        let cells = face.shape_run(&mk(&[
+            ('n' as u32, 0),
+            (0x0308, 0),
+            (0x0308, 0),
+            ('a' as u32, 1),
+        ]));
+        assert!(!cells.is_empty());
+        assert!(
+            cells.iter().all(|c| c.x <= 1),
+            "marks still fold into cell 0/1"
+        );
+        assert_eq!(cells.last().unwrap().x, 1, "'a' still in cell 1");
     }
 }
