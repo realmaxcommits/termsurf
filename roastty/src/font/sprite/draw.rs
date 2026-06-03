@@ -5,10 +5,11 @@
 //! the shared `font/sprite/draw/common.zig` primitives (`Thickness`,
 //! `Fraction`/`fill`, the `hline`/`vline` helpers, `Shade`/`Alignment`/`Quads`).
 //! Covered so far: the box-drawing line glyphs (`U+2500`–`U+257F` `linesChar`
-//! dispatch), the dashes, the Block Elements (`U+2580`–`U+259F`), and the
-//! Braille Patterns (`U+2800`–`U+28FF`). The `z2d`-based primitives (arcs,
-//! diagonals), the sprite `hasCodepoint` inventory, and the other sprite
-//! categories (powerline, legacy, geometric) are later experiments.
+//! dispatch), the dashes, the Block Elements (`U+2580`–`U+259F`), the Braille
+//! Patterns (`U+2800`–`U+28FF`), and the legacy-computing Sextants
+//! (`U+1FB00`–`U+1FB3B`). The `z2d`-based primitives (arcs, diagonals), the
+//! sprite `hasCodepoint` inventory, and the other sprite categories (powerline,
+//! the rest of legacy-computing, geometric) are later experiments.
 
 use crate::font::metrics::Metrics;
 use crate::font::sprite::canvas::{Canvas, Color, Rect};
@@ -1129,6 +1130,66 @@ pub(crate) fn draw_braille(cp: u32, metrics: &Metrics, canvas: &mut Canvas) -> b
     true
 }
 
+/// The six cell flags of a sextant glyph, in the upstream bit order
+/// `tl, tr, ml, mr, bl, br`. Faithful port of upstream `Sextants`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Sextants {
+    tl: bool,
+    tr: bool,
+    ml: bool,
+    mr: bool,
+    bl: bool,
+    br: bool,
+}
+
+impl Sextants {
+    /// Decode the sextant pattern for `cp`. The pattern index skips the blank
+    /// (`0`) and the two half-column patterns (`21`/`42`, which are the left/
+    /// right half blocks) via `idx + idx/0x14 + 1`. Faithful port of upstream.
+    fn from_cp(cp: u32) -> Sextants {
+        let idx = cp - 0x1FB00;
+        let sex = ((idx + idx / 0x14 + 1) & 0x3F) as u8;
+        Sextants {
+            tl: sex & 0x01 != 0,
+            tr: sex & 0x02 != 0,
+            ml: sex & 0x04 != 0,
+            mr: sex & 0x08 != 0,
+            bl: sex & 0x10 != 0,
+            br: sex & 0x20 != 0,
+        }
+    }
+}
+
+/// Draw the sextant glyph for `cp` (`U+1FB00`–`U+1FB3B`) into `canvas`,
+/// returning `true` if `cp` is a sextant. Faithful port of upstream
+/// `draw1FB00_1FB3B`: a 2×3 grid of `fill`ed cells selected by the pattern.
+pub(crate) fn draw_sextant(cp: u32, metrics: &Metrics, canvas: &mut Canvas) -> bool {
+    if !(0x1FB00..=0x1FB3B).contains(&cp) {
+        return false;
+    }
+    use Fraction::{End, Full, Half, OneThird, TwoThirds, Zero};
+    let s = Sextants::from_cp(cp);
+    if s.tl {
+        fill(metrics, canvas, Zero, Half, Zero, OneThird);
+    }
+    if s.tr {
+        fill(metrics, canvas, Half, Full, Zero, OneThird);
+    }
+    if s.ml {
+        fill(metrics, canvas, Zero, Half, OneThird, TwoThirds);
+    }
+    if s.mr {
+        fill(metrics, canvas, Half, Full, OneThird, TwoThirds);
+    }
+    if s.bl {
+        fill(metrics, canvas, Zero, Half, TwoThirds, End);
+    }
+    if s.br {
+        fill(metrics, canvas, Half, Full, TwoThirds, End);
+    }
+    true
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1949,6 +2010,94 @@ mod tests {
             let mut c = cell_canvas();
             assert!(!draw_braille(cp, &m, &mut c), "{cp:#06x} not braille");
             assert!(all_alpha(&c, &m, 0), "{cp:#06x} drew ink");
+        }
+    }
+
+    /// Sextant cell rectangle for the `9×18` fixture. Columns: left `[0,5)`,
+    /// right `[4,9)`. Rows: top `[0,6)`, middle `[6,12)`, bottom `[12,18)`.
+    /// `cell` is one of "tl","tr","ml","mr","bl","br".
+    fn sextant_cell(cell: &str) -> (i32, i32, i32, i32) {
+        let (x0, x1) = if cell.ends_with('l') { (0, 5) } else { (4, 9) };
+        let (y0, y1) = match &cell[..1] {
+            "t" => (0, 6),
+            "m" => (6, 12),
+            _ => (12, 18),
+        };
+        (x0, y0, x1, y1)
+    }
+
+    /// Assert every pixel belongs to exactly the union of the given cells.
+    /// (Cells overlap by 1px at the center column for the odd 9px width — that
+    /// is upstream-intentional; a pixel inside any listed cell must be inked.)
+    fn cells_inked(c: &Canvas, m: &Metrics, cells: &[&str]) {
+        let rects: Vec<(i32, i32, i32, i32)> = cells.iter().map(|s| sextant_cell(s)).collect();
+        for y in 0..m.cell_height as i32 {
+            for x in 0..m.cell_width as i32 {
+                let want = rects
+                    .iter()
+                    .any(|&(x0, y0, x1, y1)| x >= x0 && x < x1 && y >= y0 && y < y1);
+                assert_eq!(inked(c, x, y), want, "pixel ({x},{y})");
+            }
+        }
+    }
+
+    #[test]
+    fn sextant_first() {
+        // 0x1FB00: idx 0 -> sex 1 -> tl.
+        let m = fixture_metrics();
+        let mut c = cell_canvas();
+        assert!(draw_sextant(0x1FB00, &m, &mut c));
+        cells_inked(&c, &m, &["tl"]);
+    }
+
+    #[test]
+    fn sextant_second() {
+        // 0x1FB01: idx 1 -> sex 2 -> tr.
+        let m = fixture_metrics();
+        let mut c = cell_canvas();
+        assert!(draw_sextant(0x1FB01, &m, &mut c));
+        cells_inked(&c, &m, &["tr"]);
+    }
+
+    #[test]
+    fn sextant_tl_tr() {
+        // 0x1FB02: idx 2 -> sex 3 -> tl+tr (whole top row).
+        let m = fixture_metrics();
+        let mut c = cell_canvas();
+        assert!(draw_sextant(0x1FB02, &m, &mut c));
+        cells_inked(&c, &m, &["tl", "tr"]);
+    }
+
+    #[test]
+    fn sextant_index_jump() {
+        // idx 19 -> sex 20 -> ml+bl; idx 20 -> sex 22 -> tr+ml+bl. The jump
+        // (idx/0x14) skips sex value 21 between them.
+        let m = fixture_metrics();
+        let mut c = cell_canvas();
+        assert!(draw_sextant(0x1FB13, &m, &mut c));
+        cells_inked(&c, &m, &["ml", "bl"]);
+
+        let mut c2 = cell_canvas();
+        assert!(draw_sextant(0x1FB14, &m, &mut c2));
+        cells_inked(&c2, &m, &["tr", "ml", "bl"]);
+    }
+
+    #[test]
+    fn sextant_last() {
+        // 0x1FB3B: idx 59 -> sex 62 -> all but tl.
+        let m = fixture_metrics();
+        let mut c = cell_canvas();
+        assert!(draw_sextant(0x1FB3B, &m, &mut c));
+        cells_inked(&c, &m, &["tr", "ml", "mr", "bl", "br"]);
+    }
+
+    #[test]
+    fn draw_sextant_excludes() {
+        let m = fixture_metrics();
+        for cp in [0x1FAFFu32, 0x1FB3C, 'M' as u32] {
+            let mut c = cell_canvas();
+            assert!(!draw_sextant(cp, &m, &mut c), "{cp:#07x} not a sextant");
+            assert!(all_alpha(&c, &m, 0), "{cp:#07x} drew ink");
         }
     }
 }

@@ -137,3 +137,63 @@ Review artifacts:
 
 - Prompt: `logs/codex-review/20260603-010831-620214-prompt.md`
 - Result: `logs/codex-review/20260603-010831-620214-last-message.md`
+
+## Result
+
+**Result:** Pass
+
+`roastty/src/font/sprite/draw.rs` gained `Sextants` (+ `from_cp`, decoding the
+`idx + idx/0x14 + 1` pattern into six cell flags) and `draw_sextant` (the 2×3
+grid of `fill`ed cells). The module doc now notes sextant coverage.
+
+Tests (deterministic, the fixture; cells at columns left `[0,5)`/right `[4,9)`
+and rows top `[0,6)`/middle `[6,12)`/bottom `[12,18)`). The `cells_inked` helper
+asserts every cell pixel belongs to exactly the expected cell union:
+
+- `sextant_first` (`0x1FB00`) → `tl`; `sextant_second` (`0x1FB01`) → `tr`;
+  `sextant_tl_tr` (`0x1FB02`) → the top row.
+- `sextant_index_jump` (`0x1FB13` → `ml+bl`, `0x1FB14` → `tr+ml+bl`) proves the
+  `idx/0x14` jump skips sex value `21`.
+- `sextant_last` (`0x1FB3B`) → all cells but `tl`.
+- `draw_sextant_excludes` → `0x1FAFF`, `0x1FB3C`, `'M'` return `false`, draw
+  nothing.
+
+Gate results:
+
+- `cargo fmt -p roastty` accepted; `--check` clean.
+- `cargo test -p roastty sprite` → 65 passed (6 new).
+- `cargo test -p roastty` → 2491 passed, 0 failed (no regressions; +6).
+- `cargo build -p roastty` → no warnings.
+- No-`ghostty`-name gates clean; `git diff --check` clean.
+
+## Conclusion
+
+The legacy-computing Sextants (`U+1FB00`–`U+1FB3B`) are ported and
+pixel-verified — the skip-encoded pattern index and the six fill cells both
+confirmed. Six rect/`fill`-based sprite families are now in place. The remaining
+`symbols_for_legacy_computing` glyphs (smooth mosaics, separated blocks, the
+larger run) lean on `canvas.line` (the `z2d` path API), so the next meaningful
+step toward completing the sprite font is the **`z2d` anti-aliased-path port** —
+the prerequisite for the box-drawing arcs/diagonals, the geometric-shape curves,
+and those legacy glyphs. With several families landed, wiring the per-family
+dispatchers under one sprite `has_codepoint`/draw entry point (which the
+resolver's deferred sprite render arm needs) is also now worthwhile. Alongside
+the sprite font remain the discovery consumer, the UCD emoji-presentation
+default, codepoint overrides, the shaper, the Nerd Font attribute table, and SVG
+color detection.
+
+## Completion Review
+
+Codex reviewed the completed implementation and result and found **no required
+changes**. It confirmed `from_cp` matches the upstream index math and bit order
+exactly, `draw_sextant` returns `false` outside `0x1FB00..=0x1FB3B`, all six
+`fill` calls use the upstream fraction pairs, the `cells_inked` helper correctly
+models the `9×18` fixture rects (including the 1px center-column overlap), and
+the worked codepoints (`0x1FB00 tl`, `0x1FB01 tr`, `0x1FB02 tl+tr`,
+`0x1FB13 ml+bl`, `0x1FB14 tr+ml+bl`, `0x1FB3B all-but-tl`) are correct. It
+judged the verification clean.
+
+Review artifacts:
+
+- Prompt: `logs/codex-review/20260603-011125-545816-prompt.md`
+- Result: `logs/codex-review/20260603-011125-545816-last-message.md`
