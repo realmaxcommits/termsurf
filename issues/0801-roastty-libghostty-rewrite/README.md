@@ -1071,6 +1071,8 @@ are past the correctness-critical foundation.
   — **Pass** · Claude/Codex/Codex
 - [Experiment 312: Canvas::flip_horizontal + the outlined powerline chevrons (E0B1/E0B3)](312-powerline-chevrons.md)
   — **Pass** · Claude/Codex/Codex
+- [Experiment 313: the rounded powerline separators (E0B4–E0B7)](313-powerline-rounded.md)
+  — **Designed** · Claude/Codex/Codex
 
 ## Non-Goals
 
