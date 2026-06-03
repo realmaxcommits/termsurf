@@ -1033,6 +1033,8 @@ are past the correctness-critical foundation.
   Claude/Codex/Codex
 - [Experiment 293: z2d port — Face (stroke offsets + butt cap)](293-z2d-face.md)
   — **Pass** · Claude/Codex/Codex
+- [Experiment 294: z2d port — Polygon Contour](294-z2d-contour.md) —
+  **Designed** · Claude/Codex/Codex
 
 ## Non-Goals
 
