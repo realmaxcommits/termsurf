@@ -25,6 +25,8 @@ use crate::font::run::{RunCell, ShapedRun, Wide};
 use crate::font::shape;
 use crate::font::shared_grid::SharedGrid;
 use crate::font::Presentation;
+use crate::terminal::color::{Palette, Rgb};
+use crate::terminal::style::BoldColor;
 
 /// True only for U+2588 FULL BLOCK.
 pub(crate) fn is_covering(cp: u32) -> bool {
@@ -468,6 +470,51 @@ pub(crate) fn add_run(
     Ok(())
 }
 
+/// Assemble one viewport row's foreground text cells into `contents`. Derives the
+/// row's [`CellInfo`] slice ([`cell_infos`]) and per-column `fg_colors`
+/// ([`Style::resolve_fg`](crate::terminal::style::Style::resolve_fg) + `alpha`)
+/// from `row_cells`, then places every glyph of each [`ShapedRun`] via
+/// [`add_run`]. The per-row foreground body of upstream `rebuildCells`.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn rebuild_row(
+    contents: &mut Contents,
+    grid: &mut SharedGrid,
+    y: u16,
+    row_runs: &[ShapedRun],
+    row_cells: &[RunCell],
+    default_fg: Rgb,
+    palette: &Palette,
+    bold: Option<BoldColor>,
+    alpha: u8,
+    thicken: bool,
+    thicken_strength: u8,
+) -> Result<(), ResolverRenderError> {
+    let cols = row_cells.len();
+    let infos = cell_infos(row_cells);
+    let fg_colors: Vec<[u8; 4]> = row_cells
+        .iter()
+        .map(|cell| {
+            let rgb = cell.style.resolve_fg(default_fg, palette, bold);
+            [rgb.r, rgb.g, rgb.b, alpha]
+        })
+        .collect();
+
+    for run in row_runs {
+        add_run(
+            contents,
+            grid,
+            y,
+            run,
+            &infos,
+            &fg_colors,
+            cols,
+            thicken,
+            thicken_strength,
+        )?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -836,6 +883,88 @@ mod tests {
         assert_eq!(v1.color, [40, 50, 60, 255]);
         assert_eq!(v0.atlas, CellTextAtlas::Grayscale);
         assert_eq!(v1.atlas, CellTextAtlas::Grayscale);
+    }
+
+    #[test]
+    fn rebuild_row_derives_infos_and_colors() {
+        use crate::font::collection::Index;
+        use crate::font::run::TextRun;
+        use crate::terminal::color::{Rgb, DEFAULT_PALETTE};
+        use crate::terminal::style::{Color, Style as TermStyle};
+
+        let mut shared = menlo_grid();
+        let mut c = Contents::default();
+        c.resize(grid(4, 2));
+
+        // 'A' uses the default style; 'B' carries its own foreground color.
+        let b_style = TermStyle {
+            fg_color: Color::Rgb(Rgb::new(11, 22, 33)),
+            ..TermStyle::default()
+        };
+        let run_cell = |cp: u32, style: TermStyle| RunCell {
+            codepoint: cp,
+            graphemes: vec![],
+            style,
+            style_id: 0,
+            wide: Wide::Narrow,
+            is_empty: false,
+            is_codepoint: true,
+        };
+        let row_cells = [
+            run_cell('A' as u32, TermStyle::default()),
+            run_cell('B' as u32, b_style),
+        ];
+        let run = ShapedRun {
+            run: TextRun {
+                hash: 0,
+                offset: 0,
+                cells: 2,
+                font_index: Index::default(),
+            },
+            glyphs: vec![
+                shape::Cell {
+                    x: 0,
+                    x_offset: 0,
+                    y_offset: 0,
+                    glyph_index: glyph_for(b'A'),
+                },
+                shape::Cell {
+                    x: 1,
+                    x_offset: 0,
+                    y_offset: 0,
+                    glyph_index: glyph_for(b'B'),
+                },
+            ],
+        };
+
+        let default_fg = Rgb::new(200, 200, 200);
+        rebuild_row(
+            &mut c,
+            &mut shared,
+            1,
+            &[run],
+            &row_cells,
+            default_fg,
+            &DEFAULT_PALETTE,
+            None,
+            255,
+            false,
+            255,
+        )
+        .expect("rebuild_row");
+
+        assert_eq!(c.fg_rows[2].len(), 2);
+        let v0 = c.fg_rows[2][0];
+        let v1 = c.fg_rows[2][1];
+        assert_eq!(v0.grid_pos, [0, 1]);
+        assert_eq!(v1.grid_pos, [1, 1]);
+        assert_eq!(v0.atlas, CellTextAtlas::Grayscale);
+        assert_eq!(v1.atlas, CellTextAtlas::Grayscale);
+        // Column 0 (default style) resolves to default_fg; column 1 carries its
+        // own color — proving fg_colors is per-cell, not a flat default_fg.
+        assert_eq!(v0.color, [200, 200, 200, 255]);
+        assert_eq!(v1.color, [11, 22, 33, 255]);
+        assert_ne!(v1.color, [200, 200, 200, 255]);
     }
 
     #[test]

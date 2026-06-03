@@ -190,3 +190,64 @@ Review artifacts:
 
 - Prompt: `logs/codex-review/20260603-182514-265914-prompt.md` (design)
 - Result: `logs/codex-review/20260603-182514-265914-last-message.md` (design)
+
+## Result
+
+**Result:** Pass
+
+One viewport row's foreground text now assembles end to end.
+
+- `roastty/src/renderer/cell.rs`:
+  `rebuild_row(contents, grid, y, row_runs, row_cells, default_fg, palette, bold, alpha, thicken, thicken_strength)`
+  derives the row's `CellInfo` slice (`cell_infos`) and per-column `fg_colors`
+  (each cell's `style.resolve_fg(default_fg, palette, bold)` + `alpha`) once,
+  then calls `add_run` for each `ShapedRun` with the row-wide slices
+  (`cols = row_cells.len()`). Imported `terminal::color::{Palette, Rgb}` and
+  `terminal::style::BoldColor`.
+
+Test (in `cell.rs`): `rebuild_row_derives_infos_and_colors` builds a row with
+`'A'` (default style) and `'B'` (`Color::Rgb(11, 22, 33)`) and a matching
+`ShapedRun`, calls `rebuild_row` with `default_fg = Rgb(200, 200, 200)`, and
+asserts the two emitted cells land at `[0, 1]`/`[1, 1]` (Grayscale) with column
+0's color `[200, 200, 200, 255]` (default → `default_fg`) and column 1's
+`[11, 22, 33, 255]` — `assert_ne` against `default_fg` proving the per-column
+colors come from each cell's style.
+
+Gate results:
+
+- `cargo fmt -p roastty` accepted; `--check` clean.
+- `cargo test -p roastty` → 2821 passed, 0 failed (+1, no regressions).
+- `cargo build -p roastty` → no warnings.
+- No-`ghostty`-name gates (font + renderer) clean; `git diff --check` clean.
+
+## Conclusion
+
+The per-row foreground assembly is complete: a row's `RunCell`s + `ShapedRun`s
+become correctly-placed, correctly-colored `CellTextVertex`es in `Contents`. The
+last structural step is the **outer loop** that drives `rebuild_row` over the
+whole viewport.
+
+The remaining renderer-bridge work: the **full-viewport loop** (Experiment 372)
+— iterate `shape_viewport`'s rows (each row's `ShapedRun`s) alongside each row's
+`RunCell`s (from `Terminal::shape_run_options`'s `RunOptions.cells`), calling
+`rebuild_row` per row — then the renderer-layer color adjustments
+(reverse-video, selection, min-contrast, faint/dim alpha), the
+background/decoration/cursor cells, and the Metal upload of `Contents`.
+
+## Completion Review
+
+Codex reviewed the completed implementation and result and **approved** with
+**no findings**. It confirmed `rebuild_row` is faithful to the approved per-row
+composition (derives `cols` from `row_cells.len()`, builds `cell_infos` and
+per-cell `fg_colors` once, then feeds each `ShapedRun` through `add_run` with
+matching row-wide slices), with base foreground resolution plus uniform alpha
+the right scope (inverse, selection, faint/dim alpha, min-contrast, backgrounds,
+cursor, and upload correctly deferred). It confirmed the Required test fix is
+applied — `'B'` carries a non-default `Color::Rgb(11, 22, 33)` and the test
+asserts its emitted column color differs from `default_fg`, proving `fg_colors`
+comes from each cell's style rather than a flat default. Nothing needed to
+change before the result commit.
+
+Review artifacts:
+
+- Result review: `logs/codex-review/20260603-182735-961437-last-message.md`
