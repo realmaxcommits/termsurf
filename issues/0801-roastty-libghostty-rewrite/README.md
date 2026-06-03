@@ -1045,6 +1045,8 @@ are past the correctness-critical foundation.
   — **Pass** · Claude/Codex/Codex
 - [Experiment 299: z2d port — round joins in the stroke plotter](299-z2d-round-joins.md)
   — **Pass** · Claude/Codex/Codex
+- [Experiment 300: z2d port — the cubic-curve stroke (`runCurveTo`)](300-z2d-curve-stroke.md)
+  — **Designed** · Claude/Codex/Codex
 
 ## Non-Goals
 
