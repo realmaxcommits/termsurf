@@ -1169,6 +1169,8 @@ are past the correctness-critical foundation.
   — **Pass** · Claude/Codex/Codex
 - [Experiment 361: the shape-a-row driver](361-shape-row-driver.md) — **Pass** ·
   Claude/Codex/Codex
+- [Experiment 362: shaping the whole viewport](362-shape-viewport.md) —
+  **Designed** · Claude/Codex/Codex
 
 ## Non-Goals
 
