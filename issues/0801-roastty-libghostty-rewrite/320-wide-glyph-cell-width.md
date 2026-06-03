@@ -219,3 +219,83 @@ Review artifacts:
 
 - Prompt: `logs/codex-review/20260603-102320-874525-prompt.md`
 - Result: `logs/codex-review/20260603-102320-874525-last-message.md`
+
+## Result
+
+**Result:** Pass
+
+The wide-glyph factoring lands, completing the sprite `renderGlyph` signature.
+
+- `roastty/src/font/face/coretext.rs`: `RenderOptions` gained
+  `cell_width: Option<u8>` (the cell span; the analog of upstream's
+  `cell_width: ?u8`), set to `None` at every construction site.
+- `roastty/src/font/sprite/mod.rs`: `render_codepoint` gained a `cell_width`
+  parameter and widens the canvas —
+  `width = match cell_width { None | Some(0) | Some(1) => metrics.cell_width, Some(n) => metrics.cell_width.saturating_mul(n as u32) }`,
+  with `padding_x = width / 4`; it threads `width` into `draw_codepoint`.
+- `roastty/src/font/sprite/draw.rs`: `draw_codepoint` gained a `width` parameter
+  and threads it **only** to `draw_braille` and the powerline draws; box, block,
+  sextant, octant, separated-quadrant, and the corner triangles keep reading
+  `metrics.cell_width` — the faithful per-family split (upstream `_ = width;`).
+  `draw_braille` gained a `cell_width` parameter and uses it for the horizontal
+  geometry (the local `width`, the shared dot size
+  `w = min(width / 4, height / 8)`, `x_spacing`, `x_margin`, the right-edge
+  assertion); the vertical geometry (`height`, `y_spacing`, `y_margin`) stays on
+  `metrics.cell_height`. `has_codepoint` passes `metrics.cell_width`
+  (single-cell coverage).
+- `roastty/src/font/codepoint_resolver.rs`: `render_glyph` passes
+  `opts.cell_width` into `render_codepoint`.
+
+Tests (`mod.rs`): `render_codepoint_wide` (`0x28FF` `Some(2)` trims wider than
+`Some(1)`); `render_codepoint_wide_box_unchanged` (`0x2500` `Some(2)` has the
+same trimmed width/height as `Some(1)` — box ignores the factor);
+`render_codepoint_single_is_default` (`None`/`Some(0)`/`Some(1)` identical);
+`draw_braille_wide` (a direct two-cell render inks the right cell,
+`x ≥ cell_width`). Existing `render_codepoint`/`draw_codepoint`/`draw_braille`
+call sites were updated for the new parameters.
+
+Gate results:
+
+- `cargo fmt -p roastty` accepted; `--check` clean.
+- `cargo test -p roastty` → 2676 passed, 0 failed (+4, no regressions).
+- `cargo build -p roastty` → no warnings.
+- No-`ghostty`-name gates clean; `git diff --check` clean.
+
+## Conclusion
+
+The sprite `renderGlyph` is now a complete port — the codepoint dispatch, the
+coverage predicate, the render-to-atlas, the resolver wiring, and now the
+wide-glyph `cell_width` factoring, with the per-family
+width/`metrics.cell_width` split reproduced exactly (braille + powerline widen;
+box/block/geometric/ sextant/octant ignore the factor). A wide sprite codepoint
+renders into a wide canvas with faithful geometry.
+
+The remaining sprite-adjacent work is the **sprite-kind special glyphs** (the
+underlines/strikethrough/overline/cursors `Sprite` enum range
+`cp >= Sprite.start`, dispatched through a parallel render entry point keyed by
+the kind), and a **range-only `has_codepoint` fast path**. After the sprite
+font: the discovery consumer, the UCD emoji-presentation default, codepoint
+overrides, the shaper, the Nerd Font attribute table, and SVG color detection.
+
+## Completion Review
+
+Codex reviewed the completed implementation and result and **approved** with
+**no Required findings**. It confirmed: `render_codepoint` computes the widened
+canvas width from `cell_width`, treats `None`/`0`/`1` as single-cell, uses the
+widened `padding_x`, and passes the widened width into `draw_codepoint`;
+`draw_codepoint` threads the widened width only to braille and the
+width-consuming powerline families while box/block/geometric/sextant/octant/
+separated-quadrant stay metrics-based; `draw_braille` correctly substitutes the
+passed width for the horizontal geometry including the shared dot size
+`w = min(width / 4, height / 8)` (keeping `w` shared with the vertical dot
+placement is faithful to upstream); `has_codepoint` remains single-cell
+coverage; the resolver passes `opts.cell_width` through; and `RenderOptions`
+gained the internal `cell_width` field set to `None` at every site. One
+**non-blocking** note: `render_codepoint_single_is_default` compares only
+dimensions, not bearings or pixels — accepted, since the other tests cover the
+behavioral split and the implementation is correct. (The reviewing session's
+prior history was full, so the review ran in a fresh Codex session.)
+
+Review artifacts:
+
+- Result review: `logs/codex-review/20260603-102955-950209-last-message.md`

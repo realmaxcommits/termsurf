@@ -201,10 +201,13 @@ impl CodepointResolver {
                 .sprite_metrics
                 .as_ref()
                 .ok_or(ResolverRenderError::SpriteUnavailable)?;
-            return Ok(
-                crate::font::sprite::render_codepoint(glyph_index, m, atlas)?
-                    .unwrap_or(BLANK_GLYPH),
-            );
+            return Ok(crate::font::sprite::render_codepoint(
+                glyph_index,
+                m,
+                opts.cell_width,
+                atlas,
+            )?
+            .unwrap_or(BLANK_GLYPH));
         }
         let face = self.collection.get_face(index)?;
         // CoreText glyph ids fit in `u16`.
@@ -289,6 +292,7 @@ mod tests {
     fn none_opts(face: &Face) -> RenderOptions {
         RenderOptions {
             grid_metrics: crate::font::metrics::Metrics::calc(face.get_metrics()),
+            cell_width: None,
             constraint: crate::font::face::constraint::Constraint::default(),
             constraint_width: 1,
             thicken: false,

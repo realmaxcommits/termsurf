@@ -99,12 +99,16 @@ impl From<AtlasError> for RenderGlyphError {
 
 /// Options controlling how a glyph is rendered into the atlas. Faithful subset
 /// of upstream `RenderOptions`: the grid metrics defining the cell layout, the
-/// sizing/alignment [`Constraint`], and the number of cells the glyph may span.
-/// (Upstream's `cell_width`, `thicken`, and `thicken_strength` are deferred with
-/// the thicken/color branches.)
+/// sizing/alignment [`Constraint`], the number of cells the glyph spans, and the
+/// constraint cell span. (Upstream's `thicken` and `thicken_strength` are
+/// deferred with the thicken/color branches but exist here as fields.)
 pub(crate) struct RenderOptions {
     /// The metrics defining the grid layout (usually the primary face's).
     pub grid_metrics: Metrics,
+    /// The number of cells the glyph spans horizontally, used by the sprite font
+    /// to widen its canvas (`None`/`Some(0)`/`Some(1)` ⇒ a single cell). Faithful
+    /// analog of upstream's `cell_width: ?u8`.
+    pub cell_width: Option<u8>,
     /// The sizing and alignment constraint for the glyph.
     pub constraint: Constraint,
     /// The number of cells horizontally the glyph may take up when constrained.
@@ -993,6 +997,7 @@ mod tests {
     fn none_opts(face: &Face) -> RenderOptions {
         RenderOptions {
             grid_metrics: Metrics::calc(face.get_metrics()),
+            cell_width: None,
             constraint: Constraint::default(),
             constraint_width: 1,
             thicken: false,
@@ -1048,6 +1053,7 @@ mod tests {
         // resulting Glyph is deterministic regardless of the raw bbox.
         let opts = RenderOptions {
             grid_metrics: metrics,
+            cell_width: None,
             constraint: Constraint {
                 size: Size::Stretch,
                 align_horizontal: Align::Start,
@@ -1254,6 +1260,7 @@ mod tests {
         let mut atlas = Atlas::new(1024, Format::Bgra);
         let opts = RenderOptions {
             grid_metrics: Metrics::calc(face.get_metrics()),
+            cell_width: None,
             constraint: Constraint::default(),
             constraint_width: 1,
             thicken: false,
@@ -1306,6 +1313,7 @@ mod tests {
         let mut gray = Atlas::new(512, Format::Grayscale);
         let emoji_opts = RenderOptions {
             grid_metrics: Metrics::calc(emoji.get_metrics()),
+            cell_width: None,
             constraint: Constraint::default(),
             constraint_width: 1,
             thicken: false,

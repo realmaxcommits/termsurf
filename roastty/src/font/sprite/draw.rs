@@ -1205,25 +1205,28 @@ pub(crate) fn draw_powerline_flame(
 /// codepoint to exactly one family. The faithful equivalent of upstream's sprite
 /// `Face` codepoint switch. (The sprite-kind special glyphs — underlines,
 /// cursors — are keyed separately, not by codepoint.)
-pub(crate) fn draw_codepoint(cp: u32, metrics: &Metrics, canvas: &mut Canvas) -> bool {
-    let w = metrics.cell_width;
+pub(crate) fn draw_codepoint(cp: u32, width: u32, metrics: &Metrics, canvas: &mut Canvas) -> bool {
+    // `width` is the (possibly widened) canvas content width. Upstream passes it
+    // to every family, but most ignore it and draw against `metrics.cell_width`;
+    // only braille and powerline consume it (the wide-glyph factoring). The
+    // height is always a single cell.
     let h = metrics.cell_height;
     draw_box_lines(cp, metrics, canvas)
         || draw_box_dashes(cp, metrics, canvas)
         || draw_box_diagonal(cp, metrics, canvas)
         || draw_box_arc(cp, metrics, canvas)
-        || draw_braille(cp, metrics, canvas)
+        || draw_braille(cp, width, metrics, canvas)
         || draw_sextant(cp, metrics, canvas)
         || draw_octant(cp, metrics, canvas)
         || draw_separated_quadrant(cp, metrics, canvas)
         || draw_block(cp, metrics, canvas)
         || draw_corner_triangle(cp, metrics, canvas)
         || draw_corner_triangle_outline(cp, metrics, canvas)
-        || draw_powerline_triangle(cp, w, h, canvas)
-        || draw_powerline_chevron(cp, w, h, metrics, canvas)
-        || draw_powerline_rounded(cp, w, h, metrics, canvas)
+        || draw_powerline_triangle(cp, width, h, canvas)
+        || draw_powerline_chevron(cp, width, h, metrics, canvas)
+        || draw_powerline_rounded(cp, width, h, metrics, canvas)
         || draw_powerline_diagonal(cp, metrics, canvas)
-        || draw_powerline_flame(cp, w, h, metrics, canvas)
+        || draw_powerline_flame(cp, width, h, metrics, canvas)
 }
 
 /// Whether `cp` is a drawable codepoint-keyed sprite glyph (ignoring
@@ -1233,8 +1236,9 @@ pub(crate) fn draw_codepoint(cp: u32, metrics: &Metrics, canvas: &mut Canvas) ->
 /// from what actually renders. (A range-only fast path is a future optimization
 /// if the coverage check proves hot.)
 pub(crate) fn has_codepoint(cp: u32, metrics: &Metrics) -> bool {
+    // Coverage is single-cell: the scratch render uses the unwidened cell width.
     let mut scratch = Canvas::new(metrics.cell_width, metrics.cell_height, 0, 0);
-    draw_codepoint(cp, metrics, &mut scratch)
+    draw_codepoint(cp, metrics.cell_width, metrics, &mut scratch)
 }
 
 /// The block cursor: a full-cell rect. Faithful port of upstream `special.zig`'s
@@ -1729,16 +1733,25 @@ impl BraillePattern {
 /// returning `true` if `cp` is a braille codepoint. Faithful port of upstream
 /// `draw2800_28FF`: it sizes the 8-dot grid to the cell with a fixed refinement
 /// pass, then draws a `w × w` box at each set dot.
-pub(crate) fn draw_braille(cp: u32, metrics: &Metrics, canvas: &mut Canvas) -> bool {
+pub(crate) fn draw_braille(
+    cp: u32,
+    cell_width: u32,
+    metrics: &Metrics,
+    canvas: &mut Canvas,
+) -> bool {
     if !(0x2800..=0x28FF).contains(&cp) {
         return false;
     }
 
-    let width = metrics.cell_width as i32;
+    // The horizontal geometry follows the passed (possibly widened) `cell_width`;
+    // the vertical geometry stays on `metrics.cell_height`. The dot size `w` is
+    // derived from the width and shared with the vertical placement (faithful to
+    // upstream, where `w = min(width / 4, height / 8)`).
+    let width = cell_width as i32;
     let height = metrics.cell_height as i32;
 
-    let mut w: i32 = (metrics.cell_width / 4).min(metrics.cell_height / 8) as i32;
-    let mut x_spacing: i32 = (metrics.cell_width / 4) as i32;
+    let mut w: i32 = (cell_width / 4).min(metrics.cell_height / 8) as i32;
+    let mut x_spacing: i32 = (cell_width / 4) as i32;
     let mut y_spacing: i32 = (metrics.cell_height / 8) as i32;
     let mut x_margin: i32 = x_spacing.div_euclid(2);
     let mut y_margin: i32 = y_spacing.div_euclid(2);
@@ -2805,7 +2818,7 @@ mod tests {
     fn braille_layout_blank() {
         let m = fixture_metrics();
         let mut c = cell_canvas();
-        assert!(draw_braille(0x2800, &m, &mut c));
+        assert!(draw_braille(0x2800, m.cell_width, &m, &mut c));
         assert!(all_alpha(&c, &m, 0), "blank braille draws nothing");
     }
 
@@ -2814,7 +2827,7 @@ mod tests {
         // 0x2801: tl only -> x[1,3) y[2,4).
         let m = fixture_metrics();
         let mut c = cell_canvas();
-        assert!(draw_braille(0x2801, &m, &mut c));
+        assert!(draw_braille(0x2801, m.cell_width, &m, &mut c));
         only_dots_inked(&c, &m, &[(0, 0)]);
     }
 
@@ -2823,7 +2836,7 @@ mod tests {
         // 0x2880: br only -> x[6,8) y[14,16).
         let m = fixture_metrics();
         let mut c = cell_canvas();
-        assert!(draw_braille(0x2880, &m, &mut c));
+        assert!(draw_braille(0x2880, m.cell_width, &m, &mut c));
         only_dots_inked(&c, &m, &[(1, 3)]);
     }
 
@@ -2832,7 +2845,7 @@ mod tests {
         // 0x284D = 0x4D = bits tl, ll, tr, bl -> (0,0),(0,2),(1,0),(0,3).
         let m = fixture_metrics();
         let mut c = cell_canvas();
-        assert!(draw_braille(0x284D, &m, &mut c));
+        assert!(draw_braille(0x284D, m.cell_width, &m, &mut c));
         only_dots_inked(&c, &m, &[(0, 0), (0, 2), (1, 0), (0, 3)]);
     }
 
@@ -2841,7 +2854,7 @@ mod tests {
         // 0x28FF: all eight dots.
         let m = fixture_metrics();
         let mut c = cell_canvas();
-        assert!(draw_braille(0x28FF, &m, &mut c));
+        assert!(draw_braille(0x28FF, m.cell_width, &m, &mut c));
         only_dots_inked(
             &c,
             &m,
@@ -2863,7 +2876,10 @@ mod tests {
         let m = fixture_metrics();
         for cp in [0x27FFu32, 0x2900, 'M' as u32] {
             let mut c = cell_canvas();
-            assert!(!draw_braille(cp, &m, &mut c), "{cp:#06x} not braille");
+            assert!(
+                !draw_braille(cp, m.cell_width, &m, &mut c),
+                "{cp:#06x} not braille"
+            );
             assert!(all_alpha(&c, &m, 0), "{cp:#06x} drew ink");
         }
     }
@@ -3614,7 +3630,10 @@ mod tests {
     /// call — each on its own fresh canvas.
     fn assert_dispatch(cp: u32, m: &Metrics, direct: impl Fn(&mut Canvas)) {
         let mut a = cell_canvas();
-        assert!(draw_codepoint(cp, m, &mut a), "{cp:#07x} not dispatched");
+        assert!(
+            draw_codepoint(cp, m.cell_width, m, &mut a),
+            "{cp:#07x} not dispatched"
+        );
         let mut b = cell_canvas();
         direct(&mut b);
         for y in 0..18 {
@@ -3642,7 +3661,7 @@ mod tests {
             draw_box_arc(0x2570, &m, c);
         });
         assert_dispatch(0x2802, &m, |c| {
-            draw_braille(0x2802, &m, c);
+            draw_braille(0x2802, m.cell_width, &m, c);
         });
         assert_dispatch(0x1fb00, &m, |c| {
             draw_sextant(0x1fb00, &m, c);
@@ -3684,7 +3703,10 @@ mod tests {
         let m = fixture_metrics();
         for cp in ['M' as u32, 0x0041, 0x20] {
             let mut c = cell_canvas();
-            assert!(!draw_codepoint(cp, &m, &mut c), "{cp:#06x} is not a sprite");
+            assert!(
+                !draw_codepoint(cp, m.cell_width, &m, &mut c),
+                "{cp:#06x} is not a sprite"
+            );
             assert!(all_alpha(&c, &m, 0), "{cp:#06x} drew ink");
         }
     }
@@ -3724,7 +3746,7 @@ mod tests {
         ];
         for &cp in probes {
             let mut c = cell_canvas();
-            let drew = draw_codepoint(cp, &m, &mut c);
+            let drew = draw_codepoint(cp, m.cell_width, &m, &mut c);
             assert_eq!(has_codepoint(cp, &m), drew, "{cp:#07x} predicate vs draw");
         }
     }
