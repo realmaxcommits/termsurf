@@ -1077,6 +1077,8 @@ are past the correctness-critical foundation.
   — **Pass** · Claude/Codex/Codex
 - [Experiment 315: the powerline flame separators (E0D2/E0D4)](315-powerline-flames.md)
   — **Pass** · Claude/Codex/Codex
+- [Experiment 316: the unifying codepoint sprite dispatch (draw_codepoint)](316-sprite-dispatch.md)
+  — **Designed** · Claude/Codex/Codex
 
 ## Non-Goals
 
