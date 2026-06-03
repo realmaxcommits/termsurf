@@ -1126,7 +1126,7 @@ are past the correctness-critical foundation.
 - [Experiment 339: the shaper's glyph offsets](339-shaper-glyph-offsets.md) —
   **Pass** · Claude/Codex/Codex
 - [Experiment 340: the shaper's non-LTR run sort](340-shaper-nonltr-sort.md) —
-  **Designed** · Claude/Codex/Codex
+  **Pass** · Claude/Codex/Codex
 
 ## Non-Goals
 

@@ -18,7 +18,7 @@ use objc2_core_graphics::{
     CGImageAlphaInfo, CGImageByteOrderInfo, CGTextDrawingMode,
 };
 use objc2_core_text::{
-    kCTFontAttributeName, CTFont, CTFontOrientation, CTFontTableOptions, CTLine, CTRun,
+    kCTFontAttributeName, CTFont, CTFontOrientation, CTFontTableOptions, CTLine, CTRun, CTRunStatus,
 };
 
 use super::constraint::{Constraint, GlyphSize, Size};
@@ -313,8 +313,17 @@ impl Face {
         // The pen's x: the accumulated advance width across the whole line (all
         // runs), against which each glyph's position gives its `x_offset`.
         let mut pen: f64 = 0.0;
+        // CoreText, despite an enforced LTR embedding level, may emit runs that
+        // are non-monotonic or right-to-left, leaving `cells` out of grid order.
+        // If any run carries either status, we sort the buffer by `x` at the end.
+        let mut non_ltr = false;
         for i in 0..runs.len() {
             let Some(run) = runs.get(i) else { continue };
+            // SAFETY: `run` is live.
+            let status = unsafe { run.status() };
+            if status.intersects(CTRunStatus::RightToLeft | CTRunStatus::NonMonotonic) {
+                non_ltr = true;
+            }
             // SAFETY: `run` is live.
             let n = unsafe { run.glyph_count() }.max(0) as usize;
             if n == 0 {
@@ -334,6 +343,11 @@ impl Face {
                 // The advance applies to the next glyph's pen position.
                 pen += advances[k].width;
             }
+        }
+        // A non-LTR run left the buffer out of grid order; restore it by `x`.
+        // (Exceptionally rare — only complex-shaping scripts trigger this.)
+        if non_ltr {
+            cells.sort_by(|a, b| a.x.cmp(&b.x));
         }
         cells
     }
@@ -1773,6 +1787,32 @@ mod tests {
         assert!(
             cells.windows(2).all(|w| w[0].x <= w[1].x),
             "the cell x positions are non-decreasing"
+        );
+    }
+
+    #[test]
+    fn shape_ltr_stays_sorted() {
+        // Pure LTR text never trips `non_ltr`; the 1:1 monospace cells keep their
+        // string-index order (x = 0, 1, 2) and the buffer stays grid-ordered.
+        let face = Face::new("Menlo", 24.0);
+        let cells = face.shape_codepoints(&['A' as u32, 'B' as u32, 'C' as u32]);
+        assert_eq!(cells.len(), 3);
+        for (i, c) in cells.iter().enumerate() {
+            assert_eq!(c.x, i as u16, "cell {i} keeps its string-index x");
+        }
+    }
+
+    #[test]
+    fn shape_rtl_grid_ordered() {
+        // Hebrew "שלום". On a host whose CoreText shapes this RTL, the raw run
+        // order is reversed; the non-LTR sort restores ascending `x`. The
+        // post-condition (cells sorted by `x`) holds regardless of the fallback
+        // font the host picks, so this is robust.
+        let face = Face::new("Menlo", 24.0);
+        let cells = face.shape_codepoints(&[0x05E9, 0x05DC, 0x05D5, 0x05DD]);
+        assert!(
+            cells.windows(2).all(|w| w[0].x <= w[1].x),
+            "the cell x positions are non-decreasing after the non-LTR sort"
         );
     }
 }

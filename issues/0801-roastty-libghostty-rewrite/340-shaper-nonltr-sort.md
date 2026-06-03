@@ -180,3 +180,69 @@ Review artifacts:
 
 - Prompt: `logs/codex-review/20260603-131031-976423-prompt.md` (design)
 - Result: `logs/codex-review/20260603-131031-976423-last-message.md` (design)
+
+## Result
+
+**Result:** Pass
+
+The shaper now restores grid order when CoreText emits non-LTR runs.
+
+- `roastty/src/font/face/coretext.rs`: `shape_codepoints` imports `CTRunStatus`,
+  declares `let mut non_ltr = false;` before the `CTRun` loop, and per run reads
+  `let status = unsafe { run.status() };` (before the empty-run skip, matching
+  upstream's loop shape) and sets `non_ltr = true` when
+  `status.intersects(CTRunStatus::RightToLeft | CTRunStatus::NonMonotonic)`
+  (any-bit, matching upstream's `non_monotonic or right_to_left`). After the run
+  loop it sorts `cells.sort_by(|a, b| a.x.cmp(&b.x))` when `non_ltr` — faithful
+  to upstream's final unstable `std.mem.sort` by `Cell.x` (stable vs unstable is
+  non-divergent for the ascending-by-`x` contract).
+
+Tests: `shape_ltr_stays_sorted` (Menlo `"ABC"` → `x = 0, 1, 2`, `non_ltr` stays
+false, no reorder), `shape_rtl_grid_ordered` (Hebrew `"שלום"`
+`0x05E9, 0x05DC, 0x05D5, 0x05DD` → `x` non-decreasing).
+
+**Branch genuinely exercised (full Pass, not partial):** a temporary probe
+(since removed) confirmed the Hebrew input sets `non_ltr = true` on this host
+and the 4 cells emerge `[0, 1, 2, 3]` **after** the sort — CoreText emitted them
+reversed (RTL), and the non-LTR sort restored ascending `x`.
+
+Gate results:
+
+- `cargo fmt -p roastty` accepted; `--check` clean.
+- `cargo test -p roastty` → 2746 passed, 0 failed (+2, no regressions).
+- `cargo build -p roastty` → no warnings.
+- No-`ghostty`-name gates clean; `git diff --check` clean.
+
+## Conclusion
+
+The non-LTR ordering guard of `Shaper.shape` is ported: roastty reads each
+`CTRun`'s status and, when any run is right-to-left or non-monotonic, sorts the
+cell buffer by `x` so the output is grid-ordered. The Hebrew test proves the
+path runs end to end on a real RTL script.
+
+The remaining shaper work is the terminal-coupled orchestration: the
+**cluster→cell mapping** with the ligature heuristic (which sets `Cell.x` to the
+cluster and resets `cell_offset` per cluster start); the **special-font** fast
+path (codepoint == glyph, skipping shaping); and the `Shaper` struct with its
+run state, caching, and the **`RunIterator`** over terminal cells (which threads
+in the terminal grid/render-state types). The deferred **variation-axis**
+`score()` refinement and **variations** application also remain.
+
+## Completion Review
+
+Codex reviewed the completed implementation and result and **approved** with
+**no Required findings**. It confirmed: the design-gate fix is correct —
+`status.intersects(RightToLeft | NonMonotonic)` has the required any-bit
+semantics, matching upstream's `non_monotonic or right_to_left`; `non_ltr` is
+tracked across the whole line (not per run); `run.status()` is a pure CoreText
+read on a live `CTRun` with no lifetime concern; reading status before the
+`n == 0` skip matches upstream's run-loop shape and is safe; sorting once after
+all runs by `Cell.x` matches upstream's final `std.mem.sort`, with stable
+(`sort_by`) vs unstable being a non-divergence for the ascending-by-`x`
+contract; and the deferred scope (cluster→cell, special-font,
+`Shaper`/`RunIterator`, variations) is unchanged. It noted the Hebrew probe
+evidence upgrades the runtime result from partial to full pass on this host.
+
+Review artifacts:
+
+- Result review: `logs/codex-review/20260603-131422-562134-last-message.md`
