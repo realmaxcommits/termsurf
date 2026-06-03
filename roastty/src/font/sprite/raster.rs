@@ -1087,6 +1087,109 @@ impl Slope {
     }
 }
 
+/// A stroke edge of a line segment `p0 → p1`: the four offset corners
+/// (`cw`/`ccw` at each end) a half-width perpendicular to the segment. Faithful
+/// port of z2d's `Face` (Cairo-derived), **specialized to the sprite `Canvas`'s
+/// translation-only CTM** (whose linear part is identity, so the perpendicular
+/// offset is not warped).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct Face {
+    pub p0: Point,
+    pub p1: Point,
+    pub width: f64,
+    pub dev_slope: Slope,
+    pub half_width: f64,
+    pub p0_cw: Point,
+    pub p0_ccw: Point,
+    pub p1_cw: Point,
+    pub p1_ccw: Point,
+}
+
+impl Face {
+    /// A face from `p0 → p1` with the given line `thickness`. Faithful port of
+    /// `Face.init`.
+    pub(crate) fn init(p0: Point, p1: Point, thickness: f64) -> Face {
+        let mut dev_slope = Slope::init(p0, p1);
+        dev_slope.normalize();
+        Face::init_internal(p0, p1, dev_slope, thickness)
+    }
+
+    /// A face at a single `point` with a precomputed normalized `dev_slope`.
+    /// Faithful port of `Face.initSingle`.
+    pub(crate) fn init_single(point: Point, dev_slope: Slope, thickness: f64) -> Face {
+        Face::init_internal(point, point, dev_slope, thickness)
+    }
+
+    fn init_internal(p0: Point, p1: Point, dev_slope: Slope, thickness: f64) -> Face {
+        let half_width = thickness / 2.0;
+        // Linear-identity CTM (the sprite Canvas is translation-only): the
+        // perpendicular offset is unwarped.
+        let offset_cw_x = -dev_slope.dy * half_width;
+        let offset_cw_y = dev_slope.dx * half_width;
+        let offset_ccw_x = -offset_cw_x;
+        let offset_ccw_y = -offset_cw_y;
+
+        Face {
+            p0,
+            p1,
+            width: thickness,
+            dev_slope,
+            half_width,
+            p0_cw: Point::new(p0.x + offset_cw_x, p0.y + offset_cw_y),
+            p0_ccw: Point::new(p0.x + offset_ccw_x, p0.y + offset_ccw_y),
+            p1_cw: Point::new(p1.x + offset_cw_x, p1.y + offset_cw_y),
+            p1_ccw: Point::new(p1.x + offset_ccw_x, p1.y + offset_ccw_y),
+        }
+    }
+
+    /// The miter-join intersection of two faces' inner edges. Faithful port of
+    /// `Face.intersect`.
+    pub(crate) fn intersect(in_face: &Face, out_face: &Face, clockwise: bool) -> Point {
+        assert!(Slope::compare(in_face.dev_slope, out_face.dev_slope) != 0);
+
+        let in_point = if clockwise {
+            in_face.p1_ccw
+        } else {
+            in_face.p1_cw
+        };
+        let out_point = if clockwise {
+            out_face.p0_ccw
+        } else {
+            out_face.p0_cw
+        };
+
+        let mut in_slope = in_face.dev_slope;
+        in_slope.normalize();
+        let mut out_slope = out_face.dev_slope;
+        out_slope.normalize();
+
+        let result_y = ((out_point.x - in_point.x) * in_slope.dy * out_slope.dy
+            - out_point.y * out_slope.dx * in_slope.dy
+            + in_point.y * in_slope.dx * out_slope.dy)
+            / (in_slope.dx * out_slope.dy - out_slope.dx * in_slope.dy);
+
+        let result_x = if in_slope.dy.abs() >= out_slope.dy.abs() {
+            (result_y - in_point.y) * in_slope.dx / in_slope.dy + in_point.x
+        } else {
+            (result_y - out_point.y) * out_slope.dx / out_slope.dy + out_point.x
+        };
+
+        Point::new(result_x, result_y)
+    }
+
+    /// Emit a butt cap at `p1` (the two far corners). Faithful port of
+    /// `Face.capButt`.
+    pub(crate) fn cap_butt(&self, clockwise: bool, out: &mut Vec<Point>) {
+        if clockwise {
+            out.push(self.p1_ccw);
+            out.push(self.p1_cw);
+        } else {
+            out.push(self.p1_cw);
+            out.push(self.p1_ccw);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1896,5 +1999,47 @@ mod tests {
         let out_s = Slope { dx: 0.0, dy: 1.0 };
         assert!(Slope::compare_for_miter_limit(in_s, out_s, 2.0));
         assert!(!Slope::compare_for_miter_limit(in_s, out_s, 1.0));
+    }
+
+    // Face.
+
+    #[test]
+    fn face_horizontal() {
+        let f = Face::init(pt(0.0, 0.0), pt(10.0, 0.0), 2.0);
+        assert_eq!(f.dev_slope, Slope { dx: 1.0, dy: 0.0 });
+        assert_eq!(f.half_width, 1.0);
+        assert_eq!(f.p0_cw, pt(0.0, 1.0));
+        assert_eq!(f.p0_ccw, pt(0.0, -1.0));
+        assert_eq!(f.p1_cw, pt(10.0, 1.0));
+        assert_eq!(f.p1_ccw, pt(10.0, -1.0));
+    }
+
+    #[test]
+    fn face_vertical() {
+        let f = Face::init(pt(0.0, 0.0), pt(0.0, 10.0), 2.0);
+        assert_eq!(f.dev_slope, Slope { dx: 0.0, dy: 1.0 });
+        assert_eq!(f.p0_cw, pt(-1.0, 0.0));
+        assert_eq!(f.p0_ccw, pt(1.0, 0.0));
+        assert_eq!(f.p1_cw, pt(-1.0, 10.0));
+        assert_eq!(f.p1_ccw, pt(1.0, 10.0));
+    }
+
+    #[test]
+    fn cap_butt_emits() {
+        let f = Face::init(pt(0.0, 0.0), pt(10.0, 0.0), 2.0);
+        let mut out = Vec::new();
+        f.cap_butt(false, &mut out);
+        assert_eq!(out, vec![pt(10.0, 1.0), pt(10.0, -1.0)]);
+        let mut out_cw = Vec::new();
+        f.cap_butt(true, &mut out_cw);
+        assert_eq!(out_cw, vec![pt(10.0, -1.0), pt(10.0, 1.0)]);
+    }
+
+    #[test]
+    fn intersect_corner() {
+        let in_face = Face::init(pt(0.0, 0.0), pt(10.0, 0.0), 2.0);
+        let out_face = Face::init(pt(10.0, 0.0), pt(10.0, 10.0), 2.0);
+        let p = Face::intersect(&in_face, &out_face, false);
+        assert_eq!(p, pt(9.0, 1.0));
     }
 }

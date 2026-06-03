@@ -137,3 +137,56 @@ Review artifacts:
 
 - Prompt: `logs/codex-review/20260603-064657-363837-prompt.md`
 - Result: `logs/codex-review/20260603-064657-363837-last-message.md`
+
+## Result
+
+**Result:** Pass
+
+`roastty/src/font/sprite/raster.rs` gained `Face` (`init`/`init_single`/
+`intersect`/`cap_butt`) — the perpendicular-offset stroke corners, the
+miter-join intersection, and the butt cap, specialized to the sprite Canvas's
+translation- only CTM.
+
+Tests (deterministic):
+
+- `face_horizontal` — `(0,0)→(10,0)` thickness 2 → `dev_slope {1,0}`,
+  `half_width 1`, corners `(0,±1)`/`(10,±1)`.
+- `face_vertical` — `(0,0)→(0,10)` → corners `(∓1,0)`/`(∓1,10)`.
+- `cap_butt_emits` — `cap_butt(false)` → `[(10,1),(10,-1)]`, `cap_butt(true)` →
+  the reverse.
+- `intersect_corner` — the right-angle miter of `(0,0)→(10,0)` and
+  `(10,0)→(10,10)` at `clockwise=false` → `(9,1)`.
+
+Gate results:
+
+- `cargo fmt -p roastty` accepted; `--check` clean.
+- `cargo test -p roastty raster` → 63 passed (4 new).
+- `cargo test -p roastty` → 2564 passed, 0 failed (no regressions; +4).
+- `cargo build -p roastty` → no warnings.
+- No-`ghostty`-name gates clean; `git diff --check` clean.
+
+## Conclusion
+
+`Face` — the stroke segment's geometry — is in place. The next slice is the
+**`stroke_plotter`** itself (its butt-cap, miter-join path: walk the path nodes,
+build a `Face` per segment, emit the outline contour from the faces' corners +
+butt caps + miter intersections into a `Polygon`). That, plus a `Canvas::line`/
+`stroke` that applies the padding translation and calls `fill_polygon`, finally
+renders the box-drawing **diagonals** (`0x2571`–`0x2573`). The round caps/joins
+(needing `Pen`) and the curve/arc strokes come after. Alongside the sprite font
+remain the discovery consumer, the UCD emoji-presentation default, codepoint
+overrides, the shaper, the Nerd Font attribute table, and SVG color detection.
+
+## Completion Review
+
+Codex reviewed the completed implementation and result and found **no required
+changes**. It confirmed `init`/`init_single`/`init_internal`/`intersect`/
+`cap_butt` match `Face.zig` once the translation-only CTM distance transforms
+reduce to no-ops, and that the four tests cover the expected horizontal/vertical
+corners, the butt-cap ordering, and the `(9,1)` miter intersection. It judged
+the gates clean.
+
+Review artifacts:
+
+- Prompt: `logs/codex-review/20260603-064948-021891-prompt.md`
+- Result: `logs/codex-review/20260603-064948-021891-last-message.md`
