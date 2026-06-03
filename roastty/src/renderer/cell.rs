@@ -586,12 +586,54 @@ pub(crate) fn rebuild_bg_row(
     }
 }
 
+/// Render a decoration `sprite` through `grid` and add it to `contents` as a
+/// `key` cell at `grid_pos` with `color`/`alpha`. The shared body of the
+/// decoration writers (underline/strikethrough/overline): a sprite drawn at
+/// `cell_width = 1` into the grayscale atlas, with the sprite glyph's own bearings
+/// (a decoration has no shaper cell, so no shaper offset).
+fn add_sprite_decoration(
+    contents: &mut Contents,
+    grid: &mut SharedGrid,
+    grid_pos: [u16; 2],
+    sprite: Sprite,
+    key: Key,
+    color: [u8; 3],
+    alpha: u8,
+) -> Result<(), ResolverRenderError> {
+    let opts = RenderOptions {
+        grid_metrics: grid.metrics,
+        cell_width: Some(1),
+        constraint: Constraint::default(),
+        constraint_width: 1,
+        thicken: false,
+        thicken_strength: 255,
+    };
+    let render = grid.render_glyph(Index::special(Special::Sprite), sprite as u32, &opts)?;
+
+    contents.add(
+        key,
+        CellTextVertex {
+            glyph_pos: [render.glyph.atlas_x, render.glyph.atlas_y],
+            glyph_size: [render.glyph.width, render.glyph.height],
+            bearings: [
+                i16::try_from(render.glyph.offset_x).expect("decoration x bearing fits i16"),
+                i16::try_from(render.glyph.offset_y).expect("decoration y bearing fits i16"),
+            ],
+            grid_pos,
+            color: [color[0], color[1], color[2], alpha],
+            atlas: CellTextAtlas::Grayscale,
+            flags: CellTextFlags::new(false, false),
+            _padding: [0, 0],
+        },
+    );
+    Ok(())
+}
+
 /// Render a cell's underline as a sprite through `grid` and add it to `contents`
 /// as a [`Key::Underline`] decoration cell at `grid_pos` with `color`/`alpha`.
 /// `Underline::None` adds nothing. Faithful port of upstream `addUnderline`: the
 /// sprite (one of five variants) is drawn at `cell_width = 1` into the grayscale
-/// atlas, and the bearings are the sprite glyph's own offsets (a decoration has
-/// no shaper offset).
+/// atlas.
 pub(crate) fn add_underline(
     contents: &mut Contents,
     grid: &mut SharedGrid,
@@ -608,35 +650,55 @@ pub(crate) fn add_underline(
         Underline::Dashed => Sprite::UnderlineDashed,
         Underline::Curly => Sprite::UnderlineCurly,
     };
-
-    let opts = RenderOptions {
-        grid_metrics: grid.metrics,
-        cell_width: Some(1),
-        constraint: Constraint::default(),
-        constraint_width: 1,
-        thicken: false,
-        thicken_strength: 255,
-    };
-    let render = grid.render_glyph(Index::special(Special::Sprite), sprite as u32, &opts)?;
-
-    contents.add(
+    add_sprite_decoration(
+        contents,
+        grid,
+        grid_pos,
+        sprite,
         Key::Underline,
-        CellTextVertex {
-            glyph_pos: [render.glyph.atlas_x, render.glyph.atlas_y],
-            glyph_size: [render.glyph.width, render.glyph.height],
-            // A decoration has no shaper cell, so only the glyph's own bearings.
-            bearings: [
-                i16::try_from(render.glyph.offset_x).expect("underline x bearing fits i16"),
-                i16::try_from(render.glyph.offset_y).expect("underline y bearing fits i16"),
-            ],
-            grid_pos,
-            color: [color[0], color[1], color[2], alpha],
-            atlas: CellTextAtlas::Grayscale,
-            flags: CellTextFlags::new(false, false),
-            _padding: [0, 0],
-        },
-    );
-    Ok(())
+        color,
+        alpha,
+    )
+}
+
+/// Render a cell's strikethrough sprite and add a [`Key::Strikethrough`] cell.
+/// Faithful port of upstream `addStrikethrough` (the caller guards the flag).
+pub(crate) fn add_strikethrough(
+    contents: &mut Contents,
+    grid: &mut SharedGrid,
+    grid_pos: [u16; 2],
+    color: [u8; 3],
+    alpha: u8,
+) -> Result<(), ResolverRenderError> {
+    add_sprite_decoration(
+        contents,
+        grid,
+        grid_pos,
+        Sprite::Strikethrough,
+        Key::Strikethrough,
+        color,
+        alpha,
+    )
+}
+
+/// Render a cell's overline sprite and add a [`Key::Overline`] cell. Faithful
+/// port of upstream `addOverline` (the caller guards the flag).
+pub(crate) fn add_overline(
+    contents: &mut Contents,
+    grid: &mut SharedGrid,
+    grid_pos: [u16; 2],
+    color: [u8; 3],
+    alpha: u8,
+) -> Result<(), ResolverRenderError> {
+    add_sprite_decoration(
+        contents,
+        grid,
+        grid_pos,
+        Sprite::Overline,
+        Key::Overline,
+        color,
+        alpha,
+    )
 }
 
 #[cfg(test)]
@@ -1298,6 +1360,58 @@ mod tests {
         add_underline(&mut c, &mut shared, [0, 0], Underline::None, [5, 6, 7], 255)
             .expect("add_underline");
         assert!(c.fg_rows[1].is_empty());
+    }
+
+    #[test]
+    fn add_strikethrough_and_overline_render_their_sprites() {
+        // (writer, expected sprite). Each is checked independently via the
+        // same-grid cache-identity technique used for underlines.
+        type Writer = fn(
+            &mut Contents,
+            &mut SharedGrid,
+            [u16; 2],
+            [u8; 3],
+            u8,
+        ) -> Result<(), ResolverRenderError>;
+        let cases: [(Writer, Sprite); 2] = [
+            (add_strikethrough, Sprite::Strikethrough),
+            (add_overline, Sprite::Overline),
+        ];
+
+        for (writer, sprite) in cases {
+            let mut shared = menlo_grid();
+            let mut c = Contents::default();
+            c.resize(grid(2, 1));
+
+            writer(&mut c, &mut shared, [1, 0], [9, 8, 7], 255).expect("decoration");
+
+            assert_eq!(c.fg_rows[1].len(), 1, "{sprite:?}");
+            let v = c.fg_rows[1][0];
+            assert_eq!(v.grid_pos, [1, 0]);
+            assert_eq!(v.atlas, CellTextAtlas::Grayscale);
+            assert_eq!(v.color, [9, 8, 7, 255]);
+
+            let opts = underline_opts(&shared);
+            let expected = shared
+                .render_glyph(Index::special(Special::Sprite), sprite as u32, &opts)
+                .expect("expected sprite renders")
+                .glyph;
+            assert_eq!(
+                v.glyph_pos,
+                [expected.atlas_x, expected.atlas_y],
+                "{sprite:?} mismatch"
+            );
+            assert_eq!(
+                v.glyph_size,
+                [expected.width, expected.height],
+                "{sprite:?}"
+            );
+            assert_eq!(
+                v.bearings,
+                [expected.offset_x as i16, expected.offset_y as i16],
+                "{sprite:?}"
+            );
+        }
     }
 
     #[test]

@@ -212,3 +212,66 @@ Review artifacts:
 
 - Prompt: `logs/codex-review/20260603-185417-158621-prompt.md` (design)
 - Result: `logs/codex-review/20260603-185417-158621-last-message.md` (design)
+
+## Result
+
+**Result:** Pass
+
+All three decorations are now ported.
+
+- `roastty/src/renderer/cell.rs`: extracted the private `add_sprite_decoration`
+  helper (the former `add_underline` body — render a sprite at `cell_width = 1`
+  into the grayscale atlas and add a `key` cell with glyph-only bearings);
+  refactored `add_underline` to map its variant → sprite then delegate to the
+  helper (`Key::Underline`); and added `add_strikethrough`
+  (`Sprite::Strikethrough`, `Key::Strikethrough`) and `add_overline`
+  (`Sprite::Overline`, `Key::Overline`) — both unconditional (the caller guards
+  the style flag), using the supplied foreground color.
+
+Test (in `cell.rs`): `add_strikethrough_and_overline_render_their_sprites` is
+table-driven over
+`[(add_strikethrough, Sprite::Strikethrough), (add_overline, Sprite::Overline)]`
+(fn pointers); each writer adds one cell to `fg_rows[1]` with `grid_pos [1, 0]`,
+grayscale atlas, and color `[9, 8, 7, 255]`, and a same-grid direct render of
+the expected sprite is a cache hit (`glyph_pos`/`glyph_size`/`bearings` match)
+only if the writer rendered exactly that sprite. The existing `add_underline`
+tests still pass after the refactor.
+
+Gate results:
+
+- `cargo fmt -p roastty` accepted; `--check` clean.
+- `cargo test -p roastty` → 2828 passed, 0 failed (+1 net, no regressions).
+- `cargo build -p roastty` → no warnings.
+- No-`ghostty`-name gates (font + renderer) clean; `git diff --check` clean.
+
+## Conclusion
+
+The decoration subsystem's per-cell writers are complete: `add_underline` (5
+variants), `add_strikethrough`, and `add_overline`, all sharing one
+`add_sprite_decoration` body. `Contents` can now hold every foreground cell kind
+a viewport needs — text, underline, strikethrough, and overline — plus
+backgrounds.
+
+The remaining renderer-bridge work: the underline-color resolution
+(`Style::underline_color`); the row/viewport integration (calling the decoration
+writers per decorated cell, alongside `add_run`); the **cursor** cell; the
+renderer-layer **color adjustments** (reverse-video, selection, min-contrast,
+faint/dim alpha, default-bg fill, opacity); and the **Metal upload** of
+`Contents`.
+
+## Completion Review
+
+Codex reviewed the completed implementation and result and **approved** with
+**no findings**. It confirmed the `add_sprite_decoration` extraction is
+behavior-preserving for `add_underline` (the same render options, sprite render,
+grayscale atlas, glyph-only bearings, color/alpha, and vertex construction are
+centralized, with `add_underline` keeping its variant mapping and
+`Key:: Underline`); that `add_strikethrough`/`add_overline` are faithful (fixed
+sprite/key, supplied foreground color, unconditional with the caller gating the
+style flag); and that the table test robustly proves each writer rendered its
+exact sprite via the same-grid cache identity, with the existing underline tests
+covering the refactor. Nothing needed to change before the result commit.
+
+Review artifacts:
+
+- Result review: `logs/codex-review/20260603-185638-382014-last-message.md`
