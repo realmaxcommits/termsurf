@@ -157,6 +157,13 @@ impl Canvas {
         }
     }
 
+    /// The vertical padding (rows added above and below the cell). Used by draw
+    /// functions whose geometry depends on the drawable area (e.g. the curly
+    /// underline's clip clamp).
+    pub(crate) fn padding_y(&self) -> u32 {
+        self.padding_y
+    }
+
     /// Draw and fill a single pixel, offset by the padding. Writes outside the
     /// surface are silently dropped (matching z2d `putPixel`).
     pub(crate) fn pixel(&mut self, x: i32, y: i32, color: Color) {

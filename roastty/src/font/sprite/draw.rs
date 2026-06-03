@@ -761,6 +761,51 @@ pub(crate) fn draw_box_arc(cp: u32, metrics: &Metrics, canvas: &mut Canvas) -> b
     true
 }
 
+/// The curly underline (undercurl): a single-cycle wave — two cubic Béziers —
+/// peaking at the cell center, stroked with the underline thickness and round
+/// caps. The first round-cap sprite glyph. Faithful port of upstream
+/// `special.zig`'s `underline_curly`.
+pub(crate) fn draw_underline_curly(
+    canvas: &mut Canvas,
+    width: u32,
+    height: u32,
+    metrics: &Metrics,
+) {
+    let float_width = width as f64;
+    let float_height = height as f64;
+    let float_pos = metrics.underline_position as f64;
+    let line_width = metrics.underline_thickness as f64;
+
+    // Empirically this looks good.
+    let amplitude = float_width / std::f64::consts::PI;
+
+    // Clamp so the curl is not clipped below the drawable area.
+    let padding = canvas.padding_y() as f64;
+    let top = float_pos.min(float_height + padding - amplitude - line_width);
+    let bottom = top + amplitude;
+
+    // Curvature multiplier (0.4 gives a nice smooth wiggle) and the cell center.
+    let r = 0.4;
+    let center = 0.5 * float_width;
+
+    // One wave cycle, peaking at the center.
+    let nodes = [
+        raster::PathNode::MoveTo(raster::Point::new(0.0, bottom)),
+        raster::PathNode::CurveTo {
+            p1: raster::Point::new(center * r, bottom),
+            p2: raster::Point::new(center - center * r, top),
+            p3: raster::Point::new(center, top),
+        },
+        raster::PathNode::CurveTo {
+            p1: raster::Point::new(center + center * r, top),
+            p2: raster::Point::new(float_width - center * r, bottom),
+            p3: raster::Point::new(float_width, bottom),
+        },
+    ];
+
+    canvas.stroke_path(&nodes, line_width, raster::CapMode::Round);
+}
+
 /// Horizontal line with the top edge at `y`, from `x1` to `x2`, `thick` pixels
 /// tall. Faithful port of upstream `common.hline`.
 fn hline(canvas: &mut Canvas, x1: i32, x2: i32, y: i32, thick: u32) {
@@ -2667,6 +2712,37 @@ mod tests {
         assert!(inked(&c, 1, 9), "left-center arm");
         assert!(!inked(&c, 7, 9), "right-center empty");
         assert!(!inked(&c, 7, 16), "bottom-right corner empty");
+    }
+
+    // The curly underline (Canvas::stroke_path + the curve/round-cap pipeline).
+    // The fixture 9×18 cell, underline_position 15, thickness 1, unpadded:
+    // amplitude ≈ 2.86, top ≈ 14.14, bottom ≈ 17.0 — a wave peaking at the
+    // center (rows ~13–14) with troughs at the ends (rows ~16–17).
+
+    #[test]
+    fn underline_curly_wave() {
+        let m = fixture_metrics();
+        let mut c = cell_canvas();
+        draw_underline_curly(&mut c, 9, 18, &m);
+        // The peak: at the high row the center is inked but the ends are not.
+        assert!(inked(&c, 4, 13), "center peak");
+        assert!(!inked(&c, 0, 13), "left end above the trough");
+        assert!(!inked(&c, 8, 13), "right end above the trough");
+        // The troughs: at the low row the ends are inked but the center is not.
+        assert!(inked(&c, 0, 16), "left trough");
+        assert!(inked(&c, 8, 16), "right trough");
+        assert!(!inked(&c, 4, 16), "center above the troughs");
+    }
+
+    #[test]
+    fn underline_curly_shape() {
+        let m = fixture_metrics();
+        let mut c = cell_canvas();
+        draw_underline_curly(&mut c, 9, 18, &m);
+        // The curl sits in the lower band: a row well above it is empty.
+        for x in 0..9 {
+            assert!(!inked(&c, x, 10), "upper cell empty at x={x}");
+        }
     }
 
     #[test]

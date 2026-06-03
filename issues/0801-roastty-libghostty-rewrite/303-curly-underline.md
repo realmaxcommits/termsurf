@@ -147,3 +147,68 @@ Review artifacts:
 
 - Prompt: `logs/codex-review/20260603-080539-599586-prompt.md`
 - Result: `logs/codex-review/20260603-080539-599586-last-message.md`
+
+## Result
+
+**Result:** Pass
+
+`roastty/src/font/sprite/canvas.rs` gained a
+`pub(crate) fn padding_y(&self) -> u32` accessor.
+`roastty/src/font/sprite/draw.rs` gained `draw_underline_curly`:
+`line_width = underline_thickness`, `amplitude = width / π`, the clip-clamped
+`top = min(underline_position, height + padding_y − amplitude − line_width)`,
+`bottom = top + amplitude`, `r = 0.4`, `center = 0.5 · width`, the two-cubic
+wave (`move(0, bottom)`, the up-to-peak `curve`, the down-to-edge `curve`),
+stroked via `canvas.stroke_path(&nodes, line_width, CapMode::Round)` — the first
+sprite glyph to use round caps and the curve stroke together.
+
+Tests (the fixture `9×18` cell, unpadded — `amplitude ≈ 2.86`, `top ≈ 14.14`,
+`bottom ≈ 17.0`), confirmed against the actual render:
+
+- `underline_curly_wave` — at the peak row `y = 13` the center `(4,13)` is inked
+  while the ends `(0,13)`/`(8,13)` are empty; at the trough row `y = 16` the
+  ends `(0,16)`/`(8,16)` are inked while the center `(4,16)` is empty — pinning
+  the wave (center high, ends low).
+- `underline_curly_shape` — the row `y = 10` is entirely empty (the curl sits in
+  the lower band, not filling the cell).
+
+Gate results:
+
+- `cargo fmt -p roastty` accepted; `--check` clean.
+- `cargo test -p roastty` → 2606 passed, 0 failed (+2, no regressions).
+- `cargo build -p roastty` → no warnings.
+- No-`ghostty`-name gates clean; `git diff --check` clean.
+
+## Conclusion
+
+The curly underline renders end to end — the first sprite glyph to exercise the
+**round caps** (Experiment 302) and the **curve stroke** (Experiment 300)
+together, validating the full open-path stroke pipeline in a real glyph. The
+sprite font's `z2d`-backed coverage is now the diagonals, the box arcs, and the
+undercurl.
+
+The next sprite glyphs are the **circle/ellipse geometric pieces**
+(`geometric_shapes.zig` — filled and stroked circles/ellipses, some closed
+paths) and the remaining **special sprites** (plain/double/dotted/dashed
+underlines, strikethrough, overline, cursors — mostly rect-based). The larger
+remaining integration is the **closed-path stroke** (`plotClosedJoined`) and
+then the unifying sprite `has_codepoint`/draw and sprite-kind dispatch (which
+fills the resolver's deferred `SpriteUnavailable` arm), followed by the
+discovery consumer, the UCD emoji-presentation default, codepoint overrides, the
+shaper, the Nerd Font attribute table, and SVG color detection.
+
+## Completion Review
+
+Codex reviewed the completed implementation and result and found **no Required
+changes**. It confirmed the geometry matches upstream exactly (`line_width`,
+`amplitude`, `padding`, the `top` clamp, `bottom`, `r`, `center`, and both cubic
+control-point sets); that it strokes via
+`canvas.stroke_path(…, CapMode::Round)`, exercising the curve stroke and round
+caps as upstream `ctx.stroke()` with `line_cap_mode = .round`; that
+`padding_y()` is a clean `pub(crate)` accessor; and that the tests pin the
+expected wave shape (center peak, trough ends, empty upper band). No Optional
+findings.
+
+Review artifacts:
+
+- Result review: `logs/codex-review/20260603-080809-873232-last-message.md`
