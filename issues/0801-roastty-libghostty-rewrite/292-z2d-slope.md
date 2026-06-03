@@ -131,3 +131,57 @@ Review artifacts:
 
 - Prompt: `logs/codex-review/20260603-063303-355711-prompt.md`
 - Result: `logs/codex-review/20260603-063303-355711-last-message.md`
+
+## Result
+
+**Result:** Pass
+
+`roastty/src/font/sprite/raster.rs` gained `Slope`
+(`init`/`equal`/`calculate`/`compare`/`compare_for_miter_limit`/`normalize`) and
+the zero-at-zero `sign` helper — the faithful Cairo slope math.
+
+Tests (deterministic):
+
+- `slope_init` (`{3,4}`), `slope_calculate` (`3.0`, plus `equal`).
+- `slope_normalize` — `{3,4}→5,{0.6,0.8}`; `{0,5}→5,{0,1}`; `{-4,0}→4,{-1,0}`.
+- `slope_compare` — `+x` before `+y` (`-1`), parallel (`0`), opposite (`-1`).
+- `slope_miter_limit` — the right-angle turn: `ml=2 → true`, `ml=1 → false`.
+
+Gate results:
+
+- `cargo fmt -p roastty` accepted; `--check` clean.
+- `cargo test -p roastty raster` → 59 passed (5 new).
+- `cargo test -p roastty` → 2560 passed, 0 failed (no regressions; +5).
+- `cargo build -p roastty` → no warnings.
+- No-`ghostty`-name gates clean; `git diff --check` clean.
+
+## Conclusion
+
+`Slope` — the stroke path's foundation — is in place. The next stroke-path
+slices, in order: `Face` (the perpendicular offset that turns a segment +
+line-width into the two stroke-edge points), the `Pen` (the polygon
+approximation of a circle, only needed for round caps/joins), then the
+`stroke_plotter` (which for a butt-cap straight line just emits the `Face`
+rectangle — the simplest path, which the box-drawing diagonals use); then a
+`Canvas::line`/`stroke` that builds the stroke `Polygon` and calls
+`fill_polygon`. That finally unblocks the box-drawing diagonals
+(`0x2571`–`0x2573`); the arcs and circle pieces additionally need the
+curve/`Pen` paths. Alongside the sprite font remain the discovery consumer, the
+UCD emoji-presentation default, codepoint overrides, the shaper, the Nerd Font
+attribute table, and SVG color detection.
+
+## Completion Review
+
+Codex reviewed the completed implementation and result and found **no required
+changes**. It confirmed `Slope` and `sign` are faithful to `Slope.zig` —
+`init`/`equal`/`calculate` direct; `compare` preserving the epsilon snap,
+cross-product sign, and tie-breaker order; `sign` returning `0` at zero (not
+`f64::signum`); `compare_for_miter_limit` normalizing both before the dot test;
+`normalize` matching the nonzero assertion, axis fast paths, `hypot` fallback,
+and pre-normalization magnitude return — and that the five tests cover the
+expected deterministic cases. It judged the gates clean.
+
+Review artifacts:
+
+- Prompt: `logs/codex-review/20260603-063513-586009-prompt.md`
+- Result: `logs/codex-review/20260603-063513-586009-last-message.md`

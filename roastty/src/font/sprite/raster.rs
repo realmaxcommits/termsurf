@@ -959,6 +959,134 @@ pub(crate) fn fill_plot(nodes: &[PathNode], scale: f64, tolerance: f64) -> Polyg
     result
 }
 
+/// The sign of `x`: `1.0`/`-1.0`/`0.0`. Faithful port of Zig's `math.sign`
+/// (which is `0` at `0` — unlike `f64::signum`, which is `±1` at `±0`).
+fn sign(x: f64) -> f64 {
+    if x > 0.0 {
+        1.0
+    } else if x < 0.0 {
+        -1.0
+    } else {
+        0.0
+    }
+}
+
+/// A direction vector (a segment's slope deconstructed as deltas). Faithful port
+/// of z2d's `Slope` (derived from Cairo).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct Slope {
+    pub dx: f64,
+    pub dy: f64,
+}
+
+impl Slope {
+    /// The slope vector `b - a`.
+    pub(crate) fn init(a: Point, b: Point) -> Slope {
+        Slope {
+            dx: b.x - a.x,
+            dy: b.y - a.y,
+        }
+    }
+
+    /// Exact `dx`/`dy` equality.
+    pub(crate) fn equal(self, other: Slope) -> bool {
+        self.dx == other.dx && self.dy == other.dy
+    }
+
+    /// The slope as `dy / dx`.
+    pub(crate) fn calculate(self) -> f64 {
+        self.dy / self.dx
+    }
+
+    /// Angular comparison (`< 0` when `a < b`, `0` equal, `> 0` when `a > b`),
+    /// done multiplicatively. Faithful port of `Slope.compare`.
+    pub(crate) fn compare(a: Slope, b: Slope) -> i32 {
+        // Snap b to a when within one f64 epsilon (avoids downstream NaNs from
+        // near-parallel slopes).
+        let bdy = if (b.dy - a.dy).abs() > f64::EPSILON {
+            b.dy
+        } else {
+            a.dy
+        };
+        let bdx = if (b.dx - a.dx).abs() > f64::EPSILON {
+            b.dx
+        } else {
+            a.dx
+        };
+
+        let cmp = sign(a.dy * bdx - bdy * a.dx);
+        if cmp != 0.0 {
+            return cmp as i32;
+        }
+
+        // Tie-breakers.
+        if a.dx == 0.0 && a.dy == 0.0 && bdx == 0.0 && bdy == 0.0 {
+            return 0;
+        }
+        if a.dx == 0.0 && a.dy == 0.0 {
+            return 1;
+        }
+        if bdx == 0.0 && bdy == 0.0 {
+            return -1;
+        }
+
+        // Opposite (pi-apart) directions.
+        if sign(a.dx) != sign(bdx) || sign(a.dy) != sign(bdy) {
+            return if a.dx > 0.0 || (a.dx == 0.0 && a.dy > 0.0) {
+                -1
+            } else {
+                1
+            };
+        }
+
+        0
+    }
+
+    /// Whether the miter join of `in_slope`→`out_slope` is within `miter_limit`:
+    /// `2 <= miter_limit² · (1 + in·out)` (normalized). Faithful port of
+    /// `Slope.compare_for_miter_limit`.
+    pub(crate) fn compare_for_miter_limit(
+        in_slope: Slope,
+        out_slope: Slope,
+        miter_limit: f64,
+    ) -> bool {
+        let mut in_n = in_slope;
+        in_n.normalize();
+        let mut out_n = out_slope;
+        out_n.normalize();
+
+        let in_dot_out = in_n.dx * out_n.dx + in_n.dy * out_n.dy;
+        2.0 <= miter_limit * miter_limit * (1.0 + in_dot_out)
+    }
+
+    /// Set the slope to its unit vector and return the pre-normalization
+    /// magnitude. Faithful port of `Slope.normalize` (with the axis fast paths).
+    pub(crate) fn normalize(&mut self) -> f64 {
+        assert!(self.dx != 0.0 || self.dy != 0.0);
+
+        let (result_dx, result_dy, mag) = if self.dx == 0.0 {
+            if self.dy > 0.0 {
+                (0.0, 1.0, self.dy)
+            } else {
+                (0.0, -1.0, -self.dy)
+            }
+        } else if self.dy == 0.0 {
+            if self.dx > 0.0 {
+                (1.0, 0.0, self.dx)
+            } else {
+                (-1.0, 0.0, -self.dx)
+            }
+        } else {
+            let mag = self.dx.hypot(self.dy);
+            (self.dx / mag, self.dy / mag, mag)
+        };
+
+        self.dx = result_dx;
+        self.dy = result_dy;
+        mag
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1708,5 +1836,65 @@ mod tests {
         assert!(result.edges.len() > 2, "the cubic flattens to many edges");
         assert!(result.extent_left >= 0.0 && result.extent_right <= 10.0);
         assert!(result.extent_top >= 0.0 && result.extent_bottom <= 10.0);
+    }
+
+    // Slope.
+
+    #[test]
+    fn slope_init() {
+        let s = Slope::init(pt(1.0, 2.0), pt(4.0, 6.0));
+        assert_eq!(s, Slope { dx: 3.0, dy: 4.0 });
+    }
+
+    #[test]
+    fn slope_calculate() {
+        assert_eq!(Slope { dx: 2.0, dy: 6.0 }.calculate(), 3.0);
+        assert!(Slope { dx: 3.0, dy: 4.0 }.equal(Slope { dx: 3.0, dy: 4.0 }));
+    }
+
+    #[test]
+    fn slope_normalize() {
+        let mut s = Slope { dx: 3.0, dy: 4.0 };
+        assert_eq!(s.normalize(), 5.0);
+        assert_eq!(s, Slope { dx: 0.6, dy: 0.8 });
+
+        let mut v = Slope { dx: 0.0, dy: 5.0 };
+        assert_eq!(v.normalize(), 5.0);
+        assert_eq!(v, Slope { dx: 0.0, dy: 1.0 });
+
+        let mut h = Slope { dx: -4.0, dy: 0.0 };
+        assert_eq!(h.normalize(), 4.0);
+        assert_eq!(h, Slope { dx: -1.0, dy: 0.0 });
+    }
+
+    #[test]
+    fn slope_compare() {
+        // +x is angularly before +y.
+        assert_eq!(
+            Slope::compare(
+                Slope::init(pt(0.0, 0.0), pt(1.0, 0.0)),
+                Slope::init(pt(0.0, 0.0), pt(0.0, 1.0))
+            ),
+            -1
+        );
+        // Parallel, same direction -> 0.
+        assert_eq!(
+            Slope::compare(Slope { dx: 1.0, dy: 1.0 }, Slope { dx: 2.0, dy: 2.0 }),
+            0
+        );
+        // Opposite (pi-apart) directions.
+        assert_eq!(
+            Slope::compare(Slope { dx: 1.0, dy: 0.0 }, Slope { dx: -1.0, dy: 0.0 }),
+            -1
+        );
+    }
+
+    #[test]
+    fn slope_miter_limit() {
+        // A right-angle turn: in.out = 0, so 2 <= ml^2.
+        let in_s = Slope { dx: 1.0, dy: 0.0 };
+        let out_s = Slope { dx: 0.0, dy: 1.0 };
+        assert!(Slope::compare_for_miter_limit(in_s, out_s, 2.0));
+        assert!(!Slope::compare_for_miter_limit(in_s, out_s, 1.0));
     }
 }
