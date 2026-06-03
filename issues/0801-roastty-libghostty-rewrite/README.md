@@ -1047,6 +1047,8 @@ are past the correctness-critical foundation.
   — **Pass** · Claude/Codex/Codex
 - [Experiment 300: z2d port — the cubic-curve stroke (`runCurveTo`)](300-z2d-curve-stroke.md)
   — **Pass** · Claude/Codex/Codex
+- [Experiment 301: the box-drawing arcs (`U+256D`–`U+2570`)](301-box-arcs.md) —
+  **Designed** · Claude/Codex/Codex
 
 ## Non-Goals
 
