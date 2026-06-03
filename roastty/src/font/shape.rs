@@ -299,6 +299,22 @@ pub(crate) struct Options {
     pub features: Vec<String>,
 }
 
+impl Options {
+    /// The full feature list to apply when shaping: the [`default_features`]
+    /// followed by the parsed user [`features`](Self::features) (each entry a
+    /// comma-separated list). Faithful port of upstream's `Shaper.init` assembly
+    /// (`feats_df = default_features ++ parsed`) — defaults first, so a trailing
+    /// user setting (e.g. `-liga`) overrides a default (CoreText uses the last
+    /// setting for a duplicated tag).
+    pub(crate) fn merged_features(&self) -> Vec<Feature> {
+        let mut out = default_features();
+        for s in &self.features {
+            out.extend(parse_features(s));
+        }
+        out
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -424,6 +440,52 @@ mod tests {
         ] {
             assert_eq!(Feature::from_str(s), None, "parsing {s:?}");
         }
+    }
+
+    #[test]
+    fn merged_features_defaults_then_user() {
+        let liga1 = Feature {
+            tag: *b"liga",
+            value: 1,
+        };
+        // Empty options → just the defaults.
+        assert_eq!(Options::default().merged_features(), vec![liga1]);
+        // Defaults first, then the parsed user features in order.
+        let opts = Options {
+            features: vec!["-liga".into(), "kern=2".into()],
+        };
+        assert_eq!(
+            opts.merged_features(),
+            vec![
+                liga1,
+                Feature {
+                    tag: *b"liga",
+                    value: 0
+                },
+                Feature {
+                    tag: *b"kern",
+                    value: 2
+                },
+            ]
+        );
+        // A single comma-separated entry parses to multiple features.
+        let opts = Options {
+            features: vec!["calt, -dlig".into()],
+        };
+        assert_eq!(
+            opts.merged_features(),
+            vec![
+                liga1,
+                Feature {
+                    tag: *b"calt",
+                    value: 1
+                },
+                Feature {
+                    tag: *b"dlig",
+                    value: 0
+                },
+            ]
+        );
     }
 
     #[test]

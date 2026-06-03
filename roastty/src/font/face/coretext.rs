@@ -312,16 +312,38 @@ impl Face {
         self.shape_run(&run)
     }
 
+    /// Shape a clustered run, applying the default OpenType features. A thin
+    /// delegate over [`Self::shape_run_with_features`].
+    pub(crate) fn shape_run(&self, run: &[shape::Codepoint]) -> Vec<shape::Cell> {
+        self.shape_run_with_features(run, &shape::default_features())
+    }
+
+    /// Shape a clustered run, applying the features configured by `options` (the
+    /// [`default_features`](shape::default_features) merged with the parsed user
+    /// features — see [`shape::Options::merged_features`]).
+    pub(crate) fn shape_run_options(
+        &self,
+        run: &[shape::Codepoint],
+        options: &shape::Options,
+    ) -> Vec<shape::Cell> {
+        self.shape_run_with_features(run, &options.merged_features())
+    }
+
     /// Shape a clustered run of codepoints into positioned glyphs with this face,
-    /// via CoreText (`CFAttributedString` → `CTLine` → `CTRun`). Faithful port of
-    /// the core of upstream `Shaper.shape`: the input is a `(codepoint, cluster)`
-    /// stream (upstream's `RunState.codepoints`, fed by `addCodepoint`), where the
-    /// caller supplies each codepoint's cluster (the terminal cell, grouping a
-    /// grapheme's codepoints). Each [`shape::Cell`]'s `x` is the glyph's cluster,
-    /// and `x_offset`/`y_offset` are the glyph's nudge from the cell origin. The
+    /// applying the given OpenType `features`, via CoreText (`CFAttributedString`
+    /// → `CTLine` → `CTRun`). Faithful port of the core of upstream `Shaper.shape`:
+    /// the input is a `(codepoint, cluster)` stream (upstream's
+    /// `RunState.codepoints`, fed by `addCodepoint`), where the caller supplies
+    /// each codepoint's cluster (the terminal cell, grouping a grapheme's
+    /// codepoints). Each [`shape::Cell`]'s `x` is the glyph's cluster, and
+    /// `x_offset`/`y_offset` are the glyph's nudge from the cell origin. The
     /// ligature/mark heuristic and the special-font path are deferred to the full
     /// `Shaper`.
-    pub(crate) fn shape_run(&self, run: &[shape::Codepoint]) -> Vec<shape::Cell> {
+    pub(crate) fn shape_run_with_features(
+        &self,
+        run: &[shape::Codepoint],
+        features: &[shape::Feature],
+    ) -> Vec<shape::Cell> {
         if run.is_empty() {
             return Vec::new();
         }
@@ -353,10 +375,9 @@ impl Face {
         }
         let cf_str = CFString::from_str(&text);
 
-        // Apply the default OpenType features (e.g. `liga`) by copying the face's
-        // font with a feature-settings descriptor; that font drives shaping.
-        let features = shape::default_features();
-        let run_font = match feature_settings_descriptor(&features) {
+        // Apply the OpenType features by copying the face's font with a
+        // feature-settings descriptor; that font drives shaping.
+        let run_font = match feature_settings_descriptor(features) {
             // SAFETY: `self.font`/`desc` are live; a null matrix is valid; size
             // `0.0` preserves the current size.
             Some(desc) => unsafe {
@@ -1133,14 +1154,18 @@ fn feature_settings_descriptor(
     }
     let dicts: Vec<CFRetained<CFMutableDictionary<CFString, CFType>>> = features
         .iter()
-        .map(|f| {
+        .filter_map(|f| {
+            // CoreText's `kCTFontOpenTypeFeatureValue` is a signed int (as
+            // upstream's `@intCast` to `c_int`); skip any value that does not fit
+            // rather than wrapping. Real feature values are small.
+            let value_i32 = i32::try_from(f.value).ok()?;
             let dict = CFMutableDictionary::<CFString, CFType>::empty();
             // OpenType feature tags are 4 ASCII bytes by construction (upstream
             // builds the string from exactly these bytes).
             let tag = CFString::from_str(
                 std::str::from_utf8(&f.tag).expect("an OpenType feature tag is 4 ASCII bytes"),
             );
-            let value = CFNumber::new_i32(f.value as i32);
+            let value = CFNumber::new_i32(value_i32);
             // SAFETY: the keys are static CF strings; the dict retains both values
             // on insertion.
             unsafe {
@@ -1155,9 +1180,13 @@ fn feature_settings_descriptor(
                     (&*value as *const CFNumber).cast::<c_void>(),
                 );
             }
-            dict
+            Some(dict)
         })
         .collect();
+    // Every feature was out of range — no settings to apply.
+    if dicts.is_empty() {
+        return None;
+    }
     let list = CFArray::from_retained_objects(&dicts);
 
     let settings = CFMutableDictionary::<CFString, CFType>::empty();
@@ -2195,6 +2224,46 @@ mod tests {
                 "cell {i} still shapes to the cmap glyph"
             );
         }
+    }
+
+    #[test]
+    fn shape_run_options_regression() {
+        // The merged-features path with default options matches the default path.
+        let face = Face::new("Menlo", 24.0);
+        let cps = ['A' as u32, 'B' as u32, 'C' as u32];
+        let run: Vec<shape::Codepoint> = cps
+            .iter()
+            .enumerate()
+            .map(|(i, &codepoint)| shape::Codepoint {
+                codepoint,
+                cluster: i as u32,
+            })
+            .collect();
+        assert_eq!(
+            face.shape_run_options(&run, &shape::Options::default()),
+            face.shape_codepoints(&cps)
+        );
+    }
+
+    #[test]
+    fn feature_settings_descriptor_skips_out_of_range() {
+        // A value exceeding `i32::MAX` is skipped rather than wrapping.
+        let too_big = shape::Feature {
+            tag: *b"aalt",
+            value: i32::MAX as u32 + 1,
+        };
+        assert!(
+            feature_settings_descriptor(&[too_big]).is_none(),
+            "a lone out-of-range feature yields no descriptor"
+        );
+        let liga = shape::Feature {
+            tag: *b"liga",
+            value: 1,
+        };
+        assert!(
+            feature_settings_descriptor(&[liga, too_big]).is_some(),
+            "a valid feature survives alongside a skipped out-of-range one"
+        );
     }
 
     #[test]

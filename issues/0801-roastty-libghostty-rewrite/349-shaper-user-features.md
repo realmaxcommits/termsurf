@@ -182,3 +182,68 @@ Review artifacts:
 
 - Prompt: `logs/codex-review/20260603-143046-872583-prompt.md` (design)
 - Result: `logs/codex-review/20260603-143046-872583-last-message.md` (design)
+
+## Result
+
+**Result:** Pass
+
+User-configured features now reach shaping.
+
+- `roastty/src/font/shape.rs`: `Options::merged_features` returns
+  `default_features()` followed by `parse_features` of each `Options.features`
+  entry — defaults first, then the parsed user features.
+- `roastty/src/font/face/coretext.rs`: the former `shape_run` body is now
+  `shape_run_with_features(&self, run, features)`; `shape_run` is a thin
+  delegate passing `default_features()` (unchanged behavior);
+  `shape_run_options` passes `options.merged_features()`.
+  `feature_settings_descriptor` was hardened — a checked
+  `i32::try_from(f.value)` (`filter_map`) skips out-of-range values, and an
+  all-skipped list yields `None`.
+
+Tests: `merged_features_defaults_then_user` (empty → `[liga=1]`;
+`["-liga", "kern=2"]` → `[liga=1, liga=0, kern=2]`; `["calt, -dlig"]` →
+`[liga=1, calt=1, dlig=0]`), `shape_run_options_regression` (`shape_run_options`
+with default `Options` == `shape_codepoints` for Menlo `"ABC"`),
+`feature_settings_descriptor_skips_out_of_range` (a lone `value > i32::MAX` →
+`None`; `[liga, too_big]` → `Some`). All pass.
+
+Gate results:
+
+- `cargo fmt -p roastty` accepted; `--check` clean.
+- `cargo test -p roastty` → 2771 passed, 0 failed (+3, no regressions).
+- `cargo build -p roastty` → no warnings.
+- No-`ghostty`-name gates clean; `git diff --check` clean.
+
+## Conclusion
+
+The feature subsystem is now connected end to end: a user's `Options.features`
+strings are parsed (Exp 348), merged with the defaults (defaults first, so a
+trailing `-liga` overrides), and applied during shaping via `shape_run_options`.
+The `Feature` type, default application, parser, and user-feature threading are
+all in place.
+
+The remaining shaper work: the **`features_no_default`** variant (for faces that
+disable default features) and the caching **`Shaper` struct** (which builds the
+feature dict once); the **special-font** fast path; and the `Shaper` +
+**`RunIterator`** over terminal cells — the orchestration layer that resolves
+fonts from the `Collection` and iterates the terminal grid.
+
+## Completion Review
+
+Codex reviewed the completed implementation and result and **approved** with
+**no Required findings**. It confirmed: `merged_features` preserves the upstream
+order (`default_features()` first, then each entry parsed via `parse_features`,
+including comma-separated entries); `shape_run` remains behavior-preserving
+(delegating with only `default_features()`); `shape_run_options` is the sole new
+user-feature path routing `merged_features()` into `shape_run_with_features`,
+which uses the passed slice directly; the `i32::try_from` hardening resolves the
+prior Required finding (all-skipped → `None`, mixed input keeps the valid
+settings, the existing empty-input `None` still holds); and the CF ownership is
+sound after the `filter_map` change (tag/value retained by the per-feature dict,
+dicts by the array, the array by the settings dict). It ran the three targeted
+tests locally — all passed. The deferred scope (`features_no_default`,
+special-font, `Shaper`/`RunIterator`) is intact.
+
+Review artifacts:
+
+- Result review: `logs/codex-review/20260603-143522-217120-last-message.md`
