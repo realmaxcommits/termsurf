@@ -515,11 +515,12 @@ pub(crate) fn rebuild_row(
     Ok(())
 }
 
-/// Rebuild every viewport row's foreground text into `contents` from the
-/// viewport's per-row [`RunOptions`] (from `Terminal::shape_run_options`). For
-/// each row, shape it into [`ShapedRun`]s ([`shape_row`] over the grid's resolver)
-/// and assemble it ([`rebuild_row`]) with the row's cells. The row loop of upstream
-/// `rebuildCells` (foreground text).
+/// Rebuild every viewport row's background **and** foreground into `contents`
+/// from the viewport's per-row [`RunOptions`] (from `Terminal::shape_run_options`).
+/// For each row, write its backgrounds ([`rebuild_bg_row`]) then shape it into
+/// [`ShapedRun`]s ([`shape_row`] over the grid's resolver) and assemble its
+/// foreground ([`rebuild_row`]) — one pass per row, as upstream `rebuildCells`.
+/// The decorations, cursor, and Metal upload remain separate.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn rebuild_viewport(
     contents: &mut Contents,
@@ -534,8 +535,13 @@ pub(crate) fn rebuild_viewport(
 ) -> Result<(), ResolverRenderError> {
     for (y, opts) in rows.iter().enumerate() {
         let y = u16::try_from(y).expect("viewport row fits u16");
-        // Shape the row first (this borrows the grid's resolver) — `runs` is owned,
-        // releasing that borrow before `rebuild_row` borrows the grid.
+
+        // Backgrounds first (behind the glyphs); needs no shaping or grid.
+        rebuild_bg_row(contents, y, &opts.cells, palette, alpha);
+
+        // Then the foreground: shape the row (this borrows the grid's resolver) —
+        // `runs` is owned, releasing that borrow before `rebuild_row` borrows the
+        // grid.
         let runs = shape_row(opts, &mut grid.resolver);
         rebuild_row(
             contents,
@@ -1081,6 +1087,58 @@ mod tests {
         assert_eq!(c.fg_rows[1][0].grid_pos, [0, 0]);
         assert_eq!(c.fg_rows[1][1].grid_pos, [1, 0]);
         assert_eq!(c.fg_rows[2][0].grid_pos, [0, 1]);
+    }
+
+    #[test]
+    fn rebuild_viewport_fills_background_and_foreground() {
+        use crate::terminal::color::{Rgb, DEFAULT_PALETTE};
+        use crate::terminal::style::{Color, Style as TermStyle};
+
+        let mut shared = menlo_grid();
+        let mut c = Contents::default();
+        c.resize(grid(2, 1));
+
+        // Column 0 has an explicit background; both columns are visible glyphs.
+        let cell = |cp: u32, bg: Color| RunCell {
+            codepoint: cp,
+            graphemes: vec![],
+            style: TermStyle {
+                bg_color: bg,
+                ..TermStyle::default()
+            },
+            style_id: 0,
+            wide: Wide::Narrow,
+            is_empty: false,
+            is_codepoint: true,
+        };
+        let rows = vec![RunOptions {
+            cells: vec![
+                cell('A' as u32, Color::Palette(1)),
+                cell('B' as u32, Color::None),
+            ],
+            ..Default::default()
+        }];
+
+        rebuild_viewport(
+            &mut c,
+            &mut shared,
+            &rows,
+            Rgb::new(200, 200, 200),
+            &DEFAULT_PALETTE,
+            None,
+            255,
+            false,
+            255,
+        )
+        .expect("rebuild_viewport");
+
+        // Foreground: the row's glyphs are present (one pass filled fg_rows).
+        assert_eq!(c.fg_rows[1].len(), 2);
+        // Background: the same pass wrote column 0's explicit background.
+        let p1 = DEFAULT_PALETTE[1];
+        assert_eq!(*c.bg_cell(0, 0), CellBg([p1.r, p1.g, p1.b, 255]));
+        // Column 1's default background is transparent.
+        assert_eq!(*c.bg_cell(0, 1), CellBg([0, 0, 0, 0]));
     }
 
     #[test]

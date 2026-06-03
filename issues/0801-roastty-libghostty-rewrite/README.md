@@ -1194,7 +1194,7 @@ are past the correctness-critical foundation.
 - [Experiment 373: the background-cell row](373-rebuild-bg.md) — **Pass** ·
   Claude/Codex/Codex
 - [Experiment 374: backgrounds in the viewport pass](374-viewport-bg.md) —
-  **Designed** · Claude/Codex/Codex
+  **Pass** · Claude/Codex/Codex
 
 ## Non-Goals
 

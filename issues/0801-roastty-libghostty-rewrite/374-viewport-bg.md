@@ -158,3 +158,64 @@ Review artifacts:
 
 - Prompt: `logs/codex-review/20260603-184123-778140-prompt.md` (design)
 - Result: `logs/codex-review/20260603-184123-778140-last-message.md` (design)
+
+## Result
+
+**Result:** Pass
+
+One viewport pass now fills both buffers.
+
+- `roastty/src/renderer/cell.rs`: `rebuild_viewport`'s row loop now calls
+  `rebuild_bg_row(contents, y, &opts.cells, palette, alpha)` (backgrounds, no
+  grid needed) before shaping the row and assembling its foreground
+  (`shape_row` + `rebuild_row`). The doc comment was updated to state the pass
+  fills both background and foreground (decorations/cursor/upload still
+  separate). No signature change — the existing `palette`/`alpha` feed the
+  background.
+
+Test (in `cell.rs`): `rebuild_viewport_fills_background_and_foreground` builds a
+2×1 viewport with `'A'` (`bg = Palette(1)`) and `'B'` (`bg = None`); after one
+`rebuild_viewport` call it asserts the foreground glyphs are present
+(`fg_rows[1].len() == 2`) **and** the explicit background is written
+(`bg_cell(0, 0) == CellBg([p1.r, p1.g, p1.b, 255])`) with the default cell
+transparent (`bg_cell(0, 1) == CellBg([0, 0, 0, 0])`).
+
+Gate results:
+
+- `cargo fmt -p roastty` accepted; `--check` clean.
+- `cargo test -p roastty` → 2825 passed, 0 failed (+1, no regressions; the
+  existing `rebuild_viewport_fills_each_row` still passes).
+- `cargo build -p roastty` → no warnings.
+- No-`ghostty`-name gates (font + renderer) clean; `git diff --check` clean.
+
+## Conclusion
+
+`rebuild_viewport` is now the single entry that turns a viewport's `RunOptions`
+into a `Contents` with both its background colors and its foreground glyphs —
+upstream `rebuildCells`'s per-row background+foreground pass, ported and gated.
+A renderer can call it once per frame to fill the text and background GPU
+buffers.
+
+The remaining renderer-bridge work: the **decorations**
+(underline/strikethrough/ overline cells), the **cursor** cell, the
+renderer-layer **color adjustments** (reverse-video, selection, min-contrast,
+faint/dim alpha, default-background fill, opacity), and the **Metal upload** of
+`Contents` to the GPU.
+
+## Completion Review
+
+Codex reviewed the completed implementation and result and **approved** with
+**no findings**. It confirmed `rebuild_viewport` now calls `rebuild_bg_row`
+before shaping and foreground assembly (faithful to the single per-row rebuild
+flow — backgrounds into `bg_cells`, foreground glyphs into `fg_rows`, both using
+the same `opts.cells`), with sound borrow ordering (the background write
+finishes before `shape_row` borrows `grid.resolver`, and `shape_row` returns
+owned runs before `rebuild_row` borrows the full grid). It confirmed the Low doc
+finding was addressed (the doc now says the pass fills both buffers) and that
+the new test proves one `rebuild_viewport` call fills both buffers (foreground
+in `fg_rows[1]`, the explicit background in `bg_cell(0, 0)`). Nothing needed to
+change before the result commit.
+
+Review artifacts:
+
+- Result review: `logs/codex-review/20260603-184302-877387-last-message.md`
