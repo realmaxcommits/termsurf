@@ -193,3 +193,69 @@ Review artifacts:
 
 - Prompt: `logs/codex-review/20260603-105549-333056-prompt.md`
 - Result: `logs/codex-review/20260603-105549-333056-last-message.md`
+
+## Result
+
+**Result:** Pass
+
+The Nerd Font constraint table lands.
+
+- `roastty/src/font/face/nerd_font_attributes.rs` (new, committed, generated):
+  `get_constraint(cp: u32) -> Option<Constraint>` — 276 `match` arms parsed once
+  from the vendored `nerd_font_attributes.zig` `getConstraint` switch. The build
+  never reads the zig; the table is baked into source. Mapping: Zig inclusive
+  `0xAAAA...0xBBBB` → Rust `0xAAAA..=0xBBBB`; multiple patterns → a `|`
+  alternation; `.size`/`.height`/`.align_*` → the `Size`/`Height`/`Align`
+  variants; `.max_xy_ratio = X` → `Some(X)`; the `f64`/`u8` fields verbatim
+  (integer-valued floats get a `.0`); unset fields via `..Default::default()`.
+- `roastty/src/font/face/mod.rs`: declares `nerd_font_attributes`.
+
+Tests: `get_constraint_known` (exact `Constraint` equality for `0x2630` the
+hexagram, `0xE0B0` stretch + `max_xy_ratio`, `0xE0A0` the `fit_cover1` range
+arm; `0xEA61`/`0xE0C0` `Some`); `get_constraint_none`
+(`0x41`/`0x2500`/`0x1F600`/ `0x0` → `None`); `get_constraint_ranges`
+(`0xE0A0..=0xE0A3 | 0xE0CF` share a constraint, the neighbor `0xE0A4` differs);
+`get_constraint_defaults_match` (`0xE0A0`'s arm leaves
+`relative_*`/`max_xy_ratio`/`max_constraint_width`/`height` at the struct
+defaults).
+
+Gate results:
+
+- `cargo fmt -p roastty` accepted; `--check` clean.
+- `cargo test -p roastty` → 2689 passed, 0 failed (+4, no regressions).
+- `cargo build -p roastty` → no warnings.
+- No-`ghostty`-name gates clean (the provenance comment avoids the literal
+  token); `git diff --check` clean. Arm count `276` matches upstream.
+
+## Conclusion
+
+Every Nerd Font codepoint now maps to the exact sizing/positioning `Constraint`
+upstream assigns it — a faithful, mechanically-verified port of the generated
+`getConstraint` table. The data and lookup are in place.
+
+The remaining Nerd-Font-adjacent work is **wiring `get_constraint` into the
+render/shaper path** — consulting it to set a glyph's constraint when rendering
+a Nerd Font codepoint (the consumer side). Beyond that, the larger deferred
+subsystems are **font discovery** (the CoreText
+`Descriptor → CTFontDescriptor → CTFontCollection` matching that gates both the
+resolver's discovery fallback and codepoint overrides), the **shaper**, and
+**SVG color detection**.
+
+## Completion Review
+
+Codex reviewed the completed implementation and result and **approved** with
+**no Required findings**. It **mechanically compared** the committed Rust table
+against the vendored Zig switch: Zig constraint arms `276`, Rust match arms
+`276`, pattern/field diffs `0`, expanded constrained codepoints `10,410` on both
+sides, and the expanded codepoint→constraint maps **equal: true**. It confirmed
+the key mappings (inclusive `...` → `..=`, alternations, preserved negative
+pads, `max_xy_ratio` → `Some(...)`), that the `..Default::default()` tail is
+sound (roastty's defaults match upstream's unset-field semantics including
+`max_xy_ratio None`, `max_constraint_width 2`, `height Cell`), and that —
+because the committed artifact compares exactly to upstream — a parser bug
+silently dropping or merging an arm is ruled out. It ran the focused tests (all
+4 pass). No Optional findings.
+
+Review artifacts:
+
+- Result review: `logs/codex-review/20260603-110058-088638-last-message.md`

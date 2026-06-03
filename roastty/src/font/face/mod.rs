@@ -8,3 +8,4 @@
 
 pub(crate) mod constraint;
 pub(crate) mod coretext;
+pub(crate) mod nerd_font_attributes;
