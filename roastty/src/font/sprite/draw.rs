@@ -1198,20 +1198,99 @@ pub(crate) fn draw_powerline_flame(
     true
 }
 
+/// The synthetic codepoint band for the special sprite glyphs (the underlines,
+/// strikethrough, overline, and the four cursor shapes). Faithful port of
+/// upstream `sprite.Sprite`: a `u32` enum whose values start at
+/// [`Sprite::START`] (`maxInt(u21) + 1 = 0x20_0000`), just above the Unicode
+/// maximum (`0x10_FFFF`), so the band can never collide with a real codepoint.
+/// Each variant maps to the special draw function that shares its name, in
+/// upstream order.
+#[repr(u32)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Sprite {
+    Underline = 0x20_0000,
+    UnderlineDouble,
+    UnderlineDotted,
+    UnderlineDashed,
+    UnderlineCurly,
+    Strikethrough,
+    Overline,
+    CursorRect,
+    CursorHollowRect,
+    CursorBar,
+    CursorUnderline,
+}
+
+impl Sprite {
+    /// The first special-sprite codepoint (`maxInt(u21) + 1`).
+    pub(crate) const START: u32 = Sprite::Underline as u32;
+
+    /// The special sprite kind for `cp`, or `None` if `cp` is not in the band.
+    /// Unlike upstream's `@enumFromInt` (which panics on an out-of-range value),
+    /// an unknown `cp >= START` returns `None` — these codepoints are generated
+    /// internally, so an unknown one is treated as a non-sprite rather than a
+    /// crash.
+    pub(crate) fn from_codepoint(cp: u32) -> Option<Sprite> {
+        // The variants are sequential from START, so the offset is the index.
+        const KINDS: [Sprite; 11] = [
+            Sprite::Underline,
+            Sprite::UnderlineDouble,
+            Sprite::UnderlineDotted,
+            Sprite::UnderlineDashed,
+            Sprite::UnderlineCurly,
+            Sprite::Strikethrough,
+            Sprite::Overline,
+            Sprite::CursorRect,
+            Sprite::CursorHollowRect,
+            Sprite::CursorBar,
+            Sprite::CursorUnderline,
+        ];
+        cp.checked_sub(Sprite::START)
+            .and_then(|i| KINDS.get(i as usize))
+            .copied()
+    }
+}
+
+/// Draw the special sprite glyph for `cp` into `canvas`, returning whether `cp`
+/// is a special-band codepoint. Faithful port of the `cp >= Sprite.start` arm of
+/// upstream's `getDrawFn`: each band codepoint dispatches to the special
+/// function that shares the enum field's name. The (possibly widened) `width`
+/// and `height` flow through, so cursors honor the wide-glyph factoring.
+fn draw_special(cp: u32, width: u32, height: u32, metrics: &Metrics, canvas: &mut Canvas) -> bool {
+    let Some(kind) = Sprite::from_codepoint(cp) else {
+        return false;
+    };
+    match kind {
+        Sprite::Underline => draw_underline(canvas, width, height, metrics),
+        Sprite::UnderlineDouble => draw_underline_double(canvas, width, height, metrics),
+        Sprite::UnderlineDotted => draw_underline_dotted(canvas, width, height, metrics),
+        Sprite::UnderlineDashed => draw_underline_dashed(canvas, width, height, metrics),
+        Sprite::UnderlineCurly => draw_underline_curly(canvas, width, height, metrics),
+        Sprite::Strikethrough => draw_strikethrough(canvas, width, height, metrics),
+        Sprite::Overline => draw_overline(canvas, width, height, metrics),
+        Sprite::CursorRect => draw_cursor_rect(canvas, width, height, metrics),
+        Sprite::CursorHollowRect => draw_cursor_hollow_rect(canvas, width, height, metrics),
+        Sprite::CursorBar => draw_cursor_bar(canvas, width, height, metrics),
+        Sprite::CursorUnderline => draw_cursor_underline(canvas, width, height, metrics),
+    }
+    true
+}
+
 /// The unifying codepoint sprite dispatch: render the glyph for `cp` (if any
-/// sprite family covers it) into `canvas`, returning whether one did. Tries each
-/// codepoint-keyed family in turn — each draws nothing and returns `false` when
-/// `cp` is outside its range, so the short-circuit `||` chain routes each
-/// codepoint to exactly one family. The faithful equivalent of upstream's sprite
-/// `Face` codepoint switch. (The sprite-kind special glyphs — underlines,
-/// cursors — are keyed separately, not by codepoint.)
+/// sprite family covers it) into `canvas`, returning whether one did. The
+/// special-sprite band (underlines, cursors — `cp >= Sprite::START`) is checked
+/// first (matching upstream's `getDrawFn`), then each codepoint-keyed family in
+/// turn — each draws nothing and returns `false` when `cp` is outside its range,
+/// so the short-circuit `||` chain routes each codepoint to exactly one family.
+/// The faithful equivalent of upstream's sprite `Face` `getDrawFn`.
 pub(crate) fn draw_codepoint(cp: u32, width: u32, metrics: &Metrics, canvas: &mut Canvas) -> bool {
     // `width` is the (possibly widened) canvas content width. Upstream passes it
     // to every family, but most ignore it and draw against `metrics.cell_width`;
     // only braille and powerline consume it (the wide-glyph factoring). The
     // height is always a single cell.
     let h = metrics.cell_height;
-    draw_box_lines(cp, metrics, canvas)
+    draw_special(cp, width, h, metrics, canvas)
+        || draw_box_lines(cp, metrics, canvas)
         || draw_box_dashes(cp, metrics, canvas)
         || draw_box_diagonal(cp, metrics, canvas)
         || draw_box_arc(cp, metrics, canvas)
@@ -4058,5 +4137,104 @@ mod tests {
             assert!(!draw_box_arc(cp, &m, &mut c), "{cp:#06x} not an arc");
             assert!(all_alpha(&c, &m, 0), "{cp:#06x} drew ink");
         }
+    }
+
+    // The sprite-kind special glyph band.
+
+    /// Per-pixel equality between two cell canvases.
+    fn same_pixels(a: &Canvas, b: &Canvas) -> bool {
+        (0..18).all(|y| (0..9).all(|x| a.get(x, y) == b.get(x, y)))
+    }
+
+    #[test]
+    fn from_codepoint_maps_each() {
+        let kinds = [
+            (Sprite::START, Sprite::Underline),
+            (Sprite::START + 1, Sprite::UnderlineDouble),
+            (Sprite::START + 2, Sprite::UnderlineDotted),
+            (Sprite::START + 3, Sprite::UnderlineDashed),
+            (Sprite::START + 4, Sprite::UnderlineCurly),
+            (Sprite::START + 5, Sprite::Strikethrough),
+            (Sprite::START + 6, Sprite::Overline),
+            (Sprite::START + 7, Sprite::CursorRect),
+            (Sprite::START + 8, Sprite::CursorHollowRect),
+            (Sprite::START + 9, Sprite::CursorBar),
+            (Sprite::START + 10, Sprite::CursorUnderline),
+        ];
+        for (cp, kind) in kinds {
+            assert_eq!(Sprite::from_codepoint(cp), Some(kind), "{cp:#x}");
+        }
+        // START is just above the Unicode maximum.
+        assert_eq!(Sprite::START, 0x20_0000);
+        // Outside the band -> None.
+        assert_eq!(Sprite::from_codepoint(Sprite::START - 1), None);
+        assert_eq!(Sprite::from_codepoint(Sprite::START + 11), None);
+        assert_eq!(Sprite::from_codepoint(0x41), None);
+    }
+
+    #[test]
+    fn draw_special_dispatches() {
+        // Each special kind dispatches to its own draw function, pixel-for-pixel.
+        let m = fixture_metrics();
+        let w = m.cell_width;
+        let h = m.cell_height;
+        type Direct = fn(&mut Canvas, u32, u32, &Metrics);
+        let cases: [(u32, Direct); 11] = [
+            (Sprite::START, draw_underline),
+            (Sprite::START + 1, draw_underline_double),
+            (Sprite::START + 2, draw_underline_dotted),
+            (Sprite::START + 3, draw_underline_dashed),
+            (Sprite::START + 4, draw_underline_curly),
+            (Sprite::START + 5, draw_strikethrough),
+            (Sprite::START + 6, draw_overline),
+            (Sprite::START + 7, draw_cursor_rect),
+            (Sprite::START + 8, draw_cursor_hollow_rect),
+            (Sprite::START + 9, draw_cursor_bar),
+            (Sprite::START + 10, draw_cursor_underline),
+        ];
+        for (cp, direct) in cases {
+            let mut via = cell_canvas();
+            assert!(draw_special(cp, w, h, &m, &mut via), "{cp:#x} is a special");
+            let mut want = cell_canvas();
+            direct(&mut want, w, h, &m);
+            assert!(same_pixels(&via, &want), "{cp:#x} dispatch mismatch");
+        }
+    }
+
+    #[test]
+    fn draw_special_excludes() {
+        let m = fixture_metrics();
+        let w = m.cell_width;
+        let h = m.cell_height;
+        // Past the last kind in the band -> not a special, no ink.
+        let mut c = cell_canvas();
+        assert!(!draw_special(Sprite::START + 50, w, h, &m, &mut c));
+        assert!(all_alpha(&c, &m, 0), "out-of-band drew ink");
+        // A normal codepoint (box) is not a special.
+        let mut c2 = cell_canvas();
+        assert!(!draw_special(0x2500, w, h, &m, &mut c2));
+        assert!(all_alpha(&c2, &m, 0), "box codepoint drew via special");
+    }
+
+    #[test]
+    fn draw_codepoint_special() {
+        // The special band is reachable from the unified dispatch and inks.
+        let m = fixture_metrics();
+        let mut c = cell_canvas();
+        assert!(
+            draw_codepoint(Sprite::START, m.cell_width, &m, &mut c),
+            "underline dispatched"
+        );
+        assert!(!all_alpha(&c, &m, 0), "underline drew ink");
+        // has_codepoint covers the band (cursor_rect) but not out-of-band values.
+        assert!(has_codepoint(Sprite::START + 7, &m), "cursor_rect covered");
+        assert!(
+            !has_codepoint(Sprite::START + 50, &m),
+            "out-of-band not covered"
+        );
+        // A box codepoint still routes through the range families, not special.
+        let mut c2 = cell_canvas();
+        assert!(draw_codepoint(0x2500, m.cell_width, &m, &mut c2));
+        assert!(!all_alpha(&c2, &m, 0), "box still drawn");
     }
 }

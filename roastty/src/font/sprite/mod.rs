@@ -238,4 +238,39 @@ mod tests {
             (0..m.cell_height).any(|y| (cw..2 * cw).any(|x| wide.get(x as i32, y as i32) != 0));
         assert!(right_inked, "wide braille inks the right cell");
     }
+
+    #[test]
+    fn render_codepoint_special() {
+        // A special-band codepoint renders through the unified pipeline.
+        // cursor_rect (START + 7) is a full-cell rect.
+        use crate::font::sprite::draw::Sprite;
+        let m = fixture_metrics();
+        let mut atlas = Atlas::new(64, Format::Grayscale);
+        let glyph = render_codepoint(Sprite::START + 7, &m, None, &mut atlas)
+            .unwrap()
+            .expect("cursor_rect is a special sprite");
+        assert!(glyph.width > 0 && glyph.height > 0, "cursor rect non-empty");
+    }
+
+    #[test]
+    fn render_codepoint_special_wide() {
+        // The cursor honors the wide-glyph factoring through the special band:
+        // a two-cell cursor_rect trims wider than the single-cell render.
+        use crate::font::sprite::draw::Sprite;
+        let m = fixture_metrics();
+        let mut atlas_one = Atlas::new(64, Format::Grayscale);
+        let single = render_codepoint(Sprite::START + 7, &m, Some(1), &mut atlas_one)
+            .unwrap()
+            .unwrap();
+        let mut atlas_two = Atlas::new(64, Format::Grayscale);
+        let wide = render_codepoint(Sprite::START + 7, &m, Some(2), &mut atlas_two)
+            .unwrap()
+            .unwrap();
+        assert!(
+            wide.width > single.width,
+            "wide cursor ({}) spans wider than single ({})",
+            wide.width,
+            single.width
+        );
+    }
 }

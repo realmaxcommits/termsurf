@@ -198,3 +198,79 @@ Review artifacts:
 
 - Prompt: `logs/codex-review/20260603-103357-319610-prompt.md`
 - Result: `logs/codex-review/20260603-103357-319610-last-message.md`
+
+## Result
+
+**Result:** Pass
+
+The special sprite band is wired into the unified pipeline.
+
+- `roastty/src/font/sprite/draw.rs`: a `Sprite` enum (`#[repr(u32)]`, eleven
+  variants in upstream order from `Underline = 0x20_0000`),
+  `const START = Sprite::Underline as u32`, and
+  `from_codepoint(cp) -> Option<Sprite>` — `cp.checked_sub(START)` indexes an
+  ordered `KINDS` table, returning `None` for any out-of-band `cp` (including
+  `cp >= START` past the eleventh variant, the safe deviation from upstream's
+  `@enumFromInt` panic).
+- `draw_special(cp, width, height, metrics, canvas) -> bool`: `from_codepoint`
+  then a `match` dispatching to the matching existing `draw_underline` / … /
+  `draw_cursor_underline` (all `(canvas, width, height, metrics)`);
+  `None ⇒ false`.
+- `draw_codepoint` now prepends
+  `draw_special(cp, width, h, metrics, canvas) || …`, so the band is checked
+  first (faithful to `getDrawFn`). `has_codepoint` and `render_codepoint`
+  inherit the special glyphs automatically; cursors honor the wide-glyph
+  factoring through the passed `width`.
+
+Tests: `from_codepoint_maps_each` (the eleven values map, `START == 0x20_0000`,
+`START - 1`/`START + 11`/`0x41` ⇒ `None`); `draw_special_dispatches` (each kind
+is pixel-for-pixel identical to its direct draw call); `draw_special_excludes`
+(`START + 50` and the box `0x2500` ⇒ `false`, no ink); `draw_codepoint_special`
+(the underline is reachable from the unified dispatch and inks; `has_codepoint`
+covers `START + 7` but not `START + 50`; the box `0x2500` still routes through
+the range families); `render_codepoint_special` (`cursor_rect` renders
+non-empty); `render_codepoint_special_wide` (a two-cell `cursor_rect` trims
+wider than the single-cell render).
+
+Gate results:
+
+- `cargo fmt -p roastty` accepted; `--check` clean.
+- `cargo test -p roastty` → 2682 passed, 0 failed (+6, no regressions).
+- `cargo build -p roastty` → no warnings.
+- No-`ghostty`-name gates clean; `git diff --check` clean.
+
+## Conclusion
+
+The sprite `Face` codepoint→glyph path is now a complete port: the codepoint
+ranges (box, braille, sextant, octant, block, geometric, powerline) **and** the
+special band (underlines, strikethrough, overline, the four cursors) all render
+through `draw_codepoint` → `has_codepoint` → `render_codepoint`, with the
+wide-glyph factoring honored across both. The sprite subsystem's draw and render
+halves are done.
+
+The remaining sprite-adjacent work is a **range-only `has_codepoint` fast path**
+(an optimization — the scratch-render predicate is the source of truth) and the
+**resolver/shaper production side** that decides to emit these synthetic
+codepoints (e.g. drawing a cell's underline decoration as sprite `0x20_0000`).
+After the sprite font: the discovery consumer, the UCD emoji-presentation
+default, codepoint overrides, the shaper, the Nerd Font attribute table, and SVG
+color detection.
+
+## Completion Review
+
+Codex reviewed the completed implementation and result and **approved** with
+**no Required findings**. Verified against the vendored upstream: `sprite.zig`
+defines `start = maxInt(u21) + 1` and the same eleven-variant order; the Rust
+enum starts at `0x20_0000` and preserves that order exactly. `from_codepoint`
+maps only offsets `0..=10` through the ordered `KINDS` table and returns `None`
+for everything else (the planned safe deviation); `draw_special` maps every
+variant to the correctly-named existing draw function; and `draw_codepoint`
+checks `draw_special` first, matching `getDrawFn`'s leading `cp >= Sprite.start`
+branch. Codex confirmed the tests cover the enum values, exact (pixel-for-pixel)
+dispatch, invalid-band exclusion, normal-codepoint non-special behavior, the
+unified dispatch, `has_codepoint`, render reachability, and wide-cursor width
+propagation. No Optional findings.
+
+Review artifacts:
+
+- Result review: `logs/codex-review/20260603-103730-576943-last-message.md`
