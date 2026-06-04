@@ -26,7 +26,7 @@ mod device_status;
 mod dcs;
 
 #[allow(dead_code)]
-mod x11_color;
+pub(crate) mod x11_color;
 
 #[allow(dead_code)]
 pub(crate) mod focus;

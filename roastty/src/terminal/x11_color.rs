@@ -9,7 +9,7 @@ use super::color::Rgb;
 
 const RGB_TXT: &str = include_str!("res/rgb.txt");
 
-pub(super) fn get(name: &[u8]) -> Option<Rgb> {
+pub(crate) fn get(name: &[u8]) -> Option<Rgb> {
     let name = trim_edge_spaces(name);
     let name = std::str::from_utf8(name).ok()?;
 

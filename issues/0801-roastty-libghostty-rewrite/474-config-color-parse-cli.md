@@ -198,3 +198,51 @@ Review artifacts:
 
 - Prompt: `logs/codex-review/20260604-125918-d474-prompt.md` (design)
 - Result: `logs/codex-review/20260604-125918-d474-last-message.md` (design)
+
+## Result
+
+**Result:** Pass
+
+`Color::parse_cli` was added to `roastty/src/config/mod.rs` exactly as designed
+— the `ValueRequired` guard on a missing value, the `" \t"` trim, the X11
+named-color lookup, the `Color`-from-`Rgb` construction on a hit, and the
+`from_hex` fallback on a miss. `ColorParseError` gained a `ValueRequired`
+variant. `terminal::x11_color` and its `get` were widened to `pub(crate)` so
+`config` can reuse the already-ported map; the existing in-`terminal` caller is
+unaffected. The new test `parse_cli_parses_names_and_hex` asserts the upstream
+`parseCLI` cases (`"black"`, `" #AABBCC   "`, `"  black "`), a hex passthrough,
+a case-insensitive name (`"ForestGreen"`), a tab-trim case, the missing-value
+error, and the non-name/non-hex error.
+
+Gates:
+
+- `cargo fmt -p roastty` accepted; `--check` clean.
+- `cargo test -p roastty`: 2953 passed, 0 failed (one new test; no regressions).
+- `cargo build -p roastty`: no warnings.
+- no-`ghostty`-name greps (font/renderer/config + lib.rs/header/abi_harness.c)
+  clean; `git diff --check` clean.
+
+## Completion Review
+
+Codex reviewed the completed experiment and **approved** it with **no
+findings**: `parse_cli` faithfully ports `Color.parseCLI` (missing-value error,
+space/tab trim, X11 name lookup first, then `from_hex` fallback);
+`ValueRequired` / `Invalid` are appropriate mappings for the two upstream error
+cases; reusing the existing terminal X11 map through `pub(crate)` visibility is
+the right approach and avoids duplication; the test covers the upstream behavior
+plus the important edge cases (tab trimming, case-insensitive names, hex
+passthrough, missing input, invalid fallback). "Approved for the result commit."
+
+Review artifacts:
+
+- Prompt: `logs/codex-review/20260604-130130-r474-prompt.md` (result)
+- Result: `logs/codex-review/20260604-130130-r474-last-message.md` (result)
+
+## Conclusion
+
+The config `Color` parser is complete on the parse side: `parse_cli` (named
+colors → hex fallback, with the whitespace trim and the missing-value error)
+joins `from_hex` from Experiment 473. The next slice can port `Color.formatBuf`
+/ `formatEntry` (the formatter side that renders a `Color` back to `#rrggbb`),
+or move to another config value type's `parseCLI`, continuing toward the
+per-field parser dispatch and the full config loader (`loadCli` / file loading).

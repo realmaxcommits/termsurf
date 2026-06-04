@@ -178,10 +178,13 @@ pub(crate) struct Color {
     pub b: u8,
 }
 
-/// An error parsing a config `Color` (upstream `error.InvalidValue`).
+/// An error parsing a config `Color`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ColorParseError {
-    /// The input is not a valid hex color (wrong length or a non-hex digit).
+    /// No value was supplied (upstream `error.ValueRequired`).
+    ValueRequired,
+    /// The input is not a valid hex color (wrong length or a non-hex digit;
+    /// upstream `error.InvalidValue`).
     Invalid,
 }
 
@@ -214,6 +217,23 @@ impl Color {
             g: digit(expanded[2])? * 16 + digit(expanded[3])?,
             b: digit(expanded[4])? * 16 + digit(expanded[5])?,
         })
+    }
+
+    /// Parse a config color value (upstream `Color.parseCLI`): trim surrounding
+    /// spaces and tabs, look the result up in the X11 named-color map, and fall
+    /// back to [`Color::from_hex`]. A missing value is
+    /// `ColorParseError::ValueRequired`.
+    pub(crate) fn parse_cli(input: Option<&str>) -> Result<Color, ColorParseError> {
+        let input = input.ok_or(ColorParseError::ValueRequired)?;
+        let trimmed = input.trim_matches(|c: char| c == ' ' || c == '\t');
+        if let Some(rgb) = crate::terminal::x11_color::get(trimmed.as_bytes()) {
+            return Ok(Color {
+                r: rgb.r,
+                g: rgb.g,
+                b: rgb.b,
+            });
+        }
+        Color::from_hex(trimmed)
     }
 }
 
@@ -1619,5 +1639,59 @@ mod tests {
         // Errors: a wrong length and a non-hex digit are both `Invalid`.
         assert_eq!(Color::from_hex("12345"), Err(ColorParseError::Invalid));
         assert_eq!(Color::from_hex("ZZZZZZ"), Err(ColorParseError::Invalid));
+    }
+
+    #[test]
+    fn parse_cli_parses_names_and_hex() {
+        // Upstream `Color.parseCLI` cases.
+        assert_eq!(
+            Color::parse_cli(Some("black")),
+            Ok(Color { r: 0, g: 0, b: 0 })
+        );
+        assert_eq!(
+            Color::parse_cli(Some(" #AABBCC   ")),
+            Ok(Color {
+                r: 0xAA,
+                g: 0xBB,
+                b: 0xCC
+            })
+        );
+        assert_eq!(
+            Color::parse_cli(Some("  black ")),
+            Ok(Color { r: 0, g: 0, b: 0 })
+        );
+
+        // A hex value passes straight through to `from_hex`.
+        assert_eq!(
+            Color::parse_cli(Some("#0A0B0C")),
+            Ok(Color {
+                r: 10,
+                g: 11,
+                b: 12
+            })
+        );
+
+        // Named-color lookup is ASCII case-insensitive.
+        assert_eq!(
+            Color::parse_cli(Some("ForestGreen")),
+            Ok(Color {
+                r: 34,
+                g: 139,
+                b: 34
+            })
+        );
+
+        // Tabs are trimmed too (the X11 map alone trims only spaces).
+        assert_eq!(
+            Color::parse_cli(Some("\tblack\t")),
+            Ok(Color { r: 0, g: 0, b: 0 })
+        );
+
+        // A missing value is `ValueRequired`; a non-name non-hex input is `Invalid`.
+        assert_eq!(Color::parse_cli(None), Err(ColorParseError::ValueRequired));
+        assert_eq!(
+            Color::parse_cli(Some("nosuchcolor")),
+            Err(ColorParseError::Invalid)
+        );
     }
 }
