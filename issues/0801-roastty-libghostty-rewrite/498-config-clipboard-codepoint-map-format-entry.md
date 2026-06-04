@@ -181,3 +181,48 @@ Review artifacts:
 
 - Prompt: `logs/codex-review/20260604-154345-d498-prompt.md` (design)
 - Result: `logs/codex-review/20260604-154345-d498-last-message.md` (design)
+
+## Result
+
+**Result:** Pass
+
+`RepeatableClipboardCodepointMap::format_entry` was added to the existing impl
+exactly as designed — an empty map writes one void entry; otherwise one
+`U+XXXX[-U+YYYY]=value` entry per mapping (uppercase 4-digit hex keys; `U+XXXX`
+for a codepoint replacement or the literal string). The new test
+`clipboard_codepoint_map_format_entry` covers the codepoint / string / range
+round-trips, the empty map, and accumulation.
+
+Gates:
+
+- `cargo fmt -p roastty` accepted; `--check` clean.
+- `cargo test -p roastty`: 2983 passed, 0 failed (one new test; no regressions).
+- `cargo build -p roastty`: no warnings.
+- no-`ghostty`-name greps (font/renderer/config + lib.rs/header/abi_harness.c)
+  clean; `git diff --check` clean.
+
+## Completion Review
+
+Codex reviewed the completed experiment and **approved** it with **no
+findings**: the implementation matches upstream
+`RepeatableClipboardCodepointMap.formatEntry` (empty map → void entry, each
+mapping → one line, codepoint replacements use uppercase `U+{X:0>4}`, string
+replacements are literal, and range keys include both endpoints with `U+`
+prefixes — `Config.zig:8312`/`:8322`/`:8327`); the tests cover the upstream
+codepoint / string examples, a range, empty output, and accumulated multi-line
+output; gates are clean. "Approved with no findings."
+
+Review artifacts:
+
+- Prompt: `logs/codex-review/20260604-154621-r498-prompt.md` (result)
+- Result: `logs/codex-review/20260604-154621-r498-last-message.md` (result)
+
+## Conclusion
+
+`RepeatableClipboardCodepointMap` now round-trips: the Experiment 487 parser
+reads `U+XXXX=value` mappings, and `format_entry` writes them back. The config
+formatter side now covers twelve types. The remaining `formatEntry` to port is
+`QuickTerminalSize` (deferred with its parser, since the `%` path needs a
+faithful `parseFloat`); after that the per-field formatter dispatch (the generic
+`formatEntry` for fields without a custom method) and the full config loader
+remain, continuing toward the full config formatter and loader.

@@ -1442,7 +1442,7 @@ are past the correctness-critical foundation.
 - [Experiment 497: the SelectionWordChars config formatter (SelectionWordChars::format_entry)](497-config-selection-word-chars-format-entry.md)
   — **Pass** · Claude/Codex/Codex
 - [Experiment 498: the clipboard-codepoint-map formatter (RepeatableClipboardCodepointMap::format_entry)](498-config-clipboard-codepoint-map-format-entry.md)
-  — **Designed** · Claude/Codex/—
+  — **Pass** · Claude/Codex/Codex
 
 ## Non-Goals
 

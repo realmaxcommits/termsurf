@@ -1099,6 +1099,31 @@ impl RepeatableClipboardCodepointMap {
         }
         Ok(())
     }
+
+    /// Format as config entries (upstream
+    /// `RepeatableClipboardCodepointMap.formatEntry`): an empty map writes one empty
+    /// entry; otherwise one `U+XXXX[-U+YYYY]=value` entry per mapping (uppercase
+    /// 4-digit hex keys; the value is `U+XXXX` for a codepoint replacement, else the
+    /// literal string).
+    pub(crate) fn format_entry(&self, formatter: &mut EntryFormatter) {
+        if self.map.is_empty() {
+            formatter.entry_void();
+            return;
+        }
+        for entry in &self.map {
+            let value = match &entry.replacement {
+                ClipboardReplacement::Codepoint(cp) => format!("U+{:04X}", cp),
+                ClipboardReplacement::String(s) => s.clone(),
+            };
+            let [start, end] = entry.range;
+            let key = if start == end {
+                format!("U+{:04X}", start)
+            } else {
+                format!("U+{:04X}-U+{:04X}", start, end)
+            };
+            formatter.entry_str(&format!("{}={}", key, value));
+        }
+    }
 }
 
 /// Parse a base-16 `u21` (upstream `std.fmt.parseInt(u21, _, 16)`); every error is
@@ -3643,5 +3668,34 @@ mod tests {
         };
         assert_eq!(cap(4096), 4096);
         assert_eq!(cap(4097), 4096);
+    }
+
+    #[test]
+    fn clipboard_codepoint_map_format_entry() {
+        // Round-trips: parse, then format back.
+        let rt = |input: &str| {
+            let mut m = RepeatableClipboardCodepointMap::default();
+            m.parse_cli(Some(input)).unwrap();
+            let mut out = String::new();
+            m.format_entry(&mut EntryFormatter::new("a", &mut out));
+            out
+        };
+        assert_eq!(rt("U+2500=U+002D"), "a = U+2500=U+002D\n"); // codepoint replacement
+        assert_eq!(rt("U+03A3=SUM"), "a = U+03A3=SUM\n"); // string replacement
+        assert_eq!(rt("U+2500-U+2503=|"), "a = U+2500-U+2503=|\n"); // range key
+
+        // The empty map writes one empty entry.
+        let mut out = String::new();
+        RepeatableClipboardCodepointMap::default()
+            .format_entry(&mut EntryFormatter::new("a", &mut out));
+        assert_eq!(out, "a = \n");
+
+        // Accumulation: two entries → two lines.
+        let mut m = RepeatableClipboardCodepointMap::default();
+        m.parse_cli(Some("U+2500=U+002D")).unwrap();
+        m.parse_cli(Some("U+03A3=SUM")).unwrap();
+        let mut out = String::new();
+        m.format_entry(&mut EntryFormatter::new("a", &mut out));
+        assert_eq!(out, "a = U+2500=U+002D\na = U+03A3=SUM\n");
     }
 }
