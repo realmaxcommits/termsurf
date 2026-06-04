@@ -1325,6 +1325,8 @@ are past the correctness-critical foundation.
   — **Pass** · Claude/Codex/Codex
 - [Experiment 439: the custom-shader-animation config enum and its animate decision (CustomShaderAnimation, should_animate)](439-config-custom-shader-animation.md)
   — **Pass** · Claude/Codex/Codex
+- [Experiment 440: the font-style config union and its enabled predicate (FontStyle, enabled)](440-config-font-style.md)
+  — **Designed** · Claude/Codex/—
 
 ## Non-Goals
 
