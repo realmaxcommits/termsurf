@@ -163,3 +163,57 @@ Review artifacts:
 
 - Prompt: `logs/codex-review/20260603-211415-445086-prompt.md` (design)
 - Result: `logs/codex-review/20260603-211415-445086-last-message.md` (design)
+
+## Result
+
+**Result:** Pass
+
+The link underline override is now computable.
+
+- `roastty/src/renderer/cell.rs`:
+  `link_underline(is_link, underline) -> Underline` — a non-link cell returns
+  its `underline` unchanged; a link cell turns `Single` into `Double` and every
+  other underline (including `None`) into `Single`. `pub(crate)` and not yet
+  called in production (the hovered-link membership and the underline-pass
+  wiring are deferred), reachable in the library crate, so no dead-code warning.
+
+Test (in `cell.rs`): `link_underline_applies_the_hovered_link_override` — a
+non-link cell keeps all six variants (`None`/`Single`/`Double`/`Curly`/`Dotted`/
+`Dashed`); a link cell maps `Single → Double`, `None → Single`, and
+`Double`/`Curly`/`Dotted`/`Dashed → Single`.
+
+Gate results:
+
+- `cargo fmt -p roastty` accepted; `--check` clean.
+- `cargo test -p roastty` → 2856 passed, 0 failed (+1, no regressions).
+- `cargo build -p roastty` → no warnings.
+- No-`ghostty`-name gates (font + renderer) clean; `git diff --check` clean.
+
+## Conclusion
+
+The hovered-link underline override is now ported faithfully as
+`link_underline`: a link cell's single underline becomes a double underline (to
+distinguish it from the cell's own underline), any other underline (including
+none) becomes single, and a non-link cell is unchanged. Like the search
+highlights (Experiment 390), the link-membership source and the wiring into
+`rebuild_row`'s underline pass are deferred until a hovered-link set is modeled.
+
+The remaining renderer-bridge work: the hovered-link set (OSC 8 / regex link
+membership) and wiring `link_underline` into the underline pass; the
+column-ordered decoration merge; and the **Metal upload** of `Contents`.
+
+## Completion Review
+
+Codex reviewed the completed implementation and result and **approved** with
+**no findings**. It confirmed the implementation matches the approved design and
+upstream logic exactly: non-link cells return their original underline, link
+cells turn `Single` into `Double`, and every other underline variant (including
+`None`) becomes `Single`. It confirmed the test covers the full variant matrix
+for both the passthrough and the link-override behavior, that deferring the
+hovered-link membership and the underline-pass wiring is reasonable for this
+scoped helper, and that there is no public C ABI/header impact. Nothing needed
+to change before the result commit.
+
+Review artifacts:
+
+- Result review: `logs/codex-review/20260603-211612-122555-last-message.md`

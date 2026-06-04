@@ -385,6 +385,23 @@ pub(crate) fn block_cursor_pos(x: u16, y: u16, wide: Wide) -> ([u16; 2], bool) {
     ([cursor_x, y], cursor_wide)
 }
 
+/// The effective underline for a cell, applying the hovered-link override: a link
+/// cell gets a single underline, unless it already has a **single** underline, in
+/// which case it gets a **double** underline to distinguish the link from the
+/// cell's own underline. A non-link cell keeps its SGR `underline`. Faithful port
+/// of upstream's link underline logic; the hovered-link membership is supplied by
+/// the caller as `is_link` (the link set is not yet modeled).
+pub(crate) fn link_underline(is_link: bool, underline: Underline) -> Underline {
+    if !is_link {
+        return underline;
+    }
+    if matches!(underline, Underline::Single) {
+        Underline::Double
+    } else {
+        Underline::Single
+    }
+}
+
 /// The per-cell selected state (upstream's `selected` enum). `False` uses the
 /// base [`cell_colors`]; the three selected states use [`selected_colors`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -3673,6 +3690,35 @@ mod tests {
 
         // Saturating: a spacer tail at column 0 does not underflow.
         assert_eq!(block_cursor_pos(0, 0, Wide::SpacerTail), ([0, 0], true));
+    }
+
+    #[test]
+    fn link_underline_applies_the_hovered_link_override() {
+        // A non-link cell keeps its SGR underline (every variant unchanged).
+        for u in [
+            Underline::None,
+            Underline::Single,
+            Underline::Double,
+            Underline::Curly,
+            Underline::Dotted,
+            Underline::Dashed,
+        ] {
+            assert_eq!(link_underline(false, u), u, "non-link {u:?}");
+        }
+
+        // A link cell with a single underline → double (to distinguish it).
+        assert_eq!(link_underline(true, Underline::Single), Underline::Double);
+        // A link cell with no underline → a single underline.
+        assert_eq!(link_underline(true, Underline::None), Underline::Single);
+        // A link cell with any other underline → a single underline.
+        for u in [
+            Underline::Double,
+            Underline::Curly,
+            Underline::Dotted,
+            Underline::Dashed,
+        ] {
+            assert_eq!(link_underline(true, u), Underline::Single, "link {u:?}");
+        }
     }
 
     #[test]

@@ -1240,7 +1240,7 @@ are past the correctness-critical foundation.
 - [Experiment 396: the block-cursor position uniform](396-block-cursor-pos.md) —
   **Pass** · Claude/Codex/Codex
 - [Experiment 397: the link underline override](397-link-underline.md) —
-  **Designed** · Claude/Codex/Codex
+  **Pass** · Claude/Codex/Codex
 
 ## Non-Goals
 
