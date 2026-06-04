@@ -159,3 +159,57 @@ Review artifacts:
 
 - Prompt: `logs/codex-review/20260604-085454-d423-prompt.md` (design)
 - Result: `logs/codex-review/20260604-085454-d423-last-message.md` (design)
+
+## Result
+
+**Result:** Pass
+
+The perfect-fit powerline predicate is now live.
+
+- `roastty/src/renderer/cell.rs`:
+  `pub(crate) fn is_perfect_fit_powerline(cp: u32) -> bool` —
+  `matches!(cp, 0xE0B0..=0xE0C8 | 0xE0CA | 0xE0CC..=0xE0D2 | 0xE0D4)`, the
+  perfect-fit subset upstream's `neverExtendBg` uses, distinct from the broad
+  `is_powerline(0xE0B0..=0xE0D7)`.
+
+Test (in `cell.rs`): `is_perfect_fit_powerline_is_the_narrow_subset` — true at
+`0xE0B0`, `0xE0C8`, `0xE0CA`, `0xE0CC`, `0xE0D2`, `0xE0D4`; false at `0xE0AF`,
+`0xE0C9`, `0xE0CB`, `0xE0D3`, `0xE0D5`, `0xE0D7` (the gaps the broad
+`is_powerline` includes but the perfect-fit subset excludes).
+
+Gate results:
+
+- `cargo fmt -p roastty` accepted; `--check` clean.
+- `cargo test -p roastty` → 2902 passed, 0 failed (+1, no regressions).
+- `cargo build -p roastty` → no warnings.
+- No-`ghostty`-name gates (font + renderer + config +
+  `lib.rs`/header/`abi_harness.c`) clean; `git diff --check` clean.
+
+## Conclusion
+
+The perfect-fit powerline codepoint subset is ported as a self-contained
+predicate, distinct from the broad `is_powerline`. It is the codepoint half of
+upstream's `neverExtendBg` powerline check. The full `neverExtendBg` — the
+semantic-prompt check and the per-cell `content_tag` / `bg` / default-background
+checks — needs the renderer's terminal-core row/cell representation (`RunCell`
+does not yet carry `semantic_prompt` / `content_tag`), so it and the per-row
+`padding_extend` refinement that consumes it stay deferred. The other remaining
+renderer-bridge work: the macOS-glass `bg_color` override (needs a
+`background_blur` config enum), a production `MetalUniforms` constructor, and
+the live per-frame call sites.
+
+## Completion Review
+
+Codex reviewed the completed implementation and result and **approved** with
+**no findings**. It confirmed the predicate matches upstream's `neverExtendBg`
+powerline arm exactly (`0xE0B0..=0xE0C8 | 0xE0CA | 0xE0CC..=0xE0D2 | 0xE0D4`)
+and is correctly distinct from the broad `is_powerline(0xE0B0..=0xE0D7)`
+classifier, with the test covering the included boundaries/singletons and the
+excluded gaps (`0xE0C9`, `0xE0CB`, `0xE0D3`, `0xE0D5`, `0xE0D7`). It confirmed
+the full `neverExtendBg` and the padding refinement remain properly deferred. No
+public C ABI/header impact; nothing needed to change before the result commit.
+
+Review artifacts:
+
+- Prompt: `logs/codex-review/20260604-085641-r423-prompt.md` (result)
+- Result: `logs/codex-review/20260604-085641-r423-last-message.md` (result)

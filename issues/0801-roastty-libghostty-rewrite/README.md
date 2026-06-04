@@ -1292,7 +1292,7 @@ are past the correctness-critical foundation.
 - [Experiment 422: the padding-extend reset (WindowPaddingColor + reset_padding_extend)](422-padding-extend-reset.md)
   — **Pass** · Claude/Codex/Codex
 - [Experiment 423: the perfect-fit powerline predicate (is_perfect_fit_powerline)](423-perfect-fit-powerline.md)
-  — **Designed** · Claude/Codex/Codex
+  — **Pass** · Claude/Codex/Codex
 
 ## Non-Goals
 

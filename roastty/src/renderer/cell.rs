@@ -69,6 +69,16 @@ fn is_powerline(cp: u32) -> bool {
     matches!(cp, 0xE0B0..=0xE0D7)
 }
 
+/// Whether `cp` is a "perfect-fit" powerline glyph — the subset upstream's
+/// `neverExtendBg` treats as a reason to never extend a row's background (these
+/// separators are perfect-fit, so extending the background past them looks bad).
+/// A **narrower** set than the general [`is_powerline`] range: `0xE0B0..=0xE0C8`,
+/// `0xE0CA`, `0xE0CC..=0xE0D2`, `0xE0D4` (excludes `0xE0C9`, `0xE0CB`, `0xE0D3`,
+/// `0xE0D5..=0xE0D7`).
+pub(crate) fn is_perfect_fit_powerline(cp: u32) -> bool {
+    matches!(cp, 0xE0B0..=0xE0C8 | 0xE0CA | 0xE0CC..=0xE0D2 | 0xE0D4)
+}
+
 /// Some general spaces, kept to force the font to render as a fixed width.
 fn is_space(cp: u32) -> bool {
     matches!(cp, 0x0020 | 0x2002)
@@ -1490,6 +1500,26 @@ mod tests {
         assert!(is_powerline(0xE0B0));
         assert!(is_powerline(0xE0D7));
         assert!(!is_powerline(0xE0D8));
+    }
+
+    #[test]
+    fn is_perfect_fit_powerline_is_the_narrow_subset() {
+        // Boundaries and singletons in the set.
+        assert!(is_perfect_fit_powerline(0xE0B0));
+        assert!(is_perfect_fit_powerline(0xE0C8));
+        assert!(is_perfect_fit_powerline(0xE0CA));
+        assert!(is_perfect_fit_powerline(0xE0CC));
+        assert!(is_perfect_fit_powerline(0xE0D2));
+        assert!(is_perfect_fit_powerline(0xE0D4));
+
+        // Just outside, and the gaps the broad `is_powerline` includes but the
+        // perfect-fit subset excludes.
+        assert!(!is_perfect_fit_powerline(0xE0AF));
+        assert!(!is_perfect_fit_powerline(0xE0C9));
+        assert!(!is_perfect_fit_powerline(0xE0CB));
+        assert!(!is_perfect_fit_powerline(0xE0D3));
+        assert!(!is_perfect_fit_powerline(0xE0D5));
+        assert!(!is_perfect_fit_powerline(0xE0D7));
     }
 
     #[test]
