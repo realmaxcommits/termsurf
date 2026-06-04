@@ -1363,6 +1363,8 @@ are past the correctness-critical foundation.
   — **Pass** · Claude/Codex/Codex
 - [Experiment 458: the macOS window config enums (MacWindowButtons, MacHidden)](458-config-mac-window.md)
   — **Pass** · Claude/Codex/Codex
+- [Experiment 459: the theme config type and its single-name constructor (Theme, single)](459-config-theme.md)
+  — **Designed** · Claude/Codex/—
 
 ## Non-Goals
 
