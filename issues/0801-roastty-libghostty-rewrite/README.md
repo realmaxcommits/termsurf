@@ -1299,6 +1299,8 @@ are past the correctness-critical foundation.
   — **Pass** · Claude/Codex/Codex
 - [Experiment 426: the production MetalUniforms constructor (new)](426-uniforms-constructor.md)
   — **Pass** · Claude/Codex/Codex
+- [Experiment 427: the per-row padding-extend refinement (refine_padding_extend)](427-padding-extend-refine.md)
+  — **Designed** · Claude/Codex/Codex
 
 ## Non-Goals
 
