@@ -160,3 +160,54 @@ Review artifacts:
 
 - Prompt: `logs/codex-review/20260604-124647-d472-prompt.md` (design)
 - Result: `logs/codex-review/20260604-124647-d472-last-message.md` (design)
+
+## Result
+
+**Result:** Pass
+
+The `Config` struct now carries the base-colors field group.
+
+- `roastty/src/config/mod.rs`: `Config` gains `background: Color`,
+  `foreground: Color`, and `theme: Option<Theme>`; `Config::default()` sets
+  their upstream Config-field defaults — `Color { 0x28, 0x2C, 0x34 }`,
+  `Color { 0xFF, 0xFF, 0xFF }`, and `None`.
+
+Test (in `config/mod.rs`): `config_default_clipboard_group` extended to assert
+the three new base-colors defaults alongside the eleven prior groups' defaults;
+the modified-config inequality and the `Clone`/`PartialEq` round-trip remain.
+
+Gate results:
+
+- `cargo fmt -p roastty` accepted; `--check` clean.
+- `cargo test -p roastty` → 2952 passed, 0 failed (no regressions; the existing
+  `config_default` test was extended).
+- `cargo build -p roastty` → no warnings.
+- No-`ghostty`-name gates (font + renderer + config +
+  `lib.rs`/header/`abi_harness.c`) clean; `git diff --check` clean.
+
+## Conclusion
+
+The aggregating `Config` struct now holds twelve field groups — clipboard (461)
+through terminal/render-behavior (471), plus base-colors — forty-four fields
+total. The base-colors group lands the last two ported config value types: the
+base `Color` (Experiment 445), used directly for `background` / `foreground`,
+and `Theme` (Experiment 459), wrapped in `Option` for `theme`. With this, every
+config type ported over Experiments 437–460 is now represented in the `Config`
+aggregate. The remaining upstream `Config` fields (the many not-yet-ported
+scalars / path / list types), the parser (including `loadTheme`), the
+`changeConfig` machinery, and the conditional-config system stay deferred.
+
+## Completion Review
+
+Codex reviewed the completed implementation and result and **approved** with
+**no findings**. It confirmed `background`, `foreground`, and `theme` were added
+with faithful upstream defaults; `Option<Theme>` correctly maps upstream
+`?Theme = null`; the base-colors group is properly scoped (parser / `loadTheme`
+and conditional-config behavior remain deferred); and extending the existing
+`Config::default()` test is adequate and keeps all prior groups covered. No
+public C ABI/header impact; nothing needed to change before the result commit.
+
+Review artifacts:
+
+- Prompt: `logs/codex-review/20260604-124839-r472-prompt.md` (result)
+- Result: `logs/codex-review/20260604-124839-r472-last-message.md` (result)

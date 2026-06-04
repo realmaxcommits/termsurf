@@ -98,6 +98,12 @@ pub(crate) struct Config {
     pub scroll_to_bottom: ScrollToBottom,
     /// `custom-shader-animation`.
     pub custom_shader_animation: CustomShaderAnimation,
+    /// `background`.
+    pub background: Color,
+    /// `foreground`.
+    pub foreground: Color,
+    /// `theme`.
+    pub theme: Option<Theme>,
 }
 
 impl Default for Config {
@@ -147,6 +153,17 @@ impl Default for Config {
             osc_color_report_format: OscColorReportFormat::Bits16,
             scroll_to_bottom: ScrollToBottom::default(),
             custom_shader_animation: CustomShaderAnimation::True,
+            background: Color {
+                r: 0x28,
+                g: 0x2C,
+                b: 0x34,
+            },
+            foreground: Color {
+                r: 0xFF,
+                g: 0xFF,
+                b: 0xFF,
+            },
+            theme: None,
         }
     }
 }
@@ -1060,6 +1077,24 @@ mod tests {
         assert_eq!(d.osc_color_report_format, OscColorReportFormat::Bits16);
         assert_eq!(d.scroll_to_bottom, ScrollToBottom::default());
         assert_eq!(d.custom_shader_animation, CustomShaderAnimation::True);
+        // Base-colors group (Experiment 472).
+        assert_eq!(
+            d.background,
+            Color {
+                r: 0x28,
+                g: 0x2C,
+                b: 0x34
+            }
+        );
+        assert_eq!(
+            d.foreground,
+            Color {
+                r: 0xFF,
+                g: 0xFF,
+                b: 0xFF
+            }
+        );
+        assert_eq!(d.theme, None);
 
         // A modified config differs from the default and round-trips Clone/PartialEq.
         let mut modified = Config::default();
