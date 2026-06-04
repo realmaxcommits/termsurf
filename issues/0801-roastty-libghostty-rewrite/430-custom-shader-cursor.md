@@ -222,3 +222,66 @@ Review artifacts:
 
 - Prompt: `logs/codex-review/20260604-093334-d430-prompt.md` (design)
 - Result: `logs/codex-review/20260604-093334-d430-last-message.md` (design)
+
+## Result
+
+**Result:** Pass
+
+The custom-shader cursor update is now live.
+
+- `roastty/src/renderer/shadertoy.rs`:
+  `CustomShaderUniforms::update_cursor(&mut self, cursor: Option<CellTextVertex>, cell_width, cell_height, padding_left, padding_top)`
+  computes the Metal cursor pixel rect
+  (`x = grid_x·cell_w + padding_left + bearingX`;
+  `y = grid_y·cell_h + padding_top + cell_h − bearingY + glyphH`) and the
+  normalized color (RGBA / 255), and on a change shifts `current` → `previous`
+  and stamps `cursor_change_time = time`; `None` is a no-op. Added
+  `use crate::renderer::shader::CellTextVertex;`.
+
+Test (in `shadertoy.rs`): `update_cursor_computes_pixel_rect_and_tracks_changes`
+— a cursor glyph (`grid_pos [2, 3]`, `glyph_size [10, 20]`, `bearings [1, 2]`,
+red) with `cell 8×16`, `padding left 4 / top 5`, `time = 5.0` →
+`current_cursor == [21, 87, 10, 20]`, `current_cursor_color == [1, 0, 0, 1]`,
+`previous_cursor == [0; 4]`, `cursor_change_time == 5.0`; the same glyph at
+`time = 6.0` → no change; a different glyph → `previous_cursor` becomes the
+prior current and `cursor_change_time == 6.0`; `None` → no-op (the struct
+unchanged).
+
+Gate results:
+
+- `cargo fmt -p roastty` accepted; `--check` clean.
+- `cargo test -p roastty` → 2912 passed, 0 failed (+1, no regressions).
+- `cargo build -p roastty` → no warnings.
+- No-`ghostty`-name gates (font + renderer + config +
+  `lib.rs`/header/`abi_harness.c`) clean; `git diff --check` clean.
+
+## Conclusion
+
+The custom-shader per-frame update now covers both halves — the time/resolution
+group (Experiment 429) and the cursor group (this experiment, the Metal pixel
+rect + change-tracking). The remaining custom-shader work — the focus uniforms
+(`focus` / `time_focus`, from `self.focused` / `custom_shader_focused_changed`),
+the `updateCustomShaderUniformsFromState` group, the live timing source, the
+`Target` enum, and the shader loading — stays deferred, along with the broader
+live per-frame call sites and the `neverExtendBg` terminal-core row/cell access;
+beyond the renderer, the other subsystems.
+
+## Completion Review
+
+Codex reviewed the completed implementation and result and **approved** with
+**no findings**. It confirmed `update_cursor` matches the upstream Metal path —
+the y-flip is correctly omitted for `custom_shader_y_is_down = true`, and the
+pixel math is faithful (`x = grid_x·cell_width + padding_left + bearing_x`;
+`y = grid_y·cell_height + padding_top + cell_height − bearing_y + glyph_height`),
+landing the worked case at `[21.0, 87.0, 10.0, 20.0]`. It confirmed the color
+normalization (`channel / 255.0` per RGBA channel) and the change-tracking
+(current shifts to previous, the color shifts with it, and `cursor_change_time`
+is stamped from `self.time` only when the rect or color changes; `None` is a
+no-op). It judged the test to cover the first update, the same-glyph no-change,
+the changed-glyph shifting, and the full-struct no-op for `None`. No public C
+ABI/header impact; nothing needed to change before the result commit.
+
+Review artifacts:
+
+- Prompt: `logs/codex-review/20260604-093609-r430-prompt.md` (result)
+- Result: `logs/codex-review/20260604-093609-r430-last-message.md` (result)

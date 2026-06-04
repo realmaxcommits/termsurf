@@ -8,6 +8,8 @@
 #![allow(dead_code)]
 // This shadertoy layer is consumed by later slices.
 
+use crate::renderer::shader::CellTextVertex;
+
 /// The uniform struct custom shaders read (upstream `shadertoy.Uniforms`). The
 /// `#[repr(C, align(16))]` layout with explicit padding reproduces upstream's
 /// `extern struct` `align(16)` field offsets (Rust's `[f32; 4]` has alignment 4,
@@ -106,11 +108,58 @@ impl CustomShaderUniforms {
         self.resolution = [w, h, 1.0];
         self.channel_resolution[0] = [w, h, 1.0, 0.0];
     }
+
+    /// Update the cursor uniforms from the cursor glyph (upstream
+    /// `updateCustomShaderUniformsForFrame`'s cursor half, Metal
+    /// `custom_shader_y_is_down = true`): compute the cursor's pixel rect
+    /// (`[left + bearingX, top + cellH - bearingY + glyphH, glyphW, glyphH]`) and
+    /// its normalized color; on a change, shift `current` → `previous` and stamp
+    /// `cursor_change_time = time`. No cursor glyph → no update.
+    pub(crate) fn update_cursor(
+        &mut self,
+        cursor: Option<CellTextVertex>,
+        cell_width: u32,
+        cell_height: u32,
+        padding_left: u32,
+        padding_top: u32,
+    ) {
+        let Some(cursor) = cursor else {
+            return;
+        };
+        let mut pixel_x = (cursor.grid_pos[0] as u32 * cell_width + padding_left) as f32;
+        let mut pixel_y = (cursor.grid_pos[1] as u32 * cell_height + padding_top) as f32;
+        pixel_x += f32::from(cursor.bearings[0]);
+        // Metal: custom_shader_y_is_down = true.
+        pixel_y += cell_height as f32;
+        pixel_y -= f32::from(cursor.bearings[1]);
+        pixel_y += cursor.glyph_size[1] as f32;
+
+        let new_cursor = [
+            pixel_x,
+            pixel_y,
+            cursor.glyph_size[0] as f32,
+            cursor.glyph_size[1] as f32,
+        ];
+        let cursor_color = [
+            f32::from(cursor.color[0]) / 255.0,
+            f32::from(cursor.color[1]) / 255.0,
+            f32::from(cursor.color[2]) / 255.0,
+            f32::from(cursor.color[3]) / 255.0,
+        ];
+
+        if new_cursor != self.current_cursor || cursor_color != self.current_cursor_color {
+            self.previous_cursor = self.current_cursor;
+            self.previous_cursor_color = self.current_cursor_color;
+            self.current_cursor = new_cursor;
+            self.current_cursor_color = cursor_color;
+            self.cursor_change_time = self.time;
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::CustomShaderUniforms;
+    use super::{CellTextVertex, CustomShaderUniforms};
     use std::mem::{align_of, offset_of, size_of};
 
     #[test]
@@ -172,5 +221,58 @@ mod tests {
         assert_eq!(u.focus, 1);
         assert_eq!(u.palette[0], [0.0; 4]);
         assert_eq!(u.channel_resolution[1], [0.0; 4]);
+    }
+
+    fn cursor_glyph(
+        grid_pos: [u16; 2],
+        glyph_size: [u32; 2],
+        bearings: [i16; 2],
+        color: [u8; 4],
+    ) -> CellTextVertex {
+        use crate::renderer::shader::{CellTextAtlas, CellTextFlags};
+        CellTextVertex {
+            glyph_pos: [0, 0],
+            glyph_size,
+            bearings,
+            grid_pos,
+            color,
+            atlas: CellTextAtlas::Grayscale,
+            flags: CellTextFlags::default(),
+            _padding: [0, 0],
+        }
+    }
+
+    #[test]
+    fn update_cursor_computes_pixel_rect_and_tracks_changes() {
+        let mut u = CustomShaderUniforms::new();
+        u.time = 5.0;
+
+        // grid_pos [2,3], glyph_size [10,20], bearings [1,2], red; cell 8×16,
+        // padding left 4 / top 5. x = 2·8+4+1 = 21; y = 3·16+5+16−2+20 = 87.
+        let glyph = cursor_glyph([2, 3], [10, 20], [1, 2], [255, 0, 0, 255]);
+        u.update_cursor(Some(glyph), 8, 16, 4, 5);
+        assert_eq!(u.current_cursor, [21.0, 87.0, 10.0, 20.0]);
+        assert_eq!(u.current_cursor_color, [1.0, 0.0, 0.0, 1.0]);
+        assert_eq!(u.previous_cursor, [0.0; 4]); // the old current
+        assert_eq!(u.cursor_change_time, 5.0);
+
+        // The same glyph at a later time → no change (previous and change time
+        // stay).
+        u.time = 6.0;
+        u.update_cursor(Some(glyph), 8, 16, 4, 5);
+        assert_eq!(u.previous_cursor, [0.0; 4]);
+        assert_eq!(u.cursor_change_time, 5.0);
+
+        // A different glyph → previous becomes the prior current, change time
+        // updates.
+        let glyph2 = cursor_glyph([0, 0], [10, 20], [0, 0], [0, 0, 255, 255]);
+        u.update_cursor(Some(glyph2), 8, 16, 4, 5);
+        assert_eq!(u.previous_cursor, [21.0, 87.0, 10.0, 20.0]);
+        assert_eq!(u.cursor_change_time, 6.0);
+
+        // None → no-op.
+        let before = u;
+        u.update_cursor(None, 8, 16, 4, 5);
+        assert_eq!(u, before);
     }
 }
