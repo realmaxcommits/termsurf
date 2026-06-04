@@ -9,7 +9,7 @@
 // This shadertoy layer is consumed by later slices.
 
 use crate::renderer::shader::CellTextVertex;
-use crate::terminal::color::Palette;
+use crate::terminal::color::{Palette, Rgb};
 
 /// The uniform struct custom shaders read (upstream `shadertoy.Uniforms`). The
 /// `#[repr(C, align(16))]` layout with explicit padding reproduces upstream's
@@ -184,6 +184,48 @@ impl CustomShaderUniforms {
             ];
         }
     }
+
+    /// Update the from-state color uniforms (the colors of upstream
+    /// `updateCustomShaderUniformsFromState`): `background_color` and
+    /// `foreground_color` always; `cursor_color`, `cursor_text`,
+    /// `selection_background_color`, and `selection_foreground_color` only when
+    /// their value is present (else the prior value is kept). Each is the RGB
+    /// normalized to `[0, 1]` with an opaque alpha.
+    pub(crate) fn update_state_colors(
+        &mut self,
+        background: Rgb,
+        foreground: Rgb,
+        cursor: Option<Rgb>,
+        cursor_text: Option<Rgb>,
+        selection_background: Option<Rgb>,
+        selection_foreground: Option<Rgb>,
+    ) {
+        self.background_color = normalize_rgb(background);
+        self.foreground_color = normalize_rgb(foreground);
+        if let Some(c) = cursor {
+            self.cursor_color = normalize_rgb(c);
+        }
+        if let Some(c) = cursor_text {
+            self.cursor_text = normalize_rgb(c);
+        }
+        if let Some(c) = selection_background {
+            self.selection_background_color = normalize_rgb(c);
+        }
+        if let Some(c) = selection_foreground {
+            self.selection_foreground_color = normalize_rgb(c);
+        }
+    }
+}
+
+/// Normalize an `Rgb` to a `[0, 1]` `vec4` with an opaque alpha
+/// (`@floatFromInt(channel) / 255.0`, alpha `1.0`).
+fn normalize_rgb(c: Rgb) -> [f32; 4] {
+    [
+        f32::from(c.r) / 255.0,
+        f32::from(c.g) / 255.0,
+        f32::from(c.b) / 255.0,
+        1.0,
+    ]
 }
 
 #[cfg(test)]
@@ -358,5 +400,60 @@ mod tests {
         assert_eq!(u.background_color, [0.0; 4]);
         assert_eq!(u.focus, 1);
         assert_eq!(u.frame, 0);
+    }
+
+    #[test]
+    fn update_state_colors_sets_required_and_optional() {
+        use crate::terminal::color::Rgb;
+
+        let mut u = CustomShaderUniforms::new();
+
+        // First call: every optional color is `Some`, so each updates its field.
+        u.update_state_colors(
+            Rgb::new(10, 20, 30),
+            Rgb::new(40, 50, 60),
+            Some(Rgb::new(255, 0, 0)),
+            Some(Rgb::new(0, 128, 255)),
+            Some(Rgb::new(0, 255, 0)),
+            Some(Rgb::new(64, 64, 64)),
+        );
+        assert_eq!(
+            u.background_color,
+            [10.0 / 255.0, 20.0 / 255.0, 30.0 / 255.0, 1.0]
+        );
+        assert_eq!(
+            u.foreground_color,
+            [40.0 / 255.0, 50.0 / 255.0, 60.0 / 255.0, 1.0]
+        );
+        assert_eq!(u.cursor_color, [1.0, 0.0, 0.0, 1.0]);
+        assert_eq!(u.cursor_text, [0.0, 128.0 / 255.0, 1.0, 1.0]);
+        assert_eq!(u.selection_background_color, [0.0, 1.0, 0.0, 1.0]);
+        assert_eq!(
+            u.selection_foreground_color,
+            [64.0 / 255.0, 64.0 / 255.0, 64.0 / 255.0, 1.0]
+        );
+
+        // Second call: every optional color is `None`, so each keeps its prior
+        // (seeded) value; only background/foreground change.
+        u.update_state_colors(Rgb::new(1, 2, 3), Rgb::new(4, 5, 6), None, None, None, None);
+        assert_eq!(
+            u.background_color,
+            [1.0 / 255.0, 2.0 / 255.0, 3.0 / 255.0, 1.0]
+        );
+        assert_eq!(
+            u.foreground_color,
+            [4.0 / 255.0, 5.0 / 255.0, 6.0 / 255.0, 1.0]
+        );
+        assert_eq!(u.cursor_color, [1.0, 0.0, 0.0, 1.0]);
+        assert_eq!(u.cursor_text, [0.0, 128.0 / 255.0, 1.0, 1.0]);
+        assert_eq!(u.selection_background_color, [0.0, 1.0, 0.0, 1.0]);
+        assert_eq!(
+            u.selection_foreground_color,
+            [64.0 / 255.0, 64.0 / 255.0, 64.0 / 255.0, 1.0]
+        );
+
+        // Unrelated fields are untouched.
+        assert_eq!(u.palette[0], [0.0; 4]);
+        assert_eq!(u.focus, 1);
     }
 }

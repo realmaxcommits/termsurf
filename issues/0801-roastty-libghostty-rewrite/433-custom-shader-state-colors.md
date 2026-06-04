@@ -193,3 +193,65 @@ Review artifacts:
 
 - Prompt: `logs/codex-review/20260604-094832-d433-prompt.md` (design)
 - Result: `logs/codex-review/20260604-094832-d433-last-message.md` (design)
+
+## Result
+
+**Result:** Pass
+
+The custom-shader from-state colors are now live.
+
+- `roastty/src/renderer/shadertoy.rs`:
+  `CustomShaderUniforms::update_state_colors(&mut self, background, foreground, cursor, cursor_text, selection_background, selection_foreground)`
+  always sets `background_color` / `foreground_color` and sets `cursor_color` /
+  `cursor_text` / `selection_background_color` / `selection_foreground_color`
+  only when the corresponding `Option<Rgb>` is `Some` (else the prior value is
+  kept). A private `fn normalize_rgb(c: Rgb) -> [f32; 4]` does the
+  `[r/255, g/255, b/255, 1.0]` conversion. Extended the import to
+  `use crate::terminal::color::{Palette, Rgb};`.
+
+Test (in `shadertoy.rs`): `update_state_colors_sets_required_and_optional` — a
+first call with all four optionals `Some` (asserting each updates its field:
+`cursor_color == [1,0,0,1]`, `cursor_text == [0, 128/255, 1, 1]`,
+`selection_background_color == [0,1,0,1]`,
+`selection_foreground_color == [64/255, 64/255, 64/255, 1]`, plus the always-set
+bg/fg), then a second call with all four `None` and different bg/fg (asserting
+bg/fg change and the four optional colors keep their prior seeded values); and
+`palette[0]` / `focus` untouched.
+
+Gate results:
+
+- `cargo fmt -p roastty` accepted; `--check` clean.
+- `cargo test -p roastty` → 2916 passed, 0 failed (+1, no regressions).
+- `cargo build -p roastty` → no warnings.
+- No-`ghostty`-name gates (font + renderer + config +
+  `lib.rs`/header/`abi_harness.c`) clean; `git diff --check` clean.
+
+## Conclusion
+
+The custom-shader uniforms now take their background, foreground, cursor,
+cursor-text, and selection colors from a `Rgb` / `Option<Rgb>` set, with the
+optional colors faithfully preserving their prior value when absent. The
+remaining `updateCustomShaderUniformsFromState` work — the `cursor_visible` flag
+and the cursor-style fields (`current_cursor_style` / `previous_cursor_style`,
+driven by a `CursorStyle`-to-`i32` mapping) — plus the `dirty` gate stays
+deferred (each a small param-driven slice), along with the `Target` enum, the
+shader loading, the broader live per-frame call sites, and the `neverExtendBg`
+terminal-core row/cell access; beyond the renderer, the other subsystems.
+
+## Completion Review
+
+Codex reviewed the completed implementation and result and **approved** with
+**no findings**. It confirmed `update_state_colors` is faithful to upstream's
+colors group: `background_color` and `foreground_color` are always updated, the
+four optional colors update only on `Some`, and `None` preserves the prior
+uniform value; `normalize_rgb` matches upstream's
+`@floatFromInt(channel) / 255.0` with alpha `1.0`. It judged the prior Low
+resolved — the test now covers all optional `Some` branches and then a second
+all-`None` call proving the seeded optional values are preserved while bg/fg
+still update, plus representative untouched fields. No public C ABI/header
+impact; nothing needed to change before the result commit.
+
+Review artifacts:
+
+- Prompt: `logs/codex-review/20260604-095134-r433-prompt.md` (result)
+- Result: `logs/codex-review/20260604-095134-r433-last-message.md` (result)

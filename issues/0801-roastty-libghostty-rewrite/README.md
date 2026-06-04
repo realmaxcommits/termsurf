@@ -1312,7 +1312,7 @@ are past the correctness-critical foundation.
 - [Experiment 432: the custom-shader palette update (update_palette)](432-custom-shader-palette.md)
   — **Pass** · Claude/Codex/Codex
 - [Experiment 433: the custom-shader from-state colors (update_state_colors)](433-custom-shader-state-colors.md)
-  — **Designed** · Claude/Codex/—
+  — **Pass** · Claude/Codex/Codex
 
 ## Non-Goals
 
