@@ -178,3 +178,59 @@ Review artifacts:
 
 - Prompt: `logs/codex-review/20260604-103154-d440-prompt.md` (design)
 - Result: `logs/codex-review/20260604-103154-d440-last-message.md` (design)
+
+## Result
+
+**Result:** Pass
+
+The font-style config union and its enabled predicate are now live.
+
+- `roastty/src/config/mod.rs`:
+  `pub(crate) enum FontStyle { Default, False, Name(String) }` (upstream
+  `FontStyle`, `Clone`/`Eq` but not `Copy` — the owned `Name` payload) and
+  `FontStyle::enabled(&self) -> bool` (`!matches!(self, FontStyle::False)`), the
+  extraction of upstream's `DerivedConfig.init`
+  `config.@"font-style-*" != .false` derivation.
+
+Test (in `config/mod.rs`): `font_style_enabled_unless_false` —
+`Default.enabled() == true`, `Name("Bold").enabled() == true`,
+`False.enabled() == false`; the variants distinct (`Default != False`,
+`Name("a") != Name("b")`); a `Clone`/`Eq` round-trip on the `Name` payload.
+
+Gate results:
+
+- `cargo fmt -p roastty` accepted; `--check` clean.
+- `cargo test -p roastty` → 2927 passed, 0 failed (+1, no regressions).
+- `cargo build -p roastty` → no warnings.
+- No-`ghostty`-name gates (font + renderer + config +
+  `lib.rs`/header/`abi_harness.c`) clean; `git diff --check` clean.
+
+## Conclusion
+
+The config layer now carries `FontStyle` and its enabled predicate — the fourth
+config slice in a row to land its consumer logic alongside the type, and the
+first config type with an owned (`String`) payload. The `Config` struct /
+parsing and the `DerivedConfig.init` wiring that fills the `StyleStatus`
+(`CodepointResolver.styles`) from `enabled` stay deferred. The config-type
+family — consistently pairing a config type with its behavior — remains a clean,
+gated way to advance the rewrite while the larger coupled subsystems stay
+deferred.
+
+## Completion Review
+
+Codex reviewed the completed implementation and result and **approved** with
+**no findings**. It confirmed faithfulness against the vendored upstream:
+`FontStyle::{Default, False, Name(String)}` matches the `union(enum)` variants
+(`Config.zig:8431`); the deferred default `.default` (`Config.zig:186`) is
+documented and left off the enum; `enabled()` exactly extracts the
+`DerivedConfig.init` `!= .false` checks (`generic.zig:596`, only `False`
+disables, `Default` and `Name(_)` stay enabled); and `String` is a reasonable
+owned adaptation of `[:0]const u8` (losing `Copy` is expected). It judged the
+test to cover the enabled behavior, distinctness, payload equality, and
+`Clone`/`Eq`. No public C ABI/header impact; nothing needed to change before the
+result commit.
+
+Review artifacts:
+
+- Prompt: `logs/codex-review/20260604-103358-r440-prompt.md` (result)
+- Result: `logs/codex-review/20260604-103358-r440-last-message.md` (result)

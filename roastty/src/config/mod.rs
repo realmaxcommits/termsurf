@@ -177,11 +177,32 @@ impl CustomShaderAnimation {
     }
 }
 
+/// The `font-style*` config (upstream `FontStyle`): how a font style (bold,
+/// italic, …) is selected. The `Config` default is `Default`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum FontStyle {
+    /// Use the default font style that font discovery finds.
+    Default,
+    /// Disable this style completely; fall back to the regular font.
+    False,
+    /// Use a specific named font style.
+    Name(String),
+}
+
+impl FontStyle {
+    /// Whether this style is enabled (upstream `DerivedConfig.init`'s
+    /// `config.@"font-style-*" != .false`): enabled unless `False` — `Default`
+    /// and `Name` both leave the style enabled.
+    pub(crate) fn enabled(&self) -> bool {
+        !matches!(self, FontStyle::False)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
         AlphaBlending, BackgroundBlur, BackgroundImageFit, BackgroundImagePosition,
-        CustomShaderAnimation, FontShapingBreak, GraphemeWidthMethod,
+        CustomShaderAnimation, FontShapingBreak, FontStyle, GraphemeWidthMethod,
     };
 
     #[test]
@@ -289,5 +310,22 @@ mod tests {
         let a = CustomShaderAnimation::Always;
         let copied = a;
         assert_eq!(a, copied);
+    }
+
+    #[test]
+    fn font_style_enabled_unless_false() {
+        assert!(FontStyle::Default.enabled());
+        assert!(FontStyle::Name("Bold".to_string()).enabled());
+        assert!(!FontStyle::False.enabled());
+
+        assert_ne!(FontStyle::Default, FontStyle::False);
+        assert_ne!(
+            FontStyle::Name("a".to_string()),
+            FontStyle::Name("b".to_string())
+        );
+        // `Clone` + `Eq`: a round-trip (the `Name` payload is owned).
+        let s = FontStyle::Name("Italic".to_string());
+        let cloned = s.clone();
+        assert_eq!(s, cloned);
     }
 }
