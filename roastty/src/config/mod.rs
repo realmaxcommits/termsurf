@@ -52,6 +52,16 @@ pub(crate) struct Config {
     pub bg_image_fit: BackgroundImageFit,
     /// `background-image-repeat`.
     pub bg_image_repeat: bool,
+    /// `cursor-color`.
+    pub cursor_color: Option<TerminalColor>,
+    /// `cursor-text`.
+    pub cursor_text: Option<TerminalColor>,
+    /// `selection-foreground`.
+    pub selection_foreground: Option<TerminalColor>,
+    /// `selection-background`.
+    pub selection_background: Option<TerminalColor>,
+    /// `bold-color`.
+    pub bold_color: Option<BoldColor>,
 }
 
 impl Default for Config {
@@ -78,6 +88,11 @@ impl Default for Config {
             bg_image_position: BackgroundImagePosition::Center,
             bg_image_fit: BackgroundImageFit::Contain,
             bg_image_repeat: false,
+            cursor_color: None,
+            cursor_text: None,
+            selection_foreground: None,
+            selection_background: None,
+            bold_color: None,
         }
     }
 }
@@ -963,6 +978,12 @@ mod tests {
         assert_eq!(d.bg_image_position, BackgroundImagePosition::Center);
         assert_eq!(d.bg_image_fit, BackgroundImageFit::Contain);
         assert!(!d.bg_image_repeat);
+        // Optional-colors group (Experiment 467).
+        assert_eq!(d.cursor_color, None);
+        assert_eq!(d.cursor_text, None);
+        assert_eq!(d.selection_foreground, None);
+        assert_eq!(d.selection_background, None);
+        assert_eq!(d.bold_color, None);
 
         // A modified config differs from the default and round-trips Clone/PartialEq.
         let mut modified = Config::default();

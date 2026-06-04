@@ -168,3 +168,58 @@ Review artifacts:
 
 - Prompt: `logs/codex-review/20260604-122706-d467-prompt.md` (design)
 - Result: `logs/codex-review/20260604-122706-d467-last-message.md` (design)
+
+## Result
+
+**Result:** Pass
+
+The `Config` struct now carries the optional-colors field group.
+
+- `roastty/src/config/mod.rs`: `Config` gains `cursor_color`, `cursor_text`,
+  `selection_foreground`, `selection_background` (each `Option<TerminalColor>`),
+  and `bold_color` (`Option<BoldColor>`); `Config::default()` sets all five to
+  `None` (upstream `null`). This is the first time the aggregate uses the
+  already-ported color value types (`TerminalColor`, `BoldColor`).
+
+Test (in `config/mod.rs`): `config_default_clipboard_group` extended to assert
+all five new optional-color fields are `None` alongside the six prior groups'
+defaults; the modified-config inequality and the `Clone`/`PartialEq` round-trip
+remain.
+
+Gate results:
+
+- `cargo fmt -p roastty` accepted; `--check` clean.
+- `cargo test -p roastty` → 2952 passed, 0 failed (no regressions; the existing
+  `config_default` test was extended).
+- `cargo build -p roastty` → no warnings.
+- No-`ghostty`-name gates (font + renderer + config +
+  `lib.rs`/header/`abi_harness.c`) clean; `git diff --check` clean.
+
+## Conclusion
+
+The aggregating `Config` struct now holds seven field groups — clipboard (461),
+mouse/click (462), shell-integration (463), notification (464),
+renderer-appearance (465), background-image (466), and optional-colors —
+twenty-three fields total. The optional-colors group is the first to use the
+`TerminalColor` / `BoldColor` value types (`Color` → `TerminalColor` /
+`BoldColor`, Experiments 445–447) that the `Config` aggregate was built toward,
+each wrapped in `Option` for upstream's `?T = null`. The parser, the
+`changeConfig` machinery, the conditional-config system, the renderer
+`DerivedConfig` resolution of these colors, and the remaining upstream `Config`
+fields stay deferred.
+
+## Completion Review
+
+Codex reviewed the completed implementation and result and **approved** with
+**no findings**. It confirmed the four `?TerminalColor` fields and one
+`?BoldColor` field are faithfully `Option<TerminalColor>` / `Option<BoldColor>`;
+all five defaults are correctly `None` (upstream `null`); reusing the existing
+value types is appropriate (renderer/`DerivedConfig` resolution remains
+deferred); and extending the existing `Config::default()` test is adequate and
+keeps the prior groups covered. No public C ABI/header impact; nothing needed to
+change before the result commit.
+
+Review artifacts:
+
+- Prompt: `logs/codex-review/20260604-122904-r467-prompt.md` (result)
+- Result: `logs/codex-review/20260604-122904-r467-last-message.md` (result)
