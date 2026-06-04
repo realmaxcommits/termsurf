@@ -368,3 +368,53 @@ Review artifacts:
 - Round 1 result: `logs/codex-review/20260604-142803-d486-last-message.md`
 - Round 2 prompt: `logs/codex-review/20260604-142938-d486b-prompt.md`
 - Round 2 result: `logs/codex-review/20260604-142938-d486b-last-message.md`
+
+## Result
+
+**Result:** Pass
+
+The new `roastty/src/config/unicode_range.rs` module was implemented exactly as
+the (Round-2-approved) design: `InvalidRange`, `UnicodeRangeParser` (`new` /
+`next` / `consume_whitespace` / `parse_codepoint` / `byte` / `advance` / `eof`),
+and `parse_hex_u21` (checked, overflow → `None`). It is wired into
+`config/mod.rs` via `mod unicode_range;`. Two tests cover the upstream keys, the
+comma list, the empty input, lowercase hex, and the error cases (trailing comma,
+bad `U+`, no hex, non-hex, `start > end`, range end not `U+`, and the short/long
+overflows).
+
+Gates:
+
+- `cargo fmt -p roastty` accepted; `--check` clean.
+- `cargo test -p roastty`: 2970 passed, 0 failed (two new tests; no
+  regressions).
+- `cargo build -p roastty`: no warnings.
+- no-`ghostty`-name greps (font/renderer/config + lib.rs/header/abi_harness.c)
+  clean; `git diff --check` clean.
+
+## Completion Review
+
+Codex reviewed the completed experiment and **approved** it with **no
+findings**: the parser matches upstream `UnicodeRangeParser` (EOF → `None`,
+codepoint parsing requires `U+` plus ≥1 hex digit, whitespace is only space/tab,
+the comma/range state transitions match, trailing comma and reversed ranges
+error, and `parse_hex_u21` safely maps invalid/overflowing `u21` values to
+`InvalidRange` — `Config.zig:8074`/ `:8123`); the tests cover the upstream
+examples, lowercase hex, empty input, syntax errors, range ordering, and
+overflow; gates are clean. "Approved with no findings."
+
+Review artifacts:
+
+- Prompt: `logs/codex-review/20260604-143213-r486-prompt.md` (result)
+- Result: `logs/codex-review/20260604-143213-r486-last-message.md` (result)
+
+## Conclusion
+
+The Unicode range parser is ported as a reusable `config::unicode_range` module
+— the `U+XXXX[-U+YYYY][, …]` state machine that the codepoint-map config keys
+use. This unblocks `RepeatableCodepointMap` / `RepeatableClipboardCodepointMap`
+(once the font / clipboard codepoint-map storage is ported). The config layer
+now has three reusable parsing helpers (`config::string`,
+`config::unicode_range`, and the integer/bool parsers) alongside eleven value
+types. The next slice can port the font `CodepointMap` storage (toward
+`RepeatableCodepointMap`), another self-contained value type, or begin the
+per-field parser dispatch, continuing toward the full config loader.

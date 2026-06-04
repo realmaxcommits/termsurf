@@ -1418,7 +1418,7 @@ are past the correctness-critical foundation.
 - [Experiment 485: the config SelectionWordChars CLI parser (SelectionWordChars::parse_cli)](485-config-selection-word-chars-parse-cli.md)
   — **Pass** · Claude/Codex/Codex
 - [Experiment 486: the config Unicode range parser (config::unicode_range::UnicodeRangeParser)](486-config-unicode-range-parser.md)
-  — **Designed** · Claude/Codex/—
+  — **Pass** · Claude/Codex/Codex
 
 ## Non-Goals
 

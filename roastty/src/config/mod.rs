@@ -8,6 +8,7 @@
 // This config layer is consumed by later slices.
 
 mod string;
+mod unicode_range;
 
 use crate::config::string::codepoint_iterator;
 use crate::terminal::color::{Palette as TerminalPalette, PaletteMask, Rgb, DEFAULT_PALETTE};
