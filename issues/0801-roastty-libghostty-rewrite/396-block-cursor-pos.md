@@ -159,3 +159,62 @@ Review artifacts:
 
 - Prompt: `logs/codex-review/20260603-210959-513065-prompt.md` (design)
 - Result: `logs/codex-review/20260603-210959-513065-last-message.md` (design)
+
+## Result
+
+**Result:** Pass
+
+The block-cursor position uniform is now computable.
+
+- `roastty/src/renderer/cell.rs`:
+  `block_cursor_pos(x, y, wide) -> ([u16; 2], bool)` — `cursor_x` is
+  `x.saturating_sub(1)` for a `Wide::SpacerTail` and `x` for
+  `Narrow`/`SpacerHead`/`Wide`; `cursor_wide` is
+  `matches!(wide, Wide::Wide | Wide::SpacerTail)`; returns
+  `([cursor_x, y], cursor_wide)`. Computed unconditionally (the block-only
+  gating and the uniform upload are the caller's, deferred). `pub(crate)` and
+  not yet called in production (the Metal upload is deferred), but reachable in
+  the library crate, so no dead-code warning.
+
+Test (in `cell.rs`): `block_cursor_pos_adjusts_for_wide_kind` — `Narrow(5, 2)` →
+`([5, 2], false)`; `Wide` → `([5, 2], true)`; `SpacerHead` → `([5, 2], false)`;
+`SpacerTail(5, 2)` → `([4, 2], true)` (moved back one, wide); `SpacerTail(0, 0)`
+→ `([0, 0], true)` (saturating, no underflow).
+
+Gate results:
+
+- `cargo fmt -p roastty` accepted; `--check` clean.
+- `cargo test -p roastty` → 2855 passed, 0 failed (+1, no regressions).
+- `cargo build -p roastty` → no warnings.
+- No-`ghostty`-name gates (font + renderer) clean; `git diff --check` clean.
+
+## Conclusion
+
+The block-cursor position uniforms (`cursor_pos`/`cursor_wide`) are now ported
+faithfully as `block_cursor_pos` — the spacer-tail one-column back-step
+(saturating) and the wide flag. With the cursor's own color (Experiment 395),
+the under-cursor text recolor (Experiment 394), and now the cursor position, all
+the CPU-side inputs to the block-cursor uniforms are computed; the uniform
+buffer that carries them to the shader is part of the deferred Metal upload.
+
+The remaining renderer-bridge work: assembling and uploading the cursor uniforms
+(`cursor_pos`/`cursor_wide`/`cursor_color`) and wiring the cursor colors into
+`add_cursor`, part of the Metal upload; the column-ordered decoration merge +
+link double-underline; and the **Metal upload** of `Contents`.
+
+## Completion Review
+
+Codex reviewed the completed implementation and result and **approved** with
+**no findings**. It confirmed the implementation matches the approved design
+exactly: only `Wide::SpacerTail` uses `x.saturating_sub(1)`, all other wide
+kinds keep `x`, and `cursor_wide` is true only for `Wide` and `SpacerTail`, with
+the returned `([cursor_x, y], cursor_wide)` pair faithfully representing
+upstream's `cursor_pos` and `cursor_wide` uniforms. It confirmed the test covers
+all `Wide` variants plus the saturating column-zero case, that the change is
+internal Rust only with the uniform upload/block gating reasonably deferred, and
+that there is no public C ABI/header change. Nothing needed to change before the
+result commit.
+
+Review artifacts:
+
+- Result review: `logs/codex-review/20260603-211137-313191-last-message.md`

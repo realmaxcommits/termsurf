@@ -369,6 +369,22 @@ pub(crate) fn cursor_color(
     }
 }
 
+/// Compute a **block** cursor's position uniforms — `cursor_pos` (the cell it
+/// covers) and `cursor_wide` (whether it spans two cells) — from the cursor's
+/// viewport `(x, y)` and the under-cursor cell's [`Wide`] kind (upstream's
+/// block-cursor `uniforms.cursor_pos`/`bools.cursor_wide`). A spacer tail moves
+/// the cursor back one column (saturating — it sits over the wide character); the
+/// cursor is "wide" for a wide cell or its spacer tail. The caller computes this
+/// only for a block cursor.
+pub(crate) fn block_cursor_pos(x: u16, y: u16, wide: Wide) -> ([u16; 2], bool) {
+    let cursor_x = match wide {
+        Wide::SpacerTail => x.saturating_sub(1),
+        Wide::Narrow | Wide::SpacerHead | Wide::Wide => x,
+    };
+    let cursor_wide = matches!(wide, Wide::Wide | Wide::SpacerTail);
+    ([cursor_x, y], cursor_wide)
+}
+
 /// The per-cell selected state (upstream's `selected` enum). `False` uses the
 /// base [`cell_colors`]; the three selected states use [`selected_colors`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -3641,6 +3657,22 @@ mod tests {
             ),
             default_bg
         );
+    }
+
+    #[test]
+    fn block_cursor_pos_adjusts_for_wide_kind() {
+        // Narrow / spacer head / wide keep the column; the cursor is "wide" only
+        // for a wide cell or its spacer tail.
+        assert_eq!(block_cursor_pos(5, 2, Wide::Narrow), ([5, 2], false));
+        assert_eq!(block_cursor_pos(5, 2, Wide::Wide), ([5, 2], true));
+        assert_eq!(block_cursor_pos(5, 2, Wide::SpacerHead), ([5, 2], false));
+
+        // A spacer tail moves the cursor back one column (it sits over the wide
+        // character) and is wide.
+        assert_eq!(block_cursor_pos(5, 2, Wide::SpacerTail), ([4, 2], true));
+
+        // Saturating: a spacer tail at column 0 does not underflow.
+        assert_eq!(block_cursor_pos(0, 0, Wide::SpacerTail), ([0, 0], true));
     }
 
     #[test]
