@@ -174,3 +174,56 @@ Review artifacts:
 
 - Prompt: `logs/codex-review/20260604-115403-d459-prompt.md` (design)
 - Result: `logs/codex-review/20260604-115403-d459-last-message.md` (design)
+
+## Result
+
+**Result:** Pass
+
+The theme config type and its single-name constructor are now live.
+
+- `roastty/src/config/mod.rs`:
+  `pub(crate) struct Theme { pub light: String, pub dark: String }` (upstream
+  `Theme`, `Clone`/`Eq` but not `Copy` — the owned name payloads) and
+  `Theme::single(name: String) -> Theme` (both `light` and `dark` = `name`), the
+  extraction of upstream's `parseCLI` non-pair (single-name) path.
+
+Test (in `config/mod.rs`): `config_theme_single_sets_both_modes` —
+`Theme::single("foo".to_string())` has `light == "foo"`, `dark == "foo"`; a pair
+`Theme { light: "a", dark: "b" }` has `light != dark` and differs from
+`single("a")`; a `Clone`/`Eq` round-trip.
+
+Gate results:
+
+- `cargo fmt -p roastty` accepted; `--check` clean.
+- `cargo test -p roastty` → 2950 passed, 0 failed (+1, no regressions).
+- `cargo build -p roastty` → no warnings.
+- No-`ghostty`-name gates (font + renderer + config +
+  `lib.rs`/header/`abi_harness.c`) clean; `git diff --check` clean.
+
+## Conclusion
+
+The config layer now carries the `Theme` value type and its single-name
+normalization — a string-pair config struct (the second `String`-payload config
+type after `FontStyle`), capturing the documented "one name applies to both
+modes" parser path. The full `parseCLI` (the delimiter-based light/dark pair
+detection, the Windows drive-letter guard, the trimming), the `formatEntry`, the
+`Config` struct, and the appearance-based light/dark selection (the
+conditional-config system) stay deferred. The config-type family — now
+twenty-two enums/flag-structs with consumers plus four value types (`Color`,
+`TerminalColor`, `BoldColor`, `Theme`) — remains a clean, gated way to advance
+the rewrite while the larger coupled subsystems stay deferred.
+
+## Completion Review
+
+Codex reviewed the completed implementation and result and **approved** with
+**no findings**. It confirmed `Theme { light, dark }` faithfully ports the
+upstream two-string config value; `Theme::single()` correctly represents the
+single-name parse path (both modes set to the same name); owned `String` and
+non-`Copy` semantics are appropriate; and the test covers single-name
+normalization, distinct light/dark pairs, and clone/equality. No public C
+ABI/header impact; nothing needed to change before the result commit.
+
+Review artifacts:
+
+- Prompt: `logs/codex-review/20260604-115609-r459-prompt.md` (result)
+- Result: `logs/codex-review/20260604-115609-r459-last-message.md` (result)

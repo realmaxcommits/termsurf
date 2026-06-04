@@ -325,6 +325,27 @@ pub(crate) enum MacHidden {
     Always,
 }
 
+/// The `theme` config (upstream `Theme`): the theme names for light mode and dark
+/// mode.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Theme {
+    /// The theme name used in light mode.
+    pub light: String,
+    /// The theme name used in dark mode.
+    pub dark: String,
+}
+
+impl Theme {
+    /// A single theme name used for both light and dark modes (upstream's
+    /// `parseCLI` non-pair path: `light = dark = name`).
+    pub(crate) fn single(name: String) -> Theme {
+        Theme {
+            light: name.clone(),
+            dark: name,
+        }
+    }
+}
+
 /// The color space the window renders in (upstream `WindowColorspace`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum WindowColorspace {
@@ -648,7 +669,7 @@ mod tests {
         MacTitlebarStyle, MacWindowButtons, MiddleClickAction, MouseShiftCapture,
         NonNativeFullscreen, NotifyOnCommandFinish, NotifyOnCommandFinishAction,
         OscColorReportFormat, RightClickAction, ScrollToBottom, ShellIntegration,
-        ShellIntegrationFeatures, TerminalBoldColor, TerminalColor, WindowSubtitle,
+        ShellIntegrationFeatures, TerminalBoldColor, TerminalColor, Theme, WindowSubtitle,
     };
     use crate::terminal::color::Rgb;
 
@@ -809,6 +830,24 @@ mod tests {
         let i = MacTitlebarProxyIcon::Visible;
         let copied = i;
         assert_eq!(i, copied);
+    }
+
+    #[test]
+    fn config_theme_single_sets_both_modes() {
+        let single = Theme::single("foo".to_string());
+        assert_eq!(single.light, "foo");
+        assert_eq!(single.dark, "foo");
+
+        // A light/dark pair has distinct names and differs from the single.
+        let pair = Theme {
+            light: "a".to_string(),
+            dark: "b".to_string(),
+        };
+        assert_ne!(pair.light, pair.dark);
+        assert_ne!(pair, Theme::single("a".to_string()));
+        // `Clone` + `Eq`: a round-trip (the names are owned).
+        let cloned = single.clone();
+        assert_eq!(single, cloned);
     }
 
     #[test]
