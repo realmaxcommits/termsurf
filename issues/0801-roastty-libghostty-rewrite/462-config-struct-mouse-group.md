@@ -153,3 +153,56 @@ Review artifacts:
 
 - Prompt: `logs/codex-review/20260604-120818-d462-prompt.md` (design)
 - Result: `logs/codex-review/20260604-120818-d462-last-message.md` (design)
+
+## Result
+
+**Result:** Pass
+
+The `Config` struct now carries the mouse / click field group.
+
+- `roastty/src/config/mod.rs`: `Config` gains
+  `mouse_shift_capture: MouseShiftCapture`,
+  `right_click_action: RightClickAction`, and
+  `middle_click_action: MiddleClickAction`; `Config::default()` sets their
+  upstream Config-field defaults — `MouseShiftCapture::False`,
+  `RightClickAction::ContextMenu`, `MiddleClickAction::PrimaryPaste`.
+
+Test (in `config/mod.rs`): `config_default_clipboard_group` extended to assert
+the new mouse / click defaults (`False` / `ContextMenu` / `PrimaryPaste`)
+alongside the existing clipboard-group defaults; the modified-config inequality
+and the `Clone`/`PartialEq` round-trip remain.
+
+Gate results:
+
+- `cargo fmt -p roastty` accepted; `--check` clean.
+- `cargo test -p roastty` → 2952 passed, 0 failed (no regressions; the existing
+  `config_default` test was extended).
+- `cargo build -p roastty` → no warnings.
+- No-`ghostty`-name gates (font + renderer + config +
+  `lib.rs`/header/`abi_harness.c`) clean; `git diff --check` clean.
+
+## Conclusion
+
+The aggregating `Config` struct now holds two field groups — the clipboard group
+(Experiment 461) and the mouse / click group — demonstrating the incremental
+growth pattern: each experiment adds a coherent group of already-ported leaf
+fields with their upstream defaults, and the `config_default` test grows to
+guard the whole initializer. The parser (`loadCli` / file loading / per-field
+`parseCLI`), the `changeConfig` machinery, the conditional-config system, and
+the remaining upstream `Config` fields stay deferred.
+
+## Completion Review
+
+Codex reviewed the completed implementation and result and **approved** with
+**no findings**. It confirmed the mouse / click fields were added to the
+aggregate `Config` with the correct upstream defaults (`False`, `ContextMenu`,
+`PrimaryPaste`); keeping the existing clipboard default assertions in the same
+test is adequate while `Config::default()` grows; the `Clone`/`PartialEq`
+coverage still fits the aggregate shape; and the deferred parser /
+`changeConfig` / conditional-config work remains properly scoped. No public C
+ABI/header impact; nothing needed to change before the result commit.
+
+Review artifacts:
+
+- Prompt: `logs/codex-review/20260604-121006-r462-prompt.md` (result)
+- Result: `logs/codex-review/20260604-121006-r462-last-message.md` (result)

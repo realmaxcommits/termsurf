@@ -22,6 +22,12 @@ pub(crate) struct Config {
     pub clipboard_read: ClipboardAccess,
     /// `clipboard-write`.
     pub clipboard_write: ClipboardAccess,
+    /// `mouse-shift-capture`.
+    pub mouse_shift_capture: MouseShiftCapture,
+    /// `right-click-action`.
+    pub right_click_action: RightClickAction,
+    /// `middle-click-action`.
+    pub middle_click_action: MiddleClickAction,
 }
 
 impl Default for Config {
@@ -33,6 +39,9 @@ impl Default for Config {
             copy_on_select: CopyOnSelect::True,
             clipboard_read: ClipboardAccess::Ask,
             clipboard_write: ClipboardAccess::Allow,
+            mouse_shift_capture: MouseShiftCapture::False,
+            right_click_action: RightClickAction::ContextMenu,
+            middle_click_action: MiddleClickAction::PrimaryPaste,
         }
     }
 }
@@ -891,6 +900,10 @@ mod tests {
         assert_eq!(d.copy_on_select, CopyOnSelect::True);
         assert_eq!(d.clipboard_read, ClipboardAccess::Ask);
         assert_eq!(d.clipboard_write, ClipboardAccess::Allow);
+        // Mouse / click group (Experiment 462).
+        assert_eq!(d.mouse_shift_capture, MouseShiftCapture::False);
+        assert_eq!(d.right_click_action, RightClickAction::ContextMenu);
+        assert_eq!(d.middle_click_action, MiddleClickAction::PrimaryPaste);
 
         // A modified config differs from the default and round-trips Clone/PartialEq.
         let mut modified = Config::default();
