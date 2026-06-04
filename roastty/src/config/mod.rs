@@ -693,6 +693,16 @@ impl WorkingDirectory {
             WorkingDirectory::Home | WorkingDirectory::Inherit => None,
         }
     }
+
+    /// Format as a config entry (upstream `WorkingDirectory.formatEntry`): the
+    /// `home` / `inherit` keyword, or the path.
+    pub(crate) fn format_entry(&self, formatter: &mut EntryFormatter) {
+        match self {
+            WorkingDirectory::Home => formatter.entry_str("home"),
+            WorkingDirectory::Inherit => formatter.entry_str("inherit"),
+            WorkingDirectory::Path(path) => formatter.entry_str(path),
+        }
+    }
 }
 
 /// An error parsing `WindowPadding` (upstream `WindowPadding.parseCLI`).
@@ -738,6 +748,16 @@ impl WindowPadding {
                 top_left: value,
                 bottom_right: value,
             })
+        }
+    }
+
+    /// Format as a config entry (upstream `WindowPadding.formatEntry`): one value
+    /// when both edges are equal, else `left,right`.
+    pub(crate) fn format_entry(self, formatter: &mut EntryFormatter) {
+        if self.top_left == self.bottom_right {
+            formatter.entry_int(self.top_left);
+        } else {
+            formatter.entry_str(&format!("{},{}", self.top_left, self.bottom_right));
         }
     }
 }
@@ -1420,6 +1440,18 @@ impl BackgroundBlur {
             parse_uint(input, 0, 0xFF).map_err(|_| BackgroundBlurParseError::InvalidValue)?;
         *self = BackgroundBlur::Radius(radius as u8);
         Ok(())
+    }
+
+    /// Format as a config entry (upstream `BackgroundBlur.formatEntry`): a bool, an
+    /// int radius, or a glass keyword.
+    pub(crate) fn format_entry(self, formatter: &mut EntryFormatter) {
+        match self {
+            BackgroundBlur::False => formatter.entry_bool(false),
+            BackgroundBlur::True => formatter.entry_bool(true),
+            BackgroundBlur::Radius(v) => formatter.entry_int(v),
+            BackgroundBlur::MacosGlassRegular => formatter.entry_str("macos-glass-regular"),
+            BackgroundBlur::MacosGlassClear => formatter.entry_str("macos-glass-clear"),
+        }
     }
 }
 
@@ -3352,5 +3384,66 @@ mod tests {
             "a = #0a0b0c\n"
         );
         assert_eq!(fmt(&|f| BoldColor::Bright.format_entry(f)), "a = bright\n");
+    }
+
+    #[test]
+    fn scalar_format_entries() {
+        let fmt = |v: &dyn Fn(&mut EntryFormatter)| {
+            let mut out = String::new();
+            let mut f = EntryFormatter::new("a", &mut out);
+            v(&mut f);
+            out
+        };
+
+        // WorkingDirectory: keyword or path.
+        assert_eq!(
+            fmt(&|f| WorkingDirectory::Home.format_entry(f)),
+            "a = home\n"
+        );
+        assert_eq!(
+            fmt(&|f| WorkingDirectory::Inherit.format_entry(f)),
+            "a = inherit\n"
+        );
+        assert_eq!(
+            fmt(&|f| WorkingDirectory::Path("/x".to_string()).format_entry(f)),
+            "a = /x\n"
+        );
+
+        // WindowPadding: one value when equal, else `left,right`.
+        assert_eq!(
+            fmt(&|f| WindowPadding {
+                top_left: 5,
+                bottom_right: 5
+            }
+            .format_entry(f)),
+            "a = 5\n"
+        );
+        assert_eq!(
+            fmt(&|f| WindowPadding {
+                top_left: 3,
+                bottom_right: 7
+            }
+            .format_entry(f)),
+            "a = 3,7\n"
+        );
+
+        // BackgroundBlur: bool, radius int, or glass keyword.
+        assert_eq!(
+            fmt(&|f| BackgroundBlur::False.format_entry(f)),
+            "a = false\n"
+        );
+        assert_eq!(fmt(&|f| BackgroundBlur::True.format_entry(f)), "a = true\n");
+        assert_eq!(
+            fmt(&|f| BackgroundBlur::Radius(42).format_entry(f)),
+            "a = 42\n"
+        );
+        assert_eq!(
+            fmt(&|f| BackgroundBlur::MacosGlassRegular.format_entry(f)),
+            "a = macos-glass-regular\n"
+        );
+        assert_eq!(
+            fmt(&|f| BackgroundBlur::MacosGlassClear.format_entry(f)),
+            "a = macos-glass-clear\n"
+        );
     }
 }

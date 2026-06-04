@@ -198,3 +198,46 @@ Review artifacts:
 
 - Prompt: `logs/codex-review/20260604-151722-d493-prompt.md` (design)
 - Result: `logs/codex-review/20260604-151722-d493-last-message.md` (design)
+
+## Result
+
+**Result:** Pass
+
+The three scalar `format_entry` methods were added to their existing impls
+exactly as designed — `WorkingDirectory` writes the `home` / `inherit` keyword
+or the path string; `WindowPadding` writes the single `entry_int` (edges equal)
+or the `left,right` string; `BackgroundBlur` writes a bool / radius int / glass
+keyword. The new test `scalar_format_entries` covers every variant/shape.
+
+Gates:
+
+- `cargo fmt -p roastty` accepted; `--check` clean.
+- `cargo test -p roastty`: 2978 passed, 0 failed (one new test; no regressions).
+- `cargo build -p roastty`: no warnings.
+- no-`ghostty`-name greps (font/renderer/config + lib.rs/header/abi_harness.c)
+  clean; `git diff --check` clean.
+
+## Completion Review
+
+Codex reviewed the completed experiment and **approved** it with **no
+findings**: the implementations preserve the upstream formatted output for all
+three types (`WorkingDirectory` tag/path strings, `WindowPadding` single value
+vs `left,right`, `BackgroundBlur` bool/radius/glass strings —
+`Config.zig:5361`/`:10142`/`:9740`); the test covers every variant/shape added
+here; gates are clean. "Approved with no findings."
+
+Review artifacts:
+
+- Prompt: `logs/codex-review/20260604-152012-r493-prompt.md` (result)
+- Result: `logs/codex-review/20260604-152012-r493-last-message.md` (result)
+
+## Conclusion
+
+Three more `formatEntry` methods are ported. The config formatter side now
+covers `Color`, `TerminalColor`, `BoldColor`, `WorkingDirectory`,
+`WindowPadding`, and `BackgroundBlur`. The next slices can port the remaining
+types' `formatEntry` (`Palette`, `ColorList`, `Duration` — which needs its
+`format` unit decomposition — `SelectionWordChars` — which re-encodes codepoints
+to UTF-8 — `QuickTerminalSize`, `RepeatableString`, the codepoint maps), then
+the generic field-dispatch `formatEntry`, continuing toward the full config
+formatter and loader.
