@@ -1361,6 +1361,8 @@ are past the correctness-critical foundation.
   — **Pass** · Claude/Codex/Codex
 - [Experiment 457: the fullscreen config enums (Fullscreen, NonNativeFullscreen)](457-config-fullscreen.md)
   — **Pass** · Claude/Codex/Codex
+- [Experiment 458: the macOS window config enums (MacWindowButtons, MacHidden)](458-config-mac-window.md)
+  — **Designed** · Claude/Codex/—
 
 ## Non-Goals
 
