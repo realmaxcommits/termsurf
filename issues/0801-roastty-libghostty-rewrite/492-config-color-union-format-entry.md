@@ -171,3 +171,48 @@ Review artifacts:
 
 - Prompt: `logs/codex-review/20260604-151211-d492-prompt.md` (design)
 - Result: `logs/codex-review/20260604-151211-d492-last-message.md` (design)
+
+## Result
+
+**Result:** Pass
+
+`TerminalColor::format_entry` and `BoldColor::format_entry` were added to their
+existing impls exactly as designed — the explicit-color arm delegates to
+`Color::format_entry`, and the keyword arms write `cell-foreground` /
+`cell-background` / `bright` via `entry_str`. The new test
+`terminal_and_bold_color_format_entry` covers the upstream `formatConfig`
+keyword cases and the explicit-color delegation.
+
+Gates:
+
+- `cargo fmt -p roastty` accepted; `--check` clean.
+- `cargo test -p roastty`: 2977 passed, 0 failed (one new test; no regressions).
+- `cargo build -p roastty`: no warnings.
+- no-`ghostty`-name greps (font/renderer/config + lib.rs/header/abi_harness.c)
+  clean; `git diff --check` clean.
+
+## Completion Review
+
+Codex reviewed the completed experiment and **approved** it with **no
+findings**: the implementation matches upstream (the color variants delegate to
+`Color::formatEntry`, and the keyword variants write the exact tag strings
+`cell-foreground` / `cell-background` / `bright` — `Config.zig:5569`/`:5633`);
+the test covers both upstream keyword format cases and the explicit-color
+delegation; gates are clean. "Approved with no findings."
+
+Review artifacts:
+
+- Prompt: `logs/codex-review/20260604-151501-r492-prompt.md` (result)
+- Result: `logs/codex-review/20260604-151501-r492-last-message.md` (result)
+
+## Conclusion
+
+The two color-union formatters (`TerminalColor` / `BoldColor`) now write their
+config entries, delegating the explicit-color case to `Color::format_entry`
+(Experiment 491) and writing their keywords otherwise. The formatter side now
+covers `Color`, `TerminalColor`, and `BoldColor`. The next slices can port the
+remaining types' `formatEntry` (`Palette`, `ColorList`, `Duration`,
+`WindowPadding`, `SelectionWordChars`, `WorkingDirectory`, `QuickTerminalSize`,
+`BackgroundBlur`, `RepeatableString`, the codepoint maps), then the generic
+field-dispatch `formatEntry`, continuing toward the full config formatter and
+loader.

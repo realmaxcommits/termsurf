@@ -295,6 +295,17 @@ impl TerminalColor {
         }
         Ok(TerminalColor::Color(Color::parse_cli(Some(input))?))
     }
+
+    /// Format as a config entry (upstream `TerminalColor.formatEntry`): an explicit
+    /// `Color` delegates to [`Color::format_entry`]; the cell sentinels write their
+    /// keyword.
+    pub(crate) fn format_entry(self, formatter: &mut EntryFormatter) {
+        match self {
+            TerminalColor::Color(c) => c.format_entry(formatter),
+            TerminalColor::CellForeground => formatter.entry_str("cell-foreground"),
+            TerminalColor::CellBackground => formatter.entry_str("cell-background"),
+        }
+    }
 }
 
 /// The `bold-color` config (upstream `Config.BoldColor`): the color to use for
@@ -328,6 +339,15 @@ impl BoldColor {
             return Ok(BoldColor::Bright);
         }
         Ok(BoldColor::Color(Color::parse_cli(Some(input))?))
+    }
+
+    /// Format as a config entry (upstream `BoldColor.formatEntry`): an explicit
+    /// `Color` delegates to [`Color::format_entry`]; `Bright` writes its keyword.
+    pub(crate) fn format_entry(self, formatter: &mut EntryFormatter) {
+        match self {
+            BoldColor::Color(c) => c.format_entry(formatter),
+            BoldColor::Bright => formatter.entry_str("bright"),
+        }
     }
 }
 
@@ -3296,5 +3316,41 @@ mod tests {
         }
         .format_entry(&mut f);
         assert_eq!(out, "a = #0a0b0c\n");
+    }
+
+    #[test]
+    fn terminal_and_bold_color_format_entry() {
+        let color = Color {
+            r: 10,
+            g: 11,
+            b: 12,
+        };
+        let fmt = |v: &dyn Fn(&mut EntryFormatter)| {
+            let mut out = String::new();
+            let mut f = EntryFormatter::new("a", &mut out);
+            v(&mut f);
+            out
+        };
+
+        // TerminalColor: explicit color delegates; sentinels write their keyword.
+        assert_eq!(
+            fmt(&|f| TerminalColor::Color(color).format_entry(f)),
+            "a = #0a0b0c\n"
+        );
+        assert_eq!(
+            fmt(&|f| TerminalColor::CellForeground.format_entry(f)),
+            "a = cell-foreground\n"
+        );
+        assert_eq!(
+            fmt(&|f| TerminalColor::CellBackground.format_entry(f)),
+            "a = cell-background\n"
+        );
+
+        // BoldColor: explicit color delegates; `Bright` writes its keyword.
+        assert_eq!(
+            fmt(&|f| BoldColor::Color(color).format_entry(f)),
+            "a = #0a0b0c\n"
+        );
+        assert_eq!(fmt(&|f| BoldColor::Bright.format_entry(f)), "a = bright\n");
     }
 }

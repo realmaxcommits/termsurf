@@ -1430,7 +1430,7 @@ are past the correctness-critical foundation.
 - [Experiment 491: the config EntryFormatter and the first formatEntry (Color)](491-config-entry-formatter.md)
   — **Pass** · Claude/Codex/Codex
 - [Experiment 492: the color-union formatters (TerminalColor / BoldColor format_entry)](492-config-color-union-format-entry.md)
-  — **Designed** · Claude/Codex/—
+  — **Pass** · Claude/Codex/Codex
 
 ## Non-Goals
 
