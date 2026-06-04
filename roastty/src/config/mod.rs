@@ -62,6 +62,12 @@ pub(crate) struct Config {
     pub selection_background: Option<TerminalColor>,
     /// `bold-color`.
     pub bold_color: Option<BoldColor>,
+    /// `confirm-close-surface`.
+    pub confirm_close_surface: ConfirmCloseSurface,
+    /// `link-previews`.
+    pub link_previews: LinkPreviews,
+    /// `window-subtitle`.
+    pub window_subtitle: WindowSubtitle,
 }
 
 impl Default for Config {
@@ -93,6 +99,9 @@ impl Default for Config {
             selection_foreground: None,
             selection_background: None,
             bold_color: None,
+            confirm_close_surface: ConfirmCloseSurface::True,
+            link_previews: LinkPreviews::True,
+            window_subtitle: WindowSubtitle::False,
         }
     }
 }
@@ -984,6 +993,10 @@ mod tests {
         assert_eq!(d.selection_foreground, None);
         assert_eq!(d.selection_background, None);
         assert_eq!(d.bold_color, None);
+        // Surface-policy group (Experiment 468).
+        assert_eq!(d.confirm_close_surface, ConfirmCloseSurface::True);
+        assert_eq!(d.link_previews, LinkPreviews::True);
+        assert_eq!(d.window_subtitle, WindowSubtitle::False);
 
         // A modified config differs from the default and round-trips Clone/PartialEq.
         let mut modified = Config::default();

@@ -1382,7 +1382,7 @@ are past the correctness-critical foundation.
 - [Experiment 467: grow the Config struct with the optional-colors group](467-config-struct-optional-colors-group.md)
   — **Pass** · Claude/Codex/Codex
 - [Experiment 468: grow the Config struct with the surface-policy group](468-config-struct-surface-policy-group.md)
-  — **Designed** · Claude/Codex/—
+  — **Pass** · Claude/Codex/Codex
 
 ## Non-Goals
 

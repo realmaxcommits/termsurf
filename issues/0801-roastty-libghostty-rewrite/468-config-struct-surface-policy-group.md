@@ -146,3 +146,54 @@ Review artifacts:
 
 - Prompt: `logs/codex-review/20260604-123046-d468-prompt.md` (design)
 - Result: `logs/codex-review/20260604-123046-d468-last-message.md` (design)
+
+## Result
+
+**Result:** Pass
+
+The `Config` struct now carries the surface-policy field group.
+
+- `roastty/src/config/mod.rs`: `Config` gains
+  `confirm_close_surface: ConfirmCloseSurface`, `link_previews: LinkPreviews`,
+  and `window_subtitle: WindowSubtitle`; `Config::default()` sets their upstream
+  Config-field defaults — `ConfirmCloseSurface::True`, `LinkPreviews::True`,
+  `WindowSubtitle::False`.
+
+Test (in `config/mod.rs`): `config_default_clipboard_group` extended to assert
+the three new surface-policy defaults (`True` / `True` / `False`) alongside the
+seven prior groups' defaults; the modified-config inequality and the
+`Clone`/`PartialEq` round-trip remain.
+
+Gate results:
+
+- `cargo fmt -p roastty` accepted; `--check` clean.
+- `cargo test -p roastty` → 2952 passed, 0 failed (no regressions; the existing
+  `config_default` test was extended).
+- `cargo build -p roastty` → no warnings.
+- No-`ghostty`-name gates (font + renderer + config +
+  `lib.rs`/header/`abi_harness.c`) clean; `git diff --check` clean.
+
+## Conclusion
+
+The aggregating `Config` struct now holds eight field groups — clipboard (461),
+mouse/click (462), shell-integration (463), notification (464),
+renderer-appearance (465), background-image (466), optional-colors (467), and
+surface-policy — twenty-six fields total, drawing on the leaf enums and color
+value types ported earlier this issue. The parser, the `changeConfig` machinery,
+the conditional-config system, and the remaining upstream `Config` fields stay
+deferred.
+
+## Completion Review
+
+Codex reviewed the completed implementation and result and **approved** with
+**no findings**. It confirmed the surface-policy fields were added with faithful
+defaults (`ConfirmCloseSurface::True`, `LinkPreviews::True`,
+`WindowSubtitle::False`); the group remains properly scoped to aggregate
+`Config` defaults only; and extending the existing `Config::default()` test is
+adequate and keeps all prior defaults covered. No public C ABI/header impact;
+nothing needed to change before the result commit.
+
+Review artifacts:
+
+- Prompt: `logs/codex-review/20260604-123228-r468-prompt.md` (result)
+- Result: `logs/codex-review/20260604-123228-r468-last-message.md` (result)
