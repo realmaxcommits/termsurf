@@ -1302,7 +1302,7 @@ are past the correctness-critical foundation.
 - [Experiment 427: the per-row padding-extend refinement (refine_padding_extend)](427-padding-extend-refine.md)
   — **Pass** · Claude/Codex/Codex
 - [Experiment 428: the custom-shader uniforms value type (CustomShaderUniforms)](428-custom-shader-uniforms.md)
-  — **Designed** · Claude/Codex/Codex
+  — **Pass** · Claude/Codex/Codex
 
 ## Non-Goals
 

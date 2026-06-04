@@ -251,3 +251,68 @@ Review artifacts:
 
 - Prompt: `logs/codex-review/20260604-092242-d428-prompt.md` (design)
 - Result: `logs/codex-review/20260604-092242-d428-last-message.md` (design)
+
+## Result
+
+**Result:** Pass
+
+The custom-shader uniforms value type is now live.
+
+- `roastty/src/renderer/shadertoy.rs` (new module, registered in
+  `renderer/mod.rs` as `pub(crate) mod shadertoy;`, with
+  `#![allow(dead_code)]`): the `#[repr(C, align(16))]` `CustomShaderUniforms`
+  struct (the fields in upstream order, with explicit `_pad0: [u8; 4]` /
+  `_pad1: [u8; 12]` / `_pad2: [u8; 8]` padding reproducing the `extern struct`
+  `align(16)` offsets), and `CustomShaderUniforms::new()` (the renderer-init
+  defaults — all zero except `resolution = [0, 0, 1]`, `frame_rate = 60`,
+  `focus = 1`).
+
+Tests (in `shadertoy.rs`):
+
+- `custom_shader_uniforms_layout_matches_extern_struct` — `size_of == 4496`,
+  `align_of == 16`, and `offset_of!` for `resolution` 0, `time` 12, `frame` 24,
+  `channel_time` 32, `channel_resolution` 96, `mouse` 160, `date` 176,
+  `sample_rate` 192, `current_cursor` 208, `current_cursor_style` 272, `focus`
+  292, `palette` 304, `background_color` 4400,
+  `selection_foreground_color` 4480.
+- `custom_shader_uniforms_new_matches_init_defaults` —
+  `resolution == [0, 0, 1]`, `frame_rate == 60`, `focus == 1`, and `time` /
+  `frame` / `cursor_visible` / `palette[0]` / `background_color` zeroed.
+
+Gate results:
+
+- `cargo fmt -p roastty` accepted; `--check` clean.
+- `cargo test -p roastty` → 2910 passed, 0 failed (+2, no regressions).
+- `cargo build -p roastty` → no warnings.
+- No-`ghostty`-name gates (font + renderer incl. `shadertoy.rs` + config +
+  `lib.rs`/header/`abi_harness.c`) clean; `git diff --check` clean.
+
+## Conclusion
+
+The custom-shader uniform value type is ported with its `extern struct` layout
+locked by offset/size/alignment tests (the explicit padding reproduces the
+std140 `align(16)` offsets that Rust's element-aligned arrays would not), plus
+the renderer-init defaults. The remaining custom-shader work — the
+per-frame/state update methods (`updateCustomShaderUniformsFromState` /
+`…ForFrame`, which need the live render `State`), the `Target` enum, and the
+shader loading (`loadFromFiles`) — stays deferred, along with the broader live
+per-frame call sites and the `neverExtendBg` terminal-core row/cell access;
+beyond the renderer, the other subsystems of the libghostty→libroastty rewrite.
+
+## Completion Review
+
+Codex reviewed the completed implementation and result and **approved** with
+**no findings**. It confirmed `CustomShaderUniforms` matches upstream's field
+order and scalar/vector types, and that the explicit padding reproduces the
+upstream `extern struct` alignment points (`_pad0` → `channel_time` at `32`,
+`_pad1` → `current_cursor` at `208`, `_pad2` → `palette` at `304`; `palette`
+spans `304..4400`; the trailing color vec4s end at `4496`). It confirmed the
+passing `size_of == 4496`, `align_of == 16`, and the key `offset_of!` checks
+lock the layout, and that `new()` matches the renderer-init defaults (all zero
+except `resolution = [0.0, 0.0, 1.0]`, `frame_rate = 60.0`, `focus = 1`). No
+public C ABI/header impact; nothing needed to change before the result commit.
+
+Review artifacts:
+
+- Prompt: `logs/codex-review/20260604-092531-r428-prompt.md` (result)
+- Result: `logs/codex-review/20260604-092531-r428-last-message.md` (result)
