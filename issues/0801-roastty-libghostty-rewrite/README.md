@@ -1305,6 +1305,8 @@ are past the correctness-critical foundation.
   — **Pass** · Claude/Codex/Codex
 - [Experiment 429: the custom-shader per-frame time/resolution update (update_for_frame)](429-custom-shader-frame-update.md)
   — **Pass** · Claude/Codex/Codex
+- [Experiment 430: the custom-shader cursor update (update_cursor)](430-custom-shader-cursor.md)
+  — **Designed** · Claude/Codex/Codex
 
 ## Non-Goals
 
