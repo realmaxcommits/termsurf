@@ -1285,6 +1285,8 @@ are past the correctness-critical foundation.
   — **Pass** · Claude/Codex/Codex
 - [Experiment 419: the background-color uniform update (update_bg_color)](419-bg-color-uniform.md)
   — **Pass** · Claude/Codex/Codex
+- [Experiment 420: the minimum-contrast uniform update (update_min_contrast)](420-min-contrast-uniform.md)
+  — **Designed** · Claude/Codex/Codex
 
 ## Non-Goals
 
