@@ -1355,6 +1355,8 @@ are past the correctness-critical foundation.
   — **Pass** · Claude/Codex/Codex
 - [Experiment 454: the confirm-close-surface config enum and its confirm decision (ConfirmCloseSurface, needs_confirm)](454-config-confirm-close-surface.md)
   — **Pass** · Claude/Codex/Codex
+- [Experiment 455: the window-subtitle config enum and its predicate (WindowSubtitle, shows_working_directory)](455-config-window-subtitle.md)
+  — **Designed** · Claude/Codex/—
 
 ## Non-Goals
 
