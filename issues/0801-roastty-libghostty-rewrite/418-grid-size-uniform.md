@@ -146,3 +146,54 @@ Review artifacts:
 
 - Prompt: `logs/codex-review/20260604-082928-d418-prompt.md` (design)
 - Result: `logs/codex-review/20260604-082928-d418-last-message.md` (design)
+
+## Result
+
+**Result:** Pass
+
+The grid-size uniform update is now live.
+
+- `roastty/src/renderer/metal/shaders.rs`:
+  `MetalUniforms::update_grid_size(&mut self, grid: GridSize)` sets
+  `grid_size = [grid.columns, grid.rows]` (the only field upstream's
+  `rebuildCells` resize assignment touches).
+
+Test (in `shaders.rs`): `update_grid_size_sets_grid_size_only` —
+`update_grid_size(GridSize { columns: 11, rows: 7 })` → `grid_size == [11, 7]`,
+and `screen_size` / `cell_size` / `bg_color` unchanged.
+
+Gate results:
+
+- `cargo fmt -p roastty` accepted; `--check` clean.
+- `cargo test -p roastty` → 2895 passed, 0 failed (+1, no regressions).
+- `cargo build -p roastty` → no warnings.
+- No-`ghostty`-name gates (font + renderer + `lib.rs`/header/`abi_harness.c`)
+  clean; `git diff --check` clean.
+
+## Conclusion
+
+The per-frame uniforms now cover the full **geometry trio** — `screen_size`
+(Experiment 415), `cell_size` (Experiment 416), and `grid_size` (this
+experiment) — plus the cursor group (Experiment 417). The remaining
+uniform-update work: the config-derived group (min-contrast and the
+color-space/blending bools, which first need the config `colorspace`/`blending`
+enums), the background color, and the `padding_extend` flags; then a full
+production `MetalUniforms` constructor that composes these, and the live call
+sites that run the updates on resize/font/config change.
+
+## Completion Review
+
+Codex reviewed the completed implementation and result and **approved** with
+**no findings**. It confirmed the implementation matches the approved design and
+the upstream assignment exactly: `update_grid_size` sets `grid_size` to
+`[grid.columns, grid.rows]` in the upstream order, with no cast or extra
+behavior, and the method body touches only that field. It judged the test to
+cover the important risks (distinct `columns` and `rows` catch ordering
+mistakes, and the representative untouched-field assertions confirm the
+single-field boundary). No public C ABI/header impact; nothing needed to change
+before the result commit.
+
+Review artifacts:
+
+- Prompt: `logs/codex-review/20260604-083042-r418-prompt.md` (result)
+- Result: `logs/codex-review/20260604-083042-r418-last-message.md` (result)

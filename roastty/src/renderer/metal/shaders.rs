@@ -187,6 +187,13 @@ impl MetalUniforms {
         self.cell_size = [metrics.cell_width as f32, metrics.cell_height as f32];
     }
 
+    /// Update the grid-size uniform (upstream `rebuildCells`'s resize path): the
+    /// `grid_size` (`[columns, rows]`), so the background cells stay in place when
+    /// the grid is resized.
+    pub(crate) fn update_grid_size(&mut self, grid: GridSize) {
+        self.grid_size = [grid.columns, grid.rows];
+    }
+
     /// Clear the cursor uniform: set `cursor_pos` to the sentinel
     /// `(u16::MAX, u16::MAX)`, which the shader reads as "no cursor" (upstream's
     /// default clear). Only `cursor_pos` is touched.
@@ -558,6 +565,24 @@ fragment float4 bg_image_fragment() {
         // The other fields are untouched.
         assert_eq!(uniforms.screen_size, [2.0, 3.0]);
         assert_eq!(uniforms.grid_size, [4, 5]);
+        assert_eq!(uniforms.bg_color, [1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn update_grid_size_sets_grid_size_only() {
+        let mut uniforms =
+            MetalUniforms::test_with_grid([2, 3], [4, 5], [6.0, 7.0], [0.0; 4], 0, [1, 2, 3, 4]);
+
+        // Distinct columns ≠ rows so the order is meaningful.
+        uniforms.update_grid_size(GridSize {
+            columns: 11,
+            rows: 7,
+        });
+
+        assert_eq!(uniforms.grid_size, [11, 7]);
+        // The other fields are untouched.
+        assert_eq!(uniforms.screen_size, [2.0, 3.0]);
+        assert_eq!(uniforms.cell_size, [6.0, 7.0]);
         assert_eq!(uniforms.bg_color, [1, 2, 3, 4]);
     }
 
