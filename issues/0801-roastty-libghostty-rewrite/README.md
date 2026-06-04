@@ -1479,6 +1479,8 @@ are past the correctness-critical foundation.
   — **Pass** · Claude/Codex/Codex
 - [Experiment 516: the last enum-keyword config parsers (from_keyword: ShellIntegration / NotifyOnCommandFinish)](516-config-enum-from-keyword-4.md)
   — **Pass** · Claude/Codex/Codex
+- [Experiment 517: the packed-struct flag parser (parse_packed_flags + ScrollToBottom / FontShapingBreak parse_cli)](517-config-packed-struct-parse.md)
+  — **Designed** · Claude/Codex/—
 
 ## Non-Goals
 
