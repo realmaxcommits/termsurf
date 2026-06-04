@@ -1428,7 +1428,7 @@ are past the correctness-critical foundation.
 - [Experiment 490: the config BackgroundBlur CLI parser (BackgroundBlur::parse_cli)](490-config-background-blur-parse-cli.md)
   — **Pass** · Claude/Codex/Codex
 - [Experiment 491: the config EntryFormatter and the first formatEntry (Color)](491-config-entry-formatter.md)
-  — **Designed** · Claude/Codex/—
+  — **Pass** · Claude/Codex/Codex
 
 ## Non-Goals
 

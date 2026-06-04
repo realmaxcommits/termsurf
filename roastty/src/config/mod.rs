@@ -7,9 +7,11 @@
 #![allow(dead_code)]
 // This config layer is consumed by later slices.
 
+mod formatter;
 mod string;
 mod unicode_range;
 
+use crate::config::formatter::EntryFormatter;
 use crate::config::string::codepoint_iterator;
 use crate::terminal::color::{Palette as TerminalPalette, PaletteMask, Rgb, DEFAULT_PALETTE};
 use crate::terminal::selection_codepoints::DEFAULT_WORD_BOUNDARIES;
@@ -246,6 +248,12 @@ impl Color {
     /// The inverse of [`Color::from_hex`].
     pub(crate) fn format_buf(self) -> String {
         format!("#{:02x}{:02x}{:02x}", self.r, self.g, self.b)
+    }
+
+    /// Format the color as a config entry (upstream `Color.formatEntry`): write the
+    /// `#rrggbb` string (via [`Color::format_buf`]) as the value.
+    pub(crate) fn format_entry(self, formatter: &mut EntryFormatter) {
+        formatter.entry_str(&self.format_buf());
     }
 }
 
@@ -1640,6 +1648,7 @@ impl OscColorReportFormat {
 
 #[cfg(test)]
 mod tests {
+    use super::EntryFormatter;
     use super::{
         AlphaBlending, BackgroundBlur, BackgroundBlurParseError, BackgroundImageFit,
         BackgroundImagePosition, BoldColor, ClipboardAccess, ClipboardCodepointMapEntry,
@@ -3273,5 +3282,19 @@ mod tests {
         ] {
             assert_eq!(Color::from_hex(&c.format_buf()), Ok(c));
         }
+    }
+
+    #[test]
+    fn color_format_entry_writes_hex_string() {
+        // Upstream `Color` `formatConfig`: `Color{10,11,12}` under name `a`.
+        let mut out = String::new();
+        let mut f = EntryFormatter::new("a", &mut out);
+        Color {
+            r: 10,
+            g: 11,
+            b: 12,
+        }
+        .format_entry(&mut f);
+        assert_eq!(out, "a = #0a0b0c\n");
     }
 }

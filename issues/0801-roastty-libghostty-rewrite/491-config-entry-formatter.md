@@ -250,3 +250,54 @@ Review artifacts:
 
 - Prompt: `logs/codex-review/20260604-150634-d491-prompt.md` (design)
 - Result: `logs/codex-review/20260604-150634-d491-last-message.md` (design)
+
+## Result
+
+**Result:** Pass
+
+The new `roastty/src/config/formatter.rs` module was implemented exactly as
+designed — `EntryFormatter` (`new` / `entry_str` / `entry_bool` / `entry_int` /
+`entry_void`, each producing the upstream `name = …\n` line) — and wired into
+`config/mod.rs` via `mod formatter;` + the `EntryFormatter` import.
+`Color::format_entry` was added, writing the `format_buf` `#rrggbb` string as a
+string entry. Two tests cover the `EntryFormatter` primitives (including the
+`a = \n` void form) and the `Color` `a = #0a0b0c\n` output (upstream's `Color`
+`formatConfig`).
+
+Gates:
+
+- `cargo fmt -p roastty` accepted; `--check` clean.
+- `cargo test -p roastty`: 2976 passed, 0 failed (two new tests; no
+  regressions).
+- `cargo build -p roastty`: no warnings.
+- no-`ghostty`-name greps (font/renderer/config + lib.rs/header/abi_harness.c)
+  clean; `git diff --check` clean.
+
+## Completion Review
+
+Codex reviewed the completed experiment and **approved** it with **no
+findings**: the implemented `EntryFormatter` preserves the upstream primitive
+line formats (including the exact void output `a = \n` —
+`formatter.zig:41`/`:57`), and `Color::format_entry` correctly writes
+`Color::format_buf()` as a string entry, matching the upstream `a = #0a0b0c\n`
+format test (`Config.zig:5459`/`:5524`); the scoped formatter API is adequate
+for the first consumer, and the deferred generic dispatch cases are
+appropriately left for later experiments; gates are clean. "Approved with no
+findings."
+
+Review artifacts:
+
+- Prompt: `logs/codex-review/20260604-150948-r491-prompt.md` (result)
+- Result: `logs/codex-review/20260604-150948-r491-last-message.md` (result)
+
+## Conclusion
+
+The config **formatter** layer is stood up: the
+`config::formatter::EntryFormatter` object (the thing every type's `formatEntry`
+receives) is ported, and `Color` is its first consumer (`Color::format_entry` →
+`a = #0a0b0c\n`). This unblocks the formatter side deferred across Experiments
+475–490 — the next slices can port the remaining types' `formatEntry` methods
+(`TerminalColor`, `BoldColor`, `Palette`, `ColorList`, `Duration`,
+`WindowPadding`, etc.), each grounded by `EntryFormatter`, and later the generic
+field-dispatch `formatEntry` (enum/float/optional/packed), continuing toward the
+full config formatter and loader.
