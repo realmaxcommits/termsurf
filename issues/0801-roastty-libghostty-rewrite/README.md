@@ -1439,6 +1439,8 @@ are past the correctness-critical foundation.
   — **Pass** · Claude/Codex/Codex
 - [Experiment 496: the Duration config formatter (Duration::format_entry)](496-config-duration-format-entry.md)
   — **Pass** · Claude/Codex/Codex
+- [Experiment 497: the SelectionWordChars config formatter (SelectionWordChars::format_entry)](497-config-selection-word-chars-format-entry.md)
+  — **Designed** · Claude/Codex/—
 
 ## Non-Goals
 
