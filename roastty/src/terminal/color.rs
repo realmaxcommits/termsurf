@@ -29,7 +29,7 @@ pub(super) struct DynamicPalette {
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-struct PaletteMask {
+pub(crate) struct PaletteMask {
     words: [u64; 4],
 }
 
@@ -228,15 +228,15 @@ impl DynamicPalette {
 }
 
 impl PaletteMask {
-    const fn empty() -> Self {
+    pub(crate) const fn empty() -> Self {
         Self { words: [0; 4] }
     }
 
-    fn is_empty(self) -> bool {
+    pub(crate) fn is_empty(self) -> bool {
         self.words.iter().all(|word| *word == 0)
     }
 
-    fn set(&mut self, index: u8) {
+    pub(crate) fn set(&mut self, index: u8) {
         let index = index as usize;
         self.words[index / 64] |= 1 << (index % 64);
     }
@@ -246,7 +246,7 @@ impl PaletteMask {
         self.words[index / 64] &= !(1 << (index % 64));
     }
 
-    fn get(self, index: u8) -> bool {
+    pub(crate) fn get(self, index: u8) -> bool {
         let index = index as usize;
         self.words[index / 64] & (1 << (index % 64)) != 0
     }

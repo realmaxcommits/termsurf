@@ -7,7 +7,7 @@
 #![allow(dead_code)]
 // This config layer is consumed by later slices.
 
-use crate::terminal::color::Rgb;
+use crate::terminal::color::{Palette as TerminalPalette, PaletteMask, Rgb, DEFAULT_PALETTE};
 use crate::terminal::style::BoldColor as TerminalBoldColor;
 
 /// The aggregating config struct (upstream `config.Config`) — the home of the
@@ -316,6 +316,139 @@ impl BoldColor {
         }
         Ok(BoldColor::Color(Color::parse_cli(Some(input))?))
     }
+}
+
+/// An error parsing the `palette` config (upstream `Palette.parseCLI` errors).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PaletteParseError {
+    /// No value was supplied (upstream `error.ValueRequired`).
+    ValueRequired,
+    /// No `=`, or a non-numeric key, or an unparseable color (upstream
+    /// `error.InvalidValue`).
+    InvalidValue,
+    /// The palette index is greater than 255 (upstream `error.Overflow`).
+    Overflow,
+}
+
+/// The `palette` config (upstream `Config.Palette`): the 256-entry color table
+/// plus a mask of which indices the user set.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Palette {
+    pub value: TerminalPalette,
+    pub mask: PaletteMask,
+}
+
+impl Default for Palette {
+    fn default() -> Self {
+        Self {
+            value: DEFAULT_PALETTE,
+            mask: PaletteMask::empty(),
+        }
+    }
+}
+
+impl Palette {
+    /// Parse one `index=color` assignment (upstream `Palette.parseCLI`): split on
+    /// the first `=`, parse the whitespace-trimmed base-0 `u8` key and the color
+    /// (via [`Color::parse_cli`]), then set that entry and mark the mask. A
+    /// missing value is `PaletteParseError::ValueRequired`; a missing `=` or a bad
+    /// key/color is `InvalidValue`; a key `> 255` is `Overflow`. State is mutated
+    /// only after both the key and the color parse successfully.
+    pub(crate) fn parse_cli(&mut self, input: Option<&str>) -> Result<(), PaletteParseError> {
+        let value = input.ok_or(PaletteParseError::ValueRequired)?;
+        let eql = value.find('=').ok_or(PaletteParseError::InvalidValue)?;
+
+        let key = parse_palette_key(value[..eql].trim_matches(|c: char| c == ' ' || c == '\t'))?;
+        let rgb = Color::parse_cli(Some(&value[eql + 1..]))
+            .map_err(|_| PaletteParseError::InvalidValue)?;
+
+        self.value[key as usize] = rgb.to_terminal_rgb();
+        self.mask.set(key);
+        Ok(())
+    }
+}
+
+/// Parse a base-0 `u8` (upstream `std.fmt.parseInt(u8, _, 0)`). A faithful port of
+/// Zig's `parseInt` / `parseIntWithSign`: an optional leading `+`/`-` sign, then
+/// base auto-detection from a case-insensitive `0x`/`0o`/`0b` prefix (decimal
+/// otherwise), `_` separators allowed only *between* digits (leading/trailing `_`
+/// rejected). For an unsigned `u8`: `-0` is `0`, any negative nonzero is
+/// `Overflow`, a value `> 255` is `Overflow`, and any other malformed input is
+/// `InvalidValue` (Zig's `error.InvalidCharacter`).
+fn parse_palette_key(buf: &str) -> Result<u8, PaletteParseError> {
+    let bytes = buf.as_bytes();
+    match bytes.first() {
+        Some(b'+') => parse_u8_with_sign(&buf[1..], false),
+        Some(b'-') => parse_u8_with_sign(&buf[1..], true),
+        _ => parse_u8_with_sign(buf, false),
+    }
+}
+
+fn parse_u8_with_sign(buf: &str, neg: bool) -> Result<u8, PaletteParseError> {
+    let bytes = buf.as_bytes();
+    if bytes.is_empty() {
+        return Err(PaletteParseError::InvalidValue); // bare "+"/"-" or empty
+    }
+
+    // base 0: default decimal; detect a `0x`/`0o`/`0b` prefix (case-insensitive,
+    // and only when there is at least one digit after it — `buf.len > 2`).
+    let mut base: u32 = 10;
+    let mut start: &[u8] = bytes;
+    if bytes.len() > 2 && bytes[0] == b'0' {
+        match bytes[1].to_ascii_lowercase() {
+            b'b' => (base, start) = (2, &bytes[2..]),
+            b'o' => (base, start) = (8, &bytes[2..]),
+            b'x' => (base, start) = (16, &bytes[2..]),
+            _ => {}
+        }
+    }
+
+    // Leading/trailing underscores are rejected; interior ones are skipped.
+    if start[0] == b'_' || start[start.len() - 1] == b'_' {
+        return Err(PaletteParseError::InvalidValue);
+    }
+
+    // Accumulate is a `u8` for a `u8` result; every intermediate must fit 0..=255.
+    let mut acc: i32 = 0;
+    for &c in start {
+        if c == b'_' {
+            continue;
+        }
+        let digit = char_to_digit(c, base)? as i32;
+        if acc != 0 {
+            acc = acc
+                .checked_mul(base as i32)
+                .filter(|&v| v <= 255)
+                .ok_or(PaletteParseError::Overflow)?;
+        } else if neg {
+            // First digit of a negative number: only `-0` survives for unsigned.
+            acc = -digit;
+            if acc < 0 {
+                return Err(PaletteParseError::Overflow);
+            }
+            continue;
+        }
+        acc = if neg { acc - digit } else { acc + digit };
+        if !(0..=255).contains(&acc) {
+            return Err(PaletteParseError::Overflow);
+        }
+    }
+    Ok(acc as u8)
+}
+
+/// Upstream `std.fmt.charToDigit`: the digit value of an ASCII alphanumeric in the
+/// given base, else `InvalidValue` (Zig's `error.InvalidCharacter`).
+fn char_to_digit(c: u8, base: u32) -> Result<u32, PaletteParseError> {
+    let value = match c {
+        b'0'..=b'9' => (c - b'0') as u32,
+        b'A'..=b'Z' => (c - b'A') as u32 + 10,
+        b'a'..=b'z' => (c - b'a') as u32 + 10,
+        _ => return Err(PaletteParseError::InvalidValue),
+    };
+    if value >= base {
+        return Err(PaletteParseError::InvalidValue);
+    }
+    Ok(value)
 }
 
 /// The `notify-on-command-finish` config (upstream `NotifyOnCommandFinish`): when
@@ -937,9 +1070,10 @@ mod tests {
         CustomShaderAnimation, FontShapingBreak, FontStyle, Fullscreen, GraphemeWidthMethod,
         LinkPreviews, MacHidden, MacTitlebarProxyIcon, MacTitlebarStyle, MacWindowButtons,
         MiddleClickAction, MouseShiftCapture, NonNativeFullscreen, NotifyOnCommandFinish,
-        NotifyOnCommandFinishAction, OscColorReportFormat, RightClickAction, ScrollToBottom,
-        ShellIntegration, ShellIntegrationFeatures, TerminalBoldColor, TerminalColor, Theme,
-        WindowColorspace, WindowPaddingColor, WindowSubtitle,
+        NotifyOnCommandFinishAction, OscColorReportFormat, Palette, PaletteParseError,
+        RightClickAction, ScrollToBottom, ShellIntegration, ShellIntegrationFeatures,
+        TerminalBoldColor, TerminalColor, Theme, WindowColorspace, WindowPaddingColor,
+        WindowSubtitle,
     };
     use crate::terminal::color::Rgb;
 
@@ -1689,6 +1823,101 @@ mod tests {
         assert_eq!(
             BoldColor::parse_cli(Some(" bright")),
             Err(ColorParseError::Invalid)
+        );
+    }
+
+    #[test]
+    fn palette_parse_cli_sets_indices_and_mask() {
+        // Upstream `Palette.parseCLI`: `"0=#AABBCC"` sets index 0 and marks it.
+        let mut p = Palette::default();
+        assert_eq!(p.parse_cli(Some("0=#AABBCC")), Ok(()));
+        assert_eq!(p.value[0], Rgb::new(0xAA, 0xBB, 0xCC));
+        assert!(p.mask.get(0));
+        assert!(!p.mask.get(1));
+
+        // The base prefixes set indices 1 / 7 / 15.
+        let mut p = Palette::default();
+        assert_eq!(p.parse_cli(Some("0b1=#014589")), Ok(()));
+        assert_eq!(p.parse_cli(Some("0o7=#234567")), Ok(()));
+        assert_eq!(p.parse_cli(Some("0xF=#ABCDEF")), Ok(()));
+        assert_eq!(p.value[1], Rgb::new(0x01, 0x45, 0x89));
+        assert_eq!(p.value[7], Rgb::new(0x23, 0x45, 0x67));
+        assert_eq!(p.value[15], Rgb::new(0xAB, 0xCD, 0xEF));
+        assert!(p.mask.get(1) && p.mask.get(7) && p.mask.get(15));
+        assert!(!p.mask.get(0) && !p.mask.get(2));
+
+        // An overflowing key errors and leaves the table and mask unchanged.
+        let mut p = Palette::default();
+        let before = p.value[0];
+        assert_eq!(
+            p.parse_cli(Some("256=#AABBCC")),
+            Err(PaletteParseError::Overflow)
+        );
+        assert!(p.mask.is_empty());
+        assert_eq!(p.value[0], before);
+
+        // Whitespace around the key and color is tolerated.
+        let mut p = Palette::default();
+        assert_eq!(p.parse_cli(Some("0 =  #AABBCC")), Ok(()));
+        assert_eq!(p.parse_cli(Some(" 1= #DDEEFF    ")), Ok(()));
+        assert_eq!(p.parse_cli(Some("  2  =  #123456 ")), Ok(()));
+        assert_eq!(p.value[0], Rgb::new(0xAA, 0xBB, 0xCC));
+        assert_eq!(p.value[1], Rgb::new(0xDD, 0xEE, 0xFF));
+        assert_eq!(p.value[2], Rgb::new(0x12, 0x34, 0x56));
+        assert!(p.mask.get(0) && p.mask.get(1) && p.mask.get(2) && !p.mask.get(3));
+
+        // Top-level errors: missing value, no `=`, and a bad color.
+        let mut p = Palette::default();
+        assert_eq!(p.parse_cli(None), Err(PaletteParseError::ValueRequired));
+        assert_eq!(p.parse_cli(Some("0")), Err(PaletteParseError::InvalidValue));
+        assert_eq!(
+            p.parse_cli(Some("0=nope")),
+            Err(PaletteParseError::InvalidValue)
+        );
+        assert!(p.mask.is_empty());
+    }
+
+    #[test]
+    fn palette_parse_cli_key_matches_zig_parse_int() {
+        // Uppercase base prefixes parse the same as lowercase.
+        let mut p = Palette::default();
+        assert_eq!(p.parse_cli(Some("0XF=#ABCDEF")), Ok(()));
+        assert_eq!(p.parse_cli(Some("0B1=#014589")), Ok(()));
+        assert_eq!(p.parse_cli(Some("0O7=#234567")), Ok(()));
+        assert!(p.mask.get(15) && p.mask.get(1) && p.mask.get(7));
+
+        // A leading `+` is accepted.
+        let mut p = Palette::default();
+        assert_eq!(p.parse_cli(Some("+0xF=#ABCDEF")), Ok(()));
+        assert_eq!(p.parse_cli(Some("+0=#AABBCC")), Ok(()));
+        assert!(p.mask.get(15) && p.mask.get(0));
+
+        // Unsigned sign rules: `-0` is index 0; any negative nonzero overflows.
+        let mut p = Palette::default();
+        assert_eq!(p.parse_cli(Some("-0=#AABBCC")), Ok(()));
+        assert!(p.mask.get(0));
+        assert_eq!(
+            p.parse_cli(Some("-1=#AABBCC")),
+            Err(PaletteParseError::Overflow)
+        );
+
+        // Interior underscores are allowed; leading/trailing/bare-prefix are not.
+        let mut p = Palette::default();
+        assert_eq!(p.parse_cli(Some("1_0=#AABBCC")), Ok(())); // decimal 10
+        assert_eq!(p.parse_cli(Some("0x1_0=#AABBCC")), Ok(())); // hex 0x10 = 16
+        assert_eq!(p.value[10], Rgb::new(0xAA, 0xBB, 0xCC));
+        assert_eq!(p.value[16], Rgb::new(0xAA, 0xBB, 0xCC));
+        for bad in ["_0=#AABBCC", "0_=#AABBCC", "0x_10=#AABBCC", "0x10_=#AABBCC"] {
+            assert_eq!(
+                p.parse_cli(Some(bad)),
+                Err(PaletteParseError::InvalidValue),
+                "{bad}"
+            );
+        }
+        // A bare prefix has no digits and is invalid.
+        assert_eq!(
+            p.parse_cli(Some("0x=#AABBCC")),
+            Err(PaletteParseError::InvalidValue)
         );
     }
 

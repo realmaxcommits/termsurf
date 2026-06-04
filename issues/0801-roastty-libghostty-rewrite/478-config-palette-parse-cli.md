@@ -395,3 +395,63 @@ Review artifacts:
 - Round 1 result: `logs/codex-review/20260604-131757-d478-last-message.md`
 - Round 2 prompt: `logs/codex-review/20260604-132352-d478b-prompt.md`
 - Round 2 result: `logs/codex-review/20260604-132352-d478b-last-message.md`
+
+## Result
+
+**Result:** Pass
+
+The config `Palette` was implemented exactly as the (Round-2-approved) design.
+`roastty/src/terminal/color.rs` widened `PaletteMask` and its `empty` /
+`is_empty` / `set` / `get` methods to `pub(crate)` (the in-`terminal` callers
+are unaffected). `roastty/src/config/mod.rs` added `PaletteParseError`, the
+`Palette` struct (`value: terminal::color::Palette` defaulting to
+`DEFAULT_PALETTE`, plus a `PaletteMask`), `Palette::parse_cli`, and the base-0
+key helpers (`parse_palette_key` / `parse_u8_with_sign` / `char_to_digit`, a
+faithful port of Zig's `parseInt`/`parseIntWithSign`/`charToDigit`). Two tests
+were added: `palette_parse_cli_sets_indices_and_mask` (the upstream `parseCLI`
+cases — index + mask, base prefixes, the overflow-leaves-state-unchanged case,
+whitespace, and the missing-value / no-`=` / bad-color errors) and
+`palette_parse_cli_key_matches_zig_parse_int` (the Zig integer-parser edge cases
+— uppercase prefixes, leading `+`, `-0`/`-1`, interior vs edge underscores, bare
+prefix).
+
+Gates:
+
+- `cargo fmt -p roastty` accepted; `--check` clean.
+- `cargo test -p roastty`: 2958 passed, 0 failed (two new tests; no
+  regressions).
+- `cargo build -p roastty`: no warnings.
+- no-`ghostty`-name greps (font/renderer/config + lib.rs/header/abi_harness.c)
+  clean; `git diff --check` clean.
+
+## Completion Review
+
+Codex reviewed the completed experiment and **approved** it with **no
+findings**: `Palette::parse_cli` faithfully ports upstream's mutating parser
+(missing value, first `=`, trimmed key, color parse, then `value[key]` +
+`mask.set(key)` only after both parses succeed); the key parser now matches Zig
+`parseInt(u8, _, 0)` for the relevant cases (optional signs, case-insensitive
+base prefixes, internal underscores, edge-underscore rejection, `-0`, negative
+overflow, `u8` overflow); mapping invalid integer/color → `InvalidValue` and
+integer overflow → `Overflow` is appropriate; reusing `DEFAULT_PALETTE` and
+widening `PaletteMask` is the right approach; the tests cover the upstream cases
+plus the Zig integer-parser edge cases that mattered; and the deferred `cval` /
+`formatEntry` / broader config parsing remain properly scoped. "Approved for the
+result commit."
+
+Review artifacts:
+
+- Prompt: `logs/codex-review/20260604-132807-r478-prompt.md` (result)
+- Result: `logs/codex-review/20260604-132807-r478-last-message.md` (result)
+
+## Conclusion
+
+The `palette` config now parses: `Palette::parse_cli` reads one `index=color`
+assignment per call, reusing the terminal `DEFAULT_PALETTE` / `PaletteMask` and
+the `Color` parser, with a faithful port of Zig's base-0 integer parser for the
+key. This experiment also lands a reusable base-0 `u8` parser
+(`parse_palette_key`) that later integer-keyed config parsers can build on. The
+next slice can port the `palette` formatter (`formatEntry`, once
+`EntryFormatter` lands) or another config value type's `parseCLI` (e.g.
+`ColorList`, or a non-color type like `Duration` / `WindowPadding`), continuing
+toward the per-field parser dispatch and the full config loader.
