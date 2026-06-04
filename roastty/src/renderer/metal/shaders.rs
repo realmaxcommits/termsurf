@@ -3,7 +3,7 @@ use objc2::runtime::ProtocolObject;
 use objc2_foundation::NSString;
 use objc2_metal::{MTLDevice, MTLLibrary};
 
-use crate::config::{AlphaBlending, WindowColorspace};
+use crate::config::{AlphaBlending, WindowColorspace, WindowPaddingColor};
 use crate::font::metrics::Metrics;
 use crate::font::run::Wide;
 use crate::renderer::cell::block_cursor_pos;
@@ -140,6 +140,13 @@ pub(crate) struct MetalUniforms {
     pub(crate) _padding2: [u8; 8],
 }
 
+/// The `padding_extend` uniform bit flags — which edges extend the background
+/// color into the window padding. Must match `shaders.metal`.
+pub(crate) const EXTEND_LEFT: u8 = 1;
+pub(crate) const EXTEND_RIGHT: u8 = 2;
+pub(crate) const EXTEND_UP: u8 = 4;
+pub(crate) const EXTEND_DOWN: u8 = 8;
+
 /// The 2D orthographic projection matrix (upstream `math.ortho2d`). Maps the
 /// `[left, right] × [bottom, top]` rectangle to clip space; the `bottom`/`top`
 /// convention yields the negative-Y scale used for terminal coordinates.
@@ -226,6 +233,19 @@ impl MetalUniforms {
         self.bools.use_display_p3 = colorspace == WindowColorspace::DisplayP3;
         self.bools.use_linear_blending = blending.is_linear();
         self.bools.use_linear_correction = blending == AlphaBlending::LinearCorrected;
+    }
+
+    /// Reset `padding_extend` from the `padding_color` (upstream `rebuildCells`'s
+    /// full-rebuild reset): `Extend` / `ExtendAlways` set all four edges (the
+    /// per-row `rowNeverExtendBg` refinement may later disable some for `Extend`);
+    /// `Background` is a no-op.
+    pub(crate) fn reset_padding_extend(&mut self, padding_color: WindowPaddingColor) {
+        match padding_color {
+            WindowPaddingColor::Background => {}
+            WindowPaddingColor::Extend | WindowPaddingColor::ExtendAlways => {
+                self.padding_extend = EXTEND_LEFT | EXTEND_RIGHT | EXTEND_UP | EXTEND_DOWN;
+            }
+        }
     }
 
     /// Clear the cursor uniform: set `cursor_pos` to the sentinel
@@ -617,6 +637,41 @@ fragment float4 bg_image_fragment() {
         // The other fields are untouched.
         assert_eq!(uniforms.screen_size, [2.0, 3.0]);
         assert_eq!(uniforms.cell_size, [6.0, 7.0]);
+        assert_eq!(uniforms.bg_color, [1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn extend_bit_flags_match_the_shader() {
+        // Must match the EXTEND_* defines in shaders.metal.
+        assert_eq!(super::EXTEND_LEFT, 1);
+        assert_eq!(super::EXTEND_RIGHT, 2);
+        assert_eq!(super::EXTEND_UP, 4);
+        assert_eq!(super::EXTEND_DOWN, 8);
+    }
+
+    #[test]
+    fn reset_padding_extend_sets_all_edges_for_extend_modes() {
+        use crate::config::WindowPaddingColor;
+
+        let mut uniforms =
+            MetalUniforms::test_with_grid([2, 3], [4, 5], [6.0, 7.0], [0.0; 4], 9, [1, 2, 3, 4]);
+        uniforms.min_contrast = 3.0;
+
+        // Background → no-op: the pre-set padding_extend (9) is unchanged.
+        uniforms.reset_padding_extend(WindowPaddingColor::Background);
+        assert_eq!(uniforms.padding_extend, 9);
+
+        // Extend → all four edges (15).
+        uniforms.reset_padding_extend(WindowPaddingColor::Extend);
+        assert_eq!(uniforms.padding_extend, 15);
+
+        // ExtendAlways → all four edges (15).
+        uniforms.padding_extend = 0;
+        uniforms.reset_padding_extend(WindowPaddingColor::ExtendAlways);
+        assert_eq!(uniforms.padding_extend, 15);
+
+        // The other fields are untouched.
+        assert_eq!(uniforms.min_contrast, 3.0);
         assert_eq!(uniforms.bg_color, [1, 2, 3, 4]);
     }
 

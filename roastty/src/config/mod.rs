@@ -34,6 +34,19 @@ impl AlphaBlending {
     }
 }
 
+/// How the window padding around the grid is colored (upstream
+/// `WindowPaddingColor`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum WindowPaddingColor {
+    /// The configured background color fills the padding.
+    Background,
+    /// The edge cells' background extends into the padding (subject to per-row
+    /// heuristics).
+    Extend,
+    /// The edge cells' background always extends into the padding.
+    ExtendAlways,
+}
+
 #[cfg(test)]
 mod tests {
     use super::AlphaBlending;

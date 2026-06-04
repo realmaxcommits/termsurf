@@ -197,3 +197,64 @@ Review artifacts:
 
 - Prompt: `logs/codex-review/20260604-084847-d422-prompt.md` (design)
 - Result: `logs/codex-review/20260604-084847-d422-last-message.md` (design)
+
+## Result
+
+**Result:** Pass
+
+The padding-extend reset is now live.
+
+- `roastty/src/config/mod.rs`: the
+  `WindowPaddingColor { Background, Extend, ExtendAlways }` enum.
+- `roastty/src/renderer/metal/shaders.rs`: the `EXTEND_LEFT` (1) /
+  `EXTEND_RIGHT` (2) / `EXTEND_UP` (4) / `EXTEND_DOWN` (8) `u8` constants
+  (mirroring `shaders.metal`), and
+  `MetalUniforms::reset_padding_extend(&mut self, padding_color: WindowPaddingColor)`
+  — `Extend` / `ExtendAlways` set all four edges (`15`), `Background` is a no-op
+  (upstream's `switch`). Added `WindowPaddingColor` to the `crate::config`
+  import.
+
+Tests (in `shaders.rs`):
+
+- `extend_bit_flags_match_the_shader` — `EXTEND_LEFT` / `RIGHT` / `UP` / `DOWN`
+  are `1` / `2` / `4` / `8`.
+- `reset_padding_extend_sets_all_edges_for_extend_modes` — `Background` leaves a
+  pre-set `padding_extend` (`9`) unchanged; `Extend` → `15`; `ExtendAlways`
+  (from `0`) → `15`; and `min_contrast` / `bg_color` unchanged.
+
+Gate results:
+
+- `cargo fmt -p roastty` accepted; `--check` clean.
+- `cargo test -p roastty` → 2901 passed, 0 failed (+2, no regressions).
+- `cargo build -p roastty` → no warnings.
+- No-`ghostty`-name gates (font + renderer + config +
+  `lib.rs`/header/`abi_harness.c`) clean; `git diff --check` clean.
+
+## Conclusion
+
+The per-frame uniforms now cover the geometry trio, the cursor group, the
+background color, the minimum contrast, the color-space/blending bools, and the
+padding-extend reset. The config layer has grown its third enum
+(`WindowPaddingColor`). The remaining uniform-update work: the per-row
+`rowNeverExtendBg` refinement of `padding_extend` (which clears `up` / `down`
+for `Extend` based on the row content) and the macOS glass override (needs a
+`background_blur` config enum). Then a full production `MetalUniforms`
+constructor composing the groups, and the live per-frame call sites.
+
+## Completion Review
+
+Codex reviewed the completed implementation and result and **approved** with
+**no findings**. It confirmed the implementation matches the approved design and
+upstream behavior: `WindowPaddingColor::{Background, Extend, ExtendAlways}`
+faithfully maps upstream's `background` / `extend` / `extend-always`, and the
+Rust `EXTEND_*` constants match `shaders.metal` (left `1`, right `2`, up `4`,
+down `8`). It confirmed `reset_padding_extend` is correct (`Background` a no-op;
+`Extend` and `ExtendAlways` set all four bits `15`), that the method only writes
+`padding_extend`, and that the tests cover the bit values, the no-op background
+behavior, both extend modes, and representative untouched fields. No public C
+ABI/header impact; nothing needed to change before the result commit.
+
+Review artifacts:
+
+- Prompt: `logs/codex-review/20260604-085056-r422-prompt.md` (result)
+- Result: `logs/codex-review/20260604-085056-r422-last-message.md` (result)

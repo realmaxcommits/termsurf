@@ -1290,7 +1290,7 @@ are past the correctness-critical foundation.
 - [Experiment 421: the color-config uniforms (WindowColorspace + AlphaBlending + update_color_config)](421-color-config-uniforms.md)
   — **Pass** · Claude/Codex/Codex
 - [Experiment 422: the padding-extend reset (WindowPaddingColor + reset_padding_extend)](422-padding-extend-reset.md)
-  — **Designed** · Claude/Codex/Codex
+  — **Pass** · Claude/Codex/Codex
 
 ## Non-Goals
 
