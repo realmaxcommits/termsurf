@@ -85,6 +85,27 @@ impl CustomShaderUniforms {
             selection_foreground_color: [0.0; 4],
         }
     }
+
+    /// Update the per-frame time and resolution fields (the time/resolution
+    /// group of upstream `updateCustomShaderUniformsForFrame`): `time` (seconds
+    /// since the first frame), `time_delta` (seconds since the last frame), the
+    /// `frame` counter (incremented), `resolution` (the screen size, `z = 1`),
+    /// and `channel_resolution[0]`. The caller owns the clock (computes the
+    /// seconds); the cursor-glyph update is a later slice.
+    pub(crate) fn update_for_frame(
+        &mut self,
+        time_secs: f32,
+        time_delta_secs: f32,
+        screen_width: u32,
+        screen_height: u32,
+    ) {
+        self.time = time_secs;
+        self.time_delta = time_delta_secs;
+        self.frame += 1;
+        let (w, h) = (screen_width as f32, screen_height as f32);
+        self.resolution = [w, h, 1.0];
+        self.channel_resolution[0] = [w, h, 1.0, 0.0];
+    }
 }
 
 #[cfg(test)]
@@ -130,5 +151,26 @@ mod tests {
         assert_eq!(u.cursor_visible, 0);
         assert_eq!(u.palette[0], [0.0; 4]);
         assert_eq!(u.background_color, [0.0; 4]);
+    }
+
+    #[test]
+    fn update_for_frame_sets_time_and_resolution() {
+        let mut u = CustomShaderUniforms::new();
+
+        u.update_for_frame(1.5, 0.016, 800, 600);
+        assert_eq!(u.time, 1.5);
+        assert_eq!(u.time_delta, 0.016);
+        assert_eq!(u.frame, 1);
+        assert_eq!(u.resolution, [800.0, 600.0, 1.0]);
+        assert_eq!(u.channel_resolution[0], [800.0, 600.0, 1.0, 0.0]);
+
+        // The frame counter increments across calls.
+        u.update_for_frame(1.6, 0.016, 800, 600);
+        assert_eq!(u.frame, 2);
+
+        // The other fields are untouched.
+        assert_eq!(u.focus, 1);
+        assert_eq!(u.palette[0], [0.0; 4]);
+        assert_eq!(u.channel_resolution[1], [0.0; 4]);
     }
 }

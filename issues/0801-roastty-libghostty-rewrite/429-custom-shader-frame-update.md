@@ -173,3 +173,58 @@ Review artifacts:
 
 - Prompt: `logs/codex-review/20260604-092820-d429-prompt.md` (design)
 - Result: `logs/codex-review/20260604-092820-d429-last-message.md` (design)
+
+## Result
+
+**Result:** Pass
+
+The custom-shader per-frame time/resolution update is now live.
+
+- `roastty/src/renderer/shadertoy.rs`:
+  `CustomShaderUniforms::update_for_frame(&mut self, time_secs, time_delta_secs, screen_width, screen_height)`
+  sets `time` / `time_delta` from the given seconds, increments `frame`, and
+  sets `resolution = [w, h, 1.0]` and
+  `channel_resolution[0] = [w, h, 1.0, 0.0]`.
+
+Test (in `shadertoy.rs`): `update_for_frame_sets_time_and_resolution` — from
+`new()`, `update_for_frame(1.5, 0.016, 800, 600)` → `time == 1.5`,
+`time_delta == 0.016`, `frame == 1`, `resolution == [800, 600, 1]`,
+`channel_resolution[0] == [800, 600, 1, 0]`; a second call → `frame == 2`; and
+`focus` / `palette[0]` / `channel_resolution[1]` untouched.
+
+Gate results:
+
+- `cargo fmt -p roastty` accepted; `--check` clean.
+- `cargo test -p roastty` → 2911 passed, 0 failed (+1, no regressions).
+- `cargo build -p roastty` → no warnings.
+- No-`ghostty`-name gates (font + renderer + config +
+  `lib.rs`/header/`abi_harness.c`) clean; `git diff --check` clean.
+
+## Conclusion
+
+The custom-shader uniforms now carry their per-frame time and resolution (built
+on the value type from Experiment 428). The remaining custom-shader work — the
+cursor-glyph half of `updateCustomShaderUniformsForFrame` (needs `Contents` /
+`getCursorGlyph`), the `updateCustomShaderUniformsFromState` group (needs the
+live render `State`), the live timing source, the `Target` enum, and the shader
+loading — stays deferred, along with the broader live per-frame call sites and
+the `neverExtendBg` terminal-core row/cell access; beyond the renderer, the
+other subsystems.
+
+## Completion Review
+
+Codex reviewed the completed implementation and result and **approved** with
+**no findings**. It confirmed `update_for_frame` matches the upstream
+time/resolution block: it assigns `time` and `time_delta` from the provided
+seconds, increments `frame`, sets `resolution` to `[w, h, 1.0]`, and sets
+`channel_resolution[0]` to `[w, h, 1.0, 0.0]` (the `1.0` and trailing `0.0`
+match upstream exactly). It judged the test to cover the first-frame
+assignments, the second-call frame increment, and representative untouched
+fields (including `channel_resolution[1]`), and the deferral of the timing
+source and cursor-glyph half a clean boundary. No public C ABI/header impact;
+nothing needed to change before the result commit.
+
+Review artifacts:
+
+- Prompt: `logs/codex-review/20260604-092948-r429-prompt.md` (result)
+- Result: `logs/codex-review/20260604-092948-r429-last-message.md` (result)

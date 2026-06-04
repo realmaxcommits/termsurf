@@ -1304,7 +1304,7 @@ are past the correctness-critical foundation.
 - [Experiment 428: the custom-shader uniforms value type (CustomShaderUniforms)](428-custom-shader-uniforms.md)
   — **Pass** · Claude/Codex/Codex
 - [Experiment 429: the custom-shader per-frame time/resolution update (update_for_frame)](429-custom-shader-frame-update.md)
-  — **Designed** · Claude/Codex/Codex
+  — **Pass** · Claude/Codex/Codex
 
 ## Non-Goals
 
