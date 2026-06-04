@@ -151,3 +151,45 @@ Review artifacts:
 
 - Prompt: `logs/codex-review/20260604-162625-d506-prompt.md` (design)
 - Result: `logs/codex-review/20260604-162625-d506-last-message.md` (design)
+
+## Result
+
+**Result:** Pass
+
+`format_entry(&self, …)` was added to `FontStyle`'s existing `impl`, matching
+upstream's custom union `formatEntry`: the `Default` / `False` arms write the
+tag names `"default"` / `"false"` as strings, and the `Name` arm writes the
+stored style string — each as `name = value\n` via `entry_str`. The new test
+`font_style_format_entry` covers all three arms.
+
+Gates:
+
+- `cargo fmt -p roastty` accepted; `--check` clean.
+- `cargo test -p roastty`: 2992 passed, 0 failed (one new test; no regressions).
+- `cargo build -p roastty`: no warnings.
+- no-`ghostty`-name greps (font/renderer/config + lib.rs/header/abi_harness.c)
+  clean; `git diff --check` clean.
+
+## Completion Review
+
+Codex reviewed the completed experiment and **approved** it with **no
+findings**: the implementation matches upstream `FontStyle.formatEntry` —
+`default` and `false` write their tag names as strings and `name` writes the
+stored style string with no quoting (`Config.zig:8478`, `formatter.zig:77`); the
+test covers the three upstream format cases; gates are clean. "Approved with no
+findings."
+
+Review artifacts:
+
+- Prompt: `logs/codex-review/20260604-162743-r506-prompt.md` (result)
+- Result: `logs/codex-review/20260604-162743-r506-last-message.md` (result)
+
+## Conclusion
+
+`FontStyle` — the first union-typed config formatter (string-name branch,
+`&self`) — now formats its three arms faithfully. The remaining config-formatter
+work is `FontShapingBreak` (a packed-struct bool-keyword type, like
+`ScrollToBottom`), `CustomShaderAnimation`, and `MouseShiftCapture`, then the
+remaining generic field-dispatch cases (float `{d}`, optional recurse),
+`QuickTerminalSize`, and the full config loader, continuing toward the full
+config formatter and loader.

@@ -1458,7 +1458,7 @@ are past the correctness-critical foundation.
 - [Experiment 505: the remaining small enum-keyword config formatters (OscColorReportFormat / ConfirmCloseSurface / LinkPreviews / WindowSubtitle / WindowPaddingColor)](505-config-enum-format-entries-misc.md)
   — **Pass** · Claude/Codex/Codex
 - [Experiment 506: the FontStyle union config formatter (font-style / font-style-bold / …)](506-config-font-style-format-entry.md)
-  — **Designed** · Claude/Codex/—
+  — **Pass** · Claude/Codex/Codex
 
 ## Non-Goals
 

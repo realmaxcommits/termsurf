@@ -2019,6 +2019,17 @@ impl FontStyle {
     pub(crate) fn enabled(&self) -> bool {
         !matches!(self, FontStyle::False)
     }
+
+    /// Format this value as a config entry (upstream's custom union
+    /// `formatEntry`): the `default` / `false` tag names or the stored style
+    /// name, each written as `name = value\n` via the string `formatEntry`.
+    pub(crate) fn format_entry(&self, formatter: &mut EntryFormatter) {
+        match self {
+            FontStyle::Default => formatter.entry_str("default"),
+            FontStyle::False => formatter.entry_str("false"),
+            FontStyle::Name(name) => formatter.entry_str(name),
+        }
+    }
 }
 
 /// The `mouse-shift-capture` config (upstream `MouseShiftCapture`): whether the
@@ -4378,5 +4389,25 @@ mod tests {
         ] {
             assert_eq!(fmt(&|f| variant.format_entry(f)), format!("a = {}\n", kw));
         }
+    }
+
+    #[test]
+    fn font_style_format_entry() {
+        let fmt = |v: &dyn Fn(&mut EntryFormatter)| {
+            let mut out = String::new();
+            let mut f = EntryFormatter::new("a", &mut out);
+            v(&mut f);
+            out
+        };
+
+        assert_eq!(
+            fmt(&|f| FontStyle::Default.format_entry(f)),
+            "a = default\n"
+        );
+        assert_eq!(fmt(&|f| FontStyle::False.format_entry(f)), "a = false\n");
+        assert_eq!(
+            fmt(&|f| FontStyle::Name("bold".into()).format_entry(f)),
+            "a = bold\n"
+        );
     }
 }
