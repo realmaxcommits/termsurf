@@ -251,6 +251,30 @@ impl WindowSubtitle {
     }
 }
 
+/// The `macos-titlebar-style` config (upstream `MacTitlebarStyle`): the macOS
+/// titlebar appearance. The `Config` default is `Transparent`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum MacTitlebarStyle {
+    /// The standard macOS titlebar.
+    Native,
+    /// A translucent titlebar.
+    Transparent,
+    /// A tab-integrated titlebar.
+    Tabs,
+    /// No titlebar.
+    Hidden,
+}
+
+/// The `macos-titlebar-proxy-icon` config (upstream `MacTitlebarProxyIcon`):
+/// whether the document proxy icon is shown. The `Config` default is `Visible`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum MacTitlebarProxyIcon {
+    /// Show the document proxy icon.
+    Visible,
+    /// Hide the document proxy icon.
+    Hidden,
+}
+
 /// The color space the window renders in (upstream `WindowColorspace`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum WindowColorspace {
@@ -570,10 +594,10 @@ mod tests {
     use super::{
         AlphaBlending, BackgroundBlur, BackgroundImageFit, BackgroundImagePosition, BoldColor,
         Color, ConfirmCloseSurface, CopyOnSelect, CustomShaderAnimation, FontShapingBreak,
-        FontStyle, GraphemeWidthMethod, LinkPreviews, MiddleClickAction, MouseShiftCapture,
-        NotifyOnCommandFinish, NotifyOnCommandFinishAction, OscColorReportFormat, RightClickAction,
-        ScrollToBottom, ShellIntegration, ShellIntegrationFeatures, TerminalBoldColor,
-        TerminalColor, WindowSubtitle,
+        FontStyle, GraphemeWidthMethod, LinkPreviews, MacTitlebarProxyIcon, MacTitlebarStyle,
+        MiddleClickAction, MouseShiftCapture, NotifyOnCommandFinish, NotifyOnCommandFinishAction,
+        OscColorReportFormat, RightClickAction, ScrollToBottom, ShellIntegration,
+        ShellIntegrationFeatures, TerminalBoldColor, TerminalColor, WindowSubtitle,
     };
     use crate::terminal::color::Rgb;
 
@@ -652,6 +676,33 @@ mod tests {
         // `Copy` + `Eq`: a trivial round-trip.
         let copied = off;
         assert_eq!(off, copied);
+    }
+
+    #[test]
+    fn mac_titlebar_style_has_the_four_upstream_variants() {
+        let styles = [
+            MacTitlebarStyle::Native,
+            MacTitlebarStyle::Transparent,
+            MacTitlebarStyle::Tabs,
+            MacTitlebarStyle::Hidden,
+        ];
+        assert_eq!(styles.len(), 4);
+        assert_ne!(MacTitlebarStyle::Native, MacTitlebarStyle::Hidden);
+        // `Copy` + `Eq`: a trivial round-trip.
+        let s = MacTitlebarStyle::Transparent;
+        let copied = s;
+        assert_eq!(s, copied);
+    }
+
+    #[test]
+    fn mac_titlebar_proxy_icon_has_the_two_upstream_variants() {
+        let icons = [MacTitlebarProxyIcon::Visible, MacTitlebarProxyIcon::Hidden];
+        assert_eq!(icons.len(), 2);
+        assert_ne!(MacTitlebarProxyIcon::Visible, MacTitlebarProxyIcon::Hidden);
+        // `Copy` + `Eq`: a trivial round-trip.
+        let i = MacTitlebarProxyIcon::Visible;
+        let copied = i;
+        assert_eq!(i, copied);
     }
 
     #[test]

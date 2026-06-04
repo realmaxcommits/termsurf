@@ -1358,7 +1358,7 @@ are past the correctness-critical foundation.
 - [Experiment 455: the window-subtitle config enum and its predicate (WindowSubtitle, shows_working_directory)](455-config-window-subtitle.md)
   — **Pass** · Claude/Codex/Codex
 - [Experiment 456: the macOS titlebar config enums (MacTitlebarStyle, MacTitlebarProxyIcon)](456-config-mac-titlebar.md)
-  — **Designed** · Claude/Codex/—
+  — **Pass** · Claude/Codex/Codex
 
 ## Non-Goals
 

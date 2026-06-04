@@ -166,3 +166,62 @@ Review artifacts:
 
 - Prompt: `logs/codex-review/20260604-114120-d456-prompt.md` (design)
 - Result: `logs/codex-review/20260604-114120-d456-last-message.md` (design)
+
+## Result
+
+**Result:** Pass
+
+The macOS titlebar config enums are now live.
+
+- `roastty/src/config/mod.rs`:
+  `pub(crate) enum MacTitlebarStyle { Native, Transparent, Tabs, Hidden }`
+  (upstream `MacTitlebarStyle`) and
+  `pub(crate) enum MacTitlebarProxyIcon { Visible, Hidden }` (upstream
+  `MacTitlebarProxyIcon`), both deriving `Debug, Clone, Copy, PartialEq, Eq`.
+  Plain enums (the consumers are imperative macOS-frontend titlebar styling,
+  ported with the frontend window code later); the `Config` field defaults
+  (`.transparent` / `.visible`) documented but kept off the enums.
+
+Tests (in `config/mod.rs`):
+
+- `mac_titlebar_style_has_the_four_upstream_variants` — an array of all four
+  variants, `assert_eq!(len, 4)`, `assert_ne!(Native, Hidden)`, `Copy`/`Eq`.
+- `mac_titlebar_proxy_icon_has_the_two_upstream_variants` — an array of both
+  variants, `assert_eq!(len, 2)`, `assert_ne!(Visible, Hidden)`, `Copy`/`Eq`.
+
+Gate results:
+
+- `cargo fmt -p roastty` accepted; `--check` clean.
+- `cargo test -p roastty` → 2945 passed, 0 failed (+2, no regressions).
+- `cargo build -p roastty` → no warnings.
+- No-`ghostty`-name gates (font + renderer + config +
+  `lib.rs`/header/`abi_harness.c`) clean; `git diff --check` clean.
+
+## Conclusion
+
+The config layer now carries the macOS titlebar config enums `MacTitlebarStyle`
+and `MacTitlebarProxyIcon` — the first config slice to reach the macOS-window
+frontend config (directly relevant since roastty is macOS-only). These are
+dispatch enums (no extracted method — the consumers are imperative
+macOS-frontend titlebar styling), so they land as plain enums with
+exact-variant-set tests, like the background-image placement pair
+(Experiment 436) and the click-action pair (Experiment 443). The `Config` struct
+/ parsing and the macOS (Swift) frontend that builds the titlebar stay deferred.
+The config-type family — now eighteen enums/flag-structs with consumers plus
+three color value types — remains a clean, gated way to advance the rewrite
+while the larger coupled subsystems stay deferred.
+
+## Completion Review
+
+Codex reviewed the completed implementation and result and **approved** with
+**no findings**. It confirmed `MacTitlebarStyle` and `MacTitlebarProxyIcon`
+carry the exact upstream variant sets; keeping them as plain enums is
+appropriate (behavior belongs in the later macOS frontend titlebar integration);
+the defaults are documented but correctly left off the enums; and the tests
+reference every variant. No public C ABI/header impact; nothing needed to change
+before the result commit.
+
+Review artifacts:
+
+- Prompt: `logs/codex-review/20260604-114307-r456-prompt.md` (result)
+- Result: `logs/codex-review/20260604-114307-r456-last-message.md` (result)
