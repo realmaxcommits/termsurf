@@ -1422,7 +1422,7 @@ are past the correctness-critical foundation.
 - [Experiment 487: the config RepeatableClipboardCodepointMap CLI parser (parse_cli)](487-config-clipboard-codepoint-map-parse-cli.md)
   — **Pass** · Claude/Codex/Codex
 - [Experiment 488: consolidate the config integer parsers into one parse_uint](488-config-consolidate-int-parsers.md)
-  — **Designed** · Claude/Codex/—
+  — **Pass** · Claude/Codex/Codex
 
 ## Non-Goals
 

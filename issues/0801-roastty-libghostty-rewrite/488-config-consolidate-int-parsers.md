@@ -252,3 +252,54 @@ Review artifacts:
 
 - Prompt: `logs/codex-review/20260604-144509-d488-prompt.md` (design)
 - Result: `logs/codex-review/20260604-144509-d488-last-message.md` (design)
+
+## Result
+
+**Result:** Pass
+
+The three integer parsers were consolidated exactly as designed: `IntParseError`
+and the generic `parse_uint(buf, base, max)` were added; `parse_palette_key` /
+`parse_u32_dec` / `parse_u21_hex` were reimplemented as thin wrappers
+(signatures and call sites unchanged); and `parse_u8_with_sign` /
+`char_to_digit` were removed (no remaining references).
+`unicode_range::parse_hex_u21` was left untouched. A direct
+`parse_uint_consolidates_the_int_parsers` test covers the base-0 prefixes, fixed
+bases, signs, underscores, and the `Overflow`-vs-`Invalid` distinction; the
+existing wrapper tests are the behavior-preservation guard.
+
+Gates:
+
+- `cargo fmt -p roastty` accepted; `--check` clean.
+- `cargo test -p roastty`: 2972 passed, 0 failed (one new test; no regressions —
+  the palette-key, window-padding, and clipboard-codepoint wrapper tests all
+  still pass).
+- `cargo build -p roastty`: no warnings.
+- `parse_u8_with_sign` / `char_to_digit` removed (grep-clean); no-`ghostty`-name
+  greps clean; `git diff --check` clean.
+
+## Completion Review
+
+Codex reviewed the completed experiment and **approved** it with **no
+findings**: the refactor preserves the three upstream `parseInt` call shapes —
+palette key `u8` base-0 with the overflow distinguished, window padding `u32`
+base-10 with errors collapsed, and the clipboard replacement `u21` base-16 with
+errors collapsed (`Config.zig:5867`/`:10127`/`:8261`); the wrappers keep their
+public behavior, `unicode_range::parse_hex_u21` correctly remains separate, and
+the passing old wrapper tests are the right regression guard; gates are clean.
+"Approved with no findings."
+
+Review artifacts:
+
+- Prompt: `logs/codex-review/20260604-144922-r488-prompt.md` (result)
+- Result: `logs/codex-review/20260604-144922-r488-last-message.md` (result)
+
+## Conclusion
+
+The config integer parsing is now a single faithful `parse_uint` (the unsigned
+subset of Zig `std.fmt.parseInt`) behind the three same-signature wrappers, with
+the duplication removed. This tidies the parser surface ahead of the per-field
+parser dispatch and gives later integer-keyed config types a ready, faithful
+base-N parser. The next slice can port the font `CodepointMap` storage (toward
+`RepeatableCodepointMap`), another self-contained value type, a faithful
+`parseFloat`, or begin the per-field dispatch, continuing toward the full config
+loader.

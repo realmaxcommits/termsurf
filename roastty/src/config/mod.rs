@@ -381,79 +381,78 @@ impl Palette {
 /// `Overflow`, a value `> 255` is `Overflow`, and any other malformed input is
 /// `InvalidValue` (Zig's `error.InvalidCharacter`).
 fn parse_palette_key(buf: &str) -> Result<u8, PaletteParseError> {
-    let bytes = buf.as_bytes();
-    match bytes.first() {
-        Some(b'+') => parse_u8_with_sign(&buf[1..], false),
-        Some(b'-') => parse_u8_with_sign(&buf[1..], true),
-        _ => parse_u8_with_sign(buf, false),
+    match parse_uint(buf, 0, 0xFF) {
+        Ok(v) => Ok(v as u8),
+        Err(IntParseError::Overflow) => Err(PaletteParseError::Overflow),
+        Err(IntParseError::Invalid) => Err(PaletteParseError::InvalidValue),
     }
 }
 
-fn parse_u8_with_sign(buf: &str, neg: bool) -> Result<u8, PaletteParseError> {
-    let bytes = buf.as_bytes();
-    if bytes.is_empty() {
-        return Err(PaletteParseError::InvalidValue); // bare "+"/"-" or empty
-    }
+/// An integer parse error (the unsigned subset of Zig `std.fmt.parseInt`): a
+/// non-digit / bad form, or a value exceeding the target's range.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum IntParseError {
+    Invalid,
+    Overflow,
+}
 
-    // base 0: default decimal; detect a `0x`/`0o`/`0b` prefix (case-insensitive,
-    // and only when there is at least one digit after it — `buf.len > 2`).
-    let mut base: u32 = 10;
-    let mut start: &[u8] = bytes;
-    if bytes.len() > 2 && bytes[0] == b'0' {
-        match bytes[1].to_ascii_lowercase() {
-            b'b' => (base, start) = (2, &bytes[2..]),
-            b'o' => (base, start) = (8, &bytes[2..]),
-            b'x' => (base, start) = (16, &bytes[2..]),
-            _ => {}
+/// Parse an unsigned integer (the unsigned subset of Zig `std.fmt.parseInt`).
+/// `base == 0` auto-detects a case-insensitive `0x`/`0o`/`0b` prefix (only when a
+/// digit follows it — `len > 2`); otherwise the fixed `base` is used. An optional
+/// `+`/`-` sign (`-0` → `0`, negative nonzero → `Overflow`), interior-only `_`
+/// separators (leading/trailing `_` → `Invalid`), per-step accumulation, and a value
+/// above `max` → `Overflow`. A non-digit / digit `>=` base is `Invalid`.
+fn parse_uint(buf: &str, base: u32, max: u64) -> Result<u64, IntParseError> {
+    let (neg, rest): (bool, &str) = match buf.as_bytes().first() {
+        Some(b'+') => (false, &buf[1..]),
+        Some(b'-') => (true, &buf[1..]),
+        _ => (false, buf),
+    };
+
+    let mut radix = base;
+    let mut bytes = rest.as_bytes();
+    if base == 0 {
+        radix = 10;
+        if bytes.len() > 2 && bytes[0] == b'0' {
+            match bytes[1].to_ascii_lowercase() {
+                b'b' => (radix, bytes) = (2, &bytes[2..]),
+                b'o' => (radix, bytes) = (8, &bytes[2..]),
+                b'x' => (radix, bytes) = (16, &bytes[2..]),
+                _ => {}
+            }
         }
     }
 
-    // Leading/trailing underscores are rejected; interior ones are skipped.
-    if start[0] == b'_' || start[start.len() - 1] == b'_' {
-        return Err(PaletteParseError::InvalidValue);
+    if bytes.is_empty() || bytes[0] == b'_' || bytes[bytes.len() - 1] == b'_' {
+        return Err(IntParseError::Invalid);
     }
 
-    // Accumulate is a `u8` for a `u8` result; every intermediate must fit 0..=255.
-    let mut acc: i32 = 0;
-    for &c in start {
+    let limit = max as i128;
+    let mut acc: i128 = 0;
+    for &c in bytes {
         if c == b'_' {
             continue;
         }
-        let digit = char_to_digit(c, base)? as i32;
+        let digit = (c as char).to_digit(radix).ok_or(IntParseError::Invalid)? as i128;
         if acc != 0 {
             acc = acc
-                .checked_mul(base as i32)
-                .filter(|&v| v <= 255)
-                .ok_or(PaletteParseError::Overflow)?;
+                .checked_mul(radix as i128)
+                .filter(|&v| v <= limit)
+                .ok_or(IntParseError::Overflow)?;
         } else if neg {
             // First digit of a negative number: only `-0` survives for unsigned.
             acc = -digit;
             if acc < 0 {
-                return Err(PaletteParseError::Overflow);
+                return Err(IntParseError::Overflow);
             }
             continue;
         }
         acc = if neg { acc - digit } else { acc + digit };
-        if !(0..=255).contains(&acc) {
-            return Err(PaletteParseError::Overflow);
+        if !(0..=limit).contains(&acc) {
+            return Err(IntParseError::Overflow);
         }
     }
-    Ok(acc as u8)
-}
-
-/// Upstream `std.fmt.charToDigit`: the digit value of an ASCII alphanumeric in the
-/// given base, else `InvalidValue` (Zig's `error.InvalidCharacter`).
-fn char_to_digit(c: u8, base: u32) -> Result<u32, PaletteParseError> {
-    let value = match c {
-        b'0'..=b'9' => (c - b'0') as u32,
-        b'A'..=b'Z' => (c - b'A') as u32 + 10,
-        b'a'..=b'z' => (c - b'a') as u32 + 10,
-        _ => return Err(PaletteParseError::InvalidValue),
-    };
-    if value >= base {
-        return Err(PaletteParseError::InvalidValue);
-    }
-    Ok(value)
+    Ok(acc as u64)
 }
 
 /// The config `ColorList` (upstream `Config.ColorList`): a comma-separated list of
@@ -660,46 +659,11 @@ impl WindowPadding {
     }
 }
 
-/// Parse a base-10 `u32` (upstream `std.fmt.parseInt(u32, _, 10)`): an optional
-/// `+`/`-` sign, then decimal digits with interior-only `_` separators
-/// (leading/trailing `_` rejected). `-0` is `0`; a negative nonzero, an overflow,
-/// or any non-digit is `None`. (The whole string must parse — unlike the greedy
-/// scan in [`Duration::parse_cli`].)
+/// Parse a base-10 `u32` (upstream `std.fmt.parseInt(u32, _, 10)`); every error is
+/// `None`. (The whole string must parse — unlike the greedy scan in
+/// [`Duration::parse_cli`].)
 fn parse_u32_dec(buf: &str) -> Option<u32> {
-    let (neg, rest): (bool, &str) = match buf.as_bytes().first() {
-        Some(b'+') => (false, &buf[1..]),
-        Some(b'-') => (true, &buf[1..]),
-        _ => (false, buf),
-    };
-    let bytes = rest.as_bytes();
-    if bytes.is_empty() || bytes[0] == b'_' || bytes[bytes.len() - 1] == b'_' {
-        return None;
-    }
-    let mut acc: i64 = 0;
-    for &c in bytes {
-        if c == b'_' {
-            continue;
-        }
-        if !c.is_ascii_digit() {
-            return None;
-        }
-        let digit = (c - b'0') as i64;
-        if acc != 0 {
-            acc = acc.checked_mul(10).filter(|&v| v <= u32::MAX as i64)?;
-        } else if neg {
-            // First digit of a negative number: only `-0` survives for unsigned.
-            acc = -digit;
-            if acc < 0 {
-                return None;
-            }
-            continue;
-        }
-        acc = if neg { acc - digit } else { acc + digit };
-        if !(0..=(u32::MAX as i64)).contains(&acc) {
-            return None;
-        }
-    }
-    Some(acc as u32)
+    parse_uint(buf, 10, u32::MAX as u64).ok().map(|v| v as u32)
 }
 
 /// An error parsing `WindowDecoration` (upstream `error.InvalidValue`).
@@ -954,43 +918,11 @@ impl RepeatableClipboardCodepointMap {
     }
 }
 
-/// Parse a base-16 `u21` (upstream `std.fmt.parseInt(u21, _, 16)`): an optional
-/// `+`/`-` sign, then hex digits with interior-only `_` separators
-/// (leading/trailing `_` rejected). `-0` is `0`; a negative nonzero, an overflow
-/// beyond the `u21` max (`0x1FFFFF`), or any non-hex is `None`. (Mirrors the
-/// `parse_u32_dec` base-10 helper, with base 16 and the `u21` bound — distinct from
-/// `unicode_range`'s pure-hex `parse_hex_u21`, whose input is pre-scanned to hex.)
+/// Parse a base-16 `u21` (upstream `std.fmt.parseInt(u21, _, 16)`); every error is
+/// `None`. (The whole string must parse — distinct from `unicode_range`'s pure-hex
+/// `parse_hex_u21`, whose input is pre-scanned to hex.)
 fn parse_u21_hex(buf: &str) -> Option<u32> {
-    let (neg, rest): (bool, &str) = match buf.as_bytes().first() {
-        Some(b'+') => (false, &buf[1..]),
-        Some(b'-') => (true, &buf[1..]),
-        _ => (false, buf),
-    };
-    let bytes = rest.as_bytes();
-    if bytes.is_empty() || bytes[0] == b'_' || bytes[bytes.len() - 1] == b'_' {
-        return None;
-    }
-    let mut acc: i64 = 0;
-    for &c in bytes {
-        if c == b'_' {
-            continue;
-        }
-        let digit = (c as char).to_digit(16)? as i64;
-        if acc != 0 {
-            acc = acc.checked_mul(16).filter(|&v| v <= 0x1FFFFF)?;
-        } else if neg {
-            acc = -digit;
-            if acc < 0 {
-                return None;
-            }
-            continue;
-        }
-        acc = if neg { acc - digit } else { acc + digit };
-        if !(0..=0x1FFFFF).contains(&acc) {
-            return None;
-        }
-    }
-    Some(acc as u32)
+    parse_uint(buf, 16, 0x1FFFFF).ok().map(|v| v as u32)
 }
 
 /// The `notify-on-command-finish` config (upstream `NotifyOnCommandFinish`): when
@@ -2954,6 +2886,38 @@ mod tests {
             cp("U+2500=U+200000"), // u21 overflow
             Err(ClipboardCodepointMapParseError::InvalidValue)
         );
+    }
+
+    #[test]
+    fn parse_uint_consolidates_the_int_parsers() {
+        use super::{parse_uint, IntParseError};
+
+        // base 0: auto-detect the `0x`/`0o`/`0b` prefix, else decimal.
+        assert_eq!(parse_uint("0xFF", 0, 0xFF), Ok(255));
+        assert_eq!(parse_uint("0b101", 0, 0xFF), Ok(5));
+        assert_eq!(parse_uint("0o17", 0, 0xFF), Ok(15));
+        assert_eq!(parse_uint("42", 0, 0xFF), Ok(42));
+        assert_eq!(parse_uint("0x", 0, 0xFF), Err(IntParseError::Invalid)); // bare prefix
+
+        // Fixed base 10 / 16.
+        assert_eq!(parse_uint("255", 10, u32::MAX as u64), Ok(255));
+        assert_eq!(parse_uint("ff", 16, 0x1FFFFF), Ok(255));
+        assert_eq!(
+            parse_uint("0x10", 16, 0x1FFFFF),
+            Err(IntParseError::Invalid)
+        ); // 'x' not base-16
+
+        // Signs and underscores.
+        assert_eq!(parse_uint("+5", 10, 0xFF), Ok(5));
+        assert_eq!(parse_uint("-0", 10, 0xFF), Ok(0));
+        assert_eq!(parse_uint("-1", 10, 0xFF), Err(IntParseError::Overflow));
+        assert_eq!(parse_uint("1_0", 10, 0xFF), Ok(10));
+        assert_eq!(parse_uint("_0", 10, 0xFF), Err(IntParseError::Invalid));
+        assert_eq!(parse_uint("0_", 10, 0xFF), Err(IntParseError::Invalid));
+
+        // Overflow is distinct from invalid.
+        assert_eq!(parse_uint("256", 0, 0xFF), Err(IntParseError::Overflow));
+        assert_eq!(parse_uint("100", 16, 0xFF), Err(IntParseError::Overflow));
     }
 
     #[test]
