@@ -1485,6 +1485,8 @@ are past the correctness-critical foundation.
   — **Pass** · Claude/Codex/Codex
 - [Experiment 519: the bool / string type-magic parse paths (parse_bool_field / parse_string_field)](519-config-magic-bool-string.md)
   — **Pass** · Claude/Codex/Codex
+- [Experiment 520: the FontStyle config parser (FontStyle::parse_cli)](520-config-font-style-parse.md)
+  — **Designed** · Claude/Codex/—
 
 ## Non-Goals
 
