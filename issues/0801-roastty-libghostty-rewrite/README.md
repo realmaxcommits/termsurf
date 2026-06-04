@@ -1477,6 +1477,8 @@ are past the correctness-critical foundation.
   — **Pass** · Claude/Codex/Codex
 - [Experiment 515: more enum-keyword config parsers (from_keyword: the misc + fullscreen enums)](515-config-enum-from-keyword-3.md)
   — **Pass** · Claude/Codex/Codex
+- [Experiment 516: the last enum-keyword config parsers (from_keyword: ShellIntegration / NotifyOnCommandFinish)](516-config-enum-from-keyword-4.md)
+  — **Designed** · Claude/Codex/—
 
 ## Non-Goals
 
