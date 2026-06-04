@@ -1398,7 +1398,7 @@ are past the correctness-critical foundation.
 - [Experiment 475: the config Color formatter (Color::format_buf)](475-config-color-format-buf.md)
   — **Pass** · Claude/Codex/Codex
 - [Experiment 476: the config TerminalColor CLI parser (TerminalColor::parse_cli)](476-config-terminal-color-parse-cli.md)
-  — **Designed** · Claude/Codex/—
+  — **Pass** · Claude/Codex/Codex
 
 ## Non-Goals
 

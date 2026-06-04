@@ -176,3 +176,51 @@ Review artifacts:
 
 - Prompt: `logs/codex-review/20260604-130737-d476-prompt.md` (design)
 - Result: `logs/codex-review/20260604-130737-d476-last-message.md` (design)
+
+## Result
+
+**Result:** Pass
+
+`TerminalColor::parse_cli` was added to `roastty/src/config/mod.rs` exactly as
+designed — the `ValueRequired` guard, the two exact (un-trimmed) sentinel checks
+(`cell-foreground` / `cell-background`), and the delegation to
+`Color::parse_cli` for everything else, with `Invalid` propagated. The new test
+`terminal_color_parse_cli_parses_sentinels_and_colors` asserts the upstream
+`parseCLI` cases (`#4e2a84`, `black`, the two sentinels, `a` → `Invalid`), the
+missing-value error, and the folded-in design-review case (a padded
+`" cell-foreground"` falls through to `Color::parse_cli` and is `Invalid`).
+
+Gates:
+
+- `cargo fmt -p roastty` accepted; `--check` clean.
+- `cargo test -p roastty`: 2955 passed, 0 failed (one new test; no regressions).
+- `cargo build -p roastty`: no warnings.
+- no-`ghostty`-name greps (font/renderer/config + lib.rs/header/abi_harness.c)
+  clean; `git diff --check` clean.
+
+## Completion Review
+
+Codex reviewed the completed experiment and **approved** it with **no findings**
+(the design-review Low is resolved): `parse_cli` faithfully ports
+`TerminalColor.parseCLI` (missing input → `ValueRequired`, raw exact sentinel
+strings → the two sentinels, everything else → `Color::parse_cli`); the padded
+`" cell-foreground"` test confirms the subtle upstream behavior (sentinels are
+not trimmed before matching); the test covers the upstream color/name/sentinel
+cases plus invalid and missing input; deferring `formatEntry` and the broader
+config parser/formatter remains properly scoped. "Approved for the result
+commit."
+
+Review artifacts:
+
+- Prompt: `logs/codex-review/20260604-130944-r476-prompt.md` (result)
+- Result: `logs/codex-review/20260604-130944-r476-last-message.md` (result)
+
+## Conclusion
+
+`TerminalColor` now parses (`parse_cli`), reusing the `Color` parser for the
+explicit-color path and adding the two cell-relative sentinels. The next slice
+can port `BoldColor.parseCLI` (the other small color union, also building on
+`Color::parse_cli`, plus a `bright` keyword), or another config value type's
+`parseCLI`, continuing toward the per-field parser dispatch and the full config
+loader. The formatter side for these color types waits on the config
+`EntryFormatter`.

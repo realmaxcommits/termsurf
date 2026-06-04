@@ -267,6 +267,21 @@ impl TerminalColor {
             TerminalColor::CellForeground | TerminalColor::CellBackground => None,
         }
     }
+
+    /// Parse a config terminal-color value (upstream `TerminalColor.parseCLI`):
+    /// the keywords `cell-foreground` / `cell-background` yield the cell
+    /// sentinels (exact match on the raw input); anything else delegates to
+    /// [`Color::parse_cli`]. A missing value is `ColorParseError::ValueRequired`.
+    pub(crate) fn parse_cli(input: Option<&str>) -> Result<TerminalColor, ColorParseError> {
+        let input = input.ok_or(ColorParseError::ValueRequired)?;
+        if input == "cell-foreground" {
+            return Ok(TerminalColor::CellForeground);
+        }
+        if input == "cell-background" {
+            return Ok(TerminalColor::CellBackground);
+        }
+        Ok(TerminalColor::Color(Color::parse_cli(Some(input))?))
+    }
 }
 
 /// The `bold-color` config (upstream `Config.BoldColor`): the color to use for
@@ -1560,6 +1575,48 @@ mod tests {
         // `Copy` + `Eq`: a trivial round-trip.
         let copied = explicit;
         assert_eq!(explicit, copied);
+    }
+
+    #[test]
+    fn terminal_color_parse_cli_parses_sentinels_and_colors() {
+        // Upstream `TerminalColor.parseCLI` cases.
+        assert_eq!(
+            TerminalColor::parse_cli(Some("#4e2a84")),
+            Ok(TerminalColor::Color(Color {
+                r: 78,
+                g: 42,
+                b: 132
+            }))
+        );
+        assert_eq!(
+            TerminalColor::parse_cli(Some("black")),
+            Ok(TerminalColor::Color(Color { r: 0, g: 0, b: 0 }))
+        );
+        assert_eq!(
+            TerminalColor::parse_cli(Some("cell-foreground")),
+            Ok(TerminalColor::CellForeground)
+        );
+        assert_eq!(
+            TerminalColor::parse_cli(Some("cell-background")),
+            Ok(TerminalColor::CellBackground)
+        );
+
+        // A non-sentinel non-color is `Invalid`; a missing value is `ValueRequired`.
+        assert_eq!(
+            TerminalColor::parse_cli(Some("a")),
+            Err(ColorParseError::Invalid)
+        );
+        assert_eq!(
+            TerminalColor::parse_cli(None),
+            Err(ColorParseError::ValueRequired)
+        );
+
+        // The sentinel match is exact/un-trimmed: a padded keyword falls through
+        // to `Color::parse_cli` (which trims, then fails to parse it as a color).
+        assert_eq!(
+            TerminalColor::parse_cli(Some(" cell-foreground")),
+            Err(ColorParseError::Invalid)
+        );
     }
 
     #[test]
