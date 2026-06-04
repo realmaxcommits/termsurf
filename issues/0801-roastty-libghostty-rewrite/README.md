@@ -1487,6 +1487,8 @@ are past the correctness-critical foundation.
   — **Pass** · Claude/Codex/Codex
 - [Experiment 520: the FontStyle config parser (FontStyle::parse_cli)](520-config-font-style-parse.md)
   — **Pass** · Claude/Codex/Codex
+- [Experiment 521: the per-field parse dispatch, enum slice (Config::set + set_enum_field)](521-config-set-enum-dispatch.md)
+  — **Designed** · Claude/Codex/—
 
 ## Non-Goals
 
