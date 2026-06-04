@@ -305,6 +305,26 @@ pub(crate) enum NonNativeFullscreen {
     PaddedNotch,
 }
 
+/// The `macos-window-buttons` config (upstream `MacWindowButtons`): whether the
+/// window's traffic-light buttons are shown. The `Config` default is `Visible`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum MacWindowButtons {
+    /// Show the window buttons.
+    Visible,
+    /// Hide the window buttons.
+    Hidden,
+}
+
+/// The `macos-hidden` config (upstream `MacHidden`): whether the app starts
+/// hidden. The `Config` default is `Never`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum MacHidden {
+    /// Never start hidden.
+    Never,
+    /// Always start hidden.
+    Always,
+}
+
 /// The color space the window renders in (upstream `WindowColorspace`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum WindowColorspace {
@@ -624,11 +644,11 @@ mod tests {
     use super::{
         AlphaBlending, BackgroundBlur, BackgroundImageFit, BackgroundImagePosition, BoldColor,
         Color, ConfirmCloseSurface, CopyOnSelect, CustomShaderAnimation, FontShapingBreak,
-        FontStyle, Fullscreen, GraphemeWidthMethod, LinkPreviews, MacTitlebarProxyIcon,
-        MacTitlebarStyle, MiddleClickAction, MouseShiftCapture, NonNativeFullscreen,
-        NotifyOnCommandFinish, NotifyOnCommandFinishAction, OscColorReportFormat, RightClickAction,
-        ScrollToBottom, ShellIntegration, ShellIntegrationFeatures, TerminalBoldColor,
-        TerminalColor, WindowSubtitle,
+        FontStyle, Fullscreen, GraphemeWidthMethod, LinkPreviews, MacHidden, MacTitlebarProxyIcon,
+        MacTitlebarStyle, MacWindowButtons, MiddleClickAction, MouseShiftCapture,
+        NonNativeFullscreen, NotifyOnCommandFinish, NotifyOnCommandFinishAction,
+        OscColorReportFormat, RightClickAction, ScrollToBottom, ShellIntegration,
+        ShellIntegrationFeatures, TerminalBoldColor, TerminalColor, WindowSubtitle,
     };
     use crate::terminal::color::Rgb;
 
@@ -738,6 +758,28 @@ mod tests {
         assert_ne!(NonNativeFullscreen::False, NonNativeFullscreen::PaddedNotch);
         // `Copy` + `Eq`: a trivial round-trip.
         let m = NonNativeFullscreen::VisibleMenu;
+        let copied = m;
+        assert_eq!(m, copied);
+    }
+
+    #[test]
+    fn mac_window_buttons_has_the_two_upstream_variants() {
+        let buttons = [MacWindowButtons::Visible, MacWindowButtons::Hidden];
+        assert_eq!(buttons.len(), 2);
+        assert_ne!(MacWindowButtons::Visible, MacWindowButtons::Hidden);
+        // `Copy` + `Eq`: a trivial round-trip.
+        let b = MacWindowButtons::Visible;
+        let copied = b;
+        assert_eq!(b, copied);
+    }
+
+    #[test]
+    fn mac_hidden_has_the_two_upstream_variants() {
+        let modes = [MacHidden::Never, MacHidden::Always];
+        assert_eq!(modes.len(), 2);
+        assert_ne!(MacHidden::Never, MacHidden::Always);
+        // `Copy` + `Eq`: a trivial round-trip.
+        let m = MacHidden::Never;
         let copied = m;
         assert_eq!(m, copied);
     }

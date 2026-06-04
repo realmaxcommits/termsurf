@@ -154,3 +154,58 @@ Review artifacts:
 
 - Prompt: `logs/codex-review/20260604-114911-d458-prompt.md` (design)
 - Result: `logs/codex-review/20260604-114911-d458-last-message.md` (design)
+
+## Result
+
+**Result:** Pass
+
+The macOS window config enums are now live.
+
+- `roastty/src/config/mod.rs`:
+  `pub(crate) enum MacWindowButtons { Visible, Hidden }` (upstream
+  `MacWindowButtons`) and `pub(crate) enum MacHidden { Never, Always }`
+  (upstream `MacHidden`), both deriving `Debug, Clone, Copy, PartialEq, Eq`.
+  Plain enums (the consumers are imperative macOS-frontend handling, ported with
+  the frontend window code later); the `Config` field defaults (`.visible` /
+  `.never`) documented but kept off the enums.
+
+Tests (in `config/mod.rs`):
+
+- `mac_window_buttons_has_the_two_upstream_variants` — an array of both
+  variants, `assert_eq!(len, 2)`, `assert_ne!(Visible, Hidden)`, `Copy`/`Eq`.
+- `mac_hidden_has_the_two_upstream_variants` — an array of both variants,
+  `assert_eq!(len, 2)`, `assert_ne!(Never, Always)`, `Copy`/`Eq`.
+
+Gate results:
+
+- `cargo fmt -p roastty` accepted; `--check` clean.
+- `cargo test -p roastty` → 2949 passed, 0 failed (+2, no regressions).
+- `cargo build -p roastty` → no warnings.
+- No-`ghostty`-name gates (font + renderer + config +
+  `lib.rs`/header/`abi_harness.c`) clean; `git diff --check` clean.
+
+## Conclusion
+
+The config layer now carries the macOS window config enums `MacWindowButtons`
+and `MacHidden` — continuing the macOS-window frontend config family
+(Experiments 456–457). These are dispatch enums (no extracted method — the
+consumers are imperative macOS-frontend handling), so they land as plain enums
+with exact-variant-set tests. The `Config` struct / parsing and the macOS
+frontend that applies these enums stay deferred. The config-type family — now
+twenty-two enums/flag-structs with consumers plus three color value types —
+remains a clean, gated way to advance the rewrite while the larger coupled
+subsystems stay deferred.
+
+## Completion Review
+
+Codex reviewed the completed implementation and result and **approved** with
+**no findings**. It confirmed `MacWindowButtons` and `MacHidden` carry the exact
+upstream variant sets; plain enums are appropriate (the behavior belongs in
+later macOS frontend handling); the defaults are documented but correctly left
+off the enums; and the tests reference every variant. No public C ABI/header
+impact; nothing needed to change before the result commit.
+
+Review artifacts:
+
+- Prompt: `logs/codex-review/20260604-115057-r458-prompt.md` (result)
+- Result: `logs/codex-review/20260604-115057-r458-last-message.md` (result)
