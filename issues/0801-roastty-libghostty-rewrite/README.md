@@ -1219,6 +1219,8 @@ are past the correctness-critical foundation.
   **Pass** · Claude/Codex/Codex
 - [Experiment 386: wire the selected state into the background pass](386-wire-selection-bg.md)
   — **Pass** · Claude/Codex/Codex
+- [Experiment 387: wire the selected state into the foreground pass](387-wire-selection-fg.md)
+  — **Designed** · Claude/Codex/Codex
 
 ## Non-Goals
 
