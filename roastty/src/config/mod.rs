@@ -198,11 +198,44 @@ impl FontStyle {
     }
 }
 
+/// The `mouse-shift-capture` config (upstream `MouseShiftCapture`): whether the
+/// shift modifier may be captured by mouse events. The `Config` default is
+/// `False`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum MouseShiftCapture {
+    /// Default off, but a terminal request can override.
+    False,
+    /// Default on, but a terminal request can override.
+    True,
+    /// Always capture (no terminal override).
+    Always,
+    /// Never capture (no terminal override).
+    Never,
+}
+
+impl MouseShiftCapture {
+    /// Whether the shift modifier may be captured, given the terminal's own
+    /// `mouse_shift_capture` request (upstream `Surface.mouseShiftCapture`):
+    /// `Never`/`Always` decide outright; otherwise the terminal request
+    /// (`Some(false)` / `Some(true)`) decides, and only when it is `None` does
+    /// the config `False`/`True` provide the default.
+    pub(crate) fn capture_shift(self, terminal_request: Option<bool>) -> bool {
+        match self {
+            MouseShiftCapture::Never => false,
+            MouseShiftCapture::Always => true,
+            MouseShiftCapture::False | MouseShiftCapture::True => match terminal_request {
+                Some(v) => v,
+                None => matches!(self, MouseShiftCapture::True),
+            },
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
         AlphaBlending, BackgroundBlur, BackgroundImageFit, BackgroundImagePosition,
-        CustomShaderAnimation, FontShapingBreak, FontStyle, GraphemeWidthMethod,
+        CustomShaderAnimation, FontShapingBreak, FontStyle, GraphemeWidthMethod, MouseShiftCapture,
     };
 
     #[test]
@@ -327,5 +360,32 @@ mod tests {
         let s = FontStyle::Name("Italic".to_string());
         let cloned = s.clone();
         assert_eq!(s, cloned);
+    }
+
+    #[test]
+    fn mouse_shift_capture_decision_truth_table() {
+        use MouseShiftCapture::{Always, False, Never, True};
+
+        // Never / Always short-circuit regardless of the terminal request.
+        for req in [None, Some(false), Some(true)] {
+            assert!(!Never.capture_shift(req));
+            assert!(Always.capture_shift(req));
+        }
+
+        // False: terminal request wins, else default false.
+        assert!(!False.capture_shift(None));
+        assert!(!False.capture_shift(Some(false)));
+        assert!(False.capture_shift(Some(true)));
+
+        // True: terminal request wins, else default true.
+        assert!(True.capture_shift(None));
+        assert!(!True.capture_shift(Some(false)));
+        assert!(True.capture_shift(Some(true)));
+
+        assert_ne!(False, True);
+        // `Copy` + `Eq`: a trivial round-trip.
+        let c = Always;
+        let copied = c;
+        assert_eq!(c, copied);
     }
 }

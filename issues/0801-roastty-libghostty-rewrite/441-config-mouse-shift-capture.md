@@ -216,3 +216,62 @@ Review artifacts:
 
 - Prompt: `logs/codex-review/20260604-103716-d441-prompt.md` (design)
 - Result: `logs/codex-review/20260604-103716-d441-last-message.md` (design)
+
+## Result
+
+**Result:** Pass
+
+The mouse-shift-capture config enum and its capture decision are now live.
+
+- `roastty/src/config/mod.rs`:
+  `pub(crate) enum MouseShiftCapture { False, True, Always, Never }` (upstream
+  `MouseShiftCapture`) and
+  `MouseShiftCapture::capture_shift(self, terminal_request: Option<bool>) -> bool`
+  — the faithful port of upstream's `Surface.mouseShiftCapture`:
+  `Never`/`Always` short-circuit, the terminal request (`Option<bool>`) decides
+  next, and the config `False`/`True` is the fallback only when the request is
+  `None`.
+
+Test (in `config/mod.rs`): `mouse_shift_capture_decision_truth_table` — the full
+4×3 truth table (`Never → false×3`, `Always → true×3`,
+`False → None false / Some(false) false / Some(true) true`,
+`True → None true / Some(false) false / Some(true) true`), the variants
+distinct, `Copy`/`Eq`.
+
+Gate results:
+
+- `cargo fmt -p roastty` accepted; `--check` clean.
+- `cargo test -p roastty` → 2928 passed, 0 failed (+1, no regressions).
+- `cargo build -p roastty` → no warnings.
+- No-`ghostty`-name gates (font + renderer + config +
+  `lib.rs`/header/`abi_harness.c`) clean; `git diff --check` clean.
+
+## Conclusion
+
+The config layer now carries `MouseShiftCapture` and its capture decision — the
+fifth config slice in a row to land its consumer logic alongside the type, and
+the first to diversify the family into the input/mouse subsystem (upstream
+`Surface.zig`), folding the terminal's tri-state request into a faithful
+param-driven decision. The `Config` struct / parsing, the live terminal
+`mouse_shift_capture` flag, and the surface call site (the renderer-state lock
+and the situational left-button / click checks) stay deferred. The config-type
+family — pairing a config type with its behavior, now across renderer, font,
+terminal, and input consumers — remains a clean, gated way to advance the
+rewrite while the larger coupled subsystems stay deferred.
+
+## Completion Review
+
+Codex reviewed the completed implementation and result and **approved** with
+**no findings**. It confirmed the enum variants match upstream
+(`MouseShiftCapture { false, true, always, never }`); `capture_shift` preserves
+upstream's decision order (`Never`/`Always` short-circuit, the terminal request
+next, then `False`/`True` as the fallback when the request is `None`);
+`Option<bool>` remains the right Rust representation for the tri-state terminal
+flag; and the truth-table test directly covers the ordering that matters. It
+judged the gates clean and the deferred pieces properly scoped. No public C
+ABI/header impact; nothing needed to change before the result commit.
+
+Review artifacts:
+
+- Prompt: `logs/codex-review/20260604-103927-r441-prompt.md` (result)
+- Result: `logs/codex-review/20260604-103927-r441-last-message.md` (result)
