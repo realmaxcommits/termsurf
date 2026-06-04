@@ -1288,7 +1288,7 @@ are past the correctness-critical foundation.
 - [Experiment 420: the minimum-contrast uniform update (update_min_contrast)](420-min-contrast-uniform.md)
   — **Pass** · Claude/Codex/Codex
 - [Experiment 421: the color-config uniforms (WindowColorspace + AlphaBlending + update_color_config)](421-color-config-uniforms.md)
-  — **Designed** · Claude/Codex/Codex
+  — **Pass** · Claude/Codex/Codex
 
 ## Non-Goals
 

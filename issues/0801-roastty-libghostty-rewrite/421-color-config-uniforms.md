@@ -207,3 +207,73 @@ Review artifacts:
 
 - Prompt: `logs/codex-review/20260604-084243-d421-prompt.md` (design)
 - Result: `logs/codex-review/20260604-084243-d421-last-message.md` (design)
+
+## Result
+
+**Result:** Pass
+
+The config layer is open and the color-config uniforms are live.
+
+- `roastty/src/config/mod.rs` (new module, registered in `lib.rs` as
+  `mod config;`, with `#![allow(dead_code)]` — consumed by later slices): the
+  `WindowColorspace { Srgb, DisplayP3 }` and
+  `AlphaBlending { Native, Linear, LinearCorrected }` enums, with
+  `AlphaBlending::is_linear` (`Native` false; `Linear` / `LinearCorrected`
+  true).
+- `roastty/src/renderer/metal/shaders.rs` (added
+  `use crate::config::{AlphaBlending, WindowColorspace};`):
+  `MetalUniforms::update_color_config(&mut self, colorspace, blending)` sets the
+  three color-space bools — `use_display_p3 = colorspace == DisplayP3`,
+  `use_linear_blending = blending.is_linear()`,
+  `use_linear_correction = blending == LinearCorrected` (the only fields the
+  bool half of upstream `changeConfig` touches).
+
+Tests:
+
+- `config`: `alpha_blending_is_linear_truth_table` — `Native` false, `Linear`
+  true, `LinearCorrected` true.
+- `shaders.rs`: `update_color_config_sets_the_color_space_bools` —
+  `(Srgb, Native)` → `(false, false, false)`; `(DisplayP3, Linear)` →
+  `(true, true, false)`; `(DisplayP3, LinearCorrected)` → `(true, true, true)`;
+  and `cursor_wide` / `min_contrast` / `screen_size` unchanged.
+
+Gate results:
+
+- `cargo fmt -p roastty` accepted; `--check` clean.
+- `cargo test -p roastty` → 2899 passed, 0 failed (+2, no regressions).
+- `cargo build -p roastty` → no warnings.
+- No-`ghostty`-name gates (font + renderer + the new `config` +
+  `lib.rs`/header/`abi_harness.c`) clean; `git diff --check` clean.
+
+## Conclusion
+
+The config layer now exists (its first two enums), and the per-frame uniforms
+cover the geometry trio, the cursor group, the background color, the minimum
+contrast, and now the color-space/blending bools — the whole color/contrast
+block of `changeConfig`. The remaining uniform-update work: the `padding_extend`
+flags (needs the `padding_color` config enum and the row-by-row extend
+computation) and the macOS glass override (needs the `background_blur` config
+enum). Then a full production `MetalUniforms` constructor composing the groups,
+and the live per-frame call sites. The config layer can grow its remaining
+keys/enums as those slices need them.
+
+## Completion Review
+
+Codex reviewed the completed implementation and result and **approved** with
+**no findings**. It confirmed the new `config` module is registered correctly
+and the two enums faithfully map upstream's `WindowColorspace` and
+`AlphaBlending` variants, with `AlphaBlending::is_linear()` having the correct
+truth table (`Native` false; `Linear` / `LinearCorrected` true). It confirmed
+`update_color_config` matches `changeConfig` field-for-field
+(`use_display_p3 = colorspace == DisplayP3`,
+`use_linear_blending = blending.is_linear()`,
+`use_linear_correction = blending == LinearCorrected`), does not touch
+`cursor_wide`, and that the test protects that boundary along with
+`min_contrast` and `screen_size`; the no-`ghostty` gate including
+`roastty/src/config` is the right adjustment. No public C ABI/header impact;
+nothing needed to change before the result commit.
+
+Review artifacts:
+
+- Prompt: `logs/codex-review/20260604-084505-r421-prompt.md` (result)
+- Result: `logs/codex-review/20260604-084505-r421-last-message.md` (result)

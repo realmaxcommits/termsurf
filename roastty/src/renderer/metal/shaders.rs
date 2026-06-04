@@ -3,6 +3,7 @@ use objc2::runtime::ProtocolObject;
 use objc2_foundation::NSString;
 use objc2_metal::{MTLDevice, MTLLibrary};
 
+use crate::config::{AlphaBlending, WindowColorspace};
 use crate::font::metrics::Metrics;
 use crate::font::run::Wide;
 use crate::renderer::cell::block_cursor_pos;
@@ -211,6 +212,20 @@ impl MetalUniforms {
     /// background.
     pub(crate) fn update_min_contrast(&mut self, min_contrast: f32) {
         self.min_contrast = min_contrast;
+    }
+
+    /// Update the color-space and blending bool uniforms (upstream
+    /// `changeConfig`): `use_display_p3` (the colorspace is Display P3),
+    /// `use_linear_blending` (the blending is linear), and `use_linear_correction`
+    /// (the blending is linear-corrected).
+    pub(crate) fn update_color_config(
+        &mut self,
+        colorspace: WindowColorspace,
+        blending: AlphaBlending,
+    ) {
+        self.bools.use_display_p3 = colorspace == WindowColorspace::DisplayP3;
+        self.bools.use_linear_blending = blending.is_linear();
+        self.bools.use_linear_correction = blending == AlphaBlending::LinearCorrected;
     }
 
     /// Clear the cursor uniform: set `cursor_pos` to the sentinel
@@ -603,6 +618,39 @@ fragment float4 bg_image_fragment() {
         assert_eq!(uniforms.screen_size, [2.0, 3.0]);
         assert_eq!(uniforms.cell_size, [6.0, 7.0]);
         assert_eq!(uniforms.bg_color, [1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn update_color_config_sets_the_color_space_bools() {
+        use crate::config::{AlphaBlending, WindowColorspace};
+
+        let mut uniforms =
+            MetalUniforms::test_with_grid([2, 3], [4, 5], [6.0, 7.0], [0.0; 4], 0, [1, 2, 3, 4]);
+        uniforms.bools.cursor_wide = true;
+        uniforms.min_contrast = 3.0;
+
+        // sRGB + native → all three color-space bools false.
+        uniforms.update_color_config(WindowColorspace::Srgb, AlphaBlending::Native);
+        assert!(!uniforms.bools.use_display_p3);
+        assert!(!uniforms.bools.use_linear_blending);
+        assert!(!uniforms.bools.use_linear_correction);
+
+        // Display P3 + linear → P3 and linear-blending true, correction false.
+        uniforms.update_color_config(WindowColorspace::DisplayP3, AlphaBlending::Linear);
+        assert!(uniforms.bools.use_display_p3);
+        assert!(uniforms.bools.use_linear_blending);
+        assert!(!uniforms.bools.use_linear_correction);
+
+        // Display P3 + linear-corrected → all three true.
+        uniforms.update_color_config(WindowColorspace::DisplayP3, AlphaBlending::LinearCorrected);
+        assert!(uniforms.bools.use_display_p3);
+        assert!(uniforms.bools.use_linear_blending);
+        assert!(uniforms.bools.use_linear_correction);
+
+        // The non-color-space fields are untouched.
+        assert!(uniforms.bools.cursor_wide);
+        assert_eq!(uniforms.min_contrast, 3.0);
+        assert_eq!(uniforms.screen_size, [2.0, 3.0]);
     }
 
     #[test]
