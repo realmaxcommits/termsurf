@@ -1338,7 +1338,7 @@ are past the correctness-critical foundation.
 - [Experiment 445: the config Color type and its terminal-RGB conversion (Color, to_terminal_rgb)](445-config-color.md)
   — **Pass** · Claude/Codex/Codex
 - [Experiment 446: the config TerminalColor type and its terminal-RGB conversion (TerminalColor, to_terminal_rgb)](446-config-terminal-color.md)
-  — **Designed** · Claude/Codex/—
+  — **Pass** · Claude/Codex/Codex
 
 ## Non-Goals
 

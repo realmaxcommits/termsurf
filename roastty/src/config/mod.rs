@@ -27,6 +27,31 @@ impl Color {
     }
 }
 
+/// A config terminal-color value (upstream `Config.TerminalColor`): either an
+/// explicit `Color` or a cell-relative sentinel (use the cell's own fg / bg).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TerminalColor {
+    /// An explicit color.
+    Color(Color),
+    /// Use the cell's own foreground color.
+    CellForeground,
+    /// Use the cell's own background color.
+    CellBackground,
+}
+
+impl TerminalColor {
+    /// Resolve to the terminal-native `Rgb` (upstream
+    /// `TerminalColor.toTerminalRGB`): an explicit `Color` resolves to its `Rgb`;
+    /// the cell sentinels resolve to `None` (the consumer uses the cell's own fg /
+    /// bg).
+    pub(crate) fn to_terminal_rgb(self) -> Option<Rgb> {
+        match self {
+            TerminalColor::Color(c) => Some(c.to_terminal_rgb()),
+            TerminalColor::CellForeground | TerminalColor::CellBackground => None,
+        }
+    }
+}
+
 /// The color space the window renders in (upstream `WindowColorspace`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum WindowColorspace {
@@ -326,6 +351,7 @@ mod tests {
         AlphaBlending, BackgroundBlur, BackgroundImageFit, BackgroundImagePosition, Color,
         CopyOnSelect, CustomShaderAnimation, FontShapingBreak, FontStyle, GraphemeWidthMethod,
         MiddleClickAction, MouseShiftCapture, OscColorReportFormat, RightClickAction,
+        TerminalColor,
     };
     use crate::terminal::color::Rgb;
 
@@ -562,5 +588,28 @@ mod tests {
         let copied = c;
         assert_eq!(c, copied);
         assert_ne!(c, edge);
+    }
+
+    #[test]
+    fn terminal_color_resolves_explicit_and_sentinels() {
+        let explicit = TerminalColor::Color(Color {
+            r: 10,
+            g: 20,
+            b: 30,
+        });
+        assert_eq!(explicit.to_terminal_rgb(), Some(Rgb::new(10, 20, 30)));
+
+        // The cell sentinels resolve to `None` (the consumer uses the cell's fg/bg).
+        assert_eq!(TerminalColor::CellForeground.to_terminal_rgb(), None);
+        assert_eq!(TerminalColor::CellBackground.to_terminal_rgb(), None);
+
+        assert_ne!(TerminalColor::CellForeground, TerminalColor::CellBackground);
+        assert_ne!(
+            TerminalColor::Color(Color { r: 1, g: 2, b: 3 }),
+            TerminalColor::Color(Color { r: 4, g: 5, b: 6 })
+        );
+        // `Copy` + `Eq`: a trivial round-trip.
+        let copied = explicit;
+        assert_eq!(explicit, copied);
     }
 }

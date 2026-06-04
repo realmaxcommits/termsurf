@@ -179,3 +179,59 @@ Review artifacts:
 
 - Prompt: `logs/codex-review/20260604-110050-d446-prompt.md` (design)
 - Result: `logs/codex-review/20260604-110050-d446-last-message.md` (design)
+
+## Result
+
+**Result:** Pass
+
+The config `TerminalColor` type and its terminal-RGB conversion are now live.
+
+- `roastty/src/config/mod.rs`:
+  `pub(crate) enum TerminalColor { Color(Color), CellForeground, CellBackground }`
+  (upstream `Config.TerminalColor`) and
+  `TerminalColor::to_terminal_rgb(self) -> Option<Rgb>` — the port of upstream's
+  `toTerminalRGB`: `Some(c.to_terminal_rgb())` for an explicit `Color`, `None`
+  for both cell sentinels.
+
+Test (in `config/mod.rs`): `terminal_color_resolves_explicit_and_sentinels` —
+`TerminalColor::Color(Color { 10, 20, 30 }).to_terminal_rgb() == Some(Rgb::new(10, 20, 30))`;
+`CellForeground` / `CellBackground` resolve to `None`; the variants distinct
+(`CellForeground != CellBackground`, two `Color(_)` differ); `Copy`/`Eq`.
+
+Gate results:
+
+- `cargo fmt -p roastty` accepted; `--check` clean.
+- `cargo test -p roastty` → 2934 passed, 0 failed (+1, no regressions).
+- `cargo build -p roastty` → no warnings.
+- No-`ghostty`-name gates (font + renderer + config +
+  `lib.rs`/header/`abi_harness.c`) clean; `git diff --check` clean.
+
+## Conclusion
+
+The config layer now carries `TerminalColor` — built directly on the `Color`
+value type (Experiment 445) — and its terminal-RGB resolution, with the cell
+sentinels preserved as `None`. This is the config type the renderer's
+`DerivedConfig` holds for the cursor and selection colors (`cursor_color`,
+`cursor_text`, `selection_*`, `search_*`, each `?TerminalColor`). The string
+parsing (`parseCLI`), `formatEntry`, the `Config` struct, and the renderer /
+terminal resolution of the `None` sentinel to the cell's actual fg / bg stay
+deferred. The remaining color config type, `BoldColor` (which also wraps a
+`Color`), is now a natural next slice. The config-type family remains a clean,
+gated way to advance the rewrite while the larger coupled subsystems stay
+deferred.
+
+## Completion Review
+
+Codex reviewed the completed implementation and result and **approved** with
+**no findings**. It confirmed `TerminalColor` faithfully ports upstream's
+`color` / `cell-foreground` / `cell-background` union cases; `to_terminal_rgb()`
+preserves the upstream semantics (explicit color → `Some(Rgb)`, both cell
+sentinels → `None`); deferring parsing, formatting, the `Config` fields, and the
+consumer-side sentinel resolution is the right scope; and the test covers
+explicit conversion, both sentinel cases, distinctness, and value semantics. No
+public C ABI/header impact; nothing needed to change before the result commit.
+
+Review artifacts:
+
+- Prompt: `logs/codex-review/20260604-110239-r446-prompt.md` (result)
+- Result: `logs/codex-review/20260604-110239-r446-last-message.md` (result)
