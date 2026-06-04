@@ -308,6 +308,23 @@ pub(crate) enum Selected {
     SearchSelected,
 }
 
+/// A search highlight's tag (upstream `HighlightTag`): a plain match or a match
+/// inside the active selection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum HighlightTag {
+    SearchMatch,
+    SearchMatchSelected,
+}
+
+/// A search highlight: an inclusive `[start, end]` column range and its tag. A
+/// renderer input (upstream's per-row render-state highlights), not a shaper field
+/// — highlights do not affect run breaking.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Highlight {
+    pub range: [u16; 2],
+    pub tag: HighlightTag,
+}
+
 /// The selection/search color config. `selection-*` is optional (`None` → a plain
 /// reverse); the `search-*`/`search-selected-*` values are non-optional (upstream
 /// `TerminalColor`s with concrete defaults).
@@ -369,32 +386,51 @@ pub(crate) fn selected_colors(
     ))
 }
 
+/// A cell's comparison column: a wide cell's spacer tail compares one column to
+/// the left (saturating), faithful to upstream's `x_compare`. Shared by the
+/// selection and highlight range checks.
+fn x_compare(x: u16, wide: Wide) -> u16 {
+    if matches!(wide, Wide::SpacerTail) {
+        x.saturating_sub(1)
+    } else {
+        x
+    }
+}
+
 /// Whether column `x` of a row is selected, given the row's `[start, end]`
-/// selection bounds (inclusive). A wide cell's spacer tail compares one column to
-/// the left (saturating), faithful to upstream's `x_compare`. Ports the
-/// `.selection` part of upstream's per-cell `selected` derivation; the search
-/// highlights are deferred.
+/// selection bounds (inclusive). Ports the `.selection` part of upstream's
+/// per-cell `selected` derivation.
 fn is_selected(selection: Option<[u16; 2]>, x: u16, wide: Wide) -> bool {
     let Some([start, end]) = selection else {
         return false;
     };
-    let x_compare = if matches!(wide, Wide::SpacerTail) {
-        x.saturating_sub(1)
-    } else {
-        x
-    };
-    x_compare >= start && x_compare <= end
+    let xc = x_compare(x, wide);
+    xc >= start && xc <= end
 }
 
-/// The per-cell [`Selected`] state for a rebuild. Selection takes precedence; the
-/// search-highlight states (`Search`/`SearchSelected`) are deferred (their per-row
-/// ranges are not yet plumbed), so this yields `Selection` or `False`.
-fn selected_state(selection: Option<[u16; 2]>, x: u16, wide: Wide) -> Selected {
+/// The per-cell [`Selected`] state for a rebuild. Faithful port of upstream's
+/// `selected` derivation: the selection takes precedence (→ `Selection`), then the
+/// **first** matching `highlights` range (→ `Search`/`SearchSelected` by its tag),
+/// else `False`. Highlights use the same `x_compare` adjustment as selection.
+fn selected_state(
+    selection: Option<[u16; 2]>,
+    highlights: &[Highlight],
+    x: u16,
+    wide: Wide,
+) -> Selected {
     if is_selected(selection, x, wide) {
-        Selected::Selection
-    } else {
-        Selected::False
+        return Selected::Selection;
     }
+    let xc = x_compare(x, wide);
+    for hl in highlights {
+        if xc >= hl.range[0] && xc <= hl.range[1] {
+            return match hl.tag {
+                HighlightTag::SearchMatch => Selected::Search,
+                HighlightTag::SearchMatchSelected => Selected::SearchSelected,
+            };
+        }
+    }
+    Selected::False
 }
 
 /// Identifies which GPU buffer a cell belongs to. Conceptually maps to a cell
@@ -726,7 +762,8 @@ pub(crate) fn rebuild_row(
         .enumerate()
         .map(|(col, cell)| {
             let x = u16::try_from(col).expect("viewport column fits u16");
-            let state = selected_state(selection, x, cell.wide);
+            // No per-row highlight source is plumbed yet (Experiment 391).
+            let state = selected_state(selection, &[], x, cell.wide);
             // A selected cell's foreground comes from the selected-state colors;
             // otherwise the inverse-aware SGR foreground. This one color feeds the
             // glyph and every decoration below.
@@ -912,7 +949,8 @@ pub(crate) fn rebuild_bg_row(
     let row = usize::from(y);
     for (col, cell) in row_cells.iter().enumerate() {
         let x = u16::try_from(col).expect("viewport column fits u16");
-        let state = selected_state(selection, x, cell.wide);
+        // No per-row highlight source is plumbed yet (Experiment 391).
+        let state = selected_state(selection, &[], x, cell.wide);
         let colors = selected_colors(
             state,
             cell.style,
@@ -2376,23 +2414,105 @@ mod tests {
 
     #[test]
     fn selected_state_yields_selection_or_false() {
-        // No bounds → `False` (the search states are deferred).
-        assert_eq!(selected_state(None, 0, Wide::Narrow), Selected::False);
+        let no_hl: &[Highlight] = &[];
+
+        // No bounds, no highlights → `False`.
+        assert_eq!(
+            selected_state(None, no_hl, 0, Wide::Narrow),
+            Selected::False
+        );
 
         // Inside the inclusive [1, 3] bounds → `Selection`.
         let bounds = Some([1, 3]);
-        assert_eq!(selected_state(bounds, 0, Wide::Narrow), Selected::False); // before
-        assert_eq!(selected_state(bounds, 1, Wide::Narrow), Selected::Selection); // at start
-        assert_eq!(selected_state(bounds, 3, Wide::Narrow), Selected::Selection); // at end
-        assert_eq!(selected_state(bounds, 4, Wide::Narrow), Selected::False); // after
+        assert_eq!(
+            selected_state(bounds, no_hl, 0, Wide::Narrow),
+            Selected::False
+        ); // before
+        assert_eq!(
+            selected_state(bounds, no_hl, 1, Wide::Narrow),
+            Selected::Selection
+        ); // at start
+        assert_eq!(
+            selected_state(bounds, no_hl, 3, Wide::Narrow),
+            Selected::Selection
+        ); // at end
+        assert_eq!(
+            selected_state(bounds, no_hl, 4, Wide::Narrow),
+            Selected::False
+        ); // after
 
         // A spacer tail at `end + 1 = 4` compares `x_compare = 3` → `Selection`,
         // where a narrow cell at column 4 is `False`.
         assert_eq!(
-            selected_state(bounds, 4, Wide::SpacerTail),
+            selected_state(bounds, no_hl, 4, Wide::SpacerTail),
             Selected::Selection
         );
-        assert_eq!(selected_state(bounds, 4, Wide::Narrow), Selected::False);
+        assert_eq!(
+            selected_state(bounds, no_hl, 4, Wide::Narrow),
+            Selected::False
+        );
+    }
+
+    #[test]
+    fn selected_state_consults_highlights() {
+        // A plain match and a match-inside-selection highlight, columns [2, 4]
+        // and [6, 8].
+        let highlights = [
+            Highlight {
+                range: [2, 4],
+                tag: HighlightTag::SearchMatch,
+            },
+            Highlight {
+                range: [6, 8],
+                tag: HighlightTag::SearchMatchSelected,
+            },
+        ];
+
+        // A cell inside a `SearchMatch` highlight → `Search`; a
+        // `SearchMatchSelected` highlight → `SearchSelected`; outside both →
+        // `False`.
+        assert_eq!(
+            selected_state(None, &highlights, 3, Wide::Narrow),
+            Selected::Search
+        );
+        assert_eq!(
+            selected_state(None, &highlights, 7, Wide::Narrow),
+            Selected::SearchSelected
+        );
+        assert_eq!(
+            selected_state(None, &highlights, 5, Wide::Narrow),
+            Selected::False
+        );
+
+        // Selection takes precedence over a highlight at the same column.
+        assert_eq!(
+            selected_state(Some([3, 3]), &highlights, 3, Wide::Narrow),
+            Selected::Selection
+        );
+
+        // First-match-wins: two overlapping highlights with different tags → the
+        // first listed.
+        let overlap = [
+            Highlight {
+                range: [0, 5],
+                tag: HighlightTag::SearchMatch,
+            },
+            Highlight {
+                range: [0, 5],
+                tag: HighlightTag::SearchMatchSelected,
+            },
+        ];
+        assert_eq!(
+            selected_state(None, &overlap, 2, Wide::Narrow),
+            Selected::Search
+        );
+
+        // The spacer-tail adjustment applies to highlight matching: a spacer tail
+        // at `end + 1 = 5` compares `x_compare = 4` → in [2, 4] → `Search`.
+        assert_eq!(
+            selected_state(None, &highlights, 5, Wide::SpacerTail),
+            Selected::Search
+        );
     }
 
     #[test]

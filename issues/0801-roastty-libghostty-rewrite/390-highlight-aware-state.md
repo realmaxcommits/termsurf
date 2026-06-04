@@ -227,3 +227,82 @@ Review artifacts:
 
 - Prompt: `logs/codex-review/20260603-203204-234910-prompt.md` (design)
 - Result: `logs/codex-review/20260603-203204-234910-last-message.md` (design)
+
+## Result
+
+**Result:** Pass
+
+`selected_state` now consults the search highlights.
+
+- `roastty/src/renderer/cell.rs`:
+  - the `HighlightTag` enum (`SearchMatch` / `SearchMatchSelected`) and the
+    `Highlight` struct (`range: [u16; 2]`, `tag`) — renderer-local types (not on
+    `RunOptions`, since upstream's `shape.RunOptions` carries no highlights);
+  - the `x_compare(x, wide)` helper (the spacer-tail `saturating_sub(1)` logic),
+    now shared; `is_selected` refactored to use it (behavior unchanged);
+  - `selected_state(selection, highlights, x, wide)`: the selection check first
+    (→ `Selection`), then the **first** matching highlight (→ `Search` /
+    `SearchSelected` by tag), else `False`.
+  - both row passes call `selected_state(selection, &[], x, cell.wide)` — an
+    empty highlight slice (no per-row source plumbed yet), so behavior is
+    unchanged.
+
+Tests (in `cell.rs`):
+
+- `selected_state_yields_selection_or_false` — updated for the new signature
+  (passing an empty highlight slice); the `Selection`/`False`/spacer-tail cases
+  unchanged.
+- `selected_state_consults_highlights` — a `SearchMatch` highlight `[2, 4]` → a
+  cell at 3 is `Search`; a `SearchMatchSelected` highlight `[6, 8]` → 7 is
+  `SearchSelected`; 5 (outside both) is `False`; selection at the same column
+  takes precedence (→ `Selection`); two overlapping highlights with different
+  tags → the first's tag (`Search`); a spacer tail at `end + 1 = 5` →
+  `x_compare = 4` → in `[2, 4]` → `Search`.
+
+Gate results:
+
+- `cargo fmt -p roastty` accepted; `--check` clean.
+- `cargo test -p roastty` → 2847 passed, 0 failed (+1, no regressions; the
+  existing `selected_state` test updated for the new signature, the rebuild
+  tests unchanged via `&[]`).
+- `cargo build -p roastty` → no warnings (`is_selected` and `x_compare` remain
+  used).
+- No-`ghostty`-name gates (font + renderer) clean; `git diff --check` clean.
+
+## Conclusion
+
+The per-cell `selected` derivation is now complete and faithful: selection
+first, then the first matching search highlight, else nothing. The `Highlight`/
+`HighlightTag` types and the highlight-aware `selected_state` are in place; the
+only remaining piece for live search highlighting is the per-row highlight
+**source** — deriving the real search-match ranges and threading them into the
+passes (currently `&[]`).
+
+The remaining renderer-bridge work: deriving and plumbing the per-row search
+highlight ranges into the passes (Experiment 391 — threading `&[Highlight]` from
+a per-row source through `rebuild_viewport`/`rebuild_bg_row`/`rebuild_row`); the
+lock-cursor glyph + under-cursor text recolor; the column-ordered decoration
+merge
+
+- link double-underline; and the **Metal upload** of `Contents`.
+
+## Completion Review
+
+Codex reviewed the completed implementation and result and **approved** with
+**no findings**. It confirmed the implementation matches the approved design:
+`HighlightTag` and `Highlight` are renderer-local types not added to
+`RunOptions` (faithful, since highlights are render-state input and do not
+affect shaping); `x_compare` correctly factors the spacer-tail
+`saturating_sub(1)` logic and `is_selected` preserves its prior behavior by
+using it; `selected_state` is faithful (selection checked first, highlights
+scanned in order with inclusive bounds, first-match-wins, tags mapping to
+`Search`/`SearchSelected`); the row passes still pass `&[]` so production
+behavior is unchanged until the highlight plumbing arrives in Experiment 391;
+`is_selected` and `x_compare` remain used (no dead code); and the tests cover
+the tag mapping, selection precedence, first-match-wins, spacer-tail matching,
+and empty-highlight behavior, with the diff internal Rust only (no public C
+ABI/header change). Nothing needed to change before the result commit.
+
+Review artifacts:
+
+- Result review: `logs/codex-review/20260603-203438-006187-last-message.md`
