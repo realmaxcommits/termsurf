@@ -1228,7 +1228,7 @@ are past the correctness-critical foundation.
 - [Experiment 390: a highlight-aware selected state](390-highlight-aware-state.md)
   — **Pass** · Claude/Codex/Codex
 - [Experiment 391: plumb the per-row highlights into the passes](391-plumb-highlights.md)
-  — **Designed** · Claude/Codex/Codex
+  — **Pass** · Claude/Codex/Codex
 
 ## Non-Goals
 

@@ -186,3 +186,75 @@ Review artifacts:
 
 - Prompt: `logs/codex-review/20260603-203729-176260-prompt.md` (design)
 - Result: `logs/codex-review/20260603-203729-176260-last-message.md` (design)
+
+## Result
+
+**Result:** Pass
+
+Search highlighting is now live in the rebuild.
+
+- `roastty/src/renderer/cell.rs`:
+  - `rebuild_bg_row` and `rebuild_row` gain a `highlights: &[Highlight]` param,
+    passed to `selected_state(selection, highlights, x, cell.wide)`.
+  - `rebuild_viewport` gains a `highlights: &[Vec<Highlight>]` param (per-row,
+    parallel to `rows`); per row it computes
+    `row_highlights = highlights.get(y) .map(Vec::as_slice).unwrap_or(&[])` (the
+    `usize` enumerate index, before the `y: u16` shadow) and passes the **same**
+    slice to both passes — so a row with no highlights (or beyond the array) is
+    unchanged.
+  - The doc comments now describe the highlight inputs. The existing
+    `rebuild_bg_row`/`rebuild_row`/`rebuild_viewport` test call sites are
+    updated for the new signatures (`&[]`).
+
+Tests (in `cell.rs`):
+
+- `rebuild_bg_row_recolors_highlighted_cells` — a `SearchMatch` highlight over a
+  no-explicit-bg cell → opaque amber `#FFE082`; a `SearchMatchSelected`
+  highlight → salmon `#F2A57E`; an un-highlighted column → transparent.
+- `rebuild_row_recolors_highlighted_foreground` — a `SearchMatch` highlight over
+  a glyph cell → the glyph draws with the search foreground (black).
+- `rebuild_viewport_threads_per_row_highlights` — a per-row highlights array
+  highlights column 1 (`SearchMatch`) → that column's background is amber and
+  its glyph is black, column 0 unchanged — end-to-end row-indexed plumbing.
+
+Gate results:
+
+- `cargo fmt -p roastty` accepted; `--check` clean.
+- `cargo test -p roastty` → 2850 passed, 0 failed (+3, no regressions; the
+  existing 13 rebuild tests pass with the new `&[]` signatures).
+- `cargo build -p roastty` → no warnings.
+- No-`ghostty`-name gates (font + renderer) clean; `git diff --check` clean.
+
+## Conclusion
+
+Search highlighting is now **live** in the rebuild: a cell inside a per-row
+search highlight draws the search colors (amber/salmon background opaque, black
+foreground) — the full chain from a highlight range to the final `Contents` is
+faithful (`selected_state` derivation → `selected_colors` → both passes). The
+selection **and** search recolor are complete; the only external dependency left
+is the origin of the highlight ranges (the search engine that computes
+search-match ranges, outside the renderer bridge).
+
+The remaining renderer-bridge work: the lock-cursor glyph + under-cursor text
+recolor; the column-ordered decoration merge + link double-underline; and the
+**Metal upload** of `Contents`.
+
+## Completion Review
+
+Codex reviewed the completed implementation and result and **approved** with
+**no findings**. It confirmed the implementation matches the approved design and
+is faithful: highlights stay a renderer input (not on `RunOptions`);
+`rebuild_viewport` indexes the per-row `highlights` with the `usize` row index
+before the `u16` shadow, missing rows default to `&[]`, and the same
+`row_highlights` slice is passed to both the background and foreground passes
+(consistent bg/fg state, no row bleed); both passes route that slice into
+`selected_state`, so search highlighting is live. It confirmed the new tests
+cover the search-match amber background, the search-selected salmon background,
+the search foreground black, un-highlighted cells unchanged, and the
+viewport-level per-row plumbing, that the existing empty-slice call sites
+preserve prior behavior, and that there is no public C ABI/header change.
+Nothing needed to change before the result commit.
+
+Review artifacts:
+
+- Result review: `logs/codex-review/20260603-204215-693382-last-message.md`

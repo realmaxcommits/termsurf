@@ -731,11 +731,12 @@ pub(crate) fn add_run(
 /// Assemble one viewport row's foreground text cells into `contents`. Derives the
 /// row's [`CellInfo`] slice ([`cell_infos`]) and per-column `fg_colors` (each
 /// cell's foreground + `alpha`), then places every glyph of each [`ShapedRun`]
-/// via [`add_run`]. Each cell's [`Selected`] state ([`selected_state`]) drives its
-/// foreground: a selected cell takes [`selected_colors`] (the `selection_config`);
-/// otherwise [`cell_colors`] (so the foreground is inverse-aware — reverse-video
-/// swaps the glyph color). That one per-cell foreground feeds the glyph and all
-/// three decorations (via `fg_colors`). The per-row foreground body of upstream
+/// via [`add_run`]. Each cell's [`Selected`] state ([`selected_state`], from the
+/// row's `selection` and `highlights`) drives its foreground: a selected/search
+/// cell takes [`selected_colors`] (the `selection_config`); otherwise
+/// [`cell_colors`] (so the foreground is inverse-aware — reverse-video swaps the
+/// glyph color). That one per-cell foreground feeds the glyph and all three
+/// decorations (via `fg_colors`). The per-row foreground body of upstream
 /// `rebuildCells`.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn rebuild_row(
@@ -745,6 +746,7 @@ pub(crate) fn rebuild_row(
     row_runs: &[ShapedRun],
     row_cells: &[RunCell],
     selection: Option<[u16; 2]>,
+    highlights: &[Highlight],
     selection_config: &SelectionConfig,
     default_fg: Rgb,
     default_bg: Rgb,
@@ -762,8 +764,7 @@ pub(crate) fn rebuild_row(
         .enumerate()
         .map(|(col, cell)| {
             let x = u16::try_from(col).expect("viewport column fits u16");
-            // No per-row highlight source is plumbed yet (Experiment 391).
-            let state = selected_state(selection, &[], x, cell.wide);
+            let state = selected_state(selection, highlights, x, cell.wide);
             // A selected cell's foreground comes from the selected-state colors;
             // otherwise the inverse-aware SGR foreground. This one color feeds the
             // glyph and every decoration below.
@@ -859,15 +860,18 @@ pub(crate) fn rebuild_row(
 
 /// Rebuild every viewport row's background **and** foreground into `contents`
 /// from the viewport's per-row [`RunOptions`] (from `Terminal::shape_run_options`).
-/// For each row, write its backgrounds ([`rebuild_bg_row`]) then shape it into
-/// [`ShapedRun`]s ([`shape_row`] over the grid's resolver) and assemble its
-/// foreground ([`rebuild_row`]) — one pass per row, as upstream `rebuildCells`.
-/// The decorations, cursor, and Metal upload remain separate.
+/// `highlights` is the per-row search highlight lists (parallel to `rows`, like
+/// upstream's `row_highlights`; a row beyond the array has none). For each row,
+/// write its backgrounds ([`rebuild_bg_row`]) then shape it into [`ShapedRun`]s
+/// ([`shape_row`] over the grid's resolver) and assemble its foreground
+/// ([`rebuild_row`]) — one pass per row, as upstream `rebuildCells`. The
+/// decorations, cursor, and Metal upload remain separate.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn rebuild_viewport(
     contents: &mut Contents,
     grid: &mut SharedGrid,
     rows: &[RunOptions],
+    highlights: &[Vec<Highlight>],
     selection_config: &SelectionConfig,
     default_fg: Rgb,
     default_bg: Rgb,
@@ -879,6 +883,8 @@ pub(crate) fn rebuild_viewport(
     thicken_strength: u8,
 ) -> Result<(), ResolverRenderError> {
     for (y, opts) in rows.iter().enumerate() {
+        // This row's highlights (empty for a row beyond the array).
+        let row_highlights = highlights.get(y).map(Vec::as_slice).unwrap_or(&[]);
         let y = u16::try_from(y).expect("viewport row fits u16");
 
         // Backgrounds first (behind the glyphs); needs no shaping or grid.
@@ -887,6 +893,7 @@ pub(crate) fn rebuild_viewport(
             y,
             &opts.cells,
             opts.selection,
+            row_highlights,
             selection_config,
             default_fg,
             default_bg,
@@ -906,6 +913,7 @@ pub(crate) fn rebuild_viewport(
             &runs,
             &opts.cells,
             opts.selection,
+            row_highlights,
             selection_config,
             default_fg,
             default_bg,
@@ -921,8 +929,9 @@ pub(crate) fn rebuild_viewport(
 }
 
 /// Write one viewport row's background cells into `contents`. Each cell's
-/// [`Selected`] state ([`selected_state`]) drives its background: a selected cell
-/// takes [`selected_colors`] (the `selection_config`) and is forced **opaque**;
+/// [`Selected`] state ([`selected_state`], from the row's `selection` and
+/// `highlights`) drives its background: a selected/search cell takes
+/// [`selected_colors`] (the `selection_config`) and is forced **opaque**;
 /// otherwise the background comes from [`cell_colors`] (reverse-video + the
 /// full-block twist). The RGB falls back to `default_bg` when the resolved
 /// background is `None` (upstream `bg orelse default`). The background cell is
@@ -930,15 +939,15 @@ pub(crate) fn rebuild_viewport(
 /// for a selected, inverse, or explicit-background cell, transparent (`0`)
 /// otherwise — so a covering-derived or default background lets the already-drawn
 /// screen background show through, while an inverse cell stays opaque even when
-/// its resolved background is `None`. The search states (deferred) and the
-/// `background_opacity_cells` branch are deferred. The background half of upstream
-/// `rebuildCells`'s per-cell work.
+/// its resolved background is `None`. The `background_opacity_cells` branch is
+/// deferred. The background half of upstream `rebuildCells`'s per-cell work.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn rebuild_bg_row(
     contents: &mut Contents,
     y: u16,
     row_cells: &[RunCell],
     selection: Option<[u16; 2]>,
+    highlights: &[Highlight],
     selection_config: &SelectionConfig,
     default_fg: Rgb,
     default_bg: Rgb,
@@ -949,8 +958,7 @@ pub(crate) fn rebuild_bg_row(
     let row = usize::from(y);
     for (col, cell) in row_cells.iter().enumerate() {
         let x = u16::try_from(col).expect("viewport column fits u16");
-        // No per-row highlight source is plumbed yet (Experiment 391).
-        let state = selected_state(selection, &[], x, cell.wide);
+        let state = selected_state(selection, highlights, x, cell.wide);
         let colors = selected_colors(
             state,
             cell.style,
@@ -1590,6 +1598,7 @@ mod tests {
             &[run],
             &row_cells,
             None,
+            &[],
             &SelectionConfig::default(),
             default_fg,
             Rgb::new(0, 0, 0),
@@ -1673,6 +1682,7 @@ mod tests {
             &[run],
             &row_cells,
             None,
+            &[],
             &SelectionConfig::default(),
             default_fg,
             Rgb::new(0, 0, 0),
@@ -1773,6 +1783,7 @@ mod tests {
             &[run],
             &[faint_cell],
             None,
+            &[],
             &SelectionConfig::default(),
             Rgb::new(200, 200, 200),
             Rgb::new(0, 0, 0),
@@ -1824,6 +1835,7 @@ mod tests {
             &[run2],
             &[plain_cell],
             None,
+            &[],
             &SelectionConfig::default(),
             Rgb::new(200, 200, 200),
             Rgb::new(0, 0, 0),
@@ -1896,6 +1908,7 @@ mod tests {
             &[run()],
             &[cell.clone()],
             Some([0, 0]),
+            &[],
             &SelectionConfig::default(),
             default_fg,
             default_bg,
@@ -1926,6 +1939,7 @@ mod tests {
             &[run()],
             &[cell],
             None,
+            &[],
             &SelectionConfig::default(),
             default_fg,
             default_bg,
@@ -1999,6 +2013,7 @@ mod tests {
             &[run],
             &[cell],
             Some([0, 0]),
+            &[],
             &SelectionConfig::default(),
             default_fg,
             default_bg,
@@ -2069,6 +2084,7 @@ mod tests {
             &mut c,
             &mut shared,
             &rows,
+            &[],
             &SelectionConfig::default(),
             Rgb::new(200, 200, 200),
             Rgb::new(0, 0, 0),
@@ -2124,6 +2140,7 @@ mod tests {
             &mut c,
             &mut shared,
             &rows,
+            &[],
             &SelectionConfig::default(),
             Rgb::new(200, 200, 200),
             Rgb::new(0, 0, 0),
@@ -2176,6 +2193,7 @@ mod tests {
             0,
             &row_cells,
             None,
+            &[],
             &SelectionConfig::default(),
             Rgb::new(200, 200, 200),
             Rgb::new(0, 0, 0),
@@ -2228,6 +2246,7 @@ mod tests {
             &mut c,
             &mut shared,
             &rows,
+            &[],
             &SelectionConfig::default(),
             Rgb::new(200, 200, 200),
             Rgb::new(0, 0, 0),
@@ -2278,6 +2297,7 @@ mod tests {
             0,
             &[cell],
             None,
+            &[],
             &SelectionConfig::default(),
             Rgb::new(200, 200, 200),
             Rgb::new(0, 0, 0),
@@ -2323,6 +2343,7 @@ mod tests {
             0,
             &[cell],
             None,
+            &[],
             &SelectionConfig::default(),
             Rgb::new(200, 200, 200),
             Rgb::new(0, 0, 0),
@@ -2372,6 +2393,7 @@ mod tests {
             0,
             &[cell],
             None,
+            &[],
             &SelectionConfig::default(),
             Rgb::new(200, 200, 200),
             default_bg,
@@ -2548,6 +2570,7 @@ mod tests {
             0,
             &row_cells,
             Some([0, 0]),
+            &[],
             &SelectionConfig::default(),
             default_fg,
             default_bg,
@@ -2566,6 +2589,217 @@ mod tests {
         // Column 1 is not selected: unchanged (no explicit bg, not inverse →
         // transparent).
         assert_eq!(*c.bg_cell(0, 1), CellBg([0, 0, 0, 0]));
+    }
+
+    #[test]
+    fn rebuild_bg_row_recolors_highlighted_cells() {
+        use crate::terminal::color::{Rgb, DEFAULT_PALETTE};
+        use crate::terminal::style::{Color, Style as TermStyle};
+
+        let default_fg = Rgb::new(200, 200, 200);
+        let default_bg = Rgb::new(0, 0, 0);
+        let amber = Rgb::new(0xFF, 0xE0, 0x82);
+        let salmon = Rgb::new(0xF2, 0xA5, 0x7E);
+
+        let cell = || RunCell {
+            codepoint: 'x' as u32,
+            graphemes: vec![],
+            style: TermStyle {
+                bg_color: Color::None,
+                ..TermStyle::default()
+            },
+            style_id: 0,
+            wide: Wide::Narrow,
+            is_empty: false,
+            is_codepoint: true,
+        };
+        let row_cells = [cell(), cell()];
+
+        // Column 0 is a plain search match (amber bg, opaque), column 1 is
+        // un-highlighted (transparent).
+        let mut c = Contents::default();
+        c.resize(grid(2, 1));
+        rebuild_bg_row(
+            &mut c,
+            0,
+            &row_cells,
+            None,
+            &[Highlight {
+                range: [0, 0],
+                tag: HighlightTag::SearchMatch,
+            }],
+            &SelectionConfig::default(),
+            default_fg,
+            default_bg,
+            &DEFAULT_PALETTE,
+            None,
+            255,
+        );
+        assert_eq!(*c.bg_cell(0, 0), CellBg([amber.r, amber.g, amber.b, 255]));
+        assert_eq!(*c.bg_cell(0, 1), CellBg([0, 0, 0, 0]));
+
+        // A search-match-selected highlight → the salmon background.
+        let mut c2 = Contents::default();
+        c2.resize(grid(2, 1));
+        rebuild_bg_row(
+            &mut c2,
+            0,
+            &row_cells,
+            None,
+            &[Highlight {
+                range: [0, 0],
+                tag: HighlightTag::SearchMatchSelected,
+            }],
+            &SelectionConfig::default(),
+            default_fg,
+            default_bg,
+            &DEFAULT_PALETTE,
+            None,
+            255,
+        );
+        assert_eq!(
+            *c2.bg_cell(0, 0),
+            CellBg([salmon.r, salmon.g, salmon.b, 255])
+        );
+    }
+
+    #[test]
+    fn rebuild_row_recolors_highlighted_foreground() {
+        use crate::font::collection::Index;
+        use crate::font::run::TextRun;
+        use crate::terminal::color::{Rgb, DEFAULT_PALETTE};
+        use crate::terminal::style::Style as TermStyle;
+
+        let default_fg = Rgb::new(200, 200, 200);
+        let default_bg = Rgb::new(0, 0, 0);
+        let black = Rgb::new(0, 0, 0); // the default search foreground
+
+        let cell = RunCell {
+            codepoint: 'A' as u32,
+            graphemes: vec![],
+            style: TermStyle::default(),
+            style_id: 0,
+            wide: Wide::Narrow,
+            is_empty: false,
+            is_codepoint: true,
+        };
+        let run = ShapedRun {
+            run: TextRun {
+                hash: 0,
+                offset: 0,
+                cells: 1,
+                font_index: Index::default(),
+            },
+            glyphs: vec![shape::Cell {
+                x: 0,
+                x_offset: 0,
+                y_offset: 0,
+                glyph_index: glyph_for(b'A'),
+            }],
+        };
+
+        let mut shared = menlo_grid();
+        let mut c = Contents::default();
+        c.resize(grid(1, 1));
+        rebuild_row(
+            &mut c,
+            &mut shared,
+            0,
+            &[run],
+            &[cell],
+            None,
+            &[Highlight {
+                range: [0, 0],
+                tag: HighlightTag::SearchMatch,
+            }],
+            &SelectionConfig::default(),
+            default_fg,
+            default_bg,
+            &DEFAULT_PALETTE,
+            None,
+            255,
+            255,
+            false,
+            255,
+        )
+        .expect("rebuild_row");
+
+        // The glyph draws with the search foreground (black), not its SGR fg.
+        assert_eq!(
+            [
+                c.fg_rows[1][0].color[0],
+                c.fg_rows[1][0].color[1],
+                c.fg_rows[1][0].color[2]
+            ],
+            [black.r, black.g, black.b]
+        );
+    }
+
+    #[test]
+    fn rebuild_viewport_threads_per_row_highlights() {
+        use crate::terminal::color::{Rgb, DEFAULT_PALETTE};
+        use crate::terminal::style::{Color, Style as TermStyle};
+
+        let mut shared = menlo_grid();
+        let mut c = Contents::default();
+        c.resize(grid(2, 1));
+
+        let amber = Rgb::new(0xFF, 0xE0, 0x82);
+        let black = Rgb::new(0, 0, 0);
+
+        let cell = |cp: u32| RunCell {
+            codepoint: cp,
+            graphemes: vec![],
+            style: TermStyle {
+                bg_color: Color::None,
+                ..TermStyle::default()
+            },
+            style_id: 0,
+            wide: Wide::Narrow,
+            is_empty: false,
+            is_codepoint: true,
+        };
+        let rows = vec![RunOptions {
+            cells: vec![cell('A' as u32), cell('B' as u32)],
+            ..Default::default()
+        }];
+        // Row 0 highlights column 1 only as a search match.
+        let highlights = vec![vec![Highlight {
+            range: [1, 1],
+            tag: HighlightTag::SearchMatch,
+        }]];
+
+        rebuild_viewport(
+            &mut c,
+            &mut shared,
+            &rows,
+            &highlights,
+            &SelectionConfig::default(),
+            Rgb::new(200, 200, 200),
+            Rgb::new(0, 0, 0),
+            &DEFAULT_PALETTE,
+            None,
+            255,
+            255,
+            false,
+            255,
+        )
+        .expect("rebuild_viewport");
+
+        // Column 1 (highlighted) → amber background; column 0 (un-highlighted) →
+        // transparent. Two glyphs present; the highlighted column's glyph is black.
+        assert_eq!(*c.bg_cell(0, 1), CellBg([amber.r, amber.g, amber.b, 255]));
+        assert_eq!(*c.bg_cell(0, 0), CellBg([0, 0, 0, 0]));
+        // The glyph at column 1 carries the search foreground (black). Its
+        // `grid_pos` is `[col, y]` = `[1, 0]` (stored in `fg_rows[y + 1]`).
+        let col1 = c.fg_rows[1]
+            .iter()
+            .find(|v| v.grid_pos == [1, 0])
+            .expect("column 1 glyph");
+        assert_eq!(
+            [col1.color[0], col1.color[1], col1.color[2]],
+            [black.r, black.g, black.b]
+        );
     }
 
     fn underline_opts(grid: &SharedGrid) -> RenderOptions {
