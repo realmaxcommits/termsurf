@@ -7,6 +7,7 @@
 #![allow(dead_code)]
 // This config layer is consumed by later slices.
 
+mod comma_splitter;
 mod formatter;
 mod string;
 mod unicode_range;

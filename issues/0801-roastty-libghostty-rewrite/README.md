@@ -1494,7 +1494,7 @@ are past the correctness-critical foundation.
 - [Experiment 523: the per-field parse dispatch, color + font-style slice (Config::set)](523-config-set-color-fontstyle-dispatch.md)
   — **Pass** · Claude/Codex/Codex
 - [Experiment 524: the quote/escape-aware comma splitter (CommaSplitter)](524-config-comma-splitter.md)
-  — **Designed** · Claude/Codex/—
+  — **Pass** · Claude/Codex/Codex
 
 ## Non-Goals
 

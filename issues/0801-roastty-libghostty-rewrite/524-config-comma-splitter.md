@@ -188,3 +188,53 @@ Review artifacts:
 
 - Prompt: `logs/codex-review/20260604-183504-d524-prompt.md` (design)
 - Result: `logs/codex-review/20260604-183504-d524-last-message.md` (design)
+
+## Result
+
+**Result:** Pass
+
+The new module `roastty/src/config/comma_splitter.rs` (declared
+`mod comma_splitter;`) ports upstream `cli/CommaSplitter`: `CommaSplitError` and
+`CommaSplitter` (`new` + `next`), the full state machine as a Rust
+`loop { match state { … } }` over `input.as_bytes()` returning `&str` slices,
+with `ESCAPE_OUTSIDE_QUOTES = true` (macOS) and the exact `unicodeescape`
+accumulator/overflow quirks. Three tests cover the basic splitter behavior
+(mirroring upstream `splitter 1`–`8`), the error cases (`\x` / `\x5` / `\u` /
+`\u{` ⇒ `UnfinishedEscape`; `\u{}` / `\d` ⇒ `IllegalEscape`; `"a` ⇒
+`UnclosedQuote`), and the folded unicode overflow/quirk cases (`\u{10ffff}` /
+`\u{afffff}` succeed, `\u{110000}` ⇒ `IllegalEscape`).
+
+Gates:
+
+- `cargo fmt -p roastty` accepted; `--check` clean.
+- `cargo test -p roastty`: 3012 passed, 0 failed (three new tests; no
+  regressions).
+- `cargo build -p roastty`: no warnings.
+- no-`ghostty`-name greps (font/renderer/config + lib.rs/header/abi_harness.c)
+  clean; `git diff --check` clean.
+
+## Completion Review
+
+Codex reviewed the completed experiment and **approved** it with **no
+findings**: the completed slice matches the approved design — the state-machine
+shape, error categories, raw-slice return behavior, macOS
+`ESCAPE_OUTSIDE_QUOTES = true`, last-state restoration after escapes, and the
+unicode accumulator quirk/overflow guard are all faithful to upstream; the
+folded tests cover the main splitter behavior plus the edge cases
+(unfinished/illegal escapes, unclosed quotes, unicode max/overflow, the `a-f`
+quirk); gates are clean and the consumer/parser work remains deferred. "Approved
+with no findings."
+
+Review artifacts:
+
+- Prompt: `logs/codex-review/20260604-183808-r524-prompt.md` (result)
+- Result: `logs/codex-review/20260604-183808-r524-last-message.md` (result)
+
+## Conclusion
+
+`CommaSplitter` — the quote/escape-aware comma iterator — is ported. The next
+building block is **`parseAutoStruct`** (the colon-keyed `key:value` comma-list
+parser that drives `CommaSplitter`, decodes double-quoted values, and tracks
+required fields), then `Theme::parse_cli` (its light/dark-pair branch) and the
+`theme` `Config::set` arm — the last parseable field. Then the `loadCli` /
+config-file loader splits `key = value` lines and drives `Config::set`.
