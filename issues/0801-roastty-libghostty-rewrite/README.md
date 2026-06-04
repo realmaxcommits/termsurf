@@ -1225,6 +1225,8 @@ are past the correctness-critical foundation.
   **Pass** · Claude/Codex/Codex
 - [Experiment 389: route the row passes through selected_colors](389-route-selected-colors.md)
   — **Pass** · Claude/Codex/Codex
+- [Experiment 390: a highlight-aware selected state](390-highlight-aware-state.md)
+  — **Designed** · Claude/Codex/Codex
 
 ## Non-Goals
 
