@@ -183,3 +183,57 @@ Review artifacts:
 
 - Prompt: `logs/codex-review/20260604-113316-d454-prompt.md` (design)
 - Result: `logs/codex-review/20260604-113316-d454-last-message.md` (design)
+
+## Result
+
+**Result:** Pass
+
+The confirm-close-surface config enum and its confirm decision are now live.
+
+- `roastty/src/config/mod.rs`:
+  `pub(crate) enum ConfirmCloseSurface { False, True, Always }` (upstream
+  `ConfirmCloseSurface`) and
+  `ConfirmCloseSurface::needs_confirm(self, at_prompt: bool) -> bool` — an
+  exhaustive `match` (`Always → true`, `False → false`, `True → !at_prompt`),
+  the config's part of upstream's `Surface.needsConfirmQuit` switch.
+
+Test (in `config/mod.rs`): `confirm_close_surface_needs_confirm_truth_table` —
+the full 3×2 truth table (`Always → true/true`, `False → false/false`,
+`True → false (at prompt) / true (not at prompt)`), the variants distinct,
+`Copy`/`Eq`.
+
+Gate results:
+
+- `cargo fmt -p roastty` accepted; `--check` clean.
+- `cargo test -p roastty` → 2942 passed, 0 failed (+1, no regressions).
+- `cargo build -p roastty` → no warnings.
+- No-`ghostty`-name gates (font + renderer + config +
+  `lib.rs`/header/`abi_harness.c`) clean; `git diff --check` clean.
+
+## Conclusion
+
+The config layer now carries `ConfirmCloseSurface` and its confirm decision — a
+state-parameterized truth table (on `at_prompt`) joining the family of
+state-driven config decisions (`should_animate`, `should_notify`,
+`capture_shift`). The `Config` struct / parsing, the surrounding
+`needsConfirmQuit` logic (the read-only / child-exited early returns, the
+renderer-state lock), and the live `cursorIsAtPrompt` computation stay deferred.
+The config-type family — now fifteen enums/flag-structs with consumers plus
+three color value types — remains a clean, gated way to advance the rewrite
+while the larger coupled subsystems stay deferred.
+
+## Completion Review
+
+Codex reviewed the completed implementation and result and **approved** with
+**no findings**. It confirmed `ConfirmCloseSurface { False, True, Always }`
+faithfully maps the upstream enum; `needs_confirm()` correctly captures the
+config switch (always confirm, never confirm, or confirm only when not at the
+prompt); deferring the read-only / child-exited early returns, the locking, and
+the live `cursorIsAtPrompt` read remains the right boundary; and the truth-table
+test fully covers the predicate behavior. No public C ABI/header impact; nothing
+needed to change before the result commit.
+
+Review artifacts:
+
+- Prompt: `logs/codex-review/20260604-113501-r454-prompt.md` (result)
+- Result: `logs/codex-review/20260604-113501-r454-last-message.md` (result)

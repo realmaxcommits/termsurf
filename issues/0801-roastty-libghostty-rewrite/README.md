@@ -1354,7 +1354,7 @@ are past the correctness-critical foundation.
 - [Experiment 453: the link-previews config enum and its preview predicates (LinkPreviews, previews_regular_link / previews_osc8_link)](453-config-link-previews.md)
   — **Pass** · Claude/Codex/Codex
 - [Experiment 454: the confirm-close-surface config enum and its confirm decision (ConfirmCloseSurface, needs_confirm)](454-config-confirm-close-surface.md)
-  — **Designed** · Claude/Codex/—
+  — **Pass** · Claude/Codex/Codex
 
 ## Non-Goals
 

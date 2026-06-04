@@ -207,6 +207,32 @@ impl LinkPreviews {
     }
 }
 
+/// The `confirm-close-surface` config (upstream `ConfirmCloseSurface`): whether
+/// closing a surface asks for confirmation. The `Config` default is `True`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ConfirmCloseSurface {
+    /// Never confirm.
+    False,
+    /// Confirm only when a command appears to be running.
+    True,
+    /// Always confirm.
+    Always,
+}
+
+impl ConfirmCloseSurface {
+    /// Whether closing needs confirmation, given whether the terminal is at a
+    /// shell prompt (the config's part of upstream `Surface.needsConfirmQuit`):
+    /// `Always` always confirms, `False` never confirms, `True` confirms only when
+    /// **not** `at_prompt`.
+    pub(crate) fn needs_confirm(self, at_prompt: bool) -> bool {
+        match self {
+            ConfirmCloseSurface::Always => true,
+            ConfirmCloseSurface::False => false,
+            ConfirmCloseSurface::True => !at_prompt,
+        }
+    }
+}
+
 /// The color space the window renders in (upstream `WindowColorspace`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum WindowColorspace {
@@ -525,8 +551,8 @@ impl OscColorReportFormat {
 mod tests {
     use super::{
         AlphaBlending, BackgroundBlur, BackgroundImageFit, BackgroundImagePosition, BoldColor,
-        Color, CopyOnSelect, CustomShaderAnimation, FontShapingBreak, FontStyle,
-        GraphemeWidthMethod, LinkPreviews, MiddleClickAction, MouseShiftCapture,
+        Color, ConfirmCloseSurface, CopyOnSelect, CustomShaderAnimation, FontShapingBreak,
+        FontStyle, GraphemeWidthMethod, LinkPreviews, MiddleClickAction, MouseShiftCapture,
         NotifyOnCommandFinish, NotifyOnCommandFinishAction, OscColorReportFormat, RightClickAction,
         ScrollToBottom, ShellIntegration, ShellIntegrationFeatures, TerminalBoldColor,
         TerminalColor,
@@ -608,6 +634,27 @@ mod tests {
         // `Copy` + `Eq`: a trivial round-trip.
         let copied = off;
         assert_eq!(off, copied);
+    }
+
+    #[test]
+    fn confirm_close_surface_needs_confirm_truth_table() {
+        use ConfirmCloseSurface::{Always, False, True};
+
+        // Always: always confirm regardless of prompt state.
+        assert!(Always.needs_confirm(true));
+        assert!(Always.needs_confirm(false));
+        // False: never confirm.
+        assert!(!False.needs_confirm(true));
+        assert!(!False.needs_confirm(false));
+        // True: confirm only when not at the prompt (a command is running).
+        assert!(!True.needs_confirm(true));
+        assert!(True.needs_confirm(false));
+
+        assert_ne!(False, Always);
+        // `Copy` + `Eq`: a trivial round-trip.
+        let c = True;
+        let copied = c;
+        assert_eq!(c, copied);
     }
 
     #[test]
