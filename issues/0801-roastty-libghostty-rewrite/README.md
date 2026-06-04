@@ -1436,7 +1436,7 @@ are past the correctness-critical foundation.
 - [Experiment 494: the list config formatters (RepeatableString / ColorList format_entry)](494-config-list-format-entries.md)
   — **Pass** · Claude/Codex/Codex
 - [Experiment 495: the Palette config formatter (Palette::format_entry)](495-config-palette-format-entry.md)
-  — **Designed** · Claude/Codex/—
+  — **Pass** · Claude/Codex/Codex
 
 ## Non-Goals
 

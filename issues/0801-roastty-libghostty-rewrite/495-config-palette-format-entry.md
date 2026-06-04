@@ -148,3 +148,46 @@ Review artifacts:
 
 - Prompt: `logs/codex-review/20260604-152731-d495-prompt.md` (design)
 - Result: `logs/codex-review/20260604-152731-d495-last-message.md` (design)
+
+## Result
+
+**Result:** Pass
+
+`Palette::format_entry` was added to the existing `impl Palette` exactly as
+designed — it iterates all 256 `value` entries (ignoring the mask), writing each
+as `name = {index}=#rrggbb\n` (decimal index, lowercase two-digit hex). The new
+test `palette_format_entry_writes_all_256` asserts the 256-line shape, the
+default first line `a = 0=#1d1f21`, and a modified index-0 line.
+
+Gates:
+
+- `cargo fmt -p roastty` accepted; `--check` clean.
+- `cargo test -p roastty`: 2980 passed, 0 failed (one new test; no regressions).
+- `cargo build -p roastty`: no warnings.
+- no-`ghostty`-name greps (font/renderer/config + lib.rs/header/abi_harness.c)
+  clean; `git diff --check` clean.
+
+## Completion Review
+
+Codex reviewed the completed experiment and **approved** it with **no
+findings**: the implementation matches upstream `Palette.formatEntry` (it
+iterates all 256 palette values, ignores the mask, and emits one string entry
+per index in decimal with lowercase two-digit RGB hex — `Config.zig:5890`); the
+test covers the upstream default first line and the all-256-lines shape plus a
+modified entry; gates are clean. "Approved with no findings."
+
+Review artifacts:
+
+- Prompt: `logs/codex-review/20260604-152940-r495-prompt.md` (result)
+- Result: `logs/codex-review/20260604-152940-r495-last-message.md` (result)
+
+## Conclusion
+
+`Palette::format_entry` is ported — all 256 entries as `index=#rrggbb` lines.
+The config formatter side now covers nine types (`Color`, `TerminalColor`,
+`BoldColor`, `WorkingDirectory`, `WindowPadding`, `BackgroundBlur`,
+`RepeatableString`, `ColorList`, `Palette`). The next slices can port the
+remaining types' `formatEntry` (`Duration` — which needs its `format` unit
+decomposition — `SelectionWordChars` — which re-encodes codepoints to UTF-8 —
+`QuickTerminalSize`, the codepoint maps), then the generic field-dispatch
+`formatEntry`, continuing toward the full config formatter and loader.

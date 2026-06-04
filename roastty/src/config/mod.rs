@@ -399,6 +399,14 @@ impl Palette {
         self.mask.set(key);
         Ok(())
     }
+
+    /// Format as config entries (upstream `Palette.formatEntry`): one
+    /// `index=#rrggbb` entry per palette index (all 256, mask ignored).
+    pub(crate) fn format_entry(&self, formatter: &mut EntryFormatter) {
+        for (k, rgb) in self.value.iter().enumerate() {
+            formatter.entry_str(&format!("{}=#{:02x}{:02x}{:02x}", k, rgb.r, rgb.g, rgb.b));
+        }
+    }
 }
 
 /// Parse a base-0 `u8` (upstream `std.fmt.parseInt(u8, _, 0)`). A faithful port of
@@ -3512,5 +3520,24 @@ mod tests {
             fmt(&|f| cl(&[black, white]).format_entry(f)),
             "a = #000000,#ffffff\n"
         );
+    }
+
+    #[test]
+    fn palette_format_entry_writes_all_256() {
+        // A default palette: 256 lines, the first the default index-0 color.
+        let mut out = String::new();
+        Palette::default().format_entry(&mut EntryFormatter::new("a", &mut out));
+        let lines: Vec<&str> = out.lines().collect();
+        assert_eq!(lines.len(), 256);
+        assert_eq!(lines[0], "a = 0=#1d1f21");
+
+        // A set index 0 renders as that color.
+        let mut p = Palette::default();
+        p.value[0] = Rgb::new(0xAA, 0xBB, 0xCC);
+        let mut out = String::new();
+        p.format_entry(&mut EntryFormatter::new("a", &mut out));
+        let lines: Vec<&str> = out.lines().collect();
+        assert_eq!(lines.len(), 256);
+        assert_eq!(lines[0], "a = 0=#aabbcc");
     }
 }
