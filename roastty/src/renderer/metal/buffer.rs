@@ -9,6 +9,7 @@ use objc2::runtime::ProtocolObject;
 use objc2_foundation::NSRange;
 use objc2_metal::{MTLBuffer, MTLDevice};
 
+use crate::renderer::cell::Contents;
 use crate::renderer::metal::api::{MetalResourceOptions, MetalStorageMode};
 use crate::renderer::shader::{BgImageVertex, CellBg, CellTextVertex, ImageVertex};
 
@@ -204,6 +205,50 @@ impl<T: MetalBufferElement> MetalBuffer<T> {
             }
         }
         bytes
+    }
+}
+
+/// The frame-owned cell buffers: a background buffer and a cell-text
+/// (foreground) buffer. Mirrors upstream's per-frame `cells_bg` / `cells`. Both
+/// start at the initial capacity of one element and share the same buffer
+/// options (upstream `bgBufferOptions == fgBufferOptions`).
+pub(crate) struct FrameCells {
+    cells_bg: MetalBuffer<CellBg>,
+    cells: MetalBuffer<CellTextVertex>,
+}
+
+impl FrameCells {
+    /// Create the frame's cell buffers, each at the initial capacity of one
+    /// element (upstream `init(api.{bg,fg}BufferOptions(), 1)`).
+    pub(crate) fn new(options: MetalBufferOptions<'_>) -> Result<Self, MetalBufferError> {
+        let cells_bg = MetalBuffer::new(options, 1)?;
+        let cells = MetalBuffer::new(options, 1)?;
+        Ok(Self { cells_bg, cells })
+    }
+
+    /// Sync the assembled [`Contents`] into the GPU buffers — the background
+    /// slice 1:1, the foreground row lists concatenated — returning the
+    /// foreground vertex count (upstream `drawFrame`: `cells_bg.sync(bg_cells)`
+    /// then `fg_count = cells.syncFromArrayLists(fg_rows.lists)`). Background and
+    /// foreground share `options` (upstream `bgBufferOptions == fgBufferOptions`).
+    pub(crate) fn sync(
+        &mut self,
+        options: MetalBufferOptions<'_>,
+        contents: &Contents,
+    ) -> Result<usize, MetalBufferError> {
+        self.cells_bg.sync(options, contents.bg_cells())?;
+        self.cells
+            .sync_from_array_lists(options, contents.fg_rows())
+    }
+
+    /// The background cell buffer (bound at the bg / cell-bg draw steps).
+    pub(crate) fn bg_buffer(&self) -> &ProtocolObject<dyn MTLBuffer> {
+        self.cells_bg.buffer()
+    }
+
+    /// The cell-text (foreground) buffer (bound at the cell-text draw step).
+    pub(crate) fn text_buffer(&self) -> &ProtocolObject<dyn MTLBuffer> {
+        self.cells.buffer()
     }
 }
 
@@ -408,6 +453,103 @@ mod tests {
         assert_eq!(count, 0);
         assert_eq!(buffer.capacity_items(), 3);
         assert_eq!(buffer.capacity_bytes(), 12);
+    }
+
+    fn text_vertex(col: u16, color: [u8; 4]) -> CellTextVertex {
+        use crate::renderer::shader::{CellTextAtlas, CellTextFlags};
+        CellTextVertex {
+            glyph_pos: [0, 0],
+            glyph_size: [0, 0],
+            bearings: [0, 0],
+            grid_pos: [col, 0],
+            color,
+            atlas: CellTextAtlas::Grayscale,
+            flags: CellTextFlags::default(),
+            _padding: [0, 0],
+        }
+    }
+
+    #[test]
+    fn frame_cells_sync_uploads_background_and_foreground() {
+        use crate::renderer::cell::{Contents, Key};
+        use crate::renderer::cursor::Style as CursorStyle;
+        use crate::renderer::size::GridSize;
+
+        let device = metal_device();
+
+        // A 2×1 Contents: two background cells, a foreground vertex on the real
+        // row, and a block cursor glyph in the reserved list.
+        let mut contents = Contents::default();
+        contents.resize(GridSize {
+            columns: 2,
+            rows: 1,
+        });
+        *contents.bg_cell_mut(0, 0) = CellBg([1, 2, 3, 4]);
+        *contents.bg_cell_mut(0, 1) = CellBg([5, 6, 7, 8]);
+        let row_vertex = text_vertex(1, [10, 20, 30, 40]);
+        contents.add(Key::Text, row_vertex);
+        let cursor_vertex = text_vertex(0, [90, 90, 90, 90]);
+        contents.set_cursor(Some(cursor_vertex), Some(CursorStyle::Block));
+
+        let mut frame = FrameCells::new(shared_options(&device)).expect("create frame cells");
+        let fg_count = frame
+            .sync(shared_options(&device), &contents)
+            .expect("sync frame cells");
+
+        // The foreground count includes the cursor glyph (reserved list 0) AND
+        // the real-row vertex.
+        assert_eq!(fg_count, 2);
+
+        // The background buffer holds the two background cells, row-major. Both
+        // buffers grew from the initial capacity of one (2 items → doubled to 4).
+        assert_eq!(
+            frame.cells_bg.read_bytes(2),
+            data_as_bytes(&[CellBg([1, 2, 3, 4]), CellBg([5, 6, 7, 8])]).to_vec()
+        );
+        assert_eq!(frame.cells_bg.capacity_items(), 4);
+
+        // The cell-text buffer holds the concatenation: the cursor glyph (reserved
+        // list 0) first, then the real-row vertex (list 1).
+        assert_eq!(
+            frame.cells.read_bytes(2),
+            data_as_bytes(&[cursor_vertex, row_vertex]).to_vec()
+        );
+        assert_eq!(frame.cells.capacity_items(), 4);
+    }
+
+    #[test]
+    fn frame_cells_sync_grows_for_larger_contents() {
+        use crate::renderer::cell::{Contents, Key};
+        use crate::renderer::size::GridSize;
+
+        let device = metal_device();
+
+        // A 3×1 Contents with three foreground vertices on the real row (no
+        // cursor): the foreground count is 3, and the cell-text buffer grows.
+        let mut contents = Contents::default();
+        contents.resize(GridSize {
+            columns: 3,
+            rows: 1,
+        });
+        let v0 = text_vertex(0, [1, 1, 1, 1]);
+        let v1 = text_vertex(1, [2, 2, 2, 2]);
+        let v2 = text_vertex(2, [3, 3, 3, 3]);
+        contents.add(Key::Text, v0);
+        contents.add(Key::Text, v1);
+        contents.add(Key::Text, v2);
+
+        let mut frame = FrameCells::new(shared_options(&device)).expect("create frame cells");
+        let fg_count = frame
+            .sync(shared_options(&device), &contents)
+            .expect("sync frame cells");
+
+        assert_eq!(fg_count, 3);
+        assert_eq!(
+            frame.cells.read_bytes(3),
+            data_as_bytes(&[v0, v1, v2]).to_vec()
+        );
+        // 3 items exceeded the capacity-1 buffer → doubled to 6.
+        assert_eq!(frame.cells.capacity_items(), 6);
     }
 
     #[test]

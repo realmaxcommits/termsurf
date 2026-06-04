@@ -203,3 +203,74 @@ Review artifacts:
 
 - Prompt: `logs/codex-review/20260604-071821-d408-prompt.md` (design)
 - Result: `logs/codex-review/20260604-071821-d408-last-message.md` (design)
+
+## Result
+
+**Result:** Pass
+
+The frame cell buffers are now live.
+
+- `roastty/src/renderer/metal/buffer.rs`: a `FrameCells` struct owning
+  `cells_bg: MetalBuffer<CellBg>` and `cells: MetalBuffer<CellTextVertex>`, with
+  `new(options)` (both buffers at capacity one),
+  `sync(options, contents) -> Result<usize, MetalBufferError>` (background 1:1
+  via `sync`, then foreground concatenated via `sync_from_array_lists`,
+  returning the foreground vertex count), and `bg_buffer()` / `text_buffer()`
+  accessors exposing the `MTLBuffer`s for the later draw-step binding. Added
+  `use crate::renderer::cell::Contents;`.
+
+Tests (in `buffer.rs`, live Metal device):
+
+- `frame_cells_sync_uploads_background_and_foreground` — a 2×1 `Contents` (two
+  background cells, a foreground vertex on the real row, a block cursor glyph
+  via `set_cursor`) → `sync` returns `2` (the cursor glyph **and** the real-row
+  vertex); the background buffer holds the two `bg_cells` bytes (capacity grew
+  to `4`); the cell-text buffer holds the concatenation, cursor glyph first
+  (reserved list `0`) then the real-row vertex (capacity grew to `4`).
+- `frame_cells_sync_grows_for_larger_contents` — a 3×1 `Contents` with three
+  foreground vertices (no cursor) → `sync` returns `3`, the cell-text buffer
+  holds `[v0, v1, v2]` and grew to capacity `6`.
+
+Gate results:
+
+- `cargo fmt -p roastty` accepted; `--check` clean.
+- `cargo test -p roastty` → 2874 passed, 0 failed (+2, no regressions).
+- `cargo build -p roastty` → no warnings.
+- No-`ghostty`-name gates (font + renderer + `lib.rs`/header/`abi_harness.c`)
+  clean; `git diff --check` clean.
+
+## Conclusion
+
+The frame now owns its background + cell-text buffers and syncs an assembled
+`Contents` into them in one call, returning the foreground vertex count — a
+faithful port of upstream's per-frame cell buffers and the `drawFrame` cell sync
+(generic.zig:1560–1561). The cell-upload path is now complete end-to-end:
+per-cell assembly (`rebuildCells`) → `Contents` read views → the two upload
+primitives → the frame buffer pair. The next renderer-bridge slice is the
+per-frame draw that binds these buffers (`bg_buffer` / `text_buffer`) and issues
+the bg-color / cell-bg / cell-text render-pass steps, plus the uniform/atlas
+sync — which depends on the live frame / render-pass plumbing; the
+`rebuild_viewport` cursor/preedit assembly and the live `Contents` assembly call
+stay deferred.
+
+## Completion Review
+
+Codex reviewed the completed implementation and result and **approved** with
+**no findings**. It confirmed the implementation matches the approved design and
+upstream shape: `FrameCells::new` creates both typed buffers at capacity `1`;
+`sync` uploads the background first via `contents.bg_cells()` then the
+foreground via `contents.fg_rows()`, returning the `sync_from_array_lists`
+foreground count; and because `fg_rows()` exposes the full list array, the count
+and upload include the block cursor in reserved list `0` (the byte-order test
+verifies the cursor-first concatenation). It confirmed that using the same
+`MetalBufferOptions` for both buffers is faithful to upstream's shared bg/fg
+buffer options, that the `bg_buffer()` / `text_buffer()` accessors expose the
+underlying `MTLBuffer`s for later draw binding, and that the tests cover the
+background bytes, foreground bytes, cursor inclusion, and growth behavior.
+Internal Rust only — no public C ABI/header impact; nothing needed to change
+before the result commit.
+
+Review artifacts:
+
+- Prompt: `logs/codex-review/20260604-072135-r408-prompt.md` (result)
+- Result: `logs/codex-review/20260604-072135-r408-last-message.md` (result)

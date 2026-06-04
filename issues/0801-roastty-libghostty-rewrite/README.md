@@ -1262,7 +1262,7 @@ are past the correctness-critical foundation.
 - [Experiment 407: the Contents upload accessors](407-contents-upload-accessors.md)
   — **Pass** · Claude/Codex/Codex
 - [Experiment 408: the frame cell buffers (FrameCells)](408-frame-cell-buffers.md)
-  — **Designed** · Claude/Codex/Codex
+  — **Pass** · Claude/Codex/Codex
 
 ## Non-Goals
 
