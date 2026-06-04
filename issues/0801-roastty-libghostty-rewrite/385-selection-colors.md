@@ -253,3 +253,77 @@ Review artifacts:
 
 - Prompt: `logs/codex-review/20260603-195744-901792-prompt.md` (design)
 - Result: `logs/codex-review/20260603-195744-901792-last-message.md` (design)
+
+## Result
+
+**Result:** Pass
+
+The selection color computation is now ported.
+
+- `roastty/src/renderer/cell.rs`: a new `SelectionColor` enum (upstream
+  `TerminalColor`: `Color(Rgb)` / `CellForeground` / `CellBackground`) and a
+  `selection_colors` function returning the shared `CellColors`. It resolves the
+  cell's SGR `fg_style`/`bg_style` and
+  `final_bg = bg_style.unwrap_or(default_bg)`, then applies upstream's
+  `.selection` bg/fg arms: the background `None → Some(default_fg)`,
+  `Color(c) → Some(c)`, `CellForeground → inverse ? bg_style : Some(fg_style)`,
+  `CellBackground → inverse ? Some(fg_style) : bg_style` (kept an `Option`,
+  default-fallback); the foreground `None → default_bg`, `Color(c) → c`,
+  `CellForeground → inverse ? final_bg : fg_style`,
+  `CellBackground → inverse ? fg_style : final_bg`. It takes no codepoint — the
+  covering twist does not apply to a selected cell. `cell_colors` and its
+  callers are untouched.
+
+Test (in `cell.rs`): `selection_colors_applies_the_selection_arms` covers, for a
+cell with explicit SGR `fg = a` / `bg = b`, the default-config plain reverse
+(`bg = Some(default_fg)`, `fg = default_bg`), explicit colors verbatim, the
+`CellForeground`/`CellBackground` matrix non-inverse (`fg(a)`/`bg(b)`) and
+inverse (swapped), and the no-explicit-bg fallback (`CellForeground` background
+under inverse → `bg = None`; `CellBackground` foreground non-inverse →
+`final_bg = default_bg`).
+
+Gate results:
+
+- `cargo fmt -p roastty` accepted; `--check` clean.
+- `cargo test -p roastty` → 2840 passed, 0 failed (+1, no regressions).
+- `cargo build -p roastty` → no warnings (`pub(crate)` items are reachable in
+  the library crate, so no dead-code warning despite no non-test caller yet).
+- No-`ghostty`-name gates (font + renderer) clean; `git diff --check` clean.
+
+## Conclusion
+
+A selected cell's colors are now computable faithfully: given the
+`selection-background`/`selection-foreground` config, `selection_colors`
+produces upstream's `.selection` colors (a plain reverse by default, an explicit
+color, or the cell's own colors swapped under `inverse`), with the background
+kept optional for the default-fallback and the covering twist correctly
+excluded. The function returns the shared `CellColors`, so the row passes can
+later choose `selection_colors` vs `cell_colors` per cell from a `selected`
+state.
+
+The remaining renderer-bridge work: the per-cell `selected` state and the
+plumbing of real selection ranges (and the `bg_alpha` selection → opaque branch)
+into the row passes; the `.search`/`.search_selected` highlight arms; the
+lock-cursor glyph + under-cursor text recolor; the column-ordered decoration
+merge + link double-underline; and the **Metal upload** of `Contents`.
+
+## Completion Review
+
+Codex reviewed the completed implementation and result and **approved** with
+**no findings**. It confirmed the implementation matches the approved mapping
+and upstream's `.selection` arms: `SelectionColor` has the right three cases;
+`selection_colors` preserves the selected background as `Option<Rgb>`, uses
+`final_bg = bg_style.unwrap_or(default_bg)` for the foreground cases, and
+applies the inverse swaps correctly; the `None` defaults are the default
+foreground (background) and default background (foreground); the function
+intentionally takes no codepoint (the covering twist is only in the non-selected
+background arm); `cell_colors` and its callers are untouched; and
+`.search`/`.search_selected` plus the selection-range plumbing remain cleanly
+deferred. It confirmed the test covers the default reverse, explicit colors, the
+cell-fg/cell-bg matrix under inverse and non-inverse, and the no-explicit-bg
+fallback, with the diff internal to `cell.rs` (no public C ABI/header change).
+Nothing needed to change before the result commit.
+
+Review artifacts:
+
+- Result review: `logs/codex-review/20260603-195943-493961-last-message.md`

@@ -221,6 +221,83 @@ pub(crate) fn cell_colors(
     CellColors { fg, bg }
 }
 
+/// A selection/search color configuration value (upstream `TerminalColor`):
+/// either an explicit color, or the cell's own resolved foreground/background.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SelectionColor {
+    Color(Rgb),
+    CellForeground,
+    CellBackground,
+}
+
+/// Compute a *selected* cell's final colors — upstream's `.selection` arms of the
+/// per-cell background/foreground switches. `background`/`foreground` are the
+/// `selection-background`/`selection-foreground` config (`None` → the default
+/// selection colors: the default foreground for the background, the default
+/// background for the foreground — a plain reverse). The covering (full-block)
+/// twist does not apply to a selected cell, so this takes no codepoint. The
+/// `.search`/`.search_selected` arms are deferred.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn selection_colors(
+    style: TermStyle,
+    default_fg: Rgb,
+    default_bg: Rgb,
+    palette: &Palette,
+    bold: Option<BoldColor>,
+    background: Option<SelectionColor>,
+    foreground: Option<SelectionColor>,
+) -> CellColors {
+    let fg_style = style.resolve_fg(default_fg, palette, bold);
+    let bg_style = style.resolve_bg(palette);
+    let inverse = style.flags.inverse;
+    let final_bg = bg_style.unwrap_or(default_bg);
+
+    // Background: `None` → the default foreground (a plain reverse). The
+    // `CellForeground`/`CellBackground` options can yield `bg_style` (possibly
+    // `None`, i.e. the default background), faithful to upstream.
+    let bg = match background {
+        None => Some(default_fg),
+        Some(SelectionColor::Color(c)) => Some(c),
+        Some(SelectionColor::CellForeground) => {
+            if inverse {
+                bg_style
+            } else {
+                Some(fg_style)
+            }
+        }
+        Some(SelectionColor::CellBackground) => {
+            if inverse {
+                Some(fg_style)
+            } else {
+                bg_style
+            }
+        }
+    };
+
+    // Foreground: `None` → the default background (a plain reverse). The
+    // cell-color options use `final_bg` (the default-filled background).
+    let fg = match foreground {
+        None => default_bg,
+        Some(SelectionColor::Color(c)) => c,
+        Some(SelectionColor::CellForeground) => {
+            if inverse {
+                final_bg
+            } else {
+                fg_style
+            }
+        }
+        Some(SelectionColor::CellBackground) => {
+            if inverse {
+                fg_style
+            } else {
+                final_bg
+            }
+        }
+    };
+
+    CellColors { fg, bg }
+}
+
 /// Identifies which GPU buffer a cell belongs to. Conceptually maps to a cell
 /// type (upstream `Key.CellType`): `Bg` → `CellBg`; the foreground kinds
 /// (`Text`/`Underline`/`Strikethrough`/`Overline`) → `CellTextVertex`.
@@ -2263,6 +2340,133 @@ mod tests {
         assert_eq!(
             colors(true, Color::Rgb(b), block),
             CellColors { fg: b, bg: Some(b) }
+        );
+    }
+
+    #[test]
+    fn selection_colors_applies_the_selection_arms() {
+        use crate::terminal::color::DEFAULT_PALETTE;
+        use crate::terminal::style::{Color, Flags, Style as TermStyle};
+
+        let a = Rgb::new(10, 20, 30);
+        let b = Rgb::new(40, 50, 60);
+        let c1 = Rgb::new(1, 2, 3);
+        let c2 = Rgb::new(4, 5, 6);
+        let default_fg = Rgb::new(200, 200, 200);
+        let default_bg = Rgb::new(7, 8, 9);
+
+        // A cell with an explicit SGR fg=a / bg=b.
+        let styled = |inverse: bool, bg: Color| TermStyle {
+            fg_color: Color::Rgb(a),
+            bg_color: bg,
+            flags: Flags {
+                inverse,
+                ..Flags::default()
+            },
+            ..TermStyle::default()
+        };
+        let sel = |inverse, bg, bg_cfg, fg_cfg| {
+            selection_colors(
+                styled(inverse, bg),
+                default_fg,
+                default_bg,
+                &DEFAULT_PALETTE,
+                None,
+                bg_cfg,
+                fg_cfg,
+            )
+        };
+
+        // Default config (None/None): a plain reverse — bg is the default
+        // foreground, fg is the default background.
+        assert_eq!(
+            sel(false, Color::Rgb(b), None, None),
+            CellColors {
+                fg: default_bg,
+                bg: Some(default_fg)
+            }
+        );
+
+        // Explicit colors are used verbatim.
+        assert_eq!(
+            sel(
+                false,
+                Color::Rgb(b),
+                Some(SelectionColor::Color(c1)),
+                Some(SelectionColor::Color(c2)),
+            ),
+            CellColors {
+                fg: c2,
+                bg: Some(c1)
+            }
+        );
+
+        // CellForeground/CellBackground, non-inverse: the cell's own resolved
+        // colors. bg: CellForeground→fg(a), CellBackground→bg(b);
+        // fg: CellForeground→fg(a), CellBackground→final_bg(b).
+        assert_eq!(
+            sel(
+                false,
+                Color::Rgb(b),
+                Some(SelectionColor::CellForeground),
+                Some(SelectionColor::CellForeground),
+            ),
+            CellColors { fg: a, bg: Some(a) }
+        );
+        assert_eq!(
+            sel(
+                false,
+                Color::Rgb(b),
+                Some(SelectionColor::CellBackground),
+                Some(SelectionColor::CellBackground),
+            ),
+            CellColors { fg: b, bg: Some(b) }
+        );
+
+        // CellForeground/CellBackground, inverse: the swap.
+        // bg: CellForeground→bg(b), CellBackground→fg(a);
+        // fg: CellForeground→final_bg(b), CellBackground→fg(a).
+        assert_eq!(
+            sel(
+                true,
+                Color::Rgb(b),
+                Some(SelectionColor::CellForeground),
+                Some(SelectionColor::CellForeground),
+            ),
+            CellColors { fg: b, bg: Some(b) }
+        );
+        assert_eq!(
+            sel(
+                true,
+                Color::Rgb(b),
+                Some(SelectionColor::CellBackground),
+                Some(SelectionColor::CellBackground),
+            ),
+            CellColors { fg: a, bg: Some(a) }
+        );
+
+        // No explicit SGR bg: CellForeground background under inverse yields the
+        // cell's (None) background — falls back to the default background; the
+        // CellBackground foreground non-inverse yields final_bg = default_bg.
+        assert_eq!(
+            sel(
+                true,
+                Color::None,
+                Some(SelectionColor::CellForeground),
+                None,
+            )
+            .bg,
+            None
+        );
+        assert_eq!(
+            sel(
+                false,
+                Color::None,
+                None,
+                Some(SelectionColor::CellBackground),
+            )
+            .fg,
+            default_bg
         );
     }
 
