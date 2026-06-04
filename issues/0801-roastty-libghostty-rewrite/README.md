@@ -1213,7 +1213,7 @@ are past the correctness-critical foundation.
   — **Pass** · Claude/Codex/Codex
 - [Experiment 383: faint foreground alpha](383-faint-alpha.md) — **Pass** ·
   Claude/Codex/Codex
-- [Experiment 384: the background-cell alpha](384-bg-alpha.md) — **Designed** ·
+- [Experiment 384: the background-cell alpha](384-bg-alpha.md) — **Pass** ·
   Claude/Codex/Codex
 
 ## Non-Goals

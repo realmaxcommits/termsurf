@@ -202,3 +202,78 @@ Review artifacts:
 
 - Prompt: `logs/codex-review/20260603-194839-346613-prompt.md` (design)
 - Result: `logs/codex-review/20260603-194839-346613-last-message.md` (design)
+
+## Result
+
+**Result:** Pass
+
+`rebuild_bg_row` now writes the per-cell background alpha faithfully.
+
+- `roastty/src/renderer/cell.rs`: `rebuild_bg_row` writes the background cell
+  **unconditionally** — `rgb = cell_colors(...).bg.unwrap_or(default_bg)`
+  (upstream `bg orelse default`) — with a per-cell
+  `bg_alpha = (inverse || has_explicit_bg) ? alpha : 0`, where
+  `has_explicit_bg = cell.style.bg_color != Color::None` (upstream
+  `bg_style != null`), evaluated independently of whether the final background
+  is `Some`. `Color` is now imported at module scope; the doc comment describes
+  the new alpha rule. The selection and `background_opacity_cells` branches stay
+  deferred.
+
+Tests (in `cell.rs`):
+
+- `rebuild_bg_row_full_block_without_bg_is_transparent` — a non-inverse `U+2588`
+  with an explicit fg but no explicit background: the covering twist makes the
+  final bg `Some(fg)`, but with no explicit bg and no inverse the alpha is `0`,
+  so `bg_cell(0, 0)` is `CellBg([fg.r, fg.g, fg.b, 0])` (transparent).
+- `rebuild_bg_row_inverse_without_bg_is_opaque_default` — an inverse `U+2588`
+  with an explicit fg but no explicit background, drawn with a non-black
+  `default_bg`: `inverse != is_covering` cancels so the final bg is `None`, the
+  RGB falls back to `default_bg`, and the inverse branch makes the alpha opaque
+  — `bg_cell(0, 0)` is
+  `CellBg([default_bg.r, default_bg.g, default_bg.b, 255])`.
+
+Gate results:
+
+- `cargo fmt -p roastty` accepted; `--check` clean.
+- `cargo test -p roastty` → 2839 passed, 0 failed (+2, no regressions; the
+  existing `rebuild_bg_row` tests pass a black `default_bg`, so the transparent
+  path still yields `[0, 0, 0, 0]`).
+- `cargo build -p roastty` → no warnings.
+- No-`ghostty`-name gates (font + renderer) clean; `git diff --check` clean.
+
+## Conclusion
+
+The background half of the rebuild now matches upstream's `bg_alpha`: an inverse
+or explicit-background cell draws opaque, a covering-derived or default
+background draws transparent, and the RGB always falls back to the default
+background — so an inverse cell with no explicit background draws an opaque
+default background (previously clamped to fully transparent), and a full block
+without an explicit background draws transparent (previously opaque). With the
+foreground (reverse-video, full-block twist, faint) and the background alpha all
+live, the CPU-side per-cell color/alpha computation is complete for the
+non-selection, no-opacity-config case.
+
+The remaining renderer-bridge work: the **selection/search** colors (which also
+feed the `bg_alpha` selection → opaque branch) and the
+`background_opacity_cells` opacity scaling; the lock-cursor glyph + under-cursor
+text recolor; the column-ordered decoration merge + link double-underline; and
+the **Metal upload** of `Contents`.
+
+## Completion Review
+
+Codex reviewed the completed implementation and result and **approved** with
+**no findings**. It confirmed the implementation matches the approved design and
+upstream shape: `rebuild_bg_row` writes the background cell unconditionally with
+`colors.bg.unwrap_or(default_bg)` for the RGB and computes `bg_alpha`
+independently as `alpha` for inverse or explicit-background cells (else `0`);
+that `cell.style.bg_color != Color::None` is equivalent to upstream's original
+`bg_style != null`; that the two new tests cover the corrected edges
+(non-inverse `U+2588` without an explicit bg → foreground RGB at alpha `0`;
+inverse `U+2588` without an explicit bg → opaque non-black `default_bg`) while
+the existing explicit-bg/default-transparent behavior is preserved; and that the
+diff is internal Rust only, with no C ABI/header surface change. Nothing needed
+to change before the result commit.
+
+Review artifacts:
+
+- Result review: `logs/codex-review/20260603-195328-438770-last-message.md`

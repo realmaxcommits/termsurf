@@ -28,7 +28,7 @@ use crate::font::sprite::draw::Sprite;
 use crate::font::Presentation;
 use crate::terminal::color::{Palette, Rgb};
 use crate::terminal::sgr::Underline;
-use crate::terminal::style::{BoldColor, Style as TermStyle};
+use crate::terminal::style::{BoldColor, Color, Style as TermStyle};
 
 /// True only for U+2588 FULL BLOCK.
 pub(crate) fn is_covering(cp: u32) -> bool {
@@ -680,11 +680,16 @@ pub(crate) fn rebuild_viewport(
 }
 
 /// Write one viewport row's background cells into `contents`. Each cell's
-/// background comes from [`cell_colors`] (so reverse-video and the full-block
-/// twist are applied): a `Some` background paints a [`CellBg`] at its column with
-/// `alpha`; a default (`None`) background is actively written transparent so a
-/// stale background from a prior rebuild cannot linger. The background half of
-/// upstream `rebuildCells`'s per-cell work.
+/// background color comes from [`cell_colors`] (so reverse-video and the
+/// full-block twist are applied), falling back to `default_bg` when the resolved
+/// background is `None` (upstream `bg orelse default`). The background cell is
+/// written unconditionally with a per-cell `bg_alpha`: opaque (the base `alpha`)
+/// for an inverse cell or one with an explicit background, transparent (`0`)
+/// otherwise — so a covering-derived or default background lets the already-drawn
+/// screen background show through, while an inverse cell stays opaque even when
+/// its resolved background is `None`. The selection and `background_opacity_cells`
+/// branches are deferred. The background half of upstream `rebuildCells`'s
+/// per-cell work.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn rebuild_bg_row(
     contents: &mut Contents,
@@ -698,18 +703,28 @@ pub(crate) fn rebuild_bg_row(
 ) {
     let row = usize::from(y);
     for (col, cell) in row_cells.iter().enumerate() {
-        let bg = cell_colors(
+        let colors = cell_colors(
             cell.style,
             cell.codepoint,
             default_fg,
             default_bg,
             palette,
             bold,
-        )
-        .bg
-        .map(|rgb| CellBg([rgb.r, rgb.g, rgb.b, alpha]))
-        .unwrap_or(CellBg([0, 0, 0, 0]));
-        *contents.bg_cell_mut(row, col) = bg;
+        );
+        // Opaque for an inverse cell or one with an explicit background; a
+        // covering-derived or default background is transparent. Evaluated
+        // independently of whether the final background is `Some` (upstream's
+        // `bg_alpha` branches run regardless of `bg == null`).
+        let has_explicit_bg = !matches!(cell.style.bg_color, Color::None);
+        let bg_alpha = if cell.style.flags.inverse || has_explicit_bg {
+            alpha
+        } else {
+            0
+        };
+        // The RGB falls back to the default background (upstream `bg orelse
+        // default`).
+        let rgb = colors.bg.unwrap_or(default_bg);
+        *contents.bg_cell_mut(row, col) = CellBg([rgb.r, rgb.g, rgb.b, bg_alpha]);
     }
 }
 
@@ -1801,6 +1816,101 @@ mod tests {
 
         // The full block paints its bg with the foreground color (a), not b.
         assert_eq!(*c.bg_cell(0, 0), CellBg([a.r, a.g, a.b, 255]));
+    }
+
+    #[test]
+    fn rebuild_bg_row_full_block_without_bg_is_transparent() {
+        use crate::terminal::color::{Rgb, DEFAULT_PALETTE};
+        use crate::terminal::style::{Color, Style as TermStyle};
+
+        let mut c = Contents::default();
+        c.resize(grid(1, 1));
+
+        let a = Rgb::new(11, 22, 33);
+        // A full block (U+2588) with an explicit fg but NO explicit background,
+        // non-inverse: the covering twist makes the final bg `Some(fg)`, but with
+        // no explicit `bg_style` and no inverse the `bg_alpha` is 0 — the cell is
+        // transparent (the screen background shows through), carrying the
+        // foreground RGB at alpha 0.
+        let cell = RunCell {
+            codepoint: 0x2588,
+            graphemes: vec![],
+            style: TermStyle {
+                fg_color: Color::Rgb(a),
+                bg_color: Color::None,
+                ..TermStyle::default()
+            },
+            style_id: 0,
+            wide: Wide::Narrow,
+            is_empty: false,
+            is_codepoint: true,
+        };
+
+        rebuild_bg_row(
+            &mut c,
+            0,
+            &[cell],
+            Rgb::new(200, 200, 200),
+            Rgb::new(0, 0, 0),
+            &DEFAULT_PALETTE,
+            None,
+            255,
+        );
+
+        // Covering-derived bg, no explicit bg, not inverse → transparent.
+        assert_eq!(*c.bg_cell(0, 0), CellBg([a.r, a.g, a.b, 0]));
+    }
+
+    #[test]
+    fn rebuild_bg_row_inverse_without_bg_is_opaque_default() {
+        use crate::terminal::color::{Rgb, DEFAULT_PALETTE};
+        use crate::terminal::style::{Color, Flags, Style as TermStyle};
+
+        let mut c = Contents::default();
+        c.resize(grid(1, 1));
+
+        let a = Rgb::new(11, 22, 33);
+        let default_bg = Rgb::new(7, 8, 9);
+        // An inverse full block (U+2588) with an explicit fg but NO explicit
+        // background. `inverse != is_covering` cancels, so the final bg is `None`;
+        // the RGB falls back to `default_bg`, and the inverse branch makes the
+        // `bg_alpha` opaque even though the final bg is `None`.
+        let cell = RunCell {
+            codepoint: 0x2588,
+            graphemes: vec![],
+            style: TermStyle {
+                fg_color: Color::Rgb(a),
+                bg_color: Color::None,
+                flags: Flags {
+                    inverse: true,
+                    ..Flags::default()
+                },
+                ..TermStyle::default()
+            },
+            style_id: 0,
+            wide: Wide::Narrow,
+            is_empty: false,
+            is_codepoint: true,
+        };
+
+        rebuild_bg_row(
+            &mut c,
+            0,
+            &[cell],
+            Rgb::new(200, 200, 200),
+            default_bg,
+            &DEFAULT_PALETTE,
+            None,
+            255,
+        );
+
+        // Inverse, no explicit bg → opaque default background (proves the inverse
+        // branch fires though the final bg is `None`, and the RGB falls back to
+        // `default_bg`).
+        assert_eq!(
+            *c.bg_cell(0, 0),
+            CellBg([default_bg.r, default_bg.g, default_bg.b, 255])
+        );
     }
 
     fn underline_opts(grid: &SharedGrid) -> RenderOptions {
