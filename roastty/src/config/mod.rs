@@ -991,6 +991,47 @@ fn parse_bool(v: &str) -> Option<bool> {
     }
 }
 
+/// An error parsing a packed-struct bool-flag value (upstream
+/// `error.InvalidValue` from `cli.args.parsePackedStruct`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FlagsParseError {
+    /// A comma part named no known flag.
+    InvalidValue,
+}
+
+/// A token from a packed-struct flag value: `All` (a standalone bool) or `One`
+/// (a single `[no-]flag` keyword).
+enum FlagToken<'a> {
+    All(bool),
+    One(&'a str, bool),
+}
+
+/// Parse a packed-struct bool-flag value (upstream `cli.args.parsePackedStruct`):
+/// a standalone bool yields `All(b)` (setting every flag); otherwise each comma
+/// part yields `One(name, on)` (a `no-` prefix means `on = false`). `apply` sets
+/// the flag(s) and returns `false` for an unknown name (upstream's
+/// `error.InvalidValue`).
+fn parse_packed_flags(
+    value: &str,
+    mut apply: impl FnMut(FlagToken) -> bool,
+) -> Result<(), FlagsParseError> {
+    if let Some(b) = parse_bool(value) {
+        apply(FlagToken::All(b));
+        return Ok(());
+    }
+    for part in value.split(',') {
+        let trimmed = part.trim_matches(|c| c == ' ' || c == '\t');
+        let (name, on) = match trimmed.strip_prefix("no-") {
+            Some(rest) => (rest, false),
+            None => (trimmed, true),
+        };
+        if !apply(FlagToken::One(name, on)) {
+            return Err(FlagsParseError::InvalidValue);
+        }
+    }
+    Ok(())
+}
+
 /// An error parsing a `RepeatableString` (upstream `error.ValueRequired`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RepeatableStringParseError {
@@ -2233,6 +2274,25 @@ impl FontShapingBreak {
     pub(crate) fn format_entry(self, formatter: &mut EntryFormatter) {
         formatter.entry_flags(&[("cursor", self.cursor)]);
     }
+
+    /// Parse a packed-struct flag value (upstream `cli.args.parsePackedStruct`): a
+    /// standalone bool sets every flag; otherwise a `[no-]flag` comma-list sets the
+    /// named flags, with defaults for the rest.
+    pub(crate) fn parse_cli(value: &str) -> Result<Self, FlagsParseError> {
+        let mut result = FontShapingBreak::default();
+        parse_packed_flags(value, |tok| match tok {
+            FlagToken::All(b) => {
+                result.cursor = b;
+                true
+            }
+            FlagToken::One("cursor", on) => {
+                result.cursor = on;
+                true
+            }
+            FlagToken::One(_, _) => false,
+        })?;
+        Ok(result)
+    }
 }
 
 impl Default for FontShapingBreak {
@@ -2258,6 +2318,30 @@ impl ScrollToBottom {
     /// keywords comma-joined.
     pub(crate) fn format_entry(self, formatter: &mut EntryFormatter) {
         formatter.entry_flags(&[("keystroke", self.keystroke), ("output", self.output)]);
+    }
+
+    /// Parse a packed-struct flag value (upstream `cli.args.parsePackedStruct`): a
+    /// standalone bool sets every flag; otherwise a `[no-]flag` comma-list sets the
+    /// named flags, with defaults for the rest.
+    pub(crate) fn parse_cli(value: &str) -> Result<Self, FlagsParseError> {
+        let mut result = ScrollToBottom::default();
+        parse_packed_flags(value, |tok| match tok {
+            FlagToken::All(b) => {
+                result.keystroke = b;
+                result.output = b;
+                true
+            }
+            FlagToken::One("keystroke", on) => {
+                result.keystroke = on;
+                true
+            }
+            FlagToken::One("output", on) => {
+                result.output = on;
+                true
+            }
+            FlagToken::One(_, _) => false,
+        })?;
+        Ok(result)
     }
 }
 
@@ -2642,16 +2726,16 @@ mod tests {
         BackgroundImagePosition, BoldColor, ClipboardAccess, ClipboardCodepointMapEntry,
         ClipboardCodepointMapParseError, ClipboardReplacement, Color, ColorList, ColorParseError,
         Config, ConfirmCloseSurface, CopyOnSelect, CustomShaderAnimation, Duration,
-        DurationParseError, FontShapingBreak, FontStyle, Fullscreen, GraphemeWidthMethod,
-        LinkPreviews, MacHidden, MacTitlebarProxyIcon, MacTitlebarStyle, MacWindowButtons,
-        MiddleClickAction, MouseShiftCapture, NonNativeFullscreen, NotifyOnCommandFinish,
-        NotifyOnCommandFinishAction, OscColorReportFormat, Palette, PaletteParseError,
-        RepeatableClipboardCodepointMap, RepeatableString, RepeatableStringParseError,
-        RightClickAction, ScrollToBottom, SelectionWordChars, SelectionWordCharsParseError,
-        ShellIntegration, ShellIntegrationFeatures, TerminalBoldColor, TerminalColor, Theme,
-        WindowColorspace, WindowDecoration, WindowDecorationParseError, WindowPadding,
-        WindowPaddingColor, WindowPaddingParseError, WindowSubtitle, WorkingDirectory,
-        WorkingDirectoryParseError,
+        DurationParseError, FlagsParseError, FontShapingBreak, FontStyle, Fullscreen,
+        GraphemeWidthMethod, LinkPreviews, MacHidden, MacTitlebarProxyIcon, MacTitlebarStyle,
+        MacWindowButtons, MiddleClickAction, MouseShiftCapture, NonNativeFullscreen,
+        NotifyOnCommandFinish, NotifyOnCommandFinishAction, OscColorReportFormat, Palette,
+        PaletteParseError, RepeatableClipboardCodepointMap, RepeatableString,
+        RepeatableStringParseError, RightClickAction, ScrollToBottom, SelectionWordChars,
+        SelectionWordCharsParseError, ShellIntegration, ShellIntegrationFeatures,
+        TerminalBoldColor, TerminalColor, Theme, WindowColorspace, WindowDecoration,
+        WindowDecorationParseError, WindowPadding, WindowPaddingColor, WindowPaddingParseError,
+        WindowSubtitle, WorkingDirectory, WorkingDirectoryParseError,
     };
     use crate::terminal::color::Rgb;
     use crate::terminal::selection_codepoints::DEFAULT_WORD_BOUNDARIES;
@@ -5228,5 +5312,96 @@ mod tests {
             assert_eq!(NotifyOnCommandFinish::from_keyword(v.keyword()), Some(v));
         }
         assert_eq!(NotifyOnCommandFinish::from_keyword("nope"), None);
+    }
+
+    #[test]
+    fn packed_flags_parse_cli() {
+        // Standalone bools set every flag.
+        assert_eq!(
+            ScrollToBottom::parse_cli("true"),
+            Ok(ScrollToBottom {
+                keystroke: true,
+                output: true,
+            })
+        );
+        assert_eq!(
+            ScrollToBottom::parse_cli("false"),
+            Ok(ScrollToBottom {
+                keystroke: false,
+                output: false,
+            })
+        );
+        assert_eq!(
+            ScrollToBottom::parse_cli("1"),
+            Ok(ScrollToBottom {
+                keystroke: true,
+                output: true,
+            })
+        );
+        assert_eq!(
+            ScrollToBottom::parse_cli("0"),
+            Ok(ScrollToBottom {
+                keystroke: false,
+                output: false,
+            })
+        );
+
+        // A `[no-]flag` comma-list sets the named flags; the rest keep defaults
+        // (`keystroke = true`, `output = false`).
+        assert_eq!(
+            ScrollToBottom::parse_cli("output"),
+            Ok(ScrollToBottom {
+                keystroke: true,
+                output: true,
+            })
+        );
+        assert_eq!(
+            ScrollToBottom::parse_cli("no-keystroke,output"),
+            Ok(ScrollToBottom {
+                keystroke: false,
+                output: true,
+            })
+        );
+        assert_eq!(
+            ScrollToBottom::parse_cli(" keystroke , no-output "),
+            Ok(ScrollToBottom {
+                keystroke: true,
+                output: false,
+            })
+        );
+
+        // Unknown flag → InvalidValue.
+        assert_eq!(
+            ScrollToBottom::parse_cli("nope"),
+            Err(FlagsParseError::InvalidValue)
+        );
+
+        // FontShapingBreak (single `cursor` flag; default `true`).
+        assert_eq!(
+            FontShapingBreak::parse_cli("no-cursor"),
+            Ok(FontShapingBreak { cursor: false })
+        );
+        assert_eq!(
+            FontShapingBreak::parse_cli("cursor"),
+            Ok(FontShapingBreak { cursor: true })
+        );
+        assert_eq!(
+            FontShapingBreak::parse_cli("false"),
+            Ok(FontShapingBreak { cursor: false })
+        );
+        assert_eq!(
+            FontShapingBreak::parse_cli("nope"),
+            Err(FlagsParseError::InvalidValue)
+        );
+
+        // Round-trip: format_entry then parse_cli recovers the value.
+        let original = ScrollToBottom {
+            keystroke: false,
+            output: true,
+        };
+        let mut out = String::new();
+        original.format_entry(&mut EntryFormatter::new("scroll-to-bottom", &mut out));
+        let rendered = out.trim_end().split(" = ").nth(1).unwrap().to_string();
+        assert_eq!(ScrollToBottom::parse_cli(&rendered), Ok(original));
     }
 }

@@ -234,3 +234,51 @@ Review artifacts:
 
 - Prompt: `logs/codex-review/20260604-171804-d517-prompt.md` (design)
 - Result: `logs/codex-review/20260604-171804-d517-last-message.md` (design)
+
+## Result
+
+**Result:** Pass
+
+The packed-struct parse was implemented: `FlagsParseError`, the `FlagToken`
+enum, the `parse_packed_flags` helper, and `parse_cli` for `ScrollToBottom` and
+`FontShapingBreak`. A standalone bool (`parse_bool` on the raw value) sets every
+flag; otherwise each `[no-]flag` comma part (trimmed of `" \t"`) sets a named
+flag, with `Default` values for the rest, and an unknown flag returns
+`FlagsParseError::InvalidValue`. The new test `packed_flags_parse_cli` covers
+standalone bools, the comma-list with `no-` and whitespace, omitted-flag
+defaults, the unknown-flag error, both structs, and a `format_entry` →
+`parse_cli` round-trip.
+
+Gates:
+
+- `cargo fmt -p roastty` accepted; `--check` clean.
+- `cargo test -p roastty`: 3003 passed, 0 failed (one new test; no regressions).
+- `cargo build -p roastty`: no warnings.
+- no-`ghostty`-name greps (font/renderer/config + lib.rs/header/abi_harness.c)
+  clean; `git diff --check` clean.
+
+## Completion Review
+
+Codex reviewed the completed experiment and **approved** it with **no
+findings**: the implementation matches upstream `parsePackedStruct` — raw
+`parseBool` shortcut, comma-list fallback, `" \t"` trimming, `no-` negation
+without re-trimming, exact field matching, defaults for omitted fields, and
+`InvalidValue` for unknown flags; the test coverage is adequate (all-flags
+bools, omitted-default behavior, whitespace, negation, errors, both target
+structs, formatter round-trips); the gates are clean and the deferred items
+stayed out of scope. "Approved with no findings."
+
+Review artifacts:
+
+- Prompt: `logs/codex-review/20260604-172109-r517-prompt.md` (result)
+- Result: `logs/codex-review/20260604-172109-r517-last-message.md` (result)
+
+## Conclusion
+
+The packed-struct flag parser (`parse_packed_flags`) is the parse inverse of
+`entry_flags`, now applied to `ScrollToBottom` and `FontShapingBreak`. The
+remaining loader work is: `parse_cli` for the other two packed structs
+(`ShellIntegrationFeatures`, `NotifyOnCommandFinishAction`) via the same helper;
+the bool / int / string "magic" parse paths (float stays blocked); the
+empty-string reset-to-default rule; and the per-field `parseIntoField` dispatch
+(`Config::set(key, value)`) + the `loadCli` / file loader.
