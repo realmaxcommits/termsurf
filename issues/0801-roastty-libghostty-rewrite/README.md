@@ -1271,6 +1271,8 @@ are past the correctness-critical foundation.
   — **Pass** · Claude/Codex/Codex
 - [Experiment 412: the modified-gated atlas sync (FrameAtlasTexture)](412-frame-atlas-texture.md)
   — **Pass** · Claude/Codex/Codex
+- [Experiment 413: the per-frame resource state (FrameState)](413-frame-state.md)
+  — **Designed** · Claude/Codex/Codex
 
 ## Non-Goals
 
