@@ -1469,6 +1469,8 @@ are past the correctness-critical foundation.
   — **Pass** · Claude/Codex/Codex
 - [Experiment 511: the Theme config formatter (theme)](511-config-theme-format-entry.md)
   — **Pass** · Claude/Codex/Codex
+- [Experiment 512: the aggregate per-field config formatter (Config::format_config)](512-config-aggregate-formatter.md)
+  — **Designed** · Claude/Codex/—
 
 ## Non-Goals
 
