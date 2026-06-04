@@ -1369,6 +1369,8 @@ are past the correctness-critical foundation.
   — **Pass** · Claude/Codex/Codex
 - [Experiment 461: begin the aggregating Config struct (the clipboard config group)](461-config-struct-clipboard-group.md)
   — **Pass** · Claude/Codex/Codex
+- [Experiment 462: grow the Config struct with the mouse/click group](462-config-struct-mouse-group.md)
+  — **Designed** · Claude/Codex/—
 
 ## Non-Goals
 
