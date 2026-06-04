@@ -304,6 +304,18 @@ impl BoldColor {
             BoldColor::Bright => TerminalBoldColor::Bright,
         }
     }
+
+    /// Parse a config bold-color value (upstream `BoldColor.parseCLI`): the
+    /// keyword `bright` yields the bright variant (exact match on the raw input);
+    /// anything else delegates to [`Color::parse_cli`]. A missing value is
+    /// `ColorParseError::ValueRequired`.
+    pub(crate) fn parse_cli(input: Option<&str>) -> Result<BoldColor, ColorParseError> {
+        let input = input.ok_or(ColorParseError::ValueRequired)?;
+        if input == "bright" {
+            return Ok(BoldColor::Bright);
+        }
+        Ok(BoldColor::Color(Color::parse_cli(Some(input))?))
+    }
 }
 
 /// The `notify-on-command-finish` config (upstream `NotifyOnCommandFinish`): when
@@ -1643,6 +1655,41 @@ mod tests {
         // `Copy` + `Eq`: a trivial round-trip.
         let copied = explicit;
         assert_eq!(explicit, copied);
+    }
+
+    #[test]
+    fn bold_color_parse_cli_parses_keyword_and_colors() {
+        // Upstream `BoldColor.parseCLI` cases.
+        assert_eq!(
+            BoldColor::parse_cli(Some("#4e2a84")),
+            Ok(BoldColor::Color(Color {
+                r: 78,
+                g: 42,
+                b: 132
+            }))
+        );
+        assert_eq!(
+            BoldColor::parse_cli(Some("black")),
+            Ok(BoldColor::Color(Color { r: 0, g: 0, b: 0 }))
+        );
+        assert_eq!(BoldColor::parse_cli(Some("bright")), Ok(BoldColor::Bright));
+
+        // A non-keyword non-color is `Invalid`; a missing value is `ValueRequired`.
+        assert_eq!(
+            BoldColor::parse_cli(Some("a")),
+            Err(ColorParseError::Invalid)
+        );
+        assert_eq!(
+            BoldColor::parse_cli(None),
+            Err(ColorParseError::ValueRequired)
+        );
+
+        // The keyword match is exact/un-trimmed: a padded keyword falls through
+        // to `Color::parse_cli` (which trims, then fails to parse it as a color).
+        assert_eq!(
+            BoldColor::parse_cli(Some(" bright")),
+            Err(ColorParseError::Invalid)
+        );
     }
 
     #[test]

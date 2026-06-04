@@ -164,3 +164,49 @@ Review artifacts:
 
 - Prompt: `logs/codex-review/20260604-131130-d477-prompt.md` (design)
 - Result: `logs/codex-review/20260604-131130-d477-last-message.md` (design)
+
+## Result
+
+**Result:** Pass
+
+`BoldColor::parse_cli` was added to `roastty/src/config/mod.rs` exactly as
+designed — the `ValueRequired` guard, the one exact (un-trimmed) `bright`
+keyword check, and the delegation to `Color::parse_cli` for everything else,
+with `Invalid` propagated. The new test
+`bold_color_parse_cli_parses_keyword_and_colors` asserts the upstream `parseCLI`
+cases (`#4e2a84`, `black`, `bright`, `a` → `Invalid`), the missing-value error,
+and the padded `" bright"` case (falls through to `Color::parse_cli` and is
+`Invalid`).
+
+Gates:
+
+- `cargo fmt -p roastty` accepted; `--check` clean.
+- `cargo test -p roastty`: 2956 passed, 0 failed (one new test; no regressions).
+- `cargo build -p roastty`: no warnings.
+- no-`ghostty`-name greps (font/renderer/config + lib.rs/header/abi_harness.c)
+  clean; `git diff --check` clean.
+
+## Completion Review
+
+Codex reviewed the completed experiment and **approved** it with **no
+findings**: `BoldColor::parse_cli` faithfully ports upstream (missing input →
+`ValueRequired`, raw exact `"bright"` → `Bright`, all other input →
+`Color::parse_cli`); the padded `" bright"` test confirms the subtle untrimmed
+keyword behavior; the test covers the upstream color/name/keyword/invalid cases
+plus missing input; deferring `formatEntry` and the broader config
+parser/formatter remains properly scoped. "Approved for the result commit."
+
+Review artifacts:
+
+- Prompt: `logs/codex-review/20260604-131304-r477-prompt.md` (result)
+- Result: `logs/codex-review/20260604-131304-r477-last-message.md` (result)
+
+## Conclusion
+
+Both small color unions now parse: `TerminalColor::parse_cli` (Experiment 476)
+and `BoldColor::parse_cli` (this experiment), each reusing `Color::parse_cli`
+for the explicit-color path and adding their own keyword(s). The next slice can
+port a larger color value type's parser — `Palette` (the 256-entry palette,
+`0=#hex` form) or `ColorList` — or another config value type's `parseCLI`,
+continuing toward the per-field parser dispatch and the full config loader. The
+formatter side for the color types waits on the config `EntryFormatter`.

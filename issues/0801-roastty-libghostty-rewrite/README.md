@@ -1400,7 +1400,7 @@ are past the correctness-critical foundation.
 - [Experiment 476: the config TerminalColor CLI parser (TerminalColor::parse_cli)](476-config-terminal-color-parse-cli.md)
   — **Pass** · Claude/Codex/Codex
 - [Experiment 477: the config BoldColor CLI parser (BoldColor::parse_cli)](477-config-bold-color-parse-cli.md)
-  — **Designed** · Claude/Codex/—
+  — **Pass** · Claude/Codex/Codex
 
 ## Non-Goals
 
