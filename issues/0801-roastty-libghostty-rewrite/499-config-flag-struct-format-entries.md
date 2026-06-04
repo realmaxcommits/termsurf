@@ -206,3 +206,52 @@ Review artifacts:
 
 - Prompt: `logs/codex-review/20260604-154952-d499-prompt.md` (design)
 - Result: `logs/codex-review/20260604-154952-d499-last-message.md` (design)
+
+## Result
+
+**Result:** Pass
+
+The shared `EntryFormatter::entry_flags` (the packed-struct format branch) was
+added to `config/formatter.rs`, and `format_entry` was added for the three
+flag-structs (`ShellIntegrationFeatures`, `ScrollToBottom`,
+`NotifyOnCommandFinishAction`), each passing its fields in upstream order with
+the config keywords (the hyphenated `ssh-env` / `ssh-terminfo` mapped from the
+Rust `ssh_env` / `ssh_terminfo`). Two tests cover the helper and the three
+structs' output.
+
+Gates:
+
+- `cargo fmt -p roastty` accepted; `--check` clean.
+- `cargo test -p roastty`: 2985 passed, 0 failed (two new tests; no
+  regressions).
+- `cargo build -p roastty`: no warnings.
+- no-`ghostty`-name greps (font/renderer/config + lib.rs/header/abi_harness.c)
+  clean; `git diff --check` clean.
+
+## Completion Review
+
+Codex reviewed the completed experiment and **approved** it with **no
+findings**: the helper matches upstream's packed-struct formatter
+(comma-separated field names in declaration order, with `no-` for false fields —
+`formatter.zig:98`), and the three Rust field lists preserve the upstream field
+order and the hyphenated config names for `ssh-env` / `ssh-terminfo`
+(`Config.zig:8672`/`:10206`/`:10221`); the tests cover the shared helper and
+each struct's output; gates are clean. "Approved with no findings."
+
+Review artifacts:
+
+- Prompt: `logs/codex-review/20260604-155332-r499-prompt.md` (result)
+- Result: `logs/codex-review/20260604-155332-r499-last-message.md` (result)
+
+## Conclusion
+
+The packed-struct flag format (the generic formatter's packed-struct branch) is
+ported as `EntryFormatter::entry_flags`, with the three flag-structs
+(`ShellIntegrationFeatures`, `ScrollToBottom`, `NotifyOnCommandFinishAction`)
+wired to it. The config formatter side now covers fifteen types' entries plus
+the flag-struct branch. The remaining formatter work is the rest of the generic
+field-dispatch (the enum-keyword `{t}`, float `{d}`, and optional-recurse cases)
+and `QuickTerminalSize` (deferred with its `parseFloat`-blocked parser); after
+that the full config loader (per-field parser/formatter dispatch over the
+aggregate `Config`, `loadCli`, file I/O) remains, continuing toward the full
+config formatter and loader.

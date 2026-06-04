@@ -39,6 +39,23 @@ impl<'a> EntryFormatter<'a> {
     pub(crate) fn entry_void(&mut self) {
         let _ = writeln!(self.out, "{} = ", self.name);
     }
+
+    /// `name = [no-]field,[no-]field…\n` (upstream the packed-struct case): each
+    /// flag is its keyword, prefixed with `no-` when `false`.
+    pub(crate) fn entry_flags(&mut self, fields: &[(&str, bool)]) {
+        let joined = fields
+            .iter()
+            .map(|&(name, on)| {
+                if on {
+                    name.to_string()
+                } else {
+                    format!("no-{}", name)
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(",");
+        self.entry_str(&joined);
+    }
 }
 
 #[cfg(test)]
@@ -66,5 +83,12 @@ mod tests {
         let mut out = String::new();
         EntryFormatter::new("a", &mut out).entry_void();
         assert_eq!(out, "a = \n");
+    }
+
+    #[test]
+    fn entry_flags_writes_comma_joined_keywords() {
+        let mut out = String::new();
+        EntryFormatter::new("x", &mut out).entry_flags(&[("a", true), ("b", false)]);
+        assert_eq!(out, "x = a,no-b\n");
     }
 }

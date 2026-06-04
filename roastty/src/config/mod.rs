@@ -1171,6 +1171,14 @@ pub(crate) struct NotifyOnCommandFinishAction {
     pub notify: bool,
 }
 
+impl NotifyOnCommandFinishAction {
+    /// Format as a config entry (upstream's packed-struct branch): the `[no-]flag`
+    /// keywords comma-joined.
+    pub(crate) fn format_entry(self, formatter: &mut EntryFormatter) {
+        formatter.entry_flags(&[("bell", self.bell), ("notify", self.notify)]);
+    }
+}
+
 impl Default for NotifyOnCommandFinishAction {
     /// Upstream's field defaults `bell = true`, `notify = false`.
     fn default() -> Self {
@@ -1222,6 +1230,21 @@ pub(crate) struct ShellIntegrationFeatures {
     pub ssh_terminfo: bool,
     /// PATH adjustments.
     pub path: bool,
+}
+
+impl ShellIntegrationFeatures {
+    /// Format as a config entry (upstream's packed-struct branch): the `[no-]flag`
+    /// keywords comma-joined (the hyphenated `ssh-env` / `ssh-terminfo` keywords).
+    pub(crate) fn format_entry(self, formatter: &mut EntryFormatter) {
+        formatter.entry_flags(&[
+            ("cursor", self.cursor),
+            ("sudo", self.sudo),
+            ("title", self.title),
+            ("ssh-env", self.ssh_env),
+            ("ssh-terminfo", self.ssh_terminfo),
+            ("path", self.path),
+        ]);
+    }
 }
 
 impl Default for ShellIntegrationFeatures {
@@ -1622,6 +1645,14 @@ pub(crate) struct ScrollToBottom {
     pub keystroke: bool,
     /// Scroll to the bottom on new output.
     pub output: bool,
+}
+
+impl ScrollToBottom {
+    /// Format as a config entry (upstream's packed-struct branch): the `[no-]flag`
+    /// keywords comma-joined.
+    pub(crate) fn format_entry(self, formatter: &mut EntryFormatter) {
+        formatter.entry_flags(&[("keystroke", self.keystroke), ("output", self.output)]);
+    }
 }
 
 impl Default for ScrollToBottom {
@@ -3697,5 +3728,57 @@ mod tests {
         let mut out = String::new();
         m.format_entry(&mut EntryFormatter::new("a", &mut out));
         assert_eq!(out, "a = U+2500=U+002D\na = U+03A3=SUM\n");
+    }
+
+    #[test]
+    fn flag_struct_format_entries() {
+        let fmt = |v: &dyn Fn(&mut EntryFormatter)| {
+            let mut out = String::new();
+            let mut f = EntryFormatter::new("a", &mut out);
+            v(&mut f);
+            out
+        };
+
+        // ShellIntegrationFeatures: the hyphenated keywords, in order.
+        let sif = ShellIntegrationFeatures {
+            cursor: true,
+            sudo: false,
+            title: true,
+            ssh_env: false,
+            ssh_terminfo: false,
+            path: true,
+        };
+        assert_eq!(
+            fmt(&|f| sif.format_entry(f)),
+            "a = cursor,no-sudo,title,no-ssh-env,no-ssh-terminfo,path\n"
+        );
+
+        // ScrollToBottom.
+        assert_eq!(
+            fmt(&|f| ScrollToBottom {
+                keystroke: true,
+                output: false
+            }
+            .format_entry(f)),
+            "a = keystroke,no-output\n"
+        );
+        assert_eq!(
+            fmt(&|f| ScrollToBottom {
+                keystroke: false,
+                output: false
+            }
+            .format_entry(f)),
+            "a = no-keystroke,no-output\n"
+        );
+
+        // NotifyOnCommandFinishAction.
+        assert_eq!(
+            fmt(&|f| NotifyOnCommandFinishAction {
+                bell: true,
+                notify: false
+            }
+            .format_entry(f)),
+            "a = bell,no-notify\n"
+        );
     }
 }
