@@ -28,7 +28,7 @@ use crate::font::sprite::draw::Sprite;
 use crate::font::Presentation;
 use crate::terminal::color::{Palette, Rgb};
 use crate::terminal::sgr::Underline;
-use crate::terminal::style::BoldColor;
+use crate::terminal::style::{BoldColor, Style as TermStyle};
 
 /// True only for U+2588 FULL BLOCK.
 pub(crate) fn is_covering(cp: u32) -> bool {
@@ -175,6 +175,45 @@ pub(crate) fn cell_infos(cells: &[RunCell]) -> Vec<CellInfo> {
             grid_width: grid_width(cell.wide),
         })
         .collect()
+}
+
+/// A cell's final foreground and background colors. `bg = None` means the default
+/// background (the transparent slot — the screen background shows through).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CellColors {
+    pub fg: Rgb,
+    pub bg: Option<Rgb>,
+}
+
+/// Compute a cell's final colors from its `style`, applying reverse-video
+/// (`inverse`): the foreground and background swap. Faithful port of the base
+/// (non-selection) per-cell color computation in upstream `rebuildCells`. The
+/// `isCovering` full-block twist, selection/search colors, and minimum-contrast
+/// are deferred.
+pub(crate) fn cell_colors(
+    style: TermStyle,
+    default_fg: Rgb,
+    default_bg: Rgb,
+    palette: &Palette,
+    bold: Option<BoldColor>,
+) -> CellColors {
+    let fg_style = style.resolve_fg(default_fg, palette, bold);
+    let bg_style = style.resolve_bg(palette);
+
+    if style.flags.inverse {
+        // The background becomes the foreground (the default bg when the cell has
+        // no explicit bg), and the foreground becomes the background.
+        let final_bg = bg_style.unwrap_or(default_bg);
+        CellColors {
+            fg: final_bg,
+            bg: Some(fg_style),
+        }
+    } else {
+        CellColors {
+            fg: fg_style,
+            bg: bg_style,
+        }
+    }
 }
 
 /// Identifies which GPU buffer a cell belongs to. Conceptually maps to a cell
@@ -1765,6 +1804,78 @@ mod tests {
         let widths: Vec<u8> = infos.iter().map(|c| c.grid_width).collect();
         // Narrow 1, Wide 2, both spacer kinds 1 (not 2), empty 1.
         assert_eq!(widths, vec![1, 2, 1, 1, 1]);
+    }
+
+    #[test]
+    fn cell_colors_applies_reverse_video() {
+        use crate::terminal::color::DEFAULT_PALETTE;
+        use crate::terminal::style::{Color, Flags, Style as TermStyle};
+
+        let a = Rgb::new(10, 20, 30);
+        let b = Rgb::new(40, 50, 60);
+        let default_fg = Rgb::new(200, 200, 200);
+        let default_bg = Rgb::new(0, 0, 0);
+
+        let styled = |inverse: bool, bg: Color| TermStyle {
+            fg_color: Color::Rgb(a),
+            bg_color: bg,
+            flags: Flags {
+                inverse,
+                ..Flags::default()
+            },
+            ..TermStyle::default()
+        };
+
+        // Non-inverse, explicit bg: colors unchanged.
+        assert_eq!(
+            cell_colors(
+                styled(false, Color::Rgb(b)),
+                default_fg,
+                default_bg,
+                &DEFAULT_PALETTE,
+                None
+            ),
+            CellColors { fg: a, bg: Some(b) }
+        );
+
+        // Inverse, explicit bg: fg and bg swap.
+        assert_eq!(
+            cell_colors(
+                styled(true, Color::Rgb(b)),
+                default_fg,
+                default_bg,
+                &DEFAULT_PALETTE,
+                None
+            ),
+            CellColors { fg: b, bg: Some(a) }
+        );
+
+        // Inverse, no bg: the default background fills the foreground.
+        assert_eq!(
+            cell_colors(
+                styled(true, Color::None),
+                default_fg,
+                default_bg,
+                &DEFAULT_PALETTE,
+                None
+            ),
+            CellColors {
+                fg: default_bg,
+                bg: Some(a)
+            }
+        );
+
+        // Non-inverse, no bg: background stays the default (None).
+        assert_eq!(
+            cell_colors(
+                styled(false, Color::None),
+                default_fg,
+                default_bg,
+                &DEFAULT_PALETTE,
+                None
+            ),
+            CellColors { fg: a, bg: None }
+        );
     }
 
     #[test]

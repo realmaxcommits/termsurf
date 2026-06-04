@@ -188,3 +188,59 @@ Review artifacts:
 
 - Prompt: `logs/codex-review/20260603-191809-716430-prompt.md` (design)
 - Result: `logs/codex-review/20260603-191809-716430-last-message.md` (design)
+
+## Result
+
+**Result:** Pass
+
+Reverse-video color resolution is ported.
+
+- `roastty/src/renderer/cell.rs`: `CellColors { fg: Rgb, bg: Option<Rgb> }` and
+  `cell_colors(style, default_fg, default_bg, palette, bold)` — resolves the
+  cell's foreground (`resolve_fg`) and background (`resolve_bg`); without
+  `inverse`, returns them unchanged; with `inverse`, swaps them
+  (`fg = bg_style.unwrap_or(default_bg)`, `bg = Some(fg_style)`). Imported
+  `Style as TermStyle`.
+
+Test (in `cell.rs`): `cell_colors_applies_reverse_video` covers non-inverse with
+an explicit background (`{ fg: a, bg: Some(b) }`), inverse with an explicit
+background (swapped: `{ fg: b, bg: Some(a) }`), inverse with no background
+(`{ fg: default_bg, bg: Some(a) }`), and non-inverse with no background
+(`{ fg: a, bg: None }`).
+
+Gate results:
+
+- `cargo fmt -p roastty` accepted; `--check` clean.
+- `cargo test -p roastty` → 2834 passed, 0 failed (+1, no regressions).
+- `cargo build -p roastty` → no warnings.
+- No-`ghostty`-name gates (font + renderer) clean; `git diff --check` clean.
+
+## Conclusion
+
+The renderer can now compute a cell's final colors with reverse-video applied —
+the base of upstream's per-cell color derivation. This is the first of the
+renderer-layer color adjustments.
+
+The remaining renderer-bridge work: wire `cell_colors` into `rebuild_row`/
+`rebuild_bg_row` (handling the `isCovering` full-block twist there); the
+**selection/search** colors and the **minimum-contrast** adjustment and
+**faint/dim alpha**; the lock-cursor glyph and under-cursor text recolor; the
+column-ordered decoration merge and link double-underline; and the **Metal
+upload** of `Contents`.
+
+## Completion Review
+
+Codex reviewed the completed implementation and result and **approved** with
+**no findings**. It confirmed `cell_colors` implements the approved base inverse
+logic exactly (non-inverse returns the resolved foreground/background unchanged;
+inverse sets `fg = bg_style.unwrap_or(default_bg)` and `bg = Some(fg_style)`,
+matching the upstream non-selected, non-`isCovering` swap direction), and that
+the test covers the important cases (explicit bg unchanged, explicit bg swapped
+under inverse, inverse with no bg using `default_bg`, non-inverse with no bg
+staying `None`), with the deferred `isCovering`/selection/min-contrast
+integration correctly out of scope. Nothing needed to change before the result
+commit.
+
+Review artifacts:
+
+- Result review: `logs/codex-review/20260603-192111-090300-last-message.md`
