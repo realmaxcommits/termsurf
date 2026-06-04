@@ -114,9 +114,28 @@ pub(crate) enum BackgroundImagePosition {
     Center,
 }
 
+/// The `font-shaping-break` config (upstream `FontShapingBreak`): which
+/// boundaries break a shaping run. `cursor` (default `true`) breaks the run
+/// around the cursor.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct FontShapingBreak {
+    /// Break a shaping run around the cursor.
+    pub cursor: bool,
+}
+
+impl Default for FontShapingBreak {
+    /// Upstream's field default `cursor: bool = true`.
+    fn default() -> Self {
+        Self { cursor: true }
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{AlphaBlending, BackgroundBlur, BackgroundImageFit, BackgroundImagePosition};
+    use super::{
+        AlphaBlending, BackgroundBlur, BackgroundImageFit, BackgroundImagePosition,
+        FontShapingBreak,
+    };
 
     #[test]
     fn alpha_blending_is_linear_truth_table() {
@@ -183,5 +202,15 @@ mod tests {
         let p = BackgroundImagePosition::TopLeft;
         let copied = p;
         assert_eq!(p, copied);
+    }
+
+    #[test]
+    fn font_shaping_break_defaults_cursor_true() {
+        assert!(FontShapingBreak::default().cursor);
+        let off = FontShapingBreak { cursor: false };
+        assert_ne!(off, FontShapingBreak::default());
+        // `Copy` + `Eq`: a trivial round-trip.
+        let copied = off;
+        assert_eq!(off, copied);
     }
 }

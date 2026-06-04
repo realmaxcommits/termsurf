@@ -201,3 +201,62 @@ Review artifacts:
 
 - Prompt: `logs/codex-review/20260604-101558-d437-prompt.md` (design)
 - Result: `logs/codex-review/20260604-101558-d437-last-message.md` (design)
+
+## Result
+
+**Result:** Pass
+
+The font-shaping-break config type and its run-option consumer are now live.
+
+- `roastty/src/config/mod.rs`:
+  `pub(crate) struct FontShapingBreak { pub cursor: bool }` with a hand-written
+  `impl Default` (`cursor: true`) — upstream's
+  `packed struct { cursor: bool = true }`.
+- `roastty/src/font/run.rs`:
+  `RunOptions::apply_break_config(&mut self, config: FontShapingBreak)` —
+  `if !config.cursor { self.cursor_x = None; }`, the exact port of upstream
+  `applyBreakConfig`. Added `use crate::config::FontShapingBreak;`.
+
+Tests:
+
+- `font_shaping_break_defaults_cursor_true` (in `config/mod.rs`) — the default
+  `cursor` is `true`, `{ cursor: false }` differs from the default, `Copy`/`Eq`.
+- `apply_break_config_clears_cursor_x_when_off` (in `font/run.rs`) —
+  `cursor: false` clears `cursor_x` (cells/selection untouched); the default
+  (`cursor: true`) leaves `cursor_x == Some(3)`; an already-`None` `cursor_x`
+  stays `None`.
+
+Gate results:
+
+- `cargo fmt -p roastty` accepted; `--check` clean.
+- `cargo test -p roastty` → 2924 passed, 0 failed (+2, no regressions).
+- `cargo build -p roastty` → no warnings.
+- No-`ghostty`-name gates (font + renderer + config +
+  `lib.rs`/header/`abi_harness.c`) clean; `git diff --check` clean.
+
+## Conclusion
+
+The config layer now carries `FontShapingBreak`, and the shaper's `RunOptions`
+applies it (`apply_break_config`) — the first config slice in this run to land a
+consumer (an existing roastty type, `RunOptions`) alongside the config type. The
+`Config` struct / parsing and the renderer's `rebuildCells` call site
+(`generic.zig:2672`, `run_iter_opts.applyBreakConfig(...)`) stay deferred. The
+config-enum/type family remains a clean, gated way to advance the rewrite, often
+pairing a config type with its already-present consumer.
+
+## Completion Review
+
+Codex reviewed the completed implementation and result and **approved** with
+**no findings**. It confirmed faithfulness against the vendored upstream:
+`FontShapingBreak { cursor: bool }` with manual `Default { cursor: true }`
+matches the `packed struct { cursor: bool = true }` (`Config.zig:8563`) and the
+`.{}` config default (`Config.zig:374`); `RunOptions::apply_break_config`
+exactly matches `applyBreakConfig` (`shape.zig:88`); and the tests cover default
+truth, false distinctness, the clear, the preserve-when-enabled, already-`None`,
+and the untouched `cells`/`selection`. No public C ABI/header impact; nothing
+needed to change before the result commit.
+
+Review artifacts:
+
+- Prompt: `logs/codex-review/20260604-101823-r437-prompt.md` (result)
+- Result: `logs/codex-review/20260604-101823-r437-last-message.md` (result)

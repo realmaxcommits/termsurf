@@ -10,6 +10,7 @@
 
 use std::hash::{Hash, Hasher};
 
+use crate::config::FontShapingBreak;
 use crate::font::codepoint_resolver::CodepointResolver;
 use crate::font::collection::Index;
 use crate::font::shape::{self, Codepoint};
@@ -98,6 +99,17 @@ pub(crate) struct RunOptions {
     pub selection: Option<[u16; 2]>,
     /// The cursor's column in this row, if any (a run breaks around the cursor).
     pub cursor_x: Option<u16>,
+}
+
+impl RunOptions {
+    /// Apply the font break configuration to the run (upstream
+    /// `RunOptions.applyBreakConfig`): when `cursor` breaking is off, clear
+    /// `cursor_x` so the run iterator does not break shaping at the cursor.
+    pub(crate) fn apply_break_config(&mut self, config: FontShapingBreak) {
+        if !config.cursor {
+            self.cursor_x = None;
+        }
+    }
 }
 
 /// A single text run produced by the run iterator: one row's worth of cells that
@@ -616,6 +628,36 @@ mod tests {
         assert_eq!(opts.cells[0], cell);
         assert_eq!(opts.selection, Some([1, 4]));
         assert_eq!(opts.cursor_x, Some(2));
+    }
+
+    #[test]
+    fn apply_break_config_clears_cursor_x_when_off() {
+        // cursor break off → cursor_x cleared; cells/selection untouched.
+        let mut opts = RunOptions {
+            cells: vec![sample_cell('A' as u32, vec![])],
+            selection: Some([1, 4]),
+            cursor_x: Some(3),
+        };
+        opts.apply_break_config(FontShapingBreak { cursor: false });
+        assert_eq!(opts.cursor_x, None);
+        assert_eq!(opts.cells.len(), 1);
+        assert_eq!(opts.selection, Some([1, 4]));
+
+        // cursor break on (the default) → cursor_x left unchanged.
+        let mut opts = RunOptions {
+            cursor_x: Some(3),
+            ..Default::default()
+        };
+        opts.apply_break_config(FontShapingBreak::default());
+        assert_eq!(opts.cursor_x, Some(3));
+
+        // already None + cursor off → stays None.
+        let mut opts = RunOptions {
+            cursor_x: None,
+            ..Default::default()
+        };
+        opts.apply_break_config(FontShapingBreak { cursor: false });
+        assert_eq!(opts.cursor_x, None);
     }
 
     fn menlo_resolver() -> CodepointResolver {
