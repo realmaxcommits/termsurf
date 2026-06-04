@@ -200,3 +200,72 @@ Review artifacts:
 
 - Prompt: `logs/codex-review/20260604-075539-d413-prompt.md` (design)
 - Result: `logs/codex-review/20260604-075539-d413-last-message.md` (design)
+
+## Result
+
+**Result:** Pass
+
+The per-frame resource state is now live.
+
+- `roastty/src/renderer/metal/frame.rs` (new module, registered in `mod.rs`): a
+  `FrameStateError` enum (`Buffer(MetalBufferError)` /
+  `Texture(MetalTextureError)` with `From` impls) and a `FrameState` struct
+  owning the uniform buffer (`MetalBuffer<MetalUniforms>`), the cell buffers
+  (`FrameCells`), and the grayscale/color atlas textures (`FrameAtlasTexture`).
+  `new` creates them (the uniform/cell buffers at capacity one; the atlas
+  textures sized to their atlases, device/storage from the shared `options`);
+  `sync` runs upstream's `drawFrame` sync block — uniforms (one element via
+  `from_ref`) → cells (background + foreground) → both atlas textures (each
+  modified-gated) — and returns the foreground cell count. Accessors expose the
+  uniform buffer, the cells, and the two textures for the later `draw_cells`
+  binding.
+
+Test (in `frame.rs`, live Metal device): a grayscale atlas and a `Bgra` color
+atlas (each with a written pixel), a 1×1 `Contents` (an explicit background cell
+
+- a foreground vertex), and a `MetalUniforms` → `FrameState::new` then `sync`
+  returns `1` (the foreground count); the uniform buffer holds the uniforms
+  bytes; the cells' background and cell-text buffers hold the background cell
+  and the vertex; and the grayscale and color textures hold their
+  `atlas.data()`. (The otherwise-private buffer bytes are read via a local
+  `contents()` helper, sound for the shared-storage buffers.)
+
+Gate results:
+
+- `cargo fmt -p roastty` accepted; `--check` clean.
+- `cargo test -p roastty` → 2887 passed, 0 failed (+1, no regressions).
+- `cargo build -p roastty` → no warnings.
+- No-`ghostty`-name gates (font + renderer + `lib.rs`/header/`abi_harness.c`)
+  clean; `git diff --check` clean.
+
+## Conclusion
+
+The renderer bridge now has a single per-frame resource owner that runs the
+whole `drawFrame` sync block in upstream's order and hands back the foreground
+count plus the buffers/textures the draw needs. Every per-frame GPU building
+block is now in place: `FrameState` (uniforms + cells + atlas textures), the
+sync, and `draw_cells` (the render-pass sequence). The remaining renderer-bridge
+work is the outer per-frame loop that ties `FrameState::sync` to `draw_cells` —
+acquiring the frame target (`begin_frame`), opening the render pass, and binding
+`state.uniforms_buffer()` / `state.cells()` / `state.grayscale_texture()` /
+`state.color_texture()` with `fg_count` — which depends on the live render
+`State` and target plumbing; plus the deferred bg-image / kitty / overlay draws,
+the custom-shader passes, and the `rebuild_viewport` cursor/preedit assembly.
+
+## Completion Review
+
+Codex reviewed the completed implementation and result and **approved** with
+**no findings**. It confirmed the implementation matches the approved design and
+the upstream sync block: `FrameState` owns the uniform buffer, `FrameCells`, and
+both atlas textures; `sync` runs in the correct order (uniforms → cells →
+grayscale atlas → color atlas); the uniforms are synced as a single element; and
+the returned `fg_count` is the cell-text upload count from `FrameCells`. It
+judged the test to genuinely exercise all four resource categories and the local
+raw `MTLBuffer` reads sound (shared storage, exactly the synced byte lengths).
+Internal Rust only — no public C ABI/header impact; nothing needed to change
+before the result commit.
+
+Review artifacts:
+
+- Prompt: `logs/codex-review/20260604-075918-r413-prompt.md` (result)
+- Result: `logs/codex-review/20260604-075918-r413-last-message.md` (result)
