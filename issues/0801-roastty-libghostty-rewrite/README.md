@@ -1373,6 +1373,8 @@ are past the correctness-critical foundation.
   — **Pass** · Claude/Codex/Codex
 - [Experiment 463: grow the Config struct with the shell-integration group](463-config-struct-shell-group.md)
   — **Pass** · Claude/Codex/Codex
+- [Experiment 464: grow the Config struct with the notification group](464-config-struct-notify-group.md)
+  — **Designed** · Claude/Codex/—
 
 ## Non-Goals
 
