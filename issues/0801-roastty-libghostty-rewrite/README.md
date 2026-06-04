@@ -1329,6 +1329,8 @@ are past the correctness-critical foundation.
   — **Pass** · Claude/Codex/Codex
 - [Experiment 441: the mouse-shift-capture config enum and its capture decision (MouseShiftCapture, capture_shift)](441-config-mouse-shift-capture.md)
   — **Pass** · Claude/Codex/Codex
+- [Experiment 442: the copy-on-select config enum and its enabled predicate (CopyOnSelect, enabled)](442-config-copy-on-select.md)
+  — **Designed** · Claude/Codex/—
 
 ## Non-Goals
 
