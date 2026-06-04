@@ -9,6 +9,7 @@
 
 mod comma_splitter;
 mod formatter;
+mod loader;
 mod string;
 mod unicode_range;
 

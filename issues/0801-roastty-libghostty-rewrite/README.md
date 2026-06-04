@@ -1502,7 +1502,7 @@ are past the correctness-critical foundation.
 - [Experiment 527: Theme::parse_cli and the theme Config::set arm](527-config-theme-parse-cli.md)
   — **Pass** · Claude/Codex/Codex
 - [Experiment 528: the config-file line parser (parse_config_line)](528-config-line-parse.md)
-  — **Designed** · Claude/Codex/—
+  — **Pass** · Claude/Codex/Codex
 
 ## Non-Goals
 

@@ -178,3 +178,49 @@ Review artifacts:
 
 - Prompt: `logs/codex-review/20260604-185650-d528-prompt.md` (design)
 - Result: `logs/codex-review/20260604-185650-d528-last-message.md` (design)
+
+## Result
+
+**Result:** Pass
+
+The new module `roastty/src/config/loader.rs` (declared `mod loader;`) ports the
+per-line extraction of `cli.args.LineIterator.next` as `parse_config_line`: trim
+`" \t\r"`; skip a blank line or `#` comment; on `=`, trim the key/value
+(`" \t"`) and strip the value's surrounding double quotes (not decode); a no-`=`
+line is a bare key (`None` value). Two tests cover the `value` / whitespace /
+quoted / empty / bare / CRLF cases and the blank / comment skips.
+
+Gates:
+
+- `cargo fmt -p roastty` accepted; `--check` clean.
+- `cargo test -p roastty`: 3018 passed, 0 failed (two new tests; no
+  regressions).
+- `cargo build -p roastty`: no warnings.
+- no-`ghostty`-name greps (font/renderer/config + lib.rs/header/abi_harness.c)
+  clean; `git diff --check` clean.
+
+## Completion Review
+
+Codex reviewed the completed experiment and **approved** it with **no
+findings**: the implementation matches upstream `LineIterator.next` for the
+per-line extraction — whole-line `" \t\r"` trim, blank/comment skip after trim,
+key/value `" \t"` trim around `=`, outer-quote stripping without decoding, empty
+value preserved as `Some("")`, and bare keys mapped to `None`; the added doc
+note about no trailing `\n` matches the upstream reader; the tests cover the
+important cases; gates are clean and the driver/IO work remains deferred.
+"Approved with no findings."
+
+Review artifacts:
+
+- Prompt: `logs/codex-review/20260604-185844-r528-prompt.md` (result)
+- Result: `logs/codex-review/20260604-185844-r528-last-message.md` (result)
+
+## Conclusion
+
+`parse_config_line` is the per-line heart of the config-file loader. The next
+experiment is the multi-line **driver** —
+`Config::load_str(&mut self, text: &str)` — iterating the lines, calling
+`parse_config_line` then `Config::set(key, value)` per line, and collecting
+per-line diagnostics (so a bad line doesn't abort the load, as upstream's
+`parse` continues past field errors). After that, file IO (reading a config file
+path into the driver). `background-image-opacity` stays float-blocked.
