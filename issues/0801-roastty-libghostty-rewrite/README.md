@@ -1209,6 +1209,8 @@ are past the correctness-critical foundation.
   — **Pass** · Claude/Codex/Codex
 - [Experiment 381: the full-block twist in cell colors](381-cell-colors-covering.md)
   — **Pass** · Claude/Codex/Codex
+- [Experiment 382: wiring cell_colors into the row passes](382-wire-cell-colors.md)
+  — **Designed** · Claude/Codex/Codex
 
 ## Non-Goals
 
