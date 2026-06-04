@@ -145,3 +145,47 @@ Review artifacts:
 
 - Prompt: `logs/codex-review/20260604-164052-d510-prompt.md` (design)
 - Result: `logs/codex-review/20260604-164052-d510-last-message.md` (design)
+
+## Result
+
+**Result:** Pass
+
+`entry_optional<T>` was added to `EntryFormatter`: `Some(inner)` runs the
+caller's closure to format the inner value with the same name (the Rust stand-in
+for upstream's comptime `info.child` dispatch), and `None` delegates to
+`entry_void` (`name = \n`). The new test
+`entry_optional_recurses_when_some_and_void_when_none` covers recursion through
+`entry_str` / `entry_bool` and the `None` void line.
+
+Gates:
+
+- `cargo fmt -p roastty` accepted; `--check` clean.
+- `cargo test -p roastty`: 2996 passed, 0 failed (one new test; no regressions).
+- `cargo build -p roastty`: no warnings.
+- no-`ghostty`-name greps (font/renderer/config + lib.rs/header/abi_harness.c)
+  clean; `git diff --check` clean.
+
+## Completion Review
+
+Codex reviewed the completed experiment and **approved** it with **no
+findings**: `entry_optional` matches the upstream optional branch — `Some`
+recurses into the inner formatter with the same entry name, and `None` writes
+the same empty line as `void` (`name = \n`) (`formatter.zig:62`/`:57`); the
+tests cover both recursion and empty-output behavior; gates are clean. "Approved
+with no findings."
+
+Review artifacts:
+
+- Prompt: `logs/codex-review/20260604-164225-r510-prompt.md` (result)
+- Result: `logs/codex-review/20260604-164225-r510-last-message.md` (result)
+
+## Conclusion
+
+`EntryFormatter` now covers every generic `formatEntry` field-dispatch branch
+except the float `{d}` case (float-formatting blocked, Experiment 509): string /
+bool / int / void / packed-struct flags / enum-keyword / optional-recurse. The
+remaining config-formatter work is the **aggregate per-field dispatch** — a
+top-level formatter that walks the `Config` struct and routes each field through
+its `format_entry` (or the matching `entry_*` primitive) — plus the full config
+loader (`loadCli`, file I/O), continuing toward the full config formatter and
+loader.

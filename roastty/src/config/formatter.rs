@@ -56,6 +56,20 @@ impl<'a> EntryFormatter<'a> {
             .join(",");
         self.entry_str(&joined);
     }
+
+    /// `name = <inner>\n` when present, else `name = \n` (upstream the `optional`
+    /// case): when `Some`, recurse into the inner value's formatter with the same
+    /// name; when `None`, write the void line.
+    pub(crate) fn entry_optional<T>(
+        &mut self,
+        value: Option<T>,
+        fmt_inner: impl FnOnce(T, &mut Self),
+    ) {
+        match value {
+            Some(inner) => fmt_inner(inner, self),
+            None => self.entry_void(),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -90,5 +104,20 @@ mod tests {
         let mut out = String::new();
         EntryFormatter::new("x", &mut out).entry_flags(&[("a", true), ("b", false)]);
         assert_eq!(out, "x = a,no-b\n");
+    }
+
+    #[test]
+    fn entry_optional_recurses_when_some_and_void_when_none() {
+        let mut out = String::new();
+        EntryFormatter::new("a", &mut out).entry_optional(Some("v"), |v, f| f.entry_str(v));
+        assert_eq!(out, "a = v\n");
+
+        let mut out = String::new();
+        EntryFormatter::new("a", &mut out).entry_optional(Some(true), |v, f| f.entry_bool(v));
+        assert_eq!(out, "a = true\n");
+
+        let mut out = String::new();
+        EntryFormatter::new("a", &mut out).entry_optional(None::<bool>, |v, f| f.entry_bool(v));
+        assert_eq!(out, "a = \n");
     }
 }
