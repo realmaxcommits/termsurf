@@ -1,7 +1,7 @@
 use objc2::rc::Retained;
 use objc2::runtime::ProtocolObject;
 use objc2_metal::{
-    MTLCommandBuffer, MTLCommandBufferStatus, MTLCommandEncoder, MTLCommandQueue,
+    MTLBuffer, MTLCommandBuffer, MTLCommandBufferStatus, MTLCommandEncoder, MTLCommandQueue,
     MTLRenderCommandEncoder, MTLRenderPassDescriptor,
 };
 
@@ -9,7 +9,9 @@ use crate::renderer::metal::api::{
     MetalClearColor, MetalCommandBufferStatus, MetalLoadAction, MetalPrimitiveType,
     MetalStoreAction,
 };
+use crate::renderer::metal::buffer::FrameCells;
 use crate::renderer::metal::pipeline::MetalPipeline;
+use crate::renderer::metal::shaders::MetalStandardPipelines;
 use crate::renderer::metal::texture::MetalTexture;
 
 pub(crate) struct MetalCommandFrame {
@@ -121,6 +123,62 @@ impl MetalRenderPass {
 
     pub(crate) fn complete(self) {
         self.encoder.endEncoding();
+    }
+
+    /// Issue the core cell-draw sequence — the background color, the opaque cell
+    /// backgrounds, and the cell text — from the frame's cell buffers. Mirrors
+    /// upstream `drawFrame`'s cell steps (the no-background-image path): the two
+    /// background steps bind `[null, cells_bg]` and draw a full-target triangle;
+    /// the text step binds `[cells_text, cells_bg]` with the grayscale and color
+    /// atlases and draws one instanced quad per foreground cell (`fg_count`). A
+    /// `fg_count` of `0` skips the text step (`step` short-circuits zero
+    /// instances). The background-image branch and the kitty/overlay draws are
+    /// deferred.
+    pub(crate) fn draw_cells(
+        &self,
+        pipelines: &MetalStandardPipelines,
+        uniforms: &ProtocolObject<dyn MTLBuffer>,
+        cells: &FrameCells,
+        grayscale: &MetalTexture,
+        color: &MetalTexture,
+        fg_count: usize,
+    ) {
+        // Background color: a full-target triangle reading the bg cells.
+        self.step(MetalRenderPassStep {
+            pipeline: &pipelines.bg_color,
+            buffers: &[None, Some(cells.bg_buffer())],
+            textures: &[],
+            uniforms: Some(uniforms),
+            draw: MetalDraw {
+                primitive_type: MetalPrimitiveType::Triangle,
+                vertex_count: 3,
+                instance_count: 1,
+            },
+        });
+        // Opaque cell backgrounds.
+        self.step(MetalRenderPassStep {
+            pipeline: &pipelines.cell_bg,
+            buffers: &[None, Some(cells.bg_buffer())],
+            textures: &[],
+            uniforms: Some(uniforms),
+            draw: MetalDraw {
+                primitive_type: MetalPrimitiveType::Triangle,
+                vertex_count: 3,
+                instance_count: 1,
+            },
+        });
+        // Cell text: one instanced quad per foreground cell.
+        self.step(MetalRenderPassStep {
+            pipeline: &pipelines.cell_text,
+            buffers: &[Some(cells.text_buffer()), Some(cells.bg_buffer())],
+            textures: &[Some(grayscale), Some(color)],
+            uniforms: Some(uniforms),
+            draw: MetalDraw {
+                primitive_type: MetalPrimitiveType::TriangleStrip,
+                vertex_count: 4,
+                instance_count: fg_count,
+            },
+        });
     }
 }
 
@@ -761,6 +819,225 @@ mod tests {
             .expect("command frame should complete");
 
         assert_pixels(&target.read_bytes(), [0, 255, 0, 255]);
+    }
+
+    fn draw_cells_options(device: &ProtocolObject<dyn MTLDevice>) -> MetalBufferOptions<'_> {
+        MetalBufferOptions {
+            device,
+            resource_options: MetalResourceOptions::image(MetalStorageMode::Shared),
+        }
+    }
+
+    #[test]
+    fn draw_cells_renders_text_over_cells() {
+        use crate::renderer::cell::{Contents, Key};
+        use crate::renderer::size::GridSize;
+
+        let device = metal_device();
+        let queue = device
+            .newCommandQueue()
+            .expect("command queue should be created");
+        let pipelines = MetalStandardPipelines::new(&device, MetalPixelFormat::Bgra8Unorm)
+            .expect("standard pipelines should compile");
+        let uniforms = uniform_buffer(
+            &device,
+            cell_text_uniforms([2, 2], [1, 1], [2.0, 2.0], [0, 0, 0, 0]),
+        );
+
+        // A 1×1 Contents: a transparent cell background and a masked red glyph on
+        // the real row (the same vertex/atlas as the known cell-text test, routed
+        // through `draw_cells`).
+        let mut contents = Contents::default();
+        contents.resize(GridSize {
+            columns: 1,
+            rows: 1,
+        });
+        *contents.bg_cell_mut(0, 0) = CellBg([0, 0, 0, 0]);
+        contents.add(
+            Key::Text,
+            cell_text_vertex([0, 0], [2, 2], [0, 2], [0, 0], [255, 0, 0, 255]),
+        );
+
+        let opts = draw_cells_options(&device);
+        let mut frame_cells = FrameCells::new(opts).expect("frame cells should be created");
+        let fg_count = frame_cells
+            .sync(opts, &contents)
+            .expect("frame cells should sync");
+        assert_eq!(fg_count, 1);
+
+        let grayscale = grayscale_atlas_texture(&device, 2, 2, &[255, 0, 0, 255]);
+        let color = dummy_color_atlas_texture(&device);
+        let target = render_target(&device, 2, 2);
+        let frame = MetalCommandFrame::begin(&queue).expect("command frame should begin");
+        let pass = frame
+            .render_pass(&[MetalRenderPassAttachment {
+                texture: &target,
+                clear_color: Some(MetalClearColor {
+                    red: 0.0,
+                    green: 0.0,
+                    blue: 0.0,
+                    alpha: 0.0,
+                }),
+            }])
+            .expect("render pass should begin");
+
+        pass.draw_cells(
+            &pipelines,
+            uniforms.buffer(),
+            &frame_cells,
+            &grayscale,
+            &color,
+            fg_count,
+        );
+        pass.complete();
+        frame
+            .commit_and_wait()
+            .expect("command frame should complete");
+
+        // The text step drew the one foreground instance: the masked red glyph
+        // (the bg-color and cell-bg steps drew transparent, leaving the mask).
+        let transparent = [0, 0, 0, 0];
+        let red = [0, 0, 255, 255];
+        assert_pixel_grid(
+            &target.read_bytes(),
+            2,
+            &[red, transparent, transparent, red],
+        );
+    }
+
+    #[test]
+    fn draw_cells_draws_cell_background_and_skips_zero_foreground() {
+        use crate::renderer::cell::Contents;
+        use crate::renderer::size::GridSize;
+
+        let device = metal_device();
+        let queue = device
+            .newCommandQueue()
+            .expect("command queue should be created");
+        let pipelines = MetalStandardPipelines::new(&device, MetalPixelFormat::Bgra8Unorm)
+            .expect("standard pipelines should compile");
+        let uniforms = uniform_buffer(
+            &device,
+            cell_text_uniforms([2, 2], [1, 1], [2.0, 2.0], [0, 0, 0, 0]),
+        );
+
+        // A 1×1 Contents: an opaque green cell background and NO foreground.
+        let mut contents = Contents::default();
+        contents.resize(GridSize {
+            columns: 1,
+            rows: 1,
+        });
+        *contents.bg_cell_mut(0, 0) = CellBg([0, 255, 0, 255]);
+
+        let opts = draw_cells_options(&device);
+        let mut frame_cells = FrameCells::new(opts).expect("frame cells should be created");
+        let fg_count = frame_cells
+            .sync(opts, &contents)
+            .expect("frame cells should sync");
+        assert_eq!(fg_count, 0);
+
+        let grayscale = grayscale_atlas_texture(&device, 1, 1, &[255]);
+        let color = dummy_color_atlas_texture(&device);
+        let target = render_target(&device, 2, 2);
+        let frame = MetalCommandFrame::begin(&queue).expect("command frame should begin");
+        let pass = frame
+            .render_pass(&[MetalRenderPassAttachment {
+                texture: &target,
+                clear_color: Some(MetalClearColor {
+                    red: 0.0,
+                    green: 0.0,
+                    blue: 0.0,
+                    alpha: 0.0,
+                }),
+            }])
+            .expect("render pass should begin");
+
+        pass.draw_cells(
+            &pipelines,
+            uniforms.buffer(),
+            &frame_cells,
+            &grayscale,
+            &color,
+            fg_count,
+        );
+        pass.complete();
+        frame
+            .commit_and_wait()
+            .expect("command frame should complete");
+
+        // The cell-background step drew the opaque green cell; the text step was
+        // skipped (`fg_count == 0`), so the green shows everywhere.
+        assert_pixels(&target.read_bytes(), [0, 255, 0, 255]);
+    }
+
+    #[test]
+    fn draw_cells_draws_background_color_step() {
+        use crate::renderer::cell::Contents;
+        use crate::renderer::size::GridSize;
+
+        let device = metal_device();
+        let queue = device
+            .newCommandQueue()
+            .expect("command queue should be created");
+        let pipelines = MetalStandardPipelines::new(&device, MetalPixelFormat::Bgra8Unorm)
+            .expect("standard pipelines should compile");
+        // A nonzero uniform background color.
+        let uniforms = uniform_buffer(
+            &device,
+            cell_text_uniforms([2, 2], [1, 1], [2.0, 2.0], [32, 64, 128, 255]),
+        );
+
+        // A 1×1 Contents: a TRANSPARENT cell background and NO foreground — so
+        // only the bg-color step can produce a visible pixel.
+        let mut contents = Contents::default();
+        contents.resize(GridSize {
+            columns: 1,
+            rows: 1,
+        });
+        *contents.bg_cell_mut(0, 0) = CellBg([0, 0, 0, 0]);
+
+        let opts = draw_cells_options(&device);
+        let mut frame_cells = FrameCells::new(opts).expect("frame cells should be created");
+        let fg_count = frame_cells
+            .sync(opts, &contents)
+            .expect("frame cells should sync");
+        assert_eq!(fg_count, 0);
+
+        let grayscale = grayscale_atlas_texture(&device, 1, 1, &[255]);
+        let color = dummy_color_atlas_texture(&device);
+        let target = render_target(&device, 2, 2);
+        let frame = MetalCommandFrame::begin(&queue).expect("command frame should begin");
+        let pass = frame
+            .render_pass(&[MetalRenderPassAttachment {
+                texture: &target,
+                clear_color: Some(MetalClearColor {
+                    red: 0.0,
+                    green: 0.0,
+                    blue: 0.0,
+                    alpha: 0.0,
+                }),
+            }])
+            .expect("render pass should begin");
+
+        pass.draw_cells(
+            &pipelines,
+            uniforms.buffer(),
+            &frame_cells,
+            &grayscale,
+            &color,
+            fg_count,
+        );
+        pass.complete();
+        frame
+            .commit_and_wait()
+            .expect("command frame should complete");
+
+        // The bg-color step filled the target with the uniform background color
+        // (RGBA `[32, 64, 128, 255]` → BGRA pixel `[128, 64, 32, 255]`); the
+        // transparent cell background drew nothing over it, and the text was
+        // skipped. An implementation omitting the bg-color step would leave the
+        // clear color `[0, 0, 0, 0]`.
+        assert_pixels(&target.read_bytes(), [128, 64, 32, 255]);
     }
 
     #[test]

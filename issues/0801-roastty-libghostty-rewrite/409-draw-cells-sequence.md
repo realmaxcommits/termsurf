@@ -240,3 +240,78 @@ Review artifacts:
 
 - Prompt: `logs/codex-review/20260604-072610-d409-prompt.md` (design)
 - Result: `logs/codex-review/20260604-072610-d409-last-message.md` (design)
+
+## Result
+
+**Result:** Pass
+
+The core cell-draw sequence is now live.
+
+- `roastty/src/renderer/metal/render_pass.rs`:
+  `MetalRenderPass::draw_cells(&self, pipelines, uniforms, cells: &FrameCells, grayscale, color, fg_count)`
+  issues the three cell steps via `self.step` in order — `bg_color` (buffers
+  `[None, Some(bg)]`, no textures, `Triangle`/3/1), `cell_bg` (same bindings),
+  and `cell_text` (buffers `[Some(text), Some(bg)]`, textures
+  `[grayscale, color]`, `TriangleStrip`/4/`fg_count`). The existing
+  zero-instance guard in `step` skips the text step when `fg_count == 0`. Added
+  imports `objc2_metal::MTLBuffer`, `buffer::FrameCells`,
+  `shaders::MetalStandardPipelines`.
+
+Tests (in `render_pass.rs`, live Metal device, render-to-target + pixel
+read-back):
+
+- `draw_cells_renders_text_over_cells` — a 1×1 `Contents` (transparent bg cell +
+  a masked red glyph) synced into `FrameCells` (`fg_count == 1`); `draw_cells`
+  over a 2×2 target → the pixel grid `[red, transparent, transparent, red]` (the
+  known cell-text mask, routed through `draw_cells`).
+- `draw_cells_draws_cell_background_and_skips_zero_foreground` — a 1×1
+  `Contents` (opaque green bg cell, no foreground; `fg_count == 0`) → all pixels
+  green `[0, 255, 0, 255]` (the cell-bg step drew, the text step was skipped).
+- `draw_cells_draws_background_color_step` — a 1×1 `Contents` (transparent bg
+  cell, no foreground), a nonzero uniform `bg_color`, a different clear color →
+  all pixels `[128, 64, 32, 255]` (the bg-color step ran; an omitted bg-color
+  step would leave the clear color).
+
+Gate results:
+
+- `cargo fmt -p roastty` accepted; `--check` clean.
+- `cargo test -p roastty` → 2877 passed, 0 failed (+3, no regressions).
+- `cargo build -p roastty` → no warnings.
+- No-`ghostty`-name gates (font + renderer + `lib.rs`/header/`abi_harness.c`)
+  clean; `git diff --check` clean.
+
+## Conclusion
+
+The renderer bridge now runs the full cell pipeline end-to-end on the GPU:
+per-cell assembly (`rebuildCells`) → `Contents` read views → the upload
+primitives → `FrameCells` → `draw_cells` (bg-color, cell-bg, cell-text). A small
+`Contents` assembled in a test renders to a Metal target with the expected
+pixels. The remaining renderer-bridge work is the surrounding per-frame plumbing
+— the uniform/atlas sync, the `begin_frame` / target acquisition / custom-shader
+passes, the background-image and kitty/overlay image draws — and the live call
+site that assembles `Contents` from terminal state, syncs `FrameCells`, and
+invokes `draw_cells` each frame (which depends on the live render `State`); plus
+the `rebuild_viewport` cursor/preedit assembly.
+
+## Completion Review
+
+Codex reviewed the completed implementation and result and **approved** with
+**no findings**. It confirmed the implementation matches the approved design and
+upstream's no-background-image cell sequence: `draw_cells` issues the steps in
+the correct order (`bg_color` → `cell_bg` → `cell_text`) with upstream's
+bindings and draw parameters (`[None, Some(cells_bg)]` for both background
+steps; `[Some(text), Some(cells_bg)]` plus `[grayscale, color]` for the text;
+`Triangle`/3/1 for the backgrounds; `TriangleStrip`/4/`fg_count` for the text),
+and the existing zero-instance guard correctly skips the text draw when
+`fg_count == 0`. It confirmed the Low finding is addressed —
+`draw_cells_draws_background_color_step` (transparent cell background, no
+foreground, nonzero uniform bg color, different clear color) would fail if the
+bg-color step were omitted — and that the other two tests exercise the text
+rendering and the cell-background / zero-foreground paths. Internal Rust only —
+no public C ABI/header impact; nothing needed to change before the result
+commit.
+
+Review artifacts:
+
+- Prompt: `logs/codex-review/20260604-073220-r409-prompt.md` (result)
+- Result: `logs/codex-review/20260604-073220-r409-last-message.md` (result)
