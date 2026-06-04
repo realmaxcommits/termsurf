@@ -232,3 +232,71 @@ Review artifacts:
 
 - Prompt: `logs/codex-review/20260603-205421-028293-prompt.md` (design)
 - Result: `logs/codex-review/20260603-205421-028293-last-message.md` (design)
+
+## Result
+
+**Result:** Pass
+
+The lock cursor now renders its glyph.
+
+- `roastty/src/renderer/cell.rs`:
+  - `add_cursor` is restructured: `opts` is computed once, then a per-style
+    `match` yields a `Render` — the four sprite styles via
+    `render_glyph(Special::Sprite, Sprite::Cursor*)` (unchanged), and `Lock` via
+    `render_codepoint(0xF023, Style::Regular, Some(Presentation::Text), &opts)?`
+    (`Some` → the render; `None` → `set_cursor(None, Some(Lock))` + return). The
+    cursor vertex is built once from the `Render` (grayscale atlas,
+    `is_cursor_glyph = true`, same
+    `grid_pos`/`color`/`glyph_pos`/`glyph_size`/`bearings`) and `set_cursor`
+    stores it — shared across all five styles. `crate::font::Style` is imported;
+    the doc comment now describes the lock-symbol render.
+
+Test (in `cell.rs`): `add_cursor_lock_falls_back_when_glyph_absent` — a `Lock`
+cursor on a Menlo grid (no `0xF023`, discovery disabled) → `render_codepoint`
+returns `None`, so the lock cursor draws nothing, clears the pre-seeded block
+cursor, and returns `Ok`. The sprite cursor tests
+(`add_cursor_maps_styles_and_routes`, `add_cursor_wide_uses_two_cells`) are
+unchanged and still pass.
+
+Gate results:
+
+- `cargo fmt -p roastty` accepted; `--check` clean.
+- `cargo test -p roastty` → 2852 passed, 0 failed (no net change — the lock test
+  was renamed/updated, not added; no regressions, sprite cursors unchanged).
+- `cargo build -p roastty` → no warnings.
+- No-`ghostty`-name gates (font + renderer) clean; `git diff --check` clean.
+
+## Conclusion
+
+The lock cursor is now wired: `add_cursor`'s `Lock` branch renders the Nerd Font
+lock symbol (`0xF023`) via `render_codepoint` and draws it through the same
+cursor vertex path as the sprite cursors, falling back to a cleared cursor when
+no font has the glyph (the local path, since roastty embeds no Nerd Font). All
+five cursor styles are now faithfully ported.
+
+The remaining renderer-bridge work: the under-cursor text recolor (the cell
+under the cursor is recolored to contrast); the column-ordered decoration
+merge + link double-underline; and the **Metal upload** of `Contents`.
+
+## Completion Review
+
+Codex reviewed the completed implementation and result and **approved** with
+**no findings**. It confirmed the implementation matches the approved design:
+`add_cursor` resolves each cursor style to a `Render`, keeps the four sprite
+styles on the same `render_glyph(Special::Sprite, Sprite::Cursor*)` path, and
+routes `Lock` through
+`render_codepoint(0xF023, Style::Regular, Some(Presentation::Text))`, with the
+`None` fallback clearing the cursor and returning `Ok(())` (upstream's
+no-cursor-drawn outcome). It confirmed the shared vertex tail preserves the
+cursor rendering contract across all five styles (grayscale atlas,
+`is_cursor_glyph = true`, same grid position/color/glyph
+position/size/bearings), that the design-review Low about `?` error propagation
+was recorded as an intentional Rust adaptation consistent with the sprite
+branches, that the lock fall-back test is appropriate for Menlo/no-Nerd-Font and
+the `Some` path is reasonably covered by Experiment 392 plus the unchanged
+sprite cursor vertex tests, and that there is no public C ABI/header change.
+Nothing needed to change before the result commit.
+
+Review artifacts:
+
+- Result review: `logs/codex-review/20260603-205717-964028-last-message.md`

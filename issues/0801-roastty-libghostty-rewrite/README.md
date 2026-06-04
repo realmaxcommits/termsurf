@@ -1231,7 +1231,7 @@ are past the correctness-critical foundation.
   — **Pass** · Claude/Codex/Codex
 - [Experiment 392: the codepoint render path](392-render-codepoint.md) —
   **Pass** · Claude/Codex/Codex
-- [Experiment 393: the lock cursor glyph](393-lock-cursor.md) — **Designed** ·
+- [Experiment 393: the lock cursor glyph](393-lock-cursor.md) — **Pass** ·
   Claude/Codex/Codex
 
 ## Non-Goals

@@ -25,7 +25,7 @@ use crate::font::run::{shape_row, RunCell, RunOptions, ShapedRun, Wide};
 use crate::font::shape;
 use crate::font::shared_grid::SharedGrid;
 use crate::font::sprite::draw::Sprite;
-use crate::font::Presentation;
+use crate::font::{Presentation, Style};
 use crate::terminal::color::{Palette, Rgb};
 use crate::terminal::sgr::Underline;
 use crate::terminal::style::{BoldColor, Color, Style as TermStyle};
@@ -1112,12 +1112,13 @@ pub(crate) fn add_overline(
     )
 }
 
-/// Render the cursor sprite for `cursor_style` through `grid` and set it as the
-/// cursor cell in `contents` (via [`Contents::set_cursor`]) at `grid_pos`, with
-/// `color`/`alpha`. `wide` widens the sprite to two cells. Faithful port of
-/// upstream `addCursor` (the sprite cursor styles). `CursorStyle::Lock` renders a
-/// codepoint glyph upstream, not a sprite, and is deferred — it clears any prior
-/// cursor and returns.
+/// Render `cursor_style`'s glyph through `grid` and set it as the cursor cell in
+/// `contents` (via [`Contents::set_cursor`]) at `grid_pos`, with `color`/`alpha`.
+/// `wide` widens the glyph to two cells. Faithful port of upstream `addCursor`:
+/// the four sprite styles render a cursor sprite, while `CursorStyle::Lock`
+/// renders the real Nerd Font lock symbol (`0xF023`) via [`SharedGrid::
+/// render_codepoint`]. If no font has the lock glyph (roastty embeds no Nerd
+/// Font), the cursor is cleared and nothing is drawn, as upstream does.
 pub(crate) fn add_cursor(
     contents: &mut Contents,
     grid: &mut SharedGrid,
@@ -1127,19 +1128,6 @@ pub(crate) fn add_cursor(
     color: [u8; 3],
     alpha: u8,
 ) -> Result<(), ResolverRenderError> {
-    let sprite = match cursor_style {
-        CursorStyle::Block => Sprite::CursorRect,
-        CursorStyle::BlockHollow => Sprite::CursorHollowRect,
-        CursorStyle::Bar => Sprite::CursorBar,
-        CursorStyle::Underline => Sprite::CursorUnderline,
-        // The lock cursor renders a codepoint glyph (deferred), not a sprite.
-        // Still clear any prior cursor so a stale one does not linger.
-        CursorStyle::Lock => {
-            contents.set_cursor(None, Some(CursorStyle::Lock));
-            return Ok(());
-        }
-    };
-
     let opts = RenderOptions {
         grid_metrics: grid.metrics,
         cell_width: Some(if wide { 2 } else { 1 }),
@@ -1148,7 +1136,41 @@ pub(crate) fn add_cursor(
         thicken: false,
         thicken_strength: 255,
     };
-    let render = grid.render_glyph(Index::special(Special::Sprite), sprite as u32, &opts)?;
+
+    // The sprite cursors render a cursor sprite; the lock cursor renders the real
+    // lock symbol (0xF023). If no font has the lock glyph, clear the cursor and
+    // return (upstream logs and returns — the same no-cursor outcome).
+    let render = match cursor_style {
+        CursorStyle::Block => grid.render_glyph(
+            Index::special(Special::Sprite),
+            Sprite::CursorRect as u32,
+            &opts,
+        )?,
+        CursorStyle::BlockHollow => grid.render_glyph(
+            Index::special(Special::Sprite),
+            Sprite::CursorHollowRect as u32,
+            &opts,
+        )?,
+        CursorStyle::Bar => grid.render_glyph(
+            Index::special(Special::Sprite),
+            Sprite::CursorBar as u32,
+            &opts,
+        )?,
+        CursorStyle::Underline => grid.render_glyph(
+            Index::special(Special::Sprite),
+            Sprite::CursorUnderline as u32,
+            &opts,
+        )?,
+        CursorStyle::Lock => {
+            match grid.render_codepoint(0xF023, Style::Regular, Some(Presentation::Text), &opts)? {
+                Some(render) => render,
+                None => {
+                    contents.set_cursor(None, Some(CursorStyle::Lock));
+                    return Ok(());
+                }
+            }
+        }
+    };
 
     let vertex = CellTextVertex {
         glyph_pos: [render.glyph.atlas_x, render.glyph.atlas_y],
@@ -3020,12 +3042,16 @@ mod tests {
     }
 
     #[test]
-    fn add_cursor_lock_clears() {
+    fn add_cursor_lock_falls_back_when_glyph_absent() {
         let mut shared = menlo_grid();
         let mut c = Contents::default();
         c.resize(grid(4, 3));
 
-        // Pre-seed a block cursor, then a Lock cursor clears it (no sprite drawn).
+        // Pre-seed a block cursor, then a Lock cursor: Menlo has no lock symbol
+        // (U+F023) and discovery is disabled, so `render_codepoint` returns `None`
+        // and the lock cursor draws nothing — clearing the prior cursor and
+        // returning `Ok` (upstream's no-cursor outcome). A font embedding the lock
+        // glyph would instead draw it via the same vertex path as the sprites.
         add_cursor(
             &mut c,
             &mut shared,
