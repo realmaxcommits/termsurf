@@ -195,3 +195,50 @@ Review artifacts:
 
 - Prompt: `logs/codex-review/20260604-193707-d536-prompt.md` (design)
 - Result: `logs/codex-review/20260604-193707-d536-last-message.md` (design)
+
+## Result
+
+**Result:** Pass
+
+The new module `roastty/src/terminal/ansi.rs` (declared
+`#[allow(dead_code)] mod ansi;`) ports the `C0` control-character enum: a
+`#[repr(u8)]` enum with the 13 named codes at their exact byte values, `value()`
+returning the discriminant, and `from_byte(u8) -> Option<C0>` mapping a byte to
+its named code or `None` — the Rust stand-in for upstream's non-exhaustive
+`enum(u7)` / `@enumFromInt`. The new test `c0_round_trips_and_rejects_unknown`
+round-trips every named code, checks exact byte values, and rejects
+representative unnamed bytes (`0x03` / `0x04` / `0x20` / `0x7F`).
+
+Gates:
+
+- `cargo fmt -p roastty` accepted; `--check` clean.
+- `cargo test -p roastty`: 3026 passed, 0 failed (one new test; no regressions).
+- `cargo build -p roastty`: no warnings.
+- no-`ghostty`-name greps (font/renderer/config + terminal/ansi.rs +
+  lib.rs/header/abi_harness.c) clean; `git diff --check` clean.
+
+## Completion Review
+
+Codex reviewed the completed experiment and **approved** it with **no
+findings**: the implementation matches the approved C0 slice — exact named byte
+values, `value()` as the discriminant, and `from_byte()` returning `None` for
+unnamed/unknown values as the Rust stand-in for upstream's non-exhaustive
+`enum(u7)` else path; the tests cover all named round-trips plus representative
+unnamed values (unnamed C0 bytes and non-control bytes); gates are clean and the
+parser / other ANSI enums remain deferred. "Approved with no findings."
+
+Review artifacts:
+
+- Prompt: `logs/codex-review/20260604-193857-r536-prompt.md` (result)
+- Result: `logs/codex-review/20260604-193857-r536-last-message.md` (result)
+
+## Conclusion
+
+The first non-config experiment lands: `terminal::ansi::C0`, the foundational VT
+control-code enum, in a new `terminal::ansi` module. The next slices can port
+the other `ansi.zig` enums (`RenditionAspect`, `CursorStyle`, `StatusLineType`,
+`StatusDisplay`, `ModifyKeyFormat`, `ProtectedMode`) into the same module, then
+the rest of the VT layer (`csi`, `apc`, `parse_table`, `Parser`) and the stream
+parser that consumes them — toward the terminal core. The config subsystem's
+`loadDefaultFiles` remains deferred pending roastty's naming decision;
+`background-image-opacity` stays float-blocked.

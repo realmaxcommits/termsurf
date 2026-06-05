@@ -1518,7 +1518,7 @@ are past the correctness-critical foundation.
 - [Experiment 535: the CLI-args driver (Config::set_cli_args)](535-config-set-cli-args.md)
   — **Pass** · Claude/Codex/Codex
 - [Experiment 536: the C0 control-character enum (terminal::ansi::C0)](536-terminal-ansi-c0.md)
-  — **Designed** · Claude/Codex/—
+  — **Pass** · Claude/Codex/Codex
 
 ## Non-Goals
 

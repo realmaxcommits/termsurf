@@ -1,4 +1,7 @@
 #[allow(dead_code)]
+mod ansi;
+
+#[allow(dead_code)]
 mod bitmap_allocator;
 
 #[allow(dead_code)]
