@@ -255,3 +255,66 @@ Review artifacts:
 
 - Prompt: `logs/codex-review/20260604-d580-prompt.md`
 - Result: `logs/codex-review/20260604-d580-last-message.md`
+
+## Result
+
+**Result:** Pass
+
+`terminal::split_tree` gained the in-order traversal and navigation dispatch:
+the `Backtrack` enum, `previous_backtrack` (left-then-right, a right-side
+backtrack resolving to `deepest(Right, left)`) and `next_backtrack` (the
+mirror), `previous` / `next` (mapping only `Result` to `Some`), and `goto`
+(`pub(crate)`; the five-way dispatch — direct `previous` / `next`, the
+`_wrapped` fallbacks to root `deepest`, and `Spatial` → `spatial()` +
+`nearest_wrapped`). The module doc comment was updated to mark the navigation
+complete.
+
+Gates:
+
+- `cargo fmt -p roastty` accepted; `--check` clean.
+- `cargo test -p roastty`: 3199 passed, 0 failed (five new tests; no
+  regressions, up from 3196).
+- `cargo build -p roastty`: no warnings.
+- no-`ghostty`-name greps (font/renderer/config + terminal/split_tree.rs +
+  lib.rs/header/abi_harness.c) clean; `git diff --check` clean.
+
+The five new tests (over the 2×2 grid, in-order leaves `2, 3, 5, 6`): the `next`
+forward traversal (`2 → 3 → 5 → 6 → None`), the `previous` mirror
+(`6 → 5 → 3 → 2 → None`), `goto` direct (`goto(2, Next) == Some(3)`,
+`goto(6, Next) == None`), `goto` wrapped (`NextWrapped(6) == 2`,
+`PreviousWrapped(2) == 6`), and `goto` spatial (`Spatial(Right)` from `TL` →
+`TR`, `Spatial(Down)` → `BL`).
+
+## Completion Review
+
+Codex reviewed the completed experiment and **approved** it with **no Required
+or Optional findings** (one Nit: the `## Result` / `## Conclusion` sections were
+not yet in the saved file — added here). Codex confirmed the implementation
+matches upstream — `previous_backtrack` searches left then right and resolves
+the right-side backtrack through `deepest(Right, left)`, `next_backtrack`
+mirrors it (right then left, `deepest(Left, right)`), `previous` / `next` map
+only `Result` to `Some`, and `goto` correctly dispatches the direct, wrapped,
+and spatial variants — and that the 2×2 traversal tests are sound.
+
+Review artifacts:
+
+- Prompt: `logs/codex-review/20260604-r580-prompt.md` (result)
+- Result: `logs/codex-review/20260604-r580-last-message.md` (result)
+
+## Conclusion
+
+This experiment ports the split_tree in-order `previous` / `next` backtracking
+traversal and the `goto` dispatch — the eighth split_tree slice — **completing
+the split_tree navigation surface**. With this, split_tree's read-side is fully
+ported: the vocabulary, the `Split` / `Slot` payloads, the spatial geometry, the
+`Node<V>` arena and structural queries, the iterator / zoom / `Goto`, the
+`Spatial` container, the spatial `nearest` / `nearest_wrapped`, the in-order
+`previous` / `next`, and `goto`. The only remaining split_tree pieces are the
+**tree-shaping operations** (`split` / `remove` / `equalize` / `resize` — arena
+rewrites that _build_ new trees, where `split` reuses the already-ported
+`Direction::split_layout` and `Handle::offset`) and the **formatters**
+(`formatText` / `formatDiagram`). The other remaining big-ticket subsystem is
+the terminal **search subsystem** (coupled to `PageList` / `Pin` / `Screen` /
+`Selection` / `PageFormatter`); the dependency-blocked helpers persist
+(regex/oniguruma for `Link::oniRegex`, a URI parser for `os/uri`, the
+config-directory naming decision for `file_load` / `edit` / `loadDefaultFiles`).

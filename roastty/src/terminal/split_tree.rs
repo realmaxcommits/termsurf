@@ -2,9 +2,10 @@
 //! (`Handle` / `Layout` / `Direction`), the `Split` / `Slot` payloads, the spatial geometry, the
 //! `Node<V>` arena (`SplitTree`) with the structural queries (`is_empty` / `is_split` / `deepest` /
 //! `dimensions`) and `Rc<V>`-based view ref-counting, the leaf `iter`ator, `zoom`, and the `Goto`
-//! enum, the `Spatial` container's normalization (`spatial` / `fillSpatialSlots`), and the spatial
-//! navigation (`nearest` / `nearest_wrapped`). Still deferred: the tree-shaping operations (`split`
-//! / `remove` / `equalize` / `resize`), the `goto` method, and the formatters.
+//! enum, the `Spatial` container's normalization (`spatial` / `fillSpatialSlots`), and the full
+//! navigation (the spatial `nearest` / `nearest_wrapped`, the in-order `previous` / `next`, and the
+//! `goto` dispatch). Still deferred: the tree-shaping operations (`split` / `remove` / `equalize` /
+//! `resize`) and the formatters.
 
 use half::f16;
 use std::rc::Rc;
@@ -176,6 +177,13 @@ pub(crate) enum Side {
     Right,
 }
 
+/// The result of the backtracking previous/next search (upstream `Backtrack`).
+enum Backtrack {
+    Deadend,
+    Backtrack,
+    Result(Handle),
+}
+
 /// Relative tree dimensions in leaf units (upstream `dimensions`' anonymous return).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Dimensions {
@@ -298,6 +306,86 @@ impl<V> SplitTree<V> {
         }
 
         Spatial { slots }
+    }
+
+    /// The in-order previous view of `from`, or `None` if it is the first (upstream `previous`).
+    fn previous(&self, from: Handle) -> Option<Handle> {
+        match self.previous_backtrack(from, Handle::ROOT) {
+            Backtrack::Result(v) => Some(v),
+            Backtrack::Backtrack | Backtrack::Deadend => None,
+        }
+    }
+
+    /// The in-order next view of `from`, or `None` if it is the last (upstream `next`).
+    fn next(&self, from: Handle) -> Option<Handle> {
+        match self.next_backtrack(from, Handle::ROOT) {
+            Backtrack::Result(v) => Some(v),
+            Backtrack::Backtrack | Backtrack::Deadend => None,
+        }
+    }
+
+    fn previous_backtrack(&self, from: Handle, current: Handle) -> Backtrack {
+        if from == current {
+            return Backtrack::Backtrack;
+        }
+        match &self.nodes[current.idx()] {
+            Node::Leaf(_) => Backtrack::Deadend,
+            Node::Split(s) => {
+                let s = *s;
+                match self.previous_backtrack(from, s.left) {
+                    Backtrack::Result(v) => Backtrack::Result(v),
+                    Backtrack::Backtrack => Backtrack::Backtrack,
+                    Backtrack::Deadend => match self.previous_backtrack(from, s.right) {
+                        Backtrack::Result(v) => Backtrack::Result(v),
+                        Backtrack::Deadend => Backtrack::Deadend,
+                        Backtrack::Backtrack => {
+                            Backtrack::Result(self.deepest(Side::Right, s.left))
+                        }
+                    },
+                }
+            }
+        }
+    }
+
+    fn next_backtrack(&self, from: Handle, current: Handle) -> Backtrack {
+        if from == current {
+            return Backtrack::Backtrack;
+        }
+        match &self.nodes[current.idx()] {
+            Node::Leaf(_) => Backtrack::Deadend,
+            Node::Split(s) => {
+                let s = *s;
+                match self.next_backtrack(from, s.right) {
+                    Backtrack::Result(v) => Backtrack::Result(v),
+                    Backtrack::Backtrack => Backtrack::Backtrack,
+                    Backtrack::Deadend => match self.next_backtrack(from, s.left) {
+                        Backtrack::Result(v) => Backtrack::Result(v),
+                        Backtrack::Deadend => Backtrack::Deadend,
+                        Backtrack::Backtrack => {
+                            Backtrack::Result(self.deepest(Side::Left, s.right))
+                        }
+                    },
+                }
+            }
+        }
+    }
+
+    /// Resolve a `Goto` to a target handle, or `None` (upstream `goto`).
+    pub(crate) fn goto(&self, from: Handle, to: Goto) -> Option<Handle> {
+        match to {
+            Goto::Previous => self.previous(from),
+            Goto::Next => self.next(from),
+            Goto::PreviousWrapped => self
+                .previous(from)
+                .or_else(|| Some(self.deepest(Side::Right, Handle::ROOT))),
+            Goto::NextWrapped => self
+                .next(from)
+                .or_else(|| Some(self.deepest(Side::Left, Handle::ROOT))),
+            Goto::Spatial(d) => {
+                let sp = self.spatial();
+                self.nearest_wrapped(&sp, from, d)
+            }
+        }
     }
 
     /// The nearest leaf to `target` in `direction`, or `None` if there is none (upstream
@@ -1086,6 +1174,68 @@ mod tests {
         assert_eq!(
             tree.nearest_wrapped(&sp, tl, SpatialDirection::Left),
             Some(tr)
+        );
+    }
+
+    #[test]
+    fn next_and_previous_in_order_traversal() {
+        let tree = grid_2x2();
+        // In-order leaves: TL=2, BL=3, TR=5, BR=6.
+        assert_eq!(
+            tree.next(Handle::from_index(2)),
+            Some(Handle::from_index(3))
+        );
+        assert_eq!(
+            tree.next(Handle::from_index(3)),
+            Some(Handle::from_index(5))
+        );
+        assert_eq!(
+            tree.next(Handle::from_index(5)),
+            Some(Handle::from_index(6))
+        );
+        assert_eq!(tree.next(Handle::from_index(6)), None);
+
+        // previous is the mirror.
+        assert_eq!(
+            tree.previous(Handle::from_index(6)),
+            Some(Handle::from_index(5))
+        );
+        assert_eq!(
+            tree.previous(Handle::from_index(5)),
+            Some(Handle::from_index(3))
+        );
+        assert_eq!(
+            tree.previous(Handle::from_index(3)),
+            Some(Handle::from_index(2))
+        );
+        assert_eq!(tree.previous(Handle::from_index(2)), None);
+    }
+
+    #[test]
+    fn goto_previous_next_and_wrapped() {
+        let tree = grid_2x2();
+        let first = Handle::from_index(2); // TL
+        let last = Handle::from_index(6); // BR
+
+        assert_eq!(tree.goto(first, Goto::Next), Some(Handle::from_index(3)));
+        assert_eq!(tree.goto(last, Goto::Next), None);
+        // NextWrapped from the last wraps to the first (deepest-left of root).
+        assert_eq!(tree.goto(last, Goto::NextWrapped), Some(first));
+        // PreviousWrapped from the first wraps to the last (deepest-right of root).
+        assert_eq!(tree.goto(first, Goto::PreviousWrapped), Some(last));
+    }
+
+    #[test]
+    fn goto_spatial_uses_nearest_wrapped() {
+        let tree = grid_2x2();
+        let tl = Handle::from_index(2);
+        assert_eq!(
+            tree.goto(tl, Goto::Spatial(SpatialDirection::Right)),
+            Some(Handle::from_index(5)) // TR
+        );
+        assert_eq!(
+            tree.goto(tl, Goto::Spatial(SpatialDirection::Down)),
+            Some(Handle::from_index(3)) // BL
         );
     }
 
