@@ -1681,6 +1681,8 @@ are past the correctness-critical foundation.
   — **Pass** · Claude/Codex/Codex
 - [Experiment 617: wire StringMap to the screen producer](617-string-map-producer.md)
   — **Pass** · Claude/Codex/Codex
+- [Experiment 618: RFC-3986 URI parser (std.Uri foundation)](618-uri-rfc3986-parser.md)
+  — **Designed** · Claude/Codex/Codex
 
 ## Non-Goals
 
