@@ -83,6 +83,9 @@ pub(crate) mod point;
 mod ref_counted_set;
 
 #[allow(dead_code)]
+mod segmented_pool;
+
+#[allow(dead_code)]
 pub(crate) mod selection_codepoints;
 
 #[allow(dead_code)]

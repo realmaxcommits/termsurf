@@ -271,3 +271,68 @@ Review artifacts:
 
 - Prompt: `logs/codex-review/20260604-d563-prompt.md`
 - Result: `logs/codex-review/20260604-d563-last-message.md`
+
+## Result
+
+**Result:** Pass
+
+`terminal::segmented_pool::SegmentedPool<T: Default>` was added: a `Vec<T>`
+backing store with a wrapping cursor `i` and an `available` count.
+`new(prealloc)` asserts `prealloc >= 1` and default-initializes the slots; `get`
+returns `Result<usize, OutOfValues>` (slot `i % len`, wrapping cursor advance,
+`available` decrement); `get_grow` grows-then-gets (infallible `usize`); `put`
+bumps `available` guarded by a release-trapping `assert!` (the Required fix);
+`at` / `at_mut` resolve an index to a borrow; and `grow` doubles the length via
+`extend`, resetting `i` and `available` to the old length so the fresh half is
+handed out first. Registered via `#[allow(dead_code)] mod segmented_pool;` in
+`terminal/mod.rs`.
+
+Gates:
+
+- `cargo fmt -p roastty` accepted; `--check` clean.
+- `cargo test -p roastty`: 3122 passed, 0 failed (five new tests; no
+  regressions, up from 3117).
+- `cargo build -p roastty`: no warnings.
+- no-`ghostty`-name greps (font/renderer/config + terminal/segmented_pool.rs +
+  lib.rs/header/abi_harness.c) clean; `git diff --check` clean.
+
+The five new tests: distinct slots until exhausted, in-order put-back returning
+the same slot with its written value intact, growth handing out the fresh half
+first (then wrapping back to the first old slot after a `put`),
+capacity/availability tracking across a grow, and the over-`put`
+`#[should_panic]` guard.
+
+## Completion Review
+
+Codex reviewed the completed experiment and **approved** it with **no Required
+or Optional findings** (one Nit: the `## Result` / `## Conclusion` sections were
+not yet in the saved file — added here as part of result recording). Codex
+confirmed the implementation matches upstream and the approved design: `get`
+uses `i % len` with a wrapping cursor and `available` decrement; `get_grow`
+grows first when exhausted; `grow` doubles and hands out the fresh half first by
+setting `i` and `available` to `old_len`; `put` uses the release-active
+`assert!`; the index-handle adaptation is documented; and the tests cover
+exhaustion, in-order put-back with value preservation, growth/wrap behavior,
+count tracking, and the over-`put` panic.
+
+Review artifacts:
+
+- Prompt: `logs/codex-review/20260604-r563-prompt.md` (result)
+- Result: `logs/codex-review/20260604-r563-last-message.md` (result)
+
+## Conclusion
+
+`terminal::segmented_pool::SegmentedPool` is ported from
+`datastruct/segmented_pool.zig` — roastty's fifth `datastruct/` type. The key
+adaptation was turning upstream's libuv-motivated **raw-pointer +
+`std.SegmentedList`** design (pointer stability across growth) into an
+**index-handle + `Vec<T>`** design: indices are stable across a `Vec`
+reallocation by construction, so the simpler backing store is faithful, with the
+ring arithmetic (cursor / `available` / doubling) reproduced exactly. The
+remaining `datastruct/` work is `intrusive_linked_list` (the raw-pointer
+doubly-linked list — an arena/index redesign like `Lru`), `blocking_queue`
+(channel-like, thread-synchronized), and the large `split_tree`. The terminal
+**search subsystem** (now `CircBuf` and the cache/pool datastructs are in place)
+is the other natural target. The objc/bundle-id helpers, the `home()` resolver,
+and config `loadDefaultFiles` remain deferred pending roastty's naming decision;
+`background-image-opacity` stays float-blocked.
