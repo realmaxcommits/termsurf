@@ -1507,6 +1507,8 @@ are past the correctness-critical foundation.
   — **Pass** · Claude/Codex/Codex
 - [Experiment 530: config file IO (Config::load_file)](530-config-load-file.md)
   — **Pass** · Claude/Codex/Codex
+- [Experiment 531: the XDG config-directory resolution (xdg_config_dir)](531-config-xdg-path.md)
+  — **Designed** · Claude/Codex/—
 
 ## Non-Goals
 
