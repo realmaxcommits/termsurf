@@ -1596,7 +1596,7 @@ are past the correctness-critical foundation.
 - [Experiment 574: split tree spatial geometry (SpatialDirection, slot direction/distance/wrap)](574-split-tree-spatial-geometry.md)
   — **Pass** · Claude/Codex/Codex
 - [Experiment 575: config float formatter (background-image-opacity)](575-config-float-formatter.md)
-  — **Designed** · Claude/Codex/Codex
+  — **Pass** · Claude/Codex/Codex
 
 ## Non-Goals
 

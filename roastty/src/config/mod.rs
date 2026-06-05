@@ -186,9 +186,6 @@ impl Config {
     /// Format the whole config as `key = value\n` lines, one per field, in
     /// upstream `Config` declaration order (upstream `FileFormatter.format`,
     /// `config/formatter_file.zig`, the default non-docs / non-changed path).
-    ///
-    /// `background-image-opacity` (an `f32`) is omitted: the generic float `{d}`
-    /// branch is float-formatting blocked (Experiment 509).
     pub(crate) fn format_config(&self, out: &mut String) {
         self.font_style
             .format_entry(&mut EntryFormatter::new("font-style", out));
@@ -210,7 +207,7 @@ impl Config {
             .format_entry(&mut EntryFormatter::new("background", out));
         self.foreground
             .format_entry(&mut EntryFormatter::new("foreground", out));
-        // background-image-opacity (f32) — float-formatting blocked (Exp 509), deferred.
+        EntryFormatter::new("background-image-opacity", out).entry_float(self.bg_image_opacity);
         self.bg_image_position
             .format_entry(&mut EntryFormatter::new("background-image-position", out));
         self.bg_image_fit
@@ -6035,8 +6032,7 @@ mod tests {
         cfg.format_config(&mut out);
 
         // Every line is a `key = …` entry, and the keys appear in upstream
-        // `Config` declaration order (omitting the float-blocked
-        // `background-image-opacity`).
+        // `Config` declaration order.
         let keys: Vec<&str> = out
             .lines()
             .map(|l| l.split(" = ").next().unwrap())
@@ -6054,6 +6050,7 @@ mod tests {
                 "theme",
                 "background",
                 "foreground",
+                "background-image-opacity",
                 "background-image-position",
                 "background-image-fit",
                 "background-image-repeat",
@@ -6090,8 +6087,8 @@ mod tests {
             ]
         );
 
-        // The float-blocked field is intentionally absent.
-        assert!(!out.contains("background-image-opacity"));
+        // The float field formats as its shortest-decimal default (`1.0` → `1`).
+        assert!(out.contains("background-image-opacity = 1\n"));
 
         // The default optionals (all `None`) format as the void line, and `theme`
         // (default `None`) too.
