@@ -224,3 +224,56 @@ Review artifacts:
   `logs/codex-review/20260604-d549b-prompt.md` (design re-review)
 - Result: `logs/codex-review/20260604-d549-last-message.md` (design),
   `logs/codex-review/20260604-d549b-last-message.md` (design re-review)
+
+## Result
+
+**Result:** Pass
+
+`os::open` was added with `Kind` (`Text` / `Html` / `Unknown`), the
+`open_command_args` argv seam (`open -t <url>` for `Text`, `open <url>` for
+`Html` / `Unknown`), and `open`: a `std::process::Command` with stdout null /
+stderr piped, spawned synchronously (spawn error propagates), then a detached
+reaper thread (via `thread::Builder::spawn(...)?`, so a thread-creation error
+propagates and the `JoinHandle` is dropped to detach) that drains stderr to
+`std::io::sink()` and `wait()`s. The module is registered in `os/mod.rs`. Two
+tests cover the argv seam (`Text` ⇒ `-t`; `Html` / `Unknown` ⇒ plain `open`);
+the live spawn is not unit-tested (it would launch an external application).
+
+Gates:
+
+- `cargo fmt -p roastty` accepted; `--check` clean.
+- `cargo test -p roastty`: 3061 passed, 0 failed (two new tests; no regressions,
+  up from 3059).
+- `cargo build -p roastty`: no warnings.
+- no-`ghostty`-name greps (font/renderer/config + os/open.rs + os/mod.rs +
+  lib.rs/header/abi_harness.c) clean; `git diff --check` clean.
+
+## Completion Review
+
+Codex reviewed the completed experiment and **approved** it with **one Nit** (no
+Required or Optional findings): the doc had `## Result` but no `## Conclusion` —
+fixed by adding the conclusion below. Codex confirmed the implementation matches
+upstream macOS behavior: the argv selection is faithful, stdout is ignored,
+stderr is piped and drained with bounded buffering, `command.spawn()?` and
+`Builder::spawn(...)?` both propagate errors, and dropping the `JoinHandle` is
+the Rust detached-thread equivalent; the seam-only tests are appropriate because
+a live `open` would launch an external app.
+
+Review artifacts:
+
+- Prompt: `logs/codex-review/20260604-r549-prompt.md` (result)
+- Result: `logs/codex-review/20260604-r549-last-message.md` (result)
+
+## Conclusion
+
+`os::open::open` — open a URL/file in the system default handler (`open` /
+`open -t` on macOS) — is faithfully ported from `os/open.zig`, adding to the
+`os` module from Experiments 541–548. This is how roastty will open OSC 8
+hyperlinks (wiring into the OSC 8 handler deferred). The Codex design review
+tightened two real faithfulness gaps the Rust stdlib's defaults would have
+introduced — `thread::spawn` panicking instead of propagating (fixed with
+`Builder::spawn(...)?`) and an unbounded stderr drain (fixed with `io::copy` to
+`io::sink()`). The OS-utility frontier still has a few self-contained slices
+(`locale`, `homedir`'s tilde-expansion, `i18n_locales`, `resourcesdir`). The
+config `loadDefaultFiles` stays deferred pending roastty's naming decision;
+`background-image-opacity` stays float-blocked.
