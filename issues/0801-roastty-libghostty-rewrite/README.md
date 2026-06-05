@@ -1504,7 +1504,7 @@ are past the correctness-critical foundation.
 - [Experiment 528: the config-file line parser (parse_config_line)](528-config-line-parse.md)
   — **Pass** · Claude/Codex/Codex
 - [Experiment 529: the multi-line config loader (Config::load_str)](529-config-load-str.md)
-  — **Designed** · Claude/Codex/—
+  — **Pass** · Claude/Codex/Codex
 
 ## Non-Goals
 

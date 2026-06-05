@@ -172,3 +172,54 @@ Review artifacts:
 
 - Prompt: `logs/codex-review/20260604-190040-d529-prompt.md` (design)
 - Result: `logs/codex-review/20260604-190040-d529-last-message.md` (design)
+
+## Result
+
+**Result:** Pass
+
+`ConfigDiagnostic` and `Config::load_str` were added. `load_str` iterates
+`text.split('\n').enumerate()`, applies each `parse_config_line` ⇒
+`Config::set`, and collects a `ConfigDiagnostic { line: i+1, key, error }` per
+failing line while continuing — faithful to upstream's `parse` (record +
+continue), with 1-indexed line numbers counting blank/comment lines. The new
+test `config_load_str_applies_lines_and_collects_diagnostics` covers a clean
+multi-line load (keys, comment, blank, quoted value, bare bool) with no
+diagnostics, and a load with errors producing the correct line-numbered
+diagnostics while the good lines still apply (defaults preserved after an
+invalid value). This is the end-to-end string-to-`Config` loader.
+
+Gates:
+
+- `cargo fmt -p roastty` accepted; `--check` clean.
+- `cargo test -p roastty`: 3019 passed, 0 failed (one new test; no regressions).
+- `cargo build -p roastty`: no warnings.
+- no-`ghostty`-name greps (font/renderer/config + lib.rs/header/abi_harness.c)
+  clean; `git diff --check` clean.
+
+## Completion Review
+
+Codex reviewed the completed experiment and **approved** it with **no
+findings**: the implementation matches the approved driver semantics —
+`split('\n').enumerate()` gives 1-indexed diagnostics counting skipped
+blank/comment lines, each parsed line feeds `Config::set`, and failures are
+collected without aborting the rest of the file; the tests cover clean loading,
+quote stripping, bare-bool behavior, diagnostic line numbering across
+comments/blanks, continue-past-errors, and default preservation after an invalid
+value; gates are clean and the remaining file/CLI/message-format pieces are
+deferred. "Approved with no findings."
+
+Review artifacts:
+
+- Prompt: `logs/codex-review/20260604-190308-r529-prompt.md` (result)
+- Result: `logs/codex-review/20260604-190308-r529-last-message.md` (result)
+
+## Conclusion
+
+The config system is now **end-to-end** in both directions for a string source:
+`Config::load_str` (text → `Config` + diagnostics) and `Config::format_config`
+(`Config` → text), over all the leaf parsers/formatters and the 43-of-44-field
+`Config::set`. The remaining config work is **file IO** — reading a config-file
+path into `load_str` (open, read to a string, the default config-path
+resolution) — and the `--key=value` CLI-arg form. `background-image-opacity`
+stays float-blocked. After the config subsystem, the entire non-config rewrite
+remains.

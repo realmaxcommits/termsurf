@@ -531,6 +531,28 @@ impl Config {
         }
         Ok(())
     }
+
+    /// Load config from a source string (upstream's config-file `parse` driving
+    /// `LineIterator`): apply each `key = value` line via `Config::set`, skipping
+    /// blank lines and `#` comments, and collect a diagnostic per failing line
+    /// (continuing rather than aborting). Lines are 1-indexed, counting blanks and
+    /// comments.
+    pub(crate) fn load_str(&mut self, text: &str) -> Vec<ConfigDiagnostic> {
+        let mut diagnostics = Vec::new();
+        for (i, line) in text.split('\n').enumerate() {
+            let Some((key, value)) = loader::parse_config_line(line) else {
+                continue;
+            };
+            if let Err(error) = self.set(key, value) {
+                diagnostics.push(ConfigDiagnostic {
+                    line: i + 1,
+                    key: key.to_string(),
+                    error,
+                });
+            }
+        }
+        diagnostics
+    }
 }
 
 /// An error from `Config::set` (upstream `parseIntoField`'s
@@ -543,6 +565,15 @@ pub(crate) enum ConfigSetError {
     InvalidValue,
     /// The field requires a value but none was given.
     ValueRequired,
+}
+
+/// A per-line config-load diagnostic (upstream's `parse` diagnostics): the 1-indexed
+/// line, the offending key, and the `Config::set` error.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ConfigDiagnostic {
+    pub line: usize,
+    pub key: String,
+    pub error: ConfigSetError,
 }
 
 /// Resolve an enum field value (upstream's empty-reset + `stringToEnum` magic): a
@@ -3275,18 +3306,18 @@ mod tests {
         AlphaBlending, BackgroundBlur, BackgroundBlurParseError, BackgroundImageFit,
         BackgroundImagePosition, BoldColor, ClipboardAccess, ClipboardCodepointMapEntry,
         ClipboardCodepointMapParseError, ClipboardReplacement, Color, ColorList, ColorParseError,
-        Config, ConfigSetError, ConfirmCloseSurface, CopyOnSelect, CustomShaderAnimation, Duration,
-        DurationParseError, FlagsParseError, FontShapingBreak, FontStyle, FontStyleParseError,
-        Fullscreen, GraphemeWidthMethod, LinkPreviews, MacHidden, MacTitlebarProxyIcon,
-        MacTitlebarStyle, MacWindowButtons, MagicParseError, MiddleClickAction, MouseShiftCapture,
-        NonNativeFullscreen, NotifyOnCommandFinish, NotifyOnCommandFinishAction,
-        OscColorReportFormat, Palette, PaletteParseError, RepeatableClipboardCodepointMap,
-        RepeatableString, RepeatableStringParseError, RightClickAction, ScrollToBottom,
-        SelectionWordChars, SelectionWordCharsParseError, ShellIntegration,
-        ShellIntegrationFeatures, TerminalBoldColor, TerminalColor, Theme, ThemeParseError,
-        WindowColorspace, WindowDecoration, WindowDecorationParseError, WindowPadding,
-        WindowPaddingColor, WindowPaddingParseError, WindowSubtitle, WorkingDirectory,
-        WorkingDirectoryParseError,
+        Config, ConfigDiagnostic, ConfigSetError, ConfirmCloseSurface, CopyOnSelect,
+        CustomShaderAnimation, Duration, DurationParseError, FlagsParseError, FontShapingBreak,
+        FontStyle, FontStyleParseError, Fullscreen, GraphemeWidthMethod, LinkPreviews, MacHidden,
+        MacTitlebarProxyIcon, MacTitlebarStyle, MacWindowButtons, MagicParseError,
+        MiddleClickAction, MouseShiftCapture, NonNativeFullscreen, NotifyOnCommandFinish,
+        NotifyOnCommandFinishAction, OscColorReportFormat, Palette, PaletteParseError,
+        RepeatableClipboardCodepointMap, RepeatableString, RepeatableStringParseError,
+        RightClickAction, ScrollToBottom, SelectionWordChars, SelectionWordCharsParseError,
+        ShellIntegration, ShellIntegrationFeatures, TerminalBoldColor, TerminalColor, Theme,
+        ThemeParseError, WindowColorspace, WindowDecoration, WindowDecorationParseError,
+        WindowPadding, WindowPaddingColor, WindowPaddingParseError, WindowSubtitle,
+        WorkingDirectory, WorkingDirectoryParseError,
     };
     use crate::terminal::color::Rgb;
     use crate::terminal::selection_codepoints::DEFAULT_WORD_BOUNDARIES;
@@ -5721,6 +5752,63 @@ mod tests {
             cfg.set("theme", Some("bright:x,dark:y")),
             Err(ConfigSetError::InvalidValue)
         );
+    }
+
+    #[test]
+    fn config_load_str_applies_lines_and_collects_diagnostics() {
+        let has = |out: &str, key: &str, val: &str| {
+            out.lines().any(|l| l == format!("{} = {}", key, val))
+        };
+
+        // A clean multi-line config (keys, a comment, a blank line, a quoted value)
+        // applies every field with no diagnostics.
+        let mut cfg = Config::default();
+        let diags = cfg.load_str(
+            "# a comment\n\
+             fullscreen = non-native\n\
+             \n\
+             theme = \"catppuccin-mocha\"\n\
+             background = #ff0000\n\
+             background-image-repeat\n",
+        );
+        assert!(diags.is_empty());
+        let mut out = String::new();
+        cfg.format_config(&mut out);
+        assert!(has(&out, "fullscreen", "non-native"));
+        assert!(has(&out, "theme", "catppuccin-mocha")); // quotes stripped
+        assert!(has(&out, "background", "#ff0000"));
+        assert!(has(&out, "background-image-repeat", "true")); // bare key ⇒ true
+
+        // A config with errors records a diagnostic per failing line (1-indexed,
+        // counting the blank/comment lines) and still applies the good lines.
+        let mut cfg = Config::default();
+        let diags = cfg.load_str(
+            "# header\n\
+             copy-on-select = clipboard\n\
+             \n\
+             badkey = x\n\
+             fullscreen = nope\n",
+        );
+        assert_eq!(
+            diags,
+            vec![
+                ConfigDiagnostic {
+                    line: 4,
+                    key: "badkey".to_string(),
+                    error: ConfigSetError::UnknownField,
+                },
+                ConfigDiagnostic {
+                    line: 5,
+                    key: "fullscreen".to_string(),
+                    error: ConfigSetError::InvalidValue,
+                },
+            ]
+        );
+        // The good line still applied; the bad `fullscreen` kept its default.
+        let mut out = String::new();
+        cfg.format_config(&mut out);
+        assert!(has(&out, "copy-on-select", "clipboard"));
+        assert!(has(&out, "fullscreen", "false")); // the default
     }
 
     #[test]
