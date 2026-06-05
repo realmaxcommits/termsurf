@@ -37,6 +37,8 @@ use terminal::terminal::{
 use terminal::{mouse, mouse_encode, osc, point, sgr, size_report, style};
 
 mod config;
+#[allow(dead_code)]
+mod file_type;
 mod font;
 mod input;
 mod os;

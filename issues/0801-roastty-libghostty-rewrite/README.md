@@ -1580,7 +1580,7 @@ are past the correctness-critical foundation.
 - [Experiment 566: the DFA UTF-8 decoder (Utf8Decoder)](566-utf8-decoder.md) —
   **Pass** · Claude/Codex/Codex
 - [Experiment 567: magic-byte file-type detection (FileType)](567-file-type.md)
-  — **Designed** · Claude/Codex/Codex
+  — **Pass** · Claude/Codex/Codex
 
 ## Non-Goals
 

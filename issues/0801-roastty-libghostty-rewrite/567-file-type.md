@@ -294,3 +294,67 @@ Review artifacts:
 
 - Prompt: `logs/codex-review/20260604-d567-prompt.md`
 - Result: `logs/codex-review/20260604-d567-last-message.md`
+
+## Result
+
+**Result:** Pass
+
+`crate::file_type::FileType` was added: the enum
+(`Jpeg`/`Png`/`Gif`/`Bmp`/`Qoi`/`Webp`/`Unknown`), the verbatim `TYPE_DETAILS`
+table (signatures as `&[Option<u8>]` with `None` wildcards, ASCII bytes as
+`Some(b'…')`, order preserved), `detect(&[u8])` (the `len`-guard + `zip().all()`
+wildcard match), and the byte-oriented `guess_from_extension(&[u8])` (the
+Required fix) using `<[u8]>::eq_ignore_ascii_case` against each
+`ext.as_bytes()`. Registered via `#[allow(dead_code)] mod file_type;` at the
+crate root in `lib.rs`, mirroring upstream's `src/file_type.zig`. No other files
+were touched.
+
+Gates:
+
+- `cargo fmt -p roastty` accepted; `--check` clean.
+- `cargo test -p roastty`: 3140 passed, 0 failed (five new tests; no
+  regressions, up from 3135).
+- `cargo build -p roastty`: no warnings.
+- no-`ghostty`-name greps (font/renderer/config + file_type.rs +
+  lib.rs/header/abi_harness.c) clean; `git diff --check` clean.
+
+The five new tests: each format detected from its magic bytes; wildcards honored
+(the EXIF JPEG and the WebP signatures match regardless of the wildcard bytes);
+the short `FF D8 FF E0` JPEG signature matched via ordering; too-short /
+unrelated content → `Unknown`; and case-insensitive extension guessing (`.png` /
+`.JPG` / `.Jpeg` / `.jfif` / `.WEBP` / `.qoi`, with `.txt` and a non-UTF-8
+extension → `Unknown`).
+
+## Completion Review
+
+Codex reviewed the completed experiment and **approved** it with **no Required
+or Optional findings** (one Nit: the `## Result` / `## Conclusion` sections were
+not yet in the saved file — added here as part of result recording). Codex
+mechanically compared the _implemented_ `TYPE_DETAILS` table against upstream —
+type order, extension order, and **all 74 signature/wildcard tokens match** —
+and confirmed the `detect` prefix/wildcard logic is faithful, the byte-oriented
+`guess_from_extension(&[u8])` fix is in place, and the tests cover the table,
+ordering, wildcard, unknown, and non-UTF-8 extension cases.
+
+Review artifacts:
+
+- Prompt: `logs/codex-review/20260604-r567-prompt.md` (result)
+- Result: `logs/codex-review/20260604-r567-last-message.md` (result)
+
+## Conclusion
+
+`crate::file_type::FileType` is a 1:1 port of `file_type.zig` — an image
+magic-byte detector (JPEG/PNG/GIF/BMP/QOI/WebP) whose signature table was
+transcribed verbatim and verified token-for- token by the reviewer. The
+byte-faithfulness theme recurred: `guess_from_extension` takes `&[u8]` (not
+`&str`) to mirror upstream's `[]const u8`, so non-UTF-8 extensions naturally
+fall through to `Unknown`. This is roastty's first crate-root (`src/`) leaf port
+(after the `os/`, `datastruct/`, and `terminal/` layers). Other small unported
+leaves include `terminal/csi`, `terminal/ScreenSet`, and `src/`-level helpers
+(`math`, `fastmem`, `quirks`). The big-ticket items remain
+`datastruct/split_tree` (2517 lines) and the terminal **search subsystem**
+(coupled to `PageList` / `Pin` / `Screen` / `Selection` / `PageFormatter`); a
+future slice could wire `file_type` into the kitty graphics loader and unify
+`stream.rs`'s decoder with the DFA `Utf8Decoder`. The objc/bundle-id helpers,
+the `home()` resolver, and config `loadDefaultFiles` remain deferred pending
+roastty's naming decision; `background-image-opacity` stays float-blocked.
