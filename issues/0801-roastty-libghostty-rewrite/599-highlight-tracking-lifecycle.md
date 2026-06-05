@@ -213,3 +213,65 @@ Review artifacts:
 
 - Prompt: `logs/codex-review/20260604-d599-prompt.md`
 - Result: `logs/codex-review/20260604-d599-last-message.md`
+
+## Result
+
+**Result:** Pass
+
+`terminal::highlight` gained the tracking lifecycle: `Untracked::track`
+(delegates to `Tracked::init`), `Tracked::init` (tracks `start` then `end` via
+the existing `Screen::track_pin`, untracking `start` if `end` fails, returning
+`Option<Tracked>`), and `Tracked::deinit` (untracks both pins, taking `self` by
+value). `Untracked::eql` is the derived `PartialEq`. The existing
+`Screen::track_pin` / `untrack_pin` are reused (no duplicates); `#[cfg(test)]`
+`Screen::first_node_ptr_for_tests` / `tracked_pin_count` were added for the
+tests.
+
+Gates:
+
+- `cargo fmt -p roastty` accepted; `--check` clean.
+- `cargo test -p roastty`: 3295 passed, 0 failed (three new tests; no
+  regressions, up from 3292).
+- `cargo build -p roastty`: no warnings.
+- no-`ghostty`-name greps: font/renderer/config + `highlight.rs` +
+  lib.rs/header/abi_harness.c clean; this experiment's `screen.rs` additions are
+  clean of ghostty names; `git diff --check` clean. (As in Experiment 597, the
+  large pre-existing `screen.rs` file carries one pre-existing
+  `// Upstream Ghostty` comment unrelated to this diff, left untouched per the
+  no-unrequested-changes rule.)
+
+The three new tests: the normal lifecycle (track raises the screen's tracked-pin
+count by 2, deinit returns it to baseline), the rollback path (a valid start
+pin + an invalid end pin → `Tracked::init` returns `None` and the count returns
+to baseline), and the derived `Untracked` equality.
+
+## Completion Review
+
+Codex reviewed the completed experiment and **approved** it with **no Required
+or Optional findings** (one Nit: the `## Result` / `## Conclusion` sections were
+not yet saved — added here). Codex confirmed the implementation is faithful:
+`Untracked::track` delegates to `Tracked::init`; `Tracked::init` tracks start
+then end and untracks the start on end failure; `Tracked::deinit` untracks both
+pins and takes `self` by value; `Option<Tracked>` is the right adaptation for
+the existing `track_pin` failure model; the tests cover the normal lifecycle,
+the rollback path, and the derived equality; and leaving the pre-existing
+`screen.rs` no-name hit untouched (documented as outside the diff) is the right
+handling.
+
+Review artifacts:
+
+- Prompt: `logs/codex-review/20260604-r599-prompt.md` (result)
+- Result: `logs/codex-review/20260604-r599-last-message.md` (result)
+
+## Conclusion
+
+This experiment ports the highlight tracking lifecycle (`Untracked::track` /
+`Tracked::init` / `deinit`) — the prerequisite for `ScreenSearch`'s selection
+stepping, which tracks the selected match's pins so it follows the content
+across terminal mutations. The next slice is `ScreenSearch::select_next` /
+`select_prev` (they pick or step the selected match, track it via
+`Untracked::track`, and `deinit` the previous tracked highlight — self-contained
+relative to the `reload_active` / `select` cluster, which calls them). After
+that, the `init` / `reload_active` / `select` construction cluster and `feed` /
+`search_all` remain in `ScreenSearch`, followed by `ViewportSearch` and the
+search `Thread`.

@@ -1488,6 +1488,21 @@ impl Screen {
         self.pages.track_pin(pin)
     }
 
+    /// The first (oldest) page node pointer (test helper for the highlight tracking lifecycle).
+    #[cfg(test)]
+    pub(in crate::terminal) fn first_node_ptr_for_tests(
+        &self,
+    ) -> std::ptr::NonNull<super::page_list::Node> {
+        self.pages.first_node_ptr()
+    }
+
+    /// The number of tracked pins in this screen's page list (test helper for the highlight tracking
+    /// lifecycle).
+    #[cfg(test)]
+    pub(in crate::terminal) fn tracked_pin_count(&self) -> usize {
+        self.pages.tracked_pin_count()
+    }
+
     pub(super) fn untrack_pin(&mut self, pin: std::ptr::NonNull<Pin>) {
         self.pages.untrack_pin(pin);
     }
