@@ -2,9 +2,9 @@
 //! (`Handle` / `Layout` / `Direction`), the `Split` / `Slot` payloads, the spatial geometry, the
 //! `Node<V>` arena (`SplitTree`) with the structural queries (`is_empty` / `is_split` / `deepest` /
 //! `dimensions`) and `Rc<V>`-based view ref-counting, the leaf `iter`ator, `zoom`, and the `Goto`
-//! enum. Still deferred: the tree-shaping operations (`split` / `remove` / `equalize` / `resize`),
-//! the `goto` method, the `Spatial` container's normalization (`spatial` / `fillSpatialSlots`) and
-//! `nearest`, and the formatters.
+//! enum, and the `Spatial` container's normalization (`spatial` / `fillSpatialSlots`). Still
+//! deferred: the tree-shaping operations (`split` / `remove` / `equalize` / `resize`), the `goto`
+//! method, the arena-coupled `nearest` / `nearestWrapped`, and the formatters.
 
 use half::f16;
 use std::rc::Rc;
@@ -258,6 +258,94 @@ impl<V> SplitTree<V> {
         self.zoomed
     }
 
+    /// The normalized spatial representation: each node's rectangle in a 1×1 space (upstream
+    /// `spatial`). An empty tree yields an empty `Spatial`.
+    pub(crate) fn spatial(&self) -> Spatial {
+        if self.nodes.is_empty() {
+            return Spatial { slots: Vec::new() };
+        }
+
+        let dim = self.dimensions(Handle::ROOT);
+        let width = f16::from_f32(dim.width as f32);
+        let height = f16::from_f32(dim.height as f32);
+        let zero = f16::from_f32(0.0);
+
+        // One slot per node; the root spans the full relative dimensions, the rest are filled by
+        // `fill_spatial_slots`. The zero init is just a placeholder (every node is reached).
+        let mut slots = vec![
+            Slot {
+                x: zero,
+                y: zero,
+                width: zero,
+                height: zero,
+            };
+            self.nodes.len()
+        ];
+        slots[0] = Slot {
+            x: zero,
+            y: zero,
+            width,
+            height,
+        };
+        self.fill_spatial_slots(&mut slots, Handle::ROOT);
+
+        // Normalize to a 1×1 grid.
+        for slot in &mut slots {
+            slot.x /= width;
+            slot.y /= height;
+            slot.width /= width;
+            slot.height /= height;
+        }
+
+        Spatial { slots }
+    }
+
+    /// Recursively fill each child's slot from its parent split's slot (upstream
+    /// `fillSpatialSlots`).
+    fn fill_spatial_slots(&self, slots: &mut [Slot], current: Handle) {
+        let cur = slots[current.idx()];
+        let zero = f16::from_f32(0.0);
+        assert!(cur.width >= zero && cur.height >= zero);
+
+        if let Node::Split(s) = &self.nodes[current.idx()] {
+            let s = *s; // copy (drops the borrow of `self.nodes`)
+            let one = f16::from_f32(1.0);
+            match s.layout {
+                Layout::Horizontal => {
+                    slots[s.left.idx()] = Slot {
+                        x: cur.x,
+                        y: cur.y,
+                        width: cur.width * s.ratio,
+                        height: cur.height,
+                    };
+                    slots[s.right.idx()] = Slot {
+                        x: cur.x + cur.width * s.ratio,
+                        y: cur.y,
+                        width: cur.width * (one - s.ratio),
+                        height: cur.height,
+                    };
+                }
+                Layout::Vertical => {
+                    slots[s.left.idx()] = Slot {
+                        x: cur.x,
+                        y: cur.y,
+                        width: cur.width,
+                        height: cur.height * s.ratio,
+                    };
+                    slots[s.right.idx()] = Slot {
+                        x: cur.x,
+                        y: cur.y + cur.height * s.ratio,
+                        width: cur.width,
+                        height: cur.height * (one - s.ratio),
+                    };
+                }
+            }
+            self.fill_spatial_slots(slots, s.left);
+            self.fill_spatial_slots(slots, s.right);
+        }
+        // Leaf: the slot was already filled by the caller (upstream's `.leaf => {}`).
+    }
+
     /// Relative dimensions of the subtree at `from`, in leaf units (upstream `dimensions`).
     pub(crate) fn dimensions(&self, from: Handle) -> Dimensions {
         match &self.nodes[from.idx()] {
@@ -280,6 +368,18 @@ impl<V> SplitTree<V> {
                 }
             }
         }
+    }
+}
+
+/// The normalized 2D layout of every node, in a 1×1 space (upstream `Spatial`).
+pub(crate) struct Spatial {
+    slots: Vec<Slot>,
+}
+
+impl Spatial {
+    /// The per-node slots, in the same order as the tree's nodes.
+    pub(crate) fn slots(&self) -> &[Slot] {
+        &self.slots
     }
 }
 
@@ -748,5 +848,105 @@ mod tests {
             Goto::Spatial(SpatialDirection::Up),
             Goto::Spatial(SpatialDirection::Up)
         );
+    }
+
+    /// A split node payload with an explicit ratio.
+    fn split_ratio(layout: Layout, ratio: f32, left: usize, right: usize) -> Split {
+        Split {
+            layout,
+            ratio: f16::from_f32(ratio),
+            left: Handle::from_index(left),
+            right: Handle::from_index(right),
+        }
+    }
+
+    fn slot_eq(s: Slot, x: f32, y: f32, w: f32, h: f32) -> bool {
+        s.x == f16::from_f32(x)
+            && s.y == f16::from_f32(y)
+            && s.width == f16::from_f32(w)
+            && s.height == f16::from_f32(h)
+    }
+
+    #[test]
+    fn spatial_single_leaf() {
+        let tree = SplitTree::new(Rc::new("v"));
+        let sp = tree.spatial();
+        assert_eq!(sp.slots().len(), 1);
+        assert!(slot_eq(sp.slots()[0], 0.0, 0.0, 1.0, 1.0));
+    }
+
+    #[test]
+    fn spatial_empty_tree() {
+        let tree: SplitTree<&str> = SplitTree::empty();
+        assert!(tree.spatial().slots().is_empty());
+    }
+
+    #[test]
+    fn spatial_horizontal_split_half() {
+        let tree = SplitTree {
+            nodes: vec![
+                Node::Split(split_ratio(Layout::Horizontal, 0.5, 1, 2)),
+                Node::Leaf(Rc::new("a")),
+                Node::Leaf(Rc::new("b")),
+            ],
+            zoomed: None,
+        };
+        let sp = tree.spatial();
+        assert!(slot_eq(sp.slots()[0], 0.0, 0.0, 1.0, 1.0)); // root
+        assert!(slot_eq(sp.slots()[1], 0.0, 0.0, 0.5, 1.0)); // left leaf
+        assert!(slot_eq(sp.slots()[2], 0.5, 0.0, 0.5, 1.0)); // right leaf
+    }
+
+    #[test]
+    fn spatial_horizontal_split_quarter_is_asymmetric() {
+        // ratio 0.25: left gets 0.25 width, right gets 1 - 0.25 = 0.75 (catches a `1 - ratio` bug).
+        let tree = SplitTree {
+            nodes: vec![
+                Node::Split(split_ratio(Layout::Horizontal, 0.25, 1, 2)),
+                Node::Leaf(Rc::new("a")),
+                Node::Leaf(Rc::new("b")),
+            ],
+            zoomed: None,
+        };
+        let sp = tree.spatial();
+        assert!(slot_eq(sp.slots()[1], 0.0, 0.0, 0.25, 1.0));
+        assert!(slot_eq(sp.slots()[2], 0.25, 0.0, 0.75, 1.0));
+    }
+
+    #[test]
+    fn spatial_vertical_split_half() {
+        let tree = SplitTree {
+            nodes: vec![
+                Node::Split(split_ratio(Layout::Vertical, 0.5, 1, 2)),
+                Node::Leaf(Rc::new("a")),
+                Node::Leaf(Rc::new("b")),
+            ],
+            zoomed: None,
+        };
+        let sp = tree.spatial();
+        assert!(slot_eq(sp.slots()[1], 0.0, 0.0, 1.0, 0.5)); // top leaf
+        assert!(slot_eq(sp.slots()[2], 0.0, 0.5, 1.0, 0.5)); // bottom leaf
+    }
+
+    #[test]
+    fn spatial_nested_tree() {
+        // root = H split(left=1, right=4); node1 = V split(left=2, right=3); 2,3,4 leaves.
+        // Left column (1 wide, 2 tall) at the left half; right leaf at the right half.
+        let tree = SplitTree {
+            nodes: vec![
+                Node::Split(split_ratio(Layout::Horizontal, 0.5, 1, 4)),
+                Node::Split(split_ratio(Layout::Vertical, 0.5, 2, 3)),
+                Node::Leaf(Rc::new("a")),
+                Node::Leaf(Rc::new("b")),
+                Node::Leaf(Rc::new("c")),
+            ],
+            zoomed: None,
+        };
+        let sp = tree.spatial();
+        // Left column occupies x∈[0,0.5]; its two leaves stack vertically.
+        assert!(slot_eq(sp.slots()[2], 0.0, 0.0, 0.5, 0.5)); // top-left leaf
+        assert!(slot_eq(sp.slots()[3], 0.0, 0.5, 0.5, 0.5)); // bottom-left leaf
+                                                             // Right leaf occupies x∈[0.5,1], full height.
+        assert!(slot_eq(sp.slots()[4], 0.5, 0.0, 0.5, 1.0));
     }
 }

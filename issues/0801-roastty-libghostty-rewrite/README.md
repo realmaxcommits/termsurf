@@ -1602,7 +1602,7 @@ are past the correctness-critical foundation.
 - [Experiment 577: split tree iterator, zoom, and Goto](577-split-tree-iterator.md)
   — **Pass** · Claude/Codex/Codex
 - [Experiment 578: split tree Spatial container (spatial / fillSpatialSlots)](578-split-tree-spatial.md)
-  — **Designed** · Claude/Codex/Codex
+  — **Pass** · Claude/Codex/Codex
 
 ## Non-Goals
 

@@ -260,3 +260,68 @@ Review artifacts:
 
 - Prompt: `logs/codex-review/20260604-d578-prompt.md`
 - Result: `logs/codex-review/20260604-d578-last-message.md`
+
+## Result
+
+**Result:** Pass
+
+`terminal::split_tree` gained the `Spatial` container (`slots: Vec<Slot>` + a
+`slots` accessor), `SplitTree::spatial` (empty ⇒ empty `Spatial`; otherwise size
+the root to the relative dimensions, `fill_spatial_slots`, then normalize every
+slot into the 1×1 space), and the private `fill_spatial_slots` (leaf ⇒ nothing;
+split ⇒ divide the slot along the split axis by `ratio`, the right/bottom child
+taking `1 - ratio` offset by the left/top extent, then recurse). The module doc
+comment was updated to mark `spatial` as landed.
+
+Gates:
+
+- `cargo fmt -p roastty` accepted; `--check` clean.
+- `cargo test -p roastty`: 3193 passed, 0 failed (six new tests; no regressions,
+  up from 3187).
+- `cargo build -p roastty`: no warnings.
+- no-`ghostty`-name greps (font/renderer/config + terminal/split_tree.rs +
+  lib.rs/header/abi_harness.c) clean; `git diff --check` clean.
+
+The six new tests (binary-exact `f16` comparisons): single leaf
+(`{0, 0, 1, 1}`), the empty tree, the half horizontal split (left
+`{0, 0, 0.5, 1}`, right `{0.5, 0, 0.5, 1}`), the **asymmetric** quarter
+horizontal split (left `{0, 0, 0.25, 1}`, right `{0.25, 0, 0.75, 1}` — covering
+the `1 - ratio` remainder path), the half vertical split, and a nested tree (a
+left 1×2 column of two stacked leaves and a full-height right leaf).
+
+## Completion Review
+
+Codex reviewed the completed experiment and **approved** it with **no Required
+or Optional findings** (one Nit: the `## Result` / `## Conclusion` sections were
+not yet in the saved file — added here). Codex confirmed the implementation
+matches upstream — empty tree ⇒ empty `Spatial`, the root starts in relative
+dimensions, `fill_spatial_slots` assigns child slots along the correct axis with
+the right/bottom child taking `1 - ratio` at the correct offset, and
+normalization divides every slot into the 1×1 space — that copying `Split` out
+before recursion is sound and keeps the borrow simple, and that the tests are
+solid (especially the `0.25` asymmetric case covering the remainder path).
+
+Review artifacts:
+
+- Prompt: `logs/codex-review/20260604-r578-prompt.md` (result)
+- Result: `logs/codex-review/20260604-r578-last-message.md` (result)
+
+## Conclusion
+
+This experiment ports the split_tree `Spatial` representation — the sixth
+split_tree slice — the first to **combine** the `Node<V>` arena (Experiment 576)
+with the `Slot` `f16` geometry (Experiments 573 / 574): `spatial` walks the
+arena recursively, sizing each node's normalized rectangle from its parent
+split's `ratio`, then normalizes into the 1×1 space. With the `Spatial`
+container in place alongside the `Slot::is_in_direction` / `distance_to` /
+`wrapped_for` helpers, the arena-coupled `nearest` / `nearestWrapped` (iterate a
+`Spatial`'s slots, skip non-leaf nodes via the arena, track the running minimum)
+is the next natural slice, then `goto` (which builds a `Spatial` and calls
+`nearestWrapped`, or dispatches to the in-order `previous` / `next`). The
+remaining split_tree work is then the tree-shaping operations (`split` /
+`remove` / `equalize` / `resize`) and the formatters. The other remaining
+big-ticket subsystem is the terminal **search subsystem** (coupled to `PageList`
+/ `Pin` / `Screen` / `Selection` / `PageFormatter`); the dependency-blocked
+helpers persist (regex/oniguruma for `Link::oniRegex`, a URI parser for
+`os/uri`, the config-directory naming decision for `file_load` / `edit` /
+`loadDefaultFiles`).
