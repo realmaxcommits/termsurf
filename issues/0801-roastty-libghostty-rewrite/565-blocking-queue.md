@@ -327,3 +327,74 @@ Review artifacts:
 
 - Prompt: `logs/codex-review/20260604-d565-prompt.md`
 - Result: `logs/codex-review/20260604-d565-last-message.md`
+
+## Result
+
+**Result:** Pass
+
+`terminal::blocking_queue::BlockingQueue<T, CAP>` was added: an `Inner<T, CAP>`
+(a `[Option<T>; CAP]` ring with `write` / `read` / `len` / `not_full_waiters`)
+guarded by a `Mutex`, with a sibling `cond_not_full` `Condvar`. `push` blocks
+the producer on a full queue per the `Timeout` (`Instant` / `Forever` / `Ns`),
+incrementing the waiter count before the wait and decrementing after, returning
+`0` on a timed-out or still-full wake and otherwise the new `len`; `pop` is
+non-blocking and signals a waiter; `drain` returns a `Drain` iterator that holds
+the lock and signals on `Drop`. A shared `take_at_read` (returning `T` via
+`expect`) advances the read cursor for both `pop` and `Drain::next`. Registered
+via `#[allow(dead_code)] mod blocking_queue;` in `terminal/mod.rs`.
+
+Gates:
+
+- `cargo fmt -p roastty` accepted; `--check` clean.
+- `cargo test -p roastty`: 3132 passed, 0 failed (five new tests; no
+  regressions, up from 3127).
+- `cargo build -p roastty`: no warnings.
+- no-`ghostty`-name greps (font/renderer/config + terminal/blocking_queue.rs +
+  lib.rs/header/abi_harness.c) clean; `git diff --check` clean.
+
+The five new tests: the two upstream tests (basic push/pop at capacity 4; timed
+push at capacity 1), plus drain-with-values (FIFO collection then re-push), ring
+wrap-around preserving FIFO across 10 interleaved push/pops at capacity 3, and
+the threaded `Forever` block (the producer blocks on a full capacity-1 queue;
+the main thread polls `not_full_waiters == 1` with a deadline before popping, so
+the condvar wake path is deterministically exercised; the producer then
+completes returning `1`).
+
+## Completion Review
+
+Codex reviewed the completed experiment and **approved** it with **no Required
+or Optional findings** (one Nit: the `## Result` / `## Conclusion` sections were
+not yet in the saved file — added here as part of result recording). Codex
+confirmed the implementation matches the approved design and upstream behavior —
+ring accounting, full-queue timeout handling, the waiter increment/decrement
+ordering, the post-wake full recheck, non-blocking `pop`, the lock-held `drain`,
+and signal-on-drop all correct — the adopted `take_at_read -> T` change is in
+place, and the threaded test now deterministically waits for
+`not_full_waiters == 1` before popping so it actually exercises the condvar
+path.
+
+Review artifacts:
+
+- Prompt: `logs/codex-review/20260604-r565-prompt.md` (result)
+- Result: `logs/codex-review/20260604-r565-last-message.md` (result)
+
+## Conclusion
+
+`terminal::blocking_queue::BlockingQueue` is ported from
+`datastruct/blocking_queue.zig` — roastty's seventh `datastruct/` type, and the
+first that is genuinely thread-synchronized. Upstream's `std.Thread.Mutex` +
+`std.Thread.Condition` map cleanly onto `std::sync::{Mutex, Condvar}`; the main
+adaptation is Rust's "guard the data, not the code" model — the ring state moves
+inside `Mutex<Inner>` and the `DrainIterator.deinit` becomes a `Drop` impl. The
+SPSC ring, the `Instant` / `Forever` / `Ns` producer-blocking timeouts, the
+waiter-count signalling, and the lock-held drain are all faithful. With this,
+**all of `datastruct/` is ported except `split_tree`** (`bitmap_allocator`,
+`offset_hash_map`, `ref_counted_set`, `cache_table`, `circ_buf`, `message_data`,
+`lru`, `segmented_pool`, `intrusive_linked_list`, `blocking_queue` — plus
+`array_list_collection` and `comparison`, the latter subsumed by Rust's
+`PartialEq`). `split_tree` (2517 lines) is a large multi-experiment subsystem in
+its own right. The terminal **search subsystem** is the other natural target but
+is heavily coupled to `PageList` / `Pin` / `Screen` / `Selection` /
+`PageFormatter`. The objc/bundle-id helpers, the `home()` resolver, and config
+`loadDefaultFiles` remain deferred pending roastty's naming decision;
+`background-image-opacity` stays float-blocked.
