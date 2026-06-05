@@ -1653,6 +1653,8 @@ are past the correctness-critical foundation.
   — **Pass** · Claude/Codex/Codex
 - [Experiment 603: search ScreenSearch construction cluster (new / reload_active / select)](603-search-screen-construction.md)
   — **Pass** · Claude/Codex/Codex
+- [Experiment 604: search ScreenSearch feed / search_all](604-search-screen-feed.md)
+  — **Designed** · Claude/Codex/Codex
 
 ## Non-Goals
 
