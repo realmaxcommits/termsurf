@@ -268,3 +268,61 @@ Review artifacts:
 
 - Prompt: `logs/codex-review/20260604-d544-prompt.md` (design)
 - Result: `logs/codex-review/20260604-d544-last-message.md` (design)
+
+## Result
+
+**Result:** Pass
+
+`os::file` was added with `tmp_dir` (`$TMPDIR` / `$TMP` / `/tmp`, trailing-`/`
+trimmed via the `resolve_tmp_dir` test seam), `random_basename` (16
+`arc4random_buf` bytes → `base64_url_no_pad` → 22 chars), `random_tmp_path`
+(`{tmp}/{prefix}{random}`), `RANDOM_BASENAME_LEN`, and the faithful
+`base64_url_no_pad` encoder. The module is registered in `os/mod.rs`. Four
+tests: base64 known vectors (`Man`→`TWFu`, `Ma`→`TWE`, `M`→`TQ`, `[0;16]`→22
+`A`s), `random_basename` length/charset/two-differ, `resolve_tmp_dir`
+trailing-separator trimming (including the `None` ⇒ `/tmp` fallback), and
+`random_tmp_path` composition (starts with `tmp_dir`, contains the prefix, total
+length = `tmp + 1 + prefix + 22`, two-differ).
+
+Gates:
+
+- `cargo fmt -p roastty` accepted; `--check` clean (an initial unused-import
+  warning for `OsStringExt` was removed so the build has no warnings).
+- `cargo test -p roastty`: 3053 passed, 0 failed (four new tests; no
+  regressions, up from 3049).
+- `cargo build -p roastty`: no warnings.
+- no-`ghostty`-name greps (font/renderer/config + os/file.rs + os/mod.rs +
+  lib.rs/header/abi_harness.c) clean; `git diff --check` clean.
+
+## Completion Review
+
+Codex reviewed the completed experiment and **approved** it with **one Nit** (no
+Required or Optional findings): the doc had `## Result` but no `## Conclusion` —
+fixed by adding the conclusion below. Codex confirmed the implementation matches
+upstream `file.zig` and the approved design: `tmp_dir` preserves `$TMPDIR` /
+`$TMP` / `/tmp` ordering and trims trailing `/`; `random_basename` uses 16
+random bytes and url-safe no-pad base64 for a 22-char basename;
+`random_tmp_path` composes `{tmp}/{prefix}{random}` without touching disk; the
+base64 encoder handles full groups and 1-/2-byte tails correctly;
+`arc4random_buf` is an appropriate macOS CSPRNG substitute; and the tests cover
+the upstream behavior plus the deterministic base64 vectors.
+
+Review artifacts:
+
+- Prompt: `logs/codex-review/20260604-r544-prompt.md` (result)
+- Result: `logs/codex-review/20260604-r544-last-message.md` (result)
+
+## Conclusion
+
+`os::file` now holds the temp-path helpers (`tmp_dir`, `random_basename`,
+`random_tmp_path`) plus a faithful url-safe-no-pad base64 encoder, ported from
+`os/file.zig` and adding to the `os` module from Experiments 541–543. These
+generate one-shot temp file / socket paths — directly useful for roastty's
+PID-scoped Unix socket paths (wiring into the socket setup deferred). The
+hand-rolled `base64_url_no_pad` is roastty's first base64 _encoder_ (it
+previously had only a private kitty _decoder_). The `fixMaxFiles` /
+`restoreMaxFiles` rlimit helpers and the Windows arms stay deferred. The
+OS-utility frontier still has clean slices (`pipe`, `i18n_locales`, `TempDir`,
+the rlimit remainder of `file.zig`). The config `loadDefaultFiles` stays
+deferred pending roastty's naming decision; `background-image-opacity` stays
+float-blocked.
