@@ -39,6 +39,7 @@ use terminal::{mouse, mouse_encode, osc, point, sgr, size_report, style};
 mod config;
 mod font;
 mod input;
+mod os;
 mod renderer;
 mod terminal;
 

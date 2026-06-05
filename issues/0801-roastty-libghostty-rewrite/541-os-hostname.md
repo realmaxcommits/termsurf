@@ -286,3 +286,58 @@ Review artifacts:
 
 - Prompt: `logs/codex-review/20260604-d541-prompt.md` (design)
 - Result: `logs/codex-review/20260604-d541-last-message.md` (design)
+
+## Result
+
+**Result:** Pass
+
+The new `roastty::os` module was established (`mod os;` in `lib.rs`, `os/mod.rs`
+with `#![allow(dead_code)]`), with `os::hostname` holding `is_valid` (the
+verbatim RFC 1123 validator over `&[u8]`), `is_local` (`localhost` ⇒ `Ok(true)`,
+else a `libc::gethostname` byte comparison with an `EPERM` ⇒ `PermissionDenied`
+/ else `Unexpected` errno mapping, using the faithful `HOST_NAME_MAX = 72`
+buffer per the design review), and the `LocalHostnameError` enum. Four tests
+port the upstream suites: the full RFC 1123 valid/invalid list (including the
+63/64-char label and 253/254-char length boundaries built from byte vectors) and
+the three `is_local` cases (`localhost`, this machine's `gethostname`, and a
+non-local name).
+
+Gates:
+
+- `cargo fmt -p roastty` accepted; `--check` clean.
+- `cargo test -p roastty`: 3038 passed, 0 failed (four new tests; no
+  regressions, up from 3034).
+- `cargo build -p roastty`: no warnings.
+- no-`ghostty`-name greps (font/renderer/config + os/hostname.rs + os/mod.rs +
+  lib.rs/header/abi_harness.c) clean; `git diff --check` clean.
+
+## Completion Review
+
+Codex reviewed the completed experiment and **approved** it with **one Nit** (no
+Required or Optional findings): the doc had `## Result` but no `## Conclusion` —
+fixed by adding the conclusion below. Codex confirmed `is_valid` is faithful to
+upstream (the empty, leading-dot, trailing-FQDN-dot, 253-byte length, 1..=63
+label, alphanumeric start/end, and hyphen-body rules all match, with the
+boundary tests covering the observable edges), and `is_local` matches the fixed
+design (the `HOST_NAME_MAX = 72` buffer now aligns with upstream's
+`posix.HOST_NAME_MAX`, `localhost` short-circuits, NUL scanning yields the
+returned hostname bytes, and the `EPERM` ⇒ `PermissionDenied` / else ⇒
+`Unexpected` errno mapping is right). The `os` module scaffolding is properly
+scoped, with OSC 7 consumption deferred.
+
+Review artifacts:
+
+- Prompt: `logs/codex-review/20260604-r541-prompt.md` (result)
+- Result: `logs/codex-review/20260604-r541-last-message.md` (result)
+
+## Conclusion
+
+roastty now has an `os` module, opened with `os::hostname` (`is_valid` /
+`is_local` / `LocalHostnameError`), faithfully ported from `os/hostname.zig`.
+This is the first slice of the OS-utility layer that issue 801 covers
+(PTY/IO/os) — the home for the many small self-contained upstream `os/*.zig`
+files (`pipe`, `path`, `file`, `env`, `homedir`, `passwd`, `xdg`, etc.), each a
+natural next slice. Wiring `is_valid` / `is_local` into the OSC 7 /
+shell-integration consumer (`terminal::osc` carries the raw `url` today) stays
+deferred. The config `loadDefaultFiles` stays deferred pending roastty's naming
+decision; `background-image-opacity` stays float-blocked.

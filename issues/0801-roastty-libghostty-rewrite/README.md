@@ -1528,7 +1528,7 @@ are past the correctness-critical foundation.
 - [Experiment 540: the keyboard layout](540-input-keyboard-layout.md) — **Pass**
   · Claude/Codex/Codex
 - [Experiment 541: the hostname validator (first os/ slice)](541-os-hostname.md)
-  — **Designed** · Claude/Codex/Codex
+  — **Pass** · Claude/Codex/Codex
 
 ## Non-Goals
 
