@@ -242,3 +242,59 @@ Review artifacts:
 
 - Prompt: `logs/codex-review/20260605-d614-prompt.md`
 - Result: `logs/codex-review/20260605-d614-last-message.md`
+
+## Result
+
+**Result:** Pass
+
+Implemented the `select` handler in `thread.rs` (+ `Message::Select` and the
+`drain_mailbox` arm + `Search::reset_last_selected`), plus the thin
+scroll/overlap accessors:
+`PageList::{viewport_overlaps, scroll_to_pin_for_search}` and
+`Screen::{viewport_overlaps_chunk, scroll_to_pin}` (delegating to the existing
+`Scroll::Pin` / `PageChunk::overlaps` machinery — no new scroll algorithm). The
+match's chunks are read via direct `flattened.chunks` / `Chunk` field access
+(`pub(in terminal)`). `select` holds `opts.lock` for the whole body, ignores the
+`ScreenSearch::select` result, resets the notify cache only after a match
+exists, early-returns when the match already overlaps the viewport, and
+otherwise scrolls the `start_pin` into view.
+
+The Required completion-review fix is in: `select` resolves
+`present_screen_ptrs` and validates the cached searcher's `screen_ptr()` against
+the present pointer **before** dereferencing it (the Exp 607 stale-screen
+class), no-opping if the screen was dropped/replaced. Five tests: a selection is
+made, the next `notify` re-emits it (cache reset), no-search no-op,
+`drain_mailbox` dispatch, and `select_no_ops_for_a_dropped_screen` (RIS drops
+the alternate; the stale select no-ops with no use-after-free). Gates:
+`cargo fmt --check` clean, `cargo build -p roastty` no warnings,
+`cargo test -p roastty` **3382 passed / 0 failed** (3377 → 3382, +5), no-ghostty
+grep clean, `git diff --check` clean.
+
+## Completion Review
+
+Codex's first completion review raised **one Required** finding — `select`
+dereferenced the cached `NonNull<Screen>` (via `screen_search.select`) before
+validating it against the current terminal screen, a stale-pointer UAF risk.
+Fixed by reordering: resolve `present_screen_ptrs` and compare `screen_ptr()`
+first, no-op on gone/replaced. Codex **re-confirmed APPROVED**, noting the
+live-screen path is faithful and the stale-screen edge is now safer than
+upstream, the shared `&Screen` overlap block is scoped before the mutable
+scroll, and the new regression test is consistent with the established
+no-Drop/no-stale-deref model.
+
+Review artifacts:
+
+- Design prompt/result:
+  `logs/codex-review/20260605-d614-{prompt,last-message}.md`
+- Result prompt/result:
+  `logs/codex-review/20260605-r614-{prompt,last-message}.md`
+- Re-confirmation: `logs/codex-review/20260605-r614b-{prompt,last-message}.md`
+
+## Conclusion
+
+The outer `Thread`'s message-handling layer is complete (`change_needle` +
+`select` + `drain_mailbox`). The final slice, **Exp 615**, ports `thread_main` —
+the std-concurrency event loop replacing upstream's libxev: the `std::thread`
+spawn, the `unsafe Send` model for the search's raw `Terminal` pointers, the
+stop signal, and the `REFRESH_INTERVAL` feed cadence — completing the search
+subsystem.

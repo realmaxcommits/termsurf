@@ -2248,6 +2248,42 @@ impl PageList {
         self.get_bottom_right(point::Tag::Active).map(|p| p.node())
     }
 
+    /// Whether any viewport page-chunk overlaps the `[start, end)` rows of `node` (upstream search
+    /// `select`'s viewport `pageIterator` + `chunk.overlaps`). Returns on the first overlap. Used to
+    /// decide whether a search match is already visible.
+    pub(in crate::terminal) fn viewport_overlaps(
+        &self,
+        node: NonNull<Node>,
+        start: CellCountInt,
+        end: CellCountInt,
+    ) -> bool {
+        let probe = PageChunk { node, start, end };
+        let top = self.get_top_left(point::Tag::Viewport);
+        // Upstream's viewport iterator assumes a valid extent; match `viewport_nodes` and `expect`.
+        let bottom = self
+            .get_bottom_right(point::Tag::Viewport)
+            .expect("viewport bottom-right must exist");
+        let mut it = PageIterator {
+            list: self,
+            row: Some(top),
+            limit: Some(bottom),
+            direction: Direction::RightDown,
+        };
+        while let Some(chunk) = it.next() {
+            if chunk.overlaps(&probe) {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Scroll the viewport to `pin` via the normal `Scroll::Pin` behavior (upstream search `select`'s
+    /// `screen.scroll(.{ .pin })`) — the scroll path may clamp, so `pin` is not necessarily placed
+    /// exactly at the top. Integrity-checked.
+    pub(in crate::terminal) fn scroll_to_pin_for_search(&mut self, pin: Pin) {
+        self.scroll(Scroll::Pin(pin));
+    }
+
     fn get_top_left(&self, tag: point::Tag) -> Pin {
         match tag {
             point::Tag::Screen | point::Tag::History => Pin {

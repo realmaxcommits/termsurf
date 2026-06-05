@@ -12,8 +12,8 @@ use super::kitty::graphics_storage::{
 };
 use super::page::{SemanticContent, SemanticPrompt};
 use super::page_list::{
-    BasicCellWriteError, CodepointMapEntry, DragGeometry, GridRef, GridRefPointError, PageList,
-    PageListAllocError, PageOutputFormat, PageStringWithPinMap, Pin, RenderRowSnapshot,
+    BasicCellWriteError, CodepointMapEntry, DragGeometry, GridRef, GridRefPointError, Node,
+    PageList, PageListAllocError, PageOutputFormat, PageStringWithPinMap, Pin, RenderRowSnapshot,
     SelectLineOptions, StyledCellWriteError,
 };
 use super::point;
@@ -202,6 +202,22 @@ impl Screen {
     /// This screen's page list, mutably (for the search subsystem's history searcher setup).
     pub(in crate::terminal) fn pages_mut(&mut self) -> &mut PageList {
         &mut self.pages
+    }
+
+    /// Whether any viewport chunk overlaps the given match chunk (upstream search `select`'s
+    /// viewport-visibility check). Delegates to the page list.
+    pub(in crate::terminal) fn viewport_overlaps_chunk(
+        &self,
+        node: std::ptr::NonNull<Node>,
+        start: CellCountInt,
+        end: CellCountInt,
+    ) -> bool {
+        self.pages.viewport_overlaps(node, start, end)
+    }
+
+    /// Scroll the viewport to `pin` (upstream search `select`'s `screen.scroll(.{ .pin })`).
+    pub(in crate::terminal) fn scroll_to_pin(&mut self, pin: Pin) {
+        self.pages.scroll_to_pin_for_search(pin);
     }
 
     /// The active row count of this screen's page list (upstream `screen.pages.rows`).

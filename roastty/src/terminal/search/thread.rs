@@ -3,9 +3,9 @@
 //! This lands the lock-aware, multi-screen orchestration core (the `Search` aggregator: a
 //! `ViewportSearch` plus a `ScreenSearch` per terminal screen, with `new` / `deinit` /
 //! `is_complete` / `tick` / `feed` / `notify`) and the outer `Thread`'s foundation — its types
-//! (`Options` / `Message` / `Mailbox` / `EventCallback`), `new` / `deinit`, `change_needle`, and
-//! `drain_mailbox`. The outer `Thread`'s `select` handler and its `thread_main` event loop (a
-//! std-concurrency adaptation of upstream's libxev loop) are deferred to later slices.
+//! (`Options` / `Message` / `Mailbox` / `EventCallback`), `new` / `deinit`, `change_needle`,
+//! `drain_mailbox`, and the `select` handler. The outer `Thread`'s `thread_main` event loop (a
+//! std-concurrency adaptation of upstream's libxev loop) is deferred to the final slice.
 
 use std::ptr::NonNull;
 use std::sync::{Arc, Mutex};
@@ -14,7 +14,7 @@ use super::super::blocking_queue::BlockingQueue;
 use super::super::highlight::{Flattened, Untracked};
 use super::super::message_data::MessageData;
 use super::super::terminal::{Terminal, TerminalScreenKey};
-use super::screen::{ScreenSearch, Tick as ScreenTick};
+use super::screen::{ScreenSearch, Select, Tick as ScreenTick};
 use super::viewport::ViewportSearch;
 
 /// The number of screen kinds (`TerminalScreenKey`: `Primary`, `Alternate`).
@@ -145,6 +145,12 @@ impl Search {
     /// The needle this aggregator is searching for (upstream `s.viewport.needle()`).
     pub(in crate::terminal) fn needle(&self) -> &[u8] {
         self.viewport.needle()
+    }
+
+    /// Clear the last-notified selection (upstream `s.last_screen.selected = null`), so the next
+    /// `notify` re-emits the selection. Used by the search thread's `select`.
+    pub(in crate::terminal) fn reset_last_selected(&mut self) {
+        self.last_screen.selected = None;
     }
 
     /// Tear down every screen searcher (upstream `deinit`). `ViewportSearch` frees itself on `Drop`.
@@ -335,10 +341,12 @@ impl Search {
     }
 }
 
-/// Messages the search thread accepts (upstream `Thread.Message`). `Select` is added in Exp 614.
+/// Messages the search thread accepts (upstream `Thread.Message`).
 pub(in crate::terminal) enum Message {
     /// Change the search term (start / restart / stop on empty).
     ChangeNeedle(MessageData<'static, u8, 255>),
+    /// Select (and scroll to) a search result.
+    Select(Select),
 }
 
 /// The mailbox for sending the search thread messages (upstream `Mailbox = BlockingQueue(Message,
@@ -408,6 +416,8 @@ impl Thread {
             match message {
                 // SAFETY: caller's contract.
                 Message::ChangeNeedle(v) => unsafe { self.change_needle(v.slice()) },
+                // SAFETY: caller's contract.
+                Message::Select(sel) => unsafe { self.select(sel) },
             }
         }
     }
@@ -453,6 +463,68 @@ impl Thread {
             unsafe { s.feed(self.opts.terminal) };
         }
         self.search = Some(s);
+    }
+
+    /// Make/move the selection on the active screen and scroll it into view if it is not already
+    /// visible (upstream `select`). Holds the terminal lock for the whole body.
+    ///
+    /// # Safety
+    /// `opts.terminal` / `opts.lock` must be live; the terminal must outlive the search.
+    pub(in crate::terminal) unsafe fn select(&mut self, sel: Select) {
+        let Some(s) = self.search.as_mut() else {
+            return;
+        };
+        let key = s.last_screen.key;
+        if s.screens.get(key).is_none() {
+            return;
+        }
+
+        // SAFETY: `lock` is live and guards `terminal`.
+        let _guard = unsafe { self.opts.lock.as_ref() }.lock().unwrap();
+
+        // Resolve the active screen pointer and validate the cached searcher's screen against it
+        // BEFORE dereferencing the searcher's cached `NonNull<Screen>` (which may be stale if the
+        // terminal dropped or replaced the screen since the last feed — the Exp 607 stale-screen
+        // class). If gone or replaced, no-op.
+        // SAFETY: terminal live; lock held.
+        let present = unsafe { Terminal::present_screen_ptrs(self.opts.terminal) };
+        let Some((_, screen_ptr)) = present.iter().find(|(k, _)| *k == key).copied() else {
+            return;
+        };
+        if s.screens.get(key).unwrap().screen_ptr() != screen_ptr {
+            return;
+        }
+
+        // Make the selection, then snapshot the flattened match (dropping the searcher borrow).
+        let flattened = {
+            let screen_search = s.screens.get_mut(key).unwrap();
+            // SAFETY: screen live (validated above); lock held.
+            unsafe { screen_search.select(sel) };
+            screen_search.selected_match()
+        };
+        let Some(flattened) = flattened else {
+            return;
+        };
+        s.reset_last_selected(); // re-notify the selection
+
+        // If the match is already visible in the viewport, do nothing. The shared `&Screen` borrow
+        // is scoped to this block so it ends before the `&mut Screen` scroll below.
+        let already_visible = {
+            // SAFETY: screen live; lock held.
+            let screen = unsafe { screen_ptr.as_ref() };
+            flattened
+                .chunks
+                .iter()
+                .any(|c| screen.viewport_overlaps_chunk(c.node, c.start, c.end))
+        };
+        if already_visible {
+            return;
+        }
+
+        // Scroll the match's start pin into view.
+        let mut sp = screen_ptr;
+        // SAFETY: screen live; lock held; this is the only access to it here.
+        unsafe { sp.as_mut() }.scroll_to_pin(flattened.start_pin());
     }
 }
 
@@ -1055,5 +1127,129 @@ mod tests {
         // SAFETY: as above; called once.
         unsafe { thread.deinit() };
         assert_eq!(primary_pin_count(t), baseline);
+    }
+
+    // --- Thread `select` handler (Exp 614) ---
+
+    #[test]
+    fn select_makes_a_selection() {
+        let mut terminal = Terminal::init(10, 10, None).unwrap();
+        terminal.next_slice(b"Fizz Fizz").unwrap();
+        let lock = Mutex::new(());
+        let mut thread = Thread::new(thread_opts(&mut terminal, &lock, None));
+
+        // SAFETY: as above.
+        unsafe { thread.change_needle(b"Fizz") };
+        // SAFETY: as above.
+        unsafe { thread.select(Select::Next) };
+
+        let ss = thread
+            .search
+            .as_ref()
+            .unwrap()
+            .screens
+            .get(TerminalScreenKey::Primary)
+            .unwrap();
+        assert!(ss.selected_index().is_some());
+
+        // SAFETY: as above.
+        unsafe { thread.deinit() };
+    }
+
+    #[test]
+    fn select_emits_selection_on_next_notify() {
+        let mut terminal = Terminal::init(10, 10, None).unwrap();
+        terminal.next_slice(b"Fizz Fizz").unwrap();
+        let lock = Mutex::new(());
+        let mut thread = Thread::new(thread_opts(&mut terminal, &lock, None));
+
+        // SAFETY: as above.
+        unsafe { thread.change_needle(b"Fizz") };
+        // SAFETY: as above.
+        unsafe { thread.select(Select::Next) };
+
+        // After `select` reset the notify cache, the next `notify` re-emits the selection.
+        let mut got = Vec::new();
+        {
+            let mut cb = |e: Event<'_>| got.push(ev_of(e));
+            thread.search.as_mut().unwrap().notify(&mut cb);
+        }
+        assert!(got.iter().any(|e| matches!(e, Ev::Selected(Some(_)))));
+
+        // SAFETY: as above.
+        unsafe { thread.deinit() };
+    }
+
+    #[test]
+    fn select_with_no_search_is_a_noop() {
+        let mut terminal = Terminal::init(10, 10, None).unwrap();
+        let lock = Mutex::new(());
+        let mut thread = Thread::new(thread_opts(&mut terminal, &lock, None));
+
+        // No search yet → `select` returns without panicking.
+        // SAFETY: as above.
+        unsafe { thread.select(Select::Next) };
+        assert!(thread.search.is_none());
+    }
+
+    #[test]
+    fn drain_mailbox_dispatches_select() {
+        let mut terminal = Terminal::init(10, 10, None).unwrap();
+        terminal.next_slice(b"Fizz Fizz").unwrap();
+        let lock = Mutex::new(());
+        let mut thread = Thread::new(thread_opts(&mut terminal, &lock, None));
+
+        // SAFETY: as above.
+        unsafe { thread.change_needle(b"Fizz") };
+        thread
+            .mailbox()
+            .push(Message::Select(Select::Next), Timeout::Instant);
+        // SAFETY: as above.
+        unsafe { thread.drain_mailbox() };
+
+        let ss = thread
+            .search
+            .as_ref()
+            .unwrap()
+            .screens
+            .get(TerminalScreenKey::Primary)
+            .unwrap();
+        assert!(ss.selected_index().is_some());
+
+        // SAFETY: as above.
+        unsafe { thread.deinit() };
+    }
+
+    #[test]
+    fn select_no_ops_for_a_dropped_screen() {
+        let mut terminal = Terminal::init(10, 10, None).unwrap();
+        terminal.next_slice(b"Fizz").unwrap();
+        // Enter the alternate screen, so a search there targets `last_screen.key = Alternate`.
+        terminal.next_slice(b"\x1b[?1049h").unwrap();
+        terminal.next_slice(b"Fizz").unwrap();
+        let lock = Mutex::new(());
+        let mut thread = Thread::new(thread_opts(&mut terminal, &lock, None));
+
+        // SAFETY: as above. Feeds while the alternate is active → `last_screen.key = Alternate`.
+        unsafe { thread.change_needle(b"Fizz") };
+        assert!(thread
+            .search
+            .as_ref()
+            .unwrap()
+            .screens
+            .get(TerminalScreenKey::Alternate)
+            .is_some());
+
+        // A full reset (RIS) drops the alternate screen, leaving the alternate searcher's cached
+        // pointer stale.
+        terminal.next_slice(b"\x1bc").unwrap();
+
+        // `select` resolves the present screens first and finds no alternate, so it no-ops WITHOUT
+        // dereferencing the stale cached screen pointer (no use-after-free).
+        // SAFETY: as above.
+        unsafe { thread.select(Select::Next) };
+
+        // Intentionally no `deinit`: the stale searchers drop without dereferencing their freed
+        // screens (the search structs have no `Drop` that touches the screen).
     }
 }
