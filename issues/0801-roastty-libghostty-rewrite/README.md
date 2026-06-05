@@ -1611,6 +1611,8 @@ are past the correctness-critical foundation.
   — **Pass** · Claude/Codex/Codex
 - [Experiment 582: split tree remove (delete a node, collapsing its parent split)](582-split-tree-remove.md)
   — **Pass** · Claude/Codex/Codex
+- [Experiment 583: split tree equalize (rebalance split ratios by leaf weight)](583-split-tree-equalize.md)
+  — **Designed** · Claude/Codex/Codex
 
 ## Non-Goals
 
