@@ -1521,6 +1521,8 @@ are past the correctness-critical foundation.
   — **Pass** · Claude/Codex/Codex
 - [Experiment 537: the non-exhaustive ANSI value enums (RenditionAspect / StatusLineType)](537-terminal-ansi-value-enums.md)
   — **Pass** · Claude/Codex/Codex
+- [Experiment 538: the remaining ANSI mode enums (CursorStyle / StatusDisplay / ModifyKeyFormat / ProtectedMode)](538-terminal-ansi-mode-enums.md)
+  — **Designed** · Claude/Codex/Codex
 
 ## Non-Goals
 
