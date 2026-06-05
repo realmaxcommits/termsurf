@@ -248,3 +248,56 @@ Review artifacts:
 
 - Prompt: `logs/codex-review/20260604-d555-prompt.md` (design)
 - Result: `logs/codex-review/20260604-d555-last-message.md` (design)
+
+## Result
+
+**Result:** Pass
+
+`terminal::cache_table` was added with the `CacheContext` trait (`hash` / `eql`)
+and the const-generic `CacheTable<K, V, C, BUCKET_COUNT, BUCKET_SIZE>`: `put`
+appends when the bucket has room, otherwise evicts the front (LRU) via
+left-shift and returns it; `get` scans most-recent-first and rotates the hit to
+the end (LRU bump); `clear` resets all buckets. Storage is the allocation-free
+`[[Option<(K, V)>; BUCKET_SIZE]; BUCKET_COUNT]` + `lengths`. The module is
+registered in `terminal/mod.rs`. Four tests: the upstream fill-and-evict case,
+hit/miss, the LRU bump (a `get` saves the bumped key from the next eviction),
+and `clear` (plus reuse after).
+
+Gates:
+
+- `cargo fmt -p roastty` accepted; `--check` clean.
+- `cargo test -p roastty`: 3085 passed, 0 failed (four new tests; no
+  regressions, up from 3081).
+- `cargo build -p roastty`: no warnings.
+- no-`ghostty`-name greps (font/renderer/config + terminal/cache_table.rs +
+  lib.rs/header/abi_harness.c) clean; `git diff --check` clean.
+
+## Completion Review
+
+Codex reviewed the completed experiment and **approved** it with **one Nit** (no
+Required or Optional findings): the doc had `## Result` but no `## Conclusion` —
+fixed by adding the conclusion below. Codex confirmed the implementation matches
+upstream's bucket mechanics — `hash % bucket_count`, append while there's room,
+full-bucket eviction from the LRU/front with left shift, most-recent-first
+lookup, rotate-to-end on hit, and clear/reset — and that the LRU-bump test is
+the right one (it proves a `get` changes the next eviction target).
+
+Review artifacts:
+
+- Prompt: `logs/codex-review/20260604-r555-prompt.md` (result)
+- Result: `logs/codex-review/20260604-r555-last-message.md` (result)
+
+## Conclusion
+
+`terminal::cache_table::CacheTable` — a fixed-bucket cache with within-bucket
+LRU eviction — is faithfully ported from `datastruct/cache_table.zig`, the first
+of roastty's `datastruct/` ports beyond the already-present `bitmap_allocator` /
+`offset_hash_map` / `ref_counted_set`. This is the allocation-free cache roastty
+uses for recomputable values (glyph / shaping caches). The Zig comptime generic
+became a Rust const-generic struct with a `CacheContext` trait, and the optional
+`evicted` callback became `put` returning the evicted entry (which upstream
+already does). Other `datastruct/` candidates (`lru`, `segmented_pool`,
+`intrusive_linked_list`, `circ_buf`) remain unported. The objc/bundle-id
+helpers, the `home()` resolver, and config `loadDefaultFiles` remain deferred
+pending roastty's naming decision; `background-image-opacity` stays
+float-blocked.

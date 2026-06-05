@@ -5,6 +5,9 @@ mod ansi;
 mod bitmap_allocator;
 
 #[allow(dead_code)]
+mod cache_table;
+
+#[allow(dead_code)]
 mod charsets;
 
 #[allow(dead_code)]
