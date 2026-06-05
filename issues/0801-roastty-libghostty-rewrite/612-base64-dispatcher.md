@@ -163,3 +163,48 @@ Review artifacts:
 
 - Prompt: `logs/codex-review/20260605-d612-prompt.md`
 - Result: `logs/codex-review/20260605-d612-last-message.md`
+
+## Result
+
+**Result:** Pass
+
+Implemented `roastty/src/terminal/base64.rs` (registered in `terminal/mod.rs`),
+porting upstream `simd/base64`'s scalar path: `max_len` (strip `=` →
+`calc_size_for_slice`, 0 on error), `decode` (strip → size → empty-on-zero →
+capacity assert → no-pad scalar decode → `&output[..size]`), and the safe
+`scalar_input` (`take_while` over trailing `=`, so empty / all-`=` input is safe
+rather than underflowing). The SIMD branches and C++ `extern` declarations drop
+(no SIMD artifact). An initial module-doc reference to the upstream extern
+symbol name was rephrased to keep the no-ghostty gate clean on the source.
+
+Seven tests: the upstream padded case (`max_len`==11, decode→`hello world`),
+unpadded, multiple-`=` stripping, invalid-char error, and the degenerate
+empty/all-`=` inputs (size 0, empty, no panic). Gates: `cargo fmt --check`
+clean, `cargo build -p roastty` no warnings, `cargo test -p roastty` **3372
+passed / 0 failed** (3365 → 3372, +7), no-ghostty grep clean, `git diff --check`
+clean.
+
+## Completion Review
+
+Codex reviewed the completed experiment and **APPROVED** it with **no Required,
+Optional, or Nit findings**, confirming the port is faithful: `max_len` strips
+before sizing and returns 0 on error; `decode` matches `decodeScalar` (strip,
+size, empty-on-zero, capacity assert, decode into the caller buffer, return
+`&output[..size]`); the `decode` lifetime correctly ties the returned slice to
+the output buffer; the safe `scalar_input` preserves valid-input behavior while
+avoiding the degenerate underflow; and dropping the SIMD branch / extern decls
+is correct for the current build.
+
+Review artifacts:
+
+- Prompt: `logs/codex-review/20260605-r612-prompt.md`
+- Result: `logs/codex-review/20260605-r612-last-message.md`
+
+## Conclusion
+
+The base64 subsystem (`simd/base64_scalar` + `simd/base64`'s scalar path) is now
+ported — the canonical decoder and its public `max_len` / `decode` entry point.
+The remaining `simd/` companions are SIMD-intrinsic or width-table modules
+(`index_of`, `codepoint_width`, `vt`) that roastty largely covers with scalar
+equivalents; the base64 C++ SIMD fast path and the larger dependency boundaries
+(libxev, oniguruma, `std.Uri`) remain. Issue 801 stays open and broad.
