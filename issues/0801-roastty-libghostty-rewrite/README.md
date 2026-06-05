@@ -1562,7 +1562,7 @@ are past the correctness-critical foundation.
 - [Experiment 557: the CircBuf iterator](557-circ-buf-iterator.md) — **Pass** ·
   Claude/Codex/Codex
 - [Experiment 558: CircBuf two-span access (getPtrSlice + appendSlice)](558-circ-buf-getptrslice.md)
-  — **Designed** · Claude/Codex/Codex
+  — **Pass** · Claude/Codex/Codex
 
 ## Non-Goals
 

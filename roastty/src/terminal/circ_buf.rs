@@ -165,6 +165,75 @@ impl<T: Copy> CircBuf<T> {
             direction,
         }
     }
+
+    /// The (up to two) contiguous storage spans covering the logical range `[offset,
+    /// offset+slice_len)` (upstream `getPtrSlice`). If the range extends past the current
+    /// length, the space is claimed by advancing `head`. The second span is empty when the
+    /// range does not wrap.
+    pub(crate) fn get_ptr_slice(
+        &mut self,
+        offset: usize,
+        slice_len: usize,
+    ) -> (&mut [T], &mut [T]) {
+        if slice_len == 0 {
+            // Two disjoint empty spans (deriving them from a split avoids two `&mut []`
+            // literals, which would be two mutable borrows of the same promoted empty array).
+            let (a, b) = self.storage.split_at_mut(0);
+            return (a, &mut b[..0]);
+        }
+        assert!(offset + slice_len <= self.capacity());
+        let end_offset = offset + slice_len;
+        let cur_len = self.len();
+        if end_offset > cur_len {
+            self.advance(end_offset - cur_len);
+        }
+        let start_idx = self.storage_offset(offset);
+        let end_idx = self.storage_offset(end_offset - 1);
+        if end_idx >= start_idx {
+            // Non-wrap: one span `storage[start_idx..=end_idx]`, empty second. Split at
+            // `end_idx + 1` so the second (empty) span is a disjoint sub-slice.
+            let (front, back) = self.storage.split_at_mut(end_idx + 1);
+            (&mut front[start_idx..], &mut back[..0])
+        } else {
+            // Wrap: span0 = storage[start_idx..], span1 = storage[0..=end_idx]; disjoint
+            // because end_idx < start_idx.
+            let (left, right) = self.storage.split_at_mut(start_idx);
+            (right, &mut left[..=end_idx])
+        }
+    }
+
+    /// Advance `head` by `amount`, claiming free space (upstream `advance`).
+    fn advance(&mut self, amount: usize) {
+        assert!(amount <= self.storage.len() - self.len());
+        self.head += amount;
+        if self.head >= self.storage.len() {
+            self.head -= self.storage.len();
+        }
+        if self.full {
+            self.tail = self.head;
+        }
+        self.full = self.head == self.tail;
+    }
+
+    /// Map a logical offset (from the oldest) to a storage index (upstream `storageOffset`).
+    fn storage_offset(&self, offset: usize) -> usize {
+        assert!(offset < self.storage.len());
+        let fits = self.tail + offset;
+        if fits < self.storage.len() {
+            fits
+        } else {
+            fits - self.storage.len()
+        }
+    }
+
+    /// Append a slice, assuming there is capacity (upstream `appendSliceAssumeCapacity`).
+    pub(crate) fn append_slice_assume_capacity(&mut self, slice: &[T]) {
+        let len = self.len();
+        let (span0, span1) = self.get_ptr_slice(len, slice.len());
+        let first = span0.len();
+        span0.copy_from_slice(&slice[..first]);
+        span1.copy_from_slice(&slice[first..]);
+    }
 }
 
 #[cfg(test)]
@@ -290,6 +359,85 @@ mod tests {
         let buf = CircBuf::new(3, 0u8);
         let mut it = buf.iterator(Direction::Forward);
         assert_eq!(it.next(), None);
+    }
+
+    #[test]
+    fn get_ptr_slice_non_wrap() {
+        let mut buf = CircBuf::new(5, 0u8);
+        buf.append_assume_capacity(1);
+        buf.append_assume_capacity(2);
+        buf.append_assume_capacity(3);
+
+        // Reading the existing 3 elements does not advance (end_offset == len).
+        let len_before = buf.len();
+        let (span0, span1) = buf.get_ptr_slice(0, 3);
+        assert_eq!(span0, &[1, 2, 3]);
+        assert!(span1.is_empty());
+        assert_eq!(buf.len(), len_before);
+    }
+
+    #[test]
+    fn get_ptr_slice_wrap() {
+        let mut buf = CircBuf::new(3, 0u8);
+        buf.append_assume_capacity(1);
+        buf.append_assume_capacity(2);
+        buf.append_assume_capacity(3);
+        buf.delete_oldest(1); // tail -> 1
+        buf.append_assume_capacity(4); // head wraps; storage is [4, 2, 3]
+
+        let (span0, span1) = buf.get_ptr_slice(0, 3);
+        assert_eq!(span0, &[2, 3]); // storage[1..]
+        assert_eq!(span1, &[4]); // storage[0..=0]
+    }
+
+    #[test]
+    fn get_ptr_slice_claims_space() {
+        let mut buf = CircBuf::new(4, 0u8);
+        assert_eq!(buf.len(), 0);
+
+        // Requesting a range past the (zero) length advances head to claim it.
+        {
+            let (span0, span1) = buf.get_ptr_slice(0, 4);
+            assert!(span1.is_empty());
+            span0.copy_from_slice(&[10, 20, 30, 40]);
+        }
+        assert_eq!(buf.len(), 4);
+        assert_eq!(
+            collect(buf.iterator(Direction::Forward)),
+            vec![10, 20, 30, 40],
+        );
+    }
+
+    #[test]
+    fn append_slice_non_wrap() {
+        let mut buf = CircBuf::new(5, 0u8);
+        buf.append_assume_capacity(1);
+        buf.append_slice_assume_capacity(&[2, 3, 4]);
+        assert_eq!(buf.len(), 4);
+        assert_eq!(collect(buf.iterator(Direction::Forward)), vec![1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn append_slice_across_wrap() {
+        // Leave one element (3) near the end of the storage, then append a slice that wraps.
+        let mut buf = CircBuf::new(4, 0u8);
+        buf.append_assume_capacity(1);
+        buf.append_assume_capacity(2);
+        buf.append_assume_capacity(3);
+        buf.delete_oldest(2); // drops 1, 2; tail -> 2, leaving [_, _, 3, _]
+
+        buf.append_slice_assume_capacity(&[4, 5, 6]); // wraps around the end
+        assert_eq!(buf.len(), 4);
+        assert_eq!(collect(buf.iterator(Direction::Forward)), vec![3, 4, 5, 6]);
+    }
+
+    #[test]
+    fn append_slice_empty_is_noop() {
+        let mut buf = CircBuf::new(3, 0u8);
+        buf.append_assume_capacity(7);
+        buf.append_slice_assume_capacity(&[]);
+        assert_eq!(buf.len(), 1);
+        assert_eq!(buf.first(), Some(&7));
     }
 
     #[test]

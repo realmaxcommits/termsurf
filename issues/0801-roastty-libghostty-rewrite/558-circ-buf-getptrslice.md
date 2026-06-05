@@ -266,3 +266,58 @@ Review artifacts:
   `logs/codex-review/20260604-d558b-prompt.md` (design re-review)
 - Result: `logs/codex-review/20260604-d558-last-message.md` (design),
   `logs/codex-review/20260604-d558b-last-message.md` (design re-review)
+
+## Result
+
+**Result:** Pass
+
+`terminal::circ_buf` gained `get_ptr_slice` (the two-span mutable accessor —
+empty fast path; capacity assert; `advance`-to-claim when the range ends past
+`len`; one span non-wrap / two spans wrap, all derived from `split_at_mut` so
+the spans are disjoint with no `&mut []` literal), the private `advance` /
+`storage_offset`, and `append_slice_assume_capacity`. Six new tests:
+`get_ptr_slice` non-wrap (reads the existing spans, no advance), wrap
+(`[4, 2, 3]` ⇒ span0 `[2, 3]`, span1 `[4]`), claims-space (`get_ptr_slice(0, 4)`
+on an empty `new(4, 0)` advances to full and the writes become
+iterator-visible), `append_slice` non-wrap and across-the-wrap, and empty-slice
+no-op.
+
+Gates:
+
+- `cargo fmt -p roastty` accepted; `--check` clean.
+- `cargo test -p roastty`: 3099 passed, 0 failed (six new tests; no regressions,
+  up from 3093).
+- `cargo build -p roastty`: no warnings.
+- no-`ghostty`-name greps (font/renderer/config + terminal/circ_buf.rs +
+  lib.rs/header/abi_harness.c) clean; `git diff --check` clean.
+
+## Completion Review
+
+Codex reviewed the completed experiment and **approved** it with **one Nit** (no
+Required or Optional findings): the doc had `## Result` but no `## Conclusion` —
+fixed by adding the conclusion below. Codex confirmed the implementation matches
+the approved design and upstream behavior — the span calculation is faithful,
+`advance` preserves the claim-space side effect, `storage_offset` is direct,
+`append_slice_assume_capacity` copies across the returned spans correctly, and
+all returned mutable spans are disjoint via `split_at_mut` — and that the wrap
+and claim-space tests cover the important cases.
+
+Review artifacts:
+
+- Prompt: `logs/codex-review/20260604-r558-prompt.md` (result)
+- Result: `logs/codex-review/20260604-r558-last-message.md` (result)
+
+## Conclusion
+
+`terminal::circ_buf` now has its two-span mutable accessor `get_ptr_slice` (with
+the private `advance` / `storage_offset` it needs) and
+`append_slice_assume_capacity`, faithfully ported from
+`datastruct/circ_buf.zig`. The design review caught a real Rust soundness issue
+— `(&mut [], &mut [])` is two mutable borrows of the same promoted empty array —
+fixed by deriving every span (including the empty ones) from `split_at_mut`.
+With this, only auto-growing (`resize` / `ensureUnusedCapacity`) remains before
+`CircBuf` is fully ported and the terminal **search subsystem** (the sliding
+window, which builds on `CircBuf`) can itself be tackled. The objc/bundle-id
+helpers, the `home()` resolver, and config `loadDefaultFiles` remain deferred
+pending roastty's naming decision; `background-image-opacity` stays
+float-blocked.
