@@ -194,3 +194,66 @@ Review artifacts:
 
 - Prompt: `logs/codex-review/20260604-d568-prompt.md`
 - Result: `logs/codex-review/20260604-d568-last-message.md`
+
+## Result
+
+**Result:** Pass
+
+`crate::fastmem` was added with four fully-generic single-step slice rotations:
+`rotate_once` (`rotate_left(1)`), `rotate_once_r` (`rotate_right(1)`),
+`rotate_in` (`mem::replace` at index 0, then `rotate_left(1)`, returning the
+displaced first), and `rotate_in_r` (`mem::replace` at the last index, then
+`rotate_right(1)`, returning the displaced last). The libc-`memmove` / `memcpy`
+wrappers (`move` / `copy`) were not ported — they are a no-op optimization in
+Rust. Registered via `#[allow(dead_code)] mod fastmem;` at the crate root in
+`lib.rs`. No other files were touched.
+
+Gates:
+
+- `cargo fmt -p roastty` accepted; `--check` clean.
+- `cargo test -p roastty`: 3147 passed, 0 failed (seven new tests; no
+  regressions, up from 3140).
+- `cargo build -p roastty`: no warnings.
+- no-`ghostty`-name greps (font/renderer/config + fastmem.rs +
+  lib.rs/header/abi_harness.c) clean; `git diff --check` clean.
+
+The seven new tests: the four upstream doc examples (`[0,1,2,3]` → `[1,2,3,0]` /
+`[3,0,1,2]`; `rotate_in` 4 → `[1,2,3,4]` returns 0; `rotate_in_r` 4 →
+`[4,0,1,2]` returns 3), `rotate_once` / `rotate_once_r` as inverses (both
+directions), single-element identity / lone-element return, and a non-`Copy`
+`String` case validating the generic surface.
+
+## Completion Review
+
+Codex reviewed the completed experiment and **approved** it with **no Required
+or Optional findings** (one Nit: the `## Result` / `## Conclusion` sections were
+not yet in the saved file — added here as part of result recording). Codex
+confirmed the four rotations match upstream's documented behavior and returned
+elements, the generic `replace`-then-`rotate_left/right` implementation is
+correct for non-`Copy` values and preserves the non-empty precondition, and the
+tests cover the examples, inverses, single-element behavior, and the non-`Copy`
+surface.
+
+Review artifacts:
+
+- Prompt: `logs/codex-review/20260604-r568-prompt.md` (result)
+- Result: `logs/codex-review/20260604-r568-last-message.md` (result)
+
+## Conclusion
+
+`crate::fastmem`'s four rotation helpers are ported from `fastmem.zig`. The
+adaptation was idiomatic: upstream's hand-rolled `memmove`-based rotation (an
+optimization of `std.mem.rotate(items, 1)`) becomes Rust's already-optimized
+`slice::rotate_left` / `rotate_right`, and the displace-and-return helpers use
+`std::mem::replace` so all four stay fully generic over `T` (adopting the
+review's Optional rather than narrowing to `Copy`). The `move` / `copy` libc
+micro-optimizations are subsumed by Rust's `copy_within` / `copy_from_slice`.
+This is the second crate-root (`src/`) leaf port (after `file_type`), and
+follows the established pattern of porting small self-contained upstream files
+while the big-ticket subsystems (`datastruct/split_tree`, 2517 lines; the
+terminal **search subsystem** coupled to `PageList` / `Pin` / `Screen` /
+`Selection` / `PageFormatter`) await dedicated multi-experiment efforts. Other
+unported leaves include `terminal/csi`, `terminal/ScreenSet`, and `src/quirks`.
+The objc/bundle-id helpers, the `home()` resolver, and config `loadDefaultFiles`
+remain deferred pending roastty's naming decision; `background-image-opacity`
+stays float-blocked.

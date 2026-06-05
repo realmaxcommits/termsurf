@@ -1582,7 +1582,7 @@ are past the correctness-critical foundation.
 - [Experiment 567: magic-byte file-type detection (FileType)](567-file-type.md)
   — **Pass** · Claude/Codex/Codex
 - [Experiment 568: fastmem single-step slice rotations](568-fastmem-rotate.md) —
-  **Designed** · Claude/Codex/Codex
+  **Pass** · Claude/Codex/Codex
 
 ## Non-Goals
 
