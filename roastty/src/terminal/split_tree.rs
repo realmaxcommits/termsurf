@@ -4,8 +4,8 @@
 //! `dimensions`) and `Rc<V>`-based view ref-counting, the leaf `iter`ator, `zoom`, and the `Goto`
 //! enum, the `Spatial` container's normalization (`spatial` / `fillSpatialSlots`), and the full
 //! navigation (the spatial `nearest` / `nearest_wrapped`, the in-order `previous` / `next`, and the
-//! `goto` dispatch), and the `split` / `remove` tree-shaping operations. Still deferred: the
-//! remaining tree-shaping operations (`equalize` / `resize`) and the formatters.
+//! `goto` dispatch), and the `split` / `remove` / `equalize` tree-shaping operations. Still
+//! deferred: the remaining tree-shaping operation (`resize`) and the formatters.
 
 use half::f16;
 use std::rc::Rc;
@@ -382,6 +382,47 @@ impl<V> SplitTree<V> {
             nodes,
             zoomed: None, // split always resets zoom
         })
+    }
+
+    /// Return a new tree with every split's `ratio` rebalanced to the relative leaf weight of its
+    /// children, so panes are evenly sized (upstream `equalize`). Structure and zoom are preserved.
+    pub(crate) fn equalize(&self) -> SplitTree<V> {
+        if self.is_empty() {
+            return SplitTree::empty();
+        }
+
+        // Clone the nodes (refs each view); recompute each split's ratio.
+        let mut nodes: Vec<Node<V>> = self.nodes.iter().cloned().collect();
+        for node in &mut nodes {
+            if let Node::Split(s) = node {
+                let weight_left = self.weight(s.left, s.layout);
+                let weight_right = self.weight(s.right, s.layout);
+                assert!(weight_left > 0 && weight_right > 0);
+                let total = f16::from_f32((weight_left + weight_right) as f32);
+                s.ratio = f16::from_f32(weight_left as f32) / total;
+            }
+        }
+
+        SplitTree {
+            nodes,
+            zoomed: self.zoomed,
+        }
+    }
+
+    /// The number of leaves reachable from `from` through splits of `layout` (upstream `weight`,
+    /// without the vestigial `acc`). A leaf is `1`; a same-layout split sums its children; a
+    /// different-layout split counts as `1`.
+    fn weight(&self, from: Handle, layout: Layout) -> usize {
+        match &self.nodes[from.idx()] {
+            Node::Leaf(_) => 1,
+            Node::Split(s) => {
+                if s.layout == layout {
+                    self.weight(s.left, layout) + self.weight(s.right, layout)
+                } else {
+                    1
+                }
+            }
+        }
     }
 
     /// Build a new tree with the node `at` removed, collapsing its parent split into the surviving
@@ -1673,6 +1714,118 @@ mod tests {
         let result = tree.remove(Handle::from_index(2));
         assert_eq!(result.zoomed(), Some(Handle::from_index(1)));
         assert_eq!(view_at(&result, result.zoomed().unwrap()), "b");
+    }
+
+    /// The split payload at a handle (test helper; reads the node arena directly).
+    fn split_payload<V>(tree: &SplitTree<V>, handle: Handle) -> Split {
+        match &tree.nodes[handle.idx()] {
+            Node::Split(s) => *s,
+            Node::Leaf(_) => panic!("not a split"),
+        }
+    }
+
+    #[test]
+    fn equalize_empty_and_single_leaf() {
+        let empty: SplitTree<&str> = SplitTree::empty();
+        assert!(empty.equalize().is_empty());
+
+        let single = SplitTree::new(Rc::new("v"));
+        let eq = single.equalize();
+        assert!(!eq.is_split());
+        assert_eq!(collect_views(&eq), vec![(0, "v")]);
+    }
+
+    #[test]
+    fn equalize_balanced_split_to_half() {
+        // A 2-leaf split with a lopsided starting ratio equalizes to 0.5.
+        let tree = SplitTree {
+            nodes: vec![
+                Node::Split(split_ratio(Layout::Horizontal, 0.25, 1, 2)),
+                Node::Leaf(Rc::new("a")),
+                Node::Leaf(Rc::new("b")),
+            ],
+            zoomed: None,
+        };
+        let eq = tree.equalize();
+        assert_eq!(split_payload(&eq, Handle::ROOT).ratio, f16::from_f32(0.5));
+    }
+
+    #[test]
+    fn equalize_unbalanced_same_layout() {
+        // root = H(left = H(a,b), right = c). weights: left=2, right=1 → root ratio 2/3; inner 0.5.
+        let tree = SplitTree {
+            nodes: vec![
+                Node::Split(split_ratio(Layout::Horizontal, 0.5, 1, 4)),
+                Node::Split(split_ratio(Layout::Horizontal, 0.5, 2, 3)),
+                Node::Leaf(Rc::new("a")),
+                Node::Leaf(Rc::new("b")),
+                Node::Leaf(Rc::new("c")),
+            ],
+            zoomed: None,
+        };
+        let eq = tree.equalize();
+        assert_eq!(
+            split_payload(&eq, Handle::ROOT).ratio,
+            f16::from_f32(2.0) / f16::from_f32(3.0)
+        );
+        assert_eq!(
+            split_payload(&eq, Handle::from_index(1)).ratio,
+            f16::from_f32(0.5)
+        );
+    }
+
+    #[test]
+    fn equalize_different_layout_child_counts_as_one() {
+        // root = V(left = H(a,b), right = c). The H child counts as weight 1 along the V axis →
+        // root ratio 1/2; the inner H split is 0.5.
+        let tree = SplitTree {
+            nodes: vec![
+                Node::Split(split_ratio(Layout::Vertical, 0.25, 1, 4)),
+                Node::Split(split_ratio(Layout::Horizontal, 0.5, 2, 3)),
+                Node::Leaf(Rc::new("a")),
+                Node::Leaf(Rc::new("b")),
+                Node::Leaf(Rc::new("c")),
+            ],
+            zoomed: None,
+        };
+        let eq = tree.equalize();
+        assert_eq!(split_payload(&eq, Handle::ROOT).ratio, f16::from_f32(0.5));
+        assert_eq!(
+            split_payload(&eq, Handle::from_index(1)).ratio,
+            f16::from_f32(0.5)
+        );
+    }
+
+    #[test]
+    fn equalize_preserves_zoom() {
+        let mut tree = two_leaf();
+        tree.zoom(Some(Handle::from_index(2)));
+        let eq = tree.equalize();
+        assert_eq!(eq.zoomed(), Some(Handle::from_index(2)));
+    }
+
+    #[test]
+    fn equalize_ref_counts_the_views() {
+        let a = Rc::new("a");
+        let b = Rc::new("b");
+        let tree = SplitTree {
+            nodes: vec![
+                Node::Split(split_ratio(Layout::Horizontal, 0.5, 1, 2)),
+                Node::Leaf(Rc::clone(&a)),
+                Node::Leaf(Rc::clone(&b)),
+            ],
+            zoomed: None,
+        };
+        assert_eq!(Rc::strong_count(&a), 2);
+        assert_eq!(Rc::strong_count(&b), 2);
+
+        let eq = tree.equalize();
+        assert_eq!(Rc::strong_count(&a), 3);
+        assert_eq!(Rc::strong_count(&b), 3);
+
+        drop(eq);
+        assert_eq!(Rc::strong_count(&a), 2);
+        assert_eq!(Rc::strong_count(&b), 2);
     }
 
     #[test]

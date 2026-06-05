@@ -209,3 +209,61 @@ Review artifacts:
 
 - Prompt: `logs/codex-review/20260604-d583-prompt.md`
 - Result: `logs/codex-review/20260604-d583-last-message.md`
+
+## Result
+
+**Result:** Pass
+
+`terminal::split_tree` gained `SplitTree::equalize` and `weight`. `equalize`
+returns the empty tree for an empty input; otherwise it clones the nodes (refs
+each view) and recomputes every split's `ratio` as
+`weight_left / (weight_left + weight_right)` in `f16`, preserving the structure
+and the zoom. `weight` counts same-layout-reachable leaves (leaf = 1,
+same-layout split = children sum, different-layout split = 1; the vestigial
+`acc` dropped). The module doc comment was updated to mark `equalize` landed.
+
+Gates:
+
+- `cargo fmt -p roastty` accepted; `--check` clean.
+- `cargo test -p roastty`: 3219 passed, 0 failed (six new tests; no regressions,
+  up from 3213).
+- `cargo build -p roastty`: no warnings.
+- no-`ghostty`-name greps (font/renderer/config + terminal/split_tree.rs +
+  lib.rs/header/abi_harness.c) clean; `git diff --check` clean.
+
+The six new tests: empty / single-leaf (unchanged), a balanced split equalizing
+a lopsided `0.25` to `0.5`, an unbalanced same-layout tree (`H(H(a,b), c)` →
+root `2/3` via the explicit `f16` division, inner `0.5`), a different-layout
+child counting as one cell (`V(H(a,b), c)` → root `0.5`, inner `0.5`), zoom
+preservation, and the `Rc::strong_count` lifecycle (each view `2 → 3` on
+`equalize`, `→ 2` on drop).
+
+## Completion Review
+
+Codex reviewed the completed experiment and **approved** it with **no Required
+or Optional findings** (one Nit: the `## Result` / `## Conclusion` sections were
+not yet in the saved file — added here). Codex confirmed `equalize` and `weight`
+match upstream (empty → empty, nodes cloned with one new `Rc` ref per leaf,
+split ratios recomputed as `left_weight / total_weight` in `f16`, same-layout
+splits summing leaf weights, different-layout splits counting as one cell, and
+`zoomed` preserved), and that the tests cover the balanced / unbalanced
+same-layout / different-layout weight collapse / zoom / refcount cases.
+
+Review artifacts:
+
+- Prompt: `logs/codex-review/20260604-r583-prompt.md` (result)
+- Result: `logs/codex-review/20260604-r583-last-message.md` (result)
+
+## Conclusion
+
+This experiment ports `equalize` — the eleventh split_tree slice and the first
+of the two `f16`-ratio rebalancers. It rebalances every split's ratio by its
+children's relative same-layout leaf weight, leaving the structure and zoom
+intact. The only remaining split_tree work is `resize` (the other rebalancer —
+it nudges the nearest layout-matching split's divider by a signed delta of the
+whole grid, unzooming) and the `formatText` / `formatDiagram` formatters. The
+other remaining big-ticket subsystem is the terminal **search subsystem**
+(coupled to `PageList` / `Pin` / `Screen` / `Selection` / `PageFormatter`); the
+dependency-blocked helpers persist (regex/oniguruma for `Link::oniRegex`, a URI
+parser for `os/uri`, the config-directory naming decision for `file_load` /
+`edit` / `loadDefaultFiles`).
