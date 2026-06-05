@@ -209,3 +209,68 @@ Review artifacts:
 
 - Prompt: `logs/codex-review/20260604-d588-prompt.md`
 - Result: `logs/codex-review/20260604-d588-last-message.md`
+
+## Result
+
+**Result:** Pass
+
+`page_list.rs` gained a `Node::search_encode` method (a new `impl Node` block):
+it builds a `PlainPageFormat` over the node's full page extent
+(`screen_y_base = 0` for page-relative coordinates, `start = (0, 0)`,
+`end = (size_cols - 1, size_rows - 1)` via `saturating_sub(1)`,
+`rectangle = false`, `trim = true`, `unwrap = true`, no `trailing_state` /
+`codepoint_map`), runs it with a fresh `cell_map`, and `assert_eq!`s
+`cell_map.len() == text.len()` (active in all build modes), returning
+`(text, cell_map)`. This mirrors upstream's
+`PageFormatter{emit: plain, unwrap: true}.format` + `point_map`. No trailing
+newline is added — `append` (the next slice) adds it.
+
+Gates:
+
+- `cargo fmt -p roastty` accepted; `--check` clean.
+- `cargo test -p roastty`: 3248 passed, 0 failed (four new tests; no
+  regressions, up from 3244).
+- `cargo build -p roastty`: no warnings.
+- no-`ghostty`-name greps (font/renderer/config + page_list.rs +
+  lib.rs/header/abi_harness.c) clean; `git diff --check` clean.
+
+The four new tests: a basic two-row page (`["abc", "de"]` → `"abc\nde"`,
+`cell_map.len() == 6`, first coord `(0, 0)`, the `d` on row `1`, and the `\n`
+mapping to the previous coordinate `(2, 0)` — the last byte of `c`'s cell, not
+the next row), a multibyte per-byte map (`"é"` → two entries at column `0`,
+`cell_map.len() == text.len() == 2`), trailing-space trim on a nonblank row
+(`"ab  "` → `"ab"`, `cell_map.len() == 2`), and trailing-blank-row trim
+(`["only"]` → `"only"`).
+
+## Completion Review
+
+Codex reviewed the completed experiment and **approved** it with **no Required
+or Optional findings** (one Nit: the `## Result` / `## Conclusion` sections were
+not yet in the saved file — added here). Codex confirmed the implementation is
+faithful: it uses the existing plain formatter with `unwrap = true`,
+`trim = true`, full-page bounds, page-relative coordinates via
+`screen_y_base = 0`, no rectangle / codepoint map / trailing state, and a
+release-mode `assert_eq!` for the per-byte cell-map invariant; and that the
+tests cover the important edge cases (basic multi-row encoding,
+newline-coordinate behavior, UTF-8 multi-byte per-byte mapping, trailing-space
+trim, blank-row trim).
+
+Review artifacts:
+
+- Prompt: `logs/codex-review/20260604-r588-prompt.md` (result)
+- Result: `logs/codex-review/20260604-r588-last-message.md` (result)
+
+## Conclusion
+
+This experiment exposes the search subsystem's page-encode step — a focused
+`Node::search_encode` over the already-ported `PlainPageFormat` — giving
+`terminal::search` the plain, soft-unwrapped page text plus a per-byte cell map
+(`cell_map.len() == text.len()`) that the next slice needs, while keeping the
+formatter's selection-oriented internals encapsulated in `page_list`. The next
+slice is `SlidingWindow::append`: construct a `Meta` (the node, its serial, the
+encoded `cell_map`), append the encoded bytes to the window's `data` (adding the
+trailing newline when the last page row is not soft-wrapped, and reversing both
+bytes and `cell_map` for a reverse search), grow the buffers, and maintain the
+integrity invariant. After `append` come `next` / `highlight` (the cross-page
+overlap matcher), then the higher-level searchers (`active` / `pagelist` /
+`screen` / `viewport`) and the search `Thread`.

@@ -68,6 +68,36 @@ pub(super) struct Node {
     serial: u64,
 }
 
+impl Node {
+    /// Encode this page's full contents as plain, soft-unwrapped text with a per-byte cell map
+    /// (upstream `PageFormatter` with `emit: plain, unwrap: true`, plus its `point_map`). Used by
+    /// the search subsystem (`SlidingWindow::append`). Each output byte gets one page-relative
+    /// source coordinate, so `cell_map.len() == text.len()`. No trailing newline is added — the
+    /// caller appends it based on the last row's wrap state.
+    pub(in crate::terminal) fn search_encode(&self) -> (String, Vec<point::Coordinate>) {
+        let mut text = String::new();
+        let mut cell_map = Vec::new();
+        let formatter = PlainPageFormat {
+            node: self,
+            screen_y_base: 0,
+            start_x: 0,
+            start_y: 0,
+            end_x: self.page.size_cols().saturating_sub(1),
+            end_y: self.page.size_rows().saturating_sub(1),
+            rectangle: false,
+            trim: true,
+            unwrap: true,
+            trailing_state: None,
+            codepoint_map: None,
+        };
+        formatter.format(&mut text, Some(&mut cell_map));
+        // Active in all build modes (upstream's inline assert): `append` relies on this contract to
+        // map match byte offsets back to cells.
+        assert_eq!(cell_map.len(), text.len());
+        (text, cell_map)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct RenderRowSelectionSnapshot {
     pub(crate) start_x: CellCountInt,
@@ -19822,5 +19852,62 @@ mod tests {
         let opts = list.shape_run_options(Some(sel), None);
         assert_eq!(opts.len(), 1);
         assert_eq!(opts[0].selection, Some([0, 2]));
+    }
+
+    #[test]
+    fn search_encode_basic_two_row_page() {
+        let mut list = PageList::init(80, 24, None).unwrap();
+        list.set_screen_text_lines_for_tests(&["abc", "de"]);
+
+        let (text, cell_map) = list.pages[0].search_encode();
+
+        assert_eq!(text, "abc\nde");
+        assert_eq!(cell_map.len(), text.len());
+        assert_eq!(cell_map.len(), 6);
+        // First byte is the `a` at (0, 0).
+        assert_eq!(cell_map[0], point::Coordinate::new(0, 0));
+        // The `d` (after the newline) is on row 1.
+        assert_eq!(cell_map[4].y, 1);
+        // The `\n` maps to the previous emitted coordinate — the last byte of `c`'s cell, (2, 0) —
+        // not the next row.
+        assert_eq!(cell_map[3], point::Coordinate::new(2, 0));
+    }
+
+    #[test]
+    fn search_encode_multibyte_is_per_byte() {
+        let mut list = PageList::init(80, 24, None).unwrap();
+        // "é" is two UTF-8 bytes; it should contribute two cell-map entries at the same column.
+        list.set_screen_text_lines_for_tests(&["é"]);
+
+        let (text, cell_map) = list.pages[0].search_encode();
+
+        assert_eq!(text, "é");
+        assert_eq!(text.len(), 2);
+        assert_eq!(cell_map.len(), text.len());
+        assert_eq!(cell_map[0], point::Coordinate::new(0, 0));
+        assert_eq!(cell_map[1], point::Coordinate::new(0, 0));
+    }
+
+    #[test]
+    fn search_encode_trims_trailing_spaces_on_nonblank_row() {
+        let mut list = PageList::init(80, 24, None).unwrap();
+        list.set_screen_text_lines_for_tests(&["ab  "]);
+
+        let (text, cell_map) = list.pages[0].search_encode();
+
+        // `trim = true` drops the trailing spaces.
+        assert_eq!(text, "ab");
+        assert_eq!(cell_map.len(), 2);
+    }
+
+    #[test]
+    fn search_encode_trims_trailing_blank_rows() {
+        let mut list = PageList::init(80, 24, None).unwrap();
+        list.set_screen_text_lines_for_tests(&["only"]);
+
+        let (text, cell_map) = list.pages[0].search_encode();
+
+        assert_eq!(text, "only");
+        assert_eq!(cell_map.len(), text.len());
     }
 }

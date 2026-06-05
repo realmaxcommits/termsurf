@@ -1622,7 +1622,7 @@ are past the correctness-critical foundation.
 - [Experiment 587: search SlidingWindow skeleton (vocabulary + lifecycle)](587-search-sliding-window-skeleton.md)
   — **Pass** · Claude/Codex/Codex
 - [Experiment 588: search page encoder (Node plain-text + cell map)](588-search-page-encoder.md)
-  — **Designed** · Claude/Codex/Codex
+  — **Pass** · Claude/Codex/Codex
 
 ## Non-Goals
 
