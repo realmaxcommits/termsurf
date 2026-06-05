@@ -1509,6 +1509,8 @@ are past the correctness-critical foundation.
   — **Pass** · Claude/Codex/Codex
 - [Experiment 531: the XDG config-directory resolution (xdg_config_dir)](531-config-xdg-path.md)
   — **Pass** · Claude/Codex/Codex
+- [Experiment 532: the macOS Application Support config path (app_support_dir)](532-config-app-support-path.md)
+  — **Designed** · Claude/Codex/—
 
 ## Non-Goals
 
