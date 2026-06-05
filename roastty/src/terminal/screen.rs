@@ -187,6 +187,12 @@ impl Screen {
         self.pages.page_serial_min()
     }
 
+    /// Whether this screen keeps no scrollback (upstream `screen.no_scrollback`). The search
+    /// special-cases this in `reload_active`.
+    pub(in crate::terminal) fn no_scrollback(&self) -> bool {
+        self.pages.scrollback_disabled()
+    }
+
     /// Set the minimum live page serial (test helper for the search history pruning).
     #[cfg(test)]
     pub(in crate::terminal) fn set_page_serial_min_for_tests(&mut self, value: u64) {
@@ -2448,6 +2454,15 @@ mod tests {
     use crate::terminal::page_list::CodepointReplacement;
     use crate::terminal::page_list::Pin;
     use crate::terminal::point;
+
+    #[test]
+    fn no_scrollback_reflects_max_scrollback() {
+        let none = Screen::init(10, 10, Some(0)).unwrap();
+        assert!(none.no_scrollback());
+
+        let with = Screen::init(10, 10, None).unwrap();
+        assert!(!with.no_scrollback());
+    }
 
     fn screen_with_lines(lines: &[&str]) -> Screen {
         let rows = lines.len().max(1);

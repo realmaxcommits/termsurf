@@ -1648,7 +1648,7 @@ are past the correctness-critical foundation.
 - [Experiment 600: search ScreenSearch select_next / select_prev](600-search-screen-select-step.md)
   — **Pass** · Claude/Codex/Codex
 - [Experiment 601: search reload_active support accessors (next_node_ptr, no_scrollback)](601-search-reload-support-accessors.md)
-  — **Designed** · Claude/Codex/Codex
+  — **Pass** · Claude/Codex/Codex
 
 ## Non-Goals
 

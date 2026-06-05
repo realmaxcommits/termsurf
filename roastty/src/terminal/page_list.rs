@@ -2154,6 +2154,14 @@ impl PageList {
         Some(NonNull::from(self.pages[idx - 1].as_ref()))
     }
 
+    /// The page node immediately newer than `node` (upstream `node.next`); `None` if `node` is the
+    /// newest page or not in this list. The forward counterpart to `prev_node_ptr`, used by the
+    /// screen search to re-walk newly-grown history pages.
+    pub(in crate::terminal) fn next_node_ptr(&self, node: NonNull<Node>) -> Option<NonNull<Node>> {
+        let idx = self.node_index(node)?;
+        self.pages.get(idx + 1).map(|p| NonNull::from(p.as_ref()))
+    }
+
     /// Put a single content cell in the first (oldest) page and set whether its last row is
     /// soft-wrapped (test helper for the search overlap pass: the content makes the page's encoding
     /// non-empty, and the wrap flag controls whether the overlap pass appends it).
@@ -20031,5 +20039,26 @@ mod tests {
 
         assert_eq!(text, "only");
         assert_eq!(cell_map.len(), text.len());
+    }
+
+    #[test]
+    fn next_node_ptr_walks_pages_forward() {
+        let mut list = PageList::init(10, 10, None).unwrap();
+        list.grow_to_two_pages_for_tests();
+        let first = list.first_node_ptr();
+        let last = list.last_node_ptr();
+
+        assert_eq!(list.next_node_ptr(first), Some(last));
+        assert_eq!(list.next_node_ptr(last), None);
+        assert_eq!(list.next_node_ptr(NonNull::dangling()), None);
+        // Symmetry with `prev_node_ptr`.
+        assert_eq!(list.prev_node_ptr(last), Some(first));
+    }
+
+    #[test]
+    fn next_node_ptr_single_page_is_none() {
+        let list = PageList::init(10, 10, None).unwrap();
+        let only = list.first_node_ptr();
+        assert_eq!(list.next_node_ptr(only), None);
     }
 }

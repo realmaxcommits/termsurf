@@ -164,3 +164,57 @@ Review artifacts:
 
 - Prompt: `logs/codex-review/20260604-d601-prompt.md`
 - Result: `logs/codex-review/20260604-d601-last-message.md`
+
+## Result
+
+**Result:** Pass
+
+`PageList` gained `next_node_ptr` (the forward counterpart to `prev_node_ptr`:
+returns `pages[node_index + 1]`, the newer node, or `None` at the newest / for
+an unknown node), and `Screen` gained `no_scrollback` (delegating to
+`PageList::scrollback_disabled`).
+
+Gates:
+
+- `cargo fmt -p roastty` accepted; `--check` clean.
+- `cargo test -p roastty`: 3301 passed, 0 failed (three new tests; no
+  regressions, up from 3298).
+- `cargo build -p roastty`: no warnings.
+- no-`ghostty`-name greps: font/renderer/config + `page_list.rs` +
+  lib.rs/header/abi_harness.c clean; this experiment's `screen.rs` additions are
+  clean of ghostty names; `git diff --check` clean. (The pre-existing
+  `// Upstream Ghostty` comment in the large `screen.rs` file is unrelated to
+  this diff and left untouched per the no-unrequested-changes rule.)
+
+The three new tests: the forward walk over a two-page list
+(`next(first) == Some(last)`, `next(last) == None`, `next(dangling) == None`,
+plus the `prev(last) == Some(first)` symmetry), the single-page `None`, and
+`no_scrollback` reflecting `Some(0)` (true) vs `None` (false).
+
+## Completion Review
+
+Codex reviewed the completed experiment and **approved** it with **no Required
+or Optional findings** (one Nit: the `## Result` / `## Conclusion` sections were
+not yet saved — added here). Codex confirmed `next_node_ptr` uses the same page
+ordering as `prev_node_ptr` (`idx + 1` returns the newer page, yielding `None`
+for the newest or an unknown node), `no_scrollback` correctly delegates to the
+scrollback-disabled state, the tests cover the forward walk / newest / unknown /
+single-page `None` / the symmetry assertion / the `Some(0)` vs `None` scrollback
+configuration, and leaving the pre-existing `screen.rs` no-name comment
+untouched is the right handling.
+
+Review artifacts:
+
+- Prompt: `logs/codex-review/20260604-r601-prompt.md` (result)
+- Result: `logs/codex-review/20260604-r601-last-message.md` (result)
+
+## Conclusion
+
+This experiment ports two small `reload_active` prerequisites: `next_node_ptr`
+(the forward node walk for re-searching newly-grown history pages) and
+`no_scrollback` (the screen's no-scrollback special case). The remaining
+`reload_active` accessors are `Pin::before` (pin ordering, for the no-scrollback
+active-pruning branch) and a `top_left`-pin accessor; those land with
+`reload_active` itself. After the accessors, the construction/dispatch cluster —
+`init` / `reload_active` / the `select` dispatcher / `feed` / `search_all` —
+remains in `ScreenSearch`, followed by `ViewportSearch` and the search `Thread`.
