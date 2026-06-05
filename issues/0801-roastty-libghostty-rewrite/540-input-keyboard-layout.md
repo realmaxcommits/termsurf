@@ -202,3 +202,57 @@ Review artifacts:
 
 - Prompt: `logs/codex-review/20260604-d540-prompt.md` (design)
 - Result: `logs/codex-review/20260604-d540-last-message.md` (design)
+
+## Result
+
+**Result:** Pass
+
+`input::keyboard` was created with `Layout` (`Unknown` / `UsStandard` /
+`UsInternational`, `#[default] Unknown`), `map_apple_id(&str) -> Option<Layout>`
+recognizing exactly the two Apple IDs (else `None`), and
+`detect_option_as_alt(self) -> OptionAsAlt` returning `True` for the US layouts
+and `False` for `Unknown` — reusing roastty's existing
+`input::key_mods::OptionAsAlt`. The module is registered in `input/mod.rs`
+(`cargo fmt` reordered the `mod` declarations alphabetically, accepted as the
+formatter's output). Three tests verify the ID mapping (including `None` for an
+unrecognized ID and `""`), the option-as-alt defaulting, and
+`Layout::default() == Unknown`.
+
+Gates:
+
+- `cargo fmt -p roastty` accepted; `--check` clean.
+- `cargo test -p roastty`: 3034 passed, 0 failed (three new tests; no
+  regressions, up from 3031).
+- `cargo build -p roastty`: no warnings.
+- no-`ghostty`-name greps (font/renderer/config + input/keyboard.rs +
+  lib.rs/header/abi_harness.c) clean; `git diff --check` clean; `roastty.h`
+  untouched.
+
+## Completion Review
+
+Codex reviewed the completed experiment and **approved** it with **one Nit** (no
+Required or Optional findings): the doc had `## Result` but no `## Conclusion` —
+fixed by adding the conclusion below. Codex confirmed the implementation is
+faithful to upstream `keyboard.zig`: the variant set is exact, `map_apple_id`
+recognizes only the two Apple IDs and returns `None` otherwise, and
+`detect_option_as_alt` maps the two US layouts to `OptionAsAlt::True` and
+`Unknown` to `False`. Reusing `input::key_mods::OptionAsAlt` is correct for
+roastty's module layout, and the tests adequately verify the slice — including
+the important `None`-not-`Unknown` behavior for unrecognized IDs.
+
+Review artifacts:
+
+- Prompt: `logs/codex-review/20260604-r540-prompt.md` (result)
+- Result: `logs/codex-review/20260604-r540-last-message.md` (result)
+
+## Conclusion
+
+`input::keyboard` now holds the `Layout` type with its Apple-ID mapping and
+option-as-alt defaulting, faithfully ported from `input/keyboard.zig` — the
+second input-layer slice after `input::mouse` (Experiment 539). The macOS Carbon
+call that produces the layout ID at runtime and the config-defaulting wiring
+stay deferred as frontend/consumer glue. Remaining self-contained input files
+genuinely unported include `function_keys.zig`, `keycodes.zig`, and
+`mouse_encode.zig` (input-side), each a natural next slice. The config
+`loadDefaultFiles` stays deferred pending roastty's naming decision;
+`background-image-opacity` stays float-blocked.
