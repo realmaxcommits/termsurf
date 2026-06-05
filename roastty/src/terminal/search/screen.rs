@@ -3,18 +3,19 @@
 //! background search survives screen changes. So far it lands the state-machine vocabulary and
 //! struct skeleton, the read-only result accessors (`needle` / `matches_len` / `matches`), and the
 //! `tick` state machine (`tick` / `tick_active` / `tick_history`), `prune_history` (drop stale
-//! cached history results), `selected_match` (read the selected result by index), and the
-//! selection stepping (`select_next` / `select_prev`); construction (`init` / `reload_active`),
-//! `feed`, and the `select` dispatcher are deferred.
+//! cached history results), `selected_match` (read the selected result by index), the selection
+//! stepping (`select_next` / `select_prev`), and the construction/dispatch cluster (`new` /
+//! `reload_active` / `select` / `deinit`); `feed` and `search_all` are deferred.
 
 use std::ptr::NonNull;
 
 use super::super::highlight::{Flattened, Tracked};
-use super::super::page_list::Pin;
+use super::super::page_list::{Node, Pin};
 use super::super::screen::Screen;
 use super::super::size::CellCountInt;
 use super::active::ActiveSearch;
 use super::pagelist::PageListSearch;
+use super::sliding_window::{Direction, SlidingWindow};
 
 /// The search state machine's position (upstream `ScreenSearch.State`). Module-private, like
 /// upstream's `State` (private to `ScreenSearch`); same-module tests exercise its predicates.
@@ -87,6 +88,24 @@ struct HistorySearch {
     /// The pin for the first node this searcher started from (to detect active-area growth over
     /// previously-searched history).
     start_pin: NonNull<Pin>,
+}
+
+impl HistorySearch {
+    /// Untrack the start pin and drop the page-list searcher (upstream `HistorySearch.deinit`).
+    ///
+    /// Takes `screen` by pointer (not `&mut Screen`): `PageListSearch::deinit` dereferences its own
+    /// raw `NonNull<PageList>` into this same screen, so no `&mut Screen` may be live across it.
+    ///
+    /// # Safety
+    /// `screen` must be the live screen this history searcher belongs to, exclusively accessed.
+    unsafe fn deinit(self, mut screen: NonNull<Screen>) {
+        let mut searcher = self.searcher;
+        // SAFETY: the searcher's `list` is this screen's page list, which is alive; no `&mut Screen`
+        // is held here, so this is the only access to the page list.
+        unsafe { searcher.deinit() };
+        // SAFETY: screen alive; the searcher access above has ended.
+        unsafe { screen.as_mut() }.untrack_pin(self.start_pin);
+    }
 }
 
 /// Searches a needle within a whole `Screen`, caching results across screen changes (upstream
@@ -301,6 +320,355 @@ impl ScreenSearch {
             idx: next_idx,
             highlight: tracked,
         });
+    }
+
+    /// Construct a screen search for `needle` and load the initial active area (upstream `init`).
+    ///
+    /// # Safety
+    /// `screen` must be live and outlive the search; the caller holds the screen lock (no
+    /// concurrent access). The search stores the pointer and dereferences it on `reload_active` /
+    /// `select` / `deinit`.
+    pub(in crate::terminal) unsafe fn new(screen: NonNull<Screen>, needle: &[u8]) -> ScreenSearch {
+        // SAFETY: caller's contract — `screen` is live.
+        let (rows, cols) = {
+            let s = unsafe { screen.as_ref() };
+            (s.rows(), s.cols())
+        };
+        let mut result = ScreenSearch {
+            screen,
+            active: ActiveSearch::new(needle),
+            history: None,
+            state: State::Active,
+            selected: None,
+            history_results: Vec::new(),
+            active_results: Vec::new(),
+            rows,
+            cols,
+        };
+        // SAFETY: see above.
+        unsafe { result.reload_active() };
+        result
+    }
+
+    /// Untrack the selection and history pins and drop the searchers (upstream `deinit`). Explicit
+    /// (not `Drop`) because it dereferences the `screen` pointer.
+    ///
+    /// # Safety
+    /// As `new`. Call exactly once, before the backing `Screen` is dropped.
+    pub(in crate::terminal) unsafe fn deinit(&mut self) {
+        if let Some(m) = self.selected.take() {
+            // SAFETY: caller's contract — `screen` is live.
+            let screen = unsafe { self.screen.as_mut() };
+            m.deinit(screen);
+        }
+        if let Some(h) = self.history.take() {
+            // SAFETY: caller's contract — `screen` is live; no `&mut Screen` is held here.
+            unsafe { h.deinit(self.screen) };
+        }
+    }
+
+    /// Select the next/previous match after re-validating the active area and pruning stale history
+    /// (upstream `select`).
+    ///
+    /// # Safety
+    /// As `new`.
+    pub(in crate::terminal) unsafe fn select(&mut self, to: Select) -> bool {
+        // SAFETY: caller's contract.
+        unsafe { self.reload_active() };
+        self.prune_history();
+        match to {
+            Select::Next => self.select_next(),
+            Select::Prev => self.select_prev(),
+        }
+    }
+
+    /// Re-copy the active area, grow the history search, and keep the selection valid (upstream
+    /// `reloadActive`). Decomposed into `reload_history` (B), `prune_no_scrollback_active` (D), and
+    /// `fixup_selection` (E) — a faithful refactoring of upstream's labeled blocks.
+    ///
+    /// # Safety
+    /// As `new`.
+    pub(in crate::terminal) unsafe fn reload_active(&mut self) {
+        // (A) Selection-garbage recovery: if either of the selection's tracked pins went garbage,
+        // drop the selection now and re-select the last match after the body runs.
+        let mut select_prev_recovery = false;
+        if let Some(m) = self.selected.as_ref() {
+            // SAFETY: screen alive.
+            let screen = unsafe { self.screen.as_ref() };
+            let garbage = screen
+                .tracked_pin_value(m.highlight.start)
+                .map_or(true, |p| p.is_garbage())
+                || screen
+                    .tracked_pin_value(m.highlight.end)
+                    .map_or(true, |p| p.is_garbage());
+            if garbage {
+                let m = self.selected.take().unwrap();
+                // SAFETY: screen alive.
+                let screen = unsafe { self.screen.as_mut() };
+                m.deinit(screen);
+                select_prev_recovery = true;
+            }
+        }
+
+        // (B) Active update + history growth.
+        let history_node = {
+            // SAFETY: nodes come from the live screen; `update` stores them under the search
+            // contract (screen alive + lock held).
+            let list = unsafe { self.screen.as_ref() }.pages();
+            unsafe { self.active.update(list) }
+        };
+        // SAFETY: as `reload_active`.
+        unsafe { self.reload_history(history_node) };
+
+        // (C) Re-run the active-area search, preserving any non-active state.
+        let old_active_len = self.active_results.len();
+        let old_selection_idx = self.selected.as_ref().map(|m| m.idx);
+        self.active_results.clear();
+        if self.state == State::Active {
+            self.tick_active();
+        } else {
+            let saved = self.state;
+            self.tick_active();
+            self.state = saved;
+        }
+
+        // (D) No-scrollback active pruning.
+        self.prune_no_scrollback_active();
+
+        // (E) Selection fixup.
+        // SAFETY: as `reload_active`.
+        unsafe { self.fixup_selection(old_active_len, old_selection_idx) };
+
+        // (A, deferred) Re-select the last match after a garbage recovery.
+        if select_prev_recovery {
+            // SAFETY: as `reload_active`.
+            unsafe { self.select(Select::Prev) };
+        }
+    }
+
+    /// Grow (or create/reset) the history searcher to cover everything above the active area
+    /// (upstream `reloadActive`'s history block).
+    ///
+    /// # Safety
+    /// As `new`.
+    unsafe fn reload_history(&mut self, history_node: Option<NonNull<Node>>) {
+        let Some(history_node) = history_node else {
+            // No history node → no history. Clear it and move a history-area selection to the
+            // active end.
+            if let Some(h) = self.history.take() {
+                // SAFETY: screen alive; no `&mut Screen` is held here.
+                unsafe { h.deinit(self.screen) };
+            }
+            self.history_results.clear();
+            if let Some(m) = self.selected.as_ref() {
+                if m.idx >= self.active_results.len() {
+                    let m = self.selected.take().unwrap();
+                    // SAFETY: screen alive.
+                    let screen = unsafe { self.screen.as_mut() };
+                    m.deinit(screen);
+                    // SAFETY: as `reload_active`.
+                    unsafe { self.select(Select::Prev) };
+                }
+            }
+            return;
+        };
+
+        // SAFETY: screen alive.
+        if unsafe { self.screen.as_ref() }.no_scrollback() {
+            debug_assert!(self.history.is_none());
+            return;
+        }
+
+        // Reset the history if its start pin went garbage.
+        if let Some(h) = self.history.as_ref() {
+            // SAFETY: screen alive.
+            let garbage = unsafe { self.screen.as_ref() }
+                .tracked_pin_value(h.start_pin)
+                .map_or(true, |p| p.is_garbage());
+            if garbage {
+                let h = self.history.take().unwrap();
+                // SAFETY: screen alive; no `&mut Screen` is held here.
+                unsafe { h.deinit(self.screen) };
+                self.history_results.clear();
+            }
+        }
+
+        // No history yet → create one rooted at `history_node`.
+        if self.history.is_none() {
+            let needle = self.needle().to_vec();
+            // SAFETY: `history_node` is a live node; the screen is alive.
+            let searcher = unsafe {
+                let list = self.screen.as_mut().pages_mut();
+                PageListSearch::new(&needle, list, history_node)
+            }
+            .expect("history start node must be trackable");
+            let start_pin = unsafe { self.screen.as_mut() }
+                .track_pin(Pin::new(history_node, 0, 0))
+                .expect("history start node must be trackable");
+            self.history = Some(HistorySearch {
+                searcher,
+                start_pin,
+            });
+            return;
+        }
+
+        // Existing history: if the start node is unchanged, there is nothing to grow.
+        let start_pin = self.history.as_ref().unwrap().start_pin;
+        // SAFETY: the start pin is tracked in the live screen.
+        if unsafe { start_pin.as_ref() }.node() == history_node {
+            return;
+        }
+
+        // Grown: forward-search `[start_node ..= history_node]`, collect matches that do not start
+        // on the active-covering node, reverse, and prepend to the existing history results.
+        let needle = self.needle().to_vec();
+        let mut window = SlidingWindow::new(Direction::Forward, &needle);
+        loop {
+            // SAFETY: the start pin is tracked in the live screen.
+            let node = unsafe { start_pin.as_ref() }.node();
+            // SAFETY: `node` is a live page-list node.
+            unsafe { window.append(node) };
+            if node == history_node {
+                break;
+            }
+            // SAFETY: screen alive.
+            let Some(next) = unsafe { self.screen.as_ref() }.pages().next_node_ptr(node) else {
+                break;
+            };
+            let mut sp = start_pin;
+            // SAFETY: the start pin is tracked in the live screen; advancing its node keeps it
+            // valid (a real page-list node).
+            unsafe { sp.as_mut() }.set_node(next);
+        }
+        // The walk must have reached the active-covering node (upstream asserts this); otherwise the
+        // collected results and the advanced `start_pin` would be garbage. A hard assert (vs
+        // upstream's debug-only one) keeps a contract violation from silently corrupting history.
+        // SAFETY: the start pin is tracked in the live screen.
+        assert!(
+            unsafe { start_pin.as_ref() }.node() == history_node,
+            "history walk must reach the active-covering node",
+        );
+
+        let mut results: Vec<Flattened> = Vec::new();
+        while let Some(hl) = window.next() {
+            // Skip matches that start on the active-covering node — those belong to the active area.
+            if hl.chunks[0].node == history_node {
+                continue;
+            }
+            results.push(hl);
+        }
+
+        // No new matches → nothing changes in the history (fast path).
+        if results.is_empty() {
+            return;
+        }
+
+        let added_len = results.len();
+        results.reverse();
+        results.extend(self.history_results.drain(..));
+        self.history_results = results;
+
+        // A history-area selection shifts by the number of newly prepended matches.
+        if let Some(m) = self.selected.as_mut() {
+            if m.idx >= self.active_results.len() {
+                m.idx += added_len;
+            }
+        }
+    }
+
+    /// In a no-scrollback screen, drop active results that are not actually in the active area
+    /// (upstream `reloadActive`'s no-scrollback block).
+    fn prune_no_scrollback_active(&mut self) {
+        // SAFETY: screen alive.
+        if !unsafe { self.screen.as_ref() }.no_scrollback() || self.active_results.is_empty() {
+            return;
+        }
+        // SAFETY: screen alive.
+        let tl = unsafe { self.screen.as_ref() }.active_area_top_left();
+        let mut boundary = None;
+        for (i, hl) in self.active_results.iter().enumerate() {
+            // A result is in the active area iff the active top-left is before its end pin.
+            // SAFETY: screen alive.
+            let in_active = unsafe { self.screen.as_ref() }
+                .pin_before(tl, hl.end_pin())
+                .unwrap_or(false);
+            if in_active {
+                boundary = Some(i);
+                break;
+            }
+        }
+        match boundary {
+            Some(i) => {
+                self.active_results.drain(..i);
+            }
+            None => self.active_results.clear(),
+        }
+    }
+
+    /// Re-resolve the selection's index against the freshly-rebuilt active results (upstream
+    /// `reloadActive`'s selection-fixup block).
+    ///
+    /// # Safety
+    /// As `new`.
+    unsafe fn fixup_selection(&mut self, old_active_len: usize, old_selection_idx: Option<usize>) {
+        let Some(old_idx) = old_selection_idx else {
+            return;
+        };
+        if self.selected.is_none() {
+            return;
+        }
+
+        if old_idx >= old_active_len {
+            // History-area selection: shift by the change in active-area length.
+            let active_len = self.active_results.len();
+            let m = self.selected.as_mut().unwrap();
+            m.idx = m.idx - old_active_len + active_len;
+            return;
+        }
+
+        // Active-area selection: re-find it by comparing the selection's CURRENT tracked pin values
+        // against each candidate's untracked endpoints.
+        let (start_val, end_val) = {
+            // SAFETY: screen alive.
+            let screen = unsafe { self.screen.as_ref() };
+            let m = self.selected.as_ref().unwrap();
+            (
+                screen.tracked_pin_value(m.highlight.start),
+                screen.tracked_pin_value(m.highlight.end),
+            )
+        };
+        let (Some(start_val), Some(end_val)) = (start_val, end_val) else {
+            // Missing/garbage tracked pin → treat as not found.
+            // SAFETY: as `reload_active`.
+            unsafe { self.drop_selection_and_select_next() };
+            return;
+        };
+
+        let active_len = self.active_results.len();
+        for i in 0..active_len {
+            let untracked = self.active_results[i].untracked();
+            if untracked.start == start_val && untracked.end == end_val {
+                self.selected.as_mut().unwrap().idx = active_len - 1 - i;
+                return;
+            }
+        }
+
+        // Not found in the new active results.
+        // SAFETY: as `reload_active`.
+        unsafe { self.drop_selection_and_select_next() };
+    }
+
+    /// Drop the current selection and advance to the next match (upstream's not-found recovery).
+    ///
+    /// # Safety
+    /// As `new`.
+    unsafe fn drop_selection_and_select_next(&mut self) {
+        let m = self.selected.take().unwrap();
+        // SAFETY: screen alive.
+        let screen = unsafe { self.screen.as_mut() };
+        m.deinit(screen);
+        // SAFETY: as `reload_active`.
+        unsafe { self.select(Select::Next) };
     }
 }
 
@@ -637,5 +1005,65 @@ mod tests {
         assert!(s.selected.is_none());
         assert!(!s.select_prev());
         assert!(s.selected.is_none());
+    }
+
+    #[test]
+    fn new_searches_the_active_area_and_releases_its_pins_on_deinit() {
+        let mut screen = Screen::init(10, 10, None).unwrap();
+        screen.set_text_lines_for_tests(&["Fizz buzz", "Fizz pop"]);
+        let baseline = screen.tracked_pin_count();
+        let ptr = NonNull::from(&mut screen);
+        // SAFETY: `screen` outlives `s`; this thread holds it exclusively.
+        let mut s = unsafe { ScreenSearch::new(ptr, b"Fizz") };
+
+        assert_eq!(s.needle(), b"Fizz");
+        // Two "Fizz" occurrences in the active area, both copied into the active results.
+        assert_eq!(s.matches_len(), 2);
+        // Construction stands up a history searcher rooted above the active area (its `start_pin`
+        // plus the `PageListSearch` pin = two pins past the baseline); no selection yet.
+        assert_eq!(screen.tracked_pin_count(), baseline + 2);
+
+        // SAFETY: as `new`; called exactly once.
+        unsafe { s.deinit() };
+        assert_eq!(screen.tracked_pin_count(), baseline);
+    }
+
+    #[test]
+    fn select_after_new_tracks_one_selection_then_deinit_releases_it() {
+        let mut screen = Screen::init(10, 10, None).unwrap();
+        screen.set_text_lines_for_tests(&["Fizz buzz", "Fizz pop"]);
+        let baseline = screen.tracked_pin_count();
+        let ptr = NonNull::from(&mut screen);
+        // SAFETY: `screen` outlives `s`.
+        let mut s = unsafe { ScreenSearch::new(ptr, b"Fizz") };
+
+        // SAFETY: as `new`.
+        assert!(unsafe { s.select(Select::Next) });
+        assert!(s.selected.is_some());
+        // History searcher (two pins) plus one selection (two pins) past the baseline.
+        assert_eq!(screen.tracked_pin_count(), baseline + 4);
+
+        // SAFETY: as `new`; called once.
+        unsafe { s.deinit() };
+        assert_eq!(screen.tracked_pin_count(), baseline);
+    }
+
+    #[test]
+    fn new_with_no_matches_finds_nothing_and_selects_nothing() {
+        let mut screen = Screen::init(10, 10, None).unwrap();
+        screen.set_text_lines_for_tests(&["hello"]);
+        let baseline = screen.tracked_pin_count();
+        let ptr = NonNull::from(&mut screen);
+        // SAFETY: `screen` outlives `s`.
+        let mut s = unsafe { ScreenSearch::new(ptr, b"zzz") };
+
+        assert_eq!(s.matches_len(), 0);
+        // SAFETY: as `new`.
+        assert!(!unsafe { s.select(Select::Next) });
+        assert!(s.selected.is_none());
+
+        // SAFETY: as `new`; called once.
+        unsafe { s.deinit() };
+        assert_eq!(screen.tracked_pin_count(), baseline);
     }
 }

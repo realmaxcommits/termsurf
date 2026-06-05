@@ -2123,6 +2123,11 @@ impl PageList {
         self.rows
     }
 
+    /// The column count (upstream `list.cols`). Used by the search subsystem's resize detection.
+    pub(in crate::terminal) fn cols(&self) -> CellCountInt {
+        self.cols
+    }
+
     /// The minimum serial of a still-live page (upstream `page_serial_min`). Rises as pages are
     /// pruned from the scrollback; the search uses it to drop stale cached results.
     pub(in crate::terminal) fn page_serial_min(&self) -> u64 {

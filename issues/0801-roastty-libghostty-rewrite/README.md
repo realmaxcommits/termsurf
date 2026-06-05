@@ -1652,7 +1652,7 @@ are past the correctness-critical foundation.
 - [Experiment 602: search reload_active pin accessors (pin_before, active_area_top_left)](602-search-reload-pin-accessors.md)
   — **Pass** · Claude/Codex/Codex
 - [Experiment 603: search ScreenSearch construction cluster (new / reload_active / select)](603-search-screen-construction.md)
-  — **Designed** · Claude/Codex/Codex
+  — **Pass** · Claude/Codex/Codex
 
 ## Non-Goals
 

@@ -193,6 +193,27 @@ impl Screen {
         self.pages.scrollback_disabled()
     }
 
+    /// This screen's page list (upstream `screen.pages`). Used by the search subsystem to drive the
+    /// active-area search.
+    pub(in crate::terminal) fn pages(&self) -> &PageList {
+        &self.pages
+    }
+
+    /// This screen's page list, mutably (for the search subsystem's history searcher setup).
+    pub(in crate::terminal) fn pages_mut(&mut self) -> &mut PageList {
+        &mut self.pages
+    }
+
+    /// The active row count of this screen's page list (upstream `screen.pages.rows`).
+    pub(in crate::terminal) fn rows(&self) -> CellCountInt {
+        self.pages.active_rows()
+    }
+
+    /// The column count of this screen's page list (upstream `screen.pages.cols`).
+    pub(in crate::terminal) fn cols(&self) -> CellCountInt {
+        self.pages.cols()
+    }
+
     /// The pin at the top-left cell of the active area (upstream `pages.getTopLeft(.active)`). Used
     /// by `reload_active`'s no-scrollback pruning.
     pub(in crate::terminal) fn active_area_top_left(&self) -> Pin {

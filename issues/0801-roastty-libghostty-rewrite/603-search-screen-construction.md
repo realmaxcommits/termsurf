@@ -331,3 +331,83 @@ Review artifacts:
 
 - Prompt: `logs/codex-review/20260604-d603-prompt.md`
 - Result: `logs/codex-review/20260604-d603-last-message.md`
+
+## Result
+
+**Result:** Pass
+
+Implemented the construction/dispatch cluster in
+`roastty/src/terminal/search/screen.rs` and the supporting accessors:
+
+- `unsafe fn new(screen, needle)` — captures `(rows, cols)` via `Screen::rows()`
+  / `cols()`, builds the struct, and runs the initial `reload_active`.
+- `unsafe fn deinit(&mut self)` — untracks the selection
+  (`SelectedMatch::deinit`) and the history (`HistorySearch::deinit`).
+- `unsafe fn select(&mut self, to)` — `reload_active` + `prune_history` +
+  `select_next` / `select_prev`.
+- `unsafe fn reload_active(&mut self)` — phases A–E, decomposed into
+  `reload_history` (B), `prune_no_scrollback_active` (D), and `fixup_selection`
+  (E). Phase A's garbage-recovery `defer` is an explicit deferred
+  `select(Prev)`; phase C's `errdefer` is dropped (infallible rebuild); phase E
+  compares the selection's **current tracked pin values**
+  (`Screen::tracked_pin_value`) against each candidate's `untracked()`
+  endpoints, falling to `drop_selection_and_select_next` on a missing/garbage
+  pin or no match.
+- `reload_history` — the no-history-node path, the `no_scrollback` early return,
+  the garbage-start-pin reset, create-if-absent (`PageListSearch::new` + track
+  `Pin::new(history_node, 0, 0)`), the unchanged-start fast path, and the grown
+  forward re-search.
+- `impl HistorySearch { unsafe fn deinit(self, screen: NonNull<Screen>) }`.
+- `Screen::pages` / `pages_mut` / `rows` / `cols`; `PageList::cols`.
+
+Three construction-cluster tests were added (matches found + history pins
+released on `deinit`; `select` after `new` tracks exactly one selection; the
+no-match path). Gates: `cargo fmt --check` clean, `cargo build -p roastty` no
+warnings, `cargo test -p roastty` **3307 passed / 0 failed** (3304 → 3307, +3),
+no-ghostty grep clean (only the pre-existing `// Upstream Ghostty` comment in
+`screen.rs`, untouched), `git diff --check` clean.
+
+## Completion Review
+
+Codex reviewed the completed experiment and raised **two Required** findings,
+both fixed and re-confirmed:
+
+- **Required (fixed)**: `HistorySearch::deinit` originally held a `&mut Screen`
+  while `PageListSearch::deinit` dereferenced its own raw `NonNull<PageList>`
+  into the same screen — an aliasing hazard. Changed it to take
+  `screen: NonNull<Screen>`, deinitialize the `PageListSearch` first while no
+  `&mut Screen` is live, then `untrack_pin` through the pointer; all three
+  callers updated to pass `self.screen` without holding a `&mut Screen` across
+  the call.
+- **Required (fixed)**: the grown-history walk silently `break`ed if
+  `next_node_ptr` could not reach `history_node`, then collected/prepended
+  garbage. Added a hard `assert!` after the loop that the advanced `start_pin`
+  reached `history_node` (upstream `screen.zig:490` asserts this; made always-on
+  so a contract violation panics instead of corrupting history).
+- **Optional (deferred)**: a two-page history-growth integration test. The grown
+  path's constituents are independently unit-tested (forward `SlidingWindow`
+  587–591, `next_node_ptr` 601, `PageListSearch` 593); a Screen scenario that
+  reliably re-triggers `active.update` with a _new_ `history_node` is fragile to
+  construct, so it is recorded as a follow-up — the main residual coverage gap.
+
+Codex then **APPROVED** the experiment with no remaining correctness or
+faithfulness issues.
+
+Review artifacts:
+
+- Result prompt: `logs/codex-review/20260605-r603-prompt.md`
+- Result: `logs/codex-review/20260605-r603-last-message.md`
+- Re-confirmation prompt: `logs/codex-review/20260605-r603b-prompt.md`
+- Re-confirmation: `logs/codex-review/20260605-r603b-last-message.md`
+
+## Conclusion
+
+`ScreenSearch`'s incremental, lock-free core is complete: construction (`new`),
+the re-search engine (`reload_active` + helpers), the public dispatcher
+(`select`), and teardown (`deinit`). The mutually-recursive `new` ↔
+`reload_active` ↔ `select` triad ports faithfully, with the garbage-recovery and
+not-found recursion bounded by clearing/deiniting the stale selection before
+recursing. The remaining `ScreenSearch` surface is `feed` / `search_all` (the
+history-feeding paths that pull more scrollback into the searcher). The next
+experiment should port `feed` (and `search_all`), after which `ViewportSearch`
+and the search `Thread` complete the search subsystem.
