@@ -3,8 +3,9 @@
 //! background search survives screen changes. So far it lands the state-machine vocabulary and
 //! struct skeleton, the read-only result accessors (`needle` / `matches_len` / `matches`), and the
 //! `tick` state machine (`tick` / `tick_active` / `tick_history`), `prune_history` (drop stale
-//! cached history results), and `selected_match` (read the selected result by index); construction
-//! (`init` / `reload_active`), `feed`, and `select` are deferred.
+//! cached history results), `selected_match` (read the selected result by index), and the
+//! selection stepping (`select_next` / `select_prev`); construction (`init` / `reload_active`),
+//! `feed`, and the `select` dispatcher are deferred.
 
 use std::ptr::NonNull;
 
@@ -69,6 +70,14 @@ struct SelectedMatch {
     idx: usize,
     /// Tracked highlight so we can detect movement.
     highlight: Tracked,
+}
+
+impl SelectedMatch {
+    /// Untrack the selection's pins (upstream `SelectedMatch.deinit`). Takes `self` by value (the
+    /// lifecycle style of `Tracked::deinit`; the caller owns the previous selection via `take`).
+    fn deinit(self, screen: &mut Screen) {
+        self.highlight.deinit(screen);
+    }
 }
 
 /// History (scrollback) search state (upstream `ScreenSearch.HistorySearch`).
@@ -210,12 +219,95 @@ impl ScreenSearch {
         }
         None
     }
+
+    /// The cached result at `idx` (the `selected_match` indexing; the caller guarantees
+    /// `idx < active_len + history_len`).
+    fn result_at(&self, idx: usize) -> Flattened {
+        let active_len = self.active_results.len();
+        if idx < active_len {
+            self.active_results[active_len - 1 - idx].clone()
+        } else {
+            self.history_results[idx - active_len].clone()
+        }
+    }
+
+    /// Select the next match (newest→oldest, wrapping), upstream `selectNext`. `false` only if there
+    /// are no matches.
+    fn select_next(&mut self) -> bool {
+        let total = self.active_results.len() + self.history_results.len();
+        let next_idx = match &self.selected {
+            None => {
+                if total == 0 {
+                    return false;
+                }
+                // The newest match is index 0.
+                0
+            }
+            Some(m) => {
+                if m.idx + 1 >= total {
+                    0
+                } else {
+                    m.idx + 1
+                }
+            }
+        };
+
+        self.set_selection(next_idx);
+        true
+    }
+
+    /// Select the previous match (oldest→newest, wrapping), upstream `selectPrev`. `false` only if
+    /// there are no matches.
+    fn select_prev(&mut self) -> bool {
+        let total = self.active_results.len() + self.history_results.len();
+        let next_idx = match &self.selected {
+            None => {
+                if total == 0 {
+                    return false;
+                }
+                // The oldest match is the last index.
+                total - 1
+            }
+            Some(m) => {
+                if m.idx != 0 {
+                    m.idx - 1
+                } else {
+                    total - 1
+                }
+            }
+        };
+
+        self.set_selection(next_idx);
+        true
+    }
+
+    /// Track the result at `next_idx`, deinit any previous selection, and store the new one. Shared
+    /// by `select_next` / `select_prev`; the caller guarantees `next_idx` is in range.
+    fn set_selection(&mut self, next_idx: usize) {
+        let hl = self.result_at(next_idx);
+        // SAFETY: the screen is alive and exclusively accessed (the caller holds the screen lock —
+        // upstream's `select` read/write contract).
+        let screen = unsafe { self.screen.as_mut() };
+        // Track first, so a (non-)failure leaves the previous selection intact. A `None` here is an
+        // invariant violation (a valid cached match must have trackable pins), not a "no match".
+        let tracked = hl
+            .untracked()
+            .track(screen)
+            .expect("selected match pins must be trackable");
+        if let Some(prev) = self.selected.take() {
+            prev.deinit(screen);
+        }
+        self.selected = Some(SelectedMatch {
+            idx: next_idx,
+            highlight: tracked,
+        });
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::super::super::highlight::Chunk;
-    use super::super::super::page_list::PageList;
+    use super::super::super::page_list::{Node, PageList};
     use super::super::super::screen::Screen;
     use super::*;
 
@@ -463,5 +555,87 @@ mod tests {
         // active_len 0, so idx 0 = history[0].
         let s = build_selected(0, Vec::new(), vec![flat(10)]);
         assert_eq!(s.selected_match().unwrap().top_x, 10);
+    }
+
+    /// A `Flattened` whose single chunk is on `node` with a trackable in-bounds extent (so its
+    /// `untracked()` pins are valid for a real screen).
+    fn flat_on(node: NonNull<Node>, x: CellCountInt) -> Flattened {
+        Flattened {
+            chunks: vec![Chunk {
+                node,
+                serial: 0,
+                start: 0,
+                end: 1,
+            }],
+            top_x: x,
+            bot_x: x,
+        }
+    }
+
+    /// Build a `ScreenSearch` over `screen` (mutably, so `select_*` can track pins) with the given
+    /// active results and no history.
+    fn build_over_screen_mut(screen: &mut Screen, active: Vec<Flattened>) -> ScreenSearch {
+        ScreenSearch {
+            screen: NonNull::from(screen),
+            active: ActiveSearch::new(b"x"),
+            history: None,
+            state: State::Active,
+            selected: None,
+            history_results: Vec::new(),
+            active_results: active,
+            rows: 10,
+            cols: 10,
+        }
+    }
+
+    fn selected_idx(s: &ScreenSearch) -> usize {
+        s.selected.as_ref().unwrap().idx
+    }
+
+    #[test]
+    fn select_next_picks_newest_then_steps_and_wraps() {
+        let mut screen = Screen::init(10, 10, None).unwrap();
+        let node = screen.first_node_ptr_for_tests();
+        let baseline = screen.tracked_pin_count();
+        let mut s = build_over_screen_mut(&mut screen, vec![flat_on(node, 1), flat_on(node, 2)]);
+
+        assert!(s.select_next());
+        assert_eq!(selected_idx(&s), 0); // newest
+        assert!(s.select_next());
+        assert_eq!(selected_idx(&s), 1);
+        assert!(s.select_next());
+        assert_eq!(selected_idx(&s), 0); // wrapped
+
+        // Exactly one selection is tracked (2 pins past the baseline); the previous was deinited
+        // each step.
+        assert_eq!(screen.tracked_pin_count(), baseline + 2);
+    }
+
+    #[test]
+    fn select_prev_picks_oldest_then_steps_and_wraps() {
+        let mut screen = Screen::init(10, 10, None).unwrap();
+        let node = screen.first_node_ptr_for_tests();
+        let baseline = screen.tracked_pin_count();
+        let mut s = build_over_screen_mut(&mut screen, vec![flat_on(node, 1), flat_on(node, 2)]);
+
+        assert!(s.select_prev());
+        assert_eq!(selected_idx(&s), 1); // oldest = total - 1
+        assert!(s.select_prev());
+        assert_eq!(selected_idx(&s), 0);
+        assert!(s.select_prev());
+        assert_eq!(selected_idx(&s), 1); // wrapped
+
+        assert_eq!(screen.tracked_pin_count(), baseline + 2);
+    }
+
+    #[test]
+    fn select_with_no_matches_returns_false() {
+        let mut screen = Screen::init(10, 10, None).unwrap();
+        let mut s = build_over_screen_mut(&mut screen, Vec::new());
+
+        assert!(!s.select_next());
+        assert!(s.selected.is_none());
+        assert!(!s.select_prev());
+        assert!(s.selected.is_none());
     }
 }

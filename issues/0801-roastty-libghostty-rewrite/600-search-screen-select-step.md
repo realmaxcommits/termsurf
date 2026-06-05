@@ -310,3 +310,67 @@ Review artifacts:
 
 - Prompt: `logs/codex-review/20260604-d600-prompt.md`
 - Result: `logs/codex-review/20260604-d600-last-message.md`
+
+## Result
+
+**Result:** Pass
+
+`ScreenSearch` gained the selection stepping: `select_next` (newest→oldest,
+wrapping — picks index `0` on the first selection), `select_prev`
+(oldest→newest, wrapping — picks `total - 1` first), the shared `set_selection`
+(tracks the result at the new index, then deinits the previous selection, then
+stores the new one — `.expect`ing the track as an invariant), the `result_at`
+index helper, and `SelectedMatch::deinit` (by value). Both return `false` only
+when there are no matches. The methods stay safe with an internal `unsafe`
+`as_mut` of the screen pointer under the screen-alive + lock invariant.
+
+Gates:
+
+- `cargo fmt -p roastty` accepted; `--check` clean.
+- `cargo test -p roastty`: 3298 passed, 0 failed (three new tests; no
+  regressions, up from 3295).
+- `cargo build -p roastty`: no warnings.
+- no-`ghostty`-name greps (font/renderer/config + terminal/search +
+  lib.rs/header/abi_harness.c) clean; `git diff --check` clean.
+
+The three new tests run over a real `Screen` with trackable results (a
+`Flattened` with one chunk on the screen's first node, so its `untracked()` pins
+are valid): `select_next` picking the newest then stepping `0 → 1 → 0` (wrap),
+`select_prev` picking the oldest then stepping `1 → 0 → 1` (wrap) — both ending
+with the screen's tracked-pin count at `baseline + 2` (one selection tracked,
+the previous deinited each step) — and the no-match `false` path leaving
+`selected` `None`. (The screen has a baseline tracked pin — the viewport — so
+the assertion is `baseline + 2`.)
+
+## Completion Review
+
+Codex reviewed the completed experiment and **approved** it with **no Required
+or Optional findings** (one Nit: the `## Result` / `## Conclusion` sections were
+not yet saved — added here). Codex confirmed the implementation is faithful:
+`select_next` picks index `0` on the first selection, steps newest-to-oldest,
+wraps, and returns `false` only with no matches; `select_prev` picks `total - 1`
+first, steps back, and wraps; `set_selection` preserves the upstream ordering
+(track the new highlight first, then deinit the previous, then store), and the
+`.expect` correctly treats untrackable cached results as an invariant failure
+rather than a no-match; the tests cover the first pick, step, wrap,
+prior-selection cleanup via the stable tracked-pin count, and the no-match false
+path.
+
+Review artifacts:
+
+- Prompt: `logs/codex-review/20260604-r600-prompt.md` (result)
+- Result: `logs/codex-review/20260604-r600-last-message.md` (result)
+
+## Conclusion
+
+This experiment ports `select_next` / `select_prev` — the selection stepping
+that walks the combined match list (wrapping), tracking the new selection's pins
+(via Experiment 599's `Untracked::track`) and deiniting the previous one. With
+`selected_match` (598) and these, the selection-read and selection-step halves
+of `ScreenSearch` are done. The remaining `ScreenSearch` work is the
+mutually-recursive construction/dispatch cluster — `init` / `reload_active`
+(load the active area, set up the `HistorySearch` with its tracked `start_pin`,
+handle active-area growth into history, and re-fix the selection) and the public
+`select` dispatcher (which calls `reload_active` + `prune_history` then these) —
+plus `feed` / `search_all`. After `ScreenSearch`, `ViewportSearch` and the
+search `Thread` remain.
