@@ -1540,7 +1540,7 @@ are past the correctness-critical foundation.
 - [Experiment 546: the close-on-exec pipe (os::pipe)](546-os-pipe.md) — **Pass**
   · Claude/Codex/Codex
 - [Experiment 547: maximize the file-descriptor limit (os::file rlimit)](547-os-file-rlimit.md)
-  — **Designed** · Claude/Codex/Codex
+  — **Pass** · Claude/Codex/Codex
 
 ## Non-Goals
 

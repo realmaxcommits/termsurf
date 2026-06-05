@@ -85,6 +85,56 @@ pub(crate) fn random_tmp_path(prefix: &OsStr) -> OsString {
     path
 }
 
+/// Maximize the number of open file descriptors (`RLIMIT_NOFILE`) and return the previous
+/// limit so it can be restored (upstream `os.file.fixMaxFiles`). Each window/pane consumes
+/// several fds, so we raise the soft limit toward the hard limit. `None` if the limit can't
+/// be queried.
+pub(crate) fn fix_max_files() -> Option<libc::rlimit> {
+    let mut old = libc::rlimit {
+        rlim_cur: 0,
+        rlim_max: 0,
+    };
+    // Oh well; we tried. (Upstream logs a warning that max windows may be limited.)
+    if unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut old) } != 0 {
+        return None;
+    }
+
+    // If we're already at the max, we're done.
+    if old.rlim_cur >= old.rlim_max {
+        return Some(old);
+    }
+
+    // Binary search for the limit.
+    let mut min: libc::rlim_t = old.rlim_cur;
+    let mut max: libc::rlim_t = 1 << 20;
+    // If there's a defined upper bound, don't search — just set it.
+    if old.rlim_max != libc::RLIM_INFINITY {
+        min = old.rlim_max;
+        max = old.rlim_max;
+    }
+
+    loop {
+        let mut lim = old;
+        lim.rlim_cur = min + (max - min) / 2;
+        if unsafe { libc::setrlimit(libc::RLIMIT_NOFILE, &lim) } == 0 {
+            min = lim.rlim_cur;
+        } else {
+            max = lim.rlim_cur;
+        }
+        if min + 1 >= max {
+            break;
+        }
+    }
+
+    Some(old)
+}
+
+/// Restore a file-descriptor limit previously returned by `fix_max_files` (upstream
+/// `os.file.restoreMaxFiles`). Errors are ignored.
+pub(crate) fn restore_max_files(lim: libc::rlimit) {
+    unsafe { libc::setrlimit(libc::RLIMIT_NOFILE, &lim) };
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -147,5 +197,33 @@ mod tests {
         );
         // Two paths should differ.
         assert_ne!(random_tmp_path(prefix), random_tmp_path(prefix));
+    }
+
+    #[test]
+    fn fix_max_files_raises_then_restores() {
+        fn query() -> libc::rlimit {
+            let mut lim = libc::rlimit {
+                rlim_cur: 0,
+                rlim_max: 0,
+            };
+            assert_eq!(
+                unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut lim) },
+                0,
+                "getrlimit failed",
+            );
+            lim
+        }
+
+        let old = fix_max_files().expect("rlimit should be queryable");
+
+        // The soft limit is never lowered by fixing.
+        let after = query();
+        assert!(after.rlim_cur >= old.rlim_cur);
+
+        // Restoring returns the limit to exactly the old value.
+        restore_max_files(old);
+        let restored = query();
+        assert_eq!(restored.rlim_cur, old.rlim_cur);
+        assert_eq!(restored.rlim_max, old.rlim_max);
     }
 }

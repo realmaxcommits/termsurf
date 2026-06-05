@@ -216,3 +216,54 @@ Review artifacts:
 
 - Prompt: `logs/codex-review/20260604-d547-prompt.md` (design)
 - Result: `logs/codex-review/20260604-d547-last-message.md` (design)
+
+## Result
+
+**Result:** Pass
+
+`fix_max_files` and `restore_max_files` were added to `os::file`, completing the
+`os/file.zig` port on the macOS arm. `fix_max_files` queries `RLIMIT_NOFILE` via
+`libc::getrlimit` (`None` on failure), returns the old limit when already maxed,
+otherwise binary-searches the soft limit upward (`[cur, 1<<20)` or
+`[hard, hard]` when the hard limit isn't `RLIM_INFINITY`, moving `min` up on
+`setrlimit` success and `max` down on failure until `min + 1 >= max`), and
+returns the old limit; `restore_max_files` sets it back, ignoring errors. One
+test raises the limit (asserting the soft limit is never lowered) then restores
+it (asserting the queried limit returns to exactly `old`).
+
+Gates:
+
+- `cargo fmt -p roastty` accepted; `--check` clean.
+- `cargo test -p roastty`: 3058 passed, 0 failed (one new test; no regressions,
+  up from 3057).
+- `cargo build -p roastty`: no warnings.
+- no-`ghostty`-name greps (font/renderer/config + os/file.rs + os/mod.rs +
+  lib.rs/header/abi_harness.c) clean; `git diff --check` clean.
+
+## Completion Review
+
+Codex reviewed the completed experiment and **approved** it with **one Nit** (no
+Required or Optional findings): the doc had `## Result` but no `## Conclusion` —
+fixed by adding the conclusion below. Codex confirmed the implementation matches
+upstream `file.zig` and the approved design: it returns the old limit, preserves
+the already-maxed early return, implements the bounded hard-limit branch as a
+single attempt to set `cur = hard`, and otherwise follows the same min/max
+binary search and termination condition; `restore_max_files` correctly ignores
+`setrlimit` errors; and the test soundly confirms the limit is not lowered and
+is then restored to exactly the old `rlim_cur` / `rlim_max`.
+
+Review artifacts:
+
+- Prompt: `logs/codex-review/20260604-r547-prompt.md` (result)
+- Result: `logs/codex-review/20260604-r547-last-message.md` (result)
+
+## Conclusion
+
+`os::file` is now **fully ported** on the macOS arm: the temp-path helpers
+(Experiment 544) plus `fix_max_files` / `restore_max_files` — the binary-search
+fd-limit raiser that lets roastty open enough descriptors for many windows/panes
+(wiring into startup deferred). With this the `os` module spans `hostname`,
+`path`, `env`, `file`, `temp_dir`, and `pipe`. The OS-utility frontier still has
+a few self-contained slices (`i18n_locales`, `kernel_info`, `resourcesdir`). The
+config `loadDefaultFiles` stays deferred pending roastty's naming decision;
+`background-image-opacity` stays float-blocked.
