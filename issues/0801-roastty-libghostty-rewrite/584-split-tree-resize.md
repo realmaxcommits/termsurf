@@ -288,3 +288,66 @@ Review artifacts:
 
 - Prompt: `logs/codex-review/20260604-d584-prompt.md`
 - Result: `logs/codex-review/20260604-d584-last-message.md`
+
+## Result
+
+**Result:** Pass
+
+`terminal::split_tree` gained `SplitTree::resize`, `resize_in_place`, and
+`find_parent_split`. `resize` asserts a finite `ratio` in `[-1, 1]`, fast-paths
+the empty tree, clones, finds the nearest layout-matching ancestor split of
+`from` (returning the unchanged clone if there is none — including when `from`
+is the root), computes the split's grid-relative `scale` from the clone's
+`spatial` slots, converts the grid delta to a split delta (`ratio / scale`),
+adds it to the split's ratio, clamps to `[0, 1]`, and writes it (preserving
+`zoomed`). `resize_in_place` traps on a non-split handle. The module doc comment
+was updated — only the formatters remain.
+
+Gates:
+
+- `cargo fmt -p roastty` accepted; `--check` clean.
+- `cargo test -p roastty`: 3226 passed, 0 failed (seven new tests; no
+  regressions, up from 3219).
+- `cargo build -p roastty`: no warnings.
+- no-`ghostty`-name greps (font/renderer/config + terminal/split_tree.rs +
+  lib.rs/header/abi_harness.c) clean; `git diff --check` clean.
+
+The seven new tests: empty resize → empty, a basic `scale 1` resize (`+0.25` →
+root `0.75`), a layout mismatch and a from-root resize both no-ops, clamping
+(`+1.0` → `1.0`, `-1.0` → `0.0`), a nested `scale 0.5` (a `0.125` grid delta → a
+`0.25` split delta, inner `0.5 → 0.75`), and zoom preservation on both the
+changed and the no-op paths.
+
+## Completion Review
+
+Codex reviewed the completed experiment and **approved** it with **no Required
+or Optional findings** (one Nit: the `## Result` / `## Conclusion` sections were
+not yet in the saved file — added here). Codex confirmed `find_parent_split`
+matches upstream's backtracking search (including the root / no-parent case),
+that `resize` clones first, returns the unchanged clone for the empty / no-match
+/ zero-scale paths, computes `scale` from the clone's spatial slots, applies
+`ratio / scale`, clamps to `[0, 1]`, and preserves `zoomed`, that
+`resize_in_place` now enforces the split-handle invariant, and that the tests
+cover the important behavior.
+
+Review artifacts:
+
+- Prompt: `logs/codex-review/20260604-r584-prompt.md` (result)
+- Result: `logs/codex-review/20260604-r584-last-message.md` (result)
+
+## Conclusion
+
+This experiment ports `resize` — the twelfth split_tree slice and the **last
+tree-shaping operation**. `resize` moves the nearest layout-matching ancestor
+split's divider by a grid-relative delta, scaling it to the split's own extent
+(via the `Spatial` representation) and clamping to `[0, 1]`. With this, **all of
+split_tree's tree-shaping operations are ported** (`split` / `remove` /
+`equalize` / `resize`), alongside the vocabulary, payloads, geometry, arena,
+structural queries, iterator, navigation, and the `Spatial` container. The only
+remaining split_tree pieces are the **formatters** (`formatText` /
+`formatDiagram`), which render a tree as a textual diagram. The other remaining
+big-ticket subsystem is the terminal **search subsystem** (coupled to `PageList`
+/ `Pin` / `Screen` / `Selection` / `PageFormatter`); the dependency-blocked
+helpers persist (regex/oniguruma for `Link::oniRegex`, a URI parser for
+`os/uri`, the config-directory naming decision for `file_load` / `edit` /
+`loadDefaultFiles`).

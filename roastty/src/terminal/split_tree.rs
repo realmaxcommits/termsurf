@@ -4,8 +4,8 @@
 //! `dimensions`) and `Rc<V>`-based view ref-counting, the leaf `iter`ator, `zoom`, and the `Goto`
 //! enum, the `Spatial` container's normalization (`spatial` / `fillSpatialSlots`), and the full
 //! navigation (the spatial `nearest` / `nearest_wrapped`, the in-order `previous` / `next`, and the
-//! `goto` dispatch), and the `split` / `remove` / `equalize` tree-shaping operations. Still
-//! deferred: the remaining tree-shaping operation (`resize`) and the formatters.
+//! `goto` dispatch), and the `split` / `remove` / `equalize` / `resize` tree-shaping operations.
+//! Still deferred: the formatters (`formatText` / `formatDiagram`).
 
 use half::f16;
 use std::rc::Rc;
@@ -382,6 +382,94 @@ impl<V> SplitTree<V> {
             nodes,
             zoomed: None, // split always resets zoom
         })
+    }
+
+    /// Move the nearest split matching `layout` (an ancestor of `from`) by `ratio`, a signed delta
+    /// as a fraction of the whole grid (upstream `resize`). Returns a clone unchanged if there is no
+    /// matching split or the split has zero extent. `ratio` must be a finite value in `[-1, 1]`.
+    pub(crate) fn resize(&self, from: Handle, layout: Layout, ratio: f16) -> SplitTree<V> {
+        let zero = f16::from_f32(0.0);
+        let one = f16::from_f32(1.0);
+        assert!(ratio >= f16::from_f32(-1.0) && ratio <= one);
+        assert!(!ratio.is_nan() && !ratio.is_infinite());
+
+        if self.is_empty() {
+            return SplitTree::empty();
+        }
+        let mut result = self.clone(); // worst case: returned unchanged
+
+        let parent = match self.find_parent_split(layout, from, Handle::ROOT) {
+            Backtrack::Result(v) => v,
+            Backtrack::Deadend | Backtrack::Backtrack => return result,
+        };
+
+        let sp = result.spatial();
+        let parent_slot = sp.slots()[parent.idx()];
+        let root_slot = sp.slots()[0];
+        let scale = match layout {
+            Layout::Horizontal => parent_slot.width / root_slot.width,
+            Layout::Vertical => parent_slot.height / root_slot.height,
+        };
+        if scale == zero {
+            return result;
+        }
+
+        let current_ratio = match &result.nodes[parent.idx()] {
+            Node::Split(s) => s.ratio,
+            Node::Leaf(_) => unreachable!("find_parent_split returns a split"),
+        };
+        let new_ratio = current_ratio + (ratio / scale);
+        let clamped = if new_ratio < zero {
+            zero
+        } else if new_ratio > one {
+            one
+        } else {
+            new_ratio
+        };
+        result.resize_in_place(parent, clamped);
+        result
+    }
+
+    /// Set the split at `at`'s ratio in place (upstream `resizeInPlace`). `at` must be a split.
+    fn resize_in_place(&mut self, at: Handle, ratio: f16) {
+        match &mut self.nodes[at.idx()] {
+            Node::Split(s) => s.ratio = ratio,
+            Node::Leaf(_) => unreachable!("resize_in_place expects a split handle"),
+        }
+    }
+
+    /// The nearest ancestor split of `from` whose layout is `layout` (upstream `findParentSplit`).
+    fn find_parent_split(&self, layout: Layout, from: Handle, current: Handle) -> Backtrack {
+        if from == current {
+            return Backtrack::Backtrack;
+        }
+        match &self.nodes[current.idx()] {
+            Node::Leaf(_) => Backtrack::Deadend,
+            Node::Split(s) => {
+                let s = *s;
+                match self.find_parent_split(layout, from, s.left) {
+                    Backtrack::Result(v) => Backtrack::Result(v),
+                    Backtrack::Backtrack => {
+                        if s.layout == layout {
+                            Backtrack::Result(current)
+                        } else {
+                            Backtrack::Backtrack
+                        }
+                    }
+                    Backtrack::Deadend => match self.find_parent_split(layout, from, s.right) {
+                        Backtrack::Deadend => Backtrack::Deadend,
+                        Backtrack::Result(v) => Backtrack::Result(v),
+                        Backtrack::Backtrack => {
+                            if s.layout == layout {
+                                Backtrack::Result(current)
+                            } else {
+                                Backtrack::Backtrack
+                            }
+                        }
+                    },
+                }
+            }
+        }
     }
 
     /// Return a new tree with every split's `ratio` rebalanced to the relative leaf weight of its
@@ -1722,6 +1810,108 @@ mod tests {
             Node::Split(s) => *s,
             Node::Leaf(_) => panic!("not a split"),
         }
+    }
+
+    fn quarter() -> f16 {
+        f16::from_f32(0.25)
+    }
+
+    #[test]
+    fn resize_empty_is_empty() {
+        let tree: SplitTree<&str> = SplitTree::empty();
+        assert!(tree
+            .resize(Handle::ROOT, Layout::Horizontal, quarter())
+            .is_empty());
+    }
+
+    #[test]
+    fn resize_basic_scale_one() {
+        // A 2-leaf horizontal split spans the whole grid (scale 1): +0.25 → root ratio 0.75.
+        let tree = two_leaf();
+        let result = tree.resize(Handle::from_index(1), Layout::Horizontal, quarter());
+        assert_eq!(
+            split_payload(&result, Handle::ROOT).ratio,
+            f16::from_f32(0.75)
+        );
+    }
+
+    #[test]
+    fn resize_layout_mismatch_is_a_noop() {
+        // No vertical ancestor split → unchanged ratio.
+        let tree = two_leaf();
+        let result = tree.resize(Handle::from_index(1), Layout::Vertical, quarter());
+        assert_eq!(
+            split_payload(&result, Handle::ROOT).ratio,
+            f16::from_f32(0.5)
+        );
+    }
+
+    #[test]
+    fn resize_from_root_is_a_noop() {
+        // The root has no parent split.
+        let tree = two_leaf();
+        let result = tree.resize(Handle::ROOT, Layout::Horizontal, quarter());
+        assert_eq!(
+            split_payload(&result, Handle::ROOT).ratio,
+            f16::from_f32(0.5)
+        );
+    }
+
+    #[test]
+    fn resize_clamps_to_zero_and_one() {
+        let tree = two_leaf();
+        // +1.0: 0.5 + 1.0 = 1.5 → clamp 1.0.
+        let high = tree.resize(
+            Handle::from_index(1),
+            Layout::Horizontal,
+            f16::from_f32(1.0),
+        );
+        assert_eq!(split_payload(&high, Handle::ROOT).ratio, f16::from_f32(1.0));
+        // -1.0: 0.5 - 1.0 = -0.5 → clamp 0.0.
+        let low = tree.resize(
+            Handle::from_index(1),
+            Layout::Horizontal,
+            f16::from_f32(-1.0),
+        );
+        assert_eq!(split_payload(&low, Handle::ROOT).ratio, f16::from_f32(0.0));
+    }
+
+    #[test]
+    fn resize_nested_scale_half() {
+        // root = H(left = H(a,b), right = c), ratio 0.5: the inner H split occupies the left half
+        // (scale 0.5). A 0.125 grid delta becomes a 0.25 split delta: inner ratio 0.5 → 0.75.
+        let tree = SplitTree {
+            nodes: vec![
+                Node::Split(split_ratio(Layout::Horizontal, 0.5, 1, 4)),
+                Node::Split(split_ratio(Layout::Horizontal, 0.5, 2, 3)),
+                Node::Leaf(Rc::new("a")),
+                Node::Leaf(Rc::new("b")),
+                Node::Leaf(Rc::new("c")),
+            ],
+            zoomed: None,
+        };
+        // Resize from `a` (handle 2): the nearest H ancestor split is the inner split (handle 1).
+        let result = tree.resize(
+            Handle::from_index(2),
+            Layout::Horizontal,
+            f16::from_f32(0.125),
+        );
+        assert_eq!(
+            split_payload(&result, Handle::from_index(1)).ratio,
+            f16::from_f32(0.75)
+        );
+    }
+
+    #[test]
+    fn resize_preserves_zoom() {
+        let mut tree = two_leaf();
+        tree.zoom(Some(Handle::from_index(2)));
+        // Changed path.
+        let changed = tree.resize(Handle::from_index(1), Layout::Horizontal, quarter());
+        assert_eq!(changed.zoomed(), Some(Handle::from_index(2)));
+        // No-op path (layout mismatch).
+        let noop = tree.resize(Handle::from_index(1), Layout::Vertical, quarter());
+        assert_eq!(noop.zoomed(), Some(Handle::from_index(2)));
     }
 
     #[test]
