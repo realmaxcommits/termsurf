@@ -1568,6 +1568,7 @@ name = "roastty"
 version = "0.1.0"
 dependencies = [
  "flate2",
+ "half",
  "libc",
  "objc2",
  "objc2-core-foundation",

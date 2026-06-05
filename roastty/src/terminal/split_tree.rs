@@ -1,6 +1,8 @@
-//! Foundational types for the split-pane tree (port of the `f16`-free vocabulary of upstream
+//! Foundational types for the split-pane tree (port of the vocabulary of upstream
 //! `datastruct/split_tree`). The tree itself — the node arena, view ref-counting, and the
-//! `f16`-based spatial / ratio / resize logic — is deferred (Rust has no stable `f16`).
+//! spatial normalization / resize logic — is deferred.
+
+use half::f16;
 
 /// A handle into the tree's `nodes` array (upstream `Node.Handle`): a `u16`-backed index, so nodes
 /// are referenced by 16-bit handles rather than pointers.
@@ -64,6 +66,38 @@ impl Direction {
     }
 }
 
+/// The payload of a split node (upstream `Split`): two child handles, the split orientation, and
+/// the fraction of space given to the first (left / top) child.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct Split {
+    pub(crate) layout: Layout,
+    pub(crate) ratio: f16,
+    pub(crate) left: Handle,
+    pub(crate) right: Handle,
+}
+
+/// A node's normalized 2D rectangle in the spatial representation (upstream `Spatial.Slot`); all
+/// coordinates are in a 1×1 space.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct Slot {
+    pub(crate) x: f16,
+    pub(crate) y: f16,
+    pub(crate) width: f16,
+    pub(crate) height: f16,
+}
+
+impl Slot {
+    /// The right edge, `x + width` (upstream `maxX`).
+    pub(crate) fn max_x(self) -> f16 {
+        self.x + self.width
+    }
+
+    /// The bottom edge, `y + height` (upstream `maxY`).
+    pub(crate) fn max_y(self) -> f16 {
+        self.y + self.height
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -119,5 +153,53 @@ mod tests {
         assert_ne!(Direction::Left, Direction::Right);
         assert_ne!(Direction::Up, Direction::Down);
         assert_ne!(Direction::Left, Direction::Up);
+    }
+
+    #[test]
+    fn split_fields_and_equality() {
+        let split = Split {
+            layout: Layout::Horizontal,
+            ratio: f16::from_f32(0.5),
+            left: Handle::from_index(1),
+            right: Handle::from_index(2),
+        };
+        assert_eq!(split.layout, Layout::Horizontal);
+        assert_eq!(split.left, Handle::from_index(1));
+        assert_eq!(split.right, Handle::from_index(2));
+
+        let same = split;
+        assert_eq!(split, same);
+
+        let different = Split {
+            ratio: f16::from_f32(0.25),
+            ..split
+        };
+        assert_ne!(split, different);
+    }
+
+    #[test]
+    fn ratio_round_trips_through_f16() {
+        let split = Split {
+            layout: Layout::Vertical,
+            ratio: f16::from_f32(0.5),
+            left: Handle::ROOT,
+            right: Handle::from_index(1),
+        };
+        assert_eq!(split.ratio.to_f32(), 0.5);
+    }
+
+    #[test]
+    fn slot_max_x_and_max_y() {
+        // Binary-exact half fractions, so there is no decimal-rounding ambiguity.
+        let slot = Slot {
+            x: f16::from_f32(0.25),
+            y: f16::from_f32(0.125),
+            width: f16::from_f32(0.5),
+            height: f16::from_f32(0.25),
+        };
+        assert_eq!(slot.max_x(), f16::from_f32(0.75));
+        assert_eq!(slot.max_y(), f16::from_f32(0.375));
+        // Compare like-for-like against the explicit half addition.
+        assert_eq!(slot.max_y(), f16::from_f32(0.125) + f16::from_f32(0.25));
     }
 }

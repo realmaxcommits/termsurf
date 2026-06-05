@@ -195,3 +195,63 @@ Review artifacts:
 
 - Prompt: `logs/codex-review/20260604-d573-prompt.md`
 - Result: `logs/codex-review/20260604-d573-last-message.md`
+
+## Result
+
+**Result:** Pass
+
+`half = "2"` was added to roastty's `[dependencies]` (resolving to the
+workspace-locked `2.7.1`), and `terminal::split_tree` gained `use half::f16;`,
+the `Split` node payload (`layout`, `ratio: f16`, `left` / `right: Handle`,
+deriving `Debug` / `Clone` / `Copy` / `PartialEq`), and the `Slot` normalized
+rectangle (`x` / `y` / `width` / `height: f16`) with `max_x` (`x + width`) and
+`max_y` (`y + height`) via `half::f16`'s `Add`.
+
+Gates:
+
+- `cargo fmt -p roastty` accepted; `--check` clean.
+- `cargo test -p roastty`: 3169 passed, 0 failed (three new tests; no
+  regressions, up from 3166).
+- `cargo build -p roastty`: no warnings; `half 2.7.1` compiled and linked.
+- no-`ghostty`-name greps (font/renderer/config + terminal/split_tree.rs +
+  lib.rs/header/abi_harness.c) clean; `git diff --check` clean.
+
+The three new tests: `Split` fields / equality (identical `==`, different
+`ratio` `!=`), the `ratio` round-trip (`f16::from_f32(0.5).to_f32() == 0.5`),
+and `Slot::max_x` / `max_y` with binary-exact half fractions
+(`0.25 + 0.5 == 0.75`, `0.125 + 0.25 == 0.375`, plus a like-for-like comparison
+against the explicit half addition).
+
+## Completion Review
+
+Codex reviewed the completed experiment and **approved** it with **no Required
+or Optional findings** (one Nit: the `## Result` / `## Conclusion` sections were
+not yet in the saved file — added here as part of result recording). Codex
+confirmed `half = "2"` resolves to the locked `2.7.1`, the `Split` / `Slot`
+structs match upstream's fields and `f16` storage, `max_x` / `max_y` use half
+addition directly, and the binary-exact tests (plus the explicit half-op
+comparison) avoid decimal-rounding ambiguity.
+
+Review artifacts:
+
+- Prompt: `logs/codex-review/20260604-r573-prompt.md` (result)
+- Result: `logs/codex-review/20260604-r573-last-message.md` (result)
+
+## Conclusion
+
+This experiment **unblocks the `f16` work** that had been deferred across
+`background-image-opacity` and split_tree's spatial/ratio logic: it introduces
+the `half` crate (`half::f16`, IEEE-754 binary16, bit-identical to Zig's `f16`)
+as a roastty dependency — low-risk since it was already in the workspace lock —
+and ports the two `f16`-leaf structs of `datastruct/split_tree`, the `Split`
+node payload and the `Spatial` `Slot` (with `max_x` / `max_y`). With `f16` now
+available, the remaining split_tree work (the `Node` arena, the `Spatial`
+container's normalization and `Direction` navigation, and the tree-shaping
+`split` / `resize` / `equalize` operations) is unblocked on the float front,
+leaving the `Node`-over-`View`-generic arena and ref-counting as the next design
+question; and `background-image-opacity`'s float formatter can now follow as its
+own config slice. The remaining big-ticket subsystem is the terminal **search
+subsystem** (coupled to `PageList` / `Pin` / `Screen` / `Selection` /
+`PageFormatter`); the dependency-blocked helpers that persist are
+regex/oniguruma for `Link::oniRegex`, a URI parser for `os/uri`, and the
+config-directory naming decision for `file_load` / `edit` / `loadDefaultFiles`.
