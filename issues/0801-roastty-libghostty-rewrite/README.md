@@ -1663,6 +1663,8 @@ are past the correctness-critical foundation.
   — **Pass** · Claude/Codex/Codex
 - [Experiment 608: search Thread — part 3: `Search::notify` + `Event` types](608-search-thread-notify.md)
   — **Pass** · Claude/Codex/Codex
+- [Experiment 609: os string_encoding (printf %q + URL percent decode/encode)](609-os-string-encoding.md)
+  — **Designed** · Claude/Codex/Codex
 
 ## Non-Goals
 
