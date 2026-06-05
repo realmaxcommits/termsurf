@@ -1589,6 +1589,8 @@ are past the correctness-critical foundation.
   **Pass** · Claude/Codex/Codex
 - [Experiment 571: config edit-path selection (configPath)](571-config-edit-path.md)
   — **Pass** · Claude/Codex/Codex
+- [Experiment 572: split tree foundations (Handle, Layout, Direction)](572-split-tree-handle.md)
+  — **Designed** · Claude/Codex/Codex
 
 ## Non-Goals
 
