@@ -333,3 +333,72 @@ Review artifacts:
 
 - Prompt: `logs/codex-review/20260604-d564-prompt.md`
 - Result: `logs/codex-review/20260604-d564-last-message.md`
+
+## Result
+
+**Result:** Pass
+
+`terminal::intrusive_linked_list::DoublyLinkedList<T>` was added: an arena
+(`Vec<Option<Node<T>>>`
+
+- a `free: Vec<usize>` list, `NIL` sentinel) owning the nodes, with `first` /
+  `last` indices and `usize` handles. `insert_after` / `insert_before` read the
+  neighbor handle before allocating, then rewire (updating `last` / `first` at
+  the ends); `append` / `prepend` delegate (or take the empty-list path);
+  `unlink` rewires neighbors; `remove` unlinks, `take()`s the slot, frees it,
+  and returns the data; `pop` / `pop_first` remove from the ends; `first` /
+  `last` / `next` / `prev` return `Option<usize>` (hiding `NIL`); `get` /
+  `get_mut` borrow the data. Registered via
+  `#[allow(dead_code)] mod intrusive_linked_list;` in `terminal/mod.rs`.
+
+Gates:
+
+- `cargo fmt -p roastty` accepted; `--check` clean.
+- `cargo test -p roastty`: 3127 passed, 0 failed (five new tests; no
+  regressions, up from 3122).
+- `cargo build -p roastty`: no warnings.
+- no-`ghostty`-name greps (font/renderer/config +
+  terminal/intrusive_linked_list.rs + lib.rs/header/abi_harness.c) clean;
+  `git diff --check` clean.
+
+The five new tests: the upstream sequence (build `{1, 2, 3, 4, 5}` via
+`append`/`prepend`/`insert_before`/`insert_after`, forward `[1, 2, 3, 4, 5]` and
+backward `[5, 4, 3, 2, 1]` traversal, then `pop_first` → `Some(1)`, `pop` →
+`Some(5)`, `remove` → `3`, leaving `{2, 4}` with `first == 2`, `last == 4`), the
+empty list (`pop` / `pop_first` → `None`, `is_empty`), a single element,
+`get_mut` mutation, and free-slot reuse (remove the middle, append, order intact
+both directions).
+
+## Completion Review
+
+Codex reviewed the completed experiment and **approved** it with **no Required
+or Optional findings** (one Nit: the `## Result` / `## Conclusion` sections were
+not yet in the saved file — added here as part of result recording). Codex
+confirmed the implementation matches the approved arena-owned adaptation and
+upstream list semantics — insert rewiring, `first` / `last` updates, the
+empty-list prepend path, traversal, `pop`, `pop_first`, and `remove` all correct
+— the tests cover the upstream sequence plus the empty / single-node / free-slot
+cases, and the file is clean of the forbidden literal name.
+
+Review artifacts:
+
+- Prompt: `logs/codex-review/20260604-r564-prompt.md` (result)
+- Result: `logs/codex-review/20260604-r564-last-message.md` (result)
+
+## Conclusion
+
+`terminal::intrusive_linked_list::DoublyLinkedList` is ported from
+`datastruct/intrusive_linked_list.zig` — roastty's sixth `datastruct/` type. The
+defining adaptation: upstream's _intrusive_ design (node type `T` carrying raw
+`prev`/`next` pointers, the caller owning each node) does not translate to safe
+Rust, so the port is **arena-owned** with `usize` handles, `Option<Node>` + a
+free list for freed slots — the same idiom proven in `Lru`. The list order and
+every operation match upstream; the only divergences (a node cannot live in two
+lists at once; a removed handle panics rather than becoming use-after-free UB)
+are documented and needed by no roastty consumer. The remaining `datastruct/`
+work is `blocking_queue` (a thread-synchronized SPSC/MPSC ring — the awkward
+one, needing Rust sync primitives) and the large `split_tree`. The terminal
+**search subsystem** (now that `CircBuf` and the cache/pool/list datastructs are
+in place) is the other natural target. The objc/bundle-id helpers, the `home()`
+resolver, and config `loadDefaultFiles` remain deferred pending roastty's naming
+decision; `background-image-opacity` stays float-blocked.

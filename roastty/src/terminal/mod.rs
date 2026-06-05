@@ -44,6 +44,9 @@ pub(crate) mod focus;
 mod hyperlink;
 
 #[allow(dead_code)]
+mod intrusive_linked_list;
+
+#[allow(dead_code)]
 mod lru;
 
 #[allow(dead_code)]

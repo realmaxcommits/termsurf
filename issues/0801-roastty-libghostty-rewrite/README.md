@@ -1574,7 +1574,7 @@ are past the correctness-critical foundation.
 - [Experiment 563: the SegmentedPool (stable-handle write-request pool)](563-segmented-pool.md)
   — **Pass** · Claude/Codex/Codex
 - [Experiment 564: the doubly-linked list (arena port of the intrusive list)](564-intrusive-linked-list.md)
-  — **Designed** · Claude/Codex/Codex
+  — **Pass** · Claude/Codex/Codex
 
 ## Non-Goals
 
