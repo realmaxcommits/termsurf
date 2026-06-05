@@ -1571,6 +1571,8 @@ are past the correctness-critical foundation.
   Claude/Codex/Codex
 - [Experiment 562: LRU resize (free-slot reuse + shrink eviction)](562-lru-resize.md)
   — **Pass** · Claude/Codex/Codex
+- [Experiment 563: the SegmentedPool (stable-handle write-request pool)](563-segmented-pool.md)
+  — **Designed** · Claude/Codex/Codex
 
 ## Non-Goals
 
