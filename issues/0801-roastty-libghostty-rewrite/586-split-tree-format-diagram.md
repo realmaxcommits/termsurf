@@ -265,3 +265,70 @@ Review artifacts:
 
 - Prompt: `logs/codex-review/20260604-d586-prompt.md`
 - Result: `logs/codex-review/20260604-d586-last-message.md`
+
+## Result
+
+**Result:** Pass
+
+`terminal::split_tree` gained `SplitTree::format_diagram` and
+`SplitTree::format`. `format_diagram` writes `empty` for an empty tree;
+otherwise it builds the spatial representation, re-scales it so the smallest
+nonzero leaf is `1` unit (`ratio_w` = `1/min_w`, `ratio_h` = `1/min_h`), sizes
+the cells (`cell_width` = `2 + (log10(n)+1) + 2`, `cell_height` = `3`),
+allocates a `Vec<Vec<u8>>` grid (`ceil(root.dim) * cell`, each row ending
+`'\n'`), draws a `+`/`-`/`|` box for every leaf (splits and zero-extent slots
+skipped) at the floored, cell-scaled coordinates with the centered handle-index
+label, and outputs rows until the first blank-leading row. `format` writes
+`empty` for an empty tree; otherwise the diagram then the textual dump. The
+module doc comment was updated to mark the index-label `split_tree` port
+complete (only the `splitTreeLabel` view-label path remains a future
+refinement).
+
+Gates:
+
+- `cargo fmt -p roastty` accepted; `--check` clean.
+- `cargo test -p roastty`: 3238 passed, 0 failed (six new tests; no regressions,
+  up from 3232).
+- `cargo build -p roastty`: no warnings.
+- no-`ghostty`-name greps (font/renderer/config + terminal/split_tree.rs +
+  lib.rs/header/abi_harness.c) clean; `git diff --check` clean.
+
+The six new tests (exact-string asserts): `format_diagram` empty → `empty`,
+single leaf → `"+---+\n| 0 |\n+---+\n"`, a horizontal split (leaves `1`, `2`) →
+`"+---++---+\n| 1 || 2 |\n+---++---+\n"`, a vertical split (stacked `1` over
+`2`) → `"+---+\n| 1 |\n+---+\n+---+\n| 2 |\n+---+\n"`, `format` (combined) on a
+single leaf → the diagram plus `leaf: 0\n`, and `format` empty → `empty`.
+
+## Completion Review
+
+Codex reviewed the completed experiment and **approved** it with **no Required
+or Optional findings** (one Nit: the `## Result` / `## Conclusion` sections were
+not yet in the saved file — added here). Codex confirmed the implementation is
+faithful to upstream's index-label path: the scaling uses the minimum nonzero
+slot width/height capped at `1`, the cell and grid dimensions match, leaf-only
+box drawing skips splits and zero extents, the border placement and centered
+handle labels match the upstream math, the output truncates at the first
+blank-leading row, and `format` composes the diagram then the text with no extra
+separator; the exact-string tests cover single / horizontal / vertical /
+combined non-empty / empty, and the gates are clean.
+
+Review artifacts:
+
+- Prompt: `logs/codex-review/20260604-r586-prompt.md` (result)
+- Result: `logs/codex-review/20260604-r586-last-message.md` (result)
+
+## Conclusion
+
+This experiment ports `formatDiagram` and the combined `format` — the fourteenth
+and final split_tree slice. `format_diagram` renders the tree as an ASCII-art
+box diagram (spatial re-scaling so the smallest leaf is one cell, per-leaf box
+drawing, centered handle-index labels, trailing-blank-row truncation); `format`
+runs the diagram then the textual dump. With these, **`terminal::split_tree` is
+a complete index-label port of `datastruct/split_tree.zig`** — only the
+`splitTreeLabel` view-label path of the two formatters remains a future
+refinement (it needs a view-label trait, and the index path is upstream's
+faithful no-label `else` branch). The remaining big-ticket subsystem is the
+terminal **search subsystem** (coupled to `PageList` / `Pin` / `Screen` /
+`Selection` / `PageFormatter`); the dependency-blocked helpers persist
+(regex/oniguruma for `Link::oniRegex`, a URI parser for `os/uri`, the
+config-directory naming decision for `file_load` / `edit` / `loadDefaultFiles`).

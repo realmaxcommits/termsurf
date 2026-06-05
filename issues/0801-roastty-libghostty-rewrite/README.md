@@ -1618,7 +1618,7 @@ are past the correctness-critical foundation.
 - [Experiment 585: split tree formatText (textual tree dump)](585-split-tree-format-text.md)
   — **Pass** · Claude/Codex/Codex
 - [Experiment 586: split tree formatDiagram and the combined format](586-split-tree-format-diagram.md)
-  — **Designed** · Claude/Codex/Codex
+  — **Pass** · Claude/Codex/Codex
 
 ## Non-Goals
 

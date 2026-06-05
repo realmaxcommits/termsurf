@@ -5,8 +5,9 @@
 //! enum, the `Spatial` container's normalization (`spatial` / `fillSpatialSlots`), and the full
 //! navigation (the spatial `nearest` / `nearest_wrapped`, the in-order `previous` / `next`, and the
 //! `goto` dispatch), the `split` / `remove` / `equalize` / `resize` tree-shaping operations, and the
-//! `format_text` textual dump. Still deferred: the ASCII-art `format_diagram` and the combined
-//! `format`.
+//! `format_text` textual dump, the ASCII-art `format_diagram`, and the combined `format`. This
+//! completes the index-label port of `datastruct/split_tree`; only the `splitTreeLabel` view-label
+//! path of the two formatters remains a future refinement (it needs a view-label trait).
 
 use half::f16;
 use std::fmt::Write as _;
@@ -394,6 +395,113 @@ impl<V> SplitTree<V> {
             return;
         }
         self.format_text_inner(out, Handle::ROOT, 0);
+    }
+
+    /// Write the tree as an ASCII-art box diagram, one bordered cell per leaf (upstream
+    /// `formatDiagram`). An empty tree writes `empty`.
+    pub(crate) fn format_diagram(&self, out: &mut String) {
+        if self.nodes.is_empty() {
+            out.push_str("empty");
+            return;
+        }
+
+        // Scale the spatial representation so the smallest nonzero leaf is 1 unit.
+        let sp = self.spatial();
+        let one = f16::from_f32(1.0);
+        let zero = f16::from_f32(0.0);
+        let mut min_w = one;
+        let mut min_h = one;
+        for slot in sp.slots() {
+            if slot.width > zero && slot.width < min_w {
+                min_w = slot.width;
+            }
+            if slot.height > zero && slot.height < min_h {
+                min_h = slot.height;
+            }
+        }
+        let ratio_w = one / min_w;
+        let ratio_h = one / min_h;
+        let slots: Vec<Slot> = sp
+            .slots()
+            .iter()
+            .map(|s| Slot {
+                x: s.x * ratio_w,
+                y: s.y * ratio_h,
+                width: s.width * ratio_w,
+                height: s.height * ratio_h,
+            })
+            .collect();
+
+        // Cell dimensions (index-label path: reserve log10(n)+1 digits).
+        let max_label_width = self.nodes.len().ilog10() as usize + 1;
+        let cell_width = 2 + max_label_width + 2;
+        let cell_height = 3;
+
+        // Grid sized from the (scaled) root, rounded up.
+        let grid_w = (slots[0].width.to_f32().ceil() as usize) * cell_width;
+        let grid_h = (slots[0].height.to_f32().ceil() as usize) * cell_height;
+        let mut grid: Vec<Vec<u8>> = (0..grid_h)
+            .map(|_| {
+                let mut row = vec![b' '; grid_w + 1];
+                row[grid_w] = b'\n';
+                row
+            })
+            .collect();
+
+        // Draw each leaf as a box with its handle index centered.
+        for (handle, slot) in slots.iter().enumerate() {
+            if !matches!(self.nodes[handle], Node::Leaf(_)) {
+                continue; // splits are layout-only
+            }
+            if slot.width == zero || slot.height == zero {
+                continue;
+            }
+            let x = (slot.x.to_f32().floor() as usize) * cell_width;
+            let y = (slot.y.to_f32().floor() as usize) * cell_height;
+            let w = (slot.width.to_f32().floor().max(1.0) as usize) * cell_width;
+            let h = (slot.height.to_f32().floor().max(1.0) as usize) * cell_height;
+
+            // Top and bottom borders.
+            for row_y in [y, y + h - 1] {
+                let row = &mut grid[row_y];
+                row[x] = b'+';
+                for cell in row.iter_mut().take(x + w - 1).skip(x + 1) {
+                    *cell = b'-';
+                }
+                row[x + w - 1] = b'+';
+            }
+            // Left and right borders.
+            for row in grid.iter_mut().take(y + h - 1).skip(y + 1) {
+                row[x] = b'|';
+                row[x + w - 1] = b'|';
+            }
+
+            // Centered handle-index label.
+            let label = handle.to_string();
+            let x_mid = w / 2 + x;
+            let y_mid = h / 2 + y;
+            let label_start = x_mid - label.len() / 2;
+            grid[y_mid][label_start..label_start + label.len()].copy_from_slice(label.as_bytes());
+        }
+
+        // Output rows until the first blank-leading row (the upstream trailing-blank-line
+        // workaround).
+        for row in &grid {
+            if row[0] == b' ' {
+                break;
+            }
+            out.push_str(std::str::from_utf8(row).expect("ascii grid"));
+        }
+    }
+
+    /// Write the tree as the diagram followed by the textual dump (upstream `format`).
+    pub(crate) fn format(&self, out: &mut String) {
+        if self.nodes.is_empty() {
+            out.push_str("empty");
+            return;
+        }
+        self.format_diagram(out);
+        self.format_text(out);
     }
 
     fn format_text_inner(&self, out: &mut String, current: Handle, depth: usize) {
@@ -1930,6 +2038,65 @@ mod tests {
             "split (layout: horizontal, ratio: 0.50)\n  \
 split (layout: vertical, ratio: 0.50)\n    leaf: 2\n    leaf: 3\n  leaf: 4\n"
         );
+    }
+
+    #[test]
+    fn format_diagram_empty() {
+        let tree: SplitTree<&str> = SplitTree::empty();
+        let mut out = String::new();
+        tree.format_diagram(&mut out);
+        assert_eq!(out, "empty");
+    }
+
+    #[test]
+    fn format_diagram_single_leaf() {
+        // A single leaf is a 5×3 box with its index `0` centered.
+        let tree = SplitTree::new(Rc::new("v"));
+        let mut out = String::new();
+        tree.format_diagram(&mut out);
+        assert_eq!(out, "+---+\n| 0 |\n+---+\n");
+    }
+
+    #[test]
+    fn format_diagram_horizontal_split() {
+        // Two side-by-side 5×3 boxes (leaf handles 1 and 2).
+        let tree = two_leaf();
+        let mut out = String::new();
+        tree.format_diagram(&mut out);
+        assert_eq!(out, "+---++---+\n| 1 || 2 |\n+---++---+\n");
+    }
+
+    #[test]
+    fn format_diagram_vertical_split() {
+        // Two stacked 5×3 boxes (leaf handles 1 and 2).
+        let tree = SplitTree {
+            nodes: vec![
+                Node::Split(split_ratio(Layout::Vertical, 0.5, 1, 2)),
+                Node::Leaf(Rc::new("a")),
+                Node::Leaf(Rc::new("b")),
+            ],
+            zoomed: None,
+        };
+        let mut out = String::new();
+        tree.format_diagram(&mut out);
+        assert_eq!(out, "+---+\n| 1 |\n+---+\n+---+\n| 2 |\n+---+\n");
+    }
+
+    #[test]
+    fn format_combined_single_leaf() {
+        // `format` writes the diagram then the textual dump.
+        let tree = SplitTree::new(Rc::new("v"));
+        let mut out = String::new();
+        tree.format(&mut out);
+        assert_eq!(out, "+---+\n| 0 |\n+---+\nleaf: 0\n");
+    }
+
+    #[test]
+    fn format_combined_empty() {
+        let tree: SplitTree<&str> = SplitTree::empty();
+        let mut out = String::new();
+        tree.format(&mut out);
+        assert_eq!(out, "empty");
     }
 
     #[test]
