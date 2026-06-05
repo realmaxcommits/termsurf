@@ -304,3 +304,61 @@ Review artifacts:
 
 - Prompt: `logs/codex-review/20260605-d606-prompt.md`
 - Result: `logs/codex-review/20260605-d606-last-message.md`
+
+## Result
+
+**Result:** Pass
+
+Implemented the inner `Search` aggregator core in the new
+`roastty/src/terminal/search/thread.rs`, plus the
+`ScreenSearch::is_state_complete` accessor and the `search/mod.rs` registration.
+The port faithfully mirrors upstream's `Search`: `new` (viewport with
+`set_active_dirty(Some(true))`, empty screens, `Primary` last screen,
+`last_complete=false`, `stale_viewport_matches=true`), `deinit` (`unsafe`;
+`ScreenSearch::deinit` each present searcher, viewport drops itself),
+`is_complete` (vacuously true with no screens), and `tick` (start `Complete`;
+`Progressed`→`Progress`, `Complete`→neutral, `FeedRequired`→`Blocked` only from
+`Complete`). The `EnumMap<Key, ScreenSearch>` is modelled as a two-slot array
+keyed by `TerminalScreenKey`; `insert` returns the replaced searcher (the
+adopted Optional) so the future `feed` reconciliation won't leak tracked pins.
+
+Six tests cover empty init/complete/tick, the progress→blocked→complete flow,
+progress-dominates-blocked across two screens, replacement handling, and
+tracked-pin teardown. Gates: `cargo fmt --check` clean, `cargo build -p roastty`
+no warnings, `cargo test -p roastty` **3323 passed / 0 failed** (3317 → 3323,
++6), no-ghostty grep clean, `git diff --check` clean.
+
+## Completion Review
+
+Codex reviewed the completed experiment and **APPROVED** it with **no Required
+and no Optional findings**, confirming: `new` field initialization matches
+upstream; `tick` precedence is exact (`Progressed` dominates, `FeedRequired`
+only flips `Complete → Blocked`, `Complete` neutral); `is_complete` via the new
+`is_state_complete` accessor is vacuously true when empty; `Search::deinit`
+`unsafe` is the right boundary; the two-slot map and `insert`-returns-replaced
+handle the pin lifecycle; and the deferred fields/types are appropriate for this
+slice. The lone Nit (record `## Result` / `## Conclusion`) is addressed here.
+
+Review artifacts:
+
+- Prompt: `logs/codex-review/20260605-r606-prompt.md`
+- Result: `logs/codex-review/20260605-r606-last-message.md`
+
+## Conclusion
+
+The search-thread aggregator's lock-free core is in place. The search subsystem
+now has every searcher (`SlidingWindow`, `ActiveSearch`, `PageListSearch`,
+`ScreenSearch`, `ViewportSearch`) plus the `Search` aggregator's structure and
+`tick`. What remains of the `Thread`:
+
+- **Exp 607 — `Search::feed`**: the lock-holding reconciliation. It needs new
+  `Terminal` surface — a `search_viewport_dirty` flag on `TerminalFlags` and a
+  way to enumerate/compare the live screens (roastty has `primary` +
+  `Option<alternate>`, not an `EnumMap`). That terminal-integration surface is
+  the next slice's main work.
+- **`Search::notify`** + the `Event` / `EventCallback` types: the external
+  notification interface (bundled with the `Event` enum).
+- **The outer `Thread`** (OS thread + libxev event loop + mailbox + timers):
+  **blocked on a libxev port**, which roastty does not yet have. This is a
+  genuine dependency boundary for the search subsystem, alongside the
+  regex/oniguruma and URI-parser blocks elsewhere in Issue 801.

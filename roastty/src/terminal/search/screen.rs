@@ -143,6 +143,12 @@ impl ScreenSearch {
         self.active_results.len() + self.history_results.len()
     }
 
+    /// Whether this screen's search state is complete (upstream `self.state.isComplete()`). Used by
+    /// the search-thread aggregator to detect when all screens are done.
+    pub(in crate::terminal) fn is_state_complete(&self) -> bool {
+        self.state.is_complete()
+    }
+
     /// All matches, ordered newest-to-oldest (upstream `matches`): the active results (stored
     /// forward) reversed, then the history results (already newest-to-oldest) appended. Returns an
     /// owned `Vec` (Rust ownership replaces upstream's caller-frees slice).

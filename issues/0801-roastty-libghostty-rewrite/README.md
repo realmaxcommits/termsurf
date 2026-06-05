@@ -1658,7 +1658,7 @@ are past the correctness-critical foundation.
 - [Experiment 605: search ViewportSearch](605-search-viewport.md) — **Pass** ·
   Claude/Codex/Codex
 - [Experiment 606: search Thread — part 1: the `Search` aggregator core](606-search-thread-aggregator.md)
-  — **Designed** · Claude/Codex/Codex
+  — **Pass** · Claude/Codex/Codex
 
 ## Non-Goals
 
