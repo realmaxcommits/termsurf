@@ -1613,6 +1613,8 @@ are past the correctness-critical foundation.
   — **Pass** · Claude/Codex/Codex
 - [Experiment 583: split tree equalize (rebalance split ratios by leaf weight)](583-split-tree-equalize.md)
   — **Pass** · Claude/Codex/Codex
+- [Experiment 584: split tree resize (move a split's divider by a grid-relative delta)](584-split-tree-resize.md)
+  — **Designed** · Claude/Codex/Codex
 
 ## Non-Goals
 
