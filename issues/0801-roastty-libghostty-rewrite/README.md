@@ -1619,6 +1619,8 @@ are past the correctness-critical foundation.
   — **Pass** · Claude/Codex/Codex
 - [Experiment 586: split tree formatDiagram and the combined format](586-split-tree-format-diagram.md)
   — **Pass** · Claude/Codex/Codex
+- [Experiment 587: search SlidingWindow skeleton (vocabulary + lifecycle)](587-search-sliding-window-skeleton.md)
+  — **Designed** · Claude/Codex/Codex
 
 ## Non-Goals
 
