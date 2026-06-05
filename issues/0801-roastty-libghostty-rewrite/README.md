@@ -1665,6 +1665,8 @@ are past the correctness-critical foundation.
   — **Pass** · Claude/Codex/Codex
 - [Experiment 609: os string_encoding (printf %q + URL percent decode/encode)](609-os-string-encoding.md)
   — **Pass** · Claude/Codex/Codex
+- [Experiment 610: datastruct ArrayListCollection](610-datastruct-array-list-collection.md)
+  — **Designed** · Claude/Codex/Codex
 
 ## Non-Goals
 
