@@ -1,21 +1,29 @@
 //! The search-thread aggregator (port of the `Search` struct in upstream `terminal/search/Thread.zig`).
 //!
-//! This lands the lock-aware, multi-screen orchestration core (the `Search` aggregator: a
+//! This lands the complete search subsystem: the lock-aware, multi-screen `Search` aggregator (a
 //! `ViewportSearch` plus a `ScreenSearch` per terminal screen, with `new` / `deinit` /
-//! `is_complete` / `tick` / `feed` / `notify`) and the outer `Thread`'s foundation — its types
-//! (`Options` / `Message` / `Mailbox` / `EventCallback`), `new` / `deinit`, `change_needle`,
-//! `drain_mailbox`, and the `select` handler. The outer `Thread`'s `thread_main` event loop (a
-//! std-concurrency adaptation of upstream's libxev loop) is deferred to the final slice.
+//! `is_complete` / `tick` / `feed` / `notify`) and the outer `Thread` — its types (`Options` /
+//! `Message` / `Mailbox` / `EventCallback`), the `change_needle` / `select` / `drain_mailbox`
+//! handlers, and the `thread_main` event loop with `spawn` / `ThreadHandle` (a std-concurrency
+//! adaptation — `std::thread` + a `Condvar` wakeup + an `AtomicBool` stop + a `REFRESH_INTERVAL`
+//! cadence — of upstream's libxev loop).
 
 use std::ptr::NonNull;
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Condvar, Mutex};
+use std::thread::JoinHandle;
+use std::time::{Duration, Instant};
 
-use super::super::blocking_queue::BlockingQueue;
+use super::super::blocking_queue::{BlockingQueue, Timeout};
 use super::super::highlight::{Flattened, Untracked};
 use super::super::message_data::MessageData;
 use super::super::terminal::{Terminal, TerminalScreenKey};
 use super::screen::{ScreenSearch, Select, Tick as ScreenTick};
 use super::viewport::ViewportSearch;
+
+/// The interval at which the search thread re-feeds the terminal to detect changes (upstream
+/// `REFRESH_INTERVAL = 24` ms, 40 FPS).
+const REFRESH_INTERVAL: Duration = Duration::from_millis(24);
 
 /// The number of screen kinds (`TerminalScreenKey`: `Primary`, `Alternate`).
 const SCREEN_KEY_COUNT: usize = 2;
@@ -368,19 +376,71 @@ pub(in crate::terminal) struct Options {
     pub(in crate::terminal) event_cb: Option<EventCallback>,
 }
 
-/// The search thread (upstream `Thread`). This slice lands its state + message handling; the OS
-/// thread and event loop come in Exp 615.
+/// Shared wakeup / stop control between the producer (`ThreadHandle`) and the spawned thread
+/// (replacing upstream's `xev.Async` wakeup/stop). The `pending` flag makes `wait` predicate-based
+/// so a posted message is handled immediately, not only on the next refresh tick.
+struct Control {
+    stop: AtomicBool,
+    pending: Mutex<bool>,
+    cv: Condvar,
+}
+
+impl Control {
+    fn new() -> Control {
+        Control {
+            stop: AtomicBool::new(false),
+            pending: Mutex::new(false),
+            cv: Condvar::new(),
+        }
+    }
+
+    /// Mark work pending and wake the thread (a posted message or a stop).
+    fn signal(&self) {
+        *self.pending.lock().unwrap() = true;
+        self.cv.notify_all();
+    }
+
+    fn request_stop(&self) {
+        self.stop.store(true, Ordering::Release);
+        self.signal();
+    }
+
+    /// Block up to `timeout` for pending work (or the refresh tick), then consume the flag.
+    fn wait(&self, timeout: Duration) {
+        let mut p = self.pending.lock().unwrap();
+        if !*p {
+            p = self
+                .cv
+                .wait_timeout_while(p, timeout, |pending| !*pending)
+                .unwrap()
+                .0;
+        }
+        *p = false;
+    }
+}
+
+/// The search thread (upstream `Thread`). Owns the inner `Search`, the message handlers, and — once
+/// `spawn`ed — runs the std-concurrency event loop (`thread_main`).
 pub(crate) struct Thread {
     mailbox: Arc<Mailbox>,
+    control: Arc<Control>,
     search: Option<Search>,
     opts: Options,
 }
 
+// SAFETY: `Thread`'s raw pointers (`Options.terminal` / `lock` and the `Search`'s cached screen
+// pointers) refer to embedder-owned state that — per the `spawn` contract — outlives the joined
+// thread, is not moved, and is accessed (on every thread, including from the event callback) only
+// while `opts.lock` is held. The `EventCallback` is itself `Send`.
+unsafe impl Send for Thread {}
+
 impl Thread {
-    /// Construct the thread state (upstream `init`, minus the xev loop/async/timer — Exp 615).
+    /// Construct the thread state (upstream `init`, minus the xev loop/async/timer — those are the
+    /// `Control` + `thread_main`).
     pub(in crate::terminal) fn new(opts: Options) -> Thread {
         Thread {
             mailbox: Arc::new(Mailbox::new()),
+            control: Arc::new(Control::new()),
             search: None,
             opts,
         }
@@ -525,6 +585,127 @@ impl Thread {
         let mut sp = screen_ptr;
         // SAFETY: screen live; lock held; this is the only access to it here.
         unsafe { sp.as_mut() }.scroll_to_pin(flattened.start_pin());
+    }
+
+    /// Spawn the OS thread running `thread_main`, returning a handle to post messages / stop / join
+    /// (upstream: the caller spawns `threadMain`).
+    ///
+    /// # Safety
+    /// The embedder's terminal + lock (`opts.terminal` / `opts.lock`) must outlive the thread — join
+    /// it via `ThreadHandle::stop_and_join` before dropping or moving them — and all access to the
+    /// terminal on every thread (including the event callback) must be under `opts.lock`.
+    pub(in crate::terminal) unsafe fn spawn(self) -> ThreadHandle {
+        let control = Arc::clone(&self.control);
+        let mailbox = Arc::clone(&self.mailbox);
+        let join = std::thread::spawn(move || {
+            let mut thread = self;
+            // SAFETY: the embedder's contract (as `spawn`).
+            unsafe { thread.thread_main() };
+            // Tear down the search (untrack pins) before `thread` drops — the terminal + lock are
+            // still live per the contract (the embedder joins only after this returns).
+            // SAFETY: as `spawn`.
+            unsafe { thread.deinit() };
+        });
+        ThreadHandle {
+            join: Some(join),
+            control,
+            mailbox,
+        }
+    }
+
+    /// The thread body (upstream `threadMain_`): drain messages, make search progress, feed under the
+    /// lock periodically, and emit notifications until stopped; then emit `Quit`.
+    ///
+    /// # Safety
+    /// As `spawn`.
+    unsafe fn thread_main(&mut self) {
+        let mut last_refresh = Instant::now();
+        loop {
+            if self.control.stop.load(Ordering::Acquire) {
+                while self.mailbox.pop().is_some() {} // drain remaining + quit
+                break;
+            }
+
+            // Process pending messages (upstream wakeup → drainMailbox).
+            // SAFETY: embedder contract.
+            unsafe { self.drain_mailbox() };
+
+            // Periodic refresh tick (upstream refresh timer, 24ms). Reset `last_refresh` on every
+            // tick (even with no search) so the idle wait stays ~24ms; feed only when a search runs.
+            if last_refresh.elapsed() >= REFRESH_INTERVAL {
+                if self.search.is_some() {
+                    // SAFETY: embedder contract; feeds under the lock.
+                    unsafe { self.feed_under_lock() };
+                }
+                last_refresh = Instant::now();
+            }
+
+            // Notify any state changes.
+            if let (Some(cb), Some(s)) = (self.opts.event_cb.as_mut(), self.search.as_mut()) {
+                s.notify(cb);
+            }
+
+            // Tick the active search (compute the outcome before re-borrowing `self` to feed).
+            let tick = match self.search.as_mut() {
+                None => None,
+                Some(s) if s.is_complete() => None,
+                Some(s) => Some(s.tick()),
+            };
+            if matches!(tick, Some(Tick::Blocked)) {
+                // SAFETY: embedder contract.
+                unsafe { self.feed_under_lock() };
+            }
+
+            // Any tick outcome means active work — loop without waiting (upstream `run(.no_wait)`).
+            // `None` (idle / complete) → block until a message/stop or the next refresh tick.
+            if tick.is_none() {
+                let until_refresh = REFRESH_INTERVAL.saturating_sub(last_refresh.elapsed());
+                self.control
+                    .wait(until_refresh.max(Duration::from_millis(1)));
+            }
+        }
+
+        // Emit the quit event (upstream's `defer` on thread exit).
+        if let Some(cb) = self.opts.event_cb.as_mut() {
+            cb(Event::Quit);
+        }
+    }
+
+    /// Feed the active search under the terminal lock.
+    ///
+    /// # Safety
+    /// As `change_needle`.
+    unsafe fn feed_under_lock(&mut self) {
+        if let Some(s) = self.search.as_mut() {
+            // SAFETY: `lock` is live and guards `terminal`.
+            let _guard = unsafe { self.opts.lock.as_ref() }.lock().unwrap();
+            // SAFETY: terminal live; lock held.
+            unsafe { s.feed(self.opts.terminal) };
+        }
+    }
+}
+
+/// A handle to a spawned search thread (`Thread::spawn`): post messages, request stop, and join.
+pub(crate) struct ThreadHandle {
+    join: Option<JoinHandle<()>>,
+    control: Arc<Control>,
+    mailbox: Arc<Mailbox>,
+}
+
+impl ThreadHandle {
+    /// Post a message and wake the thread (upstream: push to the mailbox + `wakeup.notify()`).
+    pub(in crate::terminal) fn post(&self, message: Message) {
+        self.mailbox.push(message, Timeout::Forever);
+        self.control.signal();
+    }
+
+    /// Request the thread stop, then join it (upstream `stop.notify()` + the caller's join). The
+    /// terminal + lock must remain live until this returns (the thread deinits the search on exit).
+    pub(in crate::terminal) fn stop_and_join(&mut self) {
+        self.control.request_stop();
+        if let Some(j) = self.join.take() {
+            let _ = j.join();
+        }
     }
 }
 
@@ -1251,5 +1432,115 @@ mod tests {
 
         // Intentionally no `deinit`: the stale searchers drop without dereferencing their freed
         // screens (the search structs have no `Drop` that touches the screen).
+    }
+
+    // --- Spawned thread (Exp 615) ---
+
+    /// Build `Options` over a leaked `Terminal` + `Mutex<()>` (so they outlive the spawned thread),
+    /// returning the options and a raw terminal pointer for assertions.
+    fn spawn_opts(
+        text: &[u8],
+        cb: Option<EventCallback>,
+    ) -> (Options, NonNull<Terminal>, NonNull<Mutex<()>>) {
+        let terminal: &'static mut Terminal =
+            Box::leak(Box::new(Terminal::init(10, 10, None).unwrap()));
+        terminal.next_slice(text).unwrap();
+        let t_ptr = NonNull::new(terminal as *mut Terminal).unwrap();
+        let lock: &'static Mutex<()> = Box::leak(Box::new(Mutex::new(())));
+        let lock_ptr = NonNull::from(&*lock);
+        (
+            Options {
+                lock: lock_ptr,
+                terminal: t_ptr,
+                event_cb: cb,
+            },
+            t_ptr,
+            lock_ptr,
+        )
+    }
+
+    /// A `(done, events)` pair and a callback that records every event and signals `done` on
+    /// `Complete`.
+    type Recorder = (Arc<(Mutex<bool>, Condvar)>, Arc<Mutex<Vec<Ev>>>);
+    fn signalling_cb() -> (EventCallback, Recorder) {
+        let done = Arc::new((Mutex::new(false), Condvar::new()));
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let cb_done = Arc::clone(&done);
+        let cb_events = Arc::clone(&events);
+        let cb: EventCallback = Box::new(move |e: Event<'_>| {
+            let ev = ev_of(e);
+            if ev == Ev::Complete {
+                let mut d = cb_done.0.lock().unwrap();
+                *d = true;
+                cb_done.1.notify_all();
+            }
+            cb_events.lock().unwrap().push(ev);
+        });
+        (cb, (done, events))
+    }
+
+    /// Wait up to 5s for `done`.
+    fn wait_done(done: &Arc<(Mutex<bool>, Condvar)>) -> bool {
+        let (m, cv) = &**done;
+        let mut d = m.lock().unwrap();
+        let start = Instant::now();
+        while !*d && start.elapsed() < Duration::from_secs(5) {
+            d = cv.wait_timeout(d, Duration::from_millis(50)).unwrap().0;
+        }
+        *d
+    }
+
+    #[test]
+    fn spawn_searches_and_emits_complete() {
+        let (cb, (done, events)) = signalling_cb();
+        let (opts, _t, _l) = spawn_opts(b"Fizz Fizz", Some(cb));
+        let thread = Thread::new(opts);
+        // SAFETY: the leaked terminal + lock outlive the thread; joined before this test returns.
+        let mut handle = unsafe { thread.spawn() };
+
+        handle.post(Message::ChangeNeedle(MessageData::init(b"Fizz")));
+        assert!(
+            wait_done(&done),
+            "search did not complete within the timeout"
+        );
+
+        handle.stop_and_join();
+        let evs = events.lock().unwrap();
+        assert!(evs.contains(&Ev::Complete));
+        assert!(evs.iter().any(|e| matches!(e, Ev::Total(_))));
+        assert!(evs.contains(&Ev::Quit));
+    }
+
+    #[test]
+    fn spawn_then_stop_emits_quit() {
+        let (cb, (_done, events)) = signalling_cb();
+        let (opts, _t, _l) = spawn_opts(b"Fizz", Some(cb));
+        let thread = Thread::new(opts);
+        // SAFETY: as above.
+        let mut handle = unsafe { thread.spawn() };
+
+        // Stop immediately, with no search started.
+        handle.stop_and_join();
+        assert!(events.lock().unwrap().contains(&Ev::Quit));
+    }
+
+    #[test]
+    fn post_select_after_search_is_a_smoke_test() {
+        let (cb, (done, _events)) = signalling_cb();
+        let (opts, _t, _l) = spawn_opts(b"Fizz Fizz", Some(cb));
+        let thread = Thread::new(opts);
+        // SAFETY: as above.
+        let mut handle = unsafe { thread.spawn() };
+
+        handle.post(Message::ChangeNeedle(MessageData::init(b"Fizz")));
+        assert!(
+            wait_done(&done),
+            "search did not complete within the timeout"
+        );
+        // Posting a select should not panic or deadlock.
+        handle.post(Message::Select(Select::Next));
+        std::thread::sleep(Duration::from_millis(50));
+
+        handle.stop_and_join();
     }
 }

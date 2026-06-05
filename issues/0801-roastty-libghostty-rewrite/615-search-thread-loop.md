@@ -311,3 +311,62 @@ Review artifacts:
 
 - Prompt: `logs/codex-review/20260605-d615-prompt.md`
 - Result: `logs/codex-review/20260605-d615-last-message.md`
+
+## Result
+
+**Result:** Pass
+
+Implemented `thread_main` + the OS-thread lifecycle in `thread.rs`, completing
+the outer `Thread` (and the whole search subsystem):
+`const REFRESH_INTERVAL = 24ms`; `Control` (stop `AtomicBool` + a predicate
+`pending: Mutex<bool>` + `Condvar`, with `signal` / `request_stop` /
+`wait_timeout_while`); `Thread.control: Arc<Control>`;
+`unsafe impl Send for Thread` (documented contract);
+`unsafe fn spawn(self) -> ThreadHandle` (`std::thread::spawn`, running
+`thread_main` then `deinit` so pins are released); `unsafe fn thread_main`
+(drain → refresh-tick → notify → tick → blocked-feed → idle/complete wait, then
+emit `Quit`); `feed_under_lock`; and `ThreadHandle { post, stop_and_join }`. All
+three Required design fixes are in (deinit-after-loop; the
+`let tick: Option<Tick>` borrow restructure; `last_refresh` reset every 24ms
+regardless of search), plus the predicate-based `Control`.
+
+Three real-threading tests (over a leaked terminal + lock so they outlive the
+thread, with a `Condvar` the callback signals on `Complete`) cover spawn →
+search → `Complete`/`Quit`, immediate stop → `Quit`, and a post-`Select` smoke
+test — passing on repeat runs (no flake). Gates: `cargo fmt --check` clean,
+`cargo build -p roastty` no warnings, `cargo test -p roastty` **3385 passed / 0
+failed** (3382 → 3385, +3), no-ghostty grep clean, `git diff --check` clean.
+
+## Completion Review
+
+Codex reviewed the completed experiment and **APPROVED** it with **no Required
+or Optional findings**, confirming all three Required design fixes are correctly
+applied; that `unsafe impl Send for Thread` is sound under the documented
+contract (terminal + lock stable, outlive the joined thread, all terminal access
+serialized through `opts.lock`, the callback `Send` and invoked without a
+terminal deref); that `Control` uses a real pending predicate (no lost wakeups,
+stop not lost); and that the loop order is faithful to upstream's event-loop
+intent. The lone Nit (`stop_and_join` discards a join panic) is acceptable for
+this port and left as a best-effort `let _ = join()`.
+
+Review artifacts:
+
+- Prompt: `logs/codex-review/20260605-d615-prompt.md` / `…-r615-prompt.md`
+- Result: `logs/codex-review/20260605-d615-last-message.md` /
+  `…-r615-last-message.md`
+
+## Conclusion
+
+**The search subsystem is complete.** Across Exps 586–615 it ports the entire
+`terminal/search` tree: the `SlidingWindow` matcher, `ActiveSearch`,
+`PageListSearch`, `ScreenSearch`, `ViewportSearch`, the inner `Search`
+aggregator (`tick` / `feed` / `notify`), and the outer `Thread` (message
+handling + the std-concurrency event loop replacing libxev). The libxev
+dependency was resolved by the chosen std-concurrency adaptation rather than a
+verbatim port.
+
+The remaining Issue 801 work lies elsewhere and is still dependency-gated or
+adaptation-bounded: regex/oniguruma (link detection, `StringMap`), the URI
+parser (`std.Uri` / RFC-3986), the base64 C++ SIMD fast path, `uucode` width
+tables, and the FFI/branding-gated `os/` modules. Issue 801 stays open and broad
+as intended.
