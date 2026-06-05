@@ -1692,7 +1692,7 @@ are past the correctness-critical foundation.
 - [Experiment 622: os i18n locale canonicalization foundation](622-os-i18n-locale.md)
   — **Pass** · Codex/Codex/Codex
 - [Experiment 623: os mouse double-click interval](623-os-mouse-click-interval.md)
-  — **Designed**
+  — **Pass** · Codex/Codex/Codex
 
 ## Non-Goals
 
