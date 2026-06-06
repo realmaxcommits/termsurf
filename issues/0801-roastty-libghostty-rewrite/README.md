@@ -1911,6 +1911,8 @@ are past the correctness-critical foundation.
   — **Pass** · Codex/Codex/Codex
 - [Experiment 703: Binding Action Close Surface](703-binding-action-close-surface.md)
   — **Pass** · Codex/Codex/Codex
+- [Experiment 704: Binding Action Text](704-binding-action-text.md) —
+  **Designed** · Codex/Codex/-
 
 ## Non-Goals
 
