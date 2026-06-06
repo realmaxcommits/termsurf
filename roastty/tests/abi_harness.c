@@ -4422,6 +4422,8 @@ int main(int argc, char **argv) {
       surface, "toggle_background_opacity:now", 29));
   assert(!roastty_surface_binding_action(surface, "show_on_screen_keyboard:", 24));
   assert(!roastty_surface_binding_action(surface, "show_on_screen_keyboard:now", 27));
+  assert(!roastty_surface_binding_action(surface, "toggle_mouse_reporting:", 23));
+  assert(!roastty_surface_binding_action(surface, "toggle_mouse_reporting:now", 26));
   assert(!roastty_surface_binding_action(surface, "toggle_window_float_on_top:", 27));
   assert(!roastty_surface_binding_action(
       surface, "toggle_window_float_on_top:now", 30));
@@ -4540,6 +4542,7 @@ int main(int argc, char **argv) {
   assert(!roastty_surface_binding_action(surface, "toggle_command_palette", 22));
   assert(!roastty_surface_binding_action(surface, "toggle_background_opacity", 25));
   assert(!roastty_surface_binding_action(surface, "show_on_screen_keyboard", 23));
+  assert(roastty_surface_binding_action(surface, "toggle_mouse_reporting", 22));
   assert(!roastty_surface_binding_action(surface, "toggle_window_float_on_top", 26));
   assert(!roastty_surface_binding_action(surface, "toggle_secure_input", 20));
   assert(!roastty_surface_binding_action(surface, "inspector:toggle", 16));

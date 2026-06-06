@@ -8,6 +8,11 @@ reasoning = "high"
 agent = "codex"
 model = "gpt-5"
 reasoning = "medium"
+
+[review.result]
+agent = "codex"
+model = "gpt-5"
+reasoning = "medium"
 +++
 
 # Experiment 725: Binding Action Toggle Mouse Reporting
@@ -93,3 +98,50 @@ initializing Roastty's surface-local gate to upstream's default `true`.
 The review found one workflow blocker: this design-review section still said
 `Pending.` This section now records the review outcome, and the README tuple is
 `Codex/Codex/-`.
+
+## Result
+
+**Result:** Pass
+
+Roastty now accepts `toggle_mouse_reporting` as a parameterless local binding
+action. The action flips a surface-local `mouse_reporting` gate initialized to
+`true`, returns `false` for null or detached surfaces, and does not forward
+through the runtime action callback.
+
+Mouse report dispatch now requires both the surface gate and active terminal
+mouse tracking. Button and scroll callbacks still store their latest state while
+the gate is disabled, but they do not emit mouse reports or update reported-cell
+state until the gate is re-enabled. `roastty_surface_mouse_captured` follows the
+same combined gate.
+
+Verification passed:
+
+- `cargo fmt -p roastty`
+- `cargo test -p roastty toggle_mouse_reporting -- --nocapture --test-threads=1`
+  — 2 passed
+- `cargo test -p roastty mouse -- --nocapture --test-threads=1` — 79 passed
+- `cargo test -p roastty binding_action -- --nocapture --test-threads=1` — 88
+  passed
+- `cargo test -p roastty --test abi_harness` — 1 passed
+- `cargo fmt -p roastty -- --check`
+- `git diff --check`
+
+## Conclusion
+
+`toggle_mouse_reporting` is complete at Roastty's current binding-action layer:
+the parser, local surface mutation, capture gate, mouse report suppression, Rust
+tests, and C ABI parser coverage all match the experiment plan. Full
+`mouse-reporting` config parsing remains deferred as planned; the surface gate
+uses upstream's default enabled state.
+
+## Completion Review
+
+Codex reviewed the completed experiment and found one workflow blocker: this
+completion-review section still said `Pending.` The review found no
+implementation blockers.
+
+The review approved the surface-local gate initialized to `true`, local toggling
+without runtime forwarding, false returns for null and detached surfaces,
+no-worker consumption, `roastty_surface_mouse_captured` gating, mouse report
+suppression while preserving stored button and scroll state, parser false paths,
+Rust tests, C ABI harness checks, and verification record.

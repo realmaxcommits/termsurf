@@ -1433,6 +1433,7 @@ struct Surface {
     inspector: Option<NonNull<Inspector>>,
     last_key_event: Option<key::KeyEvent>,
     mouse: SurfaceMouseState,
+    mouse_reporting: bool,
     termio_worker: Option<termio::TermioWorker>,
     process_exited: bool,
     dirty: bool,
@@ -2366,6 +2367,9 @@ impl Surface {
         let Some((x, y)) = self.mouse.position else {
             return false;
         };
+        if !self.mouse_reporting {
+            return false;
+        }
         let Some(worker) = self.termio_worker.as_ref() else {
             return false;
         };
@@ -2463,6 +2467,9 @@ impl Surface {
         mouse::MouseFormat,
         mouse_encode::Geometry,
     )> {
+        if !self.mouse_reporting {
+            return None;
+        }
         let worker = self.termio_worker.as_ref()?;
         worker.with_termio(|termio| {
             let terminal = termio.terminal();
@@ -2568,6 +2575,14 @@ impl Surface {
             .iter()
             .position(|state| matches!(state, Some(SurfaceMouseButtonState::Press)))
             .and_then(mouse_button_from_index)
+    }
+
+    fn toggle_mouse_reporting(&mut self) -> bool {
+        if self.app.is_null() {
+            return false;
+        }
+        self.mouse_reporting = !self.mouse_reporting;
+        true
     }
 
     fn key(&mut self, event: &KeyEvent) -> bool {
@@ -2920,6 +2935,7 @@ enum ParsedBindingAction {
     ScrollPageLines(i16),
     ScrollPageFractional(f32),
     JumpToPrompt(i16),
+    ToggleMouseReporting,
 }
 
 #[derive(Clone, Copy)]
@@ -3049,6 +3065,12 @@ fn parse_binding_action(surface: &Surface, action: &[u8]) -> Option<ParsedBindin
                 ROASTTY_ACTION_SHOW_ON_SCREEN_KEYBOARD,
                 [0usize; 8],
             ))
+        }
+        b"toggle_mouse_reporting" => {
+            if parameter.is_some() {
+                return None;
+            }
+            Some(ParsedBindingAction::ToggleMouseReporting)
         }
         b"toggle_window_float_on_top" => {
             if parameter.is_some() {
@@ -10645,6 +10667,7 @@ pub extern "C" fn roastty_surface_new(
         inspector: None,
         last_key_event: None,
         mouse: SurfaceMouseState::default(),
+        mouse_reporting: true,
         termio_worker: None,
         process_exited: false,
         dirty: false,
@@ -11134,6 +11157,9 @@ pub extern "C" fn roastty_surface_mouse_captured(surface: RoasttySurface) -> boo
     if surface.app.is_null() {
         return false;
     }
+    if !surface.mouse_reporting {
+        return false;
+    }
     let Some(worker) = surface.termio_worker.as_ref() else {
         return false;
     };
@@ -11508,6 +11534,7 @@ pub extern "C" fn roastty_surface_binding_action(
             }
             surface.scroll_viewport_to_prompt(delta)
         }
+        ParsedBindingAction::ToggleMouseReporting => surface.toggle_mouse_reporting(),
     }
 }
 
@@ -13539,6 +13566,8 @@ mod tests {
             "toggle_background_opacity:now",
             "show_on_screen_keyboard:",
             "show_on_screen_keyboard:now",
+            "toggle_mouse_reporting:",
+            "toggle_mouse_reporting:now",
             "toggle_window_float_on_top:",
             "toggle_window_float_on_top:now",
             "toggle_secure_input:",
@@ -16675,6 +16704,53 @@ mod tests {
     }
 
     #[test]
+    fn surface_binding_action_toggle_mouse_reporting_false_for_null_and_detached() {
+        assert!(!binding_action(ptr::null_mut(), "toggle_mouse_reporting"));
+
+        let app = new_test_app();
+        let surface = new_test_surface(app);
+        roastty_app_free(app);
+
+        assert!(!binding_action(surface, "toggle_mouse_reporting"));
+        roastty_surface_free(surface);
+    }
+
+    #[test]
+    fn surface_binding_action_toggle_mouse_reporting_toggles_gate() {
+        let app = new_test_app();
+        let surface = new_test_surface(app);
+        assert!(surface_from_handle(surface).unwrap().mouse_reporting);
+
+        assert!(binding_action(surface, "toggle_mouse_reporting"));
+        assert!(!surface_from_handle(surface).unwrap().mouse_reporting);
+
+        assert!(binding_action(surface, "toggle_mouse_reporting"));
+        assert!(surface_from_handle(surface).unwrap().mouse_reporting);
+
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+    }
+
+    #[test]
+    fn surface_mouse_captured_honors_surface_mouse_reporting_gate() {
+        let _guard = PTY_COMMAND_LOCK.lock().unwrap();
+        let app = new_test_app();
+        let surface = new_test_surface(app);
+        surface_from_handle(surface).unwrap().termio_worker = Some(test_worker("sleep 1"));
+        set_surface_worker_mouse_tracking(surface, true);
+        assert!(roastty_surface_mouse_captured(surface));
+
+        assert!(binding_action(surface, "toggle_mouse_reporting"));
+        assert!(!roastty_surface_mouse_captured(surface));
+
+        assert!(binding_action(surface, "toggle_mouse_reporting"));
+        assert!(roastty_surface_mouse_captured(surface));
+
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+    }
+
+    #[test]
     fn surface_mouse_callbacks_validate_null_detached_noop() {
         assert!(!roastty_surface_mouse_button(
             ptr::null_mut(),
@@ -16842,6 +16918,51 @@ mod tests {
             ROASTTY_MOUSE_BUTTON_LEFT,
             ROASTTY_MODS_NONE
         ));
+
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+    }
+
+    #[test]
+    fn surface_mouse_button_reporting_honors_surface_mouse_reporting_gate() {
+        let _guard = PTY_COMMAND_LOCK.lock().unwrap();
+        let app = new_test_app();
+        let surface = new_test_surface(app);
+        surface_from_handle(surface).unwrap().termio_worker = Some(test_worker("sleep 5"));
+        roastty_surface_set_size(surface, 800, 480);
+        roastty_surface_mouse_pos(surface, 20.0, 20.0, ROASTTY_MODS_NONE);
+        set_surface_worker_mouse_mode(surface, 1000, true);
+
+        assert!(binding_action(surface, "toggle_mouse_reporting"));
+        assert!(!roastty_surface_mouse_button(
+            surface,
+            ROASTTY_MOUSE_BUTTON_PRESS,
+            ROASTTY_MOUSE_BUTTON_LEFT,
+            ROASTTY_MODS_CTRL
+        ));
+
+        let mouse = surface_from_handle(surface).unwrap().mouse;
+        assert_eq!(
+            mouse.buttons[mouse_button_index(mouse::MouseButton::Left)],
+            Some(SurfaceMouseButtonState::Press)
+        );
+        assert_eq!(key_mods_to_raw(mouse.mods), ROASTTY_MODS_CTRL);
+        assert!(mouse.last_reported_cell.is_none());
+
+        assert!(binding_action(surface, "toggle_mouse_reporting"));
+        assert!(roastty_surface_mouse_button(
+            surface,
+            ROASTTY_MOUSE_BUTTON_RELEASE,
+            ROASTTY_MOUSE_BUTTON_LEFT,
+            ROASTTY_MODS_NONE
+        ));
+        assert_eq!(
+            surface_from_handle(surface)
+                .unwrap()
+                .mouse
+                .last_reported_cell,
+            Some(point::Coordinate::new(2, 1))
+        );
 
         roastty_surface_free(surface);
         roastty_app_free(app);
@@ -17054,6 +17175,36 @@ mod tests {
         assert_eq!(mouse.pending_scroll_x, 0.0);
         assert_eq!(mouse.pending_scroll_y, 0.0);
         assert!(mouse.last_reported_cell.is_none());
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+    }
+
+    #[test]
+    fn surface_mouse_scroll_reporting_honors_surface_mouse_reporting_gate() {
+        let _guard = PTY_COMMAND_LOCK.lock().unwrap();
+        let app = new_test_app();
+        let surface = new_test_surface(app);
+        surface_from_handle(surface).unwrap().termio_worker = Some(test_worker("sleep 5"));
+        roastty_surface_set_size(surface, 800, 480);
+        roastty_surface_mouse_pos(surface, 20.0, 20.0, ROASTTY_MODS_NONE);
+        set_surface_worker_mouse_mode(surface, 1003, true);
+
+        assert!(binding_action(surface, "toggle_mouse_reporting"));
+        roastty_surface_mouse_scroll(surface, 1.0, -1.0, 0);
+
+        let mouse = surface_from_handle(surface).unwrap().mouse;
+        assert_eq!(mouse.scroll, Some((1.0, -1.0, 0)));
+        assert_eq!(mouse.pending_scroll_x, 0.0);
+        assert_eq!(mouse.pending_scroll_y, 0.0);
+        assert!(mouse.last_reported_cell.is_none());
+
+        assert!(binding_action(surface, "toggle_mouse_reporting"));
+        roastty_surface_mouse_scroll(surface, 1.0, -1.0, 0);
+
+        let mouse = surface_from_handle(surface).unwrap().mouse;
+        assert_eq!(mouse.last_reported_cell, Some(point::Coordinate::new(2, 1)));
+        assert_eq!(mouse.pending_scroll_x, 0.0);
+        assert_eq!(mouse.pending_scroll_y, 0.0);
         roastty_surface_free(surface);
         roastty_app_free(app);
     }
