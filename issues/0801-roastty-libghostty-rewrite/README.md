@@ -2009,6 +2009,8 @@ are past the correctness-critical foundation.
   — **Pass** · Codex/Codex/Codex
 - [Experiment 747: Surface Default Key Dispatch](747-surface-default-key-dispatch.md)
   — **Pass** · Codex/Codex/Codex
+- [Experiment 748: Binding Action Navigate Search](748-binding-action-navigate-search.md)
+  — **Designed** · Codex/Codex
 
 ## Non-Goals
 
