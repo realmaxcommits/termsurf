@@ -1860,6 +1860,8 @@ are past the correctness-critical foundation.
   **Pass** · Codex/Codex/Codex
 - [Experiment 686: Surface Inherited Config](686-surface-inherited-config.md) —
   **Pass** · Codex/Codex/Codex
+- [Experiment 687: Surface Key Translation Mods](687-surface-key-translation-mods.md)
+  — **Designed** · Codex/-/-
 
 ## Non-Goals
 
