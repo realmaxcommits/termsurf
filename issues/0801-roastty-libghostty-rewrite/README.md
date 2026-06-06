@@ -1713,6 +1713,8 @@ are past the correctness-critical foundation.
   **Pass** · Codex/Codex/Codex
 - [Experiment 633: Collection Deferred Entries](633-collection-deferred-entries.md)
   — **Pass** · Codex/Codex/Codex
+- [Experiment 634: Font Backend And Library](634-font-backend-library.md) —
+  **Designed**
 
 ## Non-Goals
 
