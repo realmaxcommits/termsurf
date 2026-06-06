@@ -1746,6 +1746,8 @@ are past the correctness-critical foundation.
   Codex/Codex/Codex
 - [Experiment 643: Tmux Layout Parser](643-tmux-layout-parser.md) — **Pass** ·
   Codex/Codex/Codex
+- [Experiment 644: Tmux Output Format Helpers](644-tmux-output-format.md) —
+  **Designed**
 
 ## Non-Goals
 
