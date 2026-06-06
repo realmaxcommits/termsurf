@@ -20,9 +20,11 @@ mod unicode_range;
 use crate::config::comma_splitter::CommaSplitter;
 use crate::config::formatter::EntryFormatter;
 use crate::config::string::{codepoint_iterator, parse_quoted_string};
+use crate::os::homedir::expand_home;
 use crate::terminal::color::{Palette as TerminalPalette, PaletteMask, Rgb, DEFAULT_PALETTE};
 use crate::terminal::selection_codepoints::DEFAULT_WORD_BOUNDARIES;
 use crate::terminal::style::BoldColor as TerminalBoldColor;
+use std::ffi::OsStr;
 
 /// The aggregating config struct (upstream `config.Config`) — the home of the
 /// config keys. Built up one coherent field group per slice; this lands the
@@ -1261,8 +1263,7 @@ pub(crate) enum WorkingDirectoryParseError {
 }
 
 /// The `working-directory` config (upstream `Config.WorkingDirectory`): a keyword
-/// (`home` / `inherit`) or an explicit path. The `finalize` (tilde expansion) and
-/// `formatEntry` are ported later.
+/// (`home` / `inherit`) or an explicit path. `formatEntry` is ported later.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum WorkingDirectory {
     Home,
@@ -1297,6 +1298,25 @@ impl WorkingDirectory {
             other => WorkingDirectory::Path(other.to_string()),
         };
         Ok(())
+    }
+
+    /// Expand a leading `~/` path using an already-resolved home directory.
+    pub(crate) fn finalize_with_home(&mut self, home: &OsStr) {
+        let WorkingDirectory::Path(path) = self else {
+            return;
+        };
+        if home.is_empty() {
+            return;
+        }
+
+        let expanded = expand_home(OsStr::new(path), home);
+        let expanded: &OsStr = expanded.as_ref();
+        if expanded == OsStr::new(path) {
+            return;
+        }
+        if let Some(expanded_str) = expanded.to_str() {
+            *path = expanded_str.to_string();
+        }
     }
 
     /// The explicit path, if any (upstream `value`): `Some` for `Path`, else `None`.
@@ -3389,6 +3409,8 @@ mod tests {
     };
     use crate::terminal::color::Rgb;
     use crate::terminal::selection_codepoints::DEFAULT_WORD_BOUNDARIES;
+    use std::ffi::OsStr;
+    use std::os::unix::ffi::OsStrExt;
 
     #[test]
     fn alpha_blending_is_linear_truth_table() {
@@ -4796,6 +4818,47 @@ mod tests {
         assert_eq!(WorkingDirectory::Inherit.value(), None);
         assert_eq!(WorkingDirectory::Home.value(), None);
         assert_eq!(WorkingDirectory::Path("x".to_string()).value(), Some("x"));
+    }
+
+    #[test]
+    fn working_directory_finalize_expands_tilde_slash_paths() {
+        let home = OsStr::new("/Users/tester");
+
+        let mut wd = WorkingDirectory::Path("~/projects/app".to_string());
+        wd.finalize_with_home(home);
+        assert_eq!(
+            wd,
+            WorkingDirectory::Path("/Users/tester/projects/app".to_string())
+        );
+
+        let mut wd = WorkingDirectory::Path("~/".to_string());
+        wd.finalize_with_home(home);
+        assert_eq!(wd, WorkingDirectory::Path("/Users/tester/".to_string()));
+    }
+
+    #[test]
+    fn working_directory_finalize_preserves_non_expandable_values() {
+        for value in ["~", "~other/app", "/tmp/app"] {
+            let mut wd = WorkingDirectory::Path(value.to_string());
+            wd.finalize_with_home(OsStr::new("/Users/tester"));
+            assert_eq!(wd, WorkingDirectory::Path(value.to_string()));
+        }
+
+        let mut wd = WorkingDirectory::Home;
+        wd.finalize_with_home(OsStr::new("/Users/tester"));
+        assert_eq!(wd, WorkingDirectory::Home);
+
+        let mut wd = WorkingDirectory::Inherit;
+        wd.finalize_with_home(OsStr::new("/Users/tester"));
+        assert_eq!(wd, WorkingDirectory::Inherit);
+
+        let mut wd = WorkingDirectory::Path("~/projects/app".to_string());
+        wd.finalize_with_home(OsStr::new(""));
+        assert_eq!(wd, WorkingDirectory::Path("~/projects/app".to_string()));
+
+        let mut wd = WorkingDirectory::Path("~/projects/app".to_string());
+        wd.finalize_with_home(OsStr::from_bytes(b"/Users/tester\xff"));
+        assert_eq!(wd, WorkingDirectory::Path("~/projects/app".to_string()));
     }
 
     #[test]

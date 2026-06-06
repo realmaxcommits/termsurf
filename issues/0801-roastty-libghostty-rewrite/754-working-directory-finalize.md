@@ -3,6 +3,16 @@
 agent = "codex"
 model = "gpt-5"
 reasoning = "high"
+
+[review.design]
+agent = "codex"
+model = "gpt-5"
+reasoning = "medium"
+
+[review.result]
+agent = "codex"
+model = "gpt-5"
+reasoning = "medium"
 +++
 
 # Experiment 754: Working Directory Finalize
@@ -87,3 +97,36 @@ Codex then approved the corrected design for the plan commit with no blocking
 findings. The review confirmed the scope is small and faithful to upstream's
 `~/`-only finalization behavior, while staying internal to
 `roastty/src/config/mod.rs` until the typed config path is ready.
+
+## Result
+
+**Result:** Pass
+
+`WorkingDirectory::finalize_with_home` now expands representable UTF-8 paths
+that start with `~/` using the existing `os::homedir::expand_home` helper. It
+leaves `Home`, `Inherit`, bare `~`, `~other/...`, absolute paths, empty-home
+expansion, unchanged expansions, and non-UTF-8 expanded results untouched.
+
+Verification passed:
+
+- `cargo test -p roastty working_directory -- --nocapture --test-threads=1`
+- `cargo fmt -p roastty`
+- `cargo fmt -p roastty -- --check`
+- `git diff --check`
+
+## Completion Review
+
+Codex reviewed the completed implementation and found no blocking issues. The
+review agreed that the helper matches the approved scope: it is internal, keeps
+non-path variants unchanged, treats empty home as failed resolution, delegates
+`~/` behavior to `expand_home`, and writes back only valid UTF-8 expanded paths.
+
+The review considered the verification sufficient. It noted a non-blocking
+portability detail: the non-UTF-8 test imports `std::os::unix::ffi::OsStrExt`;
+that is acceptable for the current macOS-focused Roastty target.
+
+## Conclusion
+
+Experiment 754 completes the deferred `WorkingDirectory.finalize` helper from
+Experiment 489 for the current internal config representation. Full
+`Config::finalize` wiring and C ABI integration remain separate future slices.
