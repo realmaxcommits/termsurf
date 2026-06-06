@@ -1894,6 +1894,8 @@ are past the correctness-critical foundation.
   **Pass** · Codex/Codex/Codex
 - [Experiment 698: Surface Quicklook ABI](698-surface-quicklook-abi.md) —
   **Pass** · Codex/Codex/Codex
+- [Experiment 699: Confirm Close Policy](699-confirm-close-policy.md) —
+  **Designed** · Codex/Codex/-
 
 ## Non-Goals
 
