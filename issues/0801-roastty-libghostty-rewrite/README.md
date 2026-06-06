@@ -1972,7 +1972,7 @@ are past the correctness-critical foundation.
 - [Experiment 728: Binding Action Undo Redo](728-binding-action-undo-redo.md) —
   **Pass** · Codex/Codex/Codex
 - [Experiment 729: Binding Action App Runtime Forwarding](729-binding-action-app-runtime-forwarding.md)
-  — **Designed** · Codex/Codex/-
+  — **Pass** · Codex/Codex/Codex
 
 ## Non-Goals
 

@@ -8,6 +8,11 @@ reasoning = "high"
 agent = "codex"
 model = "gpt-5"
 reasoning = "medium"
+
+[review.result]
+agent = "codex"
+model = "gpt-5"
+reasoning = "medium"
 +++
 
 # Experiment 729: Binding Action App Runtime Forwarding
@@ -113,3 +118,56 @@ surface-targeted actions.
 The review also found one workflow blocker: this design-review section still
 said `Pending.` This section now records the review outcome, and the README
 tuple is `Codex/Codex/-`.
+
+## Result
+
+**Result:** Pass
+
+Experiment 729 added app-target runtime forwarding for the eight zero-storage
+app-scoped binding actions: `quit`, `close_all_windows`,
+`toggle_quick_terminal`, `toggle_visibility`, `show_gtk_inspector`,
+`open_config`, `reload_config`, and `check_for_updates`.
+
+The public C ABI now exposes explicit target tag values, documents that
+app-target callbacks receive `target.tag = ROASTTY_TARGET_APP` with
+`target.surface = NULL`, and includes upstream-aligned action tags for the
+forwarded app actions. The Rust binding parser now distinguishes app-target
+runtime actions from existing surface-target runtime actions, rejects colon
+parameters for the app actions, and routes app actions through the same runtime
+callback with the app target shape.
+
+Verification passed:
+
+- `cargo fmt -p roastty`
+- `cargo test -p roastty app_runtime -- --nocapture --test-threads=1`
+  - 4 passed
+- `cargo test -p roastty binding_action -- --nocapture --test-threads=1`
+  - 101 passed
+- `cargo test -p roastty --test abi_harness`
+  - 1 passed
+- `cargo fmt -p roastty -- --check`
+- `git diff --check`
+
+## Conclusion
+
+The app-scoped zero-storage binding actions now reach embedders through the
+runtime action callback with an explicit app target instead of being forced
+through a surface target. Existing surface-scoped runtime actions still forward
+with `ROASTTY_TARGET_SURFACE`, so the new app path does not change the target
+shape for earlier binding-action work.
+
+`new_window` remains intentionally separate because upstream routes it through
+window creation with a parent surface rather than a plain app runtime action.
+
+## Completion Review
+
+Codex reviewed the completed Experiment 729 diff and found one workflow blocker:
+the result record was present, but completion-review provenance had not yet been
+recorded. This section, the `[review.result]` frontmatter, and the README tuple
+now record that review.
+
+The review found no implementation blockers. It approved the app-target
+forwarding path using `ROASTTY_TARGET_APP` with null surface, explicit ABI
+target and action constants, parser rejection for empty and non-empty
+parameters, zero-storage app action forwarding, app-target tests, and regression
+coverage showing existing runtime actions still use `ROASTTY_TARGET_SURFACE`.

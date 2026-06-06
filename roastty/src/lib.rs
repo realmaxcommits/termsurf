@@ -104,6 +104,7 @@ const ROASTTY_SURFACE_CONTEXT_WINDOW: c_int = 0;
 const ROASTTY_SURFACE_CONTEXT_TAB: c_int = 1;
 const ROASTTY_SURFACE_CONTEXT_SPLIT: c_int = 2;
 
+const ROASTTY_TARGET_APP: c_int = 0;
 const ROASTTY_TARGET_SURFACE: c_int = 1;
 const ROASTTY_CLIPBOARD_STANDARD: c_int = 0;
 const ROASTTY_CLIPBOARD_SELECTION: c_int = 1;
@@ -114,14 +115,18 @@ const ROASTTY_CLIPBOARD_REQUEST_OSC_52_READ: c_int = 1;
 #[allow(dead_code)]
 const ROASTTY_CLIPBOARD_REQUEST_OSC_52_WRITE: c_int = 2;
 
+const ROASTTY_ACTION_QUIT: c_int = 0;
 const ROASTTY_ACTION_NEW_TAB: c_int = 2;
 const ROASTTY_ACTION_CLOSE_TAB: c_int = 3;
 const ROASTTY_ACTION_NEW_SPLIT: c_int = 4;
+const ROASTTY_ACTION_CLOSE_ALL_WINDOWS: c_int = 5;
 const ROASTTY_ACTION_TOGGLE_MAXIMIZE: c_int = 6;
 const ROASTTY_ACTION_TOGGLE_FULLSCREEN: c_int = 7;
 const ROASTTY_ACTION_TOGGLE_TAB_OVERVIEW: c_int = 8;
 const ROASTTY_ACTION_TOGGLE_WINDOW_DECORATIONS: c_int = 9;
+const ROASTTY_ACTION_TOGGLE_QUICK_TERMINAL: c_int = 10;
 const ROASTTY_ACTION_TOGGLE_COMMAND_PALETTE: c_int = 11;
+const ROASTTY_ACTION_TOGGLE_VISIBILITY: c_int = 12;
 const ROASTTY_ACTION_TOGGLE_BACKGROUND_OPACITY: c_int = 13;
 const ROASTTY_ACTION_MOVE_TAB: c_int = 14;
 const ROASTTY_ACTION_GOTO_TAB: c_int = 15;
@@ -132,14 +137,18 @@ const ROASTTY_ACTION_EQUALIZE_SPLITS: c_int = 19;
 const ROASTTY_ACTION_TOGGLE_SPLIT_ZOOM: c_int = 20;
 const ROASTTY_ACTION_RESET_WINDOW_SIZE: c_int = 23;
 const ROASTTY_ACTION_INSPECTOR: c_int = 28;
+const ROASTTY_ACTION_SHOW_GTK_INSPECTOR: c_int = 29;
 const ROASTTY_ACTION_SET_TITLE: c_int = 32;
 const ROASTTY_ACTION_SET_TAB_TITLE: c_int = 33;
 const ROASTTY_ACTION_PROMPT_TITLE: c_int = 34;
+const ROASTTY_ACTION_OPEN_CONFIG: c_int = 40;
 const ROASTTY_ACTION_FLOAT_WINDOW: c_int = 42;
 const ROASTTY_ACTION_SECURE_INPUT: c_int = 43;
+const ROASTTY_ACTION_RELOAD_CONFIG: c_int = 47;
 const ROASTTY_ACTION_CLOSE_WINDOW: c_int = 49;
 const ROASTTY_ACTION_UNDO: c_int = 51;
 const ROASTTY_ACTION_REDO: c_int = 52;
+const ROASTTY_ACTION_CHECK_FOR_UPDATES: c_int = 53;
 const ROASTTY_ACTION_SHOW_ON_SCREEN_KEYBOARD: c_int = 57;
 const ROASTTY_ACTION_READONLY: c_int = 63;
 const ROASTTY_ACTION_COPY_TITLE_TO_CLIPBOARD: c_int = 64;
@@ -1856,13 +1865,32 @@ impl Surface {
     }
 
     fn perform_action_result(&self, tag: c_int, storage: [usize; 8]) -> bool {
+        self.perform_targeted_action_result(
+            ROASTTY_TARGET_SURFACE,
+            (self as *const Surface).cast_mut().cast(),
+            tag,
+            storage,
+        )
+    }
+
+    fn perform_app_action_result(&self, tag: c_int, storage: [usize; 8]) -> bool {
+        self.perform_targeted_action_result(ROASTTY_TARGET_APP, ptr::null_mut(), tag, storage)
+    }
+
+    fn perform_targeted_action_result(
+        &self,
+        target_tag: c_int,
+        target_surface: RoasttySurface,
+        tag: c_int,
+        storage: [usize; 8],
+    ) -> bool {
         let Some(app) = app_from_handle(self.app) else {
             return false;
         };
         if let Some(action) = app.runtime.action_cb {
             let target = RoasttyTarget {
-                tag: ROASTTY_TARGET_SURFACE,
-                surface: (self as *const Surface).cast_mut().cast(),
+                tag: target_tag,
+                surface: target_surface,
             };
             let action_value = RoasttyAction { tag, storage };
             return unsafe { action(self.app, target, action_value) };
@@ -2945,6 +2973,7 @@ fn goto_tab_action(selector: c_int) -> ParsedBindingAction {
 
 enum ParsedBindingAction {
     RuntimeAction(c_int, [usize; 8]),
+    AppRuntimeAction(c_int, [usize; 8]),
     CloseSurface,
     Text(Vec<u8>),
     Csi(Vec<u8>),
@@ -2972,6 +3001,13 @@ enum ParsedBindingAction {
     JumpToPrompt(i16),
     ToggleMouseReporting,
     ToggleReadonly,
+}
+
+fn parameterless_app_action(parameter: Option<&[u8]>, tag: c_int) -> Option<ParsedBindingAction> {
+    if parameter.is_some() {
+        return None;
+    }
+    Some(ParsedBindingAction::AppRuntimeAction(tag, [0usize; 8]))
 }
 
 #[derive(Clone, Copy)]
@@ -3005,6 +3041,24 @@ fn parse_binding_action(surface: &Surface, action: &[u8]) -> Option<ParsedBindin
     }
 
     match name {
+        b"quit" => parameterless_app_action(parameter, ROASTTY_ACTION_QUIT),
+        b"close_all_windows" => {
+            parameterless_app_action(parameter, ROASTTY_ACTION_CLOSE_ALL_WINDOWS)
+        }
+        b"toggle_quick_terminal" => {
+            parameterless_app_action(parameter, ROASTTY_ACTION_TOGGLE_QUICK_TERMINAL)
+        }
+        b"toggle_visibility" => {
+            parameterless_app_action(parameter, ROASTTY_ACTION_TOGGLE_VISIBILITY)
+        }
+        b"show_gtk_inspector" => {
+            parameterless_app_action(parameter, ROASTTY_ACTION_SHOW_GTK_INSPECTOR)
+        }
+        b"open_config" => parameterless_app_action(parameter, ROASTTY_ACTION_OPEN_CONFIG),
+        b"reload_config" => parameterless_app_action(parameter, ROASTTY_ACTION_RELOAD_CONFIG),
+        b"check_for_updates" => {
+            parameterless_app_action(parameter, ROASTTY_ACTION_CHECK_FOR_UPDATES)
+        }
         b"new_tab" => {
             if parameter.is_some() {
                 return None;
@@ -11434,6 +11488,9 @@ pub extern "C" fn roastty_surface_binding_action(
         ParsedBindingAction::RuntimeAction(tag, storage) => {
             surface.perform_action_result(tag, storage)
         }
+        ParsedBindingAction::AppRuntimeAction(tag, storage) => {
+            surface.perform_app_action_result(tag, storage)
+        }
         ParsedBindingAction::CloseSurface => {
             if surface.app.is_null() {
                 return false;
@@ -13436,14 +13493,20 @@ mod tests {
 
     #[test]
     fn surface_action_constants_match_upstream_values() {
+        assert_eq!(ROASTTY_TARGET_APP, 0);
+        assert_eq!(ROASTTY_TARGET_SURFACE, 1);
+        assert_eq!(ROASTTY_ACTION_QUIT, 0);
         assert_eq!(ROASTTY_ACTION_NEW_TAB, 2);
         assert_eq!(ROASTTY_ACTION_CLOSE_TAB, 3);
         assert_eq!(ROASTTY_ACTION_NEW_SPLIT, 4);
+        assert_eq!(ROASTTY_ACTION_CLOSE_ALL_WINDOWS, 5);
         assert_eq!(ROASTTY_ACTION_TOGGLE_MAXIMIZE, 6);
         assert_eq!(ROASTTY_ACTION_TOGGLE_FULLSCREEN, 7);
         assert_eq!(ROASTTY_ACTION_TOGGLE_TAB_OVERVIEW, 8);
         assert_eq!(ROASTTY_ACTION_TOGGLE_WINDOW_DECORATIONS, 9);
+        assert_eq!(ROASTTY_ACTION_TOGGLE_QUICK_TERMINAL, 10);
         assert_eq!(ROASTTY_ACTION_TOGGLE_COMMAND_PALETTE, 11);
+        assert_eq!(ROASTTY_ACTION_TOGGLE_VISIBILITY, 12);
         assert_eq!(ROASTTY_ACTION_TOGGLE_BACKGROUND_OPACITY, 13);
         assert_eq!(ROASTTY_ACTION_MOVE_TAB, 14);
         assert_eq!(ROASTTY_ACTION_GOTO_TAB, 15);
@@ -13454,14 +13517,18 @@ mod tests {
         assert_eq!(ROASTTY_ACTION_TOGGLE_SPLIT_ZOOM, 20);
         assert_eq!(ROASTTY_ACTION_RESET_WINDOW_SIZE, 23);
         assert_eq!(ROASTTY_ACTION_INSPECTOR, 28);
+        assert_eq!(ROASTTY_ACTION_SHOW_GTK_INSPECTOR, 29);
         assert_eq!(ROASTTY_ACTION_SET_TITLE, 32);
         assert_eq!(ROASTTY_ACTION_SET_TAB_TITLE, 33);
         assert_eq!(ROASTTY_ACTION_PROMPT_TITLE, 34);
+        assert_eq!(ROASTTY_ACTION_OPEN_CONFIG, 40);
         assert_eq!(ROASTTY_ACTION_FLOAT_WINDOW, 42);
         assert_eq!(ROASTTY_ACTION_SECURE_INPUT, 43);
+        assert_eq!(ROASTTY_ACTION_RELOAD_CONFIG, 47);
         assert_eq!(ROASTTY_ACTION_CLOSE_WINDOW, 49);
         assert_eq!(ROASTTY_ACTION_UNDO, 51);
         assert_eq!(ROASTTY_ACTION_REDO, 52);
+        assert_eq!(ROASTTY_ACTION_CHECK_FOR_UPDATES, 53);
         assert_eq!(ROASTTY_ACTION_SHOW_ON_SCREEN_KEYBOARD, 57);
         assert_eq!(ROASTTY_ACTION_READONLY, 63);
         assert_eq!(ROASTTY_ACTION_COPY_TITLE_TO_CLIPBOARD, 64);
@@ -13604,6 +13671,22 @@ mod tests {
             "",
             ":new_split",
             "unknown",
+            "quit:",
+            "quit:now",
+            "close_all_windows:",
+            "close_all_windows:now",
+            "toggle_quick_terminal:",
+            "toggle_quick_terminal:now",
+            "toggle_visibility:",
+            "toggle_visibility:now",
+            "show_gtk_inspector:",
+            "show_gtk_inspector:now",
+            "open_config:",
+            "open_config:now",
+            "reload_config:",
+            "reload_config:now",
+            "check_for_updates:",
+            "check_for_updates:now",
             "new_tab:",
             "new_tab:now",
             "close_tab:",
@@ -16136,6 +16219,112 @@ mod tests {
         assert!(!binding_action(surface, "move_tab:-1"));
         assert!(!binding_action(surface, "toggle_tab_overview"));
         assert_eq!(action_records().len(), 6);
+
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+    }
+
+    const APP_RUNTIME_ACTIONS: [(&str, c_int); 8] = [
+        ("quit", ROASTTY_ACTION_QUIT),
+        ("close_all_windows", ROASTTY_ACTION_CLOSE_ALL_WINDOWS),
+        (
+            "toggle_quick_terminal",
+            ROASTTY_ACTION_TOGGLE_QUICK_TERMINAL,
+        ),
+        ("toggle_visibility", ROASTTY_ACTION_TOGGLE_VISIBILITY),
+        ("show_gtk_inspector", ROASTTY_ACTION_SHOW_GTK_INSPECTOR),
+        ("open_config", ROASTTY_ACTION_OPEN_CONFIG),
+        ("reload_config", ROASTTY_ACTION_RELOAD_CONFIG),
+        ("check_for_updates", ROASTTY_ACTION_CHECK_FOR_UPDATES),
+    ];
+
+    #[test]
+    fn surface_binding_action_app_runtime_false_for_null_detached_and_no_callback() {
+        let app = new_test_app();
+        let surface = new_test_surface(app);
+
+        for (action, _) in APP_RUNTIME_ACTIONS {
+            assert!(!binding_action(ptr::null_mut(), action), "{action}");
+            assert!(!binding_action(surface, action), "{action}");
+        }
+
+        roastty_app_free(app);
+        for (action, _) in APP_RUNTIME_ACTIONS {
+            assert!(!binding_action(surface, action), "{action}");
+        }
+        roastty_surface_free(surface);
+    }
+
+    #[test]
+    fn surface_binding_action_app_runtime_forwards_supported_actions() {
+        let app = new_test_app_with_action(true);
+        let surface = new_test_surface(app);
+
+        for (action, _) in APP_RUNTIME_ACTIONS {
+            assert!(binding_action(surface, action), "{action}");
+        }
+
+        let records = action_records();
+        assert_eq!(records.len(), APP_RUNTIME_ACTIONS.len());
+        for (record, (_, expected_tag)) in records.iter().zip(APP_RUNTIME_ACTIONS) {
+            assert_eq!(record.app, app);
+            assert_eq!(record.target_tag, ROASTTY_TARGET_APP);
+            assert!(record.surface.is_null());
+            assert_eq!(record.action_tag, expected_tag);
+            assert!(record.storage.iter().all(|value| *value == 0));
+        }
+
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+    }
+
+    #[test]
+    fn surface_binding_action_app_runtime_returns_callback_result() {
+        let app = new_test_app_with_action(false);
+        let surface = new_test_surface(app);
+
+        for (action, _) in APP_RUNTIME_ACTIONS {
+            assert!(!binding_action(surface, action), "{action}");
+        }
+        assert_eq!(action_records().len(), APP_RUNTIME_ACTIONS.len());
+
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+    }
+
+    #[test]
+    fn surface_binding_action_app_runtime_preserves_surface_target_actions() {
+        let app = new_test_app_with_action(true);
+        let surface = new_test_surface(app);
+
+        for action in [
+            "new_tab",
+            "toggle_window_decorations",
+            "close_window",
+            "undo",
+            "copy_title_to_clipboard",
+        ] {
+            assert!(binding_action(surface, action), "{action}");
+        }
+
+        let records = action_records();
+        assert_eq!(records.len(), 5);
+        for record in &records {
+            assert_eq!(record.app, app);
+            assert_eq!(record.target_tag, ROASTTY_TARGET_SURFACE);
+            assert_eq!(record.surface, surface);
+        }
+        assert_eq!(records[0].action_tag, ROASTTY_ACTION_NEW_TAB);
+        assert_eq!(
+            records[1].action_tag,
+            ROASTTY_ACTION_TOGGLE_WINDOW_DECORATIONS
+        );
+        assert_eq!(records[2].action_tag, ROASTTY_ACTION_CLOSE_WINDOW);
+        assert_eq!(records[3].action_tag, ROASTTY_ACTION_UNDO);
+        assert_eq!(
+            records[4].action_tag,
+            ROASTTY_ACTION_COPY_TITLE_TO_CLIPBOARD
+        );
 
         roastty_surface_free(surface);
         roastty_app_free(app);
