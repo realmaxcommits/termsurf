@@ -724,6 +724,8 @@ static SYS_STATE: Mutex<SysState> = Mutex::new(SysState {
 #[cfg(test)]
 pub(crate) static SYS_TEST_LOCK: Mutex<()> = Mutex::new(());
 
+static INIT_ARGV: Mutex<Vec<Vec<u8>>> = Mutex::new(Vec::new());
+
 pub(crate) struct DecodedPng {
     pub(crate) width: u32,
     pub(crate) height: u32,
@@ -1435,6 +1437,27 @@ struct Config {
     finalized: bool,
     confirm_close_surface: config::ConfirmCloseSurface,
     has_global_keybinds: bool,
+    keybind_triggers: Vec<ConfigKeybind>,
+}
+
+#[derive(Clone)]
+struct ConfigKeybind {
+    action: Vec<u8>,
+    trigger: RoasttyInputTrigger,
+}
+
+impl Config {
+    fn store_keybind(&mut self, binding: ConfigKeybind) {
+        if let Some(existing) = self
+            .keybind_triggers
+            .iter_mut()
+            .find(|existing| existing.action == binding.action)
+        {
+            *existing = binding;
+        } else {
+            self.keybind_triggers.push(binding);
+        }
+    }
 }
 
 struct App {
@@ -4583,6 +4606,137 @@ fn unicode_trigger(codepoint: u32, mods: c_int) -> RoasttyInputTrigger {
         key: RoasttyInputTriggerKey { unicode: codepoint },
         mods,
     }
+}
+
+fn parse_config_keybind(value: &[u8]) -> Option<ConfigKeybind> {
+    let separator = value.iter().position(|byte| *byte == b'=')?;
+    let trigger = &value[..separator];
+    let action = &value[separator + 1..];
+    if trigger.is_empty() || action.is_empty() {
+        return None;
+    }
+    Some(ConfigKeybind {
+        action: action.to_vec(),
+        trigger: parse_config_keybind_trigger(trigger)?,
+    })
+}
+
+fn parse_config_keybind_trigger(trigger: &[u8]) -> Option<RoasttyInputTrigger> {
+    let mut mods = ROASTTY_MODS_NONE;
+    let mut key = None;
+    for part in trigger.split(|byte| *byte == b'+') {
+        if part.is_empty() {
+            return None;
+        }
+        if let Some(modifier) = config_keybind_modifier(part) {
+            if mods & modifier != 0 {
+                return None;
+            }
+            mods |= modifier;
+            continue;
+        }
+        if key.is_some() {
+            return None;
+        }
+        key = Some(config_keybind_key(part)?);
+    }
+
+    let key = key?;
+    Some(match key {
+        ConfigKeybindKey::Physical(key) => physical_trigger(key, mods),
+        ConfigKeybindKey::Unicode(codepoint) => unicode_trigger(codepoint, mods),
+    })
+}
+
+enum ConfigKeybindKey {
+    Physical(key::Key),
+    Unicode(u32),
+}
+
+fn config_keybind_modifier(part: &[u8]) -> Option<c_int> {
+    match part {
+        b"shift" => Some(ROASTTY_MODS_SHIFT),
+        b"ctrl" | b"control" => Some(ROASTTY_MODS_CTRL),
+        b"alt" | b"opt" | b"option" => Some(ROASTTY_MODS_ALT),
+        b"super" | b"cmd" | b"command" => Some(ROASTTY_MODS_SUPER),
+        _ => None,
+    }
+}
+
+fn config_keybind_key(part: &[u8]) -> Option<ConfigKeybindKey> {
+    if let Ok(name) = std::str::from_utf8(part) {
+        if let Some(key) = key::Key::from_w3c(name) {
+            if config_keybind_physical_key_supported(key) {
+                return Some(ConfigKeybindKey::Physical(key));
+            }
+            return None;
+        }
+    }
+
+    let text = std::str::from_utf8(part).ok()?;
+    let mut chars = text.chars();
+    let ch = chars.next()?;
+    if chars.next().is_some() {
+        return None;
+    }
+    Some(ConfigKeybindKey::Unicode(ch as u32))
+}
+
+fn config_keybind_physical_key_supported(key: key::Key) -> bool {
+    matches!(
+        key,
+        key::Key::KeyA
+            | key::Key::KeyB
+            | key::Key::KeyC
+            | key::Key::KeyD
+            | key::Key::KeyE
+            | key::Key::KeyF
+            | key::Key::KeyG
+            | key::Key::KeyH
+            | key::Key::KeyI
+            | key::Key::KeyJ
+            | key::Key::KeyK
+            | key::Key::KeyL
+            | key::Key::KeyM
+            | key::Key::KeyN
+            | key::Key::KeyO
+            | key::Key::KeyP
+            | key::Key::KeyQ
+            | key::Key::KeyR
+            | key::Key::KeyS
+            | key::Key::KeyT
+            | key::Key::KeyU
+            | key::Key::KeyV
+            | key::Key::KeyW
+            | key::Key::KeyX
+            | key::Key::KeyY
+            | key::Key::KeyZ
+            | key::Key::Digit0
+            | key::Key::Digit1
+            | key::Key::Digit2
+            | key::Key::Digit3
+            | key::Key::Digit4
+            | key::Key::Digit5
+            | key::Key::Digit6
+            | key::Key::Digit7
+            | key::Key::Digit8
+            | key::Key::Digit9
+            | key::Key::Copy
+            | key::Key::Paste
+            | key::Key::Escape
+            | key::Key::ArrowUp
+            | key::Key::ArrowDown
+            | key::Key::ArrowLeft
+            | key::Key::ArrowRight
+            | key::Key::Home
+            | key::Key::End
+            | key::Key::PageUp
+            | key::Key::PageDown
+            | key::Key::Enter
+            | key::Key::Tab
+            | key::Key::Backspace
+            | key::Key::Insert
+    )
 }
 
 fn default_config_trigger(action: &[u8]) -> RoasttyInputTrigger {
@@ -7852,7 +8006,19 @@ pub extern "C" fn roastty_render_state_colors_get(
 }
 
 #[no_mangle]
-pub extern "C" fn roastty_init(_argc: usize, _argv: *mut *mut c_char) -> c_int {
+pub extern "C" fn roastty_init(argc: usize, argv: *mut *mut c_char) -> c_int {
+    let mut copied = Vec::new();
+    if !argv.is_null() {
+        for index in 0..argc {
+            let arg = unsafe { *argv.add(index) };
+            if arg.is_null() {
+                copied.clear();
+                break;
+            }
+            copied.push(unsafe { CStr::from_ptr(arg) }.to_bytes().to_vec());
+        }
+    }
+    *INIT_ARGV.lock().unwrap() = copied;
     ROASTTY_SUCCESS
 }
 
@@ -8253,6 +8419,7 @@ pub extern "C" fn roastty_config_new() -> RoasttyConfig {
         finalized: false,
         confirm_close_surface: config::ConfirmCloseSurface::True,
         has_global_keybinds: false,
+        keybind_triggers: Vec::new(),
     }))
     .cast()
 }
@@ -8268,25 +8435,59 @@ pub extern "C" fn roastty_config_free(config: RoasttyConfig) {
 
 #[no_mangle]
 pub extern "C" fn roastty_config_clone(config: RoasttyConfig) -> RoasttyConfig {
-    let (finalized, confirm_close_surface, has_global_keybinds) = config_from_handle(config)
-        .map(|config| {
-            (
-                config.finalized,
-                config.confirm_close_surface,
-                config.has_global_keybinds,
-            )
-        })
-        .unwrap_or((false, config::ConfirmCloseSurface::True, false));
+    let (finalized, confirm_close_surface, has_global_keybinds, keybind_triggers) =
+        config_from_handle(config)
+            .map(|config| {
+                (
+                    config.finalized,
+                    config.confirm_close_surface,
+                    config.has_global_keybinds,
+                    config.keybind_triggers.clone(),
+                )
+            })
+            .unwrap_or((false, config::ConfirmCloseSurface::True, false, Vec::new()));
     Box::into_raw(Box::new(Config {
         finalized,
         confirm_close_surface,
         has_global_keybinds,
+        keybind_triggers,
     }))
     .cast()
 }
 
 #[no_mangle]
-pub extern "C" fn roastty_config_load_cli_args(_config: RoasttyConfig) {}
+pub extern "C" fn roastty_config_load_cli_args(config: RoasttyConfig) {
+    let Some(config) = config_from_handle(config) else {
+        return;
+    };
+    let argv = INIT_ARGV.lock().unwrap().clone();
+    let mut index = 1;
+    while index < argv.len() {
+        let arg = &argv[index];
+        if let Some(value) = arg.strip_prefix(b"--keybind=") {
+            if let Some(binding) = parse_config_keybind(value) {
+                config.store_keybind(binding);
+            }
+            index += 1;
+            continue;
+        }
+        if arg == b"--keybind" {
+            if let Some(value) = argv
+                .get(index + 1)
+                .filter(|value| !value.starts_with(b"--"))
+            {
+                if let Some(binding) = parse_config_keybind(value) {
+                    config.store_keybind(binding);
+                }
+                index += 2;
+            } else {
+                index += 1;
+            }
+            continue;
+        }
+        index += 1;
+    }
+}
 
 #[no_mangle]
 pub extern "C" fn roastty_config_load_file(_config: RoasttyConfig, _path: *const c_char) {}
@@ -8372,10 +8573,21 @@ pub extern "C" fn roastty_config_trigger(
     action: *const c_char,
     action_len: usize,
 ) -> RoasttyInputTrigger {
-    if config_from_handle(config).is_none() || action.is_null() {
+    let Some(config) = config_from_handle(config) else {
+        return empty_trigger();
+    };
+    if action.is_null() {
         return empty_trigger();
     }
     let action = unsafe { slice::from_raw_parts(action.cast::<u8>(), action_len) };
+    if let Some(binding) = config
+        .keybind_triggers
+        .iter()
+        .rev()
+        .find(|binding| binding.action.as_slice() == action)
+    {
+        return binding.trigger;
+    }
     default_config_trigger(action)
 }
 
@@ -12949,6 +13161,7 @@ mod tests {
     use std::time::Duration;
 
     static ENV_LOCK: Mutex<()> = Mutex::new(());
+    static CLI_ARGS_LOCK: Mutex<()> = Mutex::new(());
     static SCRIPT_COUNTER: AtomicUsize = AtomicUsize::new(0);
     static WAKEUP_LOCK: Mutex<()> = Mutex::new(());
     static WAKEUP_COUNT: AtomicUsize = AtomicUsize::new(0);
@@ -14871,6 +15084,21 @@ mod tests {
         assert_eq!(trigger.mods, mods);
     }
 
+    fn with_init_args(args: &[&str], f: impl FnOnce()) {
+        let _guard = CLI_ARGS_LOCK.lock().unwrap();
+        let strings = args
+            .iter()
+            .map(|arg| CString::new(*arg).unwrap())
+            .collect::<Vec<_>>();
+        let mut ptrs = strings
+            .iter()
+            .map(|arg| arg.as_ptr().cast_mut())
+            .collect::<Vec<_>>();
+        assert_eq!(roastty_init(ptrs.len(), ptrs.as_mut_ptr()), ROASTTY_SUCCESS);
+        f();
+        assert_eq!(roastty_init(0, ptr::null_mut()), ROASTTY_SUCCESS);
+    }
+
     #[test]
     fn config_trigger_returns_default_open_reload_triggers() {
         let config = roastty_config_new();
@@ -15153,6 +15381,196 @@ mod tests {
         }
 
         roastty_config_free(config);
+    }
+
+    #[test]
+    fn config_cli_keybind_loads_equals_and_split_forms() {
+        with_init_args(
+            &[
+                "roastty",
+                "--keybind=ctrl+a=copy_to_clipboard",
+                "--keybind",
+                "cmd+KeyN=new_window",
+            ],
+            || {
+                let config = roastty_config_new();
+                roastty_config_load_cli_args(config);
+
+                let copy = CString::new("copy_to_clipboard").unwrap();
+                assert_unicode_config_trigger(
+                    roastty_config_trigger(config, copy.as_ptr(), copy.as_bytes().len()),
+                    u32::from(b'a'),
+                    ROASTTY_MODS_CTRL,
+                );
+                let new_window = CString::new("new_window").unwrap();
+                assert_physical_config_trigger(
+                    roastty_config_trigger(
+                        config,
+                        new_window.as_ptr(),
+                        new_window.as_bytes().len(),
+                    ),
+                    key::Key::KeyN,
+                    ROASTTY_MODS_SUPER,
+                );
+
+                roastty_config_free(config);
+            },
+        );
+    }
+
+    #[test]
+    fn config_cli_keybind_supports_aliases_physical_and_action_equals() {
+        with_init_args(
+            &[
+                "roastty",
+                "--keybind=option+Digit1=goto_tab:1",
+                "--keybind=control+page_down=scroll_page_down",
+                "--keybind=ctrl+e=text:=",
+            ],
+            || {
+                let config = roastty_config_new();
+                roastty_config_load_cli_args(config);
+
+                let goto_tab = CString::new("goto_tab:1").unwrap();
+                assert_physical_config_trigger(
+                    roastty_config_trigger(config, goto_tab.as_ptr(), goto_tab.as_bytes().len()),
+                    key::Key::Digit1,
+                    ROASTTY_MODS_ALT,
+                );
+                let scroll = CString::new("scroll_page_down").unwrap();
+                assert_physical_config_trigger(
+                    roastty_config_trigger(config, scroll.as_ptr(), scroll.as_bytes().len()),
+                    key::Key::PageDown,
+                    ROASTTY_MODS_CTRL,
+                );
+                let text = CString::new("text:=").unwrap();
+                assert_unicode_config_trigger(
+                    roastty_config_trigger(config, text.as_ptr(), text.as_bytes().len()),
+                    u32::from(b'e'),
+                    ROASTTY_MODS_CTRL,
+                );
+
+                roastty_config_free(config);
+            },
+        );
+    }
+
+    #[test]
+    fn config_cli_keybind_later_action_replaces_earlier_and_clones() {
+        with_init_args(
+            &[
+                "roastty",
+                "--keybind=ctrl+n=new_window",
+                "--keybind=cmd+n=new_window",
+            ],
+            || {
+                let config = roastty_config_new();
+                roastty_config_load_cli_args(config);
+                let clone = roastty_config_clone(config);
+
+                let action = CString::new("new_window").unwrap();
+                for config in [config, clone] {
+                    assert_unicode_config_trigger(
+                        roastty_config_trigger(config, action.as_ptr(), action.as_bytes().len()),
+                        u32::from(b'n'),
+                        ROASTTY_MODS_SUPER,
+                    );
+                }
+
+                roastty_config_free(clone);
+                roastty_config_free(config);
+            },
+        );
+    }
+
+    #[test]
+    fn config_cli_keybind_ignores_malformed_and_keeps_fallback_defaults() {
+        with_init_args(
+            &[
+                "roastty",
+                "--keybind",
+                "--window-theme=dark",
+                "--keybind=",
+                "--keybind=ctrl+=new_window",
+                "--keybind=shift+shift+a=new_window",
+                "--keybind=foo=new_window",
+                "--keybind=a+b=new_window",
+                "--keybind=F1=reload_config",
+                "--keybind=a=",
+                "--keybind=ctrl+a=copy_to_clipboard",
+            ],
+            || {
+                let config = roastty_config_new();
+                roastty_config_load_cli_args(config);
+
+                let new_window = CString::new("new_window").unwrap();
+                assert_unicode_config_trigger(
+                    roastty_config_trigger(
+                        config,
+                        new_window.as_ptr(),
+                        new_window.as_bytes().len(),
+                    ),
+                    u32::from(b'n'),
+                    ROASTTY_MODS_SUPER,
+                );
+                let copy = CString::new("copy_to_clipboard").unwrap();
+                assert_unicode_config_trigger(
+                    roastty_config_trigger(config, copy.as_ptr(), copy.as_bytes().len()),
+                    u32::from(b'a'),
+                    ROASTTY_MODS_CTRL,
+                );
+                let reload = CString::new("reload_config").unwrap();
+                assert_unicode_config_trigger(
+                    roastty_config_trigger(config, reload.as_ptr(), reload.as_bytes().len()),
+                    u32::from(b','),
+                    ROASTTY_MODS_SHIFT | ROASTTY_MODS_SUPER,
+                );
+
+                roastty_config_free(config);
+            },
+        );
+    }
+
+    #[test]
+    fn config_cli_keybind_init_replaces_previous_argv_and_handles_nulls() {
+        let _guard = CLI_ARGS_LOCK.lock().unwrap();
+        let first = CString::new("roastty").unwrap();
+        let keybind = CString::new("--keybind=ctrl+a=copy_to_clipboard").unwrap();
+        let mut first_ptrs = vec![first.as_ptr().cast_mut(), keybind.as_ptr().cast_mut()];
+        assert_eq!(
+            roastty_init(first_ptrs.len(), first_ptrs.as_mut_ptr()),
+            ROASTTY_SUCCESS
+        );
+        let config = roastty_config_new();
+        roastty_config_load_cli_args(config);
+        let copy = CString::new("copy_to_clipboard").unwrap();
+        assert_unicode_config_trigger(
+            roastty_config_trigger(config, copy.as_ptr(), copy.as_bytes().len()),
+            u32::from(b'a'),
+            ROASTTY_MODS_CTRL,
+        );
+        roastty_config_free(config);
+
+        let later = CString::new("--keybind=cmd+n=new_window").unwrap();
+        let mut second_ptrs = vec![
+            first.as_ptr().cast_mut(),
+            ptr::null_mut(),
+            later.as_ptr().cast_mut(),
+        ];
+        assert_eq!(
+            roastty_init(second_ptrs.len(), second_ptrs.as_mut_ptr()),
+            ROASTTY_SUCCESS
+        );
+        let config = roastty_config_new();
+        roastty_config_load_cli_args(config);
+        assert_physical_config_trigger(
+            roastty_config_trigger(config, copy.as_ptr(), copy.as_bytes().len()),
+            key::Key::Copy,
+            ROASTTY_MODS_NONE,
+        );
+        roastty_config_free(config);
+
+        assert_eq!(roastty_init(0, ptr::null_mut()), ROASTTY_SUCCESS);
     }
 
     #[test]

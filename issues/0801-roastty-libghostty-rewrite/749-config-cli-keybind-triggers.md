@@ -8,6 +8,11 @@ reasoning = "high"
 agent = "codex"
 model = "gpt-5"
 reasoning = "medium"
+
+[review.result]
+agent = "codex"
+model = "gpt-5"
+reasoning = "medium"
 +++
 
 # Experiment 749: Config CLI Keybind Triggers
@@ -109,3 +114,50 @@ Codex re-reviewed the corrected design and approved it for the plan commit. The
 review confirmed that the scope is narrow enough to add custom reverse trigger
 lookup through CLI-loaded config without implying custom key dispatch, key
 tables, sequences, unbinds, or diagnostics.
+
+## Result
+
+**Result:** Pass
+
+Roastty now keeps a deep-copied process-local argv snapshot from
+`roastty_init(argc, argv)` and uses it in `roastty_config_load_cli_args`.
+`--keybind=value` and `--keybind value` now load simple root keybinds into a
+reverse action-to-trigger map on `Config`, and `roastty_config_trigger` checks
+that map before falling back to static defaults.
+
+The parser supports the scoped `modifier+modifier+key=action` grammar, common
+Ghostty modifier aliases, one-character Unicode triggers, and the approved
+physical-key subset. It rejects malformed values silently for this experiment,
+preserves action bytes after the first `=`, replaces earlier triggers for
+duplicate actions, and clones stored trigger mappings with
+`roastty_config_clone`.
+
+Verification passed:
+
+- `cargo test -p roastty config_cli_keybind -- --nocapture --test-threads=1`
+- `cargo test -p roastty config_trigger -- --nocapture --test-threads=1`
+- `cargo test -p roastty --test abi_harness -- --nocapture`
+- `cargo fmt -p roastty`
+- `cargo fmt -p roastty -- --check`
+- `git diff --check`
+
+## Completion Review
+
+Codex reviewed the first implementation and found two real blockers: null argv
+entries were skipped instead of causing the captured argv list to be treated as
+empty, and the physical-key parser accepted every key known to `Key::from_w3c`
+instead of the approved subset.
+
+The implementation was corrected so any null argv entry clears the captured argv
+list, and physical key parsing now uses an explicit allowlist. Rust and C tests
+were added for null-entry argv mixed with later keybinds and for rejecting an
+unsupported known W3C key (`F1`). Codex re-reviewed the corrected implementation
+and approved it for the result commit with no remaining blocking findings.
+
+## Conclusion
+
+Experiment 749 added the first real keybind parsing/storage path for Roastty
+configuration and made `roastty_config_trigger` a real configured reverse lookup
+instead of default-only behavior. The remaining keybinding work is still large:
+config files, diagnostics, tables, sequences, unbind/clear semantics, and
+surface dispatch of configured keybinds are not implemented yet.

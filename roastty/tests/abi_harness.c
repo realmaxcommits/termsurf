@@ -4469,6 +4469,78 @@ int main(int argc, char **argv) {
   assert(trigger.tag == ROASTTY_TRIGGER_UNICODE);
   assert(trigger.key.unicode == 'g');
   assert(trigger.mods == (ROASTTY_MODS_SHIFT | ROASTTY_MODS_SUPER));
+
+  char cli_arg0[] = "roastty";
+  char cli_keybind1[] = "--keybind=ctrl+a=copy_to_clipboard";
+  char cli_keybind_flag[] = "--keybind";
+  char cli_keybind2[] = "cmd+KeyN=new_window";
+  char *cli_argv[] = {cli_arg0, cli_keybind1, cli_keybind_flag, cli_keybind2};
+  assert(roastty_init(4, cli_argv) == ROASTTY_SUCCESS);
+  roastty_config_t cli_config = roastty_config_new();
+  assert(cli_config != NULL);
+  roastty_config_load_cli_args(cli_config);
+  trigger = roastty_config_trigger(cli_config, "copy_to_clipboard",
+                                   strlen("copy_to_clipboard"));
+  assert(trigger.tag == ROASTTY_TRIGGER_UNICODE);
+  assert(trigger.key.unicode == 'a');
+  assert(trigger.mods == ROASTTY_MODS_CTRL);
+  trigger = roastty_config_trigger(cli_config, "new_window",
+                                   strlen("new_window"));
+  assert(trigger.tag == ROASTTY_TRIGGER_PHYSICAL);
+  assert(trigger.key.physical == ROASTTY_KEY_KEY_N);
+  assert(trigger.mods == ROASTTY_MODS_SUPER);
+
+  roastty_config_t cli_clone = roastty_config_clone(cli_config);
+  assert(cli_clone != NULL);
+  trigger = roastty_config_trigger(cli_clone, "new_window",
+                                   strlen("new_window"));
+  assert(trigger.tag == ROASTTY_TRIGGER_PHYSICAL);
+  assert(trigger.key.physical == ROASTTY_KEY_KEY_N);
+  assert(trigger.mods == ROASTTY_MODS_SUPER);
+  roastty_config_free(cli_clone);
+  roastty_config_free(cli_config);
+
+  char malformed_flag[] = "--keybind";
+  char next_option[] = "--window-theme=dark";
+  char empty_keybind[] = "--keybind=";
+  char malformed1[] = "--keybind=shift+shift+a=new_window";
+  char malformed2[] = "--keybind=a+b=new_window";
+  char unsupported_physical[] = "--keybind=F1=reload_config";
+  char valid1[] = "--keybind=ctrl+n=new_window";
+  char valid2[] = "--keybind=cmd+n=new_window";
+  char *malformed_argv[] = {cli_arg0, malformed_flag, next_option,
+                            empty_keybind, malformed1, malformed2,
+                            unsupported_physical, valid1, valid2};
+  assert(roastty_init(9, malformed_argv) == ROASTTY_SUCCESS);
+  cli_config = roastty_config_new();
+  assert(cli_config != NULL);
+  roastty_config_load_cli_args(cli_config);
+  trigger = roastty_config_trigger(cli_config, "new_window",
+                                   strlen("new_window"));
+  assert(trigger.tag == ROASTTY_TRIGGER_UNICODE);
+  assert(trigger.key.unicode == 'n');
+  assert(trigger.mods == ROASTTY_MODS_SUPER);
+  trigger = roastty_config_trigger(cli_config, "reload_config",
+                                   strlen("reload_config"));
+  assert(trigger.tag == ROASTTY_TRIGGER_UNICODE);
+  assert(trigger.key.unicode == ',');
+  assert(trigger.mods == (ROASTTY_MODS_SHIFT | ROASTTY_MODS_SUPER));
+  roastty_config_free(cli_config);
+
+  char later_keybind[] = "--keybind=cmd+n=new_window";
+  char *null_entry_argv[] = {cli_arg0, NULL, later_keybind};
+  assert(roastty_init(3, null_entry_argv) == ROASTTY_SUCCESS);
+  cli_config = roastty_config_new();
+  assert(cli_config != NULL);
+  roastty_config_load_cli_args(cli_config);
+  trigger = roastty_config_trigger(cli_config, "copy_to_clipboard",
+                                   strlen("copy_to_clipboard"));
+  assert(trigger.tag == ROASTTY_TRIGGER_PHYSICAL);
+  assert(trigger.key.physical == ROASTTY_KEY_COPY);
+  assert(trigger.mods == ROASTTY_MODS_NONE);
+  roastty_config_free(cli_config);
+
+  assert(roastty_init((uintptr_t)argc, argv) == ROASTTY_SUCCESS);
   trigger = roastty_config_trigger(config, "open_config:", 12);
   assert(trigger.tag == ROASTTY_TRIGGER_PHYSICAL);
   assert(trigger.key.physical == ROASTTY_KEY_UNIDENTIFIED);
