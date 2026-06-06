@@ -1,4 +1,6 @@
 use std::alloc::{self, Layout};
+#[cfg(test)]
+use std::collections::VecDeque;
 use std::ffi::CString;
 use std::io::Write;
 use std::os::raw::{c_char, c_int, c_void};
@@ -1248,6 +1250,7 @@ struct App {
     runtime: RoasttyRuntimeConfig,
     focused: bool,
     color_scheme: c_int,
+    surfaces: Vec<NonNull<Surface>>,
 }
 
 struct Surface {
@@ -1259,6 +1262,55 @@ struct Surface {
     occluded: bool,
     size: RoasttySurfaceSize,
     color_scheme: c_int,
+    termio_worker: Option<termio::TermioWorker>,
+    process_exited: bool,
+    dirty: bool,
+    last_termio_error: Option<String>,
+    #[cfg(test)]
+    test_termio_events: VecDeque<termio::TermioWorkerEvent>,
+}
+
+impl Surface {
+    fn tick_termio(&mut self) {
+        #[cfg(test)]
+        while let Some(event) = self.test_termio_events.pop_front() {
+            self.apply_termio_event(event);
+        }
+
+        let mut events = Vec::new();
+        if let Some(worker) = &self.termio_worker {
+            while let Some(event) = worker.try_recv_event() {
+                events.push(event);
+            }
+        }
+
+        for event in events {
+            self.apply_termio_event(event);
+        }
+    }
+
+    fn apply_termio_event(&mut self, event: termio::TermioWorkerEvent) {
+        match event {
+            termio::TermioWorkerEvent::Pump(pump) => {
+                if pump.bytes_read > 0
+                    || pump.bytes_written > 0
+                    || pump.pending_write_bytes > 0
+                    || pump.eof
+                    || pump.child_exited
+                {
+                    self.dirty = true;
+                }
+                if pump.eof || pump.child_exited {
+                    self.process_exited = true;
+                }
+            }
+            termio::TermioWorkerEvent::Error(err) => {
+                self.last_termio_error = Some(err);
+                self.process_exited = true;
+                self.dirty = true;
+            }
+        }
+    }
 }
 
 struct Terminal {
@@ -1342,6 +1394,18 @@ fn surface_from_handle<'a>(handle: RoasttySurface) -> Option<&'a mut Surface> {
         None
     } else {
         Some(unsafe { &mut *(handle.cast::<Surface>()) })
+    }
+}
+
+fn register_surface(app: RoasttyApp, surface: NonNull<Surface>) {
+    if let Some(app) = app_from_handle(app) {
+        app.surfaces.push(surface);
+    }
+}
+
+fn unregister_surface(app: RoasttyApp, surface: NonNull<Surface>) {
+    if let Some(app) = app_from_handle(app) {
+        app.surfaces.retain(|registered| *registered != surface);
     }
 }
 
@@ -4915,6 +4979,7 @@ pub extern "C" fn roastty_app_new(
         runtime,
         focused: false,
         color_scheme: 0,
+        surfaces: Vec::new(),
     }))
     .cast()
 }
@@ -4923,13 +4988,29 @@ pub extern "C" fn roastty_app_new(
 pub extern "C" fn roastty_app_free(app: RoasttyApp) {
     if !app.is_null() {
         unsafe {
-            drop(Box::from_raw(app.cast::<App>()));
+            let mut app_box = Box::from_raw(app.cast::<App>());
+            for mut surface in app_box.surfaces.drain(..) {
+                let surface = surface.as_mut();
+                surface.app = ptr::null_mut();
+                surface.termio_worker = None;
+            }
+            drop(app_box);
         }
     }
 }
 
 #[no_mangle]
-pub extern "C" fn roastty_app_tick(_app: RoasttyApp) {}
+pub extern "C" fn roastty_app_tick(app: RoasttyApp) {
+    let surfaces = app_from_handle(app)
+        .map(|app| app.surfaces.clone())
+        .unwrap_or_default();
+    for mut surface in surfaces {
+        let surface = unsafe { surface.as_mut() };
+        if surface.app == app {
+            surface.tick_termio();
+        }
+    }
+}
 
 #[no_mangle]
 pub extern "C" fn roastty_app_userdata(app: RoasttyApp) -> *mut c_void {
@@ -8228,7 +8309,7 @@ pub extern "C" fn roastty_surface_new(
         unsafe { *config }
     };
 
-    Box::into_raw(Box::new(Surface {
+    let surface = Box::new(Surface {
         app,
         userdata: config.userdata,
         scale_factor_x: config.scale_factor,
@@ -8244,15 +8325,28 @@ pub extern "C" fn roastty_surface_new(
             cell_height_px: 0,
         },
         color_scheme: 0,
-    }))
-    .cast()
+        termio_worker: None,
+        process_exited: false,
+        dirty: false,
+        last_termio_error: None,
+        #[cfg(test)]
+        test_termio_events: VecDeque::new(),
+    });
+    let surface = NonNull::from(Box::leak(surface));
+    register_surface(app, surface);
+    surface.as_ptr().cast()
 }
 
 #[no_mangle]
 pub extern "C" fn roastty_surface_free(surface: RoasttySurface) {
     if !surface.is_null() {
         unsafe {
-            drop(Box::from_raw(surface.cast::<Surface>()));
+            let surface_ptr = NonNull::new_unchecked(surface.cast::<Surface>());
+            let surface_box = Box::from_raw(surface.cast::<Surface>());
+            if !surface_box.app.is_null() {
+                unregister_surface(surface_box.app, surface_ptr);
+            }
+            drop(surface_box);
         }
     }
 }
@@ -8280,8 +8374,10 @@ pub extern "C" fn roastty_surface_needs_confirm_quit(_surface: RoasttySurface) -
 }
 
 #[no_mangle]
-pub extern "C" fn roastty_surface_process_exited(_surface: RoasttySurface) -> bool {
-    false
+pub extern "C" fn roastty_surface_process_exited(surface: RoasttySurface) -> bool {
+    surface_from_handle(surface)
+        .map(|surface| surface.process_exited)
+        .unwrap_or(false)
 }
 
 #[no_mangle]
@@ -8355,12 +8451,15 @@ pub extern "C" fn roastty_surface_request_close(_surface: RoasttySurface) {}
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::os::pty::{PtyReadiness, PtySize, PTY_COMMAND_LOCK};
     use crate::terminal::terminal::{
         TerminalDeviceAttributes, TerminalDeviceAttributesPrimary,
         TerminalDeviceAttributesSecondary, TerminalDeviceAttributesTertiary,
     };
     use std::cell::RefCell;
     use std::sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering};
+    use std::thread;
+    use std::time::Duration;
 
     #[derive(Default)]
     struct EffectState {
@@ -8394,6 +8493,181 @@ mod tests {
 
     fn with_effect_state<R>(f: impl FnOnce(&mut EffectState) -> R) -> R {
         EFFECT_STATE.with(|state| f(&mut state.borrow_mut()))
+    }
+
+    fn test_pty_size() -> PtySize {
+        PtySize {
+            rows: 24,
+            cols: 80,
+            width_px: 800,
+            height_px: 600,
+        }
+    }
+
+    fn new_test_app() -> RoasttyApp {
+        roastty_app_new(ptr::null(), ptr::null_mut())
+    }
+
+    fn new_test_surface(app: RoasttyApp) -> RoasttySurface {
+        let config = roastty_surface_config_new();
+        roastty_surface_new(app, &config)
+    }
+
+    fn app_surface_count(app: RoasttyApp) -> usize {
+        app_from_handle(app)
+            .map(|app| app.surfaces.len())
+            .unwrap_or_default()
+    }
+
+    fn test_worker(script: &str) -> termio::TermioWorker {
+        let termio = termio::Termio::spawn("/bin/sh", ["-c", script], test_pty_size())
+            .expect("spawn termio");
+        termio::TermioWorker::spawn(termio, 10, 4096).expect("spawn termio worker")
+    }
+
+    fn wait_until(mut done: impl FnMut() -> bool) {
+        for _ in 0..100 {
+            if done() {
+                return;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        panic!("condition not met");
+    }
+
+    fn test_pump(
+        bytes_read: usize,
+        bytes_written: usize,
+        pending_write_bytes: usize,
+        eof: bool,
+        child_exited: bool,
+    ) -> termio::TermioPump {
+        termio::TermioPump {
+            readiness: PtyReadiness::default(),
+            bytes_read,
+            eof,
+            bytes_written,
+            pending_write_bytes,
+            child_exited,
+        }
+    }
+
+    #[test]
+    fn surface_new_registers_and_surface_free_unregisters_from_app() {
+        let app = new_test_app();
+        let first = new_test_surface(app);
+        let second = new_test_surface(app);
+
+        assert_eq!(app_surface_count(app), 2);
+
+        roastty_surface_free(first);
+        assert_eq!(app_surface_count(app), 1);
+        assert_eq!(roastty_surface_app(second), app);
+
+        roastty_surface_free(second);
+        assert_eq!(app_surface_count(app), 0);
+        roastty_app_free(app);
+    }
+
+    #[test]
+    fn app_free_detaches_live_surfaces_before_surface_free() {
+        let _guard = PTY_COMMAND_LOCK.lock().unwrap();
+        let app = new_test_app();
+        let surface = new_test_surface(app);
+        surface_from_handle(surface).unwrap().termio_worker = Some(test_worker("sleep 5"));
+
+        roastty_app_free(app);
+
+        let surface_ref = surface_from_handle(surface).unwrap();
+        assert!(surface_ref.app.is_null());
+        assert!(surface_ref.termio_worker.is_none());
+        assert_eq!(roastty_surface_app(surface), ptr::null_mut());
+
+        roastty_surface_free(surface);
+    }
+
+    #[test]
+    fn app_tick_drains_worker_output_into_surface_dirty_state() {
+        let _guard = PTY_COMMAND_LOCK.lock().unwrap();
+        let app = new_test_app();
+        let surface = new_test_surface(app);
+        surface_from_handle(surface).unwrap().termio_worker = Some(test_worker("printf hello"));
+
+        wait_until(|| {
+            roastty_app_tick(app);
+            surface_from_handle(surface).unwrap().dirty
+        });
+
+        assert!(surface_from_handle(surface).unwrap().dirty);
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+    }
+
+    #[test]
+    fn app_tick_marks_surface_process_exited_from_worker_final_event() {
+        let _guard = PTY_COMMAND_LOCK.lock().unwrap();
+        let app = new_test_app();
+        let surface = new_test_surface(app);
+        surface_from_handle(surface).unwrap().termio_worker = Some(test_worker("printf done"));
+
+        wait_until(|| {
+            roastty_app_tick(app);
+            roastty_surface_process_exited(surface)
+        });
+
+        assert!(roastty_surface_process_exited(surface));
+        assert!(surface_from_handle(surface).unwrap().dirty);
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+    }
+
+    #[test]
+    fn app_tick_applies_test_error_event_to_surface_state() {
+        let app = new_test_app();
+        let surface = new_test_surface(app);
+        surface_from_handle(surface)
+            .unwrap()
+            .test_termio_events
+            .push_back(termio::TermioWorkerEvent::Error("boom".to_string()));
+
+        roastty_app_tick(app);
+
+        let surface_ref = surface_from_handle(surface).unwrap();
+        assert!(surface_ref.dirty);
+        assert!(surface_ref.process_exited);
+        assert_eq!(surface_ref.last_termio_error.as_deref(), Some("boom"));
+        assert!(roastty_surface_process_exited(surface));
+
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+    }
+
+    #[test]
+    fn app_tick_drains_all_queued_surface_test_events_in_one_tick() {
+        let app = new_test_app();
+        let surface = new_test_surface(app);
+        let surface_ref = surface_from_handle(surface).unwrap();
+        surface_ref
+            .test_termio_events
+            .push_back(termio::TermioWorkerEvent::Pump(test_pump(
+                1, 0, 0, false, false,
+            )));
+        surface_ref
+            .test_termio_events
+            .push_back(termio::TermioWorkerEvent::Pump(test_pump(
+                0, 0, 0, false, true,
+            )));
+
+        roastty_app_tick(app);
+
+        let surface_ref = surface_from_handle(surface).unwrap();
+        assert!(surface_ref.test_termio_events.is_empty());
+        assert!(surface_ref.dirty);
+        assert!(surface_ref.process_exited);
+        assert!(roastty_surface_process_exited(surface));
+
+        roastty_surface_free(surface);
+        roastty_app_free(app);
     }
 
     unsafe extern "C" fn write_pty_cb(

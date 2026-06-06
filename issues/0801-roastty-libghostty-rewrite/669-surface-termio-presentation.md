@@ -3,6 +3,16 @@
 agent = "codex"
 model = "gpt-5"
 reasoning = "high"
+
+[review.design]
+agent = "codex"
+model = "gpt-5"
+reasoning = "medium"
+
+[review.result]
+agent = "codex"
+model = "gpt-5"
+reasoning = "medium"
 +++
 
 # Experiment 669: Surface Termio Presentation
@@ -106,3 +116,65 @@ all-events-drained test.
 - `cargo test -p roastty surface`
 - `cargo test -p roastty os::pty`
 - `git diff --check`
+
+## Result
+
+**Result:** Pass.
+
+Roastty now has internal surface presentation state for termio worker events.
+Apps keep a non-owning registry of live surfaces, `roastty_app_tick` walks that
+registry, and each surface drains all currently queued termio events into stored
+state. Pump events mark the surface dirty when output, writes, pending writes,
+EOF, or child exit occur. EOF and child exit set `process_exited`, and worker
+error events record `last_termio_error`, mark dirty, and set `process_exited`.
+
+Surface teardown now has explicit detachment behavior. `roastty_app_free`
+detaches registered surfaces, clears attached workers, nulls their app handles,
+and clears the app registry before dropping the app. `roastty_surface_free`
+skips app unregistration for detached surfaces, so freeing a surface after its
+app is safe. `roastty_surface_process_exited` now returns the stored surface
+state instead of a hardcoded false.
+
+This remains internal presentation plumbing. `roastty_surface_new` still does
+not start a shell or create a worker, and this experiment does not add renderer
+wakeups, frontend terminal snapshots, public worker launch ABI, or terminal grid
+resize.
+
+Focused tests cover surface registration/unregistration, app-free-before-surface
+detachment, worker-output dirty state, worker EOF/child-exit process state,
+test-queued worker error state, and single-tick draining of multiple queued
+events. Existing termio and PTY tests still pass.
+
+Verification passed:
+
+- `cargo fmt -p roastty`
+- `cargo fmt -p roastty -- --check`
+- `cargo test -p roastty surface` — 8 passed, 0 failed
+- `cargo test -p roastty termio` — 14 passed, 0 failed
+- `cargo test -p roastty os::pty` — 13 passed, 0 failed
+- `git diff --check`
+
+## Conclusion
+
+The app/surface layer can now observe attached termio worker events and retain
+basic presentation state. The remaining presentation work is to create workers
+from real surface configuration, expose terminal snapshots to the frontend,
+connect dirty state to renderer wakeups, and resize terminal grids with surface
+size changes.
+
+## Completion Review
+
+**Result:** Approved after documentation fixes.
+
+Codex found no code correctness blockers. It confirmed that app/surface registry
+teardown matches the amended design, `app_tick` clones the registry before
+ticking, detached surfaces skip app unregistration, and queued worker/test
+events drain into dirty/process-exited/error state. It found two result-record
+blockers: the experiment provenance was missing result-review metadata, and the
+README App/Surface/IO checklist still described the subsystem as not started.
+
+The experiment frontmatter and README agent tuple now record the result review,
+and the App/Surface/IO checklist now describes the completed PTY, termio worker,
+and surface termio presentation pieces while keeping the remaining frontend,
+renderer, snapshot, configured shell launch, foreground-pid, tty-name, and grid
+resize work explicit.

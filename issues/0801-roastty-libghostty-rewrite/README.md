@@ -205,7 +205,8 @@ Experiment 246).
       done; pane state alternate saved cursor application done; remaining pane
       state application, live output, terminal DCS bridge, PTY foundation, and
       PTY subprocess spawn, PTY child IO, and synchronous termio pump done;
-      background PTY worker done; App/surface presentation missing
+      background PTY worker and surface termio presentation state done; frontend
+      terminal snapshots and renderer integration missing
 - [x] `sys` (PNG-decode abstraction) — implemented and tested via C ABI
 
 ### Renderer — data + Metal primitives only; no live render loop
@@ -272,15 +273,22 @@ Experiment 246).
       mouse dispatch, selection read, splits — missing
 - [ ] Inspector ABI — missing
 
-### App / Surface / IO — not started (stubs only)
+### App / Surface / IO — partial
 
 - [ ] `App` lifecycle (init, tick, focus, quit-confirm, color-scheme, global
-      keybinds, mailbox / events) — skeleton struct + stubbed fns
+      keybinds, mailbox / events) — app struct, focus/color-scheme state, and
+      surface tick registry exist; mailbox/events and full lifecycle behavior
+      missing
 - [ ] `Surface` lifecycle (create, config-inherit, draw/refresh, sizing, scale,
       display-id, occlusion, quicklook, inspector, splits, selection + text
-      reads) — skeleton + basic setters only
+      reads) — lifecycle handle, basic setters, app detachment, worker event
+      draining, dirty/process-exit/error state done; draw/refresh, snapshots,
+      splits, text reads, and frontend presentation missing
 - [ ] `pty` + `termio` (shell spawn, read/write loops, resize, fg pid, tty name,
-      exit) — missing (placeholder returns)
+      exit) — PTY open/resize, subprocess spawn, child IO, synchronous pump,
+      background worker, worker shutdown/drop, and surface process-exit state
+      done; configured shell launch, foreground pid, tty name, renderer wakeups,
+      and frontend terminal snapshots missing
 - [ ] `os/` utilities (tmpdir / file / env / hostname / locale) — ad hoc Rust
       stdlib; no dedicated module
 
@@ -1806,7 +1814,7 @@ are past the correctness-critical foundation.
 - [Experiment 668: Background Termio Worker](668-background-termio-worker.md) —
   **Pass** · Codex/Codex/Codex
 - [Experiment 669: Surface Termio Presentation](669-surface-termio-presentation.md)
-  — **Designed** · Codex/Codex/-
+  — **Pass** · Codex/Codex/Codex
 
 ## Non-Goals
 
