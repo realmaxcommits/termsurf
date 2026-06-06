@@ -8,6 +8,11 @@ reasoning = "high"
 agent = "codex"
 model = "gpt-5"
 reasoning = "medium"
+
+[review.result]
+agent = "codex"
+model = "gpt-5"
+reasoning = "medium"
 +++
 
 # Experiment 748: Binding Action Navigate Search
@@ -93,3 +98,49 @@ review agreed that the runtime-callback approach is appropriate for Roastty's
 current architecture because Ghostty's internal search worker is not present,
 and confirmed that the design now preserves performable Command-G /
 Shift-Command-G semantics.
+
+## Result
+
+**Result:** Pass
+
+Roastty now supports `navigate_search:next` and `navigate_search:previous`
+through a Roastty-owned runtime callback action:
+`ROASTTY_ACTION_NAVIGATE_SEARCH = 1000`. The public header reserves the Roastty
+extension action range, exposes stable previous/next direction values, and
+documents the action storage layout.
+
+The binding-action parser forwards both directions with strict parameter
+validation, `roastty_config_trigger` reports the Ghostty macOS defaults for
+Command-G and Shift-Command-G, and default surface key dispatch now performs
+those chords when the callback succeeds while falling through when it does not.
+Rust and C harness tests cover constants, callback target and storage shape,
+config triggers, parser rejection, callback result propagation, release
+suppression, and performable fallback.
+
+Verification passed:
+
+- `cargo test -p roastty surface_binding_action_search -- --nocapture --test-threads=1`
+- `cargo test -p roastty config_trigger -- --nocapture --test-threads=1`
+- `cargo test -p roastty surface_key_default -- --nocapture --test-threads=1`
+- `cargo test -p roastty surface_key_is_binding -- --nocapture --test-threads=1`
+- `cargo test -p roastty --test abi_harness -- --nocapture`
+- `cargo fmt -p roastty`
+- `cargo fmt -p roastty -- --check`
+- `git diff --check`
+
+## Completion Review
+
+Codex reviewed the completed implementation and approved it for the result
+commit. The review found no blocking issues, confirmed the Roastty extension ABI
+shape, strict parser behavior, config trigger mapping, and performable default
+dispatch semantics. It noted only a non-blocking gap: the diff proves
+callback-false fallthrough for default Command-G, while missing-callback
+fallthrough is covered indirectly through the shared runtime callback false path
+rather than by a dedicated default-key test.
+
+## Conclusion
+
+Experiment 748 closed the Command-G / Shift-Command-G search navigation gap left
+by Experiment 747. Search navigation is still delegated to the embedding runtime
+because Roastty does not yet own Ghostty's internal search worker, but the ABI
+and default key behavior now have stable, tested hooks.

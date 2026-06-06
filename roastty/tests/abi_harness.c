@@ -6,6 +6,12 @@
 
 #include "roastty.h"
 
+static bool action_cb_result = false;
+static size_t action_cb_count = 0;
+static roastty_app_t action_last_app = NULL;
+static roastty_target_s action_last_target = {0};
+static roastty_action_s action_last_action = {0};
+
 static void wakeup_cb(void *userdata) {
   assert(userdata == (void *)0xA991);
 }
@@ -13,10 +19,11 @@ static void wakeup_cb(void *userdata) {
 static bool action_cb(roastty_app_t app,
                       roastty_target_s target,
                       roastty_action_s action) {
-  (void)app;
-  (void)target;
-  (void)action;
-  return false;
+  action_cb_count++;
+  action_last_app = app;
+  action_last_target = target;
+  action_last_action = action;
+  return action_cb_result;
 }
 
 static bool read_clipboard_cb(void *userdata,
@@ -1847,10 +1854,13 @@ static void assert_support_abi(void) {
   assert(ROASTTY_ACTION_END_SEARCH == 60);
   assert(ROASTTY_ACTION_READONLY == 63);
   assert(ROASTTY_ACTION_COPY_TITLE_TO_CLIPBOARD == 64);
+  assert(ROASTTY_ACTION_NAVIGATE_SEARCH == 1000);
   assert(ROASTTY_ACTION_FLOAT_WINDOW == 42);
   assert(ROASTTY_ACTION_SECURE_INPUT == 43);
   assert(ROASTTY_READONLY_ON == 0);
   assert(ROASTTY_READONLY_OFF == 1);
+  assert(ROASTTY_NAVIGATE_SEARCH_PREVIOUS == 0);
+  assert(ROASTTY_NAVIGATE_SEARCH_NEXT == 1);
   assert(ROASTTY_ACTION_OPEN_URL_KIND_UNKNOWN == 0);
   assert(ROASTTY_ACTION_OPEN_URL_KIND_TEXT == 1);
   assert(ROASTTY_ACTION_OPEN_URL_KIND_HTML == 2);
@@ -4089,6 +4099,7 @@ int main(int argc, char **argv) {
   assert(ROASTTY_ACTION_UNDO == 51);
   assert(ROASTTY_ACTION_REDO == 52);
   assert(ROASTTY_ACTION_SHOW_ON_SCREEN_KEYBOARD == 57);
+  assert(ROASTTY_ACTION_NAVIGATE_SEARCH == 1000);
   assert(ROASTTY_INSPECTOR_TOGGLE == 0);
   assert(ROASTTY_INSPECTOR_SHOW == 1);
   assert(ROASTTY_INSPECTOR_HIDE == 2);
@@ -4098,6 +4109,8 @@ int main(int argc, char **argv) {
   assert(ROASTTY_SECURE_INPUT_ON == 0);
   assert(ROASTTY_SECURE_INPUT_OFF == 1);
   assert(ROASTTY_SECURE_INPUT_TOGGLE == 2);
+  assert(ROASTTY_NAVIGATE_SEARCH_PREVIOUS == 0);
+  assert(ROASTTY_NAVIGATE_SEARCH_NEXT == 1);
   assert(ROASTTY_CLOSE_TAB_THIS == 0);
   assert(ROASTTY_CLOSE_TAB_OTHER == 1);
   assert(ROASTTY_CLOSE_TAB_RIGHT == 2);
@@ -4446,6 +4459,16 @@ int main(int argc, char **argv) {
   assert(trigger.tag == ROASTTY_TRIGGER_UNICODE);
   assert(trigger.key.unicode == 'v');
   assert(trigger.mods == (ROASTTY_MODS_SHIFT | ROASTTY_MODS_SUPER));
+  trigger = roastty_config_trigger(config, "navigate_search:next",
+                                   strlen("navigate_search:next"));
+  assert(trigger.tag == ROASTTY_TRIGGER_UNICODE);
+  assert(trigger.key.unicode == 'g');
+  assert(trigger.mods == ROASTTY_MODS_SUPER);
+  trigger = roastty_config_trigger(config, "navigate_search:previous",
+                                   strlen("navigate_search:previous"));
+  assert(trigger.tag == ROASTTY_TRIGGER_UNICODE);
+  assert(trigger.key.unicode == 'g');
+  assert(trigger.mods == (ROASTTY_MODS_SHIFT | ROASTTY_MODS_SUPER));
   trigger = roastty_config_trigger(config, "open_config:", 12);
   assert(trigger.tag == ROASTTY_TRIGGER_PHYSICAL);
   assert(trigger.key.physical == ROASTTY_KEY_UNIDENTIFIED);
@@ -4614,12 +4637,36 @@ int main(int argc, char **argv) {
   set_config_binding_event(surface_binding_event, ROASTTY_KEY_ACTION_RELEASE,
                            ROASTTY_KEY_KEY_D, ROASTTY_MODS_SUPER, NULL, 0);
   assert(roastty_surface_key(surface, surface_binding_event));
+  action_cb_result = true;
+  action_cb_count = 0;
   set_config_binding_event(surface_binding_event, ROASTTY_KEY_ACTION_PRESS,
                            ROASTTY_KEY_KEY_G, ROASTTY_MODS_SUPER, "g", 0);
   keybind_flags = 0xff;
   assert(roastty_surface_key_is_binding(surface, surface_binding_event,
                                         &keybind_flags));
   assert(keybind_flags == 0x09);
+  assert(roastty_surface_key(surface, surface_binding_event));
+  assert(action_cb_count == 1);
+  assert(action_last_action.tag == ROASTTY_ACTION_NAVIGATE_SEARCH);
+  assert(action_last_action.storage[0] == ROASTTY_NAVIGATE_SEARCH_NEXT);
+  for (size_t i = 1; i < 8; i++) {
+    assert(action_last_action.storage[i] == 0);
+  }
+  set_config_binding_event(surface_binding_event, ROASTTY_KEY_ACTION_RELEASE,
+                           ROASTTY_KEY_KEY_G, ROASTTY_MODS_SUPER, NULL, 0);
+  assert(roastty_surface_key(surface, surface_binding_event));
+  set_config_binding_event(surface_binding_event, ROASTTY_KEY_ACTION_PRESS,
+                           ROASTTY_KEY_KEY_G,
+                           (roastty_input_mods_e)(ROASTTY_MODS_SHIFT |
+                                                  ROASTTY_MODS_SUPER),
+                           "g", 0);
+  assert(roastty_surface_key(surface, surface_binding_event));
+  assert(action_cb_count == 2);
+  assert(action_last_action.tag == ROASTTY_ACTION_NAVIGATE_SEARCH);
+  assert(action_last_action.storage[0] == ROASTTY_NAVIGATE_SEARCH_PREVIOUS);
+  action_cb_result = false;
+  set_config_binding_event(surface_binding_event, ROASTTY_KEY_ACTION_PRESS,
+                           ROASTTY_KEY_KEY_G, ROASTTY_MODS_SUPER, "g", 0);
   assert(!roastty_surface_key(surface, surface_binding_event));
   roastty_key_event_free(surface_binding_event);
   roastty_surface_config_s inherited =
@@ -4707,6 +4754,36 @@ int main(int argc, char **argv) {
   assert(!roastty_surface_binding_action(surface, "end_search:now", 14));
   assert(!roastty_surface_binding_action(surface, "search_selection:", 17));
   assert(!roastty_surface_binding_action(surface, "search_selection:now", 20));
+  action_cb_count = 0;
+  assert(!roastty_surface_binding_action(surface, "navigate_search", 15));
+  assert(!roastty_surface_binding_action(surface, "navigate_search:", 16));
+  assert(!roastty_surface_binding_action(surface, "navigate_search:forward", 23));
+  assert(!roastty_surface_binding_action(surface, "navigate_search:next:extra", 26));
+  assert(!roastty_surface_binding_action(surface, "navigate_search: next", 21));
+  assert(!roastty_surface_binding_action(surface, "navigate_search:next ", 21));
+  assert(!roastty_surface_binding_action(surface, "navigate_search:previous:extra", 30));
+  assert(!roastty_surface_binding_action(surface, "navigate_search: previous", 25));
+  assert(!roastty_surface_binding_action(surface, "navigate_search:previous ", 25));
+  assert(action_cb_count == 0);
+  action_cb_result = true;
+  assert(roastty_surface_binding_action(surface, "navigate_search:next", 20));
+  assert(action_cb_count == 1);
+  assert(action_last_app == app);
+  assert(action_last_target.tag == ROASTTY_TARGET_SURFACE);
+  assert(action_last_target.surface == surface);
+  assert(action_last_action.tag == ROASTTY_ACTION_NAVIGATE_SEARCH);
+  assert(action_last_action.storage[0] == ROASTTY_NAVIGATE_SEARCH_NEXT);
+  for (size_t i = 1; i < 8; i++) {
+    assert(action_last_action.storage[i] == 0);
+  }
+  assert(roastty_surface_binding_action(surface, "navigate_search:previous", 24));
+  assert(action_cb_count == 2);
+  assert(action_last_action.tag == ROASTTY_ACTION_NAVIGATE_SEARCH);
+  assert(action_last_action.storage[0] == ROASTTY_NAVIGATE_SEARCH_PREVIOUS);
+  for (size_t i = 1; i < 8; i++) {
+    assert(action_last_action.storage[i] == 0);
+  }
+  action_cb_result = false;
   assert(!roastty_surface_binding_action(surface, "new_tab:", 8));
   assert(!roastty_surface_binding_action(surface, "new_tab:now", 11));
   assert(!roastty_surface_binding_action(surface, "close_tab:", 10));

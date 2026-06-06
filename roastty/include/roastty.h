@@ -1238,6 +1238,11 @@ typedef enum {
   ROASTTY_ACTION_END_SEARCH = 60,
   ROASTTY_ACTION_READONLY = 63,
   ROASTTY_ACTION_COPY_TITLE_TO_CLIPBOARD = 64,
+  /*
+   * Roastty-owned action extensions start at 1000. These actions do not map to
+   * upstream Ghostty C action tags.
+   */
+  ROASTTY_ACTION_NAVIGATE_SEARCH = 1000,
 } roastty_action_tag_e;
 
 typedef enum {
@@ -1293,6 +1298,11 @@ typedef enum {
 } roastty_readonly_e;
 
 typedef enum {
+  ROASTTY_NAVIGATE_SEARCH_PREVIOUS = 0,
+  ROASTTY_NAVIGATE_SEARCH_NEXT = 1,
+} roastty_navigate_search_e;
+
+typedef enum {
   ROASTTY_ACTION_OPEN_URL_KIND_UNKNOWN = 0,
   ROASTTY_ACTION_OPEN_URL_KIND_TEXT = 1,
   ROASTTY_ACTION_OPEN_URL_KIND_HTML = 2,
@@ -1322,6 +1332,9 @@ typedef struct {
    *   storage[0] = borrowed const char* valid only during action_cb.
    *   Parameterless start_search bindings pass an empty string.
    * - ROASTTY_ACTION_READONLY: storage[0] = roastty_readonly_e
+   * - ROASTTY_ACTION_NAVIGATE_SEARCH:
+   *   storage[0] = roastty_navigate_search_e
+   *   storage[1..7] = 0
    * - ROASTTY_ACTION_OPEN_URL:
    *   storage[0] = roastty_action_open_url_kind_e
    *   storage[1] = borrowed const char* URL pointer valid only during action_cb

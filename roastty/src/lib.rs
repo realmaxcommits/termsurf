@@ -157,6 +157,7 @@ const ROASTTY_ACTION_START_SEARCH: c_int = 59;
 const ROASTTY_ACTION_END_SEARCH: c_int = 60;
 const ROASTTY_ACTION_READONLY: c_int = 63;
 const ROASTTY_ACTION_COPY_TITLE_TO_CLIPBOARD: c_int = 64;
+const ROASTTY_ACTION_NAVIGATE_SEARCH: c_int = 1000;
 
 const ROASTTY_INSPECTOR_TOGGLE: c_int = 0;
 const ROASTTY_INSPECTOR_SHOW: c_int = 1;
@@ -173,6 +174,9 @@ const ROASTTY_SECURE_INPUT_ON: c_int = 0;
 #[allow(dead_code)]
 const ROASTTY_SECURE_INPUT_OFF: c_int = 1;
 const ROASTTY_SECURE_INPUT_TOGGLE: c_int = 2;
+
+const ROASTTY_NAVIGATE_SEARCH_PREVIOUS: c_int = 0;
+const ROASTTY_NAVIGATE_SEARCH_NEXT: c_int = 1;
 
 const ROASTTY_CLOSE_TAB_THIS: c_int = 0;
 const ROASTTY_CLOSE_TAB_OTHER: c_int = 1;
@@ -3282,6 +3286,14 @@ fn inspector_mode_from_str(value: &[u8]) -> Option<c_int> {
     }
 }
 
+fn navigate_search_from_str(value: &[u8]) -> Option<c_int> {
+    match value {
+        b"previous" => Some(ROASTTY_NAVIGATE_SEARCH_PREVIOUS),
+        b"next" => Some(ROASTTY_NAVIGATE_SEARCH_NEXT),
+        _ => None,
+    }
+}
+
 fn signed_storage(value: isize) -> usize {
     value as usize
 }
@@ -3592,6 +3604,14 @@ fn parse_binding_action(surface: &Surface, action: &[u8]) -> Option<ParsedBindin
                 return None;
             }
             Some(ParsedBindingAction::SearchSelection)
+        }
+        b"navigate_search" => {
+            let mut storage = [0usize; 8];
+            storage[0] = navigate_search_from_str(parameter?)? as usize;
+            Some(ParsedBindingAction::RuntimeAction(
+                ROASTTY_ACTION_NAVIGATE_SEARCH,
+                storage,
+            ))
         }
         b"toggle_mouse_reporting" => {
             if parameter.is_some() {
@@ -4671,6 +4691,10 @@ fn default_config_trigger(action: &[u8]) -> RoasttyInputTrigger {
         b"paste_from_selection" => {
             unicode_trigger(u32::from(b'v'), ROASTTY_MODS_SHIFT | ROASTTY_MODS_SUPER)
         }
+        b"navigate_search:next" => unicode_trigger(u32::from(b'g'), ROASTTY_MODS_SUPER),
+        b"navigate_search:previous" => {
+            unicode_trigger(u32::from(b'g'), ROASTTY_MODS_SHIFT | ROASTTY_MODS_SUPER)
+        }
         _ => empty_trigger(),
     }
 }
@@ -4973,7 +4997,10 @@ fn default_unicode_key_binding(
             107 => (ROASTTY_KEYBIND_FLAGS_PERFORMABLE, Some(b"clear_screen")),
             102 => (ROASTTY_KEYBIND_FLAGS_PERFORMABLE, Some(b"start_search")),
             101 => (ROASTTY_KEYBIND_FLAGS_PERFORMABLE, Some(b"search_selection")),
-            103 => (ROASTTY_KEYBIND_FLAGS_PERFORMABLE, None),
+            103 => (
+                ROASTTY_KEYBIND_FLAGS_PERFORMABLE,
+                Some(b"navigate_search:next"),
+            ),
             106 => (
                 ROASTTY_KEYBIND_FLAGS_PERFORMABLE,
                 Some(b"scroll_to_selection"),
@@ -4993,7 +5020,10 @@ fn default_unicode_key_binding(
             116 => (ROASTTY_KEYBIND_FLAGS_PERFORMABLE, Some(b"undo")),
             122 => (ROASTTY_KEYBIND_FLAGS_PERFORMABLE, Some(b"redo")),
             102 => (ROASTTY_KEYBIND_FLAGS_PERFORMABLE, Some(b"end_search")),
-            103 => (ROASTTY_KEYBIND_FLAGS_PERFORMABLE, None),
+            103 => (
+                ROASTTY_KEYBIND_FLAGS_PERFORMABLE,
+                Some(b"navigate_search:previous"),
+            ),
             118 => (ROASTTY_KEYBIND_FLAGS_DEFAULT, Some(b"paste_from_selection")),
             112 => (
                 ROASTTY_KEYBIND_FLAGS_DEFAULT,
@@ -14461,6 +14491,48 @@ mod tests {
         assert_eq!(records.len(), 1);
         assert_eq!(records[0].action_tag, ROASTTY_ACTION_END_SEARCH);
 
+        set_key_event(
+            event,
+            key::KeyAction::Press,
+            key::Key::KeyG,
+            ROASTTY_MODS_SUPER,
+            b"g",
+            0,
+        );
+        assert!(roastty_surface_key(surface, event));
+
+        set_key_event(
+            event,
+            key::KeyAction::Release,
+            key::Key::KeyG,
+            ROASTTY_MODS_SUPER,
+            &[],
+            0,
+        );
+        assert!(roastty_surface_key(surface, event));
+
+        set_key_event(
+            event,
+            key::KeyAction::Press,
+            key::Key::KeyG,
+            ROASTTY_MODS_SHIFT | ROASTTY_MODS_SUPER,
+            b"g",
+            0,
+        );
+        assert!(roastty_surface_key(surface, event));
+
+        let records = action_records();
+        assert_eq!(records.len(), 3);
+        assert_eq!(records[1].action_tag, ROASTTY_ACTION_NAVIGATE_SEARCH);
+        assert_eq!(records[1].storage[0], ROASTTY_NAVIGATE_SEARCH_NEXT as usize);
+        assert!(records[1].storage[1..].iter().all(|value| *value == 0));
+        assert_eq!(records[2].action_tag, ROASTTY_ACTION_NAVIGATE_SEARCH);
+        assert_eq!(
+            records[2].storage[0],
+            ROASTTY_NAVIGATE_SEARCH_PREVIOUS as usize
+        );
+        assert!(records[2].storage[1..].iter().all(|value| *value == 0));
+
         roastty_key_event_free(event);
         roastty_surface_free(surface);
         roastty_app_free(app);
@@ -14552,8 +14624,8 @@ mod tests {
     }
 
     #[test]
-    fn surface_key_default_unsupported_query_match_falls_through() {
-        let app = new_test_app_with_action(true);
+    fn surface_key_default_navigate_search_falls_through_when_unperformed() {
+        let app = new_test_app_with_action(false);
         let surface = new_test_surface(app);
         let event = new_key_event();
 
@@ -14569,7 +14641,7 @@ mod tests {
         assert!(roastty_surface_key_is_binding(surface, event, &mut flags));
         assert_eq!(flags, ROASTTY_KEYBIND_FLAGS_PERFORMABLE);
         assert!(!roastty_surface_key(surface, event));
-        assert!(action_records().is_empty());
+        assert_eq!(action_records().len(), 1);
 
         set_key_event(
             event,
@@ -14953,6 +15025,12 @@ mod tests {
                 u32::from(b'v'),
                 ROASTTY_MODS_SHIFT | ROASTTY_MODS_SUPER,
             ),
+            ("navigate_search:next", u32::from(b'g'), ROASTTY_MODS_SUPER),
+            (
+                "navigate_search:previous",
+                u32::from(b'g'),
+                ROASTTY_MODS_SHIFT | ROASTTY_MODS_SUPER,
+            ),
         ] {
             let action = CString::new(action).unwrap();
             assert_unicode_config_trigger(
@@ -15157,6 +15235,7 @@ mod tests {
             (b"k".as_slice(), ROASTTY_MODS_SUPER),
             (b"z".as_slice(), ROASTTY_MODS_SUPER),
             (b"f".as_slice(), ROASTTY_MODS_SUPER),
+            (b"g".as_slice(), ROASTTY_MODS_SUPER),
             (b"g".as_slice(), ROASTTY_MODS_SHIFT | ROASTTY_MODS_SUPER),
             (
                 b"j".as_slice(),
@@ -15624,6 +15703,7 @@ mod tests {
         assert_eq!(ROASTTY_ACTION_END_SEARCH, 60);
         assert_eq!(ROASTTY_ACTION_READONLY, 63);
         assert_eq!(ROASTTY_ACTION_COPY_TITLE_TO_CLIPBOARD, 64);
+        assert_eq!(ROASTTY_ACTION_NAVIGATE_SEARCH, 1000);
         assert_eq!(ROASTTY_INSPECTOR_TOGGLE, 0);
         assert_eq!(ROASTTY_INSPECTOR_SHOW, 1);
         assert_eq!(ROASTTY_INSPECTOR_HIDE, 2);
@@ -15633,6 +15713,8 @@ mod tests {
         assert_eq!(ROASTTY_SECURE_INPUT_ON, 0);
         assert_eq!(ROASTTY_SECURE_INPUT_OFF, 1);
         assert_eq!(ROASTTY_SECURE_INPUT_TOGGLE, 2);
+        assert_eq!(ROASTTY_NAVIGATE_SEARCH_PREVIOUS, 0);
+        assert_eq!(ROASTTY_NAVIGATE_SEARCH_NEXT, 1);
         assert_eq!(ROASTTY_CLOSE_TAB_THIS, 0);
         assert_eq!(ROASTTY_CLOSE_TAB_OTHER, 1);
         assert_eq!(ROASTTY_CLOSE_TAB_RIGHT, 2);
@@ -19788,13 +19870,23 @@ mod tests {
         let app = new_test_app();
         let surface = new_test_surface(app);
 
-        for action in ["start_search", "end_search"] {
+        for action in [
+            "start_search",
+            "end_search",
+            "navigate_search:next",
+            "navigate_search:previous",
+        ] {
             assert!(!binding_action(ptr::null_mut(), action), "{action}");
             assert!(!binding_action(surface, action), "{action}");
         }
 
         roastty_app_free(app);
-        for action in ["start_search", "end_search"] {
+        for action in [
+            "start_search",
+            "end_search",
+            "navigate_search:next",
+            "navigate_search:previous",
+        ] {
             assert!(!binding_action(surface, action), "{action}");
         }
         roastty_surface_free(surface);
@@ -19807,9 +19899,11 @@ mod tests {
 
         assert!(binding_action(surface, "start_search"));
         assert!(binding_action(surface, "end_search"));
+        assert!(binding_action(surface, "navigate_search:next"));
+        assert!(binding_action(surface, "navigate_search:previous"));
 
         let records = action_records();
-        assert_eq!(records.len(), 2);
+        assert_eq!(records.len(), 4);
         for record in &records {
             assert_eq!(record.app, app);
             assert_eq!(record.target_tag, ROASTTY_TARGET_SURFACE);
@@ -19821,6 +19915,15 @@ mod tests {
         assert!(records[0].storage[1..].iter().all(|value| *value == 0));
         assert_eq!(records[1].action_tag, ROASTTY_ACTION_END_SEARCH);
         assert!(records[1].storage.iter().all(|value| *value == 0));
+        assert_eq!(records[2].action_tag, ROASTTY_ACTION_NAVIGATE_SEARCH);
+        assert_eq!(records[2].storage[0], ROASTTY_NAVIGATE_SEARCH_NEXT as usize);
+        assert!(records[2].storage[1..].iter().all(|value| *value == 0));
+        assert_eq!(records[3].action_tag, ROASTTY_ACTION_NAVIGATE_SEARCH);
+        assert_eq!(
+            records[3].storage[0],
+            ROASTTY_NAVIGATE_SEARCH_PREVIOUS as usize
+        );
+        assert!(records[3].storage[1..].iter().all(|value| *value == 0));
 
         roastty_surface_free(surface);
         roastty_app_free(app);
@@ -19833,7 +19936,33 @@ mod tests {
 
         assert!(!binding_action(surface, "start_search"));
         assert!(!binding_action(surface, "end_search"));
-        assert_eq!(action_records().len(), 2);
+        assert!(!binding_action(surface, "navigate_search:next"));
+        assert!(!binding_action(surface, "navigate_search:previous"));
+        assert_eq!(action_records().len(), 4);
+
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+    }
+
+    #[test]
+    fn surface_binding_action_navigate_search_rejects_invalid_parameters() {
+        let app = new_test_app_with_action(true);
+        let surface = new_test_surface(app);
+
+        for action in [
+            "navigate_search",
+            "navigate_search:",
+            "navigate_search:forward",
+            "navigate_search:next:extra",
+            "navigate_search: next",
+            "navigate_search:next ",
+            "navigate_search:previous:extra",
+            "navigate_search: previous",
+            "navigate_search:previous ",
+        ] {
+            assert!(!binding_action(surface, action), "{action}");
+        }
+        assert!(action_records().is_empty());
 
         roastty_surface_free(surface);
         roastty_app_free(app);
