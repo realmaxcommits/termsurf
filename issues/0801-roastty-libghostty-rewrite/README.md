@@ -1878,6 +1878,8 @@ are past the correctness-critical foundation.
   — **Pass** · Codex/Codex/Codex
 - [Experiment 693: Surface Mouse Scroll Reporting](693-surface-mouse-scroll-reporting.md)
   — **Pass** · Codex/Codex/Codex
+- [Experiment 694: Surface Key Terminal Dispatch](694-surface-key-terminal-dispatch.md)
+  — **Designed** · Codex/Codex/-
 
 ## Non-Goals
 
