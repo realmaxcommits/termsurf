@@ -1941,6 +1941,8 @@ are past the correctness-critical foundation.
   — **Pass** · Codex/Codex/Codex
 - [Experiment 715: Binding Action Select All](715-binding-action-select-all.md)
   — **Pass** · Codex/Codex/Codex
+- [Experiment 716: Binding Action Adjust Selection](716-binding-action-adjust-selection.md)
+  — **Designed** · Codex/Codex/-
 
 ## Non-Goals
 
