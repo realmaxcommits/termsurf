@@ -1981,6 +1981,8 @@ are past the correctness-critical foundation.
   — **Pass** · Codex/Codex/Codex
 - [Experiment 733: Binding Action Copy URL To Clipboard](733-binding-action-copy-url-to-clipboard.md)
   — **Pass** · Codex/Codex/Codex
+- [Experiment 734: Binding Action Write Selection File Copy](734-binding-action-write-selection-file-copy.md)
+  — **Designed** · Codex/Codex/-
 
 ## Non-Goals
 
