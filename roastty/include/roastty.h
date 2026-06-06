@@ -1196,14 +1196,39 @@ typedef struct {
 } roastty_target_s;
 
 typedef enum {
+  ROASTTY_ACTION_NEW_TAB = 2,
+  ROASTTY_ACTION_CLOSE_TAB = 3,
   ROASTTY_ACTION_NEW_SPLIT = 4,
+  ROASTTY_ACTION_TOGGLE_MAXIMIZE = 6,
+  ROASTTY_ACTION_TOGGLE_FULLSCREEN = 7,
   ROASTTY_ACTION_GOTO_SPLIT = 16,
+  ROASTTY_ACTION_GOTO_WINDOW = 17,
   ROASTTY_ACTION_RESIZE_SPLIT = 18,
   ROASTTY_ACTION_EQUALIZE_SPLITS = 19,
+  ROASTTY_ACTION_TOGGLE_SPLIT_ZOOM = 20,
+  ROASTTY_ACTION_RESET_WINDOW_SIZE = 23,
   ROASTTY_ACTION_SET_TITLE = 32,
   ROASTTY_ACTION_SET_TAB_TITLE = 33,
   ROASTTY_ACTION_PROMPT_TITLE = 34,
 } roastty_action_tag_e;
+
+typedef enum {
+  ROASTTY_CLOSE_TAB_THIS = 0,
+  ROASTTY_CLOSE_TAB_OTHER = 1,
+  ROASTTY_CLOSE_TAB_RIGHT = 2,
+} roastty_close_tab_e;
+
+typedef enum {
+  ROASTTY_GOTO_WINDOW_PREVIOUS = 0,
+  ROASTTY_GOTO_WINDOW_NEXT = 1,
+} roastty_goto_window_e;
+
+typedef enum {
+  ROASTTY_FULLSCREEN_NATIVE = 0,
+  ROASTTY_FULLSCREEN_MACOS_NON_NATIVE = 1,
+  ROASTTY_FULLSCREEN_MACOS_NON_NATIVE_VISIBLE_MENU = 2,
+  ROASTTY_FULLSCREEN_MACOS_NON_NATIVE_PADDED_NOTCH = 3,
+} roastty_fullscreen_e;
 
 typedef enum {
   ROASTTY_PROMPT_TITLE_SURFACE = 0,
@@ -1214,10 +1239,16 @@ typedef struct {
   int tag;
   /*
    * Tag-specific storage:
+   * - ROASTTY_ACTION_NEW_TAB / ROASTTY_ACTION_TOGGLE_MAXIMIZE /
+   *   ROASTTY_ACTION_TOGGLE_SPLIT_ZOOM / ROASTTY_ACTION_RESET_WINDOW_SIZE:
+   *   storage is zeroed
+   * - ROASTTY_ACTION_CLOSE_TAB: storage[0] = roastty_close_tab_e
    * - ROASTTY_ACTION_NEW_SPLIT: storage[0] = roastty_split_direction_e
    * - ROASTTY_ACTION_GOTO_SPLIT: storage[0] = roastty_goto_split_e
+   * - ROASTTY_ACTION_GOTO_WINDOW: storage[0] = roastty_goto_window_e
    * - ROASTTY_ACTION_RESIZE_SPLIT:
    *   storage[0] = amount, storage[1] = roastty_resize_split_e
+   * - ROASTTY_ACTION_TOGGLE_FULLSCREEN: storage[0] = roastty_fullscreen_e
    * - ROASTTY_ACTION_PROMPT_TITLE: storage[0] = roastty_prompt_title_e
    * - ROASTTY_ACTION_SET_TITLE / ROASTTY_ACTION_SET_TAB_TITLE:
    *   storage[0] = borrowed const char* valid only during action_cb

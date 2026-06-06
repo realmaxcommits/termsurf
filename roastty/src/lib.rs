@@ -114,13 +114,35 @@ const ROASTTY_CLIPBOARD_REQUEST_OSC_52_READ: c_int = 1;
 #[allow(dead_code)]
 const ROASTTY_CLIPBOARD_REQUEST_OSC_52_WRITE: c_int = 2;
 
+const ROASTTY_ACTION_NEW_TAB: c_int = 2;
+const ROASTTY_ACTION_CLOSE_TAB: c_int = 3;
 const ROASTTY_ACTION_NEW_SPLIT: c_int = 4;
+const ROASTTY_ACTION_TOGGLE_MAXIMIZE: c_int = 6;
+const ROASTTY_ACTION_TOGGLE_FULLSCREEN: c_int = 7;
 const ROASTTY_ACTION_GOTO_SPLIT: c_int = 16;
+const ROASTTY_ACTION_GOTO_WINDOW: c_int = 17;
 const ROASTTY_ACTION_RESIZE_SPLIT: c_int = 18;
 const ROASTTY_ACTION_EQUALIZE_SPLITS: c_int = 19;
+const ROASTTY_ACTION_TOGGLE_SPLIT_ZOOM: c_int = 20;
+const ROASTTY_ACTION_RESET_WINDOW_SIZE: c_int = 23;
 const ROASTTY_ACTION_SET_TITLE: c_int = 32;
 const ROASTTY_ACTION_SET_TAB_TITLE: c_int = 33;
 const ROASTTY_ACTION_PROMPT_TITLE: c_int = 34;
+
+const ROASTTY_CLOSE_TAB_THIS: c_int = 0;
+const ROASTTY_CLOSE_TAB_OTHER: c_int = 1;
+const ROASTTY_CLOSE_TAB_RIGHT: c_int = 2;
+
+const ROASTTY_GOTO_WINDOW_PREVIOUS: c_int = 0;
+const ROASTTY_GOTO_WINDOW_NEXT: c_int = 1;
+
+const ROASTTY_FULLSCREEN_NATIVE: c_int = 0;
+#[allow(dead_code)]
+const ROASTTY_FULLSCREEN_MACOS_NON_NATIVE: c_int = 1;
+#[allow(dead_code)]
+const ROASTTY_FULLSCREEN_MACOS_NON_NATIVE_VISIBLE_MENU: c_int = 2;
+#[allow(dead_code)]
+const ROASTTY_FULLSCREEN_MACOS_NON_NATIVE_PADDED_NOTCH: c_int = 3;
 
 const ROASTTY_PROMPT_TITLE_SURFACE: c_int = 0;
 const ROASTTY_PROMPT_TITLE_TAB: c_int = 1;
@@ -2804,6 +2826,23 @@ fn resize_split_from_str(value: &[u8]) -> Option<c_int> {
     }
 }
 
+fn close_tab_from_str(parameter: Option<&[u8]>) -> Option<c_int> {
+    match parameter {
+        None | Some(b"this") => Some(ROASTTY_CLOSE_TAB_THIS),
+        Some(b"other") => Some(ROASTTY_CLOSE_TAB_OTHER),
+        Some(b"right") => Some(ROASTTY_CLOSE_TAB_RIGHT),
+        _ => None,
+    }
+}
+
+fn goto_window_from_str(value: &[u8]) -> Option<c_int> {
+    match value {
+        b"previous" => Some(ROASTTY_GOTO_WINDOW_PREVIOUS),
+        b"next" => Some(ROASTTY_GOTO_WINDOW_NEXT),
+        _ => None,
+    }
+}
+
 enum ParsedBindingAction {
     RuntimeAction(c_int, [usize; 8]),
     CloseSurface,
@@ -2864,6 +2903,24 @@ fn parse_binding_action(surface: &Surface, action: &[u8]) -> Option<ParsedBindin
     }
 
     match name {
+        b"new_tab" => {
+            if parameter.is_some() {
+                return None;
+            }
+            Some(ParsedBindingAction::RuntimeAction(
+                ROASTTY_ACTION_NEW_TAB,
+                [0usize; 8],
+            ))
+        }
+        b"close_tab" => {
+            let mode = close_tab_from_str(parameter)?;
+            let mut storage = [0usize; 8];
+            storage[0] = mode as usize;
+            Some(ParsedBindingAction::RuntimeAction(
+                ROASTTY_ACTION_CLOSE_TAB,
+                storage,
+            ))
+        }
         b"new_split" => {
             let direction = match parameter {
                 None | Some(b"auto") => auto_split_direction(surface),
@@ -2882,6 +2939,15 @@ fn parse_binding_action(surface: &Surface, action: &[u8]) -> Option<ParsedBindin
             storage[0] = direction as usize;
             Some(ParsedBindingAction::RuntimeAction(
                 ROASTTY_ACTION_GOTO_SPLIT,
+                storage,
+            ))
+        }
+        b"goto_window" => {
+            let direction = goto_window_from_str(parameter?)?;
+            let mut storage = [0usize; 8];
+            storage[0] = direction as usize;
+            Some(ParsedBindingAction::RuntimeAction(
+                ROASTTY_ACTION_GOTO_WINDOW,
                 storage,
             ))
         }
@@ -2907,6 +2973,44 @@ fn parse_binding_action(surface: &Surface, action: &[u8]) -> Option<ParsedBindin
             Some(ParsedBindingAction::RuntimeAction(
                 ROASTTY_ACTION_EQUALIZE_SPLITS,
                 [0usize; 8],
+            ))
+        }
+        b"toggle_split_zoom" => {
+            if parameter.is_some() {
+                return None;
+            }
+            Some(ParsedBindingAction::RuntimeAction(
+                ROASTTY_ACTION_TOGGLE_SPLIT_ZOOM,
+                [0usize; 8],
+            ))
+        }
+        b"reset_window_size" => {
+            if parameter.is_some() {
+                return None;
+            }
+            Some(ParsedBindingAction::RuntimeAction(
+                ROASTTY_ACTION_RESET_WINDOW_SIZE,
+                [0usize; 8],
+            ))
+        }
+        b"toggle_maximize" => {
+            if parameter.is_some() {
+                return None;
+            }
+            Some(ParsedBindingAction::RuntimeAction(
+                ROASTTY_ACTION_TOGGLE_MAXIMIZE,
+                [0usize; 8],
+            ))
+        }
+        b"toggle_fullscreen" => {
+            if parameter.is_some() {
+                return None;
+            }
+            let mut storage = [0usize; 8];
+            storage[0] = ROASTTY_FULLSCREEN_NATIVE as usize;
+            Some(ParsedBindingAction::RuntimeAction(
+                ROASTTY_ACTION_TOGGLE_FULLSCREEN,
+                storage,
             ))
         }
         b"close_surface" => {
@@ -13058,14 +13162,30 @@ mod tests {
     }
 
     #[test]
-    fn surface_split_constants_match_upstream_values() {
+    fn surface_action_constants_match_upstream_values() {
+        assert_eq!(ROASTTY_ACTION_NEW_TAB, 2);
+        assert_eq!(ROASTTY_ACTION_CLOSE_TAB, 3);
         assert_eq!(ROASTTY_ACTION_NEW_SPLIT, 4);
+        assert_eq!(ROASTTY_ACTION_TOGGLE_MAXIMIZE, 6);
+        assert_eq!(ROASTTY_ACTION_TOGGLE_FULLSCREEN, 7);
         assert_eq!(ROASTTY_ACTION_GOTO_SPLIT, 16);
+        assert_eq!(ROASTTY_ACTION_GOTO_WINDOW, 17);
         assert_eq!(ROASTTY_ACTION_RESIZE_SPLIT, 18);
         assert_eq!(ROASTTY_ACTION_EQUALIZE_SPLITS, 19);
+        assert_eq!(ROASTTY_ACTION_TOGGLE_SPLIT_ZOOM, 20);
+        assert_eq!(ROASTTY_ACTION_RESET_WINDOW_SIZE, 23);
         assert_eq!(ROASTTY_ACTION_SET_TITLE, 32);
         assert_eq!(ROASTTY_ACTION_SET_TAB_TITLE, 33);
         assert_eq!(ROASTTY_ACTION_PROMPT_TITLE, 34);
+        assert_eq!(ROASTTY_CLOSE_TAB_THIS, 0);
+        assert_eq!(ROASTTY_CLOSE_TAB_OTHER, 1);
+        assert_eq!(ROASTTY_CLOSE_TAB_RIGHT, 2);
+        assert_eq!(ROASTTY_GOTO_WINDOW_PREVIOUS, 0);
+        assert_eq!(ROASTTY_GOTO_WINDOW_NEXT, 1);
+        assert_eq!(ROASTTY_FULLSCREEN_NATIVE, 0);
+        assert_eq!(ROASTTY_FULLSCREEN_MACOS_NON_NATIVE, 1);
+        assert_eq!(ROASTTY_FULLSCREEN_MACOS_NON_NATIVE_VISIBLE_MENU, 2);
+        assert_eq!(ROASTTY_FULLSCREEN_MACOS_NON_NATIVE_PADDED_NOTCH, 3);
         assert_eq!(ROASTTY_PROMPT_TITLE_SURFACE, 0);
         assert_eq!(ROASTTY_PROMPT_TITLE_TAB, 1);
         assert_eq!(ROASTTY_SPLIT_DIRECTION_RIGHT, 0);
@@ -13182,17 +13302,38 @@ mod tests {
             "",
             ":new_split",
             "unknown",
+            "new_tab:",
+            "new_tab:now",
+            "close_tab:",
+            "close_tab:all",
+            "close_tab:this:extra",
+            "close_tab: this",
+            "close_tab:this ",
             "new_split:",
             "new_split:diagonal",
             "goto_split",
             "goto_split:",
             "goto_split:green",
+            "goto_window",
+            "goto_window:",
+            "goto_window:previous:extra",
+            "goto_window: previous",
+            "goto_window:previous ",
+            "goto_window:left",
             "resize_split",
             "resize_split:up",
             "resize_split:up,10,12",
             "resize_split:up,four",
             "resize_split:forward,10",
             "equalize_splits:now",
+            "toggle_split_zoom:",
+            "toggle_split_zoom:now",
+            "reset_window_size:",
+            "reset_window_size:now",
+            "toggle_maximize:",
+            "toggle_maximize:now",
+            "toggle_fullscreen:",
+            "toggle_fullscreen:now",
             "close_surface:now",
             "text",
             "csi",
@@ -15321,6 +15462,117 @@ mod tests {
             records[2].storage[0],
             ROASTTY_SPLIT_DIRECTION_RIGHT as usize
         );
+
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+    }
+
+    #[test]
+    fn surface_binding_action_tab_window_false_for_null_detached_and_no_callback() {
+        let app = new_test_app();
+        let surface = new_test_surface(app);
+
+        for action in [
+            "new_tab",
+            "close_tab",
+            "close_tab:this",
+            "close_tab:other",
+            "close_tab:right",
+            "goto_window:previous",
+            "goto_window:next",
+            "toggle_split_zoom",
+            "reset_window_size",
+            "toggle_maximize",
+            "toggle_fullscreen",
+        ] {
+            assert!(!binding_action(ptr::null_mut(), action), "{action}");
+            assert!(!binding_action(surface, action), "{action}");
+        }
+
+        roastty_app_free(app);
+        for action in [
+            "new_tab",
+            "close_tab",
+            "goto_window:previous",
+            "toggle_split_zoom",
+            "reset_window_size",
+            "toggle_maximize",
+            "toggle_fullscreen",
+        ] {
+            assert!(!binding_action(surface, action), "{action}");
+        }
+        roastty_surface_free(surface);
+    }
+
+    #[test]
+    fn surface_binding_action_forwards_supported_tab_window_actions() {
+        let app = new_test_app_with_action(true);
+        let surface = new_test_surface(app);
+
+        for action in [
+            "new_tab",
+            "close_tab",
+            "close_tab:this",
+            "close_tab:other",
+            "close_tab:right",
+            "goto_window:previous",
+            "goto_window:next",
+            "toggle_split_zoom",
+            "reset_window_size",
+            "toggle_maximize",
+            "toggle_fullscreen",
+        ] {
+            assert!(binding_action(surface, action), "{action}");
+        }
+
+        let records = action_records();
+        assert_eq!(records.len(), 11);
+        for record in &records {
+            assert_eq!(record.app, app);
+            assert_eq!(record.target_tag, ROASTTY_TARGET_SURFACE);
+            assert_eq!(record.surface, surface);
+        }
+        assert_eq!(records[0].action_tag, ROASTTY_ACTION_NEW_TAB);
+        assert!(records[0].storage.iter().all(|value| *value == 0));
+        assert_eq!(records[1].action_tag, ROASTTY_ACTION_CLOSE_TAB);
+        assert_eq!(records[1].storage[0], ROASTTY_CLOSE_TAB_THIS as usize);
+        assert_eq!(records[2].action_tag, ROASTTY_ACTION_CLOSE_TAB);
+        assert_eq!(records[2].storage[0], ROASTTY_CLOSE_TAB_THIS as usize);
+        assert_eq!(records[3].action_tag, ROASTTY_ACTION_CLOSE_TAB);
+        assert_eq!(records[3].storage[0], ROASTTY_CLOSE_TAB_OTHER as usize);
+        assert_eq!(records[4].action_tag, ROASTTY_ACTION_CLOSE_TAB);
+        assert_eq!(records[4].storage[0], ROASTTY_CLOSE_TAB_RIGHT as usize);
+        assert_eq!(records[5].action_tag, ROASTTY_ACTION_GOTO_WINDOW);
+        assert_eq!(records[5].storage[0], ROASTTY_GOTO_WINDOW_PREVIOUS as usize);
+        assert_eq!(records[6].action_tag, ROASTTY_ACTION_GOTO_WINDOW);
+        assert_eq!(records[6].storage[0], ROASTTY_GOTO_WINDOW_NEXT as usize);
+        assert_eq!(records[7].action_tag, ROASTTY_ACTION_TOGGLE_SPLIT_ZOOM);
+        assert!(records[7].storage.iter().all(|value| *value == 0));
+        assert_eq!(records[8].action_tag, ROASTTY_ACTION_RESET_WINDOW_SIZE);
+        assert!(records[8].storage.iter().all(|value| *value == 0));
+        assert_eq!(records[9].action_tag, ROASTTY_ACTION_TOGGLE_MAXIMIZE);
+        assert!(records[9].storage.iter().all(|value| *value == 0));
+        assert_eq!(records[10].action_tag, ROASTTY_ACTION_TOGGLE_FULLSCREEN);
+        assert_eq!(records[10].storage[0], ROASTTY_FULLSCREEN_NATIVE as usize);
+        assert!(records[10].storage[1..].iter().all(|value| *value == 0));
+
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+    }
+
+    #[test]
+    fn surface_binding_action_tab_window_returns_callback_result() {
+        let app = new_test_app_with_action(false);
+        let surface = new_test_surface(app);
+
+        assert!(!binding_action(surface, "new_tab"));
+        assert!(!binding_action(surface, "close_tab"));
+        assert!(!binding_action(surface, "goto_window:previous"));
+        assert!(!binding_action(surface, "toggle_split_zoom"));
+        assert!(!binding_action(surface, "reset_window_size"));
+        assert!(!binding_action(surface, "toggle_maximize"));
+        assert!(!binding_action(surface, "toggle_fullscreen"));
+        assert_eq!(action_records().len(), 7);
 
         roastty_surface_free(surface);
         roastty_app_free(app);

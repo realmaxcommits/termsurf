@@ -279,15 +279,15 @@ Experiment 246).
       callback/keybinding query state foundation done; renderer preedit/export,
       surface mouse callback state foundation done; surface mouse
       button/position dispatch done; surface mouse scroll reporting done; split
-      action callback forwarding done; surface key default terminal dispatch
-      done; terminal-derived key encoder options done; surface text viewport
-      metadata done; config/surface key-is-binding false-path foundation done;
-      split, close, text, CSI, ESC, reset, clear-screen, scroll-to-top,
-      scroll-to-bottom, scroll-to-row, scroll-to-selection, scroll-page-up,
-      scroll-page-down, scroll-page-lines, and scroll-page-fractional
-      binding-action string invocation foundations done; keybinding/action
-      dispatch, frontend selection routing, full binding-action parsing, and
-      split tree/frontend mutations missing
+      action callback forwarding and tab/window runtime action forwarding done;
+      surface key default terminal dispatch done; terminal-derived key encoder
+      options done; surface text viewport metadata done; config/surface
+      key-is-binding false-path foundation done; split, close, text, CSI, ESC,
+      reset, clear-screen, scroll-to-top, scroll-to-bottom, scroll-to-row,
+      scroll-to-selection, scroll-page-up, scroll-page-down, scroll-page-lines,
+      and scroll-page-fractional binding-action string invocation foundations
+      done; keybinding/action dispatch, frontend selection routing, full
+      binding-action parsing, and split tree/frontend mutations missing
 - [ ] Inspector ABI — non-Metal handle lifecycle and input forwarding foundation
       done; Metal renderer integration, inspector UI rendering, and core
       inspector data collection missing
@@ -312,10 +312,11 @@ Experiment 246).
       done; split, close, text, CSI, ESC, reset, clear-screen, scroll-to-top,
       scroll-to-bottom, scroll-to-row, scroll-to-selection, scroll-page-up,
       scroll-page-down, scroll-page-lines, and scroll-page-fractional
-      binding-action string invocation foundations done; splits, frontend
-      selection routing, renderer display-ID delivery, full binding-action
-      parsing, Quicklook UI/font integration, clipboard request
-      allocation/handling, and full frontend presentation missing
+      binding-action string invocation foundations and tab/window runtime action
+      forwarding done; splits, frontend selection routing, renderer display-ID
+      delivery, full binding-action parsing, Quicklook UI/font integration,
+      clipboard request allocation/handling, and full frontend presentation
+      missing
 - [ ] `pty` + `termio` (shell spawn, read/write loops, resize, fg pid, tty name,
       exit) — PTY open/resize, subprocess spawn, child IO, synchronous pump,
       background worker, worker shutdown/drop, and surface process-exit state
@@ -1952,7 +1953,7 @@ are past the correctness-critical foundation.
 - [Experiment 720: Binding Action Title](720-binding-action-title.md) — **Pass**
   · Codex/Codex/Codex
 - [Experiment 721: Binding Action Tab Window Forwarding](721-binding-action-tab-window-forwarding.md)
-  — **Designed** · Codex/Codex/-
+  — **Pass** · Codex/Codex/Codex
 
 ## Non-Goals
 
