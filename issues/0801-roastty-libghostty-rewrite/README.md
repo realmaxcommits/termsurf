@@ -298,9 +298,11 @@ Experiment 246).
       snapshots, surface worker start, and surface draw/refresh wakeups done;
       display-ID storage, request-close callback forwarding, inherited surface
       config, explicit text reads plus active selection reads, and
-      mouse-captured query done; surface text viewport metadata done; splits,
-      frontend selection routing, full confirm-close policy, renderer display-ID
-      delivery, and full frontend presentation missing
+      mouse-captured query done; surface text viewport metadata done; Quicklook
+      word ABI foundation done with font handle returning null until CoreText
+      font-grid integration exists; splits, frontend selection routing, full
+      confirm-close policy, renderer display-ID delivery, Quicklook UI/font
+      integration, and full frontend presentation missing
 - [ ] `pty` + `termio` (shell spawn, read/write loops, resize, fg pid, tty name,
       exit) — PTY open/resize, subprocess spawn, child IO, synchronous pump,
       background worker, worker shutdown/drop, and surface process-exit state
@@ -1891,7 +1893,7 @@ are past the correctness-critical foundation.
 - [Experiment 697: Inspector ABI Foundation](697-inspector-abi-foundation.md) —
   **Pass** · Codex/Codex/Codex
 - [Experiment 698: Surface Quicklook ABI](698-surface-quicklook-abi.md) —
-  **Designed** · Codex/Codex/-
+  **Pass** · Codex/Codex/Codex
 
 ## Non-Goals
 

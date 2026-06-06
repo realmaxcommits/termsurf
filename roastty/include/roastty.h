@@ -1889,6 +1889,9 @@ ROASTTY_API void roastty_inspector_key(roastty_inspector_t,
                                        roastty_key_e,
                                        roastty_input_mods_e);
 ROASTTY_API void roastty_inspector_text(roastty_inspector_t, const char*);
+ROASTTY_API void* roastty_surface_quicklook_font(roastty_surface_t);
+ROASTTY_API bool roastty_surface_quicklook_word(roastty_surface_t,
+                                                roastty_text_s*);
 ROASTTY_API roastty_input_mods_e
 roastty_surface_key_translation_mods(roastty_surface_t, roastty_input_mods_e);
 ROASTTY_API bool roastty_surface_key(roastty_surface_t, roastty_key_event_t);

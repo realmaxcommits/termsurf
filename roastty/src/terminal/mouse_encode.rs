@@ -75,14 +75,14 @@ impl Geometry {
         )
     }
 
-    fn pos_out_of_viewport(self, pos: Position) -> bool {
+    pub(crate) fn pos_out_of_viewport(self, pos: Position) -> bool {
         pos.x < 0.0
             || pos.y < 0.0
             || pos.x > self.screen.width as f32
             || pos.y > self.screen.height as f32
     }
 
-    fn pos_to_cell(self, pos: Position) -> point::Coordinate {
+    pub(crate) fn pos_to_cell(self, pos: Position) -> point::Coordinate {
         let term_x = pos.x - self.padding.left as f32;
         let term_y = pos.y - self.padding.top as f32;
         let cell_width = self.cell.width.max(1) as f32;

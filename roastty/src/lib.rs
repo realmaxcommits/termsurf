@@ -2015,6 +2015,40 @@ impl Surface {
         })
     }
 
+    fn quicklook_word_text(&self) -> Result<RoasttyText, c_int> {
+        if self.app.is_null() {
+            return Err(ROASTTY_INVALID_VALUE);
+        }
+        let Some(worker) = self.termio_worker.as_ref() else {
+            return Err(ROASTTY_INVALID_VALUE);
+        };
+        let Some((x, y)) = self.mouse.position else {
+            return Err(ROASTTY_INVALID_VALUE);
+        };
+        if !x.is_finite() || !y.is_finite() || x > f64::from(f32::MAX) || y > f64::from(f32::MAX) {
+            return Err(ROASTTY_INVALID_VALUE);
+        }
+
+        let selection = worker.with_termio(|termio| {
+            let terminal = termio.terminal();
+            let geometry = self.mouse_report_geometry(terminal)?;
+            let pos = mouse_encode::Position {
+                x: x as f32,
+                y: y as f32,
+            };
+            if geometry.pos_out_of_viewport(pos) {
+                return None;
+            }
+            let cell = geometry.pos_to_cell(pos);
+            let ref_ = terminal.grid_ref(TerminalPointTag::Viewport, cell)?;
+            terminal.select_word(ref_, None).ok().flatten()
+        });
+        let Some(selection) = selection else {
+            return Err(ROASTTY_INVALID_VALUE);
+        };
+        try_surface_selection_text(self, worker, Some(selection))
+    }
+
     fn any_mouse_button_pressed(&self) -> bool {
         self.mouse
             .buttons
@@ -9717,6 +9751,32 @@ pub extern "C" fn roastty_inspector_text(inspector: RoasttyInspector, text: *con
 }
 
 #[no_mangle]
+pub extern "C" fn roastty_surface_quicklook_font(_surface: RoasttySurface) -> *mut c_void {
+    ptr::null_mut()
+}
+
+#[no_mangle]
+pub extern "C" fn roastty_surface_quicklook_word(
+    surface: RoasttySurface,
+    result: *mut RoasttyText,
+) -> bool {
+    if result.is_null() {
+        return false;
+    }
+    write_empty_text(result);
+    let Some(surface) = surface_from_handle(surface) else {
+        return false;
+    };
+    let Ok(text) = surface.quicklook_word_text() else {
+        return false;
+    };
+    unsafe {
+        result.write(text);
+    }
+    true
+}
+
+#[no_mangle]
 pub extern "C" fn roastty_surface_key_translation_mods(
     _surface: RoasttySurface,
     mods: c_int,
@@ -12542,6 +12602,136 @@ mod tests {
         assert!(!roastty_surface_has_selection(surface));
         assert!(!roastty_surface_read_selection(surface, &mut text));
         assert!(text.text.is_null());
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+    }
+
+    #[test]
+    fn surface_quicklook_font_returns_null_until_font_stack_exists() {
+        let app = new_test_app();
+        let surface = new_test_surface(app);
+
+        assert!(roastty_surface_quicklook_font(ptr::null_mut()).is_null());
+        assert!(roastty_surface_quicklook_font(surface).is_null());
+
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+    }
+
+    #[test]
+    fn surface_quicklook_word_validates_inputs_no_worker_and_no_position() {
+        let _guard = PTY_COMMAND_LOCK.lock().unwrap();
+        let app = new_test_app();
+        let surface = new_test_surface(app);
+        let mut text = RoasttyText {
+            tl_px_x: 99.0,
+            tl_px_y: 99.0,
+            offset_start: 99,
+            offset_len: 99,
+            text: ptr::dangling(),
+            text_len: 99,
+        };
+
+        assert!(!roastty_surface_quicklook_word(ptr::null_mut(), &mut text));
+        assert_eq!(text.tl_px_x, -1.0);
+        assert_eq!(text.tl_px_y, -1.0);
+        assert_eq!(text.offset_start, 0);
+        assert_eq!(text.offset_len, 0);
+        assert!(text.text.is_null());
+        assert_eq!(text.text_len, 0);
+        assert!(!roastty_surface_quicklook_word(surface, ptr::null_mut()));
+        assert!(!roastty_surface_quicklook_word(surface, &mut text));
+
+        let command = CString::new("printf 'Hello World'").unwrap();
+        let mut config = roastty_surface_config_new();
+        config.command = command.as_ptr();
+        let worker_surface = new_test_surface_with_config(app, &config);
+        set_surface_test_geometry(worker_surface, 80, 24, 10, 20);
+        assert!(surface_snapshot_text_after_start(app, worker_surface).contains("Hello World"));
+        assert!(!roastty_surface_quicklook_word(worker_surface, &mut text));
+
+        roastty_surface_mouse_pos(worker_surface, -1.0, 0.0, ROASTTY_MODS_NONE);
+        assert!(!roastty_surface_quicklook_word(worker_surface, &mut text));
+
+        roastty_surface_free(worker_surface);
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+    }
+
+    #[test]
+    fn surface_quicklook_word_reads_word_at_mouse_position_with_metadata() {
+        let _guard = PTY_COMMAND_LOCK.lock().unwrap();
+        let app = new_test_app();
+        let command = CString::new("printf 'Hello World'").unwrap();
+        let mut config = roastty_surface_config_new();
+        config.command = command.as_ptr();
+        let surface = new_test_surface_with_config(app, &config);
+        set_surface_test_geometry(surface, 80, 24, 10, 20);
+        assert!(surface_snapshot_text_after_start(app, surface).contains("Hello World"));
+        roastty_surface_mouse_pos(surface, 65.0, 5.0, ROASTTY_MODS_NONE);
+        let mut text = empty_text();
+
+        assert!(roastty_surface_quicklook_word(surface, &mut text));
+
+        assert_eq!(text.tl_px_x, 60.0);
+        assert_eq!(text.tl_px_y, 0.0);
+        assert_eq!(text.offset_start, 6);
+        assert_eq!(text.offset_len, 4);
+        assert_eq!(take_roastty_text(text), b"World");
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+    }
+
+    #[test]
+    fn surface_quicklook_word_preserves_active_selection() {
+        let _guard = PTY_COMMAND_LOCK.lock().unwrap();
+        let app = new_test_app();
+        let command = CString::new("printf 'Hello World'").unwrap();
+        let mut config = roastty_surface_config_new();
+        config.command = command.as_ptr();
+        let surface = new_test_surface_with_config(app, &config);
+        set_surface_test_geometry(surface, 80, 24, 10, 20);
+        assert!(surface_snapshot_text_after_start(app, surface).contains("Hello World"));
+        let selection = surface_worker_selection(surface, (0, 0), (4, 0));
+        set_surface_worker_active_selection(surface, Some(selection));
+        roastty_surface_mouse_pos(surface, 65.0, 5.0, ROASTTY_MODS_NONE);
+        let mut text = empty_text();
+
+        assert!(roastty_surface_quicklook_word(surface, &mut text));
+        assert_eq!(take_roastty_text(text), b"World");
+
+        let mut active_text = empty_text();
+        assert!(roastty_surface_read_selection(surface, &mut active_text));
+        assert_eq!(take_roastty_text(active_text), b"Hello");
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+    }
+
+    #[test]
+    fn surface_quicklook_word_free_resets_pointer_state() {
+        let _guard = PTY_COMMAND_LOCK.lock().unwrap();
+        let app = new_test_app();
+        let command = CString::new("printf 'Hello World'").unwrap();
+        let mut config = roastty_surface_config_new();
+        config.command = command.as_ptr();
+        let surface = new_test_surface_with_config(app, &config);
+        set_surface_test_geometry(surface, 80, 24, 10, 20);
+        assert!(surface_snapshot_text_after_start(app, surface).contains("Hello World"));
+        roastty_surface_mouse_pos(surface, 5.0, 5.0, ROASTTY_MODS_NONE);
+        let mut text = empty_text();
+
+        assert!(roastty_surface_quicklook_word(surface, &mut text));
+        assert!(!text.text.is_null());
+        assert_eq!(text.text_len, 5);
+
+        roastty_surface_free_text(surface, &mut text);
+
+        assert_eq!(text.tl_px_x, -1.0);
+        assert_eq!(text.tl_px_y, -1.0);
+        assert_eq!(text.offset_start, 0);
+        assert_eq!(text.offset_len, 0);
+        assert!(text.text.is_null());
+        assert_eq!(text.text_len, 0);
         roastty_surface_free(surface);
         roastty_app_free(app);
     }

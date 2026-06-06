@@ -8,6 +8,11 @@ reasoning = "high"
 agent = "codex"
 model = "gpt-5"
 reasoning = "medium"
+
+[review.result]
+agent = "codex"
+model = "gpt-5"
+reasoning = "medium"
 +++
 
 # Experiment 698: Surface Quicklook ABI
@@ -96,3 +101,52 @@ documented null font placeholder until Roastty has the CoreText/font-grid path,
 the word-selection path from surface mouse position and geometry, the use of the
 existing surface text allocation/metadata contract, and the proposed C ABI and
 Rust test coverage.
+
+## Result
+
+**Result:** Pass
+
+Implemented the Roastty-named Quicklook surface ABI:
+
+- `roastty_surface_quicklook_font` is exported and returns null for all inputs,
+  documenting the missing CoreText/font-grid integration point.
+- `roastty_surface_quicklook_word` is exported and reads the word under the
+  current surface mouse position when the surface is attached, has a worker, has
+  valid geometry, and the pointer is inside the viewport.
+- Quicklook word reads convert the current mouse position through the same
+  surface mouse geometry used by mouse reporting, obtain a viewport grid ref,
+  select a word with terminal default boundaries, and return text through the
+  existing surface text allocation and metadata path.
+- The active terminal selection is not mutated.
+- The C ABI harness now compiles and links the new prototypes and covers
+  null/default failure cases plus result cleanup through
+  `roastty_surface_free_text`.
+
+Verification passed:
+
+- `cargo fmt -p roastty`
+- `cargo test -p roastty quicklook -- --nocapture`
+- `cargo test -p roastty surface_read -- --nocapture`
+- `cargo test -p roastty --test abi_harness`
+- `cargo fmt -p roastty -- --check`
+- `git diff --check`
+
+## Conclusion
+
+Roastty now has the macOS Quicklook ABI foundation needed by the frontend for
+word lookup. The implemented word path is useful and test-covered, while the
+font path remains an explicit null placeholder until a later experiment connects
+CoreText font-grid state and Quicklook presentation.
+
+## Completion Review
+
+Codex reviewed the staged completed Experiment 698 result. The review found no
+implementation blockers: the ABI shape matches upstream, the null font
+placeholder matches the documented foundation, word lookup uses stored surface
+mouse position plus surface geometry, active selection is preserved, successful
+results use the existing `roastty_text_s` allocation/metadata/free path, and the
+C harness covers the new prototypes and null/default behavior.
+
+The review initially blocked the result commit only because completion-review
+provenance had not yet been recorded. This section, the `[review.result]`
+frontmatter, and the README tuple update resolve that workflow finding.
