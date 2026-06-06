@@ -1945,6 +1945,8 @@ are past the correctness-critical foundation.
   — **Pass** · Codex/Codex/Codex
 - [Experiment 717: Binding Action Copy To Clipboard](717-binding-action-copy-to-clipboard.md)
   — **Pass** · Codex/Codex/Codex
+- [Experiment 718: Binding Action Paste From Clipboard](718-binding-action-paste-from-clipboard.md)
+  — **Designed** · Codex/Codex/-
 
 ## Non-Goals
 
