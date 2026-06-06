@@ -1846,6 +1846,23 @@ impl Surface {
         }
     }
 
+    fn raw_text(&mut self, text: &[u8]) {
+        if text.is_empty() || self.app.is_null() {
+            return;
+        }
+
+        let error = {
+            let Some(worker) = self.termio_worker.as_ref() else {
+                return;
+            };
+            worker.queue_write(text).err().map(|err| format!("{err:?}"))
+        };
+
+        if let Some(error) = error {
+            self.apply_termio_event(termio::TermioWorkerEvent::Error(error));
+        }
+    }
+
     fn set_preedit(&mut self, preedit: Option<&str>) {
         self.preedit = preedit.map(str::to_owned);
         self.request_render();
@@ -2353,12 +2370,12 @@ fn valid_resize_split(direction: c_int) -> Option<c_int> {
     }
 }
 
-fn split_direction_from_str(value: &str) -> Option<c_int> {
+fn split_direction_from_str(value: &[u8]) -> Option<c_int> {
     match value {
-        "right" => Some(ROASTTY_SPLIT_DIRECTION_RIGHT),
-        "down" => Some(ROASTTY_SPLIT_DIRECTION_DOWN),
-        "left" => Some(ROASTTY_SPLIT_DIRECTION_LEFT),
-        "up" => Some(ROASTTY_SPLIT_DIRECTION_UP),
+        b"right" => Some(ROASTTY_SPLIT_DIRECTION_RIGHT),
+        b"down" => Some(ROASTTY_SPLIT_DIRECTION_DOWN),
+        b"left" => Some(ROASTTY_SPLIT_DIRECTION_LEFT),
+        b"up" => Some(ROASTTY_SPLIT_DIRECTION_UP),
         _ => None,
     }
 }
@@ -2371,24 +2388,24 @@ fn auto_split_direction(surface: &Surface) -> c_int {
     }
 }
 
-fn goto_split_from_str(value: &str) -> Option<c_int> {
+fn goto_split_from_str(value: &[u8]) -> Option<c_int> {
     match value {
-        "previous" => Some(ROASTTY_GOTO_SPLIT_PREVIOUS),
-        "next" => Some(ROASTTY_GOTO_SPLIT_NEXT),
-        "up" | "top" => Some(ROASTTY_GOTO_SPLIT_UP),
-        "left" => Some(ROASTTY_GOTO_SPLIT_LEFT),
-        "down" | "bottom" => Some(ROASTTY_GOTO_SPLIT_DOWN),
-        "right" => Some(ROASTTY_GOTO_SPLIT_RIGHT),
+        b"previous" => Some(ROASTTY_GOTO_SPLIT_PREVIOUS),
+        b"next" => Some(ROASTTY_GOTO_SPLIT_NEXT),
+        b"up" | b"top" => Some(ROASTTY_GOTO_SPLIT_UP),
+        b"left" => Some(ROASTTY_GOTO_SPLIT_LEFT),
+        b"down" | b"bottom" => Some(ROASTTY_GOTO_SPLIT_DOWN),
+        b"right" => Some(ROASTTY_GOTO_SPLIT_RIGHT),
         _ => None,
     }
 }
 
-fn resize_split_from_str(value: &str) -> Option<c_int> {
+fn resize_split_from_str(value: &[u8]) -> Option<c_int> {
     match value {
-        "up" => Some(ROASTTY_RESIZE_SPLIT_UP),
-        "down" => Some(ROASTTY_RESIZE_SPLIT_DOWN),
-        "left" => Some(ROASTTY_RESIZE_SPLIT_LEFT),
-        "right" => Some(ROASTTY_RESIZE_SPLIT_RIGHT),
+        b"up" => Some(ROASTTY_RESIZE_SPLIT_UP),
+        b"down" => Some(ROASTTY_RESIZE_SPLIT_DOWN),
+        b"left" => Some(ROASTTY_RESIZE_SPLIT_LEFT),
+        b"right" => Some(ROASTTY_RESIZE_SPLIT_RIGHT),
         _ => None,
     }
 }
@@ -2396,20 +2413,24 @@ fn resize_split_from_str(value: &str) -> Option<c_int> {
 enum ParsedBindingAction {
     RuntimeAction(c_int, [usize; 8]),
     CloseSurface,
+    Text(Vec<u8>),
 }
 
-fn parse_binding_action(surface: &Surface, action: &str) -> Option<ParsedBindingAction> {
+fn parse_binding_action(surface: &Surface, action: &[u8]) -> Option<ParsedBindingAction> {
     let (name, parameter) = action
-        .split_once(':')
-        .map_or((action, None), |(name, parameter)| (name, Some(parameter)));
+        .iter()
+        .position(|byte| *byte == b':')
+        .map_or((action, None), |index| {
+            (&action[..index], Some(&action[index + 1..]))
+        });
     if name.is_empty() {
         return None;
     }
 
     match name {
-        "new_split" => {
+        b"new_split" => {
             let direction = match parameter {
-                None | Some("auto") => auto_split_direction(surface),
+                None | Some(b"auto") => auto_split_direction(surface),
                 Some(parameter) => split_direction_from_str(parameter)?,
             };
             let mut storage = [0usize; 8];
@@ -2419,7 +2440,7 @@ fn parse_binding_action(surface: &Surface, action: &str) -> Option<ParsedBinding
                 storage,
             ))
         }
-        "goto_split" => {
+        b"goto_split" => {
             let direction = goto_split_from_str(parameter?)?;
             let mut storage = [0usize; 8];
             storage[0] = direction as usize;
@@ -2428,10 +2449,10 @@ fn parse_binding_action(surface: &Surface, action: &str) -> Option<ParsedBinding
                 storage,
             ))
         }
-        "resize_split" => {
-            let mut parts = parameter?.split(',');
+        b"resize_split" => {
+            let mut parts = parameter?.split(|byte| *byte == b',');
             let direction = resize_split_from_str(parts.next()?)?;
-            let amount = parts.next()?.parse::<u16>().ok()?;
+            let amount = parse_u16_ascii(parts.next()?)?;
             if parts.next().is_some() {
                 return None;
             }
@@ -2443,7 +2464,7 @@ fn parse_binding_action(surface: &Surface, action: &str) -> Option<ParsedBinding
                 storage,
             ))
         }
-        "equalize_splits" => {
+        b"equalize_splits" => {
             if parameter.is_some() {
                 return None;
             }
@@ -2452,14 +2473,34 @@ fn parse_binding_action(surface: &Surface, action: &str) -> Option<ParsedBinding
                 [0usize; 8],
             ))
         }
-        "close_surface" => {
+        b"close_surface" => {
             if parameter.is_some() {
                 return None;
             }
             Some(ParsedBindingAction::CloseSurface)
         }
+        b"text" => Some(ParsedBindingAction::Text(parameter?.to_vec())),
         _ => None,
     }
+}
+
+fn parse_u16_ascii(bytes: &[u8]) -> Option<u16> {
+    if bytes.is_empty() {
+        return None;
+    }
+    let mut value: u32 = 0;
+    for byte in bytes {
+        if !byte.is_ascii_digit() {
+            return None;
+        }
+        value = value
+            .saturating_mul(10)
+            .saturating_add(u32::from(byte - b'0'));
+        if value > u32::from(u16::MAX) {
+            return None;
+        }
+    }
+    Some(value as u16)
 }
 
 fn copied_env_vars(ptr: *mut RoasttyEnvVar, len: usize) -> Vec<(String, String)> {
@@ -10344,10 +10385,7 @@ pub extern "C" fn roastty_surface_binding_action(
     } else {
         unsafe { std::slice::from_raw_parts(action.cast::<u8>(), action_len) }
     };
-    let Ok(action) = std::str::from_utf8(action_bytes) else {
-        return false;
-    };
-    let Some(action) = parse_binding_action(surface, action) else {
+    let Some(action) = parse_binding_action(surface, action_bytes) else {
         return false;
     };
     match action {
@@ -10359,6 +10397,15 @@ pub extern "C" fn roastty_surface_binding_action(
                 return false;
             }
             surface.request_close();
+            true
+        }
+        ParsedBindingAction::Text(text) => {
+            if surface.app.is_null() {
+                return false;
+            }
+            if let Ok(text) = config::string::parse_string_literal(&text) {
+                surface.raw_text(&text);
+            }
             true
         }
     }
@@ -12128,6 +12175,10 @@ mod tests {
         roastty_surface_binding_action(surface, action.as_ptr().cast(), action.len())
     }
 
+    fn binding_action_bytes(surface: RoasttySurface, action: &[u8]) -> bool {
+        roastty_surface_binding_action(surface, action.as_ptr().cast(), action.len())
+    }
+
     #[test]
     fn surface_binding_action_false_paths_do_not_forward() {
         reset_action_records(true);
@@ -12164,6 +12215,7 @@ mod tests {
             "resize_split:forward,10",
             "equalize_splits:now",
             "close_surface:now",
+            "text",
         ] {
             assert!(!binding_action(surface, action), "{action}");
         }
@@ -12310,6 +12362,106 @@ mod tests {
 
         assert_eq!(CLOSE_COUNT.load(Ordering::SeqCst), 0);
         roastty_surface_free(surface);
+    }
+
+    #[test]
+    fn surface_binding_action_text_no_worker_consumes_action() {
+        let app = new_test_app();
+        let surface = new_test_surface(app);
+
+        assert!(binding_action(surface, "text:"));
+        assert!(binding_action(surface, "text:hello\\n"));
+        assert!(binding_action(surface, "text:\\q"));
+
+        let surface_ref = surface_from_handle(surface).unwrap();
+        assert!(surface_ref.last_termio_error.is_none());
+        assert!(!surface_ref.dirty);
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+    }
+
+    #[test]
+    fn surface_binding_action_text_false_for_null_and_detached() {
+        let app = new_test_app();
+        let surface = new_test_surface(app);
+
+        assert!(!binding_action(ptr::null_mut(), "text:hello"));
+        roastty_app_free(app);
+        assert!(!binding_action(surface, "text:hello"));
+        roastty_surface_free(surface);
+    }
+
+    #[test]
+    fn surface_binding_action_text_decoded_escapes_reach_child_pty() {
+        let _guard = PTY_COMMAND_LOCK.lock().unwrap();
+        let app = new_test_app();
+        let command =
+            CString::new("stty -echo; IFS= read line; printf 'line:%s' \"$line\"").unwrap();
+        let mut config = roastty_surface_config_new();
+        config.command = command.as_ptr();
+        let surface = new_test_surface_with_config(app, &config);
+
+        assert_eq!(roastty_surface_start(surface), ROASTTY_SUCCESS);
+        assert!(binding_action(surface, "text:hello\\n"));
+        let text = surface_snapshot_text(app, surface);
+
+        assert!(text.contains("line:hello"));
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+    }
+
+    #[test]
+    fn surface_binding_action_text_raw_control_bytes_reach_child_pty() {
+        let _guard = PTY_COMMAND_LOCK.lock().unwrap();
+        let app = new_test_app();
+        let command = CString::new(
+            "python3 -c 'import sys, tty; sys.stdout.write(\"ready\\n\"); sys.stdout.flush(); tty.setraw(sys.stdin.fileno()); b = sys.stdin.buffer.read(1); sys.stdout.write(\"\\n\" + b.hex())'",
+        )
+        .unwrap();
+        let mut config = roastty_surface_config_new();
+        config.command = command.as_ptr();
+        let surface = new_test_surface_with_config(app, &config);
+
+        assert!(surface_snapshot_text_after_start(app, surface).contains("ready"));
+        assert!(binding_action(surface, "text:\\x15"));
+        let text = surface_snapshot_text(app, surface);
+
+        assert!(text.contains("15"));
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+    }
+
+    #[test]
+    fn surface_binding_action_text_invalid_escape_consumes_without_writing() {
+        let _guard = PTY_COMMAND_LOCK.lock().unwrap();
+        let app = new_test_app();
+        let command = CString::new(
+            "python3 -c 'import select, sys, tty; sys.stdout.write(\"ready\\n\"); sys.stdout.flush(); tty.setraw(sys.stdin.fileno()); r, _, _ = select.select([sys.stdin], [], [], 0.5); b = sys.stdin.buffer.read(1) if r else b\"\"; sys.stdout.write(\"\\nbyte:\" + b.hex())'",
+        )
+        .unwrap();
+        let mut config = roastty_surface_config_new();
+        config.command = command.as_ptr();
+        let surface = new_test_surface_with_config(app, &config);
+
+        assert!(surface_snapshot_text_after_start(app, surface).contains("ready"));
+        assert!(binding_action(surface, "text:\\q"));
+        let text = surface_snapshot_text(app, surface);
+
+        assert!(text.contains("byte:"));
+        assert!(!text.contains("byte:20"));
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+    }
+
+    #[test]
+    fn surface_binding_action_text_accepts_literal_non_utf8_bytes() {
+        let app = new_test_app();
+        let surface = new_test_surface(app);
+
+        assert!(binding_action_bytes(surface, b"text:\xff"));
+
+        roastty_surface_free(surface);
+        roastty_app_free(app);
     }
 
     #[test]

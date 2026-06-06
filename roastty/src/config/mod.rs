@@ -14,7 +14,7 @@ mod conditional;
 mod edit;
 mod formatter;
 mod loader;
-mod string;
+pub(crate) mod string;
 mod unicode_range;
 
 use crate::config::comma_splitter::CommaSplitter;

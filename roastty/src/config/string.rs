@@ -1,8 +1,8 @@
 //! String-literal codepoint iteration (port of upstream `config/string.zig`).
 //!
 //! An allocation-free iterator over the codepoints of a string literal, parsing
-//! Zig escape sequences (`\n`, `\t`, `\\`, `\xNN`, `\u{...}`, …) as it goes. The
-//! byte-array `parse` variant in the upstream file is ported later.
+//! Zig escape sequences (`\n`, `\t`, `\\`, `\xNN`, `\u{...}`, …) as it goes.
+//! The upstream byte-array `parse` variant is exposed as `parse_string_literal`.
 #![allow(dead_code)]
 
 /// A failure parsing a string literal (upstream `error.InvalidString`).
@@ -14,6 +14,27 @@ pub(crate) struct InvalidString;
 /// name a value, e.g. a surrogate, that is not a Rust `char`).
 pub(crate) fn codepoint_iterator(bytes: &[u8]) -> CodepointIterator<'_> {
     CodepointIterator { bytes, i: 0 }
+}
+
+/// Parse an unquoted string literal into bytes (upstream
+/// `config.string.parse`). Literal non-escape bytes are copied as-is; escape
+/// sequences are decoded to UTF-8 bytes.
+pub(crate) fn parse_string_literal(bytes: &[u8]) -> Result<Vec<u8>, InvalidString> {
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut index = 0usize;
+    while index < bytes.len() {
+        if bytes[index] != b'\\' {
+            out.push(bytes[index]);
+            index += 1;
+            continue;
+        }
+
+        let cp = parse_escape_sequence(bytes, &mut index).ok_or(InvalidString)?;
+        let ch = char::from_u32(cp).ok_or(InvalidString)?;
+        let mut buf = [0u8; 4];
+        out.extend_from_slice(ch.encode_utf8(&mut buf).as_bytes());
+    }
+    Ok(out)
 }
 
 pub(crate) struct CodepointIterator<'a> {
@@ -253,5 +274,30 @@ mod tests {
         assert_eq!(q("\"\\u{d800}\""), None); // a surrogate codepoint
         assert_eq!(q("abc"), None); // missing surrounding quotes
         assert_eq!(q("\""), None); // too short
+    }
+
+    #[test]
+    fn parse_string_literal_decodes_unquoted_bytes() {
+        assert_eq!(parse_string_literal(b""), Ok(Vec::new()));
+        assert_eq!(
+            parse_string_literal(b"hello world"),
+            Ok(b"hello world".to_vec())
+        );
+        assert_eq!(
+            parse_string_literal(b"hello\\nworld"),
+            Ok(b"hello\nworld".to_vec())
+        );
+        assert_eq!(parse_string_literal(b"\\x15"), Ok(vec![0x15]));
+        assert_eq!(
+            parse_string_literal(b"\\u{2502}x"),
+            Ok("│x".as_bytes().to_vec())
+        );
+        assert_eq!(parse_string_literal(&[0xff, b'a']), Ok(vec![0xff, b'a']));
+
+        assert_eq!(parse_string_literal(b"\\"), Err(InvalidString));
+        assert_eq!(parse_string_literal(b"\\q"), Err(InvalidString));
+        assert_eq!(parse_string_literal(b"\\x1"), Err(InvalidString));
+        assert_eq!(parse_string_literal(b"\\u{}"), Err(InvalidString));
+        assert_eq!(parse_string_literal(b"\\u{d800}"), Err(InvalidString));
     }
 }

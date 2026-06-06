@@ -8,6 +8,11 @@ reasoning = "high"
 agent = "codex"
 model = "gpt-5"
 reasoning = "medium"
+
+[review.result]
+agent = "codex"
+model = "gpt-5"
+reasoning = "medium"
 +++
 
 # Experiment 704: Binding Action Text
@@ -134,3 +139,68 @@ raw surface input helper, a byte-array config string parser that preserves
 literal bytes, and explicit tests for raw control-byte delivery. The review also
 required recording this section and updating the README provenance tuple before
 the plan commit.
+
+## Result
+
+**Result:** Pass
+
+Implemented `text:` support in the binding-action ABI:
+
+- Added `config::string::parse_string_literal`, the byte-array parser equivalent
+  of upstream `config.string.parse`.
+- Made the config string module available to the crate so binding-action
+  dispatch can reuse the parser.
+- Changed binding-action parsing to operate on byte slices, preserving arbitrary
+  literal bytes in `text:` parameters.
+- Kept split and close action names as ASCII byte matches.
+- Added a raw surface text helper that writes directly to the active termio
+  worker without paste encoding or control-byte sanitization.
+- Extended parsed binding actions with `Text`.
+- Made parsed `text:` actions return `true` for attached surfaces even when the
+  decoded text is empty, invalid, or no termio worker exists.
+- Kept null and detached surfaces returning `false`.
+- Added parser tests for empty/plain/escaped/unicode/literal non-UTF-8 bytes and
+  malformed escapes.
+- Added Rust binding-action tests for no-worker behavior, detached behavior,
+  decoded text reaching a child PTY, raw `\x15` delivery, invalid escape
+  consumption without writing, and literal non-UTF-8 action parameters.
+- Added C ABI harness smoke coverage for `text` and `text:hello`.
+
+Verification passed:
+
+- `cargo fmt -p roastty`
+- `cargo test -p roastty string -- --nocapture`
+- `cargo test -p roastty binding_action -- --nocapture`
+- `cargo test -p roastty surface_text -- --nocapture`
+- `cargo test -p roastty --test abi_harness`
+- `cargo fmt -p roastty -- --check`
+- `git diff --check`
+
+## Conclusion
+
+Roastty binding-action invocation now supports split actions, `close_surface`,
+and raw `text:` input with upstream-style unquoted string-literal escape
+parsing. Remaining binding-action parity still requires `csi`, `esc`, cursor-key
+actions, clipboard actions, terminal reset and scrolling actions, complete
+keybind storage/lookup, app-scoped actions, and frontend split/tab/window
+mutation.
+
+One upstream detail remains deferred for this slice: Ghostty scrolls to bottom
+after queueing a `text:` binding-action write. Roastty's raw write path
+currently queues the bytes only; the scroll-to-bottom side effect should be
+handled with the later terminal scrolling / renderer state integration.
+
+## Completion Review
+
+Codex reviewed the staged completed Experiment 704 result. The review found no
+implementation blockers: binding-action parsing is byte-oriented, `text:`
+preserves literal non-UTF-8 bytes, escape decoding matches upstream's
+byte-copy-plus-UTF-8 escape behavior, dispatch bypasses `Surface::text` paste
+encoding, and the raw `\x15` PTY test proves control-byte delivery.
+
+The review accepted the parser, binding-action, surface text, and C harness
+coverage for this slice. It initially blocked the result commit only because the
+README provenance tuple still showed the result review as pending. This section
+and the README tuple update resolve that workflow finding. The review also noted
+the stale `config::string` module comment and the deferred upstream
+scroll-to-bottom side effect; both are recorded in this result.
