@@ -1983,6 +1983,8 @@ are past the correctness-critical foundation.
   — **Pass** · Codex/Codex/Codex
 - [Experiment 734: Binding Action Write Selection File Copy](734-binding-action-write-selection-file-copy.md)
   — **Pass** · Codex/Codex/Codex
+- [Experiment 735: Binding Action Write Selection File Paste](735-binding-action-write-selection-file-paste.md)
+  — **Designed** · Codex/Codex/-
 
 ## Non-Goals
 
