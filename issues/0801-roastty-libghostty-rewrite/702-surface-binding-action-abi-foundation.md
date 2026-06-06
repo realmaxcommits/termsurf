@@ -8,6 +8,11 @@ reasoning = "high"
 agent = "codex"
 model = "gpt-5"
 reasoning = "medium"
+
+[review.result]
+agent = "codex"
+model = "gpt-5"
+reasoning = "medium"
 +++
 
 # Experiment 702: Surface Binding Action ABI Foundation
@@ -124,3 +129,52 @@ until two issues were fixed:
 
 This revised design fixes both findings and adds verification for geometry-based
 auto split selection plus preservation of the existing split helper behavior.
+
+## Result
+
+**Result:** Pass
+
+Implemented the surface binding-action ABI foundation:
+
+- Added `roastty_surface_binding_action`.
+- Added a small upstream-style parser for currently supported split action
+  strings.
+- Added a bool-returning action forwarding helper while preserving the existing
+  `void` split helper ABI behavior.
+- Forwarded supported split actions through the existing runtime action callback
+  path and returned the callback result from `roastty_surface_binding_action`.
+- Used stored surface pixel geometry for `new_split` and `new_split:auto`,
+  choosing right only when width is greater than height and down otherwise.
+- Rejected null, empty, invalid UTF-8, malformed, unsupported, detached, and
+  callback-less calls with `false` and no action records.
+- Added C ABI harness coverage for the new symbol.
+
+Verification passed:
+
+- `cargo fmt -p roastty`
+- `cargo test -p roastty binding_action -- --nocapture`
+- `cargo test -p roastty split -- --nocapture`
+- `cargo test -p roastty --test abi_harness`
+- `cargo fmt -p roastty -- --check`
+- `git diff --check`
+
+## Conclusion
+
+Roastty now exposes the surface-level binding-action C boundary for the split
+actions it can already forward. Full binding-action parity remains for later
+experiments: complete `Binding.Action` parsing, keybind storage and lookup,
+app-scoped actions, terminal text/CSI/ESC actions, clipboard actions, close/tab
+/window actions, key tables, and frontend split tree mutation.
+
+## Completion Review
+
+Codex reviewed the staged completed Experiment 702 result. The review found no
+implementation blockers: the new ABI is declared, the parser is scoped to the
+planned split actions, `new_split:auto` uses stored surface geometry, the
+binding-action API returns the runtime callback result, and the existing
+split-specific `void` helpers still ignore callback results.
+
+The review accepted the Rust and C harness coverage for this slice. It initially
+blocked the result commit only because the README provenance tuple still showed
+the result review as pending. This section and the README tuple update resolve
+that workflow finding.

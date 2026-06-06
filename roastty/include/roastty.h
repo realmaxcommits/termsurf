@@ -1966,6 +1966,9 @@ ROASTTY_API void roastty_surface_split_resize(roastty_surface_t,
                                               roastty_resize_split_e,
                                               uint16_t);
 ROASTTY_API void roastty_surface_split_equalize(roastty_surface_t);
+ROASTTY_API bool roastty_surface_binding_action(roastty_surface_t,
+                                                const char*,
+                                                uintptr_t);
 
 #ifdef __cplusplus
 }

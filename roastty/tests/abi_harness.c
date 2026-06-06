@@ -4023,6 +4023,7 @@ int main(int argc, char **argv) {
   roastty_surface_split_focus(NULL, ROASTTY_GOTO_SPLIT_NEXT);
   roastty_surface_split_resize(NULL, ROASTTY_RESIZE_SPLIT_UP, 10);
   roastty_surface_split_equalize(NULL);
+  assert(!roastty_surface_binding_action(NULL, "new_split:right", 15));
   double ime_x = 1.0;
   double ime_y = 2.0;
   double ime_width = 3.0;
@@ -4291,6 +4292,10 @@ int main(int argc, char **argv) {
   roastty_surface_split_focus(surface, ROASTTY_GOTO_SPLIT_NEXT);
   roastty_surface_split_resize(surface, ROASTTY_RESIZE_SPLIT_UP, 10);
   roastty_surface_split_equalize(surface);
+  assert(!roastty_surface_binding_action(surface, NULL, 1));
+  assert(!roastty_surface_binding_action(surface, NULL, 0));
+  assert(!roastty_surface_binding_action(surface, "unknown", 7));
+  assert(!roastty_surface_binding_action(surface, "new_split:right", 15));
   roastty_surface_preedit(surface, NULL, 3);
   roastty_surface_preedit(surface, NULL, 0);
   roastty_text_s read_text = {0};

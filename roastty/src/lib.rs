@@ -1777,8 +1777,12 @@ impl Surface {
     }
 
     fn perform_action(&self, tag: c_int, storage: [usize; 8]) {
+        let _ = self.perform_action_result(tag, storage);
+    }
+
+    fn perform_action_result(&self, tag: c_int, storage: [usize; 8]) -> bool {
         let Some(app) = app_from_handle(self.app) else {
-            return;
+            return false;
         };
         if let Some(action) = app.runtime.action_cb {
             let target = RoasttyTarget {
@@ -1786,10 +1790,9 @@ impl Surface {
                 surface: (self as *const Surface).cast_mut().cast(),
             };
             let action_value = RoasttyAction { tag, storage };
-            unsafe {
-                let _ = action(self.app, target, action_value);
-            }
+            return unsafe { action(self.app, target, action_value) };
         }
+        false
     }
 
     fn inherited_config(&mut self, context: c_int) -> RoasttySurfaceConfig {
@@ -2346,6 +2349,92 @@ fn valid_resize_split(direction: c_int) -> Option<c_int> {
         | ROASTTY_RESIZE_SPLIT_DOWN
         | ROASTTY_RESIZE_SPLIT_LEFT
         | ROASTTY_RESIZE_SPLIT_RIGHT => Some(direction),
+        _ => None,
+    }
+}
+
+fn split_direction_from_str(value: &str) -> Option<c_int> {
+    match value {
+        "right" => Some(ROASTTY_SPLIT_DIRECTION_RIGHT),
+        "down" => Some(ROASTTY_SPLIT_DIRECTION_DOWN),
+        "left" => Some(ROASTTY_SPLIT_DIRECTION_LEFT),
+        "up" => Some(ROASTTY_SPLIT_DIRECTION_UP),
+        _ => None,
+    }
+}
+
+fn auto_split_direction(surface: &Surface) -> c_int {
+    if surface.size.width_px > surface.size.height_px {
+        ROASTTY_SPLIT_DIRECTION_RIGHT
+    } else {
+        ROASTTY_SPLIT_DIRECTION_DOWN
+    }
+}
+
+fn goto_split_from_str(value: &str) -> Option<c_int> {
+    match value {
+        "previous" => Some(ROASTTY_GOTO_SPLIT_PREVIOUS),
+        "next" => Some(ROASTTY_GOTO_SPLIT_NEXT),
+        "up" | "top" => Some(ROASTTY_GOTO_SPLIT_UP),
+        "left" => Some(ROASTTY_GOTO_SPLIT_LEFT),
+        "down" | "bottom" => Some(ROASTTY_GOTO_SPLIT_DOWN),
+        "right" => Some(ROASTTY_GOTO_SPLIT_RIGHT),
+        _ => None,
+    }
+}
+
+fn resize_split_from_str(value: &str) -> Option<c_int> {
+    match value {
+        "up" => Some(ROASTTY_RESIZE_SPLIT_UP),
+        "down" => Some(ROASTTY_RESIZE_SPLIT_DOWN),
+        "left" => Some(ROASTTY_RESIZE_SPLIT_LEFT),
+        "right" => Some(ROASTTY_RESIZE_SPLIT_RIGHT),
+        _ => None,
+    }
+}
+
+fn parse_binding_action(surface: &Surface, action: &str) -> Option<(c_int, [usize; 8])> {
+    let (name, parameter) = action
+        .split_once(':')
+        .map_or((action, None), |(name, parameter)| (name, Some(parameter)));
+    if name.is_empty() {
+        return None;
+    }
+
+    match name {
+        "new_split" => {
+            let direction = match parameter {
+                None | Some("auto") => auto_split_direction(surface),
+                Some(parameter) => split_direction_from_str(parameter)?,
+            };
+            let mut storage = [0usize; 8];
+            storage[0] = direction as usize;
+            Some((ROASTTY_ACTION_NEW_SPLIT, storage))
+        }
+        "goto_split" => {
+            let direction = goto_split_from_str(parameter?)?;
+            let mut storage = [0usize; 8];
+            storage[0] = direction as usize;
+            Some((ROASTTY_ACTION_GOTO_SPLIT, storage))
+        }
+        "resize_split" => {
+            let mut parts = parameter?.split(',');
+            let direction = resize_split_from_str(parts.next()?)?;
+            let amount = parts.next()?.parse::<u16>().ok()?;
+            if parts.next().is_some() {
+                return None;
+            }
+            let mut storage = [0usize; 8];
+            storage[0] = usize::from(amount);
+            storage[1] = direction as usize;
+            Some((ROASTTY_ACTION_RESIZE_SPLIT, storage))
+        }
+        "equalize_splits" => {
+            if parameter.is_some() {
+                return None;
+            }
+            Some((ROASTTY_ACTION_EQUALIZE_SPLITS, [0usize; 8]))
+        }
         _ => None,
     }
 }
@@ -10215,6 +10304,32 @@ pub extern "C" fn roastty_surface_split_equalize(surface: RoasttySurface) {
     }
 }
 
+#[no_mangle]
+pub extern "C" fn roastty_surface_binding_action(
+    surface: RoasttySurface,
+    action: *const c_char,
+    action_len: usize,
+) -> bool {
+    let Some(surface) = surface_from_handle(surface) else {
+        return false;
+    };
+    if action.is_null() && action_len > 0 {
+        return false;
+    }
+    let action_bytes = if action_len == 0 {
+        &[][..]
+    } else {
+        unsafe { std::slice::from_raw_parts(action.cast::<u8>(), action_len) }
+    };
+    let Ok(action) = std::str::from_utf8(action_bytes) else {
+        return false;
+    };
+    let Some((tag, storage)) = parse_binding_action(surface, action) else {
+        return false;
+    };
+    surface.perform_action_result(tag, storage)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -11970,6 +12085,159 @@ mod tests {
         assert_eq!(records[2].storage[1], ROASTTY_RESIZE_SPLIT_RIGHT as usize);
         assert_eq!(records[3].action_tag, ROASTTY_ACTION_EQUALIZE_SPLITS);
         assert!(records[3].storage.iter().all(|value| *value == 0));
+
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+    }
+
+    fn binding_action(surface: RoasttySurface, action: &str) -> bool {
+        roastty_surface_binding_action(surface, action.as_ptr().cast(), action.len())
+    }
+
+    #[test]
+    fn surface_binding_action_false_paths_do_not_forward() {
+        reset_action_records(true);
+        assert!(!binding_action(ptr::null_mut(), "new_split:right"));
+        assert!(!roastty_surface_binding_action(
+            ptr::null_mut(),
+            ptr::null(),
+            0
+        ));
+        assert!(action_records().is_empty());
+
+        let app = new_test_app_with_action(true);
+        let surface = new_test_surface(app);
+        assert!(!roastty_surface_binding_action(surface, ptr::null(), 1));
+        assert!(!roastty_surface_binding_action(surface, ptr::null(), 0));
+        assert!(!roastty_surface_binding_action(
+            surface,
+            [0xff].as_ptr().cast(),
+            1
+        ));
+        for action in [
+            "",
+            ":new_split",
+            "unknown",
+            "new_split:",
+            "new_split:diagonal",
+            "goto_split",
+            "goto_split:",
+            "goto_split:green",
+            "resize_split",
+            "resize_split:up",
+            "resize_split:up,10,12",
+            "resize_split:up,four",
+            "resize_split:forward,10",
+            "equalize_splits:now",
+        ] {
+            assert!(!binding_action(surface, action), "{action}");
+        }
+        assert!(action_records().is_empty());
+
+        roastty_app_free(app);
+        assert!(!binding_action(surface, "new_split:right"));
+        assert!(action_records().is_empty());
+        roastty_surface_free(surface);
+
+        let app = new_test_app();
+        let surface = new_test_surface(app);
+        assert!(!binding_action(surface, "new_split:right"));
+        assert!(action_records().is_empty());
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+    }
+
+    #[test]
+    fn surface_binding_action_forwards_supported_split_actions() {
+        let app = new_test_app_with_action(true);
+        let surface = new_test_surface(app);
+        roastty_surface_set_size(surface, 800, 480);
+
+        for action in [
+            "new_split",
+            "new_split:auto",
+            "new_split:left",
+            "goto_split:top",
+            "goto_split:bottom",
+            "goto_split:next",
+            "resize_split:right,37",
+            "equalize_splits",
+        ] {
+            assert!(binding_action(surface, action), "{action}");
+        }
+
+        let records = action_records();
+        assert_eq!(records.len(), 8);
+        for record in &records {
+            assert_eq!(record.app, app);
+            assert_eq!(record.target_tag, ROASTTY_TARGET_SURFACE);
+            assert_eq!(record.surface, surface);
+        }
+        assert_eq!(records[0].action_tag, ROASTTY_ACTION_NEW_SPLIT);
+        assert_eq!(
+            records[0].storage[0],
+            ROASTTY_SPLIT_DIRECTION_RIGHT as usize
+        );
+        assert_eq!(records[1].action_tag, ROASTTY_ACTION_NEW_SPLIT);
+        assert_eq!(
+            records[1].storage[0],
+            ROASTTY_SPLIT_DIRECTION_RIGHT as usize
+        );
+        assert_eq!(records[2].action_tag, ROASTTY_ACTION_NEW_SPLIT);
+        assert_eq!(records[2].storage[0], ROASTTY_SPLIT_DIRECTION_LEFT as usize);
+        assert_eq!(records[3].action_tag, ROASTTY_ACTION_GOTO_SPLIT);
+        assert_eq!(records[3].storage[0], ROASTTY_GOTO_SPLIT_UP as usize);
+        assert_eq!(records[4].action_tag, ROASTTY_ACTION_GOTO_SPLIT);
+        assert_eq!(records[4].storage[0], ROASTTY_GOTO_SPLIT_DOWN as usize);
+        assert_eq!(records[5].action_tag, ROASTTY_ACTION_GOTO_SPLIT);
+        assert_eq!(records[5].storage[0], ROASTTY_GOTO_SPLIT_NEXT as usize);
+        assert_eq!(records[6].action_tag, ROASTTY_ACTION_RESIZE_SPLIT);
+        assert_eq!(records[6].storage[0], 37);
+        assert_eq!(records[6].storage[1], ROASTTY_RESIZE_SPLIT_RIGHT as usize);
+        assert_eq!(records[7].action_tag, ROASTTY_ACTION_EQUALIZE_SPLITS);
+        assert!(records[7].storage.iter().all(|value| *value == 0));
+
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+    }
+
+    #[test]
+    fn surface_binding_action_auto_split_uses_surface_geometry() {
+        let app = new_test_app_with_action(true);
+        let surface = new_test_surface(app);
+
+        assert!(binding_action(surface, "new_split:auto"));
+        roastty_surface_set_size(surface, 320, 600);
+        assert!(binding_action(surface, "new_split"));
+        roastty_surface_set_size(surface, 900, 320);
+        assert!(binding_action(surface, "new_split:auto"));
+
+        let records = action_records();
+        assert_eq!(records.len(), 3);
+        assert_eq!(records[0].action_tag, ROASTTY_ACTION_NEW_SPLIT);
+        assert_eq!(records[0].storage[0], ROASTTY_SPLIT_DIRECTION_DOWN as usize);
+        assert_eq!(records[1].action_tag, ROASTTY_ACTION_NEW_SPLIT);
+        assert_eq!(records[1].storage[0], ROASTTY_SPLIT_DIRECTION_DOWN as usize);
+        assert_eq!(records[2].action_tag, ROASTTY_ACTION_NEW_SPLIT);
+        assert_eq!(
+            records[2].storage[0],
+            ROASTTY_SPLIT_DIRECTION_RIGHT as usize
+        );
+
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+    }
+
+    #[test]
+    fn surface_binding_action_returns_callback_result() {
+        let app = new_test_app_with_action(false);
+        let surface = new_test_surface(app);
+
+        assert!(!binding_action(surface, "equalize_splits"));
+
+        let records = action_records();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].action_tag, ROASTTY_ACTION_EQUALIZE_SPLITS);
 
         roastty_surface_free(surface);
         roastty_app_free(app);
