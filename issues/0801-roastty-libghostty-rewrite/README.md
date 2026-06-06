@@ -204,7 +204,8 @@ Experiment 246).
       state scroll-region application done; pane state tab-stop application
       done; pane state alternate saved cursor application done; remaining pane
       state application, live output, terminal DCS bridge, and PTY foundation
-      done; PTY loops and App/surface presentation missing
+      done; PTY subprocess spawn in progress; PTY loops and App/surface
+      presentation missing
 - [x] `sys` (PNG-decode abstraction) — implemented and tested via C ABI
 
 ### Renderer — data + Metal primitives only; no live render loop
@@ -1796,6 +1797,8 @@ are past the correctness-critical foundation.
   **Pass** · Codex/Codex/Codex
 - [Experiment 664: PTY Foundation](664-pty-foundation.md) — **Pass** ·
   Codex/Codex/Codex
+- [Experiment 665: PTY Subprocess Spawn](665-pty-subprocess-spawn.md) —
+  **Designed** · Codex/Codex/Codex
 
 ## Non-Goals
 
