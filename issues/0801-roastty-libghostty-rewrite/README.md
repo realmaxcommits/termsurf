@@ -1935,6 +1935,8 @@ are past the correctness-critical foundation.
   — **Pass** · Codex/Codex/Codex
 - [Experiment 712: Binding Action Scroll Selection](712-binding-action-scroll-selection.md)
   — **Pass** · Codex/Codex/Codex
+- [Experiment 713: Binding Action Clear Screen](713-binding-action-clear-screen.md)
+  — **Designed** · Codex/Codex/-
 
 ## Non-Goals
 
