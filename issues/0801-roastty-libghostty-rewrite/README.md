@@ -268,7 +268,9 @@ Experiment 246).
       selection-gesture ABI, Kitty-graphics ABI
 - [x] Config / app / surface lifecycle handles (new/free/clone/userdata/basic
       setters/inherited surface config)
-- [ ] `config_get` (12 defaults only) + keybind triggers — partial
+- [ ] `config_get` (12 defaults only) + keybind triggers — config trigger ABI
+      foundation and no-keybind fallback done; keybind parsing/storage and real
+      trigger lookup missing
 - [ ] App/surface key dispatch, surface draw/refresh, IME/text/preedit, surface
       mouse dispatch, selection read, splits — surface draw and refresh wakeups
       and surface text paste input done; preedit state and explicit surface text
@@ -279,8 +281,9 @@ Experiment 246).
       button/position dispatch done; surface mouse scroll reporting done; split
       action callback forwarding done; surface key default terminal dispatch
       done; terminal-derived key encoder options done; surface text viewport
-      metadata done; keybinding/action dispatch, frontend selection routing, and
-      split tree/frontend mutations missing
+      metadata done; config/surface key-is-binding false-path foundation done;
+      keybinding/action dispatch, frontend selection routing, and split
+      tree/frontend mutations missing
 - [ ] Inspector ABI — non-Metal handle lifecycle and input forwarding foundation
       done; Metal renderer integration, inspector UI rendering, and core
       inspector data collection missing
@@ -1898,7 +1901,7 @@ are past the correctness-critical foundation.
 - [Experiment 699: Confirm Close Policy](699-confirm-close-policy.md) — **Pass**
   · Codex/Codex/Codex
 - [Experiment 700: Keybind Trigger ABI Foundation](700-keybind-trigger-abi-foundation.md)
-  — **Designed** · Codex/Codex/-
+  — **Pass** · Codex/Codex/Codex
 
 ## Non-Goals
 

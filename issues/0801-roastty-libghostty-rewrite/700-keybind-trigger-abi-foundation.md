@@ -8,6 +8,11 @@ reasoning = "high"
 agent = "codex"
 model = "gpt-5"
 reasoning = "medium"
+
+[review.result]
+agent = "codex"
+model = "gpt-5"
+reasoning = "medium"
 +++
 
 # Experiment 700: Keybind Trigger ABI Foundation
@@ -101,3 +106,50 @@ explicit no-keybind behavior for config/surface binding queries and app global
 keybind checks, and the proposed Rust and C harness coverage. The review noted
 that the implementation should make trigger enum values explicit as
 `Physical = 0`, `Unicode = 1`, and `CatchAll = 2`.
+
+## Result
+
+**Result:** Pass
+
+Implemented the keybind trigger ABI foundation:
+
+- Added Roastty-named trigger C ABI types and explicit tag values.
+- Added `roastty_config_trigger` and `roastty_config_key_is_binding`.
+- Added Rust `#[repr(C)]` trigger structs/unions plus `empty_trigger()`.
+- Returned upstream-shaped empty triggers for all current config trigger lookups
+  until keybind/action parsing exists.
+- Kept config and surface binding queries false while validating inputs and
+  preserving atomic flag-zeroing for surface calls.
+- Routed `roastty_app_has_global_keybinds` through explicit config/app state
+  that currently defaults false and can be filled by later keybind parser work.
+- Added C harness smoke coverage for the new public trigger structs and config
+  keybind exports.
+
+Verification passed:
+
+- `cargo fmt -p roastty`
+- `cargo test -p roastty trigger -- --nocapture`
+- `cargo test -p roastty key_is_binding -- --nocapture`
+- `cargo test -p roastty has_global_keybinds -- --nocapture`
+- `cargo test -p roastty --test abi_harness`
+- `cargo fmt -p roastty -- --check`
+- `git diff --check`
+
+## Conclusion
+
+Roastty now exposes the keybind trigger/query ABI surface with stable no-keybind
+fallback behavior. The next keybind work can focus on parser/storage/action
+semantics without changing the public C boundary again.
+
+## Completion Review
+
+Codex reviewed the staged completed Experiment 700 result. The review found no
+code correctness blockers: trigger tag values and layout match upstream,
+`roastty_config_trigger` returns the upstream-shaped empty trigger for current
+no-keybind cases, config and surface binding queries validate inputs while
+remaining false, surface query flags are zeroed atomically, and the
+`has_global_keybinds` state foundation is scoped correctly.
+
+The review initially blocked the result commit only because completion-review
+provenance had not yet been recorded. This section, the `[review.result]`
+frontmatter, and the README tuple update resolve that workflow finding.

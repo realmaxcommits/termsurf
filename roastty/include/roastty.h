@@ -1079,6 +1079,23 @@ typedef enum {
 } roastty_key_e;
 
 typedef enum {
+  ROASTTY_TRIGGER_PHYSICAL = 0,
+  ROASTTY_TRIGGER_UNICODE = 1,
+  ROASTTY_TRIGGER_CATCH_ALL = 2,
+} roastty_input_trigger_tag_e;
+
+typedef union {
+  roastty_key_e physical;
+  uint32_t unicode;
+} roastty_input_trigger_key_u;
+
+typedef struct {
+  roastty_input_trigger_tag_e tag;
+  roastty_input_trigger_key_u key;
+  roastty_input_mods_e mods;
+} roastty_input_trigger_s;
+
+typedef enum {
   ROASTTY_KEY_SIDE_LEFT = 0,
   ROASTTY_KEY_SIDE_RIGHT = 1,
 } roastty_key_side_e;
@@ -1428,6 +1445,11 @@ ROASTTY_API bool roastty_config_get(roastty_config_t,
                                     void*,
                                     const char*,
                                     uintptr_t);
+ROASTTY_API roastty_input_trigger_s roastty_config_trigger(roastty_config_t,
+                                                           const char*,
+                                                           uintptr_t);
+ROASTTY_API bool roastty_config_key_is_binding(roastty_config_t,
+                                               roastty_key_event_t);
 ROASTTY_API uint32_t roastty_config_diagnostics_count(roastty_config_t);
 ROASTTY_API roastty_diagnostic_s roastty_config_get_diagnostic(roastty_config_t,
                                                                uint32_t);

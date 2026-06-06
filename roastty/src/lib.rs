@@ -125,7 +125,6 @@ const ROASTTY_RESIZE_SPLIT_DOWN: c_int = 1;
 const ROASTTY_RESIZE_SPLIT_LEFT: c_int = 2;
 const ROASTTY_RESIZE_SPLIT_RIGHT: c_int = 3;
 
-#[cfg(test)]
 const ROASTTY_MODS_NONE: c_int = 0;
 const ROASTTY_MODS_SHIFT: c_int = 1 << 0;
 const ROASTTY_MODS_CTRL: c_int = 1 << 1;
@@ -490,6 +489,12 @@ const ROASTTY_CELL_DATA_SEMANTIC: c_int = 9;
 const ROASTTY_CELL_DATA_COLOR_PALETTE: c_int = 10;
 const ROASTTY_CELL_DATA_COLOR_RGB: c_int = 11;
 
+const ROASTTY_TRIGGER_PHYSICAL: c_int = 0;
+#[allow(dead_code)]
+const ROASTTY_TRIGGER_UNICODE: c_int = 1;
+#[allow(dead_code)]
+const ROASTTY_TRIGGER_CATCH_ALL: c_int = 2;
+
 #[allow(dead_code)]
 const ROASTTY_ROW_SEMANTIC_NONE: c_int = 0;
 #[allow(dead_code)]
@@ -523,6 +528,21 @@ pub struct RoasttyDiagnostic {
 pub struct RoasttyConfigPath {
     path: *const c_char,
     optional: bool,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub union RoasttyInputTriggerKey {
+    physical: c_int,
+    unicode: u32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RoasttyInputTrigger {
+    tag: c_int,
+    key: RoasttyInputTriggerKey,
+    mods: c_int,
 }
 
 #[repr(C)]
@@ -1307,6 +1327,7 @@ pub struct RoasttyRuntimeConfig {
 struct Config {
     finalized: bool,
     confirm_close_surface: config::ConfirmCloseSurface,
+    has_global_keybinds: bool,
 }
 
 struct App {
@@ -1314,6 +1335,7 @@ struct App {
     focused: bool,
     color_scheme: c_int,
     confirm_close_surface: config::ConfirmCloseSurface,
+    has_global_keybinds: bool,
     surfaces: Vec<NonNull<Surface>>,
 }
 
@@ -2819,6 +2841,16 @@ fn write_empty_string(out: *mut RoasttyString) {
         unsafe {
             out.write(empty_string());
         }
+    }
+}
+
+fn empty_trigger() -> RoasttyInputTrigger {
+    RoasttyInputTrigger {
+        tag: ROASTTY_TRIGGER_PHYSICAL,
+        key: RoasttyInputTriggerKey {
+            physical: key::Key::Unidentified as c_int,
+        },
+        mods: ROASTTY_MODS_NONE,
     }
 }
 
@@ -5941,6 +5973,7 @@ pub extern "C" fn roastty_config_new() -> RoasttyConfig {
     Box::into_raw(Box::new(Config {
         finalized: false,
         confirm_close_surface: config::ConfirmCloseSurface::True,
+        has_global_keybinds: false,
     }))
     .cast()
 }
@@ -5956,12 +5989,19 @@ pub extern "C" fn roastty_config_free(config: RoasttyConfig) {
 
 #[no_mangle]
 pub extern "C" fn roastty_config_clone(config: RoasttyConfig) -> RoasttyConfig {
-    let (finalized, confirm_close_surface) = config_from_handle(config)
-        .map(|config| (config.finalized, config.confirm_close_surface))
-        .unwrap_or((false, config::ConfirmCloseSurface::True));
+    let (finalized, confirm_close_surface, has_global_keybinds) = config_from_handle(config)
+        .map(|config| {
+            (
+                config.finalized,
+                config.confirm_close_surface,
+                config.has_global_keybinds,
+            )
+        })
+        .unwrap_or((false, config::ConfirmCloseSurface::True, false));
     Box::into_raw(Box::new(Config {
         finalized,
         confirm_close_surface,
+        has_global_keybinds,
     }))
     .cast()
 }
@@ -6048,6 +6088,33 @@ pub extern "C" fn roastty_config_get(
 }
 
 #[no_mangle]
+pub extern "C" fn roastty_config_trigger(
+    config: RoasttyConfig,
+    action: *const c_char,
+    action_len: usize,
+) -> RoasttyInputTrigger {
+    if config_from_handle(config).is_none() || action.is_null() {
+        return empty_trigger();
+    }
+    let _action = unsafe { slice::from_raw_parts(action.cast::<u8>(), action_len) };
+    empty_trigger()
+}
+
+#[no_mangle]
+pub extern "C" fn roastty_config_key_is_binding(
+    config: RoasttyConfig,
+    event: RoasttyKeyEvent,
+) -> bool {
+    if config_from_handle(config).is_none() {
+        return false;
+    }
+    let Some(_event) = key_event_from_handle(event) else {
+        return false;
+    };
+    false
+}
+
+#[no_mangle]
 pub extern "C" fn roastty_config_diagnostics_count(_config: RoasttyConfig) -> u32 {
     0
 }
@@ -6089,12 +6156,16 @@ pub extern "C" fn roastty_app_new(
     let confirm_close_surface = config_from_handle(config)
         .map(|config| config.confirm_close_surface)
         .unwrap_or(config::ConfirmCloseSurface::True);
+    let has_global_keybinds = config_from_handle(config)
+        .map(|config| config.has_global_keybinds)
+        .unwrap_or(false);
 
     Box::into_raw(Box::new(App {
         runtime,
         focused: false,
         color_scheme: 0,
         confirm_close_surface,
+        has_global_keybinds,
         surfaces: Vec::new(),
     }))
     .cast()
@@ -6151,6 +6222,7 @@ pub extern "C" fn roastty_app_update_config(app: RoasttyApp, config: RoasttyConf
         return;
     };
     app.confirm_close_surface = config.confirm_close_surface;
+    app.has_global_keybinds = config.has_global_keybinds;
 }
 
 #[no_mangle]
@@ -6165,8 +6237,10 @@ pub extern "C" fn roastty_app_needs_confirm_quit(app: RoasttyApp) -> bool {
 }
 
 #[no_mangle]
-pub extern "C" fn roastty_app_has_global_keybinds(_app: RoasttyApp) -> bool {
-    false
+pub extern "C" fn roastty_app_has_global_keybinds(app: RoasttyApp) -> bool {
+    app_from_handle(app)
+        .map(|app| app.has_global_keybinds)
+        .unwrap_or(false)
 }
 
 #[no_mangle]
@@ -11418,6 +11492,111 @@ mod tests {
         roastty_key_event_free(event);
         roastty_surface_free(surface);
         roastty_app_free(app);
+    }
+
+    #[test]
+    fn keybind_trigger_abi_layout_and_empty_values_are_stable() {
+        assert_eq!(
+            std::mem::size_of::<RoasttyInputTrigger>(),
+            std::mem::size_of::<c_int>() * 3
+        );
+        assert_eq!(std::mem::offset_of!(RoasttyInputTrigger, tag), 0);
+        assert_eq!(
+            std::mem::offset_of!(RoasttyInputTrigger, key),
+            std::mem::size_of::<c_int>()
+        );
+        assert_eq!(
+            std::mem::offset_of!(RoasttyInputTrigger, mods),
+            std::mem::size_of::<c_int>() * 2
+        );
+
+        let trigger = empty_trigger();
+        assert_eq!(trigger.tag, ROASTTY_TRIGGER_PHYSICAL);
+        assert_eq!(
+            unsafe { trigger.key.physical },
+            key::Key::Unidentified as c_int
+        );
+        assert_eq!(trigger.mods, ROASTTY_MODS_NONE);
+    }
+
+    #[test]
+    fn config_trigger_returns_empty_trigger_until_keybind_parser_exists() {
+        let config = roastty_config_new();
+        let action = CString::new("new_window").unwrap();
+
+        for trigger in [
+            roastty_config_trigger(ptr::null_mut(), action.as_ptr(), 10),
+            roastty_config_trigger(config, ptr::null(), 10),
+            roastty_config_trigger(config, action.as_ptr(), 10),
+            roastty_config_trigger(config, action.as_ptr(), 0),
+        ] {
+            assert_eq!(trigger.tag, ROASTTY_TRIGGER_PHYSICAL);
+            assert_eq!(
+                unsafe { trigger.key.physical },
+                key::Key::Unidentified as c_int
+            );
+            assert_eq!(trigger.mods, ROASTTY_MODS_NONE);
+        }
+
+        roastty_config_free(config);
+    }
+
+    #[test]
+    fn config_key_is_binding_validates_inputs_and_returns_false() {
+        let config = roastty_config_new();
+        let event = new_key_event();
+
+        assert!(!roastty_config_key_is_binding(ptr::null_mut(), event));
+        assert!(!roastty_config_key_is_binding(config, ptr::null_mut()));
+        assert!(!roastty_config_key_is_binding(config, event));
+
+        roastty_key_event_free(event);
+        roastty_config_free(config);
+    }
+
+    #[test]
+    fn surface_key_is_binding_zeroes_flags_for_null_surface_and_detached_surface() {
+        let app = new_test_app();
+        let surface = new_test_surface(app);
+        let event = new_key_event();
+        let mut flags = 0xffu8;
+
+        assert!(!roastty_surface_key_is_binding(
+            ptr::null_mut(),
+            event,
+            &mut flags
+        ));
+        assert_eq!(flags, 0);
+
+        roastty_app_free(app);
+        flags = 0xff;
+        assert!(!roastty_surface_key_is_binding(surface, event, &mut flags));
+        assert_eq!(flags, 0);
+
+        roastty_key_event_free(event);
+        roastty_surface_free(surface);
+    }
+
+    #[test]
+    fn app_has_global_keybinds_reads_config_state_foundation() {
+        assert!(!roastty_app_has_global_keybinds(ptr::null_mut()));
+
+        let config = roastty_config_new();
+        let app = roastty_app_new(ptr::null(), config);
+        assert!(!roastty_app_has_global_keybinds(app));
+
+        config_from_handle(config).unwrap().has_global_keybinds = true;
+        roastty_app_update_config(app, config);
+        assert!(roastty_app_has_global_keybinds(app));
+
+        let cloned = roastty_config_clone(config);
+        let cloned_app = roastty_app_new(ptr::null(), cloned);
+        assert!(roastty_app_has_global_keybinds(cloned_app));
+
+        roastty_app_free(cloned_app);
+        roastty_app_free(app);
+        roastty_config_free(cloned);
+        roastty_config_free(config);
     }
 
     #[test]

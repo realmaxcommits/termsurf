@@ -3974,6 +3974,12 @@ int main(int argc, char **argv) {
   roastty_config_finalize(NULL);
   assert(roastty_config_diagnostics_count(NULL) == 0);
   assert(roastty_config_get_diagnostic(NULL, 0).message != NULL);
+  roastty_input_trigger_s null_trigger =
+      roastty_config_trigger(NULL, "new_window", 10);
+  assert(null_trigger.tag == ROASTTY_TRIGGER_PHYSICAL);
+  assert(null_trigger.key.physical == ROASTTY_KEY_UNIDENTIFIED);
+  assert(null_trigger.mods == ROASTTY_MODS_NONE);
+  assert(!roastty_config_key_is_binding(NULL, NULL));
   assert(roastty_app_userdata(NULL) == NULL);
   roastty_app_tick(NULL);
   roastty_app_set_focus(NULL, true);
@@ -4187,6 +4193,12 @@ int main(int argc, char **argv) {
   roastty_app_set_focus(app, true);
   roastty_app_set_color_scheme(app, ROASTTY_COLOR_SCHEME_DARK);
   roastty_app_update_config(app, config);
+  roastty_input_trigger_s trigger =
+      roastty_config_trigger(config, "new_window", 10);
+  assert(trigger.tag == ROASTTY_TRIGGER_PHYSICAL);
+  assert(trigger.key.physical == ROASTTY_KEY_UNIDENTIFIED);
+  assert(trigger.mods == ROASTTY_MODS_NONE);
+  assert(!roastty_config_key_is_binding(config, NULL));
   assert(!roastty_app_needs_confirm_quit(app));
   assert(!roastty_app_has_global_keybinds(app));
 
