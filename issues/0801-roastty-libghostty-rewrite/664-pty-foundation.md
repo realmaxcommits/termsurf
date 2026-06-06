@@ -89,3 +89,42 @@ takes ownership immediately after `openpty`, sets `FD_CLOEXEC`, uses `u16` size
 fields for direct `winsize` conversion, and requires raw-mode plus `poll` or
 `select` timeout in byte-flow tests. Codex re-reviewed the amended design and
 approved it for plan commit and implementation with no remaining blockers.
+
+## Result
+
+**Result:** Pass.
+
+`roastty/src/os/pty.rs` now provides a POSIX/macOS PTY primitive. `Pty::open`
+opens a master/slave pair with an initial `PtySize`, immediately wraps both
+descriptors in `OwnedFd`, sets `FD_CLOEXEC` on both descriptors, and exposes
+internal raw-fd accessors for future termio experiments. `Pty::set_size` updates
+the PTY winsize through `TIOCSWINSZ`.
+
+Focused tests verify descriptor validity, close-on-exec flags, initial size,
+resize behavior, and byte flow through the PTY without a hanging read by using
+raw mode and `poll`.
+
+Verification passed:
+
+- `cargo fmt -p roastty`
+- `cargo test -p roastty os::pty` — 5 passed, 0 failed
+
+## Conclusion
+
+Roastty now has the low-level PTY ownership and sizing foundation needed for the
+next termio slice. Subprocess spawn, nonblocking read/write loops, resize
+messages, foreground process queries, and App/surface integration remain
+separate follow-up work.
+
+## Completion Review
+
+**Result:** Approved.
+
+Codex found no code-level blockers. The review confirmed that `PtySize` uses
+non-truncating `u16` fields, `Pty` owns `OwnedFd`s, `openpty` descriptors are
+wrapped immediately, `FD_CLOEXEC` is set on both descriptors, `set_size` uses
+`TIOCSWINSZ`, and the focused tests cover descriptor validity, close-on-exec,
+initial size, resize, and byte flow with raw mode plus `poll` timeout.
+
+The only finding was procedural: ensure the new `roastty/src/os/pty.rs` file is
+added before the result commit.

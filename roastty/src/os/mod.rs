@@ -15,6 +15,7 @@ pub(crate) mod open;
 pub(crate) mod passwd;
 pub(crate) mod path;
 pub(crate) mod pipe;
+pub(crate) mod pty;
 pub(crate) mod resources_dir;
 pub(crate) mod shell;
 pub(crate) mod string_encoding;
