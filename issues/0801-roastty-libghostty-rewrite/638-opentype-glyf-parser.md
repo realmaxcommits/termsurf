@@ -93,3 +93,48 @@ preserve exact OpenType bit mapping for `SimpleFlags`, include fixture coverage
 for all 0/1/2-byte coordinate cases, and preserve upstream's trailing-byte
 behavior where `Entry::size()` returns the consumed size without requiring the
 entry slice to be fully consumed.
+
+## Result
+
+**Result:** Pass
+
+Roastty now has `roastty/src/font/opentype/glyf.rs`, a borrowed-byte parser for
+the `glyf` table matching Ghostty's narrow validation behavior. The parser
+supports `Glyf::from_bytes`, byte-offset entry lookup, glyph-header parsing,
+simple/composite classification, `SimpleFlags` byte accounting, and
+`Entry::size()` validation for simple glyphs. Composite glyphs and non-zero
+instruction lengths remain rejected.
+
+The implementation uses hand-built fixtures rather than embedded fonts or a
+whole-file SFNT table-directory reader. It also preserves upstream's
+trailing-byte behavior: `Entry::size()` returns the consumed glyph-entry size
+without requiring the entry slice to be fully consumed.
+
+Verification passed:
+
+- `cargo test -p roastty font::opentype::glyf` — 11 passed, 3499 filtered
+- `cargo test -p roastty font::opentype` — 32 passed, 3478 filtered
+- `cargo test -p roastty font::face::coretext` — 54 passed, 3456 filtered
+- `cargo test -p roastty` — 3510 unit tests passed, 1 ABI harness test passed
+- `cargo fmt -p roastty -- --check` — pass
+- `git diff --check` — pass
+
+## Conclusion
+
+The OpenType checklist no longer needs to list `glyf` as missing. The remaining
+OpenType-related gaps are full SFNT/table-directory helpers and embedded-font
+integration, plus any later renderer-facing use sites that need more than this
+narrow validator.
+
+## Completion Review
+
+**Reviewer:** Codex (gpt-5.5) · session `019e9a98-0fac-7b41-a8c9-8f16a7c1a653`
+
+**Verdict:** APPROVED.
+
+The reviewer found no blocking issues. The staged parser matches the local
+Ghostty `glyf.zig` narrow behavior: borrowed slices, offset entry parsing,
+header/type handling, exact simple flag byte accounting, zero-contour/
+trailing-byte behavior, and rejection of composites, hints, malformed endpoints,
+repeats, and truncation. Documentation and checklist updates accurately reflect
+the scoped `glyf` addition without claiming embedded-font or full-SFNT support.

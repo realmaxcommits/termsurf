@@ -221,8 +221,8 @@ Experiment 246).
 - [ ] `SharedGrid` / `SharedGridSet` — `SharedGrid` render and codepoint-cache
       paths complete; `SharedGridSet` ownership/refcount/locking missing
 - [ ] `opentype/`, `embedded`, `nerd_font_attributes` — `head`/`hhea`/`os2`/
-      `post`/`svg` parsers and Nerd Font attributes complete; `glyf`, embedded
-      fonts, and full OpenType helpers missing
+      `post`/`svg`/`glyf` parsers and Nerd Font attributes complete; embedded
+      fonts and full OpenType helpers missing
 
 ### Input — encoding only
 
@@ -1723,8 +1723,8 @@ are past the correctness-critical foundation.
   — **Pass** · Codex/Codex/Codex
 - [Experiment 637: Font Checklist Audit](637-font-checklist-audit.md) — **Pass**
   · Codex/Codex/Codex
-- [Experiment 638: OpenType Glyf Parser](638-opentype-glyf-parser.md) —
-  **Designed**
+- [Experiment 638: OpenType Glyf Parser](638-opentype-glyf-parser.md) — **Pass**
+  · Codex/Codex/Codex
 
 ## Non-Goals
 

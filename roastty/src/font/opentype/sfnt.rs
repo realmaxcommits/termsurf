@@ -73,6 +73,19 @@ impl<'a> Reader<'a> {
         Reader { data, pos: 0 }
     }
 
+    pub(crate) fn pos(&self) -> usize {
+        self.pos
+    }
+
+    pub(crate) fn skip(&mut self, len: usize) -> Result<(), OpenTypeError> {
+        let end = self.pos + len;
+        if end > self.data.len() {
+            return Err(OpenTypeError::EndOfStream);
+        }
+        self.pos = end;
+        Ok(())
+    }
+
     fn take<const N: usize>(&mut self) -> Result<[u8; N], OpenTypeError> {
         let end = self.pos + N;
         if end > self.data.len() {

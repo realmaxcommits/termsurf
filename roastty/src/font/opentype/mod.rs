@@ -6,11 +6,12 @@
 //! directly, so these parsers are the pure-Rust prerequisite for the font face
 //! path.
 //!
-//! This slice ports the shared SFNT scalar types and the `head`, `hhea`,
-//! `post`, and `os2` tables — the four tables `Face::getMetrics` reads. The
-//! whole-file SFNT table-directory reader and the CoreText FFI land in later
-//! experiments.
+//! This slice ports the shared SFNT scalar types, the `head`, `hhea`, `post`,
+//! and `os2` tables that `Face::getMetrics` reads, the `SVG ` color-glyph table
+//! probe, and the narrow `glyf` validator. The whole-file SFNT table-directory
+//! reader and embedded-font integration land in later experiments.
 
+pub(crate) mod glyf;
 pub(crate) mod head;
 pub(crate) mod hhea;
 pub(crate) mod os2;
