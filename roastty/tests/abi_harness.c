@@ -4313,6 +4313,11 @@ int main(int argc, char **argv) {
   assert(!roastty_surface_binding_action(surface, "scroll_page_lines:abc", 21));
   assert(!roastty_surface_binding_action(surface, "scroll_page_lines:32768", 23));
   assert(!roastty_surface_binding_action(surface, "scroll_page_lines:-32769", 24));
+  assert(!roastty_surface_binding_action(surface, "scroll_page_fractional:", 23));
+  assert(!roastty_surface_binding_action(surface, "scroll_page_fractional:abc", 26));
+  assert(!roastty_surface_binding_action(surface, "scroll_page_fractional:nan", 26));
+  assert(!roastty_surface_binding_action(surface, "scroll_page_fractional:inf", 26));
+  assert(!roastty_surface_binding_action(surface, "scroll_page_fractional:1e20", 27));
   assert(!roastty_surface_binding_action(surface, "new_split:right", 15));
   assert(roastty_surface_binding_action(surface, "text:hello", 10));
   assert(roastty_surface_binding_action(surface, "csi:", 4));
@@ -4326,6 +4331,10 @@ int main(int argc, char **argv) {
   assert(roastty_surface_binding_action(surface, "scroll_page_lines:+2", 20));
   assert(roastty_surface_binding_action(surface, "scroll_page_lines:2", 19));
   assert(roastty_surface_binding_action(surface, "scroll_page_lines:0", 19));
+  assert(roastty_surface_binding_action(surface, "scroll_page_fractional:-0.5", 27));
+  assert(roastty_surface_binding_action(surface, "scroll_page_fractional:+0.5", 27));
+  assert(roastty_surface_binding_action(surface, "scroll_page_fractional:5e-1", 27));
+  assert(roastty_surface_binding_action(surface, "scroll_page_fractional:0", 24));
   assert(roastty_surface_binding_action(surface, "close_surface", 13));
   roastty_surface_preedit(surface, NULL, 3);
   roastty_surface_preedit(surface, NULL, 0);

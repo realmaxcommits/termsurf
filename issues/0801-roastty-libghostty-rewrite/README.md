@@ -283,10 +283,10 @@ Experiment 246).
       done; terminal-derived key encoder options done; surface text viewport
       metadata done; config/surface key-is-binding false-path foundation done;
       split, close, text, CSI, ESC, reset, scroll-to-top, scroll-to-bottom,
-      scroll-page-up, scroll-page-down, and scroll-page-lines binding-action
-      string invocation foundations done; keybinding/action dispatch, frontend
-      selection routing, full binding-action parsing, and split tree/frontend
-      mutations missing
+      scroll-page-up, scroll-page-down, scroll-page-lines, and
+      scroll-page-fractional binding-action string invocation foundations done;
+      keybinding/action dispatch, frontend selection routing, full
+      binding-action parsing, and split tree/frontend mutations missing
 - [ ] Inspector ABI — non-Metal handle lifecycle and input forwarding foundation
       done; Metal renderer integration, inspector UI rendering, and core
       inspector data collection missing
@@ -309,10 +309,10 @@ Experiment 246).
       font-grid integration exists; confirm-close policy and request-close
       propagation done; clipboard completion ABI no-active-request foundation
       done; split, close, text, CSI, ESC, reset, scroll-to-top,
-      scroll-to-bottom, scroll-page-up, scroll-page-down, and scroll-page-lines
-      binding-action string invocation foundations done; splits, frontend
-      selection routing, renderer display-ID delivery, full binding-action
-      parsing, Quicklook UI/font integration, clipboard request
+      scroll-to-bottom, scroll-page-up, scroll-page-down, scroll-page-lines, and
+      scroll-page-fractional binding-action string invocation foundations done;
+      splits, frontend selection routing, renderer display-ID delivery, full
+      binding-action parsing, Quicklook UI/font integration, clipboard request
       allocation/handling, and full frontend presentation missing
 - [ ] `pty` + `termio` (shell spawn, read/write loops, resize, fg pid, tty name,
       exit) — PTY open/resize, subprocess spawn, child IO, synchronous pump,
@@ -1928,7 +1928,7 @@ are past the correctness-critical foundation.
 - [Experiment 709: Binding Action Scroll Lines](709-binding-action-scroll-lines.md)
   — **Pass** · Codex/Codex/Codex
 - [Experiment 710: Binding Action Scroll Fractional](710-binding-action-scroll-fractional.md)
-  — **Designed** · Codex/Codex/-
+  — **Pass** · Codex/Codex/Codex
 
 ## Non-Goals
 

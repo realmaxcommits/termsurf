@@ -10,9 +10,9 @@ model = "gpt-5"
 reasoning = "medium"
 
 [review.result]
-agent = "pending"
-model = "pending"
-reasoning = "pending"
+agent = "codex"
+model = "gpt-5"
+reasoning = "medium"
 +++
 
 # Experiment 710: Binding Action Scroll Fractional
@@ -128,3 +128,62 @@ coverage.
 The only required fix before plan commit was workflow provenance: replacing the
 pending design-review metadata, adding this design-review section, and updating
 the README provenance tuple to `Codex/Codex/-`.
+
+## Result
+
+**Result:** Pass
+
+Implemented finite `scroll_page_fractional:<f32>` binding-action support for
+attached surfaces. `parse_binding_action` now accepts finite float parameters
+with sign and exponent forms, rejects missing, empty, whitespace, malformed,
+extra-colon, non-finite, and globally out-of-range values, and stores the parsed
+value as `ScrollPageFractional(f32)`.
+
+Dispatch returns `false` for null or detached surfaces, returns `true` for
+attached surfaces, multiplies `surface.size.rows` by the parsed fraction,
+truncates toward zero, and routes non-zero worker-backed deltas through the
+existing terminal row-delta viewport helper. Zero rows and zero truncated deltas
+consume the action without moving the viewport.
+
+The Rust tests cover invalid forms, non-finite rejection, signed
+negative/positive/explicit-plus/exponent forms, null/detached surfaces, attached
+no-worker surfaces, exact worker-backed truncated movement, zero-truncation
+no-op behavior, zero-row no-op behavior, and unchanged binding-action behavior
+around previous actions. The C ABI harness now rejects representative
+malformed/non-finite/out-of-range fractional forms and accepts negative,
+positive, explicit-plus, exponent, and zero forms.
+
+Verification:
+
+- `cargo fmt -p roastty` passed.
+- `cargo test -p roastty binding_action -- --nocapture` passed: 40 tests.
+- `cargo test -p roastty scroll_page_fractional -- --nocapture` passed: 5 tests.
+- `cargo test -p roastty --test abi_harness` passed.
+- `cargo fmt -p roastty -- --check` passed.
+- `git diff --check` passed.
+
+## Conclusion
+
+The fractional-scroll slice now follows upstream's finite float parsing and
+truncation semantics while intentionally rejecting non-finite values to keep the
+Roastty ABI total. The remaining viewport binding-action work can continue with
+explicit row/selection scrolling, prompt jumps, or the higher-risk clear-screen
+action.
+
+## Completion Review
+
+Codex reviewed the completed Experiment 710 diff and found no code correctness
+blockers. The review confirmed that `parse_f32_ascii` rejects empty, whitespace,
+malformed, non-UTF-8, non-finite, and globally out-of-range values, accepts
+finite sign and exponent forms, and dispatch applies
+`trunc(surface.size.rows * fraction)` as a signed viewport delta.
+
+The review also confirmed that zero rows and zero truncated deltas correctly
+consume without moving, and that the tests cover invalid forms, `nan`/`inf`,
+out-of-range values, no-worker, null/detached, exact truncated movement,
+zero-truncation no-op, zero-row no-op, ABI smoke coverage, and prior-action
+regression coverage.
+
+The only required fix was workflow provenance: replacing the pending
+result-review metadata, adding this completion-review note, and updating the
+README provenance tuple to `Codex/Codex/Codex`.

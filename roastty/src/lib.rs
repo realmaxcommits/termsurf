@@ -1935,6 +1935,32 @@ impl Surface {
         self.request_render();
     }
 
+    fn scroll_viewport_fractional(&mut self, fraction: f32) {
+        if self.app.is_null() {
+            return;
+        }
+        let Some(worker) = self.termio_worker.as_ref() else {
+            return;
+        };
+        let rows = self.size.rows;
+        if rows == 0 {
+            return;
+        }
+        let delta = (f64::from(rows) * f64::from(fraction)).trunc();
+        if delta == 0.0 {
+            return;
+        }
+        if delta < isize::MIN as f64 || delta > isize::MAX as f64 {
+            return;
+        }
+        worker.with_termio_mut(|termio| {
+            termio
+                .terminal_mut()
+                .scroll_selection_gesture_viewport(delta as isize)
+        });
+        self.request_render();
+    }
+
     fn set_preedit(&mut self, preedit: Option<&str>) {
         self.preedit = preedit.map(str::to_owned);
         self.request_render();
@@ -2494,6 +2520,7 @@ enum ParsedBindingAction {
     ScrollPageUp,
     ScrollPageDown,
     ScrollPageLines(i16),
+    ScrollPageFractional(f32),
 }
 
 fn parse_binding_action(surface: &Surface, action: &[u8]) -> Option<ParsedBindingAction> {
@@ -2595,6 +2622,9 @@ fn parse_binding_action(surface: &Surface, action: &[u8]) -> Option<ParsedBindin
         b"scroll_page_lines" => Some(ParsedBindingAction::ScrollPageLines(parse_i16_ascii(
             parameter?,
         )?)),
+        b"scroll_page_fractional" => Some(ParsedBindingAction::ScrollPageFractional(
+            parse_f32_ascii(parameter?)?,
+        )),
         _ => None,
     }
 }
@@ -2645,6 +2675,22 @@ fn parse_i16_ascii(bytes: &[u8]) -> Option<i16> {
     }
 
     i16::try_from(sign * magnitude).ok()
+}
+
+fn parse_f32_ascii(bytes: &[u8]) -> Option<f32> {
+    if bytes.is_empty() || bytes.iter().any(u8::is_ascii_whitespace) {
+        return None;
+    }
+    let text = std::str::from_utf8(bytes).ok()?;
+    let value: f32 = text.parse().ok()?;
+    if !value.is_finite() {
+        return None;
+    }
+    let max_fraction = isize::MAX as f64 / f64::from(u16::MAX);
+    if f64::from(value).abs() > max_fraction {
+        return None;
+    }
+    Some(value)
 }
 
 fn copied_env_vars(ptr: *mut RoasttyEnvVar, len: usize) -> Vec<(String, String)> {
@@ -10614,6 +10660,13 @@ pub extern "C" fn roastty_surface_binding_action(
             surface.scroll_viewport_lines(lines);
             true
         }
+        ParsedBindingAction::ScrollPageFractional(fraction) => {
+            if surface.app.is_null() {
+                return false;
+            }
+            surface.scroll_viewport_fractional(fraction);
+            true
+        }
     }
 }
 
@@ -12445,6 +12498,17 @@ mod tests {
             "scroll_page_lines:abc",
             "scroll_page_lines:32768",
             "scroll_page_lines:-32769",
+            "scroll_page_fractional",
+            "scroll_page_fractional:",
+            "scroll_page_fractional: ",
+            "scroll_page_fractional: 0.5",
+            "scroll_page_fractional:0.5 ",
+            "scroll_page_fractional:1:2",
+            "scroll_page_fractional:abc",
+            "scroll_page_fractional:nan",
+            "scroll_page_fractional:inf",
+            "scroll_page_fractional:+inf",
+            "scroll_page_fractional:1e20",
         ] {
             assert!(!binding_action(surface, action), "{action}");
         }
@@ -13096,6 +13160,115 @@ mod tests {
         let top = surface_worker_viewport_top_left_screen(surface);
 
         assert!(binding_action(surface, "scroll_page_lines:0"));
+        assert_eq!(surface_worker_viewport_top_left_screen(surface), top);
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+    }
+
+    #[test]
+    fn surface_binding_action_scroll_page_fractional_no_worker_consumes_action() {
+        let app = new_test_app();
+        let surface = new_test_surface(app);
+
+        assert!(binding_action(surface, "scroll_page_fractional:-0.5"));
+        assert!(binding_action(surface, "scroll_page_fractional:+0.5"));
+        assert!(binding_action(surface, "scroll_page_fractional:5e-1"));
+        assert!(binding_action(surface, "scroll_page_fractional:0"));
+
+        let surface_ref = surface_from_handle(surface).unwrap();
+        assert!(surface_ref.last_termio_error.is_none());
+        assert!(!surface_ref.dirty);
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+    }
+
+    #[test]
+    fn surface_binding_action_scroll_page_fractional_false_for_null_and_detached() {
+        let app = new_test_app();
+        let surface = new_test_surface(app);
+
+        assert!(!binding_action(
+            ptr::null_mut(),
+            "scroll_page_fractional:-0.5"
+        ));
+        roastty_app_free(app);
+        assert!(!binding_action(surface, "scroll_page_fractional:-0.5"));
+        roastty_surface_free(surface);
+    }
+
+    #[test]
+    fn surface_binding_action_scroll_page_fractional_moves_by_truncated_row_count() {
+        let _guard = PTY_COMMAND_LOCK.lock().unwrap();
+        let app = new_test_app();
+        let command =
+            CString::new("printf 'l0\\nl1\\nl2\\nl3\\nl4\\nl5\\nl6\\nl7\\nl8\\n'; sleep 5")
+                .unwrap();
+        let mut config = roastty_surface_config_new();
+        config.command = command.as_ptr();
+        let surface = new_test_surface_with_config(app, &config);
+        set_surface_test_geometry(surface, 10, 4, 10, 20);
+
+        assert!(surface_snapshot_text_after_start(app, surface).contains("l8"));
+        let active_top_left = surface_worker_active_viewport_top_left_screen(surface);
+        assert!(active_top_left.y >= 4);
+
+        assert!(binding_action(surface, "scroll_page_fractional:-0.5"));
+        assert_eq!(
+            surface_worker_viewport_top_left_screen(surface),
+            point::Coordinate::new(0, active_top_left.y - 2)
+        );
+
+        assert!(binding_action(surface, "scroll_page_fractional:+2.5e-1"));
+        assert_eq!(
+            surface_worker_viewport_top_left_screen(surface),
+            point::Coordinate::new(0, active_top_left.y - 1)
+        );
+
+        assert!(binding_action(surface, "scroll_page_fractional:0.25"));
+        assert_eq!(
+            surface_worker_viewport_top_left_screen(surface),
+            active_top_left
+        );
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+    }
+
+    #[test]
+    fn surface_binding_action_scroll_page_fractional_zero_delta_consumes_without_moving() {
+        let _guard = PTY_COMMAND_LOCK.lock().unwrap();
+        let app = new_test_app();
+        let command = CString::new("printf 'l0\\nl1\\nl2\\nl3\\nl4\\nl5\\n'; sleep 5").unwrap();
+        let mut config = roastty_surface_config_new();
+        config.command = command.as_ptr();
+        let surface = new_test_surface_with_config(app, &config);
+        set_surface_test_geometry(surface, 10, 4, 10, 20);
+
+        assert!(surface_snapshot_text_after_start(app, surface).contains("l5"));
+        assert!(binding_action(surface, "scroll_to_top"));
+        let top = surface_worker_viewport_top_left_screen(surface);
+
+        assert!(binding_action(surface, "scroll_page_fractional:0.1"));
+        assert_eq!(surface_worker_viewport_top_left_screen(surface), top);
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+    }
+
+    #[test]
+    fn surface_binding_action_scroll_page_fractional_zero_rows_consumes_without_moving() {
+        let _guard = PTY_COMMAND_LOCK.lock().unwrap();
+        let app = new_test_app();
+        let command = CString::new("printf 'l0\\nl1\\nl2\\nl3\\nl4\\nl5\\n'; sleep 5").unwrap();
+        let mut config = roastty_surface_config_new();
+        config.command = command.as_ptr();
+        let surface = new_test_surface_with_config(app, &config);
+        set_surface_test_geometry(surface, 10, 4, 10, 20);
+
+        assert!(surface_snapshot_text_after_start(app, surface).contains("l5"));
+        assert!(binding_action(surface, "scroll_to_top"));
+        let top = surface_worker_viewport_top_left_screen(surface);
+        surface_from_handle(surface).unwrap().size.rows = 0;
+
+        assert!(binding_action(surface, "scroll_page_fractional:0.5"));
         assert_eq!(surface_worker_viewport_top_left_screen(surface), top);
         roastty_surface_free(surface);
         roastty_app_free(app);
