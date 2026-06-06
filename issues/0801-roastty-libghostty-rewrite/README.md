@@ -1870,6 +1870,8 @@ are past the correctness-critical foundation.
   — **Pass** · Codex/Codex/Codex
 - [Experiment 690: Surface Key Callback Foundation](690-surface-key-callback-foundation.md)
   — **Pass** · Codex/Codex/Codex
+- [Experiment 691: Surface Split Action Callbacks](691-surface-split-action-callbacks.md)
+  — **Designed** · Codex/-/-
 
 ## Non-Goals
 
