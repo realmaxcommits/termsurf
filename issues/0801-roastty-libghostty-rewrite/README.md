@@ -1835,6 +1835,8 @@ are past the correctness-critical foundation.
   **Pass** · Codex/Codex/Codex
 - [Experiment 677: Surface Draw Wakeup](677-surface-draw-wakeup.md) — **Pass** ·
   Codex/Codex/Codex
+- [Experiment 678: Surface Refresh Wakeup](678-surface-refresh-wakeup.md) —
+  **Designed** · Codex/Codex/-
 
 ## Non-Goals
 
