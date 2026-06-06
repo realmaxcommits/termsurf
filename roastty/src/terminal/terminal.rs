@@ -2148,6 +2148,27 @@ impl Terminal {
         .format())
     }
 
+    pub(crate) fn scrollback_format(
+        &self,
+        format: TerminalSelectionFormat,
+        unwrap: bool,
+        trim: bool,
+        extra: TerminalFormatterExtra,
+    ) -> Option<String> {
+        let selection = self.screens.active().history_selection()?;
+        Some(
+            TerminalFormatter::init(
+                self,
+                TerminalFormatterOptions::new(format.into())
+                    .unwrap(unwrap)
+                    .trim(trim),
+            )
+            .with_content(ScreenFormatterContent::Selection(Some(selection)))
+            .with_extra(extra)
+            .format(),
+        )
+    }
+
     pub(crate) fn mode_get(&self, value: u16, ansi: bool) -> Option<bool> {
         modes::mode_from_int(value, ansi).map(|mode| self.modes.get(mode))
     }

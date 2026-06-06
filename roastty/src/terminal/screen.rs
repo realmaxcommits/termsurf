@@ -1736,6 +1736,10 @@ impl Screen {
         Ok(selection::Selection::new(start, end, rectangle))
     }
 
+    pub(super) fn history_selection(&self) -> Option<selection::Selection> {
+        self.pages.history_selection()
+    }
+
     pub(super) fn active_selection(&self) -> Option<selection::Selection> {
         self.selection
     }

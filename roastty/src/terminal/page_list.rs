@@ -4056,6 +4056,12 @@ impl PageList {
         self.total_rows().saturating_sub(self.rows as usize)
     }
 
+    pub(super) fn history_selection(&self) -> Option<selection::Selection> {
+        let top_left = self.get_top_left(point::Tag::History);
+        let bottom_right = self.get_bottom_right(point::Tag::History)?;
+        Some(selection::Selection::new(top_left, bottom_right, false))
+    }
+
     #[cfg(test)]
     pub(super) fn scrollback_rows_for_tests(&self) -> usize {
         self.scrollback_rows()

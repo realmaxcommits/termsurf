@@ -8,6 +8,11 @@ reasoning = "high"
 agent = "codex"
 model = "gpt-5"
 reasoning = "medium"
+
+[review.result]
+agent = "codex"
+model = "gpt-5"
+reasoning = "medium"
 +++
 
 # Experiment 738: Binding Action Write Scrollback File Copy
@@ -105,3 +110,64 @@ NUL.
 The review also required recording `[review.design]` frontmatter, this review
 section, and the README tuple before the plan commit. With those changes, the
 plan is ready for the reviewed plan commit.
+
+## Result
+
+**Result:** Pass
+
+Experiment 738 added `write_scrollback_file:copy` support. Roastty now has a
+small internal history formatter path: PageList exposes the history selection
+bounded by the history top-left and history bottom-right pins, Screen exposes
+that selection, and Terminal formats it through the existing formatter with
+unwrap enabled and trim disabled.
+
+The write-file target enum now includes `Scrollback`. Scrollback copy writes
+`scrollback.txt` for plain/vt output and `scrollback.html` for html output,
+retains the temp directory, and copies the canonical path to the standard
+clipboard as `text/plain` without confirmation.
+
+The parser accepts `write_scrollback_file:copy`, `copy,plain`, `copy,vt`, and
+`copy,html`. Malformed forms, unsupported formats, `paste`, and `open` remain
+rejected for the scrollback target.
+
+Tests cover a terminal fixture with both scrollback history and visible active
+rows, asserting the scrollback output contains `history-red` and `history-two`
+while excluding `visible-one`, `visible-two`, and `visible-three`. They also
+cover no-history false paths, missing worker/callback false paths, clipboard
+path metadata, filename extensions, and existing screen/selection write-file
+regressions.
+
+Verification passed:
+
+- `cargo fmt -p roastty`
+- `cargo test -p roastty write_scrollback_file -- --nocapture --test-threads=1`
+  - 2 passed
+- `cargo test -p roastty write_screen_file -- --nocapture --test-threads=1`
+  - 4 passed
+- `cargo test -p roastty write_selection_file -- --nocapture --test-threads=1`
+  - 5 passed
+- `cargo test -p roastty binding_action -- --nocapture --test-threads=1`
+  - 123 passed
+- `cargo test -p roastty --test abi_harness`
+  - 1 passed
+- `cargo fmt -p roastty -- --check`
+- `git diff --check`
+
+## Conclusion
+
+Roastty now supports the copy action for all three write-file targets:
+selection, screen, and scrollback. The remaining write-file surface is paste for
+scrollback and the `open` action for each target. The `open` action still needs
+runtime URL/open action plumbing before it can be ported faithfully.
+
+## Completion Review
+
+Codex reviewed the completed Experiment 738 result and implementation diff. It
+found no implementation blockers.
+
+The review confirmed that `write_scrollback_file:copy` is scoped to copy only,
+uses a scrollback-only formatter selection, rejects paste/open and malformed
+forms, writes retained `scrollback.txt` / `scrollback.html` files, copies the
+canonical path as `text/plain` without confirmation, and includes tests for
+history-only output versus visible rows plus existing write-file regression
+coverage.

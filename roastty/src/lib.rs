@@ -2263,6 +2263,12 @@ impl Surface {
                         None,
                     )
                     .ok(),
+                WriteFileTarget::Scrollback => terminal.scrollback_format(
+                    format.selection_format(),
+                    true,
+                    false,
+                    TerminalFormatterExtra::none(),
+                ),
             }
         })?;
 
@@ -2274,6 +2280,10 @@ impl Surface {
             (WriteFileTarget::Selection, WriteFileFormat::Html) => "selection.html",
             (WriteFileTarget::Screen, WriteFileFormat::Plain | WriteFileFormat::Vt) => "screen.txt",
             (WriteFileTarget::Screen, WriteFileFormat::Html) => "screen.html",
+            (WriteFileTarget::Scrollback, WriteFileFormat::Plain | WriteFileFormat::Vt) => {
+                "scrollback.txt"
+            }
+            (WriteFileTarget::Scrollback, WriteFileFormat::Html) => "scrollback.html",
         };
         let path = temp_dir.path().join(filename);
         let written = std::fs::File::create(&path)
@@ -3244,6 +3254,7 @@ enum WriteFileAction {
 enum WriteFileTarget {
     Selection,
     Screen,
+    Scrollback,
 }
 
 impl WriteFileFormat {
@@ -3298,6 +3309,14 @@ fn write_screen_file_from_str(
     parameter: Option<&[u8]>,
 ) -> Option<(WriteFileAction, WriteFileFormat)> {
     write_selection_file_from_str(parameter)
+}
+
+fn write_scrollback_file_from_str(parameter: Option<&[u8]>) -> Option<WriteFileFormat> {
+    let (action, format) = write_selection_file_from_str(parameter)?;
+    match action {
+        WriteFileAction::Copy => Some(format),
+        WriteFileAction::Paste => None,
+    }
 }
 
 fn copy_to_clipboard_format_from_str(parameter: Option<&[u8]>) -> Option<CopyToClipboardFormat> {
@@ -3703,6 +3722,14 @@ fn parse_binding_action(surface: &Surface, action: &[u8]) -> Option<ParsedBindin
             Some(ParsedBindingAction::WriteFile(
                 WriteFileTarget::Screen,
                 action,
+                format,
+            ))
+        }
+        b"write_scrollback_file" => {
+            let format = write_scrollback_file_from_str(parameter)?;
+            Some(ParsedBindingAction::WriteFile(
+                WriteFileTarget::Scrollback,
+                WriteFileAction::Copy,
                 format,
             ))
         }
@@ -14212,6 +14239,20 @@ mod tests {
             "write_screen_file:paste ",
             "write_screen_file:open",
             "write_screen_file:copy\0plain",
+            "write_scrollback_file",
+            "write_scrollback_file:",
+            "write_scrollback_file:copy,",
+            "write_scrollback_file:,plain",
+            "write_scrollback_file:copy,rtf",
+            "write_scrollback_file:copy,html,extra",
+            "write_scrollback_file: copy",
+            "write_scrollback_file:copy ",
+            "write_scrollback_file:paste",
+            "write_scrollback_file:paste,plain",
+            "write_scrollback_file:paste,vt",
+            "write_scrollback_file:paste,html",
+            "write_scrollback_file:open",
+            "write_scrollback_file:copy\0plain",
             "copy_title_to_clipboard:",
             "copy_title_to_clipboard:now",
             "paste_from_clipboard:",
@@ -15647,6 +15688,72 @@ mod tests {
     }
 
     #[test]
+    fn surface_binding_action_write_scrollback_file_false_paths() {
+        let app = new_test_app_with_clipboard_write(0xF11E);
+        let surface = new_test_surface(app);
+
+        assert!(!binding_action(
+            ptr::null_mut(),
+            "write_scrollback_file:copy"
+        ));
+        assert!(!binding_action(surface, "write_scrollback_file:copy"));
+        assert!(clipboard_write_records().is_empty());
+
+        roastty_app_free(app);
+        assert!(!binding_action(surface, "write_scrollback_file:copy"));
+        assert!(clipboard_write_records().is_empty());
+        roastty_surface_free(surface);
+
+        let _guard = PTY_COMMAND_LOCK.lock().unwrap();
+        let app = new_test_app_with_clipboard_write(0xF11E);
+        let command = CString::new("printf ready; sleep 5").unwrap();
+        let mut config = roastty_surface_config_new();
+        config.command = command.as_ptr();
+        let surface = new_test_surface_with_config(app, &config);
+        set_surface_test_geometry(surface, 12, 3, 10, 20);
+        assert!(surface_snapshot_text_after_start(app, surface).contains("ready"));
+        {
+            let surface_ref = surface_from_handle(surface).unwrap();
+            let worker = surface_ref.termio_worker.as_ref().unwrap();
+            worker.with_termio_mut(|termio| {
+                termio.terminal_mut().reset();
+                termio.terminal_mut().next_slice(b"visible").unwrap();
+            });
+        }
+
+        reset_clipboard_write_records();
+        assert!(!binding_action(surface, "write_scrollback_file:copy"));
+        assert!(clipboard_write_records().is_empty());
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+
+        let app = new_test_app();
+        let command = CString::new("printf ready; sleep 5").unwrap();
+        let mut config = roastty_surface_config_new();
+        config.command = command.as_ptr();
+        let surface = new_test_surface_with_config(app, &config);
+        set_surface_test_geometry(surface, 12, 3, 10, 20);
+        assert!(surface_snapshot_text_after_start(app, surface).contains("ready"));
+        {
+            let surface_ref = surface_from_handle(surface).unwrap();
+            let worker = surface_ref.termio_worker.as_ref().unwrap();
+            worker.with_termio_mut(|termio| {
+                termio.terminal_mut().reset();
+                termio
+                    .terminal_mut()
+                    .next_slice(b"history\r\nvisible-one\r\nvisible-two")
+                    .unwrap();
+            });
+        }
+
+        reset_clipboard_write_records();
+        assert!(!binding_action(surface, "write_scrollback_file:copy"));
+        assert!(clipboard_write_records().is_empty());
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+    }
+
+    #[test]
     fn surface_binding_action_write_selection_file_paste_false_paths() {
         let _guard = PTY_COMMAND_LOCK.lock().unwrap();
         let app = new_test_app();
@@ -15864,6 +15971,79 @@ mod tests {
             assert!(binding_action(surface, action), "{action}");
             let path = clipboard_written_path();
             assert!(path.ends_with(&format!("screen.{extension}")), "{path}");
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), expected);
+        }
+
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+    }
+
+    #[test]
+    fn surface_binding_action_write_scrollback_file_copy_writes_history_text_file() {
+        let _guard = PTY_COMMAND_LOCK.lock().unwrap();
+        let app = new_test_app_with_clipboard_write(0xF11E);
+        let command = CString::new("printf ready; sleep 5").unwrap();
+        let mut config = roastty_surface_config_new();
+        config.command = command.as_ptr();
+        let surface = new_test_surface_with_config(app, &config);
+        set_surface_test_geometry(surface, 20, 3, 10, 20);
+        assert!(surface_snapshot_text_after_start(app, surface).contains("ready"));
+        {
+            let surface_ref = surface_from_handle(surface).unwrap();
+            let worker = surface_ref.termio_worker.as_ref().unwrap();
+            worker.with_termio_mut(|termio| {
+                termio.terminal_mut().reset();
+                termio
+                    .terminal_mut()
+                    .next_slice(
+                        b"\x1b[31mhistory-red\x1b[0m\r\nhistory-two\r\nvisible-one\r\nvisible-two\r\nvisible-three",
+                    )
+                    .unwrap();
+            });
+        }
+
+        for (action, format, extension) in [
+            (
+                "write_scrollback_file:copy",
+                TerminalSelectionFormat::Plain,
+                "txt",
+            ),
+            (
+                "write_scrollback_file:copy,plain",
+                TerminalSelectionFormat::Plain,
+                "txt",
+            ),
+            (
+                "write_scrollback_file:copy,vt",
+                TerminalSelectionFormat::Vt,
+                "txt",
+            ),
+            (
+                "write_scrollback_file:copy,html",
+                TerminalSelectionFormat::Html,
+                "html",
+            ),
+        ] {
+            let expected = {
+                let surface_ref = surface_from_handle(surface).unwrap();
+                let worker = surface_ref.termio_worker.as_ref().unwrap();
+                worker.with_termio(|termio| {
+                    termio
+                        .terminal()
+                        .scrollback_format(format, true, false, TerminalFormatterExtra::none())
+                        .unwrap()
+                })
+            };
+            assert!(expected.contains("history-red"), "{expected:?}");
+            assert!(expected.contains("history-two"), "{expected:?}");
+            assert!(!expected.contains("visible-one"), "{expected:?}");
+            assert!(!expected.contains("visible-two"), "{expected:?}");
+            assert!(!expected.contains("visible-three"), "{expected:?}");
+
+            reset_clipboard_write_records();
+            assert!(binding_action(surface, action), "{action}");
+            let path = clipboard_written_path();
+            assert!(path.ends_with(&format!("scrollback.{extension}")), "{path}");
             assert_eq!(std::fs::read_to_string(&path).unwrap(), expected);
         }
 
