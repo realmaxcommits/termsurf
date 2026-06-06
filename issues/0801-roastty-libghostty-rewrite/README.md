@@ -1840,6 +1840,8 @@ are past the correctness-critical foundation.
   **Pass** · Codex/Codex/Codex
 - [Experiment 679: Surface Display ID](679-surface-display-id.md) — **Pass** ·
   Codex/Codex/Codex
+- [Experiment 680: Surface Request Close](680-surface-request-close.md) —
+  **Designed** · Codex/Codex/-
 
 ## Non-Goals
 
