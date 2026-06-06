@@ -4,6 +4,8 @@ use std::collections::VecDeque;
 
 #[cfg(test)]
 use super::cursor;
+#[cfg(test)]
+use super::modes;
 use super::terminal::{Terminal, TerminalScreen};
 
 const DEFAULT_MAX_BYTES: usize = 1024 * 1024;
@@ -984,6 +986,17 @@ impl TmuxViewer {
                 state.cursor_y,
                 &state.cursor_shape,
             );
+            pane.terminal.apply_tmux_mode_state(
+                state.cursor_flag,
+                state.cursor_blinking,
+                state.insert_flag,
+                state.wrap_flag,
+                state.keypad_flag,
+                state.keypad_cursor_flag,
+                state.origin_flag,
+                state.focus_flag,
+                state.bracketed_paste,
+            );
         }
 
         true
@@ -1118,6 +1131,14 @@ impl TmuxViewer {
             .iter()
             .find(|pane| pane.id == id)
             .and_then(|pane| pane.terminal.tmux_cursor_visual_style_for_tests(screen))
+    }
+
+    #[cfg(test)]
+    fn pane_mode_for_tests(&self, id: usize, mode: modes::Mode) -> Option<bool> {
+        self.panes
+            .iter()
+            .find(|pane| pane.id == id)
+            .map(|pane| pane.terminal.get_mode_for_tests(mode))
     }
 
     #[cfg(test)]
@@ -3165,6 +3186,147 @@ mod tests {
     }
 
     #[test]
+    fn tmux_viewer_pane_state_applies_core_modes_true_and_false() {
+        let mut viewer = TmuxViewer::new();
+        viewer.set_panes_for_tests(&[(42, 10, 2)]);
+
+        viewer.queue_command_for_tests(TmuxCommand::PaneState);
+        assert_eq!(
+            viewer.next(ControlNotification::BlockEnd(
+                pane_state_line_with_modes(
+                    42, 1, 1, false, "block", true, true, true, true, true, true, true, true, true,
+                    false, false, false,
+                )
+                .into_bytes()
+            )),
+            Vec::new()
+        );
+        for mode in [
+            modes::Mode::CursorVisible,
+            modes::Mode::CursorBlinking,
+            modes::Mode::Insert,
+            modes::Mode::Wraparound,
+            modes::Mode::KeypadKeys,
+            modes::Mode::CursorKeys,
+            modes::Mode::Origin,
+            modes::Mode::FocusEvent,
+            modes::Mode::BracketedPaste,
+        ] {
+            assert_eq!(viewer.pane_mode_for_tests(42, mode), Some(true));
+        }
+
+        viewer.queue_command_for_tests(TmuxCommand::PaneState);
+        assert_eq!(
+            viewer.next(ControlNotification::BlockEnd(
+                pane_state_line_with_modes(
+                    42, 1, 1, false, "block", false, false, false, false, false, false, false,
+                    false, false, false, false, false,
+                )
+                .into_bytes()
+            )),
+            Vec::new()
+        );
+        for mode in [
+            modes::Mode::CursorVisible,
+            modes::Mode::CursorBlinking,
+            modes::Mode::Insert,
+            modes::Mode::Wraparound,
+            modes::Mode::KeypadKeys,
+            modes::Mode::CursorKeys,
+            modes::Mode::Origin,
+            modes::Mode::FocusEvent,
+            modes::Mode::BracketedPaste,
+        ] {
+            assert_eq!(viewer.pane_mode_for_tests(42, mode), Some(false));
+        }
+    }
+
+    #[test]
+    fn tmux_viewer_pane_state_origin_mode_does_not_move_restored_cursor() {
+        let mut viewer = TmuxViewer::new();
+        viewer.set_panes_for_tests(&[(42, 10, 2)]);
+        viewer.queue_command_for_tests(TmuxCommand::PaneState);
+
+        assert_eq!(
+            viewer.next(ControlNotification::BlockEnd(
+                pane_state_line_with_modes(
+                    42, 4, 1, false, "block", true, false, false, true, false, false, true, false,
+                    false, false, false, false,
+                )
+                .into_bytes()
+            )),
+            Vec::new()
+        );
+
+        assert_eq!(
+            viewer.pane_cursor_position_for_tests(42, TerminalScreen::Primary),
+            Some((4, 1))
+        );
+        assert_eq!(
+            viewer.pane_mode_for_tests(42, modes::Mode::Origin),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn tmux_viewer_pane_state_stale_panes_do_not_apply_modes() {
+        let mut viewer = TmuxViewer::new();
+        viewer.set_panes_for_tests(&[(42, 10, 2)]);
+        viewer.queue_command_for_tests(TmuxCommand::PaneState);
+        let output = format!(
+            "{}\n{}",
+            pane_state_line_with_modes(
+                99, 1, 1, false, "block", true, true, true, true, true, true, true, true, true,
+                false, false, false,
+            ),
+            pane_state_line_with_modes(
+                42, 1, 1, false, "block", false, false, false, false, false, false, false, false,
+                false, false, false, false,
+            )
+        );
+
+        assert_eq!(
+            viewer.next(ControlNotification::BlockEnd(output.into_bytes())),
+            Vec::new()
+        );
+        assert_eq!(
+            viewer.pane_mode_for_tests(42, modes::Mode::CursorVisible),
+            Some(false)
+        );
+        assert_eq!(
+            viewer.pane_mode_for_tests(42, modes::Mode::Wraparound),
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn tmux_viewer_pane_state_leaves_mouse_modes_out_of_scope() {
+        let mut viewer = TmuxViewer::new();
+        viewer.set_panes_for_tests(&[(42, 10, 2)]);
+        viewer.queue_command_for_tests(TmuxCommand::PaneState);
+
+        assert_eq!(
+            viewer.next(ControlNotification::BlockEnd(
+                pane_state_line_with_modes(
+                    42, 1, 1, false, "block", true, false, false, true, false, false, false, false,
+                    false, true, true, true,
+                )
+                .into_bytes()
+            )),
+            Vec::new()
+        );
+
+        assert_eq!(
+            viewer.pane_mode_for_tests(42, modes::Mode::MouseEventAny),
+            Some(false)
+        );
+        assert_eq!(
+            viewer.pane_mode_for_tests(42, modes::Mode::MouseFormatSgr),
+            Some(false)
+        );
+    }
+
+    #[test]
     fn tmux_viewer_pane_visible_primary_clears_homes_and_replays() {
         let mut viewer = TmuxViewer::new();
         let capture = TmuxCapturePane {
@@ -3442,9 +3604,65 @@ mod tests {
         alternate_on: bool,
         cursor_shape: &str,
     ) -> String {
+        pane_state_line_with_modes(
+            pane_id,
+            cursor_x,
+            cursor_y,
+            alternate_on,
+            cursor_shape,
+            true,
+            false,
+            true,
+            true,
+            false,
+            true,
+            false,
+            false,
+            true,
+            false,
+            false,
+            false,
+        )
+    }
+
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "tmux pane-state fixtures mirror fields"
+    )]
+    fn pane_state_line_with_modes(
+        pane_id: usize,
+        cursor_x: usize,
+        cursor_y: usize,
+        alternate_on: bool,
+        cursor_shape: &str,
+        cursor_flag: bool,
+        cursor_blinking: bool,
+        insert_flag: bool,
+        wrap_flag: bool,
+        keypad_flag: bool,
+        keypad_cursor_flag: bool,
+        origin_flag: bool,
+        focus_flag: bool,
+        bracketed_paste: bool,
+        mouse_all_flag: bool,
+        mouse_standard_flag: bool,
+        mouse_sgr_flag: bool,
+    ) -> String {
         format!(
-            "%{pane_id};{cursor_x};{cursor_y};1;{cursor_shape};colour255;0;{};5;6;1;1;0;1;0;1;0;1;0;1;1;0;1;0;1;0,4,8",
-            usize::from(alternate_on)
+            "%{pane_id};{cursor_x};{cursor_y};{};{cursor_shape};colour255;{};{};5;6;{};{};{};{};{};{};0;1;{};1;{};{};{};0;1;0,4,8",
+            usize::from(cursor_flag),
+            usize::from(cursor_blinking),
+            usize::from(alternate_on),
+            usize::from(insert_flag),
+            usize::from(wrap_flag),
+            usize::from(keypad_flag),
+            usize::from(keypad_cursor_flag),
+            usize::from(origin_flag),
+            usize::from(mouse_all_flag),
+            usize::from(mouse_standard_flag),
+            usize::from(mouse_sgr_flag),
+            usize::from(focus_flag),
+            usize::from(bracketed_paste),
         )
     }
 

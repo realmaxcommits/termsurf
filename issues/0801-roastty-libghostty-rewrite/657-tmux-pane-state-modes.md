@@ -74,3 +74,53 @@ Codex confirmed the previous blocker was resolved and the design now matches
 upstream's direct mode-restoration behavior. It suggested keeping the terminal
 helper narrow by passing explicit booleans rather than making terminal core
 depend on `TmuxPaneState`; the implementation will follow that boundary.
+
+## Result
+
+**Result:** Pass.
+
+Roastty now applies the non-mouse pane-state mode subset after cursor state:
+cursor visible, cursor blinking, insert, wraparound, keypad keys, cursor keys,
+origin, focus events, and bracketed paste. The terminal helper receives explicit
+booleans and assigns directly to `ModeState`, preserving the boundary between
+tmux parsing and terminal core.
+
+The implementation intentionally avoids normal mode execution side effects.
+`origin_flag = true` sets origin mode without moving the cursor restored by
+Experiment 656. The tests also prove both set and clear directions for every
+included mode, stale pane IDs remain ignored, malformed state output still
+defuncts the viewer, and command-queue continuation is preserved.
+
+Mouse modes remain out of scope for this experiment: representative mouse event
+and mouse format flags in pane state are ignored for now. Focus events and
+bracketed paste are applied here as independent non-mouse booleans, even though
+upstream lists them after mouse modes.
+
+Verification passed:
+
+- `prettier --write --prose-wrap always --print-width 80 issues/0801-roastty-libghostty-rewrite/README.md issues/0801-roastty-libghostty-rewrite/657-tmux-pane-state-modes.md`
+- `cargo fmt -p roastty`
+- `cargo fmt -p roastty -- --check`
+- `cargo test -p roastty terminal::tmux` — 125 passed, 0 failed
+- `git diff --check`
+
+## Conclusion
+
+Pane state restoration now covers cursor state and core non-mouse terminal
+modes. The next tmux experiment should restore the mouse event and mouse format
+mode subset, followed by scroll region, tab stops, and alternate saved cursor
+restoration.
+
+## Completion Review
+
+**Result:** Approved.
+
+Codex found no blocking issues. It confirmed mode restoration uses explicit
+booleans and direct `ModeState` writes, `received_pane_state` applies the mode
+subset after the cursor subset, and tests cover set and clear directions,
+origin-mode cursor preservation, stale panes, and representative mouse modes
+remaining out of scope.
+
+Codex suggested adding a short comment to preserve the
+no-normal-mode-side-effect invariant. That comment was added to
+`Terminal::apply_tmux_mode_state`.

@@ -1239,6 +1239,31 @@ impl Terminal {
         }
     }
 
+    pub(in crate::terminal) fn apply_tmux_mode_state(
+        &mut self,
+        cursor_visible: bool,
+        cursor_blinking: bool,
+        insert: bool,
+        wraparound: bool,
+        keypad_keys: bool,
+        cursor_keys: bool,
+        origin: bool,
+        focus_event: bool,
+        bracketed_paste: bool,
+    ) {
+        // Pane-state restoration mirrors upstream's direct mode writes; do not
+        // route this through normal mode handling, which has cursor side effects.
+        self.modes.set(modes::Mode::CursorVisible, cursor_visible);
+        self.modes.set(modes::Mode::CursorBlinking, cursor_blinking);
+        self.modes.set(modes::Mode::Insert, insert);
+        self.modes.set(modes::Mode::Wraparound, wraparound);
+        self.modes.set(modes::Mode::KeypadKeys, keypad_keys);
+        self.modes.set(modes::Mode::CursorKeys, cursor_keys);
+        self.modes.set(modes::Mode::Origin, origin);
+        self.modes.set(modes::Mode::FocusEvent, focus_event);
+        self.modes.set(modes::Mode::BracketedPaste, bracketed_paste);
+    }
+
     pub(crate) fn cursor_visible(&self) -> bool {
         self.modes.get(modes::Mode::CursorVisible)
     }
