@@ -1735,6 +1735,8 @@ are past the correctness-critical foundation.
   — **Pass** · Codex/Codex/Codex
 - [Experiment 640: Terminal Render And Formatter Audit](640-terminal-render-formatter-audit.md)
   — **Pass** · Codex/Codex/Codex
+- [Experiment 641: Search And StringMap Audit](641-search-stringmap-audit.md) —
+  **Designed**
 
 ## Non-Goals
 
