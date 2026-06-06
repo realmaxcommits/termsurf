@@ -1,5 +1,7 @@
 //! Tmux protocol helpers.
 
+use std::collections::VecDeque;
+
 const DEFAULT_MAX_BYTES: usize = 1024 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -148,6 +150,28 @@ pub(crate) enum TmuxCommand {
     PaneState,
     TmuxVersion,
     User(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct TmuxViewer {
+    state: TmuxViewerState,
+    session_id: usize,
+    tmux_version: String,
+    command_queue: VecDeque<TmuxCommand>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TmuxViewerState {
+    StartupBlock,
+    StartupSession,
+    CommandQueue,
+    Defunct,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum TmuxViewerAction {
+    Exit,
+    Command(String),
 }
 
 pub(crate) const LIST_PANES_DELIMITER: u8 = b';';
@@ -574,6 +598,152 @@ impl TmuxCapturePane {
             TmuxScreenKey::Primary => "",
             TmuxScreenKey::Alternate => "-a ",
         }
+    }
+}
+
+impl TmuxViewer {
+    pub(crate) fn new() -> Self {
+        Self {
+            state: TmuxViewerState::StartupBlock,
+            session_id: 0,
+            tmux_version: String::new(),
+            command_queue: VecDeque::new(),
+        }
+    }
+
+    pub(crate) fn next(&mut self, notification: ControlNotification) -> Vec<TmuxViewerAction> {
+        match self.state {
+            TmuxViewerState::Defunct => Vec::new(),
+            TmuxViewerState::StartupBlock => self.next_startup_block(notification),
+            TmuxViewerState::StartupSession => self.next_startup_session(notification),
+            TmuxViewerState::CommandQueue => self.next_command_queue(notification),
+        }
+    }
+
+    fn next_startup_block(&mut self, notification: ControlNotification) -> Vec<TmuxViewerAction> {
+        match notification {
+            ControlNotification::Exit => self.defunct(),
+            ControlNotification::BlockEnd(_) | ControlNotification::BlockErr(_) => {
+                self.state = TmuxViewerState::StartupSession;
+                Vec::new()
+            }
+            ControlNotification::Enter => Vec::new(),
+            _ => Vec::new(),
+        }
+    }
+
+    fn next_startup_session(&mut self, notification: ControlNotification) -> Vec<TmuxViewerAction> {
+        match notification {
+            ControlNotification::Exit => self.defunct(),
+            ControlNotification::SessionChanged { id, .. } => {
+                self.session_id = id;
+                self.enter_command_queue([TmuxCommand::TmuxVersion, TmuxCommand::ListWindows])
+            }
+            ControlNotification::Enter => Vec::new(),
+            _ => Vec::new(),
+        }
+    }
+
+    fn next_command_queue(&mut self, notification: ControlNotification) -> Vec<TmuxViewerAction> {
+        match notification {
+            ControlNotification::Exit => self.defunct(),
+            ControlNotification::BlockEnd(content) => self.received_command_output(content),
+            ControlNotification::BlockErr(content) => self.received_command_output(content),
+            ControlNotification::Enter => Vec::new(),
+            _ => Vec::new(),
+        }
+    }
+
+    fn enter_command_queue<const N: usize>(
+        &mut self,
+        commands: [TmuxCommand; N],
+    ) -> Vec<TmuxViewerAction> {
+        debug_assert!(self.state != TmuxViewerState::CommandQueue);
+        debug_assert!(N > 0);
+
+        let first = commands[0].format_command();
+        self.command_queue.extend(commands);
+        self.state = TmuxViewerState::CommandQueue;
+        vec![TmuxViewerAction::Command(first)]
+    }
+
+    fn received_command_output(&mut self, content: Vec<u8>) -> Vec<TmuxViewerAction> {
+        let Some(command) = self.command_queue.pop_front() else {
+            return Vec::new();
+        };
+
+        if let TmuxCommand::TmuxVersion = command {
+            if !self.received_tmux_version(&content) {
+                return self.defunct();
+            }
+        }
+
+        self.emit_next_queued_command()
+    }
+
+    fn received_tmux_version(&mut self, content: &[u8]) -> bool {
+        let Ok(content) = std::str::from_utf8(content) else {
+            return false;
+        };
+        let line = content.trim_matches([' ', '\t', '\r', '\n']);
+        if line.is_empty() {
+            return true;
+        }
+
+        let Ok(mut values) =
+            parse_output_values(TMUX_VERSION_VARIABLES, line, TMUX_VERSION_DELIMITER)
+        else {
+            return false;
+        };
+        let Some(OutputValue::Text(version)) = values.pop() else {
+            return false;
+        };
+        self.tmux_version = version;
+        true
+    }
+
+    fn emit_next_queued_command(&self) -> Vec<TmuxViewerAction> {
+        self.command_queue
+            .front()
+            .map(|command| vec![TmuxViewerAction::Command(command.format_command())])
+            .unwrap_or_default()
+    }
+
+    fn defunct(&mut self) -> Vec<TmuxViewerAction> {
+        self.state = TmuxViewerState::Defunct;
+        vec![TmuxViewerAction::Exit]
+    }
+
+    #[cfg(test)]
+    fn state(&self) -> TmuxViewerState {
+        self.state
+    }
+
+    #[cfg(test)]
+    fn session_id(&self) -> usize {
+        self.session_id
+    }
+
+    #[cfg(test)]
+    fn tmux_version(&self) -> &str {
+        &self.tmux_version
+    }
+
+    #[cfg(test)]
+    fn queue_len(&self) -> usize {
+        self.command_queue.len()
+    }
+
+    #[cfg(test)]
+    fn queue_command_for_tests(&mut self, command: TmuxCommand) {
+        self.state = TmuxViewerState::CommandQueue;
+        self.command_queue.push_back(command);
+    }
+}
+
+impl Default for TmuxViewer {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -1419,6 +1589,207 @@ mod tests {
             TmuxCommand::User("display-message hello\n".to_owned()).format_command(),
             "display-message hello\n"
         );
+    }
+
+    #[test]
+    fn tmux_viewer_immediate_exit_and_defunct_ignores_later_input() {
+        let mut viewer = TmuxViewer::new();
+
+        assert_eq!(
+            viewer.next(ControlNotification::Exit),
+            vec![TmuxViewerAction::Exit]
+        );
+        assert_eq!(viewer.state(), TmuxViewerState::Defunct);
+        assert_eq!(viewer.next(ControlNotification::Exit), Vec::new());
+    }
+
+    #[test]
+    fn tmux_viewer_startup_block_end_and_err_enter_startup_session() {
+        for notification in [
+            ControlNotification::BlockEnd(Vec::new()),
+            ControlNotification::BlockErr(Vec::new()),
+        ] {
+            let mut viewer = TmuxViewer::new();
+
+            assert_eq!(viewer.next(notification), Vec::new());
+            assert_eq!(viewer.state(), TmuxViewerState::StartupSession);
+        }
+    }
+
+    #[test]
+    fn tmux_viewer_ignores_enter_and_non_startup_notifications() {
+        let mut viewer = TmuxViewer::new();
+
+        assert_eq!(viewer.next(ControlNotification::Enter), Vec::new());
+        assert_eq!(
+            viewer.next(ControlNotification::SessionsChanged),
+            Vec::new()
+        );
+        assert_eq!(viewer.state(), TmuxViewerState::StartupBlock);
+    }
+
+    #[test]
+    fn tmux_viewer_exit_from_startup_session() {
+        let mut viewer = TmuxViewer::new();
+
+        assert_eq!(
+            viewer.next(ControlNotification::BlockEnd(Vec::new())),
+            Vec::new()
+        );
+        assert_eq!(
+            viewer.next(ControlNotification::Exit),
+            vec![TmuxViewerAction::Exit]
+        );
+        assert_eq!(viewer.state(), TmuxViewerState::Defunct);
+    }
+
+    #[test]
+    fn tmux_viewer_session_changed_emits_tmux_version_command() {
+        let mut viewer = TmuxViewer::new();
+
+        assert_eq!(
+            viewer.next(ControlNotification::BlockEnd(Vec::new())),
+            Vec::new()
+        );
+        assert_eq!(
+            viewer.next(ControlNotification::SessionChanged {
+                id: 42,
+                name: "main".to_owned(),
+            }),
+            vec![TmuxViewerAction::Command(
+                "display-message -p '#{version}'\n".to_owned()
+            )]
+        );
+        assert_eq!(viewer.state(), TmuxViewerState::CommandQueue);
+        assert_eq!(viewer.session_id(), 42);
+        assert_eq!(viewer.queue_len(), 2);
+    }
+
+    #[test]
+    fn tmux_viewer_version_output_stores_version_and_emits_list_windows() {
+        let mut viewer = TmuxViewer::new();
+
+        viewer.next(ControlNotification::BlockEnd(Vec::new()));
+        viewer.next(ControlNotification::SessionChanged {
+            id: 42,
+            name: "main".to_owned(),
+        });
+
+        assert_eq!(
+            viewer.next(ControlNotification::BlockEnd(b" 3.5a\r\n".to_vec())),
+            vec![TmuxViewerAction::Command(
+                "list-windows -F '#{session_id} #{window_id} #{window_width} #{window_height} #{window_layout}'\n"
+                    .to_owned()
+            )]
+        );
+        assert_eq!(viewer.tmux_version(), "3.5a");
+        assert_eq!(viewer.queue_len(), 1);
+    }
+
+    #[test]
+    fn tmux_viewer_empty_version_output_keeps_existing_version() {
+        let mut viewer = TmuxViewer::new();
+
+        viewer.queue_command_for_tests(TmuxCommand::TmuxVersion);
+        viewer.tmux_version = "3.5a".to_owned();
+
+        assert_eq!(
+            viewer.next(ControlNotification::BlockEnd(b" \t\r\n".to_vec())),
+            Vec::new()
+        );
+        assert_eq!(viewer.tmux_version(), "3.5a");
+        assert_eq!(viewer.queue_len(), 0);
+    }
+
+    #[test]
+    fn tmux_viewer_list_windows_output_consumed_without_parsing() {
+        let mut viewer = TmuxViewer::new();
+
+        viewer.queue_command_for_tests(TmuxCommand::ListWindows);
+        assert_eq!(
+            viewer.next(ControlNotification::BlockEnd(
+                b"$1 @2 80 24 f8f9,80x24,0,0{40x24,0,0,1,40x24,40,0,2}".to_vec()
+            )),
+            Vec::new()
+        );
+        assert_eq!(viewer.queue_len(), 0);
+        assert_eq!(viewer.state(), TmuxViewerState::CommandQueue);
+    }
+
+    #[test]
+    fn tmux_viewer_command_queue_block_err_consumes_and_emits_next() {
+        let mut viewer = TmuxViewer::new();
+
+        viewer.queue_command_for_tests(TmuxCommand::TmuxVersion);
+        viewer.command_queue.push_back(TmuxCommand::ListWindows);
+
+        assert_eq!(
+            viewer.next(ControlNotification::BlockErr(b"3.5a".to_vec())),
+            vec![TmuxViewerAction::Command(
+                "list-windows -F '#{session_id} #{window_id} #{window_width} #{window_height} #{window_layout}'\n"
+                    .to_owned()
+            )]
+        );
+        assert_eq!(viewer.tmux_version(), "3.5a");
+        assert_eq!(viewer.queue_len(), 1);
+    }
+
+    #[test]
+    fn tmux_viewer_malformed_version_output_defuncts() {
+        let mut viewer = TmuxViewer::new();
+
+        viewer.queue_command_for_tests(TmuxCommand::TmuxVersion);
+        viewer.command_queue.push_back(TmuxCommand::ListWindows);
+
+        assert_eq!(
+            viewer.next(ControlNotification::BlockEnd(b"bad version".to_vec())),
+            vec![TmuxViewerAction::Exit]
+        );
+        assert_eq!(viewer.state(), TmuxViewerState::Defunct);
+        assert_eq!(viewer.tmux_version(), "");
+    }
+
+    #[test]
+    fn tmux_viewer_command_output_with_empty_queue_is_ignored() {
+        let mut viewer = TmuxViewer::new();
+
+        viewer.next(ControlNotification::BlockEnd(Vec::new()));
+        viewer.next(ControlNotification::SessionChanged {
+            id: 42,
+            name: "main".to_owned(),
+        });
+        viewer.command_queue.clear();
+
+        assert_eq!(
+            viewer.next(ControlNotification::BlockEnd(b"unexpected".to_vec())),
+            Vec::new()
+        );
+        assert_eq!(viewer.state(), TmuxViewerState::CommandQueue);
+    }
+
+    #[test]
+    fn tmux_viewer_exit_from_command_queue() {
+        let mut viewer = TmuxViewer::new();
+
+        viewer.queue_command_for_tests(TmuxCommand::ListWindows);
+        assert_eq!(
+            viewer.next(ControlNotification::Exit),
+            vec![TmuxViewerAction::Exit]
+        );
+        assert_eq!(viewer.state(), TmuxViewerState::Defunct);
+    }
+
+    #[test]
+    fn tmux_viewer_user_command_output_consumes_without_side_effects() {
+        let mut viewer = TmuxViewer::new();
+
+        viewer.queue_command_for_tests(TmuxCommand::User("send-prefix\n".to_owned()));
+        assert_eq!(
+            viewer.next(ControlNotification::BlockEnd(b"ignored".to_vec())),
+            Vec::new()
+        );
+        assert_eq!(viewer.queue_len(), 0);
+        assert_eq!(viewer.tmux_version(), "");
     }
 
     #[test]

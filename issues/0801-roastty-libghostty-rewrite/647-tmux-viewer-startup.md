@@ -3,6 +3,16 @@
 agent = "codex"
 model = "gpt-5"
 reasoning = "high"
+
+[review.design]
+agent = "codex"
+session = "019e9ad7-04a6-7b20-823a-fa6e3d24129f"
+verdict = "approved"
+
+[review.result]
+agent = "codex"
+session = "019e9ad7-04a6-7b20-823a-fa6e3d24129f"
+verdict = "approved"
 +++
 
 # Experiment 647: Tmux Viewer Startup
@@ -119,3 +129,61 @@ implementation. The reviewer confirmed that empty command-output behavior, exit
 coverage, command-queue `BlockErr`, empty-version setup, scoped list-windows
 divergence, and `Enter` handling are now specified. The optional suggestion to
 test ignored `Enter` was added to the plan before the plan commit.
+
+## Result
+
+**Result:** Pass
+
+Implemented a standalone tmux viewer startup state machine in
+`roastty/src/terminal/tmux.rs`. The viewer starts in `StartupBlock`, accepts the
+startup block terminator, waits for `%session-changed`, records the session ID,
+queues `TmuxVersion` and `ListWindows`, emits the version command first, parses
+valid version command output, then emits the next queued command.
+
+`BlockEnd` and `BlockErr` both consume the in-flight command in `CommandQueue`.
+An empty command queue emits no action. `Exit` from startup and command-queue
+states moves the viewer to `Defunct` and emits one `Exit` action. Later inputs
+after defunct are ignored. `ControlNotification::Enter` is ignored at this API
+boundary because DCS entry is handled before notifications are handed to the
+viewer. Empty tmux version output is ignored, while malformed non-empty version
+output defuncts the viewer to match upstream command-output error handling.
+
+The scoped divergence from upstream remains intentional: `ListWindows` output is
+consumed without parsing in this experiment. Window creation, pane state, layout
+synchronization, pane output, PTY writes, and App/Surface integration remain
+future tmux work.
+
+Verification performed:
+
+- `cargo fmt -p roastty`
+- `cargo test -p roastty terminal::tmux` — 81 passed, 0 failed
+- `cargo fmt -p roastty -- --check`
+- `git diff --check`
+
+Source comparison was against `vendor/ghostty/src/terminal/tmux/viewer.zig`
+startup, command queue, and `receivedTmuxVersion` sections, plus
+`vendor/ghostty/src/terminal/tmux/output.zig`.
+
+## Completion Review
+
+Initial Codex completion review in session
+`019e9ad7-04a6-7b20-823a-fa6e3d24129f` found one blocking issue: malformed
+non-empty tmux version output was ignored while upstream defuncts the viewer
+when version parsing fails during command-output handling.
+
+The implementation was fixed so empty trimmed version output remains ignored,
+but malformed non-empty output moves the viewer to `Defunct` and emits `Exit`.
+The `BlockErr` sequencing test now uses valid version output, and a separate
+malformed-version test covers the defunct path.
+
+Follow-up review in the same session found no blocking issues and approved the
+completed experiment. The reviewer also ran
+`cargo test -p roastty terminal::tmux`, which passed with 81 tests.
+
+## Conclusion
+
+Roastty now has the first reusable tmux viewer layer: startup and initial
+command queue sequencing are covered independently from the runtime. The next
+tmux experiment should build on this by parsing `ListWindows` output into viewer
+window state before moving into panes, layout synchronization, PTY I/O, or
+App/Surface wiring.

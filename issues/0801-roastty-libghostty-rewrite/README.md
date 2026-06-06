@@ -196,7 +196,8 @@ Experiment 246).
       and StringMap complete using Rust `regex` byte matching instead of
       Oniguruma
 - [ ] `tmux` control mode — control/layout/output helpers, command formatting,
-      and DCS entry done; viewer, PTY, and App integration missing
+      DCS entry, and viewer startup done; full viewer state, PTY, and App
+      integration missing
 - [x] `sys` (PNG-decode abstraction) — implemented and tested via C ABI
 
 ### Renderer — data + Metal primitives only; no live render loop
@@ -1752,8 +1753,8 @@ are past the correctness-critical foundation.
   Codex/Codex/Codex
 - [Experiment 646: Tmux Command Formatting](646-tmux-command-formatting.md) —
   **Pass** · Codex/Codex/Codex
-- [Experiment 647: Tmux Viewer Startup](647-tmux-viewer-startup.md) —
-  **Designed**
+- [Experiment 647: Tmux Viewer Startup](647-tmux-viewer-startup.md) — **Pass** ·
+  Codex/Codex/Codex
 
 ## Non-Goals
 
