@@ -10,9 +10,9 @@ model = "gpt-5"
 reasoning = "medium"
 
 [review.result]
-agent = "pending"
-model = "pending"
-reasoning = "pending"
+agent = "codex"
+model = "gpt-5"
+reasoning = "medium"
 +++
 
 # Experiment 708: Binding Action Scroll Page
@@ -109,3 +109,55 @@ consumed no-op matches a natural zero-delta interpretation.
 The only required fix before plan commit was workflow provenance: replacing the
 pending design-review metadata, adding this design-review section, and updating
 the README provenance tuple to `Codex/Codex/-`.
+
+## Result
+
+**Result:** Pass
+
+Implemented exact `scroll_page_up` and `scroll_page_down` binding-action support
+for attached surfaces. `parse_binding_action` now accepts only the exact
+parameterless forms and rejects colon-bearing variants for both actions.
+Dispatch returns `false` for null or detached surfaces, returns `true` for
+attached surfaces, and routes worker-backed surfaces through the existing
+terminal row-delta viewport helper.
+
+The page delta comes from `surface.size.rows`, matching upstream's visible-grid
+height behavior. Page up applies a negative row delta, page down applies a
+positive row delta, and zero-row surfaces consume the action without moving the
+viewport.
+
+The Rust tests cover malformed page-scroll forms, null/detached surfaces,
+attached no-worker surfaces, exact worker-backed row-count movement, zero-row
+no-op behavior, and unchanged binding-action behavior around prior actions. The
+C ABI harness now rejects colon-bearing page-scroll forms and accepts exact
+`scroll_page_up` / `scroll_page_down`.
+
+Verification:
+
+- `cargo fmt -p roastty` passed.
+- `cargo test -p roastty binding_action -- --nocapture` passed: 31 tests.
+- `cargo test -p roastty scroll_page_up -- --nocapture` passed: 1 test.
+- `cargo test -p roastty scroll_page_down -- --nocapture` passed: 1 test.
+- `cargo test -p roastty --test abi_harness` passed.
+- `cargo fmt -p roastty -- --check` passed.
+- `git diff --check` passed.
+
+## Conclusion
+
+The page-scroll slice now follows upstream's void-action parsing contract and
+uses the surface row count as the visible-page delta. The remaining viewport
+binding-action work can continue with explicit row/selection/fractional/line
+scrolling or prompt jumps.
+
+## Completion Review
+
+Codex reviewed the completed Experiment 708 diff and found no implementation
+blockers. The review confirmed that both actions reject colon-bearing
+parameters, return `false` for null/detached surfaces, consume attached
+no-worker actions, and use `surface.size.rows` as the negative/positive page
+delta for worker-backed surfaces. It also confirmed that zero-row surfaces
+correctly no-op while the dispatcher still returns `true`.
+
+The only required fix was workflow provenance: replacing the pending
+result-review metadata, adding this completion-review note, and updating the
+README provenance tuple to `Codex/Codex/Codex`.
