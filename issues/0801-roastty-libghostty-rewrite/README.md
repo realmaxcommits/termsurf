@@ -1762,6 +1762,7 @@ are past the correctness-critical foundation.
   — **Pass** · Codex/Codex/Codex
 - [Experiment 650: Tmux Layout Change](650-tmux-layout-change.md) — **Pass** ·
   Codex/Codex/Codex
+- [Experiment 651: Tmux Pane ID Sync](651-tmux-pane-id-sync.md) — **Designed**
 
 ## Non-Goals
 
