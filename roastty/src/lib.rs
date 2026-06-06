@@ -120,6 +120,9 @@ const ROASTTY_ACTION_NEW_SPLIT: c_int = 4;
 const ROASTTY_ACTION_TOGGLE_MAXIMIZE: c_int = 6;
 const ROASTTY_ACTION_TOGGLE_FULLSCREEN: c_int = 7;
 const ROASTTY_ACTION_TOGGLE_TAB_OVERVIEW: c_int = 8;
+const ROASTTY_ACTION_TOGGLE_WINDOW_DECORATIONS: c_int = 9;
+const ROASTTY_ACTION_TOGGLE_COMMAND_PALETTE: c_int = 11;
+const ROASTTY_ACTION_TOGGLE_BACKGROUND_OPACITY: c_int = 13;
 const ROASTTY_ACTION_MOVE_TAB: c_int = 14;
 const ROASTTY_ACTION_GOTO_TAB: c_int = 15;
 const ROASTTY_ACTION_GOTO_SPLIT: c_int = 16;
@@ -131,6 +134,7 @@ const ROASTTY_ACTION_RESET_WINDOW_SIZE: c_int = 23;
 const ROASTTY_ACTION_SET_TITLE: c_int = 32;
 const ROASTTY_ACTION_SET_TAB_TITLE: c_int = 33;
 const ROASTTY_ACTION_PROMPT_TITLE: c_int = 34;
+const ROASTTY_ACTION_SHOW_ON_SCREEN_KEYBOARD: c_int = 57;
 
 const ROASTTY_CLOSE_TAB_THIS: c_int = 0;
 const ROASTTY_CLOSE_TAB_OTHER: c_int = 1;
@@ -2978,6 +2982,42 @@ fn parse_binding_action(surface: &Surface, action: &[u8]) -> Option<ParsedBindin
             }
             Some(ParsedBindingAction::RuntimeAction(
                 ROASTTY_ACTION_TOGGLE_TAB_OVERVIEW,
+                [0usize; 8],
+            ))
+        }
+        b"toggle_window_decorations" => {
+            if parameter.is_some() {
+                return None;
+            }
+            Some(ParsedBindingAction::RuntimeAction(
+                ROASTTY_ACTION_TOGGLE_WINDOW_DECORATIONS,
+                [0usize; 8],
+            ))
+        }
+        b"toggle_command_palette" => {
+            if parameter.is_some() {
+                return None;
+            }
+            Some(ParsedBindingAction::RuntimeAction(
+                ROASTTY_ACTION_TOGGLE_COMMAND_PALETTE,
+                [0usize; 8],
+            ))
+        }
+        b"toggle_background_opacity" => {
+            if parameter.is_some() {
+                return None;
+            }
+            Some(ParsedBindingAction::RuntimeAction(
+                ROASTTY_ACTION_TOGGLE_BACKGROUND_OPACITY,
+                [0usize; 8],
+            ))
+        }
+        b"show_on_screen_keyboard" => {
+            if parameter.is_some() {
+                return None;
+            }
+            Some(ParsedBindingAction::RuntimeAction(
+                ROASTTY_ACTION_SHOW_ON_SCREEN_KEYBOARD,
                 [0usize; 8],
             ))
         }
@@ -13236,6 +13276,9 @@ mod tests {
         assert_eq!(ROASTTY_ACTION_TOGGLE_MAXIMIZE, 6);
         assert_eq!(ROASTTY_ACTION_TOGGLE_FULLSCREEN, 7);
         assert_eq!(ROASTTY_ACTION_TOGGLE_TAB_OVERVIEW, 8);
+        assert_eq!(ROASTTY_ACTION_TOGGLE_WINDOW_DECORATIONS, 9);
+        assert_eq!(ROASTTY_ACTION_TOGGLE_COMMAND_PALETTE, 11);
+        assert_eq!(ROASTTY_ACTION_TOGGLE_BACKGROUND_OPACITY, 13);
         assert_eq!(ROASTTY_ACTION_MOVE_TAB, 14);
         assert_eq!(ROASTTY_ACTION_GOTO_TAB, 15);
         assert_eq!(ROASTTY_ACTION_GOTO_SPLIT, 16);
@@ -13247,6 +13290,7 @@ mod tests {
         assert_eq!(ROASTTY_ACTION_SET_TITLE, 32);
         assert_eq!(ROASTTY_ACTION_SET_TAB_TITLE, 33);
         assert_eq!(ROASTTY_ACTION_PROMPT_TITLE, 34);
+        assert_eq!(ROASTTY_ACTION_SHOW_ON_SCREEN_KEYBOARD, 57);
         assert_eq!(ROASTTY_CLOSE_TAB_THIS, 0);
         assert_eq!(ROASTTY_CLOSE_TAB_OTHER, 1);
         assert_eq!(ROASTTY_CLOSE_TAB_RIGHT, 2);
@@ -13406,6 +13450,14 @@ mod tests {
             "move_tab:-999999999999999999999999999999999999999",
             "toggle_tab_overview:",
             "toggle_tab_overview:now",
+            "toggle_window_decorations:",
+            "toggle_window_decorations:now",
+            "toggle_command_palette:",
+            "toggle_command_palette:now",
+            "toggle_background_opacity:",
+            "toggle_background_opacity:now",
+            "show_on_screen_keyboard:",
+            "show_on_screen_keyboard:now",
             "new_split:",
             "new_split:diagonal",
             "goto_split",
@@ -15782,6 +15834,88 @@ mod tests {
         assert!(!binding_action(surface, "move_tab:-1"));
         assert!(!binding_action(surface, "toggle_tab_overview"));
         assert_eq!(action_records().len(), 6);
+
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+    }
+
+    #[test]
+    fn surface_binding_action_runtime_ui_false_for_null_detached_and_no_callback() {
+        let app = new_test_app();
+        let surface = new_test_surface(app);
+
+        for action in [
+            "toggle_window_decorations",
+            "toggle_command_palette",
+            "toggle_background_opacity",
+            "show_on_screen_keyboard",
+        ] {
+            assert!(!binding_action(ptr::null_mut(), action), "{action}");
+            assert!(!binding_action(surface, action), "{action}");
+        }
+
+        roastty_app_free(app);
+        for action in [
+            "toggle_window_decorations",
+            "toggle_command_palette",
+            "toggle_background_opacity",
+            "show_on_screen_keyboard",
+        ] {
+            assert!(!binding_action(surface, action), "{action}");
+        }
+        roastty_surface_free(surface);
+    }
+
+    #[test]
+    fn surface_binding_action_forwards_supported_runtime_ui_actions() {
+        let app = new_test_app_with_action(true);
+        let surface = new_test_surface(app);
+
+        for action in [
+            "toggle_window_decorations",
+            "toggle_command_palette",
+            "toggle_background_opacity",
+            "show_on_screen_keyboard",
+        ] {
+            assert!(binding_action(surface, action), "{action}");
+        }
+
+        let records = action_records();
+        assert_eq!(records.len(), 4);
+        for record in &records {
+            assert_eq!(record.app, app);
+            assert_eq!(record.target_tag, ROASTTY_TARGET_SURFACE);
+            assert_eq!(record.surface, surface);
+            assert!(record.storage.iter().all(|value| *value == 0));
+        }
+        assert_eq!(
+            records[0].action_tag,
+            ROASTTY_ACTION_TOGGLE_WINDOW_DECORATIONS
+        );
+        assert_eq!(records[1].action_tag, ROASTTY_ACTION_TOGGLE_COMMAND_PALETTE);
+        assert_eq!(
+            records[2].action_tag,
+            ROASTTY_ACTION_TOGGLE_BACKGROUND_OPACITY
+        );
+        assert_eq!(
+            records[3].action_tag,
+            ROASTTY_ACTION_SHOW_ON_SCREEN_KEYBOARD
+        );
+
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+    }
+
+    #[test]
+    fn surface_binding_action_runtime_ui_returns_callback_result() {
+        let app = new_test_app_with_action(false);
+        let surface = new_test_surface(app);
+
+        assert!(!binding_action(surface, "toggle_window_decorations"));
+        assert!(!binding_action(surface, "toggle_command_palette"));
+        assert!(!binding_action(surface, "toggle_background_opacity"));
+        assert!(!binding_action(surface, "show_on_screen_keyboard"));
+        assert_eq!(action_records().len(), 4);
 
         roastty_surface_free(surface);
         roastty_app_free(app);

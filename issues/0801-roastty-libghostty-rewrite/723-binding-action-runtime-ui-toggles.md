@@ -8,6 +8,11 @@ reasoning = "high"
 agent = "codex"
 model = "gpt-5"
 reasoning = "medium"
+
+[review.result]
+agent = "codex"
+model = "gpt-5"
+reasoning = "medium"
 +++
 
 # Experiment 723: Binding Action Runtime UI Toggles
@@ -93,3 +98,53 @@ and stateful actions deferred to later experiments.
 The review found one workflow blocker: this design-review section still said
 `Pending.` This section now records the review outcome, and the README tuple is
 `Codex/Codex/-`.
+
+## Result
+
+**Result:** Pass
+
+Implemented no-storage runtime UI binding-action forwarding through the existing
+runtime action callback path. Roastty now exposes upstream-matching action tags
+for window decorations, command palette, background opacity, and on-screen
+keyboard actions in `roastty/include/roastty.h`.
+
+`parse_binding_action` now accepts:
+
+- `toggle_window_decorations`
+- `toggle_command_palette`
+- `toggle_background_opacity`
+- `show_on_screen_keyboard`
+
+All four actions reject empty-colon and non-empty parameters, forward with
+zeroed storage, and return the runtime callback result.
+
+Verification passed:
+
+- `cargo fmt -p roastty`
+- `cargo test -p roastty runtime_ui -- --nocapture --test-threads=1`
+- `cargo test -p roastty binding_action -- --nocapture --test-threads=1`
+- `cargo test -p roastty --test abi_harness`
+- `cargo fmt -p roastty -- --check`
+- `git diff --check`
+
+## Conclusion
+
+Runtime UI toggle binding actions now reach the app runtime with stable
+upstream-shaped action tags and zeroed storage. The remaining nearby forwarding
+work includes payload/state actions such as `toggle_window_float_on_top`,
+`toggle_secure_input`, `inspector`, and local surface state such as
+`toggle_mouse_reporting`.
+
+## Completion Review
+
+Codex reviewed the completed Experiment 723 result and found no implementation
+blockers. The review approved the action constants, header storage
+documentation, zeroed-storage forwarding, parser rejection paths, no-callback
+behavior, and Rust/C ABI test coverage.
+
+The review found one workflow blocker: result-review provenance was missing from
+the experiment frontmatter and README tuple. This section, the `[review.result]`
+frontmatter, and the README tuple now record the completion review.
+
+Codex re-reviewed the revised result and found no remaining findings. The
+completion review approved the result for commit.

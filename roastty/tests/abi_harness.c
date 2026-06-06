@@ -1775,6 +1775,9 @@ static void assert_support_abi(void) {
   assert(ROASTTY_ACTION_TOGGLE_MAXIMIZE == 6);
   assert(ROASTTY_ACTION_TOGGLE_FULLSCREEN == 7);
   assert(ROASTTY_ACTION_TOGGLE_TAB_OVERVIEW == 8);
+  assert(ROASTTY_ACTION_TOGGLE_WINDOW_DECORATIONS == 9);
+  assert(ROASTTY_ACTION_TOGGLE_COMMAND_PALETTE == 11);
+  assert(ROASTTY_ACTION_TOGGLE_BACKGROUND_OPACITY == 13);
   assert(ROASTTY_ACTION_MOVE_TAB == 14);
   assert(ROASTTY_ACTION_GOTO_TAB == 15);
   assert(ROASTTY_ACTION_GOTO_SPLIT == 16);
@@ -1783,6 +1786,7 @@ static void assert_support_abi(void) {
   assert(ROASTTY_ACTION_EQUALIZE_SPLITS == 19);
   assert(ROASTTY_ACTION_TOGGLE_SPLIT_ZOOM == 20);
   assert(ROASTTY_ACTION_RESET_WINDOW_SIZE == 23);
+  assert(ROASTTY_ACTION_SHOW_ON_SCREEN_KEYBOARD == 57);
   assert(ROASTTY_CLOSE_TAB_THIS == 0);
   assert(ROASTTY_CLOSE_TAB_OTHER == 1);
   assert(ROASTTY_CLOSE_TAB_RIGHT == 2);
@@ -3990,6 +3994,9 @@ int main(int argc, char **argv) {
   assert(ROASTTY_ACTION_TOGGLE_MAXIMIZE == 6);
   assert(ROASTTY_ACTION_TOGGLE_FULLSCREEN == 7);
   assert(ROASTTY_ACTION_TOGGLE_TAB_OVERVIEW == 8);
+  assert(ROASTTY_ACTION_TOGGLE_WINDOW_DECORATIONS == 9);
+  assert(ROASTTY_ACTION_TOGGLE_COMMAND_PALETTE == 11);
+  assert(ROASTTY_ACTION_TOGGLE_BACKGROUND_OPACITY == 13);
   assert(ROASTTY_ACTION_MOVE_TAB == 14);
   assert(ROASTTY_ACTION_GOTO_TAB == 15);
   assert(ROASTTY_ACTION_GOTO_WINDOW == 17);
@@ -3998,6 +4005,7 @@ int main(int argc, char **argv) {
   assert(ROASTTY_ACTION_SET_TITLE == 32);
   assert(ROASTTY_ACTION_SET_TAB_TITLE == 33);
   assert(ROASTTY_ACTION_PROMPT_TITLE == 34);
+  assert(ROASTTY_ACTION_SHOW_ON_SCREEN_KEYBOARD == 57);
   assert(ROASTTY_CLOSE_TAB_THIS == 0);
   assert(ROASTTY_CLOSE_TAB_OTHER == 1);
   assert(ROASTTY_CLOSE_TAB_RIGHT == 2);
@@ -4378,6 +4386,16 @@ int main(int argc, char **argv) {
       surface, "move_tab:-9223372036854775809", 29));
   assert(!roastty_surface_binding_action(surface, "toggle_tab_overview:", 20));
   assert(!roastty_surface_binding_action(surface, "toggle_tab_overview:now", 23));
+  assert(!roastty_surface_binding_action(surface, "toggle_window_decorations:", 26));
+  assert(!roastty_surface_binding_action(
+      surface, "toggle_window_decorations:now", 29));
+  assert(!roastty_surface_binding_action(surface, "toggle_command_palette:", 23));
+  assert(!roastty_surface_binding_action(surface, "toggle_command_palette:now", 26));
+  assert(!roastty_surface_binding_action(surface, "toggle_background_opacity:", 26));
+  assert(!roastty_surface_binding_action(
+      surface, "toggle_background_opacity:now", 29));
+  assert(!roastty_surface_binding_action(surface, "show_on_screen_keyboard:", 24));
+  assert(!roastty_surface_binding_action(surface, "show_on_screen_keyboard:now", 27));
   assert(!roastty_surface_binding_action(surface, "goto_window", 11));
   assert(!roastty_surface_binding_action(surface, "goto_window:", 12));
   assert(!roastty_surface_binding_action(surface, "goto_window:previous:extra", 26));
@@ -4479,6 +4497,10 @@ int main(int argc, char **argv) {
   assert(!roastty_surface_binding_action(surface, "move_tab:+1", 11));
   assert(!roastty_surface_binding_action(surface, "move_tab:0", 10));
   assert(!roastty_surface_binding_action(surface, "toggle_tab_overview", 19));
+  assert(!roastty_surface_binding_action(surface, "toggle_window_decorations", 25));
+  assert(!roastty_surface_binding_action(surface, "toggle_command_palette", 22));
+  assert(!roastty_surface_binding_action(surface, "toggle_background_opacity", 25));
+  assert(!roastty_surface_binding_action(surface, "show_on_screen_keyboard", 23));
   assert(!roastty_surface_binding_action(surface, "goto_window:previous", 20));
   assert(!roastty_surface_binding_action(surface, "goto_window:next", 16));
   assert(!roastty_surface_binding_action(surface, "toggle_split_zoom", 17));
