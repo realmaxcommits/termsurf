@@ -1803,6 +1803,8 @@ are past the correctness-critical foundation.
   Codex/Codex/Codex
 - [Experiment 667: Synchronous Termio Pump](667-synchronous-termio-pump.md) —
   **Pass** · Codex/Codex/Codex
+- [Experiment 668: Background Termio Worker](668-background-termio-worker.md) —
+  **Designed** · Codex/Codex/-
 
 ## Non-Goals
 
