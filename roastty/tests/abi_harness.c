@@ -4525,6 +4525,15 @@ int main(int argc, char **argv) {
   assert(!roastty_surface_binding_action(surface, "copy_to_clipboard:plain:extra", 29));
   assert(!roastty_surface_binding_action(surface, "copy_url_to_clipboard:", 22));
   assert(!roastty_surface_binding_action(surface, "copy_url_to_clipboard:now", 25));
+  assert(!roastty_surface_binding_action(surface, "write_selection_file", 20));
+  assert(!roastty_surface_binding_action(surface, "write_selection_file:", 21));
+  assert(!roastty_surface_binding_action(surface, "write_selection_file:copy,", 26));
+  assert(!roastty_surface_binding_action(surface, "write_selection_file:,plain", 27));
+  assert(!roastty_surface_binding_action(surface, "write_selection_file:copy,rtf", 29));
+  assert(!roastty_surface_binding_action(
+      surface, "write_selection_file:copy,html,extra", 36));
+  assert(!roastty_surface_binding_action(surface, "write_selection_file:paste", 26));
+  assert(!roastty_surface_binding_action(surface, "write_selection_file:open", 25));
   assert(!roastty_surface_binding_action(surface, "copy_title_to_clipboard:", 24));
   assert(!roastty_surface_binding_action(surface, "copy_title_to_clipboard:now", 27));
   assert(!roastty_surface_binding_action(surface, "paste_from_clipboard:", 21));
@@ -4641,6 +4650,10 @@ int main(int argc, char **argv) {
   assert(!roastty_surface_binding_action(surface, "copy_to_clipboard:html", 22));
   assert(!roastty_surface_binding_action(surface, "copy_to_clipboard:mixed", 23));
   assert(!roastty_surface_binding_action(surface, "copy_url_to_clipboard", 21));
+  assert(!roastty_surface_binding_action(surface, "write_selection_file:copy", 25));
+  assert(!roastty_surface_binding_action(surface, "write_selection_file:copy,plain", 31));
+  assert(!roastty_surface_binding_action(surface, "write_selection_file:copy,vt", 28));
+  assert(!roastty_surface_binding_action(surface, "write_selection_file:copy,html", 30));
   assert(!roastty_surface_binding_action(surface, "copy_title_to_clipboard", 23));
   assert(!roastty_surface_binding_action(surface, "paste_from_clipboard", 20));
   assert(!roastty_surface_binding_action(surface, "paste_from_selection", 20));
