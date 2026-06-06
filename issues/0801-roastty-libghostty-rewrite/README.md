@@ -1843,6 +1843,8 @@ are past the correctness-critical foundation.
   Codex/Codex/Codex
 - [Experiment 680: Surface Request Close](680-surface-request-close.md) —
   **Pass** · Codex/Codex/Codex
+- [Experiment 681: Surface Text Paste](681-surface-text-paste.md) — **Designed**
+  · Codex/Codex/-
 
 ## Non-Goals
 
