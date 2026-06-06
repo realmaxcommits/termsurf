@@ -1882,6 +1882,8 @@ are past the correctness-critical foundation.
   — **Pass** · Codex/Codex/Codex
 - [Experiment 694: Surface Key Terminal Dispatch](694-surface-key-terminal-dispatch.md)
   — **Pass** · Codex/Codex/Codex
+- [Experiment 695: Surface Key Terminal Options](695-surface-key-terminal-options.md)
+  — **Designed** · Codex/Codex/-
 
 ## Non-Goals
 
