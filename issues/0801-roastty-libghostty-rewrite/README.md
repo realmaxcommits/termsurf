@@ -1832,6 +1832,8 @@ are past the correctness-critical foundation.
   **Pass** · Codex/Codex/Codex
 - [Experiment 676: Surface Default Shell](676-surface-default-shell.md) —
   **Pass** · Codex/Codex/Codex
+- [Experiment 677: Surface Draw Wakeup](677-surface-draw-wakeup.md) —
+  **Designed** · Codex/Codex/-
 
 ## Non-Goals
 
