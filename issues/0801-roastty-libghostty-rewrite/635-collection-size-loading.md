@@ -103,3 +103,45 @@ adjusted fallback after setting the collection size. The plan now specifies that
 empty collections keep the future point size without fabricating metrics and
 adds the already-loaded adjusted fallback resize test. Follow-up review approved
 the revised design.
+
+## Result
+
+**Result:** Pass
+
+`Collection` now tracks an optional point size, rejects invalid sizes before
+mutating state, resizes loaded direct entries when the point size changes, and
+stores that size for future eager additions and deferred loads. Empty
+collections keep the future size without fabricating metrics. Adjusted fallback
+faces use their recorded scale factor both when they already exist and when they
+are added or loaded after the size has been set.
+
+The implementation stays inside the macOS/CoreText collection path. It does not
+introduce upstream's full DPI-aware `DesiredSize` load options yet.
+
+Verification passed:
+
+- `cargo test -p roastty collection_size` — 7 passed, 3486 filtered
+- `cargo test -p roastty collection_deferred` — 5 passed, 3488 filtered
+- `cargo test -p roastty discovery_fallback` — 5 passed, 3488 filtered
+- `cargo test -p roastty shared_grid` — 5 passed, 3488 filtered
+- `cargo test -p roastty` — 3493 unit tests passed, 1 ABI harness test passed
+- `cargo fmt -p roastty -- --check` — pass
+- `rg -n "physical resize to the collection size is deferred|collection-size / load-options path|Collection-size resize lands in a later experiment" roastty/src/font/collection.rs`
+  — no matches
+- `git diff --check` — pass
+
+## Conclusion
+
+Roastty's font collection now has the size state needed for loaded and deferred
+CoreText faces to converge on the same physical point size behavior as Ghostty's
+collection load-options path. The remaining collection/resolver audit can focus
+on parity gaps outside size loading, especially sprite rendering tables,
+shared-grid parity, OpenType helpers, embedded fonts, and Nerd Font attributes.
+
+## Completion Review
+
+**Reviewer:** Codex (gpt-5.5) · session `019e9a81-eea2-7121-a2f9-e64791cb6b7b`
+
+**Verdict:** APPROVED.
+
+The reviewer approved the staged result diff with no blocking findings.

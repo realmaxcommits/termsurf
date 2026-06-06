@@ -4,8 +4,7 @@
 //! the per-style [`Collection`] of loaded/deferred [`Entry`] faces (or aliases)
 //! with `add`/`add_alias`/`add_with_adjustment`/`get_entry`/`get_face`, codepoint
 //! resolution (`get_index`/`has_codepoint`), style completion (`complete_styles`),
-//! and the size-adjustment scale factor. Collection-size resize lands in a later
-//! experiment.
+//! and the size-adjustment scale factor.
 
 use crate::font::deferred_face::DeferredFace;
 use crate::font::face::coretext::Face;
@@ -139,6 +138,15 @@ enum ScaleFactor {
     Adjustment(SizeAdjustment),
 }
 
+impl ScaleFactor {
+    fn scale(self) -> f64 {
+        match self {
+            ScaleFactor::Scale(v) => v,
+            ScaleFactor::Adjustment(_) => 1.0,
+        }
+    }
+}
+
 /// A single face in a [`Collection`].
 ///
 /// Owns either a loaded [`Face`] or a [`DeferredFace`], a fallback flag, and the
@@ -155,6 +163,18 @@ impl Entry {
         match self
             .face
             .as_ref()
+            .expect("entry face is temporarily unavailable")
+        {
+            AnyFace::Loaded(face) => Some(face),
+            AnyFace::Deferred(_) => None,
+        }
+    }
+
+    /// The loaded face, mutably, if this entry has already been loaded.
+    fn face_mut(&mut self) -> Option<&mut Face> {
+        match self
+            .face
+            .as_mut()
             .expect("entry face is temporarily unavailable")
         {
             AnyFace::Loaded(face) => Some(face),
@@ -181,10 +201,7 @@ impl Entry {
     /// face was added without a size adjustment). Deferred entries report their
     /// pending adjustment as `1.0` until they load and the factor is computed.
     pub(crate) fn scale_factor(&self) -> f64 {
-        match self.scale_factor {
-            ScaleFactor::Scale(v) => v,
-            ScaleFactor::Adjustment(_) => 1.0,
-        }
+        self.scale_factor.scale()
     }
 
     /// The pending size adjustment for a deferred entry, if any.
@@ -285,6 +302,15 @@ pub(crate) enum CompleteError {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum UpdateMetricsError {
     /// The primary font (index 0) couldn't be loaded.
+    CannotLoadPrimaryFont,
+}
+
+/// An error updating a [`Collection`]'s point size.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SetPointSizeError {
+    /// The requested point size was non-finite or not greater than zero.
+    InvalidPointSize,
+    /// The primary font existed but couldn't be loaded for metric recomputation.
     CannotLoadPrimaryFont,
 }
 
@@ -400,7 +426,7 @@ pub(crate) enum EntryOrAlias {
 /// Faithful port of upstream `Collection`: the per-style face lists (entries or
 /// aliases) with eager and deferred faces, `add`/`add_alias`/`get_entry`/
 /// `get_face`, codepoint resolution, style completion, and the size-adjustment
-/// scale factor. Collection-size resize lands in a later experiment.
+/// scale factor.
 pub(crate) struct Collection {
     /// The per-style face lists, indexed by `Style as usize` (`0..=3`). Each
     /// slot is an owned entry or an alias to a face elsewhere in the collection.
@@ -411,12 +437,22 @@ pub(crate) struct Collection {
     /// The collection's grid metrics, derived from the primary face by
     /// [`update_metrics`](Self::update_metrics).
     metrics: Option<Metrics>,
+    /// Desired point size for loaded faces and future deferred loads.
+    point_size: Option<f64>,
 }
 
 /// True if a style's face list (of length `len`) can't accept another face
 /// without producing a special index. Upstream guards `idx >= Special.start - 1`.
 fn list_is_full(len: usize) -> bool {
     len >= (Special::START - 1) as usize
+}
+
+/// Resize `face` to the collection point size scaled for this entry.
+fn resize_face_to_point_size(point_size: Option<f64>, face: &mut Face, scale_factor: f64) {
+    let Some(points) = point_size else {
+        return;
+    };
+    face.set_size(points * scale_factor);
 }
 
 impl Collection {
@@ -426,6 +462,7 @@ impl Collection {
             faces: [Vec::new(), Vec::new(), Vec::new(), Vec::new()],
             primary_face_metrics: None,
             metrics: None,
+            point_size: None,
         }
     }
 
@@ -449,6 +486,11 @@ impl Collection {
         self.metrics.as_ref()
     }
 
+    /// The configured point size, if one has been set.
+    pub(crate) fn point_size(&self) -> Option<f64> {
+        self.point_size
+    }
+
     /// The number of entries (faces and aliases) for `style`.
     pub(crate) fn face_count(&self, style: Style) -> usize {
         self.faces[style as usize].len()
@@ -460,7 +502,7 @@ impl Collection {
     /// use [`add_with_adjustment`](Self::add_with_adjustment) to size-adjust.
     pub(crate) fn add(
         &mut self,
-        face: Face,
+        mut face: Face,
         style: Style,
         fallback: bool,
     ) -> Result<Index, AddError> {
@@ -469,6 +511,7 @@ impl Collection {
         if list_is_full(idx) {
             return Err(AddError::CollectionFull);
         }
+        resize_face_to_point_size(self.point_size, &mut face, 1.0);
         list.push(EntryOrAlias::Entry(Entry {
             face: Some(AnyFace::Loaded(face)),
             fallback,
@@ -478,13 +521,11 @@ impl Collection {
     }
 
     /// Add a `face` whose size is adjusted to match the primary face by the given
-    /// `adjustment`, recording the computed scale factor on its [`Entry`]. The
-    /// physical resize to the collection size is deferred (this slice has no
-    /// collection-size / load-options path), but the size-independent factor is
-    /// computed and recorded now. Faithful port of the eager `add` size-adjust.
+    /// `adjustment`, recording the computed scale factor on its [`Entry`].
+    /// Faithful port of the eager `add` size-adjust.
     pub(crate) fn add_with_adjustment(
         &mut self,
-        face: Face,
+        mut face: Face,
         style: Style,
         fallback: bool,
         adjustment: SizeAdjustment,
@@ -495,12 +536,48 @@ impl Collection {
         if list_is_full(idx) {
             return Err(AddError::CollectionFull);
         }
+        resize_face_to_point_size(self.point_size, &mut face, factor);
         list.push(EntryOrAlias::Entry(Entry {
             face: Some(AnyFace::Loaded(face)),
             fallback,
             scale_factor: ScaleFactor::Scale(factor),
         }));
         Ok(Index::new(style, idx as u16))
+    }
+
+    /// Update the collection point size, resizing loaded direct entries and
+    /// storing the size for future deferred loads.
+    pub(crate) fn set_point_size(&mut self, points: f64) -> Result<(), SetPointSizeError> {
+        if !points.is_finite() || points <= 0.0 {
+            return Err(SetPointSizeError::InvalidPointSize);
+        }
+
+        self.point_size = Some(points);
+        for style in [
+            Style::Regular,
+            Style::Bold,
+            Style::Italic,
+            Style::BoldItalic,
+        ] {
+            for eoa in &mut self.faces[style as usize] {
+                let EntryOrAlias::Entry(entry) = eoa else {
+                    continue;
+                };
+                let scale = entry.scale_factor();
+                if let Some(face) = entry.face_mut() {
+                    resize_face_to_point_size(self.point_size, face, scale);
+                }
+            }
+        }
+
+        if self.face_count(Style::Regular) > 0 {
+            self.update_metrics()
+                .map_err(|_| SetPointSizeError::CannotLoadPrimaryFont)?;
+        } else {
+            self.primary_face_metrics = None;
+            self.metrics = None;
+        }
+        Ok(())
     }
 
     /// Add a deferred `face` whose size will be adjusted to match the primary
@@ -670,6 +747,8 @@ impl Collection {
                 ScaleFactor::Scale(self.compute_scale_factor(&metrics, adjustment))
             }
         };
+        let mut face = face;
+        resize_face_to_point_size(self.point_size, &mut face, scale_factor.scale());
 
         let entry = self.get_direct_entry_mut(index)?;
         entry.face = Some(AnyFace::Loaded(face));
@@ -1111,6 +1190,123 @@ mod tests {
         let actual = deferred.get_entry(deferred_idx).unwrap().scale_factor();
         assert!(actual.is_finite());
         assert!((actual - expected).abs() < 1e-9);
+    }
+
+    fn assert_close(a: f64, b: f64) {
+        assert!((a - b).abs() < 1e-6, "{a} != {b}");
+    }
+
+    #[test]
+    fn collection_size_resizes_primary_and_updates_metrics() {
+        let mut c = menlo_collection();
+        c.update_metrics().unwrap();
+        let before = *c.metrics().unwrap();
+
+        c.set_point_size(24.0).unwrap();
+
+        assert_eq!(c.point_size(), Some(24.0));
+        assert_close(c.get_face(Index::default()).unwrap().size(), 24.0);
+        let expected = Metrics::calc(c.get_face(Index::default()).unwrap().get_metrics());
+        let actual = *c.metrics().unwrap();
+        assert_eq!(actual, expected);
+        assert_ne!(actual, before);
+    }
+
+    #[test]
+    fn collection_size_empty_collection_stores_future_size() {
+        let mut c = Collection::new();
+        c.set_point_size(20.0).unwrap();
+
+        assert_eq!(c.point_size(), Some(20.0));
+        assert!(c.metrics().is_none());
+
+        let idx = c
+            .add(Face::new("Menlo", 12.0), Style::Regular, false)
+            .unwrap();
+        assert_close(c.get_face(idx).unwrap().size(), 20.0);
+    }
+
+    #[test]
+    fn collection_size_rejects_invalid_points() {
+        for points in [0.0, -1.0, f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            let mut c = Collection::new();
+            assert_eq!(
+                c.set_point_size(points),
+                Err(SetPointSizeError::InvalidPointSize)
+            );
+            assert!(c.point_size().is_none());
+        }
+    }
+
+    #[test]
+    fn collection_size_resizes_existing_adjusted_fallback() {
+        let mut c = menlo_collection();
+        let idx = c
+            .add_with_adjustment(
+                Face::new("Apple Color Emoji", 12.0),
+                Style::Regular,
+                true,
+                SizeAdjustment::IcWidth,
+            )
+            .unwrap();
+        let scale = c.get_entry(idx).unwrap().scale_factor();
+
+        c.set_point_size(30.0).unwrap();
+
+        assert_close(c.get_face(Index::default()).unwrap().size(), 30.0);
+        assert_close(c.get_face(idx).unwrap().size(), 30.0 * scale);
+    }
+
+    #[test]
+    fn collection_size_before_eager_fallback_add_resizes_added_face() {
+        let mut c = menlo_collection();
+        c.set_point_size(18.0).unwrap();
+
+        let idx = c
+            .add_with_adjustment(
+                Face::new("Apple Color Emoji", 12.0),
+                Style::Regular,
+                true,
+                SizeAdjustment::IcWidth,
+            )
+            .unwrap();
+        let scale = c.get_entry(idx).unwrap().scale_factor();
+
+        assert_close(c.get_face(idx).unwrap().size(), 18.0 * scale);
+    }
+
+    #[test]
+    fn collection_size_before_deferred_load_resizes_loaded_face() {
+        let mut c = menlo_collection();
+        c.set_point_size(22.0).unwrap();
+        let idx = c
+            .add_deferred_with_adjustment(
+                deferred_family("Apple Color Emoji"),
+                Style::Regular,
+                true,
+                SizeAdjustment::IcWidth,
+            )
+            .unwrap();
+        assert!(c.get_entry(idx).unwrap().is_deferred());
+
+        let face = c.get_face(idx).unwrap();
+        assert!(face.glyph_index(0x1F600).is_some());
+        let scale = c.get_entry(idx).unwrap().scale_factor();
+        assert_close(c.get_face(idx).unwrap().size(), 22.0 * scale);
+    }
+
+    #[test]
+    fn collection_size_aliases_do_not_duplicate_resize_work() {
+        let mut c = menlo_collection();
+        let alias = c
+            .add_alias(Style::Italic, Index::new(Style::Regular, 0))
+            .unwrap();
+
+        c.set_point_size(26.0).unwrap();
+
+        assert_close(c.get_face(Index::default()).unwrap().size(), 26.0);
+        assert_close(c.get_face(alias).unwrap().size(), 26.0);
+        assert_eq!(c.face_count(Style::Italic), 1);
     }
 
     #[test]

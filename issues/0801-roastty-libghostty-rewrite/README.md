@@ -1716,7 +1716,7 @@ are past the correctness-critical foundation.
 - [Experiment 634: Font Backend And Library](634-font-backend-library.md) —
   **Pass** · Codex/Codex/Codex
 - [Experiment 635: Collection Size Loading](635-collection-size-loading.md) —
-  **Designed**
+  **Pass** · Codex/Codex/Codex
 
 ## Non-Goals
 
