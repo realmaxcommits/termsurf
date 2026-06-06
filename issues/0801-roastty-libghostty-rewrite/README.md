@@ -1976,7 +1976,7 @@ are past the correctness-critical foundation.
 - [Experiment 730: Binding Action New Window](730-binding-action-new-window.md)
   — **Pass** · Codex/Codex/Codex
 - [Experiment 731: Binding Action Search Overlay](731-binding-action-search-overlay.md)
-  — **Designed** · Codex/Codex/-
+  — **Pass** · Codex/Codex/Codex
 
 ## Non-Goals
 

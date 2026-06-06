@@ -1233,6 +1233,8 @@ typedef enum {
   ROASTTY_ACTION_REDO = 52,
   ROASTTY_ACTION_CHECK_FOR_UPDATES = 53,
   ROASTTY_ACTION_SHOW_ON_SCREEN_KEYBOARD = 57,
+  ROASTTY_ACTION_START_SEARCH = 59,
+  ROASTTY_ACTION_END_SEARCH = 60,
   ROASTTY_ACTION_READONLY = 63,
   ROASTTY_ACTION_COPY_TITLE_TO_CLIPBOARD = 64,
 } roastty_action_tag_e;
@@ -1307,7 +1309,11 @@ typedef struct {
    *   ROASTTY_ACTION_CLOSE_WINDOW / ROASTTY_ACTION_UNDO /
    *   ROASTTY_ACTION_REDO / ROASTTY_ACTION_CHECK_FOR_UPDATES /
    *   ROASTTY_ACTION_SHOW_ON_SCREEN_KEYBOARD /
+   *   ROASTTY_ACTION_END_SEARCH /
    *   ROASTTY_ACTION_COPY_TITLE_TO_CLIPBOARD: storage is zeroed
+   * - ROASTTY_ACTION_START_SEARCH:
+   *   storage[0] = borrowed const char* valid only during action_cb.
+   *   Parameterless start_search bindings pass an empty string.
    * - ROASTTY_ACTION_READONLY: storage[0] = roastty_readonly_e
    * - ROASTTY_ACTION_INSPECTOR: storage[0] = roastty_inspector_mode_e
    * - ROASTTY_ACTION_FLOAT_WINDOW: storage[0] = roastty_float_window_e

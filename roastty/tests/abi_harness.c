@@ -1799,6 +1799,8 @@ static void assert_support_abi(void) {
   assert(ROASTTY_ACTION_RELOAD_CONFIG == 47);
   assert(ROASTTY_ACTION_CHECK_FOR_UPDATES == 53);
   assert(ROASTTY_ACTION_SHOW_ON_SCREEN_KEYBOARD == 57);
+  assert(ROASTTY_ACTION_START_SEARCH == 59);
+  assert(ROASTTY_ACTION_END_SEARCH == 60);
   assert(ROASTTY_ACTION_READONLY == 63);
   assert(ROASTTY_ACTION_COPY_TITLE_TO_CLIPBOARD == 64);
   assert(ROASTTY_ACTION_FLOAT_WINDOW == 42);
@@ -4413,6 +4415,10 @@ int main(int argc, char **argv) {
   assert(!roastty_surface_binding_action(surface, "check_for_updates:now", 21));
   assert(!roastty_surface_binding_action(surface, "new_window:", 11));
   assert(!roastty_surface_binding_action(surface, "new_window:now", 14));
+  assert(!roastty_surface_binding_action(surface, "start_search:", 13));
+  assert(!roastty_surface_binding_action(surface, "start_search:needle", 19));
+  assert(!roastty_surface_binding_action(surface, "end_search:", 11));
+  assert(!roastty_surface_binding_action(surface, "end_search:now", 14));
   assert(!roastty_surface_binding_action(surface, "new_tab:", 8));
   assert(!roastty_surface_binding_action(surface, "new_tab:now", 11));
   assert(!roastty_surface_binding_action(surface, "close_tab:", 10));
@@ -4576,6 +4582,8 @@ int main(int argc, char **argv) {
   assert(!roastty_surface_binding_action(surface, "reload_config", 13));
   assert(!roastty_surface_binding_action(surface, "check_for_updates", 17));
   assert(!roastty_surface_binding_action(surface, "new_window", 10));
+  assert(!roastty_surface_binding_action(surface, "start_search", 12));
+  assert(!roastty_surface_binding_action(surface, "end_search", 10));
   assert(!roastty_surface_binding_action(surface, "new_tab", 7));
   assert(!roastty_surface_binding_action(surface, "close_tab", 9));
   assert(!roastty_surface_binding_action(surface, "close_tab:this", 14));

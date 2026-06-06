@@ -8,6 +8,11 @@ reasoning = "high"
 agent = "codex"
 model = "gpt-5"
 reasoning = "medium"
+
+[review.result]
+agent = "codex"
+model = "gpt-5"
+reasoning = "medium"
 +++
 
 # Experiment 731: Binding Action Search Overlay
@@ -103,3 +108,52 @@ parameterless overlay controls, using action tags `59` and `60`, documenting the
 borrowed empty search needle lifetime for `start_search`, keeping `end_search`
 zero-storage, rejecting parameterized forms, and covering runtime forwarding,
 ABI tags, parser failures, and callback result propagation.
+
+## Result
+
+**Result:** Pass
+
+Experiment 731 added parameterless search overlay binding actions:
+`start_search` and `end_search`.
+
+`start_search` now forwards to the runtime action callback with
+`ROASTTY_TARGET_SURFACE`, `ROASTTY_ACTION_START_SEARCH`, and a borrowed empty
+C-string needle in `storage[0]` that remains alive for the callback duration.
+`end_search` forwards to the same surface-target runtime callback with
+`ROASTTY_ACTION_END_SEARCH` and zeroed storage.
+
+The parser rejects colon parameters for both actions, and null surfaces,
+detached surfaces, missing callbacks, and false callback results return `false`.
+
+Verification passed:
+
+- `cargo fmt -p roastty`
+- `cargo test -p roastty search_overlay -- --nocapture --test-threads=1`
+  - 3 passed
+- `cargo test -p roastty binding_action -- --nocapture --test-threads=1`
+  - 107 passed
+- `cargo test -p roastty --test abi_harness`
+  - 1 passed
+- `cargo fmt -p roastty -- --check`
+- `git diff --check`
+
+## Conclusion
+
+Roastty can now notify embedders about the two parameterless search overlay
+controls using upstream-shaped runtime action tags and storage. This keeps the
+small overlay-control path separate from larger future search work such as
+`search:<needle>`, `search_selection`, `navigate_search`, and internal search
+match state.
+
+## Completion Review
+
+Codex reviewed the completed Experiment 731 diff and found one workflow blocker:
+the result was recorded, but completion-review provenance had not yet been added
+to the experiment frontmatter, this section, or the README tuple. This section,
+the `[review.result]` frontmatter, and the README tuple now record that review.
+
+The review found no implementation blockers. It approved `start_search`
+forwarding with surface target, tag `59`, and a borrowed empty C string that
+stays alive for the synchronous callback; `end_search` forwarding with surface
+target, tag `60`, and zeroed storage; parser rejection; callback false paths;
+ABI constants; tests; and the verification record.

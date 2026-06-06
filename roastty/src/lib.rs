@@ -151,6 +151,8 @@ const ROASTTY_ACTION_UNDO: c_int = 51;
 const ROASTTY_ACTION_REDO: c_int = 52;
 const ROASTTY_ACTION_CHECK_FOR_UPDATES: c_int = 53;
 const ROASTTY_ACTION_SHOW_ON_SCREEN_KEYBOARD: c_int = 57;
+const ROASTTY_ACTION_START_SEARCH: c_int = 59;
+const ROASTTY_ACTION_END_SEARCH: c_int = 60;
 const ROASTTY_ACTION_READONLY: c_int = 63;
 const ROASTTY_ACTION_COPY_TITLE_TO_CLIPBOARD: c_int = 64;
 
@@ -2975,6 +2977,7 @@ fn goto_tab_action(selector: c_int) -> ParsedBindingAction {
 enum ParsedBindingAction {
     RuntimeAction(c_int, [usize; 8]),
     AppRuntimeAction(c_int, [usize; 8]),
+    StartSearch,
     CloseSurface,
     Text(Vec<u8>),
     Csi(Vec<u8>),
@@ -3163,6 +3166,21 @@ fn parse_binding_action(surface: &Surface, action: &[u8]) -> Option<ParsedBindin
             }
             Some(ParsedBindingAction::RuntimeAction(
                 ROASTTY_ACTION_SHOW_ON_SCREEN_KEYBOARD,
+                [0usize; 8],
+            ))
+        }
+        b"start_search" => {
+            if parameter.is_some() {
+                return None;
+            }
+            Some(ParsedBindingAction::StartSearch)
+        }
+        b"end_search" => {
+            if parameter.is_some() {
+                return None;
+            }
+            Some(ParsedBindingAction::RuntimeAction(
+                ROASTTY_ACTION_END_SEARCH,
                 [0usize; 8],
             ))
         }
@@ -11501,6 +11519,12 @@ pub extern "C" fn roastty_surface_binding_action(
         ParsedBindingAction::AppRuntimeAction(tag, storage) => {
             surface.perform_app_action_result(tag, storage)
         }
+        ParsedBindingAction::StartSearch => {
+            let needle = CString::new("").expect("empty string has no interior NUL");
+            let mut storage = [0usize; 8];
+            storage[0] = needle.as_ptr() as usize;
+            surface.perform_action_result(ROASTTY_ACTION_START_SEARCH, storage)
+        }
         ParsedBindingAction::CloseSurface => {
             if surface.app.is_null() {
                 return false;
@@ -11710,6 +11734,7 @@ mod tests {
         action_tag: c_int,
         storage: [usize; 8],
         title: Option<String>,
+        needle: Option<String>,
     }
 
     #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -11850,6 +11875,16 @@ mod tests {
             } else {
                 None
             };
+            let needle = if action.tag == ROASTTY_ACTION_START_SEARCH {
+                let ptr = action.storage[0] as *const c_char;
+                (!ptr.is_null()).then(|| {
+                    unsafe { CStr::from_ptr(ptr) }
+                        .to_string_lossy()
+                        .into_owned()
+                })
+            } else {
+                None
+            };
             records.borrow_mut().push(ActionRecord {
                 app,
                 target_tag: target.tag,
@@ -11857,6 +11892,7 @@ mod tests {
                 action_tag: action.tag,
                 storage: action.storage,
                 title,
+                needle,
             });
         });
         ACTION_RESULT.with(|result| *result.borrow())
@@ -13541,6 +13577,8 @@ mod tests {
         assert_eq!(ROASTTY_ACTION_REDO, 52);
         assert_eq!(ROASTTY_ACTION_CHECK_FOR_UPDATES, 53);
         assert_eq!(ROASTTY_ACTION_SHOW_ON_SCREEN_KEYBOARD, 57);
+        assert_eq!(ROASTTY_ACTION_START_SEARCH, 59);
+        assert_eq!(ROASTTY_ACTION_END_SEARCH, 60);
         assert_eq!(ROASTTY_ACTION_READONLY, 63);
         assert_eq!(ROASTTY_ACTION_COPY_TITLE_TO_CLIPBOARD, 64);
         assert_eq!(ROASTTY_INSPECTOR_TOGGLE, 0);
@@ -13700,6 +13738,10 @@ mod tests {
             "check_for_updates:now",
             "new_window:",
             "new_window:now",
+            "start_search:",
+            "start_search:needle",
+            "end_search:",
+            "end_search:now",
             "new_tab:",
             "new_tab:now",
             "close_tab:",
@@ -16276,6 +16318,62 @@ mod tests {
 
         assert!(!binding_action(surface, "new_window"));
         assert_eq!(action_records().len(), 1);
+
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+    }
+
+    #[test]
+    fn surface_binding_action_search_overlay_false_for_null_detached_and_no_callback() {
+        let app = new_test_app();
+        let surface = new_test_surface(app);
+
+        for action in ["start_search", "end_search"] {
+            assert!(!binding_action(ptr::null_mut(), action), "{action}");
+            assert!(!binding_action(surface, action), "{action}");
+        }
+
+        roastty_app_free(app);
+        for action in ["start_search", "end_search"] {
+            assert!(!binding_action(surface, action), "{action}");
+        }
+        roastty_surface_free(surface);
+    }
+
+    #[test]
+    fn surface_binding_action_search_overlay_forwards_runtime_actions() {
+        let app = new_test_app_with_action(true);
+        let surface = new_test_surface(app);
+
+        assert!(binding_action(surface, "start_search"));
+        assert!(binding_action(surface, "end_search"));
+
+        let records = action_records();
+        assert_eq!(records.len(), 2);
+        for record in &records {
+            assert_eq!(record.app, app);
+            assert_eq!(record.target_tag, ROASTTY_TARGET_SURFACE);
+            assert_eq!(record.surface, surface);
+        }
+        assert_eq!(records[0].action_tag, ROASTTY_ACTION_START_SEARCH);
+        assert_eq!(records[0].needle.as_deref(), Some(""));
+        assert_ne!(records[0].storage[0], 0);
+        assert!(records[0].storage[1..].iter().all(|value| *value == 0));
+        assert_eq!(records[1].action_tag, ROASTTY_ACTION_END_SEARCH);
+        assert!(records[1].storage.iter().all(|value| *value == 0));
+
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+    }
+
+    #[test]
+    fn surface_binding_action_search_overlay_returns_callback_result() {
+        let app = new_test_app_with_action(false);
+        let surface = new_test_surface(app);
+
+        assert!(!binding_action(surface, "start_search"));
+        assert!(!binding_action(surface, "end_search"));
+        assert_eq!(action_records().len(), 2);
 
         roastty_surface_free(surface);
         roastty_app_free(app);
