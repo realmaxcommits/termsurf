@@ -2374,6 +2374,22 @@ impl Surface {
                 self.retained_write_file_dirs.push(temp_dir);
                 true
             }
+            WriteFileAction::Open => {
+                let Some((temp_dir, path)) = self.create_write_file(target, format) else {
+                    return false;
+                };
+                let kind = match format {
+                    WriteFileFormat::Plain | WriteFileFormat::Vt => {
+                        ROASTTY_ACTION_OPEN_URL_KIND_TEXT
+                    }
+                    WriteFileFormat::Html => ROASTTY_ACTION_OPEN_URL_KIND_HTML,
+                };
+                if !self.perform_open_url_result(kind, path.as_bytes()) {
+                    return false;
+                }
+                self.retained_write_file_dirs.push(temp_dir);
+                true
+            }
         }
     }
 
@@ -3266,6 +3282,7 @@ enum WriteFileFormat {
 enum WriteFileAction {
     Copy,
     Paste,
+    Open,
 }
 
 #[derive(Clone, Copy)]
@@ -3298,6 +3315,7 @@ fn write_file_action_from_str(value: &[u8]) -> Option<WriteFileAction> {
     match value {
         b"copy" => Some(WriteFileAction::Copy),
         b"paste" => Some(WriteFileAction::Paste),
+        b"open" => Some(WriteFileAction::Open),
         _ => None,
     }
 }
@@ -14363,7 +14381,12 @@ mod tests {
             "write_selection_file:paste,html,extra",
             "write_selection_file: paste",
             "write_selection_file:paste ",
-            "write_selection_file:open",
+            "write_selection_file:open,",
+            "write_selection_file:,open",
+            "write_selection_file:open,rtf",
+            "write_selection_file:open,html,extra",
+            "write_selection_file: open",
+            "write_selection_file:open ",
             "write_selection_file:copy\0plain",
             "write_screen_file",
             "write_screen_file:",
@@ -14379,7 +14402,12 @@ mod tests {
             "write_screen_file:paste,html,extra",
             "write_screen_file: paste",
             "write_screen_file:paste ",
-            "write_screen_file:open",
+            "write_screen_file:open,",
+            "write_screen_file:,open",
+            "write_screen_file:open,rtf",
+            "write_screen_file:open,html,extra",
+            "write_screen_file: open",
+            "write_screen_file:open ",
             "write_screen_file:copy\0plain",
             "write_scrollback_file",
             "write_scrollback_file:",
@@ -14395,7 +14423,12 @@ mod tests {
             "write_scrollback_file:paste,html,extra",
             "write_scrollback_file: paste",
             "write_scrollback_file:paste ",
-            "write_scrollback_file:open",
+            "write_scrollback_file:open,",
+            "write_scrollback_file:,open",
+            "write_scrollback_file:open,rtf",
+            "write_scrollback_file:open,html,extra",
+            "write_scrollback_file: open",
+            "write_scrollback_file:open ",
             "write_scrollback_file:copy\0plain",
             "copy_title_to_clipboard:",
             "copy_title_to_clipboard:now",
@@ -15759,13 +15792,19 @@ mod tests {
             ptr::null_mut(),
             "write_selection_file:paste"
         ));
+        assert!(!binding_action(
+            ptr::null_mut(),
+            "write_selection_file:open"
+        ));
         assert!(!binding_action(surface, "write_selection_file:copy"));
         assert!(!binding_action(surface, "write_selection_file:paste"));
+        assert!(!binding_action(surface, "write_selection_file:open"));
         assert!(clipboard_write_records().is_empty());
 
         roastty_app_free(app);
         assert!(!binding_action(surface, "write_selection_file:copy"));
         assert!(!binding_action(surface, "write_selection_file:paste"));
+        assert!(!binding_action(surface, "write_selection_file:open"));
         assert!(clipboard_write_records().is_empty());
         roastty_surface_free(surface);
 
@@ -15780,6 +15819,7 @@ mod tests {
 
         assert!(!binding_action(surface, "write_selection_file:copy"));
         assert!(!binding_action(surface, "write_selection_file:paste"));
+        assert!(!binding_action(surface, "write_selection_file:open"));
         assert!(clipboard_write_records().is_empty());
         roastty_surface_free(surface);
         roastty_app_free(app);
@@ -15796,6 +15836,7 @@ mod tests {
 
         reset_clipboard_write_records();
         assert!(!binding_action(surface, "write_selection_file:copy"));
+        assert!(!binding_action(surface, "write_selection_file:open"));
         assert!(clipboard_write_records().is_empty());
         roastty_surface_free(surface);
         roastty_app_free(app);
@@ -15807,11 +15848,14 @@ mod tests {
         let surface = new_test_surface(app);
 
         assert!(!binding_action(ptr::null_mut(), "write_screen_file:copy"));
+        assert!(!binding_action(ptr::null_mut(), "write_screen_file:open"));
         assert!(!binding_action(surface, "write_screen_file:copy"));
+        assert!(!binding_action(surface, "write_screen_file:open"));
         assert!(clipboard_write_records().is_empty());
 
         roastty_app_free(app);
         assert!(!binding_action(surface, "write_screen_file:copy"));
+        assert!(!binding_action(surface, "write_screen_file:open"));
         assert!(clipboard_write_records().is_empty());
         roastty_surface_free(surface);
 
@@ -15826,6 +15870,7 @@ mod tests {
 
         reset_clipboard_write_records();
         assert!(!binding_action(surface, "write_screen_file:copy"));
+        assert!(!binding_action(surface, "write_screen_file:open"));
         assert!(clipboard_write_records().is_empty());
         roastty_surface_free(surface);
         roastty_app_free(app);
@@ -15840,11 +15885,17 @@ mod tests {
             ptr::null_mut(),
             "write_scrollback_file:copy"
         ));
+        assert!(!binding_action(
+            ptr::null_mut(),
+            "write_scrollback_file:open"
+        ));
         assert!(!binding_action(surface, "write_scrollback_file:copy"));
+        assert!(!binding_action(surface, "write_scrollback_file:open"));
         assert!(clipboard_write_records().is_empty());
 
         roastty_app_free(app);
         assert!(!binding_action(surface, "write_scrollback_file:copy"));
+        assert!(!binding_action(surface, "write_scrollback_file:open"));
         assert!(clipboard_write_records().is_empty());
         roastty_surface_free(surface);
 
@@ -15867,6 +15918,7 @@ mod tests {
 
         reset_clipboard_write_records();
         assert!(!binding_action(surface, "write_scrollback_file:copy"));
+        assert!(!binding_action(surface, "write_scrollback_file:open"));
         assert!(clipboard_write_records().is_empty());
         roastty_surface_free(surface);
         roastty_app_free(app);
@@ -15892,6 +15944,7 @@ mod tests {
 
         reset_clipboard_write_records();
         assert!(!binding_action(surface, "write_scrollback_file:copy"));
+        assert!(!binding_action(surface, "write_scrollback_file:open"));
         assert!(clipboard_write_records().is_empty());
         roastty_surface_free(surface);
         roastty_app_free(app);
@@ -16518,6 +16571,324 @@ mod tests {
             roastty_app_free(app);
             drop(_guard);
         }
+    }
+
+    fn assert_write_file_open_record(
+        app: RoasttyApp,
+        surface: RoasttySurface,
+        expected_kind: c_int,
+        expected_suffix: &str,
+        expected_content: &str,
+    ) {
+        let records = action_records();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].app, app);
+        assert_eq!(records[0].target_tag, ROASTTY_TARGET_SURFACE);
+        assert_eq!(records[0].surface, surface);
+        assert_eq!(records[0].action_tag, ROASTTY_ACTION_OPEN_URL);
+        assert!(records[0].storage[3..].iter().all(|value| *value == 0));
+
+        let (kind, path_bytes) = records[0].open_url.clone().unwrap();
+        assert_eq!(kind, expected_kind);
+        let path = String::from_utf8(path_bytes).unwrap();
+        assert!(path.ends_with(expected_suffix), "{path}");
+        assert_eq!(std::fs::read_to_string(path).unwrap(), expected_content);
+    }
+
+    #[test]
+    fn surface_binding_action_write_selection_file_open_forwards_path() {
+        let _guard = PTY_COMMAND_LOCK.lock().unwrap();
+        let app = new_test_app_with_action(true);
+        let command = CString::new("printf ready; sleep 5").unwrap();
+        let mut config = roastty_surface_config_new();
+        config.command = command.as_ptr();
+        let surface = new_test_surface_with_config(app, &config);
+        set_surface_test_geometry(surface, 20, 3, 10, 20);
+        assert!(surface_snapshot_text_after_start(app, surface).contains("ready"));
+        {
+            let surface_ref = surface_from_handle(surface).unwrap();
+            let worker = surface_ref.termio_worker.as_ref().unwrap();
+            worker.with_termio_mut(|termio| {
+                termio.terminal_mut().reset();
+                termio
+                    .terminal_mut()
+                    .next_slice(b"\x1b[31mred\x1b[0m plain   \n")
+                    .unwrap();
+            });
+        }
+
+        for (action, format, kind, extension) in [
+            (
+                "write_selection_file:open",
+                TerminalSelectionFormat::Plain,
+                ROASTTY_ACTION_OPEN_URL_KIND_TEXT,
+                "txt",
+            ),
+            (
+                "write_selection_file:open,plain",
+                TerminalSelectionFormat::Plain,
+                ROASTTY_ACTION_OPEN_URL_KIND_TEXT,
+                "txt",
+            ),
+            (
+                "write_selection_file:open,vt",
+                TerminalSelectionFormat::Vt,
+                ROASTTY_ACTION_OPEN_URL_KIND_TEXT,
+                "txt",
+            ),
+            (
+                "write_selection_file:open,html",
+                TerminalSelectionFormat::Html,
+                ROASTTY_ACTION_OPEN_URL_KIND_HTML,
+                "html",
+            ),
+        ] {
+            let selection = surface_worker_selection(surface, (0, 0), (11, 0));
+            set_surface_worker_active_selection(surface, Some(selection));
+            let terminal_selection = read_selection(&selection).unwrap();
+            let expected = {
+                let surface_ref = surface_from_handle(surface).unwrap();
+                let worker = surface_ref.termio_worker.as_ref().unwrap();
+                worker.with_termio(|termio| {
+                    termio
+                        .terminal()
+                        .selection_format(format, true, false, Some(terminal_selection))
+                        .unwrap()
+                })
+            };
+
+            reset_action_records(true);
+            assert!(binding_action(surface, action), "{action}");
+            assert_write_file_open_record(
+                app,
+                surface,
+                kind,
+                &format!("selection.{extension}"),
+                &expected,
+            );
+        }
+
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+    }
+
+    #[test]
+    fn surface_binding_action_write_screen_file_open_forwards_path() {
+        let _guard = PTY_COMMAND_LOCK.lock().unwrap();
+        let app = new_test_app_with_action(true);
+        let command = CString::new("printf ready; sleep 5").unwrap();
+        let mut config = roastty_surface_config_new();
+        config.command = command.as_ptr();
+        let surface = new_test_surface_with_config(app, &config);
+        set_surface_test_geometry(surface, 20, 3, 10, 20);
+        assert!(surface_snapshot_text_after_start(app, surface).contains("ready"));
+        {
+            let surface_ref = surface_from_handle(surface).unwrap();
+            let worker = surface_ref.termio_worker.as_ref().unwrap();
+            worker.with_termio_mut(|termio| {
+                termio.terminal_mut().reset();
+                termio
+                    .terminal_mut()
+                    .next_slice(b"\x1b[31mred\x1b[0m plain   \nsecond")
+                    .unwrap();
+            });
+        }
+
+        for (action, format, kind, extension) in [
+            (
+                "write_screen_file:open",
+                TerminalSelectionFormat::Plain,
+                ROASTTY_ACTION_OPEN_URL_KIND_TEXT,
+                "txt",
+            ),
+            (
+                "write_screen_file:open,plain",
+                TerminalSelectionFormat::Plain,
+                ROASTTY_ACTION_OPEN_URL_KIND_TEXT,
+                "txt",
+            ),
+            (
+                "write_screen_file:open,vt",
+                TerminalSelectionFormat::Vt,
+                ROASTTY_ACTION_OPEN_URL_KIND_TEXT,
+                "txt",
+            ),
+            (
+                "write_screen_file:open,html",
+                TerminalSelectionFormat::Html,
+                ROASTTY_ACTION_OPEN_URL_KIND_HTML,
+                "html",
+            ),
+        ] {
+            let expected = {
+                let surface_ref = surface_from_handle(surface).unwrap();
+                let worker = surface_ref.termio_worker.as_ref().unwrap();
+                worker.with_termio(|termio| {
+                    termio
+                        .terminal()
+                        .formatter_format(format, true, false, TerminalFormatterExtra::none(), None)
+                        .unwrap()
+                })
+            };
+
+            reset_action_records(true);
+            assert!(binding_action(surface, action), "{action}");
+            assert_write_file_open_record(
+                app,
+                surface,
+                kind,
+                &format!("screen.{extension}"),
+                &expected,
+            );
+        }
+
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+    }
+
+    #[test]
+    fn surface_binding_action_write_scrollback_file_open_forwards_path() {
+        let _guard = PTY_COMMAND_LOCK.lock().unwrap();
+        let app = new_test_app_with_action(true);
+        let command = CString::new("printf ready; sleep 5").unwrap();
+        let mut config = roastty_surface_config_new();
+        config.command = command.as_ptr();
+        let surface = new_test_surface_with_config(app, &config);
+        set_surface_test_geometry(surface, 20, 3, 10, 20);
+        assert!(surface_snapshot_text_after_start(app, surface).contains("ready"));
+        {
+            let surface_ref = surface_from_handle(surface).unwrap();
+            let worker = surface_ref.termio_worker.as_ref().unwrap();
+            worker.with_termio_mut(|termio| {
+                termio.terminal_mut().reset();
+                termio
+                    .terminal_mut()
+                    .next_slice(
+                        b"\x1b[31mhistory-red\x1b[0m\r\nhistory-two\r\nvisible-one\r\nvisible-two\r\nvisible-three",
+                    )
+                    .unwrap();
+            });
+        }
+
+        for (action, format, kind, extension) in [
+            (
+                "write_scrollback_file:open",
+                TerminalSelectionFormat::Plain,
+                ROASTTY_ACTION_OPEN_URL_KIND_TEXT,
+                "txt",
+            ),
+            (
+                "write_scrollback_file:open,plain",
+                TerminalSelectionFormat::Plain,
+                ROASTTY_ACTION_OPEN_URL_KIND_TEXT,
+                "txt",
+            ),
+            (
+                "write_scrollback_file:open,vt",
+                TerminalSelectionFormat::Vt,
+                ROASTTY_ACTION_OPEN_URL_KIND_TEXT,
+                "txt",
+            ),
+            (
+                "write_scrollback_file:open,html",
+                TerminalSelectionFormat::Html,
+                ROASTTY_ACTION_OPEN_URL_KIND_HTML,
+                "html",
+            ),
+        ] {
+            let expected = {
+                let surface_ref = surface_from_handle(surface).unwrap();
+                let worker = surface_ref.termio_worker.as_ref().unwrap();
+                worker.with_termio(|termio| {
+                    termio
+                        .terminal()
+                        .scrollback_format(format, true, false, TerminalFormatterExtra::none())
+                        .unwrap()
+                })
+            };
+            assert!(expected.contains("history-red"), "{expected:?}");
+            assert!(expected.contains("history-two"), "{expected:?}");
+            assert!(!expected.contains("visible-one"), "{expected:?}");
+            assert!(!expected.contains("visible-two"), "{expected:?}");
+            assert!(!expected.contains("visible-three"), "{expected:?}");
+
+            reset_action_records(true);
+            assert!(binding_action(surface, action), "{action}");
+            assert_write_file_open_record(
+                app,
+                surface,
+                kind,
+                &format!("scrollback.{extension}"),
+                &expected,
+            );
+        }
+
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+    }
+
+    #[test]
+    fn surface_binding_action_write_file_open_false_paths() {
+        let _guard = PTY_COMMAND_LOCK.lock().unwrap();
+        let app = new_test_app_with_action(false);
+        let command = CString::new("printf ready; sleep 5").unwrap();
+        let mut config = roastty_surface_config_new();
+        config.command = command.as_ptr();
+        let surface = new_test_surface_with_config(app, &config);
+        set_surface_test_geometry(surface, 20, 3, 10, 20);
+        assert!(surface_snapshot_text_after_start(app, surface).contains("ready"));
+        {
+            let surface_ref = surface_from_handle(surface).unwrap();
+            let worker = surface_ref.termio_worker.as_ref().unwrap();
+            worker.with_termio_mut(|termio| {
+                termio.terminal_mut().reset();
+                termio.terminal_mut().next_slice(b"ready").unwrap();
+            });
+        }
+
+        reset_action_records(false);
+        assert!(!binding_action(surface, "write_screen_file:open"));
+        assert_eq!(action_records().len(), 1);
+        assert_eq!(
+            surface_from_handle(surface)
+                .unwrap()
+                .retained_write_file_dirs
+                .len(),
+            0
+        );
+
+        reset_action_records(true);
+        set_surface_worker_active_selection(surface, None);
+        assert!(!binding_action(surface, "write_selection_file:open"));
+        assert!(action_records().is_empty());
+        assert_eq!(
+            surface_from_handle(surface)
+                .unwrap()
+                .retained_write_file_dirs
+                .len(),
+            0
+        );
+
+        {
+            let surface_ref = surface_from_handle(surface).unwrap();
+            let worker = surface_ref.termio_worker.as_ref().unwrap();
+            worker.with_termio_mut(|termio| {
+                termio.terminal_mut().reset();
+                termio.terminal_mut().next_slice(b"visible").unwrap();
+            });
+        }
+        assert!(!binding_action(surface, "write_scrollback_file:open"));
+        assert!(action_records().is_empty());
+        assert_eq!(
+            surface_from_handle(surface)
+                .unwrap()
+                .retained_write_file_dirs
+                .len(),
+            0
+        );
+
+        roastty_surface_free(surface);
+        roastty_app_free(app);
     }
 
     #[test]

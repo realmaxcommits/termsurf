@@ -4540,7 +4540,13 @@ int main(int argc, char **argv) {
   assert(!roastty_surface_binding_action(surface, "write_selection_file:paste,rtf", 30));
   assert(!roastty_surface_binding_action(
       surface, "write_selection_file:paste,html,extra", 37));
-  assert(!roastty_surface_binding_action(surface, "write_selection_file:open", 25));
+  assert(!roastty_surface_binding_action(surface, "write_selection_file:open,", 26));
+  assert(!roastty_surface_binding_action(surface, "write_selection_file:,open", 26));
+  assert(!roastty_surface_binding_action(surface, "write_selection_file:open,rtf", 29));
+  assert(!roastty_surface_binding_action(
+      surface, "write_selection_file:open,html,extra", 36));
+  assert(!roastty_surface_binding_action(surface, "write_selection_file: open", 26));
+  assert(!roastty_surface_binding_action(surface, "write_selection_file:open ", 26));
   assert(!roastty_surface_binding_action(surface, "write_screen_file", 17));
   assert(!roastty_surface_binding_action(surface, "write_screen_file:", 18));
   assert(!roastty_surface_binding_action(surface, "write_screen_file:copy,", 23));
@@ -4552,7 +4558,13 @@ int main(int argc, char **argv) {
   assert(!roastty_surface_binding_action(surface, "write_screen_file:paste,rtf", 27));
   assert(!roastty_surface_binding_action(
       surface, "write_screen_file:paste,html,extra", 34));
-  assert(!roastty_surface_binding_action(surface, "write_screen_file:open", 22));
+  assert(!roastty_surface_binding_action(surface, "write_screen_file:open,", 23));
+  assert(!roastty_surface_binding_action(surface, "write_screen_file:,open", 23));
+  assert(!roastty_surface_binding_action(surface, "write_screen_file:open,rtf", 26));
+  assert(!roastty_surface_binding_action(
+      surface, "write_screen_file:open,html,extra", 33));
+  assert(!roastty_surface_binding_action(surface, "write_screen_file: open", 23));
+  assert(!roastty_surface_binding_action(surface, "write_screen_file:open ", 23));
   assert(!roastty_surface_binding_action(surface, "write_scrollback_file", 21));
   assert(!roastty_surface_binding_action(surface, "write_scrollback_file:", 22));
   assert(!roastty_surface_binding_action(surface, "write_scrollback_file:copy,", 27));
@@ -4564,7 +4576,13 @@ int main(int argc, char **argv) {
   assert(!roastty_surface_binding_action(surface, "write_scrollback_file:paste,rtf", 31));
   assert(!roastty_surface_binding_action(
       surface, "write_scrollback_file:paste,html,extra", 38));
-  assert(!roastty_surface_binding_action(surface, "write_scrollback_file:open", 26));
+  assert(!roastty_surface_binding_action(surface, "write_scrollback_file:open,", 27));
+  assert(!roastty_surface_binding_action(surface, "write_scrollback_file:,open", 27));
+  assert(!roastty_surface_binding_action(surface, "write_scrollback_file:open,rtf", 30));
+  assert(!roastty_surface_binding_action(
+      surface, "write_scrollback_file:open,html,extra", 37));
+  assert(!roastty_surface_binding_action(surface, "write_scrollback_file: open", 27));
+  assert(!roastty_surface_binding_action(surface, "write_scrollback_file:open ", 27));
   assert(!roastty_surface_binding_action(surface, "copy_title_to_clipboard:", 24));
   assert(!roastty_surface_binding_action(surface, "copy_title_to_clipboard:now", 27));
   assert(!roastty_surface_binding_action(surface, "paste_from_clipboard:", 21));
@@ -4689,6 +4707,10 @@ int main(int argc, char **argv) {
   assert(!roastty_surface_binding_action(surface, "write_selection_file:paste,plain", 32));
   assert(!roastty_surface_binding_action(surface, "write_selection_file:paste,vt", 29));
   assert(!roastty_surface_binding_action(surface, "write_selection_file:paste,html", 31));
+  assert(!roastty_surface_binding_action(surface, "write_selection_file:open", 25));
+  assert(!roastty_surface_binding_action(surface, "write_selection_file:open,plain", 31));
+  assert(!roastty_surface_binding_action(surface, "write_selection_file:open,vt", 28));
+  assert(!roastty_surface_binding_action(surface, "write_selection_file:open,html", 30));
   assert(!roastty_surface_binding_action(surface, "write_screen_file:copy", 22));
   assert(!roastty_surface_binding_action(surface, "write_screen_file:copy,plain", 28));
   assert(!roastty_surface_binding_action(surface, "write_screen_file:copy,vt", 25));
@@ -4697,6 +4719,10 @@ int main(int argc, char **argv) {
   assert(!roastty_surface_binding_action(surface, "write_screen_file:paste,plain", 29));
   assert(!roastty_surface_binding_action(surface, "write_screen_file:paste,vt", 26));
   assert(!roastty_surface_binding_action(surface, "write_screen_file:paste,html", 28));
+  assert(!roastty_surface_binding_action(surface, "write_screen_file:open", 22));
+  assert(!roastty_surface_binding_action(surface, "write_screen_file:open,plain", 28));
+  assert(!roastty_surface_binding_action(surface, "write_screen_file:open,vt", 25));
+  assert(!roastty_surface_binding_action(surface, "write_screen_file:open,html", 27));
   assert(!roastty_surface_binding_action(surface, "write_scrollback_file:copy", 26));
   assert(!roastty_surface_binding_action(surface, "write_scrollback_file:copy,plain", 32));
   assert(!roastty_surface_binding_action(surface, "write_scrollback_file:copy,vt", 29));
@@ -4705,6 +4731,10 @@ int main(int argc, char **argv) {
   assert(!roastty_surface_binding_action(surface, "write_scrollback_file:paste,plain", 33));
   assert(!roastty_surface_binding_action(surface, "write_scrollback_file:paste,vt", 30));
   assert(!roastty_surface_binding_action(surface, "write_scrollback_file:paste,html", 32));
+  assert(!roastty_surface_binding_action(surface, "write_scrollback_file:open", 26));
+  assert(!roastty_surface_binding_action(surface, "write_scrollback_file:open,plain", 32));
+  assert(!roastty_surface_binding_action(surface, "write_scrollback_file:open,vt", 29));
+  assert(!roastty_surface_binding_action(surface, "write_scrollback_file:open,html", 31));
   assert(!roastty_surface_binding_action(surface, "copy_title_to_clipboard", 23));
   assert(!roastty_surface_binding_action(surface, "paste_from_clipboard", 20));
   assert(!roastty_surface_binding_action(surface, "paste_from_selection", 20));

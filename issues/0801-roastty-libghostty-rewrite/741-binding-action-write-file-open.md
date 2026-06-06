@@ -8,6 +8,11 @@ reasoning = "high"
 agent = "codex"
 model = "gpt-5"
 reasoning = "medium"
+
+[review.result]
+agent = "codex"
+model = "gpt-5"
+reasoning = "medium"
 +++
 
 # Experiment 741: Binding Action Write File Open
@@ -107,3 +112,74 @@ remains.
 The remaining workflow requirement from the review was to record
 `[review.design]`, this review section, and the README tuple before the
 Experiment 741 plan commit; those records are now present.
+
+## Result
+
+**Result:** Pass
+
+Experiment 741 added `write_*_file:open` support for selection, screen, and
+scrollback targets. The parser now accepts `open`, `open,plain`, `open,vt`, and
+`open,html` for all three write-file actions while continuing to reject empty
+formats, unsupported formats, extra components, whitespace-padded actions, and
+NUL-containing parameters.
+
+The shared write-file helper now has an `Open` branch. It creates the formatted
+temporary file, maps plain/vt output to `ROASTTY_ACTION_OPEN_URL_KIND_TEXT`,
+maps html output to `ROASTTY_ACTION_OPEN_URL_KIND_HTML`, forwards the canonical
+path bytes through `ROASTTY_ACTION_OPEN_URL`, and retains the temporary
+directory only when the runtime callback accepts the action. Missing callbacks,
+detached surfaces, no selection, no scrollback content, and callback rejection
+return `false` without retaining a temporary directory. The OS fallback opener
+remains out of scope.
+
+Tests cover all three targets and all supported formats. They assert the
+callback receives a surface-target open-url action, the expected kind, and a
+canonical path ending in `selection.txt` / `selection.html`, `screen.txt` /
+`screen.html`, or `scrollback.txt` / `scrollback.html`. The tests read the
+created file back and compare it to the same formatter output used by copy and
+paste paths. Scrollback open verifies the file contains only history above the
+active screen.
+
+Verification passed:
+
+- `cargo fmt -p roastty`
+- `cargo test -p roastty write_selection_file -- --nocapture --test-threads=1`
+  - 6 passed
+- `cargo test -p roastty write_screen_file -- --nocapture --test-threads=1`
+  - 5 passed
+- `cargo test -p roastty write_scrollback_file -- --nocapture --test-threads=1`
+  - 5 passed
+- `cargo test -p roastty open_url -- --nocapture --test-threads=1`
+  - 4 passed
+- `cargo test -p roastty binding_action -- --nocapture --test-threads=1`
+  - 129 passed
+- `cargo test -p roastty --test abi_harness`
+  - 1 passed
+- `cargo fmt -p roastty -- --check`
+- `git diff --check`
+
+## Conclusion
+
+The write-file binding-action family now supports copy, paste, and open for all
+three upstream targets: selection, screen, and scrollback. This closes the
+runtime write-file action foundation apart from the separately deferred default
+OS opener fallback.
+
+## Completion Review
+
+Codex reviewed the completed Experiment 741 implementation and result diff. It
+found no implementation blockers.
+
+The review confirmed that the `Open` branch matches the approved plan: it
+creates the target file, maps plain/vt formats to text and html to html,
+forwards canonical path bytes through `ROASTTY_ACTION_OPEN_URL`, retains the
+temporary directory only when the callback accepts the action, and returns
+`false` for callback rejection or missing target content without retaining a
+directory. It also confirmed parser and ABI coverage: valid open forms are
+covered in no-callback false-path tests, malformed open forms remain rejected,
+and Rust tests cover all three targets, formatter contents, scrollback
+history-only behavior, open-url kind and target shape, and callback false paths.
+
+The review's only blocker was missing workflow metadata: `[review.result]`, this
+completion-review section, and the README tuple update. Those records are now
+present.
