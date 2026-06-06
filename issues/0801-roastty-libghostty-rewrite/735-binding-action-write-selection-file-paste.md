@@ -8,6 +8,11 @@ reasoning = "high"
 agent = "codex"
 model = "gpt-5"
 reasoning = "medium"
+
+[review.result]
+agent = "codex"
+model = "gpt-5"
+reasoning = "medium"
 +++
 
 # Experiment 735: Binding Action Write Selection File Paste
@@ -89,3 +94,55 @@ review, and the README tuple is updated to `Codex/Codex/-`.
 With the readonly gate added, the review found the parser scope, temp-directory
 lifetime model, exact queued path bytes requirement, queue-failure false path,
 and verification plan coherent.
+
+## Result
+
+**Result:** Pass
+
+Experiment 735 added `write_selection_file:paste` support. The
+`write_selection_file` parser now accepts `paste`, `paste,plain`, `paste,vt`,
+and `paste,html` alongside the existing copy forms. Both actions share the same
+selection-file creation path: active selection lookup, unwrap-enabled and
+trim-disabled formatting, `selection.txt` / `selection.html` naming, canonical
+path resolution, and successful temporary-directory retention on the surface.
+
+For paste, Roastty queues exactly the canonical file path bytes to the terminal
+worker with no trailing newline or NUL. Paste returns `false` in readonly mode
+before creating a temp file or queueing bytes, and it returns `false` if the
+worker queue is disconnected.
+
+`write_selection_file:open`, `write_screen_file`, and `write_scrollback_file`
+remain future work.
+
+Verification passed:
+
+- `cargo fmt -p roastty`
+- `cargo test -p roastty write_selection_file -- --nocapture --test-threads=1`
+  - 5 passed
+- `cargo test -p roastty copy_to_clipboard -- --nocapture --test-threads=1`
+  - 2 passed
+- `cargo test -p roastty binding_action -- --nocapture --test-threads=1`
+  - 117 passed
+- `cargo test -p roastty --test abi_harness`
+  - 1 passed
+- `cargo fmt -p roastty -- --check`
+- `git diff --check`
+
+## Conclusion
+
+The selection-file binding now supports both copy and paste actions while
+preserving the same temp-file lifetime model. The remaining write-file surface
+is the OS open action and the screen/scrollback variants, which can reuse this
+parser and file-creation foundation.
+
+## Completion Review
+
+Codex reviewed the completed Experiment 735 result and implementation diff. It
+found no implementation blockers.
+
+The review confirmed that the paste parser accepts the intended forms while
+preserving malformed rejection coverage, readonly returns `false` before
+temp-file creation or queueing, queue failures return `false`, queued bytes are
+exactly the canonical path bytes, temporary directories are retained after
+successful paste, copy still uses the shared file path and clipboard behavior,
+and the verification record matches the implemented coverage.

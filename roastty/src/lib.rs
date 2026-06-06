@@ -2239,33 +2239,20 @@ impl Surface {
         true
     }
 
-    fn write_selection_file_copy(&mut self, format: WriteFileFormat) -> bool {
-        if self.app.is_null() {
-            return false;
-        }
-        let Some(app) = app_from_handle(self.app) else {
-            return false;
-        };
-        let Some(write_clipboard) = app.runtime.write_clipboard_cb else {
-            return false;
-        };
-        let Some(worker) = self.termio_worker.as_ref() else {
-            return false;
-        };
-
-        let Some(text) = worker.with_termio(|termio| {
+    fn create_selection_file(
+        &self,
+        format: WriteFileFormat,
+    ) -> Option<(os::temp_dir::TempDir, String)> {
+        let worker = self.termio_worker.as_ref()?;
+        let text = worker.with_termio(|termio| {
             let terminal = termio.terminal();
             let selection = terminal.active_selection()?;
             terminal
                 .selection_format(format.selection_format(), true, false, Some(selection))
                 .ok()
-        }) else {
-            return false;
-        };
+        })?;
 
-        let Ok(temp_dir) = os::temp_dir::TempDir::new() else {
-            return false;
-        };
+        let temp_dir = os::temp_dir::TempDir::new().ok()?;
         let filename = match format {
             WriteFileFormat::Plain | WriteFileFormat::Vt => "selection.txt",
             WriteFileFormat::Html => "selection.html",
@@ -2274,35 +2261,69 @@ impl Surface {
         let written = std::fs::File::create(&path)
             .and_then(|mut file| file.write_all(text.as_bytes()).and_then(|()| file.flush()));
         if written.is_err() {
+            return None;
+        }
+        let path = std::fs::canonicalize(&path).ok()?;
+        let path = path.to_str()?.to_owned();
+        Some((temp_dir, path))
+    }
+
+    fn write_selection_file(&mut self, action: WriteFileAction, format: WriteFileFormat) -> bool {
+        if self.app.is_null() {
             return false;
         }
-        let Ok(path) = std::fs::canonicalize(&path) else {
-            return false;
-        };
-        let Some(path) = path.to_str() else {
-            return false;
-        };
-        let Ok(mime) = CString::new("text/plain") else {
-            return false;
-        };
-        let Ok(data) = CString::new(path) else {
-            return false;
-        };
-        let content = RoasttyClipboardContent {
-            mime: mime.as_ptr(),
-            data: data.as_ptr(),
-        };
-        unsafe {
-            write_clipboard(
-                app.runtime.userdata,
-                ROASTTY_CLIPBOARD_STANDARD,
-                ptr::addr_of!(content),
-                1,
-                false,
-            );
+
+        match action {
+            WriteFileAction::Copy => {
+                let Some(app) = app_from_handle(self.app) else {
+                    return false;
+                };
+                let Some(write_clipboard) = app.runtime.write_clipboard_cb else {
+                    return false;
+                };
+                let Some((temp_dir, path)) = self.create_selection_file(format) else {
+                    return false;
+                };
+                let Ok(mime) = CString::new("text/plain") else {
+                    return false;
+                };
+                let Ok(data) = CString::new(path) else {
+                    return false;
+                };
+                let content = RoasttyClipboardContent {
+                    mime: mime.as_ptr(),
+                    data: data.as_ptr(),
+                };
+                unsafe {
+                    write_clipboard(
+                        app.runtime.userdata,
+                        ROASTTY_CLIPBOARD_STANDARD,
+                        ptr::addr_of!(content),
+                        1,
+                        false,
+                    );
+                }
+                self.retained_write_file_dirs.push(temp_dir);
+                true
+            }
+            WriteFileAction::Paste => {
+                if self.readonly {
+                    return false;
+                }
+                let Some((temp_dir, path)) = self.create_selection_file(format) else {
+                    return false;
+                };
+                let Some(worker) = self.termio_worker.as_ref() else {
+                    return false;
+                };
+                if let Err(err) = worker.queue_write(path.as_bytes()) {
+                    self.apply_termio_event(termio::TermioWorkerEvent::Error(format!("{err:?}")));
+                    return false;
+                }
+                self.retained_write_file_dirs.push(temp_dir);
+                true
+            }
         }
-        self.retained_write_file_dirs.push(temp_dir);
-        true
     }
 
     fn search_selection(&mut self) -> bool {
@@ -3138,7 +3159,7 @@ enum ParsedBindingAction {
     StartSearch,
     SearchSelection,
     CopyUrlToClipboard,
-    WriteSelectionFileCopy(WriteFileFormat),
+    WriteSelectionFile(WriteFileAction, WriteFileFormat),
     CloseSurface,
     Text(Vec<u8>),
     Csi(Vec<u8>),
@@ -3190,6 +3211,12 @@ enum WriteFileFormat {
     Html,
 }
 
+#[derive(Clone, Copy)]
+enum WriteFileAction {
+    Copy,
+    Paste,
+}
+
 impl WriteFileFormat {
     fn selection_format(self) -> TerminalSelectionFormat {
         match self {
@@ -3209,16 +3236,24 @@ fn write_file_format_from_str(value: &[u8]) -> Option<WriteFileFormat> {
     }
 }
 
-fn write_selection_file_copy_from_str(parameter: Option<&[u8]>) -> Option<WriteFileFormat> {
+fn write_file_action_from_str(value: &[u8]) -> Option<WriteFileAction> {
+    match value {
+        b"copy" => Some(WriteFileAction::Copy),
+        b"paste" => Some(WriteFileAction::Paste),
+        _ => None,
+    }
+}
+
+fn write_selection_file_from_str(
+    parameter: Option<&[u8]>,
+) -> Option<(WriteFileAction, WriteFileFormat)> {
     let parameter = parameter?;
     if parameter.is_empty() || parameter.contains(&0) {
         return None;
     }
     let mut parts = parameter.split(|byte| *byte == b',');
     let action = parts.next()?;
-    if action != b"copy" {
-        return None;
-    }
+    let action = write_file_action_from_str(action)?;
     let format = match parts.next() {
         None => WriteFileFormat::Plain,
         Some(value) if !value.is_empty() => write_file_format_from_str(value)?,
@@ -3227,7 +3262,7 @@ fn write_selection_file_copy_from_str(parameter: Option<&[u8]>) -> Option<WriteF
     if parts.next().is_some() {
         return None;
     }
-    Some(format)
+    Some((action, format))
 }
 
 fn copy_to_clipboard_format_from_str(parameter: Option<&[u8]>) -> Option<CopyToClipboardFormat> {
@@ -3620,9 +3655,10 @@ fn parse_binding_action(surface: &Surface, action: &[u8]) -> Option<ParsedBindin
             }
             Some(ParsedBindingAction::CopyUrlToClipboard)
         }
-        b"write_selection_file" => Some(ParsedBindingAction::WriteSelectionFileCopy(
-            write_selection_file_copy_from_str(parameter)?,
-        )),
+        b"write_selection_file" => {
+            let (action, format) = write_selection_file_from_str(parameter)?;
+            Some(ParsedBindingAction::WriteSelectionFile(action, format))
+        }
         b"copy_title_to_clipboard" => {
             if parameter.is_some() {
                 return None;
@@ -11838,11 +11874,11 @@ pub extern "C" fn roastty_surface_binding_action(
             }
             surface.copy_url_to_clipboard()
         }
-        ParsedBindingAction::WriteSelectionFileCopy(format) => {
+        ParsedBindingAction::WriteSelectionFile(action, format) => {
             if surface.app.is_null() {
                 return false;
             }
-            surface.write_selection_file_copy(format)
+            surface.write_selection_file(action, format)
         }
         ParsedBindingAction::PasteFromClipboard(clipboard) => {
             if surface.app.is_null() {
@@ -14105,7 +14141,12 @@ mod tests {
             "write_selection_file:copy,html,extra",
             "write_selection_file: copy",
             "write_selection_file:copy ",
-            "write_selection_file:paste",
+            "write_selection_file:paste,",
+            "write_selection_file:,paste",
+            "write_selection_file:paste,rtf",
+            "write_selection_file:paste,html,extra",
+            "write_selection_file: paste",
+            "write_selection_file:paste ",
             "write_selection_file:open",
             "write_selection_file:copy\0plain",
             "copy_title_to_clipboard:",
@@ -15444,6 +15485,19 @@ mod tests {
         records[0].contents[0].1.clone()
     }
 
+    fn path_from_surface_snapshot(snapshot: &str) -> String {
+        let marker = "path:";
+        let start = snapshot
+            .find(marker)
+            .expect("snapshot contains path marker")
+            + marker.len();
+        snapshot[start..]
+            .split_whitespace()
+            .next()
+            .unwrap_or_else(|| panic!("path follows marker in snapshot: {snapshot:?}"))
+            .to_owned()
+    }
+
     #[test]
     fn surface_binding_action_write_selection_file_false_paths() {
         let app = new_test_app_with_clipboard_write(0xF11E);
@@ -15453,11 +15507,17 @@ mod tests {
             ptr::null_mut(),
             "write_selection_file:copy"
         ));
+        assert!(!binding_action(
+            ptr::null_mut(),
+            "write_selection_file:paste"
+        ));
         assert!(!binding_action(surface, "write_selection_file:copy"));
+        assert!(!binding_action(surface, "write_selection_file:paste"));
         assert!(clipboard_write_records().is_empty());
 
         roastty_app_free(app);
         assert!(!binding_action(surface, "write_selection_file:copy"));
+        assert!(!binding_action(surface, "write_selection_file:paste"));
         assert!(clipboard_write_records().is_empty());
         roastty_surface_free(surface);
 
@@ -15471,6 +15531,7 @@ mod tests {
         assert!(surface_snapshot_text_after_start(app, surface).contains("ready"));
 
         assert!(!binding_action(surface, "write_selection_file:copy"));
+        assert!(!binding_action(surface, "write_selection_file:paste"));
         assert!(clipboard_write_records().is_empty());
         roastty_surface_free(surface);
         roastty_app_free(app);
@@ -15488,6 +15549,51 @@ mod tests {
         reset_clipboard_write_records();
         assert!(!binding_action(surface, "write_selection_file:copy"));
         assert!(clipboard_write_records().is_empty());
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+    }
+
+    #[test]
+    fn surface_binding_action_write_selection_file_paste_false_paths() {
+        let _guard = PTY_COMMAND_LOCK.lock().unwrap();
+        let app = new_test_app();
+        let command = CString::new("printf ready; sleep 5").unwrap();
+        let mut config = roastty_surface_config_new();
+        config.command = command.as_ptr();
+        let surface = new_test_surface_with_config(app, &config);
+        set_surface_test_geometry(surface, 12, 3, 10, 20);
+        assert!(surface_snapshot_text_after_start(app, surface).contains("ready"));
+        {
+            let surface_ref = surface_from_handle(surface).unwrap();
+            let worker = surface_ref.termio_worker.as_ref().unwrap();
+            worker.with_termio_mut(|termio| {
+                termio.terminal_mut().reset();
+                termio.terminal_mut().next_slice(b"ready").unwrap();
+            });
+        }
+        let selection = surface_worker_selection(surface, (0, 0), (4, 0));
+        set_surface_worker_active_selection(surface, Some(selection));
+
+        assert!(binding_action(surface, "toggle_readonly"));
+        assert!(!binding_action(surface, "write_selection_file:paste"));
+        assert_eq!(
+            surface_from_handle(surface)
+                .unwrap()
+                .retained_write_file_dirs
+                .len(),
+            0
+        );
+        assert!(binding_action(surface, "toggle_readonly"));
+
+        surface_from_handle(surface)
+            .unwrap()
+            .termio_worker
+            .as_mut()
+            .unwrap()
+            .shutdown()
+            .unwrap();
+        assert!(!binding_action(surface, "write_selection_file:paste"));
+
         roastty_surface_free(surface);
         roastty_app_free(app);
     }
@@ -15600,6 +15706,79 @@ mod tests {
 
         roastty_surface_free(surface);
         roastty_app_free(app);
+    }
+
+    #[test]
+    fn surface_binding_action_write_selection_file_paste_queues_path() {
+        for (action, format, extension) in [
+            (
+                "write_selection_file:paste",
+                TerminalSelectionFormat::Plain,
+                "txt",
+            ),
+            (
+                "write_selection_file:paste,plain",
+                TerminalSelectionFormat::Plain,
+                "txt",
+            ),
+            (
+                "write_selection_file:paste,vt",
+                TerminalSelectionFormat::Vt,
+                "txt",
+            ),
+            (
+                "write_selection_file:paste,html",
+                TerminalSelectionFormat::Html,
+                "html",
+            ),
+        ] {
+            let _guard = PTY_COMMAND_LOCK.lock().unwrap();
+            let app = new_test_app();
+            let command = CString::new(
+                "python3 -c 'import os, select, sys, time, tty; sys.stdout.write(\"ready\\n\"); sys.stdout.flush(); fd = sys.stdin.fileno(); tty.setraw(fd); first = os.read(fd, 1); time.sleep(0.2); r, _, _ = select.select([fd], [], [], 0); rest = os.read(fd, 4096) if r else b\"\"; data = first + rest; sys.stdout.write(\"\\npath:\" + data.decode()); sys.stdout.flush(); time.sleep(5)'",
+            )
+            .unwrap();
+            let mut config = roastty_surface_config_new();
+            config.command = command.as_ptr();
+            let surface = new_test_surface_with_config(app, &config);
+            set_surface_test_geometry(surface, 220, 3, 10, 20);
+            assert!(surface_snapshot_text_after_start(app, surface).contains("ready"));
+            {
+                let surface_ref = surface_from_handle(surface).unwrap();
+                let worker = surface_ref.termio_worker.as_ref().unwrap();
+                worker.with_termio_mut(|termio| {
+                    termio.terminal_mut().reset();
+                    termio
+                        .terminal_mut()
+                        .next_slice(b"\x1b[31mred\x1b[0m plain   \n")
+                        .unwrap();
+                });
+            }
+            let selection = surface_worker_selection(surface, (0, 0), (11, 0));
+            set_surface_worker_active_selection(surface, Some(selection));
+            let terminal_selection = read_selection(&selection).unwrap();
+            let expected = {
+                let surface_ref = surface_from_handle(surface).unwrap();
+                let worker = surface_ref.termio_worker.as_ref().unwrap();
+                worker.with_termio(|termio| {
+                    termio
+                        .terminal()
+                        .selection_format(format, true, false, Some(terminal_selection))
+                        .unwrap()
+                })
+            };
+
+            assert!(binding_action(surface, action), "{action}");
+
+            let snapshot = surface_snapshot_text_until(app, surface, "path:");
+            let path = path_from_surface_snapshot(&snapshot);
+            assert!(path.ends_with(&format!("selection.{extension}")), "{path}");
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), expected);
+
+            roastty_surface_free(surface);
+            roastty_app_free(app);
+            drop(_guard);
+        }
     }
 
     #[test]
