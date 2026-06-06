@@ -1989,6 +1989,8 @@ are past the correctness-critical foundation.
   — **Pass** · Codex/Codex/Codex
 - [Experiment 737: Binding Action Write Screen File Paste](737-binding-action-write-screen-file-paste.md)
   — **Pass** · Codex/Codex/Codex
+- [Experiment 738: Binding Action Write Scrollback File Copy](738-binding-action-write-scrollback-file-copy.md)
+  — **Designed** · Codex/Codex/-
 
 ## Non-Goals
 
