@@ -1865,6 +1865,8 @@ are past the correctness-critical foundation.
   — **Pass** · Codex/Codex/Codex
 - [Experiment 688: Surface IME Point](688-surface-ime-point.md) — **Pass** ·
   Codex/Codex/Codex
+- [Experiment 689: Surface Mouse Callback Foundation](689-surface-mouse-callback-foundation.md)
+  — **Designed** · Codex/-/-
 
 ## Non-Goals
 
