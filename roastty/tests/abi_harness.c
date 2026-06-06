@@ -3963,6 +3963,7 @@ int main(int argc, char **argv) {
   roastty_text_s null_read_text = {0};
   roastty_selection_s null_selection = {0};
   null_selection.size = sizeof(roastty_selection_s);
+  assert(!roastty_surface_mouse_captured(NULL));
   assert(!roastty_surface_has_selection(NULL));
   assert(!roastty_surface_read_selection(NULL, &null_read_text));
   assert(null_read_text.tl_px_x == -1.0);
@@ -4156,6 +4157,7 @@ int main(int argc, char **argv) {
   roastty_text_s read_text = {0};
   roastty_selection_s empty_selection = {0};
   empty_selection.size = sizeof(roastty_selection_s);
+  assert(!roastty_surface_mouse_captured(surface));
   assert(!roastty_surface_has_selection(surface));
   assert(!roastty_surface_read_selection(surface, NULL));
   assert(!roastty_surface_read_selection(surface, &read_text));

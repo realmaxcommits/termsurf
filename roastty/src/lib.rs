@@ -8884,6 +8884,20 @@ pub extern "C" fn roastty_surface_preedit(
 }
 
 #[no_mangle]
+pub extern "C" fn roastty_surface_mouse_captured(surface: RoasttySurface) -> bool {
+    let Some(surface) = surface_from_handle(surface) else {
+        return false;
+    };
+    if surface.app.is_null() {
+        return false;
+    }
+    let Some(worker) = surface.termio_worker.as_ref() else {
+        return false;
+    };
+    worker.with_termio(|termio| termio.terminal().mouse_tracking())
+}
+
+#[no_mangle]
 pub extern "C" fn roastty_surface_has_selection(surface: RoasttySurface) -> bool {
     let Some(surface) = surface_from_handle(surface) else {
         return false;
@@ -9288,6 +9302,17 @@ mod tests {
             .as_ref()
             .unwrap()
             .with_termio_mut(|termio| termio.terminal_mut().set_selection(selection).unwrap());
+    }
+
+    fn set_surface_worker_mouse_tracking(surface: RoasttySurface, enabled: bool) {
+        let surface = surface_from_handle(surface).unwrap();
+        surface
+            .termio_worker
+            .as_ref()
+            .unwrap()
+            .with_termio_mut(|termio| {
+                assert!(termio.terminal_mut().mode_set(1000, false, enabled));
+            });
     }
 
     fn take_roastty_text(mut text: RoasttyText) -> Vec<u8> {
@@ -9742,6 +9767,48 @@ mod tests {
         roastty_surface_free_text(ptr::null_mut(), ptr::null_mut());
         roastty_surface_free_text(surface, &mut text);
         assert!(text.text.is_null());
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+    }
+
+    #[test]
+    fn surface_mouse_captured_validates_null_detached_no_worker_and_default() {
+        let _guard = PTY_COMMAND_LOCK.lock().unwrap();
+        assert!(!roastty_surface_mouse_captured(ptr::null_mut()));
+
+        let app = new_test_app();
+        let no_worker = new_test_surface(app);
+        assert!(!roastty_surface_mouse_captured(no_worker));
+
+        let command = CString::new("printf ready").unwrap();
+        let mut config = roastty_surface_config_new();
+        config.command = command.as_ptr();
+        let surface = new_test_surface_with_config(app, &config);
+        assert!(surface_snapshot_text_after_start(app, surface).contains("ready"));
+        assert!(!roastty_surface_mouse_captured(surface));
+
+        roastty_app_free(app);
+        assert!(!roastty_surface_mouse_captured(surface));
+        roastty_surface_free(surface);
+        roastty_surface_free(no_worker);
+    }
+
+    #[test]
+    fn surface_mouse_captured_tracks_worker_terminal_mouse_modes() {
+        let _guard = PTY_COMMAND_LOCK.lock().unwrap();
+        let app = new_test_app();
+        let command = CString::new("printf ready").unwrap();
+        let mut config = roastty_surface_config_new();
+        config.command = command.as_ptr();
+        let surface = new_test_surface_with_config(app, &config);
+        assert!(surface_snapshot_text_after_start(app, surface).contains("ready"));
+        assert!(!roastty_surface_mouse_captured(surface));
+
+        set_surface_worker_mouse_tracking(surface, true);
+        assert!(roastty_surface_mouse_captured(surface));
+
+        set_surface_worker_mouse_tracking(surface, false);
+        assert!(!roastty_surface_mouse_captured(surface));
         roastty_surface_free(surface);
         roastty_app_free(app);
     }

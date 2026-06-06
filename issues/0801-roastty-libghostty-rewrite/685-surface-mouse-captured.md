@@ -8,6 +8,11 @@ reasoning = "high"
 agent = "codex"
 model = "gpt-5"
 reasoning = "medium"
+
+[review.result]
+agent = "codex"
+model = "gpt-5"
+reasoning = "medium"
 +++
 
 # Experiment 685: Surface Mouse Captured
@@ -68,3 +73,46 @@ none, and Roastty's `Terminal::mouse_tracking()` already aggregates the four DEC
 mouse-event modes into the equivalent boolean. The planned null, detached,
 no-worker, default, enable, disable, and C header checks are sufficient for this
 slice.
+
+## Result
+
+**Result:** Pass.
+
+Implemented `roastty_surface_mouse_captured(surface)` as a worker-terminal
+query. Null, detached, and no-worker surfaces return `false`; worker-backed
+surfaces return the attached terminal's `mouse_tracking()` state.
+
+The C header now declares the new surface API, and the C ABI harness exercises
+null/no-worker calls through the public header. Rust tests cover null, detached,
+no-worker, default worker-backed false, DEC mouse-event mode enable returning
+true, and disabling the mode returning false again.
+
+Verification:
+
+- `cargo fmt -p roastty`
+- `cargo test -p roastty surface`
+- `cargo test -p roastty --test abi_harness`
+- `cargo fmt -p roastty -- --check`
+- `git diff --check`
+
+## Conclusion
+
+Surface mouse capture querying now matches the worker-terminal portion of
+upstream's `ghostty_surface_mouse_captured` behavior. Mouse button, position,
+scroll, and pressure dispatch remain separate work, along with mouse-shift
+capture policy, link hover actions, selection routing, and frontend cursor
+behavior.
+
+## Completion Review
+
+**Result:** Approved after workflow updates.
+
+Codex reviewed the staged result diff and found no code, ABI, regression, or
+missing-test blockers. It confirmed the implementation is the intended narrow
+query: null, detached, and no-worker surfaces return `false`, and worker-backed
+surfaces forward the worker terminal's `mouse_tracking()` state. Header
+placement and C/Rust tests cover the expected ABI and behavior.
+
+Codex blocked the result commit only until review provenance was recorded. This
+section, the `[review.result]` frontmatter, and the README reviewer tuple are
+the requested workflow updates.
