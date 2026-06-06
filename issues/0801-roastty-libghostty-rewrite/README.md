@@ -203,7 +203,8 @@ Experiment 246).
       state mode application done; pane state mouse mode application done; pane
       state scroll-region application done; pane state tab-stop application
       done; pane state alternate saved cursor application done; remaining pane
-      state application and live output done; PTY and App integration missing
+      state application, live output, and terminal DCS bridge done; PTY loops
+      and App/surface presentation missing
 - [x] `sys` (PNG-decode abstraction) — implemented and tested via C ABI
 
 ### Renderer — data + Metal primitives only; no live render loop
@@ -1792,7 +1793,7 @@ are past the correctness-critical foundation.
 - [Experiment 662: Tmux Live Pane Output](662-tmux-live-pane-output.md) —
   **Pass** · Codex/Codex/Codex
 - [Experiment 663: Tmux Terminal DCS Bridge](663-tmux-terminal-dcs-bridge.md) —
-  **Designed** · Codex/Codex/Codex
+  **Pass** · Codex/Codex/Codex
 
 ## Non-Goals
 

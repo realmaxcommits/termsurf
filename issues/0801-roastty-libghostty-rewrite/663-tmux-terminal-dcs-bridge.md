@@ -112,3 +112,53 @@ for clearing viewer/window state on viewer exit, adds a malformed-output
 viewer-exit test, specifies a no-new-pane `Windows` cache test, and explicitly
 clears/tests both reset paths. Codex re-reviewed the amended design and approved
 it for plan commit and implementation with no remaining blockers.
+
+## Result
+
+**Result:** Pass.
+
+`Terminal` now owns optional tmux viewer state and a cached tmux window list.
+The terminal stream handler routes `dcs::Command::Tmux` notifications into that
+viewer state: enter creates the viewer, DCS exit clears the viewer and cached
+windows, regular notifications feed `TmuxViewer::next`, command actions write
+through the existing PTY response path, window actions update the cache, and
+viewer exit clears cached tmux state.
+
+Both terminal reset paths clear tmux state: direct `Terminal::reset()` and
+RIS-triggered `full_reset()`.
+
+Focused tests cover startup command writeback, version/list-windows follow-up
+commands, DCS exit and re-enter, malformed-output viewer exit, no-new-pane
+window cache updates without PTY writes, and both reset paths.
+
+Verification passed:
+
+- `cargo fmt -p roastty`
+- `cargo test -p roastty terminal::terminal::tests::terminal_tmux` — 6 passed, 0
+  failed
+- `cargo test -p roastty terminal::dcs` — 13 passed, 0 failed
+- `cargo test -p roastty terminal::tmux` — 148 passed, 0 failed
+
+## Conclusion
+
+Roastty's normal terminal byte stream now reaches the tmux viewer and writes
+viewer commands back through the existing PTY response mechanism. This completes
+the terminal-side DCS bridge without taking on OS PTY spawn/read loops or public
+App/surface presentation of tmux windows, which remain the next integration
+gaps.
+
+## Completion Review
+
+**Result:** Approved.
+
+Codex found no concrete bugs, regressions, or missing tests blocking the result
+commit. The review confirmed that `Terminal` owns `tmux_viewer` and
+`tmux_windows`, passes them into `TerminalStreamHandler`, routes
+`dcs::Command::Tmux` through the new tmux command handler, converts viewer
+actions as designed, and clears tmux state through both direct reset and
+RIS-triggered full reset.
+
+The review also confirmed that the focused tests cover startup command
+writeback, follow-up commands, DCS exit and re-enter, viewer-exit cleanup,
+no-new-pane window-cache behavior without PTY writes, and both reset paths, and
+that the recorded result and README updates are accurate.

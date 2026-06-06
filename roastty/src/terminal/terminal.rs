@@ -35,6 +35,7 @@ use super::size_report;
 use super::stream::{self, Action, Handler};
 use super::style;
 use super::tabstops;
+use super::tmux;
 use crate::font::run::RunOptions;
 
 const TABSTOP_INTERVAL: usize = 8;
@@ -51,6 +52,8 @@ pub(crate) struct Terminal {
     effects: TerminalEffects,
     stream: stream::Stream,
     dcs: dcs::Handler,
+    tmux_viewer: Option<tmux::TmuxViewer>,
+    tmux_windows: Vec<tmux::TmuxWindow>,
     kitty_graphics: KittyGraphicsApc,
     kitty_config: KittyGraphicsConfig,
     flags: TerminalFlags,
@@ -740,6 +743,8 @@ struct TerminalStreamHandler<'a> {
     next_implicit_hyperlink_id: &'a mut u32,
     previous_char: &'a mut Option<char>,
     dcs: &'a mut dcs::Handler,
+    tmux_viewer: &'a mut Option<tmux::TmuxViewer>,
+    tmux_windows: &'a mut Vec<tmux::TmuxWindow>,
     kitty_graphics: &'a mut KittyGraphicsApc,
     kitty_config: &'a mut KittyGraphicsConfig,
     flags: &'a mut TerminalFlags,
@@ -952,6 +957,8 @@ impl Terminal {
             effects: TerminalEffects::default(),
             stream: stream::Stream::init(),
             dcs: dcs::Handler::new(),
+            tmux_viewer: None,
+            tmux_windows: Vec::new(),
             kitty_graphics: KittyGraphicsApc::default(),
             kitty_config: KittyGraphicsConfig::default(),
             flags: TerminalFlags::default(),
@@ -975,6 +982,8 @@ impl Terminal {
             effects,
             stream,
             dcs,
+            tmux_viewer,
+            tmux_windows,
             kitty_graphics,
             kitty_config,
             title,
@@ -1000,6 +1009,8 @@ impl Terminal {
             next_implicit_hyperlink_id,
             previous_char,
             dcs,
+            tmux_viewer,
+            tmux_windows,
             kitty_graphics,
             kitty_config,
             flags,
@@ -1015,6 +1026,8 @@ impl Terminal {
         self.title.clear();
         self.pwd.clear();
         self.dcs = dcs::Handler::new();
+        self.tmux_viewer = None;
+        self.tmux_windows.clear();
         self.kitty_graphics.reset();
         self.flags = TerminalFlags::default();
         self.previous_char = None;
@@ -3195,8 +3208,45 @@ impl TerminalStreamHandler<'_> {
         match command {
             dcs::Command::Decrqss(request) => self.decrqss(request),
             dcs::Command::XtGettcap(mut request) => while request.next().is_some() {},
-            dcs::Command::Tmux(_) => {}
+            dcs::Command::Tmux(notification) => self.tmux_command(notification),
         }
+    }
+
+    fn tmux_command(&mut self, notification: tmux::ControlNotification) {
+        match notification {
+            tmux::ControlNotification::Enter => {
+                if self.tmux_viewer.is_none() {
+                    *self.tmux_viewer = Some(tmux::TmuxViewer::new());
+                    self.tmux_windows.clear();
+                }
+            }
+            tmux::ControlNotification::Exit => self.clear_tmux_state(),
+            notification => {
+                let Some(viewer) = self.tmux_viewer.as_mut() else {
+                    return;
+                };
+                for action in viewer.next(notification) {
+                    self.tmux_viewer_action(action);
+                }
+            }
+        }
+    }
+
+    fn tmux_viewer_action(&mut self, action: tmux::TmuxViewerAction) {
+        match action {
+            tmux::TmuxViewerAction::Exit => self.clear_tmux_state(),
+            tmux::TmuxViewerAction::Command(command) => {
+                self.write_pty_response_bytes(command.as_bytes());
+            }
+            tmux::TmuxViewerAction::Windows(windows) => {
+                *self.tmux_windows = windows;
+            }
+        }
+    }
+
+    fn clear_tmux_state(&mut self) {
+        *self.tmux_viewer = None;
+        self.tmux_windows.clear();
     }
 
     fn full_reset(&mut self) -> Result<(), TerminalStreamError> {
@@ -3207,6 +3257,7 @@ impl TerminalStreamHandler<'_> {
         self.title.clear();
         self.pwd.clear();
         *self.dcs = dcs::Handler::new();
+        self.clear_tmux_state();
         self.kitty_graphics.reset();
         *self.flags = TerminalFlags::default();
         *self.previous_char = None;
@@ -4165,6 +4216,39 @@ mod tests {
     use std::sync::MutexGuard;
     use std::time::{SystemTime, UNIX_EPOCH};
 
+    const TMUX_SIMPLE_LAYOUT: &str = "d962,80x24,0,0,42";
+
+    fn enter_tmux_dcs(terminal: &mut Terminal) {
+        terminal.next_slice(b"\x1bP1000p").unwrap();
+    }
+
+    fn start_tmux_command_queue(terminal: &mut Terminal) {
+        enter_tmux_dcs(terminal);
+        terminal
+            .next_slice(b"%begin 1 1 1\n%end 1 1 1\n%session-changed $42 main\n")
+            .unwrap();
+        terminal.clear_pty_response();
+    }
+
+    fn reach_tmux_list_windows_command(terminal: &mut Terminal) {
+        start_tmux_command_queue(terminal);
+        terminal
+            .next_slice(b"%begin 2 1 1\n3.5a\n%end 2 1 1\n")
+            .unwrap();
+        terminal.clear_pty_response();
+    }
+
+    fn cache_tmux_window_with_pending_captures(terminal: &mut Terminal) {
+        reach_tmux_list_windows_command(terminal);
+        terminal
+            .next_slice(
+                format!("%begin 3 1 1\n$42 @2 80 24 {TMUX_SIMPLE_LAYOUT}\n%end 3 1 1\n").as_bytes(),
+            )
+            .unwrap();
+        assert_eq!(terminal.tmux_windows.len(), 1);
+        terminal.clear_pty_response();
+    }
+
     fn terminal_with_lines(lines: &[&str]) -> Terminal {
         let rows = lines.len().max(1);
         let cols = lines
@@ -5046,6 +5130,121 @@ mod tests {
         assert!(!terminal.is_dirty_for_tests(0, 0));
         assert!(!terminal.is_dirty_for_tests(9, 0));
         assert!(!terminal.is_dirty_for_tests(0, 1));
+    }
+
+    #[test]
+    fn terminal_tmux_dcs_startup_writes_first_command_response() {
+        let mut terminal = Terminal::init(80, 24, None).unwrap();
+
+        enter_tmux_dcs(&mut terminal);
+        terminal
+            .next_slice(b"%begin 1 1 1\n%end 1 1 1\n%session-changed $42 main\n")
+            .unwrap();
+
+        assert!(terminal.tmux_viewer.is_some());
+        assert!(terminal.tmux_windows.is_empty());
+        assert_eq!(
+            terminal.pty_response_for_tests(),
+            b"display-message -p '#{version}'\n"
+        );
+    }
+
+    #[test]
+    fn terminal_tmux_dcs_command_flow_writes_follow_up_commands() {
+        let mut terminal = Terminal::init(80, 24, None).unwrap();
+
+        start_tmux_command_queue(&mut terminal);
+        terminal
+            .next_slice(b"%begin 2 1 1\n3.5a\n%end 2 1 1\n")
+            .unwrap();
+        assert_eq!(
+            terminal.take_pty_response_for_tests(),
+            b"list-windows -F '#{session_id} #{window_id} #{window_width} #{window_height} #{window_layout}'\n"
+        );
+
+        terminal
+            .next_slice(
+                format!("%begin 3 1 1\n$42 @2 80 24 {TMUX_SIMPLE_LAYOUT}\n%end 3 1 1\n").as_bytes(),
+            )
+            .unwrap();
+
+        assert_eq!(terminal.tmux_windows.len(), 1);
+        assert_eq!(
+            terminal.pty_response_for_tests(),
+            b"capture-pane -p -e -q -S - -E -1 -t %42\n"
+        );
+    }
+
+    #[test]
+    fn terminal_tmux_dcs_exit_clears_viewer_and_requires_new_enter() {
+        let mut terminal = Terminal::init(80, 24, None).unwrap();
+        cache_tmux_window_with_pending_captures(&mut terminal);
+
+        terminal.next_slice(b"\x1b\\").unwrap();
+        assert!(terminal.tmux_viewer.is_none());
+        assert!(terminal.tmux_windows.is_empty());
+
+        terminal.clear_pty_response();
+        terminal.next_slice(b"%sessions-changed\n").unwrap();
+        assert!(terminal.tmux_viewer.is_none());
+        assert!(terminal.pty_response_for_tests().is_empty());
+
+        enter_tmux_dcs(&mut terminal);
+        assert!(terminal.tmux_viewer.is_some());
+    }
+
+    #[test]
+    fn terminal_tmux_viewer_exit_clears_cached_state() {
+        let mut terminal = Terminal::init(80, 24, None).unwrap();
+
+        reach_tmux_list_windows_command(&mut terminal);
+        terminal
+            .next_slice(b"%begin 3 1 1\nnot a window row\n%end 3 1 1\n")
+            .unwrap();
+
+        assert!(terminal.tmux_viewer.is_none());
+        assert!(terminal.tmux_windows.is_empty());
+        assert!(terminal.pty_response_for_tests().is_empty());
+    }
+
+    #[test]
+    fn terminal_tmux_windows_cache_update_does_not_write_pty_without_new_panes() {
+        let mut terminal = Terminal::init(80, 24, None).unwrap();
+        cache_tmux_window_with_pending_captures(&mut terminal);
+
+        terminal
+            .next_slice(
+                format!("%layout-change @2 {TMUX_SIMPLE_LAYOUT} {TMUX_SIMPLE_LAYOUT} *-\n")
+                    .as_bytes(),
+            )
+            .unwrap();
+
+        assert_eq!(terminal.tmux_windows.len(), 1);
+        assert_eq!(terminal.tmux_windows[0].id, 2);
+        assert!(terminal.pty_response_for_tests().is_empty());
+    }
+
+    #[test]
+    fn terminal_tmux_reset_paths_clear_viewer_and_windows() {
+        for ris in [false, true] {
+            let mut terminal = Terminal::init(80, 24, None).unwrap();
+            terminal.tmux_viewer = Some(tmux::TmuxViewer::new());
+            terminal.tmux_windows = vec![tmux::TmuxWindow {
+                id: 2,
+                width: 80,
+                height: 24,
+                layout: tmux::Layout::parse("80x24,0,0,42").unwrap(),
+            }];
+
+            if ris {
+                terminal.next_slice(b"\x1bc").unwrap();
+            } else {
+                terminal.reset();
+            }
+
+            assert!(terminal.tmux_viewer.is_none());
+            assert!(terminal.tmux_windows.is_empty());
+        }
     }
 
     #[test]
