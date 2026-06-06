@@ -8,6 +8,11 @@ reasoning = "high"
 agent = "codex"
 session = "019e9ad7-04a6-7b20-823a-fa6e3d24129f"
 verdict = "approved"
+
+[review.result]
+agent = "codex"
+session = "019e9ad7-04a6-7b20-823a-fa6e3d24129f"
+verdict = "approved"
 +++
 
 # Experiment 651: Tmux Pane ID Sync
@@ -108,3 +113,63 @@ layout traversal, unique pane IDs, pruning removed IDs, new-pane capture/state
 commands in upstream order, sync after `ListWindows` and known-window
 `LayoutChange`, command sequencing preservation, and per-pane terminal state,
 pane output, PTY, App, and Surface integration left out of scope.
+
+## Result
+
+**Result:** Pass
+
+Implemented the first standalone `syncLayouts` slice in
+`roastty/src/terminal/tmux.rs`. `TmuxViewer` now tracks layout-derived pane IDs
+in deterministic first-seen order, keeps duplicate pane IDs unique, prunes IDs
+removed from the latest layouts, and queues new-pane capture/state commands in
+upstream order:
+
+1. `PaneHistory(primary)`
+2. `PaneVisible(primary)`
+3. `PaneHistory(alternate)`
+4. `PaneVisible(alternate)`
+5. one trailing `PaneState` when any pane was added
+
+The viewer now calls this sync helper after successful `ListWindows` output and
+after known-window `LayoutChange` updates. Command sequencing is preserved:
+`Windows` actions are emitted before queued pane commands, command-output paths
+emit the next queued command after sync, and layout-change notifications do not
+emit a new command while another command is already in flight.
+
+The intended upstream boundary remains intact. This experiment does not store
+per-pane terminal state, construct `Terminal` instances, process pane
+history/visible/state output, handle pane output, write to the PTY, or integrate
+with App/Surface runtime code.
+
+Verification performed:
+
+- `cargo fmt -p roastty`
+- `cargo test -p roastty terminal::tmux` — 100 passed, 0 failed
+
+Source comparison was against `vendor/ghostty/src/terminal/tmux/viewer.zig`
+`syncLayouts`, `initLayout`, and the command queue emission logic.
+
+## Completion Review
+
+Codex completion review session `019e9ad7-04a6-7b20-823a-fa6e3d24129f` found no
+blocking issues and approved the completed experiment. The reviewer confirmed
+that `TmuxViewer` tracks deterministic, unique layout-derived pane IDs, prunes
+removed IDs, syncs after `ListWindows` and known-window `LayoutChange`, queues
+new-pane commands in upstream order, emits `Windows` before the next queued
+command, avoids command emission while another command is in flight, and keeps
+per-pane `Terminal` state, pane output, PTY, App, and Surface integration out of
+scope.
+
+The reviewer also ran:
+
+- `cargo test -p roastty terminal::tmux` — 100 passed
+- `cargo fmt -p roastty -- --check`
+- `prettier --check ... README.md ... 651-tmux-pane-id-sync.md`
+- `git diff --check`
+
+## Conclusion
+
+Roastty's standalone tmux viewer now has the layout-derived pane ID and command
+queue portion of `syncLayouts`. The next tmux experiment should add per-pane
+state storage and terminal construction, or split further by recording pane
+metadata before consuming pane command output.

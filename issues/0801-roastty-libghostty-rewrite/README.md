@@ -197,8 +197,8 @@ Experiment 246).
       Oniguruma
 - [ ] `tmux` control mode — control/layout/output helpers, command formatting,
       DCS entry, viewer startup, list-windows parsing, and window-refresh
-      notifications, and layout-change window updates done; pane sync, PTY, and
-      App integration missing
+      notifications, layout-change window updates, and pane ID sync/capture
+      queueing done; pane terminal state, PTY, and App integration missing
 - [x] `sys` (PNG-decode abstraction) — implemented and tested via C ABI
 
 ### Renderer — data + Metal primitives only; no live render loop
@@ -1762,7 +1762,8 @@ are past the correctness-critical foundation.
   — **Pass** · Codex/Codex/Codex
 - [Experiment 650: Tmux Layout Change](650-tmux-layout-change.md) — **Pass** ·
   Codex/Codex/Codex
-- [Experiment 651: Tmux Pane ID Sync](651-tmux-pane-id-sync.md) — **Designed**
+- [Experiment 651: Tmux Pane ID Sync](651-tmux-pane-id-sync.md) — **Pass** ·
+  Codex/Codex/Codex
 
 ## Non-Goals
 
