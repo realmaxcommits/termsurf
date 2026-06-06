@@ -2027,6 +2027,8 @@ are past the correctness-critical foundation.
   — **Pass** · Codex/Codex/Codex
 - [Experiment 756: Config Default File Duplicates](756-config-default-file-duplicates.md)
   — **Pass** · Codex/Codex/Codex
+- [Experiment 757: Config C ABI File Loads](757-config-c-abi-file-loads.md) —
+  **Designed** · Codex/Codex/Codex
 
 ## Non-Goals
 
