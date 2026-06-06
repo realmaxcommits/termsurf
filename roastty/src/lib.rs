@@ -4475,22 +4475,48 @@ fn empty_trigger() -> RoasttyInputTrigger {
     }
 }
 
+fn physical_trigger(key: key::Key, mods: c_int) -> RoasttyInputTrigger {
+    RoasttyInputTrigger {
+        tag: ROASTTY_TRIGGER_PHYSICAL,
+        key: RoasttyInputTriggerKey {
+            physical: key as c_int,
+        },
+        mods,
+    }
+}
+
+fn unicode_trigger(codepoint: u32, mods: c_int) -> RoasttyInputTrigger {
+    RoasttyInputTrigger {
+        tag: ROASTTY_TRIGGER_UNICODE,
+        key: RoasttyInputTriggerKey { unicode: codepoint },
+        mods,
+    }
+}
+
 fn default_config_trigger(action: &[u8]) -> RoasttyInputTrigger {
     match action {
-        b"open_config" => RoasttyInputTrigger {
-            tag: ROASTTY_TRIGGER_UNICODE,
-            key: RoasttyInputTriggerKey {
-                unicode: u32::from(b','),
-            },
-            mods: ROASTTY_MODS_SUPER,
-        },
-        b"reload_config" => RoasttyInputTrigger {
-            tag: ROASTTY_TRIGGER_UNICODE,
-            key: RoasttyInputTriggerKey {
-                unicode: u32::from(b','),
-            },
-            mods: ROASTTY_MODS_SHIFT | ROASTTY_MODS_SUPER,
-        },
+        b"open_config" => unicode_trigger(u32::from(b','), ROASTTY_MODS_SUPER),
+        b"reload_config" => {
+            unicode_trigger(u32::from(b','), ROASTTY_MODS_SHIFT | ROASTTY_MODS_SUPER)
+        }
+        b"copy_to_clipboard" | b"copy_to_clipboard:mixed" => {
+            physical_trigger(key::Key::Copy, ROASTTY_MODS_NONE)
+        }
+        b"paste_from_clipboard" => physical_trigger(key::Key::Paste, ROASTTY_MODS_NONE),
+        b"increase_font_size:1" => unicode_trigger(u32::from(b'+'), ROASTTY_MODS_SUPER),
+        b"decrease_font_size:1" => unicode_trigger(u32::from(b'-'), ROASTTY_MODS_SUPER),
+        b"reset_font_size" => unicode_trigger(u32::from(b'0'), ROASTTY_MODS_SUPER),
+        b"write_screen_file:copy" => unicode_trigger(
+            u32::from(b'j'),
+            ROASTTY_MODS_SHIFT | ROASTTY_MODS_CTRL | ROASTTY_MODS_SUPER,
+        ),
+        b"write_screen_file:paste" => {
+            unicode_trigger(u32::from(b'j'), ROASTTY_MODS_SHIFT | ROASTTY_MODS_SUPER)
+        }
+        b"write_screen_file:open" => unicode_trigger(
+            u32::from(b'j'),
+            ROASTTY_MODS_SHIFT | ROASTTY_MODS_ALT | ROASTTY_MODS_SUPER,
+        ),
         _ => empty_trigger(),
     }
 }
@@ -13616,6 +13642,12 @@ mod tests {
         assert_eq!(trigger.mods, ROASTTY_MODS_NONE);
     }
 
+    fn assert_physical_config_trigger(trigger: RoasttyInputTrigger, key: key::Key, mods: c_int) {
+        assert_eq!(trigger.tag, ROASTTY_TRIGGER_PHYSICAL);
+        assert_eq!(unsafe { trigger.key.physical }, key as c_int);
+        assert_eq!(trigger.mods, mods);
+    }
+
     fn assert_unicode_config_trigger(trigger: RoasttyInputTrigger, codepoint: u32, mods: c_int) {
         assert_eq!(trigger.tag, ROASTTY_TRIGGER_UNICODE);
         assert_eq!(unsafe { trigger.key.unicode }, codepoint);
@@ -13644,6 +13676,57 @@ mod tests {
     }
 
     #[test]
+    fn config_trigger_returns_default_menu_action_triggers() {
+        let config = roastty_config_new();
+
+        for action in ["copy_to_clipboard", "copy_to_clipboard:mixed"] {
+            let action = CString::new(action).unwrap();
+            assert_physical_config_trigger(
+                roastty_config_trigger(config, action.as_ptr(), action.as_bytes().len()),
+                key::Key::Copy,
+                ROASTTY_MODS_NONE,
+            );
+        }
+
+        let paste = CString::new("paste_from_clipboard").unwrap();
+        assert_physical_config_trigger(
+            roastty_config_trigger(config, paste.as_ptr(), 20),
+            key::Key::Paste,
+            ROASTTY_MODS_NONE,
+        );
+
+        for (action, codepoint, mods) in [
+            ("increase_font_size:1", u32::from(b'+'), ROASTTY_MODS_SUPER),
+            ("decrease_font_size:1", u32::from(b'-'), ROASTTY_MODS_SUPER),
+            ("reset_font_size", u32::from(b'0'), ROASTTY_MODS_SUPER),
+            (
+                "write_screen_file:copy",
+                u32::from(b'j'),
+                ROASTTY_MODS_SHIFT | ROASTTY_MODS_CTRL | ROASTTY_MODS_SUPER,
+            ),
+            (
+                "write_screen_file:paste",
+                u32::from(b'j'),
+                ROASTTY_MODS_SHIFT | ROASTTY_MODS_SUPER,
+            ),
+            (
+                "write_screen_file:open",
+                u32::from(b'j'),
+                ROASTTY_MODS_SHIFT | ROASTTY_MODS_ALT | ROASTTY_MODS_SUPER,
+            ),
+        ] {
+            let action = CString::new(action).unwrap();
+            assert_unicode_config_trigger(
+                roastty_config_trigger(config, action.as_ptr(), action.as_bytes().len()),
+                codepoint,
+                mods,
+            );
+        }
+
+        roastty_config_free(config);
+    }
+
+    #[test]
     fn config_trigger_returns_empty_trigger_for_missing_malformed_and_performable_actions() {
         let config = roastty_config_new();
         let action = CString::new("new_window").unwrap();
@@ -13664,6 +13747,11 @@ mod tests {
             "reload_config:",
             "reload_config:now",
             "adjust_selection:left",
+            "copy_to_clipboard:plain",
+            "copy_to_clipboard:html",
+            "write_screen_file:copy,html",
+            "write_screen_file:paste,vt",
+            "write_screen_file:open,plain",
         ] {
             let action = CString::new(action).unwrap();
             assert_empty_config_trigger(roastty_config_trigger(

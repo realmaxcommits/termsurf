@@ -2000,7 +2000,7 @@ are past the correctness-critical foundation.
 - [Experiment 742: Config Default Trigger Foundation](742-config-default-trigger-foundation.md)
   — **Pass** · Codex/Codex/Codex
 - [Experiment 743: Config Default Trigger Menu Actions](743-config-default-trigger-menu-actions.md)
-  — **Designed** · Codex/Codex/-
+  — **Pass** · Codex/Codex/Codex
 
 ## Non-Goals
 
