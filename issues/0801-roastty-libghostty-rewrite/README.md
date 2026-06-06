@@ -282,13 +282,14 @@ Experiment 246).
 - [ ] `Surface` lifecycle (create, config-inherit, draw/refresh, sizing, scale,
       display-id, occlusion, quicklook, inspector, splits, selection + text
       reads) — lifecycle handle, basic setters, app detachment, worker event
-      draining, dirty/process-exit/error state done; draw/refresh, snapshots,
-      splits, text reads, and frontend presentation missing
+      draining, dirty/process-exit/error state, and surface render-state
+      snapshots done; draw/refresh, splits, text reads, and full frontend
+      presentation missing
 - [ ] `pty` + `termio` (shell spawn, read/write loops, resize, fg pid, tty name,
       exit) — PTY open/resize, subprocess spawn, child IO, synchronous pump,
       background worker, worker shutdown/drop, and surface process-exit state
       done; configured shell launch, foreground pid, tty name, renderer wakeups,
-      and frontend terminal snapshots missing
+      and full renderer integration missing
 - [ ] `os/` utilities (tmpdir / file / env / hostname / locale) — ad hoc Rust
       stdlib; no dedicated module
 
@@ -1816,7 +1817,7 @@ are past the correctness-critical foundation.
 - [Experiment 669: Surface Termio Presentation](669-surface-termio-presentation.md)
   — **Pass** · Codex/Codex/Codex
 - [Experiment 670: Surface Render-State Snapshot](670-surface-render-state-snapshot.md)
-  — **Designed** · Codex/Codex/-
+  — **Pass** · Codex/Codex/Codex
 
 ## Non-Goals
 

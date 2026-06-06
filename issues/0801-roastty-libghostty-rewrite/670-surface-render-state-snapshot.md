@@ -3,6 +3,16 @@
 agent = "codex"
 model = "gpt-5"
 reasoning = "high"
+
+[review.design]
+agent = "codex"
+model = "gpt-5"
+reasoning = "medium"
+
+[review.result]
+agent = "codex"
+model = "gpt-5"
+reasoning = "medium"
 +++
 
 # Experiment 670: Surface Render-State Snapshot
@@ -74,3 +84,58 @@ misuse and are not validated by this experiment.
 - `cargo test -p roastty render_state`
 - `cargo test -p roastty termio`
 - `git diff --check`
+
+## Result
+
+**Result:** Pass.
+
+Roastty now exposes a narrow surface-to-render-state bridge. The new
+`roastty_surface_needs_render(surface)` ABI reports the surface dirty flag, and
+`roastty_surface_render_state_update(surface, state)` snapshots an attached
+termio worker's terminal into the existing `roastty_render_state_t` machinery.
+The snapshot path reuses `render_state_from_terminal`, so surface snapshots have
+the same row/cell/color/cursor shape as standalone terminal render-state
+updates.
+
+The update ABI validates null surface and render-state handles, returns
+`ROASTTY_NO_VALUE` when a surface has no attached worker, and clears the surface
+dirty flag only after a successful snapshot. As designed, arbitrary stale
+non-null raw handles remain caller misuse under the existing C ABI contract.
+
+This does not launch workers from public surface configuration, schedule
+renderer frames, or implement the full draw/refresh lifecycle. It gives the
+frontend a renderable snapshot once a future experiment attaches real workers to
+surfaces and wires dirty state to renderer wakeups.
+
+Verification passed:
+
+- `cargo fmt -p roastty`
+- `cargo fmt -p roastty -- --check`
+- `cargo test -p roastty surface` — 11 passed, 0 failed
+- `cargo test -p roastty render_state` — 21 passed, 0 failed
+- `cargo test -p roastty termio` — 14 passed, 0 failed
+- `git diff --check`
+
+## Conclusion
+
+Surface presentation can now produce frontend-readable render-state snapshots
+from attached termio workers. The remaining presentation gap is creating those
+workers from real surface configuration and connecting surface dirty state to
+the runtime/renderer wakeup path.
+
+## Completion Review
+
+**Result:** Approved after documentation fixes.
+
+Codex found no ABI or implementation blockers. It confirmed that the header and
+Rust symbols match, null handles return `ROASTTY_INVALID_VALUE`, no-worker
+surfaces return `ROASTTY_NO_VALUE`, successful snapshots reuse
+`render_state_from_terminal`, and dirty state clears only after success. It
+found two result-record issues: missing result-review provenance and
+contradictory README checklist wording that implied draw/refresh snapshots were
+done.
+
+The experiment frontmatter and README agent tuple now record the result review,
+and the Surface lifecycle checklist now states only that surface render-state
+snapshots are done while draw/refresh, splits, text reads, and full frontend
+presentation remain missing.

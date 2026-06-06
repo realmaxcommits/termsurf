@@ -8381,6 +8381,33 @@ pub extern "C" fn roastty_surface_process_exited(surface: RoasttySurface) -> boo
 }
 
 #[no_mangle]
+pub extern "C" fn roastty_surface_needs_render(surface: RoasttySurface) -> bool {
+    surface_from_handle(surface)
+        .map(|surface| surface.dirty)
+        .unwrap_or(false)
+}
+
+#[no_mangle]
+pub extern "C" fn roastty_surface_render_state_update(
+    surface: RoasttySurface,
+    state: RoasttyRenderStateHandle,
+) -> c_int {
+    let Some(surface) = surface_from_handle(surface) else {
+        return ROASTTY_INVALID_VALUE;
+    };
+    let Some(state) = render_state_mut_from_handle(state) else {
+        return ROASTTY_INVALID_VALUE;
+    };
+    let Some(worker) = surface.termio_worker.as_ref() else {
+        return ROASTTY_NO_VALUE;
+    };
+
+    *state = worker.with_termio(|termio| render_state_from_terminal(termio.terminal()));
+    surface.dirty = false;
+    ROASTTY_SUCCESS
+}
+
+#[no_mangle]
 pub extern "C" fn roastty_surface_set_content_scale(surface: RoasttySurface, x: f64, y: f64) {
     if let Some(surface) = surface_from_handle(surface) {
         surface.scale_factor_x = x;
@@ -8552,6 +8579,41 @@ mod tests {
         }
     }
 
+    fn render_state_text(state: RoasttyRenderStateHandle) -> String {
+        let iterator = new_render_state_row_iterator();
+        bind_render_state_rows(state, iterator);
+        let cells = new_render_state_row_cells();
+        let mut text = String::new();
+
+        while roastty_render_state_row_iterator_next(iterator) {
+            bind_render_state_row_cells(iterator, cells);
+            while roastty_render_state_row_cells_next(cells) {
+                let mut bytes = [0u8; 8];
+                let mut buffer = RoasttyBuffer {
+                    ptr: bytes.as_mut_ptr(),
+                    cap: bytes.len(),
+                    len: 0,
+                };
+                assert_eq!(
+                    roastty_render_state_row_cells_get(
+                        cells,
+                        ROASTTY_RENDER_STATE_ROW_CELLS_DATA_GRAPHEMES_UTF8,
+                        &mut buffer as *mut _ as *mut c_void,
+                    ),
+                    ROASTTY_SUCCESS
+                );
+                if buffer.len > 0 {
+                    text.push_str(std::str::from_utf8(&bytes[..buffer.len]).unwrap());
+                }
+            }
+            text.push('\n');
+        }
+
+        roastty_render_state_row_cells_free(cells);
+        roastty_render_state_row_iterator_free(iterator);
+        text
+    }
+
     #[test]
     fn surface_new_registers_and_surface_free_unregisters_from_app() {
         let app = new_test_app();
@@ -8666,6 +8728,73 @@ mod tests {
         assert!(surface_ref.process_exited);
         assert!(roastty_surface_process_exited(surface));
 
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+    }
+
+    #[test]
+    fn surface_render_state_update_snapshots_worker_terminal_and_clears_dirty() {
+        let _guard = PTY_COMMAND_LOCK.lock().unwrap();
+        let app = new_test_app();
+        let surface = new_test_surface(app);
+        surface_from_handle(surface).unwrap().termio_worker = Some(test_worker("printf hello"));
+
+        wait_until(|| {
+            roastty_app_tick(app);
+            roastty_surface_needs_render(surface)
+        });
+
+        let state = new_render_state();
+        assert_eq!(
+            roastty_surface_render_state_update(surface, state),
+            ROASTTY_SUCCESS
+        );
+
+        assert!(!roastty_surface_needs_render(surface));
+        assert!(render_state_text(state).contains("hello"));
+
+        roastty_render_state_free(state);
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+    }
+
+    #[test]
+    fn surface_render_state_update_without_worker_returns_no_value_and_keeps_dirty() {
+        let app = new_test_app();
+        let surface = new_test_surface(app);
+        surface_from_handle(surface).unwrap().dirty = true;
+        let state = new_render_state();
+
+        assert_eq!(
+            roastty_surface_render_state_update(surface, state),
+            ROASTTY_NO_VALUE
+        );
+
+        assert!(roastty_surface_needs_render(surface));
+        roastty_render_state_free(state);
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+    }
+
+    #[test]
+    fn surface_render_state_update_validates_null_arguments() {
+        let app = new_test_app();
+        let surface = new_test_surface(app);
+        surface_from_handle(surface).unwrap().dirty = true;
+        let state = new_render_state();
+
+        assert_eq!(
+            roastty_surface_render_state_update(ptr::null_mut(), state),
+            ROASTTY_INVALID_VALUE
+        );
+        assert_eq!(
+            roastty_surface_render_state_update(surface, ptr::null_mut()),
+            ROASTTY_INVALID_VALUE
+        );
+        assert!(!roastty_surface_needs_render(ptr::null_mut()));
+        assert!(roastty_surface_needs_render(surface));
+
+        roastty_render_state_free(state);
         roastty_surface_free(surface);
         roastty_app_free(app);
     }
