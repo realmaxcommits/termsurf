@@ -1995,6 +1995,8 @@ are past the correctness-critical foundation.
   — **Pass** · Codex/Codex/Codex
 - [Experiment 740: Runtime Open URL Action Foundation](740-runtime-open-url-action-foundation.md)
   — **Pass** · Codex/Codex/Codex
+- [Experiment 741: Binding Action Write File Open](741-binding-action-write-file-open.md)
+  — **Designed** · Codex/Codex/-
 
 ## Non-Goals
 
