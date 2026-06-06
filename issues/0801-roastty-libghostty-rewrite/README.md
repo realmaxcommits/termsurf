@@ -2029,6 +2029,8 @@ are past the correctness-critical foundation.
   — **Pass** · Codex/Codex/Codex
 - [Experiment 757: Config C ABI File Loads](757-config-c-abi-file-loads.md) —
   **Pass** · Codex/Codex/Codex
+- [Experiment 758: Config C ABI Non-UTF-8 Path](758-config-c-abi-non-utf8-path.md)
+  — **Designed** · Codex/Codex/Codex
 
 ## Non-Goals
 
