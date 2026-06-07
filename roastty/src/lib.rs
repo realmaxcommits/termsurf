@@ -1436,6 +1436,8 @@ pub struct RoasttyRuntimeConfig {
 
 struct Config {
     parsed: config::Config,
+    before_default_files: Option<config::Config>,
+    before_default_files_diagnostics_len: Option<usize>,
     finalized: bool,
     confirm_close_surface: config::ConfirmCloseSurface,
     has_global_keybinds: bool,
@@ -1452,6 +1454,50 @@ struct ConfigKeybind {
 impl Config {
     fn sync_from_parsed_config(&mut self) {
         self.confirm_close_surface = self.parsed.confirm_close_surface;
+    }
+
+    fn snapshot_default_files_boundary(&mut self) {
+        self.before_default_files = Some(self.parsed.clone());
+        self.before_default_files_diagnostics_len = Some(self.diagnostics.len());
+    }
+
+    fn apply_cli_config_args(
+        &mut self,
+        config_args: &[String],
+        cli_outer_diagnostics_start: usize,
+    ) -> Vec<config::ConfigDiagnostic> {
+        self.parsed.config_default_files = true;
+        let mut diagnostics = self
+            .parsed
+            .set_cli_args(config_args.iter().map(String::as_str));
+
+        if self.parsed.config_default_files {
+            self.before_default_files = None;
+            self.before_default_files_diagnostics_len = None;
+            return diagnostics;
+        }
+
+        let Some(snapshot) = self.before_default_files.clone() else {
+            return diagnostics;
+        };
+
+        if let Some(boundary) = self.before_default_files_diagnostics_len {
+            if boundary < cli_outer_diagnostics_start
+                && cli_outer_diagnostics_start <= self.diagnostics.len()
+            {
+                self.diagnostics
+                    .drain(boundary..cli_outer_diagnostics_start);
+            }
+        }
+
+        self.parsed = snapshot;
+        self.before_default_files = None;
+        self.before_default_files_diagnostics_len = None;
+        self.parsed.config_default_files = true;
+        diagnostics = self
+            .parsed
+            .set_cli_args(config_args.iter().map(String::as_str));
+        diagnostics
     }
 
     fn push_config_diagnostic(
@@ -8591,6 +8637,8 @@ pub extern "C" fn roastty_mode_report_encode(
 pub extern "C" fn roastty_config_new() -> RoasttyConfig {
     Box::into_raw(Box::new(Config {
         parsed: config::Config::default(),
+        before_default_files: None,
+        before_default_files_diagnostics_len: None,
         finalized: false,
         confirm_close_surface: config::ConfirmCloseSurface::True,
         has_global_keybinds: false,
@@ -8613,6 +8661,8 @@ pub extern "C" fn roastty_config_free(config: RoasttyConfig) {
 pub extern "C" fn roastty_config_clone(config: RoasttyConfig) -> RoasttyConfig {
     let (
         parsed,
+        before_default_files,
+        before_default_files_diagnostics_len,
         finalized,
         confirm_close_surface,
         has_global_keybinds,
@@ -8622,6 +8672,8 @@ pub extern "C" fn roastty_config_clone(config: RoasttyConfig) -> RoasttyConfig {
         .map(|config| {
             (
                 config.parsed.clone(),
+                config.before_default_files.clone(),
+                config.before_default_files_diagnostics_len,
                 config.finalized,
                 config.confirm_close_surface,
                 config.has_global_keybinds,
@@ -8631,6 +8683,8 @@ pub extern "C" fn roastty_config_clone(config: RoasttyConfig) -> RoasttyConfig {
         })
         .unwrap_or((
             config::Config::default(),
+            None,
+            None,
             false,
             config::ConfirmCloseSurface::True,
             false,
@@ -8639,6 +8693,8 @@ pub extern "C" fn roastty_config_clone(config: RoasttyConfig) -> RoasttyConfig {
         ));
     Box::into_raw(Box::new(Config {
         parsed,
+        before_default_files,
+        before_default_files_diagnostics_len,
         finalized,
         confirm_close_surface,
         has_global_keybinds,
@@ -8655,6 +8711,7 @@ pub extern "C" fn roastty_config_load_cli_args(config: RoasttyConfig) {
     };
     let argv = INIT_ARGV.lock().unwrap().clone();
     let mut config_args = Vec::new();
+    let cli_outer_diagnostics_start = config.diagnostics.len();
     let mut index = 1;
     while index < argv.len() {
         let arg = &argv[index];
@@ -8690,9 +8747,7 @@ pub extern "C" fn roastty_config_load_cli_args(config: RoasttyConfig) {
         }
         index += 1;
     }
-    let diagnostics = config
-        .parsed
-        .set_cli_args(config_args.iter().map(String::as_str));
+    let diagnostics = config.apply_cli_config_args(&config_args, cli_outer_diagnostics_start);
     for diagnostic in &diagnostics {
         config.push_config_diagnostic("cli", diagnostic);
     }
@@ -8727,6 +8782,7 @@ pub extern "C" fn roastty_config_load_default_files(config: RoasttyConfig) {
         return;
     };
 
+    config.snapshot_default_files_boundary();
     let report = config.parsed.load_default_files();
     for load in &report.loaded {
         for diagnostic in &load.diagnostics {
@@ -16934,6 +16990,250 @@ mod tests {
         roastty_surface_free(surface);
         roastty_app_free(app);
         roastty_config_free(config);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn config_c_abi_default_files_toggle_discards_default_file_state() {
+        let _env_guard = ENV_LOCK.lock().unwrap();
+        let dir = unique_config_abi_test_dir("default-toggle-discard");
+        let xdg = dir.join("xdg");
+        let home = dir.join("home");
+        let preferred = xdg.join("roastty").join("config.roastty");
+        write_config_file(&preferred, "confirm-close-surface = always\n");
+        let _xdg = EnvGuard::set("XDG_CONFIG_HOME", &xdg);
+        let _home = EnvGuard::set("HOME", &home);
+
+        with_init_args(&["roastty", "--config-default-files=false"], || {
+            let config = roastty_config_new();
+            roastty_config_load_default_files(config);
+            roastty_config_load_cli_args(config);
+            assert_eq!(roastty_config_diagnostics_count(config), 0);
+
+            let app = roastty_app_new(ptr::null(), config);
+            let surface = roastty_surface_new(app, ptr::null());
+            assert!(!roastty_surface_needs_confirm_quit(surface));
+
+            roastty_surface_free(surface);
+            roastty_app_free(app);
+            roastty_config_free(config);
+        });
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn config_c_abi_default_files_toggle_keeps_cli_recursive_files() {
+        let _env_guard = ENV_LOCK.lock().unwrap();
+        let dir = unique_config_abi_test_dir("default-toggle-recursive");
+        let xdg = dir.join("xdg");
+        let home = dir.join("home");
+        let preferred = xdg.join("roastty").join("config.roastty");
+        let child = dir.join("child.roastty");
+        write_config_file(&preferred, "confirm-close-surface = false\n");
+        write_config_file(&child, "confirm-close-surface = always\n");
+        let _xdg = EnvGuard::set("XDG_CONFIG_HOME", &xdg);
+        let _home = EnvGuard::set("HOME", &home);
+        let config_file_arg = format!("--config-file={}", child.display());
+
+        with_init_args(
+            &["roastty", "--config-default-files=false", &config_file_arg],
+            || {
+                let config = roastty_config_new();
+                roastty_config_load_default_files(config);
+                roastty_config_load_cli_args(config);
+                roastty_config_load_recursive_files(config);
+                assert_eq!(roastty_config_diagnostics_count(config), 0);
+
+                let app = roastty_app_new(ptr::null(), config);
+                let surface = roastty_surface_new(app, ptr::null());
+                assert!(roastty_surface_needs_confirm_quit(surface));
+
+                roastty_surface_free(surface);
+                roastty_app_free(app);
+                roastty_config_free(config);
+            },
+        );
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn config_c_abi_default_files_toggle_discards_default_diagnostics_only() {
+        let _env_guard = ENV_LOCK.lock().unwrap();
+        let dir = unique_config_abi_test_dir("default-toggle-diagnostics");
+        let xdg = dir.join("xdg");
+        let home = dir.join("home");
+        let preferred = xdg.join("roastty").join("config.roastty");
+        write_config_file(
+            &preferred,
+            "bad-default = value\nconfirm-close-surface = always\n",
+        );
+        let _xdg = EnvGuard::set("XDG_CONFIG_HOME", &xdg);
+        let _home = EnvGuard::set("HOME", &home);
+
+        with_init_arg_bytes(
+            &[
+                b"roastty",
+                b"--config-default-files=false",
+                b"--bad-cli=x",
+                b"--theme=\xFF",
+                b"--keybind=ctrl+a=unknown_action",
+            ],
+            || {
+                let config = roastty_config_new();
+                roastty_config_load_default_files(config);
+                assert_eq!(roastty_config_diagnostics_count(config), 1);
+                roastty_config_load_cli_args(config);
+                assert_eq!(roastty_config_diagnostics_count(config), 3);
+
+                let messages = (0..3)
+                    .map(|index| config_diagnostic_message(config, index))
+                    .collect::<Vec<_>>();
+                assert!(
+                    !messages
+                        .iter()
+                        .any(|message| message.contains("bad-default")),
+                    "{messages:?}"
+                );
+                assert!(
+                    messages.iter().any(|message| message.contains("bad-cli")),
+                    "{messages:?}"
+                );
+                assert!(
+                    messages
+                        .iter()
+                        .any(|message| message.contains("invalid UTF-8 config argument")),
+                    "{messages:?}"
+                );
+                assert!(
+                    messages
+                        .iter()
+                        .any(|message| message.contains("invalid action")),
+                    "{messages:?}"
+                );
+
+                roastty_config_free(config);
+            },
+        );
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn config_c_abi_default_files_toggle_preserves_pre_default_manual_state() {
+        let _env_guard = ENV_LOCK.lock().unwrap();
+        let dir = unique_config_abi_test_dir("default-toggle-manual");
+        let manual = dir.join("manual.roastty");
+        let xdg = dir.join("xdg");
+        let home = dir.join("home");
+        let preferred = xdg.join("roastty").join("config.roastty");
+        write_config_file(&manual, "confirm-close-surface = always\n");
+        write_config_file(&preferred, "confirm-close-surface = false\n");
+        let _xdg = EnvGuard::set("XDG_CONFIG_HOME", &xdg);
+        let _home = EnvGuard::set("HOME", &home);
+        let manual = c_path(&manual);
+
+        with_init_args(&["roastty", "--config-default-files=false"], || {
+            let config = roastty_config_new();
+            roastty_config_load_file(config, manual.as_ptr());
+            roastty_config_load_default_files(config);
+            roastty_config_load_cli_args(config);
+            assert_eq!(roastty_config_diagnostics_count(config), 0);
+
+            let app = roastty_app_new(ptr::null(), config);
+            let surface = roastty_surface_new(app, ptr::null());
+            assert!(roastty_surface_needs_confirm_quit(surface));
+
+            roastty_surface_free(surface);
+            roastty_app_free(app);
+            roastty_config_free(config);
+        });
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn config_c_abi_default_files_toggle_resets_between_cli_loads() {
+        let _guard = CLI_ARGS_LOCK.lock().unwrap();
+        let first = CString::new("roastty").unwrap();
+        let disable = CString::new("--config-default-files=false").unwrap();
+        let mut first_ptrs = vec![first.as_ptr().cast_mut(), disable.as_ptr().cast_mut()];
+        assert_eq!(
+            roastty_init(first_ptrs.len(), first_ptrs.as_mut_ptr()),
+            ROASTTY_SUCCESS
+        );
+        let config = roastty_config_new();
+        roastty_config_load_cli_args(config);
+        assert!(
+            !config_from_handle(config)
+                .unwrap()
+                .parsed
+                .config_default_files
+        );
+
+        let mut second_ptrs = vec![first.as_ptr().cast_mut()];
+        assert_eq!(
+            roastty_init(second_ptrs.len(), second_ptrs.as_mut_ptr()),
+            ROASTTY_SUCCESS
+        );
+        roastty_config_load_cli_args(config);
+        assert!(
+            config_from_handle(config)
+                .unwrap()
+                .parsed
+                .config_default_files
+        );
+
+        roastty_config_free(config);
+        assert_eq!(roastty_init(0, ptr::null_mut()), ROASTTY_SUCCESS);
+    }
+
+    #[test]
+    fn config_c_abi_default_files_toggle_snapshot_is_consumed_by_first_cli_load() {
+        let _env_guard = ENV_LOCK.lock().unwrap();
+        let dir = unique_config_abi_test_dir("default-toggle-one-shot");
+        let xdg = dir.join("xdg");
+        let home = dir.join("home");
+        let preferred = xdg.join("roastty").join("config.roastty");
+        write_config_file(&preferred, "confirm-close-surface = false\n");
+        let _xdg = EnvGuard::set("XDG_CONFIG_HOME", &xdg);
+        let _home = EnvGuard::set("HOME", &home);
+
+        let _guard = CLI_ARGS_LOCK.lock().unwrap();
+        let app_arg = CString::new("roastty").unwrap();
+        let cli_always = CString::new("--confirm-close-surface=always").unwrap();
+        let mut first_ptrs = vec![app_arg.as_ptr().cast_mut(), cli_always.as_ptr().cast_mut()];
+        assert_eq!(
+            roastty_init(first_ptrs.len(), first_ptrs.as_mut_ptr()),
+            ROASTTY_SUCCESS
+        );
+
+        let config = roastty_config_new();
+        roastty_config_load_default_files(config);
+        roastty_config_load_cli_args(config);
+        assert_eq!(roastty_config_diagnostics_count(config), 0);
+        assert!(config_from_handle(config)
+            .unwrap()
+            .before_default_files
+            .is_none());
+
+        let disable = CString::new("--config-default-files=false").unwrap();
+        let mut second_ptrs = vec![app_arg.as_ptr().cast_mut(), disable.as_ptr().cast_mut()];
+        assert_eq!(
+            roastty_init(second_ptrs.len(), second_ptrs.as_mut_ptr()),
+            ROASTTY_SUCCESS
+        );
+        roastty_config_load_cli_args(config);
+
+        let app = roastty_app_new(ptr::null(), config);
+        let surface = roastty_surface_new(app, ptr::null());
+        assert!(roastty_surface_needs_confirm_quit(surface));
+
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+        roastty_config_free(config);
+        assert_eq!(roastty_init(0, ptr::null_mut()), ROASTTY_SUCCESS);
         std::fs::remove_dir_all(&dir).ok();
     }
 

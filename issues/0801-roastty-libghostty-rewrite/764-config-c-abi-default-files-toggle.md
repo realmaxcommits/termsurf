@@ -95,3 +95,55 @@ The review confirmed that the diagnostic rollback and `config_default_files`
 reset blockers were resolved. Non-blocking implementation guidance: keep keybind
 and invalid UTF-8 diagnostics outside parsed-config replay so they are not
 duplicated, and use one path for surfacing the effective parsed CLI diagnostics.
+
+## Result
+
+**Result:** Pass
+
+Implemented default-file discard behavior for the public C ABI config load
+sequence. `roastty_config_load_default_files` now snapshots the parsed config
+state and ABI diagnostics boundary before loading default files. The CLI loader
+resets `config_default_files` before parsing config-looking CLI args, restores
+the pre-default snapshot and removes default-file diagnostics when CLI sets
+`--config-default-files=false`, then replays the valid UTF-8 config-looking CLI
+args into the restored parsed config.
+
+The rollback boundary is consumed by the first effective CLI parse after default
+files are loaded, whether or not that CLI parse disables default files. This
+prevents a later CLI load from reusing an old pre-default snapshot.
+
+Verification passed:
+
+- `cargo test -p roastty config_c_abi_default_files -- --nocapture --test-threads=1`
+- `cargo test -p roastty config_c_abi_cli_config -- --nocapture --test-threads=1`
+- `cargo test -p roastty config_ -- --nocapture --test-threads=1`
+- `cargo fmt -p roastty`
+- `cargo fmt -p roastty -- --check`
+- `git diff --check`
+
+## Completion Review
+
+Codex reviewed the completed implementation and found one blocking issue in the
+first pass: rollback state remained armed after a non-discarding CLI load, so a
+later CLI load with `--config-default-files=false` could restore an old
+pre-default snapshot and discard already-accepted CLI state/diagnostics.
+
+The implementation was fixed by clearing the default-file snapshot and
+diagnostics boundary on the non-discarding path too, making the rollback
+boundary one-shot after default files are loaded. A regression test now covers
+the sequence: load default files, run a CLI load that omits
+`--config-default-files=false`, then run a later CLI load that includes it.
+
+Codex re-reviewed the fixed implementation and approved it with no blocking
+findings. Non-blocking follow-ups from the review: add
+clone-while-snapshot-armed coverage, and add a focused test that loading default
+files again establishes a fresh rollback boundary after the first one was
+consumed.
+
+## Conclusion
+
+The C ABI config load sequence now handles the major upstream
+`config-default-files=false` behavior without a full replay engine. Default-file
+settings and diagnostics can be discarded by CLI while CLI config args,
+recursive CLI config files, keybind diagnostics, invalid UTF-8 diagnostics, and
+pre-default manual state remain intact.
