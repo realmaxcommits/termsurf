@@ -1,0 +1,316 @@
+#![allow(dead_code)]
+//! A persistent renderer that owns the CPU-side frame-rebuild state and drives
+//! `rebuild_frame` from a live terminal across frames (Issue 801, Exp 840).
+//!
+//! This is the first renderer-integration slice. Metal presentation
+//! (`draw_frame`/compositor), deriving the rebuild input from surface config/
+//! state, wiring into `surface.draw()`, and clearing the terminal's dirty bits
+//! are all later slices.
+
+use crate::font::shared_grid::SharedGrid;
+use crate::renderer::cell::Contents;
+use crate::renderer::frame_rebuild::{
+    FramePreparedRebuildApplication, FramePreparedRebuildError, FramePreparedRebuildInput,
+    FramePreparedRebuildTargets, FrameTerminalSnapshot, RenderDirty,
+};
+use crate::renderer::metal::shaders::MetalUniforms;
+use crate::renderer::size::GridSize;
+use crate::renderer::state::Preedit;
+use crate::terminal::terminal::Terminal;
+
+/// Owns the persistent CPU-side frame-rebuild state across frames: the rebuilt
+/// `Contents`, the `MetalUniforms`, the last-rendered grid (for resize
+/// detection), and a scratch per-row dirty buffer the rebuild clears.
+pub(crate) struct FrameRenderer {
+    contents: Contents,
+    uniforms: MetalUniforms,
+    current_grid: GridSize,
+    row_dirty: Vec<bool>,
+}
+
+impl FrameRenderer {
+    /// Build a renderer over caller-supplied (config-derived) uniforms. The grid
+    /// starts at 0×0 so the first `update_frame` is a full rebuild + resize.
+    pub(crate) fn new(uniforms: MetalUniforms) -> Self {
+        Self {
+            contents: Contents::default(),
+            uniforms,
+            current_grid: GridSize {
+                columns: 0,
+                rows: 0,
+            },
+            row_dirty: Vec::new(),
+        }
+    }
+
+    /// Collect a snapshot from the live terminal, rebuild this renderer's owned
+    /// `contents`/`uniforms` against it, and advance `current_grid` on success so
+    /// the next frame only resizes when the terminal grid actually changes. On a
+    /// rebuild error the frame did not complete, so `current_grid` is left
+    /// unchanged (the next frame re-resizes idempotently).
+    pub(crate) fn update_frame(
+        &mut self,
+        terminal: &Terminal,
+        grid: &mut SharedGrid,
+        dirty: RenderDirty,
+        preedit: Option<Preedit>,
+        input: FramePreparedRebuildInput<'_>,
+    ) -> Result<FramePreparedRebuildApplication, FramePreparedRebuildError> {
+        let snapshot = FrameTerminalSnapshot::collect(terminal, self.current_grid, dirty, preedit);
+
+        // Scratch dirty buffer the rebuild marks clean: a copy of the snapshot's
+        // per-row dirty (length = terminal rows). Re-seeded every frame because the
+        // dirty truth lives in the terminal and is re-snapshotted.
+        self.row_dirty.clear();
+        self.row_dirty.extend_from_slice(&snapshot.row_dirty);
+
+        let app = snapshot.rebuild_frame(
+            FramePreparedRebuildTargets {
+                contents: &mut self.contents,
+                grid,
+                row_dirty: &mut self.row_dirty,
+                uniforms: &mut self.uniforms,
+            },
+            input,
+        )?;
+
+        self.current_grid = snapshot.terminal_grid;
+        Ok(app)
+    }
+
+    pub(crate) fn contents(&self) -> &Contents {
+        &self.contents
+    }
+
+    pub(crate) fn uniforms(&self) -> &MetalUniforms {
+        &self.uniforms
+    }
+
+    pub(crate) fn current_grid(&self) -> GridSize {
+        self.current_grid
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::WindowPaddingColor;
+    use crate::font::run::Wide;
+    use crate::renderer::cell::{Highlight, SelectionConfig};
+    use crate::renderer::cursor::Style as CursorStyle;
+    use crate::renderer::frame_rebuild::{
+        FramePaddingExtendInput, FrameRebuildUniformInput, FrameSnapshotBlockCursorUniformInput,
+        FrameSnapshotCursorOverlayInput, FrameSnapshotCursorUniformInput,
+        FrameSnapshotRowFormatInput, FrameSnapshotTextOverlayInput,
+    };
+    use crate::terminal::color::{Rgb, DEFAULT_PALETTE};
+    use crate::terminal::style::BoldColor;
+
+    fn grid(columns: u16, rows: u16) -> GridSize {
+        GridSize { columns, rows }
+    }
+
+    fn terminal(columns: u16, rows: u16) -> Terminal {
+        let mut terminal = Terminal::init(columns, rows, None).expect("terminal");
+        terminal.next_slice(b"A").expect("terminal input");
+        terminal
+    }
+
+    fn menlo_grid() -> SharedGrid {
+        use crate::font::codepoint_resolver::CodepointResolver;
+        use crate::font::collection::Collection;
+        use crate::font::face::coretext::Face;
+        use crate::font::Style;
+
+        let mut collection = Collection::new();
+        collection
+            .add(Face::new("Menlo", 32.0), Style::Regular, false)
+            .unwrap();
+        collection.update_metrics().unwrap();
+        let metrics = *collection.metrics().unwrap();
+        SharedGrid::new(CodepointResolver::new(collection), metrics)
+    }
+
+    fn uniforms() -> MetalUniforms {
+        MetalUniforms::test_with_grid([2, 3], [4, 5], [6.0, 7.0], [0.0; 4], 9, [1, 2, 3, 4])
+    }
+
+    /// Build a full rebuild input borrowing the caller-owned scratch data. The
+    /// `row_never_extend` length is the only lever the error test needs (`&[]`
+    /// makes `refine_padding_extend_rows` reject).
+    fn frame_input<'a>(
+        highlights: &'a [Vec<Highlight>],
+        link_ranges: &'a [Vec<[u16; 2]>],
+        selection_config: &'a SelectionConfig,
+        row_never_extend: &'a [bool],
+    ) -> FramePreparedRebuildInput<'a> {
+        FramePreparedRebuildInput {
+            row_format: FrameSnapshotRowFormatInput {
+                highlights,
+                link_ranges,
+                selection_config,
+                default_fg: Rgb::new(210, 211, 212),
+                default_bg: Rgb::new(10, 11, 12),
+                palette: &DEFAULT_PALETTE,
+                bold: Some(BoldColor::Color(Rgb::new(1, 2, 3))),
+                alpha: 230,
+                faint_opacity: 99,
+                thicken: true,
+                thicken_strength: 77,
+                background_opacity_cells: true,
+                background_opacity: 0.42,
+            },
+            text_overlay: FrameSnapshotTextOverlayInput {
+                cursor: Some(FrameSnapshotCursorOverlayInput {
+                    style: CursorStyle::Underline,
+                    wide: true,
+                    color: Rgb::new(3, 4, 5),
+                }),
+                screen_fg: Rgb::new(40, 41, 42),
+                alpha: 219,
+            },
+            cursor_uniform: FrameSnapshotCursorUniformInput {
+                block_cursor: Some(FrameSnapshotBlockCursorUniformInput {
+                    wide: Wide::Wide,
+                    color: Rgb::new(11, 12, 13),
+                }),
+            },
+            rebuild_uniform: FrameRebuildUniformInput {
+                padding_color: WindowPaddingColor::Extend,
+            },
+            padding_extend: FramePaddingExtendInput {
+                padding_color: WindowPaddingColor::Extend,
+                row_never_extend,
+            },
+        }
+    }
+
+    #[test]
+    fn first_frame_is_full_rebuild_and_resize() {
+        let term = terminal(4, 3);
+        let mut shared = menlo_grid();
+        let mut renderer = FrameRenderer::new(uniforms());
+        let highlights = Vec::new();
+        let links = Vec::new();
+        let selection = SelectionConfig::default();
+        let never = [false, false, false, false];
+
+        let app = renderer
+            .update_frame(
+                &term,
+                &mut shared,
+                RenderDirty::Partial,
+                None,
+                frame_input(&highlights, &links, &selection, &never),
+            )
+            .expect("first frame");
+
+        // 0x0 -> 4x3 is a grid change, so a full rebuild + resize.
+        assert!(app.rows.reset_contents);
+        assert_eq!(app.rows.rebuilt_rows, vec![0, 1, 2]);
+        assert_eq!(renderer.current_grid(), grid(4, 3));
+        assert_eq!(renderer.contents().size(), grid(4, 3));
+    }
+
+    #[test]
+    fn second_frame_with_clean_terminal_is_partial_without_resize() {
+        let mut term = terminal(4, 3);
+        let mut shared = menlo_grid();
+        let mut renderer = FrameRenderer::new(uniforms());
+        let highlights = Vec::new();
+        let links = Vec::new();
+        let selection = SelectionConfig::default();
+        let never = [false, false, false, false];
+
+        renderer
+            .update_frame(
+                &term,
+                &mut shared,
+                RenderDirty::Partial,
+                None,
+                frame_input(&highlights, &links, &selection, &never),
+            )
+            .expect("first frame");
+
+        // No terminal change, dirty cleared -> no rows to rebuild, no resize.
+        term.clear_dirty_for_tests();
+        let app = renderer
+            .update_frame(
+                &term,
+                &mut shared,
+                RenderDirty::Partial,
+                None,
+                frame_input(&highlights, &links, &selection, &never),
+            )
+            .expect("second frame");
+
+        assert!(!app.rows.reset_contents);
+        assert!(app.rows.rebuilt_rows.is_empty());
+        assert_eq!(renderer.current_grid(), grid(4, 3));
+    }
+
+    #[test]
+    fn resize_is_detected_and_advances_current_grid() {
+        let mut shared = menlo_grid();
+        let mut renderer = FrameRenderer::new(uniforms());
+        let highlights = Vec::new();
+        let links = Vec::new();
+        let selection = SelectionConfig::default();
+        let never = [false, false, false, false];
+
+        let term3 = terminal(4, 3);
+        renderer
+            .update_frame(
+                &term3,
+                &mut shared,
+                RenderDirty::Partial,
+                None,
+                frame_input(&highlights, &links, &selection, &never),
+            )
+            .expect("first frame");
+        assert_eq!(renderer.current_grid(), grid(4, 3));
+
+        // A differently-sized terminal -> grid change -> resize + full rebuild.
+        let term2 = terminal(4, 2);
+        let app = renderer
+            .update_frame(
+                &term2,
+                &mut shared,
+                RenderDirty::Partial,
+                None,
+                frame_input(&highlights, &links, &selection, &never),
+            )
+            .expect("resize frame");
+
+        assert!(app.rows.reset_contents);
+        assert_eq!(renderer.current_grid(), grid(4, 2));
+        assert_eq!(renderer.contents().size(), grid(4, 2));
+    }
+
+    #[test]
+    fn rebuild_error_does_not_advance_current_grid() {
+        let term = terminal(4, 3);
+        let mut shared = menlo_grid();
+        let mut renderer = FrameRenderer::new(uniforms());
+        let highlights = Vec::new();
+        let links = Vec::new();
+        let selection = SelectionConfig::default();
+        // Too short: under Extend, refine_padding_extend_rows validates a
+        // row_never_extend index the empty slice does not cover.
+        let never: [bool; 0] = [];
+
+        let err = renderer
+            .update_frame(
+                &term,
+                &mut shared,
+                RenderDirty::Partial,
+                None,
+                frame_input(&highlights, &links, &selection, &never),
+            )
+            .expect_err("padding extend should fail");
+
+        assert!(matches!(err, FramePreparedRebuildError::PaddingExtend(_)));
+        // The frame did not complete, so the grid is not advanced off 0x0.
+        assert_eq!(renderer.current_grid(), grid(0, 0));
+    }
+}

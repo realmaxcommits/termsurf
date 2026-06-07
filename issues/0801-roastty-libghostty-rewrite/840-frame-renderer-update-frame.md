@@ -147,6 +147,71 @@ Optionals/Nit, all adopted:
   the small fixtures (the `frame_rebuild.rs` helpers are private).
 - **Vague error trigger.** Specified the reachable `PaddingExtend` trigger.
 
+## Result
+
+**Result:** Pass
+
+New module `roastty/src/renderer/frame_renderer.rs` (declared
+`pub(crate) mod frame_renderer;` in `renderer/mod.rs`, `#![allow(dead_code)]`
+like the rest of the bottom-up renderer pipeline). Production
+`cargo build -p roastty` and `--tests` both clean (no warnings); fmt clean,
+no-ghostty clean, `git diff --check` clean.
+
+Four tests in `frame_renderer.rs`, all passing:
+
+- **`first_frame_is_full_rebuild_and_resize`** — a fresh `FrameRenderer` (0×0)
+  against a 4×3 terminal: `reset_contents`, rows `[0,1,2]` rebuilt,
+  `current_grid` advances to 4×3, `contents` resized to 4×3.
+- **`second_frame_with_clean_terminal_is_partial_without_resize`** — after a
+  `clear_dirty_for_tests`, the next frame is a partial: no reset, **no** rows
+  rebuilt, `current_grid` unchanged. (The some-but-not-all-rows partial path —
+  only the dirty rows rebuild — is already covered by `frame_rebuild.rs`'s
+  `format_rows_partial_formats_only_planned_rows`; this test confirms
+  `FrameRenderer` produces the no-resize partial framing.)
+- **`resize_is_detected_and_advances_current_grid`** — a 4×2 terminal after a
+  4×3 frame triggers a resize + full rebuild and re-advances `current_grid` to
+  4×2.
+- **`rebuild_error_does_not_advance_current_grid`** — a too-short
+  `row_never_extend` → `PaddingExtend`, and `current_grid` stays 0×0 (the frame
+  did not complete).
+
+**Full suite (default parallelism, `scripts/bounded-run.sh`):**
+`4371 passed; 0 failed` (4367 + 4 new), 0 panics, 0 `PoisonError`,
+`STATUS=COMPLETED rc=0`, 347 s — green.
+
 ## Conclusion
 
-_(to be written after the run)_
+The renderer integration has its first piece: `FrameRenderer` owns the
+persistent CPU-side frame state (`Contents`, `MetalUniforms`, `current_grid`,
+scratch `row_dirty`) and drives `rebuild_frame` from a live terminal, with
+correct first-frame/resize/partial/error behavior across frames — the roastty
+analogue of ghostty's renderer `cells`/`updateFrame`.
+
+Next slices toward the live draw path:
+
+- **Exp 841:** give `FrameRenderer` the Metal side — own (or borrow) the
+  `MetalFrameCompositor` + atlases and add a `draw_frame` (or fold present into
+  `update_frame`) using `rebuild_and_present_frame`, so the renderer produces a
+  presented frame end to end.
+- **Later:** derive the `FramePreparedRebuildInput` from the surface's
+  config/state (selection, cursor, colors, font knobs) instead of taking it as a
+  parameter; then clear the terminal's dirty bits after a frame; then wire
+  `FrameRenderer` into `surface.draw()` so the live C ABI draw path uses the new
+  pipeline.
+
+## Completion Review
+
+**Reviewer:** `adversarial-reviewer` subagent (Claude Opus, fresh context,
+read-only). Confirmed: the 4 tests pass (4371 total), fmt/build clean,
+no-ghostty; the diff is scope-clean (only the new module + the `mod.rs` line, no
+other production change); `update_frame` advances `current_grid` only after the
+`?` and re-seeds `row_dirty` each frame; `#![allow(dead_code)]` matches
+`frame_rebuild.rs` and is honest (pub(crate) API for future slices), not masking
+a warning; the suite log shows 4371 passed / 0 failed, default parallelism,
+rc=0. **Verdict: CHANGES REQUIRED → fixed.**
+
+- **Required — stale README index status.** The 840 index line still read
+  `Designed`. **Fixed:** flipped to `Pass`.
+- **Optional/Nit (no change required):** the some-but-not-all partial path is
+  covered by `frame_rebuild.rs`'s `format_rows_partial` test (noted above); the
+  `uniforms()` accessor is reserved for the Exp 841 presentation slice.
