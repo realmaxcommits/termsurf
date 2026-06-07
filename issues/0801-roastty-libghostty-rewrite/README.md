@@ -2225,6 +2225,8 @@ are past the correctness-critical foundation.
   — **Pass** · Codex/Codex/Codex
 - [Experiment 813: IOSurfaceLayer Async Presentation](813-iosurface-layer-async-presentation.md)
   — **Pass** · Codex/Codex/Codex
+- [Experiment 814: Metal Frame Compositor](814-metal-frame-compositor.md) —
+  **Designed** · Codex/Codex/Codex
 
 ## Non-Goals
 
