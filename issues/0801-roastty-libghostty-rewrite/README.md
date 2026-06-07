@@ -2061,6 +2061,8 @@ are past the correctness-critical foundation.
   Codex/Codex/Codex
 - [Experiment 773: Config Get Window Position](773-config-get-window-position.md)
   — **Pass** · Codex/Codex/Codex
+- [Experiment 774: Config Get Bell Audio Path](774-config-get-bell-audio-path.md)
+  — **Designed**
 
 ## Non-Goals
 
