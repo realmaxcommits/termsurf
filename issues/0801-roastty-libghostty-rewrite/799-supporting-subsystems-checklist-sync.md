@@ -74,3 +74,50 @@ the scope because the row remains unchecked, the wording is limited to partial
 foundations, the open gaps prevent a full supporting-subsystem completion claim,
 and the verification plan directly covers inspector ABI, resource discovery, and
 font synthetic behavior.
+
+## Result
+
+**Result:** Pass
+
+The supporting-subsystems row now records the existing scoped foundations
+instead of presenting `cli` / `inspector` / `crash` / `terminfo` / `synthetic`
+as an undifferentiated open list:
+
+- Inspector handle lifecycle and input-forwarding state exist through the C ABI.
+- Terminfo-bearing resource directory discovery exists in `os/resources_dir.rs`.
+- Font synthetic bold/italic foundations exist in the CoreText face and
+  collection paths.
+
+The row remains unchecked because CLI/list tools, inspector UI rendering and
+core data collection, Sentry-style crash reporting, full terminfo tooling, and
+broader synthetic subsystem work remain open.
+
+Verification:
+
+- Inspected:
+  - `roastty/src/lib.rs`
+  - `roastty/src/os/resources_dir.rs`
+  - `roastty/src/font/face/coretext.rs`
+  - `roastty/src/font/collection.rs`
+- `cargo test -p roastty inspector -- --nocapture --test-threads=1` — 3 passed
+- `cargo test -p roastty resources_dir -- --nocapture --test-threads=1` — 12
+  passed
+- `cargo test -p roastty synthetic -- --nocapture --test-threads=1` — 7 passed
+- `prettier --write --prose-wrap always --print-width 80 issues/0801-roastty-libghostty-rewrite/README.md issues/0801-roastty-libghostty-rewrite/799-supporting-subsystems-checklist-sync.md`
+  — passed
+- `git diff --check` — passed
+
+## Conclusion
+
+The supporting-subsystems row was under-specified rather than ready to close.
+Roastty has inspector ABI, resource discovery, and font synthetic foundations,
+but the broader tool, UI, crash-reporting, terminfo, and synthetic subsystem
+work still belongs to Issue 801.
+
+## Completion Review
+
+Codex reviewed the completed experiment and found no blocking findings. The
+review approved the result because the row remains unchecked, the result is
+scoped to the three verified foundations, the open items remain explicit, and
+the verification evidence records the focused tests, Prettier, and
+`git diff --check`.

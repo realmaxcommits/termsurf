@@ -2175,7 +2175,7 @@ are past the correctness-critical foundation.
 - [Experiment 798: UTF-8 Dependency Checklist Sync](798-utf8-dependency-checklist-sync.md)
   — **Pass** · Codex/Codex/Codex
 - [Experiment 799: Supporting Subsystems Checklist Sync](799-supporting-subsystems-checklist-sync.md)
-  — **Designed**
+  — **Pass** · Codex/Codex/Codex
 
 ## Non-Goals
 
