@@ -2360,6 +2360,8 @@ are past the correctness-critical foundation.
   — **Partial** · Claude/Claude/Claude
 - [Experiment 834: Fix the surface_start snapshot KEY defeated by input echo](834-surface-start-echo-key.md)
   — **Pass** · Claude/Claude/Claude
+- [Experiment 835: Fix surface_key natural_text — assert the byte, not the racy echo](835-surface-key-natural-text-echo.md)
+  — **Designed** · Claude/Claude/Claude
 
 ## Non-Goals
 
