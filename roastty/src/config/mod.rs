@@ -64,6 +64,8 @@ pub(crate) struct Config {
     pub notify_on_command_finish_action: NotifyOnCommandFinishAction,
     /// `bell-audio-volume`.
     pub bell_audio_volume: f64,
+    /// `notify-on-command-finish-after`.
+    pub notify_on_command_finish_after: Duration,
     /// `window-colorspace`.
     pub window_colorspace: WindowColorspace,
     /// `alpha-blending`.
@@ -163,6 +165,9 @@ impl Default for Config {
             notify_on_command_finish: NotifyOnCommandFinish::Never,
             notify_on_command_finish_action: NotifyOnCommandFinishAction::default(),
             bell_audio_volume: 0.5,
+            notify_on_command_finish_after: Duration {
+                duration: 5 * NS_PER_S,
+            },
             window_colorspace: WindowColorspace::Srgb,
             alpha_blending: AlphaBlending::Native,
             background_blur: BackgroundBlur::False,
@@ -263,6 +268,11 @@ impl Config {
             .format_entry(&mut EntryFormatter::new("background-blur", out));
         EntryFormatter::new("background-opacity", out).entry_float(self.background_opacity);
         EntryFormatter::new("bell-audio-volume", out).entry_float(self.bell_audio_volume);
+        self.notify_on_command_finish_after
+            .format_entry(&mut EntryFormatter::new(
+                "notify-on-command-finish-after",
+                out,
+            ));
         self.notify_on_command_finish
             .format_entry(&mut EntryFormatter::new("notify-on-command-finish", out));
         self.notify_on_command_finish_action
@@ -409,6 +419,13 @@ impl Config {
             }
             "bell-audio-volume" => {
                 self.bell_audio_volume = set_f64_field(value, default.bell_audio_volume)?
+            }
+            "notify-on-command-finish-after" => {
+                self.notify_on_command_finish_after = set_value_field(
+                    value,
+                    default.notify_on_command_finish_after,
+                    Duration::parse_cli,
+                )?
             }
             "window-colorspace" => {
                 self.window_colorspace = set_enum_field(
@@ -1201,6 +1218,15 @@ impl From<BackgroundBlurParseError> for ConfigSetError {
     }
 }
 
+impl From<DurationParseError> for ConfigSetError {
+    fn from(e: DurationParseError) -> Self {
+        match e {
+            DurationParseError::ValueRequired => ConfigSetError::ValueRequired,
+            DurationParseError::InvalidValue => ConfigSetError::InvalidValue,
+        }
+    }
+}
+
 impl From<WindowDecorationParseError> for ConfigSetError {
     fn from(e: WindowDecorationParseError) -> Self {
         match e {
@@ -1620,7 +1646,8 @@ pub(crate) enum DurationParseError {
 }
 
 /// A `Duration` config value (upstream `Config.Duration`): a time span in
-/// nanoseconds. `format` / `asMilliseconds` / `round` / `lte` are ported later.
+/// nanoseconds. `format_entry` and `as_milliseconds` cover the config/ABI paths;
+/// `round` and `lte` are ported later.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct Duration {
     pub duration: u64,
@@ -1743,6 +1770,14 @@ impl Duration {
     /// duration string.
     pub(crate) fn format_entry(self, formatter: &mut EntryFormatter) {
         formatter.entry_str(&self.format_value());
+    }
+
+    /// Convert to milliseconds for C ABI consumers (upstream
+    /// `Duration.asMilliseconds`): truncate fractional milliseconds and
+    /// saturate at `c_uint::MAX`.
+    pub(crate) fn as_milliseconds(self) -> usize {
+        let ms = self.duration / NS_PER_MS;
+        ms.min(u32::MAX as u64) as usize
     }
 }
 
@@ -3980,7 +4015,7 @@ mod tests {
         ShellIntegrationFeatures, TerminalBoldColor, TerminalColor, Theme, ThemeParseError,
         WindowColorspace, WindowDecoration, WindowDecorationParseError, WindowPadding,
         WindowPaddingColor, WindowPaddingParseError, WindowSaveState, WindowSubtitle, WindowTheme,
-        WorkingDirectory, WorkingDirectoryParseError,
+        WorkingDirectory, WorkingDirectoryParseError, NS_PER_MS, NS_PER_S,
     };
     use crate::terminal::color::Rgb;
     use crate::terminal::selection_codepoints::DEFAULT_WORD_BOUNDARIES;
@@ -4172,6 +4207,12 @@ mod tests {
             NotifyOnCommandFinishAction::default()
         );
         assert_eq!(d.bell_audio_volume, 0.5);
+        assert_eq!(
+            d.notify_on_command_finish_after,
+            Duration {
+                duration: 5 * NS_PER_S
+            }
+        );
         // Renderer-appearance group (Experiment 465).
         assert_eq!(d.window_colorspace, WindowColorspace::Srgb);
         assert_eq!(d.alpha_blending, AlphaBlending::Native);
@@ -7508,6 +7549,7 @@ mod tests {
                 "background-blur",
                 "background-opacity",
                 "bell-audio-volume",
+                "notify-on-command-finish-after",
                 "notify-on-command-finish",
                 "notify-on-command-finish-action",
                 "link-previews",
@@ -7543,6 +7585,7 @@ mod tests {
         assert!(out.contains("background-image-opacity = 1\n"));
         assert!(out.contains("background-opacity = 1\n"));
         assert!(out.contains("bell-audio-volume = 0.5\n"));
+        assert!(out.contains("notify-on-command-finish-after = 5s\n"));
 
         // The default optionals (all `None`) format as the void line, and `theme`
         // (default `None`) too.
@@ -7922,6 +7965,80 @@ mod tests {
                 let cloned = cfg.clone();
                 cloned == cfg && cloned.bell_audio_volume == 0.25
             }),
+            Ok(true)
+        );
+    }
+
+    #[test]
+    fn config_set_routes_notify_on_command_finish_after_duration() {
+        let line = |cfg: &Config, key: &str| -> String {
+            let mut out = String::new();
+            cfg.format_config(&mut out);
+            out.lines()
+                .find(|l| l.starts_with(&format!("{} = ", key)))
+                .unwrap()
+                .to_string()
+        };
+
+        let mut cfg = Config::default();
+        cfg.set("notify-on-command-finish-after", Some("1s 250ms"))
+            .unwrap();
+        assert_eq!(
+            cfg.notify_on_command_finish_after,
+            Duration {
+                duration: NS_PER_S + 250 * NS_PER_MS
+            }
+        );
+        assert_eq!(
+            line(&cfg, "notify-on-command-finish-after"),
+            "notify-on-command-finish-after = 1s 250ms"
+        );
+
+        cfg.set("notify-on-command-finish-after", Some("999us"))
+            .unwrap();
+        assert_eq!(
+            cfg.notify_on_command_finish_after,
+            Duration { duration: 999_000 }
+        );
+        assert_eq!(
+            line(&cfg, "notify-on-command-finish-after"),
+            "notify-on-command-finish-after = 999µs"
+        );
+        assert_eq!(cfg.notify_on_command_finish_after.as_milliseconds(), 0);
+
+        cfg.notify_on_command_finish_after = Duration { duration: u64::MAX };
+        assert_eq!(
+            cfg.notify_on_command_finish_after.as_milliseconds(),
+            u32::MAX as usize
+        );
+
+        cfg.set("notify-on-command-finish-after", Some("")).unwrap();
+        assert_eq!(
+            cfg.notify_on_command_finish_after,
+            Duration {
+                duration: 5 * NS_PER_S
+            }
+        );
+        assert_eq!(
+            line(&cfg, "notify-on-command-finish-after"),
+            "notify-on-command-finish-after = 5s"
+        );
+
+        assert_eq!(
+            cfg.set("notify-on-command-finish-after", None),
+            Err(ConfigSetError::ValueRequired)
+        );
+        assert_eq!(
+            cfg.set("notify-on-command-finish-after", Some("1")),
+            Err(ConfigSetError::InvalidValue)
+        );
+        assert_eq!(
+            cfg.set("notify-on-command-finish-after", Some("250ms"))
+                .map(|_| {
+                    let cloned = cfg.clone();
+                    cloned == cfg
+                        && cloned.notify_on_command_finish_after.duration == 250 * NS_PER_MS
+                }),
             Ok(true)
         );
     }

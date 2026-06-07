@@ -8938,7 +8938,15 @@ pub extern "C" fn roastty_config_get(
                 true
             }
             b"notify-on-command-finish-after" => {
-                output.cast::<usize>().write(5000);
+                let Some(config) = config_from_handle(config) else {
+                    return false;
+                };
+                output.cast::<usize>().write(
+                    config
+                        .parsed
+                        .notify_on_command_finish_after
+                        .as_milliseconds(),
+                );
                 true
             }
             b"title" => {
@@ -16082,6 +16090,17 @@ mod tests {
         ok.then_some(value)
     }
 
+    fn config_get_usize(config: RoasttyConfig, key: &str) -> Option<usize> {
+        let mut value = 0usize;
+        let ok = roastty_config_get(
+            config,
+            (&mut value as *mut usize).cast::<c_void>(),
+            key.as_ptr().cast(),
+            key.len(),
+        );
+        ok.then_some(value)
+    }
+
     fn unique_config_abi_test_dir(tag: &str) -> PathBuf {
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -17492,6 +17511,125 @@ mod tests {
                 assert!(message.contains("bell-audio-volume"), "{message}");
                 assert!(message.contains(error), "{message}");
                 assert_eq!(config_get_f64(config, "bell-audio-volume"), Some(0.5));
+                roastty_config_free(config);
+            });
+        }
+    }
+
+    #[test]
+    fn config_get_notify_finish_after_returns_default_file_and_clone_values() {
+        let config = roastty_config_new();
+        assert_eq!(
+            config_get_usize(config, "notify-on-command-finish-after"),
+            Some(5000)
+        );
+        roastty_config_free(config);
+
+        let dir = unique_config_abi_test_dir("get-notify-finish-after-file");
+        let path = dir.join("config.roastty");
+        write_config_file(&path, "notify-on-command-finish-after = 1s 250ms\n");
+        let path = c_path(&path);
+
+        let config = roastty_config_new();
+        roastty_config_load_file(config, path.as_ptr());
+        assert_eq!(roastty_config_diagnostics_count(config), 0);
+        let clone = roastty_config_clone(config);
+        roastty_config_free(config);
+        assert_eq!(
+            config_get_usize(clone, "notify-on-command-finish-after"),
+            Some(1250)
+        );
+
+        roastty_config_free(clone);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn config_get_notify_finish_after_returns_cli_reset_truncation_and_saturation() {
+        with_init_args(
+            &["roastty", "--notify-on-command-finish-after=1s 250ms"],
+            || {
+                let config = roastty_config_new();
+                roastty_config_load_cli_args(config);
+                assert_eq!(roastty_config_diagnostics_count(config), 0);
+                assert_eq!(
+                    config_get_usize(config, "notify-on-command-finish-after"),
+                    Some(1250)
+                );
+                roastty_config_free(config);
+            },
+        );
+
+        with_init_args(
+            &[
+                "roastty",
+                "--notify-on-command-finish-after=250ms",
+                "--notify-on-command-finish-after=",
+            ],
+            || {
+                let config = roastty_config_new();
+                roastty_config_load_cli_args(config);
+                assert_eq!(roastty_config_diagnostics_count(config), 0);
+                assert_eq!(
+                    config_get_usize(config, "notify-on-command-finish-after"),
+                    Some(5000)
+                );
+                roastty_config_free(config);
+            },
+        );
+
+        with_init_args(
+            &["roastty", "--notify-on-command-finish-after=999us"],
+            || {
+                let config = roastty_config_new();
+                roastty_config_load_cli_args(config);
+                assert_eq!(roastty_config_diagnostics_count(config), 0);
+                assert_eq!(
+                    config_get_usize(config, "notify-on-command-finish-after"),
+                    Some(0)
+                );
+                roastty_config_free(config);
+            },
+        );
+
+        with_init_args(
+            &["roastty", "--notify-on-command-finish-after=1000y"],
+            || {
+                let config = roastty_config_new();
+                roastty_config_load_cli_args(config);
+                assert_eq!(roastty_config_diagnostics_count(config), 0);
+                assert_eq!(
+                    config_get_usize(config, "notify-on-command-finish-after"),
+                    Some(u32::MAX as usize)
+                );
+                roastty_config_free(config);
+            },
+        );
+    }
+
+    #[test]
+    fn config_get_notify_finish_after_reports_missing_and_invalid_values() {
+        for (arg, error) in [
+            ("--notify-on-command-finish-after", "ValueRequired"),
+            (
+                "--notify-on-command-finish-after=not-a-duration",
+                "InvalidValue",
+            ),
+        ] {
+            with_init_args(&["roastty", arg], || {
+                let config = roastty_config_new();
+                roastty_config_load_cli_args(config);
+                assert_eq!(roastty_config_diagnostics_count(config), 1);
+                let message = config_diagnostic_message(config, 0);
+                assert!(
+                    message.contains("notify-on-command-finish-after"),
+                    "{message}"
+                );
+                assert!(message.contains(error), "{message}");
+                assert_eq!(
+                    config_get_usize(config, "notify-on-command-finish-after"),
+                    Some(5000)
+                );
                 roastty_config_free(config);
             });
         }

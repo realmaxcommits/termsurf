@@ -2056,7 +2056,7 @@ are past the correctness-critical foundation.
 - [Experiment 770: Config Get Bell Audio Volume](770-config-get-bell-audio-volume.md)
   — **Pass** · Codex/Codex/Codex
 - [Experiment 771: Config Get Notify Finish After](771-config-get-notify-finish-after.md)
-  — **Designed**
+  — **Pass** · Codex/Codex/Codex
 
 ## Non-Goals
 

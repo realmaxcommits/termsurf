@@ -85,3 +85,49 @@ The plan was amended to pin the formatter key-order expectation, public C ABI
 diagnostics for bare and invalid CLI values, and the exact ABI conversion:
 truncate nanoseconds to milliseconds, saturate at `u32::MAX`, then write through
 the existing `usize` ABI slot.
+
+## Result
+
+**Result:** Pass
+
+Implemented aggregate config storage for `notify-on-command-finish-after`.
+`config::Config` now stores `notify_on_command_finish_after: Duration`, defaults
+it to five seconds, formats it between `bell-audio-volume` and
+`notify-on-command-finish`, and routes
+`Config::set("notify-on-command-finish-after", ...)` through the existing
+duration parser and `set_value_field` reset behavior.
+
+`Duration::as_milliseconds()` now provides the upstream C ABI conversion:
+truncate nanoseconds to milliseconds and saturate at `u32::MAX`. The
+`roastty_config_get("notify-on-command-finish-after")` ABI getter now reads
+parsed config state and writes the converted millisecond value as `usize`.
+
+Verification passed:
+
+- `cargo test -p roastty notify_on_command_finish_after -- --nocapture --test-threads=1`
+- `cargo test -p roastty config_get_notify_finish_after -- --nocapture --test-threads=1`
+- `cargo test -p roastty config_ -- --nocapture --test-threads=1`
+- `cargo fmt -p roastty`
+- `cargo fmt -p roastty -- --check`
+- `git diff --check`
+
+## Conclusion
+
+`notify-on-command-finish-after` now reports parsed config state through the C
+ABI with the correct millisecond conversion. Runtime notification timers and
+command completion notification behavior remain follow-up work.
+
+## Completion Review
+
+Codex reviewed the completed implementation and found no blocking findings. The
+review confirmed that storage/defaults are correct, formatter placement is
+between `bell-audio-volume` and `notify-on-command-finish`,
+`Config::set("notify-on-command-finish-after", ...)` uses `Duration::parse_cli`
+through `set_value_field`, and the getter writes parsed milliseconds through the
+existing `usize` ABI slot.
+
+The review also confirmed the conversion truncates sub-millisecond durations and
+saturates to `u32::MAX`, and that tests cover the scoped risks: default, format
+order, file and CLI load, clone, empty reset, missing and invalid diagnostics,
+repeated units, sub-millisecond truncation, and saturation. A non-blocking stale
+`Duration` doc comment was updated after the review.
