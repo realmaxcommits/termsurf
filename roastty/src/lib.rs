@@ -1471,6 +1471,14 @@ impl Config {
         ));
     }
 
+    fn push_config_recursive_relative_path(&mut self, source: impl std::fmt::Display) {
+        self.push_diagnostic(format!("config-file {source}: path is not absolute"));
+    }
+
+    fn push_config_recursive_cycle(&mut self, source: impl std::fmt::Display) {
+        self.push_diagnostic(format!("config-file {source}: cycle detected"));
+    }
+
     fn store_keybind(&mut self, binding: ConfigKeybind) {
         self.keybind_triggers.push(binding);
     }
@@ -8713,7 +8721,32 @@ pub extern "C" fn roastty_config_load_default_files(config: RoasttyConfig) {
 }
 
 #[no_mangle]
-pub extern "C" fn roastty_config_load_recursive_files(_config: RoasttyConfig) {}
+pub extern "C" fn roastty_config_load_recursive_files(config: RoasttyConfig) {
+    let Some(config) = config_from_handle(config) else {
+        return;
+    };
+
+    let report = config.parsed.load_recursive_files_from_config();
+    for load in &report.loaded {
+        for diagnostic in &load.diagnostics {
+            config.push_config_diagnostic(load.path.display(), diagnostic);
+        }
+    }
+    for error in &report.errors {
+        match &error.error {
+            config::ConfigRecursiveFileErrorKind::RelativePath => {
+                config.push_config_recursive_relative_path(error.path.display());
+            }
+            config::ConfigRecursiveFileErrorKind::Io(io_error) => {
+                config.push_config_file_error(error.path.display(), io_error);
+            }
+        }
+    }
+    for cycle in &report.cycles {
+        config.push_config_recursive_cycle(cycle.display());
+    }
+    config.sync_from_parsed_config();
+}
 
 #[no_mangle]
 pub extern "C" fn roastty_config_finalize(config: RoasttyConfig) {
@@ -16699,6 +16732,143 @@ mod tests {
 
         roastty_surface_free(surface);
         roastty_app_free(app);
+        roastty_config_free(config);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn config_c_abi_recursive_loads_child_and_syncs_state() {
+        roastty_config_load_recursive_files(ptr::null_mut());
+
+        let dir = unique_config_abi_test_dir("recursive-sync");
+        let parent = dir.join("parent.roastty");
+        let child = dir.join("child.roastty");
+        write_config_file(&parent, "config-file = child.roastty\n");
+        write_config_file(&child, "confirm-close-surface = always\n");
+        let parent = c_path(&parent);
+
+        let config = roastty_config_new();
+        roastty_config_load_file(config, parent.as_ptr());
+        roastty_config_load_recursive_files(config);
+        assert_eq!(roastty_config_diagnostics_count(config), 0);
+
+        let app = roastty_app_new(ptr::null(), config);
+        let surface = roastty_surface_new(app, ptr::null());
+        assert!(roastty_surface_needs_confirm_quit(surface));
+
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+        roastty_config_free(config);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn config_c_abi_recursive_follows_child_appended_grandchild() {
+        let dir = unique_config_abi_test_dir("recursive-grandchild");
+        let parent = dir.join("parent.roastty");
+        let child = dir.join("child.roastty");
+        let grandchild = dir.join("grandchild.roastty");
+        write_config_file(&parent, "config-file = child.roastty\n");
+        write_config_file(
+            &child,
+            "confirm-close-surface = false\nconfig-file = grandchild.roastty\n",
+        );
+        write_config_file(&grandchild, "confirm-close-surface = always\n");
+        let parent = c_path(&parent);
+
+        let config = roastty_config_new();
+        roastty_config_load_file(config, parent.as_ptr());
+        roastty_config_load_recursive_files(config);
+        assert_eq!(roastty_config_diagnostics_count(config), 0);
+
+        let app = roastty_app_new(ptr::null(), config);
+        let surface = roastty_surface_new(app, ptr::null());
+        assert!(roastty_surface_needs_confirm_quit(surface));
+
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+        roastty_config_free(config);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn config_c_abi_recursive_records_line_diagnostics_and_valid_settings() {
+        let dir = unique_config_abi_test_dir("recursive-line-diag");
+        let parent = dir.join("parent.roastty");
+        let child = dir.join("child.roastty");
+        write_config_file(&parent, "config-file = child.roastty\n");
+        write_config_file(&child, "badkey = x\nconfirm-close-surface = always\n");
+        let parent = c_path(&parent);
+
+        let config = roastty_config_new();
+        roastty_config_load_file(config, parent.as_ptr());
+        roastty_config_load_recursive_files(config);
+        assert_eq!(roastty_config_diagnostics_count(config), 1);
+        let message = config_diagnostic_message(config, 0);
+        assert!(message.contains("badkey"), "{message}");
+        assert!(message.contains(":1:"), "{message}");
+
+        let app = roastty_app_new(ptr::null(), config);
+        let surface = roastty_surface_new(app, ptr::null());
+        assert!(roastty_surface_needs_confirm_quit(surface));
+
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+        roastty_config_free(config);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn config_c_abi_recursive_records_missing_relative_and_cycle_diagnostics() {
+        let dir = unique_config_abi_test_dir("recursive-diagnostics");
+        let parent = dir.join("parent.roastty");
+        let cycle = dir.join("cycle.roastty");
+        let missing = dir.join("missing.roastty");
+        write_config_file(
+            &parent,
+            &format!(
+                "config-file = {}\nconfig-file = {}\nconfig-file = relative.roastty\n",
+                missing.display(),
+                cycle.display()
+            ),
+        );
+        write_config_file(&cycle, &format!("config-file = {}\n", cycle.display()));
+        let parent = c_path(&parent);
+
+        let config = roastty_config_new();
+        roastty_config_load_file(config, parent.as_ptr());
+        {
+            let parsed = config_from_handle(config).unwrap();
+            parsed.parsed.config_file.list.insert(
+                0,
+                config::ConfigFilePath::Required("manual-relative.roastty".to_string()),
+            );
+        }
+        roastty_config_load_recursive_files(config);
+
+        assert_eq!(roastty_config_diagnostics_count(config), 4);
+        let messages = (0..4)
+            .map(|index| config_diagnostic_message(config, index))
+            .collect::<Vec<_>>();
+        assert!(
+            messages
+                .iter()
+                .any(|message| message.contains("missing.roastty")),
+            "{messages:?}"
+        );
+        assert!(
+            messages
+                .iter()
+                .any(|message| message.contains("not absolute")),
+            "{messages:?}"
+        );
+        assert!(
+            messages
+                .iter()
+                .any(|message| message.contains("cycle detected")),
+            "{messages:?}"
+        );
+
         roastty_config_free(config);
         std::fs::remove_dir_all(&dir).ok();
     }

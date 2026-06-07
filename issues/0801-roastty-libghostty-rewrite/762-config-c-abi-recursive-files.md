@@ -77,3 +77,42 @@ Experiment 761 loader, map report data into the existing diagnostics string
 channel, sync ABI-visible parsed state using the same pattern as `load_file` /
 `load_default_files`, and keep structured report exposure and replay behavior
 deferred.
+
+## Result
+
+**Result:** Pass
+
+Implemented `roastty_config_load_recursive_files` in `roastty/src/lib.rs`. The C
+ABI function now no-ops on null config handles, delegates to the internal
+recursive loader, maps loaded-file line diagnostics, IO errors, relative-path
+reports, and cycle reports into the existing ABI diagnostics channel, and syncs
+parsed config state afterward.
+
+Verification passed:
+
+- `cargo test -p roastty config_c_abi_recursive -- --nocapture --test-threads=1`
+- `cargo test -p roastty recursive -- --nocapture --test-threads=1`
+- `cargo test -p roastty config_ -- --nocapture --test-threads=1`
+- `cargo fmt -p roastty`
+- `cargo fmt -p roastty -- --check`
+- `git diff --check`
+
+## Completion Review
+
+Codex reviewed the completed implementation and found no blocking findings. The
+review confirmed that the function delegates to the Experiment 761 recursive
+loader, maps loaded diagnostics/errors/relative-path/cycle entries into the
+existing ABI diagnostics channel, preserves null-handle no-op behavior, and
+syncs parsed state afterward.
+
+Non-blocking follow-ups from the review: future structured diagnostics should
+preserve exact traversal order if ordering becomes user-visible, and optional
+missing / optional non-file ABI-specific tests could be added even though the
+internal loader already covers those semantics.
+
+## Conclusion
+
+The public recursive config C ABI entry point is no longer a stub. It now
+connects existing app-facing config loading to Roastty's internal recursive
+loader while keeping structured report exposure and replay-step behavior
+deferred.
