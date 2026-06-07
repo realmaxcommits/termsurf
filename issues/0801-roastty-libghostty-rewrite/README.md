@@ -536,21 +536,27 @@ make hangs loud and fatal rather than silent:
   failure this gate exists to kill. Treat an instant `STATUS=COMPLETED`, an
   empty log, or a missing `STATUS` line as a **failure to investigate**, never a
   pass.
-- **Run tests under a per-test kill-timeout.** Use
-  `cargo nextest run -p roastty` with
-  `slow-timeout = { period = "30s", terminate-after = 1 }` in
-  `.config/nextest.toml`. A test that blocks past the window is terminated and
-  reported as a failure **by name**, turning a deadlock into a diagnosable
-  failing test instead of an indefinite wait. (Experiment 829 establishes this
-  config and fixes the first deadlock it exposes.) Genuinely slow-but-finite
-  tests get a scoped exception, not a blanket longer timeout: the
-  CoreText-backed `font::` tests (no shared font cache under nextest's
-  process-per-test, ~10–58 s each) run in a capped-concurrency `coretext`
-  test-group with a 120 s window, so they are not killed as false positives
-  while an infinite deadlock anywhere is still caught.
+- **The routine gate is bare `cargo test -p roastty -- --test-threads=4`, run
+  through `scripts/bounded-run.sh`.** The `--test-threads=4` cap (≈ half this
+  machine's cores — _machine-relative_, recalibrate per host) keeps the
+  real-child PTY tests from being CPU-starved, which otherwise loses key-echo
+  renders and produces contention flakes (Experiment 833). A full run is ~190 s,
+  so it sits comfortably inside the 15-min cap. Deadlock detection comes from
+  `bounded-run.sh`: a silent hang stops log progress, trips the 90 s no-progress
+  kill, and is `sample`d before the kill — caught within the 15-min ceiling
+  (catch latency ~drain + 90 s ≈ 5 min, via stack-sample rather than a by-name
+  line).
+- **`cargo nextest run -p roastty` is the on-demand deadlock-pinpointing tool,
+  not the routine gate.** Its `.config/nextest.toml`
+  (`slow-timeout = { period = "30s", terminate-after = 1 }`, plus the `coretext`
+  test-group for the CoreText-heavy `font::` tests) gives a per-test, by-name
+  `TIMEOUT` and is the one thing that also catches an _output-emitting livelock_
+  the routine gate's idle-kill would miss. Use it when a hang is being chased —
+  but **not** for every result gate: process-per-test reloads the font cache and
+  makes a full run ~12–15 min, dangerously close to the 15-min hard cap.
 - **Run the full suite at the result gate** — never silently filter out the slow
   or PTY tests. A recorded representative subset may be used while iterating,
-  but the result gate runs everything.
+  but the result gate runs everything (at `--test-threads=4`).
 - **Never hand-roll a poll-watcher.** The only sanctioned way to run a
   possibly-hanging command is `scripts/bounded-run.sh` as a single tracked
   background task (above). Do not background a raw command with `&` and watch it
@@ -561,9 +567,10 @@ make hangs loud and fatal rather than silent:
   to fix it** — record the hang in the current experiment, then make the fix the
   immediate next experiment. No new feature work is designed until the hang is
   resolved. Deferring it to a tracking issue is not allowed.
-- **Guard against intermittency.** These deadlocks are racy, so the result-gate
-  run executes the suite multiple times (default three) with `--retries 0`; any
-  single hang is a `Fail`.
+- **Guard against intermittency.** These flakes and deadlocks are racy, so the
+  result gate runs the suite **three times, each in its own `bounded-run.sh`**
+  (full 15-min headroom per run); any single failure or hang across the three is
+  a `Fail`.
 - Each experiment's **Verification** section states the timeout used and
   confirms the suite completed within it across all repeats.
 
@@ -2350,7 +2357,7 @@ are past the correctness-critical foundation.
 - [Experiment 832: Eliminate the surface snapshot first-render race](832-surface-snapshot-race.md)
   — **Partial** · Claude/Claude/Claude
 - [Experiment 833: Bound test parallelism to eliminate the contention flakes](833-bound-test-parallelism.md)
-  — **Designed** · Claude/Claude/Claude
+  — **Partial** · Claude/Claude/Claude
 
 ## Non-Goals
 

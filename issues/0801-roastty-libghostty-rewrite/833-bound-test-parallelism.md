@@ -178,6 +178,110 @@ rewritten README gate to ensure no leftover nextest-as-routine-gate language.
 (Nit: the motivating `hyp-t4.log` predates `CMD=` logging — acceptable, it is
 "consistent, not proof"; the 3× runs carry `CMD=`.)
 
+## Result
+
+**Result:** Partial
+
+The README "Test execution gate" was rewritten to the bare
+`cargo test -p roastty -- --test-threads=4` + `bounded-run.sh` routine gate
+(nextest retired to on-demand), and `bounded-run.sh` now logs `CMD=`. The 3×
+verification (each its own bounded-run, Central-stamped):
+
+| run | STATUS                | result               | residual failure                    |
+| --: | --------------------- | -------------------- | ----------------------------------- |
+|   1 | COMPLETED rc=0 170s   | 4360 passed / 0 fail | —                                   |
+|   2 | COMPLETED rc=101 146s | 4359 / **1 fail**    | `surface_start_uses_copied_config…` |
+|   3 | COMPLETED rc=101 110s | 4359 / **1 fail**    | `surface_start_uses_copied_config…` |
+
+All three reported `START=`/`END=`/`CMD=… --test-threads=4`, none hit
+`HARD_TIMEOUT`/`IDLE_KILL` — the bounded-run gate worked exactly as designed.
+
+**The thread cap SHIFTS the flake profile — it is not a clean elimination
+(corrected in result review):**
+
+- ✅ **The `surface_key`/`surface_mouse`/`config_path_cli` flakes did not
+  appear** in any of the 3 threads=4 runs (they failed at default parallelism in
+  Exp 832). Consistent with the CPU-starvation hypothesis for _those_ tests.
+- ❌ **But a different test now fails that passed at default.**
+  `surface_start_uses_copied_config_after_source_strings_drop` is **`... ok`
+  15/15 across all Exp 831/832 logs** (default parallelism) and fails **2/3 only
+  at threads=4**. So the failure is **correlated with the thread cap** — the cap
+  plausibly _induced/exposed_ it. This contradicts a simple "contention fixed,
+  one unrelated residual" story: parallelism tuning **moved the flake** from
+  `surface_key` to `surface_start` rather than removing it.
+
+**Honest limits of the residual diagnosis** (the earlier draft overstated this):
+
+- The failing assert is `text.contains(current_dir.to_str().unwrap())` (passes
+  the `"owned"` half) at `lib.rs:29170` — a **bare `assert!` with no
+  `{text:?}`**, and the `_until` 30 s timeout dump (`lib.rs:15357`) did not
+  fire. So **the failing snapshot was never captured**; the screen content is
+  unknown.
+- A geometry/width **wrap** was hypothesized (the test never sets geometry), but
+  a wrap is **parallelism-independent** and so cannot, by itself, explain
+  pass-at-default / fail-at-threads=4; and Exp 832 established this child is
+  single-burst (path + `owned` render together). The real cause is
+  **undiagnosed** and must be observed, not inferred.
+
+So the gate-**runner** rewrite (bare `cargo test` + `bounded-run`, nextest
+on-demand — vetted in design review for speed/15-min fit) is kept, but
+`--test-threads=4` is **not validated as a clean fix**: the suite is not green
+at threads=4, and the thread cap is implicated in the new failure. Recorded
+**Partial**: the suite run is a gate **Fail** (not green) while this
+experiment's _net contribution_ is partial (proved the `surface_key` class is
+parallelism- sensitive; surfaced a thread-cap-correlated failure to diagnose).
+
 ## Conclusion
 
-_(to be written after the run)_
+The honest lesson: parallelism tuning **moves** the timing flake rather than
+removing it — at default the `surface_key` tests lose the race; at threads=4
+`surface_start_uses_copied_config` does. The underlying fragility is per-test
+render/snapshot timing, and a global thread count is not a reliable cure. The
+gate-runner rewrite (fast bare `cargo test` + `bounded-run`, nextest on-demand)
+stands; the thread _count_ is unsettled.
+
+- **Exp 834 (next):** **diagnose before fixing.**
+  `surface_start_uses_copied_config` must be **observed**, not inferred —
+  instrument it to capture the failing snapshot (add `{text:?}` to the assert,
+  or route through `_until`'s dump), reproduce under threads=4, and read what
+  the screen actually contains (wrapped path? truncated? empty? partial `pwd`?).
+  The fix follows the real cause — most likely the same
+  wait-for-full-output-token robustness as Exp 832, applied to the `current_dir`
+  half, **not** a speculative geometry change.
+- **Open gate question for 834+:** whether `--test-threads=4` is the right
+  routine value given it induced this failure, or whether the right answer is to
+  make the handful of fragile round-trip tests robust at _any_ parallelism (the
+  per-test token-wait route) and drop the global cap. 834's diagnosis informs
+  this.
+
+Feature work (URI/regex, remaining `os/`) resumes only once the suite runs green
+across the 3× gate.
+
+## Completion Review
+
+**Reviewer:** `adversarial-reviewer` subagent (Claude Opus, fresh context,
+read-only). Verified the v1/v2/v3 logs, the README gate rewrite, and the
+workflow split, then caught two factual errors in the first result draft.
+
+**Verdict:** CHANGES REQUIRED → corrected. The mechanical claims held (v1 clean;
+v2/v3 each 1 fail on `surface_start_uses_copied_config`; `STATUS=COMPLETED`,
+`CMD=…--test-threads=4`, no timeout; gate rewrite coherent). Two Required
+corrections, applied above:
+
+- **Required — false "failure originator at default" claim.** The reviewer's
+  grep showed `surface_start_uses_copied_config` is `... ok` **15/15** across
+  all Exp 831/832 logs and `FAILED` **only** at threads=4. **Fixed:** the result
+  now states it passes at default and fails only under the cap, and that the cap
+  is **implicated** (plausibly induced/exposed the failure) — parallelism tuning
+  _shifts_ the flake (`surface_key` → `surface_start`), not a clean elimination.
+- **Required — unsupported width-wrap diagnosis.** The failing snapshot was
+  never captured (bare `assert!` with no `{text:?}`, no `_until` timeout dump),
+  and a stable wrap is parallelism-independent so cannot explain pass-at-default
+  / fail-at-threads=4 (and Exp 832 found the child single-burst). **Fixed:**
+  downgraded to "cause undiagnosed, must be observed"; Exp 834 now leads with
+  capturing the snapshot before any fix, and the gate's thread count is flagged
+  as unsettled.
+- **Optional — gate-Fail vs experiment-Partial vocabulary.** **Adopted:** the
+  result states the suite run is a gate `Fail` (not green) while the
+  experiment's net contribution is `Partial`. (Nit re `CMD=` in the plan commit:
+  it is front-loaded instrumentation, acceptable.)
