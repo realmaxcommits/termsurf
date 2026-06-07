@@ -253,8 +253,8 @@ mod tests {
     use crate::renderer::shader::{CellBg, CellTextAtlas, CellTextFlags, CellTextVertex};
     use crate::renderer::size::GridSize;
 
-    fn metal_device() -> Retained<ProtocolObject<dyn MTLDevice>> {
-        MTLCreateSystemDefaultDevice().expect("Roastty requires a Metal device")
+    fn metal_device() -> Option<Retained<ProtocolObject<dyn MTLDevice>>> {
+        MTLCreateSystemDefaultDevice()
     }
 
     fn compositor(
@@ -342,7 +342,9 @@ mod tests {
 
     #[test]
     fn compositor_draws_background_frame_and_reuses_target() {
-        let device = metal_device();
+        let Some(device) = metal_device() else {
+            return;
+        };
         let grayscale = Atlas::new(8, Format::Grayscale);
         let color = Atlas::new(8, Format::Bgra);
         let mut compositor = compositor(device, 2, 2, &grayscale, &color);
@@ -377,7 +379,9 @@ mod tests {
 
     #[test]
     fn compositor_resizes_target_and_draws_cell_background() {
-        let device = metal_device();
+        let Some(device) = metal_device() else {
+            return;
+        };
         let grayscale = Atlas::new(8, Format::Grayscale);
         let color = Atlas::new(8, Format::Bgra);
         let mut compositor = compositor(device, 2, 2, &grayscale, &color);
@@ -405,7 +409,9 @@ mod tests {
 
     #[test]
     fn compositor_draws_foreground_glyph() {
-        let device = metal_device();
+        let Some(device) = metal_device() else {
+            return;
+        };
         let mut grayscale = Atlas::new(8, Format::Grayscale);
         let region = grayscale.reserve(2, 2).expect("reserve glyph region");
         grayscale.set(region, &[255, 255, 255, 255]);

@@ -123,3 +123,71 @@ remaining blockers. The re-review confirmed that contents grid validation,
 uniform grid validation, bridge dimension validation, and
 bridge-before-compositor validation tests resolve the prior findings while
 preserving prepared-input scope and compositor delegation.
+
+## Result
+
+**Result:** Pass
+
+Roastty can now present prepared Metal frames through the frame rebuild path:
+
+- `roastty/src/renderer/frame_rebuild.rs` adds `FrameMetalPresentationInput`,
+  `FrameMetalPresentationValidationError`, `FrameMetalPresentationError`, and
+  `FrameMetalPresentationApplication`.
+- `FrameRebuildPlan::present_metal_frame` validates prepared pixel dimensions,
+  `Contents::size`, and `MetalUniforms.grid_size` before calling the compositor.
+- The driver constructs `MetalFrameInput` and delegates sync, atlas upload,
+  target resize, render-pass submission, command-buffer commit, and IOSurface
+  presentation to `MetalFrameCompositor::draw_frame`.
+- Compositor `contents_scale` errors are propagated after bridge validation
+  passes.
+- Tests cover zero-dimension bridge validation before compositor scale
+  validation, contents-grid mismatch validation before compositor calls,
+  uniform-grid mismatch validation before compositor calls, compositor
+  `InvalidContentsScale` propagation, background-only frame presentation,
+  foreground-count reporting, and target-reallocation reporting.
+- Completion review found that validation-only tests still created a Metal
+  device before reaching bridge validation on hosts without a default Metal
+  device. The validation tests now call the bridge validator directly, and
+  compositor-dependent tests return early when no default Metal device is
+  available.
+
+Verification:
+
+- Inspected `vendor/ghostty/src/renderer/generic.zig` `drawFrame`.
+- Inspected `roastty/src/renderer/frame_rebuild.rs`.
+- Inspected `roastty/src/renderer/metal/compositor.rs`.
+- Inspected `roastty/src/renderer/metal/frame.rs`.
+- `cargo fmt -p roastty` — passed.
+- `cargo test -p roastty renderer::frame_rebuild -- --nocapture` — passed, 72
+  tests.
+- `cargo test -p roastty renderer::metal::compositor -- --nocapture` — passed, 3
+  tests.
+- `prettier --write --prose-wrap always --print-width 80 issues/0801-roastty-libghostty-rewrite/README.md issues/0801-roastty-libghostty-rewrite/822-present-metal-frame.md`
+  — passed.
+- `git diff --check` — passed.
+
+## Conclusion
+
+Experiment 822 connects prepared frame rebuild output to the existing Metal
+frame compositor. The renderer can now validate prepared frame presentation
+state, sync contents and atlases, submit draw calls, and report presentation
+metadata without live render-loop pacing or thread integration. Remaining work
+still includes live terminal-state collection, custom shader enablement/upload,
+pacing, renderer-thread integration, and surface lifecycle integration.
+
+## Completion Review
+
+Codex reviewed the completed implementation and initially found that the
+validation-only tests still created a Metal device before reaching bridge
+validation, so they could fail on hosts without a default Metal device. The
+tests were updated to call the bridge validator directly for zero-dimension,
+contents-grid, and uniform-grid validation, and compositor-dependent tests now
+return cleanly when no default Metal device is available.
+
+Codex re-reviewed the fixed implementation and approved it for the result commit
+with no remaining blockers. The review confirmed that `present_metal_frame`
+validates dimensions, `Contents::size`, and `MetalUniforms.grid_size` before
+constructing `MetalFrameInput` or calling the compositor, that compositor
+`contents_scale` errors still propagate after bridge validation passes, and that
+presentation metadata reports foreground presence and target reallocation
+without duplicating compositor internals.

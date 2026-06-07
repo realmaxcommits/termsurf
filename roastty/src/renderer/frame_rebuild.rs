@@ -10,6 +10,7 @@
 //! row. Actual terminal row formatting, glyph emission, cursor drawing, and
 //! `Contents` mutation remain later integration work.
 
+use crate::font::atlas::Atlas;
 use crate::font::codepoint_resolver::ResolverRenderError;
 use crate::font::run::{shape_row_cached, RunOptions, Wide};
 use crate::font::shared_grid::SharedGrid;
@@ -17,6 +18,9 @@ use crate::renderer::cell::{
     add_cursor, add_preedit, rebuild_bg_row, rebuild_row, Contents, Highlight, SelectionConfig,
 };
 use crate::renderer::cursor::Style as CursorStyle;
+use crate::renderer::metal::compositor::{
+    MetalFrameCompositor, MetalFrameCompositorError, MetalFrameInput, MetalFramePresentation,
+};
 use crate::renderer::metal::shaders::MetalUniforms;
 use crate::renderer::shader::CellTextVertex;
 use crate::renderer::shadertoy::CustomShaderUniforms;
@@ -322,6 +326,58 @@ pub(crate) struct FrameCustomShaderApplication {
     pub(crate) cursor_supplied: bool,
     pub(crate) focus_changed_consumed: bool,
     pub(crate) next_focus_changed: bool,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct FrameMetalPresentationInput<'a> {
+    pub(crate) width: usize,
+    pub(crate) height: usize,
+    pub(crate) contents_scale: f64,
+    pub(crate) uniforms: &'a MetalUniforms,
+    pub(crate) contents: &'a Contents,
+    pub(crate) grayscale_atlas: &'a Atlas,
+    pub(crate) color_atlas: &'a Atlas,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FrameMetalPresentationValidationError {
+    ZeroDimensions {
+        width: usize,
+        height: usize,
+    },
+    ContentsGridMismatch {
+        expected: GridSize,
+        actual: GridSize,
+    },
+    UniformGridMismatch {
+        expected: [u16; 2],
+        actual: [u16; 2],
+    },
+}
+
+#[derive(Debug)]
+pub(crate) enum FrameMetalPresentationError {
+    Validation(FrameMetalPresentationValidationError),
+    Compositor(MetalFrameCompositorError),
+}
+
+impl From<FrameMetalPresentationValidationError> for FrameMetalPresentationError {
+    fn from(error: FrameMetalPresentationValidationError) -> Self {
+        Self::Validation(error)
+    }
+}
+
+impl From<MetalFrameCompositorError> for FrameMetalPresentationError {
+    fn from(error: MetalFrameCompositorError) -> Self {
+        Self::Compositor(error)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct FrameMetalPresentationApplication {
+    pub(crate) presentation: MetalFramePresentation,
+    pub(crate) foreground_drawn: bool,
+    pub(crate) target_reallocated: bool,
 }
 
 impl FrameRebuildPlan {
@@ -637,6 +693,30 @@ impl FrameRebuildPlan {
         })
     }
 
+    pub(crate) fn present_metal_frame(
+        &self,
+        compositor: &mut MetalFrameCompositor,
+        input: FrameMetalPresentationInput<'_>,
+    ) -> Result<FrameMetalPresentationApplication, FrameMetalPresentationError> {
+        self.validate_metal_presentation_input(&input)?;
+
+        let presentation = compositor.draw_frame(MetalFrameInput {
+            width: input.width,
+            height: input.height,
+            contents_scale: input.contents_scale,
+            uniforms: input.uniforms,
+            contents: input.contents,
+            grayscale_atlas: input.grayscale_atlas,
+            color_atlas: input.color_atlas,
+        })?;
+
+        Ok(FrameMetalPresentationApplication {
+            foreground_drawn: presentation.fg_count > 0,
+            target_reallocated: presentation.target_reallocated,
+            presentation,
+        })
+    }
+
     fn validate_application(
         &self,
         contents: &Contents,
@@ -701,6 +781,37 @@ impl FrameRebuildPlan {
                 });
             }
         }
+        Ok(())
+    }
+
+    fn validate_metal_presentation_input(
+        &self,
+        input: &FrameMetalPresentationInput<'_>,
+    ) -> Result<(), FrameMetalPresentationValidationError> {
+        if input.width == 0 || input.height == 0 {
+            return Err(FrameMetalPresentationValidationError::ZeroDimensions {
+                width: input.width,
+                height: input.height,
+            });
+        }
+
+        if input.contents.size() != self.effective_grid {
+            return Err(
+                FrameMetalPresentationValidationError::ContentsGridMismatch {
+                    expected: self.effective_grid,
+                    actual: input.contents.size(),
+                },
+            );
+        }
+
+        let expected = [self.effective_grid.columns, self.effective_grid.rows];
+        if input.uniforms.grid_size != expected {
+            return Err(FrameMetalPresentationValidationError::UniformGridMismatch {
+                expected,
+                actual: input.uniforms.grid_size,
+            });
+        }
+
         Ok(())
     }
 
@@ -921,12 +1032,19 @@ fn plan_preedit_range(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::font::atlas::{Atlas, Format};
     use crate::renderer::cell::{Contents, Key, SelectionColor};
     use crate::renderer::cursor::Style as CursorStyle;
+    use crate::renderer::metal::api::{MetalPixelFormat, MetalResourceOptions, MetalStorageMode};
+    use crate::renderer::metal::compositor::{MetalFrameCompositorOptions, MetalFramePresentation};
+    use crate::renderer::metal::shaders::{ortho2d, MetalUniforms};
     use crate::renderer::shader::{CellBg, CellTextAtlas, CellTextFlags, CellTextVertex};
     use crate::renderer::state::Codepoint;
     use crate::terminal::color::{Rgb, DEFAULT_PALETTE};
     use crate::terminal::style::{Color, Style as TermStyle};
+    use objc2::rc::Retained;
+    use objc2::runtime::ProtocolObject;
+    use objc2_metal::{MTLCreateSystemDefaultDevice, MTLDevice};
 
     fn grid(columns: Unit, rows: Unit) -> GridSize {
         GridSize { columns, rows }
@@ -2832,5 +2950,298 @@ mod tests {
         assert_eq!(uniforms.frame, before.frame);
         assert_eq!(uniforms.current_cursor, before.current_cursor);
         assert_eq!(uniforms.resolution, before.resolution);
+    }
+
+    fn metal_device() -> Option<Retained<ProtocolObject<dyn MTLDevice>>> {
+        MTLCreateSystemDefaultDevice()
+    }
+
+    fn metal_compositor(
+        device: Retained<ProtocolObject<dyn MTLDevice>>,
+        width: usize,
+        height: usize,
+        grayscale: &Atlas,
+        color: &Atlas,
+    ) -> MetalFrameCompositor {
+        MetalFrameCompositor::new(MetalFrameCompositorOptions {
+            device,
+            width,
+            height,
+            pixel_format: MetalPixelFormat::Bgra8Unorm,
+            storage_mode: MetalStorageMode::Shared,
+            resource_options: MetalResourceOptions::image(MetalStorageMode::Shared),
+            grayscale_atlas: grayscale,
+            color_atlas: color,
+        })
+        .expect("compositor should be created")
+    }
+
+    fn metal_uniforms(screen_size: [u16; 2], grid_size: [u16; 2]) -> MetalUniforms {
+        let mut uniforms = MetalUniforms::test_with_grid(
+            screen_size,
+            grid_size,
+            [
+                screen_size[0] as f32 / grid_size[0].max(1) as f32,
+                screen_size[1] as f32 / grid_size[1].max(1) as f32,
+            ],
+            [0.0; 4],
+            0,
+            [0, 0, 0, 0],
+        );
+        uniforms.projection_matrix =
+            ortho2d(0.0, screen_size[0] as f32, screen_size[1] as f32, 0.0);
+        uniforms.cursor_pos = [u16::MAX, u16::MAX];
+        uniforms
+    }
+
+    fn metal_presentation_input<'a>(
+        width: usize,
+        height: usize,
+        contents_scale: f64,
+        uniforms: &'a MetalUniforms,
+        contents: &'a Contents,
+        grayscale: &'a Atlas,
+        color: &'a Atlas,
+    ) -> FrameMetalPresentationInput<'a> {
+        FrameMetalPresentationInput {
+            width,
+            height,
+            contents_scale,
+            uniforms,
+            contents,
+            grayscale_atlas: grayscale,
+            color_atlas: color,
+        }
+    }
+
+    fn assert_validation_error(
+        error: FrameMetalPresentationError,
+        expected: FrameMetalPresentationValidationError,
+    ) {
+        match error {
+            FrameMetalPresentationError::Validation(actual) => assert_eq!(actual, expected),
+            FrameMetalPresentationError::Compositor(other) => {
+                panic!("expected validation error, got compositor error: {other:?}")
+            }
+        }
+    }
+
+    fn assert_compositor_invalid_scale(error: FrameMetalPresentationError) {
+        match error {
+            FrameMetalPresentationError::Compositor(
+                MetalFrameCompositorError::InvalidContentsScale,
+            ) => {}
+            other => panic!("expected invalid contents scale, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn present_metal_frame_rejects_zero_dimensions_before_compositor() {
+        let grayscale = Atlas::new(8, Format::Grayscale);
+        let color = Atlas::new(8, Format::Bgra);
+        let plan = plan_for_grid(grid(1, 1));
+        let contents = contents_with_rows(grid(1, 1));
+        let uniforms = metal_uniforms([2, 2], [1, 1]);
+
+        let err = plan
+            .validate_metal_presentation_input(&metal_presentation_input(
+                0,
+                2,
+                f64::NAN,
+                &uniforms,
+                &contents,
+                &grayscale,
+                &color,
+            ))
+            .expect_err("zero width should reject before compositor scale validation");
+
+        assert_eq!(
+            err,
+            FrameMetalPresentationValidationError::ZeroDimensions {
+                width: 0,
+                height: 2,
+            },
+        );
+    }
+
+    #[test]
+    fn present_metal_frame_rejects_contents_grid_mismatch_before_compositor() {
+        let grayscale = Atlas::new(8, Format::Grayscale);
+        let color = Atlas::new(8, Format::Bgra);
+        let plan = plan_for_grid(grid(1, 1));
+        let contents = contents_with_rows(grid(2, 1));
+        let uniforms = metal_uniforms([2, 2], [1, 1]);
+
+        let err = plan
+            .validate_metal_presentation_input(&metal_presentation_input(
+                2,
+                2,
+                f64::NAN,
+                &uniforms,
+                &contents,
+                &grayscale,
+                &color,
+            ))
+            .expect_err("contents mismatch should reject before compositor scale validation");
+
+        assert_eq!(
+            err,
+            FrameMetalPresentationValidationError::ContentsGridMismatch {
+                expected: grid(1, 1),
+                actual: grid(2, 1),
+            },
+        );
+    }
+
+    #[test]
+    fn present_metal_frame_rejects_uniform_grid_mismatch_before_compositor() {
+        let grayscale = Atlas::new(8, Format::Grayscale);
+        let color = Atlas::new(8, Format::Bgra);
+        let plan = plan_for_grid(grid(1, 1));
+        let contents = contents_with_rows(grid(1, 1));
+        let uniforms = metal_uniforms([2, 2], [2, 1]);
+
+        let err = plan
+            .validate_metal_presentation_input(&metal_presentation_input(
+                2,
+                2,
+                f64::NAN,
+                &uniforms,
+                &contents,
+                &grayscale,
+                &color,
+            ))
+            .expect_err("uniform mismatch should reject before compositor scale validation");
+
+        assert_eq!(
+            err,
+            FrameMetalPresentationValidationError::UniformGridMismatch {
+                expected: [1, 1],
+                actual: [2, 1],
+            },
+        );
+    }
+
+    #[test]
+    fn present_metal_frame_propagates_invalid_contents_scale_from_compositor() {
+        let Some(device) = metal_device() else {
+            return;
+        };
+        let grayscale = Atlas::new(8, Format::Grayscale);
+        let color = Atlas::new(8, Format::Bgra);
+        let mut compositor = metal_compositor(device, 2, 2, &grayscale, &color);
+        let plan = plan_for_grid(grid(1, 1));
+        let contents = contents_with_rows(grid(1, 1));
+        let uniforms = metal_uniforms([2, 2], [1, 1]);
+
+        let err = plan
+            .present_metal_frame(
+                &mut compositor,
+                metal_presentation_input(2, 2, 0.0, &uniforms, &contents, &grayscale, &color),
+            )
+            .expect_err("invalid scale should come from compositor");
+
+        assert_compositor_invalid_scale(err);
+    }
+
+    #[test]
+    fn present_metal_frame_presents_background_only_frame() {
+        let Some(device) = metal_device() else {
+            return;
+        };
+        let grayscale = Atlas::new(8, Format::Grayscale);
+        let color = Atlas::new(8, Format::Bgra);
+        let mut compositor = metal_compositor(device, 2, 2, &grayscale, &color);
+        let plan = plan_for_grid(grid(1, 1));
+        let mut contents = Contents::default();
+        contents.resize(grid(1, 1));
+        *contents.bg_cell_mut(0, 0) = CellBg([0, 255, 0, 255]);
+        let uniforms = metal_uniforms([2, 2], [1, 1]);
+
+        let applied = plan
+            .present_metal_frame(
+                &mut compositor,
+                metal_presentation_input(2, 2, 1.0, &uniforms, &contents, &grayscale, &color),
+            )
+            .expect("frame should present");
+
+        assert_eq!(
+            applied.presentation,
+            MetalFramePresentation {
+                fg_count: 0,
+                mode: applied.presentation.mode,
+                width: 2,
+                height: 2,
+                target_reallocated: false,
+            }
+        );
+        assert!(!applied.foreground_drawn);
+        assert!(!applied.target_reallocated);
+    }
+
+    #[test]
+    fn present_metal_frame_reports_foreground_count() {
+        let Some(device) = metal_device() else {
+            return;
+        };
+        let mut grayscale = Atlas::new(8, Format::Grayscale);
+        let region = grayscale.reserve(2, 2).expect("reserve glyph region");
+        grayscale.set(region, &[255, 255, 255, 255]);
+        let color = Atlas::new(8, Format::Bgra);
+        let mut compositor = metal_compositor(device, 2, 2, &grayscale, &color);
+        let plan = plan_for_grid(grid(1, 1));
+        let mut contents = Contents::default();
+        contents.resize(grid(1, 1));
+        contents.add(
+            Key::Text,
+            CellTextVertex {
+                glyph_pos: [region.x, region.y],
+                glyph_size: [2, 2],
+                bearings: [0, 2],
+                grid_pos: [0, 0],
+                color: [255, 0, 0, 255],
+                atlas: CellTextAtlas::Grayscale,
+                flags: CellTextFlags::new(false, false),
+                _padding: [0, 0],
+            },
+        );
+        let uniforms = metal_uniforms([2, 2], [1, 1]);
+
+        let applied = plan
+            .present_metal_frame(
+                &mut compositor,
+                metal_presentation_input(2, 2, 1.0, &uniforms, &contents, &grayscale, &color),
+            )
+            .expect("frame should present");
+
+        assert_eq!(applied.presentation.fg_count, 1);
+        assert!(applied.foreground_drawn);
+        assert!(!applied.target_reallocated);
+    }
+
+    #[test]
+    fn present_metal_frame_reports_target_reallocation() {
+        let Some(device) = metal_device() else {
+            return;
+        };
+        let grayscale = Atlas::new(8, Format::Grayscale);
+        let color = Atlas::new(8, Format::Bgra);
+        let mut compositor = metal_compositor(device, 2, 2, &grayscale, &color);
+        let plan = plan_for_grid(grid(1, 1));
+        let mut contents = Contents::default();
+        contents.resize(grid(1, 1));
+        let uniforms = metal_uniforms([4, 4], [1, 1]);
+
+        let applied = plan
+            .present_metal_frame(
+                &mut compositor,
+                metal_presentation_input(4, 4, 1.0, &uniforms, &contents, &grayscale, &color),
+            )
+            .expect("resized frame should present");
+
+        assert_eq!(applied.presentation.width, 4);
+        assert_eq!(applied.presentation.height, 4);
+        assert!(applied.presentation.target_reallocated);
+        assert!(applied.target_reallocated);
     }
 }

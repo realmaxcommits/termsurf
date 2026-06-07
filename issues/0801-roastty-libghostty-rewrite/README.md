@@ -243,8 +243,9 @@ Experiment 246).
       prepared block cursor uniform inputs can clear/apply Metal cursor
       uniforms; prepared custom shader per-frame inputs can update time,
       resolution, cursor animation, and focus fields; live terminal-state
-      collection, custom shader enablement/upload, glyph upload/draw calls,
-      pacing, and live renderer integration remain missing (critical)
+      collection, custom shader enablement/upload, pacing, and live renderer
+      integration remain missing; prepared Metal frame presentation can sync
+      contents/atlases and submit draw calls through the compositor (critical)
 - [ ] z2d debug `Overlay`, link highlighting, render `Thread`, custom shaders —
       partial: custom-shader uniforms, target enum, and per-frame/state update
       helpers exist; shader file loading, debug overlay, renderer thread, and
@@ -2254,8 +2255,8 @@ are past the correctness-critical foundation.
   **Pass** · Codex/Codex/Codex
 - [Experiment 821: Apply Custom Shader Frame Updates](821-apply-custom-shader-frame.md)
   — **Pass** · Codex/Codex/Codex
-- [Experiment 822: Present Metal Frame](822-present-metal-frame.md) —
-  **Designed** · Codex/Codex
+- [Experiment 822: Present Metal Frame](822-present-metal-frame.md) — **Pass** ·
+  Codex/Codex/Codex
 
 ## Non-Goals
 
