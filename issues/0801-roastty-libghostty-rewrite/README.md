@@ -352,7 +352,10 @@ Experiment 246).
       tables; widths currently implicit)
 - [x] Datastruct: `OffsetHashMap`, `PageList`, `BitmapAllocator`,
       `RefCountedSet` (in `terminal/`)
-- [ ] Datastruct: `CircBuf`, `IntrusiveLinkedList`, other utilities — as needed
+- [x] Datastruct: `CircBuf`, `IntrusiveLinkedList`, other utilities —
+      `circ_buf`, `intrusive_linked_list`, `array_list_collection`,
+      `cache_table`, `lru`, and `segmented_pool` terminal utility collections
+      exist with focused tests; future incidental helpers remain as-needed
 - [ ] `cli/` (+list-\* tools), `inspector/` (imgui), `crash/` (sentry),
       `terminfo/`, `synthetic/`
 - [ ] Swift macOS frontend integration
@@ -2112,6 +2115,8 @@ are past the correctness-critical foundation.
 - [Experiment 790: Input Protocol Checklist Sync](790-input-protocol-checklist-sync.md)
   — **Partial** (surface mouse reporting filters hung during verification) ·
   Codex/Codex/Codex
+- [Experiment 791: Datastruct Utilities Checklist Sync](791-datastruct-utilities-checklist-sync.md)
+  — **Designed**
 
 ## Non-Goals
 
