@@ -2186,6 +2186,8 @@ are past the correctness-critical foundation.
   — **Pass** · Codex/Codex/Codex
 - [Experiment 801: Keymap Checklist Sync](801-keymap-checklist-sync.md) —
   **Pass** · Codex/Codex/Codex
+- [Experiment 802: zf Fuzzy Foundation](802-zf-fuzzy-foundation.md) —
+  **Designed**
 
 ## Non-Goals
 
