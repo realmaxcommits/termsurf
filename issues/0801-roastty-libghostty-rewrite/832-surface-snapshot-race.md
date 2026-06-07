@@ -86,15 +86,16 @@ sites become token-waits.
      reaches `dd|od`, so the awaited token is **`"18"`**; the `||` assert is
      kept (the `^X` arm is dead, so `_until("18")` cannot be defeated by it).
 
-   **Left unchanged (not a race):** `lib.rs:21419` asserts
-   **`!contains("ready")`** after a `reset` binding action. Design review
-   established this is **deterministic, not a first-render race**: the `reset`
-   action runs `worker.with_termio_mut(|t| t.terminal_mut().reset())`
-   synchronously on the caller (`termio.rs:297`), so the grid is cleared and
-   `needs_render` set _before_ the action returns; the snapshot is stable and
-   the negative assert is sound. `_until` cannot wait for an _absent_ token, and
-   no positive marker exists post-reset, so this site keeps
-   `surface_snapshot_text`.
+   **Two negative-assert sites are left unchanged** — both correctly keep
+   `surface_snapshot_text`, since `_until` cannot wait for an _absent_ token:
+   - the `!contains("byte:0c")` form-feed test; and
+   - `lib.rs:21419`'s `!contains("ready")` after a `reset` binding action.
+     Design review established this one is **deterministic, not a first-render
+     race**: `reset` runs `worker.with_termio_mut(|t| t.terminal_mut().reset())`
+     synchronously on the caller (`termio.rs:297`), so the grid is cleared and
+     `needs_render` set _before_ the action returns; the snapshot is stable and
+     the negative assert is sound. No positive marker exists post-reset, so this
+     site stays bare.
 
 No production code changes; all edits are in `#[cfg(test)]` test bodies and
 helpers. The few remaining `surface_snapshot_text` callers that assert on
@@ -149,6 +150,91 @@ token as KEY" rule (all 10 `let text =` sites are single-burst children).
   relies on all asserted tokens sharing one output burst (true for all 10
   sites); the result must flag any multi-burst exception.
 
+## Result
+
+**Result:** Partial
+
+The 116-site conversion landed (97 simple + 10 `let text =` + 9 bare round-trip
+→ token-waits; the dead `surface_snapshot_text_after_start` helper removed; 2
+negatives left unchanged), **and** `surface_snapshot_text_until` was changed
+from a 300-iteration cap to a **30 s wall-clock deadline** (`Instant`-based)
+after the iteration cap proved too brittle under contention.
+Build/fmt/no-ghostty/diff clean; the 5× verification ran under the no-progress
+watchdog (durations 86–356 s/run, no hang).
+
+**The broad first-render race is fixed:** the ~106 round-trip tests that were
+racing now pass across the watchdog-bounded 5× runs. But the suite is **not yet
+clean** — 3 residual failures, none of which the snapshot-race conversion
+addresses:
+
+| residual failure                                                        | runs | nature                 |
+| ----------------------------------------------------------------------- | ---: | ---------------------- |
+| `surface_key_default_natural_text_editing_writes_legacy_bytes`          |  4/5 | deeper bug (below)     |
+| `surface_key_default_performable_action_falls_through_when_unperformed` |  4/5 | deeper bug (below)     |
+| `surface_mouse_button_mode_drag_motion_uses_pressed_button`             | ~2/5 | non-snapshot flake     |
+| `config::tests::config_path_cli_expands_…`                              | ~1/5 | non-PTY env/path flake |
+
+### Why the 2 `surface_key` tests are out of scope (a different bug)
+
+These are **not** a first-render race, so neither the token-wait nor the 30 s
+deadline can fix them:
+
+- They pass **3/3 in isolation** (~0.9 s) but fail under full-suite load — and
+  they failed **before** this experiment too (5/5 in Exp 831), so the conversion
+  did not change their behavior.
+- They are in fact **two distinct sub-bugs** (result review):
+  - `natural_text_editing` (`dd bs=1 count=1 | od -An -tx1`, asserts `^E`):
+    under load the failing snapshot is literally the **od hex**
+    `"           05 …"`, so the screen shows `05` not `^E` — a key-encoding /
+    echo interaction under parallelism (the byte resolves/renders differently
+    than in isolation).
+  - `performable_action` (`dd bs=1 count=8 | od …`, asserts `^[[1;2D`): under
+    load the failing snapshot is **empty** (all newlines) — `dd count=8` never
+    accumulates 8 bytes so `od` never flushes; a byte-starvation mode, not
+    od-hex.
+- Either way, neither is a first-render snapshot race (the needle equals the
+  assert, and conversion neither caused nor could fix it). Pinning them needs a
+  dedicated experiment per mechanism (capture the rendered screen under load vs
+  isolation; bisect the perturbing concurrent test).
+
 ## Conclusion
 
-_(to be written after the run)_
+This experiment did its job for the **first-render snapshot race** — ~106 tests
+that intermittently snapshotted before the child's output now wait for their
+token and pass. The conversion + wall-clock deadline are kept.
+
+But "suite clean" is not reached, so feature work stays paused. The residual
+failures are **three distinct, separately-scoped** issues, to be fixed in order:
+
+- **Exp 833:** the 2 `surface_key` deeper bug (isolation-pass / load-fail;
+  od-hex vs control-char assert) — a key-encoding /
+  global-state-under-parallelism investigation, the highest-value next target
+  (4/5 failures).
+- **Exp 834:** `surface_mouse_button_mode_drag_motion_uses_pressed_button` (a
+  non-snapshot flake under load).
+- **Exp 835:** `config::tests::config_path_cli_*` (a non-PTY env/path flake).
+
+(Numbering note: the earlier 833/834 placeholders in the Exp 831/832 text are
+superseded by this ordering, decided from the actual 5× failure data.)
+
+## Completion Review
+
+**Reviewer:** `adversarial-reviewer` subagent (Claude Opus, fresh context,
+read-only). Verified the diff is exactly the intended conversions + helper +
+deadline + dead-helper removal (no stray production change), the needles match
+their asserts, and across all 10 verify runs the only failures are the 4 named
+(no converted test regressed).
+
+**Verdict:** APPROVED for a Partial — verdict, diagnosis, and next-steps
+accurate and honest. Three Optional/Nit findings, adopted:
+
+- **Two distinct surface_key mechanisms** (not one): `natural_text` shows od-hex
+  `05`; `performable_action` shows an **empty** snapshot (`dd count=8`
+  byte-starvation). Split into the Exp 833 hypothesis above.
+- **The 30 s deadline, not the watchdog, bounds these failures** — the parallel
+  suite keeps emitting `... ok` lines, so the log is never idle 90 s; a
+  genuinely stuck token burns the full 30 s (this inflated failing runs to
+  351–356 s, as recorded). The watchdog still backstops a _true_ whole-suite
+  hang.
+- **Both left-unchanged negatives named** (the `reset` `!ready` site and the
+  form-feed `!byte:0c` site).

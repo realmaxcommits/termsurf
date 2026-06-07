@@ -14512,7 +14512,7 @@ mod tests {
     use std::sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering};
     use std::sync::Mutex;
     use std::thread;
-    use std::time::Duration;
+    use std::time::{Duration, Instant};
 
     static ENV_LOCK: Mutex<()> = Mutex::new(());
     static CLI_ARGS_LOCK: Mutex<()> = Mutex::new(());
@@ -15302,9 +15302,13 @@ mod tests {
         out
     }
 
-    fn surface_snapshot_text_after_start(app: RoasttyApp, surface: RoasttySurface) -> String {
+    fn surface_snapshot_text_after_start_until(
+        app: RoasttyApp,
+        surface: RoasttySurface,
+        needle: &str,
+    ) -> String {
         assert_eq!(roastty_surface_start(surface), ROASTTY_SUCCESS);
-        surface_snapshot_text(app, surface)
+        surface_snapshot_text_until(app, surface, needle)
     }
 
     fn surface_snapshot_text(app: RoasttyApp, surface: RoasttySurface) -> String {
@@ -15327,8 +15331,14 @@ mod tests {
         surface: RoasttySurface,
         needle: &str,
     ) -> String {
+        // Poll on a wall-clock deadline, not a fixed iteration count: under
+        // full-suite CPU contention the child's worker thread can be starved well
+        // past a few hundred 10ms ticks, so a 30s real-time budget (the watchdog's
+        // 90s idle window backstops a true hang) lets the round-trip output arrive
+        // even when the suite is saturated (Issue 801, Exp 832).
         let mut latest = String::new();
-        for _ in 0..300 {
+        let deadline = Instant::now() + Duration::from_secs(30);
+        while Instant::now() < deadline {
             roastty_app_tick(app);
             if roastty_surface_needs_render(surface) {
                 let state = new_render_state();
@@ -15344,7 +15354,7 @@ mod tests {
             }
             thread::sleep(Duration::from_millis(10));
         }
-        panic!("condition not met, latest snapshot: {latest:?}");
+        panic!("condition not met after 30s, latest snapshot: {latest:?}");
     }
 
     #[test]
@@ -16310,7 +16320,7 @@ mod tests {
         );
         assert_eq!(roastty_surface_start(surface), ROASTTY_SUCCESS);
         assert!(roastty_surface_key(surface, event));
-        let text = surface_snapshot_text(app, surface);
+        let text = surface_snapshot_text_until(app, surface, "^[[1;2D");
         assert!(
             text.contains("^[[1;2D") || text.contains("^[[D"),
             "{text:?}"
@@ -16354,7 +16364,7 @@ mod tests {
         );
         assert_eq!(roastty_surface_start(surface), ROASTTY_SUCCESS);
         assert!(roastty_surface_key(surface, event));
-        let text = surface_snapshot_text(app, surface);
+        let text = surface_snapshot_text_until(app, surface, "^E");
         assert!(text.contains("^E"), "{text:?}");
 
         roastty_key_event_free(event);
@@ -16422,7 +16432,7 @@ mod tests {
                 0,
             );
             assert!(roastty_surface_key(surface, event));
-            let text = surface_snapshot_text(app, surface);
+            let text = surface_snapshot_text_until(app, surface, "hello");
             assert!(text.contains("hello"), "{text:?}");
 
             roastty_key_event_free(event);
@@ -16507,7 +16517,7 @@ mod tests {
             );
             assert!(roastty_surface_key(surface, event));
             assert!(clipboard_write_records().is_empty());
-            let text = surface_snapshot_text(app, surface);
+            let text = surface_snapshot_text_until(app, surface, "custom");
             assert!(text.contains("custom"), "{text:?}");
 
             roastty_key_event_free(event);
@@ -16643,7 +16653,7 @@ mod tests {
                     0,
                 );
                 assert!(roastty_surface_key(surface, event));
-                let text = surface_snapshot_text(app, surface);
+                let text = surface_snapshot_text_until(app, surface, "18");
                 assert!(text.contains("^X") || text.contains("18"), "{text:?}");
 
                 set_key_event(
@@ -20300,7 +20310,7 @@ mod tests {
         let running_command = CString::new("printf ready; sleep 5").unwrap();
         running_config.command = running_command.as_ptr();
         let running = new_test_surface_with_config(app, &running_config);
-        assert!(surface_snapshot_text_after_start(app, running).contains("ready"));
+        surface_snapshot_text_after_start_until(app, running, "ready");
         assert!(roastty_surface_needs_confirm_quit(running));
 
         let mut prompt_config = roastty_surface_config_new();
@@ -20308,7 +20318,7 @@ mod tests {
             CString::new("printf '\\033]133;A\\007$ \\033]133;B\\007'; sleep 5").unwrap();
         prompt_config.command = prompt_command.as_ptr();
         let prompt = new_test_surface_with_config(app, &prompt_config);
-        assert!(surface_snapshot_text_after_start(app, prompt).contains("$ "));
+        surface_snapshot_text_after_start_until(app, prompt, "$ ");
         assert!(!roastty_surface_needs_confirm_quit(prompt));
 
         roastty_surface_free(prompt);
@@ -21161,9 +21171,9 @@ mod tests {
         config.command = command.as_ptr();
         let surface = new_test_surface_with_config(app, &config);
 
-        assert!(surface_snapshot_text_after_start(app, surface).contains("ready"));
+        surface_snapshot_text_after_start_until(app, surface, "ready");
         assert!(binding_action(surface, "text:\\x15"));
-        let text = surface_snapshot_text(app, surface);
+        let text = surface_snapshot_text_until(app, surface, "15");
 
         assert!(text.contains("15"));
         roastty_surface_free(surface);
@@ -21182,9 +21192,9 @@ mod tests {
         config.command = command.as_ptr();
         let surface = new_test_surface_with_config(app, &config);
 
-        assert!(surface_snapshot_text_after_start(app, surface).contains("ready"));
+        surface_snapshot_text_after_start_until(app, surface, "ready");
         assert!(binding_action(surface, "text:\\q"));
-        let text = surface_snapshot_text(app, surface);
+        let text = surface_snapshot_text_until(app, surface, "byte:");
 
         assert!(text.contains("byte:"));
         assert!(!text.contains("byte:20"));
@@ -21218,9 +21228,9 @@ mod tests {
         config.command = command.as_ptr();
         let surface = new_test_surface_with_config(app, &config);
 
-        assert!(surface_snapshot_text_after_start(app, surface).contains("ready"));
+        surface_snapshot_text_after_start_until(app, surface, "ready");
         assert!(binding_action_bytes(surface, action));
-        let text = surface_snapshot_text(app, surface);
+        let text = surface_snapshot_text_until(app, surface, expected_hex);
 
         assert!(text.contains(expected_hex), "{text:?}");
         roastty_surface_free(surface);
@@ -21414,7 +21424,7 @@ mod tests {
         config.command = command.as_ptr();
         let surface = new_test_surface_with_config(app, &config);
 
-        assert!(surface_snapshot_text_after_start(app, surface).contains("ready"));
+        surface_snapshot_text_after_start_until(app, surface, "ready");
         assert!(binding_action(surface, "reset"));
         let text = surface_snapshot_text(app, surface);
 
@@ -21432,7 +21442,7 @@ mod tests {
         config.command = command.as_ptr();
         let surface = new_test_surface_with_config(app, &config);
 
-        assert!(surface_snapshot_text_after_start(app, surface).contains("ready"));
+        surface_snapshot_text_after_start_until(app, surface, "ready");
         {
             let surface_ref = surface_from_handle(surface).unwrap();
             let worker = surface_ref.termio_worker.as_ref().unwrap();
@@ -21482,11 +21492,11 @@ mod tests {
         let surface = new_test_surface_with_config(app, &config);
         set_surface_test_geometry(surface, 10, 3, 10, 20);
 
-        assert!(surface_snapshot_text_after_start(app, surface).contains("current"));
+        surface_snapshot_text_after_start_until(app, surface, "current");
         assert!(surface_worker_active_viewport_top_left_screen(surface).y > 0);
 
         assert!(binding_action(surface, "clear_screen"));
-        let text = surface_snapshot_text(app, surface);
+        let text = surface_snapshot_text_until(app, surface, "current");
         assert!(text.contains("current"), "{text:?}");
         assert!(!text.contains("l0"), "{text:?}");
         assert!(!text.contains("l1"), "{text:?}");
@@ -21510,7 +21520,7 @@ mod tests {
         let surface = new_test_surface_with_config(app, &config);
         set_surface_test_geometry(surface, 10, 3, 10, 20);
 
-        assert!(surface_snapshot_text_after_start(app, surface).contains("current"));
+        surface_snapshot_text_after_start_until(app, surface, "current");
         let selection = surface_worker_selection(surface, (0, 0), (1, 0));
         set_surface_worker_active_selection(surface, Some(selection));
         assert!(roastty_surface_has_selection(surface));
@@ -21572,7 +21582,7 @@ mod tests {
         let surface = new_test_surface_with_config(app, &config);
         set_surface_test_geometry(surface, 20, 3, 10, 20);
 
-        assert!(surface_snapshot_text_after_start(app, surface).contains("$"));
+        surface_snapshot_text_after_start_until(app, surface, "$");
         assert!(binding_action(surface, "clear_screen"));
         let text = surface_snapshot_text_until(app, surface, "byte:0c");
         assert!(!text.contains("$"), "{text:?}");
@@ -21593,7 +21603,7 @@ mod tests {
         let surface = new_test_surface_with_config(app, &config);
         set_surface_test_geometry(surface, 20, 3, 10, 20);
 
-        assert!(surface_snapshot_text_after_start(app, surface).contains("$"));
+        surface_snapshot_text_after_start_until(app, surface, "$");
         assert!(binding_action(surface, "toggle_readonly"));
         assert!(binding_action(surface, "clear_screen"));
         assert!(!surface_snapshot_text(app, surface).contains("byte:0c"));
@@ -21645,7 +21655,7 @@ mod tests {
         config.command = command.as_ptr();
         let surface = new_test_surface_with_config(app, &config);
         set_surface_test_geometry(surface, 10, 3, 10, 20);
-        assert!(surface_snapshot_text_after_start(app, surface).contains("ready"));
+        surface_snapshot_text_after_start_until(app, surface, "ready");
         {
             let surface_ref = surface_from_handle(surface).unwrap();
             let worker = surface_ref.termio_worker.as_ref().unwrap();
@@ -21672,7 +21682,7 @@ mod tests {
         config.command = command.as_ptr();
         let surface = new_test_surface_with_config(app, &config);
         set_surface_test_geometry(surface, 10, 3, 10, 20);
-        assert!(surface_snapshot_text_after_start(app, surface).contains("ready"));
+        surface_snapshot_text_after_start_until(app, surface, "ready");
         let expected = {
             let surface_ref = surface_from_handle(surface).unwrap();
             let worker = surface_ref.termio_worker.as_ref().unwrap();
@@ -21732,7 +21742,7 @@ mod tests {
         let surface = new_test_surface_with_config(app, &config);
         set_surface_test_geometry(surface, 10, 3, 10, 20);
 
-        assert!(surface_snapshot_text_after_start(app, surface).contains("l2"));
+        surface_snapshot_text_after_start_until(app, surface, "l2");
         assert!(!roastty_surface_needs_render(surface));
         assert!(!binding_action(surface, "adjust_selection:right"));
         assert_eq!(surface_worker_active_selection(surface), None);
@@ -21772,7 +21782,7 @@ mod tests {
         config.command = command.as_ptr();
         let surface = new_test_surface_with_config(app, &config);
         set_surface_test_geometry(surface, 10, 3, 10, 20);
-        assert!(surface_snapshot_text_after_start(app, surface).contains("ready"));
+        surface_snapshot_text_after_start_until(app, surface, "ready");
         {
             let surface_ref = surface_from_handle(surface).unwrap();
             let worker = surface_ref.termio_worker.as_ref().unwrap();
@@ -21821,7 +21831,7 @@ mod tests {
         config.command = command.as_ptr();
         let surface = new_test_surface_with_config(app, &config);
         set_surface_test_geometry(surface, 10, 3, 10, 20);
-        assert!(surface_snapshot_text_after_start(app, surface).contains("ready"));
+        surface_snapshot_text_after_start_until(app, surface, "ready");
         {
             let surface_ref = surface_from_handle(surface).unwrap();
             let worker = surface_ref.termio_worker.as_ref().unwrap();
@@ -21852,7 +21862,7 @@ mod tests {
         config.command = command.as_ptr();
         let surface = new_test_surface_with_config(app, &config);
         set_surface_test_geometry(surface, 10, 3, 10, 20);
-        assert!(surface_snapshot_text_after_start(app, surface).contains("l7"));
+        surface_snapshot_text_after_start_until(app, surface, "l7");
 
         assert!(binding_action(surface, "scroll_to_top"));
         set_surface_worker_active_selection(
@@ -21921,7 +21931,7 @@ mod tests {
         config.command = command.as_ptr();
         let surface = new_test_surface_with_config(app, &config);
         set_surface_test_geometry(surface, 10, 3, 10, 20);
-        assert!(surface_snapshot_text_after_start(app, surface).contains("l5"));
+        surface_snapshot_text_after_start_until(app, surface, "l5");
 
         assert!(binding_action(surface, "scroll_to_row:1"));
         let top = surface_worker_viewport_top_left_screen(surface);
@@ -21983,7 +21993,7 @@ mod tests {
         config.command = command.as_ptr();
         let surface = new_test_surface_with_config(app, &config);
         set_surface_test_geometry(surface, 10, 3, 10, 20);
-        assert!(surface_snapshot_text_after_start(app, surface).contains("ready"));
+        surface_snapshot_text_after_start_until(app, surface, "ready");
 
         assert!(!binding_action(surface, "copy_to_clipboard"));
         assert!(clipboard_write_records().is_empty());
@@ -21996,7 +22006,7 @@ mod tests {
         config.command = command.as_ptr();
         let surface = new_test_surface_with_config(app, &config);
         set_surface_test_geometry(surface, 10, 3, 10, 20);
-        assert!(surface_snapshot_text_after_start(app, surface).contains("ready"));
+        surface_snapshot_text_after_start_until(app, surface, "ready");
         let selection = surface_worker_selection(surface, (0, 0), (4, 0));
         set_surface_worker_active_selection(surface, Some(selection));
 
@@ -22016,7 +22026,7 @@ mod tests {
         config.command = command.as_ptr();
         let surface = new_test_surface_with_config(app, &config);
         set_surface_test_geometry(surface, 20, 3, 10, 20);
-        assert!(surface_snapshot_text_after_start(app, surface).contains("ready"));
+        surface_snapshot_text_after_start_until(app, surface, "ready");
         {
             let surface_ref = surface_from_handle(surface).unwrap();
             let worker = surface_ref.termio_worker.as_ref().unwrap();
@@ -22124,7 +22134,7 @@ mod tests {
         config.command = command.as_ptr();
         let surface = new_test_surface_with_config(app, &config);
         set_surface_test_geometry(surface, 10, 3, 10, 20);
-        assert!(surface_snapshot_text_after_start(app, surface).contains("ready"));
+        surface_snapshot_text_after_start_until(app, surface, "ready");
         write_surface_worker_osc8_link(surface);
 
         assert!(!binding_action(surface, "copy_url_to_clipboard"));
@@ -22146,7 +22156,7 @@ mod tests {
         config.command = command.as_ptr();
         let surface = new_test_surface_with_config(app, &config);
         set_surface_test_geometry(surface, 10, 3, 10, 20);
-        assert!(surface_snapshot_text_after_start(app, surface).contains("ready"));
+        surface_snapshot_text_after_start_until(app, surface, "ready");
         write_surface_worker_osc8_link(surface);
         roastty_surface_mouse_pos(surface, 5.0, 5.0, ROASTTY_MODS_NONE);
 
@@ -22166,7 +22176,7 @@ mod tests {
         config.command = command.as_ptr();
         let surface = new_test_surface_with_config(app, &config);
         set_surface_test_geometry(surface, 10, 3, 10, 20);
-        assert!(surface_snapshot_text_after_start(app, surface).contains("ready"));
+        surface_snapshot_text_after_start_until(app, surface, "ready");
         write_surface_worker_osc8_link(surface);
 
         for x in [5.0, 15.0, 25.0, 35.0] {
@@ -22252,7 +22262,7 @@ mod tests {
         config.command = command.as_ptr();
         let surface = new_test_surface_with_config(app, &config);
         set_surface_test_geometry(surface, 12, 3, 10, 20);
-        assert!(surface_snapshot_text_after_start(app, surface).contains("ready"));
+        surface_snapshot_text_after_start_until(app, surface, "ready");
 
         assert!(!binding_action(surface, "write_selection_file:copy"));
         assert!(!binding_action(surface, "write_selection_file:paste"));
@@ -22267,7 +22277,7 @@ mod tests {
         config.command = command.as_ptr();
         let surface = new_test_surface_with_config(app, &config);
         set_surface_test_geometry(surface, 12, 3, 10, 20);
-        assert!(surface_snapshot_text_after_start(app, surface).contains("ready"));
+        surface_snapshot_text_after_start_until(app, surface, "ready");
         let selection = surface_worker_selection(surface, (0, 0), (4, 0));
         set_surface_worker_active_selection(surface, Some(selection));
 
@@ -22303,7 +22313,7 @@ mod tests {
         config.command = command.as_ptr();
         let surface = new_test_surface_with_config(app, &config);
         set_surface_test_geometry(surface, 12, 3, 10, 20);
-        assert!(surface_snapshot_text_after_start(app, surface).contains("ready"));
+        surface_snapshot_text_after_start_until(app, surface, "ready");
 
         reset_clipboard_write_records();
         assert!(!binding_action(surface, "write_screen_file:copy"));
@@ -22343,7 +22353,7 @@ mod tests {
         config.command = command.as_ptr();
         let surface = new_test_surface_with_config(app, &config);
         set_surface_test_geometry(surface, 12, 3, 10, 20);
-        assert!(surface_snapshot_text_after_start(app, surface).contains("ready"));
+        surface_snapshot_text_after_start_until(app, surface, "ready");
         {
             let surface_ref = surface_from_handle(surface).unwrap();
             let worker = surface_ref.termio_worker.as_ref().unwrap();
@@ -22366,7 +22376,7 @@ mod tests {
         config.command = command.as_ptr();
         let surface = new_test_surface_with_config(app, &config);
         set_surface_test_geometry(surface, 12, 3, 10, 20);
-        assert!(surface_snapshot_text_after_start(app, surface).contains("ready"));
+        surface_snapshot_text_after_start_until(app, surface, "ready");
         {
             let surface_ref = surface_from_handle(surface).unwrap();
             let worker = surface_ref.termio_worker.as_ref().unwrap();
@@ -22396,7 +22406,7 @@ mod tests {
         config.command = command.as_ptr();
         let surface = new_test_surface_with_config(app, &config);
         set_surface_test_geometry(surface, 12, 3, 10, 20);
-        assert!(surface_snapshot_text_after_start(app, surface).contains("ready"));
+        surface_snapshot_text_after_start_until(app, surface, "ready");
         {
             let surface_ref = surface_from_handle(surface).unwrap();
             let worker = surface_ref.termio_worker.as_ref().unwrap();
@@ -22459,7 +22469,7 @@ mod tests {
         config.command = command.as_ptr();
         let surface = new_test_surface_with_config(app, &config);
         set_surface_test_geometry(surface, 12, 3, 10, 20);
-        assert!(surface_snapshot_text_after_start(app, surface).contains("ready"));
+        surface_snapshot_text_after_start_until(app, surface, "ready");
         {
             let surface_ref = surface_from_handle(surface).unwrap();
             let worker = surface_ref.termio_worker.as_ref().unwrap();
@@ -22504,7 +22514,7 @@ mod tests {
         config.command = command.as_ptr();
         let surface = new_test_surface_with_config(app, &config);
         set_surface_test_geometry(surface, 12, 3, 10, 20);
-        assert!(surface_snapshot_text_after_start(app, surface).contains("ready"));
+        surface_snapshot_text_after_start_until(app, surface, "ready");
         {
             let surface_ref = surface_from_handle(surface).unwrap();
             let worker = surface_ref.termio_worker.as_ref().unwrap();
@@ -22548,7 +22558,7 @@ mod tests {
         config.command = command.as_ptr();
         let surface = new_test_surface_with_config(app, &config);
         set_surface_test_geometry(surface, 20, 3, 10, 20);
-        assert!(surface_snapshot_text_after_start(app, surface).contains("ready"));
+        surface_snapshot_text_after_start_until(app, surface, "ready");
         {
             let surface_ref = surface_from_handle(surface).unwrap();
             let worker = surface_ref.termio_worker.as_ref().unwrap();
@@ -22617,7 +22627,7 @@ mod tests {
         config.command = command.as_ptr();
         let surface = new_test_surface_with_config(app, &config);
         set_surface_test_geometry(surface, 20, 3, 10, 20);
-        assert!(surface_snapshot_text_after_start(app, surface).contains("ready"));
+        surface_snapshot_text_after_start_until(app, surface, "ready");
         {
             let surface_ref = surface_from_handle(surface).unwrap();
             let worker = surface_ref.termio_worker.as_ref().unwrap();
@@ -22684,7 +22694,7 @@ mod tests {
         config.command = command.as_ptr();
         let surface = new_test_surface_with_config(app, &config);
         set_surface_test_geometry(surface, 20, 3, 10, 20);
-        assert!(surface_snapshot_text_after_start(app, surface).contains("ready"));
+        surface_snapshot_text_after_start_until(app, surface, "ready");
         {
             let surface_ref = surface_from_handle(surface).unwrap();
             let worker = surface_ref.termio_worker.as_ref().unwrap();
@@ -22757,7 +22767,7 @@ mod tests {
         config.command = command.as_ptr();
         let surface = new_test_surface_with_config(app, &config);
         set_surface_test_geometry(surface, 20, 3, 10, 20);
-        assert!(surface_snapshot_text_after_start(app, surface).contains("ready"));
+        surface_snapshot_text_after_start_until(app, surface, "ready");
         {
             let surface_ref = surface_from_handle(surface).unwrap();
             let worker = surface_ref.termio_worker.as_ref().unwrap();
@@ -22823,7 +22833,7 @@ mod tests {
             config.command = command.as_ptr();
             let surface = new_test_surface_with_config(app, &config);
             set_surface_test_geometry(surface, 220, 3, 10, 20);
-            assert!(surface_snapshot_text_after_start(app, surface).contains("ready"));
+            surface_snapshot_text_after_start_until(app, surface, "ready");
             {
                 let surface_ref = surface_from_handle(surface).unwrap();
                 let worker = surface_ref.termio_worker.as_ref().unwrap();
@@ -22896,7 +22906,7 @@ mod tests {
             config.command = command.as_ptr();
             let surface = new_test_surface_with_config(app, &config);
             set_surface_test_geometry(surface, 220, 3, 10, 20);
-            assert!(surface_snapshot_text_after_start(app, surface).contains("ready"));
+            surface_snapshot_text_after_start_until(app, surface, "ready");
             {
                 let surface_ref = surface_from_handle(surface).unwrap();
                 let worker = surface_ref.termio_worker.as_ref().unwrap();
@@ -22967,7 +22977,7 @@ mod tests {
             config.command = command.as_ptr();
             let surface = new_test_surface_with_config(app, &config);
             set_surface_test_geometry(surface, 220, 3, 10, 20);
-            assert!(surface_snapshot_text_after_start(app, surface).contains("ready"));
+            surface_snapshot_text_after_start_until(app, surface, "ready");
             {
                 let surface_ref = surface_from_handle(surface).unwrap();
                 let worker = surface_ref.termio_worker.as_ref().unwrap();
@@ -23041,7 +23051,7 @@ mod tests {
         config.command = command.as_ptr();
         let surface = new_test_surface_with_config(app, &config);
         set_surface_test_geometry(surface, 20, 3, 10, 20);
-        assert!(surface_snapshot_text_after_start(app, surface).contains("ready"));
+        surface_snapshot_text_after_start_until(app, surface, "ready");
         {
             let surface_ref = surface_from_handle(surface).unwrap();
             let worker = surface_ref.termio_worker.as_ref().unwrap();
@@ -23118,7 +23128,7 @@ mod tests {
         config.command = command.as_ptr();
         let surface = new_test_surface_with_config(app, &config);
         set_surface_test_geometry(surface, 20, 3, 10, 20);
-        assert!(surface_snapshot_text_after_start(app, surface).contains("ready"));
+        surface_snapshot_text_after_start_until(app, surface, "ready");
         {
             let surface_ref = surface_from_handle(surface).unwrap();
             let worker = surface_ref.termio_worker.as_ref().unwrap();
@@ -23192,7 +23202,7 @@ mod tests {
         config.command = command.as_ptr();
         let surface = new_test_surface_with_config(app, &config);
         set_surface_test_geometry(surface, 20, 3, 10, 20);
-        assert!(surface_snapshot_text_after_start(app, surface).contains("ready"));
+        surface_snapshot_text_after_start_until(app, surface, "ready");
         {
             let surface_ref = surface_from_handle(surface).unwrap();
             let worker = surface_ref.termio_worker.as_ref().unwrap();
@@ -23273,7 +23283,7 @@ mod tests {
         config.command = command.as_ptr();
         let surface = new_test_surface_with_config(app, &config);
         set_surface_test_geometry(surface, 20, 3, 10, 20);
-        assert!(surface_snapshot_text_after_start(app, surface).contains("ready"));
+        surface_snapshot_text_after_start_until(app, surface, "ready");
         {
             let surface_ref = surface_from_handle(surface).unwrap();
             let worker = surface_ref.termio_worker.as_ref().unwrap();
@@ -23397,7 +23407,7 @@ mod tests {
         config.command = command.as_ptr();
         let surface = new_test_surface_with_config(app, &config);
         set_surface_test_geometry(surface, 10, 3, 10, 20);
-        assert!(surface_snapshot_text_after_start(app, surface).contains("ready"));
+        surface_snapshot_text_after_start_until(app, surface, "ready");
 
         reset_clipboard_read_records(true);
         assert!(!binding_action(surface, "paste_from_clipboard"));
@@ -23411,7 +23421,7 @@ mod tests {
         config.command = command.as_ptr();
         let surface = new_test_surface_with_config(app, &config);
         set_surface_test_geometry(surface, 10, 3, 10, 20);
-        assert!(surface_snapshot_text_after_start(app, surface).contains("ready"));
+        surface_snapshot_text_after_start_until(app, surface, "ready");
 
         assert!(!binding_action(surface, "paste_from_selection"));
         assert!(clipboard_read_records().is_empty());
@@ -23428,7 +23438,7 @@ mod tests {
         config.command = command.as_ptr();
         let surface = new_test_surface_with_config(app, &config);
         set_surface_test_geometry(surface, 10, 3, 10, 20);
-        assert!(surface_snapshot_text_after_start(app, surface).contains("ready"));
+        surface_snapshot_text_after_start_until(app, surface, "ready");
 
         assert!(binding_action(surface, "paste_from_clipboard"));
         let records = clipboard_read_records();
@@ -23575,7 +23585,7 @@ mod tests {
         config.command = command.as_ptr();
         let surface = new_test_surface_with_config(app, &config);
         set_surface_test_geometry(surface, 40, 3, 10, 20);
-        assert!(surface_snapshot_text_after_start(app, surface).contains("ready"));
+        surface_snapshot_text_after_start_until(app, surface, "ready");
         assert!(binding_action(surface, "paste_from_clipboard"));
         let state = clipboard_read_records()[0].state as *mut c_void;
         let text = CString::new("unsafe\npaste").unwrap();
@@ -23943,7 +23953,7 @@ mod tests {
         let surface = new_test_surface_with_config(app, &config);
         set_surface_test_geometry(surface, 10, 3, 10, 20);
 
-        assert!(surface_snapshot_text_after_start(app, surface).contains("l5"));
+        surface_snapshot_text_after_start_until(app, surface, "l5");
         let before = surface_worker_viewport_top_left_screen(surface);
         assert!(binding_action(surface, "jump_to_prompt:-1"));
         assert_eq!(surface_worker_viewport_top_left_screen(surface), before);
@@ -23962,7 +23972,7 @@ mod tests {
         config.command = command.as_ptr();
         let surface = new_test_surface_with_config(app, &config);
         set_surface_test_geometry(surface, 10, 3, 10, 20);
-        assert!(surface_snapshot_text_after_start(app, surface).contains("ready"));
+        surface_snapshot_text_after_start_until(app, surface, "ready");
         {
             let surface_ref = surface_from_handle(surface).unwrap();
             let worker = surface_ref.termio_worker.as_ref().unwrap();
@@ -24025,7 +24035,7 @@ mod tests {
         let surface = new_test_surface_with_config(app, &config);
         set_surface_test_geometry(surface, 10, 3, 10, 20);
 
-        assert!(surface_snapshot_text_after_start(app, surface).contains("l5"));
+        surface_snapshot_text_after_start_until(app, surface, "l5");
         let active_top_left = surface_worker_active_viewport_top_left_screen(surface);
         assert!(active_top_left.y > 0);
         assert_eq!(
@@ -24087,7 +24097,7 @@ mod tests {
         let surface = new_test_surface_with_config(app, &config);
         set_surface_test_geometry(surface, 10, 3, 10, 20);
 
-        assert!(surface_snapshot_text_after_start(app, surface).contains("l8"));
+        surface_snapshot_text_after_start_until(app, surface, "l8");
         let active_top_left = surface_worker_active_viewport_top_left_screen(surface);
         assert!(active_top_left.y > 3);
 
@@ -24141,7 +24151,7 @@ mod tests {
         let surface = new_test_surface_with_config(app, &config);
         set_surface_test_geometry(surface, 10, 3, 10, 20);
 
-        assert!(surface_snapshot_text_after_start(app, surface).contains("l5"));
+        surface_snapshot_text_after_start_until(app, surface, "l5");
         let before = surface_worker_viewport_top_left_screen(surface);
         assert!(!binding_action(surface, "scroll_to_selection"));
         assert_eq!(surface_worker_viewport_top_left_screen(surface), before);
@@ -24161,7 +24171,7 @@ mod tests {
         let surface = new_test_surface_with_config(app, &config);
         set_surface_test_geometry(surface, 10, 3, 10, 20);
 
-        assert!(surface_snapshot_text_after_start(app, surface).contains("l8"));
+        surface_snapshot_text_after_start_until(app, surface, "l8");
         assert!(binding_action(surface, "scroll_to_top"));
 
         let forward = surface_worker_selection(surface, (1, 2), (4, 2));
@@ -24204,7 +24214,7 @@ mod tests {
         let surface = new_test_surface_with_config(app, &config);
         set_surface_test_geometry(surface, 10, 3, 10, 20);
 
-        assert!(surface_snapshot_text_after_start(app, surface).contains("l8"));
+        surface_snapshot_text_after_start_until(app, surface, "l8");
         let active_top_left = surface_worker_active_viewport_top_left_screen(surface);
         let selection = surface_worker_selection(
             surface,
@@ -24263,7 +24273,7 @@ mod tests {
         let surface = new_test_surface_with_config(app, &config);
         set_surface_test_geometry(surface, 10, 3, 10, 20);
 
-        assert!(surface_snapshot_text_after_start(app, surface).contains("l8"));
+        surface_snapshot_text_after_start_until(app, surface, "l8");
         let active_top_left = surface_worker_active_viewport_top_left_screen(surface);
         assert!(active_top_left.y >= 3);
 
@@ -24292,7 +24302,7 @@ mod tests {
         let surface = new_test_surface_with_config(app, &config);
         set_surface_test_geometry(surface, 10, 3, 10, 20);
 
-        assert!(surface_snapshot_text_after_start(app, surface).contains("l5"));
+        surface_snapshot_text_after_start_until(app, surface, "l5");
         assert!(binding_action(surface, "scroll_to_top"));
         let top = surface_worker_viewport_top_left_screen(surface);
         surface_from_handle(surface).unwrap().size.rows = 0;
@@ -24343,7 +24353,7 @@ mod tests {
         let surface = new_test_surface_with_config(app, &config);
         set_surface_test_geometry(surface, 10, 3, 10, 20);
 
-        assert!(surface_snapshot_text_after_start(app, surface).contains("l8"));
+        surface_snapshot_text_after_start_until(app, surface, "l8");
         let active_top_left = surface_worker_active_viewport_top_left_screen(surface);
         assert!(active_top_left.y >= 3);
 
@@ -24378,7 +24388,7 @@ mod tests {
         let surface = new_test_surface_with_config(app, &config);
         set_surface_test_geometry(surface, 10, 3, 10, 20);
 
-        assert!(surface_snapshot_text_after_start(app, surface).contains("l5"));
+        surface_snapshot_text_after_start_until(app, surface, "l5");
         assert!(binding_action(surface, "scroll_to_top"));
         let top = surface_worker_viewport_top_left_screen(surface);
 
@@ -24431,7 +24441,7 @@ mod tests {
         let surface = new_test_surface_with_config(app, &config);
         set_surface_test_geometry(surface, 10, 4, 10, 20);
 
-        assert!(surface_snapshot_text_after_start(app, surface).contains("l8"));
+        surface_snapshot_text_after_start_until(app, surface, "l8");
         let active_top_left = surface_worker_active_viewport_top_left_screen(surface);
         assert!(active_top_left.y >= 4);
 
@@ -24466,7 +24476,7 @@ mod tests {
         let surface = new_test_surface_with_config(app, &config);
         set_surface_test_geometry(surface, 10, 4, 10, 20);
 
-        assert!(surface_snapshot_text_after_start(app, surface).contains("l5"));
+        surface_snapshot_text_after_start_until(app, surface, "l5");
         assert!(binding_action(surface, "scroll_to_top"));
         let top = surface_worker_viewport_top_left_screen(surface);
 
@@ -24486,7 +24496,7 @@ mod tests {
         let surface = new_test_surface_with_config(app, &config);
         set_surface_test_geometry(surface, 10, 4, 10, 20);
 
-        assert!(surface_snapshot_text_after_start(app, surface).contains("l5"));
+        surface_snapshot_text_after_start_until(app, surface, "l5");
         assert!(binding_action(surface, "scroll_to_top"));
         let top = surface_worker_viewport_top_left_screen(surface);
         surface_from_handle(surface).unwrap().size.rows = 0;
@@ -24920,7 +24930,7 @@ mod tests {
         config.command = command.as_ptr();
         let surface = new_test_surface_with_config(app, &config);
         set_surface_test_geometry(surface, 10, 3, 10, 20);
-        assert!(surface_snapshot_text_after_start(app, surface).contains("ready"));
+        surface_snapshot_text_after_start_until(app, surface, "ready");
 
         assert!(!binding_action(surface, "search_selection"));
         assert!(action_records().is_empty());
@@ -24933,7 +24943,7 @@ mod tests {
         config.command = command.as_ptr();
         let surface = new_test_surface_with_config(app, &config);
         set_surface_test_geometry(surface, 10, 3, 10, 20);
-        assert!(surface_snapshot_text_after_start(app, surface).contains("ready"));
+        surface_snapshot_text_after_start_until(app, surface, "ready");
         let selection = surface_worker_selection(surface, (0, 0), (4, 0));
         set_surface_worker_active_selection(surface, Some(selection));
 
@@ -24951,7 +24961,7 @@ mod tests {
         config.command = command.as_ptr();
         let surface = new_test_surface_with_config(app, &config);
         set_surface_test_geometry(surface, 12, 3, 10, 20);
-        assert!(surface_snapshot_text_after_start(app, surface).contains("ready"));
+        surface_snapshot_text_after_start_until(app, surface, "ready");
         {
             let surface_ref = surface_from_handle(surface).unwrap();
             let worker = surface_ref.termio_worker.as_ref().unwrap();
@@ -24990,7 +25000,7 @@ mod tests {
         config.command = command.as_ptr();
         let surface = new_test_surface_with_config(app, &config);
         set_surface_test_geometry(surface, 10, 3, 10, 20);
-        assert!(surface_snapshot_text_after_start(app, surface).contains("ready"));
+        surface_snapshot_text_after_start_until(app, surface, "ready");
         let selection = surface_worker_selection(surface, (0, 0), (4, 0));
         set_surface_worker_active_selection(surface, Some(selection));
 
@@ -25963,7 +25973,7 @@ mod tests {
         config.command = command.as_ptr();
         let surface = new_test_surface_with_config(app, &config);
         set_surface_test_geometry(surface, 40, 3, 10, 20);
-        assert!(surface_snapshot_text_after_start(app, surface).contains("ready"));
+        surface_snapshot_text_after_start_until(app, surface, "ready");
         set_clipboard_read_sync_completion(surface, "f", true);
         surface_from_handle(surface)
             .unwrap()
@@ -26007,7 +26017,7 @@ mod tests {
         surface_config.command = command.as_ptr();
         let surface = new_test_surface_with_config(app, &surface_config);
         set_surface_test_geometry(surface, 48, 3, 10, 20);
-        assert!(surface_snapshot_text_after_start(app, surface).contains("ready"));
+        surface_snapshot_text_after_start_until(app, surface, "ready");
         let state = surface_from_handle(surface)
             .unwrap()
             .push_clipboard_request(
@@ -26109,7 +26119,7 @@ mod tests {
         config.command = command.as_ptr();
         let surface = new_test_surface_with_config(app, &config);
         set_surface_test_geometry(surface, 40, 3, 10, 20);
-        assert!(surface_snapshot_text_after_start(app, surface).contains("ready"));
+        surface_snapshot_text_after_start_until(app, surface, "ready");
         let state = surface_from_handle(surface)
             .unwrap()
             .push_clipboard_request(
@@ -26303,7 +26313,7 @@ mod tests {
         config.command = command.as_ptr();
         let surface = new_test_surface_with_config(app, &config);
         set_surface_test_geometry(surface, 320, 3, 10, 20);
-        assert!(surface_snapshot_text_after_start(app, surface).contains("ready"));
+        surface_snapshot_text_after_start_until(app, surface, "ready");
         push_kitty_clipboard(
             surface,
             b"type=read:id=ok",
@@ -26343,7 +26353,7 @@ mod tests {
         surface_config.command = command.as_ptr();
         let surface = new_test_surface_with_config(app, &surface_config);
         set_surface_test_geometry(surface, 320, 3, 10, 20);
-        assert!(surface_snapshot_text_after_start(app, surface).contains("ready"));
+        surface_snapshot_text_after_start_until(app, surface, "ready");
         push_kitty_clipboard(
             surface,
             b"type=read",
@@ -26380,7 +26390,7 @@ mod tests {
         config.command = command.as_ptr();
         let surface = new_test_surface_with_config(app, &config);
         set_surface_test_geometry(surface, 320, 3, 10, 20);
-        assert!(surface_snapshot_text_after_start(app, surface).contains("ready"));
+        surface_snapshot_text_after_start_until(app, surface, "ready");
         push_kitty_clipboard(surface, b"type=walias", None, osc::Terminator::St);
 
         roastty_app_tick(app);
@@ -26411,7 +26421,7 @@ mod tests {
         surface_config.command = command.as_ptr();
         let surface = new_test_surface_with_config(app, &surface_config);
         set_surface_test_geometry(surface, 320, 3, 10, 20);
-        assert!(surface_snapshot_text_after_start(app, surface).contains("ready"));
+        surface_snapshot_text_after_start_until(app, surface, "ready");
         let state = surface_from_handle(surface)
             .unwrap()
             .push_clipboard_request_with_kitty_metadata(
@@ -26455,7 +26465,7 @@ mod tests {
         surface_config.command = command.as_ptr();
         let surface = new_test_surface_with_config(app, &surface_config);
         set_surface_test_geometry(surface, 320, 3, 10, 20);
-        assert!(surface_snapshot_text_after_start(app, surface).contains("ready"));
+        surface_snapshot_text_after_start_until(app, surface, "ready");
         push_kitty_clipboard(surface, b"type=write:id=abc", None, osc::Terminator::St);
         push_kitty_clipboard(
             surface,
@@ -26550,7 +26560,7 @@ mod tests {
         surface_config.command = command.as_ptr();
         let surface = new_test_surface_with_config(app, &surface_config);
         set_surface_test_geometry(surface, 320, 3, 10, 20);
-        assert!(surface_snapshot_text_after_start(app, surface).contains("ready"));
+        surface_snapshot_text_after_start_until(app, surface, "ready");
         push_kitty_clipboard(
             surface,
             b"type=write:loc=primary",
@@ -26583,7 +26593,7 @@ mod tests {
         surface_config.command = command.as_ptr();
         let surface = new_test_surface_with_config(app, &surface_config);
         set_surface_test_geometry(surface, 320, 3, 10, 20);
-        assert!(surface_snapshot_text_after_start(app, surface).contains("ready"));
+        surface_snapshot_text_after_start_until(app, surface, "ready");
         push_kitty_clipboard(surface, b"type=write", None, osc::Terminator::St);
 
         roastty_app_tick(app);
@@ -26615,7 +26625,7 @@ mod tests {
         surface_config.command = command.as_ptr();
         let surface = new_test_surface_with_config(app, &surface_config);
         set_surface_test_geometry(surface, 320, 3, 10, 20);
-        assert!(surface_snapshot_text_after_start(app, surface).contains("ready"));
+        surface_snapshot_text_after_start_until(app, surface, "ready");
         push_kitty_clipboard(surface, b"type=write:id=bad", None, osc::Terminator::St);
         push_kitty_clipboard(
             surface,
@@ -26681,7 +26691,7 @@ mod tests {
         surface_config.command = command.as_ptr();
         let surface = new_test_surface_with_config(app, &surface_config);
         set_surface_test_geometry(surface, 320, 3, 10, 20);
-        assert!(surface_snapshot_text_after_start(app, surface).contains("ready"));
+        surface_snapshot_text_after_start_until(app, surface, "ready");
         push_kitty_clipboard(
             surface,
             b"type=wdata:mime=dGV4dC9wbGFpbg==",
@@ -26727,7 +26737,7 @@ mod tests {
         config.command = command.as_ptr();
         let surface = new_test_surface_with_config(app, &config);
         set_surface_test_geometry(surface, 320, 3, 10, 20);
-        assert!(surface_snapshot_text_after_start(app, surface).contains("ready"));
+        surface_snapshot_text_after_start_until(app, surface, "ready");
         {
             let surface_ref = surface_from_handle(surface).unwrap();
             surface_ref.kitty_clipboard_write = Some(KittyClipboardWriteTransaction {
@@ -27024,7 +27034,7 @@ mod tests {
         config.command = command.as_ptr();
         let worker_surface = new_test_surface_with_config(app, &config);
         set_surface_test_geometry(worker_surface, 10, 3, 10, 20);
-        assert!(surface_snapshot_text_after_start(app, worker_surface).contains("ready"));
+        surface_snapshot_text_after_start_until(app, worker_surface, "ready");
 
         roastty_surface_complete_clipboard_request(
             worker_surface,
@@ -27085,7 +27095,7 @@ mod tests {
             config.command = command.as_ptr();
             let surface = new_test_surface_with_config(app, &config);
             set_surface_test_geometry(surface, 20, 3, 10, 20);
-            assert!(surface_snapshot_text_after_start(app, surface).contains("ready"));
+            surface_snapshot_text_after_start_until(app, surface, "ready");
             assert!(binding_action(surface, "paste_from_clipboard"));
             let state = clipboard_read_records()[0].state as *mut c_void;
             let text = CString::new(text).unwrap();
@@ -27145,7 +27155,7 @@ mod tests {
         let mut config = roastty_surface_config_new();
         config.command = command.as_ptr();
         let surface = new_test_surface_with_config(app, &config);
-        assert!(surface_snapshot_text_after_start(app, surface).contains("ready"));
+        surface_snapshot_text_after_start_until(app, surface, "ready");
         assert!(!roastty_surface_mouse_captured(surface));
 
         roastty_app_free(app);
@@ -27162,7 +27172,7 @@ mod tests {
         let mut config = roastty_surface_config_new();
         config.command = command.as_ptr();
         let surface = new_test_surface_with_config(app, &config);
-        assert!(surface_snapshot_text_after_start(app, surface).contains("ready"));
+        surface_snapshot_text_after_start_until(app, surface, "ready");
         assert!(!roastty_surface_mouse_captured(surface));
 
         set_surface_worker_mouse_tracking(surface, true);
@@ -28014,7 +28024,7 @@ mod tests {
         let mut config = roastty_surface_config_new();
         config.command = command.as_ptr();
         let surface = new_test_surface_with_config(app, &config);
-        assert!(surface_snapshot_text_after_start(app, surface).contains("Hello World"));
+        surface_snapshot_text_after_start_until(app, surface, "Hello World");
         assert!(!roastty_surface_has_selection(surface));
 
         let selection = surface_worker_selection(surface, (0, 0), (4, 0));
@@ -28058,7 +28068,7 @@ mod tests {
         config.command = command.as_ptr();
         let surface = new_test_surface_with_config(app, &config);
         set_surface_test_geometry(surface, 80, 24, 10, 20);
-        assert!(surface_snapshot_text_after_start(app, surface).contains("Hello World"));
+        surface_snapshot_text_after_start_until(app, surface, "Hello World");
         let selection = surface_worker_selection(surface, (6, 0), (10, 0));
         set_surface_worker_active_selection(surface, Some(selection));
         let mut text = empty_text();
@@ -28082,7 +28092,7 @@ mod tests {
         let mut config = roastty_surface_config_new();
         config.command = command.as_ptr();
         let surface = new_test_surface_with_config(app, &config);
-        assert!(surface_snapshot_text_after_start(app, surface).contains("Hello World"));
+        surface_snapshot_text_after_start_until(app, surface, "Hello World");
         let selection = surface_worker_selection(surface, (0, 0), (4, 0));
         set_surface_worker_active_selection(surface, Some(selection));
         let mut text = empty_text();
@@ -28103,7 +28113,7 @@ mod tests {
         let mut config = roastty_surface_config_new();
         config.command = command.as_ptr();
         let surface = new_test_surface_with_config(app, &config);
-        assert!(surface_snapshot_text_after_start(app, surface).contains("Hello World"));
+        surface_snapshot_text_after_start_until(app, surface, "Hello World");
         let selection = surface_worker_selection(surface, (0, 0), (4, 0));
         set_surface_worker_active_selection(surface, Some(selection));
         assert!(roastty_surface_has_selection(surface));
@@ -28159,7 +28169,7 @@ mod tests {
         config.command = command.as_ptr();
         let worker_surface = new_test_surface_with_config(app, &config);
         set_surface_test_geometry(worker_surface, 80, 24, 10, 20);
-        assert!(surface_snapshot_text_after_start(app, worker_surface).contains("Hello World"));
+        surface_snapshot_text_after_start_until(app, worker_surface, "Hello World");
         assert!(!roastty_surface_quicklook_word(worker_surface, &mut text));
 
         roastty_surface_mouse_pos(worker_surface, -1.0, 0.0, ROASTTY_MODS_NONE);
@@ -28179,7 +28189,7 @@ mod tests {
         config.command = command.as_ptr();
         let surface = new_test_surface_with_config(app, &config);
         set_surface_test_geometry(surface, 80, 24, 10, 20);
-        assert!(surface_snapshot_text_after_start(app, surface).contains("Hello World"));
+        surface_snapshot_text_after_start_until(app, surface, "Hello World");
         roastty_surface_mouse_pos(surface, 65.0, 5.0, ROASTTY_MODS_NONE);
         let mut text = empty_text();
 
@@ -28203,7 +28213,7 @@ mod tests {
         config.command = command.as_ptr();
         let surface = new_test_surface_with_config(app, &config);
         set_surface_test_geometry(surface, 80, 24, 10, 20);
-        assert!(surface_snapshot_text_after_start(app, surface).contains("Hello World"));
+        surface_snapshot_text_after_start_until(app, surface, "Hello World");
         let selection = surface_worker_selection(surface, (0, 0), (4, 0));
         set_surface_worker_active_selection(surface, Some(selection));
         roastty_surface_mouse_pos(surface, 65.0, 5.0, ROASTTY_MODS_NONE);
@@ -28228,7 +28238,7 @@ mod tests {
         config.command = command.as_ptr();
         let surface = new_test_surface_with_config(app, &config);
         set_surface_test_geometry(surface, 80, 24, 10, 20);
-        assert!(surface_snapshot_text_after_start(app, surface).contains("Hello World"));
+        surface_snapshot_text_after_start_until(app, surface, "Hello World");
         roastty_surface_mouse_pos(surface, 5.0, 5.0, ROASTTY_MODS_NONE);
         let mut text = empty_text();
 
@@ -28272,7 +28282,7 @@ mod tests {
         config.command = command.as_ptr();
         let surface = new_test_surface_with_config(app, &config);
         set_surface_test_geometry(surface, 80, 24, 10, 20);
-        assert!(surface_snapshot_text_after_start(app, surface).contains("Hello World"));
+        surface_snapshot_text_after_start_until(app, surface, "Hello World");
         let selection = surface_worker_selection(surface, (6, 0), (10, 0));
         let mut text = empty_text();
 
@@ -28301,7 +28311,7 @@ mod tests {
             surface.scale_factor_x = 2.0;
             surface.scale_factor_y = 4.0;
         }
-        assert!(surface_snapshot_text_after_start(app, surface).contains("Hello World"));
+        surface_snapshot_text_after_start_until(app, surface, "Hello World");
         let selection = surface_worker_selection(surface, (6, 1), (10, 1));
         let mut text = empty_text();
 
@@ -28325,7 +28335,7 @@ mod tests {
         config.command = command.as_ptr();
         let surface = new_test_surface_with_config(app, &config);
         set_surface_test_geometry(surface, 80, 3, 10, 20);
-        assert!(surface_snapshot_text_after_start(app, surface).contains("ggg"));
+        surface_snapshot_text_after_start_until(app, surface, "ggg");
         let selection = surface_worker_selection(surface, (0, 0), (2, 0));
         let mut text = empty_text();
 
@@ -28349,7 +28359,7 @@ mod tests {
         config.command = command.as_ptr();
         let surface = new_test_surface_with_config(app, &config);
         set_surface_test_geometry(surface, 80, 3, 10, 20);
-        assert!(surface_snapshot_text_after_start(app, surface).contains("ggg"));
+        surface_snapshot_text_after_start_until(app, surface, "ggg");
         let selection = surface_worker_selection(surface, (0, 0), (2, 6));
         let mut text = empty_text();
 
@@ -28372,7 +28382,7 @@ mod tests {
         let mut config = roastty_surface_config_new();
         config.command = command.as_ptr();
         let surface = new_test_surface_with_config(app, &config);
-        assert!(surface_snapshot_text_after_start(app, surface).contains("Hello World"));
+        surface_snapshot_text_after_start_until(app, surface, "Hello World");
         let mut selection = surface_worker_selection(surface, (0, 0), (4, 0));
         selection.start.size = std::mem::size_of::<RoasttyGridRef>() - 1;
         let mut text = empty_text();
@@ -28391,7 +28401,7 @@ mod tests {
         let mut config = roastty_surface_config_new();
         config.command = command.as_ptr();
         let surface = new_test_surface_with_config(app, &config);
-        assert!(surface_snapshot_text_after_start(app, surface).contains("Hello World"));
+        surface_snapshot_text_after_start_until(app, surface, "Hello World");
         let selection = surface_worker_selection(surface, (0, 0), (4, 0));
         let mut text = empty_text();
 
@@ -28411,7 +28421,7 @@ mod tests {
         let mut config = roastty_surface_config_new();
         config.command = command.as_ptr();
         let surface = new_test_surface_with_config(app, &config);
-        assert!(surface_snapshot_text_after_start(app, surface).contains("Hello World"));
+        surface_snapshot_text_after_start_until(app, surface, "Hello World");
         let hello = surface_worker_selection(surface, (0, 0), (4, 0));
         let world = surface_worker_selection(surface, (6, 0), (10, 0));
         let mut text = empty_text();
@@ -28836,7 +28846,7 @@ mod tests {
         config.command = command.as_ptr();
         let surface = new_test_surface_with_config(app, &config);
 
-        let text = surface_snapshot_text_after_start(app, surface);
+        let text = surface_snapshot_text_after_start_until(app, surface, "hello");
 
         assert!(text.contains("hello"));
         assert!(!roastty_surface_needs_render(surface));
@@ -28914,7 +28924,7 @@ mod tests {
         let app = new_test_app();
         let surface = new_test_surface(app);
 
-        let text = surface_snapshot_text_after_start(app, surface);
+        let text = surface_snapshot_text_after_start_until(app, surface, "roastty-env-shell");
 
         assert!(text.contains("roastty-env-shell"));
         roastty_surface_free(surface);
@@ -29155,7 +29165,7 @@ mod tests {
             new_test_surface_with_config(app, &config)
         };
 
-        let text = surface_snapshot_text_after_start(app, surface);
+        let text = surface_snapshot_text_after_start_until(app, surface, "owned");
 
         assert!(text.contains(current_dir.to_str().unwrap()));
         assert!(text.contains("owned"));
@@ -29175,7 +29185,7 @@ mod tests {
         config.initial_input = input.as_ptr();
         let surface = new_test_surface_with_config(app, &config);
 
-        let text = surface_snapshot_text_after_start(app, surface);
+        let text = surface_snapshot_text_after_start_until(app, surface, "out:hello");
 
         assert!(text.contains("out:hello"));
         roastty_surface_free(surface);
@@ -29194,7 +29204,8 @@ mod tests {
         config.working_directory = cwd.as_ptr();
         let surface = new_test_surface_with_config(app, &config);
 
-        let text = surface_snapshot_text_after_start(app, surface);
+        let text =
+            surface_snapshot_text_after_start_until(app, surface, current_dir.to_str().unwrap());
 
         assert!(text.contains(current_dir.to_str().unwrap()));
         roastty_surface_free(surface);
@@ -29218,7 +29229,7 @@ mod tests {
         config.env_var_count = env.len();
         let surface = new_test_surface_with_config(app, &config);
 
-        let text = surface_snapshot_text_after_start(app, surface);
+        let text = surface_snapshot_text_after_start_until(app, surface, "surface-env");
 
         assert!(text.contains("surface-env"));
         roastty_surface_free(surface);
@@ -29244,7 +29255,7 @@ mod tests {
             new_test_surface_with_config(app, &config)
         };
 
-        let text = surface_snapshot_text_after_start(app, surface);
+        let text = surface_snapshot_text_after_start_until(app, surface, "scoped-env");
 
         assert!(text.contains("scoped-env"));
         roastty_surface_free(surface);
@@ -29262,7 +29273,7 @@ mod tests {
         config.env_var_count = 3;
         let surface = new_test_surface_with_config(app, &config);
 
-        let text = surface_snapshot_text_after_start(app, surface);
+        let text = surface_snapshot_text_after_start_until(app, surface, "unset");
 
         assert!(text.contains("unset"));
         roastty_surface_free(surface);
@@ -29311,7 +29322,7 @@ mod tests {
         config.env_var_count = env.len();
         let surface = new_test_surface_with_config(app, &config);
 
-        let text = surface_snapshot_text_after_start(app, surface);
+        let text = surface_snapshot_text_after_start_until(app, surface, "valid-env:");
 
         assert!(text.contains("valid-env:"));
         roastty_surface_free(surface);
@@ -29342,7 +29353,7 @@ mod tests {
         config.env_var_count = env.len();
         let surface = new_test_surface_with_config(app, &config);
 
-        let text = surface_snapshot_text_after_start(app, surface);
+        let text = surface_snapshot_text_after_start_until(app, surface, "second");
 
         assert!(text.contains("second"));
         assert!(!text.contains("first"));
