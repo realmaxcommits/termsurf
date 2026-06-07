@@ -2214,6 +2214,8 @@ are past the correctness-critical foundation.
   **Pass** · Codex/Codex/Codex
 - [Experiment 809: Render Pass Sampler Binding](809-render-pass-sampler-binding.md)
   — **Pass** · Codex/Codex/Codex
+- [Experiment 810: Metal IOSurface Target](810-metal-iosurface-target.md) —
+  **Designed**
 
 ## Non-Goals
 
