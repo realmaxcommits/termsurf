@@ -87,3 +87,69 @@ tested foundations, and the missing live render loop, window `Target`,
 `IOSurfaceLayer`, `Sampler`, full frame orchestration, shader file loading,
 renderer thread, debug overlay, and frontend presentation path remain explicit.
 The review also confirmed the planned test filters and counts.
+
+## Result
+
+**Result:** Pass
+
+The renderer checklist no longer describes existing renderer/Metal foundations
+as missing. The README now records the current scoped coverage while keeping the
+renderer rows unchecked:
+
+- `image.rs` has pending/ready/replace/unload state transitions, Kitty placement
+  bucketing, RGBA preparation, upload retry behavior, and image draw-call
+  foundations.
+- Metal pipeline work includes descriptor values, standard pipeline
+  descriptions, live pipeline construction tests, standard shader library and
+  pipeline creation, texture upload helpers, render-target texture helpers,
+  `FrameState`, and offscreen render-pass coverage.
+- Custom shader support includes the uniform value type, `Target`, and
+  per-frame/cursor/focus/palette/state-color update helpers.
+
+The rows intentionally remain incomplete because the live renderer still lacks
+the full frame build/dirty tracking/glyph upload/draw-call pacing loop, window
+`Target`, `IOSurfaceLayer`, `Sampler`, full frame orchestration, shader file
+loading, renderer thread, debug overlay, and frontend presentation integration.
+
+Verification:
+
+- Inspected:
+  - `roastty/src/renderer/image.rs`
+  - `roastty/src/renderer/shadertoy.rs`
+  - `roastty/src/renderer/metal/pipeline.rs`
+  - `roastty/src/renderer/metal/frame.rs`
+  - `roastty/src/renderer/metal/texture.rs`
+  - `roastty/src/renderer/metal/render_pass.rs`
+  - `roastty/src/renderer/metal/shaders.rs`
+- `cargo test -p roastty renderer::image -- --nocapture --test-threads=1` — 30
+  passed
+- `cargo test -p roastty renderer::metal::pipeline -- --nocapture --test-threads=1`
+  — 17 passed
+- `cargo test -p roastty renderer::metal::frame -- --nocapture --test-threads=1`
+  — 1 passed
+- `cargo test -p roastty renderer::metal::texture -- --nocapture --test-threads=1`
+  — 19 passed
+- `cargo test -p roastty renderer::metal::render_pass -- --nocapture --test-threads=1`
+  — 28 passed
+- `cargo test -p roastty renderer::shadertoy -- --nocapture --test-threads=1` —
+  9 passed
+- `prettier --write --prose-wrap always --print-width 80 issues/0801-roastty-libghostty-rewrite/README.md issues/0801-roastty-libghostty-rewrite/796-renderer-metal-checklist-sync.md`
+  — passed
+- `git diff --check` — passed
+
+## Conclusion
+
+The renderer/Metal checklist was stale about several tested foundations. Roastty
+has real image-state, Metal pipeline/frame/texture/offscreen render-pass, and
+custom-shader uniform support, but Issue 801 should still treat the renderer as
+open until the live render loop and presentation path exist.
+
+## Completion Review
+
+Codex reviewed the completed experiment and found no blocking findings. The
+review approved the result because the renderer rows remain unchecked, the
+claimed coverage is scoped to foundations, the missing live renderer and
+presentation path remain explicit, and the verification evidence records the
+targeted renderer/Metal/custom-shader tests, Prettier, and `git diff --check`.
+After adding `Sampler` explicitly to the open-gap sentence, Codex re-reviewed
+the completed experiment and again approved it for the result commit.
