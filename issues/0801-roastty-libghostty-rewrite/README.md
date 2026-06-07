@@ -384,7 +384,11 @@ Experiment 246).
       `cache_table`, `lru`, and `segmented_pool` terminal utility collections
       exist with focused tests; future incidental helpers remain as-needed
 - [ ] `cli/` (+list-\* tools), `inspector/` (imgui), `crash/` (sentry),
-      `terminfo/`, `synthetic/`
+      `terminfo/`, `synthetic/` — partial: inspector handle lifecycle/input
+      forwarding, terminfo-bearing resource directory discovery, and font
+      synthetic bold/italic foundations exist; CLI/list tools, inspector UI/core
+      data collection, Sentry-style crash reporting, full terminfo tooling, and
+      broader synthetic subsystem work remain open
 - [ ] Swift macOS frontend integration
 
 Out of scope / tooling: `build/`, `benchmark/`, `extra/`, `simd/`, `stb/`,
@@ -2170,6 +2174,8 @@ are past the correctness-critical foundation.
   — **Pass** · Codex/Codex/Codex
 - [Experiment 798: UTF-8 Dependency Checklist Sync](798-utf8-dependency-checklist-sync.md)
   — **Pass** · Codex/Codex/Codex
+- [Experiment 799: Supporting Subsystems Checklist Sync](799-supporting-subsystems-checklist-sync.md)
+  — **Designed**
 
 ## Non-Goals
 
