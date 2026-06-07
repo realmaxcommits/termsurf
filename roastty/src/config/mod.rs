@@ -108,6 +108,8 @@ pub(crate) struct Config {
     pub window_save_state: WindowSaveState,
     /// `fullscreen`.
     pub fullscreen: Fullscreen,
+    /// `title`.
+    pub title: Option<String>,
     /// `macos-non-native-fullscreen`.
     pub macos_non_native_fullscreen: NonNativeFullscreen,
     /// `macos-titlebar-style`.
@@ -189,6 +191,7 @@ impl Default for Config {
             window_theme: WindowTheme::Auto,
             window_save_state: WindowSaveState::Default,
             fullscreen: Fullscreen::False,
+            title: None,
             macos_non_native_fullscreen: NonNativeFullscreen::False,
             macos_titlebar_style: MacTitlebarStyle::Transparent,
             macos_titlebar_proxy_icon: MacTitlebarProxyIcon::Visible,
@@ -284,6 +287,8 @@ impl Config {
             .format_entry(&mut EntryFormatter::new("link-previews", out));
         self.fullscreen
             .format_entry(&mut EntryFormatter::new("fullscreen", out));
+        EntryFormatter::new("title", out)
+            .entry_optional(self.title.clone(), |v, f| f.entry_str(&v));
         self.window_padding_color
             .format_entry(&mut EntryFormatter::new("window-padding-color", out));
         self.window_subtitle
@@ -491,6 +496,9 @@ impl Config {
             "fullscreen" => {
                 self.fullscreen =
                     set_enum_field(value, default.fullscreen, Fullscreen::from_keyword)?
+            }
+            "title" => {
+                self.title = set_optional_value_field(value, default.title, parse_string_field)?
             }
             "macos-non-native-fullscreen" => {
                 self.macos_non_native_fullscreen = set_enum_field(
@@ -1223,6 +1231,15 @@ impl From<DurationParseError> for ConfigSetError {
         match e {
             DurationParseError::ValueRequired => ConfigSetError::ValueRequired,
             DurationParseError::InvalidValue => ConfigSetError::InvalidValue,
+        }
+    }
+}
+
+impl From<MagicParseError> for ConfigSetError {
+    fn from(e: MagicParseError) -> Self {
+        match e {
+            MagicParseError::ValueRequired => ConfigSetError::ValueRequired,
+            MagicParseError::InvalidValue => ConfigSetError::InvalidValue,
         }
     }
 }
@@ -2148,6 +2165,7 @@ pub(crate) fn parse_bool_field(value: Option<&str>) -> Result<bool, MagicParseEr
 pub(crate) fn parse_string_field(value: Option<&str>) -> Result<String, MagicParseError> {
     match value {
         None => Err(MagicParseError::ValueRequired),
+        Some(v) if v.as_bytes().contains(&0) => Err(MagicParseError::InvalidValue),
         Some(v) => Ok(v.to_string()),
     }
 }
@@ -4239,6 +4257,7 @@ mod tests {
         assert_eq!(d.window_save_state, WindowSaveState::Default);
         // macOS-window group (Experiment 469).
         assert_eq!(d.fullscreen, Fullscreen::False);
+        assert_eq!(d.title, None);
         assert_eq!(d.macos_non_native_fullscreen, NonNativeFullscreen::False);
         assert_eq!(d.macos_titlebar_style, MacTitlebarStyle::Transparent);
         assert_eq!(d.macos_titlebar_proxy_icon, MacTitlebarProxyIcon::Visible);
@@ -7554,6 +7573,7 @@ mod tests {
                 "notify-on-command-finish-action",
                 "link-previews",
                 "fullscreen",
+                "title",
                 "window-padding-color",
                 "window-subtitle",
                 "window-decoration",
@@ -7591,6 +7611,7 @@ mod tests {
         // (default `None`) too.
         assert!(out.contains("cursor-color = \n"));
         assert!(out.contains("theme = \n"));
+        assert!(out.contains("title = \n"));
     }
 
     #[test]
@@ -8040,6 +8061,56 @@ mod tests {
                         && cloned.notify_on_command_finish_after.duration == 250 * NS_PER_MS
                 }),
             Ok(true)
+        );
+    }
+
+    #[test]
+    fn config_title_routes_optional_string_field() {
+        let line = |cfg: &Config| -> String {
+            let mut out = String::new();
+            cfg.format_config(&mut out);
+            out.lines()
+                .find(|l| l.starts_with("title = "))
+                .unwrap()
+                .to_string()
+        };
+
+        let mut cfg = Config::default();
+        cfg.set("title", Some("TermSurf")).unwrap();
+        assert_eq!(cfg.title.as_deref(), Some("TermSurf"));
+        assert_eq!(line(&cfg), "title = TermSurf");
+
+        cfg.set("title", Some(" ")).unwrap();
+        assert_eq!(cfg.title.as_deref(), Some(" "));
+        assert_eq!(line(&cfg), "title =  ");
+
+        cfg.set("title", Some("")).unwrap();
+        assert_eq!(cfg.title, None);
+        assert_eq!(line(&cfg), "title = ");
+
+        assert_eq!(cfg.set("title", None), Err(ConfigSetError::ValueRequired));
+        assert_eq!(
+            cfg.set("title", Some("bad\0title")),
+            Err(ConfigSetError::InvalidValue)
+        );
+
+        assert_eq!(
+            cfg.set("title", Some("Clone title")).map(|_| {
+                let cloned = cfg.clone();
+                cloned == cfg && cloned.title.as_deref() == Some("Clone title")
+            }),
+            Ok(true)
+        );
+
+        let diagnostics = cfg.load_str("title = \" \"\ntitle =\ntitle = bad\0title\n");
+        assert_eq!(cfg.title, None);
+        assert_eq!(
+            diagnostics,
+            vec![ConfigDiagnostic {
+                line: 3,
+                key: "title".to_string(),
+                error: ConfigSetError::InvalidValue,
+            }]
         );
     }
 

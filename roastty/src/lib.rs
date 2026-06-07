@@ -1442,6 +1442,7 @@ struct Config {
     confirm_close_surface: config::ConfirmCloseSurface,
     has_global_keybinds: bool,
     keybind_triggers: Vec<ConfigKeybind>,
+    cached_title: Option<CString>,
     diagnostics: Vec<CString>,
 }
 
@@ -1454,6 +1455,14 @@ struct ConfigKeybind {
 impl Config {
     fn sync_from_parsed_config(&mut self) {
         self.confirm_close_surface = self.parsed.confirm_close_surface;
+        self.rebuild_cached_title();
+    }
+
+    fn rebuild_cached_title(&mut self) {
+        self.cached_title =
+            self.parsed.title.as_ref().map(|title| {
+                CString::new(title.as_str()).expect("config title parser rejects NUL")
+            });
     }
 
     fn snapshot_default_files_boundary(&mut self) {
@@ -8679,6 +8688,7 @@ pub extern "C" fn roastty_config_new() -> RoasttyConfig {
         confirm_close_surface: config::ConfirmCloseSurface::True,
         has_global_keybinds: false,
         keybind_triggers: Vec::new(),
+        cached_title: None,
         diagnostics: Vec::new(),
     }))
     .cast()
@@ -8727,7 +8737,7 @@ pub extern "C" fn roastty_config_clone(config: RoasttyConfig) -> RoasttyConfig {
             Vec::new(),
             Vec::new(),
         ));
-    Box::into_raw(Box::new(Config {
+    let mut cloned = Config {
         parsed,
         before_default_files,
         before_default_files_diagnostics_len,
@@ -8735,9 +8745,11 @@ pub extern "C" fn roastty_config_clone(config: RoasttyConfig) -> RoasttyConfig {
         confirm_close_surface,
         has_global_keybinds,
         keybind_triggers,
+        cached_title: None,
         diagnostics,
-    }))
-    .cast()
+    };
+    cloned.rebuild_cached_title();
+    Box::into_raw(Box::new(cloned)).cast()
 }
 
 #[no_mangle]
@@ -8950,7 +8962,15 @@ pub extern "C" fn roastty_config_get(
                 true
             }
             b"title" => {
-                output.cast::<*const c_char>().write(ptr::null());
+                let Some(config) = config_from_handle(config) else {
+                    return false;
+                };
+                let value = config
+                    .cached_title
+                    .as_ref()
+                    .map(|title| title.as_ptr())
+                    .unwrap_or(ptr::null());
+                output.cast::<*const c_char>().write(value);
                 true
             }
             b"window-position-x" | b"window-position-y" | b"bell-audio-path" => false,
@@ -16068,6 +16088,29 @@ mod tests {
         )
     }
 
+    fn config_get_optional_string_ptr(config: RoasttyConfig, key: &str) -> Option<*const c_char> {
+        let mut value: *const c_char = ptr::null();
+        let ok = roastty_config_get(
+            config,
+            (&mut value as *mut *const c_char).cast::<c_void>(),
+            key.as_ptr().cast(),
+            key.len(),
+        );
+        ok.then_some(value)
+    }
+
+    fn config_get_optional_string(config: RoasttyConfig, key: &str) -> Option<Option<String>> {
+        let value = config_get_optional_string_ptr(config, key)?;
+        if value.is_null() {
+            return Some(None);
+        }
+        Some(Some(
+            unsafe { CStr::from_ptr(value) }
+                .to_string_lossy()
+                .into_owned(),
+        ))
+    }
+
     fn config_get_bool(config: RoasttyConfig, key: &str) -> Option<bool> {
         let mut value = false;
         let ok = roastty_config_get(
@@ -17633,6 +17676,118 @@ mod tests {
                 roastty_config_free(config);
             });
         }
+    }
+
+    #[test]
+    fn config_get_title_returns_default_file_and_clone_values() {
+        let config = roastty_config_new();
+        assert_eq!(config_get_optional_string(config, "title"), Some(None));
+        roastty_config_free(config);
+
+        let dir = unique_config_abi_test_dir("get-title-file");
+        let path = dir.join("config.roastty");
+        write_config_file(&path, "title = File title\n");
+        let path = c_path(&path);
+
+        let config = roastty_config_new();
+        roastty_config_load_file(config, path.as_ptr());
+        assert_eq!(roastty_config_diagnostics_count(config), 0);
+        let first_ptr = config_get_optional_string_ptr(config, "title").unwrap();
+        let second_ptr = config_get_optional_string_ptr(config, "title").unwrap();
+        assert!(!first_ptr.is_null());
+        assert_eq!(first_ptr, second_ptr);
+        assert_eq!(
+            unsafe { CStr::from_ptr(first_ptr) }
+                .to_string_lossy()
+                .as_ref(),
+            "File title"
+        );
+
+        let clone = roastty_config_clone(config);
+        roastty_config_free(config);
+        let clone_ptr = config_get_optional_string_ptr(clone, "title").unwrap();
+        assert!(!clone_ptr.is_null());
+        assert_eq!(
+            unsafe { CStr::from_ptr(clone_ptr) }
+                .to_string_lossy()
+                .as_ref(),
+            "File title"
+        );
+        assert_eq!(
+            config_get_optional_string(clone, "title"),
+            Some(Some("File title".to_string()))
+        );
+
+        roastty_config_free(clone);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn config_get_title_returns_cli_and_reset_values() {
+        with_init_args(&["roastty", "--title=CLI title"], || {
+            let config = roastty_config_new();
+            roastty_config_load_cli_args(config);
+            assert_eq!(roastty_config_diagnostics_count(config), 0);
+            assert_eq!(
+                config_get_optional_string(config, "title"),
+                Some(Some("CLI title".to_string()))
+            );
+            roastty_config_free(config);
+        });
+
+        with_init_args(&["roastty", "--title=CLI title", "--title="], || {
+            let config = roastty_config_new();
+            roastty_config_load_cli_args(config);
+            assert_eq!(roastty_config_diagnostics_count(config), 0);
+            assert_eq!(config_get_optional_string(config, "title"), Some(None));
+            roastty_config_free(config);
+        });
+
+        let dir = unique_config_abi_test_dir("get-title-reset-file");
+        let quoted_empty = dir.join("quoted-empty.roastty");
+        let bare_empty = dir.join("bare-empty.roastty");
+        write_config_file(&quoted_empty, "title = File title\ntitle = \"\"\n");
+        write_config_file(&bare_empty, "title = File title\ntitle =\n");
+
+        for path in [quoted_empty, bare_empty] {
+            let path = c_path(&path);
+            let config = roastty_config_new();
+            roastty_config_load_file(config, path.as_ptr());
+            assert_eq!(roastty_config_diagnostics_count(config), 0);
+            assert_eq!(config_get_optional_string(config, "title"), Some(None));
+            roastty_config_free(config);
+        }
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn config_get_title_reports_missing_and_nul_values() {
+        with_init_args(&["roastty", "--title"], || {
+            let config = roastty_config_new();
+            roastty_config_load_cli_args(config);
+            assert_eq!(roastty_config_diagnostics_count(config), 1);
+            let message = config_diagnostic_message(config, 0);
+            assert!(message.contains("title"), "{message}");
+            assert!(message.contains("ValueRequired"), "{message}");
+            assert_eq!(config_get_optional_string(config, "title"), Some(None));
+            roastty_config_free(config);
+        });
+
+        let dir = unique_config_abi_test_dir("get-title-nul-file");
+        let path = dir.join("config.roastty");
+        write_config_file(&path, "title = bad\0title\n");
+        let path = c_path(&path);
+
+        let config = roastty_config_new();
+        roastty_config_load_file(config, path.as_ptr());
+        assert_eq!(roastty_config_diagnostics_count(config), 1);
+        let message = config_diagnostic_message(config, 0);
+        assert!(message.contains("title"), "{message}");
+        assert!(message.contains("InvalidValue"), "{message}");
+        assert_eq!(config_get_optional_string(config, "title"), Some(None));
+        roastty_config_free(config);
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

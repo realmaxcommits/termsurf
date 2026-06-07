@@ -2057,7 +2057,8 @@ are past the correctness-critical foundation.
   — **Pass** · Codex/Codex/Codex
 - [Experiment 771: Config Get Notify Finish After](771-config-get-notify-finish-after.md)
   — **Pass** · Codex/Codex/Codex
-- [Experiment 772: Config Get Title](772-config-get-title.md) — **Designed**
+- [Experiment 772: Config Get Title](772-config-get-title.md) — **Pass** ·
+  Codex/Codex/Codex
 
 ## Non-Goals
 

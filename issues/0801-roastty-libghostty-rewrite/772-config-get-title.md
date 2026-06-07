@@ -3,6 +3,16 @@
 agent = "codex"
 model = "gpt-5"
 reasoning = "high"
+
+[review.design]
+agent = "codex"
+model = "gpt-5"
+reasoning = "medium"
+
+[review.result]
+agent = "codex"
+model = "gpt-5"
+reasoning = "medium"
 +++
 
 # Experiment 772: Config Get Title
@@ -71,8 +81,8 @@ The experiment passes if `title` is stored in aggregate config, can be set
 through file and CLI loading, formats in full config output in upstream order
 among implemented fields, resets to `None` on an empty value, reports missing
 values consistently with upstream optional strings, and is returned by
-`roastty_config_get` from parsed state with a stable pointer while the config
-handle lives.
+`roastty_config_get` from parsed state with a pointer that remains stable until
+the config handle is freed or parsed config state is mutated and synced.
 
 ## Design Review
 
@@ -86,3 +96,48 @@ order coverage. The plan now requires a single cache rebuild path tied to
 `Config::sync_from_parsed_config`, initialization for new and cloned handles,
 and a full key-order assertion for `fullscreen`, `title`,
 `window-padding-color`.
+
+## Result
+
+**Result:** Pass
+
+Implemented aggregate config storage for `title`. `config::Config` now stores
+`title: Option<String>`, defaults it to `None`, formats it between `fullscreen`
+and `window-padding-color`, routes `Config::set("title", ...)` through optional
+string parsing/reset behavior, and rejects interior NUL values as `InvalidValue`
+because the public ABI exposes title as a C string.
+
+`ConfigHandle` now caches a `CString` derived from parsed title state. The cache
+is rebuilt by `Config::sync_from_parsed_config`, initialized on clone, and read
+by `roastty_config_get("title")`, which now writes a null pointer for `None` or
+a stable pointer for `Some(title)` until the config handle is freed or parsed
+config state is mutated and synced.
+
+Verification passed:
+
+- `cargo test -p roastty config_title -- --nocapture --test-threads=1`
+- `cargo test -p roastty config_get_title -- --nocapture --test-threads=1`
+- `cargo test -p roastty config_ -- --nocapture --test-threads=1`
+- `cargo fmt -p roastty`
+- `cargo fmt -p roastty -- --check`
+- `git diff --check`
+
+## Conclusion
+
+`title` now reports parsed optional string config state through the C ABI while
+preserving upstream's `true` plus null-pointer behavior for the unset default.
+Runtime window-title behavior and surface title update policy remain follow-up
+work.
+
+## Completion Review
+
+Codex reviewed the completed implementation and found no blocking code
+correctness issues. The review confirmed that title storage, formatting, setter
+routing, interior-NUL rejection, cached parsed-state lookup, and focused tests
+cover the experiment scope.
+
+The review found two process/documentation issues before commit: add
+`[review.design]` and `[review.result]` provenance frontmatter to match the
+README status, and clarify that returned title pointers are stable only until
+the config handle is freed or parsed config state is mutated and synced. Both
+documentation fixes were applied before the result commit.
