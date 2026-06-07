@@ -1,17 +1,21 @@
 //! Local crash-report directory support.
 //!
-//! This is the directory/listing foundation from upstream `crash/dir.zig` and
-//! the list-only path of `cli/crash_report.zig`. It does not initialize Sentry
-//! or capture crash envelopes.
+//! This is the local directory/listing and envelope persistence foundation from
+//! upstream `crash/dir.zig`, `crash/sentry_envelope.zig`, and the local
+//! transport path in `crash/sentry.zig`. It does not initialize Sentry or
+//! capture crash envelopes.
 
 use std::cmp::Ordering;
 use std::ffi::OsString;
+use std::path::Component;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 use serde_json::{Map, Value};
+use uuid::Uuid;
 
 const ROASTTY_BUNDLE_ID: &str = "com.termsurf.roastty";
+const CRASH_REPORT_EXTENSION: &str = "roasttycrash";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Report {
@@ -62,6 +66,48 @@ impl CrashDir {
         reports.sort_by(|lhs, rhs| report_order(lhs, rhs));
         Ok(reports)
     }
+
+    pub(crate) fn persist_event_envelope(
+        &self,
+        bytes: &[u8],
+    ) -> Result<PersistOutcome, PersistError> {
+        let envelope = Envelope::parse(bytes)?;
+        if !envelope.has_event() {
+            return Ok(PersistOutcome::Discarded);
+        }
+
+        let name = generated_report_name();
+        self.write_report(bytes, &name)
+    }
+
+    pub(crate) fn persist_event_envelope_with_name(
+        &self,
+        bytes: &[u8],
+        name: &str,
+    ) -> Result<PersistOutcome, PersistError> {
+        let envelope = Envelope::parse(bytes)?;
+        if !envelope.has_event() {
+            return Ok(PersistOutcome::Discarded);
+        }
+
+        self.write_report(bytes, name)
+    }
+
+    fn write_report(&self, bytes: &[u8], name: &str) -> Result<PersistOutcome, PersistError> {
+        let report_path = self.report_path_for_name(name)?;
+        std::fs::create_dir_all(&self.path)?;
+        std::fs::write(&report_path, bytes)?;
+
+        Ok(PersistOutcome::Written(report_path))
+    }
+
+    fn report_path_for_name(&self, name: &str) -> Result<PathBuf, PersistError> {
+        if !valid_report_name(name) {
+            return Err(PersistError::InvalidReportName);
+        }
+
+        Ok(self.path.join(name))
+    }
 }
 
 pub(crate) fn default_dir_path() -> PathBuf {
@@ -84,6 +130,44 @@ fn report_order(lhs: &Report, rhs: &Report) -> Ordering {
     rhs.modified
         .cmp(&lhs.modified)
         .then_with(|| lhs.name.cmp(&rhs.name))
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum PersistOutcome {
+    Written(PathBuf),
+    Discarded,
+}
+
+#[derive(Debug)]
+pub(crate) enum PersistError {
+    Envelope(EnvelopeError),
+    Io(std::io::Error),
+    InvalidReportName,
+}
+
+impl From<EnvelopeError> for PersistError {
+    fn from(err: EnvelopeError) -> PersistError {
+        PersistError::Envelope(err)
+    }
+}
+
+impl From<std::io::Error> for PersistError {
+    fn from(err: std::io::Error) -> PersistError {
+        PersistError::Io(err)
+    }
+}
+
+fn generated_report_name() -> String {
+    format!("{}.{}", Uuid::new_v4(), CRASH_REPORT_EXTENSION)
+}
+
+fn valid_report_name(name: &str) -> bool {
+    if name.is_empty() {
+        return false;
+    }
+
+    let mut components = Path::new(name).components();
+    matches!(components.next(), Some(Component::Normal(_))) && components.next().is_none()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -118,6 +202,12 @@ impl Envelope {
         }
 
         out
+    }
+
+    fn has_event(&self) -> bool {
+        self.items
+            .iter()
+            .any(|item| matches!(item.item_type(), ItemType::Event))
     }
 }
 
@@ -368,6 +458,12 @@ mod tests {
             .collect()
     }
 
+    fn event_envelope() -> &'static [u8] {
+        br#"{}
+{"type":"event","length":16}
+{"crashed":true}"#
+    }
+
     #[test]
     fn crash_default_path_uses_bundle_id_application_support_with_home() {
         let path = default_dir_path_from_home(Some(OsString::from("/Users/tester")));
@@ -437,6 +533,99 @@ mod tests {
         let mut tied = tied.to_vec();
         tied.sort_by(report_order);
         assert_eq!(names(&tied), vec!["a.ghosttycrash", "b.ghosttycrash"]);
+    }
+
+    #[test]
+    fn crash_persist_event_envelope_writes_exact_bytes() {
+        let temp = TempDir::new().unwrap();
+        let dir = CrashDir::new(temp.path().join("crash"));
+        let bytes = event_envelope();
+
+        let outcome = dir
+            .persist_event_envelope_with_name(bytes, "fixed.roasttycrash")
+            .unwrap();
+
+        let PersistOutcome::Written(path) = outcome else {
+            panic!("expected written report");
+        };
+        assert_eq!(path, dir.path().join("fixed.roasttycrash"));
+        assert_eq!(fs::read(path).unwrap(), bytes);
+        assert_eq!(names(&dir.reports().unwrap()), vec!["fixed.roasttycrash"]);
+    }
+
+    #[test]
+    fn crash_persist_generated_name_uses_roastty_extension() {
+        let temp = TempDir::new().unwrap();
+        let dir = CrashDir::new(temp.path().join("crash"));
+
+        let outcome = dir.persist_event_envelope(event_envelope()).unwrap();
+
+        let PersistOutcome::Written(path) = outcome else {
+            panic!("expected written report");
+        };
+        assert_eq!(
+            path.extension().and_then(|extension| extension.to_str()),
+            Some(CRASH_REPORT_EXTENSION)
+        );
+        assert!(path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap()
+            .ends_with(".roasttycrash"));
+        assert_eq!(fs::read(path).unwrap(), event_envelope());
+    }
+
+    #[test]
+    fn crash_persist_discards_non_event_envelopes_before_creating_directory() {
+        for bytes in [
+            br#"{}
+{"type":"session"}
+{}"# as &[u8],
+            br#"{}
+{"type":"attachment","length":4,"filename":"test.txt"}
+ABCD"#,
+        ] {
+            let temp = TempDir::new().unwrap();
+            let dir = CrashDir::new(temp.path().join("crash"));
+
+            let outcome = dir
+                .persist_event_envelope_with_name(bytes, "discarded.roasttycrash")
+                .unwrap();
+
+            assert_eq!(outcome, PersistOutcome::Discarded);
+            assert!(!dir.path().exists());
+        }
+    }
+
+    #[test]
+    fn crash_persist_malformed_envelope_errors_before_creating_directory() {
+        let temp = TempDir::new().unwrap();
+        let dir = CrashDir::new(temp.path().join("crash"));
+
+        let err = dir
+            .persist_event_envelope_with_name(b"[]", "bad.roasttycrash")
+            .unwrap_err();
+
+        assert!(matches!(
+            err,
+            PersistError::Envelope(EnvelopeError::MalformedHeaders)
+        ));
+        assert!(!dir.path().exists());
+    }
+
+    #[test]
+    fn crash_persist_rejects_report_names_that_escape_directory() {
+        for name in ["", "../escape.roasttycrash", "nested/escape.roasttycrash"] {
+            let temp = TempDir::new().unwrap();
+            let dir = CrashDir::new(temp.path().join("crash"));
+
+            let err = dir
+                .persist_event_envelope_with_name(event_envelope(), name)
+                .unwrap_err();
+
+            assert!(matches!(err, PersistError::InvalidReportName));
+            assert!(!dir.path().exists());
+        }
     }
 
     #[test]

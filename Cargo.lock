@@ -1579,6 +1579,7 @@ dependencies = [
  "objc2-metal",
  "regex",
  "serde_json",
+ "uuid",
 ]
 
 [[package]]

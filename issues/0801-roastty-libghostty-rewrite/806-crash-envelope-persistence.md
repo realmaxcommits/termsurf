@@ -101,3 +101,60 @@ approval confirmed that the no-directory side-effect tests match upstream's
 discard-before-`makePath` ordering, the generated report extension is pinned to
 `.roasttycrash`, and the scope remains limited to persistence without SDK
 initialization, crash callbacks, upload, CLI commands, or frontend work.
+
+## Result
+
+**Result:** Pass
+
+Roastty now has a local event-envelope persistence foundation in
+`roastty/src/crash.rs`. `CrashDir::persist_event_envelope` parses the serialized
+envelope bytes, discards envelopes without an `event` item, and then generates a
+`.roasttycrash` report name only for event envelopes. A deterministic
+`persist_event_envelope_with_name` helper shares the same parse/discard path for
+tests and future call sites with an existing report name. Event envelopes create
+the crash directory, write the original serialized bytes, and return that a
+report was written.
+
+`roastty/Cargo.toml` now depends on
+`uuid = { version = "1.13", features = ["v4"] }` for generated report names.
+`Cargo.lock` changed only to add `uuid` to Roastty's dependency list; the
+package was already present in the workspace lock.
+
+The Issue 801 checklist now records crash reporting as partial with local
+directory/listing support, envelope parse/serialize/attachment decode support,
+and local event-envelope persistence present. Sentry SDK initialization, crash
+callbacks, report upload, CLI commands, and frontend flows remain open.
+
+Verification:
+
+- Inspected `vendor/ghostty/src/crash/sentry.zig`.
+- Inspected `vendor/ghostty/src/crash/sentry_envelope.zig`.
+- Inspected `vendor/ghostty/src/crash/dir.zig`.
+- `cargo fmt -p roastty` — passed.
+- `cargo test -p roastty crash -- --nocapture --test-threads=1` — passed, 19
+  tests.
+- `prettier --write --prose-wrap always --print-width 80 issues/0801-roastty-libghostty-rewrite/README.md issues/0801-roastty-libghostty-rewrite/806-crash-envelope-persistence.md`
+  — passed.
+- `git diff --check` — passed.
+
+## Conclusion
+
+Experiment 806 completes the local file persistence layer that future Sentry SDK
+transport glue can call. The next crash-reporting work can focus on SDK
+initialization and callback capture, then upload and CLI/frontend exposure, with
+the local storage path already tested independently.
+
+## Completion Review
+
+Codex reviewed the staged result and found one blocking ordering mismatch:
+`persist_event_envelope` generated the UUID report name before parsing and
+discard checks, while upstream parses, discards non-event envelopes, and only
+then generates the report filename. The implementation now parses and checks for
+an event item before generating the `.roasttycrash` filename.
+
+Codex re-reviewed the corrected staged result and approved it with no findings.
+The approval confirmed that production and injected-name helpers now preserve
+the upstream parse/discard-before-filename/write ordering, generated reports use
+`.roasttycrash`, persisted files keep the original input bytes, dependency churn
+is limited to adding the already-locked `uuid` crate to Roastty, and the docs do
+not overclaim SDK initialization, callbacks, upload, CLI, or frontend work.

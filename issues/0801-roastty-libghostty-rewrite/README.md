@@ -394,11 +394,11 @@ Experiment 246).
 - [ ] `cli/` (+list-\* tools), `inspector/` (imgui), `crash/` (sentry),
       `terminfo/`, `synthetic/` — partial: inspector handle lifecycle/input
       forwarding, local crash-report directory/listing support, Sentry envelope
-      parse/serialize support, terminfo-bearing resource directory discovery,
-      and font synthetic bold/italic foundations exist; CLI/list tools,
-      inspector UI/core data collection, Sentry SDK capture/envelope persistence
-      transport/report upload, full terminfo tooling, and broader synthetic
-      subsystem work remain open
+      parse/serialize support, local event-envelope persistence,
+      terminfo-bearing resource directory discovery, and font synthetic
+      bold/italic foundations exist; CLI/list tools, inspector UI/core data
+      collection, Sentry SDK initialization/callback capture/upload, full
+      terminfo tooling, and broader synthetic subsystem work remain open
 - [ ] Swift macOS frontend integration
 
 Out of scope / tooling: `build/`, `benchmark/`, `extra/`, `simd/`, `stb/`,
@@ -433,9 +433,10 @@ Out of scope / tooling: `build/`, `benchmark/`, `extra/`, `simd/`, `stb/`,
       Ghostty call-site audit remain open
 - [ ] `highway` (SIMD) — not started
 - [ ] `sentry` (crash reporting) — partial: local crash-report directory/listing
-      and Sentry envelope parse/serialize/attachment decode support exists;
-      Sentry SDK initialization, crash callbacks, envelope persistence
-      transport, report upload, and CLI/frontend flows remain missing
+      and Sentry envelope parse/serialize/attachment decode support exists, and
+      local event envelopes can be persisted as `.roasttycrash` reports; Sentry
+      SDK initialization, crash callbacks, report upload, and CLI/frontend flows
+      remain missing
 - [ ] `dcimgui` (inspector UI) — not started
 - [ ] `glslang` / `spirv-cross` (shader translation) — not started
 
@@ -2204,7 +2205,7 @@ are past the correctness-critical foundation.
 - [Experiment 805: Sentry Envelope Foundation](805-sentry-envelope-foundation.md)
   — **Pass** · Codex/Codex/Codex
 - [Experiment 806: Crash Envelope Persistence](806-crash-envelope-persistence.md)
-  — **Designed**
+  — **Pass** · Codex/Codex/Codex
 
 ## Non-Goals
 
