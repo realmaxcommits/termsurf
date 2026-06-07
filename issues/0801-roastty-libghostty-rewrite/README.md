@@ -2180,6 +2180,8 @@ are past the correctness-critical foundation.
   — **Pass** · Codex/Codex/Codex
 - [Experiment 800: SharedGridSet Foundation](800-shared-grid-set-foundation.md)
   — **Pass** · Codex/Codex/Codex
+- [Experiment 801: Keymap Checklist Sync](801-keymap-checklist-sync.md) —
+  **Designed**
 
 ## Non-Goals
 
