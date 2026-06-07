@@ -18,6 +18,8 @@ use crate::renderer::cell::{
 };
 use crate::renderer::cursor::Style as CursorStyle;
 use crate::renderer::metal::shaders::MetalUniforms;
+use crate::renderer::shader::CellTextVertex;
+use crate::renderer::shadertoy::CustomShaderUniforms;
 use crate::renderer::size::{GridSize, Unit};
 use crate::renderer::state::{Preedit, PreeditRange};
 use crate::terminal::color::{Palette, Rgb};
@@ -295,6 +297,31 @@ pub(crate) enum FrameCursorUniformValidationError {
 pub(crate) struct FrameCursorUniformApplication {
     pub(crate) cursor_cleared: bool,
     pub(crate) block_cursor_applied: bool,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct FrameCustomShaderInput {
+    pub(crate) time_secs: f32,
+    pub(crate) time_delta_secs: f32,
+    pub(crate) screen_size: [u32; 2],
+    pub(crate) cell_size: [u32; 2],
+    pub(crate) padding: [u32; 2],
+    pub(crate) cursor: Option<CellTextVertex>,
+    pub(crate) focused: bool,
+    pub(crate) focus_changed: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FrameCustomShaderValidationError {
+    ZeroCellSizeWithCursor { cell_size: [u32; 2] },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct FrameCustomShaderApplication {
+    pub(crate) frame_updated: bool,
+    pub(crate) cursor_supplied: bool,
+    pub(crate) focus_changed_consumed: bool,
+    pub(crate) next_focus_changed: bool,
 }
 
 impl FrameRebuildPlan {
@@ -580,6 +607,36 @@ impl FrameRebuildPlan {
         })
     }
 
+    pub(crate) fn apply_custom_shader_frame(
+        &self,
+        uniforms: &mut CustomShaderUniforms,
+        input: FrameCustomShaderInput,
+    ) -> Result<FrameCustomShaderApplication, FrameCustomShaderValidationError> {
+        self.validate_custom_shader_input(input)?;
+
+        uniforms.update_for_frame(
+            input.time_secs,
+            input.time_delta_secs,
+            input.screen_size[0],
+            input.screen_size[1],
+        );
+        uniforms.update_cursor(
+            input.cursor,
+            input.cell_size[0],
+            input.cell_size[1],
+            input.padding[0],
+            input.padding[1],
+        );
+        let next_focus_changed = uniforms.update_focus(input.focused, input.focus_changed);
+
+        Ok(FrameCustomShaderApplication {
+            frame_updated: true,
+            cursor_supplied: input.cursor.is_some(),
+            focus_changed_consumed: input.focus_changed && input.focused && !next_focus_changed,
+            next_focus_changed,
+        })
+    }
+
     fn validate_application(
         &self,
         contents: &Contents,
@@ -644,6 +701,19 @@ impl FrameRebuildPlan {
                 });
             }
         }
+        Ok(())
+    }
+
+    fn validate_custom_shader_input(
+        &self,
+        input: FrameCustomShaderInput,
+    ) -> Result<(), FrameCustomShaderValidationError> {
+        if input.cursor.is_some() && (input.cell_size[0] == 0 || input.cell_size[1] == 0) {
+            return Err(FrameCustomShaderValidationError::ZeroCellSizeWithCursor {
+                cell_size: input.cell_size,
+            });
+        }
+
         Ok(())
     }
 
@@ -2548,5 +2618,219 @@ mod tests {
         assert_eq!(uniforms.cursor_pos, before.cursor_pos);
         assert_eq!(uniforms.cursor_color, before.cursor_color);
         assert_eq!(uniforms.bools.cursor_wide, before.bools.cursor_wide);
+    }
+
+    fn custom_shader_input(cursor: Option<CellTextVertex>) -> FrameCustomShaderInput {
+        FrameCustomShaderInput {
+            time_secs: 1.5,
+            time_delta_secs: 0.25,
+            screen_size: [80, 24],
+            cell_size: [8, 16],
+            padding: [4, 5],
+            cursor,
+            focused: true,
+            focus_changed: false,
+        }
+    }
+
+    fn custom_cursor_vertex() -> CellTextVertex {
+        CellTextVertex {
+            glyph_pos: [0, 0],
+            glyph_size: [6, 7],
+            bearings: [1, 2],
+            grid_pos: [2, 3],
+            color: [64, 128, 255, 128],
+            atlas: CellTextAtlas::Grayscale,
+            flags: CellTextFlags::new(false, true),
+            _padding: [0, 0],
+        }
+    }
+
+    #[test]
+    fn apply_custom_shader_frame_updates_time_and_resolution() {
+        let plan = plan_for_grid(grid(2, 1));
+        let mut uniforms = CustomShaderUniforms::new();
+
+        let applied = plan
+            .apply_custom_shader_frame(&mut uniforms, custom_shader_input(None))
+            .expect("apply custom shader frame");
+
+        assert_eq!(
+            applied,
+            FrameCustomShaderApplication {
+                frame_updated: true,
+                cursor_supplied: false,
+                focus_changed_consumed: false,
+                next_focus_changed: false,
+            }
+        );
+        assert_eq!(uniforms.time, 1.5);
+        assert_eq!(uniforms.time_delta, 0.25);
+        assert_eq!(uniforms.frame, 1);
+        assert_eq!(uniforms.resolution, [80.0, 24.0, 1.0]);
+        assert_eq!(uniforms.channel_resolution[0], [80.0, 24.0, 1.0, 0.0]);
+    }
+
+    #[test]
+    fn apply_custom_shader_frame_updates_cursor_rect_and_color() {
+        let plan = plan_for_grid(grid(2, 1));
+        let mut uniforms = CustomShaderUniforms::new();
+        let cursor = custom_cursor_vertex();
+
+        let applied = plan
+            .apply_custom_shader_frame(&mut uniforms, custom_shader_input(Some(cursor)))
+            .expect("apply custom shader frame");
+
+        assert_eq!(applied.cursor_supplied, true);
+        assert_eq!(uniforms.current_cursor, [21.0, 74.0, 6.0, 7.0]);
+        assert_eq!(
+            uniforms.current_cursor_color,
+            [64.0 / 255.0, 128.0 / 255.0, 1.0, 128.0 / 255.0]
+        );
+        assert_eq!(uniforms.previous_cursor, [0.0; 4]);
+        assert_eq!(uniforms.previous_cursor_color, [0.0; 4]);
+        assert_eq!(uniforms.cursor_change_time, 1.5);
+    }
+
+    #[test]
+    fn apply_custom_shader_frame_without_cursor_preserves_cursor_fields() {
+        let plan = plan_for_grid(grid(2, 1));
+        let mut uniforms = CustomShaderUniforms::new();
+        uniforms.current_cursor = [1.0, 2.0, 3.0, 4.0];
+        uniforms.current_cursor_color = [0.1, 0.2, 0.3, 0.4];
+        uniforms.previous_cursor = [5.0, 6.0, 7.0, 8.0];
+        uniforms.previous_cursor_color = [0.5, 0.6, 0.7, 0.8];
+        uniforms.cursor_change_time = 9.0;
+
+        plan.apply_custom_shader_frame(&mut uniforms, custom_shader_input(None))
+            .expect("apply custom shader frame");
+
+        assert_eq!(uniforms.current_cursor, [1.0, 2.0, 3.0, 4.0]);
+        assert_eq!(uniforms.current_cursor_color, [0.1, 0.2, 0.3, 0.4]);
+        assert_eq!(uniforms.previous_cursor, [5.0, 6.0, 7.0, 8.0]);
+        assert_eq!(uniforms.previous_cursor_color, [0.5, 0.6, 0.7, 0.8]);
+        assert_eq!(uniforms.cursor_change_time, 9.0);
+        assert_eq!(uniforms.time, 1.5);
+    }
+
+    #[test]
+    fn apply_custom_shader_frame_unchanged_cursor_does_not_restamp_change_time() {
+        let plan = plan_for_grid(grid(2, 1));
+        let mut uniforms = CustomShaderUniforms::new();
+        let cursor = custom_cursor_vertex();
+
+        plan.apply_custom_shader_frame(&mut uniforms, custom_shader_input(Some(cursor)))
+            .expect("first frame");
+        assert_eq!(uniforms.cursor_change_time, 1.5);
+        let previous_cursor = uniforms.previous_cursor;
+        let previous_color = uniforms.previous_cursor_color;
+
+        let mut input = custom_shader_input(Some(cursor));
+        input.time_secs = 3.0;
+        input.time_delta_secs = 1.5;
+        plan.apply_custom_shader_frame(&mut uniforms, input)
+            .expect("second frame");
+
+        assert_eq!(uniforms.time, 3.0);
+        assert_eq!(uniforms.cursor_change_time, 1.5);
+        assert_eq!(uniforms.previous_cursor, previous_cursor);
+        assert_eq!(uniforms.previous_cursor_color, previous_color);
+    }
+
+    #[test]
+    fn apply_custom_shader_frame_consumes_focus_changed_when_focused() {
+        let plan = plan_for_grid(grid(2, 1));
+        let mut uniforms = CustomShaderUniforms::new();
+        let mut input = custom_shader_input(None);
+        input.time_secs = 4.0;
+        input.focused = true;
+        input.focus_changed = true;
+
+        let applied = plan
+            .apply_custom_shader_frame(&mut uniforms, input)
+            .expect("apply custom shader frame");
+
+        assert_eq!(uniforms.focus, 1);
+        assert_eq!(uniforms.time_focus, 4.0);
+        assert!(applied.focus_changed_consumed);
+        assert!(!applied.next_focus_changed);
+    }
+
+    #[test]
+    fn apply_custom_shader_frame_preserves_focus_changed_when_unfocused() {
+        let plan = plan_for_grid(grid(2, 1));
+        let mut uniforms = CustomShaderUniforms::new();
+        uniforms.time_focus = 2.0;
+        let mut input = custom_shader_input(None);
+        input.time_secs = 4.0;
+        input.focused = false;
+        input.focus_changed = true;
+
+        let applied = plan
+            .apply_custom_shader_frame(&mut uniforms, input)
+            .expect("apply custom shader frame");
+
+        assert_eq!(uniforms.focus, 0);
+        assert_eq!(uniforms.time_focus, 2.0);
+        assert!(!applied.focus_changed_consumed);
+        assert!(applied.next_focus_changed);
+    }
+
+    #[test]
+    fn apply_custom_shader_frame_allows_zero_screen_size() {
+        let plan = plan_for_grid(grid(2, 1));
+        let mut uniforms = CustomShaderUniforms::new();
+        let mut input = custom_shader_input(None);
+        input.screen_size = [0, 0];
+
+        plan.apply_custom_shader_frame(&mut uniforms, input)
+            .expect("zero screen size is a valid prepared input");
+
+        assert_eq!(uniforms.resolution, [0.0, 0.0, 1.0]);
+        assert_eq!(uniforms.channel_resolution[0], [0.0, 0.0, 1.0, 0.0]);
+        assert_eq!(uniforms.frame, 1);
+    }
+
+    #[test]
+    fn apply_custom_shader_frame_allows_zero_cell_size_without_cursor() {
+        let plan = plan_for_grid(grid(2, 1));
+        let mut uniforms = CustomShaderUniforms::new();
+        let mut input = custom_shader_input(None);
+        input.cell_size = [0, 0];
+        input.focus_changed = true;
+
+        let applied = plan
+            .apply_custom_shader_frame(&mut uniforms, input)
+            .expect("zero cell size without cursor is valid");
+
+        assert_eq!(uniforms.time, 1.5);
+        assert_eq!(uniforms.frame, 1);
+        assert!(applied.focus_changed_consumed);
+        assert_eq!(uniforms.current_cursor, [0.0; 4]);
+    }
+
+    #[test]
+    fn apply_custom_shader_frame_rejects_zero_cell_size_with_cursor_without_mutation() {
+        let plan = plan_for_grid(grid(2, 1));
+        let mut uniforms = CustomShaderUniforms::new();
+        uniforms.time = 8.0;
+        uniforms.frame = 4;
+        uniforms.current_cursor = [1.0, 2.0, 3.0, 4.0];
+        let before = uniforms;
+        let mut input = custom_shader_input(Some(custom_cursor_vertex()));
+        input.cell_size = [0, 16];
+
+        let err = plan
+            .apply_custom_shader_frame(&mut uniforms, input)
+            .expect_err("zero cell size with cursor should reject before mutation");
+
+        assert_eq!(
+            err,
+            FrameCustomShaderValidationError::ZeroCellSizeWithCursor { cell_size: [0, 16] }
+        );
+        assert_eq!(uniforms.time, before.time);
+        assert_eq!(uniforms.frame, before.frame);
+        assert_eq!(uniforms.current_cursor, before.current_cursor);
+        assert_eq!(uniforms.resolution, before.resolution);
     }
 }

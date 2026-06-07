@@ -241,9 +241,10 @@ Experiment 246).
       prepared cursor/preedit overlay inputs can clear stale cursors, suppress
       cursors during active preedit, and emit planned cursor/preedit glyphs;
       prepared block cursor uniform inputs can clear/apply Metal cursor
-      uniforms; live terminal-state collection, custom shader cursor animation
-      updates, glyph upload/draw calls, pacing, and live renderer integration
-      remain missing (critical)
+      uniforms; prepared custom shader per-frame inputs can update time,
+      resolution, cursor animation, and focus fields; live terminal-state
+      collection, custom shader enablement/upload, glyph upload/draw calls,
+      pacing, and live renderer integration remain missing (critical)
 - [ ] z2d debug `Overlay`, link highlighting, render `Thread`, custom shaders —
       partial: custom-shader uniforms, target enum, and per-frame/state update
       helpers exist; shader file loading, debug overlay, renderer thread, and
@@ -2252,7 +2253,7 @@ are past the correctness-critical foundation.
 - [Experiment 820: Apply Cursor Uniforms](820-apply-cursor-uniforms.md) —
   **Pass** · Codex/Codex/Codex
 - [Experiment 821: Apply Custom Shader Frame Updates](821-apply-custom-shader-frame.md)
-  — **Designed** · Codex/Codex
+  — **Pass** · Codex/Codex/Codex
 
 ## Non-Goals
 

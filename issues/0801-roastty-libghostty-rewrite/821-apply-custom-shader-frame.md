@@ -132,3 +132,66 @@ remaining blockers. The re-review confirmed that the zero screen-size, zero
 cell-size-without-cursor, and zero cell-size-with-cursor boundaries are now
 specified and tested, and that the driver order matches upstream/helper
 behavior.
+
+## Result
+
+**Result:** Pass
+
+Roastty can now apply prepared custom shader per-frame updates through the frame
+rebuild path:
+
+- `roastty/src/renderer/frame_rebuild.rs` adds `FrameCustomShaderInput`,
+  `FrameCustomShaderValidationError`, and `FrameCustomShaderApplication`.
+- `FrameRebuildPlan::apply_custom_shader_frame` validates cursor geometry before
+  mutation, then calls `CustomShaderUniforms::update_for_frame`,
+  `CustomShaderUniforms::update_cursor`, and
+  `CustomShaderUniforms::update_focus` in upstream order.
+- The driver returns the next `focus_changed` value so a future live renderer
+  can consume focus-change state the same way upstream does.
+- Zero screen dimensions remain valid frame-resolution inputs.
+- Zero cell dimensions remain valid when no cursor glyph is supplied.
+- Zero cell dimensions with a cursor glyph reject before mutation because cursor
+  rectangle calculation would be invalid.
+- Tests cover time/resolution updates, cursor rectangle/color animation updates,
+  missing-cursor no-op behavior, unchanged-cursor no-restamp behavior, focused
+  focus-change consumption, unfocused focus-change preservation, zero screen
+  size acceptance, zero cell size without cursor acceptance, and zero cell size
+  with cursor rejection before mutation.
+
+Verification:
+
+- Inspected `vendor/ghostty/src/renderer/generic.zig`
+  `updateCustomShaderUniformsForFrame`.
+- Inspected `roastty/src/renderer/frame_rebuild.rs`.
+- Inspected `roastty/src/renderer/shadertoy.rs`.
+- `cargo fmt -p roastty` — passed.
+- `cargo test -p roastty renderer::frame_rebuild -- --nocapture` — passed, 65
+  tests.
+- `cargo test -p roastty renderer::shadertoy -- --nocapture` — passed, 9 tests.
+- `prettier --write --prose-wrap always --print-width 80 issues/0801-roastty-libghostty-rewrite/README.md issues/0801-roastty-libghostty-rewrite/821-apply-custom-shader-frame.md`
+  — passed.
+- `git diff --check` — passed.
+
+## Conclusion
+
+Experiment 821 connects prepared custom shader per-frame data to the existing
+custom shader uniform helpers. The frame rebuild path can now update custom
+shader time/resolution, cursor animation, and focus timing fields without live
+renderer state collection. Remaining render-loop work still needs live
+terminal-state collection, custom shader enablement/upload, cell/glyph upload,
+draw-call submission, pacing, and renderer-thread integration.
+
+## Completion Review
+
+Codex reviewed the completed implementation and found no blocking issues. The
+review confirmed that the driver validates before mutation, calls
+`update_for_frame`, `update_cursor`, and `update_focus` in upstream order,
+returns the next `focus_changed` value, and preserves the corrected
+zero-dimension boundary: zero screen size is accepted, zero cell size is
+accepted with no cursor, and zero cell size rejects only when a cursor glyph is
+present.
+
+Codex also confirmed that the result doc and README tracker match the diff, then
+re-ran the focused `frame_rebuild` and `shadertoy` test filters plus
+formatting/diff checks successfully. The experiment is approved for the result
+commit.
