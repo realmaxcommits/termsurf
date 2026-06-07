@@ -2430,8 +2430,15 @@ impl Terminal {
     }
 
     #[cfg(test)]
-    pub(super) fn clear_dirty_for_tests(&mut self) {
+    pub(crate) fn clear_dirty_for_tests(&mut self) {
         self.screens.active_mut().clear_dirty_for_tests();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_cursor_position_for_tests(&mut self, x: CellCountInt, y: CellCountInt) {
+        self.screens
+            .active_mut()
+            .set_cursor_position_for_tests(x, y);
     }
 
     #[cfg(test)]

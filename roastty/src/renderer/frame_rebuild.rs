@@ -30,6 +30,7 @@ use crate::renderer::state::{Preedit, PreeditRange};
 use crate::terminal::color::{Palette, Rgb};
 use crate::terminal::point::Coordinate;
 use crate::terminal::style::BoldColor;
+use crate::terminal::terminal::Terminal;
 use std::collections::HashSet;
 
 /// Terminal render-state dirty mode. Mirrors upstream
@@ -51,6 +52,64 @@ pub(crate) struct FrameRebuildInput<'a> {
     pub(crate) row_dirty: &'a [bool],
     pub(crate) preedit: Option<&'a Preedit>,
     pub(crate) cursor_viewport: Option<Coordinate>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct FrameTerminalSnapshot {
+    pub(crate) current_grid: GridSize,
+    pub(crate) terminal_grid: GridSize,
+    pub(crate) dirty: RenderDirty,
+    pub(crate) row_dirty: Vec<bool>,
+    pub(crate) rows: Vec<RunOptions>,
+    pub(crate) preedit: Option<Preedit>,
+    pub(crate) cursor_viewport: Option<Coordinate>,
+}
+
+impl FrameTerminalSnapshot {
+    pub(crate) fn collect(
+        terminal: &Terminal,
+        current_grid: GridSize,
+        dirty: RenderDirty,
+        preedit: Option<Preedit>,
+    ) -> Self {
+        let terminal_grid = GridSize {
+            columns: terminal.columns(),
+            rows: terminal.rows(),
+        };
+        let row_dirty = terminal
+            .render_rows_snapshot()
+            .into_iter()
+            .map(|row| row.dirty)
+            .collect();
+        let rows = terminal.shape_run_options();
+        let (cursor_x, cursor_y) = terminal.cursor_position();
+        let cursor_viewport = cursor_viewport(cursor_x, cursor_y, terminal_grid);
+
+        Self {
+            current_grid,
+            terminal_grid,
+            dirty,
+            row_dirty,
+            rows,
+            preedit,
+            cursor_viewport,
+        }
+    }
+
+    pub(crate) fn rebuild_input(&self) -> FrameRebuildInput<'_> {
+        FrameRebuildInput {
+            current_grid: self.current_grid,
+            terminal_grid: self.terminal_grid,
+            dirty: self.dirty,
+            row_dirty: &self.row_dirty,
+            preedit: self.preedit.as_ref(),
+            cursor_viewport: self.cursor_viewport,
+        }
+    }
+
+    pub(crate) fn build_plan(&self) -> Result<FrameRebuildPlan, FrameRebuildPlanError> {
+        FrameRebuildPlan::build(self.rebuild_input())
+    }
 }
 
 /// The preedit placement planned for this frame.
@@ -1151,6 +1210,11 @@ fn preedit_width(codepoints: &[crate::renderer::state::Codepoint]) -> Unit {
         .sum()
 }
 
+fn cursor_viewport(cursor_x: Unit, cursor_y: Unit, terminal_grid: GridSize) -> Option<Coordinate> {
+    (cursor_x < terminal_grid.columns && cursor_y < terminal_grid.rows)
+        .then_some(Coordinate::new(cursor_x, u32::from(cursor_y)))
+}
+
 fn validate_unique_rows(
     rows: &[Unit],
     duplicate: impl Fn(Unit) -> FrameRowRebuildValidationError,
@@ -1204,6 +1268,7 @@ mod tests {
     use crate::renderer::state::Codepoint;
     use crate::terminal::color::{Rgb, DEFAULT_PALETTE};
     use crate::terminal::style::{Color, Style as TermStyle};
+    use crate::terminal::terminal::Terminal;
     use objc2::rc::Retained;
     use objc2::runtime::ProtocolObject;
     use objc2_metal::{MTLCreateSystemDefaultDevice, MTLDevice};
@@ -1240,6 +1305,14 @@ mod tests {
         }
     }
 
+    fn terminal(columns: Unit, rows: Unit) -> Terminal {
+        Terminal::init(columns, rows, None).expect("terminal")
+    }
+
+    fn write_terminal(terminal: &mut Terminal, input: &[u8]) {
+        terminal.next_slice(input).expect("terminal input");
+    }
+
     fn dummy_vertex(row: Unit, marker: u8) -> CellTextVertex {
         CellTextVertex {
             glyph_pos: [marker as u32, 0],
@@ -1264,6 +1337,125 @@ mod tests {
             contents.add(Key::Text, dummy_vertex(row, row as u8 + 10));
         }
         contents
+    }
+
+    #[test]
+    fn terminal_snapshot_clean_terminal_builds_empty_partial_plan() {
+        let mut terminal = terminal(4, 2);
+        terminal.clear_dirty_for_tests();
+
+        let snapshot =
+            FrameTerminalSnapshot::collect(&terminal, grid(4, 2), RenderDirty::Partial, None);
+        let plan = snapshot.build_plan().expect("plan");
+
+        assert_eq!(snapshot.current_grid, grid(4, 2));
+        assert_eq!(snapshot.terminal_grid, grid(4, 2));
+        assert_eq!(snapshot.row_dirty, vec![false, false]);
+        assert_eq!(snapshot.rows.len(), 2);
+        assert_eq!(plan.rows_to_rebuild, Vec::<Unit>::new());
+        assert_eq!(plan.clear_rows, Vec::<Unit>::new());
+        assert_eq!(plan.rows_to_mark_clean, Vec::<Unit>::new());
+    }
+
+    #[test]
+    fn terminal_snapshot_dirty_rows_drive_partial_rebuild() {
+        let mut terminal = terminal(4, 3);
+        terminal.clear_dirty_for_tests();
+        terminal.set_cursor_position_for_tests(0, 1);
+        write_terminal(&mut terminal, b"A");
+
+        let snapshot =
+            FrameTerminalSnapshot::collect(&terminal, grid(4, 3), RenderDirty::Partial, None);
+        let plan = snapshot.build_plan().expect("plan");
+
+        assert_eq!(snapshot.row_dirty, vec![false, true, false]);
+        assert_eq!(plan.full_rebuild, false);
+        assert_eq!(plan.rows_to_rebuild, vec![1]);
+        assert_eq!(plan.clear_rows, vec![1]);
+        assert_eq!(plan.rows_to_mark_clean, vec![1]);
+    }
+
+    #[test]
+    fn terminal_snapshot_full_dirty_rebuilds_all_rows_when_row_flags_clean() {
+        let mut terminal = terminal(4, 3);
+        terminal.clear_dirty_for_tests();
+
+        let snapshot =
+            FrameTerminalSnapshot::collect(&terminal, grid(4, 3), RenderDirty::Full, None);
+        let plan = snapshot.build_plan().expect("plan");
+
+        assert_eq!(snapshot.row_dirty, vec![false, false, false]);
+        assert_eq!(plan.full_rebuild, true);
+        assert_eq!(plan.rows_to_rebuild, vec![0, 1, 2]);
+        assert_eq!(plan.clear_rows, Vec::<Unit>::new());
+        assert_eq!(plan.rows_to_mark_clean, vec![0, 1, 2]);
+    }
+
+    #[test]
+    fn terminal_snapshot_grid_mismatch_plans_resize_full_rebuild() {
+        let mut terminal = terminal(4, 2);
+        terminal.clear_dirty_for_tests();
+
+        let snapshot =
+            FrameTerminalSnapshot::collect(&terminal, grid(2, 1), RenderDirty::Partial, None);
+        let plan = snapshot.build_plan().expect("plan");
+
+        assert_eq!(snapshot.terminal_grid, grid(4, 2));
+        assert_eq!(plan.grid_changed, true);
+        assert_eq!(plan.resize_to, Some(grid(4, 2)));
+        assert_eq!(plan.full_rebuild, true);
+        assert_eq!(plan.rows_to_rebuild, vec![0, 1]);
+    }
+
+    #[test]
+    fn terminal_snapshot_captures_cursor_only_inside_terminal_grid() {
+        let mut terminal = terminal(4, 3);
+        terminal.set_cursor_position_for_tests(2, 1);
+
+        let snapshot =
+            FrameTerminalSnapshot::collect(&terminal, grid(4, 3), RenderDirty::Partial, None);
+
+        assert_eq!(snapshot.cursor_viewport, Some(Coordinate::new(2, 1)));
+        assert_eq!(cursor_viewport(4, 1, grid(4, 3)), None);
+        assert_eq!(cursor_viewport(2, 3, grid(4, 3)), None);
+    }
+
+    #[test]
+    fn terminal_snapshot_owns_preedit_and_feeds_rebuild_input() {
+        let mut terminal = terminal(4, 2);
+        terminal.set_cursor_position_for_tests(1, 0);
+        let preedit = preedit(&[false, false]);
+
+        let snapshot =
+            FrameTerminalSnapshot::collect(&terminal, grid(4, 2), RenderDirty::Full, Some(preedit));
+        let input = snapshot.rebuild_input();
+        let plan = snapshot.build_plan().expect("plan");
+
+        assert_eq!(input.preedit.expect("preedit").codepoints.len(), 2);
+        assert_eq!(
+            plan.preedit_range,
+            Some(FramePreeditRange {
+                row: 0,
+                range: PreeditRange {
+                    start: 1,
+                    end: 2,
+                    cp_offset: 0,
+                },
+            })
+        );
+    }
+
+    #[test]
+    fn terminal_snapshot_rows_match_terminal_shape_run_options() {
+        let mut terminal = terminal(5, 2);
+        write_terminal(&mut terminal, b"AB\nCD");
+
+        let expected = terminal.shape_run_options();
+        let snapshot =
+            FrameTerminalSnapshot::collect(&terminal, grid(5, 2), RenderDirty::Partial, None);
+
+        assert_eq!(snapshot.rows, expected);
+        assert_eq!(snapshot.rows.len(), 2);
     }
 
     fn menlo_grid() -> SharedGrid {

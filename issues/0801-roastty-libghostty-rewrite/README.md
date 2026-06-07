@@ -242,14 +242,17 @@ Experiment 246).
       cursors during active preedit, and emit planned cursor/preedit glyphs;
       prepared block cursor uniform inputs can clear/apply Metal cursor
       uniforms; prepared custom shader per-frame inputs can update time,
-      resolution, cursor animation, and focus fields; live terminal-state
-      collection, custom shader enablement/upload, pacing, and live renderer
-      integration remain missing; prepared Metal frame presentation can sync
-      contents/atlases and submit draw calls through the compositor; prepared
-      rebuild uniform inputs can sync resize grid-size and full-rebuild padding
-      extension uniforms, and prepared row-level padding-extension inputs can
-      refine rebuilt boundary rows from derived `rowNeverExtendBg` decisions
-      while live renderer-loop wiring remains missing (critical)
+      resolution, cursor animation, and focus fields; an owned terminal frame
+      snapshot can collect live terminal grid size, row dirty flags,
+      `RunOptions` rows, cursor viewport, and caller-supplied preedit for the
+      prepared rebuild planner; custom shader enablement/upload, pacing, and
+      live renderer integration remain missing; prepared Metal frame
+      presentation can sync contents/atlases and submit draw calls through the
+      compositor; prepared rebuild uniform inputs can sync resize grid-size and
+      full-rebuild padding extension uniforms, and prepared row-level
+      padding-extension inputs can refine rebuilt boundary rows from derived
+      `rowNeverExtendBg` decisions while live renderer-loop wiring remains
+      missing (critical)
 - [ ] z2d debug `Overlay`, link highlighting, render `Thread`, custom shaders —
       partial: custom-shader uniforms, target enum, and per-frame/state update
       helpers exist; shader file loading, debug overlay, renderer thread, and
@@ -2268,7 +2271,7 @@ are past the correctness-critical foundation.
 - [Experiment 825: Derive Row Background Extension](825-derive-row-background-extension.md)
   — **Pass** · Codex/Codex/Codex
 - [Experiment 826: Collect Terminal Frame Snapshot](826-collect-terminal-frame-snapshot.md)
-  — **Designed**
+  — **Pass** · Codex/Codex/Codex
 
 ## Non-Goals
 
