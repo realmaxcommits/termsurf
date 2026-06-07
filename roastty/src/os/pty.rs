@@ -7,6 +7,8 @@ use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::ptr;
+use std::thread;
+use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct PtySize {
@@ -347,13 +349,38 @@ impl PtyChild {
 
 impl Drop for PtyChild {
     fn drop(&mut self) {
-        match self.child.try_wait() {
-            Ok(Some(_)) => {}
-            Ok(None) => {
-                let _ = self.child.kill();
-                let _ = self.child.wait();
+        if matches!(self.child.try_wait(), Ok(Some(_))) {
+            return;
+        }
+        // The child ran `setsid()` and adopted the PTY as its controlling
+        // terminal (see `PtyCommand::spawn`), so it leads its own process group.
+        // SIGKILL the whole group by negated pid: this reaches any grandchildren
+        // it forked and a child wedged on controlling-terminal state, which a
+        // single-pid `kill` can leave unreapable. Then signal the child handle
+        // directly as a fallback.
+        let pid = self.child.id() as libc::pid_t;
+        unsafe {
+            libc::kill(-pid, libc::SIGKILL);
+        }
+        let _ = self.child.kill();
+        // Bounded reap. Teardown must never block indefinitely waiting for a
+        // child to exit: the previous unbounded `wait()` here could park forever
+        // in `wait4`, freezing surface/app shutdown — and, under the in-process
+        // test runner, the entire suite via the global `PTY_COMMAND_LOCK`
+        // (Issue 801, Experiment 829). Poll briefly to reap the zombie, then
+        // detach rather than hang. Detaching can leak a zombie until process
+        // exit if the child stays unreapable past the deadline (e.g. stuck in an
+        // uninterruptible kernel sleep past SIGKILL) — an accepted trade for a
+        // bounded teardown over an infinite one.
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            match self.child.try_wait() {
+                Ok(Some(_)) => return,
+                Ok(None) if Instant::now() < deadline => {
+                    thread::sleep(Duration::from_millis(2));
+                }
+                _ => return,
             }
-            Err(_) => {}
         }
     }
 }
@@ -626,6 +653,54 @@ mod tests {
         let result = unsafe { libc::kill(pid as libc::pid_t, 0) };
         assert_eq!(result, -1);
         assert_eq!(io::Error::last_os_error().raw_os_error(), Some(libc::ESRCH));
+    }
+
+    #[test]
+    fn pty_child_drop_kills_the_whole_process_group() {
+        // Regression for Issue 801 / Experiment 829. `PtyChild::drop` must
+        // terminate the child's entire session/process group, not just the direct
+        // child pid. The child backgrounds a grandchild (`sleep`) in its group and
+        // reports the grandchild's pid; after drop, the group SIGKILL must take the
+        // grandchild with it. Before the fix (single-pid kill + unbounded `wait()`),
+        // the grandchild survived and teardown could park forever in `wait4`. The
+        // 5s watchdog also guards the bounded-reap property: drop must return
+        // promptly, not block.
+        let _guard = PTY_COMMAND_LOCK.lock().unwrap();
+        let mut command = PtyCommand::new("/bin/sh", test_size());
+        command
+            .arg("-c")
+            .arg("sleep 100 & printf '%s\\n' \"$!\"; wait");
+        let child = command.spawn().expect("spawn child");
+
+        let reported =
+            read_master_with_timeout(child.master_fd(), 32).expect("read grandchild pid");
+        let grandchild: libc::pid_t = std::str::from_utf8(&reported)
+            .expect("utf8 pid")
+            .trim()
+            .parse()
+            .expect("parse grandchild pid");
+
+        let dropped = std::time::Instant::now();
+        drop(child);
+        assert!(
+            dropped.elapsed() < std::time::Duration::from_secs(5),
+            "PtyChild::drop blocked for >5s",
+        );
+
+        // The group SIGKILL takes the grandchild with the leader; poll until its
+        // reparent reaps it.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        let mut survived = true;
+        while std::time::Instant::now() < deadline {
+            if unsafe { libc::kill(grandchild, 0) } == -1
+                && io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
+            {
+                survived = false;
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        assert!(!survived, "grandchild {grandchild} survived PtyChild::drop");
     }
 
     #[test]

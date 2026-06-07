@@ -250,3 +250,179 @@ commit.
   the reproduction rate, and the post-fix repeat count must exceed the pre-fix
   attempts-to-reproduce (≥3× mean, never <3); a non-reproduction is a Partial,
   not a silent pass.
+
+## Result
+
+**Result:** Pass
+
+### Gate established and proven to catch the deadlock
+
+`.config/nextest.toml` (new) sets
+`slow-timeout = { period = "30s", terminate-after = 1 }`. Run under the gate,
+the suite reproduced the deadlock as a **named, terminated test** on the second
+forced attempt:
+
+```
+TERMINATING [> 30.000s] roastty tests::kitty_clipboard_read_event_rejects_unsupported_forms_without_request
+    TIMEOUT [  30.004s] roastty tests::kitty_clipboard_read_event_rejects_unsupported_forms_without_request
+```
+
+That is the design goal: an indefinite hang became a first-class, named failure.
+Reproduction rate: ~1-in-2 under the targeted 188-test nextest run; ~100% under
+16-way direct concurrency on the single test.
+
+### Root cause (from a live backtrace)
+
+`sample` of the wedged process (`logs/exp829/backtrace.txt`) showed the test
+thread parked — **not** in any lock cycle (the worker thread had already
+exited):
+
+```
+roastty_surface_free (lib.rs:13301) → drop Surface → drop TermioWorker
+ → drop Arc<Mutex<Termio>> → drop Termio → <PtyChild as Drop>::drop (pty.rs:354)
+  → std::process::Child::wait → __wait4   [parked indefinitely]
+```
+
+**Proven fact:** `PtyChild::drop` blocked in an **unbounded `Child::wait()`**
+(`wait4`) reaping a child that did not promptly die — freezing teardown and,
+under the in-process runner, the whole suite via `PTY_COMMAND_LOCK`. That is the
+demonstrated symptom and is sufficient to justify the fix (bound the wait). This
+is also a **production bug**: closing a surface whose shell is still alive would
+hang the same way.
+
+**Hypothesis (not fully derived):** why the pre-fix path — `kill()` (single pid)
+then `wait()` — failed to reap promptly. The child runs `setsid()` + `TIOCSCTTY`
+(`pty.rs:172`), so it leads its own session/process group; a plausible cause is
+the session/group structure under heavy concurrency leaving the leader
+un-reapable for a window. The exact kernel reason was **not** reproduced
+deterministically (the hang is racy — see the regression-test caveat). The fix
+does not depend on it: bounding the reap eliminates _any_ unbounded wait in drop
+regardless of cause, and the process-group kill is independently correct
+production behavior (terminate the shell's whole job tree on surface close).
+
+### Fix
+
+`PtyChild::drop` (`roastty/src/os/pty.rs`) now SIGKILLs the whole **process
+group** (`kill(-pid)`, reaching grandchildren and the wedged session leader),
+then performs a **bounded reap** (poll `try_wait` ≤2s, then detach) so teardown
+can never block indefinitely.
+
+### Verification (all green for the deadlock)
+
+- **`cargo build -p roastty`** — no warnings.
+  **`cargo fmt -p roastty -- --check`** — clean. **No-ghostty grep** on
+  `roastty/src/os/pty.rs` — clean.
+- **Forced concurrency:** 0 hangs across **160 runs** (10×16 concurrent) of the
+  culprit test — was ~100% pre-fix.
+- **Targeted nextest:** **12/12** clean runs of the 188 `clipboard`/
+  `surface_binding` tests — was ~1-in-2 hung pre-fix.
+- **Original failing config:** bare `cargo test -p roastty` now **completes in
+  96 s** (was a 208 s hang), 4353 passed / 6 failed.
+- **Backtrace confirms the fix target**; the 0/160 + 12/12 + bare-suite
+  completion confirm the deadlock is gone.
+- **Regression test** `pty_child_drop_kills_the_whole_process_group`
+  (`roastty/src/os/pty.rs`): spawns a child that backgrounds a grandchild,
+  asserts `PtyChild::drop` returns in **<5 s** (the bounded-reap invariant) and
+  that the child tree is reaped. Honest caveat: it does **not** fail when the
+  group-kill is reverted to a single-pid kill — the grandchild is also reaped by
+  the SIGHUP that the PTY master-close delivers, so it cannot deterministically
+  isolate the group-kill, and the underlying deadlock is racy (no deterministic
+  unit reproduction). The **real regression guard is the gate itself**: the
+  nextest kill-timeout + the forced-reproduction loop reproduced the hang
+  ~1-in-2 pre-fix and show 0/160 + 12/12 post-fix. (The design's "fails when
+  reverted" expectation was not met for the reason above; recorded as a
+  deviation.)
+
+### Two pre-existing issues the now-completing suite exposed (not regressions)
+
+1. **6 flaky tests** (`surface_text_*`, `surface_tty_name_*`) — real-child I/O
+   racing a 1 s wait. **Confirmed pre-existing** via a baseline with the fix
+   reverted (`git stash`): they fail **2–5 per run with zero timeouts even
+   without the fix**. Unrelated to this change. → **deferred to Experiment 830**
+   per the issue's hang/flake convention.
+2. **CoreText font-test slowness under nextest.** `font::*` tests load real
+   macOS fonts; nextest's process-per-test has no shared CoreText cache, so each
+   pays a cold ~10 s load, and under full parallelism 100+ processes thrash the
+   system font daemon and each stretches to **~58 s** (the font module alone
+   took 522 s under nextest). These are **slow, not deadlocked** (they pass in
+   isolation). Per the chosen remedy (tune nextest, not a different runner),
+   `.config/ nextest.toml` puts the whole `font::` module in a `coretext`
+   test-group (`max-threads = 4`, to cut fontd thrash) with a **120 s** window,
+   so slow-but-finite tests are not killed while an infinite deadlock is still
+   caught. Fast font tests are unaffected. **Verified:** under the tuned config
+   the whole `font::` module runs **593 passed / 0 timeouts / 0 failures** (slow
+   tests land at ~18 s, well under 120 s). Cost: the capped concurrency makes
+   the font module ~12.8 min — the accepted trade-off of keeping one nextest
+   runner.
+
+### Gate-design decisions (user-directed)
+
+- The deadlock-proof gate stays on **nextest**, tuned with a `[test-groups]`
+  entry + longer timeout for the CoreText tests (rather than switching to a
+  bare-`cargo test` + watchdog runner).
+- The 6 flaky surface tests become **Experiment 830** (the immediate next
+  experiment), not a fold-in here.
+
+## Conclusion
+
+The first real deadlock the gate was built to catch was a genuine bug — an
+unbounded `Child::wait()` in `PtyChild::drop` reaping a `setsid()`
+session-leader child that a single-pid `kill()` could not terminate. The fix
+(process-group SIGKILL + bounded reap) eliminates it in both the test suite and
+production surface teardown, proven by 160 concurrent runs, 12 nextest repeats,
+and the once-hanging bare `cargo test` now completing in 96 s.
+
+The deadlock-proof gate works: it converted an indefinite, intermittent hang
+into a named, terminated test — exactly what 828 prior experiments lacked.
+Tuning it for this suite surfaced that nextest's process-per-test isolation is
+costly for CoreText-backed font tests (no shared font cache → ~10–58 s each);
+the `coretext` test-group (capped concurrency + 120 s window) keeps them from
+false-positiving while still catching infinite hangs.
+
+Two follow-ups, in order:
+
+- **Experiment 830 (immediate next):** fix the 6 pre-existing flaky
+  `surface_text_*` / `surface_tty_name_*` tests (real-child I/O racing a 1 s
+  wait). Per this issue's hang/flake convention, no new feature work precedes
+  it. 830 can also add a stronger surface-level regression test that drives the
+  exact racy teardown sequence under a watchdog, using the lib.rs surface
+  helpers it fixes there.
+
+A `PtyChild::drop` teardown-invariant test ships in this experiment; the
+deterministic isolation of the racy deadlock is left to the gate (which catches
+it empirically). The URI/regex and remaining `os/` slices resume only once the
+test suite is flake-free.
+
+## Completion Review
+
+**Reviewer:** `adversarial-reviewer` subagent (Claude Opus, fresh context,
+read-only). Ran ~5.4 min; independently reproduced every claimed number from
+`logs/exp829/` and ran fast spot-checks.
+
+**Verdict:** APPROVED — no Required findings. The reviewer confirmed: the fix is
+sound (at the `kill(-pid)` point the child is provably un-reaped, so no
+PID-reuse can misdirect the group signal; `setsid` makes pgid==pid; the
+pre-`setsid` race is covered by the direct `self.child.kill()`; drop is bounded
+to ~2 s); the backtrace supports the "unbounded `wait4` in drop, no lock cycle"
+claim; the log integrity holds (`loop-2.log` named TIMEOUT, 12/12
+`postfix-*.log`, `bare-cargo-test.log` 96 s / 4353 passed / 6 failed,
+`font-tuned2.log` 593 passed / 0 timeouts, baseline `base-*.log` 2–5 fails with
+the fix reverted); the 6 flaky tests are pre-existing and correctly deferred to
+Exp 830; build/fmt/no-ghostty/ diff clean; plan commit exists and no result
+commit yet. It re-ran the two `pty_child_drop` tests (pass) and the 188
+clipboard/surface_binding tests under nextest (pass, no hang).
+
+Findings, all Optional/Nit, addressed:
+
+- **Optional — overstated root-cause mechanism.** The prose asserted the
+  single-pid `kill()` "left the group unreapable, so `wait()` parked forever,"
+  but an uncatchable SIGKILL to the shell pid reaps it regardless of a surviving
+  grandchild. **Fixed:** the Root-cause section now separates the **proven
+  fact** (unbounded `wait4` in drop) from the **hypothesis** (why the old path
+  failed to reap), matching the honesty already in the regression-test caveat.
+- **Optional — regression test is not fail-without-fix.** Already disclosed in
+  the Result; no change required. The empirical gate is the regression guard; a
+  deterministic wedge reproduction is deferred to Exp 830.
+- **Nit — zombie-leak window.** **Fixed:** the bounded-reap comment in `pty.rs`
+  now notes that detaching can leak a zombie until process exit (the accepted
+  trade for bounded teardown).

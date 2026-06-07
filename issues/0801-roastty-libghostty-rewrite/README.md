@@ -519,7 +519,12 @@ make hangs loud and fatal rather than silent:
   `.config/nextest.toml`. A test that blocks past the window is terminated and
   reported as a failure **by name**, turning a deadlock into a diagnosable
   failing test instead of an indefinite wait. (Experiment 829 establishes this
-  config and fixes the first deadlock it exposes.)
+  config and fixes the first deadlock it exposes.) Genuinely slow-but-finite
+  tests get a scoped exception, not a blanket longer timeout: the
+  CoreText-backed `font::` tests (no shared font cache under nextest's
+  process-per-test, ~10–58 s each) run in a capped-concurrency `coretext`
+  test-group with a 120 s window, so they are not killed as false positives
+  while an infinite deadlock anywhere is still caught.
 - **Run the full suite at the result gate** — never silently filter out the slow
   or PTY tests. A recorded representative subset may be used while iterating,
   but the result gate runs everything.
@@ -2311,7 +2316,7 @@ are past the correctness-critical foundation.
 - [Experiment 828: Build Snapshot Overlay Inputs](828-build-snapshot-overlay-inputs.md)
   — **Pass** · Codex/Codex/Codex
 - [Experiment 829: Deadlock-proof test gate and PTY worker deadlock fix](829-deadlock-proof-test-gate.md)
-  — **Designed** · Claude/Claude/Claude
+  — **Pass** · Claude/Claude/Claude
 
 ## Non-Goals
 
