@@ -2206,6 +2206,8 @@ are past the correctness-critical foundation.
   — **Pass** · Codex/Codex/Codex
 - [Experiment 806: Crash Envelope Persistence](806-crash-envelope-persistence.md)
   — **Pass** · Codex/Codex/Codex
+- [Experiment 807: Renderer State Mouse Foundation](807-renderer-state-mouse-foundation.md)
+  — **Designed**
 
 ## Non-Goals
 
