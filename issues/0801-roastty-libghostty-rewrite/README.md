@@ -2049,6 +2049,8 @@ are past the correctness-critical foundation.
   **Pass** · Codex/Codex/Codex
 - [Experiment 767: Config Get Window Save State](767-config-get-window-save-state.md)
   — **Pass** · Codex/Codex/Codex
+- [Experiment 768: Config Get App Lifecycle Bools](768-config-get-app-lifecycle-bools.md)
+  — **Designed**
 
 ## Non-Goals
 
