@@ -332,8 +332,11 @@ Experiment 246).
       worker resize forwarding and default shell resolution done; configured
       command/direct-exec/shell-integration policy, renderer thread/mailbox
       wakeups, renderer/grid calculation, and full renderer integration missing
-- [ ] `os/` utilities (tmpdir / file / env / hostname / locale) — ad hoc Rust
-      stdlib; no dedicated module
+- [x] `os/` utilities (tmpdir / file / env / hostname / locale) — dedicated
+      `os/` modules exist for tmpdir/temp paths, file descriptor limits, env
+      path composition, hostname validation/local detection, locale probing, and
+      i18n locale helpers; resource lookup, shell integration resources, PTY
+      policy, and frontend/app integration remain tracked elsewhere
 
 ### Supporting subsystems
 
@@ -2094,6 +2097,8 @@ are past the correctness-critical foundation.
   — **Pass** · Codex/Codex/Codex
 - [Experiment 787: Kitty Clipboard Text Writes](787-kitty-clipboard-text-writes.md)
   — **Pass** · Codex/Codex/Codex
+- [Experiment 788: OS Utilities Checklist Sync](788-os-utilities-checklist-sync.md)
+  — **Designed**
 
 ## Non-Goals
 
