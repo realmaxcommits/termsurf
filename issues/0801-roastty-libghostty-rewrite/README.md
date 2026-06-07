@@ -2371,6 +2371,8 @@ are past the correctness-critical foundation.
   — **Pass** · Claude/Claude/Claude
 - [Experiment 840: A persistent FrameRenderer that owns state and drives update_frame](840-frame-renderer-update-frame.md)
   — **Pass** · Claude/Claude/Claude
+- [Experiment 841: FrameRenderer drives update-and-present](841-frame-renderer-present.md)
+  — **Designed** · Claude/Claude/Claude
 
 ## Non-Goals
 
