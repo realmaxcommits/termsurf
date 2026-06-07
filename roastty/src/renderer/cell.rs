@@ -22,7 +22,7 @@ use crate::font::face::constraint::{Constraint, Size};
 use crate::font::face::coretext::RenderOptions;
 use crate::font::face::nerd_font_attributes::get_constraint;
 use crate::font::metrics::Metrics;
-use crate::font::run::{shape_row_cached, RunCell, RunOptions, ShapedRun, Wide};
+use crate::font::run::{shape_row_cached, RowSemanticPrompt, RunCell, RunOptions, ShapedRun, Wide};
 use crate::font::shape;
 use crate::font::shared_grid::SharedGrid;
 use crate::font::sprite::draw::Sprite;
@@ -230,6 +230,61 @@ pub(crate) fn cell_colors(
     };
 
     CellColors { fg, bg }
+}
+
+/// Whether a row should never have its background extended into terminal padding.
+/// Faithful value-level port of upstream `renderer/row.zig`'s `neverExtendBg`
+/// over Roastty's prepared [`RunOptions`] row data.
+pub(crate) fn row_never_extend_bg(row: &RunOptions, palette: &Palette, default_bg: Rgb) -> bool {
+    if matches!(
+        row.semantic_prompt,
+        RowSemanticPrompt::Prompt | RowSemanticPrompt::PromptContinuation
+    ) {
+        return true;
+    }
+
+    for cell in &row.cells {
+        if let Some(bg) = resolve_run_color(cell.explicit_bg, palette) {
+            if bg == default_bg {
+                return true;
+            }
+            continue;
+        }
+
+        if !cell.is_codepoint {
+            continue;
+        }
+
+        if is_perfect_fit_powerline(cell.codepoint) {
+            return true;
+        }
+
+        match cell.style.resolve_bg(palette) {
+            None => return true,
+            Some(bg) if bg == default_bg => return true,
+            Some(_) => {}
+        }
+    }
+
+    false
+}
+
+pub(crate) fn row_never_extend_bg_flags(
+    rows: &[RunOptions],
+    palette: &Palette,
+    default_bg: Rgb,
+) -> Vec<bool> {
+    rows.iter()
+        .map(|row| row_never_extend_bg(row, palette, default_bg))
+        .collect()
+}
+
+fn resolve_run_color(color: Color, palette: &Palette) -> Option<Rgb> {
+    match color {
+        Color::None => None,
+        Color::Palette(idx) => Some(palette[idx as usize]),
+        Color::Rgb(rgb) => Some(rgb),
+    }
 }
 
 /// A selection/search color configuration value (upstream `TerminalColor`):
@@ -1468,6 +1523,7 @@ pub(crate) fn add_preedit(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::terminal::color::DEFAULT_PALETTE;
 
     #[test]
     fn is_box_drawing_bounds() {
@@ -1833,6 +1889,172 @@ mod tests {
         assert_ne!(opts.constraint.size, Size::Fit);
     }
 
+    fn never_extend_cell(cp: u32, bg: Color, explicit_bg: Color, is_codepoint: bool) -> RunCell {
+        RunCell {
+            codepoint: cp,
+            graphemes: vec![],
+            style: TermStyle {
+                bg_color: bg,
+                ..TermStyle::default()
+            },
+            explicit_bg,
+            style_id: 0,
+            wide: Wide::Narrow,
+            is_empty: cp == 0,
+            is_codepoint,
+        }
+    }
+
+    fn never_extend_row(cells: Vec<RunCell>) -> RunOptions {
+        RunOptions {
+            cells,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn row_never_extend_bg_semantic_prompt_rows_return_true() {
+        let mut row = never_extend_row(vec![]);
+        row.semantic_prompt = RowSemanticPrompt::Prompt;
+        assert!(row_never_extend_bg(
+            &row,
+            &DEFAULT_PALETTE,
+            Rgb::new(1, 2, 3)
+        ));
+
+        row.semantic_prompt = RowSemanticPrompt::PromptContinuation;
+        assert!(row_never_extend_bg(
+            &row,
+            &DEFAULT_PALETTE,
+            Rgb::new(1, 2, 3)
+        ));
+    }
+
+    #[test]
+    fn row_never_extend_bg_explicit_background_cells_compare_default() {
+        let default = DEFAULT_PALETTE[2];
+        let same_palette = never_extend_row(vec![never_extend_cell(
+            0,
+            Color::None,
+            Color::Palette(2),
+            false,
+        )]);
+        assert!(row_never_extend_bg(
+            &same_palette,
+            &DEFAULT_PALETTE,
+            default
+        ));
+
+        let different_palette = never_extend_row(vec![never_extend_cell(
+            0,
+            Color::None,
+            Color::Palette(3),
+            false,
+        )]);
+        assert!(!row_never_extend_bg(
+            &different_palette,
+            &DEFAULT_PALETTE,
+            default
+        ));
+
+        let same_rgb = never_extend_row(vec![never_extend_cell(
+            0,
+            Color::None,
+            Color::Rgb(default),
+            false,
+        )]);
+        assert!(row_never_extend_bg(&same_rgb, &DEFAULT_PALETTE, default));
+
+        let different_rgb = never_extend_row(vec![never_extend_cell(
+            0,
+            Color::None,
+            Color::Rgb(Rgb::new(9, 8, 7)),
+            false,
+        )]);
+        assert!(!row_never_extend_bg(
+            &different_rgb,
+            &DEFAULT_PALETTE,
+            default
+        ));
+    }
+
+    #[test]
+    fn row_never_extend_bg_codepoint_background_and_powerline_cases() {
+        let default = Rgb::new(1, 2, 3);
+
+        let no_bg = never_extend_row(vec![never_extend_cell(
+            'A' as u32,
+            Color::None,
+            Color::None,
+            true,
+        )]);
+        assert!(row_never_extend_bg(&no_bg, &DEFAULT_PALETTE, default));
+
+        let default_bg = never_extend_row(vec![never_extend_cell(
+            'A' as u32,
+            Color::Rgb(default),
+            Color::None,
+            true,
+        )]);
+        assert!(row_never_extend_bg(&default_bg, &DEFAULT_PALETTE, default));
+
+        let non_default_bg = never_extend_row(vec![never_extend_cell(
+            'A' as u32,
+            Color::Rgb(Rgb::new(4, 5, 6)),
+            Color::None,
+            true,
+        )]);
+        assert!(!row_never_extend_bg(
+            &non_default_bg,
+            &DEFAULT_PALETTE,
+            default
+        ));
+
+        let powerline = never_extend_row(vec![never_extend_cell(
+            0xE0B0,
+            Color::Rgb(Rgb::new(4, 5, 6)),
+            Color::None,
+            true,
+        )]);
+        assert!(row_never_extend_bg(&powerline, &DEFAULT_PALETTE, default));
+
+        let non_powerline = never_extend_row(vec![never_extend_cell(
+            0xE0C9,
+            Color::Rgb(Rgb::new(4, 5, 6)),
+            Color::None,
+            true,
+        )]);
+        assert!(!row_never_extend_bg(
+            &non_powerline,
+            &DEFAULT_PALETTE,
+            default
+        ));
+    }
+
+    #[test]
+    fn row_never_extend_bg_flags_are_indexed_by_viewport_row() {
+        let default = Rgb::new(1, 2, 3);
+        let rows = vec![
+            never_extend_row(vec![never_extend_cell(
+                'A' as u32,
+                Color::None,
+                Color::None,
+                true,
+            )]),
+            never_extend_row(vec![never_extend_cell(
+                'B' as u32,
+                Color::Rgb(Rgb::new(4, 5, 6)),
+                Color::None,
+                true,
+            )]),
+        ];
+
+        assert_eq!(
+            row_never_extend_bg_flags(&rows, &DEFAULT_PALETTE, default),
+            vec![true, false]
+        );
+    }
+
     #[test]
     fn rebuild_row_places_glyphs_at_absolute_columns() {
         use crate::font::collection::Index;
@@ -1878,6 +2100,7 @@ mod tests {
                 fg_color: fg,
                 ..TermStyle::default()
             },
+            explicit_bg: Color::None,
             style_id: 0,
             wide: Wide::Narrow,
             is_empty: false,
@@ -1946,6 +2169,7 @@ mod tests {
                 },
                 ..TermStyle::default()
             },
+            explicit_bg: Color::None,
             style_id: 0,
             wide: Wide::Narrow,
             is_empty: false,
@@ -2025,6 +2249,7 @@ mod tests {
                 },
                 ..TermStyle::default()
             },
+            explicit_bg: Color::None,
             style_id: 0,
             wide,
             is_empty: false,
@@ -2115,6 +2340,7 @@ mod tests {
                 flags,
                 ..TermStyle::default()
             },
+            explicit_bg: Color::None,
             style_id: 0,
             wide: Wide::Narrow,
             is_empty: false,
@@ -2247,6 +2473,7 @@ mod tests {
                 flags,
                 ..TermStyle::default()
             },
+            explicit_bg: Color::None,
             style_id: 0,
             wide,
             is_empty: false,
@@ -2370,6 +2597,7 @@ mod tests {
             codepoint: cp,
             graphemes: vec![],
             style,
+            explicit_bg: Color::None,
             style_id: 0,
             wide: Wide::Narrow,
             is_empty: false,
@@ -2467,6 +2695,7 @@ mod tests {
             codepoint: 'A' as u32,
             graphemes: vec![],
             style,
+            explicit_bg: Color::None,
             style_id: 0,
             wide: Wide::Narrow,
             is_empty: false,
@@ -2569,6 +2798,7 @@ mod tests {
                 },
                 ..TermStyle::default()
             },
+            explicit_bg: Color::None,
             style_id: 0,
             wide: Wide::Narrow,
             is_empty: false,
@@ -2625,6 +2855,7 @@ mod tests {
             codepoint: 'A' as u32,
             graphemes: vec![],
             style: TermStyle::default(),
+            explicit_bg: Color::None,
             style_id: 0,
             wide: Wide::Narrow,
             is_empty: false,
@@ -2695,6 +2926,7 @@ mod tests {
                 },
                 ..TermStyle::default()
             },
+            explicit_bg: Color::None,
             style_id: 0,
             wide: Wide::Narrow,
             is_empty: false,
@@ -2807,6 +3039,7 @@ mod tests {
                 },
                 ..TermStyle::default()
             },
+            explicit_bg: Color::None,
             style_id: 0,
             wide: Wide::Narrow,
             is_empty: false,
@@ -2888,6 +3121,7 @@ mod tests {
             codepoint: cp,
             graphemes: vec![],
             style: TermStyle::default(),
+            explicit_bg: Color::None,
             style_id: 0,
             wide: Wide::Narrow,
             is_empty,
@@ -2953,6 +3187,7 @@ mod tests {
                 bg_color: bg,
                 ..TermStyle::default()
             },
+            explicit_bg: Color::None,
             style_id: 0,
             wide: Wide::Narrow,
             is_empty: false,
@@ -3014,6 +3249,7 @@ mod tests {
                 bg_color: bg,
                 ..TermStyle::default()
             },
+            explicit_bg: Color::None,
             style_id: 0,
             wide: Wide::Narrow,
             is_empty: false,
@@ -3082,6 +3318,7 @@ mod tests {
                 bg_color: bg,
                 ..TermStyle::default()
             },
+            explicit_bg: Color::None,
             style_id: 0,
             wide: Wide::Narrow,
             is_empty: false,
@@ -3128,6 +3365,7 @@ mod tests {
                 bg_color: Color::Palette(idx),
                 ..TermStyle::default()
             },
+            explicit_bg: Color::None,
             style_id: 0,
             wide: Wide::Narrow,
             is_empty: false,
@@ -3179,6 +3417,7 @@ mod tests {
                 bg_color: Color::Palette(idx),
                 ..TermStyle::default()
             },
+            explicit_bg: Color::None,
             style_id: 0,
             wide,
             is_empty: false,
@@ -3236,6 +3475,7 @@ mod tests {
                 },
                 ..TermStyle::default()
             },
+            explicit_bg: Color::None,
             style_id: 0,
             wide: Wide::Narrow,
             is_empty: false,
@@ -3294,6 +3534,7 @@ mod tests {
                 bg_color: Color::Rgb(b),
                 ..TermStyle::default()
             },
+            explicit_bg: Color::None,
             style_id: 0,
             wide: Wide::Narrow,
             is_empty: false,
@@ -3343,6 +3584,7 @@ mod tests {
                 bg_color: Color::None,
                 ..TermStyle::default()
             },
+            explicit_bg: Color::None,
             style_id: 0,
             wide: Wide::Narrow,
             is_empty: false,
@@ -3396,6 +3638,7 @@ mod tests {
                 },
                 ..TermStyle::default()
             },
+            explicit_bg: Color::None,
             style_id: 0,
             wide: Wide::Narrow,
             is_empty: false,
@@ -3445,6 +3688,7 @@ mod tests {
                 bg_color: Color::Rgb(explicit),
                 ..TermStyle::default()
             },
+            explicit_bg: Color::None,
             style_id: 0,
             wide: Wide::Narrow,
             is_empty: false,
@@ -3455,6 +3699,7 @@ mod tests {
             codepoint: 'x' as u32,
             graphemes: vec![],
             style: TermStyle::default(),
+            explicit_bg: Color::None,
             style_id: 0,
             wide: Wide::Narrow,
             is_empty: false,
@@ -3474,6 +3719,7 @@ mod tests {
                 },
                 ..TermStyle::default()
             },
+            explicit_bg: Color::None,
             style_id: 0,
             wide: Wide::Narrow,
             is_empty: false,
@@ -3529,6 +3775,7 @@ mod tests {
                 bg_color: Color::Rgb(explicit),
                 ..TermStyle::default()
             },
+            explicit_bg: Color::None,
             style_id: 0,
             wide: Wide::Narrow,
             is_empty: false,
@@ -3583,6 +3830,7 @@ mod tests {
                 bg_color: Color::None,
                 ..TermStyle::default()
             },
+            explicit_bg: Color::None,
             style_id: 0,
             wide: Wide::Narrow,
             is_empty: false,
@@ -3756,6 +4004,7 @@ mod tests {
                 bg_color: Color::None,
                 ..TermStyle::default()
             },
+            explicit_bg: Color::None,
             style_id: 0,
             wide: Wide::Narrow,
             is_empty: false,
@@ -3810,6 +4059,7 @@ mod tests {
                 bg_color: Color::None,
                 ..TermStyle::default()
             },
+            explicit_bg: Color::None,
             style_id: 0,
             wide: Wide::Narrow,
             is_empty: false,
@@ -3886,6 +4136,7 @@ mod tests {
             codepoint: 'A' as u32,
             graphemes: vec![],
             style: TermStyle::default(),
+            explicit_bg: Color::None,
             style_id: 0,
             wide: Wide::Narrow,
             is_empty: false,
@@ -3964,6 +4215,7 @@ mod tests {
                 bg_color: Color::None,
                 ..TermStyle::default()
             },
+            explicit_bg: Color::None,
             style_id: 0,
             wide: Wide::Narrow,
             is_empty: false,
@@ -4414,6 +4666,7 @@ mod tests {
             codepoint: cp,
             graphemes: vec![],
             style: TermStyle::default(),
+            explicit_bg: Color::None,
             style_id: 0,
             wide,
             is_empty,

@@ -1289,6 +1289,7 @@ mod tests {
                 bg_color: bg,
                 ..TermStyle::default()
             },
+            explicit_bg: Color::None,
             style_id: 0,
             wide: crate::font::run::Wide::Narrow,
             is_empty: cp == 0,

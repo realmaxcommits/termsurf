@@ -13,7 +13,7 @@ use super::size::{
 use super::{
     color, highlight, hyperlink, kitty::graphics_unicode, selection, selection_codepoints, style,
 };
-use crate::font::run::RunOptions;
+use crate::font::run::{RowSemanticPrompt as RunRowSemanticPrompt, RunOptions};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum Viewport {
@@ -2449,6 +2449,11 @@ impl PageList {
                 cells,
                 selection,
                 cursor_x,
+                semantic_prompt: match node.page.get_row(pin.y as usize).semantic_prompt() {
+                    SemanticPrompt::None => RunRowSemanticPrompt::None,
+                    SemanticPrompt::Prompt => RunRowSemanticPrompt::Prompt,
+                    SemanticPrompt::PromptContinuation => RunRowSemanticPrompt::PromptContinuation,
+                },
             });
         }
 
@@ -20111,6 +20116,24 @@ mod tests {
         assert!(row1.cells.iter().all(|c| c.is_empty));
         assert_eq!(row1.cursor_x, None);
         assert_eq!(row1.selection, None);
+    }
+
+    #[test]
+    fn shape_run_options_carries_row_semantic_prompt() {
+        let mut list = PageList::init(4, 3, None).unwrap();
+        list.set_active_row_semantic_prompt(0, SemanticPrompt::Prompt)
+            .unwrap();
+        list.set_active_row_semantic_prompt(1, SemanticPrompt::PromptContinuation)
+            .unwrap();
+
+        let opts = list.shape_run_options(None, None);
+
+        assert_eq!(opts[0].semantic_prompt, RunRowSemanticPrompt::Prompt);
+        assert_eq!(
+            opts[1].semantic_prompt,
+            RunRowSemanticPrompt::PromptContinuation
+        );
+        assert_eq!(opts[2].semantic_prompt, RunRowSemanticPrompt::None);
     }
 
     #[test]

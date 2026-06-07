@@ -68,6 +68,9 @@ pub(crate) struct RunCell {
     pub graphemes: Vec<u32>,
     /// The cell's effective style (the default style if the cell is unstyled).
     pub style: TermStyle,
+    /// Explicit terminal background-color cell content, if this cell is a
+    /// background-color cell rather than ordinary codepoint/grapheme text.
+    pub explicit_bg: Color,
     /// The cell's style id (the fast-path equality the run iterator uses before
     /// the `comparable_style` comparison).
     pub style_id: u16,
@@ -87,6 +90,14 @@ impl RunCell {
     }
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) enum RowSemanticPrompt {
+    #[default]
+    None,
+    Prompt,
+    PromptContinuation,
+}
+
 /// The input to a run iterator: a terminal row's decoded cells plus the run
 /// breaks. Faithful port of `shape.RunOptions` — `grid` is omitted (roastty
 /// passes the `CodepointResolver` to the iterator separately) and the cells are
@@ -101,6 +112,9 @@ pub(crate) struct RunOptions {
     pub selection: Option<[u16; 2]>,
     /// The cursor's column in this row, if any (a run breaks around the cursor).
     pub cursor_x: Option<u16>,
+    /// The row-level semantic prompt metadata used by renderer padding-extension
+    /// heuristics.
+    pub semantic_prompt: RowSemanticPrompt,
 }
 
 impl RunOptions {
@@ -612,6 +626,7 @@ mod tests {
             codepoint,
             graphemes,
             style: TermStyle::default(),
+            explicit_bg: Color::None,
             style_id: 0,
             wide: Wide::Narrow,
             is_empty: codepoint == 0,
@@ -639,6 +654,7 @@ mod tests {
             codepoint: 'Z' as u32,
             graphemes: vec![0xFE0F],
             style: TermStyle::default(),
+            explicit_bg: Color::None,
             style_id: 7,
             wide: Wide::Wide,
             is_empty: false,
@@ -654,6 +670,7 @@ mod tests {
             cells: vec![cell.clone(), sample_cell('A' as u32, vec![])],
             selection: Some([1, 4]),
             cursor_x: Some(2),
+            semantic_prompt: RowSemanticPrompt::None,
         };
         assert_eq!(opts.cells.len(), 2);
         assert_eq!(opts.cells[0], cell);
@@ -668,6 +685,7 @@ mod tests {
             cells: vec![sample_cell('A' as u32, vec![])],
             selection: Some([1, 4]),
             cursor_x: Some(3),
+            semantic_prompt: RowSemanticPrompt::None,
         };
         opts.apply_break_config(FontShapingBreak { cursor: false });
         assert_eq!(opts.cursor_x, None);
@@ -705,6 +723,7 @@ mod tests {
             codepoint,
             graphemes: vec![],
             style: TermStyle::default(),
+            explicit_bg: Color::None,
             style_id: 0,
             wide: Wide::Narrow,
             is_empty: codepoint == 0,

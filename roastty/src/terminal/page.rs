@@ -1513,6 +1513,11 @@ impl Page {
                     codepoint: cell.codepoint(),
                     graphemes,
                     style,
+                    explicit_bg: match cell.content_tag() {
+                        ContentTag::BgColorPalette => style::Color::Palette(cell.color_palette()),
+                        ContentTag::BgColorRgb => style::Color::Rgb(cell.color_rgb()),
+                        ContentTag::Codepoint | ContentTag::CodepointGrapheme => style::Color::None,
+                    },
                     style_id,
                     wide: match cell.wide() {
                         Wide::Narrow => RunWide::Narrow,
@@ -4157,6 +4162,7 @@ mod tests {
         assert!(cells[0].is_codepoint);
         assert_eq!(cells[0].style_id, style::DEFAULT_ID);
         assert_eq!(cells[0].style, style::Style::default());
+        assert_eq!(cells[0].explicit_bg, style::Color::None);
 
         // 'e' + U+0301: a grapheme cell.
         assert_eq!(cells[1].codepoint, 'e' as u32);
@@ -4168,10 +4174,29 @@ mod tests {
         assert_eq!(cells[2].codepoint, 'B' as u32);
         assert_eq!(cells[2].style_id, id);
         assert_eq!(cells[2].style, bold);
+        assert_eq!(cells[2].explicit_bg, style::Color::None);
 
         // The trailing cell is empty.
         assert_eq!(cells[3].codepoint, 0);
         assert!(cells[3].is_empty);
+        assert_eq!(cells[3].explicit_bg, style::Color::None);
+    }
+
+    #[test]
+    fn shape_run_cells_preserves_explicit_background_color_cells() {
+        let mut page = Page::init(Capacity::new(3, 1)).unwrap();
+        *page.get_row_and_cell_mut(0, 0).cell = Cell::bg_palette(2);
+        *page.get_row_and_cell_mut(1, 0).cell = Cell::bg_rgb(Rgb::new(9, 8, 7));
+        *page.get_row_and_cell_mut(2, 0).cell = Cell::init('A' as u32);
+
+        let cells = page.shape_run_cells(0);
+
+        assert_eq!(cells[0].explicit_bg, style::Color::Palette(2));
+        assert!(!cells[0].is_codepoint);
+        assert_eq!(cells[1].explicit_bg, style::Color::Rgb(Rgb::new(9, 8, 7)));
+        assert!(!cells[1].is_codepoint);
+        assert_eq!(cells[2].explicit_bg, style::Color::None);
+        assert!(cells[2].is_codepoint);
     }
 
     #[test]

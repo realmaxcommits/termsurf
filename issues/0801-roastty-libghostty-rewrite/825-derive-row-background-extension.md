@@ -124,3 +124,73 @@ no/default/non-default backgrounds, and perfect-fit Powerline glyphs. It noted
 that implementation tests should include both true and false cases for
 palette/RGB background cells, styled codepoint/grapheme cells, default/no
 background cells, semantic prompts, and Powerline/non-Powerline glyphs.
+
+## Result
+
+**Result:** Pass
+
+Roastty can now derive prepared row-level `never_extend` decisions for padding
+extension:
+
+- `roastty/src/font/run.rs` adds `RowSemanticPrompt`, carries semantic prompt
+  metadata on `RunOptions`, and preserves explicit background-color cell content
+  on `RunCell` with `explicit_bg`.
+- `roastty/src/terminal/page.rs` populates `RunCell::explicit_bg` for
+  `BgColorPalette` and `BgColorRgb` cells while leaving codepoint/grapheme cells
+  as `Color::None`.
+- `roastty/src/terminal/page_list.rs` maps terminal row semantic prompt metadata
+  into `RunOptions::semantic_prompt`.
+- `roastty/src/renderer/cell.rs` adds `row_never_extend_bg`, a value-level port
+  of upstream `renderer/row.zig`'s `neverExtendBg`, and
+  `row_never_extend_bg_flags` for producing a viewport-row-indexed bool vector.
+- Tests cover semantic prompt rows, palette and RGB explicit background cells,
+  no/default/non-default codepoint backgrounds, perfect-fit Powerline glyphs,
+  non-Powerline glyphs, derived row bool vector indexing, explicit-background
+  decoding, semantic prompt propagation, and existing font run behavior.
+
+Verification:
+
+- Inspected `vendor/ghostty/src/renderer/row.zig` `neverExtendBg`.
+- Inspected `vendor/ghostty/src/renderer/generic.zig` `rebuildRow`
+  padding-extension branch.
+- Inspected `roastty/src/font/run.rs`.
+- Inspected `roastty/src/terminal/page.rs`.
+- Inspected `roastty/src/terminal/page_list.rs`.
+- Inspected `roastty/src/renderer/cell.rs`.
+- `cargo fmt -p roastty` — passed.
+- `cargo test -p roastty renderer::cell::tests::row_never_extend -- --nocapture`
+  — passed, 4 tests.
+- `cargo test -p roastty terminal::page::tests::shape_run_cells -- --nocapture`
+  — passed, 2 tests.
+- `cargo test -p roastty terminal::page_list::tests::shape_run_options -- --nocapture`
+  — passed, 3 tests.
+- `cargo test -p roastty font::run -- --nocapture` — passed, 28 tests.
+- `prettier --write --prose-wrap always --print-width 80 issues/0801-roastty-libghostty-rewrite/README.md issues/0801-roastty-libghostty-rewrite/825-derive-row-background-extension.md`
+  — passed.
+- `git diff --check` — passed.
+
+## Conclusion
+
+Experiment 825 fills the prepared-data gap between terminal rows and the Metal
+padding-extension driver. Roastty now carries row semantic prompt metadata and
+explicit background-color cell content into renderer-facing row data, and can
+derive viewport-indexed `rowNeverExtendBg` decisions from that data. Remaining
+work still includes feeding those decisions through the live renderer loop, live
+terminal-state collection, custom shader enablement/upload, pacing,
+renderer-thread integration, and surface lifecycle integration.
+
+## Completion Review
+
+Codex reviewed the completed implementation and found no implementation
+correctness blockers. The review confirmed that `row_never_extend_bg` matches
+upstream `neverExtendBg`, semantic prompt and explicit background metadata
+propagate through the prepared row bridge, targeted tests cover the true/false
+cases, and existing shaping behavior remains preserved.
+
+The review found two documentation omissions: the README experiment index was
+missing the `Codex/Codex/Codex` provenance tag, and the Result verification list
+omitted the markdown formatting and `git diff --check` steps. Both documentation
+issues were fixed before result commit.
+
+Codex re-reviewed the fixed result record and approved the experiment for the
+result commit with no remaining findings.

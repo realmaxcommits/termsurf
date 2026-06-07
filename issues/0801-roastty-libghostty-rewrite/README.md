@@ -248,8 +248,8 @@ Experiment 246).
       contents/atlases and submit draw calls through the compositor; prepared
       rebuild uniform inputs can sync resize grid-size and full-rebuild padding
       extension uniforms, and prepared row-level padding-extension inputs can
-      refine rebuilt boundary rows while live `rowNeverExtendBg` derivation
-      remains missing (critical)
+      refine rebuilt boundary rows from derived `rowNeverExtendBg` decisions
+      while live renderer-loop wiring remains missing (critical)
 - [ ] z2d debug `Overlay`, link highlighting, render `Thread`, custom shaders —
       partial: custom-shader uniforms, target enum, and per-frame/state update
       helpers exist; shader file loading, debug overlay, renderer thread, and
@@ -2266,7 +2266,7 @@ are past the correctness-critical foundation.
 - [Experiment 824: Refine Padding Extend Rows](824-refine-padding-extend-rows.md)
   — **Pass** · Codex/Codex/Codex
 - [Experiment 825: Derive Row Background Extension](825-derive-row-background-extension.md)
-  — **Designed**
+  — **Pass** · Codex/Codex/Codex
 
 ## Non-Goals
 
