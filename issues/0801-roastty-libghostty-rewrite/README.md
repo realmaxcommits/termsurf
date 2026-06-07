@@ -254,8 +254,11 @@ Experiment 246).
       integration remain tracked elsewhere
 - [ ] Keymaps (`keycodes`, `function_keys`, `KeymapDarwin`, layouts) — missing
 - [ ] Kitty keyboard protocol details (`input/kitty`), `Link`, mouse input
-      structs — missing (note: mouse SGR/x11 _encoding_ exists in
-      `terminal/mouse_encode.rs`)
+      structs — partial: `input/link.rs`, `input/mouse.rs`, terminal mouse
+      state/encoding, surface mouse dispatch, and Kitty keyboard
+      query/push/pop/set stream state exist; dedicated `input/kitty`,
+      keymaps/layouts, frontend integration, and full input policy remain
+      incomplete
 
 ### Configuration — skeleton only
 
@@ -2106,6 +2109,8 @@ are past the correctness-critical foundation.
   — **Pass** · Codex/Codex/Codex
 - [Experiment 789: Keybinding Checklist Sync](789-keybinding-checklist-sync.md)
   — **Pass** · Codex/Codex/Codex
+- [Experiment 790: Input Protocol Checklist Sync](790-input-protocol-checklist-sync.md)
+  — **Designed**
 
 ## Non-Goals
 
