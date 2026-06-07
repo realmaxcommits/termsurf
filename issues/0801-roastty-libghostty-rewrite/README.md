@@ -2364,6 +2364,8 @@ are past the correctness-critical foundation.
   — **Pass** · Claude/Claude/Claude
 - [Experiment 836: Fix surface_key performable_action — a child that actually outputs](836-surface-key-performable-action.md)
   — **Pass** · Claude/Claude/Claude
+- [Experiment 837: Serialize the config tests' process-global env/cwd mutation](837-config-env-cwd-race.md)
+  — **Designed** · Claude/Claude/Claude
 
 ## Non-Goals
 
