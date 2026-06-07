@@ -156,6 +156,63 @@ adopted:
 - **Optional — `screen_fg`.** **Fixed:** noted it stays in knobs (preedit/IME
   foreground), sourced with the cursor/preedit slice.
 
+## Result
+
+**Result:** Pass
+
+`FrameRenderKnobs` and `FrameRenderState` (with `from_terminal` +
+`rebuild_input`) landed in `frame_renderer.rs`. Production
+`cargo build -p roastty` and `--tests` both clean (no warnings); fmt clean,
+no-ghostty clean, `git diff --check` clean.
+
+Two new tests, both passing:
+
+- **`render_state_derives_colors_and_palette_from_terminal`** — the derived
+  `default_bg`/`default_fg` equal the terminal's `color_effective` values (with
+  the GUI path's black/white fallbacks), `palette` is the default palette, and
+  `row_never_extend` is sized to the terminal rows (3).
+- **`render_state_rebuild_input_drives_a_frame`** — `from_terminal` +
+  `rebuild_input(&knobs)` feeds `FrameRenderer::update_frame` on a 4×3 terminal
+  and rebuilds the full frame (`reset_contents`, rows `[0,1,2]`, `current_grid`
+  → 4×3) — proving the terminal-derived, assembled input is valid end to end.
+
+**Full suite (default parallelism, `scripts/bounded-run.sh`):**
+`4377 passed; 0 failed` (4375 + 2 new), 0 panics, 0 `PoisonError`,
+`STATUS=COMPLETED rc=0`, 176 s — green.
+
 ## Conclusion
 
-_(to be written after the run)_
+The first slice of the input-derivation arc is done: the render input's
+`default_fg`/`default_bg`/`palette` now come from the live terminal (the same
+source as the existing GUI render path), assembled into a complete, valid
+`FramePreparedRebuildInput`. The remaining derivations are each named and
+stubbed, not hidden.
+
+Continuing the input-derivation arc, in order:
+
+- **Exp 843:** derive the cursor sub-inputs (`text_overlay.cursor` /
+  `cursor_uniform.block_cursor`) and `screen_fg` from the terminal cursor
+  state + config cursor style/color — removing them from the caller knobs.
+- **Exp 844:** derive `row_never_extend` via `cell::row_never_extend_bg_flags`.
+- **Exp 845+:** selection / highlights / link ranges from the terminal; then the
+  **configuration sub-arc** — port `font-thicken`, `font-thicken-strength`,
+  `minimum-contrast` (→ `alpha`/`faint_opacity`), and source the remaining knobs
+  (`bold_color`, `background_opacity`, `window_padding_color`) from `Config`;
+  then have `FrameRenderer::update_frame` take `&FrameRenderState` +
+  `&FrameRenderKnobs` directly. After that arc, `surface.draw()` can build the
+  input from live state.
+
+## Completion Review
+
+**Reviewer:** `adversarial-reviewer` subagent (Claude Opus, fresh context,
+read-only). **Verdict: APPROVED — no Required findings.** Independently
+confirmed: `from_terminal` mirrors `render_state_from_terminal` exactly
+(bg→black, fg→white fallbacks, 256-wide palette, no r/g/b swap — checked against
+`roastty_rgb` / `palette_from_tuples`); `rebuild_input` populates all five
+sub-inputs and every `FrameSnapshotRowFormatInput` field; the rebuild test is
+non-vacuous (a mis-sized `row_never_extend` would fail validation); the slice
+ran 2/2; a forced rebuild compiled with zero warnings (`#![allow(dead_code)]`
+covers the unused-until-wired API); only `frame_renderer.rs` changed
+(`FrameRenderer`/`update_frame` untouched); `background_opacity` is `f64`; the
+stubs are honestly named. The lone Nit was the expected pre-commit `Designed`
+index status — flipped to `Pass` with this commit.

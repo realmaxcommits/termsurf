@@ -7,17 +7,23 @@
 //! state, wiring into `surface.draw()`, and clearing the terminal's dirty bits
 //! are all later slices.
 
+use crate::config::WindowPaddingColor;
 use crate::font::shared_grid::SharedGrid;
-use crate::renderer::cell::Contents;
+use crate::renderer::cell::{Contents, Highlight, SelectionConfig};
 use crate::renderer::frame_rebuild::{
-    FramePreparedFrameApplication, FramePreparedFrameError, FramePreparedPresentationInput,
-    FramePreparedRebuildApplication, FramePreparedRebuildError, FramePreparedRebuildInput,
-    FramePreparedRebuildTargets, FrameTerminalSnapshot, RenderDirty,
+    FramePaddingExtendInput, FramePreparedFrameApplication, FramePreparedFrameError,
+    FramePreparedPresentationInput, FramePreparedRebuildApplication, FramePreparedRebuildError,
+    FramePreparedRebuildInput, FramePreparedRebuildTargets, FrameRebuildUniformInput,
+    FrameSnapshotBlockCursorUniformInput, FrameSnapshotCursorOverlayInput,
+    FrameSnapshotCursorUniformInput, FrameSnapshotRowFormatInput, FrameSnapshotTextOverlayInput,
+    FrameTerminalSnapshot, RenderDirty,
 };
 use crate::renderer::metal::shaders::MetalUniforms;
 use crate::renderer::size::GridSize;
 use crate::renderer::state::Preedit;
-use crate::terminal::terminal::Terminal;
+use crate::terminal::color::{Palette, Rgb};
+use crate::terminal::style::BoldColor;
+use crate::terminal::terminal::{Terminal, TerminalColorKind};
 
 /// Owns the persistent CPU-side frame-rebuild state across frames: the rebuilt
 /// `Contents`, the `MetalUniforms`, the last-rendered grid (for resize
@@ -123,6 +129,110 @@ impl FrameRenderer {
 
     pub(crate) fn current_grid(&self) -> GridSize {
         self.current_grid
+    }
+}
+
+/// Caller-supplied render knobs not yet sourced from `Config` (Issue 801, Exp
+/// 842). The whole struct is caller-fed because config-sourcing is deferred;
+/// four fields (`alpha`, `faint_opacity`, `thicken`, `thicken_strength`)
+/// additionally have no `Config` option yet (a configuration-arc dependency).
+pub(crate) struct FrameRenderKnobs {
+    pub(crate) bold: Option<BoldColor>,
+    pub(crate) alpha: u8,
+    pub(crate) faint_opacity: u8,
+    pub(crate) thicken: bool,
+    pub(crate) thicken_strength: u8,
+    pub(crate) background_opacity_cells: bool,
+    pub(crate) background_opacity: f64,
+    pub(crate) padding_color: WindowPaddingColor,
+    pub(crate) cursor: Option<FrameSnapshotCursorOverlayInput>,
+    pub(crate) block_cursor: Option<FrameSnapshotBlockCursorUniformInput>,
+    pub(crate) screen_fg: Rgb,
+    pub(crate) overlay_alpha: u8,
+}
+
+/// Render data derived from the live terminal — the effective default fg/bg and
+/// palette — plus the dynamic buffers the rebuild input borrows. The dynamic
+/// buffers are stubs until their own slices: `highlights`/`link_ranges` empty,
+/// `selection_config` default, and `row_never_extend` all-false (the real
+/// per-row derivation is `cell::row_never_extend_bg_flags`).
+pub(crate) struct FrameRenderState {
+    default_fg: Rgb,
+    default_bg: Rgb,
+    palette: Palette,
+    highlights: Vec<Vec<Highlight>>,
+    link_ranges: Vec<Vec<[u16; 2]>>,
+    selection_config: SelectionConfig,
+    row_never_extend: Vec<bool>,
+}
+
+impl FrameRenderState {
+    /// Derive the effective colors and palette from the terminal, mirroring the
+    /// existing GUI render path (`render_state_from_terminal`): background → black
+    /// fallback, foreground → white fallback, the 256-entry palette. The dynamic
+    /// buffers are empty/default placeholders for later slices.
+    pub(crate) fn from_terminal(terminal: &Terminal) -> Self {
+        let default_bg = terminal
+            .color_effective(TerminalColorKind::Background)
+            .map(|(r, g, b)| Rgb::new(r, g, b))
+            .unwrap_or(Rgb::new(0, 0, 0));
+        let default_fg = terminal
+            .color_effective(TerminalColorKind::Foreground)
+            .map(|(r, g, b)| Rgb::new(r, g, b))
+            .unwrap_or(Rgb::new(0xff, 0xff, 0xff));
+        let palette = terminal
+            .palette_current()
+            .map(|(r, g, b)| Rgb::new(r, g, b));
+
+        Self {
+            default_fg,
+            default_bg,
+            palette,
+            highlights: Vec::new(),
+            link_ranges: Vec::new(),
+            selection_config: SelectionConfig::default(),
+            row_never_extend: vec![false; terminal.rows() as usize],
+        }
+    }
+
+    /// Assemble a complete `FramePreparedRebuildInput` from the terminal-derived
+    /// state and the caller-supplied knobs.
+    pub(crate) fn rebuild_input<'a>(
+        &'a self,
+        knobs: &'a FrameRenderKnobs,
+    ) -> FramePreparedRebuildInput<'a> {
+        FramePreparedRebuildInput {
+            row_format: FrameSnapshotRowFormatInput {
+                highlights: &self.highlights,
+                link_ranges: &self.link_ranges,
+                selection_config: &self.selection_config,
+                default_fg: self.default_fg,
+                default_bg: self.default_bg,
+                palette: &self.palette,
+                bold: knobs.bold,
+                alpha: knobs.alpha,
+                faint_opacity: knobs.faint_opacity,
+                thicken: knobs.thicken,
+                thicken_strength: knobs.thicken_strength,
+                background_opacity_cells: knobs.background_opacity_cells,
+                background_opacity: knobs.background_opacity,
+            },
+            text_overlay: FrameSnapshotTextOverlayInput {
+                cursor: knobs.cursor,
+                screen_fg: knobs.screen_fg,
+                alpha: knobs.overlay_alpha,
+            },
+            cursor_uniform: FrameSnapshotCursorUniformInput {
+                block_cursor: knobs.block_cursor,
+            },
+            rebuild_uniform: FrameRebuildUniformInput {
+                padding_color: knobs.padding_color,
+            },
+            padding_extend: FramePaddingExtendInput {
+                padding_color: knobs.padding_color,
+                row_never_extend: &self.row_never_extend,
+            },
+        }
     }
 }
 
@@ -583,5 +693,76 @@ mod tests {
         assert!(app.rebuild.rows.reset_contents);
         assert_eq!(renderer.current_grid(), grid(4, 3));
         assert_eq!(app.present.presentation.width, 8);
+    }
+
+    fn render_knobs() -> FrameRenderKnobs {
+        FrameRenderKnobs {
+            bold: Some(BoldColor::Color(Rgb::new(1, 2, 3))),
+            alpha: 230,
+            faint_opacity: 99,
+            thicken: true,
+            thicken_strength: 77,
+            background_opacity_cells: true,
+            background_opacity: 0.42,
+            padding_color: WindowPaddingColor::Extend,
+            cursor: Some(FrameSnapshotCursorOverlayInput {
+                style: CursorStyle::Underline,
+                wide: true,
+                color: Rgb::new(3, 4, 5),
+            }),
+            block_cursor: Some(FrameSnapshotBlockCursorUniformInput {
+                wide: Wide::Wide,
+                color: Rgb::new(11, 12, 13),
+            }),
+            screen_fg: Rgb::new(40, 41, 42),
+            overlay_alpha: 219,
+        }
+    }
+
+    #[test]
+    fn render_state_derives_colors_and_palette_from_terminal() {
+        let term = terminal(4, 3);
+        let state = FrameRenderState::from_terminal(&term);
+
+        // Faithful extraction: the derived fields equal the terminal's effective
+        // colors / palette (with the GUI path's black/white fallbacks).
+        let expected_bg = term
+            .color_effective(TerminalColorKind::Background)
+            .map(|(r, g, b)| Rgb::new(r, g, b))
+            .unwrap_or(Rgb::new(0, 0, 0));
+        let expected_fg = term
+            .color_effective(TerminalColorKind::Foreground)
+            .map(|(r, g, b)| Rgb::new(r, g, b))
+            .unwrap_or(Rgb::new(0xff, 0xff, 0xff));
+        assert_eq!(state.default_bg, expected_bg);
+        assert_eq!(state.default_fg, expected_fg);
+        // A fresh terminal carries the default palette.
+        assert_eq!(state.palette, DEFAULT_PALETTE);
+        // row_never_extend is sized to the terminal rows.
+        assert_eq!(state.row_never_extend.len(), 3);
+    }
+
+    #[test]
+    fn render_state_rebuild_input_drives_a_frame() {
+        let term = terminal(4, 3);
+        let mut shared = menlo_grid();
+        let mut renderer = FrameRenderer::new(uniforms());
+        let state = FrameRenderState::from_terminal(&term);
+        let knobs = render_knobs();
+
+        let app = renderer
+            .update_frame(
+                &term,
+                &mut shared,
+                RenderDirty::Partial,
+                None,
+                state.rebuild_input(&knobs),
+            )
+            .expect("update frame from derived input");
+
+        // The terminal-derived, assembled input rebuilds a full frame.
+        assert!(app.rows.reset_contents);
+        assert_eq!(app.rows.rebuilt_rows, vec![0, 1, 2]);
+        assert_eq!(renderer.current_grid(), grid(4, 3));
     }
 }
