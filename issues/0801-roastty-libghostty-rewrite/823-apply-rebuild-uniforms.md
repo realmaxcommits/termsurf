@@ -116,3 +116,62 @@ Codex re-reviewed the amended design and approved it for implementation with no
 remaining blockers. The re-review confirmed that resize/full-rebuild invariants,
 Background no-op reporting, valid resize behavior, and row padding refinement
 deferral now match the intended scope.
+
+## Result
+
+**Result:** Pass
+
+Roastty can now apply prepared rebuild-scope uniform updates:
+
+- `roastty/src/renderer/frame_rebuild.rs` adds `FrameRebuildUniformInput`,
+  `FrameRebuildUniformValidationError`, and `FrameRebuildUniformApplication`.
+- `FrameRebuildPlan::apply_rebuild_uniforms` validates malformed resize plan
+  shapes before mutation.
+- Valid resize plans update `MetalUniforms.grid_size` with the plan's effective
+  grid.
+- Full rebuild plans call `MetalUniforms::reset_padding_extend` with the
+  prepared `WindowPaddingColor`.
+- Application metadata reports padding mutation only for `Extend` and
+  `ExtendAlways`; `Background` remains a no-op and reports no mutation.
+- Tests cover full rebuild padding reset without grid-size update,
+  resize-implies-full-rebuild applying both updates, no-op clean/partial plans,
+  Background no-op reporting, resize/effective-grid mismatch rejection, and
+  resize-without-full-rebuild rejection before mutation.
+
+Verification:
+
+- Inspected `vendor/ghostty/src/renderer/generic.zig` `rebuildCells`
+  resize/full-rebuild uniform section.
+- Inspected `roastty/src/renderer/frame_rebuild.rs`.
+- Inspected `roastty/src/renderer/metal/shaders.rs`.
+- `cargo fmt -p roastty` — passed.
+- `cargo test -p roastty renderer::frame_rebuild -- --nocapture` — passed, 78
+  tests.
+- `cargo test -p roastty renderer::metal::shaders::tests::update_grid_size -- --nocapture`
+  — passed, 1 test.
+- `cargo test -p roastty renderer::metal::shaders::tests::reset_padding_extend -- --nocapture`
+  — passed, 1 test.
+- `prettier --write --prose-wrap always --print-width 80 issues/0801-roastty-libghostty-rewrite/README.md issues/0801-roastty-libghostty-rewrite/823-apply-rebuild-uniforms.md`
+  — passed.
+- `git diff --check` — passed.
+
+## Conclusion
+
+Experiment 823 connects frame rebuild resize/full-rebuild decisions to the
+existing Metal uniform helpers. The prepared renderer path can now keep
+`grid_size` aligned with `Contents` after resize and restore full-rebuild
+padding-extension defaults before later row-level refinement. Remaining work
+still includes live terminal-state collection, row padding-extension refinement,
+custom shader enablement/upload, pacing, renderer-thread integration, and
+surface lifecycle integration.
+
+## Completion Review
+
+Codex reviewed the completed implementation and result record. It found no
+blocking issues and approved the experiment for the result commit.
+
+The review confirmed that resize still implies full rebuild through the planner
+invariant, malformed resize plans reject before mutating uniforms, valid resize
+plans update grid-size before padding reset, `Background` padding remains a
+no-op with no mutation reported, and the tests cover the required mutation and
+no-mutation paths.

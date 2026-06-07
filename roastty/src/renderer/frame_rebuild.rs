@@ -10,6 +10,7 @@
 //! row. Actual terminal row formatting, glyph emission, cursor drawing, and
 //! `Contents` mutation remain later integration work.
 
+use crate::config::WindowPaddingColor;
 use crate::font::atlas::Atlas;
 use crate::font::codepoint_resolver::ResolverRenderError;
 use crate::font::run::{shape_row_cached, RunOptions, Wide};
@@ -380,6 +381,29 @@ pub(crate) struct FrameMetalPresentationApplication {
     pub(crate) target_reallocated: bool,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct FrameRebuildUniformInput {
+    pub(crate) padding_color: WindowPaddingColor,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FrameRebuildUniformValidationError {
+    ResizeGridMismatch {
+        resize_to: GridSize,
+        effective_grid: GridSize,
+    },
+    ResizeWithoutFullRebuild {
+        resize_to: GridSize,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct FrameRebuildUniformApplication {
+    pub(crate) grid_size_updated: bool,
+    pub(crate) padding_extend_mutated: bool,
+    pub(crate) effective_grid: GridSize,
+}
+
 impl FrameRebuildPlan {
     pub(crate) fn build(input: FrameRebuildInput<'_>) -> Result<Self, FrameRebuildPlanError> {
         let needed_dirty_rows = input.terminal_grid.rows as usize;
@@ -717,6 +741,36 @@ impl FrameRebuildPlan {
         })
     }
 
+    pub(crate) fn apply_rebuild_uniforms(
+        &self,
+        uniforms: &mut MetalUniforms,
+        input: FrameRebuildUniformInput,
+    ) -> Result<FrameRebuildUniformApplication, FrameRebuildUniformValidationError> {
+        self.validate_rebuild_uniforms()?;
+
+        let mut grid_size_updated = false;
+        let mut padding_extend_mutated = false;
+
+        if self.resize_to.is_some() {
+            uniforms.update_grid_size(self.effective_grid);
+            grid_size_updated = true;
+        }
+
+        if self.full_rebuild {
+            uniforms.reset_padding_extend(input.padding_color);
+            padding_extend_mutated = matches!(
+                input.padding_color,
+                WindowPaddingColor::Extend | WindowPaddingColor::ExtendAlways
+            );
+        }
+
+        Ok(FrameRebuildUniformApplication {
+            grid_size_updated,
+            padding_extend_mutated,
+            effective_grid: self.effective_grid,
+        })
+    }
+
     fn validate_application(
         &self,
         contents: &Contents,
@@ -781,6 +835,24 @@ impl FrameRebuildPlan {
                 });
             }
         }
+        Ok(())
+    }
+
+    fn validate_rebuild_uniforms(&self) -> Result<(), FrameRebuildUniformValidationError> {
+        if let Some(resize_to) = self.resize_to {
+            if resize_to != self.effective_grid {
+                return Err(FrameRebuildUniformValidationError::ResizeGridMismatch {
+                    resize_to,
+                    effective_grid: self.effective_grid,
+                });
+            }
+            if !self.full_rebuild {
+                return Err(
+                    FrameRebuildUniformValidationError::ResizeWithoutFullRebuild { resize_to },
+                );
+            }
+        }
+
         Ok(())
     }
 
@@ -3243,5 +3315,191 @@ mod tests {
         assert_eq!(applied.presentation.height, 4);
         assert!(applied.presentation.target_reallocated);
         assert!(applied.target_reallocated);
+    }
+
+    fn rebuild_uniform_input(padding_color: WindowPaddingColor) -> FrameRebuildUniformInput {
+        FrameRebuildUniformInput { padding_color }
+    }
+
+    fn rebuild_uniforms() -> MetalUniforms {
+        MetalUniforms::test_with_grid([2, 3], [4, 5], [6.0, 7.0], [0.0; 4], 9, [1, 2, 3, 4])
+    }
+
+    #[test]
+    fn apply_rebuild_uniforms_full_rebuild_resets_padding_only() {
+        let plan =
+            FrameRebuildPlan::build(input(grid(4, 5), grid(4, 5), RenderDirty::Full, &[true; 5]))
+                .expect("plan");
+        let mut uniforms = rebuild_uniforms();
+
+        let applied = plan
+            .apply_rebuild_uniforms(
+                &mut uniforms,
+                rebuild_uniform_input(WindowPaddingColor::Extend),
+            )
+            .expect("apply rebuild uniforms");
+
+        assert_eq!(
+            applied,
+            FrameRebuildUniformApplication {
+                grid_size_updated: false,
+                padding_extend_mutated: true,
+                effective_grid: grid(4, 5),
+            }
+        );
+        assert_eq!(uniforms.grid_size, [4, 5]);
+        assert_eq!(uniforms.padding_extend, 15);
+        assert_eq!(uniforms.bg_color, [1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn apply_rebuild_uniforms_resize_full_rebuild_updates_grid_then_padding() {
+        let plan = FrameRebuildPlan::build(input(
+            grid(4, 5),
+            grid(7, 3),
+            RenderDirty::Clean,
+            &[true; 3],
+        ))
+        .expect("plan");
+        assert!(plan.full_rebuild);
+        let mut uniforms = rebuild_uniforms();
+        uniforms.padding_extend = 0;
+
+        let applied = plan
+            .apply_rebuild_uniforms(
+                &mut uniforms,
+                rebuild_uniform_input(WindowPaddingColor::ExtendAlways),
+            )
+            .expect("apply rebuild uniforms");
+
+        assert_eq!(
+            applied,
+            FrameRebuildUniformApplication {
+                grid_size_updated: true,
+                padding_extend_mutated: true,
+                effective_grid: grid(7, 3),
+            }
+        );
+        assert_eq!(uniforms.grid_size, [7, 3]);
+        assert_eq!(uniforms.padding_extend, 15);
+    }
+
+    #[test]
+    fn apply_rebuild_uniforms_clean_partial_no_resize_is_noop() {
+        let plan = FrameRebuildPlan::build(input(
+            grid(4, 5),
+            grid(4, 5),
+            RenderDirty::Partial,
+            &[false; 5],
+        ))
+        .expect("plan");
+        let mut uniforms = rebuild_uniforms();
+        let before = uniforms;
+
+        let applied = plan
+            .apply_rebuild_uniforms(
+                &mut uniforms,
+                rebuild_uniform_input(WindowPaddingColor::Extend),
+            )
+            .expect("apply rebuild uniforms");
+
+        assert_eq!(
+            applied,
+            FrameRebuildUniformApplication {
+                grid_size_updated: false,
+                padding_extend_mutated: false,
+                effective_grid: grid(4, 5),
+            }
+        );
+        assert_eq!(uniforms.grid_size, before.grid_size);
+        assert_eq!(uniforms.padding_extend, before.padding_extend);
+        assert_eq!(uniforms.bg_color, before.bg_color);
+    }
+
+    #[test]
+    fn apply_rebuild_uniforms_background_padding_reports_no_mutation() {
+        let plan =
+            FrameRebuildPlan::build(input(grid(4, 5), grid(4, 5), RenderDirty::Full, &[true; 5]))
+                .expect("plan");
+        let mut uniforms = rebuild_uniforms();
+        uniforms.padding_extend = 9;
+
+        let applied = plan
+            .apply_rebuild_uniforms(
+                &mut uniforms,
+                rebuild_uniform_input(WindowPaddingColor::Background),
+            )
+            .expect("apply rebuild uniforms");
+
+        assert_eq!(
+            applied,
+            FrameRebuildUniformApplication {
+                grid_size_updated: false,
+                padding_extend_mutated: false,
+                effective_grid: grid(4, 5),
+            }
+        );
+        assert_eq!(uniforms.padding_extend, 9);
+    }
+
+    #[test]
+    fn apply_rebuild_uniforms_rejects_resize_effective_mismatch_without_mutation() {
+        let mut plan = FrameRebuildPlan::build(input(
+            grid(4, 5),
+            grid(7, 3),
+            RenderDirty::Clean,
+            &[true; 3],
+        ))
+        .expect("plan");
+        plan.resize_to = Some(grid(6, 3));
+        let mut uniforms = rebuild_uniforms();
+        let before = uniforms;
+
+        let err = plan
+            .apply_rebuild_uniforms(
+                &mut uniforms,
+                rebuild_uniform_input(WindowPaddingColor::Extend),
+            )
+            .expect_err("malformed resize should reject");
+
+        assert_eq!(
+            err,
+            FrameRebuildUniformValidationError::ResizeGridMismatch {
+                resize_to: grid(6, 3),
+                effective_grid: grid(7, 3),
+            }
+        );
+        assert_eq!(uniforms.grid_size, before.grid_size);
+        assert_eq!(uniforms.padding_extend, before.padding_extend);
+    }
+
+    #[test]
+    fn apply_rebuild_uniforms_rejects_resize_without_full_rebuild_without_mutation() {
+        let mut plan = FrameRebuildPlan::build(input(
+            grid(4, 5),
+            grid(7, 3),
+            RenderDirty::Clean,
+            &[true; 3],
+        ))
+        .expect("plan");
+        plan.full_rebuild = false;
+        let mut uniforms = rebuild_uniforms();
+        let before = uniforms;
+
+        let err = plan
+            .apply_rebuild_uniforms(
+                &mut uniforms,
+                rebuild_uniform_input(WindowPaddingColor::Extend),
+            )
+            .expect_err("resize without full rebuild should reject");
+
+        assert_eq!(
+            err,
+            FrameRebuildUniformValidationError::ResizeWithoutFullRebuild {
+                resize_to: grid(7, 3),
+            }
+        );
+        assert_eq!(uniforms.grid_size, before.grid_size);
+        assert_eq!(uniforms.padding_extend, before.padding_extend);
     }
 }

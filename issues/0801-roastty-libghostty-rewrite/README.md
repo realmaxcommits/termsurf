@@ -245,7 +245,9 @@ Experiment 246).
       resolution, cursor animation, and focus fields; live terminal-state
       collection, custom shader enablement/upload, pacing, and live renderer
       integration remain missing; prepared Metal frame presentation can sync
-      contents/atlases and submit draw calls through the compositor (critical)
+      contents/atlases and submit draw calls through the compositor; prepared
+      rebuild uniform inputs can sync resize grid-size and full-rebuild padding
+      extension uniforms (critical)
 - [ ] z2d debug `Overlay`, link highlighting, render `Thread`, custom shaders —
       partial: custom-shader uniforms, target enum, and per-frame/state update
       helpers exist; shader file loading, debug overlay, renderer thread, and
@@ -2258,7 +2260,7 @@ are past the correctness-critical foundation.
 - [Experiment 822: Present Metal Frame](822-present-metal-frame.md) — **Pass** ·
   Codex/Codex/Codex
 - [Experiment 823: Apply Rebuild Uniforms](823-apply-rebuild-uniforms.md) —
-  **Designed** · Codex/Codex
+  **Pass** · Codex/Codex/Codex
 
 ## Non-Goals
 
