@@ -2169,7 +2169,7 @@ are past the correctness-critical foundation.
 - [Experiment 797: Image Decode Dependency Checklist Sync](797-image-decode-dependency-checklist-sync.md)
   — **Pass** · Codex/Codex/Codex
 - [Experiment 798: UTF-8 Dependency Checklist Sync](798-utf8-dependency-checklist-sync.md)
-  — **Designed**
+  — **Pass** · Codex/Codex/Codex
 
 ## Non-Goals
 

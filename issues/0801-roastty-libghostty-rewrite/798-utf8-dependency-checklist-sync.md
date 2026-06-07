@@ -78,3 +78,52 @@ approved the scope because the row remains unchecked, the wording is scoped to
 partial coverage, the broader call-site claim now has direct verification, and
 SIMD acceleration, explicit transcoding replacement, and a full Ghostty
 `simdutf` call-site audit remain open.
+
+## Result
+
+**Result:** Pass
+
+The `simdutf` dependency row no longer says UTF-8 validation/transcoding work is
+not started. The README now records the existing partial coverage:
+
+- `roastty/src/terminal/utf8_decoder.rs` ports Ghostty's DFA-based
+  `UTF8Decoder`, and `roastty/src/terminal/stream.rs` integrates it for split,
+  pending, invalid, replacement, and raw C1 byte handling.
+- C ABI, config, input, preedit, render-state, OSC, Kitty, tmux, mouse encoding,
+  and related terminal paths use standard-library UTF-8 validation/exposure
+  helpers where needed.
+
+The row remains unchecked because Roastty still has no selected SIMD UTF-8
+crate, no SIMD-accelerated validation/transcoding replacement, and no full
+Ghostty `simdutf` call-site audit.
+
+Verification:
+
+- Inspected:
+  - `roastty/src/terminal/utf8_decoder.rs`
+  - `roastty/src/terminal/stream.rs`
+  - `roastty/src/lib.rs`
+  - `roastty/src/terminal/osc.rs`
+- Ran call-site search:
+  - `rg -n "from_utf8|String::from_utf8|utf8" roastty/src/lib.rs roastty/src/config roastty/src/input roastty/src/renderer roastty/src/terminal`
+- `cargo test -p roastty utf8 -- --nocapture --test-threads=1` — 75 passed
+- `cargo test -p roastty key_event_utf8 -- --nocapture --test-threads=1` — 1
+  passed
+- `prettier --write --prose-wrap always --print-width 80 issues/0801-roastty-libghostty-rewrite/README.md issues/0801-roastty-libghostty-rewrite/798-utf8-dependency-checklist-sync.md`
+  — passed
+- `git diff --check` — passed
+
+## Conclusion
+
+The `simdutf` dependency row was stale as "not started." Roastty has tested
+UTF-8 decoding and validation/exposure foundations, but the dependency remains
+partial until a SIMD/transcoding strategy and full Ghostty call-site audit are
+completed.
+
+## Completion Review
+
+Codex reviewed the completed experiment and found no blocking findings. The
+review approved the result because the row remains unchecked and partial, SIMD
+acceleration, explicit transcoding replacement, selected crate choice, and full
+Ghostty call-site audit remain open, and the verification evidence records the
+call-site search, focused tests, Prettier, and `git diff --check`.
