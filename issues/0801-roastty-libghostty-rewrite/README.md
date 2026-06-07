@@ -249,7 +249,9 @@ Experiment 246).
 - [x] `Collection` / `CodepointResolver` / `CodepointMap` / `DeferredFace` /
       `discovery` (CoreText/macOS scope complete)
 - [ ] `SharedGrid` / `SharedGridSet` — `SharedGrid` render and codepoint-cache
-      paths complete; `SharedGridSet` ownership/refcount/locking missing
+      paths complete; partial `SharedGridSet` keyed refcount/locking foundation
+      exists; upstream config-derived key, font discovery/collection building,
+      metrics reload, and full renderer ownership integration remain missing
 - [ ] `opentype/`, `embedded`, `nerd_font_attributes` — `head`/`hhea`/`os2`/
       `post`/`svg`/`glyf` parsers and Nerd Font attributes complete; embedded
       fonts and full OpenType helpers missing
@@ -2177,7 +2179,7 @@ are past the correctness-critical foundation.
 - [Experiment 799: Supporting Subsystems Checklist Sync](799-supporting-subsystems-checklist-sync.md)
   — **Pass** · Codex/Codex/Codex
 - [Experiment 800: SharedGridSet Foundation](800-shared-grid-set-foundation.md)
-  — **Designed**
+  — **Pass** · Codex/Codex/Codex
 
 ## Non-Goals
 

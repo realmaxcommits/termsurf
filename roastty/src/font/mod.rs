@@ -24,6 +24,7 @@ pub(crate) mod run;
 pub(crate) mod shape;
 pub(crate) mod shaper_cache;
 pub(crate) mod shared_grid;
+pub(crate) mod shared_grid_set;
 pub(crate) mod sprite;
 
 /// The style (weight/slant) of a font face.
