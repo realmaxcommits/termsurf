@@ -2212,6 +2212,8 @@ are past the correctness-critical foundation.
   — **Pass** · Codex/Codex/Codex
 - [Experiment 808: Metal Sampler Wrapper](808-metal-sampler-wrapper.md) —
   **Pass** · Codex/Codex/Codex
+- [Experiment 809: Render Pass Sampler Binding](809-render-pass-sampler-binding.md)
+  — **Designed**
 
 ## Non-Goals
 
