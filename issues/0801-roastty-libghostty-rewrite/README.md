@@ -2072,6 +2072,8 @@ are past the correctness-critical foundation.
   — **Partial** (PTY paste tests pass but remain timing-heavy)
 - [Experiment 778: Narrow Surface Binding Checklist Sync](778-narrow-surface-binding-checklist-sync.md)
   — **Pass** · Codex/Codex/Codex
+- [Experiment 779: Surface Lifecycle Checklist Sync](779-surface-lifecycle-checklist-sync.md)
+  — **Designed**
 
 ## Non-Goals
 
