@@ -535,9 +535,11 @@ a different agent than the implementer.
 
 - **Experiments 1–222:** designed, reviewed, implemented, and re-reviewed
   entirely by **Codex (GPT-5.5, medium)** — all three roles.
-- **Experiment 223 onward:** the implementer switches to **Claude (Opus 4.8,
-  high)** as a controlled trial; both review gates remain **Codex (GPT-5.5,
-  medium)**. This is the first time implementer and reviewer differ.
+- **Experiment 223 onward:** experiments record the actual implementer and
+  reviewers used for that experiment. A controlled Claude/Codex trial began at
+  Experiment 223, but later experiments may use different agents when the active
+  session does so. The frontmatter and experiment index tag are the source of
+  truth for each experiment.
 
 Each `## Experiments` line is also tagged after its status with the agents for
 all three roles, in order — `implementer/design-review/result-review` (e.g.
@@ -2272,6 +2274,8 @@ are past the correctness-critical foundation.
   — **Pass** · Codex/Codex/Codex
 - [Experiment 826: Collect Terminal Frame Snapshot](826-collect-terminal-frame-snapshot.md)
   — **Pass** · Codex/Codex/Codex
+- [Experiment 827: Build Snapshot Row Format Input](827-build-snapshot-row-format-input.md)
+  — **Designed** · Codex/Codex/Codex
 
 ## Non-Goals
 
