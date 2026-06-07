@@ -15907,7 +15907,7 @@ mod tests {
 
         assert_eq!(roastty_surface_start(surface), ROASTTY_SUCCESS);
         assert!(roastty_surface_key(surface, event));
-        let text = surface_snapshot_text(app, surface);
+        let text = surface_snapshot_text_until(app, surface, "a");
         assert!(text.contains('a'), "{text:?}");
 
         roastty_key_event_free(event);
@@ -28468,7 +28468,7 @@ mod tests {
 
         assert_eq!(roastty_surface_start(surface), ROASTTY_SUCCESS);
         roastty_surface_text(surface, b"hello\n".as_ptr().cast(), 6);
-        let text = surface_snapshot_text(app, surface);
+        let text = surface_snapshot_text_until(app, surface, "out:hello");
 
         assert!(text.contains("out:hello"));
         roastty_surface_free(surface);
@@ -28487,7 +28487,7 @@ mod tests {
 
         assert_eq!(roastty_surface_start(surface), ROASTTY_SUCCESS);
         roastty_surface_text(surface, b"hello\nignored".as_ptr().cast(), 13);
-        let text = surface_snapshot_text(app, surface);
+        let text = surface_snapshot_text_until(app, surface, "line:hello");
 
         assert!(text.contains("line:hello"));
         roastty_surface_free(surface);
@@ -28506,7 +28506,7 @@ mod tests {
 
         assert_eq!(roastty_surface_start(surface), ROASTTY_SUCCESS);
         roastty_surface_text(surface, b"a\x03b\n".as_ptr().cast(), 4);
-        let text = surface_snapshot_text(app, surface);
+        let text = surface_snapshot_text_until(app, surface, "line:a b");
 
         assert!(text.contains("line:a b"));
         roastty_surface_free(surface);
@@ -28536,7 +28536,7 @@ mod tests {
                 .with_termio(|termio| termio.terminal().bracketed_paste_enabled())
         });
         roastty_surface_text(surface, b"hello\n".as_ptr().cast(), 6);
-        let text = surface_snapshot_text(app, surface);
+        let text = surface_snapshot_text_until(app, surface, "^[[201~");
 
         assert!(text.contains("^[[200~hello"), "{text:?}");
         assert!(text.contains("^[[201~"), "{text:?}");

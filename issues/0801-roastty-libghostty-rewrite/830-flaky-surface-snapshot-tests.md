@@ -160,3 +160,100 @@ Two findings, both adopted:
 - **Nit — `surface_snapshot_text_until` is pre-existing.** **Adopted:** the
   Changes section now states it is an already-used 13-caller helper,
   strengthening the minimal/proven argument.
+
+## Result
+
+**Result:** Partial
+
+The five per-test snapshot fixes were implemented (each test now waits for its
+output token; all five pass in isolation, 2.25 s) and are correct in isolation.
+**But they do not achieve the experiment's goal.** Verification —
+`cargo test -p roastty` (bare, in-process) ×5 — **failed all five runs** with
+**13–77 failures each** (`logs/exp829/verify830-{1..5}.log`):
+
+| run | total failures | real originators | `PoisonError` cascade |
+| --: | -------------: | ---------------: | --------------------: |
+|   1 |             13 |                1 |                    12 |
+|   2 |             74 |                1 |                    73 |
+|   3 |             77 |                1 |                    76 |
+|   4 |             13 |                1 |                    12 |
+|   5 |             75 |                2 |                    73 |
+
+(Corrected in result review: `total = real + PoisonError` for every row. The
+real originators are: runs 1/4 =
+`surface_start_uses_copied_config_after_source_strings_drop` (`lib.rs:29160`);
+runs 2/3 = `surface_key_default_natural_text_editing_writes_legacy_bytes`
+(`lib.rs:16358`); run 5 = the latter plus `config::tests::config_path_cli_*`
+(`config/mod.rs:5642`).)
+
+### Why the fix was insufficient (the diagnosis was under-scoped)
+
+Two facts the original diagnosis missed:
+
+1. **The flaky population is far broader than five tests.** The real
+   (non-poison) originators vary run to run and are mostly tests this experiment
+   did **not** touch — e.g.
+   `surface_key_default_natural_text_editing_writes_legacy_bytes`
+   (`lib.rs:16358`),
+   `surface_start_uses_copied_config_after_source_strings_drop`
+   (`lib.rs:29160`), and even a non-PTY `config::tests::config_path_cli_*`
+   (`config/mod.rs:5642`). Many real-child-roundtrip snapshot tests share the
+   same race; fixing five of them barely moves the per-run probability.
+2. **The poison cascade is the dominant amplifier.** Each run has only **1–2**
+   real assertion failures, but every one of them panics while holding the
+   global `PTY_COMMAND_LOCK`, poisoning it, so **12–76** subsequent PTY tests
+   panic on `PTY_COMMAND_LOCK.lock().unwrap()` with `PoisonError`. The design
+   **explicitly rejected** poison-resilience ("masks real panics") — that was
+   wrong: poison recovery does **not** hide the originating failure, it only
+   stops innocent tests from cascading. The cascade is what turns 1–2 real
+   flakes into 77 red tests.
+
+The original "6 failures" run that motivated this experiment was simply a
+low-cascade sample; the true behavior is 13–77.
+
+## Conclusion
+
+A per-test snapshot fix cannot make this suite clean. The real problem is
+systemic and has two layers, to be addressed in **Experiment 831**:
+
+1. **Kill the poison-cascade amplifier.** Replace
+   `PTY_COMMAND_LOCK.lock().unwrap()` (~160 sites) with a poison-recovering
+   accessor (`.lock().unwrap_or_else(|e| e.into_inner())`). This alone collapses
+   13–77 failures to the 1–2 genuinely-flaky originators per run, making the
+   real flakes visible instead of buried.
+2. **Robustify the real-child-roundtrip tests under contention.** With the
+   cascade gone, fix the actual originators — systematically apply the
+   wait-for-output-token pattern (this experiment's five fixes are the template)
+   and confirm an adequate timeout under full-suite CPU contention (the slow
+   CoreText font tests starve the PTY round-trips). Investigate the non-PTY
+   `config_path_cli` flake separately.
+
+The five fixes here are kept as a correct down-payment (and the template for the
+broader pass), but `cargo test -p roastty` is **not** yet clean, so feature work
+stays paused until Experiment 831 lands.
+
+## Completion Review
+
+**Reviewer:** `adversarial-reviewer` subagent (Claude Opus, fresh context,
+read-only). Verified the diff (exactly the five one-line changes), reran the two
+named changed tests (pass in isolation), and independently counted the failure
+types in `logs/exp829/verify830-{1..5}.log`.
+
+**Verdict:** CHANGES REQUIRED → fixed → the Partial verdict, diagnosis, and Exp
+831 plan are accurate and honest.
+
+- **Required — wrong "real originators" column.** The table's `2,2,5,2,3` did
+  not satisfy `total = real + PoisonError` for any row. **Fixed:** corrected to
+  `1,1,1,1,2` (totals now reconcile exactly), and the prose "2–5 real" → "1–2
+  real". The reviewer confirmed the genuine originators (runs 1/4
+  `surface_start_uses_copied_config…` `lib.rs:29160`; runs 2/3
+  `surface_key_default_natural_text_editing…` `lib.rs:16358`; run 5 + a non-PTY
+  `config::tests::config_path_cli_*` `config/mod.rs:5642`) — all tests this
+  experiment did not touch. The correction **strengthens** the conclusion: the
+  cascade fraction is even larger.
+
+The reviewer otherwise confirmed: the Partial verdict is honest, the diagnosis
+(broad flaky population + poison-cascade amplifier) is sound, the
+self-correction on poison-resilience is accurate (poison recovery preserves the
+originating panic and only suppresses the cascade), keeping the five changes is
+defensible, and the gated flow / build / fmt / diff are clean.
