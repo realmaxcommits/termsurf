@@ -2122,7 +2122,7 @@ are past the correctness-critical foundation.
 - [Experiment 792: Sprite Checklist Sync](792-sprite-checklist-sync.md) —
   **Pass** · Codex/Codex/Codex
 - [Experiment 793: z2d Dependency Checklist Sync](793-z2d-dependency-checklist-sync.md)
-  — **Designed**
+  — **Pass** · Codex/Codex/Codex
 
 ## Non-Goals
 

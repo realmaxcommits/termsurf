@@ -73,3 +73,43 @@ Codex reviewed the design and found no blocking findings. The review approved
 the scoped sprite path rasterization claim, unchanged renderer debug overlay
 row, open renderer glyph upload/live render loop/custom shader work, and
 non-empty focused test filters.
+
+## Result
+
+**Result:** Pass
+
+The Rust sprite rasterizer and path-rendered sprite coverage verified:
+
+- `cargo test -p roastty font::sprite::raster -- --nocapture --test-threads=1`:
+  95 passed
+- `cargo test -p roastty font::sprite::canvas -- --nocapture --test-threads=1`:
+  11 passed
+- `cargo test -p roastty font::sprite::draw -- --nocapture --test-threads=1`:
+  134 passed
+- `cargo test -p roastty powerline -- --nocapture --test-threads=1`: 23 passed
+- `cargo test -p roastty render_codepoint -- --nocapture --test-threads=1`: 11
+  passed
+
+Formatting and diff hygiene checks passed:
+
+- `prettier --write --prose-wrap always --print-width 80 issues/0801-roastty-libghostty-rewrite/README.md issues/0801-roastty-libghostty-rewrite/793-z2d-dependency-checklist-sync.md`
+- `git diff --check`
+
+The README now marks the `z2d` dependency complete for sprite path rasterization
+via the Rust `font/sprite/raster.rs` port used by `Canvas` path methods. CPU
+debug overlay work remains tracked by the renderer checklist rows.
+
+## Conclusion
+
+The old `z2d` dependency wording was stale. Roastty's sprite path rasterization
+is implemented and tested through the Rust rasterizer, Canvas path methods,
+procedural sprite draw paths, and render-codepoint integration. The remaining
+z2d-adjacent work is renderer/debug-overlay work, not the sprite path rasterizer
+dependency.
+
+## Completion Review
+
+Codex reviewed the completed experiment and found no blocking findings. The
+review approved the scoped `z2d` sprite path rasterization claim, recorded test
+counts plus Prettier and `git diff --check`, README status/provenance, and open
+renderer debug overlay/glyph upload/live render loop/custom shader work.
