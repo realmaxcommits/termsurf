@@ -2190,6 +2190,8 @@ are past the correctness-critical foundation.
   **Pass** · Codex/Codex/Codex
 - [Experiment 802: zf Fuzzy Foundation](802-zf-fuzzy-foundation.md) — **Pass** ·
   Codex/Codex/Codex
+- [Experiment 803: Embedded Font Resources](803-embedded-font-resources.md) —
+  **Designed**
 
 ## Non-Goals
 
