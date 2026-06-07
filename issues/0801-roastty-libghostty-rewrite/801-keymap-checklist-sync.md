@@ -81,3 +81,61 @@ blocking findings. The approval noted one non-blocking wording guard for
 implementation: keep the checklist precise that Roastty has key enum/value,
 layout mapping, and function-key encoding foundations, but still lacks the
 native macOS keycode translation table/runtime path owned by `KeymapDarwin`.
+
+## Result
+
+**Result:** Pass
+
+The keymaps row now records the existing foundations instead of presenting
+`keycodes`, `function_keys`, `KeymapDarwin`, and layouts as an undifferentiated
+missing group:
+
+- `input/key.rs` provides the key enum/value helpers, W3C round trips,
+  ASCII/codepoint mapping, keypad detection, event hashing, and macOS modifier
+  helpers.
+- `input/keyboard.rs` ports the upstream keyboard layout enum, Apple layout ID
+  mapping, and default `macos-option-as-alt` heuristic.
+- `input/key_encode.rs` carries the legacy PC cursor/edit/function tables and
+  Kitty supported-entry table used by function-key encoding.
+
+The row remains unchecked because Roastty still lacks the native macOS
+`KeymapDarwin` runtime path: active input source loading, Carbon native-keycode
+translation, dead-key state handling, reload on layout changes, and frontend
+integration remain open.
+
+Verification:
+
+- Inspected:
+  - `roastty/src/input/key.rs`
+  - `roastty/src/input/keyboard.rs`
+  - `roastty/src/input/key_encode.rs`
+  - `vendor/ghostty/src/input/keycodes.zig`
+  - `vendor/ghostty/src/input/keyboard.zig`
+  - `vendor/ghostty/src/input/function_keys.zig`
+  - `vendor/ghostty/src/input/KeymapDarwin.zig`
+- `cargo test -p roastty key_ -- --nocapture --test-threads=1` — 95 passed
+- `cargo test -p roastty keyboard -- --nocapture --test-threads=1` — 30 passed
+- `cargo test -p roastty key_encode_legacy_completed_cursor_edit_and_function_tables -- --nocapture --test-threads=1`
+  — 1 passed
+- `cargo test -p roastty key_encode_kitty_table_covers_upstream_supported_entries -- --nocapture --test-threads=1`
+  — 1 passed
+- `prettier --write --prose-wrap always --print-width 80 issues/0801-roastty-libghostty-rewrite/README.md issues/0801-roastty-libghostty-rewrite/801-keymap-checklist-sync.md`
+  — passed
+- `git diff --check` — passed
+
+## Conclusion
+
+The row was stale, not complete. Roastty has the key value, layout, and
+function-key encoding foundations needed by later input work, but the native
+macOS keymap/runtime translation path remains a concrete follow-up.
+
+## Completion Review
+
+Codex reviewed the staged result and found no blocking findings. The review
+approved the README wording because the row remains unchecked, uses scoped
+"foundations exist" language instead of parity language, and explicitly leaves
+native macOS keycode translation, input-source reload, dead-key handling, and
+frontend integration open. The review also approved the verification level for
+the documented claim: key helper tests, keyboard layout tests, and focused
+legacy/Kitty encoding-table tests cover the named foundations, while the result
+does not claim `KeymapDarwin` runtime behavior exists.

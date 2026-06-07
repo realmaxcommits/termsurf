@@ -265,7 +265,11 @@ Experiment 246).
       dispatch foundations exist; full Ghostty `Binding` type model, config
       export/remap completeness, keymaps/layouts, and frontend/global menu
       integration remain tracked elsewhere
-- [ ] Keymaps (`keycodes`, `function_keys`, `KeymapDarwin`, layouts) — missing
+- [ ] Keymaps (`keycodes`, `function_keys`, `KeymapDarwin`, layouts) — partial:
+      key enum/value helpers, keyboard layout mapping, and legacy/Kitty
+      function-key encoding foundations exist; native macOS keycode translation,
+      input-source reload, dead-key handling, and frontend integration remain
+      missing
 - [ ] Kitty keyboard protocol details (`input/kitty`), `Link`, mouse input
       structs — partial: `input/link.rs`, `input/mouse.rs`, terminal mouse
       state/encoding, surface mouse dispatch, and Kitty keyboard
@@ -2181,7 +2185,7 @@ are past the correctness-critical foundation.
 - [Experiment 800: SharedGridSet Foundation](800-shared-grid-set-foundation.md)
   — **Pass** · Codex/Codex/Codex
 - [Experiment 801: Keymap Checklist Sync](801-keymap-checklist-sync.md) —
-  **Designed**
+  **Pass** · Codex/Codex/Codex
 
 ## Non-Goals
 
