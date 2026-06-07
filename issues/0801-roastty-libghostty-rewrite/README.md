@@ -2068,7 +2068,7 @@ are past the correctness-critical foundation.
 - [Experiment 776: Surface Key Dispatch Checklist Sync](776-surface-key-dispatch-checklist-sync.md)
   — **Partial** (broad binding-action filter did not complete)
 - [Experiment 777: Binding Action Paste Test Reliability](777-binding-action-paste-test-reliability.md)
-  — **Designed**
+  — **Partial** (PTY paste tests pass but remain timing-heavy)
 
 ## Non-Goals
 
