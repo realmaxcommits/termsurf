@@ -2066,7 +2066,7 @@ are past the correctness-critical foundation.
 - [Experiment 775: C ABI Config Checklist Sync](775-c-abi-config-checklist-sync.md)
   — **Pass** · Codex/Codex/Codex
 - [Experiment 776: Surface Key Dispatch Checklist Sync](776-surface-key-dispatch-checklist-sync.md)
-  — **Designed**
+  — **Partial** (broad binding-action filter did not complete)
 
 ## Non-Goals
 
