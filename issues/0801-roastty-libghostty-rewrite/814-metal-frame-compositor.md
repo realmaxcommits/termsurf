@@ -129,3 +129,66 @@ main-thread presentation foundation, add a deterministic presentation seam for
 tests, include `contents_scale` in `MetalFrameInput`, verify layer
 `bounds * contentsScale` behavior, and explicitly leave queued multi-frame
 target lifetime safety for the later swap-chain/in-flight-target experiment.
+
+Codex re-reviewed the amended design and approved it with no remaining blocking
+findings. The follow-up review confirmed the single-in-flight scope, the
+deterministic presentation seam, and the explicit contents-scale contract.
+
+## Result
+
+**Result:** Pass
+
+Roastty now has a reusable single-target Metal frame compositor:
+
+- `roastty/src/renderer/metal/compositor.rs` adds `MetalFrameCompositor`.
+- The compositor owns a retained Metal device/command queue, standard pipelines,
+  one `FrameState`, one `MetalIOSurfaceLayer`, and an optional current
+  IOSurface-backed `MetalTarget`.
+- `MetalFrameCompositor::draw_frame` creates or reuses a target, syncs
+  uniforms/cells/atlases through `FrameState`, records a command frame and
+  render pass, draws with `MetalRenderPass::draw_frame`, commits and waits,
+  updates layer bounds/contents scale, and presents the target surface through
+  `MetalIOSurfaceLayer::set_surface`.
+- A test-only `draw_frame_immediate` seam uses `set_surface_if_size_matches`,
+  proving layer contents identity without enqueueing real main-queue work in the
+  test harness.
+- `MetalFramePresentation` reports foreground cell count, target dimensions,
+  target reallocation, and presentation mode.
+- Tests verify background-color pixels, target reuse, resize/reallocation,
+  `bounds * contentsScale` layer sizing, cell-background pixels, and foreground
+  glyph pixels.
+
+Verification:
+
+- Inspected `vendor/ghostty/src/renderer/generic.zig` `drawFrame`.
+- Inspected `roastty/src/renderer/metal/frame.rs`.
+- Inspected `roastty/src/renderer/metal/render_pass.rs`.
+- Inspected `roastty/src/renderer/metal/target.rs`.
+- Inspected `roastty/src/renderer/metal/iosurface_layer.rs`.
+- `cargo fmt -p roastty` — passed.
+- `cargo test -p roastty metal::compositor -- --nocapture --test-threads=1` —
+  passed, 3 tests.
+- `cargo test -p roastty metal::render_pass::tests::draw_frame -- --nocapture --test-threads=1`
+  — passed, 2 tests.
+- `cargo test -p roastty metal::iosurface_layer -- --nocapture --test-threads=1`
+  — passed, 13 tests.
+
+## Conclusion
+
+Experiment 814 completes the first reusable one-frame Metal orchestration
+boundary. It wires the existing GPU sync, render pass, IOSurface target, and
+IOSurfaceLayer presentation pieces together for prepared frame inputs. The
+remaining renderer work is still substantial: terminal-state rebuild,
+images/background/custom shaders, swap-chain/in-flight target lifetime, renderer
+thread/pacing, and full live app integration remain for follow-up experiments.
+
+## Completion Review
+
+Codex reviewed the completed result and approved it with no blocking findings.
+The review confirmed that the compositor owns its Metal resources correctly,
+borrows frame input only for synchronous `FrameState::sync`, commits and waits
+before returning, respects the single-in-flight contract, uses the deterministic
+presentation seam in tests, handles `contents_scale` as
+`bounds = pixels / scale`, and verifies background, cell-background, resize,
+layer sizing, and foreground glyph pixels without overclaiming the full upstream
+render loop.

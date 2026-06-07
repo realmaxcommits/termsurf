@@ -3,6 +3,7 @@
 
 pub(crate) mod api;
 pub(crate) mod buffer;
+pub(crate) mod compositor;
 pub(crate) mod frame;
 pub(crate) mod iosurface_layer;
 pub(crate) mod pipeline;

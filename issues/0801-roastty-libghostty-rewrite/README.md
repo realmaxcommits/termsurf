@@ -229,7 +229,9 @@ Experiment 246).
       wrapper plus synchronous IOSurfaceLayer presentation wrapper,
       IOSurfaceLayer subclass/display callback, and implicit animation
       suppression, and async/main-thread IOSurfaceLayer presentation scheduling
-      exist; full live frame orchestration remains missing
+      exist; single-target frame compositor exists; terminal-state rebuild,
+      images/background/custom shaders, swap-chain pacing, renderer thread, and
+      full live frame orchestration remain missing
 - [ ] Main render loop (`generic.zig`: frame build, dirty tracking, glyph
       upload, draw calls, pacing) — missing (critical)
 - [ ] z2d debug `Overlay`, link highlighting, render `Thread`, custom shaders —
@@ -2226,7 +2228,7 @@ are past the correctness-critical foundation.
 - [Experiment 813: IOSurfaceLayer Async Presentation](813-iosurface-layer-async-presentation.md)
   — **Pass** · Codex/Codex/Codex
 - [Experiment 814: Metal Frame Compositor](814-metal-frame-compositor.md) —
-  **Designed** · Codex/Codex/Codex
+  **Pass** · Codex/Codex/Codex
 
 ## Non-Goals
 
