@@ -2317,6 +2317,8 @@ are past the correctness-critical foundation.
   — **Pass** · Codex/Codex/Codex
 - [Experiment 829: Deadlock-proof test gate and PTY worker deadlock fix](829-deadlock-proof-test-gate.md)
   — **Pass** · Claude/Claude/Claude
+- [Experiment 830: Fix the flaky surface_text PTY-snapshot tests](830-flaky-surface-snapshot-tests.md)
+  — **Designed** · Claude/Claude/Claude
 
 ## Non-Goals
 
