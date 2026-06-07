@@ -2267,6 +2267,8 @@ are past the correctness-critical foundation.
   — **Pass** · Codex/Codex/Codex
 - [Experiment 825: Derive Row Background Extension](825-derive-row-background-extension.md)
   — **Pass** · Codex/Codex/Codex
+- [Experiment 826: Collect Terminal Frame Snapshot](826-collect-terminal-frame-snapshot.md)
+  — **Designed**
 
 ## Non-Goals
 
