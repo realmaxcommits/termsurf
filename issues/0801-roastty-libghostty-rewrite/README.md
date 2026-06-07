@@ -317,10 +317,11 @@ Experiment 246).
       scroll-page-down, scroll-page-lines, and scroll-page-fractional
       binding-action string invocation foundations, tab/window runtime action
       forwarding, tab navigation runtime action forwarding, and runtime UI
-      toggle forwarding done; runtime control forwarding done; splits, frontend
-      selection routing, renderer display-ID delivery, full binding-action
-      parsing, Quicklook UI/font integration, clipboard request
-      allocation/handling, and full frontend presentation missing
+      toggle forwarding done; runtime control forwarding, focused binding-action
+      parsing coverage, and targeted slow PTY paste-path coverage done; splits,
+      frontend selection routing, renderer display-ID delivery, Quicklook
+      UI/font integration, clipboard request allocation/handling, and full
+      frontend presentation missing
 - [ ] `pty` + `termio` (shell spawn, read/write loops, resize, fg pid, tty name,
       exit) — PTY open/resize, subprocess spawn, child IO, synchronous pump,
       background worker, worker shutdown/drop, and surface process-exit state
@@ -2073,7 +2074,7 @@ are past the correctness-critical foundation.
 - [Experiment 778: Narrow Surface Binding Checklist Sync](778-narrow-surface-binding-checklist-sync.md)
   — **Pass** · Codex/Codex/Codex
 - [Experiment 779: Surface Lifecycle Checklist Sync](779-surface-lifecycle-checklist-sync.md)
-  — **Designed**
+  — **Pass** · Codex/Codex/Codex
 
 ## Non-Goals
 

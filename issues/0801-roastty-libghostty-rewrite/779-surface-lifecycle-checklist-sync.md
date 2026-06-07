@@ -78,3 +78,47 @@ It was also updated to require the result to record that the stale phrase is
 being treated as parser/executor and string-invocation coverage, not frontend
 mutation/application behavior. Codex reviewed the revision, found no blockers,
 and approved the Experiment 779 plan commit.
+
+## Result
+
+**Result:** Pass
+
+The broader `Surface` lifecycle checklist used `full binding-action parsing` in
+the same parser/executor and binding-action string-invocation sense covered by
+Experiments 777 and 778. It did not describe frontend mutation/application
+behavior: the same checklist clause separately lists splits, frontend selection
+routing, renderer display-ID delivery, Quicklook UI/font integration, clipboard
+request allocation/handling, and full frontend presentation as missing.
+
+The README update is documentation-only. It moves the stale parsing claim out of
+the missing-work clause by adding the scoped done wording
+`focused binding-action parsing coverage, and targeted slow PTY paste-path coverage done`.
+The broader `Surface` lifecycle item remains unchecked and still lists the
+genuinely missing frontend/lifecycle work.
+
+Documentation checks passed after recording the result:
+
+- `prettier --write --prose-wrap always --print-width 80 issues/0801-roastty-libghostty-rewrite/README.md issues/0801-roastty-libghostty-rewrite/779-surface-lifecycle-checklist-sync.md`
+- `git diff --check`
+
+## Conclusion
+
+The `Surface` lifecycle checklist now matches the C ABI checklist for
+binding-action parsing scope. Parser/executor and string-invocation coverage are
+done; frontend selection routing, split tree/frontend mutations, renderer
+delivery, Quicklook UI/font integration, clipboard request handling, and full
+frontend presentation remain open.
+
+## Completion Review
+
+Codex reviewed the completed Pass result and found no issues. The review
+confirmed that the README update removes only the stale
+`full binding-action parsing` missing claim from the broader `Surface` lifecycle
+item, adds scoped done wording for parser coverage and slow paste-path coverage,
+keeps the item unchecked, and preserves the remaining missing frontend/lifecycle
+work.
+
+The review also confirmed that Experiment 779 records the required distinction:
+the removed phrase is treated as parser/executor and string-invocation coverage,
+not frontend mutation/application behavior. Codex approved the Experiment 779
+result commit.
