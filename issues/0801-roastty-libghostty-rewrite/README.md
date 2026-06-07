@@ -208,20 +208,29 @@ Experiment 246).
       terminal snapshots and renderer integration missing
 - [x] `sys` (PNG-decode abstraction) — implemented and tested via C ABI
 
-### Renderer — data + Metal primitives only; no live render loop
+### Renderer — data + Metal/offscreen foundations; no live render loop
 
 - [x] Cell contents builder (`cell.rs`), cursor style (`cursor.rs`),
       size/padding types (`size.rs`), shader vertex/uniform types (`shader.rs`)
 - [x] Metal primitives — `api`, `buffer`, `shaders` (MSL), `render_pass`,
       `texture`
 - [ ] Render `state` — partial (only `Preedit`; full `State` + `Mouse` missing)
-- [ ] Image state (`image.rs`) — partial (data only, no GPU upload)
+- [ ] Image state (`image.rs`) — partial: pending/ready/replace/unload tracking,
+      Kitty placement buckets, RGBA preparation, Metal texture upload, and image
+      draw-call foundations exist; live renderer upload/presentation integration
+      remains incomplete
 - [ ] Metal `pipeline` (partial), `Sampler`, `Frame`, `Target`, `IOSurfaceLayer`
-      — missing
+      — partial: pipeline descriptors/state builder, standard shader
+      library/pipelines, texture upload/render-target helpers, `FrameState`
+      uniform/cell/atlas sync, and offscreen render passes exist; `Sampler`,
+      window `Target`, `IOSurfaceLayer`, and full live frame orchestration
+      remain missing
 - [ ] Main render loop (`generic.zig`: frame build, dirty tracking, glyph
       upload, draw calls, pacing) — missing (critical)
 - [ ] z2d debug `Overlay`, link highlighting, render `Thread`, custom shaders —
-      missing
+      partial: custom-shader uniforms, target enum, and per-frame/state update
+      helpers exist; shader file loading, debug overlay, renderer thread, and
+      full renderer link-highlight integration remain missing
 
 ### Font & text — foundations only
 
@@ -2147,6 +2156,8 @@ are past the correctness-critical foundation.
   **Pass** · Codex/Codex/Codex
 - [Experiment 795: Unicode Table Checklist Sync](795-unicode-table-checklist-sync.md)
   — **Pass** · Codex/Codex/Codex
+- [Experiment 796: Renderer Metal Checklist Sync](796-renderer-metal-checklist-sync.md)
+  — **Designed**
 
 ## Non-Goals
 
