@@ -28,6 +28,71 @@ will persist into that directory. This experiment should still avoid native
 Sentry SDK initialization, crash callbacks, report upload, CLI commands, and
 frontend flows.
 
+## Result
+
+**Result:** Pass
+
+Roastty now has a tested Sentry envelope foundation in `roastty/src/crash.rs`.
+The implementation adds `Envelope`, encoded items, item-type preservation for
+known and unknown types, attachment decode validation, parse support for
+explicit-length and line-delimited payloads, and minified JSON serialization.
+Exact-length payload parsing follows upstream's delimiter behavior: EOF
+immediately after the payload is accepted, a following newline is consumed, and
+any other present delimiter byte is rejected.
+
+`roastty/Cargo.toml` now depends on `serde_json = "1.0"` for envelope header
+JSON handling. `Cargo.lock` changed only to add `serde_json` to Roastty's
+dependency list; the package was already present in the workspace lock.
+
+The Issue 801 checklist now records crash reporting as partial with local
+crash-report directory/listing support and Sentry envelope parse/serialize
+support present. Sentry SDK initialization, crash callbacks, envelope
+persistence transport, report upload, CLI commands, and frontend flows remain
+open.
+
+Verification:
+
+- Inspected `vendor/ghostty/src/crash/sentry_envelope.zig`.
+- Inspected `vendor/ghostty/src/crash/sentry.zig`.
+- Inspected `vendor/ghostty/src/crash/dir.zig`.
+- `cargo fmt -p roastty` — passed.
+- `cargo test -p roastty envelope -- --nocapture --test-threads=1` — passed, 9
+  tests.
+- `cargo test -p roastty crash -- --nocapture --test-threads=1` — passed, 14
+  tests.
+- `prettier --write --prose-wrap always --print-width 80 issues/0801-roastty-libghostty-rewrite/README.md issues/0801-roastty-libghostty-rewrite/805-sentry-envelope-foundation.md`
+  — passed.
+- `git diff --check` — passed.
+
+## Conclusion
+
+Experiment 805 moves Roastty's Sentry work from local crash-directory support to
+the envelope representation needed by future capture and persistence work. The
+next crash-reporting slices can stay focused on SDK initialization, crash
+callback capture, envelope persistence transport, upload behavior, and
+CLI/frontend exposure.
+
+## Completion Review
+
+Codex reviewed the staged result and found one blocking correctness issue: the
+line reader stripped a trailing carriage return from line-delimited payloads,
+which would corrupt payload bytes for no-`length` items ending in `\r\n`. The
+implementation now preserves raw payload bytes, and a regression test covers
+`ABC\r\n` parsing as payload `ABC\r`.
+
+Codex re-reviewed the corrected result and found one remaining blocking edge
+case: `u64::MAX` was used as the internal no-length sentinel, which collided
+with an explicit `"length":18446744073709551615` header. The parser now stores
+length as `Option<u64>`, so an explicit max-length header takes the exact-length
+payload path and fails as too short for finite input. The malformed-input test
+now covers that case.
+
+Codex re-reviewed the corrected staged result after both fixes and approved it
+with no findings. The approval confirmed that both prior blockers are fixed,
+crash-directory behavior remains unchanged, the README keeps crash/Sentry status
+partial, and the experiment docs do not overclaim SDK capture, persistence
+transport, upload, CLI, or frontend support.
+
 The upstream envelope parser is intentionally incomplete: it parses envelope
 headers as JSON, preserves encoded items, supports known/unknown item types,
 handles item payloads with explicit `length` or line-delimited payloads, decodes

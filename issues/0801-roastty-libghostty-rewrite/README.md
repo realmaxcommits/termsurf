@@ -393,11 +393,12 @@ Experiment 246).
       exist with focused tests; future incidental helpers remain as-needed
 - [ ] `cli/` (+list-\* tools), `inspector/` (imgui), `crash/` (sentry),
       `terminfo/`, `synthetic/` — partial: inspector handle lifecycle/input
-      forwarding, local crash-report directory/listing support, terminfo-bearing
-      resource directory discovery, and font synthetic bold/italic foundations
-      exist; CLI/list tools, inspector UI/core data collection, Sentry SDK
-      capture/envelope persistence/report upload, full terminfo tooling, and
-      broader synthetic subsystem work remain open
+      forwarding, local crash-report directory/listing support, Sentry envelope
+      parse/serialize support, terminfo-bearing resource directory discovery,
+      and font synthetic bold/italic foundations exist; CLI/list tools,
+      inspector UI/core data collection, Sentry SDK capture/envelope persistence
+      transport/report upload, full terminfo tooling, and broader synthetic
+      subsystem work remain open
 - [ ] Swift macOS frontend integration
 
 Out of scope / tooling: `build/`, `benchmark/`, `extra/`, `simd/`, `stb/`,
@@ -432,8 +433,9 @@ Out of scope / tooling: `build/`, `benchmark/`, `extra/`, `simd/`, `stb/`,
       Ghostty call-site audit remain open
 - [ ] `highway` (SIMD) — not started
 - [ ] `sentry` (crash reporting) — partial: local crash-report directory/listing
-      support exists; Sentry SDK initialization, crash callbacks, envelope
-      capture/persistence, report upload, and CLI/frontend flows remain missing
+      and Sentry envelope parse/serialize/attachment decode support exists;
+      Sentry SDK initialization, crash callbacks, envelope persistence
+      transport, report upload, and CLI/frontend flows remain missing
 - [ ] `dcimgui` (inspector UI) — not started
 - [ ] `glslang` / `spirv-cross` (shader translation) — not started
 
@@ -2200,7 +2202,7 @@ are past the correctness-critical foundation.
 - [Experiment 804: Crash Report Directory Foundation](804-crash-report-directory-foundation.md)
   — **Pass** · Codex/Codex/Codex
 - [Experiment 805: Sentry Envelope Foundation](805-sentry-envelope-foundation.md)
-  — **Designed**
+  — **Pass** · Codex/Codex/Codex
 
 ## Non-Goals
 

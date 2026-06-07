@@ -1578,6 +1578,7 @@ dependencies = [
  "objc2-foundation",
  "objc2-metal",
  "regex",
+ "serde_json",
 ]
 
 [[package]]
