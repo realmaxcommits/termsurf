@@ -335,18 +335,20 @@ the live app, verified by a Phase-D UI test.)
 - [x] Copy + rename the macOS app into `roastty/macos/`; point at
       `RoasttyKit.xcframework`; first build reaches Swift compile (Exp 7,
       `scripts/roastty-app/rename-app.sh`)
-- [~] **Make it compile/link — the embedded ABI type surface (Exp 8+):** Exp 8
-  (input) + Exp 9 (action: 36 types + typed `action_u` union) + Exp 10
-  (config/fn tail + mouse/action/init ABI fixes) done — **all 56 missing symbols
-  resolved**, 4396 tests green. The app build now reaches **past every
-  missing-symbol + enum + init issue** and is blocked on the
-  **`selection_s`/`point_s` layout divergence** (Exp-6 #3 → Exp 11). The build
-  exposed the real gap = **56 missing `roastty_*` symbols**, dominated by the
-  **~36 `action_*` payload types/enums** (the `action_s` tagged-union members) +
-  6 input types/enums + 4 config types + 6 functions — plus the
-  `selection_s`/`point_s` subsystem divergence. Implement byte-faithful in
-  `libroastty`/`roastty.h`, drive the app's error list to zero. (Spans several
-  gated experiments.)
+- [x] **Make it compile/link — the embedded ABI type surface (Exp 8-13): DONE.**
+      The renamed Roastty app **compiles + links** against `libroastty`
+      (`** BUILD SUCCEEDED **`); the entire embedded ABI is byte-faithful.
+      Original notes: Exp 8 (input) + Exp 9 (action: 36 types + typed `action_u`
+      union) + Exp 10 (config/fn tail + mouse/action/init ABI fixes) done —
+      **all 56 missing symbols resolved**, 4396 tests green. The app build now
+      reaches **past every missing-symbol + enum + init issue** and is blocked
+      on the **`selection_s`/`point_s` layout divergence** (Exp-6 #3 → Exp 11).
+      The build exposed the real gap = **56 missing `roastty_*` symbols**,
+      dominated by the **~36 `action_*` payload types/enums** (the `action_s`
+      tagged-union members) + 6 input types/enums + 4 config types + 6 functions
+      — plus the `selection_s`/`point_s` subsystem divergence. Implement
+      byte-faithful in `libroastty`/`roastty.h`, drive the app's error list to
+      zero. (Spans several gated experiments.)
 
 **Phase C — Live render path (the crux)**
 
@@ -466,8 +468,9 @@ stays unaltered except for the rename).
   byte-faithful; 4400 tests green; app build 80→1 errors →
   `config_key_is_binding` by-value next) · Claude/Claude
 - [Experiment 13: Embedded ABI — `config_key_is_binding` by-value (the last compile error)](13-embedded-abi-config-key.md)
-  — **Designed** (Exp-8 by-value-key pattern applied to `config_key_is_binding`;
-  the app's final compile error) · Claude
+  — **Pass** (`config_key_is_binding` by-value; **the app COMPILES + LINKS** —
+  `** BUILD SUCCEEDED **`, Roastty.app produced, Phase B exit; 4401 tests green)
+  · Claude/Claude
 
 ## Process
 

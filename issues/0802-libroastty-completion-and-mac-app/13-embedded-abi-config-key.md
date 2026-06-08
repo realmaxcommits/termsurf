@@ -97,8 +97,67 @@ compile error. Findings, folded in:
 
 ## Result
 
-_(to be added after the run.)_
+**Result:** Pass — `config_key_is_binding` takes `roastty_input_key_s` by value
+(byte-faithful, reusing the Exp-8 converter + mirroring the `config || default`
+body), `cargo test` is green, and **the renamed Roastty app now compiles AND
+links against `libroastty`** — `** BUILD SUCCEEDED **`, `Roastty.app` bundle
+produced, **0 errors**. This is the **Phase B exit**.
+
+### What landed
+
+- **`config_key_is_binding` by-value:** the opaque function renamed to
+  `roastty_config_key_is_binding_handle` (retained for tests); the new
+  `roastty_config_key_is_binding(config, RoasttyInputKey)` builds the `KeyEvent`
+  via `input_key_to_event` and returns
+  `config.key_event_is_binding(&ev.event) || default_key_event_is_binding(&ev.event)`
+  — **both** clauses (the default fallback the review caught). Header decl →
+  `roastty_input_key_s`. The 20 test sites migrated to `_handle`.
+- **A by-value regression test**
+  (`config_key_is_binding_by_value_uses_default_fallback`): Escape (native
+  `0x35`, no mods) is a default binding → `true`; native 'A' (`0x00`) → not a
+  binding → `false`. It would fail if the default fallback were dropped.
+
+### Verification
+
+- **`cargo test -p roastty --lib`: 4401 passed, 0 failed** (4400 + the new
+  by-value test).
+- **App build: `** BUILD SUCCEEDED
+  **`, 0 errors, `roastty/macos/build/Debug/Roastty.app` present.** The
+  copied-and-renamed Ghostty macOS app builds end-to-end on `libroastty`.
 
 ## Conclusion
 
-_(to be added after the run.)_
+**Phase B is done.** Across Exp 6–13 the entire embedded ABI was reconciled
+byte-faithfully — input (Exp 8), the action tagged-union (Exp 9),
+config/function tail + mouse/action/init fixes (Exp 10), selection/point (Exp
+11), the target union + action-tag completion (Exp 12), and this final by-value
+config key — so an **unmodified-except-for-rename Ghostty app compiles and links
+against the Rust port**. This is a strong structural proof: every struct layout,
+enum, and signature the app touches now matches `libroastty`'s.
+
+It is **not yet a runtime/behavioral proof** — building is not running. **Phase
+C** is next: **run** `Roastty.app` and bring up the live `surface_draw` render
+path (the app supplies the `NSView`; libroastty must render into it — the "crux"
+deferred from 801), then drive the app under macOS automation and verify
+features one by one (typing, rendering, selection, clipboard, scrollback,
+search, splits/tabs, config, keybindings, resize, colors), fixing each gap in
+`libroastty`. Exp 14 should be the first Phase-C step: launch the built app and
+capture what it does (likely a blank/again-divergent render that pins the first
+live-path work item).
+
+## Result Review
+
+**Reviewer:** `adversarial-reviewer` subagent (Claude Opus, fresh context,
+read-only). **Verdict: APPROVED** (no findings). It re-verified every static
+claim: the by-value body has **both** clauses
+(`config.key_event_is_binding(&ev) || default_key_event_is_binding(&ev)`,
+lib.rs:10058) — the Required design fix landed and is behaviorally equivalent to
+`_handle`; the header decl matches upstream (`config_t, input_key_s`) and parses
+clean, `_handle` also declared; the migration is correct and complete (the only
+bare by-value calls are the prod def + the 2 legit by-value test calls; 20 sites
+on `_handle`; no `_handle_handle`, no prod/ header touched); the by-value test
+is a **real regression guard** (fresh config → Escape `0x35` passes only via the
+`|| default` clause; native 'A' `0x00` → not a binding); and the roastty
+user/default split is **net-equivalent to upstream's combined keybind set**.
+"Pass / Phase B exit" judged honest — fully implemented (not stubbed), with
+building≠running correctly scoped to Phase C.

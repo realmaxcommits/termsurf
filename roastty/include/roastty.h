@@ -2012,7 +2012,9 @@ ROASTTY_API roastty_input_trigger_s roastty_config_trigger(roastty_config_t,
                                                            const char*,
                                                            uintptr_t);
 ROASTTY_API bool roastty_config_key_is_binding(roastty_config_t,
-                                               roastty_key_event_t);
+                                               roastty_input_key_s);
+ROASTTY_API bool roastty_config_key_is_binding_handle(roastty_config_t,
+                                                      roastty_key_event_t);
 ROASTTY_API uint32_t roastty_config_diagnostics_count(roastty_config_t);
 ROASTTY_API roastty_diagnostic_s roastty_config_get_diagnostic(roastty_config_t,
                                                                uint32_t);

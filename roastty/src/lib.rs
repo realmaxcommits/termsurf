@@ -10043,8 +10043,24 @@ pub extern "C" fn roastty_config_trigger(
     default_config_trigger(action)
 }
 
+/// Embedded by-value `config_key_is_binding` (the app's path) — supersedes the opaque
+/// `*_handle` variant (Issue 802 / Exp 13). Mirrors the handle body: config match OR a
+/// built-in default keybind.
 #[no_mangle]
 pub extern "C" fn roastty_config_key_is_binding(
+    config: RoasttyConfig,
+    event: RoasttyInputKey,
+) -> bool {
+    let Some(config) = config_from_handle(config) else {
+        return false;
+    };
+    let ev = input_key_to_event(&event);
+    config.key_event_is_binding(&ev.event) || default_key_event_is_binding(&ev.event)
+}
+
+/// Opaque-handle `config_key_is_binding` (pre-Exp-13 API) — retained for the existing tests.
+#[no_mangle]
+pub extern "C" fn roastty_config_key_is_binding_handle(
     config: RoasttyConfig,
     event: RoasttyKeyEvent,
 ) -> bool {
@@ -18324,8 +18340,8 @@ mod tests {
                     &[],
                     0,
                 );
-                assert!(roastty_config_key_is_binding(config, event));
-                assert!(roastty_config_key_is_binding(clone, event));
+                assert!(roastty_config_key_is_binding_handle(config, event));
+                assert!(roastty_config_key_is_binding_handle(clone, event));
 
                 set_key_event(
                     event,
@@ -18335,8 +18351,8 @@ mod tests {
                     "ö".as_bytes(),
                     0,
                 );
-                assert!(roastty_config_key_is_binding(config, event));
-                assert!(roastty_config_key_is_binding(clone, event));
+                assert!(roastty_config_key_is_binding_handle(config, event));
+                assert!(roastty_config_key_is_binding_handle(clone, event));
 
                 roastty_key_event_free(event);
                 roastty_config_free(clone);
@@ -18374,7 +18390,7 @@ mod tests {
                     b"n",
                     0,
                 );
-                assert!(roastty_config_key_is_binding(config, event));
+                assert!(roastty_config_key_is_binding_handle(config, event));
 
                 set_key_event(
                     event,
@@ -18384,7 +18400,7 @@ mod tests {
                     b"n",
                     0,
                 );
-                assert!(roastty_config_key_is_binding(config, event));
+                assert!(roastty_config_key_is_binding_handle(config, event));
 
                 set_key_event(
                     event,
@@ -18394,7 +18410,7 @@ mod tests {
                     &[],
                     u32::from(b'x'),
                 );
-                assert!(roastty_config_key_is_binding(config, event));
+                assert!(roastty_config_key_is_binding_handle(config, event));
 
                 roastty_key_event_free(event);
                 roastty_config_free(config);
@@ -18424,7 +18440,7 @@ mod tests {
                     b"a",
                     0,
                 );
-                assert!(!roastty_config_key_is_binding(config, event));
+                assert!(!roastty_config_key_is_binding_handle(config, event));
 
                 set_key_event(
                     event,
@@ -18434,7 +18450,7 @@ mod tests {
                     b"a",
                     0,
                 );
-                assert!(!roastty_config_key_is_binding(config, event));
+                assert!(!roastty_config_key_is_binding_handle(config, event));
 
                 set_key_event(
                     event,
@@ -18444,7 +18460,7 @@ mod tests {
                     &[],
                     0,
                 );
-                assert!(!roastty_config_key_is_binding(config, event));
+                assert!(!roastty_config_key_is_binding_handle(config, event));
 
                 roastty_key_event_free(event);
                 roastty_config_free(config);
@@ -20472,9 +20488,15 @@ mod tests {
         let config = roastty_config_new();
         let event = new_key_event();
 
-        assert!(!roastty_config_key_is_binding(ptr::null_mut(), event));
-        assert!(!roastty_config_key_is_binding(config, ptr::null_mut()));
-        assert!(!roastty_config_key_is_binding(config, event));
+        assert!(!roastty_config_key_is_binding_handle(
+            ptr::null_mut(),
+            event
+        ));
+        assert!(!roastty_config_key_is_binding_handle(
+            config,
+            ptr::null_mut()
+        ));
+        assert!(!roastty_config_key_is_binding_handle(config, event));
 
         roastty_key_event_free(event);
         roastty_config_free(config);
@@ -20527,10 +20549,43 @@ mod tests {
             (key::Key::Insert, ROASTTY_MODS_SHIFT),
         ] {
             set_key_event(event, key::KeyAction::Press, key, mods, &[], 0);
-            assert!(roastty_config_key_is_binding(config, event), "{key:?}");
+            assert!(
+                roastty_config_key_is_binding_handle(config, event),
+                "{key:?}"
+            );
         }
 
         roastty_key_event_free(event);
+        roastty_config_free(config);
+    }
+
+    #[test]
+    fn config_key_is_binding_by_value_uses_default_fallback() {
+        // The by-value `config_key_is_binding` (the app-linked path) must mirror the handle
+        // body's `config || default` — Escape (native macOS keycode 0x35) with no mods is a
+        // built-in default binding, so this fails if the default fallback is dropped.
+        let config = roastty_config_new();
+        let escape = RoasttyInputKey {
+            action: 1, // ROASTTY_ACTION_PRESS
+            mods: 0,
+            consumed_mods: 0,
+            keycode: 0x35, // -> Key::Escape
+            text: core::ptr::null(),
+            unshifted_codepoint: 0,
+            composing: false,
+        };
+        assert!(roastty_config_key_is_binding(config, escape));
+        // Native 'A' (keycode 0x00) with no mods is just typing — not a binding.
+        let typing = RoasttyInputKey {
+            action: 1, // ROASTTY_ACTION_PRESS
+            mods: 0,
+            consumed_mods: 0,
+            keycode: 0x00, // -> Key::KeyA
+            text: core::ptr::null(),
+            unshifted_codepoint: 0,
+            composing: false,
+        };
+        assert!(!roastty_config_key_is_binding(config, typing));
         roastty_config_free(config);
     }
 
@@ -20563,7 +20618,7 @@ mod tests {
                 0,
             );
             assert!(
-                roastty_config_key_is_binding(config, event),
+                roastty_config_key_is_binding_handle(config, event),
                 "{utf8:?} {mods}"
             );
         }
@@ -20576,7 +20631,7 @@ mod tests {
             &[],
             u32::from(b'n'),
         );
-        assert!(roastty_config_key_is_binding(config, event));
+        assert!(roastty_config_key_is_binding_handle(config, event));
 
         roastty_key_event_free(event);
         roastty_config_free(config);
@@ -20595,7 +20650,7 @@ mod tests {
             &[],
             0,
         );
-        assert!(roastty_config_key_is_binding(config, event));
+        assert!(roastty_config_key_is_binding_handle(config, event));
 
         set_key_event(
             event,
@@ -20605,7 +20660,7 @@ mod tests {
             b"x",
             0,
         );
-        assert!(roastty_config_key_is_binding(config, event));
+        assert!(roastty_config_key_is_binding_handle(config, event));
 
         roastty_key_event_free(event);
         roastty_config_free(config);
@@ -20624,7 +20679,7 @@ mod tests {
             &[],
             0,
         );
-        assert!(!roastty_config_key_is_binding(config, event));
+        assert!(!roastty_config_key_is_binding_handle(config, event));
 
         for (key, mods, utf8, unshifted) in [
             (key::Key::KeyX, ROASTTY_MODS_SUPER, b"x".as_slice(), 0),
@@ -20650,7 +20705,7 @@ mod tests {
         ] {
             set_key_event(event, key::KeyAction::Press, key, mods, utf8, unshifted);
             assert!(
-                !roastty_config_key_is_binding(config, event),
+                !roastty_config_key_is_binding_handle(config, event),
                 "{key:?} {mods} {utf8:?} {unshifted}"
             );
         }
