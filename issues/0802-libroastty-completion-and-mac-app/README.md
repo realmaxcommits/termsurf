@@ -435,6 +435,9 @@ stays unaltered except for the rename).
   — **Pass** (input enums byte-faithful + by-value
   `input_key_s`/`surface_key`/`app_key`; 4395 tests green; gap 56→48) ·
   Claude/Claude
+- [Experiment 9: Embedded ABI — the action-dispatch type surface (tranche 2)](09-embedded-abi-action.md)
+  — **Designed** (36 `action_*` payload types + typed `action_u` union + rewire
+  the 20 firing sites; the single largest item) · Claude
 
 ## Process
 
