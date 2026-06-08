@@ -373,6 +373,9 @@ stays unaltered except for the rename).
   — **Pass** (full matrix driven + classified; keyboard ~complete, mouse incl.
   **scroll** works; 4 known failures: F11, Ctrl-K/L, dead-key compose, synthetic
   double-click) · Claude/Claude
+- [Experiment 6: Phase B — RoasttyKit.xcframework + the embedded-ABI link worklist](06-roastty-kit-and-abi-worklist.md)
+  — **Designed** (package libroastty as RoasttyKit; 6 app-needed embedded
+  symbols missing; full signature + struct-layout audit) · Claude
 
 ## Process
 
