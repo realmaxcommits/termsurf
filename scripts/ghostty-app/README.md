@@ -55,3 +55,30 @@ scripts/ghostty-app/screenshot.sh --list Ghostty       # list candidate windows
 `${TERMSURF_SHOT_DIR:-$HOME/.cache/termsurf/shots}`. Verified: a Ghostty window captured
 at `1600×1264 px` (= `800×632 pt` × 2 Retina) — the window crop, not the full display —
 with live terminal content, while Wezboard was fullscreen on another Space.
+
+## Input injection (Exp 5)
+
+Drive the app from the agent. Keyboard via `osascript` System Events, mouse via
+`inject.swift` (CGEvent), with a raw-mode PTY byte logger (`byteprobe.py`) as the
+precise oracle. `input-matrix.sh <stage>` drives grouped tests.
+
+```bash
+swift scripts/ghostty-app/inject.swift move|click|drag|scroll  ...   # CGEvent mouse
+python3 scripts/ghostty-app/byteprobe.py /tmp/ghostty-exp5/bytes.log [mouse,focus,paste]
+scripts/ghostty-app/input-matrix.sh bootstrap|probe-start|keyA-...|...
+```
+
+**Operational facts (learned in Exp 5 — reuse these):**
+
+- **activate-first**: `osascript … to activate` the target before injecting — keyboard
+  reaches only the frontmost app, mouse only the active Space. Oracles (window-id
+  screenshot, byte-log file, `pbpaste`) survive the Space switch.
+- **Warmup key**: the first keystroke after each `activate` is dropped (focus settling);
+  send a throwaway key first.
+- **Byte log**: never truncate it while `byteprobe.py` holds it open (writes land at the
+  old fd offset → a hole of `00` bytes); read by line offset. The probe runs raw with
+  ISIG off so Ctrl-C/D/Z arrive as bytes.
+- **Bootstrap to bash**: Ghostty's default shell is nushell — inject
+  `exec bash --norc --noprofile` first so POSIX driver commands work.
+- **Known input failures** (see Exp 5): F11 (macOS-swallowed), Ctrl-K/Ctrl-L (app-consumed),
+  dead-key compose, synthetic double-click word-select. Scroll + SGR mouse reporting work.

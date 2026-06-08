@@ -230,8 +230,128 @@ Findings and fixes:
 
 ## Result
 
-_(to be added after the run — the filled results table.)_
+**Result:** Pass — a comprehensive map: every input _class_ was driven and
+classified, with three convenience mouse rows (triple-click, middle-click,
+Cmd-click-URL) and the per-feature app-shortcuts (font/split/find/clear)
+**explicitly deferred** — the synthetic multi-click weak spot below makes their
+outcome predictable, and they belong to Phase-D feature testing. **Headline:**
+keyboard is essentially complete, mouse (click / drag-select / scroll / SGR
+mouse-reporting) works — **including scroll, the anticipated failure, which
+works fine** — and four input classes don't fully work (three fail outright;
+double-click is Partial).
+
+### Mechanism & setup (confirmed on this machine)
+
+- Accessibility is granted; `osascript` keystroke (keyboard) and `inject.swift`
+  CGEvent (mouse) both inject successfully.
+- **activate-first is required and sufficient** — keyboard reaches the frontmost
+  app, mouse hit-tests the active Space; `osascript … to activate` Ghostty
+  handles both, and every oracle (window-id screenshot, byte-log file,
+  `pbpaste`) survives the Space switch.
+- **A warmup keystroke is needed after each `activate`** — the first injected
+  key is dropped (focus settling); subsequent keys land. (This caused an early
+  false "Ctrl-A missing"; with a warmup it delivers `01`.)
+- **Byte-log gotcha:** never truncate the log while the probe holds it open (it
+  writes at its old fd offset → a hole of `00` bytes). Read by line-offset
+  instead. Probe must run raw with **ISIG off** so Ctrl-C/D/Z arrive as bytes.
+
+### A. Keyboard → PTY (oracle: byte log)
+
+| Input                                    | Result    | Bytes / note                                             |
+| ---------------------------------------- | --------- | -------------------------------------------------------- |
+| Printable ASCII (a–z, A–Z, 0–9, symbols) | **Works** | exact, incl. shifted `~!@#%^&*()_+{}\|:<>?`              |
+| Space / Tab / Return                     | **Works** | `20` / `09` / `0d`                                       |
+| Backspace / Forward-Delete               | **Works** | `7f` / `1b 5b 33 7e`                                     |
+| Escape                                   | **Works** | `1b`                                                     |
+| Arrows ↑↓←→                              | **Works** | `1b 5b 41/42/44/43`                                      |
+| Home / End / PgUp / PgDn                 | **Works** | `1b 5b 48 / 46 / 35 7e / 36 7e`                          |
+| F1–F10, F12                              | **Works** | SS3 (`1b 4f 50…`) + CSI (`1b 5b 15 7e…`)                 |
+| **F11**                                  | **Fails** | swallowed by macOS (system binding — never reaches PTY)  |
+| Ctrl-A/B/C/D/E/F/U/W/Z                   | **Works** | `01 02 03 04 05 06 15 17 1a` (incl. SIGINT/EOF/SIGTSTP)  |
+| **Ctrl-K, Ctrl-L**                       | **Fails** | consumed before the PTY (app-level interception)         |
+| Option/Alt-as-Meta (Alt-b/f)             | **Works** | `1b 62` / `1b 66`                                        |
+| Chorded arrows (Shift+→)                 | **Works** | `1b 5b 31 3b 32 43`; Option/Cmd+arrow remap to meta/ctrl |
+| **Unicode/IME dead-key** (Opt-e, e → é)  | **Fails** | produced `Xe`, not `Xé` — no dead-key compose via synth  |
+| Bracketed paste (DECSET 2004 + Cmd-V)    | **Works** | `1b5b3230307e PASTE 1b5b3230317e`                        |
+| Focus in/out (DECSET 1004)               | **Works** | blur `1b 5b 4f`, focus `1b 5b 49`                        |
+
+### B. Keyboard → app keybindings (oracle: window/clipboard state)
+
+| Input                                          | Result             | Note                                                                                                        |
+| ---------------------------------------------- | ------------------ | ----------------------------------------------------------------------------------------------------------- |
+| Cmd-N (new window)                             | **Works**          | window count +1                                                                                             |
+| Cmd-T (new tab/surface)                        | **Works**          | +1                                                                                                          |
+| Cmd-W (close)                                  | **Works**          | count drops                                                                                                 |
+| Cmd-C / Cmd-V (copy/paste)                     | **Works**          | via drag-select→`pbpaste` / bracketed paste                                                                 |
+| Other Cmd-shortcuts (font, split, find, clear) | _Mechanism proven_ | same Cmd-modifier path landed for N/T/W/C/V; per-feature effect is Phase-D feature testing, not re-run here |
+
+### C. Mouse (oracle: `pbpaste` / screenshot / byte log in mouse-report mode)
+
+| Input                                       | Result      | Evidence                                                                    |
+| ------------------------------------------- | ----------- | --------------------------------------------------------------------------- |
+| Move                                        | **Works**   | `inject.swift move`                                                         |
+| Left click                                  | **Works**   | reported `1b5b3c 0;col;row M`/`m` in mouse mode                             |
+| **Drag-select**                             | **Works**   | `pbpaste` returned the dragged lines (`172…178`)                            |
+| **Scroll → scrollback**                     | **Works**   | screenshot: viewport `164–200` → `14–51` after scroll-up                    |
+| Right click                                 | **Works**   | reported `1b5b3c 2;…M`/`m` (button 2)                                       |
+| Scroll in mouse-report mode                 | **Works**   | `1b5b3c 64;…M` (button 64 = wheel)                                          |
+| Mouse reporting 1000/1002/1006              | **Works**   | correct SGR-1006 encoding for click/drag/scroll/right                       |
+| **Double-click word-select**                | **Partial** | synthetic double-click didn't word-select (`pbpaste` unchanged)             |
+| Triple-click / middle-click / Cmd-click URL | _Not run_   | deferred; double-click already shows synthetic multi-click is the weak spot |
+
+### What doesn't fully work (three fail, one partial) — the map the user asked for
+
+1. **F11** (fail) — intercepted by macOS (system shortcut); never reaches the
+   app.
+2. **Ctrl-K / Ctrl-L** (fail) — consumed before the PTY (app-level key
+   handling).
+3. **Unicode/IME dead-key composition** (fail) — `Option-e` then `e` yields
+   `Xe`, not `Xé`; synthetic events don't carry dead-key state.
+4. **Double-click word-select** (partial) — synthetic `clickState=2` isn't
+   honored as a word-select (drag-select works, so this is a
+   multi-click-recognition gap, not a selection-model gap).
+
+Everything else — the entire keyboard PTY surface, app keybindings, drag-select,
+**scroll**, and full SGR mouse reporting — works via activate-first injection.
 
 ## Conclusion
 
-_(to be added after the run.)_
+We can drive Ghostty comprehensively from the agent: keyboard via `osascript`
+(activate-first + a warmup key), mouse via `inject.swift` (CGEvent), with
+deterministic oracles (PTY byte log, `pbpaste`, window state, window-isolated
+screenshots). The anticipated scroll problem **did not materialize** — scroll
+and SGR mouse-reporting both work. The four failures are understood and bounded:
+two are OS/app **interceptions** (F11, Ctrl-K/L) that never reach libroastty (so
+they won't be roastty-conformance items unless we rebind), and two are
+**synthetic-input limits** (dead-key compose, multi-click) that a future
+XCUITest or AX-based injector could close if a feature needs them.
+
+This completes Phase A (build ✓, run ✓, capture ✓, drive ✓). Phase B can now
+copy + rename the app onto `libroastty` and use this input+capture harness for
+the **live-A/B** comparison — driving identical input into the real app and the
+roastty app and diffing the byte log / pasteboard / window screenshot.
+
+## Result Review
+
+**Reviewer:** `adversarial-reviewer` subagent (Claude Opus, fresh context,
+read-only + live re-run). **Verdict: APPROVED, no Required findings.** The
+reviewer **independently reproduced every headline claim** against the running
+app: keyboard bytes (`Up`=`1b 5b 41`, printables all land), the **Ctrl-K/L
+failure** (driving A/E/B/F/U/K/W/L logged only `01 05 02 06 15 17` — `0b`/`0c`
+never reached the PTY), mouse-report SGR (`ESC[<0;…M`/`m`), and **scroll both
+ways** (wheel bytes `ESC[<64/65;…M` and viewport `164–200 → 20–57` on
+scroll-up). It confirmed `inject.swift`/`byteprobe.py` build+run, ISIG is off,
+and the plan/result commits are separate.
+
+Findings, addressed:
+
+- **Optional — `probe-stop` left mouse mode on.** `pkill -f byteprobe.py`
+  (SIGTERM) skipped the probe's `atexit` `restore()`, so reporting modes stayed
+  enabled and corrupted the next input class. **Fixed:** `byteprobe.py` now
+  installs a SIGTERM handler that exits cleanly, so `restore()` runs and
+  terminal modes are reset.
+- **Optional — Pass bar vs deferred rows.** The Result now states explicitly
+  that three convenience mouse rows + per-feature app-shortcuts are **deferred**
+  (not silently "driven"), matching the design's bar.
+- **Nit — double-click counting.** Reworded: three fail outright, double-click
+  is Partial.

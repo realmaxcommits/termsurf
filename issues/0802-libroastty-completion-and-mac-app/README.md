@@ -202,6 +202,18 @@ before re-reading experiments.
   `$TERMSURF_SHOT_DIR` (default `~/.cache/termsurf/shots`); `__screenshots__/`
   is gitignored.
 
+### Input injection (Exp 5)
+
+- **Drive the app:** keyboard via `osascript` System Events, mouse via
+  `scripts/ghostty-app/inject.swift` (CGEvent); `byteprobe.py` is the raw-mode
+  PTY byte-log oracle. **activate-first** + a **warmup keystroke** (the first
+  key after activate drops); never truncate the byte log while the probe holds
+  it open; bootstrap to `bash` (default shell is nushell).
+- **What fails** (don't re-debug — known): **F11** (macOS-swallowed),
+  **Ctrl-K/Ctrl-L** (app-consumed before PTY), **dead-key/IME compose**,
+  **synthetic double-click word-select**. Everything else works — including
+  **scroll** and full SGR mouse reporting.
+
 ### Where things live
 
 - Harness + recipes: `scripts/ghostty-app/` (`build-macos-app.sh`,
@@ -240,11 +252,13 @@ the live app, verified by a Phase-D UI test.)
 - [x] Launch it; confirm a working terminal window (user-confirmed in Exp 3)
 - [x] Screenshot the window **in isolation** (Exp 4: `screencapture -l` +
       `winid.swift`; cross-Space, live pixels, written outside the repo)
-- [ ] Drive it programmatically (**input injection** — type a deterministic
-      command, then capture) — next experiment; feeds the live-A/B comparison
+- [x] Drive it programmatically (**input injection** — Exp 5: full
+      keyboard+mouse matrix mapped; scroll works, 4 known failures) — keyboard
+      via `osascript`, mouse via `inject.swift`, byte-log/pasteboard/screenshot
+      oracles
 - [ ] Live-A/B compare (real app vs roastty app, same run) — replaces committed
       "golden" images per the Screenshots policy; deferred to the diff
-      experiment
+      experiment (Phase B+)
 
 **Phase B — App shell + ABI link**
 
@@ -345,9 +359,9 @@ stays unaltered except for the rename).
   cross-Space, 1600×1264 px, outside the repo; ScreenCaptureKit fallback
   unneeded) · Claude/Claude
 - [Experiment 5: Comprehensive keyboard & mouse input matrix — drive everything, map what works](05-input-injection-matrix.md)
-  — **Designed** (drive the full keyboard+mouse matrix; produce a
-  Works/Partial/Fails results table with byte-log / pasteboard / screenshot
-  oracles; scroll a prime suspect) · Claude
+  — **Pass** (full matrix driven + classified; keyboard ~complete, mouse incl.
+  **scroll** works; 4 known failures: F11, Ctrl-K/L, dead-key compose, synthetic
+  double-click) · Claude/Claude
 
 ## Process
 
