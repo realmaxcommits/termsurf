@@ -13858,6 +13858,43 @@ pub extern "C" fn roastty_app_keyboard_changed(app: RoasttyApp) {
     let _ = app;
 }
 
+// --- Embedded config/misc function tail (Issue 802 / Exp 10) ---
+// Documented behavior-preserving stubs; the real behavior is a Phase-C item.
+
+/// Try to run a `+subcommand` CLI action. Upstream returns normally when there is
+/// no `+action` (only exits when one is present); the GUI launch path has none, so
+/// this is a no-op. (CLI-action invocations are a documented Phase-C gap.)
+#[no_mangle]
+pub extern "C" fn roastty_cli_try_action() {}
+
+/// Set the NSWindow background blur (cosmetic CGS effect upstream). No-op for now.
+#[no_mangle]
+pub extern "C" fn roastty_set_window_background_blur(app: RoasttyApp, window: *mut c_void) {
+    let _ = (app, window);
+}
+
+/// Initialize the inspector's Metal renderer. Returns `false` — the inspector's
+/// live Metal path is not yet wired (a documented Phase-C item). The app does not
+/// gate on the result, so the inspector simply renders nothing.
+#[no_mangle]
+pub extern "C" fn roastty_inspector_metal_init(
+    inspector: RoasttyInspector,
+    device: *mut c_void,
+) -> bool {
+    let _ = (inspector, device);
+    false
+}
+
+/// Render the inspector via Metal. No-op (see `roastty_inspector_metal_init`).
+#[no_mangle]
+pub extern "C" fn roastty_inspector_metal_render(
+    inspector: RoasttyInspector,
+    command_buffer: *mut c_void,
+    descriptor: *mut c_void,
+) {
+    let _ = (inspector, command_buffer, descriptor);
+}
+
 #[no_mangle]
 pub extern "C" fn roastty_surface_key_is_binding(
     surface: RoasttySurface,

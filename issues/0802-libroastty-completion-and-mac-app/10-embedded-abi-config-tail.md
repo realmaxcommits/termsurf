@@ -129,8 +129,83 @@ launch; keep the **named** `quick_terminal_size_value_u` typedef.
 
 ## Result
 
-_(to be added after the run.)_
+**Result:** Partial — the defined 11-symbol scope is fully resolved (gap → only
+the `roastty_app` Swift false positive) and three additional ABI divergences
+that surfaced as the app compiled were fixed, but the app does **not** yet fully
+compile: it now reaches the **`selection_s`/`point_s` layout divergence** (Exp-6
+#3), a real subsystem reconciliation deferred to Exp 11.
+
+### What landed (all in `roastty.h` + `libroastty`, `cargo test` green)
+
+- **6 config/misc value types** byte-faithful (header-only —
+  `roastty_config_get` has no arm for these keys, so Rust never constructs
+  them): `config_color_s` (3 B), `config_color_list_s`, `config_command_list_s`,
+  `command_s` (32 B), `quick_terminal_size_s` (tag + named `value_u`, 8 B),
+  `config_quick_terminal_size_s`, + `quick_terminal_size_tag_e`. C
+  `_Static_assert`s pin the layouts.
+- **4 function stubs** (documented behavior): `cli_try_action` (no-op),
+  `set_window_background_blur` (no-op), `inspector_metal_init` (→false),
+  `inspector_metal_render` (no-op).
+- **3 divergences that the compile surfaced, fixed inline** (small, mechanical):
+  - **Mouse/action enum types:** `surface_mouse_button` /
+    `inspector_mouse_button` / `inspector_key` decls pointed at the embedded
+    `input_mouse_state_e`/`input_mouse_button_e`/ `input_action_e` (matching
+    upstream) instead of the old `mouse_button_e`/`key_action_e` — header-only
+    (the enums share values; the Rust is `c_int`).
+  - **`init` success sentinel:** upstream uses `#define GHOSTTY_SUCCESS 0` (an
+    int), but roastty had `ROASTTY_SUCCESS` as a `roastty_result_e` enumerator →
+    the app's `roastty_init(...) != ROASTTY_SUCCESS` failed (`Int32 != enum`).
+    Added `#define ROASTTY_SUCCESS 0` (mirroring upstream) and renamed the
+    granular enum's value to `ROASTTY_RESULT_SUCCESS` to avoid the macro
+    collision (the Rust keeps its own separate `ROASTTY_SUCCESS` const —
+    unaffected).
+
+### Verification
+
+- **`cargo test -p roastty --lib`:** green (the types are header-only + the 4
+  stubs add no logic; no regression): **4396 passed, 0 failed**.
+- **Worklist empty:** `app-uses ∖ roastty.h` = `{roastty_app}` (the Swift var).
+  All real `roastty_*` symbols (types + functions) resolve.
+- **App build progression** (each rebuild advanced past the prior blocker):
+  missing config symbols → resolved; mouse/action enum mismatches → resolved;
+  `init`/`ROASTTY_SUCCESS` → resolved; **now blocked on
+  `selection_s`/`point_s`** (14 errors in `SurfaceView_AppKit.swift`:
+  `roastty_point_s(tag:coord:x:y:)` + `ROASTTY_POINT_COORD_*`).
 
 ## Conclusion
 
-_(to be added after the run.)_
+The 11-symbol config/function tail is closed, and the app build now reaches
+**past the entire missing-symbol + enum-mismatch + init surface** — a major
+milestone. But "compiles + links" is not yet met: the app uses the embedded
+`point_s` `{tag, coord, x, y}` + `point_coord_e` and `selection_s`
+`{top_left, bottom_right, rectangle}`, whereas roastty has a **completely
+different** point/selection ABI (grid-based tagged-union `point_s`;
+size-prefixed `selection_s` with gestures — 801's pull-model scaffolding). That
+is the Exp-6 divergence #3 and a genuine subsystem reconciliation (the Rust
+`read_selection`/ `write_selection`/`point_coordinate`/gesture machinery + the
+`read_text`/`read_selection`/ `quicklook_word` functions the app calls), so it
+gets its **own experiment**, not a cram into Exp 10.
+
+**Next (Exp 11):** reconcile the `point_s`/`selection_s` embedded ABI — define
+`point_coord_e`, fix `point_tag_e` (`SURFACE` not `HISTORY` at index 3), make
+`point_s`/`selection_s` byte-faithful, and rewire the surface selection
+functions. Then re-attempt the app compile+link (likely revealing the next
+divergence, if any).
+
+## Result Review
+
+**Reviewer:** `adversarial-reviewer` subagent (Claude Opus, fresh context,
+read-only). **Verdict: APPROVED** (no Required/Optional/Nit findings). It
+attacked the two highest-risk axes and both held: (1) **no silent input
+corruption** — the embedded
+`input_mouse_state_e`/`input_mouse_button_e`/`input_action_e` carry **identical
+integer values** to the old
+`mouse_button_state_e`/`mouse_button_e`/`key_action_e` (RELEASE=0/PRESS=1,
+UNKNOWN=0…ELEVEN=11, REPEAT=2), and the Rust maps via `*_from_int` with matching
+semantics, so the decl type-name swap is purely cosmetic; (2) **the `#define`
+doesn't corrupt the header** — `ROASTTY_SUCCESS` appears only as the macro +
+comment, the enumerator is `ROASTTY_RESULT_SUCCESS`, nothing references the old
+name, clang exits 0 and the `_Static_assert`s pass. It also confirmed the 6
+config types are byte-faithful + header-only (no Rust mirror), the 4 stubs match
+their decls, and **"Partial" is honest** — the `point_s`/`selection_s`
+divergence is genuinely Exp-6 #3, properly deferred to Exp 11.

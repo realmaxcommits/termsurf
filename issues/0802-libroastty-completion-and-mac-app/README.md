@@ -336,14 +336,17 @@ the live app, verified by a Phase-D UI test.)
       `RoasttyKit.xcframework`; first build reaches Swift compile (Exp 7,
       `scripts/roastty-app/rename-app.sh`)
 - [~] **Make it compile/link — the embedded ABI type surface (Exp 8+):** Exp 8
-  (input: 8 symbols) + Exp 9 (action: 36 types + typed `action_u` union, central
-  storage→union conversion, 4396 tests green) done; gap 56→11. Remaining: config
-  value types + misc/functions (Exp 10). the build exposed the real gap = **56
-  missing `roastty_*` symbols**, dominated by the **~36 `action_*` payload
-  types/enums** (the `action_s` tagged-union members) + 6 input types/enums
-  (`input_key_s`, `input_action_e`, …) + 4 config types + the 6 functions.
-  Implement byte-faithful in `libroastty`/`roastty.h`, drive the app's error
-  list to zero. (Spans several gated experiments.)
+  (input) + Exp 9 (action: 36 types + typed `action_u` union) + Exp 10
+  (config/fn tail + mouse/action/init ABI fixes) done — **all 56 missing symbols
+  resolved**, 4396 tests green. The app build now reaches **past every
+  missing-symbol + enum + init issue** and is blocked on the
+  **`selection_s`/`point_s` layout divergence** (Exp-6 #3 → Exp 11). The build
+  exposed the real gap = **56 missing `roastty_*` symbols**, dominated by the
+  **~36 `action_*` payload types/enums** (the `action_s` tagged-union members) +
+  6 input types/enums + 4 config types + 6 functions — plus the
+  `selection_s`/`point_s` subsystem divergence. Implement byte-faithful in
+  `libroastty`/`roastty.h`, drive the app's error list to zero. (Spans several
+  gated experiments.)
 
 **Phase C — Live render path (the crux)**
 
@@ -451,8 +454,9 @@ stays unaltered except for the rename).
   storage→union conversion, readonly swap fixed; 4396 tests green; gap 48→11) ·
   Claude/Claude
 - [Experiment 10: Embedded ABI — the config + function tail (tranche 3)](10-embedded-abi-config-tail.md)
-  — **Designed** (6 config/misc value types + 4 function stubs; should take the
-  app to compiles + links — Phase B exit) · Claude
+  — **Partial** (6 config types + 4 fn stubs + mouse/action/init ABI fixes; all
+  11 symbols resolved, 4396 tests green; app build now reaches the
+  `selection_s`/`point_s` divergence → Exp 11) · Claude/Claude
 
 ## Process
 

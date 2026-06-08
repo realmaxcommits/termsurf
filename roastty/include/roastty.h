@@ -20,6 +20,12 @@
 extern "C" {
 #endif
 
+/* Init/CLI success sentinel — an int macro (mirrors upstream `GHOSTTY_SUCCESS`),
+ * so `roastty_init(...) != ROASTTY_SUCCESS` compares against `int`. The granular
+ * `roastty_result_e` extension below uses `ROASTTY_RESULT_SUCCESS` to avoid the
+ * macro collision. */
+#define ROASTTY_SUCCESS 0
+
 typedef void* roastty_app_t;
 typedef void* roastty_config_t;
 typedef void* roastty_formatter_t;
@@ -51,7 +57,7 @@ enum {
 };
 
 typedef enum {
-  ROASTTY_SUCCESS = 0,
+  ROASTTY_RESULT_SUCCESS = 0,
   ROASTTY_OUT_OF_MEMORY = 1,
   ROASTTY_INVALID_VALUE = 2,
   ROASTTY_OUT_OF_SPACE = 3,
@@ -1678,6 +1684,57 @@ _Static_assert(sizeof(roastty_action_open_url_s) == 24, "roastty_action_open_url
 _Static_assert(offsetof(roastty_action_open_url_s, url) == 8, "open_url.url offset");
 _Static_assert(offsetof(roastty_action_open_url_s, len) == 16, "open_url.len offset");
 
+// === Embedded config/misc tail (Issue 802 / Exp 10) ===
+
+typedef union {
+  float percentage;
+  uint32_t pixels;
+} roastty_quick_terminal_size_value_u;
+
+typedef enum {
+  ROASTTY_QUICK_TERMINAL_SIZE_NONE,
+  ROASTTY_QUICK_TERMINAL_SIZE_PERCENTAGE,
+  ROASTTY_QUICK_TERMINAL_SIZE_PIXELS,
+} roastty_quick_terminal_size_tag_e;
+
+typedef struct {
+  const char* action_key;
+  const char* action;
+  const char* title;
+  const char* description;
+} roastty_command_s;
+
+typedef struct {
+  uint8_t r;
+  uint8_t g;
+  uint8_t b;
+} roastty_config_color_s;
+
+typedef struct {
+  const roastty_config_color_s* colors;
+  size_t len;
+} roastty_config_color_list_s;
+
+typedef struct {
+  const roastty_command_s* commands;
+  size_t len;
+} roastty_config_command_list_s;
+
+typedef struct {
+  roastty_quick_terminal_size_tag_e tag;
+  roastty_quick_terminal_size_value_u value;
+} roastty_quick_terminal_size_s;
+
+typedef struct {
+  roastty_quick_terminal_size_s primary;
+  roastty_quick_terminal_size_s secondary;
+} roastty_config_quick_terminal_size_s;
+
+_Static_assert(sizeof(roastty_config_color_s) == 3, "config_color_s size");
+_Static_assert(sizeof(roastty_quick_terminal_size_s) == 8, "quick_terminal_size_s size");
+_Static_assert(sizeof(roastty_command_s) == 4 * sizeof(void*), "command_s size");
+
+
 
 typedef enum {
   ROASTTY_MOUSE_ACTION_PRESS = 0,
@@ -2338,6 +2395,12 @@ ROASTTY_API void roastty_surface_set_color_scheme(roastty_surface_t,
                                                   roastty_color_scheme_e);
 ROASTTY_API roastty_inspector_t roastty_surface_inspector(roastty_surface_t);
 ROASTTY_API void roastty_inspector_free(roastty_surface_t);
+ROASTTY_API bool roastty_inspector_metal_init(roastty_inspector_t, void*);
+ROASTTY_API void roastty_inspector_metal_render(roastty_inspector_t, void*, void*);
+
+/* Embedded config/misc tail (Issue 802 / Exp 10) — see roastty_action_* notes. */
+ROASTTY_API void roastty_cli_try_action(void);
+ROASTTY_API void roastty_set_window_background_blur(roastty_app_t, void*);
 ROASTTY_API void roastty_inspector_set_focus(roastty_inspector_t, bool);
 ROASTTY_API void roastty_inspector_set_content_scale(roastty_inspector_t,
                                                      double,
@@ -2346,8 +2409,8 @@ ROASTTY_API void roastty_inspector_set_size(roastty_inspector_t,
                                             uint32_t,
                                             uint32_t);
 ROASTTY_API void roastty_inspector_mouse_button(roastty_inspector_t,
-                                                roastty_mouse_button_state_e,
-                                                roastty_mouse_button_e,
+                                                roastty_input_mouse_state_e,
+                                                roastty_input_mouse_button_e,
                                                 roastty_input_mods_e);
 ROASTTY_API void roastty_inspector_mouse_pos(roastty_inspector_t,
                                              double,
@@ -2357,8 +2420,8 @@ ROASTTY_API void roastty_inspector_mouse_scroll(roastty_inspector_t,
                                                 double,
                                                 roastty_input_scroll_mods_t);
 ROASTTY_API void roastty_inspector_key(roastty_inspector_t,
-                                       roastty_key_action_e,
-                                       roastty_key_e,
+                                       roastty_input_action_e,
+                                       roastty_input_key_e,
                                        roastty_input_mods_e);
 ROASTTY_API void roastty_inspector_text(roastty_inspector_t, const char*);
 ROASTTY_API void* roastty_surface_quicklook_font(roastty_surface_t);
@@ -2387,8 +2450,8 @@ ROASTTY_API void roastty_surface_complete_clipboard_request(roastty_surface_t,
                                                             bool);
 ROASTTY_API bool roastty_surface_mouse_captured(roastty_surface_t);
 ROASTTY_API bool roastty_surface_mouse_button(roastty_surface_t,
-                                              roastty_mouse_button_state_e,
-                                              roastty_mouse_button_e,
+                                              roastty_input_mouse_state_e,
+                                              roastty_input_mouse_button_e,
                                               roastty_input_mods_e);
 ROASTTY_API void roastty_surface_mouse_pos(roastty_surface_t,
                                            double,
