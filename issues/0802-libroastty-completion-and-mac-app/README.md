@@ -154,6 +154,62 @@ is:
 Established in [Experiment 4](04-window-screenshot-capture.md); it supersedes
 the earlier "commit a small baseline PNG set" wording in Exp 2.
 
+## Operating notes & lessons learned
+
+**Keep this current.** When an experiment yields a durable, reusable fact — a
+toolchain incantation, a dead-end to avoid, or where an artifact lives — distill
+it here (not only in the experiment file), one line with a pointer. This section
+is the **cold-resume cheat-sheet**: if the working context is lost, start here
+before re-reading experiments.
+
+### Building & running the real Ghostty app (the conformance host)
+
+- **Build it:** `scripts/ghostty-app/build-macos-app.sh [Debug|ReleaseLocal]` →
+  `vendor/ghostty/macos/build/<config>/Ghostty.app`. It runs, shows a working
+  terminal. (Exp 3.)
+- **Pinned zig 0.15.2** lives at `vendor/toolchains/` (gitignored);
+  `setup-zig.sh` fetches it. The vendored ghostty (also gitignored) is pinned at
+  commit `2c62d18` (v1.3.2-dev), which requires **exactly** zig 0.15.x.
+- The build is **macOS-only by necessity**: zig 0.15.2 can't link this machine's
+  **Xcode 26.4 SDK** (`__availability_version_check`), so the lib + Metal are
+  built under `DEVELOPER_DIR=CommandLineTools` (the 26.0 SDK links) with Xcode's
+  `metal` on `PATH`; the iOS xcframework slice is patched out
+  (`macos-only-xcframework.patch`); then `xcodebuild -create-xcframework` +
+  `macos/build.nu` build the app under Xcode. (Exp 2/3.)
+
+### Dead-ends — do NOT repeat these
+
+- **Do NOT suggest downgrading Xcode.** ghostty _requires_ Xcode 26 (official
+  docs); the machine has 26.4. The gap is the too-new SDK _point release_, not
+  the major version. (Exp 2 made this wrong call; Exp 3 corrected it.)
+- **Do NOT try to bump the zig version.** `requireZig` enforces an exact
+  major.minor and the source targets 0.15.x; even ghostty `main` still pins
+  0.15.2 — a higher zig fails to compile `build.zig`. (Exp 3.)
+- **Clear the zig caches when switching zig versions**
+  (`rm -rf vendor/ghostty/.zig-cache ~/.cache/zig`); mixing 0.16.0 and 0.15.2
+  artifacts caused phantom `DarwinSdkNotFound` / missing-archive errors. (Exp
+  2/3.)
+- **A full-screen `screencapture` grabs the agent's Wezboard Space, not
+  Ghostty's** — and a JXA `CGWindowListCopyWindowInfo` call mis-resolves its
+  option constant. Capture a specific window by id instead (below). (Exp 3 → 4.)
+
+### Screenshots
+
+- **Capture a window:** `scripts/ghostty-app/screenshot.sh <owner|bundle|pid>` →
+  `screencapture -l<id>` via `winid.swift`; Space/occlusion-independent. (Exp
+  4.)
+- **Never committed** — see the Screenshots policy above; written to
+  `$TERMSURF_SHOT_DIR` (default `~/.cache/termsurf/shots`); `__screenshots__/`
+  is gitignored.
+
+### Where things live
+
+- Harness + recipes: `scripts/ghostty-app/` (`build-macos-app.sh`,
+  `setup-zig.sh`, `screenshot.sh`, `winid.swift`,
+  `macos-only-xcframework.patch`, `README.md`).
+- The architecture gap-list + finish order: [Exp 1](01-architecture-audit.md) +
+  the Roadmap below.
+
 ## Roadmap
 
 The ordered plan to 100%, derived from
@@ -294,11 +350,15 @@ stays unaltered except for the rename).
 Standard project process (see `CLAUDE.md`): one gated experiment at a time —
 designed, AI-reviewed before implementation, plan-committed, implemented,
 verified (tests / the bounded runner), result-recorded, AI-reviewed before the
-next, and result-committed. The first experiment should be the **ABI-gap
-audit**: diff `roastty`'s exports/`roastty.h` against `ghostty.h` /
-`embedded.zig`, classify every symbol as faithful / divergent / missing, and
-produce the ordered reimplementation checklist that drives the rest of the
-issue. No experiments are listed yet.
+next, and result-committed.
+
+**Keep the issue current as you go (part of the result step, not optional).**
+After each experiment, besides flipping its status in the index: (1) distill any
+durable, reusable fact or dead-end into
+[Operating notes & lessons learned](#operating-notes--lessons-learned), and (2)
+update the [Roadmap](#roadmap) checkboxes. That lessons section is what makes
+this issue survivable across context resets — if a fact would cost time to
+rediscover, it belongs there.
 
 ## Closure Criteria
 
