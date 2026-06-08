@@ -214,6 +214,17 @@ before re-reading experiments.
   **synthetic double-click word-select**. Everything else works — including
   **scroll** and full SGR mouse reporting.
 
+### Process hygiene — kill what you spawn
+
+- **End every experiment by killing everything you launched** (debug Ghostty,
+  byte probe, background builds): `scripts/ghostty-app/stop-app.sh`. Leave
+  nothing dangling.
+- **`kill -9 <pid>` scoped to the build path — never `osascript … to quit`**
+  (graceful quit pops an "are you sure?" dialog needing the user; SIGKILL can't
+  be caught → no dialog). **Never** broad `pkill ghostty` / `killall` — only the
+  exact `vendor/ghostty/macos/build/…` PID, so nothing you didn't spawn is
+  touched.
+
 ### Where things live
 
 - Harness + recipes: `scripts/ghostty-app/` (`build-macos-app.sh`,
@@ -377,6 +388,24 @@ durable, reusable fact or dead-end into
 update the [Roadmap](#roadmap) checkboxes. That lessons section is what makes
 this issue survivable across context resets — if a fact would cost time to
 rediscover, it belongs there.
+
+**Kill every process you spawned — at the end of each experiment, leave nothing
+dangling (mandatory).** Experiments here launch the debug Ghostty app, byte
+probes, background builds, etc. When the experiment ends (pass _or_ fail),
+terminate all of them so nothing is left running on the user's screen or
+machine. Rules:
+
+- **Kill by PID, scoped to what you spawned** — for the app,
+  `scripts/ghostty-app/stop-app.sh` (kills the `vendor/ghostty/macos/build/…`
+  process by PID). **Never** `osascript … to quit` (it's graceful and pops a
+  confirmation dialog needing the user) — use **SIGKILL** (`kill -9 <pid>`),
+  which can't be caught, so there is no dialog.
+- **Never kill anything you didn't spawn.** No broad `pkill ghostty` /
+  `pkill -f Ghostty` / `killall` — scope every match to the exact build-output
+  path or the specific PID you launched, so an installed/stable Ghostty or any
+  unrelated app is never touched.
+- **Prefer launch → drive → stop in one flow** (`start-app.sh` → drive →
+  `stop-app.sh`); don't leave the app running across turns "for the next step."
 
 ## Closure Criteria
 

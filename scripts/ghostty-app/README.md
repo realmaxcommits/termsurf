@@ -29,15 +29,21 @@ What it does (see the script): pin zig 0.15.2 → apply `macos-only-xcframework.
 -create-xcframework` under Xcode → `macos/build.nu` builds the Swift app under Xcode.
 The **app is unaltered**; the only change is the build-only `build.zig` patch.
 
-## Run + (attempt) automate
+## Run + lifecycle (start → drive → stop)
 
 ```bash
+PID=$(scripts/ghostty-app/start-app.sh)       # launch + wait for window; prints PID
 APP="$PWD/vendor/ghostty/macos/build/Debug/Ghostty.app"
-open "$APP"                                  # launches a working terminal window
 osascript -e "tell application \"$APP\" to activate"
-screencapture -x shot.png                    # works (Screen Recording granted to Wezboard)
-osascript -e "tell application \"$APP\" to quit"
+screencapture -x shot.png                     # (Screen Recording granted to Wezboard)
+scripts/ghostty-app/stop-app.sh               # MANDATORY when done — see below
 ```
+
+**Always stop what you start.** `stop-app.sh` SIGKILLs the debug-build PID (and the byte
+probe) — scoped to `vendor/ghostty/macos/build/…`, so it never touches an installed
+Ghostty or any other app. **Do not** `osascript … to quit`: graceful quit pops an
+"are you sure?" dialog that needs the user. End every experiment with `stop-app.sh` —
+leave nothing dangling (see the issue README's Process-hygiene rule).
 
 ## Window-isolated screenshot (Exp 4)
 
