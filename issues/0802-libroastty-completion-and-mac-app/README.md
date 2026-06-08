@@ -344,6 +344,10 @@ stays unaltered except for the rename).
   — **Pass** (`screencapture -l<id>` + `winid.swift` captures the Ghostty window
   cross-Space, 1600×1264 px, outside the repo; ScreenCaptureKit fallback
   unneeded) · Claude/Claude
+- [Experiment 5: Comprehensive keyboard & mouse input matrix — drive everything, map what works](05-input-injection-matrix.md)
+  — **Designed** (drive the full keyboard+mouse matrix; produce a
+  Works/Partial/Fails results table with byte-log / pasteboard / screenshot
+  oracles; scroll a prime suspect) · Claude
 
 ## Process
 
