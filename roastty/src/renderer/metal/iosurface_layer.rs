@@ -40,6 +40,24 @@ impl MetalIOSurfaceLayer {
         &self.layer
     }
 
+    /// Attach this layer as the backing layer of an app-provided `NSView` (Issue 802 / Exp 15).
+    /// In-process + main-thread: the library owns the layer (matching upstream, where
+    /// `surface_draw` presents into a library-created layer on the app's NSView). `nsview` is an
+    /// `NSView*`; null is a no-op.
+    pub(crate) fn attach_to_nsview(&self, nsview: *mut c_void, scale: f64) {
+        if nsview.is_null() {
+            return;
+        }
+        let view: &AnyObject = unsafe { &*(nsview as *const AnyObject) };
+        self.layer.setContentsScale(scale);
+        unsafe {
+            // Assign the layer BEFORE wantsLayer (standard layer-hosting order, so AppKit
+            // treats it as host-managed and won't replace it).
+            let _: () = msg_send![view, setLayer: &*self.layer];
+            let _: () = msg_send![view, setWantsLayer: true];
+        }
+    }
+
     pub(crate) fn set_bounds_pixels(&self, width: f64, height: f64, scale: f64) {
         self.layer
             .setBounds(CGRect::new(CGPoint::ZERO, CGSize::new(width, height)));

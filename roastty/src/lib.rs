@@ -1935,6 +1935,69 @@ struct SurfaceLiveRenderer {
     color_atlas: font::atlas::Atlas,
 }
 
+/// Build the live Metal present state for a surface on the main thread (Issue 802 / Exp 15,
+/// slice 1): a default-monospace `SharedGrid` at the surface font size, glyph atlases, the Metal
+/// device + compositor, and the IOSurface layer attached to the app's NSView. `None` if the
+/// Metal device or font can't be created. (Config-driven font family is a later refinement.)
+fn build_live_renderer(
+    nsview: *mut c_void,
+    font_size: f32,
+    width_px: u32,
+    height_px: u32,
+    scale: f64,
+) -> Option<SurfaceLiveRenderer> {
+    use objc2_metal::MTLCreateSystemDefaultDevice;
+    let device = MTLCreateSystemDefaultDevice()?;
+    let width = width_px.max(1) as usize;
+    let height = height_px.max(1) as usize;
+    let scale = scale.max(1.0);
+    let mut collection = font::collection::Collection::new();
+    collection
+        .add(
+            font::face::coretext::Face::new("Menlo", font_size.max(1.0) as f64),
+            font::Style::Regular,
+            false,
+        )
+        .ok()?;
+    collection.update_metrics().ok()?;
+    let metrics = *collection.metrics()?;
+    let shared_grid = font::shared_grid::SharedGrid::new(
+        font::codepoint_resolver::CodepointResolver::new(collection),
+        metrics,
+    );
+    let grayscale_atlas = font::atlas::Atlas::new(512, font::atlas::Format::Grayscale);
+    let color_atlas = font::atlas::Atlas::new(512, font::atlas::Format::Bgra);
+    let compositor = renderer::metal::compositor::MetalFrameCompositor::new(
+        renderer::metal::compositor::MetalFrameCompositorOptions {
+            device,
+            width,
+            height,
+            pixel_format: renderer::metal::api::MetalPixelFormat::Bgra8Unorm,
+            storage_mode: renderer::metal::api::MetalStorageMode::Shared,
+            resource_options: renderer::metal::api::MetalResourceOptions::image(
+                renderer::metal::api::MetalStorageMode::Shared,
+            ),
+            grayscale_atlas: &grayscale_atlas,
+            color_atlas: &color_atlas,
+        },
+    )
+    .ok()?;
+    compositor
+        .layer()
+        .set_bounds_pixels(width as f64 / scale, height as f64 / scale, scale);
+    compositor.layer().attach_to_nsview(nsview, scale);
+    let frame_renderer = renderer::frame_renderer::FrameRenderer::new(
+        renderer::metal::shaders::MetalUniforms::from_config(&config::Config::default()),
+    );
+    Some(SurfaceLiveRenderer {
+        compositor,
+        frame_renderer,
+        shared_grid,
+        grayscale_atlas,
+        color_atlas,
+    })
+}
+
 impl Drop for Surface {
     fn drop(&mut self) {
         self.clear_clipboard_requests();
@@ -2258,6 +2321,10 @@ impl Surface {
         self.termio_worker = Some(worker);
         self.process_exited = false;
         self.dirty = false;
+        // Present an initial frame now that the terminal worker is running (Issue 802 / Exp 15,
+        // slice 1) — `set_size` fires before the worker exists, so this is the first present
+        // with a live terminal. (Continuous live updates need the slice-2 CVDisplayLink driver.)
+        self.present_live();
         self.last_termio_error = None;
         ROASTTY_SUCCESS
     }
@@ -2285,6 +2352,62 @@ impl Surface {
 
     fn draw(&mut self) {
         self.request_render();
+        self.present_live();
+    }
+
+    /// Render the live terminal and present it into the app's NSView layer (Issue 802 / Exp 15,
+    /// slice 1). Lazily builds the Metal renderer on first call (main thread; driven from
+    /// `set_size`/`set_content_scale`/`draw`). No-op without an nsview or a running terminal.
+    fn present_live(&mut self) {
+        if self.nsview.is_null() {
+            return;
+        }
+        if self.renderer.is_none() {
+            self.renderer = build_live_renderer(
+                self.nsview,
+                self.font_size_points,
+                self.size.width_px,
+                self.size.height_px,
+                self.scale_factor_x,
+            );
+        }
+        let width = self.size.width_px.max(1) as usize;
+        let height = self.size.height_px.max(1) as usize;
+        let scale = self.scale_factor_x.max(1.0);
+        let Some(live) = self.renderer.as_mut() else {
+            return;
+        };
+        let Some(worker) = self.termio_worker.as_ref() else {
+            return;
+        };
+        let SurfaceLiveRenderer {
+            compositor,
+            frame_renderer,
+            shared_grid,
+            grayscale_atlas,
+            color_atlas,
+        } = live;
+        let config = config::Config::default();
+        worker.with_termio(|termio| {
+            let terminal = termio.terminal();
+            if let Err(e) = frame_renderer.render_and_present_frame(
+                terminal,
+                shared_grid,
+                renderer::frame_rebuild::RenderDirty::Full,
+                None,
+                &config,
+                renderer::frame_rebuild::FramePreparedPresentationInput {
+                    compositor,
+                    width,
+                    height,
+                    contents_scale: scale,
+                    grayscale_atlas,
+                    color_atlas,
+                },
+            ) {
+                eprintln!("[roastty] live present error: {e:?}");
+            }
+        });
     }
 
     fn wakeup_app(&self) {
@@ -13749,6 +13872,9 @@ pub extern "C" fn roastty_surface_set_occlusion(surface: RoasttySurface, occlude
 pub extern "C" fn roastty_surface_set_size(surface: RoasttySurface, width: u32, height: u32) {
     if let Some(surface) = surface_from_handle(surface) {
         surface.set_size(width, height);
+        // Present a frame into the app's NSView (Exp 15, slice 1) — set_size is a main-thread
+        // FFI the app calls on launch/resize, so this is our slice-1 present trigger.
+        surface.present_live();
     }
 }
 

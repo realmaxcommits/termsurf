@@ -130,6 +130,12 @@ impl MetalFrameCompositor {
         Ok(compositor)
     }
 
+    /// The IOSurface-backed `CALayer` this compositor presents into (Issue 802 / Exp 15) —
+    /// for attaching to the app's NSView.
+    pub(crate) fn layer(&self) -> &MetalIOSurfaceLayer {
+        &self.layer
+    }
+
     pub(crate) fn draw_frame(
         &mut self,
         input: MetalFrameInput<'_>,
