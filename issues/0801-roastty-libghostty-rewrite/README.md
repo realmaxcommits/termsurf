@@ -50,6 +50,14 @@ is recorded as the next experiment and the work continues from there.
 
 ## Background
 
+> **Upstream provenance (addendum, 2026-06-08):** this port tracked the vendored
+> Ghostty at **commit `2c62d182cec246764ff725096a70b9ef44996f7f`** (branch
+> `main`; `git describe`: `tip-1608-g2c62d182c`; dated 2026-05-29;
+> `build.zig.zon` `version = "1.3.2-dev"`; requires zig `0.15.2`). Recorded
+> after closure, by request, so the exact upstream this work was ported against
+> is known; the original contents are otherwise unchanged. Continued in
+> [Issue 802](../0802-libroastty-completion-and-mac-app/README.md).
+
 Issue 800 created the Roastty foundation:
 
 - a top-level Cargo workspace containing `webtui`, `roamium`, and `roastty`

@@ -25,6 +25,13 @@ correctly on `libroastty`, the port is correct end to end. The app is the
 [Issue 801 — Reimplement libghostty as libroastty](../0801-roastty-libghostty-rewrite/README.md).
 This issue continues directly from it.
 
+**Vendored Ghostty pin (upstream version under test):** every `vendor/ghostty/…`
+reference and ABI target in this issue is against **Ghostty commit
+`2c62d182cec246764ff725096a70b9ef44996f7f`** (branch `main`; `git describe`:
+`tip-1608-g2c62d182c`; dated 2026-05-29; `build.zig.zon`
+`version = "1.3.2-dev"`; requires zig `0.15.2`). The copied app and the embedded
+ABI must match this commit.
+
 [Issue 801](../0801-roastty-libghostty-rewrite/README.md) ported the large
 majority of `libghostty` to `libroastty` (terminal core largely complete; the
 renderer's data + Metal/**offscreen** pipeline fully composed and driven from
@@ -144,10 +151,16 @@ the live app, verified by a Phase-D UI test.)
 
 - [x] Architecture audit: what's done / partial / missing + the order (Exp 1)
 
-**Phase A — Baseline & feasibility: build/run/automate the real Ghostty app**
+**Phase A — Baseline & feasibility: build/run/automate the real Ghostty app** (⏸
+paused on a toolchain decision — see Exp 2)
 
-- [ ] Resolve the toolchain (zig 0.15.x for ghostty 1.3.2-dev; nushell for
-      `macos/build.nu`)
+- [x] Resolve the zig toolchain (pinned **0.15.2** under `vendor/toolchains/`;
+      compiles ghostty's zig under `DEVELOPER_DIR=CommandLineTools`)
+- [ ] **DECISION:** install **Xcode 16.x** (zig-0.15.2-era macOS/iOS SDKs → the
+      unmodified full build works) — _or_ a macOS-only build patch (remediation
+      B). _Blocker: zig 0.15.2 can't link Xcode 26.4's SDK, and the
+      xcframework's iOS slice needs an iOS SDK zig 0.15.2 can also link; only
+      Xcode 26.4 is installed._
 - [ ] Build the real, unmodified Ghostty macOS app from `vendor/ghostty/macos`
 - [ ] Launch it; confirm a working terminal (screenshot)
 - [ ] Drive it programmatically (input + screenshot) from this environment;
@@ -243,7 +256,9 @@ stays unaltered except for the rename).
 - [Experiment 1: Architecture audit — what's done, what remains, and the order to finish](01-architecture-audit.md)
   — **Pass** · Claude (7 parallel subsystem audits)
 - [Experiment 2: Baseline & feasibility — build, run, and automate the real Ghostty app](02-ghostty-app-baseline.md)
-  — **Designed** · Claude/Claude/Claude
+  — **Partial** (toolchain blocker found: zig 0.15.2 ↔ Xcode 26.4 SDK +
+  iOS-slice; decision needed — install Xcode 16, or a macOS-only build patch) ·
+  Claude/Claude
 
 ## Process
 
