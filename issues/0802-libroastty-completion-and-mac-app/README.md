@@ -21,15 +21,21 @@ correctly on `libroastty`, the port is correct end to end. The app is the
 
 ## Background
 
-Issue 801 ported the large majority of `libghostty` to `libroastty` (terminal
-core largely complete; the renderer's data + Metal/**offscreen** pipeline fully
-composed and driven from `(terminal, config)`; font/text, input-encoding, and
-configuration foundations; a growing `roastty_*` C ABI) under a 4394-test suite.
-It closed with two facts that define this issue:
+**Predecessor:**
+[Issue 801 — Reimplement libghostty as libroastty](../0801-roastty-libghostty-rewrite/README.md).
+This issue continues directly from it.
+
+[Issue 801](../0801-roastty-libghostty-rewrite/README.md) ported the large
+majority of `libghostty` to `libroastty` (terminal core largely complete; the
+renderer's data + Metal/**offscreen** pipeline fully composed and driven from
+`(terminal, config)`; font/text, input-encoding, and configuration foundations;
+a growing `roastty_*` C ABI) under a 4394-test suite. It closed with two facts
+that define this issue:
 
 1. **The remaining subsystems are partial**, not started-from-scratch — they
-   need an audit and completion in dependency order (see 801's Subsystem
-   checklist and Conclusion).
+   need an audit and completion in dependency order (see 801's
+   [Subsystem checklist](../0801-roastty-libghostty-rewrite/README.md#subsystem-checklist)
+   and [Conclusion](../0801-roastty-libghostty-rewrite/README.md#conclusion)).
 2. **roastty's current C ABI diverges from libghostty's app-facing ("embedded")
    ABI.** libghostty exposes ~71 coarse `ghostty_*` exports — an `app` object, a
    `surface` object with `surface_draw` (the _library_ renders into an
