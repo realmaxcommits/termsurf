@@ -112,8 +112,103 @@ addressed:
 
 ## Result
 
-_(to be added after the run.)_
+**Result:** Pass — `surface_new` now auto-starts the IO for real macOS app
+surfaces, the launched app spawns a live shell, and the full suite (lib **+ the
+abi_harness**) is green with no shell leaks. Verifying this surfaced — and
+required fixing — a **second, larger** thing: the `abi_harness` C conformance
+test had been silently broken since Exp 8.
+
+### The auto-start (the planned change)
+
+`roastty_surface_new` calls `surface.start_termio()` gated on
+`platform_tag == MACOS` (1). One `lib.rs` call; no app changes.
+
+- **Verified live:** launching `Roastty.app` (PID _N_) now spawns a child
+  **`/bin/zsh`** (`ps`: `<shell-pid> <N> /bin/zsh`) — before Exp 16 there was no
+  shell child. So the surface's IO is running and `present_live` (from
+  `start_termio`/`set_size`) now reaches `render_and_present_frame` with a live
+  `termio_worker` instead of skipping on `worker is None`. App + child killed
+  cleanly (0 dangling). (Text still won't render — Exp 17 atlas coherence.)
+
+### The discovered regression (the larger fix): restoring `abi_harness`
+
+The design review correctly forced verification with the **full**
+`cargo test -p roastty` (not `--lib`). That immediately exposed that
+**`tests/abi_harness.c` had not compiled since Exp 8** — my Exp 8–15 ABI changes
+(renames + signature/layout changes) were only ever validated with
+`cargo test --lib`, which skips the C-linking integration test. **141 compile
+errors + 1 runtime assert**, all from prior experiments, fixed here:
+
+- **Keys (Exp 8/13):** the harness specifies keys by W3C enum via `key_event_t`,
+  but by-value `surface_key`/`surface_key_is_binding` take a native keycode — so
+  the harness must use the opaque `_handle` variants. Those Rust impls already
+  existed but were **never declared in `roastty.h`** — added the two decls
+  (mirroring `config_key_is_binding_handle`). Also the
+  `ROASTTY_KEY_KEY_*`→`ROASTTY_KEY_*`, `DIGIT0`→`DIGIT_0`, `NUMPAD0`→`NUMPAD_0`
+  renames.
+- **Action union (Exp 9):** `action_s.storage` (old opaque byte array) →
+  `action_s.action` (typed union). Added the `uintptr_t raw[3]` member to the C
+  `roastty_action_u` (mirroring the Rust `raw: [usize;3]`) so the harness can
+  read roastty-only tags like NAVIGATE_SEARCH (`.action.raw[0]`); fixed the
+  zero-fill loop bounds (`<8` bytes → `<3` words).
+- **Readonly values (Exp 9 review):** the harness asserted the _old swapped_
+  `ON==0/OFF==1`; Exp 9 fixed these to upstream `OFF==0/ON==1` — updated the
+  asserts (the runtime failure).
+- **Point/selection (Exp 11):** grid
+  `point_s`/`point_value_u`/`point_coordinate_s`/ `selection_s` → their `grid_*`
+  names; the `read_text` selections → the embedded `selection_s`
+  (`{top_left, bottom_right, rectangle}`, no `.size`).
+- **Target (Exp 12):** `target_s.surface` → `target_s.target.surface`.
+
+### Verification
+
+- **Full `cargo test -p roastty`:** lib **4401 passed**, `abi_harness` **1
+  passed** (was: failed to compile). No `--lib` scoping.
+- **No shell leaks:** `/bin/sh` count 12→12 across the run; the harness surfaces
+  are `platform_tag == 0`, so the auto-start gate excludes them (no real shells
+  in tests).
+- **Live shell:** the launched app has a `/bin/zsh` child (above).
+- **Known minor follow-up:** 10 benign `-Wimplicit-enum-enum-cast` warnings
+  remain where the harness passes terminal-mouse/key enum constants
+  (`ROASTTY_MOUSE_BUTTON_LEFT`, `ROASTTY_KEY_ACTION_*`) to the input functions
+  (identical values; no `-Werror`, test passes). A blanket rename risks the
+  terminal-mouse call sites, so it is left as a targeted cleanup.
 
 ## Conclusion
 
-_(to be added after the run.)_
+The app's surface now **runs a real shell** (the planned auto-start), and — more
+consequentially — the **C ABI conformance harness compiles and passes again**,
+closing a regression that had been invisible since Exp 8 because I validated
+with `cargo test --lib`. **Lesson (added to the issue README):** always verify
+ABI work with the **full** `cargo test -p roastty`; `--lib` skips the
+`abi_harness` integration test that links the cdylib against `roastty.h`.
+
+**Next (Exp 17) — atlas coherence:** the present now reaches
+`render_and_present_frame` with a live terminal, but still samples standalone
+empty atlases instead of the `SharedGrid`'s glyph atlases, so it renders
+backgrounds, not text. Make the sampled atlas be (or be synced from) the grid's
+rasterized atlas. Then real terminal text finally appears. (Exp 18: the
+continuous `CVDisplayLink` driver for live updates.)
+
+## Result Review
+
+**Reviewer:** `adversarial-reviewer` subagent (Claude Opus, fresh context,
+read-only). **Verdict: APPROVED.** It independently reproduced the load-bearing
+claims — `clang -fsyntax-only` on `abi_harness.c` → **0 errors** (10 benign
+warnings), `cargo build -p roastty` clean,
+`cargo test -p roastty --test abi_harness` → **1 passed** — and validated all
+six review points: (1) the auto-start gate is safe (`register_surface` only
+stores the raw `NonNull`, so `as_ptr().as_mut()` has exclusive access;
+`start_termio` guards re-entry; no double-start); (2) `action_u.raw[3]`
+(24B/align8) matches the Rust `raw: [usize;3]`, and since `open_url` is already
+24B it's **co-largest and cannot grow the union** — guarded by the existing
+`_Static_assert(sizeof(roastty_action_u) == 24)` (so the size is verified, not
+silent); (3) the `_handle` decls match their Rust impls; (4) the readonly fix
+(`OFF==0/ON==1`) is upstream-faithful across header/Rust/harness; (5) the
+harness was **not weakened** — the `raw[0]` NAVIGATE_SEARCH read is genuinely
+exercised by a real key binding driven through `surface_key_handle` (Rust writes
+`u.raw = [storage[0], 0, 0]`); (6) the honesty checks hold (`--lib` truly skips
+the integration test; warnings benign / no `-Werror`). Two minor findings, both
+fixed: an Optional ("ghostty" → "upstream" in the new comment) and a Nit (the
+`raw[3]` comment overstated "forces the size" — it's the typed accessor; the
+union is already 24/8 via the largest member).

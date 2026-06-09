@@ -156,6 +156,13 @@ the earlier "commit a small baseline PNG set" wording in Exp 2.
 
 ## Operating notes & lessons learned
 
+- **Verify ABI work with the FULL `cargo test -p roastty`, never just `--lib`.**
+  `--lib` skips `tests/abi_harness.rs`, the integration test that compiles
+  `abi_harness.c` against `roastty.h` and links the cdylib. Exp 8–15 were
+  validated with `--lib` only, so the harness silently failed to compile from
+  Exp 8 onward (141 errors) — not caught until Exp 16. The harness is the C-side
+  ABI conformance oracle; keep it compiling every experiment.
+
 **Keep this current.** When an experiment yields a durable, reusable fact — a
 toolchain incantation, a dead-end to avoid, or where an artifact lives — distill
 it here (not only in the experiment file), one line with a pointer. This section
@@ -481,8 +488,10 @@ stays unaltered except for the rename).
   yet: surface_new doesn't auto-start the shell → Exp 16; 4401 tests green) ·
   Claude/Claude
 - [Experiment 16: Phase C — `surface_new` auto-starts the IO (the shell-start divergence)](16-surface-new-autostart.md)
-  — **Designed** (`surface_new` calls `start_termio()` `#[cfg(not(test))]`,
-  matching ghostty; unblocks the wired present) · Claude
+  — **Pass** (`surface_new` auto-starts the IO gated on `platform_tag == MACOS`
+  — launched app spawns a live `/bin/zsh`; ALSO restored `abi_harness`, silently
+  broken since Exp 8 by `--lib`-only testing: 141 compile errors + the readonly
+  assert; full `cargo test` green, 0 shell leaks) · Claude
 
 ## Process
 

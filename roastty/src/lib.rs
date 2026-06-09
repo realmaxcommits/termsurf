@@ -13717,6 +13717,18 @@ pub extern "C" fn roastty_surface_new(
     });
     let surface = NonNull::from(Box::leak(surface));
     register_surface(app, surface);
+    // Auto-start the surface IO for real macOS app surfaces (Issue 802 / Exp 16), matching
+    // upstream's `surface_new` (which starts the IO itself — upstream has no `surface_start`,
+    // and the renamed app never calls `roastty_surface_start`). Gated on the runtime
+    // `platform_tag == MACOS` (1): the `abi_harness` + unit tests use `platform_tag == 0` and
+    // inject `termio_worker` manually, so they are excluded (a `cfg(test)` gate would NOT
+    // exclude the harness, which links the cdylib).
+    if config.platform_tag == 1 {
+        // 1 == ROASTTY_PLATFORM_MACOS
+        if let Some(surface) = unsafe { surface.as_ptr().as_mut() } {
+            let _ = surface.start_termio();
+        }
+    }
     surface.as_ptr().cast()
 }
 

@@ -1725,6 +1725,9 @@ typedef union {
   roastty_action_search_total_s search_total;
   roastty_action_search_selected_s search_selected;
   roastty_action_readonly_e readonly;
+  // Typed accessor for roastty-only tags whose payload has no named upstream member,
+  // e.g. NAVIGATE_SEARCH (the union is already 24/8 via the largest member; Exp 9, 16).
+  uintptr_t raw[3];
 } roastty_action_u;
 
 typedef struct {
@@ -2493,6 +2496,14 @@ ROASTTY_API void roastty_app_keyboard_changed(roastty_app_t);
 ROASTTY_API bool roastty_surface_key_is_binding(roastty_surface_t,
                                                 roastty_input_key_s,
                                                 roastty_binding_flags_e*);
+// Opaque-handle key variants (roastty-interim, key_event_t / W3C keys) — the
+// by-value forms above take a native keycode the app has from NSEvent; callers
+// that specify keys by enum (tests, config-binding checks) use these. Mirrors
+// roastty_config_key_is_binding_handle (Issue 802 / Exp 16).
+ROASTTY_API bool roastty_surface_key_handle(roastty_surface_t, roastty_key_event_t);
+ROASTTY_API bool roastty_surface_key_is_binding_handle(roastty_surface_t,
+                                                       roastty_key_event_t,
+                                                       uint8_t*);
 ROASTTY_API void roastty_surface_text(roastty_surface_t, const char*, uintptr_t);
 ROASTTY_API void roastty_surface_preedit(roastty_surface_t,
                                          const char*,

@@ -1219,7 +1219,7 @@ static roastty_grid_ref_s terminal_grid_ref_at(roastty_terminal_t terminal,
                                                uint16_t x,
                                                uint32_t y) {
   roastty_grid_ref_s ref = {0};
-  roastty_point_s point = {
+  roastty_grid_point_s point = {
       .tag = ROASTTY_POINT_ACTIVE,
       .value = {.active = {.x = x, .y = y}},
   };
@@ -1230,7 +1230,7 @@ static roastty_grid_ref_s terminal_grid_ref_at(roastty_terminal_t terminal,
 static roastty_tracked_grid_ref_t
 terminal_tracked_grid_ref_at(roastty_terminal_t terminal, uint16_t x, uint32_t y) {
   roastty_tracked_grid_ref_t ref = NULL;
-  roastty_point_s point = {
+  roastty_grid_point_s point = {
       .tag = ROASTTY_POINT_ACTIVE,
       .value = {.active = {.x = x, .y = y}},
   };
@@ -1367,10 +1367,10 @@ static void assert_key_event_and_encoder_abi(void) {
   roastty_key_encoder_free(NULL);
 
   assert(ROASTTY_KEY_UNIDENTIFIED == 0);
-  assert(ROASTTY_KEY_KEY_A == 20);
+  assert(ROASTTY_KEY_A == 20);
   assert(ROASTTY_KEY_ALT_LEFT == 51);
   assert(ROASTTY_KEY_ARROW_UP == 78);
-  assert(ROASTTY_KEY_NUMPAD0 == 80);
+  assert(ROASTTY_KEY_NUMPAD_0 == 80);
   assert(ROASTTY_KEY_F1 == 121);
   assert(ROASTTY_KEY_BROWSER_BACK == 151);
   assert(ROASTTY_KEY_PASTE == 175);
@@ -1488,7 +1488,7 @@ static void assert_key_event_and_encoder_abi(void) {
   assert(roastty_key_event_set_action(event, ROASTTY_KEY_ACTION_PRESS) ==
          ROASTTY_SUCCESS);
   assert(roastty_key_event_set_composing(event, false) == ROASTTY_SUCCESS);
-  assert(roastty_key_event_set_key(event, ROASTTY_KEY_KEY_C) == ROASTTY_SUCCESS);
+  assert(roastty_key_event_set_key(event, ROASTTY_KEY_C) == ROASTTY_SUCCESS);
   mods = empty_key_mods();
   mods.ctrl = true;
   assert(roastty_key_event_set_mods(event, mods) == ROASTTY_SUCCESS);
@@ -1879,8 +1879,8 @@ static void assert_support_abi(void) {
   assert(ROASTTY_ACTION_NAVIGATE_SEARCH == 1000);
   assert(ROASTTY_ACTION_FLOAT_WINDOW == 42);
   assert(ROASTTY_ACTION_SECURE_INPUT == 43);
-  assert(ROASTTY_READONLY_ON == 0);
-  assert(ROASTTY_READONLY_OFF == 1);
+  assert(ROASTTY_READONLY_ON == 1);
+  assert(ROASTTY_READONLY_OFF == 0);
   assert(ROASTTY_NAVIGATE_SEARCH_PREVIOUS == 0);
   assert(ROASTTY_NAVIGATE_SEARCH_NEXT == 1);
   assert(ROASTTY_ACTION_OPEN_URL_KIND_UNKNOWN == 0);
@@ -2142,21 +2142,21 @@ static void assert_terminal_abi(void) {
   assert(sizeof(roastty_mode_tag_t) == sizeof(uint16_t));
   assert(ROASTTY_MODE_TAG_VALUE_MASK == 0x7fff);
   assert(ROASTTY_MODE_TAG_ANSI_BIT == 0x8000);
-  assert(sizeof(roastty_point_coordinate_s) == 8);
-  assert(_Alignof(roastty_point_coordinate_s) == 4);
-  assert(offsetof(roastty_point_coordinate_s, x) == 0);
-  assert(offsetof(roastty_point_coordinate_s, y) == 4);
-  assert(sizeof(roastty_point_value_u) == 16);
-  assert(_Alignof(roastty_point_value_u) == 8);
-  assert(offsetof(roastty_point_value_u, active) == 0);
-  assert(offsetof(roastty_point_value_u, viewport) == 0);
-  assert(offsetof(roastty_point_value_u, screen) == 0);
-  assert(offsetof(roastty_point_value_u, history) == 0);
-  assert(offsetof(roastty_point_value_u, _padding) == 0);
-  assert(sizeof(roastty_point_s) == 24);
-  assert(_Alignof(roastty_point_s) == 8);
-  assert(offsetof(roastty_point_s, tag) == 0);
-  assert(offsetof(roastty_point_s, value) == 8);
+  assert(sizeof(roastty_grid_point_coordinate_s) == 8);
+  assert(_Alignof(roastty_grid_point_coordinate_s) == 4);
+  assert(offsetof(roastty_grid_point_coordinate_s, x) == 0);
+  assert(offsetof(roastty_grid_point_coordinate_s, y) == 4);
+  assert(sizeof(roastty_grid_point_value_u) == 16);
+  assert(_Alignof(roastty_grid_point_value_u) == 8);
+  assert(offsetof(roastty_grid_point_value_u, active) == 0);
+  assert(offsetof(roastty_grid_point_value_u, viewport) == 0);
+  assert(offsetof(roastty_grid_point_value_u, screen) == 0);
+  assert(offsetof(roastty_grid_point_value_u, history) == 0);
+  assert(offsetof(roastty_grid_point_value_u, _padding) == 0);
+  assert(sizeof(roastty_grid_point_s) == 24);
+  assert(_Alignof(roastty_grid_point_s) == 8);
+  assert(offsetof(roastty_grid_point_s, tag) == 0);
+  assert(offsetof(roastty_grid_point_s, value) == 8);
   assert(sizeof(roastty_grid_ref_s) == 24);
   assert(_Alignof(roastty_grid_ref_s) == 8);
   assert(offsetof(roastty_grid_ref_s, size) == 0);
@@ -2164,12 +2164,12 @@ static void assert_terminal_abi(void) {
   assert(offsetof(roastty_grid_ref_s, x) == 16);
   assert(offsetof(roastty_grid_ref_s, y) == 18);
   assert(sizeof(roastty_tracked_grid_ref_t) == sizeof(void *));
-  assert(sizeof(roastty_selection_s) == 64);
-  assert(_Alignof(roastty_selection_s) == 8);
-  assert(offsetof(roastty_selection_s, size) == 0);
-  assert(offsetof(roastty_selection_s, start) == 8);
-  assert(offsetof(roastty_selection_s, end) == 32);
-  assert(offsetof(roastty_selection_s, rectangle) == 56);
+  assert(sizeof(roastty_grid_selection_s) == 64);
+  assert(_Alignof(roastty_grid_selection_s) == 8);
+  assert(offsetof(roastty_grid_selection_s, size) == 0);
+  assert(offsetof(roastty_grid_selection_s, start) == 8);
+  assert(offsetof(roastty_grid_selection_s, end) == 32);
+  assert(offsetof(roastty_grid_selection_s, rectangle) == 56);
   assert(sizeof(roastty_terminal_select_word_options_s) == 48);
   assert(offsetof(roastty_terminal_select_word_options_s, ref) == 8);
   assert(offsetof(roastty_terminal_select_word_options_s,
@@ -2428,7 +2428,7 @@ static void assert_terminal_abi(void) {
          ROASTTY_INVALID_VALUE);
   assert(roastty_terminal_vt_write(terminal, NULL, 0) == ROASTTY_SUCCESS);
 
-  roastty_point_s point = {
+  roastty_grid_point_s point = {
       .tag = ROASTTY_POINT_ACTIVE,
       .value = {.active = {.x = 1, .y = 0}},
   };
@@ -2438,13 +2438,13 @@ static void assert_terminal_abi(void) {
   assert(roastty_terminal_grid_ref(terminal, point, NULL) ==
          ROASTTY_INVALID_VALUE);
   assert(roastty_terminal_grid_ref(terminal,
-                                   (roastty_point_s){
+                                   (roastty_grid_point_s){
                                        .tag = (roastty_point_tag_e)99,
                                        .value = {.active = {.x = 0, .y = 0}},
                                    },
                                    &grid_ref) == ROASTTY_INVALID_VALUE);
   assert(roastty_terminal_grid_ref(terminal,
-                                   (roastty_point_s){
+                                   (roastty_grid_point_s){
                                        .tag = ROASTTY_POINT_ACTIVE,
                                        .value = {.active = {.x = 10, .y = 0}},
                                    },
@@ -2496,7 +2496,7 @@ static void assert_terminal_abi(void) {
   assert(roastty_grid_ref_hyperlink_uri(&grid_ref, grid_uri, 1, NULL) ==
          ROASTTY_INVALID_VALUE);
 
-  roastty_point_coordinate_s coord = {0};
+  roastty_grid_point_coordinate_s coord = {0};
   assert(roastty_terminal_point_from_grid_ref(NULL,
                                               &grid_ref,
                                               ROASTTY_POINT_ACTIVE,
@@ -2539,7 +2539,7 @@ static void assert_terminal_abi(void) {
                                               ROASTTY_POINT_ACTIVE,
                                               &coord) == ROASTTY_INVALID_VALUE);
 
-  point = (roastty_point_s){
+  point = (roastty_grid_point_s){
       .tag = ROASTTY_POINT_VIEWPORT,
       .value = {.viewport = {.x = 2, .y = 0}},
   };
@@ -2578,13 +2578,13 @@ static void assert_terminal_abi(void) {
 
   assert(roastty_tracked_grid_ref_set(tracked,
                                       NULL,
-                                      (roastty_point_s){
+                                      (roastty_grid_point_s){
                                           .tag = ROASTTY_POINT_ACTIVE,
                                           .value = {.active = {.x = 0, .y = 0}},
                                       }) == ROASTTY_INVALID_VALUE);
   assert(roastty_tracked_grid_ref_set(tracked,
                                       terminal,
-                                      (roastty_point_s){
+                                      (roastty_grid_point_s){
                                           .tag = ROASTTY_POINT_ACTIVE,
                                           .value = {.active = {.x = 3, .y = 0}},
                                       }) == ROASTTY_SUCCESS);
@@ -2619,7 +2619,7 @@ static void assert_terminal_abi(void) {
   assert(roastty_tracked_grid_ref_snapshot(tracked, NULL) == ROASTTY_NO_VALUE);
   assert(roastty_tracked_grid_ref_set(tracked,
                                       tracked_free_terminal,
-                                      (roastty_point_s){
+                                      (roastty_grid_point_s){
                                           .tag = ROASTTY_POINT_ACTIVE,
                                           .value = {.active = {.x = 0, .y = 0}},
                                       }) == ROASTTY_INVALID_VALUE);
@@ -2635,11 +2635,11 @@ static void assert_terminal_abi(void) {
       .boundary_codepoints = NULL,
       .boundary_codepoints_len = 0,
   };
-  roastty_selection_s selection = {0};
+  roastty_grid_selection_s selection = {0};
   assert(roastty_terminal_select_word(selection_terminal,
                                       &word_options,
                                       &selection) == ROASTTY_SUCCESS);
-  assert(selection.size == sizeof(roastty_selection_s));
+  assert(selection.size == sizeof(roastty_grid_selection_s));
   assert(selection.start.size == sizeof(roastty_grid_ref_s));
   assert(selection.end.size == sizeof(roastty_grid_ref_s));
   assert(selection.start.x == 6);
@@ -2652,7 +2652,7 @@ static void assert_terminal_abi(void) {
       .boundary_codepoints = NULL,
       .boundary_codepoints_len = 0,
   };
-  roastty_selection_s between_selection = {0};
+  roastty_grid_selection_s between_selection = {0};
   assert(roastty_terminal_select_word_between(selection_terminal,
                                               &between_options,
                                               &between_selection) ==
@@ -2663,7 +2663,7 @@ static void assert_terminal_abi(void) {
   assert(roastty_terminal_set(selection_terminal,
                               ROASTTY_TERMINAL_OPTION_SELECTION,
                               &selection) == ROASTTY_SUCCESS);
-  roastty_selection_s active_selection = {0};
+  roastty_grid_selection_s active_selection = {0};
   assert(roastty_terminal_get(selection_terminal,
                               ROASTTY_TERMINAL_DATA_SELECTION,
                               &active_selection) == ROASTTY_SUCCESS);
@@ -2724,7 +2724,7 @@ static void assert_terminal_abi(void) {
   assert(roastty_terminal_selection_contains(
              selection_terminal,
              &selection,
-             (roastty_point_s){
+             (roastty_grid_point_s){
                  .tag = ROASTTY_POINT_SCREEN,
                  .value = {.screen = {.x = 8, .y = 0}},
              },
@@ -2742,7 +2742,7 @@ static void assert_terminal_abi(void) {
              ROASTTY_SELECTION_ADJUST_END_OF_LINE) == ROASTTY_SUCCESS);
   assert(active_selection.end.x == 19);
 
-  roastty_selection_s reversed = {0};
+  roastty_grid_selection_s reversed = {0};
   assert(roastty_terminal_selection_ordered(selection_terminal,
                                            &selection,
                                            ROASTTY_SELECTION_ORDER_REVERSE,
@@ -2767,7 +2767,7 @@ static void assert_terminal_abi(void) {
   assert(selection.start.x == 0);
   assert(selection.start.y == 0);
 
-  roastty_selection_s output_selection = {0};
+  roastty_grid_selection_s output_selection = {0};
   assert(roastty_terminal_select_output(selection_terminal,
                                         &selection.start,
                                         &output_selection) == ROASTTY_NO_VALUE);
@@ -2930,7 +2930,7 @@ static void assert_terminal_abi(void) {
              ROASTTY_SELECTION_GESTURE_EVENT_OPTION_GEOMETRY,
              NULL) == ROASTTY_INVALID_VALUE);
 
-  roastty_selection_s gesture_selection = {0};
+  roastty_grid_selection_s gesture_selection = {0};
   assert(roastty_selection_gesture_handle_event(gesture,
                                                 selection_terminal,
                                                 press,
@@ -3652,7 +3652,7 @@ static void assert_terminal_abi(void) {
   assert(offsetof(roastty_kitty_graphics_placement_render_info_s,
                   source_height) == 48);
 
-  roastty_selection_s placement_rect = {.size = sizeof(placement_rect)};
+  roastty_grid_selection_s placement_rect = {.size = sizeof(placement_rect)};
   assert(roastty_kitty_graphics_placement_rect(placement_iterator,
                                                image,
                                                terminal,
@@ -4167,7 +4167,7 @@ int main(int argc, char **argv) {
   assert(null_trigger.tag == ROASTTY_TRIGGER_PHYSICAL);
   assert(null_trigger.key.physical == ROASTTY_KEY_UNIDENTIFIED);
   assert(null_trigger.mods == ROASTTY_MODS_NONE);
-  assert(!roastty_config_key_is_binding(NULL, NULL));
+  assert(!roastty_config_key_is_binding_handle(NULL, NULL));
   assert(roastty_app_userdata(NULL) == NULL);
   roastty_app_tick(NULL);
   roastty_app_set_focus(NULL, true);
@@ -4220,13 +4220,12 @@ int main(int argc, char **argv) {
   assert(ime_height == 0.0);
   roastty_surface_ime_point(NULL, NULL, NULL, NULL, NULL);
   roastty_keybind_flags_t binding_flags = 0xff;
-  assert(!roastty_surface_key(NULL, NULL));
-  assert(!roastty_surface_key_is_binding(NULL, NULL, &binding_flags));
+  assert(!roastty_surface_key_handle(NULL, NULL));
+  assert(!roastty_surface_key_is_binding_handle(NULL, NULL, &binding_flags));
   assert(binding_flags == 0);
-  assert(!roastty_surface_key_is_binding(NULL, NULL, NULL));
+  assert(!roastty_surface_key_is_binding_handle(NULL, NULL, NULL));
   roastty_text_s null_read_text = {0};
   roastty_selection_s null_selection = {0};
-  null_selection.size = sizeof(roastty_selection_s);
   assert(!roastty_surface_mouse_captured(NULL));
   assert(!roastty_surface_mouse_button(
       NULL, ROASTTY_MOUSE_BUTTON_PRESS, ROASTTY_MOUSE_BUTTON_LEFT,
@@ -4511,36 +4510,36 @@ int main(int argc, char **argv) {
   trigger = roastty_config_trigger(cli_config, "new_window",
                                    strlen("new_window"));
   assert(trigger.tag == ROASTTY_TRIGGER_PHYSICAL);
-  assert(trigger.key.physical == ROASTTY_KEY_KEY_N);
+  assert(trigger.key.physical == ROASTTY_KEY_N);
   assert(trigger.mods == ROASTTY_MODS_SUPER);
 
   roastty_key_event_t cli_binding_event = NULL;
   assert(roastty_key_event_new(&cli_binding_event) == ROASTTY_SUCCESS);
   set_config_binding_event(cli_binding_event, ROASTTY_KEY_ACTION_PRESS,
-                           ROASTTY_KEY_KEY_N, ROASTTY_MODS_SUPER, NULL, 0);
-  assert(roastty_config_key_is_binding(cli_config, cli_binding_event));
+                           ROASTTY_KEY_N, ROASTTY_MODS_SUPER, NULL, 0);
+  assert(roastty_config_key_is_binding_handle(cli_config, cli_binding_event));
   set_config_binding_event(cli_binding_event, ROASTTY_KEY_ACTION_PRESS,
                            ROASTTY_KEY_UNIDENTIFIED, ROASTTY_MODS_CTRL, "a",
                            0);
-  assert(roastty_config_key_is_binding(cli_config, cli_binding_event));
+  assert(roastty_config_key_is_binding_handle(cli_config, cli_binding_event));
   set_config_binding_event(cli_binding_event, ROASTTY_KEY_ACTION_RELEASE,
                            ROASTTY_KEY_UNIDENTIFIED, ROASTTY_MODS_CTRL, "a",
                            0);
-  assert(!roastty_config_key_is_binding(cli_config, cli_binding_event));
+  assert(!roastty_config_key_is_binding_handle(cli_config, cli_binding_event));
   set_config_binding_event(cli_binding_event, ROASTTY_KEY_ACTION_PRESS,
                            ROASTTY_KEY_UNIDENTIFIED, ROASTTY_MODS_ALT, "a", 0);
-  assert(!roastty_config_key_is_binding(cli_config, cli_binding_event));
+  assert(!roastty_config_key_is_binding_handle(cli_config, cli_binding_event));
 
   roastty_config_t cli_clone = roastty_config_clone(cli_config);
   assert(cli_clone != NULL);
   trigger = roastty_config_trigger(cli_clone, "new_window",
                                    strlen("new_window"));
   assert(trigger.tag == ROASTTY_TRIGGER_PHYSICAL);
-  assert(trigger.key.physical == ROASTTY_KEY_KEY_N);
+  assert(trigger.key.physical == ROASTTY_KEY_N);
   assert(trigger.mods == ROASTTY_MODS_SUPER);
   set_config_binding_event(cli_binding_event, ROASTTY_KEY_ACTION_PRESS,
-                           ROASTTY_KEY_KEY_N, ROASTTY_MODS_SUPER, NULL, 0);
-  assert(roastty_config_key_is_binding(cli_clone, cli_binding_event));
+                           ROASTTY_KEY_N, ROASTTY_MODS_SUPER, NULL, 0);
+  assert(roastty_config_key_is_binding_handle(cli_clone, cli_binding_event));
   roastty_config_free(cli_clone);
 
   roastty_app_t cli_app = roastty_app_new(NULL, cli_config);
@@ -4553,30 +4552,30 @@ int main(int argc, char **argv) {
   assert(cli_surface != NULL);
   uint8_t cli_binding_flags = 0xff;
   set_config_binding_event(cli_binding_event, ROASTTY_KEY_ACTION_PRESS,
-                           ROASTTY_KEY_KEY_N, ROASTTY_MODS_SUPER, NULL, 0);
-  assert(roastty_surface_key_is_binding(cli_surface, cli_binding_event,
+                           ROASTTY_KEY_N, ROASTTY_MODS_SUPER, NULL, 0);
+  assert(roastty_surface_key_is_binding_handle(cli_surface, cli_binding_event,
                                         &cli_binding_flags));
   assert(cli_binding_flags == 0x01);
-  assert(roastty_surface_key(cli_surface, cli_binding_event));
+  assert(roastty_surface_key_handle(cli_surface, cli_binding_event));
   set_config_binding_event(cli_binding_event, ROASTTY_KEY_ACTION_RELEASE,
-                           ROASTTY_KEY_KEY_N, ROASTTY_MODS_SUPER, NULL, 0);
-  assert(roastty_surface_key(cli_surface, cli_binding_event));
-  assert(!roastty_surface_key(cli_surface, cli_binding_event));
+                           ROASTTY_KEY_N, ROASTTY_MODS_SUPER, NULL, 0);
+  assert(roastty_surface_key_handle(cli_surface, cli_binding_event));
+  assert(!roastty_surface_key_handle(cli_surface, cli_binding_event));
   set_config_binding_event(cli_binding_event, ROASTTY_KEY_ACTION_PRESS,
                            ROASTTY_KEY_UNIDENTIFIED, ROASTTY_MODS_CTRL, "a",
                            0);
-  assert(roastty_surface_key_is_binding(cli_surface, cli_binding_event, NULL));
+  assert(roastty_surface_key_is_binding_handle(cli_surface, cli_binding_event, NULL));
   set_config_binding_event(cli_binding_event, ROASTTY_KEY_ACTION_RELEASE,
                            ROASTTY_KEY_UNIDENTIFIED, ROASTTY_MODS_CTRL, "a",
                            0);
   cli_binding_flags = 0xff;
-  assert(!roastty_surface_key_is_binding(cli_surface, cli_binding_event,
+  assert(!roastty_surface_key_is_binding_handle(cli_surface, cli_binding_event,
                                          &cli_binding_flags));
   assert(cli_binding_flags == 0);
   set_config_binding_event(cli_binding_event, ROASTTY_KEY_ACTION_PRESS,
                            ROASTTY_KEY_UNIDENTIFIED, ROASTTY_MODS_ALT, "a", 0);
   cli_binding_flags = 0xff;
-  assert(!roastty_surface_key_is_binding(cli_surface, cli_binding_event,
+  assert(!roastty_surface_key_is_binding_handle(cli_surface, cli_binding_event,
                                          &cli_binding_flags));
   assert(cli_binding_flags == 0);
   roastty_surface_free(cli_surface);
@@ -4629,14 +4628,14 @@ int main(int argc, char **argv) {
   set_config_binding_event(cli_binding_event, ROASTTY_KEY_ACTION_PRESS,
                            ROASTTY_KEY_UNIDENTIFIED, ROASTTY_MODS_CTRL, "n",
                            0);
-  assert(roastty_config_key_is_binding(cli_config, cli_binding_event));
+  assert(roastty_config_key_is_binding_handle(cli_config, cli_binding_event));
   set_config_binding_event(cli_binding_event, ROASTTY_KEY_ACTION_PRESS,
                            ROASTTY_KEY_UNIDENTIFIED, ROASTTY_MODS_SUPER, "n",
                            0);
-  assert(roastty_config_key_is_binding(cli_config, cli_binding_event));
+  assert(roastty_config_key_is_binding_handle(cli_config, cli_binding_event));
   set_config_binding_event(cli_binding_event, ROASTTY_KEY_ACTION_PRESS,
                            ROASTTY_KEY_F1, ROASTTY_MODS_NONE, NULL, 0);
-  assert(!roastty_config_key_is_binding(cli_config, cli_binding_event));
+  assert(!roastty_config_key_is_binding_handle(cli_config, cli_binding_event));
   roastty_key_event_free(cli_binding_event);
   trigger = roastty_config_trigger(cli_config, "reload_config",
                                    strlen("reload_config"));
@@ -4661,10 +4660,10 @@ int main(int argc, char **argv) {
                            ROASTTY_KEY_UNIDENTIFIED, ROASTTY_MODS_SUPER, "c",
                            0);
   cli_binding_flags = 0xff;
-  assert(roastty_surface_key_is_binding(cli_surface, cli_binding_event,
+  assert(roastty_surface_key_is_binding_handle(cli_surface, cli_binding_event,
                                         &cli_binding_flags));
   assert(cli_binding_flags == 0x01);
-  assert(roastty_surface_key(cli_surface, cli_binding_event));
+  assert(roastty_surface_key_handle(cli_surface, cli_binding_event));
   roastty_key_event_free(cli_binding_event);
   roastty_surface_free(cli_surface);
   roastty_app_free(cli_app);
@@ -4694,12 +4693,12 @@ int main(int argc, char **argv) {
                            ROASTTY_KEY_UNIDENTIFIED, ROASTTY_MODS_SUPER, "n",
                            0);
   cli_binding_flags = 0xff;
-  assert(roastty_surface_key_is_binding(cli_surface, cli_binding_event,
+  assert(roastty_surface_key_is_binding_handle(cli_surface, cli_binding_event,
                                         &cli_binding_flags));
   assert(cli_binding_flags == 0x01);
   action_cb_result = true;
   action_cb_count = 0;
-  assert(roastty_surface_key(cli_surface, cli_binding_event));
+  assert(roastty_surface_key_handle(cli_surface, cli_binding_event));
   assert(action_cb_count == 1);
   assert(action_last_action.tag == ROASTTY_ACTION_NEW_WINDOW);
   roastty_key_event_free(cli_binding_event);
@@ -4776,23 +4775,23 @@ int main(int argc, char **argv) {
   assert(trigger.tag == ROASTTY_TRIGGER_PHYSICAL);
   assert(trigger.key.physical == ROASTTY_KEY_UNIDENTIFIED);
   assert(trigger.mods == ROASTTY_MODS_NONE);
-  assert(!roastty_config_key_is_binding(config, NULL));
+  assert(!roastty_config_key_is_binding_handle(config, NULL));
 
   roastty_key_event_t binding_event = NULL;
   assert(roastty_key_event_new(&binding_event) == ROASTTY_SUCCESS);
   set_config_binding_event(binding_event, ROASTTY_KEY_ACTION_PRESS,
                            ROASTTY_KEY_COPY, ROASTTY_MODS_NONE, NULL, 0);
-  assert(roastty_config_key_is_binding(config, binding_event));
+  assert(roastty_config_key_is_binding_handle(config, binding_event));
   set_config_binding_event(binding_event, ROASTTY_KEY_ACTION_PRESS,
-                           ROASTTY_KEY_KEY_C, ROASTTY_MODS_SUPER, "c", 0);
-  assert(roastty_config_key_is_binding(config, binding_event));
+                           ROASTTY_KEY_C, ROASTTY_MODS_SUPER, "c", 0);
+  assert(roastty_config_key_is_binding_handle(config, binding_event));
   set_config_binding_event(binding_event, ROASTTY_KEY_ACTION_PRESS,
                            ROASTTY_KEY_EQUAL, ROASTTY_MODS_SUPER, "=", 0);
-  assert(roastty_config_key_is_binding(config, binding_event));
+  assert(roastty_config_key_is_binding_handle(config, binding_event));
   set_config_binding_event(binding_event, ROASTTY_KEY_ACTION_PRESS,
                            ROASTTY_KEY_UNIDENTIFIED, ROASTTY_MODS_SUPER, NULL,
                            'n');
-  assert(roastty_config_key_is_binding(config, binding_event));
+  assert(roastty_config_key_is_binding_handle(config, binding_event));
   set_config_binding_event(binding_event, ROASTTY_KEY_ACTION_REPEAT,
                            ROASTTY_KEY_ARROW_UP,
                            (roastty_input_mods_e)(ROASTTY_MODS_SUPER |
@@ -4800,13 +4799,13 @@ int main(int argc, char **argv) {
                                                   ROASTTY_MODS_NUM |
                                                   ROASTTY_MODS_SUPER_RIGHT),
                            NULL, 0);
-  assert(roastty_config_key_is_binding(config, binding_event));
+  assert(roastty_config_key_is_binding_handle(config, binding_event));
   set_config_binding_event(binding_event, ROASTTY_KEY_ACTION_RELEASE,
                            ROASTTY_KEY_COPY, ROASTTY_MODS_NONE, NULL, 0);
-  assert(!roastty_config_key_is_binding(config, binding_event));
+  assert(!roastty_config_key_is_binding_handle(config, binding_event));
   set_config_binding_event(binding_event, ROASTTY_KEY_ACTION_PRESS,
-                           ROASTTY_KEY_KEY_C, ROASTTY_MODS_CTRL, "c", 0);
-  assert(!roastty_config_key_is_binding(config, binding_event));
+                           ROASTTY_KEY_C, ROASTTY_MODS_CTRL, "c", 0);
+  assert(!roastty_config_key_is_binding_handle(config, binding_event));
   roastty_key_event_free(binding_event);
 
   assert(!roastty_app_needs_confirm_quit(app));
@@ -4844,22 +4843,22 @@ int main(int argc, char **argv) {
   roastty_keybind_flags_t keybind_flags = 0xff;
   set_config_binding_event(surface_binding_event, ROASTTY_KEY_ACTION_PRESS,
                            ROASTTY_KEY_HOME, ROASTTY_MODS_SUPER, NULL, 0);
-  assert(roastty_surface_key_is_binding(surface, surface_binding_event,
+  assert(roastty_surface_key_is_binding_handle(surface, surface_binding_event,
                                         &keybind_flags));
   assert(keybind_flags == 0x01);
   set_config_binding_event(surface_binding_event, ROASTTY_KEY_ACTION_PRESS,
                            ROASTTY_KEY_EQUAL, ROASTTY_MODS_SUPER, "=", 0);
   keybind_flags = 0xff;
-  assert(roastty_surface_key_is_binding(surface, surface_binding_event,
+  assert(roastty_surface_key_is_binding_handle(surface, surface_binding_event,
                                         &keybind_flags));
   assert(keybind_flags == 0x01);
   set_config_binding_event(surface_binding_event, ROASTTY_KEY_ACTION_PRESS,
-                           ROASTTY_KEY_KEY_C, ROASTTY_MODS_SUPER, "c", 0);
+                           ROASTTY_KEY_C, ROASTTY_MODS_SUPER, "c", 0);
   keybind_flags = 0xff;
-  assert(roastty_surface_key_is_binding(surface, surface_binding_event,
+  assert(roastty_surface_key_is_binding_handle(surface, surface_binding_event,
                                         &keybind_flags));
   assert(keybind_flags == 0x09);
-  assert(roastty_surface_key_is_binding(surface, surface_binding_event, NULL));
+  assert(roastty_surface_key_is_binding_handle(surface, surface_binding_event, NULL));
   set_config_binding_event(surface_binding_event, ROASTTY_KEY_ACTION_REPEAT,
                            ROASTTY_KEY_ARROW_UP,
                            (roastty_input_mods_e)(ROASTTY_MODS_SUPER |
@@ -4868,58 +4867,58 @@ int main(int argc, char **argv) {
                                                   ROASTTY_MODS_SUPER_RIGHT),
                            NULL, 0);
   keybind_flags = 0xff;
-  assert(roastty_surface_key_is_binding(surface, surface_binding_event,
+  assert(roastty_surface_key_is_binding_handle(surface, surface_binding_event,
                                         &keybind_flags));
   assert(keybind_flags == 0x01);
   set_config_binding_event(surface_binding_event, ROASTTY_KEY_ACTION_RELEASE,
                            ROASTTY_KEY_COPY, ROASTTY_MODS_NONE, NULL, 0);
   keybind_flags = 0xff;
-  assert(!roastty_surface_key_is_binding(surface, surface_binding_event,
+  assert(!roastty_surface_key_is_binding_handle(surface, surface_binding_event,
                                          &keybind_flags));
   assert(keybind_flags == 0x00);
   set_config_binding_event(surface_binding_event, ROASTTY_KEY_ACTION_PRESS,
-                           ROASTTY_KEY_KEY_C, ROASTTY_MODS_CTRL, "c", 0);
+                           ROASTTY_KEY_C, ROASTTY_MODS_CTRL, "c", 0);
   keybind_flags = 0xff;
-  assert(!roastty_surface_key_is_binding(surface, surface_binding_event,
+  assert(!roastty_surface_key_is_binding_handle(surface, surface_binding_event,
                                          &keybind_flags));
   assert(keybind_flags == 0x00);
   set_config_binding_event(surface_binding_event, ROASTTY_KEY_ACTION_PRESS,
-                           ROASTTY_KEY_KEY_D, ROASTTY_MODS_SUPER, "d", 0);
-  assert(roastty_surface_key(surface, surface_binding_event));
+                           ROASTTY_KEY_D, ROASTTY_MODS_SUPER, "d", 0);
+  assert(roastty_surface_key_handle(surface, surface_binding_event));
   set_config_binding_event(surface_binding_event, ROASTTY_KEY_ACTION_RELEASE,
-                           ROASTTY_KEY_KEY_D, ROASTTY_MODS_SUPER, NULL, 0);
-  assert(roastty_surface_key(surface, surface_binding_event));
+                           ROASTTY_KEY_D, ROASTTY_MODS_SUPER, NULL, 0);
+  assert(roastty_surface_key_handle(surface, surface_binding_event));
   action_cb_result = true;
   action_cb_count = 0;
   set_config_binding_event(surface_binding_event, ROASTTY_KEY_ACTION_PRESS,
-                           ROASTTY_KEY_KEY_G, ROASTTY_MODS_SUPER, "g", 0);
+                           ROASTTY_KEY_G, ROASTTY_MODS_SUPER, "g", 0);
   keybind_flags = 0xff;
-  assert(roastty_surface_key_is_binding(surface, surface_binding_event,
+  assert(roastty_surface_key_is_binding_handle(surface, surface_binding_event,
                                         &keybind_flags));
   assert(keybind_flags == 0x09);
-  assert(roastty_surface_key(surface, surface_binding_event));
+  assert(roastty_surface_key_handle(surface, surface_binding_event));
   assert(action_cb_count == 1);
   assert(action_last_action.tag == ROASTTY_ACTION_NAVIGATE_SEARCH);
-  assert(action_last_action.storage[0] == ROASTTY_NAVIGATE_SEARCH_NEXT);
-  for (size_t i = 1; i < 8; i++) {
-    assert(action_last_action.storage[i] == 0);
+  assert(action_last_action.action.raw[0] == ROASTTY_NAVIGATE_SEARCH_NEXT);
+  for (size_t i = 1; i < 3; i++) {
+    assert(action_last_action.action.raw[i] == 0);
   }
   set_config_binding_event(surface_binding_event, ROASTTY_KEY_ACTION_RELEASE,
-                           ROASTTY_KEY_KEY_G, ROASTTY_MODS_SUPER, NULL, 0);
-  assert(roastty_surface_key(surface, surface_binding_event));
+                           ROASTTY_KEY_G, ROASTTY_MODS_SUPER, NULL, 0);
+  assert(roastty_surface_key_handle(surface, surface_binding_event));
   set_config_binding_event(surface_binding_event, ROASTTY_KEY_ACTION_PRESS,
-                           ROASTTY_KEY_KEY_G,
+                           ROASTTY_KEY_G,
                            (roastty_input_mods_e)(ROASTTY_MODS_SHIFT |
                                                   ROASTTY_MODS_SUPER),
                            "g", 0);
-  assert(roastty_surface_key(surface, surface_binding_event));
+  assert(roastty_surface_key_handle(surface, surface_binding_event));
   assert(action_cb_count == 2);
   assert(action_last_action.tag == ROASTTY_ACTION_NAVIGATE_SEARCH);
-  assert(action_last_action.storage[0] == ROASTTY_NAVIGATE_SEARCH_PREVIOUS);
+  assert(action_last_action.action.raw[0] == ROASTTY_NAVIGATE_SEARCH_PREVIOUS);
   action_cb_result = false;
   set_config_binding_event(surface_binding_event, ROASTTY_KEY_ACTION_PRESS,
-                           ROASTTY_KEY_KEY_G, ROASTTY_MODS_SUPER, "g", 0);
-  assert(!roastty_surface_key(surface, surface_binding_event));
+                           ROASTTY_KEY_G, ROASTTY_MODS_SUPER, "g", 0);
+  assert(!roastty_surface_key_handle(surface, surface_binding_event));
   roastty_key_event_free(surface_binding_event);
   roastty_surface_config_s inherited =
       roastty_surface_inherited_config(surface, ROASTTY_SURFACE_CONTEXT_SPLIT);
@@ -4968,12 +4967,12 @@ int main(int argc, char **argv) {
   roastty_key_event_t surface_key_event = NULL;
   assert(roastty_key_event_new(&surface_key_event) == ROASTTY_SUCCESS);
   assert(surface_key_event != NULL);
-  assert(!roastty_surface_key(surface, surface_key_event));
+  assert(!roastty_surface_key_handle(surface, surface_key_event));
   binding_flags = 0xff;
-  assert(!roastty_surface_key_is_binding(surface, surface_key_event,
+  assert(!roastty_surface_key_is_binding_handle(surface, surface_key_event,
                                          &binding_flags));
   assert(binding_flags == 0);
-  assert(!roastty_surface_key_is_binding(surface, surface_key_event, NULL));
+  assert(!roastty_surface_key_is_binding_handle(surface, surface_key_event, NULL));
   roastty_key_event_free(surface_key_event);
   roastty_surface_split(surface, ROASTTY_SPLIT_DIRECTION_RIGHT);
   roastty_surface_split_focus(surface, ROASTTY_GOTO_SPLIT_NEXT);
@@ -5022,18 +5021,18 @@ int main(int argc, char **argv) {
   assert(action_cb_count == 1);
   assert(action_last_app == app);
   assert(action_last_target.tag == ROASTTY_TARGET_SURFACE);
-  assert(action_last_target.surface == surface);
+  assert(action_last_target.target.surface == surface);
   assert(action_last_action.tag == ROASTTY_ACTION_NAVIGATE_SEARCH);
-  assert(action_last_action.storage[0] == ROASTTY_NAVIGATE_SEARCH_NEXT);
-  for (size_t i = 1; i < 8; i++) {
-    assert(action_last_action.storage[i] == 0);
+  assert(action_last_action.action.raw[0] == ROASTTY_NAVIGATE_SEARCH_NEXT);
+  for (size_t i = 1; i < 3; i++) {
+    assert(action_last_action.action.raw[i] == 0);
   }
   assert(roastty_surface_binding_action(surface, "navigate_search:previous", 24));
   assert(action_cb_count == 2);
   assert(action_last_action.tag == ROASTTY_ACTION_NAVIGATE_SEARCH);
-  assert(action_last_action.storage[0] == ROASTTY_NAVIGATE_SEARCH_PREVIOUS);
-  for (size_t i = 1; i < 8; i++) {
-    assert(action_last_action.storage[i] == 0);
+  assert(action_last_action.action.raw[0] == ROASTTY_NAVIGATE_SEARCH_PREVIOUS);
+  for (size_t i = 1; i < 3; i++) {
+    assert(action_last_action.action.raw[i] == 0);
   }
   action_cb_result = false;
   assert(!roastty_surface_binding_action(surface, "new_tab:", 8));
@@ -5378,7 +5377,6 @@ int main(int argc, char **argv) {
   roastty_surface_preedit(surface, NULL, 0);
   roastty_text_s read_text = {0};
   roastty_selection_s empty_selection = {0};
-  empty_selection.size = sizeof(roastty_selection_s);
   assert(!roastty_surface_mouse_captured(surface));
   assert(!roastty_surface_mouse_button(
       surface, ROASTTY_MOUSE_BUTTON_PRESS, ROASTTY_MOUSE_BUTTON_LEFT,
@@ -5401,7 +5399,7 @@ int main(int argc, char **argv) {
   roastty_inspector_mouse_scroll(NULL, 1.0, 2.0, 0);
   roastty_inspector_key(NULL,
                         ROASTTY_KEY_ACTION_PRESS,
-                        ROASTTY_KEY_KEY_A,
+                        ROASTTY_KEY_A,
                         ROASTTY_MODS_CTRL);
   roastty_inspector_text(NULL, "ignored");
 
@@ -5419,7 +5417,7 @@ int main(int argc, char **argv) {
   roastty_inspector_mouse_scroll(inspector, 5.0, 6.0, 0);
   roastty_inspector_key(inspector,
                         ROASTTY_KEY_ACTION_REPEAT,
-                        ROASTTY_KEY_KEY_B,
+                        ROASTTY_KEY_B,
                         ROASTTY_MODS_ALT);
   roastty_inspector_text(inspector, "inspector");
   roastty_inspector_text(inspector, NULL);
