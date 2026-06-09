@@ -500,6 +500,9 @@ stays unaltered except for the rename).
   — **Pass** (drives the projection/screen-size uniforms from the surface,
   Retina-correct — the launched app renders the live **shell prompt as text**;
   first real terminal frame from libroastty) · Claude
+- [Experiment 19: Phase C — a continuous present driver (live updates)](19-present-driver.md)
+  — **Designed** (main-thread ~60fps dispatch2 timer presenting on dirty; start
+  in surface_new, stop in surface_free — so typing/output render live) · Claude
 
 ## Process
 
