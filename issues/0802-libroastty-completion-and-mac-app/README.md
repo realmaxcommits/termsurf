@@ -509,6 +509,10 @@ stays unaltered except for the rename).
   / cursor-addressing / resize all WORK; gaps — `clear` drops post-clear content
   (→Exp 22), CJK+emoji tofu / no font fallback (→Exp 21); selection+scrollback
   deferred) · Claude
+- [Experiment 21: Phase C — enable font-fallback discovery (CJK + emoji)](21-font-fallback.md)
+  — **Designed** (build_live_renderer never enables the resolver's discovery
+  fallback (default off) → CJK/emoji `?`; enable `set_discover_enabled(true)`) ·
+  Claude
 
 ## Process
 
