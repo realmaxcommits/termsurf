@@ -518,6 +518,9 @@ stays unaltered except for the rename).
   no history → aborted the slice → post-clear content dropped; fixed to no-op
   (upstream-faithful) + regression test, 4404 green; live re-probe CONFIRMS
   post-clear content renders) · Claude
+- [Experiment 23: Phase C — scrollback navigation (deferred Exp-20 probe)](23-scrollback.md)
+  — **Designed** (build a CGEvent scroll driver; probe scroll-up shows history
+  after seq 1 200; fix any gap — diagnostic-led) · Claude
 
 ## Process
 
