@@ -505,9 +505,10 @@ stays unaltered except for the rename).
   the terminal is LIVE: typed `echo TERMSURF_LIVE` + its output render live;
   suite 4403+1 green, idle-efficient, clean shutdown) · Claude
 - [Experiment 20: Phase C — conformance smoke test (map the feature landscape)](20-conformance-smoke.md)
-  — **Designed** (diagnostic: drive the live app through 6 probes — scroll,
-  colors, clear, a TUI, resize, unicode — and map what works vs. gaps → next
-  experiments) · Claude
+  — **Pass** (6 probes via ZDOTDIR drive: scroll / colors+truecolor / alt-screen
+  / cursor-addressing / resize all WORK; gaps — `clear` drops post-clear content
+  (→Exp 22), CJK+emoji tofu / no font fallback (→Exp 21); selection+scrollback
+  deferred) · Claude
 
 ## Process
 
