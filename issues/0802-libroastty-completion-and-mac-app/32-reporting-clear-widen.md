@@ -109,8 +109,56 @@ button + press/release, `setSelection(null)`
 
 ## Result
 
-_(to be added after the run.)_
+**Result:** Pass — the reporting-mode selection clear+reset now runs for any
+button + press/release (fully headless; no live needed).
+
+### Change (only `libroastty`)
+
+`lib.rs::mouse_button` restructured:
+`if self.mouse_report_context().is_some() { self.selection_clear_and_reset() } else if matches!(button, Left) { Press => extend-or-press, Release => release }`.
+The reporting clear is hoisted out of the Left-only branch (any button + any
+state); the not-reporting selection path (Left only) is byte-for-byte the same
+match. The shift-while-reporting override stays deferred (noted in the comment).
+
+### Verification
+
+- **Headless regression test** `reporting_clear_widens_to_any_button`
+  (`lib.rs`): in mouse-reporting mode (`[?1000h`) with an active selection — a
+  **non-Left** (Right) press, a **Left release**, and a Left press each clear
+  the selection (`active_selection().is_none()`). Pre-fix only Left+Press
+  cleared (a non-Left/release left it lingering). Fails pre-fix, passes after.
+- **Full `cargo test -p roastty`:** lib **4415 passed**, 0 failures — the
+  not-reporting selection tests (Exp 25/27/28/30 + copy) all still pass (they
+  never enter reporting mode → unchanged else-branch).
+- **No live confirmation needed** — an edge-case behavioral fix; the headless
+  model assertion proves it. **Completes fully while the screen is locked.**
 
 ## Conclusion
 
-_(to be added after the run.)_
+Reporting-mode selection clearing is now faithful to upstream (clear on any
+button event), so a stale selection can't linger or resume across a
+report→no-report transition. A clean fully-headless Pass. Remaining: the live
+re-confirmations (Exp 29 CJK, Exp 30 shift-click) + closing await the screen
+unlock; the deeper minors (shift-while-reporting — needs
+`mouse-shift-capture`/`XTSHIFTESCAPE` modeling, CVDisplayLink vsync, DPI-change
+rebuild) remain documented follow-ups.
+
+## Result Review
+
+**Reviewer:** `adversarial-reviewer` subagent (Claude Opus, fresh context,
+read-only). **Verdict: APPROVED.** Verified: the test is **load-bearing +
+discriminating** ((a) non-Left press and (b) Left release would each fail
+pre-fix since only Left+Press cleared; the `assert!(has_selection)` precondition
+proves a real selection was set, and a non-engaged reporting mode would also
+fail (a) — so the pass confirms `\x1b[?1000h` genuinely made
+`mouse_report_context()` Some); **no regression** (full lib **4415 passed, 0
+failed**; the not-reporting selection tests untouched — the clear is gated on
+`mouse_report_context().is_some()`, None when no mouse mode is fed); the **diff
+is exactly the restructure** (the not-reporting Left arm is byte-for-byte
+identical, only re-parented under `else if`; `selection_clear_and_reset` body
+unchanged; truth table holds); **Pass honest/headless**; hygiene clean
+(`fmt --check` 0, no "ghostty" literals). Upstream fidelity confirmed against
+`Surface.zig:3879-3892`. Optional (tracked follow-up): upstream guards the clear
+with `if (mods.shift and !shift_capture) break` — roastty clears
+unconditionally; the shift-while-reporting override is the documented deferral
+(needs `mouse-shift-capture`/XTSHIFTESCAPE modeling).

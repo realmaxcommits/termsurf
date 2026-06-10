@@ -3812,20 +3812,21 @@ impl Surface {
         };
         // Mouse-drag selection (Issue 802 / Exp 25): the core drives the gesture when not actually
         // mouse-reporting (faithful to upstream). Shift-while-reporting override is deferred.
-        if matches!(button, mouse::MouseButton::Left) {
-            if self.mouse_report_context().is_none() {
-                match state {
-                    SurfaceMouseButtonState::Press => {
-                        if self.should_shift_extend() {
-                            self.selection_drag(); // shift-click extends from the anchor
-                        } else {
-                            self.selection_press();
-                        }
+        if self.mouse_report_context().is_some() {
+            // Reporting: clear+reset the selection on ANY button + press/release (Issue 802 / Exp 32,
+            // upstream `Surface.zig:3879-3895`), so a stale selection can't linger or resume on a
+            // report→no-report transition. (Shift-while-reporting override is deferred — follow-up.)
+            self.selection_clear_and_reset();
+        } else if matches!(button, mouse::MouseButton::Left) {
+            match state {
+                SurfaceMouseButtonState::Press => {
+                    if self.should_shift_extend() {
+                        self.selection_drag(); // shift-click extends from the anchor
+                    } else {
+                        self.selection_press();
                     }
-                    SurfaceMouseButtonState::Release => self.selection_release(),
                 }
-            } else if matches!(state, SurfaceMouseButtonState::Press) {
-                self.selection_clear_and_reset();
+                SurfaceMouseButtonState::Release => self.selection_release(),
             }
         }
         self.dispatch_mouse_report(action, Some(button))
@@ -17120,6 +17121,70 @@ mod tests {
         );
 
         SELECTION_TEST_CLOCK_NS.with(|c| c.set(None));
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+    }
+
+    /// Issue 802 / Exp 32: while mouse-reporting, ANY button + press/release clears the selection
+    /// (not just Left+Press), matching upstream — so a stale selection can't linger.
+    #[test]
+    fn reporting_clear_widens_to_any_button() {
+        let _guard = pty_command_lock();
+        let app = new_test_app();
+        let surface = new_test_surface(app);
+        set_test_size_80x24(surface);
+        surface_from_handle(surface).unwrap().termio_worker = Some(test_worker("sleep 5"));
+        // Enter mouse-reporting mode (so `mouse_report_context()` is `Some`) + some text.
+        surface_from_handle(surface)
+            .unwrap()
+            .termio_worker
+            .as_ref()
+            .unwrap()
+            .with_termio_mut(|termio| {
+                termio
+                    .terminal_mut()
+                    .next_slice(b"\x1b[?1000h0123456789")
+                    .unwrap();
+            });
+
+        let has_selection = |surface: RoasttySurface| -> bool {
+            surface_from_handle(surface)
+                .unwrap()
+                .termio_worker
+                .as_ref()
+                .unwrap()
+                .with_termio(|termio| termio.terminal().active_selection().is_some())
+        };
+        let set_sel = |surface: RoasttySurface| {
+            let sel = surface_worker_selection(surface, (0, 0), (3, 0));
+            set_surface_worker_active_selection(surface, Some(sel));
+        };
+
+        // (a) a NON-Left (Right = 2) press while reporting clears.
+        set_sel(surface);
+        assert!(has_selection(surface), "selection was set");
+        surface_from_handle(surface).unwrap().mouse_button(1, 2, 0); // Press, Right
+        assert!(
+            !has_selection(surface),
+            "non-Left press while reporting must clear"
+        );
+
+        // (b) a Left RELEASE while reporting clears (pre-fix it did not).
+        set_sel(surface);
+        surface_from_handle(surface).unwrap().mouse_button(0, 1, 0); // Release, Left
+        assert!(
+            !has_selection(surface),
+            "Left release while reporting must clear"
+        );
+
+        // (c) control: Left press while reporting still clears (unchanged).
+        set_sel(surface);
+        surface_from_handle(surface).unwrap().mouse_button(1, 1, 0); // Press, Left
+        assert!(
+            !has_selection(surface),
+            "Left press while reporting still clears"
+        );
+
         roastty_surface_free(surface);
         roastty_app_free(app);
     }
