@@ -585,10 +585,10 @@ stays unaltered except for the rename).
   `Terminal::report_color_scheme_change`, gated on 2031, change-only;
   deterministic terminal-level test + 4419 green, fully headless) · Claude
 - [Experiment 37: Phase C — in-band size reports (DECSET 2048)](37-in-band-size-reports.md)
-  — **Designed** (mode 2048 registered + encoder exists but `Style::Mode2048` is
-  never emitted; wire emit-on-enable (`set_mode_basic`) + emit-on-resize
-  (`set_size`→`report_in_band_size`), reusing the size callback; fully headless)
-  · Claude
+  — **Pass** (mode 2048 in-band size reports now emit on enable
+  (`set_mode_basic`) + on resize (`set_size`→`report_in_band_size`) — was
+  registered+encoded but never emitted; deterministic terminal-level test + 4420
+  green, fully headless) · Claude
 
 ## Process
 

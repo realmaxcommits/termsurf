@@ -2465,6 +2465,35 @@ impl Terminal {
         self.flags.mouse_shift_capture
     }
 
+    /// Emit an in-band size report (`CSI 48 ; rows ; cols ; height ; width t`) when mode 2048
+    /// (`InBandSizeReports`) is enabled — the resize trigger (Issue 802 / Exp 37, upstream emits the
+    /// same report on resize). Fetches the size via the `size` callback, like the DSR query path.
+    pub(crate) fn report_in_band_size(&mut self) {
+        if !self.modes.get(modes::Mode::InBandSizeReports) {
+            return;
+        }
+        let Some(callback) = self.effects.size else {
+            return;
+        };
+        let mut size = size_report::Size::default();
+        let ok = unsafe { callback(self.effects.handle, self.effects.userdata, &mut size) };
+        if !ok {
+            return;
+        }
+        let response = size_report::encode(size_report::Style::Mode2048, size);
+        self.pty_response.extend_from_slice(&response);
+        if let Some(cb) = self.effects.write_pty {
+            unsafe {
+                cb(
+                    self.effects.handle,
+                    self.effects.userdata,
+                    response.as_ptr(),
+                    response.len(),
+                );
+            }
+        }
+    }
+
     /// Report a color-scheme CHANGE to the program (write `CSI ? 997 ; 1 n` dark / `; 2 n` light),
     /// but only when mode 2031 (`report_color_scheme`) is enabled — the live-notification (force=false)
     /// path of upstream `Termio.colorSchemeReportLocked` (Issue 802 / Exp 36). The DSR query path
@@ -3264,6 +3293,11 @@ impl TerminalStreamHandler<'_> {
                     self.restore_cursor_from_active_saved();
                 }
             }
+            // In-band size reports (mode 2048): on enable, send an immediate report (Issue 802 /
+            // Exp 37, upstream `stream_handler.zig:751`).
+            modes::Mode::InBandSizeReports if enabled => {
+                self.emit_size_report(size_report::Style::Mode2048);
+            }
             _ => {}
         }
         Ok(())
@@ -3546,7 +3580,15 @@ impl TerminalStreamHandler<'_> {
             self.write_pty_response(&format!("\x1b]l{}\x1b\\", self.title.as_str()));
             return;
         }
+        let Some(style) = request.report_style() else {
+            return;
+        };
+        self.emit_size_report(style);
+    }
 
+    /// Fetch the current size via the `size` callback and write the `style` size report (Issue 802 /
+    /// Exp 37). Shared by the CSI 14/16/18 t query path and the mode-2048 enable emit.
+    fn emit_size_report(&mut self, style: size_report::Style) {
         let Some(callback) = self.effects.size else {
             return;
         };
@@ -3555,9 +3597,6 @@ impl TerminalStreamHandler<'_> {
         if !ok {
             return;
         }
-        let Some(style) = request.report_style() else {
-            return;
-        };
         let response = size_report::encode(style, size);
         self.write_pty_response_bytes(&response);
     }

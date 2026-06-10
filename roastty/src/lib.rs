@@ -2408,14 +2408,24 @@ impl Surface {
     }
 
     fn set_size(&mut self, width: u32, height: u32) {
+        // Compute the pixel-size change BEFORE the store (Issue 802 / Exp 37) — gates the in-band
+        // size report below. `resize_pty` stays unconditional.
+        let changed = self.size.width_px != width || self.size.height_px != height;
         self.size.width_px = width;
         self.size.height_px = height;
 
         let size = self.pty_size();
+        let mut resize_err = None;
         if let Some(worker) = &self.termio_worker {
             if let Err(err) = worker.resize_pty(size) {
-                self.apply_termio_event(termio::TermioWorkerEvent::Error(format!("{err:?}")));
+                resize_err = Some(format!("{err:?}"));
+            } else if changed {
+                // On an actual resize, emit the in-band size report if mode 2048 is enabled (Exp 37).
+                worker.with_termio_mut(|termio| termio.terminal_mut().report_in_band_size());
             }
+        }
+        if let Some(err) = resize_err {
+            self.apply_termio_event(termio::TermioWorkerEvent::Error(err));
         }
     }
 
@@ -34001,6 +34011,72 @@ mod tests {
             ),
             ROASTTY_INVALID_VALUE
         );
+    }
+
+    /// Issue 802 / Exp 37: in-band size reports (mode 2048) emit on enable (`?2048h`) and on a resize
+    /// (`report_in_band_size`), both gated on the mode.
+    #[test]
+    fn in_band_size_reports_mode_2048() {
+        reset_effect_state();
+        let terminal = new_terminal(8, 4);
+        let userdata = 0x4242usize as *const c_void;
+        with_effect_state(|state| {
+            state.size_response = size_report::Size {
+                rows: 24,
+                columns: 80,
+                cell_width: 9,
+                cell_height: 18,
+            };
+            state.size_result = true;
+        });
+        assert_eq!(
+            roastty_terminal_set(terminal, ROASTTY_TERMINAL_OPTION_USERDATA, userdata),
+            ROASTTY_SUCCESS
+        );
+        assert_eq!(
+            roastty_terminal_set(
+                terminal,
+                ROASTTY_TERMINAL_OPTION_WRITE_PTY,
+                write_pty_cb as *const c_void,
+            ),
+            ROASTTY_SUCCESS
+        );
+        assert_eq!(
+            roastty_terminal_set(
+                terminal,
+                ROASTTY_TERMINAL_OPTION_SIZE_CB,
+                size_cb as *const c_void,
+            ),
+            ROASTTY_SUCCESS
+        );
+
+        // emit-on-enable: `?2048h` sends an immediate Mode2048 report (rows;cols;height;width).
+        write_terminal(terminal, b"\x1b[?2048h");
+        assert_eq!(
+            terminal_string(terminal, roastty_terminal_take_pty_response),
+            b"\x1b[48;24;80;432;720t"
+        );
+
+        // resize trigger: `report_in_band_size` emits while 2048 is on.
+        terminal_from_handle(terminal)
+            .unwrap()
+            .terminal
+            .report_in_band_size();
+        assert_eq!(
+            terminal_string(terminal, roastty_terminal_take_pty_response),
+            b"\x1b[48;24;80;432;720t"
+        );
+
+        // disable 2048: neither `?2048l` nor the resize trigger emits.
+        write_terminal(terminal, b"\x1b[?2048l");
+        assert!(terminal_string(terminal, roastty_terminal_take_pty_response).is_empty());
+        terminal_from_handle(terminal)
+            .unwrap()
+            .terminal
+            .report_in_band_size();
+        assert!(terminal_string(terminal, roastty_terminal_take_pty_response).is_empty());
+
+        roastty_terminal_free(terminal);
     }
 
     #[test]
