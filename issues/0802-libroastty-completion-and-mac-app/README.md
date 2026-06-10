@@ -475,9 +475,9 @@ the live app, verified by a Phase-D UI test.)
 
 **Phase E — Terminal correctness**
 
-- [ ] Port `unicode/` tables (grapheme-break, codepoint-width, symbol/Nerd-Font
+- [x] Port `unicode/` tables (grapheme-break, codepoint-width, symbol/Nerd-Font
       width)
-- [ ] Rewrite `Terminal::print()` (width lookup + grapheme accumulation;
+- [x] Rewrite `Terminal::print()` (width lookup + grapheme accumulation;
       mode 2027)
 
 **Phase F — Config completeness**
@@ -720,6 +720,8 @@ stays unaltered except for the rename).
   — **Pass**
 - [Experiment 53: Phase E — Unicode table and grapheme parity](53-unicode-table-parity.md)
   — **Pass**
+- [Experiment 54: Phase F — font config surface](54-font-config-surface.md) —
+  **Designed**
 
 ## Process
 
