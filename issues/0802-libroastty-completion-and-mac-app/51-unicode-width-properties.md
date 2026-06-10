@@ -111,3 +111,65 @@ The reviewer found one Required issue: the first design under-specified
 also flagged an Optional ambiguity around Rust out-of-range behavior; fixed by
 specifying a `u32` codepoint input and Ghostty's fallback properties for values
 beyond the Unicode scalar range. Re-review approved with no remaining blockers.
+
+## Result
+
+**Result:** Pass.
+
+Added a direct `unicode-width` dependency to `roastty`, registered an internal
+`unicode` module, and implemented a Ghostty-shaped `Properties` lookup:
+
+- `width` uses Ghostty-compatible standalone overrides for combining marks,
+  spacing marks, and Hangul V/T, then falls back to `unicode-width` clamped to
+  Ghostty's terminal-cell range `[0, 2]`;
+- invalid / out-of-range `u32` codepoints return Ghostty's fallback properties
+  (`width = 1`, `width_zero_in_grapheme = true`, `grapheme_break = other`,
+  `emoji_vs_base = false`);
+- `width_zero_in_grapheme`, `grapheme_break`, and `emoji_vs_base` cover the
+  representative combining marks, variation selectors, emoji, CJK, box drawing,
+  private-use, regional indicator, spacing mark, ZWJ, and Hangul classes needed
+  by the next print rewrite.
+
+Verification:
+
+- `cargo fmt -- roastty/src/lib.rs roastty/src/unicode/mod.rs` — pass.
+- `cargo test -p roastty unicode` — pass: 24 tests passed, including the 9 new
+  Unicode property tests.
+- `cargo test -p roastty` — pass: 4429 unit tests passed, the C ABI harness
+  passed 1 test, and doc tests passed 0 tests. The C harness still emits the
+  existing enum-conversion warnings.
+- `bash -n scripts/roastty-app/live-ab-smoke.sh` — pass.
+- `bash -n scripts/roastty-app/live-ab-matrix.sh` — pass.
+- `git diff --check` — pass.
+
+## Completion Review
+
+**Reviewer:** Codex-native adversarial subagent (`multi_agent_v1.spawn_agent`,
+fresh context, read-only). **Initial verdict: CHANGES REQUIRED. Final verdict:
+APPROVED.**
+
+The reviewer found three Required upstream-fidelity issues:
+
+- combining marks were using raw `unicode-width` width `0`, but Ghostty's
+  standalone width is `1`;
+- Hangul V/T classes were not marked `width_zero_in_grapheme`;
+- `emoji_vs_base` was too broad because it treated arbitrary emoji as variation
+  sequence bases.
+
+Fixed all three by adding a Ghostty-compatible `standalone_width` override,
+marking Hangul V/T as zero-width inside graphemes, and narrowing `emoji_vs_base`
+to a representative subset from `emoji-variation-sequences.txt` while keeping
+`ExtendedPictographic` separate. Re-review approved the fixes with no new
+Required findings. The reviewer independently verified
+`cargo fmt --check -p roastty`, `cargo test -p roastty unicode`, both `bash -n`
+harness checks, and `git diff --check`.
+
+## Conclusion
+
+Roastty now has the internal property API shape that Ghostty's `Terminal.print`
+expects from `unicode.table.get(c)`. This is not yet the full generated Unicode
+table or grapheme-break state machine; it is the mechanical surface and
+representative compatibility layer needed to make the next slice small. The next
+Phase-E experiment should rewrite `Terminal::print()` to use this module for
+cell width, zero-width grapheme accumulation, variation selectors, and mode 2027
+behavior.

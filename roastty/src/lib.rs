@@ -60,6 +60,8 @@ mod terminal;
 #[allow(dead_code)]
 mod termio;
 #[allow(dead_code)]
+mod unicode;
+#[allow(dead_code)]
 mod zf;
 
 // ABI ownership model:

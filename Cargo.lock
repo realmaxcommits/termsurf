@@ -1607,6 +1607,7 @@ dependencies = [
  "objc2-quartz-core",
  "regex",
  "serde_json",
+ "unicode-width",
  "uuid",
 ]
 

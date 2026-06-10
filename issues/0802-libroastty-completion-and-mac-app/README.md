@@ -281,6 +281,12 @@ before re-reading experiments.
   `mismatch_ratio=0.04077708333333333`; visual inspection shows the expected
   Roastty width/fallback differences, so the next Phase-E step should port the
   Unicode width/grapheme behavior behind this oracle.
+- **Unicode property facade:** Exp 51 adds `roastty/src/unicode/` with a
+  Ghostty-shaped `Properties` lookup (`width`, `width_zero_in_grapheme`,
+  `grapheme_break`, `emoji_vs_base`) and representative width/grapheme tests.
+  The full generated table and `unicode.graphemeBreak` state machine are still
+  Phase-E work; the next slice should rewrite `Terminal::print()` against this
+  API.
 
 ### Input injection (Exp 5)
 
@@ -689,7 +695,7 @@ stays unaltered except for the rename).
 - [Experiment 50: Phase E — Unicode-width live A/B recipe](50-live-ab-unicode-width-recipe.md)
   — **Pass**
 - [Experiment 51: Phase E — Unicode width properties](51-unicode-width-properties.md)
-  — **Designed**
+  — **Pass**
 
 ## Process
 
