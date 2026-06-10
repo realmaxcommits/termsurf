@@ -103,3 +103,74 @@ policy is obeyed, and `git diff --check` passed for the design files.
 The review found one Optional issue: "machine-readable metrics" should pin the
 output format. Fixed by specifying one JSON object on stdout with diagnostics on
 stderr and adding threshold fields to the output contract.
+
+## Result
+
+**Result:** Pass
+
+Added the Phase-D screenshot diff primitive:
+
+- `scripts/roastty-app/pngdiff.swift`
+  - Loads two PNGs with Swift/AppKit.
+  - Compares dimensions and every RGBA channel.
+  - Emits exactly one JSON metrics object to stdout on compare paths.
+  - Sends usage / load diagnostics to stderr.
+  - Supports exact defaults plus `--max-mismatch-ratio` and
+    `--max-mean-channel-delta` thresholds.
+  - Writes no images or artifacts.
+- `scripts/roastty-app/README.md`
+  - Documents screenshot artifact policy and `pngdiff.swift` usage.
+- `issues/0802-libroastty-completion-and-mac-app/README.md`
+  - Records `pngdiff.swift` under Screenshots / Operating notes.
+  - Marks Experiment 38 as `Pass`.
+
+Verification:
+
+- `swift scripts/roastty-app/pngdiff.swift --help`
+  - printed usage to stderr and exited `0`.
+- Created temporary PNG fixtures under `/tmp/termsurf-pngdiff`, then removed
+  them after verification.
+- Identical 2x2 images:
+  - `verdict: PASS`, `mismatch_ratio: 0`, exit `0`.
+- One-pixel-different 2x2 images with exact thresholds:
+  - `verdict: FAIL`, `mismatched_pixels: 1`, `mismatch_ratio: 0.25`, nonzero
+    channel deltas, exit `1`.
+- Same one-pixel-different images with permissive thresholds:
+  - `verdict: PASS`, exit `0`.
+- Dimension mismatch:
+  - `verdict: FAIL`, `error: dimension_mismatch`, exit `1`.
+- `prettier --write --prose-wrap always --print-width 80 issues/0802-libroastty-completion-and-mac-app/README.md issues/0802-libroastty-completion-and-mac-app/38-screenshot-diff-metric.md scripts/roastty-app/README.md`
+- `git diff --check`
+- `git status --short`
+  - no PNG or screenshot artifacts in the repo.
+
+## Conclusion
+
+Issue 802 now has a stable, machine-readable screenshot diff metric for Phase-D
+live A/B checks. Later experiments can launch Ghostty and Roastty, drive
+identical inputs, capture both windows through the existing screenshot wrappers,
+and use `pngdiff.swift` to record a verdict without committing images.
+
+This does not complete Phase D by itself: the full live app driver, input
+recipes, crop policy, thresholds per feature, and behavior matrix still need
+follow-up experiments.
+
+## Completion Review
+
+**Reviewer:** Codex-native adversarial subagent (`multi_agent_v1.spawn_agent`,
+fresh context, read-only). **Verdict: APPROVED with no findings.**
+
+The reviewer independently verified that:
+
+- `swift scripts/roastty-app/pngdiff.swift --help` exits `0`, writes usage to
+  stderr, and writes no stdout.
+- invalid args exit `2` and write no stdout.
+- `swiftc -parse scripts/roastty-app/pngdiff.swift` exits `0`.
+- `git diff --check` exits `0`.
+- `git status --short` shows only expected source/docs changes and no PNG or
+  screenshot artifacts.
+- the latest commit is the Experiment 38 plan commit and result changes are not
+  committed before review.
+
+The reviewer did not recreate the `/tmp/termsurf-pngdiff` fixture matrix because
+the adversarial review was read-only by discipline.

@@ -208,6 +208,11 @@ before re-reading experiments.
 - **Never committed** — see the Screenshots policy above; written to
   `$TERMSURF_SHOT_DIR` (default `~/.cache/termsurf/shots`); `__screenshots__/`
   is gitignored.
+- **Diff two captures:**
+  `scripts/roastty-app/pngdiff.swift <expected.png> <actual.png>` emits one JSON
+  metrics object on stdout and writes no artifacts (threshold flags:
+  `--max-mismatch-ratio`, `--max-mean-channel-delta`). Use it for Phase-D live
+  A/B verdicts; keep images outside the repo. (Exp 38.)
 
 ### Input injection (Exp 5)
 
@@ -590,7 +595,7 @@ stays unaltered except for the rename).
   registered+encoded but never emitted; deterministic terminal-level test + 4420
   green, fully headless) · Claude
 - [Experiment 38: Phase D — screenshot diff metric for live A/B checks](38-screenshot-diff-metric.md)
-  — **Designed** · Codex/Codex/Codex
+  — **Pass** · Codex/Codex/Codex
 
 ## Process
 
