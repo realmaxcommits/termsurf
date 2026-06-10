@@ -249,6 +249,12 @@ before re-reading experiments.
   runs selected recipes with permissive thresholds by default, emits one JSON
   Lines summary per recipe, continues after failures, and exits nonzero if any
   selected recipe fails under the supplied thresholds. (Exp 45.)
+- **Live A/B input delivery is not solved yet:** Exp 46 found that Command-V
+  paste terminates the current Roastty app, while AppleScript and CGEvent
+  keyboard text injection can leave the recipe unexecuted even though the
+  permissive screenshot diff exits `0`. The harness now verifies the frontmost
+  app before input and the recipes avoid `printf` format-string hazards, but the
+  next Phase-D input step must make command delivery itself observable.
 
 ### Input injection (Exp 5)
 
@@ -647,7 +653,7 @@ stays unaltered except for the rename).
 - [Experiment 45: Phase D — live A/B recipe matrix runner](45-live-ab-recipe-matrix.md)
   — **Pass**
 - [Experiment 46: Phase D — paste-safe live A/B recipe input](46-live-ab-paste-safe-recipes.md)
-  — **Designed**
+  — **Partial**
 
 ## Process
 

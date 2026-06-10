@@ -111,3 +111,83 @@ object for every recipe from `live-ab-smoke.sh --list-recipes` and permissive
 threshold exit `0`.
 
 The focused re-review approved the fix and found no remaining Required issues.
+
+## Result
+
+**Result:** Partial
+
+The experiment found that pasteboard delivery is not viable against the current
+Roastty app: sending Command-V to Roastty terminates the app, even with a simple
+`abc` pasteboard payload. The implementation therefore did not keep the planned
+paste path. Instead, it made the harness safer and narrowed the real blocker:
+
+- `scripts/roastty-app/live-ab-smoke.sh`
+  - verifies the intended app is frontmost before input, preventing recipes from
+    being sent to the wrong app;
+  - scopes activation/window targeting to the lowercase app process names
+    reported by System Events (`ghostty`, `roastty`);
+  - dismisses the app-local macOS "Don't Reopen" crash dialog when earlier
+    automation failures left one behind;
+  - focuses the target terminal view by clicking inside the launched app window;
+  - rewrites recipes so ANSI payloads are emitted as data arguments rather than
+    `printf` format strings, so literal `%`, backslashes, and escape sequences
+    are no longer shell format hazards.
+- `scripts/ghostty-app/inject.swift`
+  - adds keyboard helpers:
+    - `key <virtual-key-code> [control] [command] [shift] [option]`;
+    - `type <utf8-text-file>`.
+- `scripts/roastty-app/README.md`
+  - documents the guarded CGEvent command-entry path.
+- `issues/0802-libroastty-completion-and-mac-app/README.md`
+  - records the durable finding that live A/B command delivery itself remains
+    unsolved.
+
+Verification:
+
+- `bash -n scripts/roastty-app/live-ab-smoke.sh`
+- `bash -n scripts/roastty-app/live-ab-matrix.sh`
+- `scripts/roastty-app/live-ab-smoke.sh --list-recipes`
+  - Printed `smoke`, `ascii-grid`, `color-grid`, `clear-after`, `alt-screen`,
+    and `scroll-output`.
+- `swift scripts/ghostty-app/inject.swift key 8 control`
+  - Compiled and ran the new key path.
+- `scripts/roastty-app/live-ab-smoke.sh --recipe smoke --max-mismatch-ratio 1 --max-mean-channel-delta 255`
+  - Exited `0`, emitted JSON, captured 1000x1000 Ghostty/Roastty images, and
+    killed the launched PID trees.
+  - The permissive screenshot diff passed, but visual inspection showed the
+    recipe output was still missing, so this is not evidence of successful
+    command delivery.
+- Focused probes:
+  - Command-V paste into Roastty terminated the app.
+  - AppleScript text entry left Roastty alive but did not produce visible
+    command output.
+  - CGEvent text entry left Roastty alive but did not produce visible command
+    output.
+- `scripts/roastty-app/stop-app.sh || true`
+- `scripts/ghostty-app/stop-app.sh || true`
+- `pgrep -fl '[G]hostty.app/Contents/MacOS/ghostty|[R]oastty.app/Contents/MacOS/roastty' || true`
+  - no output after cleanup.
+
+## Completion Review
+
+**Reviewer:** Codex-native adversarial subagent (`multi_agent_v1.spawn_agent`,
+fresh context, read-only). **Verdict: APPROVED.**
+
+The reviewer found no Required issues. It noted one Optional concern: activation
+still starts from a process-name lookup, so multiple same-name debug instances
+could confuse targeting. That is a real hardening follow-up, but it is not
+blocking for this partial result because runs begin and end with scoped
+Ghostty/Roastty cleanup. The reviewer also found one nit: `inject.swift`'s
+top-level usage omitted the new `key` and `type` subcommands; fixed before the
+result commit.
+
+## Conclusion
+
+Experiment 46 did not solve live A/B command delivery, so the full recipe matrix
+verification was not meaningful to run. It did make the harness safer: it now
+guards against wrong-frontmost-app input, avoids relaunching apps during
+activation, handles the crash-reopen dialog, and removes the `printf` format
+hazards from recipe payloads. The next experiment should make command delivery
+observable and reliable, likely by fixing Roastty's paste/key input path or by
+switching the A/B recipes to a launch-time shell bootstrap instead of synthetic
+UI typing.

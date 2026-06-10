@@ -61,6 +61,17 @@ expected debug app path verification. Run `scripts/ghostty-app/stop-app.sh` and
 `scripts/roastty-app/stop-app.sh` after manual debugging if a run is interrupted
 externally.
 
+Recipe commands are written to a temporary file and sent to the verified
+frontmost app with `inject.swift` CGEvent keyboard input. Recipe payloads use
+data arguments rather than `printf` format strings so literal `%`, backslashes,
+and ANSI escapes do not corrupt the shell command.
+
+As of Exp 46, command delivery to Roastty is still not proven: the guarded
+synthetic keyboard paths can leave the recipe unexecuted, while Command-V paste
+terminates the current Roastty app. Treat a permissive diff pass as a harness
+mechanics result until a later experiment adds an observable command-delivery
+oracle.
+
 Recipes:
 
 - `smoke` — default. Clears the terminal and prints one timestamped marker.

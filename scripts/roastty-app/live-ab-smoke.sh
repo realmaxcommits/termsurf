@@ -133,14 +133,70 @@ delay() {
 
 activate() {
   local app="$1"
-  osascript -e "tell application \"$app\" to activate" >/dev/null
+  local process_name frontmost
+  process_name="$(basename "$app" .app | tr '[:upper:]' '[:lower:]')"
+  osascript >/dev/null <<OSA
+tell application "System Events"
+  set frontmost of first process whose name is "$process_name" to true
+end tell
+OSA
   delay 0.8
+  frontmost="$(osascript -e 'tell application "System Events" to name of first process whose frontmost is true')"
+  if [ "$(printf '%s' "$frontmost" | tr '[:upper:]' '[:lower:]')" != "$(printf '%s' "$process_name" | tr '[:upper:]' '[:lower:]')" ]; then
+    echo "failed to activate $process_name; frontmost is $frontmost" >&2
+    return 1
+  fi
+}
+
+dismiss_reopen_dialog() {
+  local app="$1"
+  local process_name
+  process_name="$(basename "$app" .app | tr '[:upper:]' '[:lower:]')"
+  osascript >/dev/null <<OSA || true
+tell application "System Events"
+  if exists process "$process_name" then
+    tell process "$process_name"
+      if exists window 1 then
+        repeat with candidate in buttons of window 1
+          set candidate_name to name of candidate as text
+          if candidate_name contains "Don" and candidate_name contains "Reopen" then
+            click candidate
+            exit repeat
+          end if
+        end repeat
+      end if
+    end tell
+  end if
+end tell
+OSA
+  delay 0.4
+}
+
+app_pid() {
+  local app="$1"
+  local binary
+  binary="$(basename "$app" .app | tr '[:upper:]' '[:lower:]')"
+  pgrep -f "$app/Contents/MacOS/$binary" | head -1
+}
+
+focus_terminal_view() {
+  local app="$1"
+  local pid line x y w h
+  pid="$(app_pid "$app")"
+  [ -n "$pid" ] || { echo "no pid found for $app" >&2; return 1; }
+  line="$("$SWIFT" "$DIR/list-windows.swift" "$pid" |
+    awk '/ name="👻"/ { print; found=1; exit } !found && /layer=0/ { candidate=$0 } END { if (!found && candidate != "") print candidate }')"
+  [ -n "$line" ] || { echo "no focusable window bounds found for $app pid $pid" >&2; return 1; }
+  read -r x y w h < <(printf '%s\n' "$line" |
+    sed -E 's/.*bounds=\(([0-9.-]+),([0-9.-]+) ([0-9.-]+)x([0-9.-]+)\).*/\1 \2 \3 \4/')
+  "$SWIFT" "$GHOST_DIR/inject.swift" click "$((x + 120))" "$((y + 140))" left 1
+  delay 0.2
 }
 
 set_window_bounds() {
   local app="$1"
   local process_name
-  process_name="$(basename "$app" .app)"
+  process_name="$(basename "$app" .app | tr '[:upper:]' '[:lower:]')"
   osascript >/dev/null <<OSA
 tell application "System Events"
   tell process "$process_name"
@@ -156,12 +212,12 @@ type_shell_command() {
   local app="$1"
   local command="$2"
   local tmp="/tmp/termsurf-ab-smoke-command-$$.txt"
-  printf '%s' "$command" >"$tmp"
+  printf '%s\n' "$command" >"$tmp"
   activate "$app"
-  osascript -e 'tell application "System Events" to key code 53' >/dev/null
+  focus_terminal_view "$app"
+  "$SWIFT" "$GHOST_DIR/inject.swift" key 8 control
   delay 0.2
-  osascript -e "tell application \"System Events\" to keystroke (read POSIX file \"$tmp\")" >/dev/null
-  osascript -e 'tell application "System Events" to key code 36' >/dev/null
+  "$SWIFT" "$GHOST_DIR/inject.swift" type "$tmp"
   rm -f "$tmp"
   delay 1.0
 }
@@ -169,22 +225,22 @@ type_shell_command() {
 recipe_command() {
   case "$recipe" in
     smoke)
-      printf 'clear; echo %s' "$marker"
+      printf '%s' "clear; printf '%s\\n' '$marker'; sleep 2"
       ;;
     ascii-grid)
-      printf "printf '\\033[2J\\033[H%s\\nABCDEFGHIJKLMNOPQRSTUVWXYZ\\nabcdefghijklmnopqrstuvwxyz\\n0123456789\\n@#$%%^&*()_+-=[]{};:,.<>/?\\n'; sleep 2" "$marker"
+      printf '%s' "printf '%b' '\\033[2J\\033[H$marker\\nABCDEFGHIJKLMNOPQRSTUVWXYZ\\nabcdefghijklmnopqrstuvwxyz\\n0123456789\\n@#$%^&*()_+-=[]{};:,.<>/?\\n'; sleep 2"
       ;;
     color-grid)
-      printf "printf '\\033[2J\\033[H%s\\n\\033[30mBLACK\\033[0m \\033[31mRED\\033[0m \\033[32mGREEN\\033[0m \\033[33mYELLOW\\033[0m \\033[34mBLUE\\033[0m \\033[35mMAGENTA\\033[0m \\033[36mCYAN\\033[0m \\033[37mWHITE\\033[0m\\n\\033[40m bg-black \\033[0m \\033[41m bg-red \\033[0m \\033[42m bg-green \\033[0m \\033[43m bg-yellow \\033[0m \\033[44m bg-blue \\033[0m \\033[45m bg-magenta \\033[0m \\033[46m bg-cyan \\033[0m \\033[47m bg-white \\033[0m\\n\\033[1;30mBRIGHT-BLACK\\033[0m \\033[1;31mBRIGHT-RED\\033[0m \\033[1;32mBRIGHT-GREEN\\033[0m \\033[1;33mBRIGHT-YELLOW\\033[0m\\n\\033[1;34mBRIGHT-BLUE\\033[0m \\033[1;35mBRIGHT-MAGENTA\\033[0m \\033[1;36mBRIGHT-CYAN\\033[0m \\033[1;37mBRIGHT-WHITE\\033[0m\\n\\033[38;2;255;128;0mTRUECOLOR-FG-ORANGE\\033[0m \\033[48;2;30;90;180mTRUECOLOR-BG-BLUE\\033[0m \\033[38;2;120;255;160;48;2;60;20;80mTRUECOLOR-FG-BG\\033[0m\\n'; sleep 2" "$marker"
+      printf '%s' "printf '%b' '\\033[2J\\033[H$marker\\n\\033[30mBLACK\\033[0m \\033[31mRED\\033[0m \\033[32mGREEN\\033[0m \\033[33mYELLOW\\033[0m \\033[34mBLUE\\033[0m \\033[35mMAGENTA\\033[0m \\033[36mCYAN\\033[0m \\033[37mWHITE\\033[0m\\n\\033[40m bg-black \\033[0m \\033[41m bg-red \\033[0m \\033[42m bg-green \\033[0m \\033[43m bg-yellow \\033[0m \\033[44m bg-blue \\033[0m \\033[45m bg-magenta \\033[0m \\033[46m bg-cyan \\033[0m \\033[47m bg-white \\033[0m\\n\\033[1;30mBRIGHT-BLACK\\033[0m \\033[1;31mBRIGHT-RED\\033[0m \\033[1;32mBRIGHT-GREEN\\033[0m \\033[1;33mBRIGHT-YELLOW\\033[0m\\n\\033[1;34mBRIGHT-BLUE\\033[0m \\033[1;35mBRIGHT-MAGENTA\\033[0m \\033[1;36mBRIGHT-CYAN\\033[0m \\033[1;37mBRIGHT-WHITE\\033[0m\\n\\033[38;2;255;128;0mTRUECOLOR-FG-ORANGE\\033[0m \\033[48;2;30;90;180mTRUECOLOR-BG-BLUE\\033[0m \\033[38;2;120;255;160;48;2;60;20;80mTRUECOLOR-FG-BG\\033[0m\\n'; sleep 2"
       ;;
     clear-after)
-      printf "printf 'PRE_CLEAR_ONE\\nPRE_CLEAR_TWO\\nPRE_CLEAR_THREE\\n\\033[3J\\033[H\\033[2J%s\\nAFTER_CLEAR_ROW_1\\nAFTER_CLEAR_ROW_2\\n'; sleep 2" "$marker"
+      printf '%s' "printf '%b' 'PRE_CLEAR_ONE\\nPRE_CLEAR_TWO\\nPRE_CLEAR_THREE\\n\\033[3J\\033[H\\033[2J$marker\\nAFTER_CLEAR_ROW_1\\nAFTER_CLEAR_ROW_2\\n'; sleep 2"
       ;;
     alt-screen)
-      printf "printf '\\033[?1049h\\033[2J\\033[5;10H%s\\033[10;3HALT_ROW_10_COL_3\\033[15;20HALT_ROW_15_COL_20\\033[0m'; sleep 2" "$marker"
+      printf '%s' "printf '%b' '\\033[?1049h\\033[2J\\033[5;10H$marker\\033[10;3HALT_ROW_10_COL_3\\033[15;20HALT_ROW_15_COL_20\\033[0m'; sleep 2"
       ;;
     scroll-output)
-      printf "printf '\\033[2J\\033[H%s\\n'; for i in {001..080}; do printf 'SCROLL_ROW_%%s\\n' \"\$i\"; done; sleep 2" "$marker"
+      printf '%s' "printf '%b' '\\033[2J\\033[H$marker\\n'; for i in {001..080}; do printf 'SCROLL_ROW_%s\\n' \"\$i\"; done; sleep 2"
       ;;
   esac
 }
@@ -239,6 +295,9 @@ echo "starting Ghostty and Roastty" >&2
 ghost_pid="$("$GHOST_DIR/start-app.sh")"
 roast_pid="$("$DIR/start-app.sh")"
 echo "Ghostty pid=$ghost_pid Roastty pid=$roast_pid recipe=$recipe marker=$marker" >&2
+
+dismiss_reopen_dialog "$GHOSTTY_APP"
+dismiss_reopen_dialog "$ROASTTY_APP"
 
 activate "$GHOSTTY_APP"
 set_window_bounds "$GHOSTTY_APP"
