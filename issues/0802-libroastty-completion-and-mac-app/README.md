@@ -541,6 +541,10 @@ stays unaltered except for the rename).
   gave the Surface a monotonic clock + an injectable test clock → double-click
   word, triple-click line; 4410 green deterministic + live word/line highlight)
   · Claude
+- [Experiment 28: Phase C — drag-selection autoscroll past the edge](28-drag-autoscroll.md)
+  — **Designed** (gesture sets `autoscroll` but nothing calls `autoscroll_tick`;
+  wire a tick method + hook it into the present loop so a held past-edge drag
+  scrolls + extends) · Claude
 
 ## Process
 
