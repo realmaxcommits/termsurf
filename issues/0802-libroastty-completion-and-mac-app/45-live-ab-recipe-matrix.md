@@ -110,3 +110,87 @@ selected recipes, show at least one `FAIL`, prove the later recipe still ran,
 and report nonzero `matrix_exit`.
 
 The focused re-review approved the fix and found no new Required issues.
+
+## Result
+
+**Result:** Pass
+
+Added `scripts/roastty-app/live-ab-matrix.sh`, a JSON Lines matrix runner around
+`live-ab-smoke.sh`:
+
+- Defaults to every recipe from `live-ab-smoke.sh --list-recipes`.
+- Supports repeated `--recipe <name>` for subsets.
+- Supports `--max-mismatch-ratio` and `--max-mean-channel-delta`.
+- Defaults to permissive thresholds (`1` and `255`).
+- Emits one JSON Lines object per recipe with:
+  - `recipe`,
+  - `status`,
+  - `child_exit_status`,
+  - nested `summary` from `live-ab-smoke.sh`.
+- Continues after recipe failures and exits nonzero if any selected recipe
+  fails.
+
+Updated `scripts/roastty-app/README.md` and the Issue 802 Operating notes with
+the matrix command. The Issue 802 experiment index now marks Experiment 45
+`Pass`, and the Phase D roadmap now marks the repeatable in-session run item
+complete.
+
+Verification:
+
+- `bash -n scripts/roastty-app/live-ab-matrix.sh`
+- `bash -n scripts/roastty-app/live-ab-smoke.sh`
+- `scripts/roastty-app/live-ab-matrix.sh --help`
+  - Exited `0`.
+- `scripts/roastty-app/live-ab-smoke.sh --list-recipes`
+  - Printed `smoke`, `ascii-grid`, `color-grid`, `clear-after`, `alt-screen`,
+    and `scroll-output`.
+- One-recipe matrix smoke:
+  - `scripts/roastty-app/live-ab-matrix.sh --recipe smoke`
+  - Exited `0`.
+  - Printed one JSON Lines object with `recipe: smoke`, `status: PASS`,
+    `child_exit_status: 0`, and nested harness summary.
+  - Launched Ghostty PID `59577` and Roastty PID `59592`.
+  - The child harness killed Ghostty descendants `59585`, `59586`, Ghostty PID
+    `59577`, Roastty descendant `59599`, and Roastty PID `59592`.
+- Two-recipe permissive matrix:
+  - `scripts/roastty-app/live-ab-matrix.sh --recipe ascii-grid --recipe clear-after`
+  - Exited `0`.
+  - Printed two JSON Lines objects: `ascii-grid` then `clear-after`, both with
+    `status: PASS` and `child_exit_status: 0`.
+  - The child harnesses killed all launched Ghostty/Roastty PID trees.
+- Strict failure aggregation check:
+  - `bash -lc 'scripts/roastty-app/live-ab-matrix.sh --recipe ascii-grid --recipe clear-after --max-mismatch-ratio 0 --max-mean-channel-delta 0; rc=$?; echo matrix_exit=$rc; exit 0'`
+  - Printed two JSON Lines objects: `ascii-grid` then `clear-after`.
+  - Both objects had `status: FAIL` and `child_exit_status: 1`.
+  - The second recipe still ran after the first failure.
+  - Wrapper printed `matrix_exit=1`.
+  - The child harnesses killed all launched Ghostty/Roastty PID trees.
+- `pgrep -fl '[G]hostty.app/Contents/MacOS/ghostty|[R]oastty.app/Contents/MacOS/roastty' || true`
+  - no output after cleanup.
+- `prettier --write --prose-wrap always --print-width 80 issues/0802-libroastty-completion-and-mac-app/README.md issues/0802-libroastty-completion-and-mac-app/45-live-ab-recipe-matrix.md scripts/roastty-app/README.md`
+- `git diff --check`
+- `git status --short`
+  - no screenshot or PNG artifacts in the repo.
+
+## Completion Review
+
+**Reviewer:** Codex-native adversarial subagent (`multi_agent_v1.spawn_agent`,
+fresh context, read-only). **Verdict: APPROVED.**
+
+The reviewer found no Required issues. Notes recorded that the review did not
+launch the GUI live matrix runs, but read-only checks passed for both scripts,
+the matrix help output, recipe listing, `git diff --check`, status/artifact
+checks, and the scoped app-process `pgrep`. After the approval, the runner's
+default-all recipe collection was changed from `mapfile` to a Bash 3.2
+compatible `while read` loop so macOS system Bash can run that path.
+
+A focused Codex-native re-review of the final state approved that compatibility
+edit, the roadmap checkbox update, and the documentation wording with no
+Required findings.
+
+## Conclusion
+
+Phase D now has a repeatable in-session recipe matrix runner instead of only
+individual recipe commands. Later experiments can use it to run the current live
+visual conformance surface as a regression check, add recipes incrementally, and
+intentionally run strict thresholds when recording current visual differences.

@@ -244,6 +244,11 @@ before re-reading experiments.
   prints 80 deterministic rows and captures the settled bottom-of-output
   viewport. Strict thresholds currently fail with recorded metrics, as expected.
   (Exp 44.)
+- **Run a live A/B recipe matrix:**
+  `scripts/roastty-app/live-ab-matrix.sh --recipe ascii-grid --recipe clear-after`
+  runs selected recipes with permissive thresholds by default, emits one JSON
+  Lines summary per recipe, continues after failures, and exits nonzero if any
+  selected recipe fails under the supplied thresholds. (Exp 45.)
 
 ### Input injection (Exp 5)
 
@@ -407,7 +412,7 @@ the live app, verified by a Phase-D UI test.)
 - [x] Point the Phase-A harness at the renamed roastty-backed app
 - [ ] Golden-diff its screenshots/behavior against the Phase-A real-Ghostty
       baseline
-- [ ] Repeatable in-session run, wired so every later phase is regression-tested
+- [x] Repeatable in-session run, wired so every later phase is regression-tested
       (headless/CI automation is a separate, later concern — see Exp 2's caveat)
 
 **Phase E — Terminal correctness**
@@ -640,7 +645,7 @@ stays unaltered except for the rename).
 - [Experiment 44: Phase D — scroll-output live A/B recipe](44-live-ab-scroll-output-recipe.md)
   — **Pass**
 - [Experiment 45: Phase D — live A/B recipe matrix runner](45-live-ab-recipe-matrix.md)
-  — **Designed**
+  — **Pass**
 
 ## Process
 

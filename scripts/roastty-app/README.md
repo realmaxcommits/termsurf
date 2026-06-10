@@ -77,3 +77,20 @@ Recipes:
 - `scroll-output` — clears the terminal, prints a timestamped marker plus 80
   numbered rows, and sleeps so capture happens after the viewport scrolls to the
   bottom.
+
+## Live A/B Matrix
+
+`live-ab-matrix.sh` runs one or more recipes through `live-ab-smoke.sh` and
+prints one JSON Lines summary per recipe.
+
+```bash
+scripts/roastty-app/live-ab-matrix.sh --recipe smoke
+scripts/roastty-app/live-ab-matrix.sh \
+  --recipe ascii-grid \
+  --recipe clear-after
+```
+
+If no `--recipe` is supplied, it runs every recipe reported by
+`live-ab-smoke.sh --list-recipes`. Defaults are permissive
+(`--max-mismatch-ratio 1 --max-mean-channel-delta 255`); pass strict thresholds
+when intentionally recording current visual mismatches.
