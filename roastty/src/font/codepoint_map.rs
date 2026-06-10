@@ -46,6 +46,19 @@ impl CodepointMap {
         self.entries.iter()
     }
 
+    /// Stable hash for keying font configuration. Hashes entries in insertion
+    /// order so later-overriding maps with different order remain distinct.
+    pub(crate) fn hashcode(&self) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        self.entries.len().hash(&mut h);
+        for entry in &self.entries {
+            entry.range.hash(&mut h);
+            entry.descriptor.hashcode().hash(&mut h);
+        }
+        h.finish()
+    }
+
     /// The descriptor for `cp`, or `None`. Scans entries in **reverse** so a
     /// later-added entry wins for an overlapping range (faithful to upstream).
     pub(crate) fn get(&self, cp: u32) -> Option<&Descriptor> {

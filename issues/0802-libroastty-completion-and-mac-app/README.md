@@ -307,6 +307,12 @@ before re-reading experiments.
   standalone-width facade. The live `unicode-width` content metric remains
   passing (`mean_channel_delta=3.8097902777777777`,
   `mismatch_ratio=0.04077847222222222`).
+- **Config-derived font-grid assembly:** Exp 55 moves live renderer font-grid
+  construction through `font::shared_grid_set::build_grid_from_config`, using a
+  `DerivedConfig`/`Key` built from the represented font-family, font-style,
+  font-codepoint-map, and font-synthetic-style fields. The old hardcoded Menlo
+  renderer path is gone, but Menlo remains the temporary default-primary
+  fallback until embedded fallback fonts and the full font subsystem are ported.
 
 ### Input injection (Exp 5)
 
@@ -489,7 +495,7 @@ the live app, verified by a Phase-D UI test.)
       application)
 - [ ] Conditional state wiring (`changeConditionalState` + conditional reload)
 - [ ] `font-codepoint-map` + `clipboard-codepoint-map` as config fields
-- [ ] `SharedGridSet` config→font assembly (`Key`/`DerivedConfig` → discovery →
+- [x] `SharedGridSet` config→font assembly (`Key`/`DerivedConfig` → discovery →
       populated `Collection`), replacing the hardcoded-"Menlo" test path
 
 **Phase G — Input / keybindings**
@@ -723,7 +729,7 @@ stays unaltered except for the rename).
 - [Experiment 54: Phase F — font config surface](54-font-config-surface.md) —
   **Pass**
 - [Experiment 55: Phase F — SharedGridSet config assembly](55-shared-grid-config-assembly.md)
-  — **Designed**
+  — **Pass**
 
 ## Process
 

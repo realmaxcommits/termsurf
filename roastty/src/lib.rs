@@ -1833,6 +1833,7 @@ struct App {
     runtime: RoasttyRuntimeConfig,
     focused: bool,
     color_scheme: c_int,
+    parsed_config: config::Config,
     confirm_close_surface: config::ConfirmCloseSurface,
     clipboard_read: config::ClipboardAccess,
     clipboard_write: config::ClipboardAccess,
@@ -2006,9 +2007,10 @@ fn start_present_driver(surface: *mut Surface) -> std::sync::Arc<std::sync::atom
 /// Build the live Metal present state for a surface on the main thread (Issue 802 / Exp 15,
 /// slice 1): a default-monospace `SharedGrid` at the surface font size, glyph atlases, the Metal
 /// device + compositor, and the IOSurface layer attached to the app's NSView. `None` if the
-/// Metal device or font can't be created. (Config-driven font family is a later refinement.)
+/// Metal device or config-derived font grid can't be created.
 fn build_live_renderer(
     nsview: *mut c_void,
+    config: &config::Config,
     font_size: f32,
     width_px: u32,
     height_px: u32,
@@ -2019,30 +2021,12 @@ fn build_live_renderer(
     let width = width_px.max(1) as usize;
     let height = height_px.max(1) as usize;
     let scale = scale.max(1.0);
-    let mut collection = font::collection::Collection::new();
-    collection
-        .add(
-            // Rasterize at font_size * scale so the cell metrics are PHYSICAL pixels matching
-            // the px-space compositor target/projection (Issue 802 / Exp 18 — Retina).
-            font::face::coretext::Face::new("Menlo", (font_size as f64 * scale).max(1.0)),
-            font::Style::Regular,
-            false,
-        )
-        .ok()?;
-    collection.update_metrics().ok()?;
-    // Issue 802 / Exp 29: set the point size so discovered CJK faces get the ideographic-width
-    // (IcWidth) adjustment physically applied (`resize_face_to_point_size` no-ops when `point_size`
-    // is `None`). Menlo is resized to its existing `font_size*scale`, so the cell metrics are
-    // unchanged; capture them after the call.
-    collection
-        .set_point_size((font_size as f64 * scale).max(1.0))
-        .ok()?;
-    let metrics = *collection.metrics()?;
-    // Enable CoreText discovery fallback (Issue 802 / Exp 21) so codepoints Menlo doesn't cover
-    // (CJK, emoji) resolve to a discovered system face instead of the `?` replacement glyph.
-    let mut resolver = font::codepoint_resolver::CodepointResolver::new(collection);
-    resolver.set_discover_enabled(true);
-    let shared_grid = font::shared_grid::SharedGrid::new(resolver, metrics);
+    // Rasterize at font_size * scale so the cell metrics are PHYSICAL pixels matching
+    // the px-space compositor target/projection (Issue 802 / Exp 18 — Retina), using
+    // the config-derived SharedGrid path (Issue 802 / Exp 55).
+    let shared_grid =
+        font::shared_grid_set::build_grid_from_config(config, (font_size * scale as f32).max(1.0))
+            .ok()?;
     let compositor = renderer::metal::compositor::MetalFrameCompositor::new(
         renderer::metal::compositor::MetalFrameCompositorOptions {
             device,
@@ -2453,8 +2437,12 @@ impl Surface {
             return;
         }
         if self.renderer.is_none() {
+            let config = app_from_handle(self.app)
+                .map(|app| app.parsed_config.clone())
+                .unwrap_or_default();
             self.renderer = build_live_renderer(
                 self.nsview,
+                &config,
                 self.font_size_points,
                 self.size.width_px,
                 self.size.height_px,
@@ -10491,6 +10479,8 @@ pub extern "C" fn roastty_config_load_recursive_files(config: RoasttyConfig) {
 #[no_mangle]
 pub extern "C" fn roastty_config_finalize(config: RoasttyConfig) {
     if let Some(config) = config_from_handle(config) {
+        config.parsed.finalize();
+        config.sync_from_parsed_config();
         config.finalized = true;
     }
 }
@@ -10743,6 +10733,7 @@ pub extern "C" fn roastty_app_new(
         mouse_shift_capture,
         has_global_keybinds,
         keybind_triggers,
+        parsed_config,
     ) = config_from_handle(config)
         .map(|config| {
             (
@@ -10752,6 +10743,7 @@ pub extern "C" fn roastty_app_new(
                 config.parsed.mouse_shift_capture,
                 config.has_global_keybinds,
                 config.keybind_triggers.clone(),
+                config.parsed.clone(),
             )
         })
         .unwrap_or((
@@ -10761,12 +10753,14 @@ pub extern "C" fn roastty_app_new(
             config::MouseShiftCapture::False,
             false,
             Vec::new(),
+            config::Config::default(),
         ));
 
     Box::into_raw(Box::new(App {
         runtime,
         focused: false,
         color_scheme: 0,
+        parsed_config,
         confirm_close_surface,
         clipboard_read,
         clipboard_write,
@@ -10829,9 +10823,17 @@ pub extern "C" fn roastty_app_update_config(app: RoasttyApp, config: RoasttyConf
         return;
     };
     app.confirm_close_surface = config.confirm_close_surface;
+    app.parsed_config = config.parsed.clone();
     app.mouse_shift_capture = config.parsed.mouse_shift_capture;
     app.has_global_keybinds = config.has_global_keybinds;
     app.keybind_triggers = config.keybind_triggers.clone();
+    for mut surface in app.surfaces.clone() {
+        let surface = unsafe { surface.as_mut() };
+        if surface.app == app as *mut App as RoasttyApp {
+            surface.renderer = None;
+            surface.dirty = true;
+        }
+    }
 }
 
 #[no_mangle]

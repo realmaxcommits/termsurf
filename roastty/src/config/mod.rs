@@ -2465,6 +2465,16 @@ impl FontSyntheticStyle {
     }
 }
 
+impl From<FontSyntheticStyle> for crate::font::collection::SyntheticStyle {
+    fn from(value: FontSyntheticStyle) -> Self {
+        crate::font::collection::SyntheticStyle {
+            bold: value.bold,
+            italic: value.italic,
+            bold_italic: value.bold_italic,
+        }
+    }
+}
+
 /// Parse a `bool` field (upstream `parseIntoField`'s `bool => parseBool(value
 /// orelse "t")`): a missing value is a bare flag, which is `true`; otherwise
 /// `parse_bool` of the value, with `InvalidValue` for an unrecognized value.
@@ -4137,6 +4147,15 @@ impl FontStyle {
     /// and `Name` both leave the style enabled.
     pub(crate) fn enabled(&self) -> bool {
         !matches!(self, FontStyle::False)
+    }
+
+    /// The exact style name used in font descriptors, if configured. Upstream
+    /// `FontStyle.nameValue`: `default` and `false` are not exact style names.
+    pub(crate) fn name_value(&self) -> Option<&str> {
+        match self {
+            FontStyle::Name(name) => Some(name),
+            FontStyle::Default | FontStyle::False => None,
+        }
     }
 
     /// Parse the `font-style*` value (upstream `FontStyle.parseCLI`): a missing

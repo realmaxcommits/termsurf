@@ -6,6 +6,9 @@ reasoning = "high"
 
 [review.design]
 agent = "codex"
+
+[review.result]
+agent = "codex"
 +++
 
 # Experiment 55: Phase F — SharedGridSet config assembly
@@ -144,3 +147,70 @@ complete with no new regression.
 APPROVED.**
 
 The re-review returned no findings and confirmed the required finding was fixed.
+
+## Result
+
+**Result:** Pass
+
+The live renderer now builds its `SharedGrid` through
+`font::shared_grid_set::build_grid_from_config`, using a config-derived
+`DerivedConfig`/`Key` instead of constructing a hardcoded Menlo collection in
+`roastty/src/lib.rs`.
+
+Implemented:
+
+- `DerivedConfig` snapshots the represented font-family, font-style,
+  font-codepoint-map, and font-synthetic-style config fields.
+- `Key` builds style-ordered discovery descriptors for regular, bold, italic,
+  and bold-italic faces, preserves the codepoint map, and hashes/equates
+  descriptor content, style offsets, physical point size, and codepoint-map
+  entries.
+- The collection builder discovers configured primary descriptors by style,
+  completes missing styles through `font-synthetic-style`, keeps the temporary
+  Menlo default-primary fallback when no configured primary is available, keeps
+  Apple Color Emoji as the current explicit emoji fallback, enables discovery
+  fallback for broader coverage, and attaches configured codepoint overrides to
+  the resolver.
+- `App` stores the parsed config snapshot, updates it through
+  `roastty_app_update_config`, and invalidates live renderers after config
+  updates so the next presentation rebuilds through the new config-derived path.
+- `roastty_config_finalize` finalizes the parsed config before syncing the C ABI
+  snapshot, so inherited font-family fields are visible to app-created configs.
+
+Verification:
+
+- `cargo fmt -- roastty/src/font/shared_grid_set.rs roastty/src/lib.rs roastty/src/config/mod.rs roastty/src/font/codepoint_map.rs`
+  passed.
+- `cargo test -p roastty shared_grid_set` passed: 9 tests.
+- `cargo test -p roastty config_font` passed: 4 tests.
+- `cargo test -p roastty codepoint_override` passed: 4 tests.
+- `cargo test -p roastty surface_binding_action_font_size` passed: 4 tests.
+- `cargo test -p roastty` passed: 4456 unit tests, 1 ABI harness integration
+  test, and 0 doc-tests. The ABI harness still emits its pre-existing enum-cast
+  warnings, but links and passes.
+- `scripts/roastty-app/live-ab-smoke.sh --max-mismatch-ratio 1 --max-mean-channel-delta 255`
+  passed. Content-region metrics: `mismatch_ratio=0.00804861111111111`,
+  `mean_channel_delta=0.6435878472222222`, `mismatched_pixels=11590`,
+  `compared_pixels=1440000`; full-window metrics:
+  `mismatch_ratio=0.06265130537974684`, `mean_channel_delta=1.6896117236946202`.
+- `git diff --check` passed.
+
+## Conclusion
+
+The first config-to-font assembly path is now live. Roastty can build a usable
+font grid from the represented Phase-F font config fields, and the live app
+still passes the permissive Ghostty/Roastty A/B smoke after replacing the old
+hardcoded renderer font path.
+
+This remains a slice, not the final font subsystem. Font variations, metric
+modifiers, freetype flags, embedded fallback fonts, broader fallback ordering,
+and the remaining unrepresented config fields are still deferred to later
+experiments.
+
+## Completion Review
+
+**Reviewer:** Codex-native adversarial subagent Poincare
+(`multi_agent_v1.spawn_agent`, fresh context, read-only). **Final verdict:
+APPROVED.**
+
+The reviewer returned no findings.
