@@ -128,3 +128,61 @@ Fix:
 **Final verdict:** Approved.
 
 No findings.
+
+## Result
+
+**Result:** Pass
+
+Implemented the two Phase-F selection behavior fields:
+
+- `selection-clear-on-typing` is now represented on aggregate `Config`, defaults
+  to `true`, loads through CLI/config files, formats with the local selection
+  group, and refreshes cached `Surface` behavior through app and surface config
+  update paths.
+- `selection-word-chars` is now represented on aggregate `Config`, defaults to
+  the upstream word-boundary set, loads/formats through the existing
+  `SelectionWordChars` parser, and refreshes cached `Surface` word-boundary
+  state through config updates.
+- Mouse word selection and quicklook word selection now pass configured
+  word-boundary codepoints instead of falling back to terminal defaults.
+- Text entry, raw text entry, key input, and preedit state changes now honor
+  `selection-clear-on-typing`; Escape remains the explicit exception and clears
+  selection even when clear-on-typing is disabled.
+
+Verification passed:
+
+- `cargo fmt -- roastty/src/config/mod.rs roastty/src/lib.rs`
+- `cargo test -p roastty selection_behavior_config`
+- `cargo test -p roastty config_format_config`
+- `cargo test -p roastty double_click_word`
+- `cargo test -p roastty mouse_drag_selects`
+- `cargo test -p roastty surface_key`
+- `cargo test -p roastty surface_text`
+- `cargo test -p roastty surface_preedit`
+- `cargo test -p roastty surface_quicklook_word`
+- `cargo test -p roastty app_and_surface_update_config`
+- `cargo test -p roastty` — 4474 unit tests passed, 1 ABI harness test passed, 0
+  doc-tests; the ABI harness still prints the pre-existing enum-cast warnings.
+
+## Conclusion
+
+The selection behavior config slice is now app-facing and runtime-visible. The
+critical review findings from the design gate are covered by regression tests:
+quicklook uses configured word boundaries, and Escape keeps clearing selection
+when `selection-clear-on-typing = false`. The next Phase-F slice can continue
+with another small config group.
+
+## Completion Review
+
+Reviewed by Codex-native adversarial reviewer (`Huygens`,
+`019eb33a-cf6e-7402-a959-add518d6494f`) with fresh context.
+
+**Verdict:** Approved.
+
+- **Nit:** `SelectionWordChars` had a stale comment saying `formatEntry` would
+  be ported later even though formatting is now implemented.
+
+Fix:
+
+- Updated the stale comment to describe only the current invariant:
+  word-boundary codepoints always start with the null codepoint.

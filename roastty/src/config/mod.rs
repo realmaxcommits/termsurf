@@ -43,6 +43,8 @@ pub(crate) struct Config {
     pub quit_after_last_window_closed: bool,
     /// `copy-on-select`.
     pub copy_on_select: CopyOnSelect,
+    /// `selection-clear-on-typing`.
+    pub selection_clear_on_typing: bool,
     /// `selection-clear-on-copy`.
     pub selection_clear_on_copy: bool,
     /// `clipboard-read`.
@@ -107,6 +109,8 @@ pub(crate) struct Config {
     pub selection_foreground: Option<TerminalColor>,
     /// `selection-background`.
     pub selection_background: Option<TerminalColor>,
+    /// `selection-word-chars`.
+    pub selection_word_chars: SelectionWordChars,
     /// `minimum-contrast`.
     pub minimum_contrast: f64,
     /// `bold-color`.
@@ -198,6 +202,7 @@ impl Default for Config {
             initial_window: true,
             quit_after_last_window_closed: false,
             copy_on_select: CopyOnSelect::True,
+            selection_clear_on_typing: true,
             selection_clear_on_copy: false,
             clipboard_read: ClipboardAccess::Ask,
             clipboard_write: ClipboardAccess::Allow,
@@ -232,6 +237,7 @@ impl Default for Config {
             cursor_text: None,
             selection_foreground: None,
             selection_background: None,
+            selection_word_chars: SelectionWordChars::default(),
             minimum_contrast: 1.0,
             bold_color: None,
             faint_opacity: 0.5,
@@ -343,6 +349,10 @@ impl Config {
             .entry_optional(self.selection_foreground, |v, f| v.format_entry(f));
         EntryFormatter::new("selection-background", out)
             .entry_optional(self.selection_background, |v, f| v.format_entry(f));
+        EntryFormatter::new("selection-clear-on-typing", out)
+            .entry_bool(self.selection_clear_on_typing);
+        self.selection_word_chars
+            .format_entry(&mut EntryFormatter::new("selection-word-chars", out));
         EntryFormatter::new("minimum-contrast", out).entry_float(self.minimum_contrast);
         EntryFormatter::new("cursor-color", out)
             .entry_optional(self.cursor_color, |v, f| v.format_entry(f));
@@ -470,6 +480,10 @@ impl Config {
             "copy-on-select" => {
                 self.copy_on_select =
                     set_enum_field(value, default.copy_on_select, CopyOnSelect::from_keyword)?
+            }
+            "selection-clear-on-typing" => {
+                self.selection_clear_on_typing =
+                    set_bool_field(value, default.selection_clear_on_typing)?
             }
             "selection-clear-on-copy" => {
                 self.selection_clear_on_copy =
@@ -754,6 +768,7 @@ impl Config {
                     TerminalColor::parse_cli,
                 )?
             }
+            "selection-word-chars" => self.selection_word_chars.parse_cli(value)?,
             "bold-color" => {
                 self.bold_color =
                     set_optional_value_field(value, default.bold_color, BoldColor::parse_cli)?
@@ -2712,9 +2727,17 @@ pub(crate) enum SelectionWordCharsParseError {
     InvalidValue,
 }
 
+impl From<SelectionWordCharsParseError> for ConfigSetError {
+    fn from(error: SelectionWordCharsParseError) -> Self {
+        match error {
+            SelectionWordCharsParseError::ValueRequired => ConfigSetError::ValueRequired,
+            SelectionWordCharsParseError::InvalidValue => ConfigSetError::InvalidValue,
+        }
+    }
+}
+
 /// The `selection-word-chars` config (upstream `Config.SelectionWordChars`): the
-/// word-boundary codepoints, always starting with the null codepoint. The
-/// `formatEntry` formatter is ported later.
+/// word-boundary codepoints, always starting with the null codepoint.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct SelectionWordChars {
     pub codepoints: Vec<u32>,
@@ -4677,6 +4700,7 @@ mod tests {
         assert!(d.initial_window);
         assert!(!d.quit_after_last_window_closed);
         assert_eq!(d.copy_on_select, CopyOnSelect::True);
+        assert!(d.selection_clear_on_typing);
         assert!(!d.selection_clear_on_copy);
         assert_eq!(d.clipboard_read, ClipboardAccess::Ask);
         assert_eq!(d.clipboard_write, ClipboardAccess::Allow);
@@ -4746,6 +4770,10 @@ mod tests {
         assert_eq!(d.cursor_text, None);
         assert_eq!(d.selection_foreground, None);
         assert_eq!(d.selection_background, None);
+        assert_eq!(
+            d.selection_word_chars.codepoints,
+            DEFAULT_WORD_BOUNDARIES.to_vec()
+        );
         assert_eq!(d.bold_color, None);
         // Surface-policy group (Experiment 468).
         assert_eq!(d.confirm_close_surface, ConfirmCloseSurface::True);
@@ -8564,6 +8592,8 @@ mod tests {
                 "background-image-repeat",
                 "selection-foreground",
                 "selection-background",
+                "selection-clear-on-typing",
+                "selection-word-chars",
                 "minimum-contrast",
                 "cursor-color",
                 "cursor-text",
@@ -8622,6 +8652,8 @@ mod tests {
         assert!(out.contains("clipboard-trim-trailing-spaces = true\n"));
         assert!(out.contains("clipboard-paste-protection = true\n"));
         assert!(out.contains("clipboard-paste-bracketed-safe = true\n"));
+        assert!(out.contains("selection-clear-on-typing = true\n"));
+        assert!(out.contains("selection-word-chars = "));
         assert!(out.contains("selection-clear-on-copy = false\n"));
 
         // The default optionals (all `None`) format as the void line, and `theme`
@@ -8699,6 +8731,69 @@ mod tests {
         assert!(!cfg.clipboard_paste_protection);
         assert!(!cfg.clipboard_paste_bracketed_safe);
         assert!(cfg.selection_clear_on_copy);
+    }
+
+    #[test]
+    fn selection_behavior_config_routes_and_formats() {
+        let has = |out: &str, key: &str, val: &str| {
+            out.lines().any(|l| l == format!("{} = {}", key, val))
+        };
+        let mut cfg = Config::default();
+        cfg.set("selection-clear-on-typing", Some("false")).unwrap();
+        cfg.set("selection-word-chars", Some(" ;")).unwrap();
+
+        assert!(!cfg.selection_clear_on_typing);
+        assert_eq!(
+            cfg.selection_word_chars.codepoints,
+            vec![0, ' ' as u32, ';' as u32]
+        );
+
+        let mut out = String::new();
+        cfg.format_config(&mut out);
+        assert!(has(&out, "selection-clear-on-typing", "false"));
+        assert!(has(&out, "selection-word-chars", " ;"));
+
+        cfg.set("selection-clear-on-typing", Some("")).unwrap();
+        cfg.set("selection-word-chars", Some("")).unwrap();
+        assert!(cfg.selection_clear_on_typing);
+        assert_eq!(cfg.selection_word_chars.codepoints, vec![0]);
+
+        assert_eq!(
+            cfg.set("selection-clear-on-typing", Some("maybe")),
+            Err(ConfigSetError::InvalidValue)
+        );
+        assert_eq!(
+            cfg.set("selection-word-chars", None),
+            Err(ConfigSetError::ValueRequired)
+        );
+        assert_eq!(
+            cfg.set("selection-word-chars", Some("\\q")),
+            Err(ConfigSetError::InvalidValue)
+        );
+
+        let mut cfg = Config::default();
+        let diags = cfg.set_cli_args([
+            "--selection-clear-on-typing=false",
+            "--selection-word-chars= _",
+        ]);
+        assert!(diags.is_empty());
+        assert!(!cfg.selection_clear_on_typing);
+        assert_eq!(
+            cfg.selection_word_chars.codepoints,
+            vec![0, ' ' as u32, '_' as u32]
+        );
+
+        let mut cfg = Config::default();
+        let diags = cfg.load_str(
+            "selection-clear-on-typing = false\n\
+             selection-word-chars = \\t_\n",
+        );
+        assert!(diags.is_empty());
+        assert!(!cfg.selection_clear_on_typing);
+        assert_eq!(
+            cfg.selection_word_chars.codepoints,
+            vec![0, '\t' as u32, '_' as u32]
+        );
     }
 
     #[test]

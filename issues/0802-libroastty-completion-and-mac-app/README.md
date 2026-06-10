@@ -745,7 +745,7 @@ stays unaltered except for the rename).
 - [Experiment 57: Phase F — clipboard behavior config](57-clipboard-behavior-config.md)
   — **Pass**
 - [Experiment 58: Phase F — selection behavior config](58-selection-behavior-config.md)
-  — **Designed**
+  — **Pass**
 
 ## Process
 

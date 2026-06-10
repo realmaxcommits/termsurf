@@ -1894,6 +1894,8 @@ struct Surface {
     clipboard_write: config::ClipboardAccess,
     clipboard_paste_protection: bool,
     clipboard_paste_bracketed_safe: bool,
+    selection_clear_on_typing: bool,
+    selection_word_chars: Vec<u32>,
     preedit: Option<String>,
     inspector: Option<NonNull<Inspector>>,
     last_key_event: Option<key::KeyEvent>,
@@ -2209,6 +2211,12 @@ impl Surface {
         self.confirm_close_surface = config.confirm_close_surface;
         self.clipboard_paste_protection = config.parsed.clipboard_paste_protection;
         self.clipboard_paste_bracketed_safe = config.parsed.clipboard_paste_bracketed_safe;
+        self.selection_clear_on_typing = config.parsed.selection_clear_on_typing;
+        self.selection_word_chars = config.parsed.selection_word_chars.codepoints.clone();
+    }
+
+    fn selection_word_boundaries(&self) -> &[u32] {
+        &self.selection_word_chars
     }
 
     fn sanitized_scale(value: f64) -> f64 {
@@ -2729,6 +2737,8 @@ impl Surface {
 
         if let Some(error) = error {
             self.apply_termio_event(termio::TermioWorkerEvent::Error(error));
+        } else if self.selection_clear_on_typing {
+            self.selection_clear_and_reset();
         }
     }
 
@@ -2749,6 +2759,8 @@ impl Surface {
 
         if let Some(error) = error {
             self.apply_termio_event(termio::TermioWorkerEvent::Error(error));
+        } else if self.selection_clear_on_typing {
+            self.selection_clear_and_reset();
         }
     }
 
@@ -3852,6 +3864,9 @@ impl Surface {
     }
 
     fn set_preedit(&mut self, preedit: Option<&str>) {
+        if self.selection_clear_on_typing && (self.preedit.is_some() || preedit.is_some()) {
+            self.selection_clear_and_reset();
+        }
         self.preedit = preedit.map(str::to_owned);
         self.request_render();
     }
@@ -4132,6 +4147,7 @@ impl Surface {
         let Some((pin, max_distance)) = computed else {
             return;
         };
+        let word_boundary_codepoints = self.selection_word_chars.clone();
         worker.with_termio_mut(|termio| {
             let selection = self.selection_gesture.press(
                 termio.terminal_mut(),
@@ -4143,7 +4159,7 @@ impl Surface {
                     // Upstream `Surface.zig:3945-3952`: 500ms repeat interval, one-cell max distance.
                     max_distance,
                     repeat_interval_ns: 500_000_000,
-                    word_boundary_codepoints: None,
+                    word_boundary_codepoints: Some(&word_boundary_codepoints),
                     behaviors: DEFAULT_BEHAVIORS,
                 },
             );
@@ -4172,6 +4188,7 @@ impl Surface {
         let Some((pin, geometry)) = computed else {
             return;
         };
+        let word_boundary_codepoints = self.selection_word_chars.clone();
         worker.with_termio_mut(|termio| {
             let selection = self.selection_gesture.drag(
                 termio.terminal_mut(),
@@ -4180,7 +4197,7 @@ impl Surface {
                     x,
                     y,
                     rectangle: false,
-                    word_boundary_codepoints: None,
+                    word_boundary_codepoints: Some(&word_boundary_codepoints),
                     geometry,
                 },
             );
@@ -4218,6 +4235,7 @@ impl Surface {
         let Some((cell, geometry)) = computed else {
             return;
         };
+        let word_boundary_codepoints = self.selection_word_chars.clone();
         worker.with_termio_mut(|termio| {
             let selection = self.selection_gesture.autoscroll_tick(
                 termio.terminal_mut(),
@@ -4226,7 +4244,7 @@ impl Surface {
                     x,
                     y,
                     rectangle: false,
-                    word_boundary_codepoints: None,
+                    word_boundary_codepoints: Some(&word_boundary_codepoints),
                     geometry,
                 },
             );
@@ -4465,7 +4483,10 @@ impl Surface {
             }
             let cell = geometry.pos_to_cell(pos);
             let ref_ = terminal.grid_ref(TerminalPointTag::Viewport, cell)?;
-            terminal.select_word(ref_, None).ok().flatten()
+            terminal
+                .select_word(ref_, Some(self.selection_word_boundaries()))
+                .ok()
+                .flatten()
         });
         let Some(selection) = selection else {
             return Err(ROASTTY_INVALID_VALUE);
@@ -4599,6 +4620,11 @@ impl Surface {
         if let Err(err) = worker.queue_write(&encoded) {
             self.apply_termio_event(termio::TermioWorkerEvent::Error(format!("{err:?}")));
             return false;
+        }
+        if event.key == key::Key::Escape
+            || (self.selection_clear_on_typing && !key_is_modifier(event.key))
+        {
+            self.selection_clear_and_reset();
         }
         true
     }
@@ -6231,6 +6257,24 @@ fn key_mods_from_raw(value: c_int) -> key_mods::Mods {
 
 fn key_mods_to_raw(value: key_mods::Mods) -> c_int {
     c_int::from(value.int())
+}
+
+fn key_is_modifier(key: key::Key) -> bool {
+    matches!(
+        key,
+        key::Key::AltLeft
+            | key::Key::AltRight
+            | key::Key::CapsLock
+            | key::Key::ControlLeft
+            | key::Key::ControlRight
+            | key::Key::Fn
+            | key::Key::FnLock
+            | key::Key::MetaLeft
+            | key::Key::MetaRight
+            | key::Key::NumLock
+            | key::Key::ShiftLeft
+            | key::Key::ShiftRight
+    )
 }
 
 fn mouse_mods_from_key_mods(mods: key_mods::Mods) -> mouse::MouseMods {
@@ -14220,6 +14264,12 @@ pub extern "C" fn roastty_surface_new(
     let clipboard_paste_bracketed_safe = app_from_handle(app)
         .map(|app| app.parsed_config.clipboard_paste_bracketed_safe)
         .unwrap_or(true);
+    let selection_clear_on_typing = app_from_handle(app)
+        .map(|app| app.parsed_config.selection_clear_on_typing)
+        .unwrap_or(true);
+    let selection_word_chars = app_from_handle(app)
+        .map(|app| app.parsed_config.selection_word_chars.codepoints.clone())
+        .unwrap_or_else(|| config::SelectionWordChars::default().codepoints);
 
     let font_size_points = sanitized_font_size_points(config.font_size);
     let surface = Box::new(Surface {
@@ -14253,6 +14303,8 @@ pub extern "C" fn roastty_surface_new(
         clipboard_write,
         clipboard_paste_protection,
         clipboard_paste_bracketed_safe,
+        selection_clear_on_typing,
+        selection_word_chars,
         preedit: None,
         inspector: None,
         last_key_event: None,
@@ -15841,6 +15893,21 @@ mod tests {
         handle
     }
 
+    fn new_test_config_with_selection_behavior(
+        clear_on_typing: bool,
+        word_chars: &str,
+    ) -> RoasttyConfig {
+        let handle = roastty_config_new();
+        let config = config_from_handle(handle).unwrap();
+        config.parsed.selection_clear_on_typing = clear_on_typing;
+        config
+            .parsed
+            .selection_word_chars
+            .parse_cli(Some(word_chars))
+            .unwrap();
+        handle
+    }
+
     unsafe extern "C" fn wakeup_cb(userdata: *mut c_void) {
         WAKEUP_COUNT.fetch_add(1, Ordering::SeqCst);
         WAKEUP_USERDATA.store(userdata as usize, Ordering::SeqCst);
@@ -16066,6 +16133,16 @@ mod tests {
                     .clipboard_paste_bracketed_safe = enabled;
             }
         }
+    }
+
+    fn set_surface_selection_behavior(
+        surface: RoasttySurface,
+        clear_on_typing: bool,
+        word_chars: &str,
+    ) {
+        let config = new_test_config_with_selection_behavior(clear_on_typing, word_chars);
+        roastty_surface_update_config(surface, config);
+        roastty_config_free(config);
     }
 
     fn new_test_app_with_clipboard_write_config(
@@ -17156,6 +17233,47 @@ mod tests {
         roastty_app_free(app);
     }
 
+    #[test]
+    fn double_click_word_uses_configured_word_boundaries() {
+        let _guard = pty_command_lock();
+        let config = new_test_config_with_selection_behavior(true, "_");
+        let app = roastty_app_new(ptr::null(), config);
+        let surface = new_test_surface(app);
+        set_test_size_80x24(surface);
+        surface_from_handle(surface).unwrap().termio_worker = Some(test_worker("sleep 5"));
+        surface_from_handle(surface)
+            .unwrap()
+            .termio_worker
+            .as_ref()
+            .unwrap()
+            .with_termio_mut(|termio| {
+                termio.terminal_mut().next_slice(b"foo_bar").unwrap();
+            });
+
+        surface_from_handle(surface)
+            .unwrap()
+            .mouse_pos(45.0, 10.0, 0);
+        let click = |surface: RoasttySurface, t_ns: u64| {
+            SELECTION_TEST_CLOCK_NS.with(|c| c.set(Some(t_ns)));
+            let s = surface_from_handle(surface).unwrap();
+            s.mouse_button(1, 1, 0);
+            s.mouse_button(0, 1, 0);
+        };
+
+        click(surface, 0);
+        click(surface, 1_000_000);
+        assert_eq!(
+            selected_text(surface).as_deref(),
+            Some("bar"),
+            "configured '_' boundary should split foo_bar at the underscore"
+        );
+
+        SELECTION_TEST_CLOCK_NS.with(|c| c.set(None));
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+        roastty_config_free(config);
+    }
+
     /// Issue 802 / Exp 28: a drag held past the top edge autoscrolls the viewport into history;
     /// it stops after the button releases.
     #[test]
@@ -18079,6 +18197,59 @@ mod tests {
         assert!(text.contains('a'), "{text:?}");
 
         roastty_key_event_free(event);
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+    }
+
+    #[test]
+    fn surface_key_respects_clear_on_typing_and_escape_exception() {
+        let _guard = pty_command_lock();
+        let app = new_test_app();
+        let surface = new_test_surface(app);
+        set_surface_selection_behavior(surface, false, "");
+        set_test_size_80x24(surface);
+        surface_from_handle(surface).unwrap().termio_worker = Some(test_worker("sleep 5"));
+        surface_from_handle(surface)
+            .unwrap()
+            .termio_worker
+            .as_ref()
+            .unwrap()
+            .with_termio_mut(|termio| {
+                termio.terminal_mut().next_slice(b"Hello").unwrap();
+            });
+        let selection = surface_worker_selection(surface, (0, 0), (4, 0));
+        set_surface_worker_active_selection(surface, Some(selection));
+
+        let key_a = new_key_event();
+        assert_eq!(
+            roastty_key_event_set_key(key_a, key::Key::KeyA as c_int),
+            ROASTTY_SUCCESS
+        );
+        assert_eq!(
+            roastty_key_event_set_utf8(key_a, b"a".as_ptr(), 1),
+            ROASTTY_SUCCESS
+        );
+        assert!(roastty_surface_key_handle(surface, key_a));
+        assert_eq!(
+            selected_text(surface).as_deref(),
+            Some("Hello"),
+            "printable key must preserve selection when clear-on-typing is false"
+        );
+
+        let escape = new_key_event();
+        assert_eq!(
+            roastty_key_event_set_key(escape, key::Key::Escape as c_int),
+            ROASTTY_SUCCESS
+        );
+        assert!(roastty_surface_key_handle(surface, escape));
+        assert_eq!(
+            selected_text(surface).as_deref(),
+            None,
+            "Escape must clear selection even when clear-on-typing is false"
+        );
+
+        roastty_key_event_free(key_a);
+        roastty_key_event_free(escape);
         roastty_surface_free(surface);
         roastty_app_free(app);
     }
@@ -22627,6 +22798,50 @@ mod tests {
         roastty_config_free(no_protection);
         roastty_config_free(no_bracketed_safe);
         roastty_config_free(bracketed_safe);
+    }
+
+    #[test]
+    fn app_and_surface_update_config_sync_selection_behavior() {
+        let app = new_test_app();
+        let surface = new_test_surface(app);
+        assert!(
+            surface_from_handle(surface)
+                .unwrap()
+                .selection_clear_on_typing
+        );
+        assert_eq!(
+            surface_from_handle(surface).unwrap().selection_word_chars,
+            config::SelectionWordChars::default().codepoints
+        );
+
+        let underscore = new_test_config_with_selection_behavior(false, "_");
+        roastty_app_update_config(app, underscore);
+        assert!(
+            !surface_from_handle(surface)
+                .unwrap()
+                .selection_clear_on_typing
+        );
+        assert_eq!(
+            surface_from_handle(surface).unwrap().selection_word_chars,
+            vec![0, '_' as u32]
+        );
+
+        let semicolon = new_test_config_with_selection_behavior(true, ";");
+        roastty_surface_update_config(surface, semicolon);
+        assert!(
+            surface_from_handle(surface)
+                .unwrap()
+                .selection_clear_on_typing
+        );
+        assert_eq!(
+            surface_from_handle(surface).unwrap().selection_word_chars,
+            vec![0, ';' as u32]
+        );
+
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+        roastty_config_free(underscore);
+        roastty_config_free(semicolon);
     }
 
     #[test]
@@ -27956,6 +28171,35 @@ mod tests {
     }
 
     #[test]
+    fn surface_preedit_respects_clear_on_typing() {
+        let _guard = pty_command_lock();
+        let app = new_test_app();
+        let surface = new_test_surface(app);
+        set_surface_selection_behavior(surface, false, "");
+        surface_from_handle(surface).unwrap().termio_worker = Some(test_worker("sleep 5"));
+        surface_from_handle(surface)
+            .unwrap()
+            .termio_worker
+            .as_ref()
+            .unwrap()
+            .with_termio_mut(|termio| {
+                termio.terminal_mut().next_slice(b"Hello").unwrap();
+            });
+        let selection = surface_worker_selection(surface, (0, 0), (4, 0));
+        set_surface_worker_active_selection(surface, Some(selection));
+
+        roastty_surface_preedit(surface, b"pre".as_ptr().cast(), 3);
+
+        assert_eq!(
+            selected_text(surface).as_deref(),
+            Some("Hello"),
+            "preedit should preserve selection when clear-on-typing is false"
+        );
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+    }
+
+    #[test]
     fn surface_preedit_replaces_existing_value() {
         let app = new_test_app();
         let surface = new_test_surface(app);
@@ -30763,6 +31007,30 @@ mod tests {
     }
 
     #[test]
+    fn surface_quicklook_word_uses_configured_word_boundaries() {
+        let _guard = pty_command_lock();
+        let config_handle = new_test_config_with_selection_behavior(true, "_");
+        let app = roastty_app_new(ptr::null(), config_handle);
+        let command = CString::new("printf 'foo_bar'").unwrap();
+        let mut config = roastty_surface_config_new();
+        config.command = command.as_ptr();
+        let surface = new_test_surface_with_config(app, &config);
+        set_surface_test_geometry(surface, 80, 24, 10, 20);
+        surface_snapshot_text_after_start_until(app, surface, "foo_bar");
+        roastty_surface_mouse_pos(surface, 45.0, 5.0, ROASTTY_MODS_NONE);
+        let mut text = empty_text();
+
+        assert!(roastty_surface_quicklook_word(surface, &mut text));
+
+        assert_eq!(text.offset_start, 4);
+        assert_eq!(text.offset_len, 2);
+        assert_eq!(take_roastty_text(text), b"bar");
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+        roastty_config_free(config_handle);
+    }
+
+    #[test]
     fn surface_quicklook_word_preserves_active_selection() {
         let _guard = pty_command_lock();
         let app = new_test_app();
@@ -31109,6 +31377,45 @@ mod tests {
             .unwrap()
             .last_termio_error
             .is_none());
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+    }
+
+    #[test]
+    fn surface_text_respects_clear_on_typing() {
+        let _guard = pty_command_lock();
+        let app = new_test_app();
+        let surface = new_test_surface(app);
+        set_test_size_80x24(surface);
+        surface_from_handle(surface).unwrap().termio_worker = Some(test_worker("sleep 5"));
+        surface_from_handle(surface)
+            .unwrap()
+            .termio_worker
+            .as_ref()
+            .unwrap()
+            .with_termio_mut(|termio| {
+                termio.terminal_mut().next_slice(b"Hello").unwrap();
+            });
+        let selection = surface_worker_selection(surface, (0, 0), (4, 0));
+        set_surface_worker_active_selection(surface, Some(selection));
+
+        roastty_surface_text(surface, b"a".as_ptr().cast(), 1);
+        assert_eq!(
+            selected_text(surface).as_deref(),
+            None,
+            "default clear-on-typing should clear selection after text entry"
+        );
+
+        set_surface_selection_behavior(surface, false, "");
+        let selection = surface_worker_selection(surface, (0, 0), (4, 0));
+        set_surface_worker_active_selection(surface, Some(selection));
+        roastty_surface_text(surface, b"b".as_ptr().cast(), 1);
+        assert_eq!(
+            selected_text(surface).as_deref(),
+            Some("Hello"),
+            "disabled clear-on-typing should preserve selection after text entry"
+        );
+
         roastty_surface_free(surface);
         roastty_app_free(app);
     }
