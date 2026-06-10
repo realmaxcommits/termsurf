@@ -121,3 +121,59 @@ defaults/order match upstream `Config.zig`, upstream renderer derived config
 copies the four search fields from `Config`, existing Roastty renderer defaults
 already match those values, and Exp61's result commit exists before Exp62
 implementation.
+
+## Result
+
+**Result:** Pass
+
+Implemented the search color config slice:
+
+- added `search_foreground`, `search_background`, `search_selected_foreground`,
+  and `search_selected_background` to `Config` with upstream defaults;
+- routed all four keys through `Config::set`, `format_config`, default
+  construction, clone/equality, and diagnostics;
+- preserved formatter order immediately after `split-preserve-zoom`;
+- added `SelectionConfig::from_config(&Config)` and a `TerminalColor` →
+  `SelectionColor` conversion so explicit colors and cell-relative sentinels
+  feed renderer search highlight colors;
+- changed `FrameRenderKnobs::from_config` to carry the config-derived
+  `SelectionConfig` into frame rebuild input while preserving default frame
+  behavior.
+
+Verification:
+
+- `cargo fmt -- roastty/src/config/mod.rs roastty/src/renderer/cell.rs roastty/src/renderer/frame_renderer.rs`
+  passed.
+- `cargo test -p roastty search_color_config` passed.
+- `cargo test -p roastty selection_config` passed.
+- `cargo test -p roastty config_format_config` passed.
+- `cargo test -p roastty from_config_sources_config_values` passed.
+- `cargo test -p roastty` passed: 4497 unit tests, ABI harness, and doc-tests.
+  The ABI harness still emits the existing enum conversion warnings.
+- `cargo fmt --check` passed.
+- `git diff --check` passed.
+
+## Conclusion
+
+The upstream search highlight color config keys now exist on `Config`, round
+trip through parsing/formatting, and feed renderer `SelectionConfig`. Search
+match discovery, search action dispatch, and live highlight population remain
+separate renderer/search work.
+
+## Completion Review
+
+Codex adversarial reviewer `019eb399-ec8c-7ee1-bc5e-ad7663c3b9f3` returned
+**Approved** with no findings.
+
+The reviewer verified that the result commit had not been made yet, the working
+tree contained only the intended five files, upstream defaults/order and
+renderer derived config matched `vendor/ghostty`, the README marked Exp62
+`Pass`, and the experiment had Result and Conclusion sections. It also reran:
+
+- `cargo test -p roastty search_color_config`
+- `cargo test -p roastty selection_config`
+- `cargo test -p roastty config_format_config`
+- `cargo test -p roastty from_config_sources_config_values`
+- `cargo test -p roastty`
+- `cargo fmt --check`
+- `git diff --check`

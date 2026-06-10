@@ -102,6 +102,14 @@ pub(crate) struct Config {
     pub split_divider_color: Option<Color>,
     /// `split-preserve-zoom`.
     pub split_preserve_zoom: SplitPreserveZoom,
+    /// `search-foreground`.
+    pub search_foreground: TerminalColor,
+    /// `search-background`.
+    pub search_background: TerminalColor,
+    /// `search-selected-foreground`.
+    pub search_selected_foreground: TerminalColor,
+    /// `search-selected-background`.
+    pub search_selected_background: TerminalColor,
     /// `window-padding-color`.
     pub window_padding_color: WindowPaddingColor,
     /// `background-opacity`.
@@ -254,6 +262,18 @@ impl Default for Config {
             unfocused_split_fill: None,
             split_divider_color: None,
             split_preserve_zoom: SplitPreserveZoom::default(),
+            search_foreground: TerminalColor::Color(Color { r: 0, g: 0, b: 0 }),
+            search_background: TerminalColor::Color(Color {
+                r: 0xff,
+                g: 0xe0,
+                b: 0x82,
+            }),
+            search_selected_foreground: TerminalColor::Color(Color { r: 0, g: 0, b: 0 }),
+            search_selected_background: TerminalColor::Color(Color {
+                r: 0xf2,
+                g: 0xa5,
+                b: 0x7e,
+            }),
             window_padding_color: WindowPaddingColor::Background,
             background_opacity: 1.0,
             background_opacity_cells: false,
@@ -411,6 +431,14 @@ impl Config {
             .entry_optional(self.split_divider_color, |v, f| v.format_entry(f));
         self.split_preserve_zoom
             .format_entry(&mut EntryFormatter::new("split-preserve-zoom", out));
+        self.search_foreground
+            .format_entry(&mut EntryFormatter::new("search-foreground", out));
+        self.search_background
+            .format_entry(&mut EntryFormatter::new("search-background", out));
+        self.search_selected_foreground
+            .format_entry(&mut EntryFormatter::new("search-selected-foreground", out));
+        self.search_selected_background
+            .format_entry(&mut EntryFormatter::new("search-selected-background", out));
         EntryFormatter::new("background-opacity", out).entry_float(self.background_opacity);
         EntryFormatter::new("background-opacity-cells", out)
             .entry_bool(self.background_opacity_cells);
@@ -803,6 +831,28 @@ impl Config {
                     value,
                     default.split_preserve_zoom,
                     SplitPreserveZoom::parse_cli,
+                )?
+            }
+            "search-foreground" => {
+                self.search_foreground =
+                    set_value_field(value, default.search_foreground, TerminalColor::parse_cli)?
+            }
+            "search-background" => {
+                self.search_background =
+                    set_value_field(value, default.search_background, TerminalColor::parse_cli)?
+            }
+            "search-selected-foreground" => {
+                self.search_selected_foreground = set_value_field(
+                    value,
+                    default.search_selected_foreground,
+                    TerminalColor::parse_cli,
+                )?
+            }
+            "search-selected-background" => {
+                self.search_selected_background = set_value_field(
+                    value,
+                    default.search_selected_background,
+                    TerminalColor::parse_cli,
                 )?
             }
             "background-image-repeat" => {
@@ -5009,6 +5059,30 @@ mod tests {
         assert_eq!(d.unfocused_split_fill, None);
         assert_eq!(d.split_divider_color, None);
         assert_eq!(d.split_preserve_zoom, SplitPreserveZoom::default());
+        assert_eq!(
+            d.search_foreground,
+            TerminalColor::Color(Color { r: 0, g: 0, b: 0 })
+        );
+        assert_eq!(
+            d.search_background,
+            TerminalColor::Color(Color {
+                r: 0xff,
+                g: 0xe0,
+                b: 0x82,
+            })
+        );
+        assert_eq!(
+            d.search_selected_foreground,
+            TerminalColor::Color(Color { r: 0, g: 0, b: 0 })
+        );
+        assert_eq!(
+            d.search_selected_background,
+            TerminalColor::Color(Color {
+                r: 0xf2,
+                g: 0xa5,
+                b: 0x7e,
+            })
+        );
         assert_eq!(d.window_padding_color, WindowPaddingColor::Background);
         assert_eq!(d.background_opacity, 1.0);
         // Opacity options (Experiment 848): upstream defaults false / 0.5.
@@ -8887,6 +8961,10 @@ mod tests {
                 "unfocused-split-fill",
                 "split-divider-color",
                 "split-preserve-zoom",
+                "search-foreground",
+                "search-background",
+                "search-selected-foreground",
+                "search-selected-background",
                 "background-opacity",
                 "background-opacity-cells",
                 "bell-audio-path",
@@ -9978,6 +10056,143 @@ mod tests {
         assert_eq!(
             cfg.set("split-preserve-zoom", Some("unknown")),
             Err(ConfigSetError::InvalidValue)
+        );
+    }
+
+    #[test]
+    fn search_color_config_defaults_parse_format_and_diagnose() {
+        let line = |cfg: &Config, key: &str| -> String {
+            let mut out = String::new();
+            cfg.format_config(&mut out);
+            out.lines()
+                .find(|l| l.starts_with(&format!("{} = ", key)))
+                .unwrap()
+                .to_string()
+        };
+
+        let mut cfg = Config::default();
+        assert_eq!(
+            line(&cfg, "search-foreground"),
+            "search-foreground = #000000"
+        );
+        assert_eq!(
+            line(&cfg, "search-background"),
+            "search-background = #ffe082"
+        );
+        assert_eq!(
+            line(&cfg, "search-selected-foreground"),
+            "search-selected-foreground = #000000"
+        );
+        assert_eq!(
+            line(&cfg, "search-selected-background"),
+            "search-selected-background = #f2a57e"
+        );
+
+        cfg.set("search-foreground", Some("#010203")).unwrap();
+        assert_eq!(
+            cfg.search_foreground,
+            TerminalColor::Color(Color { r: 1, g: 2, b: 3 })
+        );
+        assert_eq!(
+            line(&cfg, "search-foreground"),
+            "search-foreground = #010203"
+        );
+
+        cfg.set("search-background", Some("ForestGreen")).unwrap();
+        assert_eq!(
+            cfg.search_background,
+            TerminalColor::Color(Color {
+                r: 0x22,
+                g: 0x8b,
+                b: 0x22,
+            })
+        );
+        assert_eq!(
+            line(&cfg, "search-background"),
+            "search-background = #228b22"
+        );
+
+        cfg.set("search-selected-foreground", Some("cell-foreground"))
+            .unwrap();
+        assert_eq!(
+            cfg.search_selected_foreground,
+            TerminalColor::CellForeground
+        );
+        assert_eq!(
+            line(&cfg, "search-selected-foreground"),
+            "search-selected-foreground = cell-foreground"
+        );
+
+        cfg.set("search-selected-background", Some("cell-background"))
+            .unwrap();
+        assert_eq!(
+            cfg.search_selected_background,
+            TerminalColor::CellBackground
+        );
+        assert_eq!(
+            line(&cfg, "search-selected-background"),
+            "search-selected-background = cell-background"
+        );
+
+        cfg.set("search-background", Some("")).unwrap();
+        assert_eq!(
+            cfg.search_background,
+            TerminalColor::Color(Color {
+                r: 0xff,
+                g: 0xe0,
+                b: 0x82,
+            })
+        );
+        assert_eq!(
+            line(&cfg, "search-background"),
+            "search-background = #ffe082"
+        );
+
+        assert_eq!(
+            cfg.set("search-foreground", None),
+            Err(ConfigSetError::ValueRequired)
+        );
+        assert_eq!(
+            cfg.set("search-selected-background", Some("notacolor")),
+            Err(ConfigSetError::InvalidValue)
+        );
+
+        let diagnostics = cfg.load_str(
+            "search-foreground = #0a0b0c\nsearch-background\nsearch-selected-foreground = nope\n",
+        );
+        assert_eq!(
+            cfg.search_foreground,
+            TerminalColor::Color(Color {
+                r: 10,
+                g: 11,
+                b: 12
+            })
+        );
+        assert_eq!(
+            diagnostics,
+            vec![
+                ConfigDiagnostic {
+                    line: 2,
+                    key: "search-background".to_string(),
+                    error: ConfigSetError::ValueRequired,
+                },
+                ConfigDiagnostic {
+                    line: 3,
+                    key: "search-selected-foreground".to_string(),
+                    error: ConfigSetError::InvalidValue,
+                },
+            ]
+        );
+
+        assert_eq!(
+            cfg.set("search-selected-background", Some("#040506"))
+                .map(|_| {
+                    let cloned = cfg.clone();
+                    cloned == cfg
+                        && cloned.search_selected_background
+                            == TerminalColor::Color(Color { r: 4, g: 5, b: 6 })
+                }),
+            Ok(true)
         );
     }
 

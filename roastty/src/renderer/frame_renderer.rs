@@ -201,6 +201,7 @@ pub(crate) struct FrameRenderKnobs {
     pub(crate) padding_color: WindowPaddingColor,
     pub(crate) overlay_alpha: u8,
     pub(crate) cursor_overlay_alpha: u8,
+    pub(crate) selection_config: SelectionConfig,
 }
 
 impl FrameRenderKnobs {
@@ -222,6 +223,7 @@ impl FrameRenderKnobs {
             padding_color: config.window_padding_color,
             overlay_alpha: 255,
             cursor_overlay_alpha: (config.cursor_opacity.clamp(0.0, 1.0) * 255.0).ceil() as u8,
+            selection_config: SelectionConfig::from_config(config),
         }
     }
 }
@@ -229,7 +231,7 @@ impl FrameRenderKnobs {
 /// Render data derived from the live terminal — the effective default fg/bg,
 /// palette, cursor, and per-row never-extend flags — plus the dynamic buffers the
 /// rebuild input borrows. The remaining stubs (until their own slices):
-/// `highlights`/`link_ranges` empty and `selection_config` default.
+/// `highlights`/`link_ranges` empty.
 pub(crate) struct FrameRenderState {
     default_fg: Rgb,
     default_bg: Rgb,
@@ -239,7 +241,6 @@ pub(crate) struct FrameRenderState {
     screen_fg: Rgb,
     highlights: Vec<Vec<Highlight>>,
     link_ranges: Vec<Vec<[u16; 2]>>,
-    selection_config: SelectionConfig,
     row_never_extend: Vec<bool>,
 }
 
@@ -289,7 +290,6 @@ impl FrameRenderState {
             screen_fg: default_fg,
             highlights: Vec::new(),
             link_ranges: Vec::new(),
-            selection_config: SelectionConfig::default(),
             row_never_extend,
         }
     }
@@ -304,7 +304,7 @@ impl FrameRenderState {
             row_format: FrameSnapshotRowFormatInput {
                 highlights: &self.highlights,
                 link_ranges: &self.link_ranges,
-                selection_config: &self.selection_config,
+                selection_config: &knobs.selection_config,
                 default_fg: self.default_fg,
                 default_bg: self.default_bg,
                 palette: &self.palette,
@@ -355,6 +355,7 @@ mod tests {
     use super::*;
     use crate::config::WindowPaddingColor;
     use crate::font::run::Wide;
+    use crate::renderer::cell::SelectionColor;
     use crate::renderer::cell::{Highlight, SelectionConfig};
     use crate::renderer::cursor::Style as CursorStyle;
     use crate::renderer::frame_rebuild::{
@@ -810,6 +811,7 @@ mod tests {
             padding_color: WindowPaddingColor::Extend,
             overlay_alpha: 219,
             cursor_overlay_alpha: 211,
+            selection_config: SelectionConfig::default(),
         }
     }
 
@@ -983,6 +985,7 @@ mod tests {
         assert_eq!(knobs.cursor_overlay_alpha, 255);
         assert_eq!(knobs.faint_opacity, 128);
         assert!(!knobs.background_opacity_cells);
+        assert_eq!(knobs.selection_config, SelectionConfig::default());
     }
 
     #[test]
@@ -992,12 +995,23 @@ mod tests {
         cfg.set("font-thicken-strength", Some("200")).unwrap();
         cfg.set("background-opacity", Some("0.7")).unwrap();
         cfg.set("bold-color", Some("bright")).unwrap();
+        cfg.set("search-background", Some("#010203")).unwrap();
+        cfg.set("search-foreground", Some("cell-background"))
+            .unwrap();
 
         let knobs = FrameRenderKnobs::from_config(&cfg);
         assert!(knobs.thicken);
         assert_eq!(knobs.thicken_strength, 200);
         assert_eq!(knobs.background_opacity, 0.7);
         assert!(matches!(knobs.bold, Some(BoldColor::Bright)));
+        assert_eq!(
+            knobs.selection_config.search_background,
+            SelectionColor::Color(Rgb::new(1, 2, 3))
+        );
+        assert_eq!(
+            knobs.selection_config.search_foreground,
+            SelectionColor::CellBackground
+        );
     }
 
     #[test]

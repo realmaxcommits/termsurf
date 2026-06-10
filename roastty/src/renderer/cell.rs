@@ -16,6 +16,7 @@ use super::cursor::Style as CursorStyle;
 use super::shader::{CellBg, CellTextAtlas, CellTextFlags, CellTextVertex};
 use super::size::GridSize;
 use super::state::{Preedit, PreeditRange};
+use crate::config::{Config, TerminalColor};
 use crate::font::codepoint_resolver::ResolverRenderError;
 use crate::font::collection::{Index, Special};
 use crate::font::face::constraint::{Constraint, Size};
@@ -296,6 +297,16 @@ pub(crate) enum SelectionColor {
     CellBackground,
 }
 
+impl From<TerminalColor> for SelectionColor {
+    fn from(value: TerminalColor) -> Self {
+        match value {
+            TerminalColor::Color(color) => SelectionColor::Color(color.to_terminal_rgb()),
+            TerminalColor::CellForeground => SelectionColor::CellForeground,
+            TerminalColor::CellBackground => SelectionColor::CellBackground,
+        }
+    }
+}
+
 /// Compute a *selected* cell's final colors — upstream's `.selection` arms of the
 /// per-cell background/foreground switches. `background`/`foreground` are the
 /// `selection-background`/`selection-foreground` config (`None` → the default
@@ -507,7 +518,7 @@ pub(crate) struct PreeditSkip {
 /// The selection/search color config. `selection-*` is optional (`None` → a plain
 /// reverse); the `search-*`/`search-selected-*` values are non-optional (upstream
 /// `TerminalColor`s with concrete defaults).
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct SelectionConfig {
     pub background: Option<SelectionColor>,
     pub foreground: Option<SelectionColor>,
@@ -527,6 +538,19 @@ impl Default for SelectionConfig {
             search_foreground: SelectionColor::Color(Rgb::new(0, 0, 0)),
             search_selected_background: SelectionColor::Color(Rgb::new(0xF2, 0xA5, 0x7E)),
             search_selected_foreground: SelectionColor::Color(Rgb::new(0, 0, 0)),
+        }
+    }
+}
+
+impl SelectionConfig {
+    pub(crate) fn from_config(config: &Config) -> Self {
+        Self {
+            background: config.selection_background.map(SelectionColor::from),
+            foreground: config.selection_foreground.map(SelectionColor::from),
+            search_background: SelectionColor::from(config.search_background),
+            search_foreground: SelectionColor::from(config.search_foreground),
+            search_selected_background: SelectionColor::from(config.search_selected_background),
+            search_selected_foreground: SelectionColor::from(config.search_selected_foreground),
         }
     }
 }
@@ -4975,6 +4999,49 @@ mod tests {
         assert_eq!(
             colors(Selected::Search, true, &cell_cfg),
             Some(CellColors { fg: b, bg: Some(b) })
+        );
+    }
+
+    #[test]
+    fn selection_config_from_config_sources_search_colors() {
+        let mut config = Config::default();
+        config
+            .set("selection-background", Some("cell-background"))
+            .unwrap();
+        config.set("selection-foreground", Some("#010203")).unwrap();
+        config.set("search-background", Some("#040506")).unwrap();
+        config
+            .set("search-foreground", Some("cell-foreground"))
+            .unwrap();
+        config
+            .set("search-selected-background", Some("cell-background"))
+            .unwrap();
+        config
+            .set("search-selected-foreground", Some("ForestGreen"))
+            .unwrap();
+
+        let selection = SelectionConfig::from_config(&config);
+        assert_eq!(selection.background, Some(SelectionColor::CellBackground));
+        assert_eq!(
+            selection.foreground,
+            Some(SelectionColor::Color(Rgb::new(1, 2, 3)))
+        );
+        assert_eq!(
+            selection.search_background,
+            SelectionColor::Color(Rgb::new(4, 5, 6))
+        );
+        assert_eq!(selection.search_foreground, SelectionColor::CellForeground);
+        assert_eq!(
+            selection.search_selected_background,
+            SelectionColor::CellBackground
+        );
+        assert_eq!(
+            selection.search_selected_foreground,
+            SelectionColor::Color(Rgb::new(0x22, 0x8b, 0x22))
+        );
+        assert_eq!(
+            SelectionConfig::from_config(&Config::default()),
+            SelectionConfig::default()
         );
     }
 
