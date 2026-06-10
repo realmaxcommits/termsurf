@@ -24,3 +24,21 @@ swift scripts/roastty-app/pngdiff.swift expected.png actual.png \
 The helper exits `0` when the metrics are within the supplied thresholds and
 nonzero on threshold failure, dimension mismatch, invalid input, or unreadable
 images.
+
+## Live A/B Smoke
+
+`live-ab-smoke.sh` launches the debug Ghostty and Roastty apps, drives the same
+ASCII marker command into both, captures Ghostty with its window screenshot
+wrapper, captures Roastty through the IOSurface-safe full-screen-plus-crop path,
+and compares the captures with `pngdiff.swift`.
+
+```bash
+scripts/roastty-app/live-ab-smoke.sh \
+  --max-mismatch-ratio 1 \
+  --max-mean-channel-delta 255
+```
+
+The script prints one JSON summary object to stdout and diagnostics to stderr.
+It traps cleanup through the scoped app stop scripts, but run
+`scripts/ghostty-app/stop-app.sh` and `scripts/roastty-app/stop-app.sh` after
+manual debugging if a run is interrupted externally.

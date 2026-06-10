@@ -118,3 +118,90 @@ The first review returned `CHANGES REQUIRED` with two Required findings:
   `swift scripts/roastty-app/pngdiff.swift <ghostty.png> <roastty-crop.png>`.
 
 The focused re-review approved both fixes and found no new Required issues.
+
+## Result
+
+**Result:** Pass
+
+Added `scripts/roastty-app/live-ab-smoke.sh`, a reusable Phase-D smoke harness
+that launches the debug Ghostty and Roastty apps, normalizes their front-window
+size, drives the same `clear; echo ISSUE802_AB_SMOKE_<timestamp>` shell command
+into both apps, captures Ghostty through the existing window-id screenshot
+wrapper, captures Roastty through the IOSurface-safe full-screen-plus-crop path,
+diffs the two captures with `swift scripts/roastty-app/pngdiff.swift`, emits one
+JSON summary object to stdout, and traps cleanup through exact launched PID-tree
+kills after expected debug app path verification.
+
+Implementation notes:
+
+- The Roastty crop uses `list-windows.swift` to find the app window, captures
+  the full screen with `screencapture`, and crops with `crop.swift`.
+- The crop size is matched to the Ghostty capture's pixel dimensions so
+  `pngdiff.swift` compares same-sized images.
+- The script accepts `--max-mismatch-ratio` and `--max-mean-channel-delta` and
+  passes both through to `pngdiff.swift`.
+- Cleanup kills only the Ghostty/Roastty PID trees launched by this harness
+  after verifying the PID command is under the expected debug app path.
+- `scripts/roastty-app/README.md` now documents the harness.
+- The Issue 802 README records the harness under Screenshots / Operating notes,
+  marks the Phase-A live A/B line complete, marks the Phase-D "point the harness
+  at Roastty" line complete, and marks Experiment 39 `Pass`.
+
+Verification:
+
+- `bash -n scripts/roastty-app/live-ab-smoke.sh`
+- Permissive live run:
+  - `scripts/roastty-app/live-ab-smoke.sh --max-mismatch-ratio 1 --max-mean-channel-delta 255`
+  - Exited `0`.
+  - Launched Ghostty PID `44674` and Roastty PID `44689`.
+  - Captured Ghostty at `1000x1000` and a matching Roastty crop at `1000x1000`.
+  - Printed one JSON summary object with `verdict: PASS`, `diff_exit_status: 0`,
+    `mismatch_ratio: 1`, and `mean_channel_delta: 107.99203675`.
+  - The trap killed Ghostty descendants `44682`, `44683`, Ghostty PID `44674`,
+    Roastty descendant `44696`, and Roastty PID `44689`.
+- Strict live run:
+  - `bash -lc 'scripts/roastty-app/live-ab-smoke.sh; rc=$?; echo strict_exit=$rc; exit 0'`
+  - Harness exited `1`, wrapper printed `strict_exit=1`.
+  - Launched Ghostty PID `44845` and Roastty PID `44859`.
+  - Captured both comparison images at `1000x1000`.
+  - Printed one JSON summary object with `verdict: FAIL`, `diff_exit_status: 1`,
+    `mismatch_ratio: 1`, and `mean_channel_delta: 107.98813075`.
+  - The trap killed Ghostty descendants `44852`, `44853`, Ghostty PID `44845`,
+    Roastty descendant `44866`, and Roastty PID `44859`.
+- `scripts/ghostty-app/stop-app.sh && scripts/roastty-app/stop-app.sh`
+- `pgrep -fl '[G]hostty.app/Contents/MacOS/ghostty|[R]oastty.app/Contents/MacOS/roastty' || true`
+  - no output after cleanup.
+- `prettier --write --prose-wrap always --print-width 80 issues/0802-libroastty-completion-and-mac-app/README.md issues/0802-libroastty-completion-and-mac-app/39-live-ab-smoke-harness.md scripts/roastty-app/README.md`
+- `git diff --check`
+- `git status --short`
+  - no screenshot or PNG artifacts in the repo.
+
+## Conclusion
+
+Issue 802 now has the first repeatable live A/B app harness. Later Phase-D
+experiments can extend this from one ASCII smoke marker into feature-specific
+recipes, crop regions, thresholds, and behavior assertions.
+
+Strict visual parity is not achieved yet, and this experiment does not claim it:
+the strict run currently fails with a recorded mismatch metric. The value of
+this experiment is that every later visual conformance slice has a live,
+machine-readable app-to-app comparison path.
+
+## Completion Review
+
+**Reviewer:** Codex-native adversarial subagent (`multi_agent_v1.spawn_agent`,
+fresh context, read-only). **Verdict: APPROVED.**
+
+The reviewer found no Required issues. It reported one Optional cleanup hygiene
+finding: the harness recorded the launched PIDs but called the broad
+build-path-scoped stop scripts, so it could kill another debug app from the same
+build tree. Fixed by making the harness cleanup kill only the launched
+Ghostty/Roastty PID trees after verifying each PID command is under the expected
+debug app path.
+
+The reviewer independently ran `bash -n scripts/roastty-app/live-ab-smoke.sh`,
+`git diff --check`, the scoped `pgrep` cleanup check, `git status --short`, and
+source/diff inspection. It did not run the live GUI harness.
+
+A focused re-review found and then approved the cleanup wording fix in this
+result record.

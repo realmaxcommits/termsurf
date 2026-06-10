@@ -209,10 +209,17 @@ before re-reading experiments.
   `$TERMSURF_SHOT_DIR` (default `~/.cache/termsurf/shots`); `__screenshots__/`
   is gitignored.
 - **Diff two captures:**
-  `scripts/roastty-app/pngdiff.swift <expected.png> <actual.png>` emits one JSON
-  metrics object on stdout and writes no artifacts (threshold flags:
+  `swift scripts/roastty-app/pngdiff.swift <expected.png> <actual.png>` emits
+  one JSON metrics object on stdout and writes no artifacts (threshold flags:
   `--max-mismatch-ratio`, `--max-mean-channel-delta`). Use it for Phase-D live
   A/B verdicts; keep images outside the repo. (Exp 38.)
+- **Run the first live A/B smoke:**
+  `scripts/roastty-app/live-ab-smoke.sh --max-mismatch-ratio 1 --max-mean-channel-delta 255`
+  launches debug Ghostty + Roastty, drives the same ASCII marker, captures
+  Ghostty by window id, captures Roastty through the IOSurface-safe full-screen
+  crop path, diffs the captures, prints one JSON summary, and traps scoped app
+  cleanup. Strict thresholds currently fail with a useful metric rather than
+  parity. (Exp 39.)
 
 ### Input injection (Exp 5)
 
@@ -330,7 +337,7 @@ the live app, verified by a Phase-D UI test.)
       keyboard+mouse matrix mapped; scroll works, 4 known failures) — keyboard
       via `osascript`, mouse via `inject.swift`, byte-log/pasteboard/screenshot
       oracles
-- [ ] Live-A/B compare (real app vs roastty app, same run) — replaces committed
+- [x] Live-A/B compare (real app vs roastty app, same run) — replaces committed
       "golden" images per the Screenshots policy; deferred to the diff
       experiment (Phase B+)
 
@@ -373,7 +380,7 @@ the live app, verified by a Phase-D UI test.)
 
 **Phase D — Automated UI tests for the roastty-backed app**
 
-- [ ] Point the Phase-A harness at the renamed roastty-backed app
+- [x] Point the Phase-A harness at the renamed roastty-backed app
 - [ ] Golden-diff its screenshots/behavior against the Phase-A real-Ghostty
       baseline
 - [ ] Repeatable in-session run, wired so every later phase is regression-tested
@@ -597,7 +604,7 @@ stays unaltered except for the rename).
 - [Experiment 38: Phase D — screenshot diff metric for live A/B checks](38-screenshot-diff-metric.md)
   — **Pass** · Codex/Codex/Codex
 - [Experiment 39: Phase D — live A/B smoke harness](39-live-ab-smoke-harness.md)
-  — **Designed**
+  — **Pass**
 
 ## Process
 
