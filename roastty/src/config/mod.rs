@@ -59,10 +59,16 @@ pub(crate) struct Config {
     pub clipboard_paste_bracketed_safe: bool,
     /// `mouse-shift-capture`.
     pub mouse_shift_capture: MouseShiftCapture,
+    /// `mouse-reporting`.
+    pub mouse_reporting: bool,
+    /// `mouse-scroll-multiplier`.
+    pub mouse_scroll_multiplier: MouseScrollMultiplier,
     /// `right-click-action`.
     pub right_click_action: RightClickAction,
     /// `middle-click-action`.
     pub middle_click_action: MiddleClickAction,
+    /// `click-repeat-interval`.
+    pub click_repeat_interval: u32,
     /// `config-file`.
     pub config_file: RepeatableConfigPath,
     /// `config-default-files`.
@@ -210,8 +216,11 @@ impl Default for Config {
             clipboard_paste_protection: true,
             clipboard_paste_bracketed_safe: true,
             mouse_shift_capture: MouseShiftCapture::False,
+            mouse_reporting: true,
+            mouse_scroll_multiplier: MouseScrollMultiplier::default(),
             right_click_action: RightClickAction::ContextMenu,
             middle_click_action: MiddleClickAction::PrimaryPaste,
+            click_repeat_interval: 0,
             config_file: RepeatableConfigPath::default(),
             config_default_files: true,
             shell_integration: ShellIntegration::Detect,
@@ -362,6 +371,9 @@ impl Config {
             .format_entry(&mut EntryFormatter::new("scroll-to-bottom", out));
         self.mouse_shift_capture
             .format_entry(&mut EntryFormatter::new("mouse-shift-capture", out));
+        EntryFormatter::new("mouse-reporting", out).entry_bool(self.mouse_reporting);
+        self.mouse_scroll_multiplier
+            .format_entry(&mut EntryFormatter::new("mouse-scroll-multiplier", out));
         self.background_blur
             .format_entry(&mut EntryFormatter::new("background-blur", out));
         EntryFormatter::new("background-opacity", out).entry_float(self.background_opacity);
@@ -422,6 +434,7 @@ impl Config {
             .format_entry(&mut EntryFormatter::new("right-click-action", out));
         self.middle_click_action
             .format_entry(&mut EntryFormatter::new("middle-click-action", out));
+        EntryFormatter::new("click-repeat-interval", out).entry_int(self.click_repeat_interval);
         self.config_file
             .format_entry(&mut EntryFormatter::new("config-file", out));
         EntryFormatter::new("config-default-files", out).entry_bool(self.config_default_files);
@@ -519,6 +532,10 @@ impl Config {
                     MouseShiftCapture::from_keyword,
                 )?
             }
+            "mouse-reporting" => {
+                self.mouse_reporting = set_bool_field(value, default.mouse_reporting)?
+            }
+            "mouse-scroll-multiplier" => self.mouse_scroll_multiplier.parse_cli(value)?,
             "right-click-action" => {
                 self.right_click_action = set_enum_field(
                     value,
@@ -532,6 +549,10 @@ impl Config {
                     default.middle_click_action,
                     MiddleClickAction::from_keyword,
                 )?
+            }
+            "click-repeat-interval" => {
+                self.click_repeat_interval =
+                    set_value_field(value, default.click_repeat_interval, parse_u32_field)?
             }
             "config-file" => self.config_file.parse_cli(value)?,
             "config-default-files" => {
@@ -825,22 +846,27 @@ impl Config {
         Ok(())
     }
 
-    /// Finalize derived config defaults (upstream `Config.finalize`). If a
-    /// regular font family is configured and a styled family list is empty, copy
-    /// the regular list so style discovery stays within the requested family.
+    /// Finalize derived config defaults (upstream `Config.finalize`).
     pub(crate) fn finalize(&mut self) {
-        if self.font_family.count() == 0 {
-            return;
+        if self.font_family.count() != 0 {
+            if self.font_family_bold.count() == 0 {
+                self.font_family_bold = self.font_family.clone();
+            }
+            if self.font_family_italic.count() == 0 {
+                self.font_family_italic = self.font_family.clone();
+            }
+            if self.font_family_bold_italic.count() == 0 {
+                self.font_family_bold_italic = self.font_family.clone();
+            }
         }
-        if self.font_family_bold.count() == 0 {
-            self.font_family_bold = self.font_family.clone();
+
+        if self.click_repeat_interval == 0 {
+            self.click_repeat_interval = 500;
         }
-        if self.font_family_italic.count() == 0 {
-            self.font_family_italic = self.font_family.clone();
-        }
-        if self.font_family_bold_italic.count() == 0 {
-            self.font_family_bold_italic = self.font_family.clone();
-        }
+        self.mouse_scroll_multiplier.precision =
+            self.mouse_scroll_multiplier.precision.clamp(0.01, 10_000.0);
+        self.mouse_scroll_multiplier.discrete =
+            self.mouse_scroll_multiplier.discrete.clamp(0.01, 10_000.0);
     }
 
     /// Load config from a source string (upstream's config-file `parse` driving
@@ -2273,6 +2299,11 @@ impl WindowPadding {
 /// [`Duration::parse_cli`].)
 fn parse_u32_dec(buf: &str) -> Option<u32> {
     parse_uint(buf, 10, u32::MAX as u64).ok().map(|v| v as u32)
+}
+
+fn parse_u32_field(value: Option<&str>) -> Result<u32, MagicParseError> {
+    let value = value.ok_or(MagicParseError::ValueRequired)?;
+    parse_u32_dec(value).ok_or(MagicParseError::InvalidValue)
 }
 
 /// An error parsing `WindowDecoration` (upstream `error.InvalidValue`).
@@ -4329,6 +4360,89 @@ impl MouseShiftCapture {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct MouseScrollMultiplier {
+    pub precision: f64,
+    pub discrete: f64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum MouseScrollMultiplierParseError {
+    ValueRequired,
+    InvalidValue,
+}
+
+impl From<MouseScrollMultiplierParseError> for ConfigSetError {
+    fn from(error: MouseScrollMultiplierParseError) -> Self {
+        match error {
+            MouseScrollMultiplierParseError::ValueRequired => ConfigSetError::ValueRequired,
+            MouseScrollMultiplierParseError::InvalidValue => ConfigSetError::InvalidValue,
+        }
+    }
+}
+
+impl Default for MouseScrollMultiplier {
+    fn default() -> Self {
+        MouseScrollMultiplier {
+            precision: 1.0,
+            discrete: 3.0,
+        }
+    }
+}
+
+impl MouseScrollMultiplier {
+    pub(crate) fn parse_cli(
+        &mut self,
+        value: Option<&str>,
+    ) -> Result<(), MouseScrollMultiplierParseError> {
+        let input = value.ok_or(MouseScrollMultiplierParseError::ValueRequired)?;
+        if input.is_empty() {
+            return Err(MouseScrollMultiplierParseError::InvalidValue);
+        }
+
+        if !input.contains(':') {
+            let parsed = input
+                .parse::<f64>()
+                .map_err(|_| MouseScrollMultiplierParseError::InvalidValue)?;
+            self.precision = parsed;
+            self.discrete = parsed;
+            return Ok(());
+        }
+
+        let ws = |c: char| c == ' ' || c == '\t';
+        let mut splitter = CommaSplitter::new(input);
+        while let Some(entry) = splitter
+            .next()
+            .map_err(|_| MouseScrollMultiplierParseError::InvalidValue)?
+        {
+            if entry.is_empty() {
+                return Err(MouseScrollMultiplierParseError::InvalidValue);
+            }
+            let idx = entry
+                .find(':')
+                .ok_or(MouseScrollMultiplierParseError::InvalidValue)?;
+            let key = entry[..idx].trim_matches(ws);
+            let raw = entry[idx + 1..].trim_matches(ws);
+            let parsed = raw
+                .parse::<f64>()
+                .map_err(|_| MouseScrollMultiplierParseError::InvalidValue)?;
+            match key {
+                "precision" => self.precision = parsed,
+                "discrete" => self.discrete = parsed,
+                _ => return Err(MouseScrollMultiplierParseError::InvalidValue),
+            }
+        }
+        Ok(())
+    }
+
+    pub(crate) fn format_entry(self, formatter: &mut EntryFormatter) {
+        formatter.entry_str(&format!(
+            "precision:{},discrete:{}",
+            self.precision, self.discrete
+        ));
+    }
+}
+
 /// The `copy-on-select` config (upstream `CopyOnSelect`): whether selecting text
 /// copies it, and to which clipboards. The `Config` default is OS-dependent
 /// (`True` on macOS / Linux, `False` elsewhere).
@@ -4518,16 +4632,17 @@ mod tests {
         DurationParseError, FlagsParseError, FontShapingBreak, FontStyle, FontStyleParseError,
         FontSyntheticStyle, Fullscreen, GraphemeWidthMethod, LinkPreviews, MacHidden,
         MacTitlebarProxyIcon, MacTitlebarStyle, MacWindowButtons, MagicParseError,
-        MiddleClickAction, MouseShiftCapture, NonNativeFullscreen, NotifyOnCommandFinish,
-        NotifyOnCommandFinishAction, OptionalFileAction, OscColorReportFormat, Palette,
-        PaletteParseError, RepeatableClipboardCodepointMap, RepeatableCodepointMap,
-        RepeatableConfigPath, RepeatableConfigPathParseError, RepeatableString,
-        RepeatableStringParseError, RightClickAction, ScrollToBottom, SelectionWordChars,
-        SelectionWordCharsParseError, ShellIntegration, ShellIntegrationFeatures,
-        TerminalBoldColor, TerminalColor, Theme, ThemeParseError, WindowColorspace,
-        WindowDecoration, WindowDecorationParseError, WindowPadding, WindowPaddingColor,
-        WindowPaddingParseError, WindowSaveState, WindowSubtitle, WindowTheme, WorkingDirectory,
-        WorkingDirectoryParseError, NS_PER_MS, NS_PER_S,
+        MiddleClickAction, MouseScrollMultiplier, MouseScrollMultiplierParseError,
+        MouseShiftCapture, NonNativeFullscreen, NotifyOnCommandFinish, NotifyOnCommandFinishAction,
+        OptionalFileAction, OscColorReportFormat, Palette, PaletteParseError,
+        RepeatableClipboardCodepointMap, RepeatableCodepointMap, RepeatableConfigPath,
+        RepeatableConfigPathParseError, RepeatableString, RepeatableStringParseError,
+        RightClickAction, ScrollToBottom, SelectionWordChars, SelectionWordCharsParseError,
+        ShellIntegration, ShellIntegrationFeatures, TerminalBoldColor, TerminalColor, Theme,
+        ThemeParseError, WindowColorspace, WindowDecoration, WindowDecorationParseError,
+        WindowPadding, WindowPaddingColor, WindowPaddingParseError, WindowSaveState,
+        WindowSubtitle, WindowTheme, WorkingDirectory, WorkingDirectoryParseError, NS_PER_MS,
+        NS_PER_S,
     };
     use crate::terminal::color::Rgb;
     use crate::terminal::selection_codepoints::DEFAULT_WORD_BOUNDARIES;
@@ -4709,8 +4824,17 @@ mod tests {
         assert!(d.clipboard_paste_bracketed_safe);
         // Mouse / click group (Experiment 462).
         assert_eq!(d.mouse_shift_capture, MouseShiftCapture::False);
+        assert!(d.mouse_reporting);
+        assert_eq!(
+            d.mouse_scroll_multiplier,
+            MouseScrollMultiplier {
+                precision: 1.0,
+                discrete: 3.0,
+            }
+        );
         assert_eq!(d.right_click_action, RightClickAction::ContextMenu);
         assert_eq!(d.middle_click_action, MiddleClickAction::PrimaryPaste);
+        assert_eq!(d.click_repeat_interval, 0);
         // Shell-integration group (Experiment 463).
         assert_eq!(d.shell_integration, ShellIntegration::Detect);
         assert_eq!(
@@ -8599,6 +8723,8 @@ mod tests {
                 "cursor-text",
                 "scroll-to-bottom",
                 "mouse-shift-capture",
+                "mouse-reporting",
+                "mouse-scroll-multiplier",
                 "background-blur",
                 "background-opacity",
                 "background-opacity-cells",
@@ -8627,6 +8753,7 @@ mod tests {
                 "selection-clear-on-copy",
                 "right-click-action",
                 "middle-click-action",
+                "click-repeat-interval",
                 "config-file",
                 "config-default-files",
                 "confirm-close-surface",
@@ -8654,6 +8781,9 @@ mod tests {
         assert!(out.contains("clipboard-paste-bracketed-safe = true\n"));
         assert!(out.contains("selection-clear-on-typing = true\n"));
         assert!(out.contains("selection-word-chars = "));
+        assert!(out.contains("mouse-reporting = true\n"));
+        assert!(out.contains("mouse-scroll-multiplier = precision:1,discrete:3\n"));
+        assert!(out.contains("click-repeat-interval = 0\n"));
         assert!(out.contains("selection-clear-on-copy = false\n"));
 
         // The default optionals (all `None`) format as the void line, and `theme`
@@ -8794,6 +8924,203 @@ mod tests {
             cfg.selection_word_chars.codepoints,
             vec![0, '\t' as u32, '_' as u32]
         );
+    }
+
+    #[test]
+    fn mouse_scroll_multiplier_parse_and_format() {
+        let mut value = MouseScrollMultiplier {
+            precision: 0.1,
+            discrete: 3.0,
+        };
+        value.parse_cli(Some("3")).unwrap();
+        assert_eq!(
+            value,
+            MouseScrollMultiplier {
+                precision: 3.0,
+                discrete: 3.0,
+            }
+        );
+
+        value = MouseScrollMultiplier {
+            precision: 0.1,
+            discrete: 3.0,
+        };
+        value.parse_cli(Some("precision:1")).unwrap();
+        assert_eq!(
+            value,
+            MouseScrollMultiplier {
+                precision: 1.0,
+                discrete: 3.0,
+            }
+        );
+
+        value = MouseScrollMultiplier {
+            precision: 0.1,
+            discrete: 3.0,
+        };
+        value.parse_cli(Some("discrete:5")).unwrap();
+        assert_eq!(
+            value,
+            MouseScrollMultiplier {
+                precision: 0.1,
+                discrete: 5.0,
+            }
+        );
+
+        value.parse_cli(Some("precision:3,discrete:7")).unwrap();
+        assert_eq!(
+            value,
+            MouseScrollMultiplier {
+                precision: 3.0,
+                discrete: 7.0,
+            }
+        );
+
+        value.parse_cli(Some("discrete:8,precision:6")).unwrap();
+        assert_eq!(
+            value,
+            MouseScrollMultiplier {
+                precision: 6.0,
+                discrete: 8.0,
+            }
+        );
+
+        let mut out = String::new();
+        value.format_entry(&mut EntryFormatter::new(
+            "mouse-scroll-multiplier",
+            &mut out,
+        ));
+        assert_eq!(out, "mouse-scroll-multiplier = precision:6,discrete:8\n");
+
+        assert_eq!(
+            value.parse_cli(None),
+            Err(MouseScrollMultiplierParseError::ValueRequired)
+        );
+        for bad in [
+            "",
+            "foo:1",
+            "precision:bar",
+            "precision:1,discrete:3,foo:5",
+            "precision:1,,discrete:3",
+            ",precision:1,discrete:3",
+        ] {
+            assert_eq!(
+                value.parse_cli(Some(bad)),
+                Err(MouseScrollMultiplierParseError::InvalidValue),
+                "{bad}"
+            );
+        }
+    }
+
+    #[test]
+    fn mouse_behavior_config_routes_and_formats() {
+        let has = |out: &str, key: &str, val: &str| {
+            out.lines().any(|l| l == format!("{} = {}", key, val))
+        };
+        let mut cfg = Config::default();
+        cfg.set("mouse-reporting", Some("false")).unwrap();
+        cfg.set(
+            "mouse-scroll-multiplier",
+            Some("precision:1.5,discrete:2.5"),
+        )
+        .unwrap();
+        cfg.set("click-repeat-interval", Some("250")).unwrap();
+
+        assert!(!cfg.mouse_reporting);
+        assert_eq!(
+            cfg.mouse_scroll_multiplier,
+            MouseScrollMultiplier {
+                precision: 1.5,
+                discrete: 2.5,
+            }
+        );
+        assert_eq!(cfg.click_repeat_interval, 250);
+
+        let mut out = String::new();
+        cfg.format_config(&mut out);
+        assert!(has(&out, "mouse-reporting", "false"));
+        assert!(has(
+            &out,
+            "mouse-scroll-multiplier",
+            "precision:1.5,discrete:2.5"
+        ));
+        assert!(has(&out, "click-repeat-interval", "250"));
+
+        cfg.set("mouse-reporting", Some("")).unwrap();
+        assert!(cfg.mouse_reporting);
+
+        assert_eq!(
+            cfg.set("mouse-reporting", Some("maybe")),
+            Err(ConfigSetError::InvalidValue)
+        );
+        assert_eq!(
+            cfg.set("mouse-scroll-multiplier", None),
+            Err(ConfigSetError::ValueRequired)
+        );
+        assert_eq!(
+            cfg.set("click-repeat-interval", Some("-1")),
+            Err(ConfigSetError::InvalidValue)
+        );
+
+        let mut cfg = Config::default();
+        let diags = cfg.set_cli_args([
+            "--mouse-reporting=false",
+            "--mouse-scroll-multiplier=precision:4,discrete:6",
+            "--click-repeat-interval=125",
+        ]);
+        assert!(diags.is_empty());
+        assert!(!cfg.mouse_reporting);
+        assert_eq!(
+            cfg.mouse_scroll_multiplier,
+            MouseScrollMultiplier {
+                precision: 4.0,
+                discrete: 6.0,
+            }
+        );
+        assert_eq!(cfg.click_repeat_interval, 125);
+
+        let mut cfg = Config::default();
+        let diags = cfg.load_str(
+            "mouse-reporting = false\n\
+             mouse-scroll-multiplier = 2\n\
+             click-repeat-interval = 333\n",
+        );
+        assert!(diags.is_empty());
+        assert!(!cfg.mouse_reporting);
+        assert_eq!(
+            cfg.mouse_scroll_multiplier,
+            MouseScrollMultiplier {
+                precision: 2.0,
+                discrete: 2.0,
+            }
+        );
+        assert_eq!(cfg.click_repeat_interval, 333);
+    }
+
+    #[test]
+    fn mouse_behavior_finalize_resolves_and_clamps() {
+        let mut cfg = Config::default();
+        cfg.click_repeat_interval = 0;
+        cfg.mouse_scroll_multiplier = MouseScrollMultiplier {
+            precision: 0.001,
+            discrete: 20_000.0,
+        };
+
+        cfg.finalize();
+
+        assert_eq!(cfg.click_repeat_interval, 500);
+        assert_eq!(cfg.mouse_scroll_multiplier.precision, 0.01);
+        assert_eq!(cfg.mouse_scroll_multiplier.discrete, 10_000.0);
+
+        cfg.click_repeat_interval = 250;
+        cfg.mouse_scroll_multiplier = MouseScrollMultiplier {
+            precision: 0.5,
+            discrete: 2.0,
+        };
+        cfg.finalize();
+        assert_eq!(cfg.click_repeat_interval, 250);
+        assert_eq!(cfg.mouse_scroll_multiplier.precision, 0.5);
+        assert_eq!(cfg.mouse_scroll_multiplier.discrete, 2.0);
     }
 
     #[test]

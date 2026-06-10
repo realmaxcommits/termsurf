@@ -1896,6 +1896,8 @@ struct Surface {
     clipboard_paste_bracketed_safe: bool,
     selection_clear_on_typing: bool,
     selection_word_chars: Vec<u32>,
+    mouse_scroll_multiplier: config::MouseScrollMultiplier,
+    click_repeat_interval_ns: u64,
     preedit: Option<String>,
     inspector: Option<NonNull<Inspector>>,
     last_key_event: Option<key::KeyEvent>,
@@ -2206,13 +2208,42 @@ fn clipboard_codepoint_map_entries(
         .collect()
 }
 
+fn finalized_parsed_config(config: &config::Config) -> config::Config {
+    let mut config = config.clone();
+    config.finalize();
+    config
+}
+
+fn default_finalized_config() -> config::Config {
+    let mut config = config::Config::default();
+    config.finalize();
+    config
+}
+
+fn click_repeat_interval_ns(config: &config::Config) -> u64 {
+    u64::from(config.click_repeat_interval) * 1_000_000
+}
+
+fn scroll_cursor_key_sequence(y_steps: i64, cursor_keys: bool) -> &'static [u8] {
+    match (y_steps > 0, cursor_keys) {
+        (true, true) => b"\x1bOA",
+        (true, false) => b"\x1b[A",
+        (false, true) => b"\x1bOB",
+        (false, false) => b"\x1b[B",
+    }
+}
+
 impl Surface {
     fn apply_config(&mut self, config: &Config) {
+        let parsed = finalized_parsed_config(&config.parsed);
         self.confirm_close_surface = config.confirm_close_surface;
-        self.clipboard_paste_protection = config.parsed.clipboard_paste_protection;
-        self.clipboard_paste_bracketed_safe = config.parsed.clipboard_paste_bracketed_safe;
-        self.selection_clear_on_typing = config.parsed.selection_clear_on_typing;
-        self.selection_word_chars = config.parsed.selection_word_chars.codepoints.clone();
+        self.clipboard_paste_protection = parsed.clipboard_paste_protection;
+        self.clipboard_paste_bracketed_safe = parsed.clipboard_paste_bracketed_safe;
+        self.selection_clear_on_typing = parsed.selection_clear_on_typing;
+        self.selection_word_chars = parsed.selection_word_chars.codepoints.clone();
+        self.mouse_reporting = parsed.mouse_reporting;
+        self.mouse_scroll_multiplier = parsed.mouse_scroll_multiplier;
+        self.click_repeat_interval_ns = click_repeat_interval_ns(&parsed);
     }
 
     fn selection_word_boundaries(&self) -> &[u32] {
@@ -3951,21 +3982,22 @@ impl Surface {
             return;
         }
         self.mouse.scroll = Some((x, y, scroll_mods as u8));
+        let precision = scroll_mods as u8 & 1 != 0;
+        let (cell_width, cell_height) = self.mouse_scroll_cell_size();
+        let (x_steps, y_steps) = self.mouse_scroll_steps(x, y, precision, cell_width, cell_height);
+        if x_steps == 0 && y_steps == 0 {
+            return;
+        }
         // Branch (2): the terminal is ACTUALLY mouse-reporting (a coarse `self.mouse_reporting`
         // flag is not enough — it defaults true; `mouse_report_context` also checks the terminal's
         // mouse-event mode) → button-4/5/6/7 reports.
         if self.mouse_report_context().is_some() {
-            self.dispatch_scroll_reports(x, y, scroll_mods as u8);
+            self.dispatch_scroll_reports(x_steps, y_steps);
             return;
         }
         // Not mouse-reporting (Issue 802 / Exp 23, porting upstream `scrollCallback`):
         // branch (1) alt-screen + alt-scroll → cursor keys; branch (3) → viewport scrollback.
         if self.readonly {
-            return;
-        }
-        // Line-mode steps from the wheel y (positive = up/toward history, button-Four sign).
-        let y_steps = scroll_steps(&mut self.mouse.pending_scroll_y, y, 1.0);
-        if y_steps == 0 {
             return;
         }
         let Some(worker) = self.termio_worker.as_ref() else {
@@ -3979,24 +4011,25 @@ impl Surface {
             )
         });
         if alt_scroll {
+            if y_steps == 0 {
+                return;
+            }
             // Branch (1): translate the wheel to cursor keys written to the PTY (the program,
             // e.g. a pager in the alt screen, scrolls). App-mode (`\x1bO…`) vs normal (`\x1b[…`).
             // Upstream clears the selection when sending wheel-as-cursor-keys.
             worker.with_termio_mut(|termio| {
                 let _ = termio.terminal_mut().set_selection(None);
             });
-            let seq: &[u8] = match (y_steps > 0, cursor_keys) {
-                (true, true) => b"\x1bOA",
-                (true, false) => b"\x1b[A",
-                (false, true) => b"\x1bOB",
-                (false, false) => b"\x1b[B",
-            };
+            let seq = scroll_cursor_key_sequence(y_steps, cursor_keys);
             for _ in 0..y_steps.unsigned_abs() {
                 if worker.queue_write(seq).is_err() {
                     break;
                 }
             }
         } else {
+            if y_steps == 0 {
+                return;
+            }
             // Branch (3): scroll the viewport (scrollback navigation). Viewport delta = -y_steps
             // (up/toward history is a negative row delta). This is a direct terminal mutation, so
             // mark dirty for the present driver to re-render.
@@ -4007,6 +4040,61 @@ impl Surface {
             });
             self.dirty = true;
         }
+    }
+
+    fn mouse_scroll_cell_size(&self) -> (u32, u32) {
+        if let Some(worker) = self.termio_worker.as_ref() {
+            if let Some((width, height)) = worker.with_termio(|termio| {
+                self.mouse_report_geometry(termio.terminal())
+                    .map(|geometry| (geometry.cell.width, geometry.cell.height))
+            }) {
+                return (width.max(1), height.max(1));
+            }
+        }
+        (
+            self.size.cell_width_px.max(1),
+            self.size.cell_height_px.max(1),
+        )
+    }
+
+    fn mouse_scroll_steps(
+        &mut self,
+        x: f64,
+        y: f64,
+        precision: bool,
+        cell_width: u32,
+        cell_height: u32,
+    ) -> (i64, i64) {
+        let x_steps = if x == 0.0 {
+            0
+        } else if precision {
+            scroll_steps(&mut self.mouse.pending_scroll_x, x, f64::from(cell_width))
+        } else {
+            x.round() as i64
+        };
+
+        let y_steps = if y == 0.0 {
+            0
+        } else {
+            let cell_height = f64::from(cell_height.max(1));
+            let y_adjusted = if precision {
+                y * self.mouse_scroll_multiplier.precision
+            } else {
+                let y = if cfg!(target_os = "macos") {
+                    if y > 0.0 {
+                        y.max(1.0)
+                    } else {
+                        y.min(-1.0)
+                    }
+                } else {
+                    y
+                };
+                y * cell_height * self.mouse_scroll_multiplier.discrete
+            };
+            scroll_steps(&mut self.mouse.pending_scroll_y, y_adjusted, cell_height)
+        };
+
+        (x_steps, y_steps)
     }
 
     fn mouse_pressure(&mut self, stage: u32, pressure: f64) {
@@ -4105,7 +4193,7 @@ impl Surface {
         let Some(last) = self.selection_gesture.click_time_ns() else {
             return false;
         };
-        if self.selection_time_ns().saturating_sub(last) <= 500_000_000 {
+        if self.selection_time_ns().saturating_sub(last) <= self.click_repeat_interval_ns {
             return false;
         }
         let Some(worker) = self.termio_worker.as_ref() else {
@@ -4156,9 +4244,9 @@ impl Surface {
                     pin,
                     x,
                     y,
-                    // Upstream `Surface.zig:3945-3952`: 500ms repeat interval, one-cell max distance.
+                    // Upstream `Surface.zig:3945-3952`: configured repeat interval, one-cell max distance.
                     max_distance,
-                    repeat_interval_ns: 500_000_000,
+                    repeat_interval_ns: self.click_repeat_interval_ns,
                     word_boundary_codepoints: Some(&word_boundary_codepoints),
                     behaviors: DEFAULT_BEHAVIORS,
                 },
@@ -4345,27 +4433,13 @@ impl Surface {
         true
     }
 
-    fn dispatch_scroll_reports(&mut self, x: f64, y: f64, scroll_mods: u8) {
+    fn dispatch_scroll_reports(&mut self, x_steps: i64, y_steps: i64) {
         if self.mouse.position.is_none() {
             return;
         }
-        let precision = scroll_mods & 1 != 0;
-        let Some((_, _, geometry)) = self.mouse_report_context() else {
+        let Some((_, _, _)) = self.mouse_report_context() else {
             return;
         };
-
-        let x_unit = if precision {
-            f64::from(geometry.cell.width.max(1))
-        } else {
-            1.0
-        };
-        let y_unit = if precision {
-            f64::from(geometry.cell.height.max(1))
-        } else {
-            1.0
-        };
-        let x_steps = scroll_steps(&mut self.mouse.pending_scroll_x, x, x_unit);
-        let y_steps = scroll_steps(&mut self.mouse.pending_scroll_y, y, y_unit);
 
         self.dispatch_scroll_axis(y_steps, mouse::MouseButton::Four, mouse::MouseButton::Five);
         self.dispatch_scroll_axis(x_steps, mouse::MouseButton::Six, mouse::MouseButton::Seven);
@@ -10861,14 +10935,15 @@ pub extern "C" fn roastty_app_new(
         parsed_config,
     ) = config_from_handle(config)
         .map(|config| {
+            let parsed = finalized_parsed_config(&config.parsed);
             (
                 config.confirm_close_surface,
-                config.parsed.clipboard_read,
-                config.parsed.clipboard_write,
-                config.parsed.mouse_shift_capture,
+                parsed.clipboard_read,
+                parsed.clipboard_write,
+                parsed.mouse_shift_capture,
                 config.has_global_keybinds,
                 config.keybind_triggers.clone(),
-                config.parsed.clone(),
+                parsed,
             )
         })
         .unwrap_or((
@@ -10878,7 +10953,7 @@ pub extern "C" fn roastty_app_new(
             config::MouseShiftCapture::False,
             false,
             Vec::new(),
-            config::Config::default(),
+            default_finalized_config(),
         ));
 
     Box::into_raw(Box::new(App {
@@ -10947,9 +11022,10 @@ pub extern "C" fn roastty_app_update_config(app: RoasttyApp, config: RoasttyConf
     let Some(config) = config_from_handle(config) else {
         return;
     };
+    let parsed_config = finalized_parsed_config(&config.parsed);
     app.confirm_close_surface = config.confirm_close_surface;
-    app.parsed_config = config.parsed.clone();
-    app.mouse_shift_capture = config.parsed.mouse_shift_capture;
+    app.parsed_config = parsed_config;
+    app.mouse_shift_capture = app.parsed_config.mouse_shift_capture;
     app.has_global_keybinds = config.has_global_keybinds;
     app.keybind_triggers = config.keybind_triggers.clone();
     for mut surface in app.surfaces.clone() {
@@ -14270,6 +14346,15 @@ pub extern "C" fn roastty_surface_new(
     let selection_word_chars = app_from_handle(app)
         .map(|app| app.parsed_config.selection_word_chars.codepoints.clone())
         .unwrap_or_else(|| config::SelectionWordChars::default().codepoints);
+    let mouse_reporting = app_from_handle(app)
+        .map(|app| app.parsed_config.mouse_reporting)
+        .unwrap_or(true);
+    let mouse_scroll_multiplier = app_from_handle(app)
+        .map(|app| app.parsed_config.mouse_scroll_multiplier)
+        .unwrap_or_default();
+    let click_repeat_interval_ns = app_from_handle(app)
+        .map(|app| click_repeat_interval_ns(&app.parsed_config))
+        .unwrap_or(500_000_000);
 
     let font_size_points = sanitized_font_size_points(config.font_size);
     let surface = Box::new(Surface {
@@ -14305,12 +14390,14 @@ pub extern "C" fn roastty_surface_new(
         clipboard_paste_bracketed_safe,
         selection_clear_on_typing,
         selection_word_chars,
+        mouse_scroll_multiplier,
+        click_repeat_interval_ns,
         preedit: None,
         inspector: None,
         last_key_event: None,
         last_consumed_default_binding: None,
         mouse: SurfaceMouseState::default(),
-        mouse_reporting: true,
+        mouse_reporting,
         selection_gesture: SelectionGesture::default(),
         selection_click_epoch: std::time::Instant::now(),
         readonly: false,
@@ -15908,6 +15995,24 @@ mod tests {
         handle
     }
 
+    fn new_test_config_with_mouse_behavior(
+        mouse_reporting: bool,
+        precision: f64,
+        discrete: f64,
+        click_repeat_interval: u32,
+    ) -> RoasttyConfig {
+        let handle = roastty_config_new();
+        let config = config_from_handle(handle).unwrap();
+        config.parsed.mouse_reporting = mouse_reporting;
+        config.parsed.mouse_scroll_multiplier = config::MouseScrollMultiplier {
+            precision,
+            discrete,
+        };
+        config.parsed.click_repeat_interval = click_repeat_interval;
+        config.parsed.finalize();
+        handle
+    }
+
     unsafe extern "C" fn wakeup_cb(userdata: *mut c_void) {
         WAKEUP_COUNT.fetch_add(1, Ordering::SeqCst);
         WAKEUP_USERDATA.store(userdata as usize, Ordering::SeqCst);
@@ -17266,6 +17371,54 @@ mod tests {
             selected_text(surface).as_deref(),
             Some("bar"),
             "configured '_' boundary should split foo_bar at the underscore"
+        );
+
+        SELECTION_TEST_CLOCK_NS.with(|c| c.set(None));
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+        roastty_config_free(config);
+    }
+
+    #[test]
+    fn double_click_word_uses_configured_click_repeat_interval() {
+        let _guard = pty_command_lock();
+        let config = new_test_config_with_mouse_behavior(true, 1.0, 3.0, 100);
+        let app = roastty_app_new(ptr::null(), config);
+        let surface = new_test_surface(app);
+        set_test_size_80x24(surface);
+        surface_from_handle(surface).unwrap().termio_worker = Some(test_worker("sleep 5"));
+        surface_from_handle(surface)
+            .unwrap()
+            .termio_worker
+            .as_ref()
+            .unwrap()
+            .with_termio_mut(|termio| {
+                termio.terminal_mut().next_slice(b"foo TARGET bar").unwrap();
+            });
+        surface_from_handle(surface)
+            .unwrap()
+            .mouse_pos(65.0, 10.0, 0);
+        let click = |surface: RoasttySurface, t_ns: u64| {
+            SELECTION_TEST_CLOCK_NS.with(|c| c.set(Some(t_ns)));
+            let s = surface_from_handle(surface).unwrap();
+            s.mouse_button(1, 1, 0);
+            s.mouse_button(0, 1, 0);
+        };
+
+        click(surface, 0);
+        click(surface, 150_000_000);
+        assert_ne!(
+            selected_text(surface).as_deref(),
+            Some("TARGET"),
+            "150ms must miss a configured 100ms double-click interval"
+        );
+
+        click(surface, 300_000_000);
+        click(surface, 350_000_000);
+        assert_eq!(
+            selected_text(surface).as_deref(),
+            Some("TARGET"),
+            "50ms must hit a configured 100ms double-click interval"
         );
 
         SELECTION_TEST_CLOCK_NS.with(|c| c.set(None));
@@ -22842,6 +22995,53 @@ mod tests {
         roastty_app_free(app);
         roastty_config_free(underscore);
         roastty_config_free(semicolon);
+    }
+
+    #[test]
+    fn app_and_surface_update_config_sync_mouse_behavior() {
+        let app = new_test_app();
+        let surface = new_test_surface(app);
+        let surface_ref = surface_from_handle(surface).unwrap();
+        assert!(surface_ref.mouse_reporting);
+        assert_eq!(
+            surface_ref.mouse_scroll_multiplier,
+            config::MouseScrollMultiplier {
+                precision: 1.0,
+                discrete: 3.0,
+            }
+        );
+        assert_eq!(surface_ref.click_repeat_interval_ns, 500_000_000);
+
+        let custom = new_test_config_with_mouse_behavior(false, 0.5, 2.0, 125);
+        roastty_app_update_config(app, custom);
+        let surface_ref = surface_from_handle(surface).unwrap();
+        assert!(!surface_ref.mouse_reporting);
+        assert_eq!(
+            surface_ref.mouse_scroll_multiplier,
+            config::MouseScrollMultiplier {
+                precision: 0.5,
+                discrete: 2.0,
+            }
+        );
+        assert_eq!(surface_ref.click_repeat_interval_ns, 125_000_000);
+
+        let surface_only = new_test_config_with_mouse_behavior(true, 4.0, 6.0, 250);
+        roastty_surface_update_config(surface, surface_only);
+        let surface_ref = surface_from_handle(surface).unwrap();
+        assert!(surface_ref.mouse_reporting);
+        assert_eq!(
+            surface_ref.mouse_scroll_multiplier,
+            config::MouseScrollMultiplier {
+                precision: 4.0,
+                discrete: 6.0,
+            }
+        );
+        assert_eq!(surface_ref.click_repeat_interval_ns, 250_000_000);
+
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+        roastty_config_free(custom);
+        roastty_config_free(surface_only);
     }
 
     #[test]
@@ -30707,7 +30907,7 @@ mod tests {
     }
 
     #[test]
-    fn surface_mouse_scroll_accumulates_non_precision_fractional_steps() {
+    fn surface_mouse_scroll_reports_non_precision_with_default_discrete_multiplier() {
         let _guard = pty_command_lock();
         let app = new_test_app();
         let surface = new_test_surface(app);
@@ -30717,22 +30917,10 @@ mod tests {
         set_surface_worker_mouse_mode(surface, 1003, true);
 
         roastty_surface_mouse_scroll(surface, 0.0, 0.5, 0);
-        assert!(surface_from_handle(surface)
-            .unwrap()
-            .mouse
-            .last_reported_cell
-            .is_none());
-        roastty_surface_mouse_scroll(surface, 0.0, 0.4, 0);
-        assert!(surface_from_handle(surface)
-            .unwrap()
-            .mouse
-            .last_reported_cell
-            .is_none());
-        roastty_surface_mouse_scroll(surface, 0.0, 0.2, 0);
 
         let mouse = surface_from_handle(surface).unwrap().mouse;
         assert_eq!(mouse.last_reported_cell, Some(point::Coordinate::new(2, 1)));
-        assert!((mouse.pending_scroll_y - 0.1).abs() < 0.001);
+        assert_eq!(mouse.pending_scroll_y, 0.0);
         roastty_surface_free(surface);
         roastty_app_free(app);
     }
@@ -30761,6 +30949,106 @@ mod tests {
         assert_eq!(mouse.pending_scroll_y, 0.0);
         roastty_surface_free(surface);
         roastty_app_free(app);
+    }
+
+    #[test]
+    fn surface_mouse_scroll_reporting_uses_configured_discrete_multiplier() {
+        let _guard = pty_command_lock();
+        let config = new_test_config_with_mouse_behavior(true, 1.0, 0.5, 500);
+        let app = roastty_app_new(ptr::null(), config);
+        let surface = new_test_surface(app);
+        surface_from_handle(surface).unwrap().termio_worker = Some(test_worker("sleep 5"));
+        roastty_surface_set_size(surface, 800, 480);
+        roastty_surface_mouse_pos(surface, 20.0, 20.0, ROASTTY_MODS_NONE);
+        set_surface_worker_mouse_mode(surface, 1003, true);
+
+        roastty_surface_mouse_scroll(surface, 0.0, 1.0, 0);
+        assert!(surface_from_handle(surface)
+            .unwrap()
+            .mouse
+            .last_reported_cell
+            .is_none());
+        assert!((surface_from_handle(surface).unwrap().mouse.pending_scroll_y - 10.0).abs() < 0.01);
+
+        roastty_surface_mouse_scroll(surface, 0.0, 1.0, 0);
+        let mouse = surface_from_handle(surface).unwrap().mouse;
+        assert_eq!(mouse.last_reported_cell, Some(point::Coordinate::new(2, 1)));
+        assert_eq!(mouse.pending_scroll_y, 0.0);
+
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+        roastty_config_free(config);
+    }
+
+    #[test]
+    fn surface_mouse_scroll_viewport_uses_configured_discrete_multiplier() {
+        let _guard = pty_command_lock();
+        let config = new_test_config_with_mouse_behavior(true, 1.0, 0.5, 500);
+        let app = roastty_app_new(ptr::null(), config);
+        let surface = new_test_surface(app);
+        surface_from_handle(surface).unwrap().termio_worker = Some(test_worker("sleep 5"));
+        roastty_surface_set_size(surface, 800, 480);
+        surface_from_handle(surface).unwrap().dirty = false;
+
+        roastty_surface_mouse_scroll(surface, 0.0, 1.0, 0);
+        assert!(!surface_from_handle(surface).unwrap().dirty);
+        assert!((surface_from_handle(surface).unwrap().mouse.pending_scroll_y - 10.0).abs() < 0.01);
+
+        roastty_surface_mouse_scroll(surface, 0.0, 1.0, 0);
+        let surface_ref = surface_from_handle(surface).unwrap();
+        assert!(surface_ref.dirty);
+        assert_eq!(surface_ref.mouse.pending_scroll_y, 0.0);
+
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+        roastty_config_free(config);
+    }
+
+    #[test]
+    fn surface_mouse_scroll_alt_screen_uses_configured_discrete_multiplier() {
+        let config = new_test_config_with_mouse_behavior(true, 1.0, 2.0, 500);
+        let app = roastty_app_new(ptr::null(), config);
+        let surface = new_test_surface(app);
+        set_surface_test_geometry(surface, 80, 24, 10, 20);
+
+        let (_, y_steps) = surface_from_handle(surface)
+            .unwrap()
+            .mouse_scroll_steps(0.0, 1.0, false, 10, 20);
+        let seq = scroll_cursor_key_sequence(y_steps, true);
+        let repeated = seq.repeat(y_steps.unsigned_abs() as usize);
+
+        assert_eq!(y_steps, 2);
+        assert_eq!(repeated, b"\x1bOA\x1bOA");
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+        roastty_config_free(config);
+    }
+
+    #[test]
+    fn surface_mouse_scroll_horizontal_ignores_vertical_multiplier() {
+        let config = new_test_config_with_mouse_behavior(true, 1.0, 100.0, 500);
+        let app = roastty_app_new(ptr::null(), config);
+        let surface = new_test_surface(app);
+        set_surface_test_geometry(surface, 80, 24, 10, 20);
+
+        let (x_steps, y_steps) = surface_from_handle(surface)
+            .unwrap()
+            .mouse_scroll_steps(0.4, 0.0, false, 10, 20);
+
+        assert_eq!(x_steps, 0);
+        assert_eq!(y_steps, 0);
+        assert_eq!(
+            surface_from_handle(surface).unwrap().mouse.pending_scroll_x,
+            0.0
+        );
+        assert_eq!(
+            surface_from_handle(surface).unwrap().mouse.pending_scroll_y,
+            0.0
+        );
+
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+        roastty_config_free(config);
     }
 
     #[test]

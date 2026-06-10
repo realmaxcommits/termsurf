@@ -402,6 +402,12 @@ before re-reading experiments.
   enumerators → C redefinition). Pin layout with BOTH Rust `offset_of!` and C
   `_Static_assert` so a Rust↔header drift fails at compile time. `ssize_t` needs
   `#include <sys/types.h>`.
+- **Mouse behavior config (Exp 59):** `mouse-reporting`,
+  `mouse-scroll-multiplier`, and `click-repeat-interval` now finalize before
+  they reach `App`/`Surface`. `click-repeat-interval = 0` becomes `500` ms, and
+  both scroll multipliers clamp to `[0.01, 10000.0]`. Surfaces cache
+  `click_repeat_interval_ns`, so runtime gesture timing should use the cached
+  nanoseconds value rather than re-reading config milliseconds.
 
 ### Where things live
 
@@ -752,7 +758,7 @@ stays unaltered except for the rename).
 - [Experiment 58: Phase F — selection behavior config](58-selection-behavior-config.md)
   — **Pass**
 - [Experiment 59: Phase F — mouse behavior config](59-mouse-behavior-config.md)
-  — **Designed**
+  — **Pass**
 
 ## Process
 

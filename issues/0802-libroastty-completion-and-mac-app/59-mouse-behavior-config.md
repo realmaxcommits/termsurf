@@ -162,3 +162,108 @@ Fix:
 **Final verdict:** Approved.
 
 No findings.
+
+## Result
+
+**Result:** Pass
+
+Implemented the mouse behavior config slice exactly as scoped:
+
+- `roastty/src/config/mod.rs` now represents `mouse-reporting`,
+  `mouse-scroll-multiplier`, and `click-repeat-interval`, routes them through
+  config loading/formatting, and finalizes the upstream-derived behavior needed
+  for this slice.
+- `MouseScrollMultiplier` parses bare floats and prefixed
+  `precision:`/`discrete:` entries, formats as
+  `precision:<value>,discrete:<value>`, and reports invalid or missing values as
+  config diagnostics.
+- `Config::finalize` preserves the existing font-family derivation while also
+  resolving `click-repeat-interval = 0` to `500` ms and clamping both scroll
+  multipliers to `[0.01, 10000.0]`.
+- `roastty_app_new`, `roastty_app_update_config`, and `Surface::apply_config`
+  use finalized parsed config snapshots while preserving the wrapper-level
+  `confirm_close_surface` policy.
+- `Surface` caches `mouse_reporting`, `mouse_scroll_multiplier`, and
+  `click_repeat_interval_ns`. Click-repeat selection logic now uses the cached
+  nanosecond interval instead of the old hardcoded `500_000_000` value.
+- Scroll handling computes horizontal and vertical scroll steps once, then
+  shares those deltas across reporting, alt-screen cursor-key scrolling, and
+  viewport scrollback. Vertical scroll uses the configured precision/discrete
+  multipliers; horizontal scroll remains upstream-shaped and ignores the
+  vertical multiplier.
+- Added an explicit alt-screen scroll regression test that deterministically
+  verifies a configured discrete multiplier produces two vertical scroll steps
+  and the alt-scroll cursor-key sequence repeats the expected app-cursor-up
+  bytes.
+
+Verification passed:
+
+- `cargo fmt -- roastty/src/config/mod.rs roastty/src/lib.rs`
+- `prettier --write --prose-wrap always --print-width 80 issues/0802-libroastty-completion-and-mac-app/README.md issues/0802-libroastty-completion-and-mac-app/59-mouse-behavior-config.md`
+- `cargo test -p roastty mouse_behavior_config`
+- `cargo test -p roastty mouse_scroll_multiplier`
+- `cargo test -p roastty mouse_behavior_finalize`
+- `cargo test -p roastty config_format_config`
+- `cargo test -p roastty mouse_scroll`:
+  - 13 passed, including alt-screen cursor-key multiplier coverage.
+- `cargo test -p roastty mouse_reporting`
+- `cargo test -p roastty double_click_word`
+- `cargo test -p roastty shift_click`
+- `cargo test -p roastty app_and_surface_update_config`
+- `cargo test -p roastty`:
+  - unit tests: 4483 passed, 0 failed
+  - ABI harness: 1 passed, 0 failed
+  - doc-tests: 0 passed, 0 failed
+  - the ABI harness still emits the existing enum-conversion warnings, but the
+    command exits successfully.
+- `git diff --check`
+- `git status --short`
+
+## Conclusion
+
+Roastty now has the Phase-F mouse behavior config group wired from aggregate
+config through finalized app/surface snapshots into the existing runtime mouse
+paths. The remaining cursor/mouse-adjacent fields are intentionally left for
+later slices because they touch renderer cursor state, app mouse visibility, or
+other ownership boundaries outside this experiment.
+
+## Completion Review
+
+Reviewed by Codex adversarial reviewer (`Dalton`,
+`019eb353-7092-7a43-a4f4-5945df28d594`) with fresh context.
+
+**Initial verdict:** Changes required.
+
+- **Required:** The result claimed verification for configured vertical scroll
+  multipliers in the alt-screen cursor-key branch, but the implementation only
+  tested reporting, viewport scrollback, precision accumulation, horizontal
+  behavior, and disabled reporting.
+
+Fix:
+
+- Added deterministic alt-screen cursor-key coverage. The test uses a configured
+  discrete multiplier of `2.0`, fixed cell geometry, verifies that one
+  non-precision vertical wheel event produces `y_steps == 2`, and verifies the
+  alt-scroll app-cursor-up sequence repeats to `\x1bOA\x1bOA`.
+- Factored the runtime alt-scroll branch's cursor-key sequence choice into
+  `scroll_cursor_key_sequence`, which the branch now calls before queueing the
+  sequence once per scroll step.
+- Re-ran focused and full verification.
+
+**Second verdict:** Changes required.
+
+- **Required:** The first PTY-backed version of the alt-screen regression test
+  was flaky under the reviewer run and timed out before observing the child
+  output.
+
+Fix:
+
+- Replaced the PTY-backed oracle with the deterministic lower-level test
+  described above.
+- Updated the result text to describe the deterministic coverage instead of the
+  removed PTY setup.
+- Re-ran focused and full verification.
+
+**Final verdict:** Approved.
+
+No findings.
