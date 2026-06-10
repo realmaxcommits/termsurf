@@ -736,6 +736,8 @@ stays unaltered except for the rename).
   — **Pass**
 - [Experiment 56: Phase F — clipboard codepoint map](56-clipboard-codepoint-map.md)
   — **Pass**
+- [Experiment 57: Phase F — clipboard behavior config](57-clipboard-behavior-config.md)
+  — **Designed**
 
 ## Process
 
