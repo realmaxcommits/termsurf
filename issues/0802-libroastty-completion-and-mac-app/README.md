@@ -670,6 +670,8 @@ stays unaltered except for the rename).
   — **Pass**
 - [Experiment 48: Phase D — hold live A/B recipe frames through capture](48-live-ab-held-recipe-frame.md)
   — **Pass**
+- [Experiment 49: Phase D — content-region live A/B diffs](49-live-ab-content-region-diff.md)
+  — **Designed**
 
 ## Process
 
