@@ -767,6 +767,8 @@ stays unaltered except for the rename).
   — **Pass**
 - [Experiment 61: Phase F — split visual config surface](61-split-visual-config-surface.md)
   — **Pass**
+- [Experiment 62: Phase F — search color config](62-search-color-config.md) —
+  **Designed**
 
 ## Process
 
