@@ -556,6 +556,10 @@ stays unaltered except for the rename).
   since the last press; not-reporting press branches to selection_drag; 2
   headless tests + 4413 green deterministic (also fixed a latent Exp-27
   double_click flaky test); live shift-click pending — screen locked) · Claude
+- [Experiment 31: Phase C — viewport-gate the cursor run-shaping hint](31-cursor-hint-viewport.md)
+  — **Designed** (Exp-24 loose end: `shape_run_options` cursor_x run-hint still
+  uses active `cy==y` not the viewport; reuse `cursor_viewport_row` to gate it;
+  fully headless, no live needed) · Claude
 
 ## Process
 
