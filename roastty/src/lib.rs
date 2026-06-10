@@ -14326,8 +14326,17 @@ pub extern "C" fn roastty_surface_render_state_update(
 #[no_mangle]
 pub extern "C" fn roastty_surface_set_content_scale(surface: RoasttySurface, x: f64, y: f64) {
     if let Some(surface) = surface_from_handle(surface) {
+        let changed = surface.scale_factor_x != x || surface.scale_factor_y != y;
         surface.scale_factor_x = x;
         surface.scale_factor_y = y;
+        if changed {
+            // DPI changed (e.g. the window moved to a monitor with a different backing scale): drop
+            // the live renderer so `present_live` rebuilds it at the new scale (Issue 802 / Exp 35) —
+            // glyphs are rasterized at `font_size * scale`, so without a rebuild text stays at the
+            // old DPI (blurry/chunky). Only the change case drops/dirties (idempotent otherwise).
+            surface.renderer = None;
+            surface.dirty = true;
+        }
     }
 }
 
@@ -17224,6 +17233,40 @@ mod tests {
         assert!(
             !has_selection(surface),
             "Left press while reporting still clears"
+        );
+
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+    }
+
+    /// Issue 802 / Exp 35: a content-scale (DPI) change drops the live renderer (so `present_live`
+    /// rebuilds it at the new scale) and requests a present; an idempotent same-scale call is a no-op.
+    #[test]
+    fn content_scale_change_drops_renderer_for_rebuild() {
+        let _guard = pty_command_lock();
+        let app = new_test_app();
+        let surface = new_test_surface(app);
+        surface_from_handle(surface).unwrap().dirty = false;
+
+        // A real change from the default 1.0 → renderer dropped + a present (rebuild) requested.
+        roastty_surface_set_content_scale(surface, 2.0, 2.0);
+        {
+            let s = surface_from_handle(surface).unwrap();
+            assert_eq!(s.scale_factor_x, 2.0);
+            assert_eq!(s.scale_factor_y, 2.0);
+            assert!(s.dirty, "a DPI change requests a present (rebuild)");
+            assert!(
+                s.renderer.is_none(),
+                "the renderer is dropped (None headless anyway)"
+            );
+            s.dirty = false;
+        }
+
+        // Same scale again → no spurious rebuild/present.
+        roastty_surface_set_content_scale(surface, 2.0, 2.0);
+        assert!(
+            !surface_from_handle(surface).unwrap().dirty,
+            "an idempotent set_content_scale must not churn the renderer"
         );
 
         roastty_surface_free(surface);

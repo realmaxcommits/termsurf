@@ -575,10 +575,10 @@ stays unaltered except for the rename).
   Never/Always/flag/default all honored; 4417 green, fully headless — closes
   Exp-33's config sub-deferral) · Claude
 - [Experiment 35: Phase C — rebuild the renderer on a DPI (content-scale) change](35-dpi-change-rebuild.md)
-  — **Designed** (`set_content_scale` never drops the renderer → stale-DPI
-  glyphs after a monitor move; drop it on a scale change so present_live
-  rebuilds at the new scale; headless change-detection test, visual
-  live-pending) · Claude
+  — **Partial** (`set_content_scale` now drops the renderer on a DPI change so
+  present_live rebuilds at the new scale — no more stale-DPI blur after a
+  monitor move; headless change-detection test + 4418 green; live re-sharpen
+  pending — screen locked) · Claude
 
 ## Process
 

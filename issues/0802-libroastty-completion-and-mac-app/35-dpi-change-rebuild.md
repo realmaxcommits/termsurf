@@ -112,8 +112,60 @@ experiment must satisfy.
 
 ## Result
 
-_(to be added after the run.)_
+**Result:** Partial — the DPI-change renderer rebuild is wired + the
+change-detection is headless-proven (suite green); the **live re-sharpen across
+a monitor/DPI change is pending a locked screen** (environment), to re-confirm
+on unlock.
+
+### Change (only `libroastty`)
+
+`roastty_surface_set_content_scale` computes
+`changed = scale_factor_x != x || scale_factor_y != y`, updates the fields, and
+on a change sets `surface.renderer = None` + `surface.dirty = true` — so
+`present_live` rebuilds the renderer at the new scale (re-rasterizing glyphs at
+`font_size * scale`) on the next present. Idempotent for a same-scale call.
+
+### Verification
+
+- **Headless change-detection test**
+  `content_scale_change_drops_renderer_for_rebuild` (`lib.rs`):
+  `set_content_scale(2.0, 2.0)` (a change from the default `1.0`) →
+  `scale_factor` updated, `dirty == true` (a rebuild present is requested),
+  `renderer` is `None`; a repeat at the same scale → `dirty == false` (no
+  spurious churn). The renderer is `None` headlessly (no nsview), so the rebuild
+  itself is live; the **trigger** (change-detection + dirty) is asserted.
+- **Full `cargo test -p roastty`:** lib **4418 passed**, 0 failures — the
+  existing scale-factor + content-scale tests all still pass (no
+  present/size-path regression).
+- **Live DPI re-sharpen — blocked (locked screen):**
+  `CGSSessionScreenIsLocked: true`; dragging the window between
+  Retina/non-Retina monitors → crisp re-rasterization awaits the unlock.
 
 ## Conclusion
 
-_(to be added after the run.)_
+A real multi-monitor faithfulness gap is closed: a DPI change now drops the
+renderer so it rebuilds at the new scale (glyphs re-rasterized for the new
+backing scale), rather than rendering blurry/chunky at the stale DPI.
+Headless-proven for the trigger; the visual re-sharpen is the only live-pending
+part. **The remaining follow-up is CVDisplayLink vsync** — genuinely all-live (a
+present-driver/window timing change with no headless surface and only visual
+verification), appropriately deferred. The live re-confirmations (Exp 29 CJK, 30
+shift-click, 33 shift-drag, 35 DPI) + closing 802 await the screen unlock.
+
+## Result Review
+
+**Reviewer:** `adversarial-reviewer` subagent (Claude Opus, fresh context,
+read-only). **Verdict: APPROVED (no findings).** Verified: the test is
+**load-bearing** (`git show HEAD~1` confirms the old `set_content_scale` never
+touched `dirty`, so the changed→`dirty==true` assert fails pre-fix; asserts both
+the changed and the idempotent same-scale→not-dirty cases; `dirty` is a
+meaningful proxy — the present driver polls
+`if surface.dirty { present_live(); }` and `present_live` rebuilds from
+`scale_factor_x` when the renderer is `None`); **no regression** (full lib
+**4418 passed, 0 failed**; existing scale/content-scale tests intact); the
+**diff is exactly** the change (compute `changed`, assign fields **before** the
+conditional so the rebuild reads the new scale, then `renderer = None` +
+`dirty = true`); **Partial honest** (renderer is `None` headlessly so the drop
+is a no-op in tests — stated plainly; the live re-sharpen is screen-locked; the
+test is non-vacuous via the `dirty`/idempotency asserts); scope/hygiene clean
+(lib.rs only, `fmt --check` 0, no new "ghostty" literals).
