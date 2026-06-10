@@ -560,6 +560,10 @@ stays unaltered except for the rename).
   — **Pass** (Exp-24 loose end: the `shape_run_options` cursor run-shaping hint
   used active `cy==y`, breaking a ligature on a scrolled history row; gated on
   the viewport via `cursor_viewport_row`; 4414 green, fully headless) · Claude
+- [Experiment 32: Phase C — widen the reporting-mode selection clear+reset](32-reporting-clear-widen.md)
+  — **Designed** (upstream clears+resets the selection on ANY button +
+  press/release while reporting; roastty only does Left+Press — hoist the clear
+  out of the Left-only branch) · Claude
 
 ## Process
 
