@@ -5,7 +5,7 @@
 #   ${TERMSURF_SHOT_DIR:-$HOME/.cache/termsurf/shots}
 #
 # Usage:
-#   live-ab-smoke.sh [--recipe smoke|ascii-grid|color-grid|clear-after] [--max-mismatch-ratio N] [--max-mean-channel-delta N]
+#   live-ab-smoke.sh [--recipe smoke|ascii-grid|color-grid|clear-after|alt-screen] [--max-mismatch-ratio N] [--max-mean-channel-delta N]
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -39,7 +39,7 @@ while [ "$#" -gt 0 ]; do
       shift 2
       ;;
     -h|--help)
-      echo "usage: $0 [--recipe smoke|ascii-grid|color-grid|clear-after] [--max-mismatch-ratio N] [--max-mean-channel-delta N]" >&2
+      echo "usage: $0 [--recipe smoke|ascii-grid|color-grid|clear-after|alt-screen] [--max-mismatch-ratio N] [--max-mean-channel-delta N]" >&2
       echo "       $0 --list-recipes" >&2
       exit 0
       ;;
@@ -50,13 +50,13 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 
-recipes=(smoke ascii-grid color-grid clear-after)
+recipes=(smoke ascii-grid color-grid clear-after alt-screen)
 if [ "$list_recipes" -eq 1 ]; then
   printf '%s\n' "${recipes[@]}"
   exit 0
 fi
 case "$recipe" in
-  smoke|ascii-grid|color-grid|clear-after) ;;
+  smoke|ascii-grid|color-grid|clear-after|alt-screen) ;;
   *)
     echo "unknown recipe: $recipe" >&2
     echo "supported recipes:" >&2
@@ -179,6 +179,9 @@ recipe_command() {
       ;;
     clear-after)
       printf "printf 'PRE_CLEAR_ONE\\nPRE_CLEAR_TWO\\nPRE_CLEAR_THREE\\n\\033[3J\\033[H\\033[2J%s\\nAFTER_CLEAR_ROW_1\\nAFTER_CLEAR_ROW_2\\n'; sleep 2" "$marker"
+      ;;
+    alt-screen)
+      printf "printf '\\033[?1049h\\033[2J\\033[5;10H%s\\033[10;3HALT_ROW_10_COL_3\\033[15;20HALT_ROW_15_COL_20\\033[0m'; sleep 2" "$marker"
       ;;
   esac
 }

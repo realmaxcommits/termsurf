@@ -234,6 +234,11 @@ before re-reading experiments.
   `scripts/roastty-app/live-ab-smoke.sh --recipe clear-after --max-mismatch-ratio 1 --max-mean-channel-delta 255`
   prints pre-clear rows, emits `3J,H,2J`, then captures fixed post-clear rows.
   Strict thresholds currently fail with recorded metrics, as expected. (Exp 42.)
+- **Alt-screen live A/B recipe:**
+  `scripts/roastty-app/live-ab-smoke.sh --recipe alt-screen --max-mismatch-ratio 1 --max-mean-channel-delta 255`
+  enters alternate screen mode, draws fixed cursor-addressed text, and captures
+  while the alt screen is active. Strict thresholds currently fail with recorded
+  metrics, as expected. (Exp 43.)
 
 ### Input injection (Exp 5)
 
@@ -626,7 +631,7 @@ stays unaltered except for the rename).
 - [Experiment 42: Phase D — clear-screen live A/B recipe](42-live-ab-clear-recipe.md)
   — **Pass**
 - [Experiment 43: Phase D — alt-screen live A/B recipe](43-live-ab-alt-screen-recipe.md)
-  — **Designed**
+  — **Pass**
 
 ## Process
 
