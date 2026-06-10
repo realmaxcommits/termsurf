@@ -612,6 +612,8 @@ stays unaltered except for the rename).
   — **Pass**
 - [Experiment 40: Phase D — named live A/B recipes](40-live-ab-recipes.md) —
   **Pass**
+- [Experiment 41: Phase D — color live A/B recipe](41-live-ab-color-recipe.md) —
+  **Designed**
 
 ## Process
 
