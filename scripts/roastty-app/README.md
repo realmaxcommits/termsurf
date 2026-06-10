@@ -61,6 +61,15 @@ expected debug app path verification. Run `scripts/ghostty-app/stop-app.sh` and
 `scripts/roastty-app/stop-app.sh` after manual debugging if a run is interrupted
 externally.
 
+By default, the pass/fail verdict uses a content-region diff
+(`--comparison-region content`) cropped from the normalized app-window captures
+with `${TERMSURF_AB_CONTENT_CROP_X:-0}`, `${TERMSURF_AB_CONTENT_CROP_Y:-132}`,
+`${TERMSURF_AB_CONTENT_CROP_W:-1600}`, and `${TERMSURF_AB_CONTENT_CROP_H:-900}`.
+The JSON still includes `full_window_diff` for titlebar/debug-banner context,
+while `diff` mirrors the active comparison and `content_region.diff` records the
+terminal-content metric. Use `--comparison-region full` to force the legacy
+full-window verdict.
+
 Recipe commands run from a per-run `ZDOTDIR` bootstrap. The harness launches
 each app binary directly with generated zsh and Nushell startup files, so
 recipes execute at shell startup instead of relying on paste or synthetic UI

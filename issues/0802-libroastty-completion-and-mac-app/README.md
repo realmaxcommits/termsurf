@@ -267,6 +267,13 @@ before re-reading experiments.
   verified against the exact launched target process's own `frontmost` property
   by Unix PID so full-screen crop captures fail instead of silently accepting
   occluded pixels.
+- **Live A/B verdicts now default to terminal content-region diffs:** Exp 49
+  keeps full-window metrics in JSON as `full_window_diff`, but gates on
+  `content_region.diff` by default (`--comparison-region content`) using the
+  configurable crop `${TERMSURF_AB_CONTENT_CROP_X:-0}`,
+  `${TERMSURF_AB_CONTENT_CROP_Y:-132}`, `${TERMSURF_AB_CONTENT_CROP_W:-1600}`,
+  `${TERMSURF_AB_CONTENT_CROP_H:-900}`. Use `--comparison-region full` for the
+  legacy titlebar/debug-banner-inclusive verdict.
 
 ### Input injection (Exp 5)
 
@@ -428,7 +435,7 @@ the live app, verified by a Phase-D UI test.)
 **Phase D — Automated UI tests for the roastty-backed app**
 
 - [x] Point the Phase-A harness at the renamed roastty-backed app
-- [ ] Golden-diff its screenshots/behavior against the Phase-A real-Ghostty
+- [x] Golden-diff its screenshots/behavior against the Phase-A real-Ghostty
       baseline
 - [x] Repeatable in-session run, wired so every later phase is regression-tested
       (headless/CI automation is a separate, later concern — see Exp 2's caveat)
@@ -671,7 +678,7 @@ stays unaltered except for the rename).
 - [Experiment 48: Phase D — hold live A/B recipe frames through capture](48-live-ab-held-recipe-frame.md)
   — **Pass**
 - [Experiment 49: Phase D — content-region live A/B diffs](49-live-ab-content-region-diff.md)
-  — **Designed**
+  — **Pass**
 
 ## Process
 

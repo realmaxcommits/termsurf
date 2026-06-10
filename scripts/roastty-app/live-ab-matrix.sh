@@ -11,11 +11,13 @@ selected_recipes=()
 
 usage() {
   cat >&2 <<USAGE
-usage: $0 [--recipe NAME ...] [--max-mismatch-ratio N] [--max-mean-channel-delta N]
+usage: $0 [--recipe NAME ...] [--comparison-region content|full] [--max-mismatch-ratio N] [--max-mean-channel-delta N]
 
 Defaults to every recipe reported by live-ab-smoke.sh --list-recipes.
 USAGE
 }
+
+forward_args=()
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -29,6 +31,10 @@ while [ "$#" -gt 0 ]; do
       ;;
     --max-mean-channel-delta)
       max_mean_channel_delta="${2:?missing value for --max-mean-channel-delta}"
+      shift 2
+      ;;
+    --comparison-region|--content-crop-x|--content-crop-y|--content-crop-w|--content-crop-h)
+      forward_args+=("$1" "${2:?missing value for $1}")
       shift 2
       ;;
     -h|--help)
@@ -53,10 +59,15 @@ any_failed=0
 for recipe in "${selected_recipes[@]}"; do
   echo "matrix: running recipe=$recipe" >&2
   child_status=0
-  child_json="$("$HARNESS" \
+  smoke_args=(
     --recipe "$recipe" \
     --max-mismatch-ratio "$max_mismatch_ratio" \
-    --max-mean-channel-delta "$max_mean_channel_delta")" || child_status=$?
+    --max-mean-channel-delta "$max_mean_channel_delta"
+  )
+  if [ "${#forward_args[@]}" -gt 0 ]; then
+    smoke_args+=("${forward_args[@]}")
+  fi
+  child_json="$("$HARNESS" "${smoke_args[@]}")" || child_status=$?
 
   if [ "$child_status" -eq 0 ]; then
     status="PASS"

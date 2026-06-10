@@ -101,6 +101,13 @@ repeatable, stricter content gating works for at least one representative
 recipe, screenshots remain outside the repo, and no launched app processes or
 bootstrap temp dirs remain.
 
+**Partial** = content-region metrics are emitted and useful, but full-matrix or
+strict-threshold gating is blocked by local capture/window conditions; record
+the exact blocker and next command.
+
+**Fail** = fixed content-region cropping cannot reliably isolate the terminal
+content across the current Ghostty and Roastty app captures.
+
 ## Design Review
 
 **Reviewer:** Codex-native adversarial subagent (`multi_agent_v1.spawn_agent`,
@@ -112,9 +119,99 @@ between the measured full-window and content-region mismatch ratios. It also
 noted one nit: replace the subjective phrase "materially lower" with a concrete
 comparison and record both values. Both were fixed before the plan commit.
 
-**Partial** = content-region metrics are emitted and useful, but full-matrix or
-strict-threshold gating is blocked by local capture/window conditions; record
-the exact blocker and next command.
+## Result
 
-**Fail** = fixed content-region cropping cannot reliably isolate the terminal
-content across the current Ghostty and Roastty app captures.
+**Result:** Pass
+
+Implemented content-region live A/B diffs:
+
+- `scripts/roastty-app/live-ab-smoke.sh`
+  - adds `--comparison-region content|full`, defaulting to
+    `${TERMSURF_AB_COMPARISON_REGION:-content}`;
+  - adds configurable content crop controls: `${TERMSURF_AB_CONTENT_CROP_X:-0}`,
+    `${TERMSURF_AB_CONTENT_CROP_Y:-132}`, `${TERMSURF_AB_CONTENT_CROP_W:-1600}`,
+    and `${TERMSURF_AB_CONTENT_CROP_H:-900}`;
+  - preserves the existing full-window crop PNGs and full-window diff metrics;
+  - writes content-region crop PNGs outside the repo next to the existing
+    captures;
+  - emits `full_window_diff` for context, `content_region.diff` for the content
+    crop, and keeps top-level `diff` as the active comparison for compatibility;
+  - exits according to the selected comparison region.
+- `scripts/roastty-app/live-ab-matrix.sh`
+  - forwards the content-region options to the smoke harness.
+- `scripts/roastty-app/README.md`
+  - documents the default content-region gate, crop controls, and JSON fields.
+- `issues/0802-libroastty-completion-and-mac-app/README.md`
+  - records the operating note, marks the Phase-D golden-diff roadmap item
+    complete, and marks Experiment 49 `Pass`.
+
+Verification:
+
+- `bash -n scripts/roastty-app/live-ab-smoke.sh`
+- `bash -n scripts/roastty-app/live-ab-matrix.sh`
+- `scripts/roastty-app/live-ab-smoke.sh --list-recipes`
+  - Printed `smoke`, `ascii-grid`, `color-grid`, `clear-after`, `alt-screen`,
+    and `scroll-output`.
+- Representative ASCII content-region smoke:
+  - `scripts/roastty-app/live-ab-smoke.sh --recipe ascii-grid --max-mismatch-ratio 1 --max-mean-channel-delta 255`
+  - Exited `0`.
+  - JSON included both `full_window_diff` and `content_region.diff`, plus
+    content crop paths outside the repo:
+    `/Users/ryan/.cache/termsurf/shots/ghostty-ab-content-20260610-115519.png`
+    and
+    `/Users/ryan/.cache/termsurf/shots/roastty-ab-content-20260610-115519.png`.
+  - Full-window metric: `mean_channel_delta=2.680687796677215`,
+    `mismatch_ratio=0.07277541534810127`.
+  - Content-region metric: `mean_channel_delta=2.0354651041666667`,
+    `mismatch_ratio=0.022267361111111113`.
+- Stricter content threshold probe:
+  - `scripts/roastty-app/live-ab-smoke.sh --recipe ascii-grid --max-mismatch-ratio 0.04 --max-mean-channel-delta 255`
+    exited `0`.
+  - The active content-region metric passed:
+    `mismatch_ratio=0.022238194444444446`.
+  - The same run's `full_window_diff` failed that threshold:
+    `mismatch_ratio=0.07275464794303797`.
+  - `scripts/roastty-app/live-ab-smoke.sh --recipe ascii-grid --comparison-region full --max-mismatch-ratio 0.04 --max-mean-channel-delta 255`
+    exited `1`, proving the legacy full-window gate still fails at the same
+    threshold while the content metric passes.
+- Full default matrix:
+  - `scripts/roastty-app/live-ab-matrix.sh`
+  - Exited `0`.
+  - Emitted six JSON Lines objects, each with `full_window_diff` and
+    `content_region.diff`.
+  - Final matrix content-region metrics:
+    - `smoke`: `mean_channel_delta=0.6406203125`,
+      `mismatch_ratio=0.008013888888888888`
+    - `ascii-grid`: `mean_channel_delta=2.0384694444444444`,
+      `mismatch_ratio=0.022296527777777776`
+    - `color-grid`: `mean_channel_delta=5.447690798611111`,
+      `mismatch_ratio=0.07510972222222222`
+    - `clear-after`: `mean_channel_delta=1.2172284722222222`,
+      `mismatch_ratio=0.013860416666666667`
+    - `alt-screen`: `mean_channel_delta=1.3197555555555556`,
+      `mismatch_ratio=0.014546527777777778`
+    - `scroll-output`: `mean_channel_delta=5.172746354166667`,
+      `mismatch_ratio=0.053760416666666665`
+- A first matrix attempt failed before launching apps because macOS's Bash
+  treated an empty forwarded-options array as unbound under `set -u`. Fixed by
+  appending forwarded options only when the array is nonempty.
+- `prettier --write --prose-wrap always --print-width 80 scripts/roastty-app/README.md issues/0802-libroastty-completion-and-mac-app/49-live-ab-content-region-diff.md issues/0802-libroastty-completion-and-mac-app/README.md`
+
+## Conclusion
+
+The live A/B harness now has a terminal-content golden-diff path against the
+real Ghostty baseline. Full-window metrics remain available for diagnosing app
+chrome and debug-banner differences, but the default verdict now measures the
+cropped terminal content region. This makes the Phase-D visual oracle usable for
+stricter regression gates and leaves the remaining mismatches as concrete
+terminal/rendering deltas for later experiments.
+
+## Completion Review
+
+**Reviewer:** Codex-native adversarial subagent (`multi_agent_v1.spawn_agent`,
+fresh context, read-only). **Verdict: APPROVED.**
+
+The reviewer found no Required issues. It independently verified `bash -n` for
+both harness scripts, recipe discovery, `git diff --check`, that no result
+commit existed before review, cleanup checks for launched app processes and
+bootstrap temp dirs, and that only the expected five files were modified.
