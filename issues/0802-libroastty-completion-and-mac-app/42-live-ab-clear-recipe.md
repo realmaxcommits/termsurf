@@ -94,3 +94,81 @@ larger rewrite.
 
 **Reviewer:** Codex-native adversarial subagent (`multi_agent_v1.spawn_agent`,
 fresh context, read-only). **Verdict: APPROVED with no findings.**
+
+## Result
+
+**Result:** Pass
+
+Added `clear-after` to the live A/B harness recipe layer:
+
+- `--list-recipes` now prints `smoke`, `ascii-grid`, `color-grid`, and
+  `clear-after`.
+- `--help` / usage text now lists `smoke|ascii-grid|color-grid|clear-after`.
+- `--recipe clear-after` prints pre-clear rows, emits the full `3J,H,2J` clear
+  sequence, prints a timestamped post-clear marker plus fixed post-clear rows,
+  and sleeps before the prompt returns.
+- Existing `smoke`, `ascii-grid`, and `color-grid` recipes, IOSurface-safe
+  Roastty capture, `swift pngdiff.swift`, screenshot policy, and exact
+  launched-PID cleanup are preserved.
+
+Updated `scripts/roastty-app/README.md` and the Issue 802 Operating notes with
+`clear-after`. The Issue 802 experiment index now marks Experiment 42 `Pass`.
+
+Verification:
+
+- `bash -n scripts/roastty-app/live-ab-smoke.sh`
+- `scripts/roastty-app/live-ab-smoke.sh --list-recipes`
+  - Exited `0`.
+  - Printed `smoke`, `ascii-grid`, `color-grid`, and `clear-after`.
+  - Did not launch either app.
+- `scripts/roastty-app/live-ab-smoke.sh --help`
+  - Exited `0`.
+  - Printed usage including `--recipe smoke|ascii-grid|color-grid|clear-after`.
+- Clear recipe permissive run:
+  - `scripts/roastty-app/live-ab-smoke.sh --recipe clear-after --max-mismatch-ratio 1 --max-mean-channel-delta 255`
+  - Exited `0`.
+  - Launched Ghostty PID `54317` and Roastty PID `54332`.
+  - Captured both comparison images at `1000x1000`.
+  - Printed one JSON summary object with `recipe: clear-after`, `verdict: PASS`,
+    `diff_exit_status: 0`, `mismatch_ratio: 1`, and
+    `mean_channel_delta: 111.078023`.
+  - The trap killed Ghostty descendants `54325`, `54326`, Ghostty PID `54317`,
+    Roastty descendant `54339`, and Roastty PID `54332`.
+- Clear recipe strict run:
+  - `bash -lc 'scripts/roastty-app/live-ab-smoke.sh --recipe clear-after; rc=$?; echo strict_exit=$rc; exit 0'`
+  - Harness exited `1`, wrapper printed `strict_exit=1`.
+  - Launched Ghostty PID `54610` and Roastty PID `54624`.
+  - Captured both comparison images at `1000x1000`.
+  - Printed one JSON summary object with `recipe: clear-after`, `verdict: FAIL`,
+    `diff_exit_status: 1`, `mismatch_ratio: 1`, and
+    `mean_channel_delta: 110.92249825`.
+  - The trap killed Ghostty descendants `54617`, `54618`, Ghostty PID `54610`,
+    Roastty descendant `54631`, and Roastty PID `54624`.
+- `pgrep -fl '[G]hostty.app/Contents/MacOS/ghostty|[R]oastty.app/Contents/MacOS/roastty' || true`
+  - no output after cleanup.
+- `prettier --write --prose-wrap always --print-width 80 issues/0802-libroastty-completion-and-mac-app/README.md issues/0802-libroastty-completion-and-mac-app/42-live-ab-clear-recipe.md scripts/roastty-app/README.md`
+- `git diff --check`
+- `git status --short`
+  - no screenshot or PNG artifacts in the repo.
+
+## Conclusion
+
+The live A/B harness now has a clear-screen fixture that exercises the full
+`3J,H,2J` clear sequence and captures only deterministic post-clear content.
+This moves the earlier Phase-C clear-screen fix into the reusable Phase-D visual
+conformance surface.
+
+Strict parity still fails, and this experiment does not claim otherwise. The
+important progress is that clear-screen behavior is now represented by a
+repeatable live app comparison recipe with machine-readable metrics.
+
+## Completion Review
+
+**Reviewer:** Codex-native adversarial subagent (`multi_agent_v1.spawn_agent`,
+fresh context, read-only). **Verdict: APPROVED with no findings.**
+
+The reviewer independently ran `bash -n scripts/roastty-app/live-ab-smoke.sh`,
+`scripts/roastty-app/live-ab-smoke.sh --list-recipes`,
+`scripts/roastty-app/live-ab-smoke.sh --help`, `git diff --check`, the scoped
+`pgrep` process check, `git status --short`, and source/diff inspection. It did
+not run the live GUI harness.

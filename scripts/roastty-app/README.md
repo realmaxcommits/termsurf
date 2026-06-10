@@ -44,6 +44,9 @@ scripts/roastty-app/live-ab-smoke.sh --recipe ascii-grid \
 scripts/roastty-app/live-ab-smoke.sh --recipe color-grid \
   --max-mismatch-ratio 1 \
   --max-mean-channel-delta 255
+scripts/roastty-app/live-ab-smoke.sh --recipe clear-after \
+  --max-mismatch-ratio 1 \
+  --max-mean-channel-delta 255
 ```
 
 The script prints one JSON summary object to stdout and diagnostics to stderr.
@@ -60,3 +63,5 @@ Recipes:
 - `color-grid` — clears the terminal, prints ANSI palette rows, bold/bright
   rows, truecolor samples, and sleeps so capture happens before the prompt
   returns.
+- `clear-after` — prints pre-clear rows, runs the full clear sequence, prints
+  post-clear rows, and sleeps so capture happens before the prompt returns.

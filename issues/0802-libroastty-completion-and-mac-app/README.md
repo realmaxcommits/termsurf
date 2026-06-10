@@ -230,6 +230,10 @@ before re-reading experiments.
   prints deterministic ANSI palette, background, bold/bright, and truecolor
   rows. Strict thresholds currently fail with recorded metrics, as expected.
   (Exp 41.)
+- **Clear-screen live A/B recipe:**
+  `scripts/roastty-app/live-ab-smoke.sh --recipe clear-after --max-mismatch-ratio 1 --max-mean-channel-delta 255`
+  prints pre-clear rows, emits `3J,H,2J`, then captures fixed post-clear rows.
+  Strict thresholds currently fail with recorded metrics, as expected. (Exp 42.)
 
 ### Input injection (Exp 5)
 
@@ -620,7 +624,7 @@ stays unaltered except for the rename).
 - [Experiment 41: Phase D — color live A/B recipe](41-live-ab-color-recipe.md) —
   **Pass**
 - [Experiment 42: Phase D — clear-screen live A/B recipe](42-live-ab-clear-recipe.md)
-  — **Designed**
+  — **Pass**
 
 ## Process
 
