@@ -90,6 +90,7 @@ mod page;
 
 #[allow(dead_code)]
 mod page_list;
+pub(crate) use page_list::{CodepointMapEntry, CodepointReplacement};
 
 #[allow(dead_code)]
 pub(crate) mod point;

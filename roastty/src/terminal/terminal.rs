@@ -2241,6 +2241,17 @@ impl Terminal {
         trim: bool,
         selection: Option<TerminalSelection>,
     ) -> Result<String, TerminalGridRefPointError> {
+        self.selection_format_with_codepoint_map(format, unwrap, trim, selection, None)
+    }
+
+    pub(crate) fn selection_format_with_codepoint_map(
+        &self,
+        format: TerminalSelectionFormat,
+        unwrap: bool,
+        trim: bool,
+        selection: Option<TerminalSelection>,
+        codepoint_map: Option<&[CodepointMapEntry]>,
+    ) -> Result<String, TerminalGridRefPointError> {
         let selection = match selection {
             Some(selection) => selection,
             None => self
@@ -2256,7 +2267,8 @@ impl Terminal {
             self,
             TerminalFormatterOptions::new(format.into())
                 .unwrap(unwrap)
-                .trim(trim),
+                .trim(trim)
+                .codepoint_map(codepoint_map),
         )
         .with_content(ScreenFormatterContent::Selection(Some(selection)))
         .format())
@@ -14393,6 +14405,48 @@ mod tests {
             "<div style=\"font-family: monospace; white-space: pre;\">a&lt;&#233;</div>"
         );
         assert_eq!(terminal_output.text.len(), terminal_output.pin_map.len());
+    }
+
+    #[test]
+    fn terminal_formatter_codepoint_map_selection_format_uses_replacements() {
+        let terminal = terminal_with_lines(&["a─Σ"]);
+        let selection = TerminalSelection {
+            start: GridRef::from(active_pin(&terminal, 0, 0)).into(),
+            end: GridRef::from(active_pin(&terminal, 2, 0)).into(),
+            rectangle: false,
+        };
+        let map = [
+            CodepointMapEntry::new('─' as u32, '─' as u32, CodepointReplacement::Codepoint('-'))
+                .unwrap(),
+            CodepointMapEntry::new(
+                'Σ' as u32,
+                'Σ' as u32,
+                CodepointReplacement::String("SUM".to_string()),
+            )
+            .unwrap(),
+        ];
+
+        let plain = terminal
+            .selection_format_with_codepoint_map(
+                TerminalSelectionFormat::Plain,
+                true,
+                true,
+                Some(selection),
+                Some(&map),
+            )
+            .unwrap();
+        assert_eq!(plain, "a-SUM");
+
+        let html = terminal
+            .selection_format_with_codepoint_map(
+                TerminalSelectionFormat::Html,
+                true,
+                true,
+                Some(selection),
+                Some(&map),
+            )
+            .unwrap();
+        assert!(html.ends_with("a-SUM</div>"), "{html}");
     }
 
     #[test]

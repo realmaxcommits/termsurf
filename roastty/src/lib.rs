@@ -44,6 +44,7 @@ use terminal::terminal::{
     TerminalXtversionCallback,
 };
 use terminal::{mouse, mouse_encode, osc, point, sgr, size_report, style};
+use terminal::{CodepointMapEntry, CodepointReplacement};
 
 mod config;
 #[allow(dead_code)]
@@ -2180,6 +2181,27 @@ fn launched_from_desktop_for_default_shell() -> bool {
     os::desktop::launched_from_desktop()
 }
 
+fn clipboard_codepoint_map_entries(
+    map: &config::RepeatableClipboardCodepointMap,
+) -> Vec<CodepointMapEntry> {
+    map.map
+        .iter()
+        .map(|entry| {
+            let replacement = match &entry.replacement {
+                config::ClipboardReplacement::Codepoint(cp) => CodepointReplacement::Codepoint(
+                    char::from_u32(*cp)
+                        .expect("clipboard codepoint map parser validates scalar replacements"),
+                ),
+                config::ClipboardReplacement::String(value) => {
+                    CodepointReplacement::String(value.clone())
+                }
+            };
+            CodepointMapEntry::new(entry.range[0], entry.range[1], replacement)
+                .expect("clipboard codepoint map parser validates scalar ranges")
+        })
+        .collect()
+}
+
 impl Surface {
     fn sanitized_scale(value: f64) -> f64 {
         if value.is_finite() && value > 0.0 {
@@ -2829,37 +2851,61 @@ impl Surface {
         let Some(worker) = self.termio_worker.as_ref() else {
             return false;
         };
+        let codepoint_map =
+            clipboard_codepoint_map_entries(&app.parsed_config.clipboard_codepoint_map);
+        let codepoint_map = (!codepoint_map.is_empty()).then_some(codepoint_map);
+        let codepoint_map = codepoint_map.as_deref();
         let Some(formatted) = worker.with_termio(|termio| {
             let terminal = termio.terminal();
             let selection = terminal.active_selection()?;
             match format {
                 CopyToClipboardFormat::Plain => terminal
-                    .selection_format(TerminalSelectionFormat::Plain, true, true, Some(selection))
+                    .selection_format_with_codepoint_map(
+                        TerminalSelectionFormat::Plain,
+                        true,
+                        true,
+                        Some(selection),
+                        codepoint_map,
+                    )
                     .ok()
                     .map(|text| vec![("text/plain", text)]),
                 CopyToClipboardFormat::Vt => terminal
-                    .selection_format(TerminalSelectionFormat::Vt, true, true, Some(selection))
+                    .selection_format_with_codepoint_map(
+                        TerminalSelectionFormat::Vt,
+                        true,
+                        true,
+                        Some(selection),
+                        codepoint_map,
+                    )
                     .ok()
                     .map(|text| vec![("text/plain", text)]),
                 CopyToClipboardFormat::Html => terminal
-                    .selection_format(TerminalSelectionFormat::Html, true, true, Some(selection))
+                    .selection_format_with_codepoint_map(
+                        TerminalSelectionFormat::Html,
+                        true,
+                        true,
+                        Some(selection),
+                        codepoint_map,
+                    )
                     .ok()
                     .map(|text| vec![("text/html", text)]),
                 CopyToClipboardFormat::Mixed => {
                     let plain = terminal
-                        .selection_format(
+                        .selection_format_with_codepoint_map(
                             TerminalSelectionFormat::Plain,
                             true,
                             true,
                             Some(selection),
+                            codepoint_map,
                         )
                         .ok()?;
                     let html = terminal
-                        .selection_format(
+                        .selection_format_with_codepoint_map(
                             TerminalSelectionFormat::Html,
                             true,
                             true,
                             Some(selection),
+                            codepoint_map,
                         )
                         .ok()?;
                     Some(vec![("text/plain", plain), ("text/html", html)])
@@ -15917,6 +15963,15 @@ mod tests {
         roastty_app_new(&runtime, ptr::null_mut())
     }
 
+    fn add_app_clipboard_codepoint_map(app: RoasttyApp, spec: &str) {
+        app_from_handle(app)
+            .unwrap()
+            .parsed_config
+            .clipboard_codepoint_map
+            .parse_cli(Some(spec))
+            .unwrap();
+    }
+
     fn new_test_app_with_clipboard_write_config(
         userdata: usize,
         supports_selection_clipboard: bool,
@@ -24192,6 +24247,66 @@ mod tests {
         roastty_app_free(app);
     }
 
+    #[test]
+    fn surface_binding_action_copy_to_clipboard_applies_clipboard_codepoint_map() {
+        let _guard = pty_command_lock();
+        let app = new_test_app_with_clipboard_write(0xC017);
+        add_app_clipboard_codepoint_map(app, "U+2500=U+002D");
+        add_app_clipboard_codepoint_map(app, "U+03A3=SUM");
+        let command = CString::new("printf ready; sleep 5").unwrap();
+        let mut config = roastty_surface_config_new();
+        config.command = command.as_ptr();
+        let surface = new_test_surface_with_config(app, &config);
+        set_surface_test_geometry(surface, 20, 3, 10, 20);
+        surface_snapshot_text_after_start_until(app, surface, "ready");
+        {
+            let surface_ref = surface_from_handle(surface).unwrap();
+            let worker = surface_ref.termio_worker.as_ref().unwrap();
+            worker.with_termio_mut(|termio| {
+                termio.terminal_mut().reset();
+                termio
+                    .terminal_mut()
+                    .next_slice("a─Σ plain".as_bytes())
+                    .unwrap();
+            });
+        }
+
+        for (action, expected_mimes) in [
+            ("copy_to_clipboard:plain", vec!["text/plain"]),
+            ("copy_to_clipboard:vt", vec!["text/plain"]),
+            ("copy_to_clipboard:html", vec!["text/html"]),
+            ("copy_to_clipboard:mixed", vec!["text/plain", "text/html"]),
+        ] {
+            let selection = surface_worker_selection(surface, (0, 0), (2, 0));
+            set_surface_worker_active_selection(surface, Some(selection));
+
+            reset_clipboard_write_records();
+            assert!(binding_action(surface, action), "{action}");
+            let records = clipboard_write_records();
+            assert_eq!(records.len(), 1, "{action}");
+            assert_eq!(records[0].userdata, 0xC017);
+            assert_eq!(records[0].clipboard, ROASTTY_CLIPBOARD_STANDARD);
+            assert_eq!(records[0].confirm, false);
+            assert_eq!(
+                records[0]
+                    .contents
+                    .iter()
+                    .map(|(mime, _)| mime.as_str())
+                    .collect::<Vec<_>>(),
+                expected_mimes,
+                "{action}"
+            );
+            for (_, text) in &records[0].contents {
+                assert!(text.contains("a-SUM"), "{action}: {text}");
+                assert!(!text.contains('─'), "{action}: {text}");
+                assert!(!text.contains('Σ'), "{action}: {text}");
+            }
+        }
+
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+    }
+
     fn write_surface_worker_osc8_link(surface: RoasttySurface) {
         let surface_ref = surface_from_handle(surface).unwrap();
         let worker = surface_ref.termio_worker.as_ref().unwrap();
@@ -24262,6 +24377,8 @@ mod tests {
     fn surface_binding_action_copy_url_to_clipboard_writes_osc8_uri() {
         let _guard = pty_command_lock();
         let app = new_test_app_with_clipboard_write(0xC017);
+        add_app_clipboard_codepoint_map(app, "U+0065=X");
+        add_app_clipboard_codepoint_map(app, "U+0074=YYY");
         let command = CString::new("printf ready; sleep 5").unwrap();
         let mut config = roastty_surface_config_new();
         config.command = command.as_ptr();

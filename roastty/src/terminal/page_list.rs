@@ -415,19 +415,19 @@ pub(super) struct PageStringWithPinMap {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) enum CodepointReplacement {
+pub(crate) enum CodepointReplacement {
     Codepoint(char),
     String(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct CodepointMapEntry {
+pub(crate) struct CodepointMapEntry {
     range: RangeInclusive<u32>,
     replacement: CodepointReplacement,
 }
 
 impl CodepointMapEntry {
-    pub(super) fn new(start: u32, end: u32, replacement: CodepointReplacement) -> Option<Self> {
+    pub(crate) fn new(start: u32, end: u32, replacement: CodepointReplacement) -> Option<Self> {
         if !valid_scalar_range(start, end) {
             return None;
         }

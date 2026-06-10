@@ -313,6 +313,10 @@ before re-reading experiments.
   font-codepoint-map, and font-synthetic-style fields. The old hardcoded Menlo
   renderer path is gone, but Menlo remains the temporary default-primary
   fallback until embedded fallback fonts and the full font subsystem are ported.
+- **Clipboard codepoint map is now app-facing:** Exp 56 represents
+  `clipboard-codepoint-map` on `Config` and applies it only to copy-to-clipboard
+  formatting, including styled HTML payloads. URL copying remains a direct URI
+  write and intentionally bypasses the map.
 
 ### Input injection (Exp 5)
 
@@ -494,7 +498,7 @@ the live app, verified by a Phase-D UI test.)
 - [ ] Theme loading (themes-dir locator + file read + palette/option
       application)
 - [ ] Conditional state wiring (`changeConditionalState` + conditional reload)
-- [ ] `font-codepoint-map` + `clipboard-codepoint-map` as config fields
+- [x] `font-codepoint-map` + `clipboard-codepoint-map` as config fields
 - [x] `SharedGridSet` config→font assembly (`Key`/`DerivedConfig` → discovery →
       populated `Collection`), replacing the hardcoded-"Menlo" test path
 
@@ -731,7 +735,7 @@ stays unaltered except for the rename).
 - [Experiment 55: Phase F — SharedGridSet config assembly](55-shared-grid-config-assembly.md)
   — **Pass**
 - [Experiment 56: Phase F — clipboard codepoint map](56-clipboard-codepoint-map.md)
-  — **Designed**
+  — **Pass**
 
 ## Process
 

@@ -157,6 +157,8 @@ pub(crate) struct Config {
     pub font_size: f32,
     /// `font-codepoint-map`.
     pub font_codepoint_map: RepeatableCodepointMap,
+    /// `clipboard-codepoint-map`.
+    pub clipboard_codepoint_map: RepeatableClipboardCodepointMap,
     /// `font-thicken`.
     pub font_thicken: bool,
     /// `font-thicken-strength`.
@@ -251,6 +253,7 @@ impl Default for Config {
                 12.0
             },
             font_codepoint_map: RepeatableCodepointMap::default(),
+            clipboard_codepoint_map: RepeatableClipboardCodepointMap::default(),
             font_thicken: false,
             font_thicken_strength: 255,
             font_shaping_break: FontShapingBreak::default(),
@@ -302,6 +305,8 @@ impl Config {
         EntryFormatter::new("font-size", out).entry_float(self.font_size);
         self.font_codepoint_map
             .format_entry(&mut EntryFormatter::new("font-codepoint-map", out));
+        self.clipboard_codepoint_map
+            .format_entry(&mut EntryFormatter::new("clipboard-codepoint-map", out));
         EntryFormatter::new("font-thicken", out).entry_bool(self.font_thicken);
         EntryFormatter::new("font-thicken-strength", out).entry_int(self.font_thicken_strength);
         self.font_shaping_break
@@ -749,6 +754,7 @@ impl Config {
             }
             "font-size" => self.font_size = set_f32_field(value, default.font_size)?,
             "font-codepoint-map" => self.font_codepoint_map.parse_cli(value)?,
+            "clipboard-codepoint-map" => self.clipboard_codepoint_map.parse_cli(value)?,
             // `BackgroundBlur::parse_cli` is `&mut self` (it overwrites `self` in
             // place), so its arm is inline: a set-but-empty value resets to the
             // default; otherwise parse in place (a missing value sets `.true`, the
@@ -1371,6 +1377,15 @@ impl From<RepeatableCodepointMapParseError> for ConfigSetError {
         match error {
             RepeatableCodepointMapParseError::ValueRequired => ConfigSetError::ValueRequired,
             RepeatableCodepointMapParseError::InvalidValue => ConfigSetError::InvalidValue,
+        }
+    }
+}
+
+impl From<ClipboardCodepointMapParseError> for ConfigSetError {
+    fn from(error: ClipboardCodepointMapParseError) -> Self {
+        match error {
+            ClipboardCodepointMapParseError::ValueRequired => ConfigSetError::ValueRequired,
+            ClipboardCodepointMapParseError::InvalidValue => ConfigSetError::InvalidValue,
         }
     }
 }
@@ -2772,6 +2787,9 @@ impl RepeatableClipboardCodepointMap {
 
         let replacement = if let Some(cp_str) = value.strip_prefix("U+") {
             let cp = parse_u21_hex(cp_str).ok_or(ClipboardCodepointMapParseError::InvalidValue)?;
+            if char::from_u32(cp).is_none() {
+                return Err(ClipboardCodepointMapParseError::InvalidValue);
+            }
             ClipboardReplacement::Codepoint(cp)
         } else {
             // `value` is already valid UTF-8 (it is a `&str`).
@@ -2783,6 +2801,9 @@ impl RepeatableClipboardCodepointMap {
             .next()
             .map_err(|_| ClipboardCodepointMapParseError::InvalidValue)?
         {
+            if !valid_clipboard_scalar_range(range) {
+                return Err(ClipboardCodepointMapParseError::InvalidValue);
+            }
             self.map.push(ClipboardCodepointMapEntry {
                 range,
                 replacement: replacement.clone(),
@@ -2815,6 +2836,13 @@ impl RepeatableClipboardCodepointMap {
             formatter.entry_str(&format!("{}={}", key, value));
         }
     }
+}
+
+fn valid_clipboard_scalar_range([start, end]: [u32; 2]) -> bool {
+    start <= end
+        && char::from_u32(start).is_some()
+        && char::from_u32(end).is_some()
+        && !(start <= 0xdfff && end >= 0xd800)
 }
 
 /// Parse a base-16 `u21` (upstream `std.fmt.parseInt(u21, _, 16)`); every error is
@@ -4669,6 +4697,7 @@ mod tests {
             }
         );
         assert!(d.font_codepoint_map.map.is_empty());
+        assert!(d.clipboard_codepoint_map.map.is_empty());
         // Font-thicken group (Experiment 845): upstream defaults false / 255.
         assert!(!d.font_thicken);
         assert_eq!(d.font_thicken_strength, 255);
@@ -6473,6 +6502,18 @@ mod tests {
         );
         assert_eq!(
             m.parse_cli(Some("U+2500=U+")), // empty codepoint replacement
+            Err(ClipboardCodepointMapParseError::InvalidValue)
+        );
+        assert_eq!(
+            m.parse_cli(Some("U+2500=U+110000")), // non-scalar replacement
+            Err(ClipboardCodepointMapParseError::InvalidValue)
+        );
+        assert_eq!(
+            m.parse_cli(Some("U+D800=U+002D")), // surrogate range
+            Err(ClipboardCodepointMapParseError::InvalidValue)
+        );
+        assert_eq!(
+            m.parse_cli(Some("U+110000=U+002D")), // non-scalar range
             Err(ClipboardCodepointMapParseError::InvalidValue)
         );
 
@@ -8402,6 +8443,45 @@ mod tests {
     }
 
     #[test]
+    fn config_clipboard_codepoint_map_routes_and_formats() {
+        let mut cfg = Config::default();
+        cfg.set("clipboard-codepoint-map", Some("U+2500=U+002D"))
+            .unwrap();
+        cfg.set("clipboard-codepoint-map", Some("U+03A3=SUM"))
+            .unwrap();
+
+        assert_eq!(cfg.clipboard_codepoint_map.map.len(), 2);
+        assert_eq!(
+            cfg.clipboard_codepoint_map.map[0],
+            ClipboardCodepointMapEntry {
+                range: [0x2500, 0x2500],
+                replacement: ClipboardReplacement::Codepoint(0x2D),
+            }
+        );
+        assert_eq!(
+            cfg.clipboard_codepoint_map.map[1],
+            ClipboardCodepointMapEntry {
+                range: [0x03A3, 0x03A3],
+                replacement: ClipboardReplacement::String("SUM".to_string()),
+            }
+        );
+
+        let mut out = String::new();
+        cfg.format_config(&mut out);
+        assert!(out.contains("clipboard-codepoint-map = U+2500=U+002D\n"));
+        assert!(out.contains("clipboard-codepoint-map = U+03A3=SUM\n"));
+
+        assert_eq!(
+            cfg.set("clipboard-codepoint-map", None),
+            Err(ConfigSetError::ValueRequired)
+        );
+        assert_eq!(
+            cfg.set("clipboard-codepoint-map", Some("U+2500")),
+            Err(ConfigSetError::InvalidValue)
+        );
+    }
+
+    #[test]
     fn config_format_config_emits_fields_in_upstream_order() {
         let cfg = Config::default();
         let mut out = String::new();
@@ -8429,6 +8509,7 @@ mod tests {
                 "font-synthetic-style",
                 "font-size",
                 "font-codepoint-map",
+                "clipboard-codepoint-map",
                 "font-thicken",
                 "font-thicken-strength",
                 "font-shaping-break",
