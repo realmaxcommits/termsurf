@@ -98,6 +98,8 @@ pub(crate) struct Config {
     pub scrollback_limit: usize,
     /// `scrollbar`.
     pub scrollbar: Scrollbar,
+    /// `link-url`.
+    pub link_url: bool,
     /// `window-colorspace`.
     pub window_colorspace: WindowColorspace,
     /// `alpha-blending`.
@@ -164,6 +166,8 @@ pub(crate) struct Config {
     pub confirm_close_surface: ConfirmCloseSurface,
     /// `link-previews`.
     pub link_previews: LinkPreviews,
+    /// `maximize`.
+    pub maximize: bool,
     /// `window-subtitle`.
     pub window_subtitle: WindowSubtitle,
     /// `window-decoration`.
@@ -274,6 +278,7 @@ impl Default for Config {
             abnormal_command_exit_runtime: 250,
             scrollback_limit: 10_000_000,
             scrollbar: Scrollbar::System,
+            link_url: true,
             window_colorspace: WindowColorspace::Srgb,
             alpha_blending: AlphaBlending::Native,
             background_blur: BackgroundBlur::False,
@@ -315,6 +320,7 @@ impl Default for Config {
             faint_opacity: 0.5,
             confirm_close_surface: ConfirmCloseSurface::True,
             link_previews: LinkPreviews::True,
+            maximize: false,
             window_subtitle: WindowSubtitle::False,
             window_decoration: WindowDecoration::Auto,
             window_theme: WindowTheme::Auto,
@@ -489,8 +495,10 @@ impl Config {
         EntryFormatter::new("scrollback-limit", out).entry_int(self.scrollback_limit);
         self.scrollbar
             .format_entry(&mut EntryFormatter::new("scrollbar", out));
+        EntryFormatter::new("link-url", out).entry_bool(self.link_url);
         self.link_previews
             .format_entry(&mut EntryFormatter::new("link-previews", out));
+        EntryFormatter::new("maximize", out).entry_bool(self.maximize);
         self.fullscreen
             .format_entry(&mut EntryFormatter::new("fullscreen", out));
         EntryFormatter::new("title", out)
@@ -705,6 +713,7 @@ impl Config {
             "scrollbar" => {
                 self.scrollbar = set_enum_field(value, default.scrollbar, Scrollbar::from_keyword)?
             }
+            "link-url" => self.link_url = set_bool_field(value, default.link_url)?,
             "window-colorspace" => {
                 self.window_colorspace = set_enum_field(
                     value,
@@ -748,6 +757,7 @@ impl Config {
                 self.link_previews =
                     set_enum_field(value, default.link_previews, LinkPreviews::from_keyword)?
             }
+            "maximize" => self.maximize = set_bool_field(value, default.maximize)?,
             "window-subtitle" => {
                 self.window_subtitle =
                     set_enum_field(value, default.window_subtitle, WindowSubtitle::from_keyword)?
@@ -5333,6 +5343,7 @@ mod tests {
         assert_eq!(d.abnormal_command_exit_runtime, 250);
         assert_eq!(d.scrollback_limit, 10_000_000);
         assert_eq!(d.scrollbar, Scrollbar::System);
+        assert!(d.link_url);
         // Renderer-appearance group (Experiment 465).
         assert_eq!(d.window_colorspace, WindowColorspace::Srgb);
         assert_eq!(d.alpha_blending, AlphaBlending::Native);
@@ -5414,6 +5425,7 @@ mod tests {
         // Surface-policy group (Experiment 468).
         assert_eq!(d.confirm_close_surface, ConfirmCloseSurface::True);
         assert_eq!(d.link_previews, LinkPreviews::True);
+        assert!(!d.maximize);
         assert_eq!(d.window_subtitle, WindowSubtitle::False);
         assert_eq!(d.window_decoration, WindowDecoration::Auto);
         assert_eq!(d.window_theme, WindowTheme::Auto);
@@ -9263,7 +9275,9 @@ mod tests {
                 "abnormal-command-exit-runtime",
                 "scrollback-limit",
                 "scrollbar",
+                "link-url",
                 "link-previews",
+                "maximize",
                 "fullscreen",
                 "title",
                 "window-padding-color",
@@ -10872,6 +10886,84 @@ mod tests {
         let cloned = cfg.clone();
         assert_eq!(cloned, cfg);
         assert_eq!(cloned.scrollbar, Scrollbar::Never);
+    }
+
+    #[test]
+    fn link_url_maximize_config_parse_format_reset_and_diagnose() {
+        let line = |cfg: &Config, key: &str| -> String {
+            let mut out = String::new();
+            cfg.format_config(&mut out);
+            out.lines()
+                .find(|l| l.starts_with(&format!("{} = ", key)))
+                .unwrap()
+                .to_string()
+        };
+
+        let mut cfg = Config::default();
+        assert!(cfg.link_url);
+        assert!(!cfg.maximize);
+        assert_eq!(line(&cfg, "link-url"), "link-url = true");
+        assert_eq!(line(&cfg, "maximize"), "maximize = false");
+
+        cfg.set("link-url", Some("false")).unwrap();
+        cfg.set("maximize", Some("true")).unwrap();
+        assert!(!cfg.link_url);
+        assert!(cfg.maximize);
+        assert_eq!(line(&cfg, "link-url"), "link-url = false");
+        assert_eq!(line(&cfg, "maximize"), "maximize = true");
+
+        cfg.set("link-url", Some("true")).unwrap();
+        cfg.set("maximize", Some("false")).unwrap();
+        assert!(cfg.link_url);
+        assert!(!cfg.maximize);
+
+        cfg.set("link-url", Some("false")).unwrap();
+        cfg.set("maximize", Some("false")).unwrap();
+        cfg.set("link-url", None).unwrap();
+        cfg.set("maximize", None).unwrap();
+        assert!(cfg.link_url);
+        assert!(cfg.maximize);
+
+        cfg.set("link-url", Some("false")).unwrap();
+        cfg.set("maximize", Some("true")).unwrap();
+        cfg.set("link-url", Some("")).unwrap();
+        cfg.set("maximize", Some("")).unwrap();
+        assert!(cfg.link_url);
+        assert!(!cfg.maximize);
+
+        assert_eq!(
+            cfg.set("link-url", Some("sometimes")),
+            Err(ConfigSetError::InvalidValue)
+        );
+        assert_eq!(
+            cfg.set("maximize", Some("sometimes")),
+            Err(ConfigSetError::InvalidValue)
+        );
+
+        let diagnostics =
+            cfg.load_str("link-url = false\nlink-url = maybe\nmaximize = true\nmaximize = maybe\n");
+        assert!(!cfg.link_url);
+        assert!(cfg.maximize);
+        assert_eq!(
+            diagnostics,
+            vec![
+                ConfigDiagnostic {
+                    line: 2,
+                    key: "link-url".to_string(),
+                    error: ConfigSetError::InvalidValue,
+                },
+                ConfigDiagnostic {
+                    line: 4,
+                    key: "maximize".to_string(),
+                    error: ConfigSetError::InvalidValue,
+                },
+            ]
+        );
+
+        let cloned = cfg.clone();
+        assert_eq!(cloned, cfg);
+        assert!(!cloned.link_url);
+        assert!(cloned.maximize);
     }
 
     #[test]

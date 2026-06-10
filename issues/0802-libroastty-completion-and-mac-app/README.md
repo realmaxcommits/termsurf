@@ -412,6 +412,9 @@ before re-reading experiments.
   both scroll multipliers clamp to `[0.01, 10000.0]`. Surfaces cache
   `click_repeat_interval_ns`, so runtime gesture timing should use the cached
   nanoseconds value rather than re-reading config milliseconds.
+- **Link URL / maximize config (Exp 67):** `link-url` and `maximize` now
+  parse/format as faithful bool surfaces. Runtime URL matching and startup
+  window maximization remain later app/link wiring work.
 
 ### Where things live
 
@@ -777,7 +780,7 @@ stays unaltered except for the rename).
   **Pass**
 - [Experiment 66: Phase F — scrollbar config](66-scrollbar-config.md) — **Pass**
 - [Experiment 67: Phase F — link URL and maximize config](67-link-url-maximize-config.md)
-  — **Designed**
+  — **Pass**
 
 ## Process
 

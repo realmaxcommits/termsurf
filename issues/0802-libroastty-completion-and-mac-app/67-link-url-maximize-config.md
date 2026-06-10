@@ -97,3 +97,64 @@ has the required sections, the scope is narrow, the planned `link-url` and
 `maximize` defaults and ordering match upstream, and the verification plan
 includes markdown/Rust formatting, targeted tests, full `cargo test -p roastty`,
 `git diff --check`, and clean-status inspection.
+
+## Result
+
+**Result:** Pass
+
+Experiment 67 added the config-only `link-url` and `maximize` surfaces to
+`roastty/src/config/mod.rs`. `Config` now carries `link_url` with upstream
+default `true` and `maximize` with upstream default `false`, routes both keys
+through `Config::set`, and emits them in `format_config` in the local upstream
+sequence:
+
+- `scrollbar`
+- `link-url`
+- `link-previews`
+- `maximize`
+- `fullscreen`
+
+The shared bool parser accepts explicit `true` and `false`, treats a missing
+CLI-style value as `true`, resets empty values to each field's upstream default,
+and reports `InvalidValue` for invalid strings. `Config::load_str` records
+line/key diagnostics for invalid `link-url` and `maximize` lines while applying
+valid neighboring lines.
+
+Runtime URL matching/open-link behavior and startup window maximization remain
+out of scope; this experiment does not alter link/action dispatch or app-window
+creation.
+
+Verification run:
+
+- `cargo fmt -- roastty/src/config/mod.rs`
+- `cargo test -p roastty link_url_maximize_config`
+- `cargo test -p roastty config_format_config`
+- `cargo test -p roastty`
+- `cargo fmt --check`
+- `git diff --check`
+- `git status --short`
+
+`cargo test -p roastty` passed with 4,502 unit tests, the C ABI harness, and doc
+tests. The C ABI harness still emits existing enum-conversion warnings unrelated
+to this config change.
+
+## Conclusion
+
+`link-url` and `maximize` now have faithful parser/formatter config surfaces
+with defaults, reset behavior, diagnostics, formatter-order coverage, and
+clone/equality coverage. The remaining repeatable `link` parser and the runtime
+application of both URL matching and window maximization should stay separate,
+larger follow-up work.
+
+## Completion Review
+
+Codex-native adversarial reviewer `019eb3d9-5fac-72b0-afd8-d96ae1160856`
+returned **Approved** with no findings.
+
+The reviewer checked the completed experiment with fresh context, including the
+workflow contract, issue README, experiment file, implementation diff since the
+plan commit, `roastty/src/config/mod.rs`, and upstream
+`vendor/ghostty/src/config/Config.zig`. The reviewer independently verified
+`cargo fmt --check`, `git diff --check`, both targeted test commands, and full
+`cargo test -p roastty`, which passed with 4,502 unit tests, the C ABI harness,
+and doc tests.
