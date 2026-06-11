@@ -114,3 +114,64 @@ to test both compatibility values and normal enum values.
 
 Codex-native adversarial re-reviewer `019eb56a-cdae-71c3-99a9-bc6a7551a3a9`
 returned **Approved** with no findings.
+
+## Result
+
+**Result:** Pass
+
+Implemented the parser/formatter-only GTK chrome config surface in
+`roastty/src/config/mod.rs`:
+
+- Added the eight GTK chrome fields to `Config`, defaults, formatter output, and
+  `Config::set`.
+- Added `GtkSingleInstance`, `GtkTabsLocation`, `GtkToolbarStyle`, and
+  `GtkTitlebarStyle` enums with exact upstream keywords.
+- Preserved upstream compatibility behavior:
+  - `gtk-single-instance = desktop` maps to `detect`.
+  - `gtk-tabs-location = hidden` sets `window-show-tab-bar = never` without
+    changing the `gtk-tabs-location` value.
+- Extended default, format-order, enum-route, bool-route, compatibility,
+  diagnostic, keyword round-trip, and clone/equality tests.
+
+Verification:
+
+- `cargo fmt` — pass.
+- `cargo test -p roastty gtk_chrome` — pass: 1 passed, 0 failed.
+- `cargo test -p roastty config_format_config` — pass: 1 passed, 0 failed.
+- Initial `cargo test -p roastty` — transient fail: 4536 passed, 1 failed. The
+  failure was
+  `tests::surface_foreground_pid_reports_worker_foreground_pid_after_start`,
+  with `left: 82986`, `right: 82981`.
+- Initial
+  `cargo test -p roastty surface_foreground_pid_reports_worker_foreground_pid_after_start`
+  — transient fail in isolation, with `left: 4244`, `right: 4240`.
+- Rerun
+  `cargo test -p roastty surface_foreground_pid_reports_worker_foreground_pid_after_start`
+  — pass: 1 passed, 0 failed.
+- Rerun `cargo test -p roastty` — pass: 4537 unit tests passed, 1 ABI harness
+  test passed, 0 doc tests. The ABI harness emitted the existing 10 enum
+  conversion warnings.
+- `cargo fmt --check` — pass.
+- `git diff --check` — pass.
+
+Codex-native adversarial completion reviewer
+`019eb575-3adc-7990-9ff3-0fce3b2ee1c2` returned **Changes Required** only for
+stale result documentation: the reviewer independently reran
+`cargo test -p roastty` and the isolated foreground-PID test, both passed, and
+the source implementation had no required findings. This result section and the
+README status were updated to reflect the current passing verification.
+
+Codex-native adversarial re-reviewer `019eb575-3adc-7990-9ff3-0fce3b2ee1c2`
+returned **Approved**: the result now records `Pass`, preserves the initial
+transient foreground-PID failures, records the passing isolated and full-suite
+reruns, and the README marks Experiment 93 as `Pass`. The re-review found no new
+required findings.
+
+## Conclusion
+
+The GTK chrome parser/formatter surface is implemented and covered by targeted
+tests, including the two upstream compatibility shims missed by the first design
+draft. Runtime GTK behavior remains out of scope for this experiment. The next
+experiment can continue with the remaining upstream config surface after the
+completion re-review approves the corrected result docs and this result is
+committed.

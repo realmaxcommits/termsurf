@@ -249,6 +249,14 @@ the earlier "commit a small baseline PNG set" wording in Exp 2.
   parsing, empty reset, diagnostics, and canonical formatter output; runtime
   transient `systemd` scope creation, resource-limit application, app C ABI
   exposure, and Linux app integration remain later work.
+- **GTK chrome config is parser/formatter-only.** Exp 93 wires
+  `gtk-opengl-debug`, `gtk-single-instance`, `gtk-titlebar`,
+  `gtk-tabs-location`, `gtk-titlebar-hide-when-maximized`, `gtk-toolbar-style`,
+  `gtk-titlebar-style`, and `gtk-wide-tabs` with upstream defaults, enum
+  keywords, empty reset, compatibility shims for `gtk-single-instance = desktop`
+  and `gtk-tabs-location = hidden`, diagnostics, and canonical formatter output;
+  runtime GTK chrome behavior, app C ABI exposure, and GTK app integration
+  remain later work.
 
 **Keep this current.** When an experiment yields a durable, reusable fact — a
 toolchain incantation, a dead-end to avoid, or where an artifact lives — distill
@@ -922,7 +930,7 @@ stays unaltered except for the rename).
 - [Experiment 92: Phase F — Linux cgroup config](92-linux-cgroup-config.md) —
   **Pass**
 - [Experiment 93: Phase F — GTK chrome config](93-gtk-chrome-config.md) —
-  **Designed**
+  **Pass**
 
 ## Process
 

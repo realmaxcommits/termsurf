@@ -289,6 +289,22 @@ pub(crate) struct Config {
     pub linux_cgroup_processes_limit: Option<u64>,
     /// `linux-cgroup-hard-fail`.
     pub linux_cgroup_hard_fail: bool,
+    /// `gtk-opengl-debug`.
+    pub gtk_opengl_debug: bool,
+    /// `gtk-single-instance`.
+    pub gtk_single_instance: GtkSingleInstance,
+    /// `gtk-titlebar`.
+    pub gtk_titlebar: bool,
+    /// `gtk-tabs-location`.
+    pub gtk_tabs_location: GtkTabsLocation,
+    /// `gtk-titlebar-hide-when-maximized`.
+    pub gtk_titlebar_hide_when_maximized: bool,
+    /// `gtk-toolbar-style`.
+    pub gtk_toolbar_style: GtkToolbarStyle,
+    /// `gtk-titlebar-style`.
+    pub gtk_titlebar_style: GtkTitlebarStyle,
+    /// `gtk-wide-tabs`.
+    pub gtk_wide_tabs: bool,
     /// `font-family`.
     pub font_family: RepeatableString,
     /// `font-family-bold`.
@@ -498,6 +514,14 @@ impl Default for Config {
             linux_cgroup_memory_limit: None,
             linux_cgroup_processes_limit: None,
             linux_cgroup_hard_fail: false,
+            gtk_opengl_debug: cfg!(debug_assertions),
+            gtk_single_instance: GtkSingleInstance::Detect,
+            gtk_titlebar: true,
+            gtk_tabs_location: GtkTabsLocation::Top,
+            gtk_titlebar_hide_when_maximized: false,
+            gtk_toolbar_style: GtkToolbarStyle::Raised,
+            gtk_titlebar_style: GtkTitlebarStyle::Native,
+            gtk_wide_tabs: true,
             font_family: RepeatableString::default(),
             font_family_bold: RepeatableString::default(),
             font_family_italic: RepeatableString::default(),
@@ -834,6 +858,19 @@ impl Config {
         EntryFormatter::new("linux-cgroup-processes-limit", out)
             .entry_optional(self.linux_cgroup_processes_limit, |v, f| f.entry_int(v));
         EntryFormatter::new("linux-cgroup-hard-fail", out).entry_bool(self.linux_cgroup_hard_fail);
+        EntryFormatter::new("gtk-opengl-debug", out).entry_bool(self.gtk_opengl_debug);
+        self.gtk_single_instance
+            .format_entry(&mut EntryFormatter::new("gtk-single-instance", out));
+        EntryFormatter::new("gtk-titlebar", out).entry_bool(self.gtk_titlebar);
+        self.gtk_tabs_location
+            .format_entry(&mut EntryFormatter::new("gtk-tabs-location", out));
+        EntryFormatter::new("gtk-titlebar-hide-when-maximized", out)
+            .entry_bool(self.gtk_titlebar_hide_when_maximized);
+        self.gtk_toolbar_style
+            .format_entry(&mut EntryFormatter::new("gtk-toolbar-style", out));
+        self.gtk_titlebar_style
+            .format_entry(&mut EntryFormatter::new("gtk-titlebar-style", out));
+        EntryFormatter::new("gtk-wide-tabs", out).entry_bool(self.gtk_wide_tabs);
         EntryFormatter::new("bold-color", out)
             .entry_optional(self.bold_color, |v, f| v.format_entry(f));
         EntryFormatter::new("faint-opacity", out).entry_float(self.faint_opacity);
@@ -1194,13 +1231,6 @@ impl Config {
                     Color::parse_cli,
                 )?
             }
-            "gtk-tabs-location" => {
-                if value == Some("hidden") {
-                    self.window_show_tab_bar = WindowShowTabBar::Never;
-                } else {
-                    return Err(ConfigSetError::UnknownField);
-                }
-            }
             "resize-overlay" => {
                 self.resize_overlay =
                     set_enum_field(value, default.resize_overlay, ResizeOverlay::from_keyword)?
@@ -1341,6 +1371,51 @@ impl Config {
             "linux-cgroup-hard-fail" => {
                 self.linux_cgroup_hard_fail = set_bool_field(value, default.linux_cgroup_hard_fail)?
             }
+            "gtk-opengl-debug" => {
+                self.gtk_opengl_debug = set_bool_field(value, default.gtk_opengl_debug)?
+            }
+            "gtk-single-instance" => {
+                self.gtk_single_instance = if value == Some("desktop") {
+                    GtkSingleInstance::Detect
+                } else {
+                    set_enum_field(
+                        value,
+                        default.gtk_single_instance,
+                        GtkSingleInstance::from_keyword,
+                    )?
+                }
+            }
+            "gtk-titlebar" => self.gtk_titlebar = set_bool_field(value, default.gtk_titlebar)?,
+            "gtk-tabs-location" => {
+                if value == Some("hidden") {
+                    self.window_show_tab_bar = WindowShowTabBar::Never;
+                } else {
+                    self.gtk_tabs_location = set_enum_field(
+                        value,
+                        default.gtk_tabs_location,
+                        GtkTabsLocation::from_keyword,
+                    )?
+                }
+            }
+            "gtk-titlebar-hide-when-maximized" => {
+                self.gtk_titlebar_hide_when_maximized =
+                    set_bool_field(value, default.gtk_titlebar_hide_when_maximized)?
+            }
+            "gtk-toolbar-style" => {
+                self.gtk_toolbar_style = set_enum_field(
+                    value,
+                    default.gtk_toolbar_style,
+                    GtkToolbarStyle::from_keyword,
+                )?
+            }
+            "gtk-titlebar-style" => {
+                self.gtk_titlebar_style = set_enum_field(
+                    value,
+                    default.gtk_titlebar_style,
+                    GtkTitlebarStyle::from_keyword,
+                )?
+            }
+            "gtk-wide-tabs" => self.gtk_wide_tabs = set_bool_field(value, default.gtk_wide_tabs)?,
             "grapheme-width-method" => {
                 self.grapheme_width_method = set_enum_field(
                     value,
@@ -5244,6 +5319,144 @@ impl LinuxCgroup {
     }
 }
 
+/// The `gtk-single-instance` config (upstream `GtkSingleInstance`): whether GTK
+/// single-instance behavior is disabled, enabled, or detected. Runtime behavior
+/// is ported later.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum GtkSingleInstance {
+    False,
+    True,
+    Detect,
+}
+
+impl GtkSingleInstance {
+    /// The config keyword (upstream tag name).
+    pub(crate) fn keyword(self) -> &'static str {
+        match self {
+            GtkSingleInstance::False => "false",
+            GtkSingleInstance::True => "true",
+            GtkSingleInstance::Detect => "detect",
+        }
+    }
+
+    /// Parse the config keyword (upstream `std.meta.stringToEnum`): an exact tag
+    /// match, else `None`.
+    pub(crate) fn from_keyword(value: &str) -> Option<Self> {
+        match value {
+            "false" => Some(GtkSingleInstance::False),
+            "true" => Some(GtkSingleInstance::True),
+            "detect" => Some(GtkSingleInstance::Detect),
+            _ => None,
+        }
+    }
+
+    /// Format as a config entry (upstream's enum branch): the keyword.
+    pub(crate) fn format_entry(self, formatter: &mut EntryFormatter) {
+        formatter.entry_str(self.keyword());
+    }
+}
+
+/// The `gtk-tabs-location` config (upstream `GtkTabsLocation`): where GTK tabs
+/// are placed. The removed `hidden` value is handled as a compatibility shim in
+/// [`Config::set_from_source`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum GtkTabsLocation {
+    Top,
+    Bottom,
+}
+
+impl GtkTabsLocation {
+    /// The config keyword (upstream tag name).
+    pub(crate) fn keyword(self) -> &'static str {
+        match self {
+            GtkTabsLocation::Top => "top",
+            GtkTabsLocation::Bottom => "bottom",
+        }
+    }
+
+    /// Parse the config keyword (upstream `std.meta.stringToEnum`): an exact tag
+    /// match, else `None`.
+    pub(crate) fn from_keyword(value: &str) -> Option<Self> {
+        match value {
+            "top" => Some(GtkTabsLocation::Top),
+            "bottom" => Some(GtkTabsLocation::Bottom),
+            _ => None,
+        }
+    }
+
+    /// Format as a config entry (upstream's enum branch): the keyword.
+    pub(crate) fn format_entry(self, formatter: &mut EntryFormatter) {
+        formatter.entry_str(self.keyword());
+    }
+}
+
+/// The `gtk-toolbar-style` config (upstream `GtkToolbarStyle`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum GtkToolbarStyle {
+    Flat,
+    Raised,
+    RaisedBorder,
+}
+
+impl GtkToolbarStyle {
+    /// The config keyword (upstream tag name).
+    pub(crate) fn keyword(self) -> &'static str {
+        match self {
+            GtkToolbarStyle::Flat => "flat",
+            GtkToolbarStyle::Raised => "raised",
+            GtkToolbarStyle::RaisedBorder => "raised-border",
+        }
+    }
+
+    /// Parse the config keyword (upstream `std.meta.stringToEnum`): an exact tag
+    /// match, else `None`.
+    pub(crate) fn from_keyword(value: &str) -> Option<Self> {
+        match value {
+            "flat" => Some(GtkToolbarStyle::Flat),
+            "raised" => Some(GtkToolbarStyle::Raised),
+            "raised-border" => Some(GtkToolbarStyle::RaisedBorder),
+            _ => None,
+        }
+    }
+
+    /// Format as a config entry (upstream's enum branch): the keyword.
+    pub(crate) fn format_entry(self, formatter: &mut EntryFormatter) {
+        formatter.entry_str(self.keyword());
+    }
+}
+
+/// The `gtk-titlebar-style` config (upstream `GtkTitlebarStyle`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum GtkTitlebarStyle {
+    Native,
+    Tabs,
+}
+
+impl GtkTitlebarStyle {
+    /// The config keyword (upstream tag name).
+    pub(crate) fn keyword(self) -> &'static str {
+        match self {
+            GtkTitlebarStyle::Native => "native",
+            GtkTitlebarStyle::Tabs => "tabs",
+        }
+    }
+
+    /// Parse the config keyword (upstream `std.meta.stringToEnum`): an exact tag
+    /// match, else `None`.
+    pub(crate) fn from_keyword(value: &str) -> Option<Self> {
+        match value {
+            "native" => Some(GtkTitlebarStyle::Native),
+            "tabs" => Some(GtkTitlebarStyle::Tabs),
+            _ => None,
+        }
+    }
+
+    /// Format as a config entry (upstream's enum branch): the keyword.
+    pub(crate) fn format_entry(self, formatter: &mut EntryFormatter) {
+        formatter.entry_str(self.keyword());
+    }
+}
+
 /// An error parsing a `Theme` (upstream `parseAutoStruct` / `Theme.parseCLI`
 /// `error.InvalidValue`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -6903,14 +7116,14 @@ mod tests {
         ConfigFilePath, ConfigRecursiveFileErrorKind, ConfigSetError, ConfirmCloseSurface,
         CopyOnSelect, CursorStyle, CustomShaderAnimation, DefaultConfigPaths, Duration,
         DurationParseError, FlagsParseError, FontShapingBreak, FontStyle, FontStyleParseError,
-        FontSyntheticStyle, Fullscreen, GraphemeWidthMethod, LinkPreviews, LinuxCgroup, MacAppIcon,
-        MacAppIconFrame, MacHidden, MacShortcuts, MacTitlebarProxyIcon, MacTitlebarStyle,
-        MacWindowButtons, MagicParseError, MiddleClickAction, MouseScrollMultiplier,
-        MouseScrollMultiplierParseError, MouseShiftCapture, NonNativeFullscreen,
-        NotifyOnCommandFinish, NotifyOnCommandFinishAction, OptionalFileAction,
-        OscColorReportFormat, Palette, PaletteParseError, QuickTerminalDimensions,
-        QuickTerminalKeyboardInteractivity, QuickTerminalLayer, QuickTerminalPosition,
-        QuickTerminalScreen, QuickTerminalSize, QuickTerminalSizeParseError,
+        FontSyntheticStyle, Fullscreen, GraphemeWidthMethod, GtkSingleInstance, GtkTabsLocation,
+        GtkTitlebarStyle, GtkToolbarStyle, LinkPreviews, LinuxCgroup, MacAppIcon, MacAppIconFrame,
+        MacHidden, MacShortcuts, MacTitlebarProxyIcon, MacTitlebarStyle, MacWindowButtons,
+        MagicParseError, MiddleClickAction, MouseScrollMultiplier, MouseScrollMultiplierParseError,
+        MouseShiftCapture, NonNativeFullscreen, NotifyOnCommandFinish, NotifyOnCommandFinishAction,
+        OptionalFileAction, OscColorReportFormat, Palette, PaletteParseError,
+        QuickTerminalDimensions, QuickTerminalKeyboardInteractivity, QuickTerminalLayer,
+        QuickTerminalPosition, QuickTerminalScreen, QuickTerminalSize, QuickTerminalSizeParseError,
         QuickTerminalSizeValue, QuickTerminalSpaceBehavior, RepeatableClipboardCodepointMap,
         RepeatableCodepointMap, RepeatableConfigPath, RepeatableConfigPathParseError,
         RepeatableString, RepeatableStringParseError, ResizeOverlay, ResizeOverlayPosition,
@@ -7279,6 +7492,14 @@ mod tests {
         assert_eq!(d.linux_cgroup_memory_limit, None);
         assert_eq!(d.linux_cgroup_processes_limit, None);
         assert!(!d.linux_cgroup_hard_fail);
+        assert_eq!(d.gtk_opengl_debug, cfg!(debug_assertions));
+        assert_eq!(d.gtk_single_instance, GtkSingleInstance::Detect);
+        assert!(d.gtk_titlebar);
+        assert_eq!(d.gtk_tabs_location, GtkTabsLocation::Top);
+        assert!(!d.gtk_titlebar_hide_when_maximized);
+        assert_eq!(d.gtk_toolbar_style, GtkToolbarStyle::Raised);
+        assert_eq!(d.gtk_titlebar_style, GtkTitlebarStyle::Native);
+        assert!(d.gtk_wide_tabs);
         // Font group (Experiment 470).
         assert_eq!(d.font_style, FontStyle::Default);
         assert_eq!(d.font_style_bold, FontStyle::Default);
@@ -9316,6 +9537,154 @@ mod tests {
         );
         assert_eq!(cfg.linux_cgroup, LinuxCgroup::Always);
         assert!(cfg.linux_cgroup_hard_fail);
+
+        let cloned = cfg.clone();
+        assert_eq!(cloned, cfg);
+    }
+
+    #[test]
+    fn gtk_chrome_config_parse_format_compat_reset_and_diagnose() {
+        let mut cfg = Config::default();
+        assert_eq!(cfg.gtk_opengl_debug, cfg!(debug_assertions));
+        assert_eq!(cfg.gtk_single_instance, GtkSingleInstance::Detect);
+        assert!(cfg.gtk_titlebar);
+        assert_eq!(cfg.gtk_tabs_location, GtkTabsLocation::Top);
+        assert!(!cfg.gtk_titlebar_hide_when_maximized);
+        assert_eq!(cfg.gtk_toolbar_style, GtkToolbarStyle::Raised);
+        assert_eq!(cfg.gtk_titlebar_style, GtkTitlebarStyle::Native);
+        assert!(cfg.gtk_wide_tabs);
+
+        let lines = |cfg: &Config| {
+            let mut out = String::new();
+            cfg.format_config(&mut out);
+            [
+                "gtk-opengl-debug",
+                "gtk-single-instance",
+                "gtk-titlebar",
+                "gtk-tabs-location",
+                "gtk-titlebar-hide-when-maximized",
+                "gtk-toolbar-style",
+                "gtk-titlebar-style",
+                "gtk-wide-tabs",
+            ]
+            .into_iter()
+            .map(|key| {
+                out.lines()
+                    .find(|line| line.starts_with(&format!("{key} = ")))
+                    .unwrap()
+                    .to_string()
+            })
+            .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            lines(&cfg),
+            vec![
+                format!("gtk-opengl-debug = {}", cfg!(debug_assertions)),
+                "gtk-single-instance = detect".to_string(),
+                "gtk-titlebar = true".to_string(),
+                "gtk-tabs-location = top".to_string(),
+                "gtk-titlebar-hide-when-maximized = false".to_string(),
+                "gtk-toolbar-style = raised".to_string(),
+                "gtk-titlebar-style = native".to_string(),
+                "gtk-wide-tabs = true".to_string(),
+            ]
+        );
+
+        cfg.set("gtk-opengl-debug", Some("false")).unwrap();
+        cfg.set("gtk-titlebar", Some("false")).unwrap();
+        cfg.set("gtk-titlebar-hide-when-maximized", None).unwrap();
+        cfg.set("gtk-wide-tabs", Some("false")).unwrap();
+        assert!(!cfg.gtk_opengl_debug);
+        assert!(!cfg.gtk_titlebar);
+        assert!(cfg.gtk_titlebar_hide_when_maximized);
+        assert!(!cfg.gtk_wide_tabs);
+
+        cfg.set("gtk-single-instance", Some("false")).unwrap();
+        assert_eq!(cfg.gtk_single_instance, GtkSingleInstance::False);
+        cfg.set("gtk-single-instance", Some("true")).unwrap();
+        assert_eq!(cfg.gtk_single_instance, GtkSingleInstance::True);
+        cfg.set("gtk-single-instance", Some("desktop")).unwrap();
+        assert_eq!(cfg.gtk_single_instance, GtkSingleInstance::Detect);
+        assert_eq!(lines(&cfg)[1], "gtk-single-instance = detect");
+
+        cfg.set("gtk-tabs-location", Some("bottom")).unwrap();
+        assert_eq!(cfg.gtk_tabs_location, GtkTabsLocation::Bottom);
+        assert_eq!(lines(&cfg)[3], "gtk-tabs-location = bottom");
+        cfg.window_show_tab_bar = WindowShowTabBar::Auto;
+        cfg.set("gtk-tabs-location", Some("hidden")).unwrap();
+        assert_eq!(cfg.gtk_tabs_location, GtkTabsLocation::Bottom);
+        assert_eq!(cfg.window_show_tab_bar, WindowShowTabBar::Never);
+
+        cfg.set("gtk-toolbar-style", Some("flat")).unwrap();
+        assert_eq!(cfg.gtk_toolbar_style, GtkToolbarStyle::Flat);
+        cfg.set("gtk-toolbar-style", Some("raised-border")).unwrap();
+        assert_eq!(cfg.gtk_toolbar_style, GtkToolbarStyle::RaisedBorder);
+        assert_eq!(lines(&cfg)[5], "gtk-toolbar-style = raised-border");
+
+        cfg.set("gtk-titlebar-style", Some("tabs")).unwrap();
+        assert_eq!(cfg.gtk_titlebar_style, GtkTitlebarStyle::Tabs);
+        assert_eq!(lines(&cfg)[6], "gtk-titlebar-style = tabs");
+
+        for key in [
+            "gtk-opengl-debug",
+            "gtk-titlebar",
+            "gtk-titlebar-hide-when-maximized",
+            "gtk-wide-tabs",
+        ] {
+            cfg.set(key, Some("")).unwrap();
+        }
+        assert_eq!(cfg.gtk_opengl_debug, cfg!(debug_assertions));
+        assert!(cfg.gtk_titlebar);
+        assert!(!cfg.gtk_titlebar_hide_when_maximized);
+        assert!(cfg.gtk_wide_tabs);
+
+        cfg.set("gtk-single-instance", Some("")).unwrap();
+        cfg.set("gtk-tabs-location", Some("")).unwrap();
+        cfg.set("gtk-toolbar-style", Some("")).unwrap();
+        cfg.set("gtk-titlebar-style", Some("")).unwrap();
+        assert_eq!(cfg.gtk_single_instance, GtkSingleInstance::Detect);
+        assert_eq!(cfg.gtk_tabs_location, GtkTabsLocation::Top);
+        assert_eq!(cfg.gtk_toolbar_style, GtkToolbarStyle::Raised);
+        assert_eq!(cfg.gtk_titlebar_style, GtkTitlebarStyle::Native);
+
+        assert_eq!(
+            cfg.set("gtk-single-instance", None),
+            Err(ConfigSetError::ValueRequired)
+        );
+        assert_eq!(
+            cfg.set("gtk-tabs-location", None),
+            Err(ConfigSetError::ValueRequired)
+        );
+        assert_eq!(
+            cfg.set("gtk-toolbar-style", Some("shadow")),
+            Err(ConfigSetError::InvalidValue)
+        );
+        assert_eq!(
+            cfg.set("gtk-titlebar-style", Some("hidden")),
+            Err(ConfigSetError::InvalidValue)
+        );
+        assert_eq!(
+            cfg.set("gtk-wide-tabs", Some("maybe")),
+            Err(ConfigSetError::InvalidValue)
+        );
+
+        let diagnostics = cfg.load_str(
+            "gtk-single-instance = desktop\n\
+             gtk-tabs-location = hidden\n\
+             gtk-toolbar-style = nope\n\
+             gtk-titlebar-style = tabs\n",
+        );
+        assert_eq!(
+            diagnostics,
+            vec![ConfigDiagnostic {
+                line: 3,
+                key: "gtk-toolbar-style".to_string(),
+                error: ConfigSetError::InvalidValue,
+            }]
+        );
+        assert_eq!(cfg.gtk_single_instance, GtkSingleInstance::Detect);
+        assert_eq!(cfg.window_show_tab_bar, WindowShowTabBar::Never);
+        assert_eq!(cfg.gtk_titlebar_style, GtkTitlebarStyle::Tabs);
 
         let cloned = cfg.clone();
         assert_eq!(cloned, cfg);
@@ -11960,6 +12329,14 @@ mod tests {
             "linux-cgroup-memory-limit",
             "linux-cgroup-processes-limit",
             "linux-cgroup-hard-fail",
+            "gtk-opengl-debug",
+            "gtk-single-instance",
+            "gtk-titlebar",
+            "gtk-tabs-location",
+            "gtk-titlebar-hide-when-maximized",
+            "gtk-toolbar-style",
+            "gtk-titlebar-style",
+            "gtk-wide-tabs",
             "bold-color",
             "faint-opacity",
         ]);
@@ -12922,6 +13299,10 @@ mod tests {
             ("macos-icon-frame", "chrome"),
             ("macos-shortcuts", "deny"),
             ("linux-cgroup", "always"),
+            ("gtk-single-instance", "true"),
+            ("gtk-tabs-location", "bottom"),
+            ("gtk-toolbar-style", "raised-border"),
+            ("gtk-titlebar-style", "tabs"),
             ("grapheme-width-method", "legacy"),
             ("osc-color-report-format", "8-bit"),
             ("custom-shader-animation", "always"),
@@ -13082,6 +13463,24 @@ mod tests {
             line(&cfg, "quit-after-last-window-closed"),
             "quit-after-last-window-closed = false"
         );
+        for (key, value, expected) in [
+            (
+                "gtk-opengl-debug",
+                Some("false"),
+                "gtk-opengl-debug = false",
+            ),
+            ("gtk-titlebar", Some("false"), "gtk-titlebar = false"),
+            (
+                "gtk-titlebar-hide-when-maximized",
+                None,
+                "gtk-titlebar-hide-when-maximized = true",
+            ),
+            ("gtk-wide-tabs", Some("false"), "gtk-wide-tabs = false"),
+        ] {
+            let mut cfg = Config::default();
+            cfg.set(key, value).unwrap();
+            assert_eq!(line(&cfg, key), expected);
+        }
 
         // Asymmetry: a missing value is `ValueRequired` for a packed struct…
         let mut cfg = Config::default();
@@ -16029,13 +16428,11 @@ mod tests {
 
         cfg.set("gtk-tabs-location", Some("hidden")).unwrap();
         assert_eq!(cfg.window_show_tab_bar, WindowShowTabBar::Never);
-        assert_eq!(
-            cfg.set("gtk-tabs-location", Some("top")),
-            Err(ConfigSetError::UnknownField)
-        );
+        cfg.set("gtk-tabs-location", Some("top")).unwrap();
+        assert_eq!(cfg.gtk_tabs_location, GtkTabsLocation::Top);
         assert_eq!(
             cfg.set("gtk-tabs-location", None),
-            Err(ConfigSetError::UnknownField)
+            Err(ConfigSetError::ValueRequired)
         );
 
         let diagnostics = cfg.load_str(
@@ -16052,6 +16449,7 @@ mod tests {
         );
         assert_eq!(cfg.window_new_tab_position, WindowNewTabPosition::End);
         assert_eq!(cfg.window_show_tab_bar, WindowShowTabBar::Never);
+        assert_eq!(cfg.gtk_tabs_location, GtkTabsLocation::Top);
         assert_eq!(
             cfg.window_titlebar_background,
             Some(Color {
@@ -16087,11 +16485,6 @@ mod tests {
                     key: "window-titlebar-foreground".to_string(),
                     error: ConfigSetError::InvalidValue,
                 },
-                ConfigDiagnostic {
-                    line: 10,
-                    key: "gtk-tabs-location".to_string(),
-                    error: ConfigSetError::UnknownField,
-                },
             ]
         );
 
@@ -16099,6 +16492,7 @@ mod tests {
         assert_eq!(cloned, cfg);
         assert_eq!(cloned.window_new_tab_position, WindowNewTabPosition::End);
         assert_eq!(cloned.window_show_tab_bar, WindowShowTabBar::Never);
+        assert_eq!(cloned.gtk_tabs_location, GtkTabsLocation::Top);
         assert_eq!(
             cloned.window_titlebar_background,
             Some(Color {
@@ -16485,6 +16879,38 @@ mod tests {
         }
         assert_eq!(LinuxCgroup::from_keyword("single_instance"), None);
         assert_eq!(LinuxCgroup::from_keyword("nope"), None);
+
+        for v in [
+            GtkSingleInstance::False,
+            GtkSingleInstance::True,
+            GtkSingleInstance::Detect,
+        ] {
+            assert_eq!(GtkSingleInstance::from_keyword(v.keyword()), Some(v));
+        }
+        assert_eq!(GtkSingleInstance::from_keyword("desktop"), None);
+        assert_eq!(GtkSingleInstance::from_keyword("nope"), None);
+
+        for v in [GtkTabsLocation::Top, GtkTabsLocation::Bottom] {
+            assert_eq!(GtkTabsLocation::from_keyword(v.keyword()), Some(v));
+        }
+        assert_eq!(GtkTabsLocation::from_keyword("hidden"), None);
+        assert_eq!(GtkTabsLocation::from_keyword("nope"), None);
+
+        for v in [
+            GtkToolbarStyle::Flat,
+            GtkToolbarStyle::Raised,
+            GtkToolbarStyle::RaisedBorder,
+        ] {
+            assert_eq!(GtkToolbarStyle::from_keyword(v.keyword()), Some(v));
+        }
+        assert_eq!(GtkToolbarStyle::from_keyword("raised_border"), None);
+        assert_eq!(GtkToolbarStyle::from_keyword("nope"), None);
+
+        for v in [GtkTitlebarStyle::Native, GtkTitlebarStyle::Tabs] {
+            assert_eq!(GtkTitlebarStyle::from_keyword(v.keyword()), Some(v));
+        }
+        assert_eq!(GtkTitlebarStyle::from_keyword("hidden"), None);
+        assert_eq!(GtkTitlebarStyle::from_keyword("nope"), None);
 
         for v in [
             BackgroundImageFit::Contain,
