@@ -835,6 +835,8 @@ stays unaltered except for the rename).
   **Pass**
 - [Experiment 80: Phase F — quick terminal position config](80-quick-terminal-position-config.md)
   — **Pass**
+- [Experiment 81: Phase F — quick terminal size config](81-quick-terminal-size-config.md)
+  — **Designed**
 
 ## Process
 
