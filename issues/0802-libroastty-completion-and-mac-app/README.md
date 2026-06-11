@@ -184,6 +184,9 @@ the earlier "commit a small baseline PNG set" wording in Exp 2.
 - **Undo-timeout config is parser/formatter-only.** Exp 79 wires `undo-timeout`
   as a `Duration` with upstream default `5s`; runtime undo stack expiration and
   binding behavior remain later work.
+- **Quick-terminal position config is parser/formatter-only.** Exp 80 wires
+  `quick-terminal-position` as an enum with upstream default `top`; quick
+  terminal sizing, window behavior, and toggle actions remain later work.
 
 **Keep this current.** When an experiment yields a durable, reusable fact — a
 toolchain incantation, a dead-end to avoid, or where an artifact lives — distill
@@ -831,7 +834,7 @@ stays unaltered except for the rename).
 - [Experiment 79: Phase F — undo timeout config](79-undo-timeout-config.md) —
   **Pass**
 - [Experiment 80: Phase F — quick terminal position config](80-quick-terminal-position-config.md)
-  — **Designed**
+  — **Pass**
 
 ## Process
 

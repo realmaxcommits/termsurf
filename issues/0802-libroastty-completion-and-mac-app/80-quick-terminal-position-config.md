@@ -94,3 +94,50 @@ upstream default and enum tags, the formatter placement after `undo-timeout` is
 explicit and matches the current local ordering, and the verification plan
 includes the required formatting, targeted test, full test, hygiene, and status
 checks.
+
+## Result
+
+**Result:** Pass
+
+Implemented `quick-terminal-position` in `roastty/src/config/mod.rs` as a
+`QuickTerminalPosition` enum with upstream variants `top`, `bottom`, `left`,
+`right`, and `center`, plus upstream default `top`. The field now routes through
+`Config::set`, config loading diagnostics, clone/equality, and `format_config`.
+Empty values reset to `top`, missing values return `ValueRequired`, and invalid
+enum keywords return `InvalidValue`.
+
+The formatter emits the key in the existing local app-lifecycle block,
+immediately after `undo-timeout`, matching the approved local ordering choice.
+
+Verification passed:
+
+- `cargo fmt`
+- `cargo test -p roastty quick_terminal_position_config`
+- `cargo test -p roastty config_format_config`
+- `cargo test -p roastty`
+  - 4517 unit tests passed
+  - ABI harness passed with the existing 10 enum-conversion warnings
+  - doc tests passed
+- `cargo fmt --check`
+- `git diff --check`
+
+## Conclusion
+
+The quick-terminal-position config surface now matches upstream's enum variants,
+default, parser behavior, diagnostics, formatter order, and clone/equality
+expectations for this slice. Quick-terminal runtime positioning and the
+following `quick-terminal-size` struct remain later work.
+
+## Completion Review
+
+Codex adversarial reviewer `019eb474-623c-7dd0-9b40-c8ba4530d16d` returned
+**Approved** with no findings. The reviewer confirmed that the result is limited
+to the `quick-terminal-position` parser/formatter config surface, the README
+status is `Pass`, the experiment file has Result and Conclusion, and no result
+commit exists after the plan commit yet.
+
+The reviewer independently verified `cargo fmt --check`, `git diff --check`,
+`cargo test -p roastty quick_terminal_position_config`,
+`cargo test -p roastty config_format_config`, and full `cargo test -p roastty`
+with 4517 unit tests passing, the ABI harness passing, and doc tests passing
+with the existing 10 enum-conversion warnings.

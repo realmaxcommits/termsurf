@@ -46,6 +46,8 @@ pub(crate) struct Config {
     pub quit_after_last_window_closed_delay: Option<Duration>,
     /// `undo-timeout`.
     pub undo_timeout: Duration,
+    /// `quick-terminal-position`.
+    pub quick_terminal_position: QuickTerminalPosition,
     /// `copy-on-select`.
     pub copy_on_select: CopyOnSelect,
     /// `selection-clear-on-typing`.
@@ -306,6 +308,7 @@ impl Default for Config {
             undo_timeout: Duration {
                 duration: 5 * NS_PER_S,
             },
+            quick_terminal_position: QuickTerminalPosition::Top,
             copy_on_select: CopyOnSelect::True,
             selection_clear_on_typing: true,
             selection_clear_on_copy: false,
@@ -477,6 +480,8 @@ impl Config {
             });
         self.undo_timeout
             .format_entry(&mut EntryFormatter::new("undo-timeout", out));
+        self.quick_terminal_position
+            .format_entry(&mut EntryFormatter::new("quick-terminal-position", out));
         self.font_family
             .format_entry(&mut EntryFormatter::new("font-family", out));
         self.font_family_bold
@@ -745,6 +750,13 @@ impl Config {
             "undo-timeout" => {
                 self.undo_timeout =
                     set_value_field(value, default.undo_timeout, Duration::parse_cli)?
+            }
+            "quick-terminal-position" => {
+                self.quick_terminal_position = set_enum_field(
+                    value,
+                    default.quick_terminal_position,
+                    QuickTerminalPosition::from_keyword,
+                )?
             }
             "copy-on-select" => {
                 self.copy_on_select =
@@ -3172,6 +3184,47 @@ impl WindowShowTabBar {
             "always" => Some(WindowShowTabBar::Always),
             "auto" => Some(WindowShowTabBar::Auto),
             "never" => Some(WindowShowTabBar::Never),
+            _ => None,
+        }
+    }
+
+    /// Format this value as a config entry (upstream's generic enum branch).
+    pub(crate) fn format_entry(self, formatter: &mut EntryFormatter) {
+        formatter.entry_str(self.keyword());
+    }
+}
+
+/// The `quick-terminal-position` config (upstream `QuickTerminalPosition`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum QuickTerminalPosition {
+    Top,
+    Bottom,
+    Left,
+    Right,
+    Center,
+}
+
+impl QuickTerminalPosition {
+    /// The config keyword (upstream tag name).
+    pub(crate) fn keyword(self) -> &'static str {
+        match self {
+            QuickTerminalPosition::Top => "top",
+            QuickTerminalPosition::Bottom => "bottom",
+            QuickTerminalPosition::Left => "left",
+            QuickTerminalPosition::Right => "right",
+            QuickTerminalPosition::Center => "center",
+        }
+    }
+
+    /// Parse the config keyword (upstream `std.meta.stringToEnum`): an exact tag
+    /// match, else `None`.
+    pub(crate) fn from_keyword(value: &str) -> Option<Self> {
+        match value {
+            "top" => Some(QuickTerminalPosition::Top),
+            "bottom" => Some(QuickTerminalPosition::Bottom),
+            "left" => Some(QuickTerminalPosition::Left),
+            "right" => Some(QuickTerminalPosition::Right),
+            "center" => Some(QuickTerminalPosition::Center),
             _ => None,
         }
     }
@@ -5612,15 +5665,16 @@ mod tests {
         MagicParseError, MiddleClickAction, MouseScrollMultiplier, MouseScrollMultiplierParseError,
         MouseShiftCapture, NonNativeFullscreen, NotifyOnCommandFinish, NotifyOnCommandFinishAction,
         OptionalFileAction, OscColorReportFormat, Palette, PaletteParseError,
-        RepeatableClipboardCodepointMap, RepeatableCodepointMap, RepeatableConfigPath,
-        RepeatableConfigPathParseError, RepeatableString, RepeatableStringParseError,
-        ResizeOverlay, ResizeOverlayPosition, RightClickAction, ScrollToBottom, Scrollbar,
-        SelectionWordChars, SelectionWordCharsParseError, ShellIntegration,
-        ShellIntegrationFeatures, SplitPreserveZoom, TerminalBoldColor, TerminalColor, Theme,
-        ThemeParseError, WindowColorspace, WindowDecoration, WindowDecorationParseError,
-        WindowNewTabPosition, WindowPadding, WindowPaddingBalance, WindowPaddingColor,
-        WindowPaddingParseError, WindowSaveState, WindowShowTabBar, WindowSubtitle, WindowTheme,
-        WorkingDirectory, WorkingDirectoryParseError, NS_PER_MS, NS_PER_S,
+        QuickTerminalPosition, RepeatableClipboardCodepointMap, RepeatableCodepointMap,
+        RepeatableConfigPath, RepeatableConfigPathParseError, RepeatableString,
+        RepeatableStringParseError, ResizeOverlay, ResizeOverlayPosition, RightClickAction,
+        ScrollToBottom, Scrollbar, SelectionWordChars, SelectionWordCharsParseError,
+        ShellIntegration, ShellIntegrationFeatures, SplitPreserveZoom, TerminalBoldColor,
+        TerminalColor, Theme, ThemeParseError, WindowColorspace, WindowDecoration,
+        WindowDecorationParseError, WindowNewTabPosition, WindowPadding, WindowPaddingBalance,
+        WindowPaddingColor, WindowPaddingParseError, WindowSaveState, WindowShowTabBar,
+        WindowSubtitle, WindowTheme, WorkingDirectory, WorkingDirectoryParseError, NS_PER_MS,
+        NS_PER_S,
     };
     use crate::terminal::color::Rgb;
     use crate::terminal::cursor;
@@ -9805,6 +9859,7 @@ mod tests {
                 "quit-after-last-window-closed",
                 "quit-after-last-window-closed-delay",
                 "undo-timeout",
+                "quick-terminal-position",
                 "font-family",
                 "font-family-bold",
                 "font-family-italic",
@@ -10748,6 +10803,71 @@ mod tests {
                 duration: 2 * NS_PER_S,
             }
         );
+    }
+
+    #[test]
+    fn quick_terminal_position_config_parse_format_reset_and_diagnose() {
+        let line = |cfg: &Config| -> String {
+            let mut out = String::new();
+            cfg.format_config(&mut out);
+            out.lines()
+                .find(|l| l.starts_with("quick-terminal-position = "))
+                .unwrap()
+                .to_string()
+        };
+
+        let mut cfg = Config::default();
+        assert_eq!(cfg.quick_terminal_position, QuickTerminalPosition::Top);
+        assert_eq!(line(&cfg), "quick-terminal-position = top");
+
+        for (keyword, expected) in [
+            ("top", QuickTerminalPosition::Top),
+            ("bottom", QuickTerminalPosition::Bottom),
+            ("left", QuickTerminalPosition::Left),
+            ("right", QuickTerminalPosition::Right),
+            ("center", QuickTerminalPosition::Center),
+        ] {
+            cfg.set("quick-terminal-position", Some(keyword)).unwrap();
+            assert_eq!(cfg.quick_terminal_position, expected);
+            assert_eq!(line(&cfg), format!("quick-terminal-position = {keyword}"));
+        }
+
+        cfg.set("quick-terminal-position", Some("")).unwrap();
+        assert_eq!(cfg.quick_terminal_position, QuickTerminalPosition::Top);
+        assert_eq!(line(&cfg), "quick-terminal-position = top");
+        assert_eq!(
+            cfg.set("quick-terminal-position", None),
+            Err(ConfigSetError::ValueRequired)
+        );
+        assert_eq!(
+            cfg.set("quick-terminal-position", Some("middle")),
+            Err(ConfigSetError::InvalidValue)
+        );
+
+        let diagnostics = cfg.load_str(
+            "quick-terminal-position = left\n\
+             quick-terminal-position = middle\n\
+             undo-timeout = 2s\n",
+        );
+        assert_eq!(cfg.quick_terminal_position, QuickTerminalPosition::Left);
+        assert_eq!(
+            cfg.undo_timeout,
+            Duration {
+                duration: 2 * NS_PER_S,
+            }
+        );
+        assert_eq!(
+            diagnostics,
+            vec![ConfigDiagnostic {
+                line: 2,
+                key: "quick-terminal-position".to_string(),
+                error: ConfigSetError::InvalidValue,
+            }]
+        );
+
+        let cloned = cfg.clone();
+        assert_eq!(cloned, cfg);
+        assert_eq!(cloned.quick_terminal_position, QuickTerminalPosition::Left);
     }
 
     #[test]
