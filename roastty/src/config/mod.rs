@@ -207,6 +207,10 @@ pub(crate) struct Config {
     pub bold_color: Option<BoldColor>,
     /// `faint-opacity`.
     pub faint_opacity: f64,
+    /// `term`.
+    pub term: String,
+    /// `enquiry-response`.
+    pub enquiry_response: String,
     /// `confirm-close-surface`.
     pub confirm_close_surface: ConfirmCloseSurface,
     /// `link-previews`.
@@ -473,6 +477,8 @@ impl Default for Config {
             minimum_contrast: 1.0,
             bold_color: None,
             faint_opacity: 0.5,
+            term: "xterm-ghostty".to_string(),
+            enquiry_response: String::new(),
             confirm_close_surface: ConfirmCloseSurface::True,
             link_previews: LinkPreviews::True,
             maximize: false,
@@ -887,6 +893,8 @@ impl Config {
         EntryFormatter::new("bold-color", out)
             .entry_optional(self.bold_color, |v, f| v.format_entry(f));
         EntryFormatter::new("faint-opacity", out).entry_float(self.faint_opacity);
+        EntryFormatter::new("term", out).entry_str(&self.term);
+        EntryFormatter::new("enquiry-response", out).entry_str(&self.enquiry_response);
     }
 
     /// Set one config field from a `key = value` pair (upstream
@@ -1435,6 +1443,11 @@ impl Config {
             }
             "progress-style" => {
                 self.progress_style = set_bool_field(value, default.progress_style)?
+            }
+            "term" => self.term = set_value_field(value, default.term, parse_string_field)?,
+            "enquiry-response" => {
+                self.enquiry_response =
+                    set_value_field(value, default.enquiry_response, parse_string_field)?
             }
             "grapheme-width-method" => {
                 self.grapheme_width_method = set_enum_field(
@@ -7432,6 +7445,8 @@ mod tests {
         // Opacity options (Experiment 848): upstream defaults false / 0.5.
         assert!(!d.background_opacity_cells);
         assert_eq!(d.faint_opacity, 0.5);
+        assert_eq!(d.term, "xterm-ghostty");
+        assert_eq!(d.enquiry_response, "");
         // minimum-contrast (Experiment 849): upstream default 1.0.
         assert_eq!(d.minimum_contrast, 1.0);
         // Background-image group (Experiment 466).
@@ -12165,6 +12180,76 @@ mod tests {
     }
 
     #[test]
+    fn term_enquiry_config_parse_format_reset_and_diagnose() {
+        let line = |cfg: &Config, key: &str| -> String {
+            let mut out = String::new();
+            cfg.format_config(&mut out);
+            out.lines()
+                .find(|l| l.starts_with(&format!("{} = ", key)))
+                .unwrap()
+                .to_string()
+        };
+
+        let mut cfg = Config::default();
+        assert_eq!(cfg.term, "xterm-ghostty");
+        assert_eq!(cfg.enquiry_response, "");
+        assert_eq!(line(&cfg, "term"), "term = xterm-ghostty");
+        assert_eq!(line(&cfg, "enquiry-response"), "enquiry-response = ");
+
+        cfg.set("term", Some("xterm-256color")).unwrap();
+        cfg.set("enquiry-response", Some("hello")).unwrap();
+        assert_eq!(cfg.term, "xterm-256color");
+        assert_eq!(cfg.enquiry_response, "hello");
+        assert_eq!(line(&cfg, "term"), "term = xterm-256color");
+        assert_eq!(line(&cfg, "enquiry-response"), "enquiry-response = hello");
+
+        cfg.set("term", Some("")).unwrap();
+        cfg.set("enquiry-response", Some("")).unwrap();
+        assert_eq!(cfg.term, "xterm-ghostty");
+        assert_eq!(cfg.enquiry_response, "");
+        assert_eq!(cfg.set("term", None), Err(ConfigSetError::ValueRequired));
+        assert_eq!(
+            cfg.set("enquiry-response", None),
+            Err(ConfigSetError::ValueRequired)
+        );
+        assert_eq!(
+            cfg.set("term", Some("bad\0term")),
+            Err(ConfigSetError::InvalidValue)
+        );
+        assert_eq!(
+            cfg.set("enquiry-response", Some("bad\0response")),
+            Err(ConfigSetError::InvalidValue)
+        );
+
+        let diagnostics = cfg.load_str(
+            "term = xterm-roastty\n\
+             term\n\
+             enquiry-response = pong\n\
+             enquiry-response = bad\0pong\n",
+        );
+        assert_eq!(cfg.term, "xterm-roastty");
+        assert_eq!(cfg.enquiry_response, "pong");
+        assert_eq!(
+            diagnostics,
+            vec![
+                ConfigDiagnostic {
+                    line: 2,
+                    key: "term".to_string(),
+                    error: ConfigSetError::ValueRequired,
+                },
+                ConfigDiagnostic {
+                    line: 4,
+                    key: "enquiry-response".to_string(),
+                    error: ConfigSetError::InvalidValue,
+                },
+            ]
+        );
+
+        let cloned = cfg.clone();
+        assert_eq!(cloned, cfg);
+    }
+
+    #[test]
     fn config_font_thicken_parses_and_round_trips() {
         let mut cfg = Config::default();
 
@@ -12559,6 +12644,8 @@ mod tests {
             "progress-style",
             "bold-color",
             "faint-opacity",
+            "term",
+            "enquiry-response",
         ]);
         assert_eq!(keys, expected);
 

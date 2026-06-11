@@ -75,3 +75,42 @@ Pass criteria:
 
 Codex-native adversarial reviewer `019eb594-e9a4-7543-92c2-085aa755116f`
 returned **Approved** with no findings.
+
+## Result
+
+**Result:** Pass
+
+Implemented the parser/formatter-only `term` and `enquiry-response` config
+surface in `roastty/src/config/mod.rs`:
+
+- Added `term` and `enquiry_response` to `Config`, defaults, formatter output,
+  and `Config::set`.
+- Routed both fields through the existing string parser, preserving supplied
+  values, empty reset to default, missing-value diagnostics, and embedded-NUL
+  diagnostics.
+- Extended default, format-order, parser/formatter, diagnostics, and
+  clone/equality tests.
+
+Verification:
+
+- `cargo fmt` — pass.
+- `cargo test -p roastty term_enquiry` — pass: 1 passed, 0 failed.
+- `cargo test -p roastty config_format_config` — pass: 1 passed, 0 failed.
+- `cargo test -p roastty` — pass: 4540 unit tests passed, 1 ABI harness test
+  passed, 0 doc tests. The ABI harness emitted the existing 10 enum conversion
+  warnings.
+- `cargo fmt --check` — pass.
+- `git diff --check` — pass.
+
+Codex-native adversarial completion reviewer
+`019eb59c-e7f8-7d02-8571-548550f4b312` returned **Approved** with no findings.
+The reviewer verified the result was uncommitted, upstream defaults and order
+matched the pinned source, local string parser semantics and test coverage were
+correct, and all claimed verification commands passed.
+
+## Conclusion
+
+Roastty now carries the upstream `term` and `enquiry-response` parser/formatter
+surface immediately after `faint-opacity` in formatter order. Runtime
+child-process `TERM` propagation and ENQ response behavior remain out of scope
+for this experiment and can be wired in later terminal/app runtime work.
