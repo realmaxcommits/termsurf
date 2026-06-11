@@ -825,6 +825,8 @@ stays unaltered except for the rename).
   — **Pass**
 - [Experiment 78: Phase F — quit delay config](78-quit-delay-config.md) —
   **Pass**
+- [Experiment 79: Phase F — undo timeout config](79-undo-timeout-config.md) —
+  **Designed**
 
 ## Process
 
