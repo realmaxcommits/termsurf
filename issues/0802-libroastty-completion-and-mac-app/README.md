@@ -800,6 +800,8 @@ stays unaltered except for the rename).
   — **Pass**
 - [Experiment 71: Phase F — window padding balance config](71-window-padding-balance-config.md)
   — **Pass**
+- [Experiment 72: Phase F — window scalar config](72-window-scalar-config.md) —
+  **Designed**
 
 ## Process
 
