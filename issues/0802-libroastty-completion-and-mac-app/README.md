@@ -1117,6 +1117,8 @@ stays unaltered except for the rename).
   — **Pass**
 - [Experiment 116: Phase G — key-table syntax storage](116-key-table-syntax-storage.md)
   — **Pass**
+- [Experiment 117: Phase G — key-table runtime activation](117-key-table-runtime-activation.md)
+  — **Designed**
 
 ## Process
 
