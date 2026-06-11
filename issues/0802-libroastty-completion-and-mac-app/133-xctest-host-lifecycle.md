@@ -84,3 +84,93 @@ findings:
 
 Both findings were fixed in the design. The final re-review approved the plan
 with no remaining required findings.
+
+## Result
+
+**Result:** Partial
+
+Implemented the deterministic non-UI hosted XCTest runner path:
+
+- `macos/build.nu` now refreshes `RoasttyKit.xcframework` from the current
+  `roastty` Rust build before `Roastty` app build/test actions. This prevents
+  the Swift app tests from linking stale `libroastty.a` after Rust ABI changes.
+- CLI-driven test actions now pass an explicit native macOS destination
+  (`platform=macOS,arch=arm64`) and disable parallel testing. This removes the
+  previous destination/session ambiguity and makes hosted unit-test runs finish
+  instead of hanging in XCTest IDE-session preparation.
+- UI tests remain opt-in through `--ui-tests`; normal CLI test runs still skip
+  `RoasttyUITests`.
+
+Verification passed:
+
+- `prettier --write --prose-wrap always --print-width 80 issues/0802-libroastty-completion-and-mac-app/133-xctest-host-lifecycle.md issues/0802-libroastty-completion-and-mac-app/README.md`
+- `cargo fmt --check`
+- `cargo build -p roastty`
+- `cargo test -p roastty config_get_ -- --test-threads=1` — 36 passed.
+- `cargo test -p roastty config_trigger_ -- --test-threads=1` — 12 passed.
+- `git diff --check`
+
+The macOS hosted XCTest commands now produce finalized xcodebuild results rather
+than hanging:
+
+- `cd roastty && macos/build.nu --action test --only-testing RoasttyTests/ConfigTests`
+  — finished with a finalized `.xcresult` and 2 assertion issues in
+  `uppercasedLetterShouldBeNormalized`.
+- `cd roastty && macos/build.nu --action test --only-testing RoasttyTests/MenuShortcutManagerTests`
+  — finished with a finalized `.xcresult` and 4 assertion issues in the two menu
+  shortcut tests.
+- `cd roastty && macos/build.nu --action test` — ran 201 tests across 18 suites,
+  then failed with the same 6 assertion issues.
+
+The first post-fix probe proved the stale-kit problem: before refreshing
+`RoasttyKit.xcframework`, `ConfigTests` still reported Exp-132-fixed keys such
+as `resize-overlay`, `scrollbar`, `maximize`, and `focus-follows-mouse` as
+`UnknownField`. After the runner refreshed the kit, those assertions passed.
+
+The remaining failing assertions all share one concrete gap: `keybind` entries
+loaded from config files still produce `UnknownField`, so
+`TemporaryConfig("keybind=...")` does not populate the keybind store. The Rust
+CLI/config-argument keybind path is covered by `config_trigger_`, but
+`roastty_config_load_file` currently delegates to the parsed config loader and
+does not route `keybind` file entries through `parse_config_keybind_entry` /
+`store_keybind_entry`.
+
+Diagnostic artifacts were written under `logs/issue-0802/exp-133/`:
+
+- `probe-003-buildnu/` — focused `ConfigTests` via updated `build.nu`, finalized
+  with 2 keybind assertions.
+- `probe-004-menu-buildnu/` — focused `MenuShortcutManagerTests` via updated
+  `build.nu`, finalized with 4 keybind assertions.
+- `probe-005-full-buildnu/` — full non-UI macOS test gate via updated
+  `build.nu`, finalized with 201 tests and 6 keybind assertions.
+- `process-check-after-probes.txt` — exact process check that records the
+  `ps -axo pid=,ppid=,command=` source, exact project/SYMROOT/app-path match
+  criteria, and `NO MATCHES` for remaining experiment `xcodebuild` or exact-path
+  hosted `roastty` processes.
+
+No broad process-name cleanup was used.
+
+## Completion Review
+
+**Reviewer:** Codex-native adversarial subagent (`multi_agent_v1.spawn_agent`,
+fresh context, `Ptolemy`)
+
+**Verdict:** Approved after fixes
+
+The initial result review returned **Changes Required** because the cleanup
+artifact recorded only a timestamp and did not prove the process-check criteria
+or no-match result. I reran the post-run check through a separate temporary
+script so the captured process table could not match the check command itself,
+then rewrote `process-check-after-probes.txt` with the `ps` source, exact
+project/SYMROOT/app-path match criteria, and explicit `NO MATCHES` output. The
+re-review approved the completed result with no remaining required findings.
+
+## Conclusion
+
+The XCTest host lifecycle/session blocker is reduced to a deterministic
+non-hanging runner path, and stale app-linked `RoasttyKit` artifacts are now
+rebuilt before app build/test actions. The copied macOS unit-test gate now
+reports real post-Experiment-132 failures: file-loaded `keybind` entries are not
+wired into the app-facing config store. The next experiment should route
+`keybind` lines loaded from config files through the existing keybind parser and
+storage path, without changing copied Swift app behavior.

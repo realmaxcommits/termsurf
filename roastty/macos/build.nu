@@ -10,8 +10,18 @@ def main [
     --ui-tests                         # Include UI tests in CLI-driven test runs
     --only-testing: string = ""        # xcodebuild -only-testing selector
 ] {
+    let repo_root = ($env.FILE_PWD | path dirname | path dirname)
     let project = ($env.FILE_PWD | path join "Roastty.xcodeproj")
     let build_dir = ($env.FILE_PWD | path join "build")
+
+    if ($scheme == "Roastty") and ($action in [build test]) {
+        let kit_config = if $configuration in [Release ReleaseLocal] {
+            "release"
+        } else {
+            "debug"
+        }
+        ^bash ($repo_root | path join "scripts/roastty-app/build-roastty-kit.sh") $kit_config
+    }
 
     # Skip UI tests for normal CLI-based invocations because they require
     # special permissions. They can be enabled explicitly with --ui-tests.
@@ -41,6 +51,12 @@ def main [
         []
     }
 
+    let test_runner_args = if $action == "test" {
+        [-destination "platform=macOS,arch=arm64" -parallel-testing-enabled NO]
+    } else {
+        []
+    }
+
     (^env -i
         $"HOME=($env.HOME)"
         "PATH=/usr/bin:/bin:/usr/sbin:/sbin"
@@ -50,6 +66,7 @@ def main [
         -scheme $scheme
         -configuration $configuration
         $"SYMROOT=($build_dir)"
+        ...$test_runner_args
         ...$skip_testing
         ...$skip_unit_testing
         ...$only_testing_args

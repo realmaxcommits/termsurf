@@ -482,6 +482,13 @@ the earlier "commit a small baseline PNG set" wording in Exp 2.
   `_prepareTestConfigurationAndIDESession`, so the remaining work is macOS
   test-host lifecycle/session setup rather than the old config assertion
   failures.
+- **The hosted macOS unit-test runner now finishes and rebuilds the current
+  `RoasttyKit`.** Exp 133 makes `macos/build.nu` refresh
+  `RoasttyKit.xcframework` before `Roastty` app build/test actions, selects
+  `platform=macOS,arch=arm64`, and disables parallel testing for CLI test runs.
+  The old XCTest session hang is now a finalized xcodebuild result: full non-UI
+  app tests run 201 tests and fail with 6 concrete assertions, all caused by
+  file-loaded `keybind` entries still reporting `UnknownField`.
 
 **Keep this current.** When an experiment yields a durable, reusable fact — a
 toolchain incantation, a dead-end to avoid, or where an artifact lives — distill
@@ -857,8 +864,9 @@ the live app, verified by a Phase-D UI test.)
       `end_key_sequence` are wired (Exp 118–121), and configured `chain=` leaves
       are wired on the surface path (Exp 122) and direct app-key path (Exp 123),
       with global app-key surface-control fanout for direct key-table and
-      `end_key_sequence` leaves (Exp 125), but native keymaps/global shortcuts
-      remain later work
+      `end_key_sequence` leaves (Exp 125), but file-loaded `keybind` config
+      entries (Exp 133's next concrete app-test failure) plus native
+      keymaps/global shortcuts remain later work
 - [ ] Trigger-prefix flags (`global:` / `all:` / `unconsumed:` / `performable:`)
       — parser/storage/query metadata and surface unconsumed/performable
       consumption are wired (Exp 110–111), and configured `global:` app-key
@@ -1262,7 +1270,7 @@ stays unaltered except for the rename).
 - [Experiment 132: Phase G — macOS unit-test baseline](132-macos-unit-test-baseline.md)
   — **Partial**
 - [Experiment 133: Phase G — XCTest host lifecycle](133-xctest-host-lifecycle.md)
-  — **Designed**
+  — **Partial**
 
 ## Process
 
