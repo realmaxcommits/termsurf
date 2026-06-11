@@ -815,6 +815,8 @@ stays unaltered except for the rename).
   — **Pass**
 - [Experiment 75: Phase F — resize overlay config](75-resize-overlay-config.md)
   — **Pass**
+- [Experiment 76: Phase F — focus follows mouse config](76-focus-follows-mouse-config.md)
+  — **Designed**
 
 ## Process
 
