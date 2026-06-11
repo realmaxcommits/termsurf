@@ -1280,6 +1280,8 @@ stays unaltered except for the rename).
   — **Partial**
 - [Experiment 134: Phase G — file keybind loading](134-file-keybind-loading.md)
   — **Pass**
+- [Experiment 135: Phase G — live keyboard layout probe](135-live-keyboard-layout-probe.md)
+  — **Designed**
 
 ## Process
 
