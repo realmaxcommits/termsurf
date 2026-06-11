@@ -1236,6 +1236,8 @@ stays unaltered except for the rename).
   — **Partial**
 - [Experiment 130: Phase G — key translation option-as-alt](130-key-translation-option-as-alt.md)
   — **Partial**
+- [Experiment 131: Phase G — keyboard layout reload](131-keyboard-layout-reload.md)
+  — **Designed**
 
 ## Process
 
