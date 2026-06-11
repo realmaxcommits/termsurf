@@ -952,7 +952,7 @@ stays unaltered except for the rename).
 - [Experiment 96: Phase F — async backend and auto-update config](96-async-update-config.md)
   — **Pass**
 - [Experiment 97: Phase F — config finalize scalar tail](97-config-finalize-scalar-tail.md)
-  — **Designed**
+  — **Pass**
 
 ## Process
 

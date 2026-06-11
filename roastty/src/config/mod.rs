@@ -33,6 +33,10 @@ use std::ffi::OsStr;
 use std::fmt::Write as _;
 use std::path::{Component, Path, PathBuf};
 
+/// The pinned Ghostty source for Issue 802 is `1.3.2-dev`, which upstream
+/// classifies as the prerelease `tip` channel in build config.
+const PINNED_BUILD_RELEASE_CHANNEL: ReleaseChannel = ReleaseChannel::Tip;
+
 /// The aggregating config struct (upstream `config.Config`) — the home of the
 /// config keys. Built up one coherent field group per slice; this lands the
 /// clipboard group. The full key set, the parser, and file loading are ported
@@ -1699,6 +1703,10 @@ impl Config {
 
     /// Finalize derived config defaults (upstream `Config.finalize`).
     pub(crate) fn finalize(&mut self) {
+        if self.term.is_empty() {
+            self.term = "xterm-ghostty".to_string();
+        }
+
         if self.font_family.count() != 0 {
             if self.font_family_bold.count() == 0 {
                 self.font_family_bold = self.font_family.clone();
@@ -1719,12 +1727,17 @@ impl Config {
         self.mouse_scroll_multiplier.discrete =
             self.mouse_scroll_multiplier.discrete.clamp(0.01, 10_000.0);
         self.unfocused_split_opacity = self.unfocused_split_opacity.clamp(0.15, 1.0);
+        self.minimum_contrast = self.minimum_contrast.clamp(1.0, 21.0);
         if self.window_width > 0 {
             self.window_width = self.window_width.max(10);
         }
         if self.window_height > 0 {
             self.window_height = self.window_height.max(4);
         }
+        if self.auto_update_channel.is_none() {
+            self.auto_update_channel = Some(PINNED_BUILD_RELEASE_CHANNEL);
+        }
+        self.faint_opacity = self.faint_opacity.clamp(0.0, 1.0);
     }
 
     /// Load config from a source string (upstream's config-file `parse` driving
@@ -12332,7 +12345,7 @@ mod tests {
         assert!(cfg.background_opacity_cells);
         cfg.set("faint-opacity", Some("0.25")).unwrap();
         assert_eq!(cfg.faint_opacity, 0.25);
-        // Out-of-range faint-opacity is stored raw (clamped at the use site, not here).
+        // Out-of-range faint-opacity is stored raw until config finalization.
         cfg.set("faint-opacity", Some("2.0")).unwrap();
         assert_eq!(cfg.faint_opacity, 2.0);
 
@@ -12550,6 +12563,53 @@ mod tests {
 
         let cloned = cfg.clone();
         assert_eq!(cloned, cfg);
+    }
+
+    #[test]
+    fn config_finalize_scalar_tail() {
+        let line = |cfg: &Config, key: &str| -> String {
+            let mut out = String::new();
+            cfg.format_config(&mut out);
+            out.lines()
+                .find(|l| l.starts_with(&format!("{} = ", key)))
+                .unwrap()
+                .to_string()
+        };
+
+        let mut cfg = Config::default();
+        cfg.term.clear();
+        cfg.set("minimum-contrast", Some("0.25")).unwrap();
+        cfg.set("faint-opacity", Some("2.0")).unwrap();
+        cfg.auto_update_channel = None;
+
+        assert_eq!(cfg.term, "");
+        assert_eq!(cfg.minimum_contrast, 0.25);
+        assert_eq!(cfg.faint_opacity, 2.0);
+        assert_eq!(cfg.auto_update_channel, None);
+
+        cfg.finalize();
+        assert_eq!(cfg.term, "xterm-ghostty");
+        assert_eq!(cfg.minimum_contrast, 1.0);
+        assert_eq!(cfg.faint_opacity, 1.0);
+        assert_eq!(cfg.auto_update_channel, Some(ReleaseChannel::Tip));
+        assert_eq!(line(&cfg, "term"), "term = xterm-ghostty");
+        assert_eq!(line(&cfg, "minimum-contrast"), "minimum-contrast = 1");
+        assert_eq!(line(&cfg, "faint-opacity"), "faint-opacity = 1");
+        assert_eq!(
+            line(&cfg, "auto-update-channel"),
+            "auto-update-channel = tip"
+        );
+
+        let mut cfg = Config::default();
+        cfg.term = "xterm-roastty".to_string();
+        cfg.set("minimum-contrast", Some("99.0")).unwrap();
+        cfg.set("faint-opacity", Some("-0.25")).unwrap();
+        cfg.auto_update_channel = Some(ReleaseChannel::Stable);
+        cfg.finalize();
+        assert_eq!(cfg.term, "xterm-roastty");
+        assert_eq!(cfg.minimum_contrast, 21.0);
+        assert_eq!(cfg.faint_opacity, 0.0);
+        assert_eq!(cfg.auto_update_channel, Some(ReleaseChannel::Stable));
     }
 
     #[test]
