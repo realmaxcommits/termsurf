@@ -7090,117 +7090,610 @@ fn config_keybind_physical_key_supported(key: key::Key) -> bool {
     )
 }
 
+#[derive(Clone, Copy)]
+enum DefaultBindingTrigger {
+    Physical(key::Key),
+    Unicode(u32),
+}
+
+#[derive(Clone, Copy)]
+struct DefaultBindingEntry {
+    trigger: DefaultBindingTrigger,
+    mods: c_int,
+    action: &'static [u8],
+    flags: u8,
+}
+
+const fn default_physical_entry(
+    key: key::Key,
+    mods: c_int,
+    action: &'static [u8],
+    flags: u8,
+) -> DefaultBindingEntry {
+    DefaultBindingEntry {
+        trigger: DefaultBindingTrigger::Physical(key),
+        mods,
+        action,
+        flags,
+    }
+}
+
+const fn default_unicode_entry(
+    codepoint: u32,
+    mods: c_int,
+    action: &'static [u8],
+    flags: u8,
+) -> DefaultBindingEntry {
+    DefaultBindingEntry {
+        trigger: DefaultBindingTrigger::Unicode(codepoint),
+        mods,
+        action,
+        flags,
+    }
+}
+
+const DEFAULT_BINDINGS: &[DefaultBindingEntry] = &[
+    default_unicode_entry(
+        b',' as u32,
+        ROASTTY_MODS_SUPER,
+        b"open_config",
+        ROASTTY_KEYBIND_FLAGS_DEFAULT,
+    ),
+    default_unicode_entry(
+        b',' as u32,
+        ROASTTY_MODS_SHIFT | ROASTTY_MODS_SUPER,
+        b"reload_config",
+        ROASTTY_KEYBIND_FLAGS_DEFAULT,
+    ),
+    default_physical_entry(
+        key::Key::Copy,
+        ROASTTY_MODS_NONE,
+        b"copy_to_clipboard:mixed",
+        ROASTTY_KEYBIND_FLAGS_DEFAULT,
+    ),
+    default_physical_entry(
+        key::Key::Paste,
+        ROASTTY_MODS_NONE,
+        b"paste_from_clipboard",
+        ROASTTY_KEYBIND_FLAGS_DEFAULT,
+    ),
+    default_physical_entry(
+        key::Key::Insert,
+        ROASTTY_MODS_SHIFT,
+        b"paste_from_selection",
+        ROASTTY_KEYBIND_FLAGS_DEFAULT,
+    ),
+    default_unicode_entry(
+        b'c' as u32,
+        ROASTTY_MODS_SUPER,
+        b"copy_to_clipboard:mixed",
+        ROASTTY_KEYBIND_FLAGS_PERFORMABLE,
+    ),
+    default_unicode_entry(
+        b'v' as u32,
+        ROASTTY_MODS_SUPER,
+        b"paste_from_clipboard",
+        ROASTTY_KEYBIND_FLAGS_PERFORMABLE,
+    ),
+    default_unicode_entry(
+        b'=' as u32,
+        ROASTTY_MODS_SUPER,
+        b"increase_font_size:1",
+        ROASTTY_KEYBIND_FLAGS_DEFAULT,
+    ),
+    default_unicode_entry(
+        b'+' as u32,
+        ROASTTY_MODS_SUPER,
+        b"increase_font_size:1",
+        ROASTTY_KEYBIND_FLAGS_DEFAULT,
+    ),
+    default_unicode_entry(
+        b'-' as u32,
+        ROASTTY_MODS_SUPER,
+        b"decrease_font_size:1",
+        ROASTTY_KEYBIND_FLAGS_DEFAULT,
+    ),
+    default_unicode_entry(
+        b'0' as u32,
+        ROASTTY_MODS_SUPER,
+        b"reset_font_size",
+        ROASTTY_KEYBIND_FLAGS_DEFAULT,
+    ),
+    default_unicode_entry(
+        b'j' as u32,
+        ROASTTY_MODS_SHIFT | ROASTTY_MODS_CTRL | ROASTTY_MODS_SUPER,
+        b"write_screen_file:copy",
+        ROASTTY_KEYBIND_FLAGS_DEFAULT,
+    ),
+    default_unicode_entry(
+        b'j' as u32,
+        ROASTTY_MODS_SHIFT | ROASTTY_MODS_SUPER,
+        b"write_screen_file:paste",
+        ROASTTY_KEYBIND_FLAGS_DEFAULT,
+    ),
+    default_unicode_entry(
+        b'j' as u32,
+        ROASTTY_MODS_SHIFT | ROASTTY_MODS_ALT | ROASTTY_MODS_SUPER,
+        b"write_screen_file:open",
+        ROASTTY_KEYBIND_FLAGS_DEFAULT,
+    ),
+    default_physical_entry(
+        key::Key::ArrowLeft,
+        ROASTTY_MODS_SHIFT,
+        b"adjust_selection:left",
+        ROASTTY_KEYBIND_FLAGS_PERFORMABLE,
+    ),
+    default_physical_entry(
+        key::Key::ArrowRight,
+        ROASTTY_MODS_SHIFT,
+        b"adjust_selection:right",
+        ROASTTY_KEYBIND_FLAGS_PERFORMABLE,
+    ),
+    default_physical_entry(
+        key::Key::ArrowUp,
+        ROASTTY_MODS_SHIFT,
+        b"adjust_selection:up",
+        ROASTTY_KEYBIND_FLAGS_PERFORMABLE,
+    ),
+    default_physical_entry(
+        key::Key::ArrowDown,
+        ROASTTY_MODS_SHIFT,
+        b"adjust_selection:down",
+        ROASTTY_KEYBIND_FLAGS_PERFORMABLE,
+    ),
+    default_physical_entry(
+        key::Key::PageUp,
+        ROASTTY_MODS_SHIFT,
+        b"adjust_selection:page_up",
+        ROASTTY_KEYBIND_FLAGS_PERFORMABLE,
+    ),
+    default_physical_entry(
+        key::Key::PageDown,
+        ROASTTY_MODS_SHIFT,
+        b"adjust_selection:page_down",
+        ROASTTY_KEYBIND_FLAGS_PERFORMABLE,
+    ),
+    default_physical_entry(
+        key::Key::Home,
+        ROASTTY_MODS_SHIFT,
+        b"adjust_selection:home",
+        ROASTTY_KEYBIND_FLAGS_PERFORMABLE,
+    ),
+    default_physical_entry(
+        key::Key::End,
+        ROASTTY_MODS_SHIFT,
+        b"adjust_selection:end",
+        ROASTTY_KEYBIND_FLAGS_PERFORMABLE,
+    ),
+    default_physical_entry(
+        key::Key::Tab,
+        ROASTTY_MODS_SHIFT | ROASTTY_MODS_CTRL,
+        b"previous_tab",
+        ROASTTY_KEYBIND_FLAGS_DEFAULT,
+    ),
+    default_physical_entry(
+        key::Key::Tab,
+        ROASTTY_MODS_CTRL,
+        b"next_tab",
+        ROASTTY_KEYBIND_FLAGS_DEFAULT,
+    ),
+    default_unicode_entry(
+        b'1' as u32,
+        ROASTTY_MODS_SUPER,
+        b"goto_tab:1",
+        ROASTTY_KEYBIND_FLAGS_DEFAULT,
+    ),
+    default_unicode_entry(
+        b'2' as u32,
+        ROASTTY_MODS_SUPER,
+        b"goto_tab:2",
+        ROASTTY_KEYBIND_FLAGS_DEFAULT,
+    ),
+    default_unicode_entry(
+        b'3' as u32,
+        ROASTTY_MODS_SUPER,
+        b"goto_tab:3",
+        ROASTTY_KEYBIND_FLAGS_DEFAULT,
+    ),
+    default_unicode_entry(
+        b'4' as u32,
+        ROASTTY_MODS_SUPER,
+        b"goto_tab:4",
+        ROASTTY_KEYBIND_FLAGS_DEFAULT,
+    ),
+    default_unicode_entry(
+        b'5' as u32,
+        ROASTTY_MODS_SUPER,
+        b"goto_tab:5",
+        ROASTTY_KEYBIND_FLAGS_DEFAULT,
+    ),
+    default_unicode_entry(
+        b'6' as u32,
+        ROASTTY_MODS_SUPER,
+        b"goto_tab:6",
+        ROASTTY_KEYBIND_FLAGS_DEFAULT,
+    ),
+    default_unicode_entry(
+        b'7' as u32,
+        ROASTTY_MODS_SUPER,
+        b"goto_tab:7",
+        ROASTTY_KEYBIND_FLAGS_DEFAULT,
+    ),
+    default_unicode_entry(
+        b'8' as u32,
+        ROASTTY_MODS_SUPER,
+        b"goto_tab:8",
+        ROASTTY_KEYBIND_FLAGS_DEFAULT,
+    ),
+    default_unicode_entry(
+        b'9' as u32,
+        ROASTTY_MODS_SUPER,
+        b"last_tab",
+        ROASTTY_KEYBIND_FLAGS_DEFAULT,
+    ),
+    default_physical_entry(
+        key::Key::Enter,
+        ROASTTY_MODS_SUPER,
+        b"toggle_fullscreen",
+        ROASTTY_KEYBIND_FLAGS_DEFAULT,
+    ),
+    default_physical_entry(
+        key::Key::Enter,
+        ROASTTY_MODS_SHIFT | ROASTTY_MODS_SUPER,
+        b"toggle_split_zoom",
+        ROASTTY_KEYBIND_FLAGS_DEFAULT,
+    ),
+    default_unicode_entry(
+        b'p' as u32,
+        ROASTTY_MODS_SHIFT | ROASTTY_MODS_SUPER,
+        b"toggle_command_palette",
+        ROASTTY_KEYBIND_FLAGS_DEFAULT,
+    ),
+    default_unicode_entry(
+        b'q' as u32,
+        ROASTTY_MODS_SUPER,
+        b"quit",
+        ROASTTY_KEYBIND_FLAGS_DEFAULT,
+    ),
+    default_unicode_entry(
+        b'k' as u32,
+        ROASTTY_MODS_SUPER,
+        b"clear_screen",
+        ROASTTY_KEYBIND_FLAGS_PERFORMABLE,
+    ),
+    default_unicode_entry(
+        b'a' as u32,
+        ROASTTY_MODS_SUPER,
+        b"select_all",
+        ROASTTY_KEYBIND_FLAGS_DEFAULT,
+    ),
+    default_unicode_entry(
+        b't' as u32,
+        ROASTTY_MODS_SHIFT | ROASTTY_MODS_SUPER,
+        b"undo",
+        ROASTTY_KEYBIND_FLAGS_PERFORMABLE,
+    ),
+    default_unicode_entry(
+        b'z' as u32,
+        ROASTTY_MODS_SUPER,
+        b"undo",
+        ROASTTY_KEYBIND_FLAGS_PERFORMABLE,
+    ),
+    default_unicode_entry(
+        b'z' as u32,
+        ROASTTY_MODS_SHIFT | ROASTTY_MODS_SUPER,
+        b"redo",
+        ROASTTY_KEYBIND_FLAGS_PERFORMABLE,
+    ),
+    default_physical_entry(
+        key::Key::Home,
+        ROASTTY_MODS_SUPER,
+        b"scroll_to_top",
+        ROASTTY_KEYBIND_FLAGS_DEFAULT,
+    ),
+    default_physical_entry(
+        key::Key::End,
+        ROASTTY_MODS_SUPER,
+        b"scroll_to_bottom",
+        ROASTTY_KEYBIND_FLAGS_DEFAULT,
+    ),
+    default_physical_entry(
+        key::Key::PageUp,
+        ROASTTY_MODS_SUPER,
+        b"scroll_page_up",
+        ROASTTY_KEYBIND_FLAGS_DEFAULT,
+    ),
+    default_physical_entry(
+        key::Key::PageDown,
+        ROASTTY_MODS_SUPER,
+        b"scroll_page_down",
+        ROASTTY_KEYBIND_FLAGS_DEFAULT,
+    ),
+    default_unicode_entry(
+        b'j' as u32,
+        ROASTTY_MODS_SUPER,
+        b"scroll_to_selection",
+        ROASTTY_KEYBIND_FLAGS_PERFORMABLE,
+    ),
+    default_physical_entry(
+        key::Key::ArrowUp,
+        ROASTTY_MODS_SHIFT | ROASTTY_MODS_SUPER,
+        b"jump_to_prompt:-1",
+        ROASTTY_KEYBIND_FLAGS_DEFAULT,
+    ),
+    default_physical_entry(
+        key::Key::ArrowDown,
+        ROASTTY_MODS_SHIFT | ROASTTY_MODS_SUPER,
+        b"jump_to_prompt:1",
+        ROASTTY_KEYBIND_FLAGS_DEFAULT,
+    ),
+    default_unicode_entry(
+        b'n' as u32,
+        ROASTTY_MODS_SUPER,
+        b"new_window",
+        ROASTTY_KEYBIND_FLAGS_DEFAULT,
+    ),
+    default_unicode_entry(
+        b'w' as u32,
+        ROASTTY_MODS_SUPER,
+        b"close_surface",
+        ROASTTY_KEYBIND_FLAGS_DEFAULT,
+    ),
+    default_unicode_entry(
+        b'w' as u32,
+        ROASTTY_MODS_ALT | ROASTTY_MODS_SUPER,
+        b"close_tab:this",
+        ROASTTY_KEYBIND_FLAGS_DEFAULT,
+    ),
+    default_unicode_entry(
+        b'w' as u32,
+        ROASTTY_MODS_SHIFT | ROASTTY_MODS_SUPER,
+        b"close_window",
+        ROASTTY_KEYBIND_FLAGS_DEFAULT,
+    ),
+    default_unicode_entry(
+        b'w' as u32,
+        ROASTTY_MODS_SHIFT | ROASTTY_MODS_ALT | ROASTTY_MODS_SUPER,
+        b"close_all_windows",
+        ROASTTY_KEYBIND_FLAGS_DEFAULT,
+    ),
+    default_unicode_entry(
+        b't' as u32,
+        ROASTTY_MODS_SUPER,
+        b"new_tab",
+        ROASTTY_KEYBIND_FLAGS_DEFAULT,
+    ),
+    default_unicode_entry(
+        b'[' as u32,
+        ROASTTY_MODS_SHIFT | ROASTTY_MODS_SUPER,
+        b"previous_tab",
+        ROASTTY_KEYBIND_FLAGS_DEFAULT,
+    ),
+    default_unicode_entry(
+        b']' as u32,
+        ROASTTY_MODS_SHIFT | ROASTTY_MODS_SUPER,
+        b"next_tab",
+        ROASTTY_KEYBIND_FLAGS_DEFAULT,
+    ),
+    default_unicode_entry(
+        b'd' as u32,
+        ROASTTY_MODS_SUPER,
+        b"new_split:right",
+        ROASTTY_KEYBIND_FLAGS_DEFAULT,
+    ),
+    default_unicode_entry(
+        b'd' as u32,
+        ROASTTY_MODS_SHIFT | ROASTTY_MODS_SUPER,
+        b"new_split:down",
+        ROASTTY_KEYBIND_FLAGS_DEFAULT,
+    ),
+    default_unicode_entry(
+        b'[' as u32,
+        ROASTTY_MODS_SUPER,
+        b"goto_split:previous",
+        ROASTTY_KEYBIND_FLAGS_DEFAULT,
+    ),
+    default_unicode_entry(
+        b']' as u32,
+        ROASTTY_MODS_SUPER,
+        b"goto_split:next",
+        ROASTTY_KEYBIND_FLAGS_DEFAULT,
+    ),
+    default_physical_entry(
+        key::Key::ArrowUp,
+        ROASTTY_MODS_ALT | ROASTTY_MODS_SUPER,
+        b"goto_split:up",
+        ROASTTY_KEYBIND_FLAGS_DEFAULT,
+    ),
+    default_physical_entry(
+        key::Key::ArrowDown,
+        ROASTTY_MODS_ALT | ROASTTY_MODS_SUPER,
+        b"goto_split:down",
+        ROASTTY_KEYBIND_FLAGS_DEFAULT,
+    ),
+    default_physical_entry(
+        key::Key::ArrowLeft,
+        ROASTTY_MODS_ALT | ROASTTY_MODS_SUPER,
+        b"goto_split:left",
+        ROASTTY_KEYBIND_FLAGS_DEFAULT,
+    ),
+    default_physical_entry(
+        key::Key::ArrowRight,
+        ROASTTY_MODS_ALT | ROASTTY_MODS_SUPER,
+        b"goto_split:right",
+        ROASTTY_KEYBIND_FLAGS_DEFAULT,
+    ),
+    default_physical_entry(
+        key::Key::ArrowUp,
+        ROASTTY_MODS_CTRL | ROASTTY_MODS_SUPER,
+        b"resize_split:up,10",
+        ROASTTY_KEYBIND_FLAGS_DEFAULT,
+    ),
+    default_physical_entry(
+        key::Key::ArrowDown,
+        ROASTTY_MODS_CTRL | ROASTTY_MODS_SUPER,
+        b"resize_split:down,10",
+        ROASTTY_KEYBIND_FLAGS_DEFAULT,
+    ),
+    default_physical_entry(
+        key::Key::ArrowLeft,
+        ROASTTY_MODS_CTRL | ROASTTY_MODS_SUPER,
+        b"resize_split:left,10",
+        ROASTTY_KEYBIND_FLAGS_DEFAULT,
+    ),
+    default_physical_entry(
+        key::Key::ArrowRight,
+        ROASTTY_MODS_CTRL | ROASTTY_MODS_SUPER,
+        b"resize_split:right,10",
+        ROASTTY_KEYBIND_FLAGS_DEFAULT,
+    ),
+    default_unicode_entry(
+        b'=' as u32,
+        ROASTTY_MODS_CTRL | ROASTTY_MODS_SUPER,
+        b"equalize_splits",
+        ROASTTY_KEYBIND_FLAGS_DEFAULT,
+    ),
+    default_physical_entry(
+        key::Key::ArrowUp,
+        ROASTTY_MODS_SUPER,
+        b"jump_to_prompt:-1",
+        ROASTTY_KEYBIND_FLAGS_DEFAULT,
+    ),
+    default_physical_entry(
+        key::Key::ArrowDown,
+        ROASTTY_MODS_SUPER,
+        b"jump_to_prompt:1",
+        ROASTTY_KEYBIND_FLAGS_DEFAULT,
+    ),
+    default_unicode_entry(
+        b'f' as u32,
+        ROASTTY_MODS_SUPER,
+        b"start_search",
+        ROASTTY_KEYBIND_FLAGS_PERFORMABLE,
+    ),
+    default_unicode_entry(
+        b'e' as u32,
+        ROASTTY_MODS_SUPER,
+        b"search_selection",
+        ROASTTY_KEYBIND_FLAGS_PERFORMABLE,
+    ),
+    default_unicode_entry(
+        b'f' as u32,
+        ROASTTY_MODS_SHIFT | ROASTTY_MODS_SUPER,
+        b"end_search",
+        ROASTTY_KEYBIND_FLAGS_PERFORMABLE,
+    ),
+    default_physical_entry(
+        key::Key::Escape,
+        ROASTTY_MODS_NONE,
+        b"end_search",
+        ROASTTY_KEYBIND_FLAGS_PERFORMABLE,
+    ),
+    default_unicode_entry(
+        b'g' as u32,
+        ROASTTY_MODS_SUPER,
+        b"navigate_search:next",
+        ROASTTY_KEYBIND_FLAGS_PERFORMABLE,
+    ),
+    default_unicode_entry(
+        b'g' as u32,
+        ROASTTY_MODS_SHIFT | ROASTTY_MODS_SUPER,
+        b"navigate_search:previous",
+        ROASTTY_KEYBIND_FLAGS_PERFORMABLE,
+    ),
+    default_unicode_entry(
+        b'i' as u32,
+        ROASTTY_MODS_ALT | ROASTTY_MODS_SUPER,
+        b"inspector:toggle",
+        ROASTTY_KEYBIND_FLAGS_DEFAULT,
+    ),
+    default_unicode_entry(
+        b'f' as u32,
+        ROASTTY_MODS_CTRL | ROASTTY_MODS_SUPER,
+        b"toggle_fullscreen",
+        ROASTTY_KEYBIND_FLAGS_DEFAULT,
+    ),
+    default_unicode_entry(
+        b'v' as u32,
+        ROASTTY_MODS_SHIFT | ROASTTY_MODS_SUPER,
+        b"paste_from_selection",
+        ROASTTY_KEYBIND_FLAGS_DEFAULT,
+    ),
+    default_physical_entry(
+        key::Key::ArrowRight,
+        ROASTTY_MODS_SUPER,
+        b"text:\\x05",
+        ROASTTY_KEYBIND_FLAGS_DEFAULT,
+    ),
+    default_physical_entry(
+        key::Key::ArrowLeft,
+        ROASTTY_MODS_SUPER,
+        b"text:\\x01",
+        ROASTTY_KEYBIND_FLAGS_DEFAULT,
+    ),
+    default_physical_entry(
+        key::Key::Backspace,
+        ROASTTY_MODS_SUPER,
+        b"text:\\x15",
+        ROASTTY_KEYBIND_FLAGS_DEFAULT,
+    ),
+    default_physical_entry(
+        key::Key::ArrowLeft,
+        ROASTTY_MODS_ALT,
+        b"esc:b",
+        ROASTTY_KEYBIND_FLAGS_DEFAULT,
+    ),
+    default_physical_entry(
+        key::Key::ArrowRight,
+        ROASTTY_MODS_ALT,
+        b"esc:f",
+        ROASTTY_KEYBIND_FLAGS_DEFAULT,
+    ),
+];
+
 fn default_config_trigger(action: &[u8]) -> RoasttyInputTrigger {
-    match action {
-        b"open_config" => unicode_trigger(u32::from(b','), ROASTTY_MODS_SUPER),
-        b"reload_config" => {
-            unicode_trigger(u32::from(b','), ROASTTY_MODS_SHIFT | ROASTTY_MODS_SUPER)
+    let action = match action {
+        b"close_tab" => b"close_tab:this".as_slice(),
+        b"copy_to_clipboard" => b"copy_to_clipboard:mixed".as_slice(),
+        _ => action,
+    };
+    DEFAULT_BINDINGS
+        .iter()
+        .rev()
+        .find(|entry| entry.action == action && entry.flags & ROASTTY_KEYBIND_FLAG_PERFORMABLE == 0)
+        .map(default_binding_entry_trigger)
+        .unwrap_or_else(empty_trigger)
+}
+
+fn default_binding_entry_trigger(entry: &DefaultBindingEntry) -> RoasttyInputTrigger {
+    match entry.trigger {
+        DefaultBindingTrigger::Physical(key) => physical_trigger(key, entry.mods),
+        DefaultBindingTrigger::Unicode(codepoint) => unicode_trigger(codepoint, entry.mods),
+    }
+}
+
+fn default_binding_entry_matches_event(
+    entry: &DefaultBindingEntry,
+    event: &key::KeyEvent,
+    mods: c_int,
+) -> bool {
+    if entry.mods != mods {
+        return false;
+    }
+    match entry.trigger {
+        DefaultBindingTrigger::Physical(key) => event.key == key,
+        DefaultBindingTrigger::Unicode(codepoint) => {
+            if let Ok(text) = std::str::from_utf8(&event.utf8) {
+                let mut chars = text.chars();
+                if let Some(ch) = chars.next() {
+                    if chars.next().is_none() && ch as u32 == codepoint {
+                        return true;
+                    }
+                }
+            }
+
+            event.unshifted_codepoint > 0 && event.unshifted_codepoint == codepoint
         }
-        b"copy_to_clipboard" | b"copy_to_clipboard:mixed" => {
-            physical_trigger(key::Key::Copy, ROASTTY_MODS_NONE)
-        }
-        b"paste_from_clipboard" => physical_trigger(key::Key::Paste, ROASTTY_MODS_NONE),
-        b"increase_font_size:1" => unicode_trigger(u32::from(b'+'), ROASTTY_MODS_SUPER),
-        b"decrease_font_size:1" => unicode_trigger(u32::from(b'-'), ROASTTY_MODS_SUPER),
-        b"reset_font_size" => unicode_trigger(u32::from(b'0'), ROASTTY_MODS_SUPER),
-        b"write_screen_file:copy" => unicode_trigger(
-            u32::from(b'j'),
-            ROASTTY_MODS_SHIFT | ROASTTY_MODS_CTRL | ROASTTY_MODS_SUPER,
-        ),
-        b"write_screen_file:paste" => {
-            unicode_trigger(u32::from(b'j'), ROASTTY_MODS_SHIFT | ROASTTY_MODS_SUPER)
-        }
-        b"write_screen_file:open" => unicode_trigger(
-            u32::from(b'j'),
-            ROASTTY_MODS_SHIFT | ROASTTY_MODS_ALT | ROASTTY_MODS_SUPER,
-        ),
-        b"quit" => unicode_trigger(u32::from(b'q'), ROASTTY_MODS_SUPER),
-        b"select_all" => unicode_trigger(u32::from(b'a'), ROASTTY_MODS_SUPER),
-        b"goto_tab:1" => unicode_trigger(u32::from(b'1'), ROASTTY_MODS_SUPER),
-        b"goto_tab:2" => unicode_trigger(u32::from(b'2'), ROASTTY_MODS_SUPER),
-        b"goto_tab:3" => unicode_trigger(u32::from(b'3'), ROASTTY_MODS_SUPER),
-        b"goto_tab:4" => unicode_trigger(u32::from(b'4'), ROASTTY_MODS_SUPER),
-        b"goto_tab:5" => unicode_trigger(u32::from(b'5'), ROASTTY_MODS_SUPER),
-        b"goto_tab:6" => unicode_trigger(u32::from(b'6'), ROASTTY_MODS_SUPER),
-        b"goto_tab:7" => unicode_trigger(u32::from(b'7'), ROASTTY_MODS_SUPER),
-        b"goto_tab:8" => unicode_trigger(u32::from(b'8'), ROASTTY_MODS_SUPER),
-        b"last_tab" => unicode_trigger(u32::from(b'9'), ROASTTY_MODS_SUPER),
-        b"new_window" => unicode_trigger(u32::from(b'n'), ROASTTY_MODS_SUPER),
-        b"close_surface" => unicode_trigger(u32::from(b'w'), ROASTTY_MODS_SUPER),
-        b"close_tab" | b"close_tab:this" => {
-            unicode_trigger(u32::from(b'w'), ROASTTY_MODS_ALT | ROASTTY_MODS_SUPER)
-        }
-        b"close_window" => {
-            unicode_trigger(u32::from(b'w'), ROASTTY_MODS_SHIFT | ROASTTY_MODS_SUPER)
-        }
-        b"close_all_windows" => unicode_trigger(
-            u32::from(b'w'),
-            ROASTTY_MODS_SHIFT | ROASTTY_MODS_ALT | ROASTTY_MODS_SUPER,
-        ),
-        b"new_tab" => unicode_trigger(u32::from(b't'), ROASTTY_MODS_SUPER),
-        b"previous_tab" => {
-            unicode_trigger(u32::from(b'['), ROASTTY_MODS_SHIFT | ROASTTY_MODS_SUPER)
-        }
-        b"next_tab" => unicode_trigger(u32::from(b']'), ROASTTY_MODS_SHIFT | ROASTTY_MODS_SUPER),
-        b"new_split:right" => unicode_trigger(u32::from(b'd'), ROASTTY_MODS_SUPER),
-        b"new_split:down" => {
-            unicode_trigger(u32::from(b'd'), ROASTTY_MODS_SHIFT | ROASTTY_MODS_SUPER)
-        }
-        b"goto_split:previous" => unicode_trigger(u32::from(b'['), ROASTTY_MODS_SUPER),
-        b"goto_split:next" => unicode_trigger(u32::from(b']'), ROASTTY_MODS_SUPER),
-        b"goto_split:up" => {
-            physical_trigger(key::Key::ArrowUp, ROASTTY_MODS_ALT | ROASTTY_MODS_SUPER)
-        }
-        b"goto_split:down" => {
-            physical_trigger(key::Key::ArrowDown, ROASTTY_MODS_ALT | ROASTTY_MODS_SUPER)
-        }
-        b"goto_split:left" => {
-            physical_trigger(key::Key::ArrowLeft, ROASTTY_MODS_ALT | ROASTTY_MODS_SUPER)
-        }
-        b"goto_split:right" => {
-            physical_trigger(key::Key::ArrowRight, ROASTTY_MODS_ALT | ROASTTY_MODS_SUPER)
-        }
-        b"resize_split:up,10" => {
-            physical_trigger(key::Key::ArrowUp, ROASTTY_MODS_CTRL | ROASTTY_MODS_SUPER)
-        }
-        b"resize_split:down,10" => {
-            physical_trigger(key::Key::ArrowDown, ROASTTY_MODS_CTRL | ROASTTY_MODS_SUPER)
-        }
-        b"resize_split:left,10" => {
-            physical_trigger(key::Key::ArrowLeft, ROASTTY_MODS_CTRL | ROASTTY_MODS_SUPER)
-        }
-        b"resize_split:right,10" => {
-            physical_trigger(key::Key::ArrowRight, ROASTTY_MODS_CTRL | ROASTTY_MODS_SUPER)
-        }
-        b"equalize_splits" => {
-            unicode_trigger(u32::from(b'='), ROASTTY_MODS_CTRL | ROASTTY_MODS_SUPER)
-        }
-        b"toggle_split_zoom" => {
-            physical_trigger(key::Key::Enter, ROASTTY_MODS_SHIFT | ROASTTY_MODS_SUPER)
-        }
-        b"toggle_fullscreen" => {
-            unicode_trigger(u32::from(b'f'), ROASTTY_MODS_CTRL | ROASTTY_MODS_SUPER)
-        }
-        b"toggle_command_palette" => {
-            unicode_trigger(u32::from(b'p'), ROASTTY_MODS_SHIFT | ROASTTY_MODS_SUPER)
-        }
-        b"scroll_to_top" => physical_trigger(key::Key::Home, ROASTTY_MODS_SUPER),
-        b"scroll_to_bottom" => physical_trigger(key::Key::End, ROASTTY_MODS_SUPER),
-        b"scroll_page_up" => physical_trigger(key::Key::PageUp, ROASTTY_MODS_SUPER),
-        b"scroll_page_down" => physical_trigger(key::Key::PageDown, ROASTTY_MODS_SUPER),
-        b"jump_to_prompt:-1" => physical_trigger(key::Key::ArrowUp, ROASTTY_MODS_SUPER),
-        b"jump_to_prompt:1" => physical_trigger(key::Key::ArrowDown, ROASTTY_MODS_SUPER),
-        b"inspector:toggle" => {
-            unicode_trigger(u32::from(b'i'), ROASTTY_MODS_ALT | ROASTTY_MODS_SUPER)
-        }
-        b"paste_from_selection" => {
-            unicode_trigger(u32::from(b'v'), ROASTTY_MODS_SHIFT | ROASTTY_MODS_SUPER)
-        }
-        b"navigate_search:next" => unicode_trigger(u32::from(b'g'), ROASTTY_MODS_SUPER),
-        b"navigate_search:previous" => {
-            unicode_trigger(u32::from(b'g'), ROASTTY_MODS_SHIFT | ROASTTY_MODS_SUPER)
-        }
-        _ => empty_trigger(),
     }
 }
 
@@ -7217,365 +7710,6 @@ fn default_binding_match(
     }
 }
 
-fn default_physical_key_binding(
-    key: key::Key,
-    mods: c_int,
-    release_key: key::Key,
-    release_mods: c_int,
-) -> Option<DefaultBindingMatch> {
-    match key {
-        key::Key::Escape if mods == ROASTTY_MODS_NONE => Some(default_binding_match(
-            ROASTTY_KEYBIND_FLAGS_PERFORMABLE,
-            Some(b"end_search"),
-            release_key,
-            release_mods,
-        )),
-        key::Key::Copy | key::Key::Paste if mods == ROASTTY_MODS_NONE => {
-            let action = if key == key::Key::Copy {
-                b"copy_to_clipboard:mixed".as_slice()
-            } else {
-                b"paste_from_clipboard".as_slice()
-            };
-            Some(default_binding_match(
-                ROASTTY_KEYBIND_FLAGS_DEFAULT,
-                Some(action),
-                release_key,
-                release_mods,
-            ))
-        }
-        key::Key::Insert if mods == ROASTTY_MODS_SHIFT => Some(default_binding_match(
-            ROASTTY_KEYBIND_FLAGS_DEFAULT,
-            Some(b"paste_from_selection"),
-            release_key,
-            release_mods,
-        )),
-        key::Key::Tab
-            if mods == ROASTTY_MODS_CTRL || mods == (ROASTTY_MODS_CTRL | ROASTTY_MODS_SHIFT) =>
-        {
-            let action = if mods == ROASTTY_MODS_CTRL {
-                b"next_tab".as_slice()
-            } else {
-                b"previous_tab".as_slice()
-            };
-            Some(default_binding_match(
-                ROASTTY_KEYBIND_FLAGS_DEFAULT,
-                Some(action),
-                release_key,
-                release_mods,
-            ))
-        }
-        key::Key::Enter
-            if mods == ROASTTY_MODS_SUPER || mods == (ROASTTY_MODS_SHIFT | ROASTTY_MODS_SUPER) =>
-        {
-            let action = if mods == ROASTTY_MODS_SUPER {
-                b"toggle_fullscreen".as_slice()
-            } else {
-                b"toggle_split_zoom".as_slice()
-            };
-            Some(default_binding_match(
-                ROASTTY_KEYBIND_FLAGS_DEFAULT,
-                Some(action),
-                release_key,
-                release_mods,
-            ))
-        }
-        key::Key::Home | key::Key::End | key::Key::PageUp | key::Key::PageDown
-            if mods == ROASTTY_MODS_SHIFT =>
-        {
-            let action = match key {
-                key::Key::Home => b"adjust_selection:home".as_slice(),
-                key::Key::End => b"adjust_selection:end".as_slice(),
-                key::Key::PageUp => b"adjust_selection:page_up".as_slice(),
-                key::Key::PageDown => b"adjust_selection:page_down".as_slice(),
-                _ => unreachable!(),
-            };
-            Some(default_binding_match(
-                ROASTTY_KEYBIND_FLAGS_PERFORMABLE,
-                Some(action),
-                release_key,
-                release_mods,
-            ))
-        }
-        key::Key::Home | key::Key::End | key::Key::PageUp | key::Key::PageDown
-            if mods == ROASTTY_MODS_SUPER =>
-        {
-            let action = match key {
-                key::Key::Home => b"scroll_to_top".as_slice(),
-                key::Key::End => b"scroll_to_bottom".as_slice(),
-                key::Key::PageUp => b"scroll_page_up".as_slice(),
-                key::Key::PageDown => b"scroll_page_down".as_slice(),
-                _ => unreachable!(),
-            };
-            Some(default_binding_match(
-                ROASTTY_KEYBIND_FLAGS_DEFAULT,
-                Some(action),
-                release_key,
-                release_mods,
-            ))
-        }
-        key::Key::ArrowUp | key::Key::ArrowDown => {
-            if mods == ROASTTY_MODS_SHIFT {
-                let action = if key == key::Key::ArrowUp {
-                    b"adjust_selection:up".as_slice()
-                } else {
-                    b"adjust_selection:down".as_slice()
-                };
-                Some(default_binding_match(
-                    ROASTTY_KEYBIND_FLAGS_PERFORMABLE,
-                    Some(action),
-                    release_key,
-                    release_mods,
-                ))
-            } else if mods == (ROASTTY_MODS_ALT | ROASTTY_MODS_SUPER) {
-                let action = if key == key::Key::ArrowUp {
-                    b"goto_split:up".as_slice()
-                } else {
-                    b"goto_split:down".as_slice()
-                };
-                Some(default_binding_match(
-                    ROASTTY_KEYBIND_FLAGS_DEFAULT,
-                    Some(action),
-                    release_key,
-                    release_mods,
-                ))
-            } else if mods == (ROASTTY_MODS_CTRL | ROASTTY_MODS_SUPER) {
-                let action = if key == key::Key::ArrowUp {
-                    b"resize_split:up,10".as_slice()
-                } else {
-                    b"resize_split:down,10".as_slice()
-                };
-                Some(default_binding_match(
-                    ROASTTY_KEYBIND_FLAGS_DEFAULT,
-                    Some(action),
-                    release_key,
-                    release_mods,
-                ))
-            } else if mods == (ROASTTY_MODS_SHIFT | ROASTTY_MODS_SUPER) {
-                let action = if key == key::Key::ArrowUp {
-                    b"jump_to_prompt:-1".as_slice()
-                } else {
-                    b"jump_to_prompt:1".as_slice()
-                };
-                Some(default_binding_match(
-                    ROASTTY_KEYBIND_FLAGS_DEFAULT,
-                    Some(action),
-                    release_key,
-                    release_mods,
-                ))
-            } else if mods == ROASTTY_MODS_SUPER {
-                let action = if key == key::Key::ArrowUp {
-                    b"jump_to_prompt:-1".as_slice()
-                } else {
-                    b"jump_to_prompt:1".as_slice()
-                };
-                Some(default_binding_match(
-                    ROASTTY_KEYBIND_FLAGS_DEFAULT,
-                    Some(action),
-                    release_key,
-                    release_mods,
-                ))
-            } else {
-                None
-            }
-        }
-        key::Key::ArrowLeft | key::Key::ArrowRight => {
-            if mods == ROASTTY_MODS_SHIFT {
-                let action = if key == key::Key::ArrowLeft {
-                    b"adjust_selection:left".as_slice()
-                } else {
-                    b"adjust_selection:right".as_slice()
-                };
-                Some(default_binding_match(
-                    ROASTTY_KEYBIND_FLAGS_PERFORMABLE,
-                    Some(action),
-                    release_key,
-                    release_mods,
-                ))
-            } else if mods == (ROASTTY_MODS_ALT | ROASTTY_MODS_SUPER) {
-                let action = if key == key::Key::ArrowLeft {
-                    b"goto_split:left".as_slice()
-                } else {
-                    b"goto_split:right".as_slice()
-                };
-                Some(default_binding_match(
-                    ROASTTY_KEYBIND_FLAGS_DEFAULT,
-                    Some(action),
-                    release_key,
-                    release_mods,
-                ))
-            } else if mods == (ROASTTY_MODS_CTRL | ROASTTY_MODS_SUPER) {
-                let action = if key == key::Key::ArrowLeft {
-                    b"resize_split:left,10".as_slice()
-                } else {
-                    b"resize_split:right,10".as_slice()
-                };
-                Some(default_binding_match(
-                    ROASTTY_KEYBIND_FLAGS_DEFAULT,
-                    Some(action),
-                    release_key,
-                    release_mods,
-                ))
-            } else if mods == ROASTTY_MODS_SUPER {
-                let action = if key == key::Key::ArrowLeft {
-                    b"text:\\x01".as_slice()
-                } else {
-                    b"text:\\x05".as_slice()
-                };
-                Some(default_binding_match(
-                    ROASTTY_KEYBIND_FLAGS_DEFAULT,
-                    Some(action),
-                    release_key,
-                    release_mods,
-                ))
-            } else if mods == ROASTTY_MODS_ALT {
-                let action = if key == key::Key::ArrowLeft {
-                    b"esc:b".as_slice()
-                } else {
-                    b"esc:f".as_slice()
-                };
-                Some(default_binding_match(
-                    ROASTTY_KEYBIND_FLAGS_DEFAULT,
-                    Some(action),
-                    release_key,
-                    release_mods,
-                ))
-            } else {
-                None
-            }
-        }
-        key::Key::Backspace if mods == ROASTTY_MODS_SUPER => Some(default_binding_match(
-            ROASTTY_KEYBIND_FLAGS_DEFAULT,
-            Some(b"text:\\x15"),
-            release_key,
-            release_mods,
-        )),
-        _ => None,
-    }
-}
-
-fn default_unicode_key_binding(
-    codepoint: u32,
-    mods: c_int,
-    release_key: key::Key,
-    release_mods: c_int,
-) -> Option<DefaultBindingMatch> {
-    let (flags, action): (u8, Option<&'static [u8]>) = match mods {
-        ROASTTY_MODS_SUPER => match codepoint {
-            44 => (ROASTTY_KEYBIND_FLAGS_DEFAULT, Some(b"open_config")),
-            99 => (
-                ROASTTY_KEYBIND_FLAGS_PERFORMABLE,
-                Some(b"copy_to_clipboard:mixed"),
-            ),
-            118 => (
-                ROASTTY_KEYBIND_FLAGS_PERFORMABLE,
-                Some(b"paste_from_clipboard"),
-            ),
-            43 | 61 => (ROASTTY_KEYBIND_FLAGS_DEFAULT, Some(b"increase_font_size:1")),
-            45 => (ROASTTY_KEYBIND_FLAGS_DEFAULT, Some(b"decrease_font_size:1")),
-            48 => (ROASTTY_KEYBIND_FLAGS_DEFAULT, Some(b"reset_font_size")),
-            113 => (ROASTTY_KEYBIND_FLAGS_DEFAULT, Some(b"quit")),
-            97 => (ROASTTY_KEYBIND_FLAGS_DEFAULT, Some(b"select_all")),
-            49..=56 => {
-                let actions: [&[u8]; 8] = [
-                    b"goto_tab:1".as_slice(),
-                    b"goto_tab:2".as_slice(),
-                    b"goto_tab:3".as_slice(),
-                    b"goto_tab:4".as_slice(),
-                    b"goto_tab:5".as_slice(),
-                    b"goto_tab:6".as_slice(),
-                    b"goto_tab:7".as_slice(),
-                    b"goto_tab:8".as_slice(),
-                ];
-                (
-                    ROASTTY_KEYBIND_FLAGS_DEFAULT,
-                    Some(actions[(codepoint - 49) as usize]),
-                )
-            }
-            57 => (ROASTTY_KEYBIND_FLAGS_DEFAULT, Some(b"last_tab")),
-            110 => (ROASTTY_KEYBIND_FLAGS_DEFAULT, Some(b"new_window")),
-            119 => (ROASTTY_KEYBIND_FLAGS_DEFAULT, Some(b"close_surface")),
-            116 => (ROASTTY_KEYBIND_FLAGS_DEFAULT, Some(b"new_tab")),
-            100 => (ROASTTY_KEYBIND_FLAGS_DEFAULT, Some(b"new_split:right")),
-            91 => (ROASTTY_KEYBIND_FLAGS_DEFAULT, Some(b"goto_split:previous")),
-            93 => (ROASTTY_KEYBIND_FLAGS_DEFAULT, Some(b"goto_split:next")),
-            122 => (ROASTTY_KEYBIND_FLAGS_PERFORMABLE, Some(b"undo")),
-            107 => (ROASTTY_KEYBIND_FLAGS_PERFORMABLE, Some(b"clear_screen")),
-            102 => (ROASTTY_KEYBIND_FLAGS_PERFORMABLE, Some(b"start_search")),
-            101 => (ROASTTY_KEYBIND_FLAGS_PERFORMABLE, Some(b"search_selection")),
-            103 => (
-                ROASTTY_KEYBIND_FLAGS_PERFORMABLE,
-                Some(b"navigate_search:next"),
-            ),
-            106 => (
-                ROASTTY_KEYBIND_FLAGS_PERFORMABLE,
-                Some(b"scroll_to_selection"),
-            ),
-            _ => return None,
-        },
-        mods if mods == (ROASTTY_MODS_SHIFT | ROASTTY_MODS_SUPER) => match codepoint {
-            44 => (ROASTTY_KEYBIND_FLAGS_DEFAULT, Some(b"reload_config")),
-            106 => (
-                ROASTTY_KEYBIND_FLAGS_DEFAULT,
-                Some(b"write_screen_file:paste"),
-            ),
-            119 => (ROASTTY_KEYBIND_FLAGS_DEFAULT, Some(b"close_window")),
-            91 => (ROASTTY_KEYBIND_FLAGS_DEFAULT, Some(b"previous_tab")),
-            93 => (ROASTTY_KEYBIND_FLAGS_DEFAULT, Some(b"next_tab")),
-            100 => (ROASTTY_KEYBIND_FLAGS_DEFAULT, Some(b"new_split:down")),
-            116 => (ROASTTY_KEYBIND_FLAGS_PERFORMABLE, Some(b"undo")),
-            122 => (ROASTTY_KEYBIND_FLAGS_PERFORMABLE, Some(b"redo")),
-            102 => (ROASTTY_KEYBIND_FLAGS_PERFORMABLE, Some(b"end_search")),
-            103 => (
-                ROASTTY_KEYBIND_FLAGS_PERFORMABLE,
-                Some(b"navigate_search:previous"),
-            ),
-            118 => (ROASTTY_KEYBIND_FLAGS_DEFAULT, Some(b"paste_from_selection")),
-            112 => (
-                ROASTTY_KEYBIND_FLAGS_DEFAULT,
-                Some(b"toggle_command_palette"),
-            ),
-            _ => return None,
-        },
-        mods if mods == (ROASTTY_MODS_SHIFT | ROASTTY_MODS_CTRL | ROASTTY_MODS_SUPER) => {
-            match codepoint {
-                106 => (
-                    ROASTTY_KEYBIND_FLAGS_DEFAULT,
-                    Some(b"write_screen_file:copy"),
-                ),
-                _ => return None,
-            }
-        }
-        mods if mods == (ROASTTY_MODS_SHIFT | ROASTTY_MODS_ALT | ROASTTY_MODS_SUPER) => {
-            match codepoint {
-                106 => (
-                    ROASTTY_KEYBIND_FLAGS_DEFAULT,
-                    Some(b"write_screen_file:open"),
-                ),
-                119 => (ROASTTY_KEYBIND_FLAGS_DEFAULT, Some(b"close_all_windows")),
-                _ => return None,
-            }
-        }
-        mods if mods == (ROASTTY_MODS_ALT | ROASTTY_MODS_SUPER) => match codepoint {
-            119 => (ROASTTY_KEYBIND_FLAGS_DEFAULT, Some(b"close_tab:this")),
-            105 => (ROASTTY_KEYBIND_FLAGS_DEFAULT, Some(b"inspector:toggle")),
-            _ => return None,
-        },
-        mods if mods == (ROASTTY_MODS_CTRL | ROASTTY_MODS_SUPER) => match codepoint {
-            61 => (ROASTTY_KEYBIND_FLAGS_DEFAULT, Some(b"equalize_splits")),
-            102 => (ROASTTY_KEYBIND_FLAGS_DEFAULT, Some(b"toggle_fullscreen")),
-            _ => return None,
-        },
-        _ => return None,
-    };
-
-    Some(default_binding_match(
-        flags,
-        action,
-        release_key,
-        release_mods,
-    ))
-}
-
 fn default_key_event_binding(event: &key::KeyEvent) -> Option<DefaultBindingMatch> {
     if event.action == key::KeyAction::Release {
         return None;
@@ -7583,35 +7717,12 @@ fn default_key_event_binding(event: &key::KeyEvent) -> Option<DefaultBindingMatc
 
     let release_key = event.key;
     let release_mods = key_mods_to_raw(event.mods.binding());
-    if let Some(binding) =
-        default_physical_key_binding(event.key, release_mods, release_key, release_mods)
-    {
-        return Some(binding);
-    }
-
-    if let Ok(text) = std::str::from_utf8(&event.utf8) {
-        let mut chars = text.chars();
-        if let Some(ch) = chars.next() {
-            if chars.next().is_none() {
-                if let Some(binding) =
-                    default_unicode_key_binding(ch as u32, release_mods, release_key, release_mods)
-                {
-                    return Some(binding);
-                }
-            }
-        }
-    }
-
-    if event.unshifted_codepoint > 0 {
-        return default_unicode_key_binding(
-            event.unshifted_codepoint,
-            release_mods,
-            release_key,
-            release_mods,
-        );
-    }
-
-    None
+    DEFAULT_BINDINGS
+        .iter()
+        .find(|entry| default_binding_entry_matches_event(entry, event, release_mods))
+        .map(|entry| {
+            default_binding_match(entry.flags, Some(entry.action), release_key, release_mods)
+        })
 }
 
 fn config_trigger_matches_key_event(trigger: RoasttyInputTrigger, event: &key::KeyEvent) -> bool {
@@ -17165,7 +17276,7 @@ mod tests {
             consumed_mods: ROASTTY_MODS_NONE,
             keycode: 0x0007,
             text: b"x\0".as_ptr().cast::<c_char>(),
-            unshifted_codepoint: u32::from(b'x'),
+            unshifted_codepoint: b'x' as u32,
             composing: false,
         }
     }
@@ -17683,7 +17794,7 @@ mod tests {
 
         assert!(send_key(
             surface,
-            key_press(key::Key::KeyQ, &[], u32::from(b'q'), ROASTTY_MODS_SUPER)
+            key_press(key::Key::KeyQ, &[], b'q' as u32, ROASTTY_MODS_SUPER)
         ));
 
         let records = action_records();
@@ -17794,7 +17905,7 @@ mod tests {
             new_test_config_with_key_remap_and_keybind(None, Some(b"all:performable:ctrl+x=quit"));
         let app = new_test_app_with_action_config(true, config);
         let surface = new_test_surface(app);
-        let event = key_press(key::Key::KeyX, b"x", u32::from(b'x'), ROASTTY_MODS_CTRL);
+        let event = key_press(key::Key::KeyX, b"x", b'x' as u32, ROASTTY_MODS_CTRL);
         let mut flags = 0;
 
         assert!(surface_from_handle(surface)
@@ -17861,7 +17972,7 @@ mod tests {
         let config = roastty_config_new();
         let app = new_test_app_with_action_config(true, config);
         let surface = new_test_surface(app);
-        let event = key_press(key::Key::KeyQ, b"q", u32::from(b'q'), ROASTTY_MODS_SUPER);
+        let event = key_press(key::Key::KeyQ, b"q", b'q' as u32, ROASTTY_MODS_SUPER);
         let mut flags = 0;
 
         assert!(surface_from_handle(surface)
@@ -17887,7 +17998,7 @@ mod tests {
 
         assert!(send_key(
             surface,
-            key_press(key::Key::KeyX, b"x", u32::from(b'x'), ROASTTY_MODS_NONE)
+            key_press(key::Key::KeyX, b"x", b'x' as u32, ROASTTY_MODS_NONE)
         ));
 
         wait_for_surface_plain_screen(app, surface, "out:x");
@@ -17912,11 +18023,11 @@ mod tests {
 
         assert!(send_key(
             surface,
-            key_press(key::Key::KeyX, b"x", u32::from(b'x'), ROASTTY_MODS_NONE)
+            key_press(key::Key::KeyX, b"x", b'x' as u32, ROASTTY_MODS_NONE)
         ));
         assert!(send_key(
             surface,
-            key_press(key::Key::KeyY, b"y", u32::from(b'y'), ROASTTY_MODS_NONE)
+            key_press(key::Key::KeyY, b"y", b'y' as u32, ROASTTY_MODS_NONE)
         ));
 
         wait_for_surface_plain_screen(app, surface, "out:y");
@@ -17944,7 +18055,7 @@ mod tests {
 
         assert!(send_key(
             surface,
-            key_press(key::Key::KeyX, b"x", u32::from(b'x'), ROASTTY_MODS_NONE)
+            key_press(key::Key::KeyX, b"x", b'x' as u32, ROASTTY_MODS_NONE)
         ));
 
         wait_for_surface_plain_screen(app, surface, "out:x");
@@ -17966,11 +18077,11 @@ mod tests {
 
         assert!(send_key(
             surface,
-            key_press(key::Key::KeyX, b"x", u32::from(b'x'), ROASTTY_MODS_NONE)
+            key_press(key::Key::KeyX, b"x", b'x' as u32, ROASTTY_MODS_NONE)
         ));
         assert!(send_key(
             surface,
-            key_press(key::Key::KeyY, b"y", u32::from(b'y'), ROASTTY_MODS_NONE)
+            key_press(key::Key::KeyY, b"y", b'y' as u32, ROASTTY_MODS_NONE)
         ));
 
         wait_for_surface_plain_screen(app, surface, "out:y");
@@ -17999,11 +18110,11 @@ mod tests {
 
             assert!(send_key(
                 surface,
-                key_press(key::Key::KeyX, b"x", u32::from(b'x'), ROASTTY_MODS_NONE)
+                key_press(key::Key::KeyX, b"x", b'x' as u32, ROASTTY_MODS_NONE)
             ));
             assert!(send_key(
                 surface,
-                key_press(key::Key::KeyY, b"y", u32::from(b'y'), ROASTTY_MODS_NONE)
+                key_press(key::Key::KeyY, b"y", b'y' as u32, ROASTTY_MODS_NONE)
             ));
 
             wait_for_surface_plain_screen(app, surface, "out:y");
@@ -18033,11 +18144,11 @@ mod tests {
 
             assert!(send_key(
                 surface,
-                key_press(key::Key::KeyX, b"x", u32::from(b'x'), ROASTTY_MODS_NONE)
+                key_press(key::Key::KeyX, b"x", b'x' as u32, ROASTTY_MODS_NONE)
             ));
             assert!(send_key(
                 surface,
-                key_press(key::Key::KeyY, b"y", u32::from(b'y'), ROASTTY_MODS_NONE)
+                key_press(key::Key::KeyY, b"y", b'y' as u32, ROASTTY_MODS_NONE)
             ));
 
             wait_for_surface_plain_screen(app, surface, "out:y");
@@ -18056,7 +18167,7 @@ mod tests {
 
         assert!(send_key(
             surface,
-            key_press(key::Key::KeyX, b"x", u32::from(b'x'), ROASTTY_MODS_CTRL)
+            key_press(key::Key::KeyX, b"x", b'x' as u32, ROASTTY_MODS_CTRL)
         ));
 
         let records = action_records();
@@ -18085,7 +18196,7 @@ mod tests {
             new_test_config_with_key_remap_and_keybind(Some("ctrl=super"), Some(b"super+x=quit"));
         let app = new_test_app_with_action_config(true, config);
         let surface = new_test_surface(app);
-        let event = key_press(key::Key::KeyX, b"x", u32::from(b'x'), ROASTTY_MODS_CTRL);
+        let event = key_press(key::Key::KeyX, b"x", b'x' as u32, ROASTTY_MODS_CTRL);
         let mut flags = 0;
 
         assert!(surface_from_handle(surface)
@@ -18103,7 +18214,7 @@ mod tests {
         let config = new_test_config_with_key_remap_and_keybind(Some("ctrl=super"), None);
         let app = new_test_app_with_action_config(true, config);
         let surface = new_test_surface(app);
-        let event = key_press(key::Key::KeyQ, b"q", u32::from(b'q'), ROASTTY_MODS_CTRL);
+        let event = key_press(key::Key::KeyQ, b"q", b'q' as u32, ROASTTY_MODS_CTRL);
         let mut flags = 0;
 
         assert!(surface_from_handle(surface)
@@ -18133,7 +18244,7 @@ mod tests {
 
         assert!(send_key(
             surface,
-            key_press(key::Key::KeyX, b"x", u32::from(b'x'), ROASTTY_MODS_CTRL)
+            key_press(key::Key::KeyX, b"x", b'x' as u32, ROASTTY_MODS_CTRL)
         ));
 
         surface_snapshot_text_until(app, surface, "out:78");
@@ -18150,7 +18261,7 @@ mod tests {
 
         assert!(!send_key(
             surface,
-            key_press(key::Key::KeyX, b"x", u32::from(b'x'), ROASTTY_MODS_CTRL)
+            key_press(key::Key::KeyX, b"x", b'x' as u32, ROASTTY_MODS_CTRL)
         ));
         assert!(action_records().is_empty());
 
@@ -18160,7 +18271,7 @@ mod tests {
 
         assert!(send_key(
             surface,
-            key_press(key::Key::KeyX, b"x", u32::from(b'x'), ROASTTY_MODS_CTRL)
+            key_press(key::Key::KeyX, b"x", b'x' as u32, ROASTTY_MODS_CTRL)
         ));
         let records = action_records();
         assert_eq!(records.len(), 1);
@@ -18183,7 +18294,7 @@ mod tests {
         roastty_surface_update_config(surface, surface_config);
         assert!(send_key(
             surface,
-            key_press(key::Key::KeyX, b"x", u32::from(b'x'), ROASTTY_MODS_CTRL)
+            key_press(key::Key::KeyX, b"x", b'x' as u32, ROASTTY_MODS_CTRL)
         ));
         let records = action_records();
         assert_eq!(records.len(), 1);
@@ -18201,7 +18312,7 @@ mod tests {
             new_test_config_with_key_remap_and_keybind(Some("ctrl=super"), Some(b"super+x=quit"));
         let app = new_test_app_with_action_config(true, config);
         let surface = new_test_surface(app);
-        let event = key_press(key::Key::KeyX, b"x", u32::from(b'x'), ROASTTY_MODS_CTRL);
+        let event = key_press(key::Key::KeyX, b"x", b'x' as u32, ROASTTY_MODS_CTRL);
 
         assert!(surface_from_handle(surface).unwrap().key(&event));
         assert_eq!(
@@ -20373,7 +20484,7 @@ mod tests {
                 key::Key::Unidentified,
                 ROASTTY_MODS_SUPER,
                 b"".as_slice(),
-                u32::from(b'n'),
+                b'n' as u32,
             ),
             (key::Key::ArrowRight, ROASTTY_MODS_SUPER, b"".as_slice(), 0),
             (key::Key::ArrowLeft, ROASTTY_MODS_ALT, b"".as_slice(), 0),
@@ -20510,7 +20621,7 @@ mod tests {
                     key::Key::Unidentified,
                     ROASTTY_MODS_ALT,
                     &[],
-                    u32::from(b'z'),
+                    b'z' as u32,
                 );
                 assert!(roastty_surface_key_is_binding_handle(
                     surface, event, &mut flags
@@ -20772,6 +20883,17 @@ mod tests {
         assert_eq!(trigger.mods, mods);
     }
 
+    fn assert_default_binding_action(
+        event: KeyEvent,
+        action: &[u8],
+        flags: u8,
+    ) -> DefaultBindingMatch {
+        let binding = default_key_event_binding(&event.event).expect("default binding");
+        assert_eq!(binding.action, Some(action));
+        assert_eq!(binding.flags, flags);
+        binding
+    }
+
     fn config_diagnostic_message(config: RoasttyConfig, index: u32) -> String {
         let diagnostic = roastty_config_get_diagnostic(config, index);
         assert!(!diagnostic.message.is_null());
@@ -20942,18 +21064,174 @@ mod tests {
         let open_config = CString::new("open_config").unwrap();
         assert_unicode_config_trigger(
             roastty_config_trigger(config, open_config.as_ptr(), 11),
-            u32::from(b','),
+            b',' as u32,
             ROASTTY_MODS_SUPER,
         );
 
         let reload_config = CString::new("reload_config").unwrap();
         assert_unicode_config_trigger(
             roastty_config_trigger(config, reload_config.as_ptr(), 13),
-            u32::from(b','),
+            b',' as u32,
             ROASTTY_MODS_SHIFT | ROASTTY_MODS_SUPER,
         );
 
         roastty_config_free(config);
+    }
+
+    #[test]
+    fn default_binding_table_rows_are_valid() {
+        assert!(!DEFAULT_BINDINGS.is_empty());
+        for entry in DEFAULT_BINDINGS {
+            assert!(!entry.action.is_empty());
+            assert_eq!(
+                entry.flags & !(ROASTTY_KEYBIND_FLAG_CONSUMED | ROASTTY_KEYBIND_FLAG_PERFORMABLE),
+                0
+            );
+            assert_ne!(entry.flags & ROASTTY_KEYBIND_FLAG_CONSUMED, 0);
+            match entry.trigger {
+                DefaultBindingTrigger::Physical(key) => {
+                    assert_ne!(key, key::Key::Unidentified);
+                    assert!(config_keybind_physical_key_supported(key));
+                }
+                DefaultBindingTrigger::Unicode(codepoint) => assert_ne!(codepoint, 0),
+            }
+            assert!(parse_config_binding_action(entry.action).is_some());
+        }
+    }
+
+    #[test]
+    fn default_config_trigger_reverse_lookup_preserves_order_and_flags() {
+        let config = roastty_config_new();
+
+        let increase = CString::new("increase_font_size:1").unwrap();
+        assert_unicode_config_trigger(
+            roastty_config_trigger(config, increase.as_ptr(), increase.as_bytes().len()),
+            b'+' as u32,
+            ROASTTY_MODS_SUPER,
+        );
+
+        let fullscreen = CString::new("toggle_fullscreen").unwrap();
+        assert_unicode_config_trigger(
+            roastty_config_trigger(config, fullscreen.as_ptr(), fullscreen.as_bytes().len()),
+            b'f' as u32,
+            ROASTTY_MODS_CTRL | ROASTTY_MODS_SUPER,
+        );
+
+        for action in [
+            "start_search",
+            "end_search",
+            "navigate_search:next",
+            "navigate_search:previous",
+            "adjust_selection:left",
+        ] {
+            let action = CString::new(action).unwrap();
+            assert_empty_config_trigger(roastty_config_trigger(
+                config,
+                action.as_ptr(),
+                action.as_bytes().len(),
+            ));
+        }
+
+        roastty_config_free(config);
+    }
+
+    #[test]
+    fn default_config_trigger_table_runtime_matches_reverse_rows() {
+        let config = roastty_config_new();
+
+        let cases = [
+            (
+                "write_screen_file:open",
+                key_press(
+                    key::Key::KeyJ,
+                    b"j",
+                    0,
+                    ROASTTY_MODS_SHIFT | ROASTTY_MODS_ALT | ROASTTY_MODS_SUPER,
+                ),
+                ROASTTY_KEYBIND_FLAGS_DEFAULT,
+            ),
+            (
+                "goto_tab:3",
+                key_press(key::Key::Digit3, b"3", 0, ROASTTY_MODS_SUPER),
+                ROASTTY_KEYBIND_FLAGS_DEFAULT,
+            ),
+            (
+                "goto_split:left",
+                key_press(
+                    key::Key::ArrowLeft,
+                    &[],
+                    0,
+                    ROASTTY_MODS_ALT | ROASTTY_MODS_SUPER,
+                ),
+                ROASTTY_KEYBIND_FLAGS_DEFAULT,
+            ),
+            (
+                "resize_split:right,10",
+                key_press(
+                    key::Key::ArrowRight,
+                    &[],
+                    0,
+                    ROASTTY_MODS_CTRL | ROASTTY_MODS_SUPER,
+                ),
+                ROASTTY_KEYBIND_FLAGS_DEFAULT,
+            ),
+            (
+                "text:\\x05",
+                key_press(key::Key::ArrowRight, &[], 0, ROASTTY_MODS_SUPER),
+                ROASTTY_KEYBIND_FLAGS_DEFAULT,
+            ),
+            (
+                "esc:b",
+                key_press(key::Key::ArrowLeft, &[], 0, ROASTTY_MODS_ALT),
+                ROASTTY_KEYBIND_FLAGS_DEFAULT,
+            ),
+        ];
+
+        for (action, event, flags) in cases {
+            let binding = assert_default_binding_action(event, action.as_bytes(), flags);
+            let trigger = default_binding_entry_trigger(
+                DEFAULT_BINDINGS
+                    .iter()
+                    .rev()
+                    .find(|entry| entry.action == action.as_bytes())
+                    .expect("reverse default row"),
+            );
+            let action = CString::new(action).unwrap();
+            let reverse = roastty_config_trigger(config, action.as_ptr(), action.as_bytes().len());
+            assert_eq!(reverse.tag, trigger.tag);
+            assert_eq!(reverse.mods, trigger.mods);
+            match reverse.tag {
+                ROASTTY_TRIGGER_PHYSICAL => {
+                    assert_eq!(unsafe { reverse.key.physical }, unsafe {
+                        trigger.key.physical
+                    });
+                }
+                ROASTTY_TRIGGER_UNICODE => {
+                    assert_eq!(unsafe { reverse.key.unicode }, unsafe {
+                        trigger.key.unicode
+                    });
+                }
+                _ => unreachable!(),
+            }
+            assert_eq!(binding.flags, flags);
+        }
+
+        roastty_config_free(config);
+    }
+
+    #[test]
+    fn config_trigger_configured_binding_overrides_default_table() {
+        with_init_args(&["roastty", "--keybind=ctrl+x=open_config"], || {
+            let config = roastty_config_new();
+            roastty_config_load_cli_args(config);
+            let action = CString::new("open_config").unwrap();
+            assert_unicode_config_trigger(
+                roastty_config_trigger(config, action.as_ptr(), action.as_bytes().len()),
+                b'x' as u32,
+                ROASTTY_MODS_CTRL,
+            );
+            roastty_config_free(config);
+        });
     }
 
     #[test]
@@ -20977,22 +21255,22 @@ mod tests {
         );
 
         for (action, codepoint, mods) in [
-            ("increase_font_size:1", u32::from(b'+'), ROASTTY_MODS_SUPER),
-            ("decrease_font_size:1", u32::from(b'-'), ROASTTY_MODS_SUPER),
-            ("reset_font_size", u32::from(b'0'), ROASTTY_MODS_SUPER),
+            ("increase_font_size:1", b'+' as u32, ROASTTY_MODS_SUPER),
+            ("decrease_font_size:1", b'-' as u32, ROASTTY_MODS_SUPER),
+            ("reset_font_size", b'0' as u32, ROASTTY_MODS_SUPER),
             (
                 "write_screen_file:copy",
-                u32::from(b'j'),
+                b'j' as u32,
                 ROASTTY_MODS_SHIFT | ROASTTY_MODS_CTRL | ROASTTY_MODS_SUPER,
             ),
             (
                 "write_screen_file:paste",
-                u32::from(b'j'),
+                b'j' as u32,
                 ROASTTY_MODS_SHIFT | ROASTTY_MODS_SUPER,
             ),
             (
                 "write_screen_file:open",
-                u32::from(b'j'),
+                b'j' as u32,
                 ROASTTY_MODS_SHIFT | ROASTTY_MODS_ALT | ROASTTY_MODS_SUPER,
             ),
         ] {
@@ -21012,87 +21290,81 @@ mod tests {
         let config = roastty_config_new();
 
         for (action, codepoint, mods) in [
-            ("quit", u32::from(b'q'), ROASTTY_MODS_SUPER),
-            ("select_all", u32::from(b'a'), ROASTTY_MODS_SUPER),
-            ("goto_tab:1", u32::from(b'1'), ROASTTY_MODS_SUPER),
-            ("goto_tab:2", u32::from(b'2'), ROASTTY_MODS_SUPER),
-            ("goto_tab:3", u32::from(b'3'), ROASTTY_MODS_SUPER),
-            ("goto_tab:4", u32::from(b'4'), ROASTTY_MODS_SUPER),
-            ("goto_tab:5", u32::from(b'5'), ROASTTY_MODS_SUPER),
-            ("goto_tab:6", u32::from(b'6'), ROASTTY_MODS_SUPER),
-            ("goto_tab:7", u32::from(b'7'), ROASTTY_MODS_SUPER),
-            ("goto_tab:8", u32::from(b'8'), ROASTTY_MODS_SUPER),
-            ("last_tab", u32::from(b'9'), ROASTTY_MODS_SUPER),
-            ("new_window", u32::from(b'n'), ROASTTY_MODS_SUPER),
-            ("close_surface", u32::from(b'w'), ROASTTY_MODS_SUPER),
+            ("quit", b'q' as u32, ROASTTY_MODS_SUPER),
+            ("select_all", b'a' as u32, ROASTTY_MODS_SUPER),
+            ("goto_tab:1", b'1' as u32, ROASTTY_MODS_SUPER),
+            ("goto_tab:2", b'2' as u32, ROASTTY_MODS_SUPER),
+            ("goto_tab:3", b'3' as u32, ROASTTY_MODS_SUPER),
+            ("goto_tab:4", b'4' as u32, ROASTTY_MODS_SUPER),
+            ("goto_tab:5", b'5' as u32, ROASTTY_MODS_SUPER),
+            ("goto_tab:6", b'6' as u32, ROASTTY_MODS_SUPER),
+            ("goto_tab:7", b'7' as u32, ROASTTY_MODS_SUPER),
+            ("goto_tab:8", b'8' as u32, ROASTTY_MODS_SUPER),
+            ("last_tab", b'9' as u32, ROASTTY_MODS_SUPER),
+            ("new_window", b'n' as u32, ROASTTY_MODS_SUPER),
+            ("close_surface", b'w' as u32, ROASTTY_MODS_SUPER),
             (
                 "close_tab",
-                u32::from(b'w'),
+                b'w' as u32,
                 ROASTTY_MODS_ALT | ROASTTY_MODS_SUPER,
             ),
             (
                 "close_tab:this",
-                u32::from(b'w'),
+                b'w' as u32,
                 ROASTTY_MODS_ALT | ROASTTY_MODS_SUPER,
             ),
             (
                 "close_window",
-                u32::from(b'w'),
+                b'w' as u32,
                 ROASTTY_MODS_SHIFT | ROASTTY_MODS_SUPER,
             ),
             (
                 "close_all_windows",
-                u32::from(b'w'),
+                b'w' as u32,
                 ROASTTY_MODS_SHIFT | ROASTTY_MODS_ALT | ROASTTY_MODS_SUPER,
             ),
-            ("new_tab", u32::from(b't'), ROASTTY_MODS_SUPER),
+            ("new_tab", b't' as u32, ROASTTY_MODS_SUPER),
             (
                 "previous_tab",
-                u32::from(b'['),
+                b'[' as u32,
                 ROASTTY_MODS_SHIFT | ROASTTY_MODS_SUPER,
             ),
             (
                 "next_tab",
-                u32::from(b']'),
+                b']' as u32,
                 ROASTTY_MODS_SHIFT | ROASTTY_MODS_SUPER,
             ),
-            ("new_split:right", u32::from(b'd'), ROASTTY_MODS_SUPER),
+            ("new_split:right", b'd' as u32, ROASTTY_MODS_SUPER),
             (
                 "new_split:down",
-                u32::from(b'd'),
+                b'd' as u32,
                 ROASTTY_MODS_SHIFT | ROASTTY_MODS_SUPER,
             ),
-            ("goto_split:previous", u32::from(b'['), ROASTTY_MODS_SUPER),
-            ("goto_split:next", u32::from(b']'), ROASTTY_MODS_SUPER),
+            ("goto_split:previous", b'[' as u32, ROASTTY_MODS_SUPER),
+            ("goto_split:next", b']' as u32, ROASTTY_MODS_SUPER),
             (
                 "equalize_splits",
-                u32::from(b'='),
+                b'=' as u32,
                 ROASTTY_MODS_CTRL | ROASTTY_MODS_SUPER,
             ),
             (
                 "toggle_fullscreen",
-                u32::from(b'f'),
+                b'f' as u32,
                 ROASTTY_MODS_CTRL | ROASTTY_MODS_SUPER,
             ),
             (
                 "toggle_command_palette",
-                u32::from(b'p'),
+                b'p' as u32,
                 ROASTTY_MODS_SHIFT | ROASTTY_MODS_SUPER,
             ),
             (
                 "inspector:toggle",
-                u32::from(b'i'),
+                b'i' as u32,
                 ROASTTY_MODS_ALT | ROASTTY_MODS_SUPER,
             ),
             (
                 "paste_from_selection",
-                u32::from(b'v'),
-                ROASTTY_MODS_SHIFT | ROASTTY_MODS_SUPER,
-            ),
-            ("navigate_search:next", u32::from(b'g'), ROASTTY_MODS_SUPER),
-            (
-                "navigate_search:previous",
-                u32::from(b'g'),
+                b'v' as u32,
                 ROASTTY_MODS_SHIFT | ROASTTY_MODS_SUPER,
             ),
         ] {
@@ -21205,8 +21477,8 @@ mod tests {
             "start_search",
             "end_search",
             "search_selection",
-            "text:\\x05",
-            "esc:b",
+            "navigate_search:next",
+            "navigate_search:previous",
         ] {
             let action = CString::new(action).unwrap();
             assert_empty_config_trigger(roastty_config_trigger(
@@ -21235,7 +21507,7 @@ mod tests {
                 let copy = CString::new("copy_to_clipboard").unwrap();
                 assert_unicode_config_trigger(
                     roastty_config_trigger(config, copy.as_ptr(), copy.as_bytes().len()),
-                    u32::from(b'a'),
+                    b'a' as u32,
                     ROASTTY_MODS_CTRL,
                 );
                 let new_window = CString::new("new_window").unwrap();
@@ -21282,7 +21554,7 @@ mod tests {
                 let text = CString::new("text:=").unwrap();
                 assert_unicode_config_trigger(
                     roastty_config_trigger(config, text.as_ptr(), text.as_bytes().len()),
-                    u32::from(b'e'),
+                    b'e' as u32,
                     ROASTTY_MODS_CTRL,
                 );
 
@@ -21308,7 +21580,7 @@ mod tests {
                 for config in [config, clone] {
                     assert_unicode_config_trigger(
                         roastty_config_trigger(config, action.as_ptr(), action.as_bytes().len()),
-                        u32::from(b'n'),
+                        b'n' as u32,
                         ROASTTY_MODS_SUPER,
                     );
                 }
@@ -21379,7 +21651,7 @@ mod tests {
                 let action = CString::new("new_window").unwrap();
                 assert_unicode_config_trigger(
                     roastty_config_trigger(config, action.as_ptr(), action.as_bytes().len()),
-                    u32::from(b'n'),
+                    b'n' as u32,
                     ROASTTY_MODS_SUPER,
                 );
 
@@ -21409,7 +21681,7 @@ mod tests {
                     key::Key::Unidentified,
                     ROASTTY_MODS_ALT,
                     &[],
-                    u32::from(b'x'),
+                    b'x' as u32,
                 );
                 assert!(roastty_config_key_is_binding_handle(config, event));
 
@@ -21496,19 +21768,19 @@ mod tests {
                         new_window.as_ptr(),
                         new_window.as_bytes().len(),
                     ),
-                    u32::from(b'n'),
+                    b'n' as u32,
                     ROASTTY_MODS_SUPER,
                 );
                 let copy = CString::new("copy_to_clipboard").unwrap();
                 assert_unicode_config_trigger(
                     roastty_config_trigger(config, copy.as_ptr(), copy.as_bytes().len()),
-                    u32::from(b'a'),
+                    b'a' as u32,
                     ROASTTY_MODS_CTRL,
                 );
                 let reload = CString::new("reload_config").unwrap();
                 assert_unicode_config_trigger(
                     roastty_config_trigger(config, reload.as_ptr(), reload.as_bytes().len()),
-                    u32::from(b','),
+                    b',' as u32,
                     ROASTTY_MODS_SHIFT | ROASTTY_MODS_SUPER,
                 );
 
@@ -21568,7 +21840,7 @@ mod tests {
                 let text = CString::new("text:ok").unwrap();
                 assert_unicode_config_trigger(
                     roastty_config_trigger(config, text.as_ptr(), text.as_bytes().len()),
-                    u32::from(b'c'),
+                    b'c' as u32,
                     ROASTTY_MODS_CTRL,
                 );
 
@@ -21698,7 +21970,7 @@ mod tests {
                 let copy = CString::new("copy_to_clipboard").unwrap();
                 assert_unicode_config_trigger(
                     roastty_config_trigger(config, copy.as_ptr(), copy.as_bytes().len()),
-                    u32::from(b'a'),
+                    b'a' as u32,
                     ROASTTY_MODS_CTRL,
                 );
                 let new_window = CString::new("new_window").unwrap();
@@ -23457,7 +23729,7 @@ mod tests {
         let copy = CString::new("copy_to_clipboard").unwrap();
         assert_unicode_config_trigger(
             roastty_config_trigger(config, copy.as_ptr(), copy.as_bytes().len()),
-            u32::from(b'a'),
+            b'a' as u32,
             ROASTTY_MODS_CTRL,
         );
         roastty_config_free(config);
@@ -23630,7 +23902,7 @@ mod tests {
             key::Key::Unidentified,
             ROASTTY_MODS_SUPER,
             &[],
-            u32::from(b'n'),
+            b'n' as u32,
         );
         assert!(roastty_config_key_is_binding_handle(config, event));
 
@@ -23701,7 +23973,7 @@ mod tests {
                 key::Key::Unidentified,
                 ROASTTY_MODS_CTRL,
                 b"".as_slice(),
-                u32::from(b'n'),
+                b'n' as u32,
             ),
         ] {
             set_key_event(event, key::KeyAction::Press, key, mods, utf8, unshifted);

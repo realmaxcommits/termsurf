@@ -353,6 +353,14 @@ the earlier "commit a small baseline PNG set" wording in Exp 2.
   path. Runtime global shortcut registration, all-surface action routing,
   app-scoped `roastty_app_key`, sequences/chords, key tables, native keymaps,
   and the full upstream binding table remain later work.
+- **Default binding table foundation is wired for macOS single-key defaults.**
+  Exp 112 moves Roastty's existing default runtime key lookup and reverse
+  action-to-trigger lookup onto one ordered table. Reverse lookup skips
+  performable rows for menu labels, but actions with separate non-performable
+  defaults still reverse-map to those rows. Multi-key sequences/chords, key
+  tables, non-macOS defaults, global/all app routing, `roastty_app_key`, native
+  keymaps, command-palette catalog data, and the remaining upstream default
+  bindings remain later work.
 
 **Keep this current.** When an experiment yields a durable, reusable fact — a
 toolchain incantation, a dead-end to avoid, or where an artifact lives — distill
@@ -729,7 +737,9 @@ the live app, verified by a Phase-D UI test.)
       consumption are wired (Exp 110–111), but runtime global/all app routing
       remains later work
 - [ ] The full action set + the default-bindings data table + reverse
-      action→trigger mapping
+      action→trigger mapping — the macOS single-key table foundation and reverse
+      lookup are wired for currently supported actions (Exp 112), but the full
+      upstream table/actions remain later work
 - [ ] Command-palette catalog (`command.zig`)
 - [ ] Native keymaps (`keycodes`, `KeymapDarwin`) + app-level key handling —
       `RemapSet`/`Mask`, the `key-remap` config field, and surface runtime
@@ -1070,7 +1080,7 @@ stays unaltered except for the rename).
 - [Experiment 111: Phase G — configured binding consumption](111-configured-binding-consumption.md)
   — **Pass**
 - [Experiment 112: Phase G — default binding table foundation](112-default-binding-table-foundation.md)
-  — **Designed**
+  — **Pass**
 
 ## Process
 

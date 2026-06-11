@@ -4484,14 +4484,14 @@ int main(int argc, char **argv) {
   assert(trigger.mods == (ROASTTY_MODS_SHIFT | ROASTTY_MODS_SUPER));
   trigger = roastty_config_trigger(config, "navigate_search:next",
                                    strlen("navigate_search:next"));
-  assert(trigger.tag == ROASTTY_TRIGGER_UNICODE);
-  assert(trigger.key.unicode == 'g');
-  assert(trigger.mods == ROASTTY_MODS_SUPER);
+  assert(trigger.tag == ROASTTY_TRIGGER_PHYSICAL);
+  assert(trigger.key.physical == ROASTTY_KEY_UNIDENTIFIED);
+  assert(trigger.mods == ROASTTY_MODS_NONE);
   trigger = roastty_config_trigger(config, "navigate_search:previous",
                                    strlen("navigate_search:previous"));
-  assert(trigger.tag == ROASTTY_TRIGGER_UNICODE);
-  assert(trigger.key.unicode == 'g');
-  assert(trigger.mods == (ROASTTY_MODS_SHIFT | ROASTTY_MODS_SUPER));
+  assert(trigger.tag == ROASTTY_TRIGGER_PHYSICAL);
+  assert(trigger.key.physical == ROASTTY_KEY_UNIDENTIFIED);
+  assert(trigger.mods == ROASTTY_MODS_NONE);
 
   char cli_arg0[] = "roastty";
   char cli_keybind1[] = "--keybind=ctrl+a=copy_to_clipboard";

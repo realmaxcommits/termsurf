@@ -108,3 +108,64 @@ Fixes: updated the plan and verification for both findings.
 
 Re-review verdict: **Approved.** The reviewer reported no remaining required
 findings.
+
+## Result
+
+**Result:** Pass.
+
+Implemented a shared default-binding table for Roastty's existing macOS
+single-key default bindings. Runtime default lookup and reverse
+action-to-trigger lookup now both scan the same ordered table, while preserving
+the existing alias behavior for `close_tab`/`close_tab:this` and
+`copy_to_clipboard`/`copy_to_clipboard:mixed`.
+
+The reverse lookup scans from the end of the table and skips rows marked
+`ROASTTY_KEYBIND_FLAG_PERFORMABLE`. This means performable-only defaults such as
+search navigation no longer appear as menu-label shortcuts, while actions that
+also have a separate non-performable default row, such as copy/paste, still
+reverse-map to that non-performable trigger. Configured keybind precedence was
+kept unchanged, and the runtime table now includes the Shift+Insert
+`paste_from_selection` default that the old physical-key ladder covered.
+
+Verification:
+
+- `cargo test -p roastty default_config_trigger` — passed.
+- `cargo test -p roastty surface_key` — passed.
+- `cargo test -p roastty keybind` — passed.
+- `cargo test -p roastty config_key_is_binding_matches_default_physical_keys` —
+  passed.
+- `cargo test -p roastty --test abi_harness` — passed with the existing enum
+  conversion warnings from the C harness.
+- `cargo test -p roastty -- --test-threads=1` — passed: 4,625 unit tests, the
+  ABI harness, and doc tests.
+
+## Conclusion
+
+The default keybinding data now has a single source for the macOS single-key
+subset that Roastty already supports. That removes the old drift risk between
+runtime key handling and app-facing reverse shortcut labels, and leaves the next
+Phase G work clearly bounded: multi-key sequences/chords, key tables, non-macOS
+defaults, global/all app routing, `roastty_app_key`, native keymaps, the
+command-palette catalog, and the remaining upstream default bindings that depend
+on unported actions.
+
+## Completion Review
+
+Codex-native adversarial review ran in a fresh-context subagent
+(`multi_agent_v1.spawn_agent`, agent `019eb6ef-3d4e-7ca1-8238-3ebc873dd69f`).
+
+Verdict: **Approved.** The reviewer reported no required findings.
+
+Evidence checked by the reviewer:
+
+- the shared table drives both reverse lookup and runtime default lookup;
+- reverse lookup scans in reverse and skips performable rows;
+- configured bindings still precede defaults;
+- the ABI harness asserts performable search defaults reverse-map to the empty
+  trigger;
+- this experiment has Result and Conclusion sections, the issue README marks
+  Experiment 112 as Pass, and the result commit had not been made before review.
+
+The reviewer independently verified `cargo fmt --check`, `git diff --check`, the
+Prettier check for the touched markdown files, targeted Roastty tests, and the
+full serial `cargo test -p roastty -- --test-threads=1` gate.
