@@ -100,3 +100,69 @@ the embedded app-runtime action enum. The reviewer also noted that app-key
 surface-scope coverage should be mandatory during implementation and that the
 temporary all-location panic behavior is a bounded divergence until Roastty has
 thread-specific IO/render crash channels.
+
+## Result
+
+**Result:** Pass
+
+Roastty now parses, canonicalizes, and dispatches the upstream `crash` binding
+action for all three locations: `crash:main`, `crash:io`, and `crash:render`.
+The action is surface-scoped and remains outside the embedded app-runtime C
+action enum.
+
+The current runtime intentionally panics with location-specific messages in the
+Rust action path for all three locations. This gives configured keybindings and
+command-palette validation access to the action now. It is a bounded divergence
+from upstream's thread-specific IO/render crash mailboxes, which Roastty can add
+once those crash channels exist.
+
+Verified behavior:
+
+- valid `crash:{main,io,render}` actions canonicalize exactly;
+- bare `crash`, empty crash parameters, unknown locations, and malformed extra
+  parameters are rejected;
+- internal surface runtime dispatch intentionally panics for all three locations
+  with location-specific messages;
+- configured surface keybindings dispatch crash actions through the internal
+  Rust key path;
+- focused non-global app-key leaves containing crash return `false` without
+  dispatching;
+- global app-key crash bindings fan out to live surfaces and panic through the
+  internal Rust app-key path.
+
+Verification run:
+
+- `cargo fmt`
+- `cargo test -p roastty crash_binding` — 5 passed
+- `cargo test -p roastty app_key` — 27 passed
+- `cargo test -p roastty command_palette` — 2 passed
+- `cargo test -p roastty -- --test-threads=1` — 4721 unit tests passed, ABI
+  harness passed with the existing 10 C enum-conversion warnings, doc tests
+  passed
+- `cargo fmt --check`
+- `git diff --check`
+
+Still out of scope:
+
+- thread-specific IO and renderer crash mailboxes;
+- C ABI tests that invoke `crash`, because the hard-crash action intentionally
+  aborts if it unwinds through an `extern "C"` boundary;
+- crash report persistence or Sentry integration;
+- native keymaps/global shortcut registration;
+- broader `all:` routing and full upstream default binding table completion.
+
+## Conclusion
+
+The remaining `crash` binding action is now represented in Roastty's parser,
+canonical action surface, configured keybinding dispatch, app-key scoping, and
+command-palette validation path. The only retained divergence is where the
+intentional crash happens for `io` and `render`, pending thread-specific crash
+mailboxes.
+
+## Completion Review
+
+Codex-native adversarial reviewer `019eb832-a8e0-7421-95a5-ac65eb01bede`
+approved the completed experiment with no required findings. The reviewer
+independently reran the focused `crash_binding`, `app_key`, and
+`command_palette` tests plus `cargo fmt --check`, `git diff --check`, and the
+Prettier check.

@@ -437,6 +437,15 @@ the earlier "commit a small baseline PNG set" wording in Exp 2.
   Remaining Phase G gaps include native keymaps/global shortcuts, broader `all:`
   routing, the `crash` binding action, command-palette UI behavior, and the full
   upstream binding/default-action tail.
+- **The `crash` binding action is wired as a surface-scoped hard-crash action.**
+  Exp 126 adds `crash:main`, `crash:io`, and `crash:render` parser,
+  canonicalization, configured keybinding dispatch, and app-key scoping. Roastty
+  currently panics in the Rust action path for all three locations; upstream's
+  thread-specific IO/render crash mailboxes remain later work. The Exp 126 full
+  run passed 4721 unit tests plus the ABI harness and doc tests. Remaining Phase
+  G gaps include native keymaps/global shortcuts, broader `all:` routing,
+  command-palette UI behavior, and the full upstream binding/default-action
+  tail.
 
 **Keep this current.** When an experiment yields a durable, reusable fact — a
 toolchain incantation, a dead-end to avoid, or where an artifact lives — distill
@@ -825,8 +834,9 @@ the live app, verified by a Phase-D UI test.)
       bindings (Exp 115)
 - [ ] The full action set + the default-bindings data table + reverse
       action→trigger mapping — the macOS single-key table foundation and reverse
-      lookup are wired for currently supported actions (Exp 112), but the full
-      upstream table/actions remain later work
+      lookup are wired for currently supported actions (Exp 112), and the
+      `crash` binding action is wired as a hard-crash surface action (Exp 126),
+      but the full upstream table/actions remain later work
 - [x] Command-palette catalog (`command.zig`) — parser/defaults and C config ABI
       exposure are wired (Exp 85, Exp 124); command-palette UI behavior remains
       later work
@@ -1198,7 +1208,7 @@ stays unaltered except for the rename).
 - [Experiment 125: Phase G — app-key surface control actions](125-app-key-surface-control-actions.md)
   — **Pass**
 - [Experiment 126: Phase G — crash binding action](126-crash-binding-action.md)
-  — **Designed**
+  — **Pass**
 
 ## Process
 

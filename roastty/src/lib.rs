@@ -6241,8 +6241,26 @@ enum ParsedBindingAction {
     ActivateKeyTable(Vec<u8>, bool),
     DeactivateKeyTable,
     DeactivateAllKeyTables,
+    Crash(CrashThread),
     Ignore,
     EndKeySequence,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum CrashThread {
+    Main,
+    Io,
+    Render,
+}
+
+impl CrashThread {
+    fn keyword(self) -> &'static str {
+        match self {
+            CrashThread::Main => "main",
+            CrashThread::Io => "io",
+            CrashThread::Render => "render",
+        }
+    }
 }
 
 impl ParsedBindingAction {
@@ -6328,6 +6346,7 @@ impl ParsedBindingAction {
             }
             ParsedBindingAction::DeactivateKeyTable => "deactivate_key_table".to_string(),
             ParsedBindingAction::DeactivateAllKeyTables => "deactivate_all_key_tables".to_string(),
+            ParsedBindingAction::Crash(thread) => format!("crash:{}", thread.keyword()),
             ParsedBindingAction::Ignore => "ignore".to_string(),
             ParsedBindingAction::EndKeySequence => "end_key_sequence".to_string(),
         }
@@ -6607,6 +6626,15 @@ fn goto_window_keyword(value: c_int) -> &'static str {
     }
 }
 
+fn crash_thread_from_str(value: &[u8]) -> Option<CrashThread> {
+    match value {
+        b"main" => Some(CrashThread::Main),
+        b"io" => Some(CrashThread::Io),
+        b"render" => Some(CrashThread::Render),
+        _ => None,
+    }
+}
+
 fn selection_adjustment_keyword(value: TerminalSelectionAdjustment) -> &'static str {
     match value {
         TerminalSelectionAdjustment::Left => "left",
@@ -6846,6 +6874,9 @@ fn parse_binding_action_with_auto_split(
             }
             Some(ParsedBindingAction::DeactivateAllKeyTables)
         }
+        b"crash" => Some(ParsedBindingAction::Crash(crash_thread_from_str(
+            parameter?,
+        )?)),
         b"toggle_window_float_on_top" => {
             if parameter.is_some() {
                 return None;
@@ -17474,6 +17505,12 @@ fn perform_parsed_binding_action(surface: &mut Surface, action: ParsedBindingAct
         }
         ParsedBindingAction::DeactivateKeyTable => surface.deactivate_key_table(),
         ParsedBindingAction::DeactivateAllKeyTables => surface.deactivate_all_key_tables(),
+        ParsedBindingAction::Crash(thread) => {
+            panic!(
+                "crash binding action, crashing intentionally on {}",
+                thread.keyword()
+            );
+        }
         ParsedBindingAction::Ignore => {
             surface.end_key_sequence(false);
             true
@@ -17711,6 +17748,12 @@ pub extern "C" fn roastty_surface_binding_action(
         }
         ParsedBindingAction::DeactivateKeyTable => surface.deactivate_key_table(),
         ParsedBindingAction::DeactivateAllKeyTables => surface.deactivate_all_key_tables(),
+        ParsedBindingAction::Crash(thread) => {
+            panic!(
+                "crash binding action, crashing intentionally on {}",
+                thread.keyword()
+            );
+        }
         ParsedBindingAction::Ignore => {
             surface.end_key_sequence(false);
             true
@@ -17749,6 +17792,7 @@ mod tests {
     static CLOSE_COUNT: AtomicUsize = AtomicUsize::new(0);
     static CLOSE_USERDATA: AtomicUsize = AtomicUsize::new(0);
     static CLOSE_NEEDS_CONFIRM: AtomicBool = AtomicBool::new(false);
+    static PANIC_HOOK_LOCK: Mutex<()> = Mutex::new(());
 
     #[derive(Clone, Debug, Default, PartialEq, Eq)]
     struct ActionRecord {
@@ -20174,6 +20218,24 @@ mod tests {
         roastty_surface_binding_action(surface, action.as_ptr().cast::<c_char>(), action.len())
     }
 
+    fn caught_panic_message(f: impl FnOnce()) -> String {
+        let _guard = PANIC_HOOK_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let previous_hook = std::panic::take_hook();
+        std::panic::set_hook(Box::new(|_| {}));
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f));
+        std::panic::set_hook(previous_hook);
+        let payload = result.expect_err("expected panic");
+        if let Some(message) = payload.downcast_ref::<&'static str>() {
+            (*message).to_string()
+        } else if let Some(message) = payload.downcast_ref::<String>() {
+            message.clone()
+        } else {
+            "<non-string panic>".to_string()
+        }
+    }
+
     #[test]
     fn parse_config_binding_action_key_table_actions() {
         assert_eq!(
@@ -20221,6 +20283,81 @@ mod tests {
         for action in [b"ignore:x".as_slice(), b"end_key_sequence:x".as_slice()] {
             assert!(canonical_config_binding_action(action).is_none());
         }
+    }
+
+    #[test]
+    fn crash_binding_action_parse_and_canonicalize() {
+        assert_eq!(
+            canonical_config_binding_action(b"crash:main").unwrap(),
+            "crash:main"
+        );
+        assert_eq!(
+            canonical_config_binding_action(b"crash:io").unwrap(),
+            "crash:io"
+        );
+        assert_eq!(
+            canonical_config_binding_action(b"crash:render").unwrap(),
+            "crash:render"
+        );
+
+        for action in [
+            b"crash".as_slice(),
+            b"crash:".as_slice(),
+            b"crash:ui".as_slice(),
+            b"crash:main:again".as_slice(),
+        ] {
+            assert!(canonical_config_binding_action(action).is_none());
+        }
+    }
+
+    #[test]
+    fn crash_binding_action_internal_runtime_panics_by_location() {
+        for (action, location) in [
+            (b"crash:main".as_slice(), "main"),
+            (b"crash:io".as_slice(), "io"),
+            (b"crash:render".as_slice(), "render"),
+        ] {
+            let config = roastty_config_new();
+            let app = new_test_app_with_action_config(true, config);
+            let surface = new_test_surface(app);
+            let parsed = parse_binding_action(surface_from_handle(surface).unwrap(), action)
+                .expect("crash parses");
+
+            let message = caught_panic_message(|| {
+                let surface_ref = surface_from_handle(surface).unwrap();
+                let _ = perform_parsed_binding_action(surface_ref, parsed);
+            });
+            assert_eq!(
+                message,
+                format!("crash binding action, crashing intentionally on {location}")
+            );
+
+            roastty_surface_free(surface);
+            roastty_app_free(app);
+            roastty_config_free(config);
+        }
+    }
+
+    #[test]
+    fn crash_binding_action_configured_surface_key_panics() {
+        let config = new_test_config_with_keybind_entries(&[b"x=crash:main"]);
+        let app = new_test_app_with_action_config(true, config);
+        let surface = new_test_surface(app);
+
+        let message = caught_panic_message(|| {
+            let _ = send_key(
+                surface,
+                key_press(key::Key::KeyX, b"x", b'x' as u32, ROASTTY_MODS_NONE),
+            );
+        });
+        assert_eq!(
+            message,
+            "crash binding action, crashing intentionally on main"
+        );
+
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+        roastty_config_free(config);
     }
 
     #[test]
@@ -21854,6 +21991,46 @@ mod tests {
         assert_eq!(records[0].key_sequence.map(|value| value.0), Some(false));
         assert_eq!(records[1].surface, second);
         assert_eq!(records[1].key_sequence.map(|value| value.0), Some(false));
+
+        roastty_surface_free(first);
+        roastty_surface_free(second);
+        roastty_app_free(app);
+        roastty_config_free(config);
+    }
+
+    #[test]
+    fn crash_binding_action_focused_non_global_app_key_returns_false() {
+        let config = new_test_config_with_keybind_entries(&[b"x=crash:main"]);
+        let app = new_test_app_with_action_config(true, config);
+        let surface = new_test_surface(app);
+        roastty_app_set_focus(app, true);
+        let event = input_key_to_event(&input_key_press_x(ROASTTY_MODS_NONE));
+
+        assert!(!app_from_handle(app).unwrap().key(app, &event.event));
+        assert!(surface_from_handle(surface).is_some());
+
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+        roastty_config_free(config);
+    }
+
+    #[test]
+    fn crash_binding_action_global_app_key_fans_out_and_panics() {
+        let config = new_test_config_with_keybind_entries(&[b"global:x=crash:render"]);
+        let app = new_test_app_with_action_config(true, config);
+        let first = new_test_surface(app);
+        let second = new_test_surface(app);
+        let event = input_key_to_event(&input_key_press_x(ROASTTY_MODS_NONE));
+
+        let message = caught_panic_message(|| {
+            let _ = app_from_handle(app).unwrap().key(app, &event.event);
+        });
+        assert_eq!(
+            message,
+            "crash binding action, crashing intentionally on render"
+        );
+        assert!(surface_from_handle(first).is_some());
+        assert!(surface_from_handle(second).is_some());
 
         roastty_surface_free(first);
         roastty_surface_free(second);
