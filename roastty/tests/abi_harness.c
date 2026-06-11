@@ -4640,9 +4640,12 @@ int main(int argc, char **argv) {
   char table_keybind3[] = "--keybind=foo/";
   char table_keybind4[] = "--keybind=foo/c=toggle_fullscreen";
   char table_keybind5[] = "--keybind=mytable//=text:foo";
+  char table_keybind6[] = "--keybind=x=activate_key_table:foo";
+  char table_keybind7[] = "--keybind=foo/d=deactivate_key_table";
   char *table_argv[] = {cli_arg0, table_keybind1, table_keybind2,
-                        table_keybind3, table_keybind4, table_keybind5};
-  assert(roastty_init(6, table_argv) == ROASTTY_SUCCESS);
+                        table_keybind3, table_keybind4, table_keybind5,
+                        table_keybind6, table_keybind7};
+  assert(roastty_init(8, table_argv) == ROASTTY_SUCCESS);
   roastty_config_t table_config = roastty_config_new();
   assert(table_config != NULL);
   roastty_config_load_cli_args(table_config);
@@ -4675,6 +4678,29 @@ int main(int argc, char **argv) {
                                                 &cli_binding_flags));
   assert(cli_binding_flags == 0);
   assert(!roastty_surface_key_handle(cli_surface, cli_binding_event));
+  set_config_binding_event(cli_binding_event, ROASTTY_KEY_ACTION_PRESS,
+                           ROASTTY_KEY_UNIDENTIFIED, ROASTTY_MODS_NONE, "x",
+                           0);
+  assert(roastty_surface_key_handle(cli_surface, cli_binding_event));
+  set_config_binding_event(cli_binding_event, ROASTTY_KEY_ACTION_PRESS,
+                           ROASTTY_KEY_UNIDENTIFIED, ROASTTY_MODS_NONE, "c",
+                           0);
+  cli_binding_flags = 0xff;
+  assert(roastty_surface_key_is_binding_handle(cli_surface, cli_binding_event,
+                                               &cli_binding_flags));
+  assert(cli_binding_flags == 0x01);
+  assert(roastty_surface_key_handle(cli_surface, cli_binding_event));
+  set_config_binding_event(cli_binding_event, ROASTTY_KEY_ACTION_PRESS,
+                           ROASTTY_KEY_UNIDENTIFIED, ROASTTY_MODS_NONE, "d",
+                           0);
+  assert(roastty_surface_key_handle(cli_surface, cli_binding_event));
+  set_config_binding_event(cli_binding_event, ROASTTY_KEY_ACTION_PRESS,
+                           ROASTTY_KEY_UNIDENTIFIED, ROASTTY_MODS_NONE, "c",
+                           0);
+  cli_binding_flags = 0xff;
+  assert(!roastty_surface_key_is_binding_handle(cli_surface, cli_binding_event,
+                                                &cli_binding_flags));
+  assert(cli_binding_flags == 0);
   roastty_surface_free(cli_surface);
   roastty_app_free(cli_app);
   roastty_key_event_free(cli_binding_event);

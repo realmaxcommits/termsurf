@@ -384,6 +384,14 @@ the earlier "commit a small baseline PNG set" wording in Exp 2.
   default bindings, including unperformed `performable:` defaults. Sequences,
   key tables, native keymaps, native global shortcuts, broader global/all
   routing, and the full upstream binding catalog remain later work.
+- **Configured key-table runtime activation is wired for surface single-key
+  bindings.** Exp 117 adds per-surface active table stacks capped at upstream's
+  depth 8, `activate_key_table`, `activate_key_table_once`,
+  `deactivate_key_table`, and `deactivate_all_key_tables`, plus table-local
+  exact/catch-all lookup before root/default lookup and
+  `ROASTTY_ACTION_KEY_TABLE` app notifications. Sequences/chords, `chain=`,
+  `ignore`, native keymaps, native global shortcuts, app-key table handling, and
+  the full upstream binding catalog remain later work.
 
 **Keep this current.** When an experiment yields a durable, reusable fact — a
 toolchain incantation, a dead-end to avoid, or where an artifact lives — distill
@@ -1118,7 +1126,7 @@ stays unaltered except for the rename).
 - [Experiment 116: Phase G — key-table syntax storage](116-key-table-syntax-storage.md)
   — **Pass**
 - [Experiment 117: Phase G — key-table runtime activation](117-key-table-runtime-activation.md)
-  — **Designed**
+  — **Pass**
 
 ## Process
 

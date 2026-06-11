@@ -221,6 +221,12 @@ const ROASTTY_ACTION_SEARCH_TOTAL: c_int = 61;
 #[allow(dead_code)] // reserved ABI tag; roastty emits it in Phase C
 const ROASTTY_ACTION_SEARCH_SELECTED: c_int = 62;
 
+const ROASTTY_KEY_TABLE_ACTIVATE: c_int = 0;
+const ROASTTY_KEY_TABLE_DEACTIVATE: c_int = 1;
+const ROASTTY_KEY_TABLE_DEACTIVATE_ALL: c_int = 2;
+
+const MAX_ACTIVE_KEY_TABLES: usize = 8;
+
 const ROASTTY_INSPECTOR_TOGGLE: c_int = 0;
 const ROASTTY_INSPECTOR_SHOW: c_int = 1;
 const ROASTTY_INSPECTOR_HIDE: c_int = 2;
@@ -1233,6 +1239,23 @@ pub struct RoasttyActionResizeSplit {
     amount: u16,
     direction: c_int,
 }
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RoasttyActionKeyTableActivate {
+    name: *const c_char,
+    len: usize,
+}
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub union RoasttyActionKeyTableU {
+    activate: RoasttyActionKeyTableActivate,
+}
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RoasttyActionKeyTable {
+    tag: c_int,
+    value: RoasttyActionKeyTableU,
+}
 
 /// The embedded `roastty_action_u` — a tagged-union payload (24 bytes / align 8,
 /// matching the upstream `action_u`). Only the data-carrying members are named; `raw`
@@ -1257,6 +1280,7 @@ pub union RoasttyActionU {
     open_url: RoasttyActionOpenUrl,
     readonly: c_int,
     start_search: RoasttyActionStartSearch,
+    key_table: RoasttyActionKeyTable,
 }
 
 #[repr(C)]
@@ -1312,6 +1336,17 @@ fn action_u_from_storage(tag: c_int, storage: [usize; 8]) -> RoasttyActionU {
         ROASTTY_ACTION_TOGGLE_FULLSCREEN => u.toggle_fullscreen = storage[0] as c_int,
         ROASTTY_ACTION_PROMPT_TITLE => u.prompt_title = storage[0] as c_int,
         ROASTTY_ACTION_NAVIGATE_SEARCH => u.raw = [storage[0], 0, 0],
+        ROASTTY_ACTION_KEY_TABLE => {
+            u.key_table = RoasttyActionKeyTable {
+                tag: storage[0] as c_int,
+                value: RoasttyActionKeyTableU {
+                    activate: RoasttyActionKeyTableActivate {
+                        name: storage[1] as *const c_char,
+                        len: storage[2],
+                    },
+                },
+            }
+        }
         _ => {}
     }
     u
@@ -1351,6 +1386,13 @@ fn action_u_to_storage(tag: c_int, u: &RoasttyActionU) -> [usize; 8] {
             ROASTTY_ACTION_TOGGLE_FULLSCREEN => s[0] = u.toggle_fullscreen as usize,
             ROASTTY_ACTION_PROMPT_TITLE => s[0] = u.prompt_title as usize,
             ROASTTY_ACTION_NAVIGATE_SEARCH => s[0] = u.raw[0],
+            ROASTTY_ACTION_KEY_TABLE => {
+                s[0] = u.key_table.tag as usize;
+                if u.key_table.tag == ROASTTY_KEY_TABLE_ACTIVATE {
+                    s[1] = u.key_table.value.activate.name as usize;
+                    s[2] = u.key_table.value.activate.len;
+                }
+            }
             _ => {}
         }
     }
@@ -1719,6 +1761,12 @@ struct ConfigKeybindTable {
     bindings: Vec<ConfigKeybind>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct ActiveKeyTable {
+    name: Vec<u8>,
+    once: bool,
+}
+
 impl Config {
     fn sync_from_parsed_config(&mut self) {
         self.confirm_close_surface = self.parsed.confirm_close_surface;
@@ -1944,6 +1992,10 @@ impl App {
             return false;
         }
 
+        if parsed.is_key_table_action() {
+            return false;
+        }
+
         if !global {
             return false;
         }
@@ -2000,6 +2052,7 @@ struct Surface {
     inspector: Option<NonNull<Inspector>>,
     last_key_event: Option<key::KeyEvent>,
     last_consumed_default_binding: Option<DefaultBindingReleaseIdentity>,
+    active_key_tables: Vec<ActiveKeyTable>,
     mouse: SurfaceMouseState,
     mouse_reporting: bool,
     /// Mouse-drag text selection gesture (Issue 802 / Exp 25), driven by the core mouse handlers
@@ -4767,6 +4820,101 @@ impl Surface {
             .and_then(|app| configured_key_event_catch_all_binding(&app.keybind_triggers, event))
     }
 
+    fn configured_table_binding(
+        &self,
+        table_name: &[u8],
+        event: &key::KeyEvent,
+    ) -> Option<ConfiguredBindingMatch> {
+        if self.app.is_null() {
+            return None;
+        }
+        app_from_handle(self.app).and_then(|app| {
+            app.keybind_tables
+                .iter()
+                .find(|table| table.name == table_name)
+                .and_then(|table| configured_key_event_binding(&table.bindings, event))
+        })
+    }
+
+    fn configured_active_table_binding(
+        &self,
+        event: &key::KeyEvent,
+    ) -> Option<(usize, ConfiguredBindingMatch)> {
+        for index in (0..self.active_key_tables.len()).rev() {
+            let table = &self.active_key_tables[index];
+            if let Some(binding) = self.configured_table_binding(&table.name, event) {
+                return Some((index, binding));
+            }
+        }
+        None
+    }
+
+    fn keybind_table_exists(&self, name: &[u8]) -> bool {
+        if self.app.is_null() {
+            return false;
+        }
+        app_from_handle(self.app)
+            .map(|app| app.keybind_tables.iter().any(|table| table.name == name))
+            .unwrap_or(false)
+    }
+
+    fn key_table_action_storage(tag: c_int, name: Option<&[u8]>) -> [usize; 8] {
+        let mut storage = [0usize; 8];
+        storage[0] = tag as usize;
+        if let Some(name) = name {
+            storage[1] = name.as_ptr() as usize;
+            storage[2] = name.len();
+        }
+        storage
+    }
+
+    fn notify_key_table_action(&self, tag: c_int, name: Option<&[u8]>) -> bool {
+        self.perform_action_result(
+            ROASTTY_ACTION_KEY_TABLE,
+            Self::key_table_action_storage(tag, name),
+        )
+    }
+
+    fn activate_key_table(&mut self, name: &[u8], once: bool) -> bool {
+        if !self.keybind_table_exists(name) {
+            return false;
+        }
+        if self
+            .active_key_tables
+            .last()
+            .is_some_and(|table| table.name == name)
+        {
+            return false;
+        }
+        if self.active_key_tables.len() >= MAX_ACTIVE_KEY_TABLES {
+            return false;
+        }
+        self.active_key_tables.push(ActiveKeyTable {
+            name: name.to_vec(),
+            once,
+        });
+        let _ = self.notify_key_table_action(ROASTTY_KEY_TABLE_ACTIVATE, Some(name));
+        true
+    }
+
+    fn deactivate_key_table(&mut self) -> bool {
+        if self.active_key_tables.is_empty() {
+            return false;
+        }
+        self.active_key_tables.pop();
+        let _ = self.notify_key_table_action(ROASTTY_KEY_TABLE_DEACTIVATE, None);
+        true
+    }
+
+    fn deactivate_all_key_tables(&mut self) -> bool {
+        if self.active_key_tables.is_empty() {
+            return false;
+        }
+        self.active_key_tables.clear();
+        let _ = self.notify_key_table_action(ROASTTY_KEY_TABLE_DEACTIVATE_ALL, None);
+        true
+    }
+
     fn remapped_key_event(&self, event: &key::KeyEvent) -> key::KeyEvent {
         let mut event = event.clone();
         if self.key_remaps.is_remapped(event.mods) {
@@ -4799,6 +4947,23 @@ impl Surface {
         self.last_key_event = Some(event.clone());
         if self.consume_default_binding_release(&event) {
             return true;
+        }
+        if let Some((table_index, binding)) = self.configured_active_table_binding(&event) {
+            if table_index + 1 == self.active_key_tables.len()
+                && self.active_key_tables[table_index].once
+            {
+                let _ = self.deactivate_key_table();
+            }
+            if let Some(consumed) = self.dispatch_configured_binding(binding) {
+                return consumed;
+            }
+            if event.action != key::KeyAction::Release {
+                self.last_consumed_default_binding = None;
+            }
+            if self.vt_kam_allowed && self.terminal_kam_enabled() {
+                return true;
+            }
+            return self.write_encoded_key_event(&event);
         }
         if let Some(binding) = self.configured_exact_binding(&event) {
             if let Some(consumed) = self.dispatch_configured_binding(binding) {
@@ -4886,7 +5051,9 @@ impl Surface {
         }
         let event = event.unwrap();
         let event = self.remapped_key_event(&event.event);
-        let flags_value = if let Some(binding) = app_from_handle(self.app)
+        let flags_value = if let Some(binding) = self.configured_active_table_binding(&event) {
+            binding.1.flags
+        } else if let Some(binding) = app_from_handle(self.app)
             .and_then(|app| configured_key_event_exact_binding(&app.keybind_triggers, &event))
         {
             binding.flags
@@ -5280,9 +5447,21 @@ enum ParsedBindingAction {
     JumpToPrompt(i16),
     ToggleMouseReporting,
     ToggleReadonly,
+    ActivateKeyTable(Vec<u8>, bool),
+    DeactivateKeyTable,
+    DeactivateAllKeyTables,
 }
 
 impl ParsedBindingAction {
+    fn is_key_table_action(&self) -> bool {
+        matches!(
+            self,
+            ParsedBindingAction::ActivateKeyTable(_, _)
+                | ParsedBindingAction::DeactivateKeyTable
+                | ParsedBindingAction::DeactivateAllKeyTables
+        )
+    }
+
     fn canonical_config_string(&self) -> String {
         match self {
             ParsedBindingAction::RuntimeAction(tag, storage)
@@ -5357,6 +5536,14 @@ impl ParsedBindingAction {
             ParsedBindingAction::JumpToPrompt(delta) => format!("jump_to_prompt:{delta}"),
             ParsedBindingAction::ToggleMouseReporting => "toggle_mouse_reporting".to_string(),
             ParsedBindingAction::ToggleReadonly => "toggle_readonly".to_string(),
+            ParsedBindingAction::ActivateKeyTable(name, false) => {
+                format!("activate_key_table:{}", zig_escape_action_bytes(name))
+            }
+            ParsedBindingAction::ActivateKeyTable(name, true) => {
+                format!("activate_key_table_once:{}", zig_escape_action_bytes(name))
+            }
+            ParsedBindingAction::DeactivateKeyTable => "deactivate_key_table".to_string(),
+            ParsedBindingAction::DeactivateAllKeyTables => "deactivate_all_key_tables".to_string(),
         }
     }
 }
@@ -5841,6 +6028,26 @@ fn parse_binding_action_with_auto_split(
             }
             Some(ParsedBindingAction::ToggleReadonly)
         }
+        b"activate_key_table" => Some(ParsedBindingAction::ActivateKeyTable(
+            parse_key_table_name(parameter?)?,
+            false,
+        )),
+        b"activate_key_table_once" => Some(ParsedBindingAction::ActivateKeyTable(
+            parse_key_table_name(parameter?)?,
+            true,
+        )),
+        b"deactivate_key_table" => {
+            if parameter.is_some() {
+                return None;
+            }
+            Some(ParsedBindingAction::DeactivateKeyTable)
+        }
+        b"deactivate_all_key_tables" => {
+            if parameter.is_some() {
+                return None;
+            }
+            Some(ParsedBindingAction::DeactivateAllKeyTables)
+        }
         b"toggle_window_float_on_top" => {
             if parameter.is_some() {
                 return None;
@@ -6159,6 +6366,17 @@ fn parse_binding_action_with_auto_split(
         )?)),
         _ => None,
     }
+}
+
+fn parse_key_table_name(name: &[u8]) -> Option<Vec<u8>> {
+    if name.is_empty()
+        || name
+            .iter()
+            .any(|byte| matches!(*byte, b'/' | b'=' | b'+' | b'>'))
+    {
+        return None;
+    }
+    Some(name.to_vec())
 }
 
 fn parse_u16_ascii(bytes: &[u8]) -> Option<u16> {
@@ -15143,6 +15361,7 @@ pub extern "C" fn roastty_surface_new(
         inspector: None,
         last_key_event: None,
         last_consumed_default_binding: None,
+        active_key_tables: Vec::new(),
         mouse: SurfaceMouseState::default(),
         mouse_reporting,
         selection_gesture: SelectionGesture::default(),
@@ -16350,6 +16569,11 @@ fn perform_parsed_binding_action(surface: &mut Surface, action: ParsedBindingAct
         }
         ParsedBindingAction::ToggleMouseReporting => surface.toggle_mouse_reporting(),
         ParsedBindingAction::ToggleReadonly => surface.toggle_readonly(),
+        ParsedBindingAction::ActivateKeyTable(name, once) => {
+            surface.activate_key_table(&name, once)
+        }
+        ParsedBindingAction::DeactivateKeyTable => surface.deactivate_key_table(),
+        ParsedBindingAction::DeactivateAllKeyTables => surface.deactivate_all_key_tables(),
     }
 }
 
@@ -16574,6 +16798,11 @@ pub extern "C" fn roastty_surface_binding_action(
         }
         ParsedBindingAction::ToggleMouseReporting => surface.toggle_mouse_reporting(),
         ParsedBindingAction::ToggleReadonly => surface.toggle_readonly(),
+        ParsedBindingAction::ActivateKeyTable(name, once) => {
+            surface.activate_key_table(&name, once)
+        }
+        ParsedBindingAction::DeactivateKeyTable => surface.deactivate_key_table(),
+        ParsedBindingAction::DeactivateAllKeyTables => surface.deactivate_all_key_tables(),
     }
 }
 
@@ -16615,6 +16844,7 @@ mod tests {
         title: Option<String>,
         needle: Option<String>,
         open_url: Option<(c_int, Vec<u8>)>,
+        key_table: Option<(c_int, Vec<u8>)>,
     }
 
     #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -16766,6 +16996,15 @@ mod tests {
         handle
     }
 
+    fn new_test_config_with_keybind_entries(entries: &[&[u8]]) -> RoasttyConfig {
+        let handle = roastty_config_new();
+        let config = config_from_handle(handle).unwrap();
+        for entry in entries {
+            config.store_keybind_entry(parse_config_keybind_entry(entry).unwrap());
+        }
+        handle
+    }
+
     fn new_test_config_with_mouse_behavior(
         mouse_reporting: bool,
         precision: f64,
@@ -16870,6 +17109,19 @@ mod tests {
             } else {
                 None
             };
+            let key_table = if action.tag == ROASTTY_ACTION_KEY_TABLE {
+                let tag = storage[0] as c_int;
+                let ptr = storage[1] as *const u8;
+                let len = storage[2];
+                let name = if tag == ROASTTY_KEY_TABLE_ACTIVATE && !ptr.is_null() {
+                    unsafe { slice::from_raw_parts(ptr, len) }.to_vec()
+                } else {
+                    Vec::new()
+                };
+                Some((tag, name))
+            } else {
+                None
+            };
             records.borrow_mut().push(ActionRecord {
                 app,
                 target_tag: target.tag,
@@ -16879,6 +17131,7 @@ mod tests {
                 title,
                 needle,
                 open_url,
+                key_table,
             });
         });
         ACTION_RESULT.with(|result| *result.borrow())
@@ -18302,6 +18555,409 @@ mod tests {
             parse_config_keybind_entry(b"foo/a+b=quit").err().unwrap(),
             ConfigKeybindParseError::InvalidTrigger
         );
+    }
+
+    fn surface_binding_action(surface: RoasttySurface, action: &[u8]) -> bool {
+        roastty_surface_binding_action(surface, action.as_ptr().cast::<c_char>(), action.len())
+    }
+
+    #[test]
+    fn parse_config_binding_action_key_table_actions() {
+        assert_eq!(
+            canonical_config_binding_action(b"activate_key_table:copy").unwrap(),
+            "activate_key_table:copy"
+        );
+        assert_eq!(
+            canonical_config_binding_action(b"activate_key_table_once:copy").unwrap(),
+            "activate_key_table_once:copy"
+        );
+        assert_eq!(
+            canonical_config_binding_action(b"deactivate_key_table").unwrap(),
+            "deactivate_key_table"
+        );
+        assert_eq!(
+            canonical_config_binding_action(b"deactivate_all_key_tables").unwrap(),
+            "deactivate_all_key_tables"
+        );
+
+        for action in [
+            b"activate_key_table".as_slice(),
+            b"activate_key_table:".as_slice(),
+            b"activate_key_table:a/b".as_slice(),
+            b"activate_key_table:a=b".as_slice(),
+            b"activate_key_table:a+b".as_slice(),
+            b"activate_key_table:a>b".as_slice(),
+            b"deactivate_key_table:x".as_slice(),
+            b"deactivate_all_key_tables:x".as_slice(),
+        ] {
+            assert!(canonical_config_binding_action(action).is_none());
+        }
+    }
+
+    #[test]
+    fn surface_key_table_exact_binding_precedes_root_and_default() {
+        let config = new_test_config_with_keybind_entries(&[
+            b"x=activate_key_table:nav",
+            b"a=toggle_fullscreen",
+            b"nav/a=quit",
+            b"nav/cmd+q=toggle_fullscreen",
+        ]);
+        let app = new_test_app_with_action_config(true, config);
+        let surface = new_test_surface(app);
+
+        assert!(send_key(
+            surface,
+            key_press(key::Key::KeyX, b"x", b'x' as u32, ROASTTY_MODS_NONE)
+        ));
+        let records = action_records();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].action_tag, ROASTTY_ACTION_KEY_TABLE);
+        assert_eq!(
+            records[0].key_table,
+            Some((ROASTTY_KEY_TABLE_ACTIVATE, b"nav".to_vec()))
+        );
+
+        reset_action_records(true);
+        assert!(send_key(
+            surface,
+            key_press(key::Key::KeyA, b"a", b'a' as u32, ROASTTY_MODS_NONE)
+        ));
+        let records = action_records();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].action_tag, ROASTTY_ACTION_QUIT);
+
+        reset_action_records(true);
+        assert!(send_key(
+            surface,
+            key_press(key::Key::KeyQ, b"q", b'q' as u32, ROASTTY_MODS_SUPER)
+        ));
+        let records = action_records();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].action_tag, ROASTTY_ACTION_TOGGLE_FULLSCREEN);
+
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+        roastty_config_free(config);
+    }
+
+    #[test]
+    fn surface_key_table_miss_falls_back_to_root_exact() {
+        let config = new_test_config_with_keybind_entries(&[
+            b"x=activate_key_table:nav",
+            b"a=toggle_fullscreen",
+            b"nav/b=quit",
+        ]);
+        let app = new_test_app_with_action_config(true, config);
+        let surface = new_test_surface(app);
+
+        assert!(send_key(
+            surface,
+            key_press(key::Key::KeyX, b"x", b'x' as u32, ROASTTY_MODS_NONE)
+        ));
+        reset_action_records(true);
+        assert!(send_key(
+            surface,
+            key_press(key::Key::KeyA, b"a", b'a' as u32, ROASTTY_MODS_NONE)
+        ));
+
+        let records = action_records();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].action_tag, ROASTTY_ACTION_TOGGLE_FULLSCREEN);
+
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+        roastty_config_free(config);
+    }
+
+    #[test]
+    fn surface_key_table_catch_all_precedes_root_and_default() {
+        let config = new_test_config_with_keybind_entries(&[
+            b"x=activate_key_table:nav",
+            b"a=quit",
+            b"nav/catch_all=toggle_fullscreen",
+        ]);
+        let app = new_test_app_with_action_config(true, config);
+        let surface = new_test_surface(app);
+
+        assert!(send_key(
+            surface,
+            key_press(key::Key::KeyX, b"x", b'x' as u32, ROASTTY_MODS_NONE)
+        ));
+
+        reset_action_records(true);
+        assert!(send_key(
+            surface,
+            key_press(key::Key::KeyA, b"a", b'a' as u32, ROASTTY_MODS_NONE)
+        ));
+        let records = action_records();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].action_tag, ROASTTY_ACTION_TOGGLE_FULLSCREEN);
+
+        reset_action_records(true);
+        assert!(send_key(
+            surface,
+            key_press(key::Key::KeyQ, b"q", b'q' as u32, ROASTTY_MODS_SUPER)
+        ));
+        let records = action_records();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].action_tag, ROASTTY_ACTION_TOGGLE_FULLSCREEN);
+
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+        roastty_config_free(config);
+    }
+
+    #[test]
+    fn surface_key_is_binding_reports_active_table_flags() {
+        let config = new_test_config_with_keybind_entries(&[
+            b"x=activate_key_table:nav",
+            b"nav/performable:a=quit",
+        ]);
+        let app = new_test_app_with_action_config(true, config);
+        let surface = new_test_surface(app);
+        assert!(send_key(
+            surface,
+            key_press(key::Key::KeyX, b"x", b'x' as u32, ROASTTY_MODS_NONE)
+        ));
+
+        let mut flags = 0;
+        assert!(surface_from_handle(surface).unwrap().key_is_binding(
+            Some(&key_press(
+                key::Key::KeyA,
+                b"a",
+                b'a' as u32,
+                ROASTTY_MODS_NONE
+            )),
+            &mut flags
+        ));
+        assert_eq!(
+            flags,
+            ROASTTY_KEYBIND_FLAG_CONSUMED | ROASTTY_KEYBIND_FLAG_PERFORMABLE
+        );
+
+        let mut abi_flags = 0;
+        let input = RoasttyInputKey {
+            action: key_action_to_int(key::KeyAction::Press),
+            mods: ROASTTY_MODS_NONE,
+            consumed_mods: ROASTTY_MODS_NONE,
+            keycode: 0x0000,
+            text: b"a\0".as_ptr().cast::<c_char>(),
+            unshifted_codepoint: b'a' as u32,
+            composing: false,
+        };
+        assert!(roastty_surface_key_is_binding(
+            surface,
+            input,
+            &mut abi_flags
+        ));
+        assert_eq!(abi_flags, c_int::from(flags));
+
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+        roastty_config_free(config);
+    }
+
+    #[test]
+    fn surface_key_table_once_pops_after_exact_and_catch_all() {
+        for table_binding in [
+            b"nav/a=toggle_fullscreen".as_slice(),
+            b"nav/catch_all=toggle_fullscreen".as_slice(),
+        ] {
+            let config = new_test_config_with_keybind_entries(&[
+                b"x=activate_key_table_once:nav",
+                table_binding,
+            ]);
+            let app = new_test_app_with_action_config(true, config);
+            let surface = new_test_surface(app);
+
+            assert!(send_key(
+                surface,
+                key_press(key::Key::KeyX, b"x", b'x' as u32, ROASTTY_MODS_NONE)
+            ));
+            assert_eq!(
+                surface_from_handle(surface)
+                    .unwrap()
+                    .active_key_tables
+                    .len(),
+                1
+            );
+            reset_action_records(true);
+            assert!(send_key(
+                surface,
+                key_press(key::Key::KeyA, b"a", b'a' as u32, ROASTTY_MODS_NONE)
+            ));
+            assert_eq!(
+                surface_from_handle(surface)
+                    .unwrap()
+                    .active_key_tables
+                    .len(),
+                0
+            );
+            let records = action_records();
+            assert_eq!(
+                records[0].key_table,
+                Some((ROASTTY_KEY_TABLE_DEACTIVATE, Vec::new()))
+            );
+            assert_eq!(records[1].action_tag, ROASTTY_ACTION_TOGGLE_FULLSCREEN);
+
+            reset_action_records(true);
+            assert!(!send_key(
+                surface,
+                key_press(key::Key::KeyB, b"b", b'b' as u32, ROASTTY_MODS_NONE)
+            ));
+            assert!(action_records().is_empty());
+
+            roastty_surface_free(surface);
+            roastty_app_free(app);
+            roastty_config_free(config);
+        }
+    }
+
+    #[test]
+    fn surface_key_table_stack_duplicate_reentry_and_cap() {
+        let config = new_test_config_with_keybind_entries(&[
+            b"t0/", b"t1/", b"t2/", b"t3/", b"t4/", b"t5/", b"t6/", b"t7/", b"t8/",
+        ]);
+        let app = new_test_app_with_action_config(true, config);
+        let surface = new_test_surface(app);
+
+        assert!(surface_binding_action(surface, b"activate_key_table:t0"));
+        assert!(!surface_binding_action(surface, b"activate_key_table:t0"));
+        assert!(surface_binding_action(surface, b"activate_key_table:t1"));
+        assert!(surface_binding_action(surface, b"activate_key_table:t0"));
+        assert_eq!(
+            surface_from_handle(surface).unwrap().active_key_tables,
+            vec![
+                ActiveKeyTable {
+                    name: b"t0".to_vec(),
+                    once: false,
+                },
+                ActiveKeyTable {
+                    name: b"t1".to_vec(),
+                    once: false,
+                },
+                ActiveKeyTable {
+                    name: b"t0".to_vec(),
+                    once: false,
+                },
+            ]
+        );
+
+        for name in [b"t2", b"t3", b"t4", b"t5", b"t6"] {
+            assert!(surface_binding_action(
+                surface,
+                format!("activate_key_table:{}", String::from_utf8_lossy(name)).as_bytes()
+            ));
+        }
+        assert_eq!(
+            surface_from_handle(surface)
+                .unwrap()
+                .active_key_tables
+                .len(),
+            MAX_ACTIVE_KEY_TABLES
+        );
+        assert!(!surface_binding_action(surface, b"activate_key_table:t8"));
+
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+        roastty_config_free(config);
+    }
+
+    #[test]
+    fn surface_key_table_deactivate_actions_notify_and_noop_when_empty() {
+        let config = new_test_config_with_keybind_entries(&[b"nav/", b"aux/"]);
+        let app = new_test_app_with_action_config(true, config);
+        let surface = new_test_surface(app);
+
+        assert!(!surface_binding_action(surface, b"deactivate_key_table"));
+        assert!(!surface_binding_action(
+            surface,
+            b"deactivate_all_key_tables"
+        ));
+        assert!(action_records().is_empty());
+
+        assert!(surface_binding_action(surface, b"activate_key_table:nav"));
+        assert!(surface_binding_action(surface, b"activate_key_table:aux"));
+        reset_action_records(true);
+        assert!(surface_binding_action(surface, b"deactivate_key_table"));
+        let records = action_records();
+        assert_eq!(records.len(), 1);
+        assert_eq!(
+            records[0].key_table,
+            Some((ROASTTY_KEY_TABLE_DEACTIVATE, Vec::new()))
+        );
+        assert_eq!(
+            surface_from_handle(surface)
+                .unwrap()
+                .active_key_tables
+                .len(),
+            1
+        );
+
+        reset_action_records(true);
+        assert!(surface_binding_action(
+            surface,
+            b"deactivate_all_key_tables"
+        ));
+        let records = action_records();
+        assert_eq!(records.len(), 1);
+        assert_eq!(
+            records[0].key_table,
+            Some((ROASTTY_KEY_TABLE_DEACTIVATE_ALL, Vec::new()))
+        );
+        assert!(surface_from_handle(surface)
+            .unwrap()
+            .active_key_tables
+            .is_empty());
+
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+        roastty_config_free(config);
+    }
+
+    #[test]
+    fn surface_key_table_uses_updated_app_table_storage() {
+        let old_config =
+            new_test_config_with_keybind_entries(&[b"x=activate_key_table:nav", b"nav/a=quit"]);
+        let new_config = new_test_config_with_keybind_entries(&[b"x=activate_key_table:nav"]);
+        let app = new_test_app_with_action_config(true, old_config);
+        let surface = new_test_surface(app);
+
+        assert!(send_key(
+            surface,
+            key_press(key::Key::KeyX, b"x", b'x' as u32, ROASTTY_MODS_NONE)
+        ));
+        roastty_app_update_config(app, new_config);
+        reset_action_records(true);
+        assert!(!send_key(
+            surface,
+            key_press(key::Key::KeyA, b"a", b'a' as u32, ROASTTY_MODS_NONE)
+        ));
+        assert!(action_records().is_empty());
+
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+        roastty_config_free(new_config);
+        roastty_config_free(old_config);
+    }
+
+    #[test]
+    fn app_key_ignores_key_table_actions_for_now() {
+        let config =
+            new_test_config_with_keybind_entries(&[b"global:x=activate_key_table:nav", b"nav/"]);
+        let app = new_test_app_with_action_config(true, config);
+        let surface = new_test_surface(app);
+
+        assert!(!roastty_app_key(app, input_key_press_x(ROASTTY_MODS_NONE)));
+        assert!(action_records().is_empty());
+        assert!(surface_from_handle(surface)
+            .unwrap()
+            .active_key_tables
+            .is_empty());
+
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+        roastty_config_free(config);
     }
 
     #[test]

@@ -131,3 +131,69 @@ shadow root/default bindings, and requires one-shot tables to pop after table
 
 Final verdict after re-review: **Approved.** The reviewer confirmed both prior
 findings were resolved and reported no new required findings.
+
+## Completion Review
+
+Codex-native adversarial review ran in a fresh-context subagent
+(`multi_agent_v1.spawn_agent`, agent `019eb758-8d09-7a43-acde-0334d36b76d4`).
+
+Verdict: **Approved.** The reviewer reported no required, optional, or nit
+findings. It independently confirmed the result was still uncommitted, reran the
+verification suite successfully, and confirmed the implementation matches the
+approved Exp117 scope while keeping app-key table behavior out of scope.
+
+## Result
+
+**Result:** Pass
+
+Roastty now activates configured key tables on surface key paths. Each surface
+owns an active table stack capped at 8 entries, table activation stores table
+names rather than borrowing app config storage, and lookup resolves against the
+current `App` table storage so `roastty_app_update_config` refreshes usable
+table bindings for existing surfaces.
+
+Implemented behavior:
+
+- `activate_key_table:<name>` activates an existing table and ignores missing
+  tables, duplicate activation of the current innermost table, and stack-depth
+  overflow.
+- `activate_key_table_once:<name>` activates a one-shot table and pops it after
+  any valid binding from that table, including table-local `catch_all`.
+- `deactivate_key_table` pops one active table; `deactivate_all_key_tables`
+  clears the stack; both return false/noop when no table is active.
+- Active tables are searched innermost-to-outermost as complete sets, so a
+  table-local exact or `catch_all` binding shadows root configured bindings and
+  built-in defaults while the table is active.
+- Root configured exact bindings, built-in exact defaults, and root configured
+  `catch_all` continue to behave as before when no active table matches.
+- `roastty_surface_key_is_binding` and the handle variant consult active tables
+  and return table binding flags.
+- `ROASTTY_ACTION_KEY_TABLE` now carries the typed C ABI payload for app
+  activation/deactivation notifications.
+- `roastty_app_key` deliberately ignores key-table actions in this slice, so
+  table runtime behavior remains surface-local.
+
+Verification run:
+
+- `cargo test -p roastty key_table` — pass
+- `cargo test -p roastty parse_config_keybind` — pass
+- `cargo test -p roastty surface_key` — pass
+- `cargo test -p roastty app_key` — pass
+- `cargo test -p roastty --test abi_harness` — pass
+  - The harness still emits the existing enum-conversion warnings in unrelated
+    mouse/inspector calls.
+- `cargo test -p roastty -- --test-threads=1` — pass
+  - 4,654 unit tests passed.
+  - ABI harness passed.
+  - Doc tests passed.
+- `cargo fmt --check` — pass
+- `git diff --check` — pass
+- `prettier --check --prose-wrap always --print-width 80 issues/0802-libroastty-completion-and-mac-app/117-key-table-runtime-activation.md issues/0802-libroastty-completion-and-mac-app/README.md`
+  — pass
+
+## Conclusion
+
+The first key-table runtime slice is complete for configured single-key surface
+bindings. Remaining Phase G keybinding work is now narrower: multi-key
+sequences/chords, `chain=`, `ignore`, native keymaps/global shortcuts,
+app-key-level table behavior, and the full upstream binding/action catalog.
