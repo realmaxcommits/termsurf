@@ -818,7 +818,7 @@ stays unaltered except for the rename).
 - [Experiment 76: Phase F — focus follows mouse config](76-focus-follows-mouse-config.md)
   — **Pass**
 - [Experiment 77: Phase F — title report and image limit config](77-title-report-image-limit-config.md)
-  — **Designed**
+  — **Pass**
 
 ## Process
 

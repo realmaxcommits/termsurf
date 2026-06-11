@@ -58,6 +58,10 @@ pub(crate) struct Config {
     pub clipboard_paste_protection: bool,
     /// `clipboard-paste-bracketed-safe`.
     pub clipboard_paste_bracketed_safe: bool,
+    /// `title-report`.
+    pub title_report: bool,
+    /// `image-storage-limit`.
+    pub image_storage_limit: u32,
     /// `mouse-shift-capture`.
     pub mouse_shift_capture: MouseShiftCapture,
     /// `mouse-reporting`.
@@ -302,6 +306,8 @@ impl Default for Config {
             clipboard_trim_trailing_spaces: true,
             clipboard_paste_protection: true,
             clipboard_paste_bracketed_safe: true,
+            title_report: false,
+            image_storage_limit: 320_000_000,
             mouse_shift_capture: MouseShiftCapture::False,
             mouse_reporting: true,
             mouse_scroll_multiplier: MouseScrollMultiplier::default(),
@@ -649,6 +655,8 @@ impl Config {
             .entry_bool(self.clipboard_paste_protection);
         EntryFormatter::new("clipboard-paste-bracketed-safe", out)
             .entry_bool(self.clipboard_paste_bracketed_safe);
+        EntryFormatter::new("title-report", out).entry_bool(self.title_report);
+        EntryFormatter::new("image-storage-limit", out).entry_int(self.image_storage_limit);
         self.copy_on_select
             .format_entry(&mut EntryFormatter::new("copy-on-select", out));
         EntryFormatter::new("selection-clear-on-copy", out)
@@ -747,6 +755,11 @@ impl Config {
             "clipboard-paste-bracketed-safe" => {
                 self.clipboard_paste_bracketed_safe =
                     set_bool_field(value, default.clipboard_paste_bracketed_safe)?
+            }
+            "title-report" => self.title_report = set_bool_field(value, default.title_report)?,
+            "image-storage-limit" => {
+                self.image_storage_limit =
+                    set_value_field(value, default.image_storage_limit, parse_u32_scalar_field)?
             }
             "mouse-shift-capture" => {
                 self.mouse_shift_capture = set_enum_field(
@@ -9867,6 +9880,8 @@ mod tests {
                 "clipboard-trim-trailing-spaces",
                 "clipboard-paste-protection",
                 "clipboard-paste-bracketed-safe",
+                "title-report",
+                "image-storage-limit",
                 "copy-on-select",
                 "selection-clear-on-copy",
                 "right-click-action",
@@ -9979,6 +9994,97 @@ mod tests {
         assert!(!cfg.clipboard_paste_protection);
         assert!(!cfg.clipboard_paste_bracketed_safe);
         assert!(cfg.selection_clear_on_copy);
+    }
+
+    #[test]
+    fn title_report_image_limit_config_parse_format_reset_and_diagnose() {
+        let line = |cfg: &Config, key: &str| -> String {
+            let mut out = String::new();
+            cfg.format_config(&mut out);
+            out.lines()
+                .find(|l| l.starts_with(&format!("{} = ", key)))
+                .unwrap()
+                .to_string()
+        };
+
+        let mut cfg = Config::default();
+        assert!(!cfg.title_report);
+        assert_eq!(cfg.image_storage_limit, 320_000_000);
+        assert_eq!(line(&cfg, "title-report"), "title-report = false");
+        assert_eq!(
+            line(&cfg, "image-storage-limit"),
+            "image-storage-limit = 320000000"
+        );
+
+        cfg.set("title-report", Some("true")).unwrap();
+        assert!(cfg.title_report);
+        assert_eq!(line(&cfg, "title-report"), "title-report = true");
+        cfg.set("title-report", Some("false")).unwrap();
+        assert!(!cfg.title_report);
+        cfg.set("title-report", None).unwrap();
+        assert!(cfg.title_report);
+        cfg.set("title-report", Some("")).unwrap();
+        assert!(!cfg.title_report);
+        assert_eq!(
+            cfg.set("title-report", Some("maybe")),
+            Err(ConfigSetError::InvalidValue)
+        );
+
+        cfg.set("image-storage-limit", Some("123456")).unwrap();
+        assert_eq!(cfg.image_storage_limit, 123456);
+        cfg.set("image-storage-limit", Some("0x20")).unwrap();
+        assert_eq!(cfg.image_storage_limit, 32);
+        cfg.set("image-storage-limit", Some("0o20")).unwrap();
+        assert_eq!(cfg.image_storage_limit, 16);
+        cfg.set("image-storage-limit", Some("0b100")).unwrap();
+        assert_eq!(cfg.image_storage_limit, 4);
+        cfg.set("image-storage-limit", Some("0")).unwrap();
+        assert_eq!(cfg.image_storage_limit, 0);
+        cfg.set("image-storage-limit", Some("")).unwrap();
+        assert_eq!(cfg.image_storage_limit, 320_000_000);
+        assert_eq!(
+            cfg.set("image-storage-limit", None),
+            Err(ConfigSetError::ValueRequired)
+        );
+        for value in ["not-a-number", "-1", "4294967296", "0x", "_1", "1_"] {
+            assert_eq!(
+                cfg.set("image-storage-limit", Some(value)),
+                Err(ConfigSetError::InvalidValue),
+                "image-storage-limit accepted {value:?}"
+            );
+        }
+
+        let diagnostics = cfg.load_str(
+            "title-report = true\n\
+             title-report = maybe\n\
+             image-storage-limit = 640000000\n\
+             image-storage-limit = nope\n\
+             copy-on-select = clipboard\n",
+        );
+        assert!(cfg.title_report);
+        assert_eq!(cfg.image_storage_limit, 640_000_000);
+        assert_eq!(cfg.copy_on_select, CopyOnSelect::Clipboard);
+        assert_eq!(
+            diagnostics,
+            vec![
+                ConfigDiagnostic {
+                    line: 2,
+                    key: "title-report".to_string(),
+                    error: ConfigSetError::InvalidValue,
+                },
+                ConfigDiagnostic {
+                    line: 4,
+                    key: "image-storage-limit".to_string(),
+                    error: ConfigSetError::InvalidValue,
+                },
+            ]
+        );
+
+        let cloned = cfg.clone();
+        assert_eq!(cloned, cfg);
+        assert!(cloned.title_report);
+        assert_eq!(cloned.image_storage_limit, 640_000_000);
+        assert_eq!(cloned.copy_on_select, CopyOnSelect::Clipboard);
     }
 
     #[test]

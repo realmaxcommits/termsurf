@@ -91,3 +91,49 @@ defaults and order for `title-report` and `image-storage-limit`. The reviewer
 also confirmed the verification plan covers defaults, parser/reset semantics,
 diagnostics, formatter order, clone/equality, targeted tests, full
 `cargo test -p roastty`, `cargo fmt --check`, and `git diff --check`.
+
+## Result
+
+**Result:** Pass
+
+Implemented `title-report` and `image-storage-limit` in
+`roastty/src/config/mod.rs`. `title-report` now uses the existing bool parser
+and formatter path with upstream default `false`; `image-storage-limit` uses the
+existing `u32` scalar parser/formatter path with upstream default `320000000`.
+Both fields format after `clipboard-paste-bracketed-safe` and before
+`copy-on-select`.
+
+Verification passed:
+
+- `cargo fmt`
+- `cargo test -p roastty title_report_image_limit_config`
+- `cargo test -p roastty config_format_config`
+- `cargo test -p roastty`
+  - 4514 unit tests passed
+  - ABI harness passed with the existing enum-conversion warnings
+  - doc tests passed
+- `cargo fmt --check`
+- `git diff --check`
+
+## Conclusion
+
+The title-report and image-storage-limit config surface now matches the upstream
+defaults, parser behavior, diagnostics, formatter order, and clone/equality
+expectations for this slice. The next upstream fields after this point are
+already represented by the earlier copy/mouse behavior config slices, so the
+next experiment should inspect the next unported field beyond that already
+ported group.
+
+## Completion Review
+
+Codex adversarial reviewer `019eb44f-6f1e-7ac2-a8a9-2b48587f6e26` returned
+**Approved** with no required findings. The reviewer confirmed that the
+implementation is limited to `title-report` and `image-storage-limit`, matches
+upstream defaults and order, uses the existing bool and `u32` scalar
+parser/reset paths, and adds coverage for formatting, diagnostics,
+clone/equality, and reset semantics. The reviewer also confirmed that the README
+status and result docs match the current state and no result commit exists after
+the plan commit.
+
+The reviewer independently verified `cargo fmt --check`, `git diff --check`,
+targeted tests, and full `cargo test -p roastty`.
