@@ -168,8 +168,8 @@ the earlier "commit a small baseline PNG set" wording in Exp 2.
   or `false` still gates later in-band DEC mode 12 mutations.
 - **Window padding config is now a parser/formatter surface only.** Exp 70 wires
   `window-padding-x` and `window-padding-y` through `Config` with upstream
-  `WindowPadding` defaults and diagnostics; renderer geometry and
-  `window-padding-balance` remain later work.
+  `WindowPadding` defaults and diagnostics; Exp 71 adds `window-padding-balance`
+  as a config enum. Renderer geometry remains later work.
 
 **Keep this current.** When an experiment yields a durable, reusable fact — a
 toolchain incantation, a dead-end to avoid, or where an artifact lives — distill
@@ -799,7 +799,7 @@ stays unaltered except for the rename).
 - [Experiment 70: Phase F — window padding config](70-window-padding-config.md)
   — **Pass**
 - [Experiment 71: Phase F — window padding balance config](71-window-padding-balance-config.md)
-  — **Designed**
+  — **Pass**
 
 ## Process
 

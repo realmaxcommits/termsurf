@@ -130,6 +130,8 @@ pub(crate) struct Config {
     pub window_padding_x: WindowPadding,
     /// `window-padding-y`.
     pub window_padding_y: WindowPadding,
+    /// `window-padding-balance`.
+    pub window_padding_balance: WindowPaddingBalance,
     /// `window-padding-color`.
     pub window_padding_color: WindowPaddingColor,
     /// `background-opacity`.
@@ -318,6 +320,7 @@ impl Default for Config {
                 top_left: 2,
                 bottom_right: 2,
             },
+            window_padding_balance: WindowPaddingBalance::False,
             window_padding_color: WindowPaddingColor::Background,
             background_opacity: 1.0,
             background_opacity_cells: false,
@@ -534,6 +537,8 @@ impl Config {
             .format_entry(&mut EntryFormatter::new("window-padding-x", out));
         self.window_padding_y
             .format_entry(&mut EntryFormatter::new("window-padding-y", out));
+        self.window_padding_balance
+            .format_entry(&mut EntryFormatter::new("window-padding-balance", out));
         self.window_padding_color
             .format_entry(&mut EntryFormatter::new("window-padding-color", out));
         self.window_subtitle
@@ -843,6 +848,13 @@ impl Config {
             "window-padding-y" => {
                 self.window_padding_y =
                     set_value_field(value, default.window_padding_y, WindowPadding::parse_cli)?
+            }
+            "window-padding-balance" => {
+                self.window_padding_balance = set_enum_field(
+                    value,
+                    default.window_padding_balance,
+                    WindowPaddingBalance::from_keyword,
+                )?
             }
             "macos-non-native-fullscreen" => {
                 self.macos_non_native_fullscreen = set_enum_field(
@@ -4292,6 +4304,45 @@ impl AlphaBlending {
     }
 }
 
+/// How extra whitespace around the terminal grid is distributed (upstream
+/// `renderer.size.PaddingBalance`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum WindowPaddingBalance {
+    /// No balancing; padding is applied as specified explicitly.
+    False,
+    /// Balance padding with a cap on top padding.
+    True,
+    /// Balance padding equally on all sides.
+    Equal,
+}
+
+impl WindowPaddingBalance {
+    /// The config keyword (upstream tag name).
+    pub(crate) fn keyword(self) -> &'static str {
+        match self {
+            WindowPaddingBalance::False => "false",
+            WindowPaddingBalance::True => "true",
+            WindowPaddingBalance::Equal => "equal",
+        }
+    }
+
+    /// Parse the config keyword (upstream `std.meta.stringToEnum`): an exact tag
+    /// match, else `None`.
+    pub(crate) fn from_keyword(value: &str) -> Option<Self> {
+        match value {
+            "false" => Some(WindowPaddingBalance::False),
+            "true" => Some(WindowPaddingBalance::True),
+            "equal" => Some(WindowPaddingBalance::Equal),
+            _ => None,
+        }
+    }
+
+    /// Format this value as a config entry (upstream's generic enum branch).
+    pub(crate) fn format_entry(self, formatter: &mut EntryFormatter) {
+        formatter.entry_str(self.keyword());
+    }
+}
+
 /// How the window padding around the grid is colored (upstream
 /// `WindowPaddingColor`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -5202,8 +5253,9 @@ mod tests {
         SelectionWordCharsParseError, ShellIntegration, ShellIntegrationFeatures,
         SplitPreserveZoom, TerminalBoldColor, TerminalColor, Theme, ThemeParseError,
         WindowColorspace, WindowDecoration, WindowDecorationParseError, WindowPadding,
-        WindowPaddingColor, WindowPaddingParseError, WindowSaveState, WindowSubtitle, WindowTheme,
-        WorkingDirectory, WorkingDirectoryParseError, NS_PER_MS, NS_PER_S,
+        WindowPaddingBalance, WindowPaddingColor, WindowPaddingParseError, WindowSaveState,
+        WindowSubtitle, WindowTheme, WorkingDirectory, WorkingDirectoryParseError, NS_PER_MS,
+        NS_PER_S,
     };
     use crate::terminal::color::Rgb;
     use crate::terminal::cursor;
@@ -5470,6 +5522,7 @@ mod tests {
                 bottom_right: 2
             }
         );
+        assert_eq!(d.window_padding_balance, WindowPaddingBalance::False);
         assert_eq!(d.window_padding_color, WindowPaddingColor::Background);
         assert_eq!(d.background_opacity, 1.0);
         // Opacity options (Experiment 848): upstream defaults false / 0.5.
@@ -9380,6 +9433,7 @@ mod tests {
                 "working-directory",
                 "window-padding-x",
                 "window-padding-y",
+                "window-padding-balance",
                 "window-padding-color",
                 "window-subtitle",
                 "window-decoration",
@@ -11474,6 +11528,72 @@ mod tests {
     }
 
     #[test]
+    fn window_padding_balance_config_parse_format_reset_and_diagnose() {
+        let line = |cfg: &Config, key: &str| -> String {
+            let mut out = String::new();
+            cfg.format_config(&mut out);
+            out.lines()
+                .find(|l| l.starts_with(&format!("{} = ", key)))
+                .unwrap()
+                .to_string()
+        };
+
+        let mut cfg = Config::default();
+        assert_eq!(cfg.window_padding_balance, WindowPaddingBalance::False);
+        assert_eq!(
+            line(&cfg, "window-padding-balance"),
+            "window-padding-balance = false"
+        );
+
+        for (value, expected) in [
+            ("false", WindowPaddingBalance::False),
+            ("true", WindowPaddingBalance::True),
+            ("equal", WindowPaddingBalance::Equal),
+        ] {
+            cfg.set("window-padding-balance", Some(value)).unwrap();
+            assert_eq!(cfg.window_padding_balance, expected);
+            assert_eq!(
+                line(&cfg, "window-padding-balance"),
+                format!("window-padding-balance = {}", value)
+            );
+        }
+
+        cfg.set("window-padding-balance", Some("")).unwrap();
+        assert_eq!(cfg.window_padding_balance, WindowPaddingBalance::False);
+
+        assert_eq!(
+            cfg.set("window-padding-balance", None),
+            Err(ConfigSetError::ValueRequired)
+        );
+        assert_eq!(
+            cfg.set("window-padding-balance", Some("1")),
+            Err(ConfigSetError::InvalidValue)
+        );
+        assert_eq!(
+            cfg.set("window-padding-balance", Some("maybe")),
+            Err(ConfigSetError::InvalidValue)
+        );
+
+        let diagnostics = cfg.load_str(
+            "window-padding-balance = true\nwindow-padding-balance = maybe\nwindow-padding-color = extend\n",
+        );
+        assert_eq!(cfg.window_padding_balance, WindowPaddingBalance::True);
+        assert_eq!(cfg.window_padding_color, WindowPaddingColor::Extend);
+        assert_eq!(
+            diagnostics,
+            vec![ConfigDiagnostic {
+                line: 2,
+                key: "window-padding-balance".to_string(),
+                error: ConfigSetError::InvalidValue,
+            }]
+        );
+
+        let cloned = cfg.clone();
+        assert_eq!(cloned, cfg);
+        assert_eq!(cloned.window_padding_balance, WindowPaddingBalance::True);
+    }
+
+    #[test]
     fn config_window_position_routes_optional_i16_fields() {
         let line = |cfg: &Config, key: &str| -> String {
             let mut out = String::new();
@@ -11690,6 +11810,15 @@ mod tests {
             assert_eq!(WindowSubtitle::from_keyword(v.keyword()), Some(v));
         }
         assert_eq!(WindowSubtitle::from_keyword("nope"), None);
+
+        for v in [
+            WindowPaddingBalance::False,
+            WindowPaddingBalance::True,
+            WindowPaddingBalance::Equal,
+        ] {
+            assert_eq!(WindowPaddingBalance::from_keyword(v.keyword()), Some(v));
+        }
+        assert_eq!(WindowPaddingBalance::from_keyword("nope"), None);
 
         for v in [
             WindowPaddingColor::Background,
