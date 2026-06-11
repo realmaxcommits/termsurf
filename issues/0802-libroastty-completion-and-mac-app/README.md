@@ -361,6 +361,12 @@ the earlier "commit a small baseline PNG set" wording in Exp 2.
   tables, non-macOS defaults, global/all app routing, `roastty_app_key`, native
   keymaps, command-palette catalog data, and the remaining upstream default
   bindings remain later work.
+- **App-level global key dispatch is wired for configured single-key bindings.**
+  Exp 113 makes `roastty_app_key` match configured `global:` keybinds, consume
+  matched captures, dispatch app-scoped actions once, and fan out surface-scoped
+  actions to live app surfaces. Plain `all:` remains surface-key-path behavior;
+  native keymaps, keyboard-layout reload, sequences/chords, key tables, default
+  global bindings, and full app action coverage remain later work.
 
 **Keep this current.** When an experiment yields a durable, reusable fact — a
 toolchain incantation, a dead-end to avoid, or where an artifact lives — distill
@@ -734,8 +740,9 @@ the live app, verified by a Phase-D UI test.)
 - [ ] Multi-key sequences / chords (the trie), leader keys, key tables
 - [ ] Trigger-prefix flags (`global:` / `all:` / `unconsumed:` / `performable:`)
       — parser/storage/query metadata and surface unconsumed/performable
-      consumption are wired (Exp 110–111), but runtime global/all app routing
-      remains later work
+      consumption are wired (Exp 110–111), and configured `global:` app-key
+      dispatch is wired (Exp 113), but native global shortcut registration and
+      broader global/all routing remain later work
 - [ ] The full action set + the default-bindings data table + reverse
       action→trigger mapping — the macOS single-key table foundation and reverse
       lookup are wired for currently supported actions (Exp 112), but the full
@@ -743,9 +750,10 @@ the live app, verified by a Phase-D UI test.)
 - [ ] Command-palette catalog (`command.zig`)
 - [ ] Native keymaps (`keycodes`, `KeymapDarwin`) + app-level key handling —
       `RemapSet`/`Mask`, the `key-remap` config field, and surface runtime
-      key-remap application are wired (Exp 107–109), but native keymaps,
-      app-scoped `roastty_app_key`, and full upstream keybinding tables remain
-      later work
+      key-remap application are wired (Exp 107–109), and configured `global:`
+      `roastty_app_key` dispatch is wired (Exp 113), but native keymaps,
+      keyboard-layout reload, and full upstream keybinding tables remain later
+      work
 
 **Phase H — Renderer feature-completion (in the live pass)**
 
@@ -1082,7 +1090,7 @@ stays unaltered except for the rename).
 - [Experiment 112: Phase G — default binding table foundation](112-default-binding-table-foundation.md)
   — **Pass**
 - [Experiment 113: Phase G — app key global binding dispatch](113-app-key-global-binding-dispatch.md)
-  — **Designed**
+  — **Pass**
 
 ## Process
 

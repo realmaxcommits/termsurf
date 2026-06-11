@@ -87,3 +87,69 @@ Re-review verdict: **Approved.** The reviewer reported no remaining required
 findings and confirmed the revised design matches upstream's split: app-key
 dispatch is limited to `global:` bindings, while plain `all:` fanout belongs to
 the surface-key path.
+
+## Result
+
+**Result:** Pass.
+
+Implemented `roastty_app_key` for configured `global:` bindings. The app path
+now matches only global keybinds, consumes matched global captures, dispatches
+app-scoped runtime actions once to the app target, and fans out surface-scoped
+actions across live surfaces registered to the app. Plain `all:` bindings remain
+surface-key-only behavior, matching upstream's split between `App.keyEvent` and
+`Surface.maybeHandleBinding`.
+
+The implementation skips stale surface registrations whose `surface.app` no
+longer matches the app handle, keeps `roastty_surface_key` unchanged, and uses
+the current app config after `roastty_app_update_config`.
+
+Verification:
+
+- `cargo test -p roastty app_key` — passed: 5 unit tests, ABI harness filtered
+  out.
+- `cargo test -p roastty app_has_global_keybinds` — passed: 2 unit tests, ABI
+  harness filtered out.
+- `cargo test -p roastty surface_key_configured_global_all_consume_even_when_unconsumed`
+  — passed.
+- `cargo test -p roastty --test abi_harness` — passed with the existing 10
+  enum-conversion warnings from the C harness.
+- First `cargo test -p roastty -- --test-threads=1` run passed the new app-key
+  tests but failed the existing
+  `surface_mouse_button_reporting_honors_surface_mouse_reporting_gate` test. The
+  failing test passed immediately when rerun in isolation.
+- Second `cargo test -p roastty -- --test-threads=1` run passed: 4,630 unit
+  tests, the ABI harness, and doc tests.
+
+## Conclusion
+
+The copied app can now hand platform global-key captures to `roastty_app_key`
+and have configured `global:` bindings perform through Roastty instead of always
+falling back to the app. This closes the first app-level key-dispatch gap while
+leaving the larger Phase G items intact: native keymaps, keyboard-layout reload,
+multi-key sequences/chords, key tables, default global bindings, full app action
+coverage, and plain `all:` surface-path fanout beyond the existing surface
+consumption behavior.
+
+## Completion Review
+
+Codex-native adversarial review ran in a fresh-context subagent
+(`multi_agent_v1.spawn_agent`, agent `019eb703-2a9a-7793-a449-2956adf56e94`).
+
+Verdict: **Approved.** The reviewer reported no findings.
+
+Evidence checked by the reviewer:
+
+- the result commit had not been made before review;
+- the issue README marks Experiment 113 as Pass;
+- this experiment has Result and Conclusion sections;
+- `roastty_app_key` matches only configured `global:` bindings;
+- plain `all:` is negative-tested for the app-key path;
+- app actions dispatch once, surface actions fan out to live app-owned surfaces,
+  stale detached surfaces are skipped, and app config update replaces the
+  keybind list;
+- `roastty_surface_key` behavior remains unchanged.
+
+The reviewer independently verified `cargo fmt --check`, `git diff --check`, the
+Prettier check for the touched markdown files, the targeted Exp113 tests, the
+ABI harness, and the full serial `cargo test -p roastty -- --test-threads=1`
+gate.
