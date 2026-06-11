@@ -889,6 +889,8 @@ stays unaltered except for the rename).
   **Pass**
 - [Experiment 88: Phase F — bell features config](88-bell-features-config.md) —
   **Pass**
+- [Experiment 89: Phase F — app notifications config](89-app-notifications-config.md)
+  — **Designed**
 
 ## Process
 
