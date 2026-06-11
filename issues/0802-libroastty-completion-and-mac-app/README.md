@@ -840,6 +840,8 @@ stays unaltered except for the rename).
   — **Pass**
 - [Experiment 81: Phase F — quick terminal size config](81-quick-terminal-size-config.md)
   — **Pass**
+- [Experiment 82: Phase F — GTK quick terminal config](82-gtk-quick-terminal-config.md)
+  — **Designed**
 
 ## Process
 
