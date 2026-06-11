@@ -281,6 +281,14 @@ pub(crate) struct Config {
     pub macos_icon_screen_color: Option<ColorList>,
     /// `macos-shortcuts`.
     pub macos_shortcuts: MacShortcuts,
+    /// `linux-cgroup`.
+    pub linux_cgroup: LinuxCgroup,
+    /// `linux-cgroup-memory-limit`.
+    pub linux_cgroup_memory_limit: Option<u64>,
+    /// `linux-cgroup-processes-limit`.
+    pub linux_cgroup_processes_limit: Option<u64>,
+    /// `linux-cgroup-hard-fail`.
+    pub linux_cgroup_hard_fail: bool,
     /// `font-family`.
     pub font_family: RepeatableString,
     /// `font-family-bold`.
@@ -482,6 +490,14 @@ impl Default for Config {
             macos_icon_ghost_color: None,
             macos_icon_screen_color: None,
             macos_shortcuts: MacShortcuts::Ask,
+            linux_cgroup: if cfg!(target_os = "linux") {
+                LinuxCgroup::SingleInstance
+            } else {
+                LinuxCgroup::Never
+            },
+            linux_cgroup_memory_limit: None,
+            linux_cgroup_processes_limit: None,
+            linux_cgroup_hard_fail: false,
             font_family: RepeatableString::default(),
             font_family_bold: RepeatableString::default(),
             font_family_italic: RepeatableString::default(),
@@ -811,6 +827,13 @@ impl Config {
             });
         self.macos_shortcuts
             .format_entry(&mut EntryFormatter::new("macos-shortcuts", out));
+        self.linux_cgroup
+            .format_entry(&mut EntryFormatter::new("linux-cgroup", out));
+        EntryFormatter::new("linux-cgroup-memory-limit", out)
+            .entry_optional(self.linux_cgroup_memory_limit, |v, f| f.entry_int(v));
+        EntryFormatter::new("linux-cgroup-processes-limit", out)
+            .entry_optional(self.linux_cgroup_processes_limit, |v, f| f.entry_int(v));
+        EntryFormatter::new("linux-cgroup-hard-fail", out).entry_bool(self.linux_cgroup_hard_fail);
         EntryFormatter::new("bold-color", out)
             .entry_optional(self.bold_color, |v, f| v.format_entry(f));
         EntryFormatter::new("faint-opacity", out).entry_float(self.faint_opacity);
@@ -1296,6 +1319,27 @@ impl Config {
             "macos-shortcuts" => {
                 self.macos_shortcuts =
                     set_enum_field(value, default.macos_shortcuts, MacShortcuts::from_keyword)?
+            }
+            "linux-cgroup" => {
+                self.linux_cgroup =
+                    set_enum_field(value, default.linux_cgroup, LinuxCgroup::from_keyword)?
+            }
+            "linux-cgroup-memory-limit" => {
+                self.linux_cgroup_memory_limit = set_optional_value_field(
+                    value,
+                    default.linux_cgroup_memory_limit,
+                    parse_u64_scalar_field,
+                )?
+            }
+            "linux-cgroup-processes-limit" => {
+                self.linux_cgroup_processes_limit = set_optional_value_field(
+                    value,
+                    default.linux_cgroup_processes_limit,
+                    parse_u64_scalar_field,
+                )?
+            }
+            "linux-cgroup-hard-fail" => {
+                self.linux_cgroup_hard_fail = set_bool_field(value, default.linux_cgroup_hard_fail)?
             }
             "grapheme-width-method" => {
                 self.grapheme_width_method = set_enum_field(
@@ -3197,6 +3241,11 @@ fn parse_usize_scalar_field(value: Option<&str>) -> Result<usize, MagicParseErro
     parse_uint(value, 0, usize::MAX as u64)
         .map(|v| v as usize)
         .map_err(|_| MagicParseError::InvalidValue)
+}
+
+fn parse_u64_scalar_field(value: Option<&str>) -> Result<u64, MagicParseError> {
+    let value = value.ok_or(MagicParseError::ValueRequired)?;
+    parse_uint(value, 0, u64::MAX).map_err(|_| MagicParseError::InvalidValue)
 }
 
 /// An error parsing `WindowDecoration` (upstream `error.InvalidValue`).
@@ -5158,6 +5207,43 @@ impl MacShortcuts {
     }
 }
 
+/// The `linux-cgroup` config (upstream `LinuxCgroup`): whether surfaces should
+/// be placed into transient `systemd` scopes. Runtime scope creation is ported
+/// later.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum LinuxCgroup {
+    Never,
+    Always,
+    SingleInstance,
+}
+
+impl LinuxCgroup {
+    /// The config keyword (upstream tag name).
+    pub(crate) fn keyword(self) -> &'static str {
+        match self {
+            LinuxCgroup::Never => "never",
+            LinuxCgroup::Always => "always",
+            LinuxCgroup::SingleInstance => "single-instance",
+        }
+    }
+
+    /// Parse the config keyword (upstream `std.meta.stringToEnum`): an exact tag
+    /// match, else `None`.
+    pub(crate) fn from_keyword(value: &str) -> Option<Self> {
+        match value {
+            "never" => Some(LinuxCgroup::Never),
+            "always" => Some(LinuxCgroup::Always),
+            "single-instance" => Some(LinuxCgroup::SingleInstance),
+            _ => None,
+        }
+    }
+
+    /// Format as a config entry (upstream's enum branch): the keyword.
+    pub(crate) fn format_entry(self, formatter: &mut EntryFormatter) {
+        formatter.entry_str(self.keyword());
+    }
+}
+
 /// An error parsing a `Theme` (upstream `parseAutoStruct` / `Theme.parseCLI`
 /// `error.InvalidValue`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -6817,7 +6903,7 @@ mod tests {
         ConfigFilePath, ConfigRecursiveFileErrorKind, ConfigSetError, ConfirmCloseSurface,
         CopyOnSelect, CursorStyle, CustomShaderAnimation, DefaultConfigPaths, Duration,
         DurationParseError, FlagsParseError, FontShapingBreak, FontStyle, FontStyleParseError,
-        FontSyntheticStyle, Fullscreen, GraphemeWidthMethod, LinkPreviews, MacAppIcon,
+        FontSyntheticStyle, Fullscreen, GraphemeWidthMethod, LinkPreviews, LinuxCgroup, MacAppIcon,
         MacAppIconFrame, MacHidden, MacShortcuts, MacTitlebarProxyIcon, MacTitlebarStyle,
         MacWindowButtons, MagicParseError, MiddleClickAction, MouseScrollMultiplier,
         MouseScrollMultiplierParseError, MouseShiftCapture, NonNativeFullscreen,
@@ -7182,6 +7268,17 @@ mod tests {
         assert_eq!(d.macos_icon_ghost_color, None);
         assert_eq!(d.macos_icon_screen_color, None);
         assert_eq!(d.macos_shortcuts, MacShortcuts::Ask);
+        assert_eq!(
+            d.linux_cgroup,
+            if cfg!(target_os = "linux") {
+                LinuxCgroup::SingleInstance
+            } else {
+                LinuxCgroup::Never
+            }
+        );
+        assert_eq!(d.linux_cgroup_memory_limit, None);
+        assert_eq!(d.linux_cgroup_processes_limit, None);
+        assert!(!d.linux_cgroup_hard_fail);
         // Font group (Experiment 470).
         assert_eq!(d.font_style, FontStyle::Default);
         assert_eq!(d.font_style_bold, FontStyle::Default);
@@ -9095,6 +9192,130 @@ mod tests {
             }]
         );
         assert_eq!(cfg.macos_shortcuts, MacShortcuts::Deny);
+
+        let cloned = cfg.clone();
+        assert_eq!(cloned, cfg);
+    }
+
+    #[test]
+    fn linux_cgroup_config_parse_format_reset_and_diagnose() {
+        let mut cfg = Config::default();
+        let default_cgroup = if cfg!(target_os = "linux") {
+            LinuxCgroup::SingleInstance
+        } else {
+            LinuxCgroup::Never
+        };
+        assert_eq!(cfg.linux_cgroup, default_cgroup);
+        assert_eq!(cfg.linux_cgroup_memory_limit, None);
+        assert_eq!(cfg.linux_cgroup_processes_limit, None);
+        assert!(!cfg.linux_cgroup_hard_fail);
+
+        let lines = |cfg: &Config| {
+            let mut out = String::new();
+            cfg.format_config(&mut out);
+            [
+                "linux-cgroup",
+                "linux-cgroup-memory-limit",
+                "linux-cgroup-processes-limit",
+                "linux-cgroup-hard-fail",
+            ]
+            .into_iter()
+            .map(|key| {
+                out.lines()
+                    .find(|line| line.starts_with(&format!("{key} = ")))
+                    .unwrap()
+                    .to_string()
+            })
+            .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            lines(&cfg),
+            vec![
+                format!("linux-cgroup = {}", default_cgroup.keyword()),
+                "linux-cgroup-memory-limit = ".to_string(),
+                "linux-cgroup-processes-limit = ".to_string(),
+                "linux-cgroup-hard-fail = false".to_string(),
+            ]
+        );
+
+        for (variant, keyword) in [
+            (LinuxCgroup::Never, "never"),
+            (LinuxCgroup::Always, "always"),
+            (LinuxCgroup::SingleInstance, "single-instance"),
+        ] {
+            cfg.set("linux-cgroup", Some(keyword)).unwrap();
+            assert_eq!(cfg.linux_cgroup, variant);
+            assert_eq!(lines(&cfg)[0], format!("linux-cgroup = {keyword}"));
+        }
+        cfg.set("linux-cgroup", Some("")).unwrap();
+        assert_eq!(cfg.linux_cgroup, default_cgroup);
+        assert_eq!(
+            cfg.set("linux-cgroup", None),
+            Err(ConfigSetError::ValueRequired)
+        );
+        assert_eq!(
+            cfg.set("linux-cgroup", Some("single_instance")),
+            Err(ConfigSetError::InvalidValue)
+        );
+
+        cfg.set("linux-cgroup-memory-limit", Some("4096")).unwrap();
+        cfg.set("linux-cgroup-processes-limit", Some("0xff"))
+            .unwrap();
+        assert_eq!(cfg.linux_cgroup_memory_limit, Some(4096));
+        assert_eq!(cfg.linux_cgroup_processes_limit, Some(255));
+        assert_eq!(lines(&cfg)[1], "linux-cgroup-memory-limit = 4096");
+        assert_eq!(lines(&cfg)[2], "linux-cgroup-processes-limit = 255");
+
+        cfg.set("linux-cgroup-memory-limit", Some("")).unwrap();
+        cfg.set("linux-cgroup-processes-limit", Some("")).unwrap();
+        assert_eq!(cfg.linux_cgroup_memory_limit, None);
+        assert_eq!(cfg.linux_cgroup_processes_limit, None);
+        assert_eq!(
+            cfg.set("linux-cgroup-memory-limit", None),
+            Err(ConfigSetError::ValueRequired)
+        );
+        assert_eq!(
+            cfg.set("linux-cgroup-processes-limit", Some("-1")),
+            Err(ConfigSetError::InvalidValue)
+        );
+        assert_eq!(
+            cfg.set("linux-cgroup-memory-limit", Some("18446744073709551616")),
+            Err(ConfigSetError::InvalidValue)
+        );
+
+        cfg.set("linux-cgroup-hard-fail", None).unwrap();
+        assert!(cfg.linux_cgroup_hard_fail);
+        assert_eq!(lines(&cfg)[3], "linux-cgroup-hard-fail = true");
+        cfg.set("linux-cgroup-hard-fail", Some("")).unwrap();
+        assert!(!cfg.linux_cgroup_hard_fail);
+        assert_eq!(
+            cfg.set("linux-cgroup-hard-fail", Some("maybe")),
+            Err(ConfigSetError::InvalidValue)
+        );
+
+        let diagnostics = cfg.load_str(
+            "linux-cgroup = always\n\
+             linux-cgroup-memory-limit\n\
+             linux-cgroup-processes-limit = nope\n\
+             linux-cgroup-hard-fail = true\n",
+        );
+        assert_eq!(
+            diagnostics,
+            vec![
+                ConfigDiagnostic {
+                    line: 2,
+                    key: "linux-cgroup-memory-limit".to_string(),
+                    error: ConfigSetError::ValueRequired,
+                },
+                ConfigDiagnostic {
+                    line: 3,
+                    key: "linux-cgroup-processes-limit".to_string(),
+                    error: ConfigSetError::InvalidValue,
+                },
+            ]
+        );
+        assert_eq!(cfg.linux_cgroup, LinuxCgroup::Always);
+        assert!(cfg.linux_cgroup_hard_fail);
 
         let cloned = cfg.clone();
         assert_eq!(cloned, cfg);
@@ -11735,6 +11956,10 @@ mod tests {
             "macos-icon-ghost-color",
             "macos-icon-screen-color",
             "macos-shortcuts",
+            "linux-cgroup",
+            "linux-cgroup-memory-limit",
+            "linux-cgroup-processes-limit",
+            "linux-cgroup-hard-fail",
             "bold-color",
             "faint-opacity",
         ]);
@@ -12696,6 +12921,7 @@ mod tests {
             ("macos-icon", "custom-style"),
             ("macos-icon-frame", "chrome"),
             ("macos-shortcuts", "deny"),
+            ("linux-cgroup", "always"),
             ("grapheme-width-method", "legacy"),
             ("osc-color-report-format", "8-bit"),
             ("custom-shader-animation", "always"),
@@ -16249,6 +16475,16 @@ mod tests {
         }
         assert_eq!(MacShortcuts::from_keyword("prompt"), None);
         assert_eq!(MacShortcuts::from_keyword("nope"), None);
+
+        for v in [
+            LinuxCgroup::Never,
+            LinuxCgroup::Always,
+            LinuxCgroup::SingleInstance,
+        ] {
+            assert_eq!(LinuxCgroup::from_keyword(v.keyword()), Some(v));
+        }
+        assert_eq!(LinuxCgroup::from_keyword("single_instance"), None);
+        assert_eq!(LinuxCgroup::from_keyword("nope"), None);
 
         for v in [
             BackgroundImageFit::Contain,

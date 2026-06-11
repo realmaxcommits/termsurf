@@ -243,6 +243,12 @@ the earlier "commit a small baseline PNG set" wording in Exp 2.
   `ask`, empty reset, missing/invalid diagnostics, and canonical formatter
   output; runtime Shortcuts authorization, action dispatch, app C ABI exposure,
   and macOS app integration remain later work.
+- **Linux cgroup config is parser/formatter-only.** Exp 92 wires `linux-cgroup`,
+  `linux-cgroup-memory-limit`, `linux-cgroup-processes-limit`, and
+  `linux-cgroup-hard-fail` with upstream defaults, base-0 optional `u64`
+  parsing, empty reset, diagnostics, and canonical formatter output; runtime
+  transient `systemd` scope creation, resource-limit application, app C ABI
+  exposure, and Linux app integration remain later work.
 
 **Keep this current.** When an experiment yields a durable, reusable fact — a
 toolchain incantation, a dead-end to avoid, or where an artifact lives — distill
@@ -914,7 +920,7 @@ stays unaltered except for the rename).
 - [Experiment 91: Phase F — macOS Shortcuts config](91-macos-shortcuts-config.md)
   — **Pass**
 - [Experiment 92: Phase F — Linux cgroup config](92-linux-cgroup-config.md) —
-  **Designed**
+  **Pass**
 
 ## Process
 
