@@ -4765,15 +4765,54 @@ int main(int argc, char **argv) {
   cli_surface = roastty_surface_new(cli_app, &sequence_surface_config);
   assert(cli_surface != NULL);
   cli_binding_flags = 0xff;
-  assert(!roastty_surface_key_is_binding_handle(cli_surface, cli_binding_event,
-                                                &cli_binding_flags));
+  assert(roastty_surface_key_is_binding_handle(cli_surface, cli_binding_event,
+                                               &cli_binding_flags));
   assert(cli_binding_flags == 0);
   roastty_app_update_config(cli_app, sequence_config);
-  assert(!roastty_surface_key_is_binding_handle(cli_surface, cli_binding_event,
-                                                NULL));
+  assert(roastty_surface_key_is_binding_handle(cli_surface, cli_binding_event,
+                                               NULL));
   roastty_surface_free(cli_surface);
   roastty_app_free(cli_app);
   roastty_key_event_free(cli_binding_event);
+
+  cli_app = roastty_app_new(&runtime, sequence_config);
+  assert(cli_app != NULL);
+  roastty_surface_config_s sequence_runtime_surface_config =
+      roastty_surface_config_new();
+  cli_surface = roastty_surface_new(cli_app, &sequence_runtime_surface_config);
+  assert(cli_surface != NULL);
+  assert(roastty_key_event_new(&cli_binding_event) == ROASTTY_SUCCESS);
+  action_cb_result = true;
+  action_cb_count = 0;
+  set_config_binding_event(cli_binding_event, ROASTTY_KEY_ACTION_PRESS,
+                           ROASTTY_KEY_UNIDENTIFIED, ROASTTY_MODS_CTRL, "a",
+                           0);
+  assert(roastty_surface_key_handle(cli_surface, cli_binding_event));
+  assert(action_cb_count == 1);
+  assert(action_last_action.tag == ROASTTY_ACTION_KEY_SEQUENCE);
+  assert(action_last_action.action.key_sequence.active);
+  assert(action_last_action.action.key_sequence.trigger.tag ==
+         ROASTTY_TRIGGER_UNICODE);
+  assert(action_last_action.action.key_sequence.trigger.key.unicode == 'a');
+  assert(action_last_action.action.key_sequence.trigger.mods ==
+         ROASTTY_MODS_CTRL);
+
+  set_config_binding_event(cli_binding_event, ROASTTY_KEY_ACTION_PRESS,
+                           ROASTTY_KEY_UNIDENTIFIED, ROASTTY_MODS_NONE, "n",
+                           0);
+  assert(roastty_surface_key_handle(cli_surface, cli_binding_event));
+  assert(action_cb_count == 2);
+  assert(action_last_action.tag == ROASTTY_ACTION_KEY_SEQUENCE);
+  assert(!action_last_action.action.key_sequence.active);
+  assert(action_last_action.action.key_sequence.trigger.tag ==
+         ROASTTY_TRIGGER_PHYSICAL);
+  assert(action_last_action.action.key_sequence.trigger.key.physical ==
+         ROASTTY_KEY_UNIDENTIFIED);
+  assert(action_last_action.action.key_sequence.trigger.mods ==
+         ROASTTY_MODS_NONE);
+  roastty_key_event_free(cli_binding_event);
+  roastty_surface_free(cli_surface);
+  roastty_app_free(cli_app);
   roastty_config_free(sequence_config);
 
   char malformed_flag[] = "--keybind";

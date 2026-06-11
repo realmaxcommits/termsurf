@@ -125,3 +125,52 @@ sequence neither advancing, clearing, nor flushing the sequence.
 
 The reviewer confirmed that the prior required finding was resolved and that the
 issue README still links Experiment 119 as `Designed`.
+
+## Result
+
+**Result:** Pass
+
+Implemented the configured surface key-sequence runtime for root keybindings.
+Sequence leaders now start or advance an active sequence, queue leader-key
+bytes, emit `ROASTTY_ACTION_KEY_SEQUENCE` active notifications, and delay leaf
+action dispatch until the final key. Matching leaf actions end the sequence with
+an inactive notification and either drop or flush the queued leader bytes
+according to whether the leaf action consumed the event. Invalid non-modifier
+keys flush the queued prefix and then encode the current key normally. Release
+events and modifier-only events do not advance or clear the active sequence.
+
+The C ABI now exposes the typed `key_sequence` action payload through
+`roastty_action_u`, and the ABI harness verifies both active and inactive
+notifications. Key-table sequences and `roastty_app_key` sequence handling
+remain stored but inert, as planned.
+
+Verification passed:
+
+- `cargo test -p roastty sequence` — 31 passed
+- `cargo test -p roastty parse_config_keybind` — 16 passed
+- `cargo test -p roastty key_table` — 14 passed
+- `cargo test -p roastty surface_key` — 68 passed
+- `cargo test -p roastty app_key` — 12 passed
+- `cargo test -p roastty --test abi_harness` — 1 passed, with existing enum
+  conversion warnings in the C harness
+- `cargo test -p roastty -- --test-threads=1` — 4,671 unit tests passed, plus
+  the ABI harness and doc tests
+- `cargo fmt`
+- `cargo fmt --check`
+- `git diff --check`
+
+## Conclusion
+
+Configured root key sequences now behave like upstream's sequence runtime for
+the bounded surface-key path needed by Phase G. The remaining sequence work is
+the deliberately deferred integration with key-table sequence lookup, including
+active table stack behavior and one-shot table popping.
+
+## Completion Review
+
+**Reviewer:** Codex-native adversarial reviewer, fresh context
+(`multi_agent_v1.spawn_agent`, agent `019eb787-7250-7832-841a-e893601af5c1`)
+
+**Verdict:** Approved
+
+**Findings:** None.
