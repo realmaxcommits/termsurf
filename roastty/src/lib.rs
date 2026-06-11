@@ -1916,7 +1916,6 @@ enum AppKeyConfiguredAction {
 enum AppKeyActionScope {
     App,
     Surface,
-    Unsupported,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -2467,8 +2466,6 @@ impl App {
                 ROASTTY_ACTION_NEW_WINDOW | ROASTTY_ACTION_UNDO | ROASTTY_ACTION_REDO,
                 _,
             ) => AppKeyActionScope::App,
-            action if action.is_key_table_action() => AppKeyActionScope::Unsupported,
-            ParsedBindingAction::EndKeySequence => AppKeyActionScope::Unsupported,
             _ => AppKeyActionScope::Surface,
         }
     }
@@ -2478,7 +2475,6 @@ impl App {
         match Self::app_key_action_scope(&parsed) {
             AppKeyActionScope::App => Some(AppKeyConfiguredAction::App(parsed)),
             AppKeyActionScope::Surface => Some(AppKeyConfiguredAction::Surface(action)),
-            AppKeyActionScope::Unsupported => None,
         }
     }
 
@@ -6250,15 +6246,6 @@ enum ParsedBindingAction {
 }
 
 impl ParsedBindingAction {
-    fn is_key_table_action(&self) -> bool {
-        matches!(
-            self,
-            ParsedBindingAction::ActivateKeyTable(_, _)
-                | ParsedBindingAction::DeactivateKeyTable
-                | ParsedBindingAction::DeactivateAllKeyTables
-        )
-    }
-
     fn canonical_config_string(&self) -> String {
         match self {
             ParsedBindingAction::RuntimeAction(tag, storage)
@@ -21667,11 +21654,165 @@ mod tests {
     }
 
     #[test]
-    fn app_key_ignores_key_table_actions_for_now() {
+    fn app_key_global_key_table_actions_fan_out_to_live_surfaces() {
         let config =
             new_test_config_with_keybind_entries(&[b"global:x=activate_key_table:nav", b"nav/"]);
         let app = new_test_app_with_action_config(true, config);
+        let first = new_test_surface(app);
+        let second = new_test_surface(app);
+
+        assert!(roastty_app_key(app, input_key_press_x(ROASTTY_MODS_NONE)));
+
+        for surface in [first, second] {
+            assert_eq!(
+                surface_from_handle(surface).unwrap().active_key_tables,
+                vec![ActiveKeyTable {
+                    name: b"nav".to_vec(),
+                    once: false,
+                }]
+            );
+        }
+        let records = action_records();
+        assert_eq!(records.len(), 2);
+        assert_eq!(records[0].surface, first);
+        assert_eq!(
+            records[0].key_table,
+            Some((ROASTTY_KEY_TABLE_ACTIVATE, b"nav".to_vec()))
+        );
+        assert_eq!(records[1].surface, second);
+        assert_eq!(
+            records[1].key_table,
+            Some((ROASTTY_KEY_TABLE_ACTIVATE, b"nav".to_vec()))
+        );
+
+        roastty_surface_free(first);
+        roastty_surface_free(second);
+        roastty_app_free(app);
+        roastty_config_free(config);
+    }
+
+    #[test]
+    fn app_key_global_key_table_once_marks_live_surfaces_once() {
+        let config = new_test_config_with_keybind_entries(&[
+            b"global:x=activate_key_table_once:nav",
+            b"nav/",
+        ]);
+        let app = new_test_app_with_action_config(true, config);
         let surface = new_test_surface(app);
+
+        assert!(roastty_app_key(app, input_key_press_x(ROASTTY_MODS_NONE)));
+        assert_eq!(
+            surface_from_handle(surface).unwrap().active_key_tables,
+            vec![ActiveKeyTable {
+                name: b"nav".to_vec(),
+                once: true,
+            }]
+        );
+        assert_eq!(
+            action_records()[0].key_table,
+            Some((ROASTTY_KEY_TABLE_ACTIVATE, b"nav".to_vec()))
+        );
+
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+        roastty_config_free(config);
+    }
+
+    #[test]
+    fn app_key_global_key_table_deactivation_fans_out_to_live_surfaces() {
+        let config = new_test_config_with_keybind_entries(&[
+            b"global:x=deactivate_key_table",
+            b"nav/",
+            b"aux/",
+        ]);
+        let app = new_test_app_with_action_config(true, config);
+        let first = new_test_surface(app);
+        let second = new_test_surface(app);
+        for surface in [first, second] {
+            assert!(surface_binding_action(surface, b"activate_key_table:nav"));
+            assert!(surface_binding_action(surface, b"activate_key_table:aux"));
+        }
+
+        reset_action_records(true);
+        assert!(roastty_app_key(app, input_key_press_x(ROASTTY_MODS_NONE)));
+
+        for surface in [first, second] {
+            assert_eq!(
+                surface_from_handle(surface).unwrap().active_key_tables,
+                vec![ActiveKeyTable {
+                    name: b"nav".to_vec(),
+                    once: false,
+                }]
+            );
+        }
+        let records = action_records();
+        assert_eq!(records.len(), 2);
+        assert_eq!(records[0].surface, first);
+        assert_eq!(
+            records[0].key_table,
+            Some((ROASTTY_KEY_TABLE_DEACTIVATE, Vec::new()))
+        );
+        assert_eq!(records[1].surface, second);
+        assert_eq!(
+            records[1].key_table,
+            Some((ROASTTY_KEY_TABLE_DEACTIVATE, Vec::new()))
+        );
+
+        roastty_surface_free(first);
+        roastty_surface_free(second);
+        roastty_app_free(app);
+        roastty_config_free(config);
+    }
+
+    #[test]
+    fn app_key_global_key_table_deactivate_all_fans_out_to_live_surfaces() {
+        let config = new_test_config_with_keybind_entries(&[
+            b"global:x=deactivate_all_key_tables",
+            b"nav/",
+            b"aux/",
+        ]);
+        let app = new_test_app_with_action_config(true, config);
+        let first = new_test_surface(app);
+        let second = new_test_surface(app);
+        for surface in [first, second] {
+            assert!(surface_binding_action(surface, b"activate_key_table:nav"));
+            assert!(surface_binding_action(surface, b"activate_key_table:aux"));
+        }
+
+        reset_action_records(true);
+        assert!(roastty_app_key(app, input_key_press_x(ROASTTY_MODS_NONE)));
+
+        for surface in [first, second] {
+            assert!(surface_from_handle(surface)
+                .unwrap()
+                .active_key_tables
+                .is_empty());
+        }
+        let records = action_records();
+        assert_eq!(records.len(), 2);
+        assert_eq!(records[0].surface, first);
+        assert_eq!(
+            records[0].key_table,
+            Some((ROASTTY_KEY_TABLE_DEACTIVATE_ALL, Vec::new()))
+        );
+        assert_eq!(records[1].surface, second);
+        assert_eq!(
+            records[1].key_table,
+            Some((ROASTTY_KEY_TABLE_DEACTIVATE_ALL, Vec::new()))
+        );
+
+        roastty_surface_free(first);
+        roastty_surface_free(second);
+        roastty_app_free(app);
+        roastty_config_free(config);
+    }
+
+    #[test]
+    fn app_key_focused_non_global_key_table_action_returns_false() {
+        let config = new_test_config_with_keybind_entries(&[b"x=activate_key_table:nav", b"nav/"]);
+        let app = new_test_app_with_action_config(true, config);
+        let surface = new_test_surface(app);
+        roastty_app_set_focus(app, true);
 
         assert!(!roastty_app_key(app, input_key_press_x(ROASTTY_MODS_NONE)));
         assert!(action_records().is_empty());
@@ -21686,17 +21827,55 @@ mod tests {
     }
 
     #[test]
-    fn app_key_ignores_sequence_control_actions_for_now() {
+    fn app_key_global_end_key_sequence_fans_out_to_live_surfaces() {
         let config = new_test_config_with_keybind_entries(&[b"global:x=end_key_sequence"]);
         let app = new_test_app_with_action_config(true, config);
+        let first = new_test_surface(app);
+        let second = new_test_surface(app);
+        for surface in [first, second] {
+            surface_from_handle(surface).unwrap().active_key_sequence =
+                Some(ConfigKeybindSet::default());
+            surface_from_handle(surface)
+                .unwrap()
+                .queued_key_sequence
+                .push(b"\x1b[1;5A".to_vec());
+        }
+
+        assert!(roastty_app_key(app, input_key_press_x(ROASTTY_MODS_NONE)));
+
+        for surface in [first, second] {
+            let surface_ref = surface_from_handle(surface).unwrap();
+            assert!(surface_ref.active_key_sequence.is_none());
+            assert!(surface_ref.queued_key_sequence.is_empty());
+        }
+        let records = action_records();
+        assert_eq!(records.len(), 2);
+        assert_eq!(records[0].surface, first);
+        assert_eq!(records[0].key_sequence.map(|value| value.0), Some(false));
+        assert_eq!(records[1].surface, second);
+        assert_eq!(records[1].key_sequence.map(|value| value.0), Some(false));
+
+        roastty_surface_free(first);
+        roastty_surface_free(second);
+        roastty_app_free(app);
+        roastty_config_free(config);
+    }
+
+    #[test]
+    fn app_key_focused_non_global_sequence_control_action_returns_false() {
+        let config = new_test_config_with_keybind_entries(&[b"x=end_key_sequence"]);
+        let app = new_test_app_with_action_config(true, config);
         let surface = new_test_surface(app);
+        roastty_app_set_focus(app, true);
+        surface_from_handle(surface).unwrap().active_key_sequence =
+            Some(ConfigKeybindSet::default());
 
         assert!(!roastty_app_key(app, input_key_press_x(ROASTTY_MODS_NONE)));
         assert!(action_records().is_empty());
         assert!(surface_from_handle(surface)
             .unwrap()
             .active_key_sequence
-            .is_none());
+            .is_some());
 
         roastty_surface_free(surface);
         roastty_app_free(app);

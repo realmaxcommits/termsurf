@@ -428,6 +428,15 @@ the earlier "commit a small baseline PNG set" wording in Exp 2.
   behavior, and clone-stable storage. Remaining Phase G gaps include
   command-palette UI behavior, the `crash` binding action, native keymaps/global
   shortcuts, app-key sequence/table handling, and broader global/all routing.
+- **Global app-key surface-control actions fan out to live surfaces.** Exp 125
+  classifies key-table actions and `end_key_sequence` as surface-scoped in the
+  app-key path, matching upstream `App.keyEvent`: focused non-global app-key
+  leaves still require app-scoped actions only, while `global:` leaves can
+  activate/deactivate key tables or end key sequences across live surfaces. The
+  Exp 125 full run passed 4716 unit tests plus the ABI harness and doc tests.
+  Remaining Phase G gaps include native keymaps/global shortcuts, broader `all:`
+  routing, the `crash` binding action, command-palette UI behavior, and the full
+  upstream binding/default-action tail.
 
 **Keep this current.** When an experiment yields a durable, reusable fact — a
 toolchain incantation, a dead-end to avoid, or where an artifact lives — distill
@@ -802,7 +811,8 @@ the live app, verified by a Phase-D UI test.)
       configured root and active-table surface sequences plus `ignore` /
       `end_key_sequence` are wired (Exp 118–121), and configured `chain=` leaves
       are wired on the surface path (Exp 122) and direct app-key path (Exp 123),
-      but native keymaps/global shortcuts, app-key sequence/table handling,
+      with global app-key surface-control fanout for direct key-table and
+      `end_key_sequence` leaves (Exp 125), but native keymaps/global shortcuts,
       broader global/all routing, and the full upstream binding catalog remain
       later work
 - [ ] Trigger-prefix flags (`global:` / `all:` / `unconsumed:` / `performable:`)
@@ -1186,7 +1196,7 @@ stays unaltered except for the rename).
 - [Experiment 124: Phase G — command palette config ABI](124-command-palette-config-abi.md)
   — **Pass**
 - [Experiment 125: Phase G — app-key surface control actions](125-app-key-surface-control-actions.md)
-  — **Designed**
+  — **Pass**
 
 ## Process
 

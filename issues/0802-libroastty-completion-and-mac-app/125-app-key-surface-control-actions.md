@@ -99,3 +99,69 @@ state redesign.
 `App.keyEvent`, that key-table and `end_key_sequence` actions are surface-scoped
 upstream, that `global:` / `all:` trigger sequences remain invalid, and that the
 plan is small enough for one experiment.
+
+## Result
+
+**Result:** Pass
+
+`roastty_app_key` now treats direct key-table actions and `end_key_sequence` as
+surface-scoped actions instead of unsupported app-key actions. This matches
+upstream's app-key split: focused non-global app-key leaves still require every
+action to be app-scoped, while `global:` leaves consume and fan out
+surface-scoped actions to all live app surfaces.
+
+Verified behavior:
+
+- `global:x=activate_key_table:nav` activates `nav` on every live surface;
+- `global:x=activate_key_table_once:nav` marks the live surface table as
+  one-shot;
+- `global:x=deactivate_key_table` pops one active table on every live surface;
+- `global:x=deactivate_all_key_tables` clears active tables on every live
+  surface;
+- `global:x=end_key_sequence` ends and clears existing live-surface sequence
+  state;
+- focused non-global key-table and sequence-control app-key leaves still return
+  `false` without dispatching, leaving the surface path responsible for them;
+- app-key still ignores sequence leader bindings.
+
+Verification run:
+
+- `cargo fmt -- roastty/src/lib.rs`
+- `cargo test -p roastty app_key` — 25 passed
+- `cargo test -p roastty key_table` — 25 passed
+- `cargo test -p roastty key_sequence` — 15 passed
+- `cargo test -p roastty -- --test-threads=1` — 4716 unit tests passed, ABI
+  harness passed with the existing 10 C enum-conversion warnings, doc tests
+  passed
+- `cargo fmt --check`
+- `git diff --check`
+
+Still out of scope:
+
+- native keymaps and keyboard-layout reload;
+- native global shortcut registration;
+- app-owned key-table or key-sequence state;
+- `global:` or `all:` trigger sequences;
+- the remaining `crash` binding action;
+- broader `all:` routing and full upstream default binding table completion.
+
+## Conclusion
+
+The app-key path now covers the remaining direct surface-control actions that
+upstream allows global app-level captures to fan out. This narrows the Phase G
+app-key gap to sequence/table leader handling that upstream intentionally keeps
+out of app-key, native keymap/global shortcut work, broader `all:` routing, and
+the remaining action/default-table completion.
+
+## Completion Review
+
+**Reviewer:** Codex-native adversarial reviewer, fresh context
+(`multi_agent_v1.spawn_agent`, agent `019eb81f-8533-7a32-96cf-8b10ad6ff8d0`)
+
+**Verdict:** Approved
+
+**Required findings:** None.
+
+**Notes:** The reviewer confirmed that the implementation matches the approved
+intent, that README status matches the experiment result, that the claimed
+targeted and full verification passed, and that the result commit may proceed.
