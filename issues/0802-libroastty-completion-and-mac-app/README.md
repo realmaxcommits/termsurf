@@ -1037,6 +1037,8 @@ stays unaltered except for the rename).
   — **Pass**
 - [Experiment 108: Phase G — key-remap config field](108-key-remap-config-field.md)
   — **Pass**
+- [Experiment 109: Phase G — key-remap runtime application](109-key-remap-runtime-application.md)
+  — **Designed**
 
 ## Process
 
