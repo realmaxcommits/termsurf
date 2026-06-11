@@ -323,6 +323,11 @@ the earlier "commit a small baseline PNG set" wording in Exp 2.
   `link = ...` parsing, regex compilation/matching, renderer link ranges, link
   preview UI, open-url dispatch, app C ABI exposure, key-remap finalization, and
   byte-faithful config string storage remain later work.
+- **Key-remap set foundation is wired.** Exp 107 ports the input-side
+  `RemapSet`/mask/parser/finalize/apply/formatter foundation; the `key-remap`
+  config field, config finalization call, app ABI exposure, runtime surface
+  key-event remapping, and byte-faithful config string storage remain later
+  work.
 
 **Keep this current.** When an experiment yields a durable, reusable fact — a
 toolchain incantation, a dead-end to avoid, or where an artifact lives — distill
@@ -1024,7 +1029,7 @@ stays unaltered except for the rename).
 - [Experiment 106: Phase F — link-url finalize](106-link-url-finalize.md) —
   **Pass**
 - [Experiment 107: Phase G — key-remap set foundation](107-key-remap-set-foundation.md)
-  — **Designed**
+  — **Pass**
 
 ## Process
 

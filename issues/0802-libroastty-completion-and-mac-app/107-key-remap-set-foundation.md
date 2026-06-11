@@ -77,3 +77,80 @@ Codex-native adversarial review ran in fresh context with subagent
 Verdict: **APPROVED**
 
 Findings: None.
+
+## Result
+
+**Result:** Pass
+
+Implemented the input-side `RemapSet` foundation in
+`roastty/src/input/key_mods.rs`:
+
+- added `RemapSet` and its `RemapMask` fast-path pre-check;
+- added `from=to` parsing for shift/ctrl/alt/super, upstream aliases, optional
+  left/right source and target sides, unsided-source expansion, and empty CLI
+  reset behavior;
+- added finalized right-side-first ordering, one-way non-transitive `apply()`,
+  `is_remapped()`, and deterministic formatter output;
+- added focused tests for unsided and sided mappings, aliases, reset/error
+  cases, right-side ordering, one-way remapping, mask checks, clone/equality,
+  order-independent equality, and formatter shape.
+
+The implementation deliberately does not add the `key-remap` config field,
+config parser routing, `Config::finalize()` wiring, app C ABI exposure, surface
+key-event remapping, menu/main-loop behavior, or OS keyboard-layout integration.
+
+Verification:
+
+1. `cargo test -p roastty key_remap_set` — pass: 9 tests passed; filtered ABI
+   harness passed.
+2. `cargo test -p roastty key_mods_` — pass: 5 tests passed; filtered ABI
+   harness passed.
+3. `cargo test -p roastty` — pass before the completion-review fix: 4598 unit
+   tests passed; ABI harness passed; doc tests passed. The ABI harness printed
+   the known 10 enum-conversion warnings.
+4. `cargo test -p roastty tests::surface_foreground_pid_reports_worker_foreground_pid_after_start`
+   — pass after the completion-review fix: 1 test passed; filtered ABI harness
+   passed.
+5. `cargo test -p roastty -- --test-threads=1` — pass after the
+   completion-review fix: 4599 unit tests passed; ABI harness passed; doc tests
+   passed. The ABI harness printed the known 10 enum-conversion warnings.
+
+## Conclusion
+
+The reusable modifier-remap data structure is now available for the later
+`key-remap` config slice. The next work can add config storage, parsing,
+formatting, and finalization without also porting the core remapping algorithm.
+
+## Completion Review
+
+Codex-native adversarial review ran in fresh context with subagent
+`019eb674-1839-7422-bd83-b22c335e7095`.
+
+Initial verdict: **CHANGES REQUIRED**
+
+Findings and fixes:
+
+- Required: `RemapSet` equality was order-sensitive because it derived
+  `PartialEq`/`Eq` over the ordered mapping vector, unlike upstream's
+  key/value-content comparison. Fixed by implementing manual order-independent
+  `PartialEq`/`Eq` for `RemapSet`.
+- Required: tests did not cover the upstream order-independent equality
+  semantics. Fixed by adding `key_remap_set_equality_is_order_independent`.
+- Required: the reviewer's independent full `cargo test -p roastty` run hit
+  `tests::surface_foreground_pid_reports_worker_foreground_pid_after_start`,
+  while the same test passed alone, suggesting an unrelated parallel-test flake.
+  The same parallel-only failure reproduced after the equality fix, the failing
+  test passed alone, and the full roastty suite passed serially with
+  `cargo test -p roastty -- --test-threads=1`.
+
+The first re-review still required a stronger equality test because the initial
+order-independent equality test used one left-side mapping and one right-side
+mapping, allowing `finalize()` to normalize the vector order. Fixed by changing
+the test to compare same-priority left-side mappings inserted in opposite order.
+
+Final re-review ran in fresh context with subagent
+`019eb682-c34a-7561-b788-5d92e3d5f9bb`.
+
+Final verdict: **APPROVED**
+
+Findings: None.
