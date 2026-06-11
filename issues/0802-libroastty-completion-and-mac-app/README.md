@@ -961,6 +961,8 @@ stays unaltered except for the rename).
   — **Pass**
 - [Experiment 98: Phase F — config replay foundation](98-config-replay-foundation.md)
   — **Pass**
+- [Experiment 99: Phase F — absolute theme loading](99-absolute-theme-loading.md)
+  — **Designed**
 
 ## Process
 
