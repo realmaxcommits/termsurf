@@ -463,6 +463,15 @@ the earlier "commit a small baseline PNG set" wording in Exp 2.
   The Exp 128 full run passed 4731 unit tests plus the ABI harness and doc
   tests. Remaining Phase G gaps are native keymaps/global shortcuts and
   command-palette UI behavior.
+- **Keyboard-layout reload plumbing is wired for option-as-alt fallback.** Exp
+  130 added `macos-option-as-alt` config and modifier translation fallback, and
+  Exp 131 makes app creation plus `roastty_app_keyboard_changed` refresh the
+  stored layout used by `roastty_surface_key_translation_mods`. The
+  deterministic tests use a thread-local layout provider override; production
+  builds compile a macOS Carbon/TIS probe, but the real host probe is not
+  exercised in unit tests. Remaining Phase G native key work is full
+  `KeymapDarwin` text translation, dead-key/preedit handling, and native global
+  shortcut registration.
 
 **Keep this current.** When an experiment yields a durable, reusable fact — a
 toolchain incantation, a dead-end to avoid, or where an artifact lives — distill
@@ -863,8 +872,9 @@ the live app, verified by a Phase-D UI test.)
       `RemapSet`/`Mask`, the `key-remap` config field, and surface runtime
       key-remap application are wired (Exp 107–109), and configured `global:`
       plus focused app-scoped `roastty_app_key` dispatch is wired (Exp 113–114),
-      but native keymaps, keyboard-layout reload, and full upstream keybinding
-      tables remain later work
+      and option-as-alt layout reload plumbing is wired (Exp 130–131), but full
+      `KeymapDarwin` text translation, dead-key/preedit handling, native global
+      shortcut registration, and live host-probe validation remain later work
 
 **Phase H — Renderer feature-completion (in the live pass)**
 
@@ -1237,7 +1247,7 @@ stays unaltered except for the rename).
 - [Experiment 130: Phase G — key translation option-as-alt](130-key-translation-option-as-alt.md)
   — **Partial**
 - [Experiment 131: Phase G — keyboard layout reload](131-keyboard-layout-reload.md)
-  — **Designed**
+  — **Partial**
 
 ## Process
 
