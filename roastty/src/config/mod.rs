@@ -314,6 +314,8 @@ pub(crate) struct Config {
     pub macos_icon_screen_color: Option<ColorList>,
     /// `macos-shortcuts`.
     pub macos_shortcuts: MacShortcuts,
+    /// `macos-option-as-alt`.
+    pub macos_option_as_alt: Option<key_mods::OptionAsAlt>,
     /// `linux-cgroup`.
     pub linux_cgroup: LinuxCgroup,
     /// `linux-cgroup-memory-limit`.
@@ -555,6 +557,7 @@ impl Default for Config {
             macos_icon_ghost_color: None,
             macos_icon_screen_color: None,
             macos_shortcuts: MacShortcuts::Ask,
+            macos_option_as_alt: None,
             linux_cgroup: if cfg!(target_os = "linux") {
                 LinuxCgroup::SingleInstance
             } else {
@@ -917,6 +920,10 @@ impl Config {
             });
         self.macos_shortcuts
             .format_entry(&mut EntryFormatter::new("macos-shortcuts", out));
+        EntryFormatter::new("macos-option-as-alt", out)
+            .entry_optional(self.macos_option_as_alt, |v, f| {
+                f.entry_str(option_as_alt_keyword(v))
+            });
         self.linux_cgroup
             .format_entry(&mut EntryFormatter::new("linux-cgroup", out));
         EntryFormatter::new("linux-cgroup-memory-limit", out)
@@ -1490,6 +1497,13 @@ impl Config {
             "macos-shortcuts" => {
                 self.macos_shortcuts =
                     set_enum_field(value, default.macos_shortcuts, MacShortcuts::from_keyword)?
+            }
+            "macos-option-as-alt" => {
+                self.macos_option_as_alt = set_optional_enum_field(
+                    value,
+                    default.macos_option_as_alt,
+                    option_as_alt_from_keyword,
+                )?
             }
             "linux-cgroup" => {
                 self.linux_cgroup =
@@ -6126,6 +6140,27 @@ impl MacShortcuts {
     }
 }
 
+/// Parse `macos-option-as-alt` keywords (upstream `input.OptionAsAlt`).
+pub(crate) fn option_as_alt_from_keyword(value: &str) -> Option<key_mods::OptionAsAlt> {
+    match value {
+        "false" => Some(key_mods::OptionAsAlt::False),
+        "true" => Some(key_mods::OptionAsAlt::True),
+        "left" => Some(key_mods::OptionAsAlt::Left),
+        "right" => Some(key_mods::OptionAsAlt::Right),
+        _ => None,
+    }
+}
+
+/// Format `macos-option-as-alt` keywords (upstream `input.OptionAsAlt`).
+pub(crate) fn option_as_alt_keyword(value: key_mods::OptionAsAlt) -> &'static str {
+    match value {
+        key_mods::OptionAsAlt::False => "false",
+        key_mods::OptionAsAlt::True => "true",
+        key_mods::OptionAsAlt::Left => "left",
+        key_mods::OptionAsAlt::Right => "right",
+    }
+}
+
 /// The `linux-cgroup` config (upstream `LinuxCgroup`): whether surfaces should
 /// be placed into transient `systemd` scopes. Runtime scope creation is ported
 /// later.
@@ -10339,6 +10374,62 @@ mod tests {
             }]
         );
         assert_eq!(cfg.macos_shortcuts, MacShortcuts::Deny);
+
+        let cloned = cfg.clone();
+        assert_eq!(cloned, cfg);
+    }
+
+    #[test]
+    fn config_macos_option_as_alt_parse_format_reset_and_diagnose() {
+        let mut cfg = Config::default();
+        assert_eq!(cfg.macos_option_as_alt, None);
+
+        let line = |cfg: &Config| {
+            let mut out = String::new();
+            cfg.format_config(&mut out);
+            out.lines()
+                .find(|line| line.starts_with("macos-option-as-alt = "))
+                .map(str::to_string)
+        };
+        assert_eq!(line(&cfg), Some("macos-option-as-alt = ".to_string()));
+
+        for (variant, keyword) in [
+            (key_mods::OptionAsAlt::False, "false"),
+            (key_mods::OptionAsAlt::True, "true"),
+            (key_mods::OptionAsAlt::Left, "left"),
+            (key_mods::OptionAsAlt::Right, "right"),
+        ] {
+            cfg.set("macos-option-as-alt", Some(keyword)).unwrap();
+            assert_eq!(cfg.macos_option_as_alt, Some(variant));
+            assert_eq!(line(&cfg), Some(format!("macos-option-as-alt = {keyword}")));
+        }
+
+        cfg.set("macos-option-as-alt", Some("")).unwrap();
+        assert_eq!(cfg.macos_option_as_alt, None);
+        assert_eq!(line(&cfg), Some("macos-option-as-alt = ".to_string()));
+        assert_eq!(
+            cfg.set("macos-option-as-alt", None),
+            Err(ConfigSetError::ValueRequired)
+        );
+        assert_eq!(
+            cfg.set("macos-option-as-alt", Some("both")),
+            Err(ConfigSetError::InvalidValue)
+        );
+
+        let diagnostics = cfg.load_str(
+            "macos-option-as-alt = true\n\
+             macos-option-as-alt = both\n\
+             macos-option-as-alt = left\n",
+        );
+        assert_eq!(
+            diagnostics,
+            vec![ConfigDiagnostic {
+                line: 2,
+                key: "macos-option-as-alt".to_string(),
+                error: ConfigSetError::InvalidValue,
+            }]
+        );
+        assert_eq!(cfg.macos_option_as_alt, Some(key_mods::OptionAsAlt::Left));
 
         let cloned = cfg.clone();
         assert_eq!(cloned, cfg);
@@ -14636,6 +14727,7 @@ mod tests {
             "macos-icon-ghost-color",
             "macos-icon-screen-color",
             "macos-shortcuts",
+            "macos-option-as-alt",
             "linux-cgroup",
             "linux-cgroup-memory-limit",
             "linux-cgroup-processes-limit",

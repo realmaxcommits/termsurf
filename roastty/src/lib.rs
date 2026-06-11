@@ -13,7 +13,7 @@ use std::ptr::NonNull;
 use std::slice;
 use std::sync::Mutex;
 
-use input::{key, key_encode, key_mods, paste};
+use input::{key, key_encode, key_mods, keyboard as input_keyboard, paste};
 use terminal::clipboard::{KittyClipboard, Location as KittyClipboardLocation};
 use terminal::clipboard::{Operation as KittyClipboardOperation, Status as KittyClipboardStatus};
 use terminal::color;
@@ -2416,6 +2416,7 @@ struct App {
     clipboard_write: config::ClipboardAccess,
     mouse_shift_capture: config::MouseShiftCapture,
     has_global_keybinds: bool,
+    keyboard_layout: input_keyboard::Layout,
     keybind_triggers: Vec<ConfigKeybind>,
     keybind_sequences: ConfigKeybindSet,
     keybind_tables: Vec<ConfigKeybindTable>,
@@ -2589,6 +2590,7 @@ struct Surface {
     selection_word_chars: Vec<u32>,
     vt_kam_allowed: bool,
     key_remaps: key_mods::RemapSet,
+    macos_option_as_alt: Option<key_mods::OptionAsAlt>,
     mouse_scroll_multiplier: config::MouseScrollMultiplier,
     click_repeat_interval_ns: u64,
     preedit: Option<String>,
@@ -2947,6 +2949,7 @@ impl Surface {
         self.selection_word_chars = parsed.selection_word_chars.codepoints.clone();
         self.vt_kam_allowed = parsed.vt_kam_allowed;
         self.key_remaps = parsed.key_remap.clone();
+        self.macos_option_as_alt = parsed.macos_option_as_alt;
         self.mouse_reporting = parsed.mouse_reporting;
         self.mouse_scroll_multiplier = parsed.mouse_scroll_multiplier;
         self.click_repeat_interval_ns = click_repeat_interval_ns(&parsed);
@@ -12866,6 +12869,7 @@ pub extern "C" fn roastty_app_new(
         keybind_triggers,
         keybind_sequences,
         keybind_tables,
+        keyboard_layout,
         parsed_config,
     ) = config_from_handle(config)
         .map(|config| {
@@ -12879,6 +12883,7 @@ pub extern "C" fn roastty_app_new(
                 config.keybind_triggers.clone(),
                 config.keybind_sequences.clone(),
                 config.keybind_tables.clone(),
+                input_keyboard::Layout::Unknown,
                 parsed,
             )
         })
@@ -12891,6 +12896,7 @@ pub extern "C" fn roastty_app_new(
             Vec::new(),
             ConfigKeybindSet::default(),
             Vec::new(),
+            input_keyboard::Layout::Unknown,
             default_finalized_config(),
         ));
 
@@ -12904,6 +12910,7 @@ pub extern "C" fn roastty_app_new(
         clipboard_write,
         mouse_shift_capture,
         has_global_keybinds,
+        keyboard_layout,
         keybind_triggers,
         keybind_sequences,
         keybind_tables,
@@ -16294,6 +16301,8 @@ pub extern "C" fn roastty_surface_new(
     let key_remaps = app_from_handle(app)
         .map(|app| app.parsed_config.key_remap.clone())
         .unwrap_or_default();
+    let macos_option_as_alt =
+        app_from_handle(app).and_then(|app| app.parsed_config.macos_option_as_alt);
     let mouse_reporting = app_from_handle(app)
         .map(|app| app.parsed_config.mouse_reporting)
         .unwrap_or(true);
@@ -16340,6 +16349,7 @@ pub extern "C" fn roastty_surface_new(
         selection_word_chars,
         vt_kam_allowed,
         key_remaps,
+        macos_option_as_alt,
         mouse_scroll_multiplier,
         click_repeat_interval_ns,
         preedit: None,
@@ -16777,10 +16787,21 @@ pub extern "C" fn roastty_surface_quicklook_word(
 
 #[no_mangle]
 pub extern "C" fn roastty_surface_key_translation_mods(
-    _surface: RoasttySurface,
+    surface: RoasttySurface,
     mods: c_int,
 ) -> c_int {
-    key_mods_to_raw(key_mods_from_raw(mods).translation(key_mods::OptionAsAlt::False))
+    let Some(surface) = surface_from_handle(surface) else {
+        return key_mods_to_raw(key_mods_from_raw(mods));
+    };
+    if surface.app.is_null() {
+        return key_mods_to_raw(key_mods_from_raw(mods));
+    }
+    let option_as_alt = surface.macos_option_as_alt.unwrap_or_else(|| {
+        app_from_handle(surface.app)
+            .map(|app| app.keyboard_layout.detect_option_as_alt())
+            .unwrap_or(key_mods::OptionAsAlt::False)
+    });
+    key_mods_to_raw(key_mods_from_raw(mods).translation(option_as_alt))
 }
 
 /// Embedded by-value key event (Issue 802 / Exp 8) — byte-faithful to
@@ -16849,11 +16870,18 @@ pub extern "C" fn roastty_app_key(app: RoasttyApp, event: RoasttyInputKey) -> bo
     app_ref.key(app, &ev.event)
 }
 
-/// Keyboard layout changed. libroastty has no keymap-reload path yet, so this is a
-/// no-op (layout-change remapping is a documented feature-completion item).
+/// Keyboard layout changed. libroastty does not yet own a Carbon keymap reload
+/// path, so the current layout remains unchanged outside tests.
 #[no_mangle]
 pub extern "C" fn roastty_app_keyboard_changed(app: RoasttyApp) {
     let _ = app;
+}
+
+#[cfg(test)]
+fn set_app_keyboard_layout_for_test(app: RoasttyApp, layout: input_keyboard::Layout) {
+    if let Some(app) = app_from_handle(app) {
+        app.keyboard_layout = layout;
+    }
 }
 
 // --- Embedded config/misc function tail (Issue 802 / Exp 10) ---
@@ -18040,6 +18068,17 @@ mod tests {
         for entry in entries {
             config.store_keybind_entry(parse_config_keybind_entry(entry).unwrap());
         }
+        handle
+    }
+
+    fn new_test_config_with_macos_option_as_alt(
+        option_as_alt: Option<key_mods::OptionAsAlt>,
+    ) -> RoasttyConfig {
+        let handle = roastty_config_new();
+        config_from_handle(handle)
+            .unwrap()
+            .parsed
+            .macos_option_as_alt = option_as_alt;
         handle
     }
 
@@ -23208,6 +23247,134 @@ mod tests {
         let mut release = plain_b.event.clone();
         release.action = key::KeyAction::Release;
         assert!(configured_key_event_binding(&bindings, &release).is_none());
+    }
+
+    fn expected_translation_mods(mods: c_int, option_as_alt: key_mods::OptionAsAlt) -> c_int {
+        key_mods_to_raw(key_mods_from_raw(mods).translation(option_as_alt))
+    }
+
+    #[test]
+    fn key_translation_mods_explicit_macos_option_as_alt_values() {
+        for (configured, input, expected_policy) in [
+            (
+                key_mods::OptionAsAlt::False,
+                ROASTTY_MODS_SHIFT | ROASTTY_MODS_ALT,
+                key_mods::OptionAsAlt::False,
+            ),
+            (
+                key_mods::OptionAsAlt::True,
+                ROASTTY_MODS_SHIFT | ROASTTY_MODS_ALT,
+                key_mods::OptionAsAlt::True,
+            ),
+            (
+                key_mods::OptionAsAlt::Left,
+                ROASTTY_MODS_ALT,
+                key_mods::OptionAsAlt::Left,
+            ),
+            (
+                key_mods::OptionAsAlt::Left,
+                ROASTTY_MODS_ALT | ROASTTY_MODS_ALT_RIGHT,
+                key_mods::OptionAsAlt::Left,
+            ),
+            (
+                key_mods::OptionAsAlt::Right,
+                ROASTTY_MODS_ALT,
+                key_mods::OptionAsAlt::Right,
+            ),
+            (
+                key_mods::OptionAsAlt::Right,
+                ROASTTY_MODS_ALT | ROASTTY_MODS_ALT_RIGHT,
+                key_mods::OptionAsAlt::Right,
+            ),
+        ] {
+            let config = new_test_config_with_macos_option_as_alt(Some(configured));
+            let app = roastty_app_new(ptr::null(), config);
+            set_app_keyboard_layout_for_test(app, input_keyboard::Layout::UsStandard);
+            let surface = new_test_surface(app);
+
+            assert_eq!(
+                roastty_surface_key_translation_mods(surface, input),
+                expected_translation_mods(input, expected_policy)
+            );
+
+            roastty_surface_free(surface);
+            roastty_app_free(app);
+            roastty_config_free(config);
+        }
+    }
+
+    #[test]
+    fn key_translation_mods_unset_uses_detected_keyboard_layout() {
+        let app = new_test_app();
+        let surface = new_test_surface(app);
+        let input = ROASTTY_MODS_SHIFT | ROASTTY_MODS_ALT;
+
+        set_app_keyboard_layout_for_test(app, input_keyboard::Layout::Unknown);
+        assert_eq!(
+            roastty_surface_key_translation_mods(surface, input),
+            expected_translation_mods(input, key_mods::OptionAsAlt::False)
+        );
+
+        set_app_keyboard_layout_for_test(app, input_keyboard::Layout::UsStandard);
+        assert_eq!(
+            roastty_surface_key_translation_mods(surface, input),
+            expected_translation_mods(input, key_mods::OptionAsAlt::True)
+        );
+
+        set_app_keyboard_layout_for_test(app, input_keyboard::Layout::UsInternational);
+        assert_eq!(
+            roastty_surface_key_translation_mods(surface, input),
+            expected_translation_mods(input, key_mods::OptionAsAlt::True)
+        );
+
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+    }
+
+    #[test]
+    fn key_translation_mods_surface_config_update_overrides_detected_layout() {
+        let app = new_test_app();
+        set_app_keyboard_layout_for_test(app, input_keyboard::Layout::UsStandard);
+        let surface = new_test_surface(app);
+        let input = ROASTTY_MODS_ALT;
+
+        assert_eq!(
+            roastty_surface_key_translation_mods(surface, input),
+            expected_translation_mods(input, key_mods::OptionAsAlt::True)
+        );
+
+        let config = new_test_config_with_macos_option_as_alt(Some(key_mods::OptionAsAlt::False));
+        roastty_surface_update_config(surface, config);
+        assert_eq!(
+            roastty_surface_key_translation_mods(surface, input),
+            expected_translation_mods(input, key_mods::OptionAsAlt::False)
+        );
+
+        roastty_config_free(config);
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+    }
+
+    #[test]
+    fn key_translation_mods_invalid_or_detached_surface_sanitizes_input_mods() {
+        let input = ROASTTY_MODS_SHIFT | ROASTTY_MODS_ALT | ROASTTY_MODS_ALT_RIGHT | (1 << 20);
+        let sanitized = key_mods_to_raw(key_mods_from_raw(input));
+        assert_eq!(
+            roastty_surface_key_translation_mods(ptr::null_mut(), input),
+            sanitized
+        );
+
+        let app = new_test_app();
+        let surface = new_test_surface(app);
+        surface_from_handle(surface).unwrap().app = ptr::null_mut();
+        assert_eq!(
+            roastty_surface_key_translation_mods(surface, input),
+            sanitized
+        );
+
+        surface_from_handle(surface).unwrap().app = app;
+        roastty_surface_free(surface);
+        roastty_app_free(app);
     }
 
     #[test]

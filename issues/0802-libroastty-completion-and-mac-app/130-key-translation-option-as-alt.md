@@ -39,7 +39,7 @@ work.
     experiment, keep reload as a documented no-op but add a test-only setter or
     helper so detected-layout fallback is still covered deterministically.
   - Change `roastty_surface_key_translation_mods(surface, mods)` so it:
-    - returns unchanged modifiers for invalid or detached surfaces;
+    - sanitizes unknown modifier bits for invalid or detached surfaces;
     - uses the explicit surface/app `macos-option-as-alt` value when configured;
     - otherwise uses the app's detected keyboard layout
       (`UsStandard`/`UsInternational` => option-as-alt true, `Unknown` =>
@@ -113,3 +113,60 @@ fallback, `macos-option-as-alt` is absent from Roastty config but present
 upstream, the minimal layout mapping already exists, and the verification plan
 includes the required formatting, targeted tests, full Roastty test run, and
 diff checks.
+
+## Result
+
+**Result:** Partial
+
+Implemented the explicit config and ABI translation path:
+
+- Added `macos-option-as-alt` to Roastty config with upstream keywords `false`,
+  `true`, `left`, and `right`, including parse/format/reset diagnostics
+  coverage.
+- Stored the finalized option-as-alt value on surfaces and refreshed it from
+  surface config updates.
+- Added minimal app keyboard layout state defaulting to `Layout::Unknown`.
+- Updated `roastty_surface_key_translation_mods` to use explicit surface config
+  first, then the app layout fallback, while preserving the existing unknown-bit
+  sanitizer for invalid or detached surfaces.
+- Left `roastty_app_keyboard_changed` as a documented no-op because the real
+  Carbon/TIS reload path is larger than this experiment.
+
+Verification:
+
+- `cargo fmt`
+- `cargo test -p roastty option_as_alt`
+- `cargo test -p roastty key_translation_mods`
+- `cargo test -p roastty config_macos_option_as_alt`
+- `cargo test -p roastty app_key`
+- `cargo test -p roastty surface_key`
+- `cargo test -p roastty -- --test-threads=1`
+- `cargo fmt --check`
+- `git diff --check`
+
+All commands passed. The full Roastty run passed 4,736 unit tests, the C ABI
+harness, and doc-tests; the ABI harness still emits the pre-existing enum
+conversion warnings.
+
+## Conclusion
+
+The modifier-translation ABI now matches upstream for explicit
+`macos-option-as-alt` policy and for deterministic layout fallback in tests.
+This narrows the remaining native key work to real keyboard layout reload via
+Carbon/TIS, full `KeymapDarwin` text translation/dead-key handling, and native
+global shortcut registration.
+
+## Completion Review
+
+**Reviewer:** Codex-native adversarial review subagent, fresh context.
+
+**Verdict:** Approved.
+
+**Findings:** No required findings. The reviewer verified that the result commit
+had not been made yet, `cargo fmt --check`, `git diff --check`,
+`prettier --check`, `cargo test -p roastty key_translation_mods`, and
+`cargo test -p roastty config_macos_option_as_alt` passed. The reviewer also
+confirmed the README status matches the `Partial` result, the experiment file
+has `Result` and `Conclusion`, and the working-tree diff does not show
+unrequested scope expansion or a correctness issue in option-as-alt parsing,
+formatting, or modifier translation behavior.

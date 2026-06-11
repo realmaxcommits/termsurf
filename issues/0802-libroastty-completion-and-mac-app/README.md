@@ -1235,7 +1235,7 @@ stays unaltered except for the rename).
 - [Experiment 129: Phase G — command palette UI gate](129-command-palette-ui-gate.md)
   — **Partial**
 - [Experiment 130: Phase G — key translation option-as-alt](130-key-translation-option-as-alt.md)
-  — **Designed**
+  — **Partial**
 
 ## Process
 
