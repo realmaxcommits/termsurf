@@ -72,3 +72,63 @@ experiment has the required design sections, the scope is narrow, and the
 planned focus/global/app-scope behavior matches upstream `App.keyEvent` for the
 currently implemented single-action binding surface. The reviewer independently
 verified the docs with `git diff --check` and Prettier.
+
+## Result
+
+**Result:** Pass.
+
+Extended `roastty_app_key` so focused apps now dispatch configured non-global
+app-scoped bindings, while unfocused apps still reject those bindings and
+focused non-global surface-scoped bindings still return `false` for the app-key
+path. Existing `global:` dispatch remains focus-independent and still fans out
+surface-scoped actions to live app surfaces.
+
+The implementation also updates the stale `roastty_app_key` comment to reflect
+the now-implemented app-key behavior and the remaining native-keymap/key-table
+gaps.
+
+Verification:
+
+- `cargo test -p roastty app_key` — passed: 10 unit tests, ABI harness filtered
+  out.
+- `cargo test -p roastty app_set_focus` — passed: 1 unit test, ABI harness
+  filtered out.
+- `cargo test -p roastty surface_key_configured_runtime_and_app_actions_dispatch`
+  — passed.
+- `cargo test -p roastty --test abi_harness` — passed with the existing 10
+  enum-conversion warnings from the C harness.
+- `cargo test -p roastty -- --test-threads=1` — passed: 4,635 unit tests, the
+  ABI harness, and doc tests.
+
+## Conclusion
+
+`roastty_app_key` now matches the implemented single-action subset of upstream
+`App.keyEvent`: global bindings work regardless of focus; focused non-global
+app-scoped bindings run on the app target; unfocused non-global bindings and
+focused surface-scoped bindings are rejected for the app-key path. Remaining
+Phase G work still includes native keymaps, keyboard-layout reload, multi-key
+sequences/chords, key tables, default global bindings, and full action catalog
+coverage.
+
+## Completion Review
+
+Codex-native adversarial review ran in a fresh-context subagent
+(`multi_agent_v1.spawn_agent`, agent `019eb70f-fa3b-7922-b5a0-4457f5fb3f57`).
+
+Verdict: **Approved.** The reviewer reported no required findings.
+
+Evidence checked by the reviewer:
+
+- the result commit had not been made before review;
+- the issue README marks Experiment 114 as Pass;
+- this experiment has Result and Conclusion sections;
+- the implementation dispatches `global:` bindings regardless of focus;
+- focused non-global app actions dispatch once to the app target;
+- unfocused non-global bindings and focused surface-scoped app-key paths return
+  false;
+- tests cover the focus, app-scope, and surface-scope cases.
+
+The reviewer independently verified `cargo fmt --check`, `git diff --check`, the
+Prettier check for the touched markdown files, the targeted Exp114 tests, the
+ABI harness, and the full serial `cargo test -p roastty -- --test-threads=1`
+gate.

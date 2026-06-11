@@ -367,6 +367,13 @@ the earlier "commit a small baseline PNG set" wording in Exp 2.
   actions to live app surfaces. Plain `all:` remains surface-key-path behavior;
   native keymaps, keyboard-layout reload, sequences/chords, key tables, default
   global bindings, and full app action coverage remain later work.
+- **Focused app-key app actions are wired for configured single-key bindings.**
+  Exp 114 extends `roastty_app_key` to match upstream's focused app-key split:
+  `global:` bindings still work regardless of focus, focused non-global
+  app-scoped bindings dispatch once to the app target, and focused non-global
+  surface-scoped bindings return false for the app-key path. Native keymaps,
+  keyboard-layout reload, sequences/chords, key tables, default global bindings,
+  and full action catalog coverage remain later work.
 
 **Keep this current.** When an experiment yields a durable, reusable fact — a
 toolchain incantation, a dead-end to avoid, or where an artifact lives — distill
@@ -741,8 +748,9 @@ the live app, verified by a Phase-D UI test.)
 - [ ] Trigger-prefix flags (`global:` / `all:` / `unconsumed:` / `performable:`)
       — parser/storage/query metadata and surface unconsumed/performable
       consumption are wired (Exp 110–111), and configured `global:` app-key
-      dispatch is wired (Exp 113), but native global shortcut registration and
-      broader global/all routing remain later work
+      dispatch plus focused app-scoped app-key dispatch are wired (Exp 113–114),
+      but native global shortcut registration and broader global/all routing
+      remain later work
 - [ ] The full action set + the default-bindings data table + reverse
       action→trigger mapping — the macOS single-key table foundation and reverse
       lookup are wired for currently supported actions (Exp 112), but the full
@@ -751,9 +759,9 @@ the live app, verified by a Phase-D UI test.)
 - [ ] Native keymaps (`keycodes`, `KeymapDarwin`) + app-level key handling —
       `RemapSet`/`Mask`, the `key-remap` config field, and surface runtime
       key-remap application are wired (Exp 107–109), and configured `global:`
-      `roastty_app_key` dispatch is wired (Exp 113), but native keymaps,
-      keyboard-layout reload, and full upstream keybinding tables remain later
-      work
+      plus focused app-scoped `roastty_app_key` dispatch is wired (Exp 113–114),
+      but native keymaps, keyboard-layout reload, and full upstream keybinding
+      tables remain later work
 
 **Phase H — Renderer feature-completion (in the live pass)**
 
@@ -1092,7 +1100,7 @@ stays unaltered except for the rename).
 - [Experiment 113: Phase G — app key global binding dispatch](113-app-key-global-binding-dispatch.md)
   — **Pass**
 - [Experiment 114: Phase G — focused app key app actions](114-focused-app-key-app-actions.md)
-  — **Designed**
+  — **Pass**
 
 ## Process
 
