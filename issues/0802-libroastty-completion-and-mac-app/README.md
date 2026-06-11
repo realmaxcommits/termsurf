@@ -1101,6 +1101,8 @@ stays unaltered except for the rename).
   — **Pass**
 - [Experiment 114: Phase G — focused app key app actions](114-focused-app-key-app-actions.md)
   — **Pass**
+- [Experiment 115: Phase G — catch-all keybind triggers](115-catch-all-keybind-triggers.md)
+  — **Designed**
 
 ## Process
 
