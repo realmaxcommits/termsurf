@@ -866,6 +866,8 @@ stays unaltered except for the rename).
   — **Pass**
 - [Experiment 85: Phase F — command palette entry config](85-command-palette-entry-config.md)
   — **Pass**
+- [Experiment 86: Phase F — VT KAM config and key gate](86-vt-kam-config-key-gate.md)
+  — **Designed**
 
 ## Process
 
