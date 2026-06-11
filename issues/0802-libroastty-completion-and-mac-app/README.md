@@ -819,6 +819,8 @@ stays unaltered except for the rename).
   — **Pass**
 - [Experiment 77: Phase F — title report and image limit config](77-title-report-image-limit-config.md)
   — **Pass**
+- [Experiment 78: Phase F — quit delay config](78-quit-delay-config.md) —
+  **Designed**
 
 ## Process
 
