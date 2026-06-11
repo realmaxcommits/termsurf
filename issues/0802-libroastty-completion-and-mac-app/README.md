@@ -1152,6 +1152,8 @@ stays unaltered except for the rename).
   — **Pass**
 - [Experiment 121: Phase G — sequence control actions](121-sequence-control-actions.md)
   — **Pass**
+- [Experiment 122: Phase G — chained keybinding actions](122-chained-keybind-actions.md)
+  — **Designed**
 
 ## Process
 
