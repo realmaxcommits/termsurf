@@ -1248,6 +1248,8 @@ stays unaltered except for the rename).
   — **Partial**
 - [Experiment 131: Phase G — keyboard layout reload](131-keyboard-layout-reload.md)
   — **Partial**
+- [Experiment 132: Phase G — macOS unit-test baseline](132-macos-unit-test-baseline.md)
+  — **Designed**
 
 ## Process
 
