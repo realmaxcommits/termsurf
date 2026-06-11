@@ -852,6 +852,8 @@ stays unaltered except for the rename).
   — **Pass**
 - [Experiment 83: Phase F — quick terminal screen and animation config](83-quick-terminal-screen-animation-config.md)
   — **Pass**
+- [Experiment 84: Phase F — quick terminal space and keyboard config](84-quick-terminal-space-keyboard-config.md)
+  — **Designed**
 
 ## Process
 
