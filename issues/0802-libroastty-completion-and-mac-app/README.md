@@ -1023,6 +1023,8 @@ stays unaltered except for the rename).
   — **Pass**
 - [Experiment 106: Phase F — link-url finalize](106-link-url-finalize.md) —
   **Pass**
+- [Experiment 107: Phase G — key-remap set foundation](107-key-remap-set-foundation.md)
+  — **Designed**
 
 ## Process
 
