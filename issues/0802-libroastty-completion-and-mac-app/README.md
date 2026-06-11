@@ -446,6 +446,14 @@ the earlier "commit a small baseline PNG set" wording in Exp 2.
   G gaps include native keymaps/global shortcuts, broader `all:` routing,
   command-palette UI behavior, and the full upstream binding/default-action
   tail.
+- **Surface-key `all:` / `global:` fanout is wired for configured leaves.** Exp
+  127 makes configured direct and chained leaves reached through
+  `roastty_surface_key` dispatch app-wide: app-scoped actions run once, and
+  surface-scoped actions fan out to all live app surfaces while preserving
+  target-local parsing such as `new_split:auto`. The Exp 127 full run passed
+  4728 unit tests plus the ABI harness and doc tests. Remaining Phase G gaps
+  include native keymaps/global shortcuts, command-palette UI behavior, and the
+  full upstream binding/default-action tail.
 
 **Keep this current.** When an experiment yields a durable, reusable fact — a
 toolchain incantation, a dead-end to avoid, or where an artifact lives — distill
@@ -822,14 +830,14 @@ the live app, verified by a Phase-D UI test.)
       are wired on the surface path (Exp 122) and direct app-key path (Exp 123),
       with global app-key surface-control fanout for direct key-table and
       `end_key_sequence` leaves (Exp 125), but native keymaps/global shortcuts,
-      broader global/all routing, and the full upstream binding catalog remain
-      later work
+      and the full upstream binding catalog remain later work
 - [ ] Trigger-prefix flags (`global:` / `all:` / `unconsumed:` / `performable:`)
       — parser/storage/query metadata and surface unconsumed/performable
       consumption are wired (Exp 110–111), and configured `global:` app-key
-      dispatch plus focused app-scoped app-key dispatch are wired (Exp 113–114),
-      but native global shortcut registration and broader global/all routing
-      remain later work
+      dispatch plus focused app-scoped app-key dispatch are wired (Exp 113–114);
+      configured `all:` / `global:` leaves reached through the surface key path
+      now dispatch app-wide (Exp 127), but native global shortcut registration
+      remains later work
 - [x] `catch_all` trigger parsing and fallback lookup for configured single-key
       bindings (Exp 115)
 - [ ] The full action set + the default-bindings data table + reverse
@@ -1210,7 +1218,7 @@ stays unaltered except for the rename).
 - [Experiment 126: Phase G — crash binding action](126-crash-binding-action.md)
   — **Pass**
 - [Experiment 127: Phase G — surface all-key routing](127-surface-all-key-routing.md)
-  — **Designed**
+  — **Pass**
 
 ## Process
 
