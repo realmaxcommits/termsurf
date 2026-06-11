@@ -1081,6 +1081,8 @@ stays unaltered except for the rename).
   — **Pass**
 - [Experiment 112: Phase G — default binding table foundation](112-default-binding-table-foundation.md)
   — **Pass**
+- [Experiment 113: Phase G — app key global binding dispatch](113-app-key-global-binding-dispatch.md)
+  — **Designed**
 
 ## Process
 
