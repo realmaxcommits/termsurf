@@ -1197,6 +1197,8 @@ stays unaltered except for the rename).
   — **Pass**
 - [Experiment 125: Phase G — app-key surface control actions](125-app-key-surface-control-actions.md)
   — **Pass**
+- [Experiment 126: Phase G — crash binding action](126-crash-binding-action.md)
+  — **Designed**
 
 ## Process
 
