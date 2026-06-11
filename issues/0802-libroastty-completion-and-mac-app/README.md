@@ -974,6 +974,8 @@ stays unaltered except for the rename).
   — **Pass**
 - [Experiment 100: Phase F — named theme lookup](100-named-theme-lookup.md) —
   **Pass**
+- [Experiment 101: Phase F — conditional theme reload](101-conditional-theme-reload.md)
+  — **Designed**
 
 ## Process
 
