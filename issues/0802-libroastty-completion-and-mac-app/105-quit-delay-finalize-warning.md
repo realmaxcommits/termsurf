@@ -93,3 +93,55 @@ Fix:
 Re-review verdict: **APPROVED**
 
 Remaining findings: None.
+
+## Result
+
+**Result:** Pass
+
+Implemented a config-finalize warning record for very short
+`quit-after-last-window-closed-delay` values.
+
+- Extended `ConfigFinalizeReport` with a typed warning list.
+- Added `ConfigFinalizeWarning::QuitAfterLastWindowClosedDelayTooShort` carrying
+  the configured `Duration`.
+- Recorded the warning during scalar finalization when the delay is present and
+  below five seconds.
+- Preserved upstream's non-mutating behavior: short delays remain configured,
+  and `None`, exactly five seconds, and longer delays emit no warning.
+- Kept app ABI diagnostic/log plumbing, delayed shutdown behavior, CLI `-e` side
+  effects, link matcher mutation, and key-remap finalization out of scope.
+
+Verification passed:
+
+1. `cargo test -p roastty config_quit_delay_finalize_warning`
+2. `cargo test -p roastty quit_after_last_window_closed_delay_config`
+3. `cargo test -p roastty config_finalize_scalar_tail`
+4. `cargo test -p roastty`
+5. `cargo fmt --check`
+6. `git diff --check`
+7. `prettier --check --prose-wrap always --print-width 80 issues/0802-libroastty-completion-and-mac-app/105-quit-delay-finalize-warning.md issues/0802-libroastty-completion-and-mac-app/README.md`
+
+The focused warning run passed 1 test. The quit-delay parser/formatter
+regression run passed 1 test. The scalar-finalize regression run passed 1 test.
+The full `cargo test -p roastty` run passed 4589 unit tests, the ABI harness,
+and doc tests. The ABI harness printed the existing 10 enum-conversion warnings.
+
+## Conclusion
+
+Roastty now preserves upstream's warning-only quit-delay finalization semantics
+in a deterministic core report: short configured delays are observable as
+warnings but are not rejected, clamped, or rewritten. The remaining config
+finalize gaps still include link matcher mutation, key-remap finalization,
+app-facing/log plumbing for finalize warnings, and broader byte-faithful config
+string storage.
+
+## Completion Review
+
+Codex-native adversarial review ran in fresh context with subagent
+`019eb656-978e-70a0-a9b3-489ef8488635` after implementation and result
+recording. The reviewer checked the experiment file, README, implementation diff
+from the plan commit, changed source, and upstream `Config.zig`.
+
+Verdict: **APPROVED**
+
+Findings: None.

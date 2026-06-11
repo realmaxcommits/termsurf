@@ -1829,7 +1829,7 @@ impl Config {
     ) -> ConfigFinalizeReport {
         let mut report = ConfigFinalizeReport::default();
         self.finalize_theme(&mut report, &locations);
-        self.finalize_scalars(&context);
+        self.finalize_scalars(&mut report, &context);
         report
     }
 
@@ -2095,7 +2095,11 @@ impl Config {
         }
     }
 
-    fn finalize_scalars(&mut self, context: &ConfigFinalizeContext) {
+    fn finalize_scalars(
+        &mut self,
+        report: &mut ConfigFinalizeReport,
+        context: &ConfigFinalizeContext,
+    ) {
         if self.font_family.count() != 0 {
             if self.font_family_bold.count() == 0 {
                 self.font_family_bold = self.font_family.clone();
@@ -2130,10 +2134,21 @@ impl Config {
         if self.window_height > 0 {
             self.window_height = self.window_height.max(4);
         }
+        self.finalize_quit_delay_warning(report);
         if self.auto_update_channel.is_none() {
             self.auto_update_channel = Some(PINNED_BUILD_RELEASE_CHANNEL);
         }
         self.faint_opacity = self.faint_opacity.clamp(0.0, 1.0);
+    }
+
+    fn finalize_quit_delay_warning(&self, report: &mut ConfigFinalizeReport) {
+        if let Some(duration) = self.quit_after_last_window_closed_delay {
+            if duration.duration < 5 * NS_PER_S {
+                report.warnings.push(
+                    ConfigFinalizeWarning::QuitAfterLastWindowClosedDelayTooShort { duration },
+                );
+            }
+        }
     }
 
     fn finalize_working_directory(&mut self, context: &ConfigFinalizeContext) {
@@ -2546,6 +2561,12 @@ pub(crate) struct ConfigDiagnostic {
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub(crate) struct ConfigFinalizeReport {
     pub theme: Option<ConfigThemeLoadReport>,
+    pub warnings: Vec<ConfigFinalizeWarning>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ConfigFinalizeWarning {
+    QuitAfterLastWindowClosedDelayTooShort { duration: Duration },
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -7892,15 +7913,16 @@ mod tests {
         BellFeatures, BoldColor, ClipboardAccess, ClipboardCodepointMapEntry,
         ClipboardCodepointMapParseError, ClipboardReplacement, Color, ColorList, ColorParseError,
         Command, CommandPaletteEntry, Config, ConfigAppRuntime, ConfigDiagnostic, ConfigFilePath,
-        ConfigFinalizeReport, ConfigRecursiveFileErrorKind, ConfigReplayEntry, ConfigSetError,
-        ConfigSetSource, ConfigThemeLoadReport, ConfirmCloseSurface, CopyOnSelect, CursorStyle,
-        CustomShaderAnimation, DefaultConfigPaths, Duration, DurationParseError, FlagsParseError,
-        FontShapingBreak, FontStyle, FontStyleParseError, FontSyntheticStyle, Fullscreen,
-        GraphemeWidthMethod, GtkSingleInstance, GtkTabsLocation, GtkTitlebarStyle, GtkToolbarStyle,
-        LinkPreviews, LinuxCgroup, MacAppIcon, MacAppIconFrame, MacHidden, MacShortcuts,
-        MacTitlebarProxyIcon, MacTitlebarStyle, MacWindowButtons, MagicParseError,
-        MiddleClickAction, MouseScrollMultiplier, MouseScrollMultiplierParseError,
-        MouseShiftCapture, NonNativeFullscreen, NotifyOnCommandFinish, NotifyOnCommandFinishAction,
+        ConfigFinalizeReport, ConfigFinalizeWarning, ConfigRecursiveFileErrorKind,
+        ConfigReplayEntry, ConfigSetError, ConfigSetSource, ConfigThemeLoadReport,
+        ConfirmCloseSurface, CopyOnSelect, CursorStyle, CustomShaderAnimation, DefaultConfigPaths,
+        Duration, DurationParseError, FlagsParseError, FontShapingBreak, FontStyle,
+        FontStyleParseError, FontSyntheticStyle, Fullscreen, GraphemeWidthMethod,
+        GtkSingleInstance, GtkTabsLocation, GtkTitlebarStyle, GtkToolbarStyle, LinkPreviews,
+        LinuxCgroup, MacAppIcon, MacAppIconFrame, MacHidden, MacShortcuts, MacTitlebarProxyIcon,
+        MacTitlebarStyle, MacWindowButtons, MagicParseError, MiddleClickAction,
+        MouseScrollMultiplier, MouseScrollMultiplierParseError, MouseShiftCapture,
+        NonNativeFullscreen, NotifyOnCommandFinish, NotifyOnCommandFinishAction,
         OptionalFileAction, OscColorReportFormat, Palette, PaletteParseError,
         QuickTerminalDimensions, QuickTerminalKeyboardInteractivity, QuickTerminalLayer,
         QuickTerminalPosition, QuickTerminalScreen, QuickTerminalSize, QuickTerminalSizeParseError,
@@ -15823,6 +15845,66 @@ mod tests {
             cloned.quit_after_last_window_closed_delay,
             Some(Duration {
                 duration: 2 * NS_PER_S,
+            })
+        );
+    }
+
+    #[test]
+    fn config_quit_delay_finalize_warning() {
+        let mut unset = Config::default();
+        let report = unset.finalize_with_report();
+        assert!(report.warnings.is_empty());
+        assert_eq!(report.theme, None);
+        assert_eq!(unset.quit_after_last_window_closed_delay, None);
+
+        let mut short = Config::default();
+        short.quit_after_last_window_closed_delay = Some(Duration {
+            duration: 5 * NS_PER_S - 1,
+        });
+        short.minimum_contrast = 99.0;
+        let report = short.finalize_with_report();
+        assert_eq!(
+            report.warnings,
+            vec![
+                ConfigFinalizeWarning::QuitAfterLastWindowClosedDelayTooShort {
+                    duration: Duration {
+                        duration: 5 * NS_PER_S - 1,
+                    },
+                }
+            ]
+        );
+        assert_eq!(report.theme, None);
+        assert_eq!(
+            short.quit_after_last_window_closed_delay,
+            Some(Duration {
+                duration: 5 * NS_PER_S - 1,
+            })
+        );
+        assert_eq!(short.minimum_contrast, 21.0);
+
+        let mut exact = Config::default();
+        exact.quit_after_last_window_closed_delay = Some(Duration {
+            duration: 5 * NS_PER_S,
+        });
+        let report = exact.finalize_with_report();
+        assert!(report.warnings.is_empty());
+        assert_eq!(
+            exact.quit_after_last_window_closed_delay,
+            Some(Duration {
+                duration: 5 * NS_PER_S,
+            })
+        );
+
+        let mut long = Config::default();
+        long.quit_after_last_window_closed_delay = Some(Duration {
+            duration: 5 * NS_PER_S + 1,
+        });
+        let report = long.finalize_with_report();
+        assert!(report.warnings.is_empty());
+        assert_eq!(
+            long.quit_after_last_window_closed_delay,
+            Some(Duration {
+                duration: 5 * NS_PER_S + 1,
             })
         );
     }

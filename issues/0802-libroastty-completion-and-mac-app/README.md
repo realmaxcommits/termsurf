@@ -311,6 +311,12 @@ the earlier "commit a small baseline PNG set" wording in Exp 2.
   embedded/mac production runtime remains unchanged; GTK runtime behavior, link
   matcher mutation, quit-delay warning logging, key-remap finalization, and
   byte-faithful config string storage remain later work.
+- **Quit-delay finalize warning is recorded in core config reports.** Exp 105
+  adds a typed `ConfigFinalizeReport` warning for
+  `quit-after-last-window-closed-delay` values shorter than five seconds while
+  preserving the configured duration; app-facing/log plumbing, delayed shutdown
+  behavior, link matcher mutation, key-remap finalization, and byte-faithful
+  config string storage remain later work.
 
 **Keep this current.** When an experiment yields a durable, reusable fact — a
 toolchain incantation, a dead-end to avoid, or where an artifact lives — distill
@@ -1008,7 +1014,7 @@ stays unaltered except for the rename).
 - [Experiment 104: Phase F — GTK single-instance finalize](104-gtk-single-instance-finalize.md)
   — **Pass**
 - [Experiment 105: Phase F — quit-delay finalize warning](105-quit-delay-finalize-warning.md)
-  — **Designed**
+  — **Pass**
 
 ## Process
 
