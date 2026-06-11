@@ -305,6 +305,12 @@ pub(crate) struct Config {
     pub gtk_titlebar_style: GtkTitlebarStyle,
     /// `gtk-wide-tabs`.
     pub gtk_wide_tabs: bool,
+    /// `gtk-custom-css`.
+    pub gtk_custom_css: RepeatableConfigPath,
+    /// `desktop-notifications`.
+    pub desktop_notifications: bool,
+    /// `progress-style`.
+    pub progress_style: bool,
     /// `font-family`.
     pub font_family: RepeatableString,
     /// `font-family-bold`.
@@ -522,6 +528,9 @@ impl Default for Config {
             gtk_toolbar_style: GtkToolbarStyle::Raised,
             gtk_titlebar_style: GtkTitlebarStyle::Native,
             gtk_wide_tabs: true,
+            gtk_custom_css: RepeatableConfigPath::default(),
+            desktop_notifications: true,
+            progress_style: true,
             font_family: RepeatableString::default(),
             font_family_bold: RepeatableString::default(),
             font_family_italic: RepeatableString::default(),
@@ -871,6 +880,10 @@ impl Config {
         self.gtk_titlebar_style
             .format_entry(&mut EntryFormatter::new("gtk-titlebar-style", out));
         EntryFormatter::new("gtk-wide-tabs", out).entry_bool(self.gtk_wide_tabs);
+        self.gtk_custom_css
+            .format_entry(&mut EntryFormatter::new("gtk-custom-css", out));
+        EntryFormatter::new("desktop-notifications", out).entry_bool(self.desktop_notifications);
+        EntryFormatter::new("progress-style", out).entry_bool(self.progress_style);
         EntryFormatter::new("bold-color", out)
             .entry_optional(self.bold_color, |v, f| v.format_entry(f));
         EntryFormatter::new("faint-opacity", out).entry_float(self.faint_opacity);
@@ -1416,6 +1429,13 @@ impl Config {
                 )?
             }
             "gtk-wide-tabs" => self.gtk_wide_tabs = set_bool_field(value, default.gtk_wide_tabs)?,
+            "gtk-custom-css" => self.gtk_custom_css.parse_cli(value)?,
+            "desktop-notifications" => {
+                self.desktop_notifications = set_bool_field(value, default.desktop_notifications)?
+            }
+            "progress-style" => {
+                self.progress_style = set_bool_field(value, default.progress_style)?
+            }
             "grapheme-width-method" => {
                 self.grapheme_width_method = set_enum_field(
                     value,
@@ -1848,6 +1868,7 @@ impl Config {
     fn expand_config_file_paths_from_base(&mut self, base: &std::path::Path) {
         self.config_file.expand_from_base(base);
         self.custom_shader.expand_from_base(base);
+        self.gtk_custom_css.expand_from_base(base);
         if let Some(path) = self.bell_audio_path.as_mut() {
             path.expand_from_base(base);
         }
@@ -7500,6 +7521,9 @@ mod tests {
         assert_eq!(d.gtk_toolbar_style, GtkToolbarStyle::Raised);
         assert_eq!(d.gtk_titlebar_style, GtkTitlebarStyle::Native);
         assert!(d.gtk_wide_tabs);
+        assert!(d.gtk_custom_css.list.is_empty());
+        assert!(d.desktop_notifications);
+        assert!(d.progress_style);
         // Font group (Experiment 470).
         assert_eq!(d.font_style, FontStyle::Default);
         assert_eq!(d.font_style_bold, FontStyle::Default);
@@ -8999,6 +9023,76 @@ mod tests {
     }
 
     #[test]
+    fn gtk_custom_css_expands_from_file_and_cli_bases() {
+        let dir = unique_config_test_dir("gtk-css-base");
+        let file_base = dir.join("file-base");
+        let cli_base = dir.join("cli-base");
+        let config_file = file_base.join("config.roastty");
+        let file_css = file_base.join("file.css");
+        let file_optional = file_base.join("optional.css");
+        let cli_css = cli_base.join("cli.css");
+        let cli_optional = cli_base.join("optional-cli.css");
+        write_config_file(
+            &config_file,
+            "gtk-custom-css = ./file.css\ngtk-custom-css = ?optional.css\n",
+        );
+        write_config_file(&file_css, "");
+        write_config_file(&file_optional, "");
+        write_config_file(&cli_css, "");
+        write_config_file(&cli_optional, "");
+
+        let mut cfg = Config::default();
+        let diagnostics = cfg.load_file(&config_file).unwrap();
+        assert!(diagnostics.is_empty());
+        assert_eq!(
+            cfg.gtk_custom_css.list,
+            vec![
+                ConfigFilePath::Required(
+                    std::fs::canonicalize(&file_css)
+                        .unwrap()
+                        .to_string_lossy()
+                        .into_owned()
+                ),
+                ConfigFilePath::Optional(
+                    std::fs::canonicalize(&file_optional)
+                        .unwrap()
+                        .to_string_lossy()
+                        .into_owned()
+                ),
+            ]
+        );
+
+        let mut cfg = Config::default();
+        let diagnostics = cfg.set_cli_args_from_base(
+            [
+                "--gtk-custom-css=./cli.css",
+                "--gtk-custom-css=?optional-cli.css",
+            ],
+            &cli_base,
+        );
+        assert!(diagnostics.is_empty());
+        assert_eq!(
+            cfg.gtk_custom_css.list,
+            vec![
+                ConfigFilePath::Required(
+                    std::fs::canonicalize(&cli_css)
+                        .unwrap()
+                        .to_string_lossy()
+                        .into_owned()
+                ),
+                ConfigFilePath::Optional(
+                    std::fs::canonicalize(&cli_optional)
+                        .unwrap()
+                        .to_string_lossy()
+                        .into_owned()
+                ),
+            ]
+        );
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
     fn bell_features_config_parse_format_reset_and_diagnose() {
         let mut cfg = Config::default();
         assert_eq!(
@@ -9685,6 +9779,129 @@ mod tests {
         assert_eq!(cfg.gtk_single_instance, GtkSingleInstance::Detect);
         assert_eq!(cfg.window_show_tab_bar, WindowShowTabBar::Never);
         assert_eq!(cfg.gtk_titlebar_style, GtkTitlebarStyle::Tabs);
+
+        let cloned = cfg.clone();
+        assert_eq!(cloned, cfg);
+    }
+
+    #[test]
+    fn gtk_css_notifications_progress_config_parse_format_reset_and_diagnose() {
+        let mut cfg = Config::default();
+        assert!(cfg.gtk_custom_css.list.is_empty());
+        assert!(cfg.desktop_notifications);
+        assert!(cfg.progress_style);
+
+        let lines = |cfg: &Config| {
+            let mut out = String::new();
+            cfg.format_config(&mut out);
+            ["gtk-custom-css", "desktop-notifications", "progress-style"]
+                .into_iter()
+                .map(|key| {
+                    out.lines()
+                        .filter(|line| line.starts_with(&format!("{key} = ")))
+                        .map(str::to_string)
+                        .collect::<Vec<_>>()
+                })
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            lines(&cfg),
+            vec![
+                vec!["gtk-custom-css = ".to_string()],
+                vec!["desktop-notifications = true".to_string()],
+                vec!["progress-style = true".to_string()],
+            ]
+        );
+
+        cfg.set("gtk-custom-css", Some("base.css")).unwrap();
+        cfg.set("gtk-custom-css", Some("?optional.css")).unwrap();
+        cfg.set("gtk-custom-css", Some("\"?literal.css\"")).unwrap();
+        assert_eq!(
+            cfg.gtk_custom_css.list,
+            vec![
+                ConfigFilePath::Required("base.css".to_string()),
+                ConfigFilePath::Optional("optional.css".to_string()),
+                ConfigFilePath::Required("?literal.css".to_string()),
+            ]
+        );
+        assert_eq!(
+            lines(&cfg)[0],
+            vec![
+                "gtk-custom-css = base.css".to_string(),
+                "gtk-custom-css = ?optional.css".to_string(),
+                "gtk-custom-css = ?literal.css".to_string(),
+            ]
+        );
+
+        cfg.set("gtk-custom-css", Some("?")).unwrap();
+        cfg.set("gtk-custom-css", Some("\"\"")).unwrap();
+        cfg.set("gtk-custom-css", Some("?\"\"")).unwrap();
+        assert_eq!(cfg.gtk_custom_css.list.len(), 3);
+
+        cfg.set("gtk-custom-css", Some("")).unwrap();
+        assert!(cfg.gtk_custom_css.list.is_empty());
+        assert_eq!(
+            cfg.set("gtk-custom-css", None),
+            Err(ConfigSetError::ValueRequired)
+        );
+
+        cfg.set("desktop-notifications", Some("false")).unwrap();
+        cfg.set("progress-style", Some("false")).unwrap();
+        assert!(!cfg.desktop_notifications);
+        assert!(!cfg.progress_style);
+        assert_eq!(lines(&cfg)[1], vec!["desktop-notifications = false"]);
+        assert_eq!(lines(&cfg)[2], vec!["progress-style = false"]);
+
+        cfg.set("desktop-notifications", None).unwrap();
+        cfg.set("progress-style", None).unwrap();
+        assert!(cfg.desktop_notifications);
+        assert!(cfg.progress_style);
+        cfg.set("desktop-notifications", Some("false")).unwrap();
+        cfg.set("progress-style", Some("false")).unwrap();
+        cfg.set("desktop-notifications", Some("")).unwrap();
+        cfg.set("progress-style", Some("")).unwrap();
+        assert!(cfg.desktop_notifications);
+        assert!(cfg.progress_style);
+
+        assert_eq!(
+            cfg.set("desktop-notifications", Some("maybe")),
+            Err(ConfigSetError::InvalidValue)
+        );
+        assert_eq!(
+            cfg.set("progress-style", Some("maybe")),
+            Err(ConfigSetError::InvalidValue)
+        );
+
+        let diagnostics = cfg.load_str(
+            "gtk-custom-css = valid-a.css\n\
+             gtk-custom-css\n\
+             gtk-custom-css = ?valid-b.css\n\
+             desktop-notifications = maybe\n\
+             progress-style = false\n",
+        );
+        assert_eq!(
+            diagnostics,
+            vec![
+                ConfigDiagnostic {
+                    line: 2,
+                    key: "gtk-custom-css".to_string(),
+                    error: ConfigSetError::ValueRequired,
+                },
+                ConfigDiagnostic {
+                    line: 4,
+                    key: "desktop-notifications".to_string(),
+                    error: ConfigSetError::InvalidValue,
+                },
+            ]
+        );
+        assert_eq!(
+            cfg.gtk_custom_css.list,
+            vec![
+                ConfigFilePath::Required("valid-a.css".to_string()),
+                ConfigFilePath::Optional("valid-b.css".to_string()),
+            ]
+        );
+        assert!(!cfg.progress_style);
 
         let cloned = cfg.clone();
         assert_eq!(cloned, cfg);
@@ -12337,6 +12554,9 @@ mod tests {
             "gtk-toolbar-style",
             "gtk-titlebar-style",
             "gtk-wide-tabs",
+            "gtk-custom-css",
+            "desktop-notifications",
+            "progress-style",
             "bold-color",
             "faint-opacity",
         ]);
@@ -13476,6 +13696,12 @@ mod tests {
                 "gtk-titlebar-hide-when-maximized = true",
             ),
             ("gtk-wide-tabs", Some("false"), "gtk-wide-tabs = false"),
+            (
+                "desktop-notifications",
+                Some("false"),
+                "desktop-notifications = false",
+            ),
+            ("progress-style", Some("false"), "progress-style = false"),
         ] {
             let mut cfg = Config::default();
             cfg.set(key, value).unwrap();

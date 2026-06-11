@@ -98,3 +98,47 @@ separately preserving upstream formatter output after `gtk-wide-tabs` and before
 
 Codex-native adversarial re-reviewer `019eb587-061c-7730-a1ac-71bda8a63dd7`
 returned **Approved** with no findings.
+
+## Result
+
+**Result:** Pass
+
+Implemented the parser/formatter-only GTK CSS, desktop notification, and
+progress-style config surface in `roastty/src/config/mod.rs`:
+
+- Added `gtk-custom-css`, `desktop-notifications`, and `progress-style` to
+  `Config`, defaults, formatter output, and `Config::set`.
+- Routed `gtk-custom-css` through the existing `RepeatableConfigPath`
+  parser/formatter and added it to config-file / CLI base expansion.
+- Routed `desktop-notifications` and `progress-style` through the existing bool
+  parser, preserving bare-key true, empty reset, and invalid-value diagnostics.
+- Extended default, format-order, repeatable-path, bool-route, path-base
+  expansion, diagnostics, and clone/equality tests.
+
+Verification:
+
+- `cargo fmt` — pass.
+- `cargo test -p roastty gtk_css_notifications_progress` — pass: 1 passed, 0
+  failed.
+- `cargo test -p roastty gtk_custom_css_expands` — pass: 1 passed, 0 failed.
+- `cargo test -p roastty config_format_config` — pass: 1 passed, 0 failed.
+- `cargo test -p roastty` — pass: 4539 unit tests passed, 1 ABI harness test
+  passed, 0 doc tests. The ABI harness emitted the existing 10 enum conversion
+  warnings.
+- `cargo fmt --check` — pass.
+- `git diff --check` — pass.
+
+Codex-native adversarial completion reviewer
+`019eb58f-f81f-7dc3-9844-65404859d776` returned **Approved** with no findings.
+The reviewer verified the result was uncommitted, the implementation was
+parser/formatter/path-expansion only, upstream defaults and order matched the
+pinned source, focused tests passed, `cargo fmt --check` and `git diff --check`
+passed, and `cargo test -p roastty` passed with 4539 unit tests, 1 ABI harness
+test, 0 doc tests, and the existing 10 enum-conversion warnings.
+
+## Conclusion
+
+The next upstream config fields after the GTK chrome group are now represented
+in Roastty's parser/formatter surface. Runtime GTK CSS loading, terminal
+desktop-notification escape handling, and progress-style escape handling remain
+out of scope for this experiment and can be wired in later runtime/app work.
