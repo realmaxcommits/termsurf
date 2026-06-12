@@ -7392,7 +7392,7 @@ mod tests {
         assert_eq!(&payload[..4], b"bbbb");
         assert_eq!(&payload[osc::MAX_BUF - 4..osc::MAX_BUF + 4], b"bbbbbbbb");
         assert_eq!(&payload[payload.len() - 4..], b"bbbb");
-        assert_eq!(print_chars(&handler), &[]);
+        assert_eq!(print_chars(&handler), Vec::<char>::new());
     }
 
     #[test]

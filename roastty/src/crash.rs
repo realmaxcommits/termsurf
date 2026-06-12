@@ -1,14 +1,16 @@
 //! Local crash-report directory support.
 //!
-//! This is the local directory/listing and envelope persistence foundation from
-//! upstream `crash/dir.zig`, `crash/sentry_envelope.zig`, and the local
-//! transport path in `crash/sentry.zig`. It does not initialize Sentry or
-//! capture crash envelopes.
+//! This is the local directory/listing, Sentry envelope persistence, and
+//! process-wide Sentry capture foundation from upstream `crash/dir.zig`,
+//! `crash/sentry_envelope.zig`, and `crash/sentry.zig`.
 
 use std::cmp::Ordering;
 use std::ffi::OsString;
 use std::path::Component;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::Mutex;
+use std::time::Duration;
 use std::time::SystemTime;
 
 use serde_json::{Map, Value};
@@ -16,6 +18,9 @@ use uuid::Uuid;
 
 const ROASTTY_BUNDLE_ID: &str = "com.termsurf.roastty";
 const CRASH_REPORT_EXTENSION: &str = "roasttycrash";
+const LOCAL_SENTRY_DSN: &str = "https://local@roastty.invalid/1";
+
+static SENTRY_GUARD: Mutex<Option<sentry::ClientInitGuard>> = Mutex::new(None);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Report {
@@ -107,6 +112,79 @@ impl CrashDir {
         }
 
         Ok(self.path.join(name))
+    }
+}
+
+pub(crate) fn init() {
+    #[cfg(test)]
+    init_with_dir(CrashDir::new(test_default_dir_path()));
+    #[cfg(not(test))]
+    init_with_dir(CrashDir::default());
+}
+
+fn init_with_dir(dir: CrashDir) {
+    let mut guard = SENTRY_GUARD.lock().unwrap();
+    if guard.is_some() {
+        return;
+    }
+
+    let sentry_guard = sentry::init(sentry::ClientOptions {
+        dsn: Some(
+            LOCAL_SENTRY_DSN
+                .parse()
+                .expect("Roastty local Sentry DSN is valid"),
+        ),
+        release: Some(env!("CARGO_PKG_VERSION").into()),
+        transport: Some(Arc::new(Arc::new(LocalCrashTransport { dir }))),
+        default_integrations: true,
+        shutdown_timeout: Duration::ZERO,
+        ..Default::default()
+    });
+
+    sentry::configure_scope(|scope| {
+        scope.set_tag("build-mode", build_mode_tag());
+        scope.set_tag("renderer", "metal");
+    });
+
+    *guard = Some(sentry_guard);
+}
+
+fn build_mode_tag() -> &'static str {
+    if cfg!(debug_assertions) {
+        "debug"
+    } else {
+        "release"
+    }
+}
+
+#[cfg(test)]
+fn test_default_dir_path() -> PathBuf {
+    std::env::temp_dir()
+        .join("roastty")
+        .join("test-crash")
+        .join(std::process::id().to_string())
+}
+
+struct LocalCrashTransport {
+    dir: CrashDir,
+}
+
+impl sentry::Transport for LocalCrashTransport {
+    fn send_envelope(&self, envelope: sentry::Envelope) {
+        if let Err(err) = self.send_envelope_inner(envelope) {
+            eprintln!("roastty: failed to persist Sentry crash envelope: {err:?}");
+        }
+    }
+}
+
+impl LocalCrashTransport {
+    fn send_envelope_inner(
+        &self,
+        envelope: sentry::Envelope,
+    ) -> Result<PersistOutcome, PersistError> {
+        let mut bytes = Vec::new();
+        envelope.to_writer(&mut bytes)?;
+        self.dir.persist_event_envelope(&bytes)
     }
 }
 
@@ -445,11 +523,14 @@ fn write_json_object(out: &mut Vec<u8>, object: &Map<String, Value>) {
 #[cfg(test)]
 mod tests {
     use std::fs::{self, File};
+    use std::sync::Mutex;
     use std::thread;
     use std::time::Duration;
 
     use super::*;
     use crate::os::temp_dir::TempDir;
+
+    static SENTRY_INIT_TEST_LOCK: Mutex<()> = Mutex::new(());
 
     fn names(reports: &[Report]) -> Vec<String> {
         reports
@@ -462,6 +543,99 @@ mod tests {
         br#"{}
 {"type":"event","length":16}
 {"crashed":true}"#
+    }
+
+    fn sentry_event_envelope() -> sentry::Envelope {
+        let mut envelope = sentry::Envelope::new();
+        let mut event = sentry::protocol::Event::new();
+        event.message = Some("test crash event".into());
+        envelope.add_item(event);
+        envelope
+    }
+
+    fn sentry_session_envelope() -> sentry::Envelope {
+        sentry::Envelope::from_bytes_raw(
+            br#"{}
+{"type":"session","length":13}
+{"init":true}
+"#
+            .to_vec(),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn sentry_init_is_idempotent() {
+        let _lock = SENTRY_INIT_TEST_LOCK.lock().unwrap();
+        init();
+        init();
+        assert!(SENTRY_GUARD.lock().unwrap().is_some());
+    }
+
+    #[test]
+    fn sentry_local_transport_writes_event_envelope() {
+        let temp = TempDir::new().unwrap();
+        let dir = CrashDir::new(temp.path().join("crash"));
+        let transport = LocalCrashTransport { dir: dir.clone() };
+
+        let outcome = transport
+            .send_envelope_inner(sentry_event_envelope())
+            .expect("persist event envelope");
+
+        let PersistOutcome::Written(path) = outcome else {
+            panic!("expected written report");
+        };
+        assert_eq!(
+            path.extension().and_then(|extension| extension.to_str()),
+            Some(CRASH_REPORT_EXTENSION)
+        );
+
+        let bytes = fs::read(path).unwrap();
+        let parsed = Envelope::parse(&bytes).unwrap();
+        assert!(parsed.has_event());
+        assert_eq!(names(&dir.reports().unwrap()).len(), 1);
+    }
+
+    #[test]
+    fn sentry_local_transport_discards_non_event_envelope() {
+        let temp = TempDir::new().unwrap();
+        let dir = CrashDir::new(temp.path().join("crash"));
+        let transport = LocalCrashTransport { dir: dir.clone() };
+
+        let outcome = transport
+            .send_envelope_inner(sentry_session_envelope())
+            .expect("discard non-event envelope");
+
+        assert_eq!(outcome, PersistOutcome::Discarded);
+        assert!(!dir.path().exists());
+    }
+
+    #[test]
+    fn sentry_client_capture_uses_local_transport() {
+        let temp = TempDir::new().unwrap();
+        let dir = CrashDir::new(temp.path().join("crash"));
+        let client = Arc::new(sentry::Client::from_config(sentry::ClientOptions {
+            dsn: Some(LOCAL_SENTRY_DSN.parse().unwrap()),
+            transport: Some(Arc::new(Arc::new(LocalCrashTransport { dir: dir.clone() }))),
+            default_integrations: false,
+            shutdown_timeout: Duration::ZERO,
+            ..Default::default()
+        }));
+        let hub = Arc::new(sentry::Hub::new(
+            Some(client),
+            Arc::new(sentry::Scope::default()),
+        ));
+
+        sentry::Hub::run(hub, || {
+            let event_id = sentry::capture_message("local capture", sentry::Level::Error);
+            assert_ne!(event_id, sentry::types::Uuid::nil());
+        });
+
+        let reports = dir.reports().unwrap();
+        assert_eq!(reports.len(), 1);
+        let bytes = fs::read(dir.path().join(&reports[0].name)).unwrap();
+        let parsed = Envelope::parse(&bytes).unwrap();
+        assert!(parsed.has_event());
     }
 
     #[test]

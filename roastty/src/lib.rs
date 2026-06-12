@@ -12611,6 +12611,7 @@ pub extern "C" fn roastty_init(argc: usize, argv: *mut *mut c_char) -> c_int {
         }
     }
     *INIT_ARGV.lock().unwrap() = copied;
+    crash::init();
     ROASTTY_SUCCESS
 }
 

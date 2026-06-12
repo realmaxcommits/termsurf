@@ -206,6 +206,10 @@ the earlier "commit a small baseline PNG set" wording in Exp 2.
   Unicode spans.** Exp 148 ports the exact upstream draw-function inventory
   inside the `U+1FB3C`-`U+1FBEF` envelope and keeps upstream gaps such as
   `U+1FBB0`, `U+1FBBC`, `U+1FBC0`, and `U+1FBCD` excluded.
+- **Sentry capture is local-only.** Exp 149 initializes the Rust Sentry SDK from
+  `roastty_init` with only the `panic` integration and a custom transport that
+  serializes envelopes into the existing local `.roasttycrash` directory; the
+  default HTTP/TLS transports remain disabled.
 - **GTK quick-terminal config is parser/formatter-only.** Exp 82 wires
   `gtk-quick-terminal-layer` and `gtk-quick-terminal-namespace`; empty values
   reset to upstream defaults before enum/string parsing, and GTK layer-shell
@@ -977,7 +981,9 @@ the live app, verified by a Phase-D UI test.)
       glyphs (U+F5D0–F5E3) — exact upstream draw-function inventory, intentional
       gap exclusions, representative glyph pixels, and sprite atlas rendering
       wired in Exp 148
-- [ ] Sentry crash capture (the init/capture half of `crash/`)
+- [x] Sentry crash capture (the init/capture half of `crash/`) — local-only
+      Sentry SDK init, panic/event capture, custom envelope transport, and
+      dependency checks excluding Sentry HTTP/TLS transports wired in Exp 149
 - [ ] SIMD fast paths (perf — base64 / VT / index-of / width)
 - [ ] `os/cf_release_thread` (perf), terminfo resource
 
@@ -1370,7 +1376,7 @@ stays unaltered except for the rename).
 - [Experiment 148: Phase I — sprite legacy-computing coverage](148-sprite-legacy-computing-coverage.md)
   — **Pass**
 - [Experiment 149: Phase I — Sentry crash capture](149-sentry-crash-capture.md)
-  — **Designed**
+  — **Pass**
 
 ## Process
 

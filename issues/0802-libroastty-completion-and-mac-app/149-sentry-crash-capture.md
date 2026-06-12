@@ -109,3 +109,76 @@ requires `features = ["panic"]`, and verification now checks `native-tls` and
 `rustls` in addition to `reqwest`, `ureq`, and `curl`.
 
 **Final verdict:** Approved.
+
+## Result
+
+**Result:** Pass
+
+Roastty now initializes Sentry capture from `roastty_init` and keeps the Sentry
+client guard alive for the process lifetime. The dependency uses
+`default-features = false` with only the `panic` feature enabled, so Sentry's
+default HTTP/TLS transports are not compiled in.
+
+The new local transport serializes each Sentry envelope with the SDK's envelope
+writer and hands the bytes to the existing `CrashDir::persist_event_envelope`
+path. Event envelopes are written as `.roasttycrash` files; non-event envelopes
+are discarded without creating the crash directory. Tests cover direct transport
+persistence, non-event discard, idempotent init, and a real Sentry client
+capture routed through the local transport. In `cfg(test)`, global
+`crash::init()` uses a process-scoped temp crash directory so intentional panic
+tests do not write to the user's production crash-report directory.
+
+The only extra source change outside `crash.rs` / `lib.rs` is a one-line
+terminal stream test fix: adding the Sentry dependency graph introduced
+`potential_utf`, which made an existing `Vec<char>` vs `&[]` assertion
+ambiguous. The assertion now compares against `Vec::<char>::new()` with no
+behavior change.
+
+## Verification
+
+- `cargo fmt` — passed
+- `cargo test -p roastty sentry -- --test-threads=1` — 4 passed
+- `cargo test -p roastty crash -- --test-threads=1` — 28 passed
+- `cargo test -p roastty --test abi_harness` — 1 passed, with the existing C
+  enum-conversion warnings
+- `cargo test -p roastty -- --test-threads=1` — 4,826 unit tests passed; ABI
+  harness and doc-tests also passed, with the existing C enum-conversion
+  warnings and existing Sentry/Swift warning noise
+- `cd roastty && macos/build.nu --action test` — 211 hosted macOS tests passed
+  (`TEST SUCCEEDED`), with existing SwiftLint, Swift concurrency,
+  main-thread-checker, and pasteboard warning noise
+- `cargo fmt --check` — passed
+- `git diff --check` — passed
+- `git diff -U0 -- roastty/src roastty/Cargo.toml | rg -n "ghosttycrash|ghostty/sentry|ghostty/crash"`
+  — no newly introduced Ghostty crash-report paths or extensions
+- `cargo tree -p roastty -i reqwest` — package not found, expected
+- `cargo tree -p roastty -i ureq` — package not found, expected
+- `cargo tree -p roastty -i curl` — package not found, expected
+- `cargo tree -p roastty -i native-tls` — package not found, expected
+- `cargo tree -p roastty -i rustls` — package not found, expected
+
+## Conclusion
+
+The init/capture half of `crash/` is complete for the current Roastty process
+model: `roastty_init` enables Sentry panic/event capture, capture stays
+local-only through the custom transport, and persisted reports reuse the
+existing `.roasttycrash` envelope path. Thread-local surface dimensions and
+IO/render crash mailboxes remain out of scope for this experiment, matching the
+Experiment 126 follow-up note.
+
+## Completion Review
+
+**Reviewer:** Codex-native adversarial subagent with fresh context, using the
+`adversarial-review` skill's Codex path (`multi_agent_v1.spawn_agent`), not
+Claude's named `adversarial-reviewer` agent.
+
+**Verdict:** Approved.
+
+**Findings:** None.
+
+**Independent verification:** The reviewer reran `cargo fmt --check`,
+`git diff --check`, `cargo test -p roastty sentry -- --test-threads=1`,
+`cargo test -p roastty crash -- --test-threads=1`, the Sentry transport
+dependency checks for `reqwest`, `ureq`, `curl`, `native-tls`, and `rustls`, and
+`prettier --check` on the issue docs. The reviewer also confirmed the result
+commit had not been made before review.
