@@ -476,9 +476,9 @@ the earlier "commit a small baseline PNG set" wording in Exp 2.
   crate-internal Rust `KeymapDarwin` / `UCKeyTranslate` foundation with
   upstream-shaped modifier stripping and dead-key preedit state, and Exp 138
   makes `App` own and reload that keymap for layout detection. The copied app
-  keyDown path still uses AppKit text. Remaining Phase G native key work is
-  app/ABI wiring for Rust-side text translation, hosted dead-key/preedit runtime
-  validation, and native global shortcut registration.
+  keyDown path intentionally keeps using AppKit / `interpretKeyEvents` text,
+  matching upstream embedded scope. Remaining Phase G native key work is hosted
+  dead-key/preedit runtime validation and native global shortcut registration.
 - **The old copied-app config/menu assertion cluster is fixed at the Rust ABI
   boundary, but the XCTest host still hangs.** Exp 132 wires the missing
   Swift-read `roastty_config_get` keys, parsed `macos-window-shadow`, direct
@@ -910,9 +910,9 @@ the live app, verified by a Phase-D UI test.)
       host layout probe is validated from a hosted app test (Exp 135), and the
       copied macOS event-tap callback dispatch path is hosted-test validated
       (Exp 136), and `App` now owns/reloads `KeymapDarwin` state for layout
-      detection (Exp 138), but full `KeymapDarwin` text translation,
-      dead-key/preedit handling, and permission-dependent live global shortcut
-      installation remain later work
+      detection (Exp 138), while copied-app key text intentionally remains
+      AppKit-provided; hosted dead-key/preedit handling and permission-dependent
+      live global shortcut installation remain later work
 
 **Phase H — Renderer feature-completion (in the live pass)**
 
@@ -1300,6 +1300,8 @@ stays unaltered except for the rename).
   — **Pass**
 - [Experiment 138: Phase G — app keymap state](138-app-keymap-state.md) —
   **Pass**
+- [Experiment 139: Phase G — keymap text scope](139-keymap-text-scope.md) —
+  **Designed**
 
 ## Process
 
