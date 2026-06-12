@@ -176,3 +176,82 @@ context.
   that proves `ResourcesDir::host()` sees the bundled shell-integration files.
 
 **Final verdict:** Approved.
+
+## Result
+
+**Result:** Pass
+
+Ported automatic shell-integration setup into Roastty's PTY startup path.
+
+The new `termio::shell_integration` module detects and force-selects supported
+shells, writes `ROASTTY_SHELL_FEATURES` before every PTY spawn, rewrites
+supported shell startup command/env state with Roastty-specific env vars and
+resource paths, and falls back to the original command/env when automatic setup
+cannot be applied. `TermioSpawnOptions` now carries finalized shell-integration
+config plus the resolved resource directory, and `Surface::start_termio` threads
+those values into the worker spawn path.
+
+Copied the pinned upstream shell-integration resource tree into
+`roastty/resources/shell-integration` with mechanical `ghostty`/`Ghostty`/
+`GHOSTTY` renames. The macOS target now copies that tree into
+`Roastty.app/Contents/Resources/roastty/shell-integration/...` and creates the
+`Contents/Resources/terminfo/78/xterm-roastty` sentinel that
+`ResourcesDir::host()` uses to resolve `Contents/Resources/roastty`.
+
+Added Rust tests for feature-env determinism, bash/zsh/XDG/nushell setup,
+missing-resource fallback, forced shell mode, unconditional feature env when
+automatic integration is disabled, and a PTY child environment proof for forced
+zsh setup. Added a hosted macOS test that checks the built app contains the
+terminfo sentinel and the expected renamed shell-integration resource files.
+
+Verification completed:
+
+- `cargo fmt`
+- `cargo test -p roastty shell_integration -- --test-threads=1` — 13 passed
+- `cargo test -p roastty termio -- --test-threads=1` — 35 passed
+- `cargo test -p roastty resources_dir -- --test-threads=1` — 12 passed
+- `cd roastty && macos/build.nu --action test --only-testing RoasttyTests/ShellIntegrationResourceTests`
+  — 1 Swift Testing test passed
+- Built app resource `test -f` checks passed for:
+  - `roastty/macos/build/Debug/Roastty.app/Contents/Resources/roastty/shell-integration/bash/roastty.bash`
+  - `roastty/macos/build/Debug/Roastty.app/Contents/Resources/roastty/shell-integration/zsh/.zshenv`
+  - `roastty/macos/build/Debug/Roastty.app/Contents/Resources/roastty/shell-integration/zsh/roastty-integration`
+  - `roastty/macos/build/Debug/Roastty.app/Contents/Resources/roastty/shell-integration/fish/vendor_conf.d/roastty-shell-integration.fish`
+  - `roastty/macos/build/Debug/Roastty.app/Contents/Resources/roastty/shell-integration/elvish/lib/roastty-integration.elv`
+  - `roastty/macos/build/Debug/Roastty.app/Contents/Resources/roastty/shell-integration/nushell/vendor/autoload/roastty.nu`
+  - `roastty/macos/build/Debug/Roastty.app/Contents/Resources/terminfo/78/xterm-roastty`
+- `rg -n "ghostty|Ghostty|GHOSTTY" roastty/resources/shell-integration roastty/macos/Roastty.xcodeproj/project.pbxproj`
+  returned no matches
+- `cargo fmt --check`
+- `cargo test -p roastty --test abi_harness` — 1 passed, with existing C enum
+  conversion warnings
+- `cargo test -p roastty -- --test-threads=1` — 4813 unit tests plus ABI harness
+  and doc tests passed, with existing C enum conversion warnings
+- `cd roastty && macos/build.nu --action test` — 211 hosted macOS tests passed
+  (`TEST SUCCEEDED`), with existing SwiftLint, Swift concurrency, App Intents,
+  missing testing config, pasteboard, and main-thread-checker warnings/noise
+
+## Completion Review
+
+**Reviewer:** Codex adversarial reviewer `Hilbert`
+
+**Initial verdict:** Changes required.
+
+**Findings and fixes:**
+
+- **Required:** the initial nushell unsupported-option fallback rejected command
+  rewriting but also discarded the already-applied XDG environment setup,
+  diverging from upstream behavior. Fixed by preserving
+  `ROASTTY_SHELL_INTEGRATION_XDG_DIR` and `XDG_DATA_DIRS` while leaving the
+  original nushell args untouched for rejected `--command`, `--lsp`, and short
+  `-c` forms, then added focused test coverage for that path.
+
+**Final verdict:** Approved.
+
+## Conclusion
+
+Phase I shell-integration setup is complete. Roastty now prepares supported
+interactive shell startup using the finalized shell-integration config, exposes
+feature flags for automatic and manual integrations, bundles the renamed
+resource scripts in the app, and proves the setup through Rust PTY tests plus
+hosted app resource verification.

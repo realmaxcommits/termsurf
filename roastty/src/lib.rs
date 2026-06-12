@@ -3594,6 +3594,9 @@ impl Surface {
         let config = app_from_handle(self.app)
             .map(|app| app.parsed_config.clone())
             .unwrap_or_default();
+        let resource_dir = os::resources_dir::resources_dir()
+            .ok()
+            .and_then(|resources| resources.host().map(PathBuf::from));
         let termio = match self
             .command
             .as_deref()
@@ -3607,6 +3610,9 @@ impl Surface {
                     env: self.env_vars.clone(),
                     cursor_visual_style: config.cursor_style.to_terminal(),
                     cursor_blink: config.cursor_style_blink,
+                    shell_integration: config.shell_integration,
+                    shell_integration_features: config.shell_integration_features,
+                    resource_dir: resource_dir.clone(),
                 },
                 size,
             ),
@@ -3618,6 +3624,9 @@ impl Surface {
                     env: self.env_vars.clone(),
                     cursor_visual_style: config.cursor_style.to_terminal(),
                     cursor_blink: config.cursor_style_blink,
+                    shell_integration: config.shell_integration,
+                    shell_integration_features: config.shell_integration_features,
+                    resource_dir,
                 },
                 size,
             ),

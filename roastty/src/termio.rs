@@ -13,6 +13,8 @@ use crate::terminal::terminal::{
     Terminal, TerminalClipboardEvent, TerminalInitError, TerminalInitOptions, TerminalStreamError,
 };
 
+mod shell_integration;
+
 #[derive(Debug)]
 pub(crate) struct Termio {
     terminal: Terminal,
@@ -21,12 +23,29 @@ pub(crate) struct Termio {
     pending_write: Vec<u8>,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub(crate) struct TermioSpawnOptions {
     pub(crate) cwd: Option<PathBuf>,
     pub(crate) env: Vec<(String, String)>,
     pub(crate) cursor_visual_style: cursor::VisualStyle,
     pub(crate) cursor_blink: Option<bool>,
+    pub(crate) shell_integration: crate::config::ShellIntegration,
+    pub(crate) shell_integration_features: crate::config::ShellIntegrationFeatures,
+    pub(crate) resource_dir: Option<PathBuf>,
+}
+
+impl Default for TermioSpawnOptions {
+    fn default() -> Self {
+        Self {
+            cwd: None,
+            env: Vec::new(),
+            cursor_visual_style: cursor::VisualStyle::default(),
+            cursor_blink: None,
+            shell_integration: crate::config::ShellIntegration::Detect,
+            shell_integration_features: crate::config::ShellIntegrationFeatures::default(),
+            resource_dir: None,
+        }
+    }
 }
 
 // Termio is transferred to the worker thread behind a Mutex. The raw pointers
@@ -115,6 +134,28 @@ impl Termio {
         options: TermioSpawnOptions,
         size: PtySize,
     ) -> Result<Self, TermioError> {
+        let mut program = program.into();
+        let mut args: Vec<OsString> = args
+            .into_iter()
+            .map(|arg| arg.as_ref().to_os_string())
+            .collect();
+        let mut env = options.env;
+        shell_integration::setup_features(
+            &mut env,
+            options.shell_integration_features,
+            options.cursor_blink.unwrap_or(true),
+        );
+        if options.shell_integration.enabled() {
+            if let Some(resource_dir) = options.resource_dir.as_deref() {
+                let command = shell_integration::Command { program, args, env };
+                let command =
+                    shell_integration::setup(command, resource_dir, options.shell_integration);
+                program = command.program;
+                args = command.args;
+                env = command.env;
+            }
+        }
+
         let terminal = Terminal::init_with_options(
             size.cols,
             size.rows,
@@ -125,10 +166,10 @@ impl Termio {
             },
         )?;
         let mut command = PtyCommand::new(program, size);
-        for arg in args {
+        for arg in &args {
             command.arg(arg);
         }
-        for (key, value) in options.env {
+        for (key, value) in env {
             command.env(key, value);
         }
         if let Some(cwd) = options.cwd {
@@ -439,8 +480,11 @@ mod tests {
     use crate::os::pty::pty_command_lock;
     use crate::terminal::osc;
     use std::ffi::c_void;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::thread;
     use std::time::Duration;
+
+    static TERMIO_TEST_DIR_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
     unsafe extern "C" fn test_bell_callback(_: *mut c_void, _: *mut c_void) {}
 
@@ -451,6 +495,14 @@ mod tests {
             width_px: 800,
             height_px: 600,
         }
+    }
+
+    fn unique_test_dir(label: &str) -> PathBuf {
+        let counter = TERMIO_TEST_DIR_COUNTER.fetch_add(1, Ordering::Relaxed);
+        std::env::temp_dir().join(format!(
+            "roastty-termio-{}-{counter}-{label}",
+            std::process::id()
+        ))
     }
 
     fn spawn_shell(script: &str) -> Termio {
@@ -685,6 +737,81 @@ mod tests {
         });
 
         assert!(termio.terminal().plain_screen(false).contains("termio-env"));
+    }
+
+    #[test]
+    fn spawn_with_options_sets_shell_feature_env_even_when_integration_is_none() {
+        let _guard = pty_command_lock();
+        let mut termio = Termio::spawn_with_options(
+            "/bin/sh",
+            ["-c", "printf '%s' \"$ROASTTY_SHELL_FEATURES\""],
+            TermioSpawnOptions {
+                shell_integration: crate::config::ShellIntegration::None,
+                shell_integration_features: crate::config::ShellIntegrationFeatures {
+                    cursor: true,
+                    sudo: true,
+                    title: false,
+                    ssh_env: false,
+                    ssh_terminfo: false,
+                    path: false,
+                },
+                cursor_blink: Some(false),
+                ..TermioSpawnOptions::default()
+            },
+            test_size(),
+        )
+        .expect("spawn termio with shell features");
+
+        pump_until(&mut termio, |termio, _| {
+            termio
+                .terminal()
+                .plain_screen(false)
+                .contains("cursor:steady,sudo")
+        });
+
+        assert!(termio
+            .terminal()
+            .plain_screen(false)
+            .contains("cursor:steady,sudo"));
+    }
+
+    #[test]
+    fn spawn_with_options_forced_zsh_integration_reaches_child_env() {
+        let _guard = pty_command_lock();
+        let resources = unique_test_dir("termio-zsh-resources");
+        let zsh_dir = resources.join("shell-integration/zsh");
+        std::fs::create_dir_all(&zsh_dir).expect("create zsh resources");
+        std::fs::write(zsh_dir.join(".zshenv"), b"").expect("write zshenv");
+
+        let mut termio = Termio::spawn_with_options(
+            "/bin/sh",
+            [
+                "-c",
+                "printf 'zdot:%s features:%s' \"$ZDOTDIR\" \"$ROASTTY_SHELL_FEATURES\"",
+            ],
+            TermioSpawnOptions {
+                shell_integration: crate::config::ShellIntegration::Zsh,
+                resource_dir: Some(resources.clone()),
+                cursor_blink: Some(true),
+                ..TermioSpawnOptions::default()
+            },
+            test_size(),
+        )
+        .expect("spawn termio with forced zsh integration");
+
+        pump_until(&mut termio, |termio, _| {
+            termio
+                .terminal()
+                .plain_screen(false)
+                .contains("shell-integration/zsh")
+        });
+
+        let screen = termio.terminal().plain_screen(false);
+        assert!(screen.contains("zdot:"));
+        assert!(screen.contains("shell-integration/zsh"));
+        assert!(screen.contains("features:cursor:blink,path,title"));
+
+        let _ = std::fs::remove_dir_all(resources);
     }
 
     #[test]

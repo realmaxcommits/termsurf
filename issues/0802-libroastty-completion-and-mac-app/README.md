@@ -193,6 +193,15 @@ the earlier "commit a small baseline PNG set" wording in Exp 2.
 - **Link-highlight matching needs Oniguruma-compatible regex.** Exp 146 tried
   `fancy-regex`, which rejected the default URL matcher's variable-width
   look-behind, so Roastty uses `onig` for renderer link detection.
+- **Shell-integration features are always exported.** Exp 147 preserves
+  upstream's manual-integration behavior by setting `ROASTTY_SHELL_FEATURES`
+  before every PTY spawn, even when automatic `shell-integration = none`;
+  automatic command/env rewriting is the part gated by `shell-integration`.
+- **Bundled shell-integration resources live under the Roastty resource
+  subdir.** Exp 147 copies scripts to
+  `Roastty.app/Contents/Resources/roastty/shell-integration/...` and creates the
+  `Contents/Resources/terminfo/78/xterm-roastty` sentinel that
+  `ResourcesDir::host()` uses to resolve `Contents/Resources/roastty`.
 - **GTK quick-terminal config is parser/formatter-only.** Exp 82 wires
   `gtk-quick-terminal-layer` and `gtk-quick-terminal-namespace`; empty values
   reset to upstream defaults before enum/string parsing, and GTK layer-shell
@@ -956,7 +965,10 @@ the live app, verified by a Phase-D UI test.)
 
 **Phase I — Polish / remaining**
 
-- [ ] Shell-integration injection (`termio/shell_integration.zig`)
+- [x] Shell-integration injection (`termio/shell_integration.zig`) — automatic
+      setup module, feature env export, supported-shell command/env rewrite,
+      renamed resource tree, app-bundle copy phase, and PTY/hosted resource
+      tests wired in Exp 147
 - [ ] Sprite legacy-computing coverage (Smooth Mosaics U+1FB3C–1FBEF) + branch
       glyphs (U+F5D0–F5E3)
 - [ ] Sentry crash capture (the init/capture half of `crash/`)
@@ -1348,7 +1360,7 @@ stays unaltered except for the rename).
 - [Experiment 146: Phase H — link-highlight renderer feed](146-link-highlight-renderer-feed.md)
   — **Pass**
 - [Experiment 147: Phase I — shell-integration setup](147-shell-integration-setup.md)
-  — **Designed**
+  — **Pass**
 
 ## Process
 
