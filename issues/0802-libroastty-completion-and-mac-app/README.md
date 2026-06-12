@@ -1381,6 +1381,8 @@ stays unaltered except for the rename).
   — **Pass**
 - [Experiment 150: Phase I — SIMD fast paths](150-simd-fast-paths.md) —
   **Partial**
+- [Experiment 151: Phase I — codepoint width fast path](151-codepoint-width-fast-path.md)
+  — **Designed**
 
 ## Process
 
