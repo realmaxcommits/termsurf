@@ -1397,6 +1397,8 @@ stays unaltered except for the rename).
   — **Partial**
 - [Experiment 152: Phase I — generated width table](152-generated-width-table.md)
   — **Pass**
+- [Experiment 153: Phase I — terminfo resource env](153-terminfo-resource-env.md)
+  — **Designed**
 
 ## Process
 
