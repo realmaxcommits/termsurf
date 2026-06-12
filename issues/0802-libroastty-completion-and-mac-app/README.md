@@ -1325,6 +1325,8 @@ stays unaltered except for the rename).
   — **Pass**
 - [Experiment 142: Phase H — background-image config path](142-background-image-config-path.md)
   — **Pass**
+- [Experiment 143: Phase H — background-image live rendering](143-background-image-live-rendering.md)
+  — **Designed**
 
 ## Process
 
