@@ -1340,6 +1340,8 @@ stays unaltered except for the rename).
   — **Pass**
 - [Experiment 145: Phase H — custom-shader loader hookup](145-custom-shader-loader-hookup.md)
   — **Pass**
+- [Experiment 146: Phase H — link-highlight renderer feed](146-link-highlight-renderer-feed.md)
+  — **Designed**
 
 ## Process
 
