@@ -1377,6 +1377,8 @@ stays unaltered except for the rename).
   — **Pass**
 - [Experiment 149: Phase I — Sentry crash capture](149-sentry-crash-capture.md)
   — **Pass**
+- [Experiment 150: Phase I — SIMD fast paths](150-simd-fast-paths.md) —
+  **Designed**
 
 ## Process
 
