@@ -1361,6 +1361,8 @@ stays unaltered except for the rename).
   — **Pass**
 - [Experiment 147: Phase I — shell-integration setup](147-shell-integration-setup.md)
   — **Pass**
+- [Experiment 148: Phase I — sprite legacy-computing coverage](148-sprite-legacy-computing-coverage.md)
+  — **Designed**
 
 ## Process
 
