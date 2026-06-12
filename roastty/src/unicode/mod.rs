@@ -9,6 +9,7 @@ use unicode_width::UnicodeWidthChar;
 
 mod grapheme_table;
 mod tables;
+mod width;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Properties {
@@ -61,6 +62,10 @@ pub(crate) fn get(codepoint: u32) -> Properties {
     }
 
     table_properties(codepoint)
+}
+
+pub(crate) fn codepoint_width(codepoint: u32) -> u8 {
+    width::fast_codepoint_width(codepoint).unwrap_or_else(|| table_properties(codepoint).width)
 }
 
 fn table_properties(codepoint: u32) -> Properties {
@@ -1215,6 +1220,92 @@ mod tests {
     }
 
     #[test]
+    fn codepoint_width_matches_upstream_basic_cases() {
+        assert_eq!(codepoint_width('a' as u32), 1);
+        assert_eq!(codepoint_width(0x100), 1);
+        assert_eq!(codepoint_width(0x3400), 2);
+        assert_eq!(codepoint_width(0x2E3A), 2);
+        assert_eq!(codepoint_width(0x1F1E6), 2);
+        assert_eq!(codepoint_width(0x4E00), 2);
+        assert_eq!(codepoint_width(0xF900), 2);
+        assert_eq!(codepoint_width(0x20000), 2);
+        assert_eq!(codepoint_width(0x30000), 2);
+    }
+
+    #[test]
+    fn codepoint_width_matches_table_for_valid_scalars() {
+        let mut mismatches = Vec::new();
+        for codepoint in 0..=0x10ffff {
+            if (0xd800..=0xdfff).contains(&codepoint) {
+                continue;
+            }
+            if codepoint <= 0xff && table_properties(codepoint).width != 1 {
+                assert_eq!(codepoint_width(codepoint), 1);
+                continue;
+            }
+            let fast = codepoint_width(codepoint);
+            let table = table_properties(codepoint).width;
+            if fast != table {
+                mismatches.push((codepoint, fast, table));
+            }
+        }
+        if !mismatches.is_empty() {
+            eprintln!("{}", mismatch_ranges(&mismatches));
+        }
+        assert!(mismatches.is_empty(), "{} mismatches", mismatches.len());
+    }
+
+    fn mismatch_ranges(mismatches: &[(u32, u8, u8)]) -> String {
+        let mut out = String::new();
+        let mut i = 0;
+        while i < mismatches.len() {
+            let (start, fast, table) = mismatches[i];
+            let mut end = start;
+            i += 1;
+            while i < mismatches.len()
+                && mismatches[i].0 == end + 1
+                && mismatches[i].1 == fast
+                && mismatches[i].2 == table
+            {
+                end = mismatches[i].0;
+                i += 1;
+            }
+            out.push_str(&format!("0x{start:x}..=0x{end:x}: {fast}->{table}\n"));
+        }
+        out
+    }
+
+    #[test]
+    fn codepoint_width_range_boundaries() {
+        for (codepoint, width) in [
+            (0x00ad, 1),
+            (0x0100, 1),
+            (0x0300, 0),
+            (0x036f, 0),
+            (0x0370, 1),
+            (0x1100, 2),
+            (0x115e, 2),
+            (0x115f, 0),
+            (0x1160, 0),
+            (0x11ff, 0),
+            (0x1200, 1),
+            (0x2e39, 1),
+            (0x2e3a, 2),
+            (0x2e3b, 2),
+            (0x3400, 2),
+            (0x4dbf, 2),
+            (0x4dc0, 2),
+            (0x4dff, 2),
+            (0x4e00, 2),
+            (0xe0000, 0),
+            (0xe0fff, 0),
+            (0xe1000, 1),
+        ] {
+            assert_eq!(codepoint_width(codepoint), width, "U+{codepoint:04X}");
+        }
+    }
+
+    #[test]
     fn unicode_properties_ascii_fast_path_matches_table() {
         for codepoint in 0x20..=0x7e {
             assert_eq!(props(codepoint), table_properties(codepoint));
@@ -1338,10 +1429,18 @@ mod tests {
 
     #[test]
     #[ignore = "release-mode perf probe"]
-    fn simd_fast_path_perf_unicode_width() {
+    fn simd_fast_path_perf_codepoint_width() {
+        let pattern = [
+            0x0100, 0x0301, 0x1100, 0x1160, 0x2e3a, 0x3400, 0x4e00, 0x65e5, 0x1f1e6, 0x1f389,
+            0x20000, 0xe0020,
+        ];
         let input: Vec<u32> = (0..(1024 * 128))
-            .map(|i| b'A' as u32 + (i % 26) as u32)
+            .map(|i| pattern[i % pattern.len()])
             .collect();
+        let expected: usize = input
+            .iter()
+            .map(|&codepoint| table_properties(codepoint).width as usize)
+            .sum();
         let iterations = 100;
 
         let scalar = time_iterations(iterations, || {
@@ -1349,16 +1448,16 @@ mod tests {
             for &codepoint in &input {
                 sum += table_properties(codepoint).width as usize;
             }
-            assert_eq!(sum, input.len());
+            assert_eq!(sum, expected);
         });
         let fast = time_iterations(iterations, || {
             let mut sum = 0usize;
             for &codepoint in &input {
-                sum += props(codepoint).width as usize;
+                sum += codepoint_width(codepoint) as usize;
             }
-            assert_eq!(sum, input.len());
+            assert_eq!(sum, expected);
         });
-        report_ratio("unicode_ascii_width", scalar, fast);
+        report_ratio("codepoint_width", scalar, fast);
     }
 
     fn time_iterations(iterations: usize, mut f: impl FnMut()) -> std::time::Duration {
@@ -1367,15 +1466,6 @@ mod tests {
             f();
         }
         start.elapsed()
-    }
-
-    fn assert_speedup(label: &str, scalar: std::time::Duration, fast: std::time::Duration) {
-        let ratio = scalar.as_secs_f64() / fast.as_secs_f64();
-        eprintln!("{label}: scalar={scalar:?} fast={fast:?} ratio={ratio:.2}x");
-        assert!(
-            ratio >= 1.05,
-            "{label} fast path ratio {ratio:.2}x below 1.05x"
-        );
     }
 
     fn report_ratio(label: &str, scalar: std::time::Duration, fast: std::time::Duration) {

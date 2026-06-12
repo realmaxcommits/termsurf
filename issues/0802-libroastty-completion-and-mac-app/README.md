@@ -210,6 +210,12 @@ the earlier "commit a small baseline PNG set" wording in Exp 2.
   `roastty_init` with only the `panic` integration and a custom transport that
   serializes envelopes into the existing local `.roasttycrash` directory; the
   default HTTP/TLS transports remain disabled.
+- **Codepoint width needs more than scalar Rust ranges.** Exp 151 added a
+  width-only helper and proved full Unicode-scalar parity with the generated
+  table, but the release probe measured only 0.76x versus direct table width
+  lookup. The remaining SIMD/perf width work should use a generated width-only
+  table, target intrinsics, or a C++ Highway bridge; do not spend more time on
+  scalar range scans/checks.
 - **GTK quick-terminal config is parser/formatter-only.** Exp 82 wires
   `gtk-quick-terminal-layer` and `gtk-quick-terminal-namespace`; empty values
   reset to upstream defaults before enum/string parsing, and GTK layer-shell
@@ -986,7 +992,9 @@ the live app, verified by a Phase-D UI test.)
       dependency checks excluding Sentry HTTP/TLS transports wired in Exp 149
 - [ ] SIMD fast paths (perf — base64 / VT / index-of / width) — base64,
       index-of, and VT ASCII fast paths wired in Exp 150; width remains a scalar
-      shortcut and needs a real SIMD/range-accelerated follow-up
+      shortcut after Exp 151's parity-safe width helper measured slower than the
+      generated table; needs a generated width table, intrinsics, or C++ Highway
+      bridge
 - [ ] `os/cf_release_thread` (perf), terminfo resource
 
 **Workstream 3 (continuous — the harness from Phase A, the roastty app from
@@ -1382,7 +1390,7 @@ stays unaltered except for the rename).
 - [Experiment 150: Phase I — SIMD fast paths](150-simd-fast-paths.md) —
   **Partial**
 - [Experiment 151: Phase I — codepoint width fast path](151-codepoint-width-fast-path.md)
-  — **Designed**
+  — **Partial**
 
 ## Process
 

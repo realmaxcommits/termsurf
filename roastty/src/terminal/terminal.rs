@@ -3269,12 +3269,13 @@ impl Handler for TerminalStreamHandler<'_> {
 
 impl TerminalStreamHandler<'_> {
     fn print(&mut self, cp: char) -> Result<(), TerminalStreamError> {
-        if cp.is_ascii_control() {
+        if cp.is_control() {
             return Err(TerminalStreamError::UnsupportedCodepoint(cp));
         }
 
         let codepoint = cp as u32;
         let props = crate::unicode::get(codepoint);
+        let width = crate::unicode::codepoint_width(codepoint);
         let wraparound = self.modes.get(modes::Mode::Wraparound);
         let cursor_x = self.screens.active().cursor_position().0;
         let right_limit = if cursor_x > self.scrolling_region.right {
@@ -3338,7 +3339,7 @@ impl TerminalStreamHandler<'_> {
             }
         }
 
-        if props.width == 0 {
+        if width == 0 {
             if self.modes.get(modes::Mode::GraphemeCluster) {
                 return Ok(());
             }
@@ -3371,7 +3372,7 @@ impl TerminalStreamHandler<'_> {
                 self.size.cols,
                 self.size.rows,
                 cp,
-                props.width,
+                width,
                 self.modes.get(modes::Mode::Insert),
                 wraparound,
                 self.scrolling_region.left,
@@ -5546,6 +5547,18 @@ mod tests {
             "ABCD"
         );
         assert_eq!(terminal.cursor_position_for_tests(), (4, 0));
+    }
+
+    #[test]
+    fn terminal_stream_c1_control_is_rejected_before_width_fast_path() {
+        let mut terminal = Terminal::init(10, 2, None).unwrap();
+
+        assert_eq!(
+            terminal.next_slice("\u{85}".as_bytes()),
+            Err(TerminalStreamError::UnsupportedCodepoint('\u{85}'))
+        );
+        assert_eq!(plain_with_unwrap(&terminal, false), "");
+        assert_eq!(terminal.cursor_position_for_tests(), (0, 0));
     }
 
     #[test]

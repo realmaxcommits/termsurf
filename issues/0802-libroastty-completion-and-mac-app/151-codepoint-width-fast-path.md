@@ -123,3 +123,76 @@ widened if the fast helper were called unconditionally.
 valid-scalar parity wording resolve the prior findings.
 
 **Final verdict:** Approved.
+
+## Result
+
+**Result:** Partial
+
+Roastty now has a dedicated width-only helper:
+
+- `unicode::codepoint_width(codepoint)` first checks a small set of hot
+  upstream-shaped ranges for Latin Extended narrow codepoints, combining marks,
+  Hangul Jamo zero-width ranges, CJK/compatibility ideograph ranges, common
+  emoji ranges, supplementary ideographs, and tag characters.
+- All uncommon codepoints fall back to the generated `Properties` table, so the
+  existing Unicode table remains the correctness oracle.
+- `TerminalStreamHandler::print` now rejects all `char::is_control()` codepoints
+  before width lookup, covering both C0 and C1 controls, then uses
+  `codepoint_width` for print/spacer width while retaining `unicode::get` for
+  grapheme break, emoji variation, and zero-width metadata decisions.
+
+The exhaustive parity test proves the width helper matches
+`table_properties(...).width` for every valid Unicode scalar value, with the
+documented `<= 0xff` control-filter exception. Terminal stream tests also cover
+the C1 rejection path and the existing wide/zero-width print behavior.
+
+The performance result did not meet the Pass threshold. The release probe
+reported:
+
+- `codepoint_width`: 0.76x versus direct generated-table width lookup
+
+This means a scalar Rust range helper is not enough to close the Phase I width
+SIMD/perf requirement. The remaining work needs a genuinely faster width
+strategy, most likely a generated width-only table, target intrinsics, or a C++
+Highway bridge equivalent to upstream `ghostty_simd_codepoint_width`.
+
+## Verification
+
+- `cargo fmt` — passed
+- `cargo test -p roastty unicode -- --test-threads=1` — 33 passed, 1 ignored
+- `cargo test -p roastty terminal_stream -- --test-threads=1` — 447 passed
+- `cargo test -p roastty -- --test-threads=1` — 4,840 unit tests passed; ABI
+  harness and doc-tests passed, with existing C enum-conversion warnings and
+  existing `[unknown](scope): message` noise
+- `cd roastty && macos/build.nu --action test` — 211 hosted macOS tests passed
+  (`TEST SUCCEEDED`), with existing SwiftLint, Swift concurrency,
+  main-thread-checker, and pasteboard warning noise
+- `cargo test --release -p roastty simd_fast_path_perf_codepoint_width -- --ignored --nocapture --test-threads=1`
+  — passed as a reporting probe; measured `codepoint_width` at 0.76x, below the
+  1.05x Pass threshold
+
+## Conclusion
+
+The width API and terminal integration are correct, but the performance gate is
+not closed. Experiment 151 keeps the SIMD checklist item open and narrows the
+next attempt: do not spend more time on scalar Rust range checks for width;
+build a width-only generated table or wire a true SIMD/intrinsics bridge.
+
+## Completion Review
+
+Codex-native adversarial subagent `Hypatia` reviewed the completed experiment
+with fresh context before the result commit. The reviewer inspected the
+experiment file, the implementation diff from plan commit
+`eaf72d1f39ae72f3dbf32650195f77314194d11c`, the changed source files, and the
+documented verification claims.
+
+**Verdict:** Approved.
+
+**Findings:** None.
+
+**Independent verification:** The reviewer ran `git status --short`,
+`cargo fmt --check`, `git diff --check`, targeted Unicode/terminal tests, and
+the release perf probe. The reviewer did not rerun the full Rust or hosted macOS
+suites, but found the recorded results internally consistent. The reviewer's
+release perf rerun measured `codepoint_width` at 0.68x, which also supports the
+Partial result.
