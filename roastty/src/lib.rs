@@ -333,6 +333,10 @@ const ROASTTY_BUILD_INFO_VERSION_PATCH: c_int = 8;
 const ROASTTY_BUILD_INFO_VERSION_PRE: c_int = 9;
 const ROASTTY_BUILD_INFO_VERSION_BUILD: c_int = 10;
 
+const ROASTTY_KEYBOARD_LAYOUT_UNKNOWN: c_int = 0;
+const ROASTTY_KEYBOARD_LAYOUT_US_STANDARD: c_int = 1;
+const ROASTTY_KEYBOARD_LAYOUT_US_INTERNATIONAL: c_int = 2;
+
 const ROASTTY_SYS_LOG_LEVEL_ERROR: c_int = 0;
 const ROASTTY_SYS_LOG_LEVEL_WARNING: c_int = 1;
 const ROASTTY_SYS_LOG_LEVEL_INFO: c_int = 2;
@@ -12264,6 +12268,19 @@ pub extern "C" fn roastty_build_info(data: c_int, out: *mut c_void) -> c_int {
     }
 }
 
+fn keyboard_layout_to_abi(layout: input_keyboard::Layout) -> c_int {
+    match layout {
+        input_keyboard::Layout::Unknown => ROASTTY_KEYBOARD_LAYOUT_UNKNOWN,
+        input_keyboard::Layout::UsStandard => ROASTTY_KEYBOARD_LAYOUT_US_STANDARD,
+        input_keyboard::Layout::UsInternational => ROASTTY_KEYBOARD_LAYOUT_US_INTERNATIONAL,
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn roastty_current_keyboard_layout() -> c_int {
+    keyboard_layout_to_abi(input_keyboard::Layout::current())
+}
+
 #[no_mangle]
 pub extern "C" fn roastty_alloc(allocator: *const RoasttyAllocator, len: usize) -> *mut u8 {
     if len == 0 {
@@ -24019,6 +24036,31 @@ mod tests {
             roastty_surface_free(surface);
             roastty_app_free(app);
         });
+    }
+
+    #[test]
+    fn current_keyboard_layout_abi_maps_current_layout() {
+        input_keyboard::with_current_layout_for_test(input_keyboard::Layout::Unknown, || {
+            assert_eq!(
+                roastty_current_keyboard_layout(),
+                ROASTTY_KEYBOARD_LAYOUT_UNKNOWN
+            );
+        });
+        input_keyboard::with_current_layout_for_test(input_keyboard::Layout::UsStandard, || {
+            assert_eq!(
+                roastty_current_keyboard_layout(),
+                ROASTTY_KEYBOARD_LAYOUT_US_STANDARD
+            );
+        });
+        input_keyboard::with_current_layout_for_test(
+            input_keyboard::Layout::UsInternational,
+            || {
+                assert_eq!(
+                    roastty_current_keyboard_layout(),
+                    ROASTTY_KEYBOARD_LAYOUT_US_INTERNATIONAL
+                );
+            },
+        );
     }
 
     #[test]

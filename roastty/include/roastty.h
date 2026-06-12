@@ -284,6 +284,12 @@ typedef enum {
   ROASTTY_BUILD_INFO_VERSION_BUILD = 10,
 } roastty_build_info_e;
 
+typedef enum {
+  ROASTTY_KEYBOARD_LAYOUT_UNKNOWN = 0,
+  ROASTTY_KEYBOARD_LAYOUT_US_STANDARD = 1,
+  ROASTTY_KEYBOARD_LAYOUT_US_INTERNATIONAL = 2,
+} roastty_keyboard_layout_e;
+
 typedef struct roastty_allocator_vtable_s {
   void* (*alloc)(void* ctx, size_t len, uint8_t alignment, uintptr_t ret_addr);
   bool (*resize)(void* ctx,
@@ -1906,6 +1912,7 @@ ROASTTY_API roastty_info_s roastty_info(void);
  * values. They remain valid for the lifetime of the process and must not be
  * passed to roastty_string_free. */
 ROASTTY_API roastty_result_e roastty_build_info(roastty_build_info_e, void*);
+ROASTTY_API roastty_keyboard_layout_e roastty_current_keyboard_layout(void);
 ROASTTY_API uint8_t* roastty_alloc(const roastty_allocator_s*, size_t);
 ROASTTY_API void roastty_free(const roastty_allocator_s*, uint8_t*, size_t);
 ROASTTY_API roastty_result_e roastty_sys_set(roastty_sys_option_e,

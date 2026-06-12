@@ -467,11 +467,11 @@ the earlier "commit a small baseline PNG set" wording in Exp 2.
   130 added `macos-option-as-alt` config and modifier translation fallback, and
   Exp 131 makes app creation plus `roastty_app_keyboard_changed` refresh the
   stored layout used by `roastty_surface_key_translation_mods`. The
-  deterministic tests use a thread-local layout provider override; production
-  builds compile a macOS Carbon/TIS probe, but the real host probe is not
-  exercised in unit tests. Remaining Phase G native key work is full
-  `KeymapDarwin` text translation, dead-key/preedit handling, and native global
-  shortcut registration.
+  deterministic Rust tests use a thread-local layout provider override, and Exp
+  135 validates the production macOS Carbon/TIS probe from the hosted app-test
+  environment through `roastty_current_keyboard_layout()`. Remaining Phase G
+  native key work is full `KeymapDarwin` text translation, dead-key/preedit
+  handling, and native global shortcut registration.
 - **The old copied-app config/menu assertion cluster is fixed at the Rust ABI
   boundary, but the XCTest host still hangs.** Exp 132 wires the missing
   Swift-read `roastty_config_get` keys, parsed `macos-window-shadow`, direct
@@ -898,9 +898,10 @@ the live app, verified by a Phase-D UI test.)
       `RemapSet`/`Mask`, the `key-remap` config field, and surface runtime
       key-remap application are wired (Exp 107–109), and configured `global:`
       plus focused app-scoped `roastty_app_key` dispatch is wired (Exp 113–114),
-      and option-as-alt layout reload plumbing is wired (Exp 130–131), but full
-      `KeymapDarwin` text translation, dead-key/preedit handling, native global
-      shortcut registration, and live host-probe validation remain later work
+      option-as-alt layout reload plumbing is wired (Exp 130–131), and the live
+      host layout probe is validated from a hosted app test (Exp 135), but full
+      `KeymapDarwin` text translation, dead-key/preedit handling, and native
+      global shortcut registration remain later work
 
 **Phase H — Renderer feature-completion (in the live pass)**
 
@@ -1281,7 +1282,7 @@ stays unaltered except for the rename).
 - [Experiment 134: Phase G — file keybind loading](134-file-keybind-loading.md)
   — **Pass**
 - [Experiment 135: Phase G — live keyboard layout probe](135-live-keyboard-layout-probe.md)
-  — **Designed**
+  — **Pass**
 
 ## Process
 

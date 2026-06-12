@@ -114,3 +114,73 @@ without first porting full `KeymapDarwin`.
   the targeted Rust checks.
 
 The re-review approved the fixes and reported no new required findings.
+
+## Result
+
+**Result:** Pass
+
+Implemented the live keyboard-layout diagnostics path:
+
+- Added public C ABI enum values for Roastty's small keyboard-layout set:
+  `unknown`, `us_standard`, and `us_international`.
+- Added `roastty_current_keyboard_layout()`, which calls the production
+  `input_keyboard::Layout::current()` path and maps the result to the ABI enum.
+- Added Rust unit coverage proving the ABI converter follows the current layout
+  provider for all three enum variants without claiming to exercise the host
+  Carbon/TIS path.
+- Added `KeyboardLayoutTests` to the macOS hosted test suite. The test calls the
+  normal staticlib ABI, verifies the result is a valid public enum case, then
+  independently reads the host layout-source ID through
+  `TISCopyCurrentKeyboardLayoutInputSource` plus `kTISPropertyInputSourceID`. On
+  this host, the independent layout-source ID was `com.apple.keylayout.US`, and
+  the ABI returned `ROASTTY_KEYBOARD_LAYOUT_US_STANDARD`.
+
+Verification:
+
+- `cargo fmt`
+- `cargo build -p roastty`
+- `cargo test -p roastty keyboard_layout` — 3 unit tests passed; ABI harness
+  filter passed with 0 tests
+- `cargo test -p roastty key_translation_mods` — 10 unit tests passed; ABI
+  harness filter passed with 0 tests
+- `cd roastty && macos/build.nu --action test --only-testing RoasttyTests/KeyboardLayoutTests`
+  — 1 Swift Testing test passed
+- Independent host layout-source check:
+  `TISCopyCurrentKeyboardLayoutInputSource` reported `com.apple.keylayout.US`
+- `cd roastty && macos/build.nu --action test` — 202 tests in 19 suites passed
+- `cargo test -p roastty -- --test-threads=1` — 4,751 unit tests passed, the C
+  ABI harness passed, and doc-tests passed
+- `cargo fmt --check`
+- `git diff --check`
+- `prettier --check --prose-wrap always --print-width 80 issues/0802-libroastty-completion-and-mac-app/135-live-keyboard-layout-probe.md issues/0802-libroastty-completion-and-mac-app/README.md`
+
+The full macOS test run still emits pre-existing SwiftLint/Main Thread Checker
+and App Intents logs; they are non-failing and unrelated to this experiment. The
+C ABI harness still emits the pre-existing enum conversion warnings.
+
+## Conclusion
+
+The production macOS Carbon/TIS layout probe is now validated from the hosted
+app-test environment through the normal staticlib ABI, with an independent
+same-API oracle for recognized Apple US layouts. This closes the live host-probe
+validation gap left by Experiment 131. The remaining native-key work is full
+Rust-side `KeymapDarwin` text translation, dead-key/preedit handling, and native
+global shortcut registration behavior.
+
+## Completion Review
+
+**Reviewer:** Codex-native adversarial review subagent `Dirac`, fresh context.
+
+**Verdict:** Approved.
+
+**Findings:** None.
+
+The reviewer verified that the result commit had not been made yet and that the
+implementation/result changes were still uncommitted on top of plan commit
+`cd7f7ec9b45bd`. The reviewer independently ran `cargo fmt --check`,
+`git diff --check`, the Prettier check, `cargo build -p roastty`,
+`cargo test -p roastty keyboard_layout`,
+`cargo test -p roastty key_translation_mods`, and
+`cd roastty && macos/build.nu --action test --only-testing RoasttyTests/KeyboardLayoutTests`;
+all passed. The reviewer also confirmed the independent host layout-source query
+returned `com.apple.keylayout.US`, matching the experiment's `Pass` condition.
