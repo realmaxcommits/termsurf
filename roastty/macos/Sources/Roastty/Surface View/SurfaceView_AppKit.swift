@@ -188,6 +188,10 @@ extension Roastty {
         // This is set to non-null during keyDown to accumulate insertText contents
         private var keyTextAccumulator: [String]?
 
+        private var uiTestKeyTracePath: String? {
+            ProcessInfo.processInfo.environment["ROASTTY_UI_KEY_TRACE_PATH"]
+        }
+
         // True when we've consumed a left mouse-down only to move focus and
         // should suppress the matching mouse-up from being reported.
         private var suppressNextLeftMouseUp: Bool = false
@@ -734,8 +738,7 @@ extension Roastty {
                 // cached value is restored next time the terminal emits a
                 // color_change.
                 if let cached = self.backgroundColor,
-                   cached != self.derivedConfig.backgroundColor
-                {
+                   cached != self.derivedConfig.backgroundColor {
                     self.backgroundColor = nil
                 }
             }
@@ -1062,6 +1065,9 @@ extension Roastty {
                 self.interpretKeyEvents([event])
                 return
             }
+            appendUITestKeyTrace(
+                "keyDown chars=\(event.characters ?? "") ignoring=\(event.charactersIgnoringModifiers ?? "") flags=\(event.modifierFlags.rawValue) keyCode=\(event.keyCode)"
+            )
 
             // On any keyDown event we unset our bell state
             bell = false
@@ -1448,11 +1454,13 @@ extension Roastty {
             // Without this, `ctrl+enter` does the wrong thing.
             if let text, text.count > 0,
                let codepoint = text.utf8.first, codepoint >= 0x20 {
+                appendUITestKeyTrace("keyAction text=\(text) composing=\(composing)")
                 return text.withCString { ptr in
                     key_ev.text = ptr
                     return roastty_surface_key(surface, key_ev)
                 }
             } else {
+                appendUITestKeyTrace("keyAction raw composing=\(composing)")
                 return roastty_surface_key(surface, key_ev)
             }
         }
@@ -1487,6 +1495,7 @@ extension Roastty {
             key_ev.unshifted_codepoint = 0
 
             return text.withCString { ptr in
+                appendUITestKeyTrace("committedPreeditText text=\(text)")
                 key_ev.text = ptr
                 return roastty_surface_key(surface, key_ev)
             }
@@ -1884,9 +1893,11 @@ extension Roastty.SurfaceView: NSTextInputClient {
         switch string {
         case let v as NSAttributedString:
             self.markedText = NSMutableAttributedString(attributedString: v)
+            appendUITestKeyTrace("setMarkedText attributed=\(v.string)")
 
         case let v as String:
             self.markedText = NSMutableAttributedString(string: v)
+            appendUITestKeyTrace("setMarkedText string=\(v)")
 
         default:
             print("unknown marked text: \(string)")
@@ -2032,9 +2043,11 @@ extension Roastty.SurfaceView: NSTextInputClient {
         if var acc = keyTextAccumulator {
             acc.append(chars)
             keyTextAccumulator = acc
+            appendUITestKeyTrace("insertText accumulated=\(chars)")
             return
         }
 
+        appendUITestKeyTrace("insertText direct=\(chars)")
         surfaceModel.sendText(chars)
     }
 
@@ -2064,10 +2077,25 @@ extension Roastty.SurfaceView: NSTextInputClient {
                     roastty_surface_preedit(surface, ptr, UInt(len - 1))
                 }
             }
+            appendUITestKeyTrace("syncPreedit text=\(str)")
         } else if clearIfNeeded {
             // If we had marked text before but don't now, we're no longer
             // in a preedit state so we can clear it.
             roastty_surface_preedit(surface, nil, 0)
+            appendUITestKeyTrace("syncPreedit clear")
+        }
+    }
+
+    private func appendUITestKeyTrace(_ line: String) {
+        guard let path = uiTestKeyTracePath else { return }
+        let data = Data((line + "\n").utf8)
+        if FileManager.default.fileExists(atPath: path),
+           let handle = try? FileHandle(forWritingTo: URL(fileURLWithPath: path)) {
+            defer { try? handle.close() }
+            try? handle.seekToEnd()
+            try? handle.write(contentsOf: data)
+        } else {
+            try? data.write(to: URL(fileURLWithPath: path), options: .atomic)
         }
     }
 

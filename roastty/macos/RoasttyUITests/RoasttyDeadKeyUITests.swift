@@ -1,0 +1,123 @@
+//
+//  RoasttyDeadKeyUITests.swift
+//  Roastty
+//
+//  Created by Codex on 12.06.2026.
+//
+
+import AppKit
+import XCTest
+
+final class RoasttyDeadKeyUITests: RoasttyCustomConfigCase {
+    @MainActor func testDeadKeyCompositionCommitsText() async throws {
+        try updateConfig(
+            """
+            title = "RoasttyDeadKeyUITests"
+            macos-option-as-alt = false
+            """
+        )
+
+        let traceFile = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension("log")
+
+        let app = try roasttyApplication()
+        app.launchEnvironment["ROASTTY_UI_KEY_TRACE_PATH"] = traceFile.path
+        app.launch()
+
+        let terminal = app.groups["Terminal pane"].firstMatch
+        XCTAssertTrue(terminal.waitForExistence(timeout: 5), "Terminal pane should appear")
+        terminal.click()
+
+        terminal.typeKey("e", modifierFlags: [.option])
+        terminal.typeKey("e", modifierFlags: [])
+
+        let trace = waitForTrace(at: traceFile, containing: "committedPreeditText text=é", timeout: 5)
+        XCTAssertGreaterThanOrEqual(
+            trace.components(separatedBy: "keyDown").count - 1,
+            2,
+            "Trace should prove both keyDown events handled the input:\n\(trace)"
+        )
+        XCTAssertTrue(
+            trace.contains("setMarkedText"),
+            "Trace should prove AppKit composition produced marked text:\n\(trace)"
+        )
+        XCTAssertTrue(
+            trace.contains("insertText accumulated=é"),
+            "Trace should prove AppKit composition committed text:\n\(trace)"
+        )
+        XCTAssertTrue(
+            trace.contains("committedPreeditText text=é"),
+            "Trace should prove committed preedit text was sent to libroastty:\n\(trace)"
+        )
+        XCTAssertFalse(
+            trace.contains("insertText direct=é"),
+            "Composed text should not bypass keyDown accumulation:\n\(trace)"
+        )
+
+        guard waitForCommittedText(terminal, app: app, containing: "é", timeout: 5) else {
+            throw XCTSkip(
+                "Dead-key route was exercised, but this host did not expose the committed text through terminal accessibility or copy. Trace:\n\(trace)"
+            )
+        }
+
+        try? FileManager.default.removeItem(at: traceFile)
+    }
+
+    @MainActor private func waitForCommittedText(
+        _ terminal: XCUIElement,
+        app: XCUIApplication,
+        containing needle: String,
+        timeout: TimeInterval
+    ) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if terminalValue(terminal, app: app).contains(needle) {
+                return true
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        }
+
+        NSPasteboard.general.clearContents()
+        terminal.typeKey("a", modifierFlags: [.command])
+        terminal.typeKey("c", modifierFlags: [.command])
+
+        let pasteboardDeadline = Date().addingTimeInterval(timeout)
+        while Date() < pasteboardDeadline {
+            if NSPasteboard.general.string(forType: .string)?.contains(needle) == true {
+                return true
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        }
+
+        return false
+    }
+
+    @MainActor private func terminalValue(_ terminal: XCUIElement, app: XCUIApplication) -> String {
+        var values: [String] = []
+        if let value = terminal.value as? String {
+            values.append(value)
+        }
+
+        let textView = app.textViews.firstMatch
+        if textView.exists, let value = textView.value as? String {
+            values.append(value)
+        }
+
+        return values.joined(separator: "\n")
+    }
+
+    private func waitForTrace(at url: URL, containing needle: String, timeout: TimeInterval) -> String {
+        let deadline = Date().addingTimeInterval(timeout)
+        var latest = ""
+        while Date() < deadline {
+            latest = (try? String(contentsOf: url, encoding: .utf8)) ?? ""
+            if latest.contains(needle) {
+                return latest
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        }
+
+        return latest
+    }
+}

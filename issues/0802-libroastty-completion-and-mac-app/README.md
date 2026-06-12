@@ -989,9 +989,12 @@ the live app, verified by a Phase-D UI test.)
       detection (Exp 138), while copied-app key text intentionally remains
       AppKit-provided and the wrapper/raw-ABI handoff preserves that text (Exp
       139); hosted `NSTextInputClient` marked-text/preedit handling and
-      `roastty_surface_ime_point` width are covered (Exp 140), while full
-      dead-key/IME UI automation and permission-dependent live global shortcut
-      installation remain later work
+      `roastty_surface_ime_point` width are covered (Exp 140), and focused
+      XCTest now proves the copied app's native `Option-E`, `E` dead-key route
+      through `keyDown`, `interpretKeyEvents`, marked text, and committed
+      preedit text (Exp 157 Partial). The remaining native-key gaps are an
+      app-visible terminal-output oracle for dead-key UI automation and
+      permission-dependent live global shortcut installation.
 
 **Phase H — Renderer feature-completion (in the live pass)**
 
@@ -1440,7 +1443,7 @@ stays unaltered except for the rename).
 - [Experiment 156: Phase G — command-palette UI discovery](156-command-palette-ui-discovery.md)
   — **Pass**
 - [Experiment 157: Phase G — dead-key UI automation](157-dead-key-ui-automation.md)
-  — **Designed**
+  — **Partial**
 
 ## Process
 

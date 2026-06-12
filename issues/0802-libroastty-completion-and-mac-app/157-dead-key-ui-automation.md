@@ -146,3 +146,88 @@ direct `sendText`, paste, or `typeText("é")` shortcut was used.
 
 **Final verdict:** Approved. The re-review found all prior findings resolved and
 no new Required findings.
+
+## Result
+
+**Result:** Partial.
+
+The focused UI selector now executes one real
+`RoasttyDeadKeyUITests.testDeadKeyCompositionCommitsText` body. It launches the
+copied app with `macos-option-as-alt = false`, focuses `"Terminal pane"`, and
+synthesizes the native XCTest sequence:
+
+- `terminal.typeKey("e", modifierFlags: [.option])`
+- `terminal.typeKey("e", modifierFlags: [])`
+
+The test-only trace proves XCTest reached the copied app's live
+`SurfaceView_AppKit.keyDown` path and AppKit's text-input stack:
+
+```text
+keyDown chars= ignoring=e flags=524288 keyCode=14
+setMarkedText string=´
+syncPreedit text=´
+keyDown chars=é ignoring=e flags=0 keyCode=14
+syncPreedit clear
+insertText accumulated=é
+syncPreedit clear
+committedPreeditText text=é
+```
+
+That rules out the earlier zero-test problem and also rules out the forbidden
+shortcuts (`typeText("é")`, paste-only input, direct `setMarkedText`, or direct
+`sendText`). The Swift source hook is inert unless `ROASTTY_UI_KEY_TRACE_PATH`
+is present.
+
+The remaining gap is the app-visible output oracle. In this host, after the
+route proof above, neither the terminal accessibility value nor the app's
+select-all/copy path exposed the committed `é`. The focused test therefore
+throws `XCTSkip` after proving the native route, so the selector succeeds while
+recording that this experiment did not prove visible terminal commit. A
+temporary attempt to launch a deterministic `printf ready; cat` command did not
+publish `ready` through the same accessibility path either, so the failure mode
+appears to be the UI-output observation path or host setup, not dead-key
+synthesis.
+
+Verification run:
+
+- `swiftlint lint roastty/macos/RoasttyUITests/RoasttyDeadKeyUITests.swift 'roastty/macos/Sources/Roastty/Surface View/SurfaceView_AppKit.swift'`
+  - **Pass:** 0 violations, 0 serious in 2 files.
+- `git diff --check`
+  - **Pass.**
+- `cd roastty && macos/build.nu --action test --ui-tests --only-testing RoasttyUITests/RoasttyDeadKeyUITests`
+  - **Partial/Pass for route gate:**
+    `Executed 1 test, with 1 test skipped and 0 failures`; the skipped test body
+    recorded the route trace above.
+- `cd roastty && macos/build.nu --action test`
+  - **Pass:** default action still skips `RoasttyUITests`;
+    `213 tests in 23 suites passed`.
+
+## Conclusion
+
+XCTest can synthesize the native macOS dead-key path in the copied app, and
+`SurfaceView_AppKit` correctly reaches AppKit marked-text and committed-preedit
+callbacks for `Option-E`, `E`. The remaining work is not route synthesis; it is
+building a stronger app-visible output oracle for live terminal contents in UI
+automation, or proving/fixing why committed preedit text does not become
+observable through the current accessibility/copy routes.
+
+## Completion Review
+
+**Reviewer:** Codex-native adversarial subagent `Leibniz` with fresh context,
+using the `adversarial-review` skill's Codex path
+(`multi_agent_v1.spawn_agent`), not Claude's named `adversarial-reviewer` agent.
+
+**Initial verdict:** Changes required.
+
+**Required finding:** The first implementation could skip the focused UI test
+after only seeing a `keyDown`/marked-text route. It did not require the full
+committed route (`insertText accumulated=é` and `committedPreeditText text=é`)
+before allowing the Partial `XCTSkip`.
+
+**Fix:** The UI test now waits for `committedPreeditText text=é`, asserts at
+least two `keyDown` entries, and separately asserts `setMarkedText`,
+`insertText accumulated=é`, and `committedPreeditText text=é` before the
+accessibility/copy output-oracle skip can run.
+
+**Final verdict:** Approved. The re-review confirmed the Required finding is
+resolved and found no new Required findings.
