@@ -1,24 +1,197 @@
 //! Custom (shadertoy-style) shader support.
 //!
-//! The `CustomShaderUniforms` value type — the uniform struct custom shaders
-//! read — its renderer-init defaults and per-frame/state update methods, and the
-//! `Target` enum. A faithful port of upstream `renderer/shadertoy.zig`'s
-//! `Uniforms` `extern struct` and `Target`; the shader loading
-//! (`loadFromFiles`) is ported in a later slice.
+//! The `CustomShaderUniforms` value type custom shaders read, plus the
+//! Shadertoy-style shader loader. This is a faithful Rust port of upstream
+//! `renderer/shadertoy.zig`: configured files are wrapped with
+//! `shadertoy_prefix.glsl`, compiled as GLSL fragments to SPIR-V, then
+//! cross-compiled to the renderer target.
 #![allow(dead_code)]
-// This shadertoy layer is consumed by later slices.
 
+use std::fmt;
+use std::fs::File;
+use std::io::{self, Read};
+use std::path::{Path, PathBuf};
+
+use crate::config::ConfigFilePath;
 use crate::renderer::cursor::Style;
 use crate::renderer::shader::CellTextVertex;
 use crate::terminal::color::{Palette, Rgb};
 
+const MAX_SHADER_BYTES: u64 = 4 * 1024 * 1024;
+const SHADERTOY_PREFIX_GLSL: &str =
+    include_str!("../../../vendor/ghostty/src/renderer/shaders/shadertoy_prefix.glsl");
+
 /// The output language the custom-shader loader cross-compiles to (upstream
-/// `shadertoy.Target`): `Glsl` for OpenGL, `Msl` for Metal. The shader loader
-/// (deferred) switches on it (GLSL → SPIR-V → target).
+/// `shadertoy.Target`): `Glsl` for OpenGL, `Msl` for Metal.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Target {
     Glsl,
     Msl,
+}
+
+#[derive(Debug)]
+pub(crate) enum ShaderLoadError {
+    Io {
+        path: PathBuf,
+        error: io::Error,
+    },
+    TooLarge {
+        path: PathBuf,
+        size: u64,
+        limit: u64,
+    },
+    GlslCompile {
+        path: PathBuf,
+        error: String,
+    },
+    CrossCompile {
+        path: PathBuf,
+        error: String,
+    },
+    UnsupportedTarget(Target),
+}
+
+impl fmt::Display for ShaderLoadError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Io { path, error } => {
+                write!(f, "{}: {error}", path.display())
+            }
+            Self::TooLarge { path, size, limit } => {
+                write!(
+                    f,
+                    "{}: shader is {size} bytes, above {limit} byte limit",
+                    path.display()
+                )
+            }
+            Self::GlslCompile { path, error } => {
+                write!(f, "{}: GLSL compile failed: {error}", path.display())
+            }
+            Self::CrossCompile { path, error } => {
+                write!(
+                    f,
+                    "{}: SPIR-V cross-compile failed: {error}",
+                    path.display()
+                )
+            }
+            Self::UnsupportedTarget(target) => {
+                write!(f, "unsupported custom shader target: {target:?}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for ShaderLoadError {}
+
+pub(crate) fn load_from_files(
+    paths: &[ConfigFilePath],
+    target: Target,
+) -> Result<Vec<String>, ShaderLoadError> {
+    let mut sources = Vec::new();
+    for config_path in paths {
+        match load_from_file(Path::new(config_path.path()), target) {
+            Ok(source) => sources.push(source),
+            Err(ShaderLoadError::Io { error, .. })
+                if config_path.optional() && error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(sources)
+}
+
+pub(crate) fn load_from_file(path: &Path, target: Target) -> Result<String, ShaderLoadError> {
+    let file = File::open(path).map_err(|error| ShaderLoadError::Io {
+        path: path.to_path_buf(),
+        error,
+    })?;
+    let mut bytes = Vec::new();
+    file.take(MAX_SHADER_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|error| ShaderLoadError::Io {
+            path: path.to_path_buf(),
+            error,
+        })?;
+    if bytes.len() as u64 > MAX_SHADER_BYTES {
+        return Err(ShaderLoadError::TooLarge {
+            path: path.to_path_buf(),
+            size: bytes.len() as u64,
+            limit: MAX_SHADER_BYTES,
+        });
+    }
+    let source = String::from_utf8(bytes).map_err(|error| ShaderLoadError::Io {
+        path: path.to_path_buf(),
+        error: io::Error::new(io::ErrorKind::InvalidData, error),
+    })?;
+    let glsl = glsl_from_shader(&source);
+    let spirv = spirv_from_glsl(&glsl, path)?;
+    match target {
+        Target::Msl => msl_from_spv(&spirv, path),
+        Target::Glsl => Err(ShaderLoadError::UnsupportedTarget(target)),
+    }
+}
+
+pub(crate) fn glsl_from_shader(source: &str) -> String {
+    let mut glsl = String::with_capacity(SHADERTOY_PREFIX_GLSL.len() + 1 + source.len());
+    glsl.push_str(SHADERTOY_PREFIX_GLSL);
+    if !glsl.ends_with('\n') {
+        glsl.push('\n');
+    }
+    glsl.push_str(source);
+    glsl
+}
+
+fn spirv_from_glsl(source: &str, path: &Path) -> Result<Vec<u32>, ShaderLoadError> {
+    let compiler = shaderc::Compiler::new().map_err(|error| ShaderLoadError::GlslCompile {
+        path: path.to_path_buf(),
+        error: error.to_string(),
+    })?;
+    let mut options =
+        shaderc::CompileOptions::new().map_err(|error| ShaderLoadError::GlslCompile {
+            path: path.to_path_buf(),
+            error: error.to_string(),
+        })?;
+    options.set_source_language(shaderc::SourceLanguage::GLSL);
+    options.set_target_env(
+        shaderc::TargetEnv::Vulkan,
+        shaderc::EnvVersion::Vulkan1_2 as u32,
+    );
+    options.set_target_spirv(shaderc::SpirvVersion::V1_5);
+
+    compiler
+        .compile_into_spirv(
+            source,
+            shaderc::ShaderKind::Fragment,
+            &path.to_string_lossy(),
+            "main",
+            Some(&options),
+        )
+        .map(|artifact| artifact.as_binary().to_vec())
+        .map_err(|error| ShaderLoadError::GlslCompile {
+            path: path.to_path_buf(),
+            error: error.to_string(),
+        })
+}
+
+fn msl_from_spv(words: &[u32], path: &Path) -> Result<String, ShaderLoadError> {
+    use spirv_cross2::compile::CompilableTarget;
+
+    let module = spirv_cross2::Module::from_words(words);
+    let compiler =
+        spirv_cross2::Compiler::<spirv_cross2::targets::Msl>::new(module).map_err(|error| {
+            ShaderLoadError::CrossCompile {
+                path: path.to_path_buf(),
+                error: error.to_string(),
+            }
+        })?;
+    let mut options = spirv_cross2::targets::Msl::options();
+    options.enable_decoration_binding = true;
+    compiler
+        .compile(&options)
+        .map(|artifact| artifact.as_ref().to_string())
+        .map_err(|error| ShaderLoadError::CrossCompile {
+            path: path.to_path_buf(),
+            error: error.to_string(),
+        })
 }
 
 /// The uniform struct custom shaders read (upstream `shadertoy.Uniforms`). The
@@ -252,8 +425,126 @@ fn normalize_rgb(c: Rgb) -> [f32; 4] {
 
 #[cfg(test)]
 mod tests {
-    use super::{CellTextVertex, CustomShaderUniforms, Target};
+    use super::{
+        glsl_from_shader, load_from_files, CellTextVertex, CustomShaderUniforms, ShaderLoadError,
+        Target,
+    };
+    use crate::config::ConfigFilePath;
     use std::mem::{align_of, offset_of, size_of};
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static TEMP_ID: AtomicU64 = AtomicU64::new(0);
+
+    fn temp_dir(name: &str) -> PathBuf {
+        let id = TEMP_ID.fetch_add(1, Ordering::SeqCst);
+        let dir = std::env::temp_dir().join(format!(
+            "roastty-shadertoy-test-{}-{name}-{id}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn sample_shader(value: &str) -> String {
+        format!(
+            r#"
+void mainImage(out vec4 fragColor, in vec2 fragCoord) {{
+    vec2 uv = fragCoord.xy / iResolution.xy;
+    vec4 terminal = texture(iChannel0, uv);
+    fragColor = vec4({value}, terminal.a);
+}}
+"#
+        )
+    }
+
+    #[test]
+    fn glsl_from_shader_prepends_upstream_prefix() {
+        let glsl = glsl_from_shader("void mainImage(out vec4 c, in vec2 p) { c = vec4(p, 0, 1); }");
+
+        assert!(glsl.starts_with("#version 430 core\n"));
+        assert!(glsl.contains("layout(binding = 1, std140) uniform Globals"));
+        assert!(glsl.contains("layout(binding = 0) uniform sampler2D iChannel0"));
+        assert!(glsl.ends_with("void mainImage(out vec4 c, in vec2 p) { c = vec4(p, 0, 1); }"));
+    }
+
+    #[test]
+    fn load_from_files_skips_optional_missing_and_preserves_order() {
+        let dir = temp_dir("order");
+        let first = dir.join("first.glsl");
+        let second = dir.join("second.glsl");
+        std::fs::write(&first, sample_shader("1.0, 0.0, 0.0")).unwrap();
+        std::fs::write(&second, sample_shader("0.0, 1.0, 0.0")).unwrap();
+
+        let paths = vec![
+            ConfigFilePath::Required(first.to_string_lossy().into_owned()),
+            ConfigFilePath::Optional(dir.join("missing.glsl").to_string_lossy().into_owned()),
+            ConfigFilePath::Required(second.to_string_lossy().into_owned()),
+        ];
+        let sources = load_from_files(&paths, Target::Msl).unwrap();
+
+        assert_eq!(sources.len(), 2);
+        assert_ne!(sources[0], sources[1]);
+        assert!(sources[0].contains("fragment"));
+        assert!(sources[1].contains("fragment"));
+    }
+
+    #[test]
+    fn load_from_files_errors_on_required_missing() {
+        let dir = temp_dir("missing");
+        let missing = dir.join("missing.glsl");
+        let error = load_from_files(
+            &[ConfigFilePath::Required(
+                missing.to_string_lossy().into_owned(),
+            )],
+            Target::Msl,
+        )
+        .unwrap_err();
+
+        assert!(matches!(error, ShaderLoadError::Io { path, error }
+            if path == missing && error.kind() == std::io::ErrorKind::NotFound));
+    }
+
+    #[test]
+    fn load_from_files_reports_invalid_shader_diagnostics() {
+        let dir = temp_dir("invalid");
+        let path = dir.join("invalid.glsl");
+        std::fs::write(&path, "void notMainImage() {}").unwrap();
+
+        let error = load_from_files(
+            &[ConfigFilePath::Required(
+                path.to_string_lossy().into_owned(),
+            )],
+            Target::Msl,
+        )
+        .unwrap_err();
+
+        assert!(
+            matches!(error, ShaderLoadError::GlslCompile { path: p, error }
+            if p == path && error.contains("mainImage"))
+        );
+    }
+
+    #[test]
+    fn load_from_files_rejects_files_larger_than_four_mib() {
+        let dir = temp_dir("too-large");
+        let path = dir.join("large.glsl");
+        let file = std::fs::File::create(&path).unwrap();
+        file.set_len(super::MAX_SHADER_BYTES + 1).unwrap();
+
+        let error = load_from_files(
+            &[ConfigFilePath::Required(
+                path.to_string_lossy().into_owned(),
+            )],
+            Target::Msl,
+        )
+        .unwrap_err();
+
+        assert!(
+            matches!(error, ShaderLoadError::TooLarge { path: p, size, limit }
+            if p == path && size == super::MAX_SHADER_BYTES + 1 && limit == super::MAX_SHADER_BYTES)
+        );
+    }
 
     #[test]
     fn custom_shader_uniforms_layout_matches_extern_struct() {

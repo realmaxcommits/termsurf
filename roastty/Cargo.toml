@@ -15,6 +15,10 @@ image = { version = "0.25", default-features = false, features = ["jpeg", "png"]
 libc = "0.2"
 regex = "1"
 serde_json = "1.0"
+shaderc = "0.10.1"
+spirv-cross2 = { version = "0.7.1", default-features = false, features = [
+    "msl",
+] }
 unicode-width = "0.2.2"
 uuid = { version = "1.13", features = ["v4"] }
 objc2 = "0.6"

@@ -203,6 +203,21 @@ impl MetalFrameCompositor {
         })
     }
 
+    pub(crate) fn draw_frame_with_images_and_custom_shaders(
+        &mut self,
+        input: MetalFrameInput<'_>,
+        images: &mut ImageState<MetalTexture>,
+        background: &mut BackgroundImageState<MetalTexture>,
+        custom: MetalCustomShaderInput<'_>,
+    ) -> Result<MetalFramePresentation, MetalFrameCompositorError> {
+        self.draw_frame_with_presenter(
+            input,
+            Some((images, background)),
+            Some(custom),
+            |layer, target| layer.set_surface(target.surface()),
+        )
+    }
+
     fn draw_frame_with_presenter(
         &mut self,
         input: MetalFrameInput<'_>,

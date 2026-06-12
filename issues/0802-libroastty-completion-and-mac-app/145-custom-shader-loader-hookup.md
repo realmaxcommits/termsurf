@@ -143,3 +143,78 @@ without a broader build-system or dependency strategy.
 **Findings and fixes:**
 
 - No findings.
+
+## Result
+
+**Result:** Pass
+
+The live Metal custom-shader path is now wired from config to presentation:
+
+- `custom-shader` paths are read in config order; missing optional paths are
+  skipped and missing required paths fail the load.
+- each configured Shadertoy GLSL fragment is prefixed with upstream
+  `shadertoy_prefix.glsl`, compiled to SPIR-V with `shaderc`, and cross-compiled
+  to MSL with `spirv-cross2` using MSL decoration binding.
+- generated MSL sources build production Metal post-process pipelines using the
+  standard `full_screen_vertex` and custom fragment `main0`.
+- the live renderer stores custom-shader pipeline state, rebuilds it when the
+  config path list changes, and falls back to ordinary terminal rendering on
+  load/build failure.
+- live presentation now feeds `CustomShaderUniforms` through
+  `FrameRebuildPlan::apply_custom_shader_frame` before invoking the compositor
+  custom-shader screen-pass path. Time, resolution, cell size, focus, palette,
+  cursor glyph rect, cursor style/visibility, and color uniforms are updated.
+
+Verification:
+
+- `cargo fmt` — pass.
+- `cargo test -p roastty shadertoy -- --test-threads=1` — pass, 15 tests.
+- `cargo test -p roastty metal::shaders -- --test-threads=1` — pass, 27 tests.
+- `cargo test -p roastty custom_shader -- --test-threads=1` — pass, 23 tests.
+- `cargo test -p roastty metal::compositor -- --test-threads=1` — pass, 12
+  tests.
+- `cargo test -p roastty --test abi_harness` — pass, with the existing C enum
+  conversion warnings.
+- `cargo test -p roastty -- --test-threads=1` — pass: 4794 unit tests, ABI
+  harness, and doc tests.
+- `cd roastty && macos/build.nu --action test` — pass: 210 hosted macOS tests,
+  with existing SwiftLint/main-thread/pasteboard warnings.
+- `cargo fmt --check` — pass.
+- `git diff --check` — pass.
+- `prettier --check --prose-wrap always --print-width 80 issues/0802-libroastty-completion-and-mac-app/145-custom-shader-loader-hookup.md issues/0802-libroastty-completion-and-mac-app/README.md`
+  — pass.
+
+## Conclusion
+
+The runtime custom-shader loader and live Metal hookup are complete enough to
+mark Phase H's custom-shader loader/cross-compiler item done. The implementation
+matches the upstream shape without relying on external `glslangValidator` or
+`spirv-cross` binaries, and shader failures are non-fatal to terminal rendering.
+
+The next Phase H work should move to link highlighting or the optional debug
+overlay.
+
+## Completion Review
+
+**Reviewer:** Codex-native adversarial review subagent `Goodall`, fresh context.
+
+**Initial verdict:** Changes required.
+
+**Findings and fixes:**
+
+- **Required:** live cursor rect uniforms were not fed because the live path
+  passed `cursor: None`. Fixed by reading the rebuilt cursor glyph from
+  `Contents::get_cursor_glyph()` inside the custom-shader rebuild/presentation
+  path immediately before `apply_custom_shader_frame`.
+- **Required:** live focus uniforms were hardcoded focused. Fixed by passing the
+  surface's actual `focused` value into the custom-shader frame input, marking
+  shader focus as changed when `roastty_surface_set_focus` changes state, and
+  preserving the updater's returned `next_focus_changed` value.
+- **Required:** the 4 MiB shader limit was only a metadata precheck before an
+  unbounded read. Fixed by reading through a `take(MAX_SHADER_BYTES + 1)` cap
+  and returning `TooLarge` when the cap is exceeded.
+
+**Re-review:** Approved. The reviewer confirmed the cursor, focus, and bounded
+shader-read fixes, found no new required findings, and independently reran
+`cargo fmt --check` plus
+`cargo test -p roastty custom_shader -- --test-threads=1`.

@@ -2904,11 +2904,106 @@ struct KittyClipboardWriteTransaction {
 /// used only on the main thread (`Surface` is already `!Send` via its raw-pointer fields).
 #[allow(dead_code)]
 struct SurfaceLiveRenderer {
+    device: objc2::rc::Retained<objc2::runtime::ProtocolObject<dyn objc2_metal::MTLDevice>>,
     compositor: renderer::metal::compositor::MetalFrameCompositor,
     frame_renderer: renderer::frame_renderer::FrameRenderer,
     image_state: renderer::image::ImageState<renderer::metal::texture::MetalTexture>,
     background_image: renderer::image::BackgroundImageState<renderer::metal::texture::MetalTexture>,
+    custom_shader: SurfaceCustomShaderState,
     shared_grid: font::shared_grid::SharedGrid,
+}
+
+#[allow(dead_code)]
+struct SurfaceCustomShaderState {
+    paths: Vec<config::ConfigFilePath>,
+    pipelines: Vec<renderer::metal::pipeline::MetalPipeline>,
+    uniforms: renderer::shadertoy::CustomShaderUniforms,
+    first_frame: Option<std::time::Instant>,
+    last_frame: Option<std::time::Instant>,
+    focus_changed: bool,
+}
+
+impl SurfaceCustomShaderState {
+    fn new() -> Self {
+        Self {
+            paths: Vec::new(),
+            pipelines: Vec::new(),
+            uniforms: renderer::shadertoy::CustomShaderUniforms::new(),
+            first_frame: None,
+            last_frame: None,
+            focus_changed: true,
+        }
+    }
+
+    fn sync_from_config(
+        &mut self,
+        device: &objc2::runtime::ProtocolObject<dyn objc2_metal::MTLDevice>,
+        config: &config::Config,
+    ) {
+        if self.paths == config.custom_shader.list {
+            return;
+        }
+
+        self.paths = config.custom_shader.list.clone();
+        self.pipelines.clear();
+        self.uniforms = renderer::shadertoy::CustomShaderUniforms::new();
+        self.first_frame = None;
+        self.last_frame = None;
+        self.focus_changed = true;
+
+        if self.paths.is_empty() {
+            return;
+        }
+
+        let sources = match renderer::shadertoy::load_from_files(
+            &self.paths,
+            renderer::metal::CUSTOM_SHADER_TARGET,
+        ) {
+            Ok(sources) => sources,
+            Err(error) => {
+                eprintln!("[roastty] custom shader load failed: {error}");
+                return;
+            }
+        };
+
+        match renderer::metal::shaders::build_post_process_pipelines(
+            device,
+            &sources,
+            renderer::metal::api::MetalPixelFormat::Bgra8Unorm,
+        ) {
+            Ok(pipelines) => self.pipelines = pipelines,
+            Err(error) => {
+                eprintln!("[roastty] custom shader pipeline build failed: {error:?}");
+            }
+        }
+    }
+
+    fn frame_input(
+        &mut self,
+        screen_size: [u32; 2],
+        cell_size: [u32; 2],
+        focused: bool,
+    ) -> renderer::frame_rebuild::FrameCustomShaderInput {
+        let now = std::time::Instant::now();
+        let first = *self.first_frame.get_or_insert(now);
+        let time_secs = now.duration_since(first).as_secs_f32();
+        let time_delta_secs = self
+            .last_frame
+            .map(|last| now.duration_since(last).as_secs_f32())
+            .unwrap_or(0.0);
+        self.last_frame = Some(now);
+
+        renderer::frame_rebuild::FrameCustomShaderInput {
+            time_secs,
+            time_delta_secs,
+            screen_size,
+            cell_size,
+            padding: [0, 0],
+            cursor: None,
+            focused,
+            focus_changed: self.focus_changed,
+        }
+    }
 }
 
 /// A `*mut Surface` that can cross into a dispatch closure (Issue 802 / Exp 19). SAFETY:
@@ -2987,7 +3082,7 @@ fn build_live_renderer(
             .ok()?;
     let compositor = renderer::metal::compositor::MetalFrameCompositor::new(
         renderer::metal::compositor::MetalFrameCompositorOptions {
-            device,
+            device: device.clone(),
             width,
             height,
             pixel_format: renderer::metal::api::MetalPixelFormat::Bgra8Unorm,
@@ -3010,10 +3105,12 @@ fn build_live_renderer(
         renderer::metal::shaders::MetalUniforms::from_config(config),
     );
     Some(SurfaceLiveRenderer {
+        device,
         compositor,
         frame_renderer,
         image_state: renderer::image::ImageState::default(),
         background_image: renderer::image::BackgroundImageState::default(),
+        custom_shader: SurfaceCustomShaderState::new(),
         shared_grid,
     })
 }
@@ -3516,6 +3613,7 @@ impl Surface {
         let scale = self.scale_factor_x.max(1.0);
         let columns = self.size.columns;
         let rows = self.size.rows;
+        let focused = self.focused;
         let Some(live) = self.renderer.as_mut() else {
             return;
         };
@@ -3523,10 +3621,12 @@ impl Surface {
             return;
         };
         let SurfaceLiveRenderer {
+            device,
             compositor,
             frame_renderer,
             image_state,
             background_image,
+            custom_shader,
             shared_grid,
         } = live;
         // Drive the projection/screen-size + font-grid uniforms from the surface (Exp 18) — the
@@ -3547,25 +3647,64 @@ impl Surface {
         let config = app_from_handle(self.app)
             .map(|app| app.parsed_config.clone())
             .unwrap_or_default();
+        custom_shader.sync_from_config(device, &config);
         worker.with_termio(|termio| {
             let terminal = termio.terminal();
             let kitty_placements = kitty_render_placement_snapshots(terminal);
             image_state.update_kitty_from_render_placements(&kitty_placements);
-            if let Err(e) = frame_renderer.render_and_present_frame_with_images(
-                terminal,
-                shared_grid,
-                image_state,
-                background_image,
-                renderer::frame_rebuild::RenderDirty::Full,
-                None,
-                &config,
-                renderer::frame_rebuild::FramePreparedPresentationInput {
-                    compositor,
-                    width,
-                    height,
-                    contents_scale: scale,
-                },
-            ) {
+            let present_result = if custom_shader.pipelines.is_empty() {
+                frame_renderer.render_and_present_frame_with_images(
+                    terminal,
+                    shared_grid,
+                    image_state,
+                    background_image,
+                    renderer::frame_rebuild::RenderDirty::Full,
+                    None,
+                    &config,
+                    renderer::frame_rebuild::FramePreparedPresentationInput {
+                        compositor,
+                        width,
+                        height,
+                        contents_scale: scale,
+                    },
+                )
+            } else {
+                let cell = shared_grid.cell_size();
+                let custom_input = custom_shader.frame_input(
+                    [width as u32, height as u32],
+                    [cell.width, cell.height],
+                    focused,
+                );
+                let pipeline_refs: Vec<_> = custom_shader.pipelines.iter().collect();
+                let result = frame_renderer
+                    .render_and_present_frame_with_images_and_custom_shaders(
+                        terminal,
+                        shared_grid,
+                        image_state,
+                        background_image,
+                        &mut custom_shader.uniforms,
+                        custom_input,
+                        &pipeline_refs,
+                        renderer::frame_rebuild::RenderDirty::Full,
+                        None,
+                        &config,
+                        renderer::frame_rebuild::FramePreparedPresentationInput {
+                            compositor,
+                            width,
+                            height,
+                            contents_scale: scale,
+                        },
+                    );
+                custom_shader.focus_changed = match &result {
+                    Ok(app) => app
+                        .custom_shader
+                        .map(|custom| custom.next_focus_changed)
+                        .unwrap_or(custom_input.focus_changed),
+                    Err(_) => custom_input.focus_changed,
+                };
+                result
+            };
+            if let Err(e) = present_result {
                 eprintln!("[roastty] live present error: {e:?}");
             }
         });
@@ -17047,7 +17186,13 @@ pub extern "C" fn roastty_surface_set_display_id(surface: RoasttySurface, displa
 #[no_mangle]
 pub extern "C" fn roastty_surface_set_focus(surface: RoasttySurface, focused: bool) {
     if let Some(surface) = surface_from_handle(surface) {
+        let changed = surface.focused != focused;
         surface.focused = focused;
+        if changed {
+            if let Some(renderer) = surface.renderer.as_mut() {
+                renderer.custom_shader.focus_changed = true;
+            }
+        }
     }
 }
 

@@ -10,8 +10,9 @@ use crate::renderer::cell::block_cursor_pos;
 use crate::renderer::metal::api::MetalPixelFormat;
 use crate::renderer::metal::buffer::MetalBufferElement;
 use crate::renderer::metal::pipeline::{
-    standard_pipeline_build_values, MetalPipeline, MetalPipelineError, MetalPipelineOptions,
-    MetalStandardPipelineDescription, STANDARD_PIPELINE_DESCRIPTIONS,
+    post_process_pipeline_build_values, standard_pipeline_build_values, MetalPipeline,
+    MetalPipelineError, MetalPipelineOptions, MetalStandardPipelineDescription,
+    STANDARD_PIPELINE_DESCRIPTIONS,
 };
 use crate::renderer::size::{GridSize, Size};
 use crate::terminal::color::Rgb;
@@ -87,6 +88,45 @@ pub(crate) enum MetalStandardPipelinesError {
     MissingStandardPipeline(&'static str),
     Pipeline {
         name: &'static str,
+        error: MetalPipelineError,
+    },
+}
+
+pub(crate) fn build_post_process_pipelines(
+    device: &ProtocolObject<dyn MTLDevice>,
+    sources: &[String],
+    pixel_format: MetalPixelFormat,
+) -> Result<Vec<MetalPipeline>, MetalPostProcessPipelineError> {
+    let vertex_library = MetalShaderLibrary::compile(device)
+        .map_err(MetalPostProcessPipelineError::StandardShaderLibrary)?;
+    let mut pipelines = Vec::with_capacity(sources.len());
+    for (index, source) in sources.iter().enumerate() {
+        let fragment_library =
+            MetalShaderLibrary::compile_source(device, source).map_err(|error| {
+                MetalPostProcessPipelineError::FragmentShaderLibrary { index, error }
+            })?;
+        let values = post_process_pipeline_build_values("main0", pixel_format);
+        let pipeline = MetalPipeline::new(MetalPipelineOptions {
+            device,
+            vertex_library: vertex_library.library(),
+            fragment_library: fragment_library.library(),
+            values,
+        })
+        .map_err(|error| MetalPostProcessPipelineError::Pipeline { index, error })?;
+        pipelines.push(pipeline);
+    }
+    Ok(pipelines)
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum MetalPostProcessPipelineError {
+    StandardShaderLibrary(MetalShaderLibraryError),
+    FragmentShaderLibrary {
+        index: usize,
+        error: MetalShaderLibraryError,
+    },
+    Pipeline {
+        index: usize,
         error: MetalPipelineError,
     },
 }
@@ -441,7 +481,8 @@ mod tests {
     use objc2_metal::{MTLCreateSystemDefaultDevice, MTLDevice, MTLLibrary};
 
     use super::{
-        build_from_library, compile_source, ortho2d, MetalShaderLibrary, MetalShaderLibraryError,
+        build_from_library, build_post_process_pipelines, compile_source, ortho2d,
+        MetalPostProcessPipelineError, MetalShaderLibrary, MetalShaderLibraryError,
         MetalStandardPipelines, MetalStandardPipelinesError, MetalUniformBools, MetalUniforms,
         STANDARD_METAL_SHADER_SOURCE,
     };
@@ -525,6 +566,27 @@ vertex VertexOut bg_image_vertex(BgImageIn in [[stage_in]]) {
 
 fragment float4 bg_image_fragment() {
     return float4(1.0, 1.0, 1.0, 1.0);
+}
+"#;
+
+    const POST_PROCESS_SHADER_SOURCE: &str = r#"
+#include <metal_stdlib>
+using namespace metal;
+
+struct CustomShaderUniforms {
+    float3 resolution;
+    float time;
+};
+
+fragment float4 main0(
+    float4 position [[position]],
+    texture2d<float> source [[texture(0)]],
+    sampler source_sampler [[sampler(0)]],
+    constant CustomShaderUniforms& uniforms [[buffer(1)]]
+) {
+    float2 uv = position.xy / uniforms.resolution.xy;
+    float4 terminal = source.sample(source_sampler, uv);
+    return float4(terminal.r, 0.0, 0.0, terminal.a);
 }
 "#;
 
@@ -619,6 +681,33 @@ fragment float4 bg_image_fragment() {
             &pipelines.image,
             &pipelines.bg_image,
         );
+    }
+
+    #[test]
+    fn post_process_pipelines_create_from_generated_sources() {
+        let device = metal_device();
+        let sources = vec![POST_PROCESS_SHADER_SOURCE.to_string()];
+        let pipelines =
+            build_post_process_pipelines(&device, &sources, MetalPixelFormat::Bgra8Unorm)
+                .expect("post-process shader should build");
+
+        assert_eq!(pipelines.len(), 1);
+    }
+
+    #[test]
+    fn post_process_pipelines_report_fragment_compile_error_index() {
+        let device = metal_device();
+        let sources = vec![
+            POST_PROCESS_SHADER_SOURCE.to_string(),
+            "not metal".to_string(),
+        ];
+        let error = build_post_process_pipelines(&device, &sources, MetalPixelFormat::Bgra8Unorm)
+            .expect_err("invalid second post-process shader should fail");
+
+        assert!(matches!(
+            error,
+            MetalPostProcessPipelineError::FragmentShaderLibrary { index: 1, .. }
+        ));
     }
 
     #[test]

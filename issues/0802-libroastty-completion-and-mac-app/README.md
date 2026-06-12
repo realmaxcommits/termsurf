@@ -941,8 +941,10 @@ the live app, verified by a Phase-D UI test.)
 - [x] Custom-shader screen pass (ping-pong target + post-process apply) —
       offscreen target, post-process apply, ping-pong, resize, sampler, and
       readback coverage wired in Exp 144
-- [ ] Custom-shader loader/cross-compiler hookup (`custom-shader` config paths
-      into live post-process pipelines)
+- [x] Custom-shader loader/cross-compiler hookup (`custom-shader` config paths
+      into live post-process pipelines) — runtime GLSL-to-SPIR-V-to-MSL loader,
+      post-process pipeline builder, config-change reload, and live uniform-fed
+      presentation wired in Exp 145
 - [ ] Link-highlight matcher (`renderer/link.zig` `renderCellMap`) + feed
       `link_ranges`
 - [ ] Debug `Overlay` (optional)
@@ -1337,7 +1339,7 @@ stays unaltered except for the rename).
 - [Experiment 144: Phase H — custom-shader screen pass](144-custom-shader-screen-pass.md)
   — **Pass**
 - [Experiment 145: Phase H — custom-shader loader hookup](145-custom-shader-loader-hookup.md)
-  — **Designed**
+  — **Pass**
 
 ## Process
 

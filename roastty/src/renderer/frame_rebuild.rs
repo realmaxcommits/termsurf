@@ -21,8 +21,10 @@ use crate::renderer::cell::{
 use crate::renderer::cursor::Style as CursorStyle;
 use crate::renderer::image::{BackgroundImageState, ImageState};
 use crate::renderer::metal::compositor::{
-    MetalFrameCompositor, MetalFrameCompositorError, MetalFrameInput, MetalFramePresentation,
+    MetalCustomShaderInput, MetalFrameCompositor, MetalFrameCompositorError, MetalFrameInput,
+    MetalFramePresentation,
 };
+use crate::renderer::metal::pipeline::MetalPipeline;
 use crate::renderer::metal::shaders::MetalUniforms;
 use crate::renderer::metal::texture::MetalTexture;
 use crate::renderer::shader::CellTextVertex;
@@ -276,7 +278,11 @@ impl FrameTerminalSnapshot {
             },
         )?;
 
-        Ok(FramePreparedFrameApplication { rebuild, present })
+        Ok(FramePreparedFrameApplication {
+            rebuild,
+            custom_shader: None,
+            present,
+        })
     }
 
     pub(crate) fn rebuild_and_present_frame_with_images(
@@ -315,7 +321,65 @@ impl FrameTerminalSnapshot {
             },
         )?;
 
-        Ok(FramePreparedFrameApplication { rebuild, present })
+        Ok(FramePreparedFrameApplication {
+            rebuild,
+            custom_shader: None,
+            present,
+        })
+    }
+
+    pub(crate) fn rebuild_and_present_frame_with_images_and_custom_shaders(
+        &self,
+        targets: FramePreparedRebuildTargets<'_>,
+        input: FramePreparedRebuildInput<'_>,
+        images: &mut ImageState<MetalTexture>,
+        background: &mut BackgroundImageState<MetalTexture>,
+        custom_uniforms: &mut CustomShaderUniforms,
+        custom_input: FrameCustomShaderInput,
+        custom_pipelines: &[&MetalPipeline],
+        presentation: FramePreparedPresentationInput<'_>,
+    ) -> Result<FramePreparedFrameApplication, FramePreparedFrameError> {
+        let plan = self.build_plan().map_err(FramePreparedRebuildError::from)?;
+
+        let rebuild = self.run_rebuild_stages(
+            &plan,
+            FramePreparedRebuildTargets {
+                contents: &mut *targets.contents,
+                grid: &mut *targets.grid,
+                row_dirty: &mut *targets.row_dirty,
+                uniforms: &mut *targets.uniforms,
+            },
+            input,
+        )?;
+
+        let mut custom_input = custom_input;
+        custom_input.cursor = targets.contents.get_cursor_glyph();
+        let custom_shader = plan.apply_custom_shader_frame(custom_uniforms, custom_input)?;
+
+        let present = plan.present_metal_frame_with_images_and_custom_shaders(
+            presentation.compositor,
+            images,
+            background,
+            FrameMetalCustomShaderPresentationInput {
+                uniforms: custom_uniforms,
+                pipelines: custom_pipelines,
+            },
+            FrameMetalPresentationInput {
+                width: presentation.width,
+                height: presentation.height,
+                contents_scale: presentation.contents_scale,
+                uniforms: targets.uniforms,
+                contents: targets.contents,
+                grayscale_atlas: &targets.grid.atlas_grayscale,
+                color_atlas: &targets.grid.atlas_color,
+            },
+        )?;
+
+        Ok(FramePreparedFrameApplication {
+            rebuild,
+            custom_shader: Some(custom_shader),
+            present,
+        })
     }
 }
 
@@ -404,11 +468,18 @@ pub(crate) struct FramePreparedPresentationInput<'a> {
     pub(crate) contents_scale: f64,
 }
 
+#[derive(Clone, Copy)]
+pub(crate) struct FrameMetalCustomShaderPresentationInput<'a> {
+    pub(crate) uniforms: &'a CustomShaderUniforms,
+    pub(crate) pipelines: &'a [&'a MetalPipeline],
+}
+
 /// The result of one full prepared frame: the rebuild applications plus the Metal
 /// presentation application.
 #[derive(Debug)]
 pub(crate) struct FramePreparedFrameApplication {
     pub(crate) rebuild: FramePreparedRebuildApplication,
+    pub(crate) custom_shader: Option<FrameCustomShaderApplication>,
     pub(crate) present: FrameMetalPresentationApplication,
 }
 
@@ -418,6 +489,7 @@ pub(crate) struct FramePreparedFrameApplication {
 #[derive(Debug)]
 pub(crate) enum FramePreparedFrameError {
     Rebuild(FramePreparedRebuildError),
+    CustomShader(FrameCustomShaderValidationError),
     Present(FrameMetalPresentationError),
 }
 
@@ -430,6 +502,12 @@ impl From<FramePreparedRebuildError> for FramePreparedFrameError {
 impl From<FrameMetalPresentationError> for FramePreparedFrameError {
     fn from(error: FrameMetalPresentationError) -> Self {
         Self::Present(error)
+    }
+}
+
+impl From<FrameCustomShaderValidationError> for FramePreparedFrameError {
+    fn from(error: FrameCustomShaderValidationError) -> Self {
+        Self::CustomShader(error)
     }
 }
 
@@ -1205,6 +1283,41 @@ impl FrameRebuildPlan {
             },
             images,
             background,
+        )?;
+
+        Ok(FrameMetalPresentationApplication {
+            foreground_drawn: presentation.fg_count > 0,
+            target_reallocated: presentation.target_reallocated,
+            presentation,
+        })
+    }
+
+    pub(crate) fn present_metal_frame_with_images_and_custom_shaders(
+        &self,
+        compositor: &mut MetalFrameCompositor,
+        images: &mut ImageState<MetalTexture>,
+        background: &mut BackgroundImageState<MetalTexture>,
+        custom: FrameMetalCustomShaderPresentationInput<'_>,
+        input: FrameMetalPresentationInput<'_>,
+    ) -> Result<FrameMetalPresentationApplication, FrameMetalPresentationError> {
+        self.validate_metal_presentation_input(&input)?;
+
+        let presentation = compositor.draw_frame_with_images_and_custom_shaders(
+            MetalFrameInput {
+                width: input.width,
+                height: input.height,
+                contents_scale: input.contents_scale,
+                uniforms: input.uniforms,
+                contents: input.contents,
+                grayscale_atlas: input.grayscale_atlas,
+                color_atlas: input.color_atlas,
+            },
+            images,
+            background,
+            MetalCustomShaderInput {
+                uniforms: custom.uniforms,
+                pipelines: custom.pipelines,
+            },
         )?;
 
         Ok(FrameMetalPresentationApplication {

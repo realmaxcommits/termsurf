@@ -13,16 +13,18 @@ use crate::font::shared_grid::SharedGrid;
 use crate::renderer::cell::{row_never_extend_bg_flags, Contents, Highlight, SelectionConfig};
 use crate::renderer::cursor::Style as CursorStyle;
 use crate::renderer::frame_rebuild::{
-    FramePaddingExtendInput, FramePreparedFrameApplication, FramePreparedFrameError,
-    FramePreparedPresentationInput, FramePreparedRebuildApplication, FramePreparedRebuildError,
-    FramePreparedRebuildInput, FramePreparedRebuildTargets, FrameRebuildUniformInput,
-    FrameSnapshotBlockCursorUniformInput, FrameSnapshotCursorOverlayInput,
-    FrameSnapshotCursorUniformInput, FrameSnapshotRowFormatInput, FrameSnapshotTextOverlayInput,
-    FrameTerminalSnapshot, RenderDirty,
+    FrameCustomShaderInput, FramePaddingExtendInput, FramePreparedFrameApplication,
+    FramePreparedFrameError, FramePreparedPresentationInput, FramePreparedRebuildApplication,
+    FramePreparedRebuildError, FramePreparedRebuildInput, FramePreparedRebuildTargets,
+    FrameRebuildUniformInput, FrameSnapshotBlockCursorUniformInput,
+    FrameSnapshotCursorOverlayInput, FrameSnapshotCursorUniformInput, FrameSnapshotRowFormatInput,
+    FrameSnapshotTextOverlayInput, FrameTerminalSnapshot, RenderDirty,
 };
 use crate::renderer::image::{BackgroundImageState, ImageState};
+use crate::renderer::metal::pipeline::MetalPipeline;
 use crate::renderer::metal::shaders::MetalUniforms;
 use crate::renderer::metal::texture::MetalTexture;
+use crate::renderer::shadertoy::CustomShaderUniforms;
 use crate::renderer::size::GridSize;
 use crate::renderer::state::Preedit;
 use crate::terminal::color::{Palette, Rgb};
@@ -219,6 +221,40 @@ impl FrameRenderer {
         )
     }
 
+    pub(crate) fn render_and_present_frame_with_images_and_custom_shaders(
+        &mut self,
+        terminal: &Terminal,
+        grid: &mut SharedGrid,
+        images: &mut ImageState<MetalTexture>,
+        background: &mut BackgroundImageState<MetalTexture>,
+        custom_uniforms: &mut CustomShaderUniforms,
+        custom_input: FrameCustomShaderInput,
+        custom_pipelines: &[&MetalPipeline],
+        dirty: RenderDirty,
+        preedit: Option<Preedit>,
+        config: &Config,
+        presentation: FramePreparedPresentationInput<'_>,
+    ) -> Result<FramePreparedFrameApplication, FramePreparedFrameError> {
+        background.update_from_config(config);
+        let state = FrameRenderState::from_terminal(terminal);
+        state.update_custom_shader_uniforms_from_state(custom_uniforms);
+        let knobs = FrameRenderKnobs::from_config(config);
+        let input = state.rebuild_input(&knobs);
+        self.update_and_present_frame_with_images_and_custom_shaders(
+            terminal,
+            grid,
+            images,
+            background,
+            custom_uniforms,
+            custom_input,
+            custom_pipelines,
+            dirty,
+            preedit,
+            input,
+            presentation,
+        )
+    }
+
     /// Drive the screen-size + font-grid uniforms from the live surface (Issue 802 / Exp 18):
     /// the orthographic `projection_matrix`, `screen_size`, and the cell pixel size. The rebuild
     /// updates `grid_size`/contents on top but touches none of these, so without this call the
@@ -231,6 +267,45 @@ impl FrameRenderer {
     ) {
         self.uniforms.update_screen_size(size, grid);
         self.uniforms.update_font_grid(metrics);
+    }
+
+    pub(crate) fn update_and_present_frame_with_images_and_custom_shaders(
+        &mut self,
+        terminal: &Terminal,
+        grid: &mut SharedGrid,
+        images: &mut ImageState<MetalTexture>,
+        background: &mut BackgroundImageState<MetalTexture>,
+        custom_uniforms: &mut CustomShaderUniforms,
+        custom_input: FrameCustomShaderInput,
+        custom_pipelines: &[&MetalPipeline],
+        dirty: RenderDirty,
+        preedit: Option<Preedit>,
+        input: FramePreparedRebuildInput<'_>,
+        presentation: FramePreparedPresentationInput<'_>,
+    ) -> Result<FramePreparedFrameApplication, FramePreparedFrameError> {
+        let snapshot = FrameTerminalSnapshot::collect(terminal, self.current_grid, dirty, preedit);
+
+        self.row_dirty.clear();
+        self.row_dirty.extend_from_slice(&snapshot.row_dirty);
+
+        let app = snapshot.rebuild_and_present_frame_with_images_and_custom_shaders(
+            FramePreparedRebuildTargets {
+                contents: &mut self.contents,
+                grid,
+                row_dirty: &mut self.row_dirty,
+                uniforms: &mut self.uniforms,
+            },
+            input,
+            images,
+            background,
+            custom_uniforms,
+            custom_input,
+            custom_pipelines,
+            presentation,
+        )?;
+
+        self.current_grid = snapshot.terminal_grid;
+        Ok(app)
     }
 
     pub(crate) fn contents(&self) -> &Contents {
@@ -409,6 +484,26 @@ impl FrameRenderState {
                 row_never_extend: &self.row_never_extend,
             },
         }
+    }
+
+    pub(crate) fn update_custom_shader_uniforms_from_state(
+        &self,
+        uniforms: &mut CustomShaderUniforms,
+    ) {
+        uniforms.update_palette(&self.palette);
+        uniforms.update_state_colors(
+            self.default_bg,
+            self.default_fg,
+            self.cursor.map(|(_, color)| color),
+            None,
+            None,
+            None,
+        );
+        let (visible, style) = self
+            .cursor
+            .map(|(style, _)| (true, style))
+            .unwrap_or((false, CursorStyle::Block));
+        uniforms.update_cursor_style(visible, style);
     }
 }
 
