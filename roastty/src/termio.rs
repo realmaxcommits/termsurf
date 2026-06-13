@@ -144,7 +144,8 @@ impl Termio {
             .into_iter()
             .map(|arg| arg.as_ref().to_os_string())
             .collect();
-        let mut env = options.env;
+        let env_override = options.env;
+        let mut env = inherited_env();
         setup_terminal_identity(&mut env, options.resource_dir.as_deref(), &options.term);
         shell_integration::setup_features(
             &mut env,
@@ -161,6 +162,7 @@ impl Termio {
                 env = command.env;
             }
         }
+        apply_env_overrides(&mut env, env_override);
 
         let mut terminal = Terminal::init_with_options(
             size.cols,
@@ -334,6 +336,18 @@ fn setup_terminal_identity(
             put_env(env, "TERM", "xterm-256color".to_string());
             put_env(env, "COLORTERM", "truecolor".to_string());
         }
+    }
+}
+
+fn inherited_env() -> Vec<(String, String)> {
+    std::env::vars_os()
+        .filter_map(|(key, value)| Some((key.into_string().ok()?, value.into_string().ok()?)))
+        .collect()
+}
+
+fn apply_env_overrides(env: &mut Vec<(String, String)>, overrides: Vec<(String, String)>) {
+    for (key, value) in overrides {
+        put_env(env, &key, value);
     }
 }
 
@@ -534,6 +548,29 @@ mod tests {
     use std::time::Duration;
 
     static TERMIO_TEST_DIR_COUNTER: AtomicUsize = AtomicUsize::new(0);
+
+    struct EnvGuard {
+        key: &'static str,
+        previous: Option<OsString>,
+    }
+
+    impl EnvGuard {
+        fn set(key: &'static str, value: impl AsRef<OsStr>) -> Self {
+            let previous = std::env::var_os(key);
+            std::env::set_var(key, value);
+            Self { key, previous }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            if let Some(previous) = &self.previous {
+                std::env::set_var(self.key, previous);
+            } else {
+                std::env::remove_var(self.key);
+            }
+        }
+    }
 
     unsafe extern "C" fn test_bell_callback(_: *mut c_void, _: *mut c_void) {}
 
@@ -764,7 +801,7 @@ mod tests {
     }
 
     #[test]
-    fn spawn_with_options_passes_environment_variables() {
+    fn termio_env_spawn_with_options_passes_environment_variables() {
         let _guard = pty_command_lock();
         let mut termio = Termio::spawn_with_options(
             "/bin/sh",
@@ -789,16 +826,92 @@ mod tests {
     }
 
     #[test]
+    fn termio_env_spawn_with_options_inherits_process_environment() {
+        let _guard = pty_command_lock();
+        let _env = EnvGuard::set("ROASTTY_TERMIO_INHERITED_ENV_TEST", "inherited-env");
+        let mut termio = Termio::spawn_with_options(
+            "/bin/sh",
+            ["-c", "printf '%s' \"$ROASTTY_TERMIO_INHERITED_ENV_TEST\""],
+            TermioSpawnOptions::default(),
+            test_size(),
+        )
+        .expect("spawn termio with inherited env");
+
+        pump_until(&mut termio, |termio, _| {
+            termio
+                .terminal()
+                .plain_screen(false)
+                .contains("inherited-env")
+        });
+
+        assert!(termio
+            .terminal()
+            .plain_screen(false)
+            .contains("inherited-env"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn termio_env_spawn_with_options_tolerates_non_unicode_inherited_environment() {
+        use std::os::unix::ffi::OsStringExt;
+
+        let _guard = pty_command_lock();
+        let value = OsString::from_vec(vec![0xff, b'x']);
+        let _env = EnvGuard::set("ROASTTY_TERMIO_NON_UNICODE_ENV_TEST", value);
+        let mut termio = Termio::spawn_with_options(
+            "/bin/sh",
+            ["-c", "printf ok"],
+            TermioSpawnOptions::default(),
+            test_size(),
+        )
+        .expect("spawn termio with non-unicode inherited env");
+
+        pump_until(&mut termio, |termio, _| {
+            termio.terminal().plain_screen(false).contains("ok")
+        });
+
+        assert!(termio.terminal().plain_screen(false).contains("ok"));
+    }
+
+    #[test]
+    fn termio_env_spawn_with_options_explicit_env_overrides_inherited_environment() {
+        let _guard = pty_command_lock();
+        let _env = EnvGuard::set("ROASTTY_TERMIO_OVERRIDE_ENV_TEST", "inherited-env");
+        let mut termio = Termio::spawn_with_options(
+            "/bin/sh",
+            ["-c", "printf '%s' \"$ROASTTY_TERMIO_OVERRIDE_ENV_TEST\""],
+            TermioSpawnOptions {
+                env: vec![(
+                    "ROASTTY_TERMIO_OVERRIDE_ENV_TEST".to_string(),
+                    "explicit-env".to_string(),
+                )],
+                ..TermioSpawnOptions::default()
+            },
+            test_size(),
+        )
+        .expect("spawn termio with explicit env override");
+
+        pump_until(&mut termio, |termio, _| {
+            termio
+                .terminal()
+                .plain_screen(false)
+                .contains("explicit-env")
+        });
+
+        let screen = termio.terminal().plain_screen(false);
+        assert!(screen.contains("explicit-env"));
+        assert!(!screen.contains("inherited-env"));
+    }
+
+    #[test]
     fn spawn_with_options_sets_fallback_terminal_identity_without_resources() {
         let _guard = pty_command_lock();
+        let _term = EnvGuard::set("TERM", "stale-term");
+        let _color = EnvGuard::set("COLORTERM", "stale-color");
         let mut termio = Termio::spawn_with_options(
             "/bin/sh",
             ["-c", "printf 'term:%s color:%s resources:%s' \"$TERM\" \"$COLORTERM\" \"$ROASTTY_RESOURCES_DIR\""],
             TermioSpawnOptions {
-                env: vec![
-                    ("TERM".to_string(), "stale-term".to_string()),
-                    ("COLORTERM".to_string(), "stale-color".to_string()),
-                ],
                 shell_integration: crate::config::ShellIntegration::None,
                 ..TermioSpawnOptions::default()
             },
@@ -819,6 +932,41 @@ mod tests {
         assert!(screen.contains("resources:"));
         assert!(!screen.contains("stale-term"));
         assert!(!screen.contains("stale-color"));
+    }
+
+    #[test]
+    fn termio_env_explicit_overrides_win_after_terminal_identity() {
+        let _guard = pty_command_lock();
+        let mut termio = Termio::spawn_with_options(
+            "/bin/sh",
+            ["-c", "printf 'term:%s color:%s resources:%s' \"$TERM\" \"$COLORTERM\" \"$ROASTTY_RESOURCES_DIR\""],
+            TermioSpawnOptions {
+                env: vec![
+                    ("TERM".to_string(), "explicit-term".to_string()),
+                    ("COLORTERM".to_string(), "explicit-color".to_string()),
+                    (
+                        "ROASTTY_RESOURCES_DIR".to_string(),
+                        "/explicit/resources".to_string(),
+                    ),
+                ],
+                shell_integration: crate::config::ShellIntegration::None,
+                ..TermioSpawnOptions::default()
+            },
+            test_size(),
+        )
+        .expect("spawn termio with explicit terminal identity overrides");
+
+        pump_until(&mut termio, |termio, _| {
+            termio
+                .terminal()
+                .plain_screen(false)
+                .contains("explicit-term")
+        });
+
+        let screen = termio.terminal().plain_screen(false);
+        assert!(screen.contains("term:explicit-term"));
+        assert!(screen.contains("color:explicit-color"));
+        assert!(screen.contains("resources:/explicit/resources"));
     }
 
     #[test]
@@ -862,8 +1010,12 @@ mod tests {
     }
 
     #[test]
-    fn spawn_with_options_resource_identity_uses_configured_term_and_overwrites_env() {
+    fn spawn_with_options_resource_identity_overwrites_inherited_env() {
         let _guard = pty_command_lock();
+        let _term = EnvGuard::set("TERM", "stale-term");
+        let _color = EnvGuard::set("COLORTERM", "stale-color");
+        let _terminfo = EnvGuard::set("TERMINFO", "/stale/terminfo");
+        let _resources = EnvGuard::set("ROASTTY_RESOURCES_DIR", "/stale/resources");
         let resources_root = unique_test_dir("termio-resource-env-override");
         let resources = resources_root.join("roastty");
         std::fs::create_dir_all(&resources).expect("create resources dir");
@@ -873,13 +1025,6 @@ mod tests {
             ["-c", "if [ \"$TERM\" = screen-256color ] && [ \"$COLORTERM\" = truecolor ] && [ \"$TERMINFO\" = \"$ROASTTY_EXPECT_TERMINFO\" ] && [ \"$ROASTTY_RESOURCES_DIR\" = \"$ROASTTY_EXPECT_RESOURCES\" ]; then printf ok; else printf 'fail:%s:%s:%s:%s' \"$TERM\" \"$COLORTERM\" \"$TERMINFO\" \"$ROASTTY_RESOURCES_DIR\"; fi"],
             TermioSpawnOptions {
                 env: vec![
-                    ("TERM".to_string(), "stale-term".to_string()),
-                    ("COLORTERM".to_string(), "stale-color".to_string()),
-                    ("TERMINFO".to_string(), "/stale/terminfo".to_string()),
-                    (
-                        "ROASTTY_RESOURCES_DIR".to_string(),
-                        "/stale/resources".to_string(),
-                    ),
                     (
                         "ROASTTY_EXPECT_TERMINFO".to_string(),
                         resources_root.join("terminfo").display().to_string(),
@@ -907,6 +1052,44 @@ mod tests {
         assert!(!screen.contains("stale"));
 
         let _ = std::fs::remove_dir_all(resources_root);
+    }
+
+    #[test]
+    fn termio_env_spawn_with_options_explicit_env_overrides_shell_integration_env() {
+        let _guard = pty_command_lock();
+        let resources = unique_test_dir("termio-zsh-explicit-override");
+        let zsh_dir = resources.join("shell-integration/zsh");
+        std::fs::create_dir_all(&zsh_dir).expect("create zsh resources");
+        std::fs::write(zsh_dir.join(".zshenv"), b"").expect("write zshenv");
+
+        let mut termio = Termio::spawn_with_options(
+            "/bin/sh",
+            [
+                "-c",
+                "printf 'zdot:%s old:%s' \"$ZDOTDIR\" \"$ROASTTY_ZSH_ZDOTDIR\"",
+            ],
+            TermioSpawnOptions {
+                env: vec![("ZDOTDIR".to_string(), "/explicit/zdotdir".to_string())],
+                shell_integration: crate::config::ShellIntegration::Zsh,
+                resource_dir: Some(resources.clone()),
+                ..TermioSpawnOptions::default()
+            },
+            test_size(),
+        )
+        .expect("spawn termio with explicit ZDOTDIR override");
+
+        pump_until(&mut termio, |termio, _| {
+            termio
+                .terminal()
+                .plain_screen(false)
+                .contains("zdot:/explicit/zdotdir")
+        });
+
+        let screen = termio.terminal().plain_screen(false);
+        assert!(screen.contains("zdot:/explicit/zdotdir"));
+        assert!(!screen.contains("shell-integration/zsh"));
+
+        let _ = std::fs::remove_dir_all(resources);
     }
 
     #[test]
@@ -946,7 +1129,7 @@ mod tests {
     }
 
     #[test]
-    fn spawn_with_options_forced_zsh_integration_reaches_child_env() {
+    fn zsh_integration_spawn_with_options_reaches_child_env() {
         let _guard = pty_command_lock();
         let resources = unique_test_dir("termio-zsh-resources");
         let zsh_dir = resources.join("shell-integration/zsh");
@@ -982,6 +1165,54 @@ mod tests {
         assert!(screen.contains("features:cursor:blink,path,title"));
 
         let _ = std::fs::remove_dir_all(resources);
+    }
+
+    #[test]
+    fn zsh_integration_spawn_with_options_sources_inherited_zdotdir() {
+        let _guard = pty_command_lock();
+        let resources = unique_test_dir("termio-zsh-inherited-bootstrap-resources");
+        let zsh_dir = resources.join("shell-integration/zsh");
+        std::fs::create_dir_all(&zsh_dir).expect("create zsh resources");
+        std::fs::write(
+            zsh_dir.join(".zshenv"),
+            b"if [[ -n \"${ROASTTY_ZSH_ZDOTDIR+X}\" ]]; then\n  builtin export ZDOTDIR=\"$ROASTTY_ZSH_ZDOTDIR\"\n  builtin unset ROASTTY_ZSH_ZDOTDIR\nelse\n  builtin unset ZDOTDIR\nfi\nbuiltin source -- \"${ZDOTDIR-$HOME}/.zshenv\"\n",
+        )
+        .expect("write zshenv");
+        let bootstrap = unique_test_dir("termio-zsh-inherited-bootstrap");
+        std::fs::create_dir_all(&bootstrap).expect("create bootstrap dir");
+        std::fs::write(
+            bootstrap.join(".zshenv"),
+            b"export ROASTTY_TERMIO_BOOTSTRAP_MARKER=bootstrap-sourced\n",
+        )
+        .expect("write bootstrap zshenv");
+        let _zdotdir = EnvGuard::set("ZDOTDIR", &bootstrap);
+
+        let mut termio = Termio::spawn_with_options(
+            "/bin/zsh",
+            ["-lc", "printf '%s' \"$ROASTTY_TERMIO_BOOTSTRAP_MARKER\""],
+            TermioSpawnOptions {
+                shell_integration: crate::config::ShellIntegration::Zsh,
+                resource_dir: Some(resources.clone()),
+                ..TermioSpawnOptions::default()
+            },
+            test_size(),
+        )
+        .expect("spawn zsh with inherited bootstrap ZDOTDIR");
+
+        pump_until(&mut termio, |termio, _| {
+            termio
+                .terminal()
+                .plain_screen(false)
+                .contains("bootstrap-sourced")
+        });
+
+        assert!(termio
+            .terminal()
+            .plain_screen(false)
+            .contains("bootstrap-sourced"));
+
+        let _ = std::fs::remove_dir_all(resources);
+        let _ = std::fs::remove_dir_all(bootstrap);
     }
 
     #[test]

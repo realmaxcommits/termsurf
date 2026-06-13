@@ -993,7 +993,10 @@ the live app, verified by a Phase-D UI test.)
 
 - [ ] `surface_draw` owns a Metal renderer bound to the app `NSView`/`CALayer`;
       attach the layer and present on-screen
-- [ ] Render thread (frame pacing + cursor-blink timer)
+- [ ] Render thread (frame pacing + cursor-blink timer) -
+      Display-link/frame-pacing startup rendering is now live-proven by
+      Experiment 177: the copied app selected CoreVideo display link and
+      rendered the smoke marker. Cursor-blink timer parity remains unproven.
 - [ ] Renderer mailbox / `Options` (focus / visible / occlusion / change-config)
 - [ ] Retire the interim `render_state` pull divergence
 - [ ] **Milestone: the app launches and shows a working ASCII terminal**
@@ -1569,7 +1572,7 @@ stays unaltered except for the rename).
 - [Experiment 176: Phase C — display-link live validation](176-display-link-live-validation.md)
   — **Partial** (display-link selected, but smoke marker did not render)
 - [Experiment 177: Phase C — preserve startup bootstrap env](177-preserve-startup-bootstrap-env.md)
-  — **Designed**
+  — **Pass**
 
 ## Process
 
