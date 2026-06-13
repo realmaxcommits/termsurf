@@ -312,6 +312,11 @@ experiment files until they are proven.
   the wrong oracle. Experiment 4 uses Swift app-source identifiers as the
   app-facing ABI slice, then separately records non-app header differences as
   follow-up source-audit rows.
+- **Full-header ABI gaps must be split into symbol and semantic outcomes.**
+  Experiment 5 proved the mapped Ghostty header can be closed at the
+  declaration/export level while still recording honest semantic divergences for
+  unsupported helpers. Do not hide unsupported behavior behind a passing symbol
+  check; put it in `divergences.md` with a guard.
 
 ## Verification
 
@@ -332,4 +337,4 @@ remains open.
 - [Experiment 4: Embedded ABI app bridge audit](04-embedded-abi-app-bridge-audit.md)
   — **Partial**
 - [Experiment 5: Resolve non-app embedded ABI functions](05-resolve-non-app-embedded-abi-functions.md)
-  — **Designed**
+  — **Pass**

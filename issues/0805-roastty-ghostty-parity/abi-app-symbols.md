@@ -66,6 +66,17 @@ function comparison reports these missing Roastty declarations:
 | `roastty_inspector_metal_shutdown` | Upstream public function not referenced by `vendor/ghostty/macos/Sources`; inspector Swift sources use init/render/input/size/focus/text calls but not shutdown. | `rg` finds `ghostty_inspector_metal_shutdown` in `vendor/ghostty/include/ghostty.h` and `vendor/ghostty/src/apprt/embedded.zig`, but not in `vendor/ghostty/macos/Sources`.                                               | Not applicable to Experiment 4 app-facing slice.                                       |
 | `roastty_translate`                | Upstream public localization helper not referenced by `vendor/ghostty/macos/Sources`.                                                                            | `rg` finds `ghostty_translate` in `vendor/ghostty/include/ghostty.h` and `vendor/ghostty/src/main_c.zig`, but not in `vendor/ghostty/macos/Sources`.                                                                      | Not applicable to Experiment 4 app-facing slice.                                       |
 
+Experiment 5 resolved this full-header delta. The same mapped header comparison
+now reports no missing Roastty declarations, and the header/export comparison
+reports only the known `roastty_string_s` callback typedef false positive.
+
+| Mapped upstream function           | Experiment 5 outcome                                                                                                                                 | Evidence                                                                                                                                                                                                                                | Status                 |
+| ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------- |
+| `roastty_app_open_config`          | Declared and exported; dispatches `ROASTTY_ACTION_OPEN_CONFIG` through the app runtime action callback.                                              | `roastty/include/roastty.h`; `roastty/src/lib.rs`; `roastty/tests/abi_harness.c`; `logs/issue805-exp5-static-abi.log`; `logs/issue805-exp5-cargo-test-roastty.log`.                                                                     | Pass                   |
+| `roastty_benchmark_cli`            | Declared and exported; intentionally returns `false` because Roastty has no benchmark CLI port.                                                      | `roastty/include/roastty.h`; `roastty/src/lib.rs`; `roastty/tests/abi_harness.c`; `roastty/macos/Tests/BenchmarkTests.swift`; `logs/issue805-exp5-cargo-test-roastty.log`; `issues/0805-roastty-ghostty-parity/divergences.md#div-002`. | Intentional divergence |
+| `roastty_inspector_metal_shutdown` | Declared and exported; returns `true` for a valid inspector handle and `false` for null while Roastty's inspector Metal backend remains unsupported. | `roastty/include/roastty.h`; `roastty/src/lib.rs`; `roastty/tests/abi_harness.c`; `logs/issue805-exp5-cargo-test-roastty.log`.                                                                                                          | Pass                   |
+| `roastty_translate`                | Declared and exported; intentionally returns the input pointer unchanged because Roastty has no catalog-backed translation runtime.                  | `roastty/include/roastty.h`; `roastty/src/lib.rs`; `roastty/src/os/i18n.rs`; `roastty/tests/abi_harness.c`; `logs/issue805-exp5-cargo-test-roastty.log`; `issues/0805-roastty-ghostty-parity/divergences.md#div-001`.                   | Intentional divergence |
+
 ## Swift Symbol Delta
 
 After mapping upstream Swift identifiers with `ghostty_ -> roastty_` and
@@ -124,7 +135,13 @@ The app-facing embedded ABI bridge passes this audit slice:
 - extra Roastty symbols are either expected Roastty-only support or outside the
   app-facing ABI surface.
 
-This does not certify the full Ghostty header or macOS test suite. In
-particular, `roastty_benchmark_cli` remains a later macOS test/benchmark parity
-gap because the renamed Swift test references it but the Roastty header does not
-declare it.
+Experiment 5 later resolved the full Ghostty header delta recorded here. This
+artifact still represents Experiment 4's app-facing audit, but the non-app
+functions are no longer undeclared: `roastty_app_open_config`,
+`roastty_benchmark_cli`, `roastty_inspector_metal_shutdown`, and
+`roastty_translate` now have Roastty declarations and exports.
+
+The macOS benchmark CLI remains an accepted semantic divergence, not a missing
+symbol gap: `roastty_benchmark_cli` is declared/exported for ABI and copied-test
+link safety, but it returns `false` because Roastty has no benchmark CLI port.
+See `DIV-002` in `divergences.md`.

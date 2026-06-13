@@ -154,3 +154,68 @@ Fresh-context adversarial re-review result: **Approved**.
 - The reviewer confirmed the issue README links Experiment 5 as `Designed`.
 
 Final design-review verdict: **Approved**.
+
+## Result
+
+**Result:** Pass
+
+The four missing mapped non-app Ghostty header functions are now resolved:
+
+- `roastty_app_open_config` is declared, exported, and dispatches
+  `ROASTTY_ACTION_OPEN_CONFIG` through Roastty's runtime action callback.
+- `roastty_inspector_metal_shutdown` is declared, exported, and safely reports
+  success for a valid inspector handle while Roastty's inspector Metal backend
+  remains unsupported.
+- `roastty_translate` is declared and exported as an identity helper. This is
+  recorded as `DIV-001` because Roastty has locale helper plumbing but no
+  catalog-backed translation runtime.
+- `roastty_benchmark_cli` is declared and exported as a false-returning
+  unsupported helper. This is recorded as `DIV-002` because Roastty has no
+  benchmark CLI port.
+
+`SRC-004` is no longer a gap. The mapped full-header comparison reports no
+missing Roastty declarations. The header/export comparison reports only
+`roastty_string_s`, the known callback typedef false positive from Experiment 4.
+
+Verification artifacts:
+
+- `logs/issue805-exp5-static-abi.log`
+- `logs/issue805-exp5-cargo-fmt-check.log`
+- `logs/issue805-exp5-cargo-test-roastty.log`
+- `logs/issue805-exp5-roastty-app-build.log`
+
+Verification summary:
+
+- `cargo fmt --check -p roastty` passed.
+- `cargo test -p roastty -- --test-threads=1` passed: 4896 Rust tests passed, 4
+  ignored, and the C ABI harness passed.
+- `cd roastty && nu macos/build.nu --configuration Debug` passed with
+  `** BUILD SUCCEEDED **`.
+
+## Conclusion
+
+Experiment 5 closes the full-header declaration/export gap found by Experiment 4
+without overclaiming unsupported behavior. The durable guard is the cheap static
+header/export comparison plus the existing C ABI harness, which now links and
+exercises the newly declared functions.
+
+Future experiments should use this pattern for parity rows that mix ABI shape
+and behavior: make the symbol surface complete, prove the behavior that exists,
+and record unsupported semantics as explicit divergence rows with guards.
+
+## Completion Review
+
+Fresh-context adversarial completion review result: **Changes required**.
+
+- Required: `abi-app-symbols.md` had a stale Experiment 4 conclusion saying
+  `roastty_benchmark_cli` was still undeclared and remained a later gap. Fix:
+  the conclusion now says Experiment 5 resolved the missing symbol gap and that
+  `roastty_benchmark_cli` is an accepted semantic divergence, not a missing
+  declaration/export.
+
+Fresh-context adversarial completion re-review result: **Approved**.
+
+- The reviewer confirmed the stale conclusion contradiction is resolved.
+- The reviewer found no new required findings introduced by the fix.
+
+Final completion-review verdict: **Approved**.

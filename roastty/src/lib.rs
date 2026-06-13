@@ -13023,6 +13023,11 @@ pub extern "C" fn roastty_info() -> RoasttyInfo {
     }
 }
 
+#[no_mangle]
+pub extern "C" fn roastty_translate(msgid: *const c_char) -> *const c_char {
+    msgid
+}
+
 fn version_component(index: usize) -> usize {
     let version = std::str::from_utf8(&VERSION[..VERSION.len() - 1]).unwrap_or("");
     let core = version.split(['-', '+']).next().unwrap_or("");
@@ -18151,6 +18156,14 @@ pub extern "C" fn roastty_app_keyboard_changed(app: RoasttyApp) {
     }
 }
 
+#[no_mangle]
+pub extern "C" fn roastty_app_open_config(app: RoasttyApp) {
+    let Some(app_ref) = app_from_handle(app) else {
+        return;
+    };
+    let _ = app_ref.perform_app_runtime_action_result(app, ROASTTY_ACTION_OPEN_CONFIG, [0usize; 8]);
+}
+
 #[cfg(test)]
 fn set_app_keyboard_layout_for_test(app: RoasttyApp, layout: input_keyboard::Layout) {
     if let Some(app) = app_from_handle(app) {
@@ -18173,6 +18186,14 @@ pub extern "C" fn roastty_set_window_background_blur(app: RoasttyApp, window: *m
     let _ = (app, window);
 }
 
+/// Roastty does not currently ship Ghostty's benchmark CLI. Keep the copied
+/// macOS benchmark test linkable while reporting unsupported actions honestly.
+#[no_mangle]
+pub extern "C" fn roastty_benchmark_cli(action_name: *const c_char, args: *const c_char) -> bool {
+    let _ = (action_name, args);
+    false
+}
+
 /// Initialize the inspector's Metal renderer. Returns `false` — the inspector's
 /// live Metal path is not yet wired (a documented Phase-C item). The app does not
 /// gate on the result, so the inspector simply renders nothing.
@@ -18193,6 +18214,13 @@ pub extern "C" fn roastty_inspector_metal_render(
     descriptor: *mut c_void,
 ) {
     let _ = (inspector, command_buffer, descriptor);
+}
+
+/// Shut down the inspector's Metal renderer. The current Roastty inspector has
+/// no Metal backend state, so a valid handle is already shut down.
+#[no_mangle]
+pub extern "C" fn roastty_inspector_metal_shutdown(inspector: RoasttyInspector) -> bool {
+    inspector_from_handle(inspector).is_some()
 }
 
 #[no_mangle]
