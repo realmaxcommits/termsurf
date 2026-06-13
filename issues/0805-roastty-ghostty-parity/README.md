@@ -324,3 +324,5 @@ remains open.
 - [Experiment 2: Keyboard target isolation](02-keyboard-target-isolation.md) —
   **Pass**
 - [Experiment 3: Parity matrix schema](03-parity-matrix-schema.md) — **Pass**
+- [Experiment 4: Embedded ABI app bridge audit](04-embedded-abi-app-bridge-audit.md)
+  — **Designed**
