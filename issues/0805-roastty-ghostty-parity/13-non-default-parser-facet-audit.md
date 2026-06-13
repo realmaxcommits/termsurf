@@ -126,3 +126,80 @@ VERDICT: APPROVED
 
 Findings: none.
 ```
+
+## Result
+
+**Result:** Pass
+
+The parser-facet audit now generates a canonical parser inventory and updates
+CFG-217 without overclaiming parser parity. The audit found:
+
+- 203 canonical Ghostty config parser rows generated.
+- 202 rows with an identified Roastty `Config::set_from_source` dispatch path.
+- 1 parser dispatch gap: canonical `link`.
+- 0 `Oracle complete` rows, so CFG-217 correctly remains `Gap`.
+- 5 compatibility-only parser arms filtered out of the canonical CFG-217 row
+  set: `adw-toolbar-style`, `background-blur-radius`, `bold-is-bright`,
+  `cursor-invert-fg-bg`, and `selection-invert-fg-bg`.
+
+The `link` gap is real, not a scanner miss. Pinned Ghostty has canonical
+`link: RepeatableLink`, but `RepeatableLink.parseCLI` is `NotImplemented`.
+Roastty has the default URL link plumbing and `link-url`, but no `link` dispatch
+arm in `Config::set_from_source`. The next parser experiment must decide and
+prove the exact equivalent Roastty behavior for that upstream not-implemented
+parser instead of accidentally treating `UnknownField` as parity.
+
+Verification:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/config_parser_inventory.py \
+  --upstream vendor/ghostty/src/config/Config.zig \
+  --roastty roastty/src/config/mod.rs \
+  --config-inventory issues/0805-roastty-ghostty-parity/config-inventory.md \
+  --output issues/0805-roastty-ghostty-parity/config-parser-inventory.md \
+  --matrix issues/0805-roastty-ghostty-parity/config-matrix.md
+```
+
+Output:
+
+```text
+ghostty_canonical=203
+roastty_parser_rows=203
+missing_canonical_parser_rows=0
+missing_dispatch_rows=1
+extra_parser_rows=0
+compatibility_only_parser_arms=5
+noncanonical_noncompat_parser_arms=0
+oracle_complete=0
+audit_covered=202
+gap=1
+```
+
+Matrix assertion output:
+
+```text
+parser_rows=203 incomplete=203 cfg217=Gap
+```
+
+## Conclusion
+
+CFG-217 remains open, but it is now concrete. The next parser work should start
+with the `link` dispatch gap and then raise parser families from `Audit covered`
+to `Oracle complete` using upstream-derived accepted-value and rejection/reset
+oracles.
+
+## Completion Review
+
+Fresh-context adversarial completion review approved the result:
+
+```text
+VERDICT: APPROVED
+
+Findings: none.
+```
+
+The reviewer independently reproduced the generator counts, verified
+`parser_rows=203 incomplete=203 cfg217=Gap`, confirmed CFG-217 points to
+`config-parser-inventory.md`, checked the `link` gap against Ghostty and Roastty
+source, verified compatibility-only arms are excluded from parser rows, and ran
+`git diff --check`.

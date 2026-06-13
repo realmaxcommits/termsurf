@@ -355,6 +355,13 @@ experiment files until they are proven.
   Remaining config work is tracked by explicit facet `Gap` rows for non-default
   parsers, non-default formatters, diagnostics, validation/finalization,
   precedence/load semantics, reload behavior, and runtime/UI effects.
+- **The `link` config option is the first concrete parser dispatch gap.**
+  Experiment 13 mapped all 203 canonical config options to Roastty parser rows.
+  It found 202 options with identified `Config::set_from_source` dispatch and
+  one missing dispatch row: upstream canonical `link`. Pinned Ghostty's
+  `RepeatableLink.parseCLI` is itself `NotImplemented`, so the next parser
+  experiment must decide and prove the exact equivalent Roastty behavior instead
+  of treating `UnknownField` as parity by accident.
 
 ## Verification
 
@@ -391,4 +398,4 @@ remains open.
 - [Experiment 12: Config matrix facet decomposition](12-config-matrix-facet-decomposition.md)
   — **Pass**
 - [Experiment 13: Non-default parser facet audit](13-non-default-parser-facet-audit.md)
-  — **Designed**
+  — **Pass**
