@@ -173,4 +173,102 @@ Overall result:
 
 ## Result
 
-Not run yet.
+**Result:** Partial.
+
+Explicitly clicking inside the live Roastty terminal before typing did not make
+external keyboard input reach the terminal. Both keyboard routes still returned
+successfully but failed the marker-file oracle, and the post-attempt screenshot
+showed no typed text in the prompt.
+
+Logs are in `logs/` with the `issue804-exp6-` prefix. Screenshots are in
+`/Users/astrohacker/.cache/termsurf/shots/`.
+
+### Preflight and Launch
+
+`logs/issue804-exp6-preflight-launch.log` shows:
+
+- `AXIsProcessTrusted()` printed `true`.
+- Apple Events to `System Events` returned process count `50`.
+- No prior debug Roastty process was running.
+- Debug Roastty launched as PID `94096`.
+- `pgrep` confirmed the expected debug binary:
+  `/Users/astrohacker/dev/termsurf/roastty/macos/build/Debug/Roastty.app/Contents/MacOS/roastty`.
+- System Events made Roastty frontmost; the frontmost process name was
+  `roastty`.
+- Screenshot capture passed:
+  `/Users/astrohacker/.cache/termsurf/shots/issue-804-exp6-before-keyboard-20260613-135938.png`.
+
+As in earlier experiments, an immediate `list-windows.swift` call printed no
+window rows and an immediate `winid.swift` call briefly selected an empty-size
+candidate (`412 0 0 0 0`). The screenshot helper then resolved the real visible
+window `id=413 bounds=800x632pt`, and a follow-up `list-windows.swift` call also
+returned that visible window.
+
+### Focus Coordinates
+
+`logs/issue804-exp6-coordinates.log` shows the visible terminal window and the
+two click targets:
+
+```text
+LINE=id=413 layer=0 bounds=(489,161 800x632) name="👻"
+FOCUS_X=529
+FOCUS_Y=233
+SAFE_X=609
+SAFE_Y=301
+```
+
+`FOCUS_Y=233` is `windowY + 72pt`, the same text-row offset that made Experiment
+4's drag selection work. `SAFE_Y=301` is inside the terminal content area below
+the debug banner.
+
+### System Events Keyboard After Terminal Click
+
+`logs/issue804-exp6-keyboard-system-events.log` shows:
+
+- Roastty was made frontmost.
+- The harness clicked `(609,301)` and `(529,233)`.
+- It waited `0.7s`, sent a warmup space, typed `exec bash --norc --noprofile`,
+  and pressed Return.
+- It clicked `(529,233)` again, typed the marker command, and pressed Return.
+- The marker file was not created:
+  `cat: /tmp/termsurf-issue804-exp6-system-events/marker.txt: No such file or directory`.
+
+Result: **Fail** for System Events keyboard after terminal-content clicks.
+
+### CGEvent Keyboard After Terminal Click
+
+`logs/issue804-exp6-keyboard-cgevent.log` shows:
+
+- Roastty was made frontmost.
+- The harness clicked `(609,301)` and `(529,233)`.
+- It waited `0.7s`, posted a warmup space, typed `exec bash --norc --noprofile`,
+  and posted Return.
+- It clicked `(529,233)` again, typed the marker command, and posted Return.
+- The marker file was not created:
+  `cat: /tmp/termsurf-issue804-exp6-cgevent/marker.txt: No such file or directory`.
+
+Result: **Fail** for CGEvent keyboard after terminal-content clicks.
+
+### Investigation and Cleanup
+
+`logs/issue804-exp6-investigation-cleanup.log` shows:
+
+- Post-attempt screenshot capture passed:
+  `/Users/astrohacker/.cache/termsurf/shots/issue-804-exp6-after-keyboard-20260613-140017.png`.
+- The screenshot showed the normal Roastty prompt and no typed command text.
+- Roastty was still frontmost and visible: `roastty, true, true, missing value`.
+- Cleanup killed debug Roastty PID `94096`.
+- No debug Roastty process remained.
+
+## Conclusion
+
+The first-responder click hypothesis is insufficient by itself. A direct click
+inside the terminal content area, followed by settle delays and warmup keys,
+does not make System Events or CGEvent keyboard input reach the live Roastty
+terminal.
+
+The next experiment should instrument Roastty's AppKit keyboard entry points and
+focus state, then rerun the same external injections. The useful signals are
+whether `SurfaceView_AppKit.keyDown`, text-input callbacks such as `insertText`
+or marked text, and first-responder/focus callbacks fire during the failed
+external keyboard attempts.

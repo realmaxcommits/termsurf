@@ -180,6 +180,10 @@ Roastty GUI automation work. Keep hypotheses in Analysis until they are proven.
 - **External System Events keyboard and CGEvent keyboard still do not reach the
   Roastty terminal.** They return successfully while Roastty is frontmost and
   visible, but marker files are not created. This remains the primary blocker.
+- **Clicking the terminal content before typing is not sufficient.** Experiment
+  6 clicked both a safe terminal content point and the known text-row offset
+  before retrying System Events and CGEvent keyboard input; both marker-file
+  oracles still failed, and the post-attempt screenshot showed no typed text.
 
 ## Verification
 
@@ -221,4 +225,5 @@ not add the `## Experiments` index until Experiment 1 is designed.
   — **Partial** (Input Monitoring grant confirmed for Ghostty; System Events and
   CGEvent keyboard still do not reach Roastty)
 - [Experiment 6: Click terminal before keyboard](06-click-terminal-before-keyboard.md)
-  — **Designed**
+  — **Partial** (explicit terminal-content clicks did not make System Events or
+  CGEvent keyboard input reach Roastty)
