@@ -9512,14 +9512,14 @@ const fn default_unicode_entry(
 const DEFAULT_BINDINGS: &[DefaultBindingEntry] = &[
     default_unicode_entry(
         b',' as u32,
-        ROASTTY_MODS_SUPER,
-        b"open_config",
+        ROASTTY_MODS_SHIFT | ROASTTY_MODS_SUPER,
+        b"reload_config",
         ROASTTY_KEYBIND_FLAGS_DEFAULT,
     ),
     default_unicode_entry(
         b',' as u32,
-        ROASTTY_MODS_SHIFT | ROASTTY_MODS_SUPER,
-        b"reload_config",
+        ROASTTY_MODS_SUPER,
+        b"open_config",
         ROASTTY_KEYBIND_FLAGS_DEFAULT,
     ),
     default_physical_entry(
@@ -9532,12 +9532,6 @@ const DEFAULT_BINDINGS: &[DefaultBindingEntry] = &[
         key::Key::Paste,
         ROASTTY_MODS_NONE,
         b"paste_from_clipboard",
-        ROASTTY_KEYBIND_FLAGS_DEFAULT,
-    ),
-    default_physical_entry(
-        key::Key::Insert,
-        ROASTTY_MODS_SHIFT,
-        b"paste_from_selection",
         ROASTTY_KEYBIND_FLAGS_DEFAULT,
     ),
     default_unicode_entry(
@@ -9579,19 +9573,19 @@ const DEFAULT_BINDINGS: &[DefaultBindingEntry] = &[
     default_unicode_entry(
         b'j' as u32,
         ROASTTY_MODS_SHIFT | ROASTTY_MODS_CTRL | ROASTTY_MODS_SUPER,
-        b"write_screen_file:copy",
+        b"write_screen_file:copy,plain",
         ROASTTY_KEYBIND_FLAGS_DEFAULT,
     ),
     default_unicode_entry(
         b'j' as u32,
         ROASTTY_MODS_SHIFT | ROASTTY_MODS_SUPER,
-        b"write_screen_file:paste",
+        b"write_screen_file:paste,plain",
         ROASTTY_KEYBIND_FLAGS_DEFAULT,
     ),
     default_unicode_entry(
         b'j' as u32,
         ROASTTY_MODS_SHIFT | ROASTTY_MODS_ALT | ROASTTY_MODS_SUPER,
-        b"write_screen_file:open",
+        b"write_screen_file:open,plain",
         ROASTTY_KEYBIND_FLAGS_DEFAULT,
     ),
     default_physical_entry(
@@ -9654,10 +9648,22 @@ const DEFAULT_BINDINGS: &[DefaultBindingEntry] = &[
         b"next_tab",
         ROASTTY_KEYBIND_FLAGS_DEFAULT,
     ),
+    default_physical_entry(
+        key::Key::Digit1,
+        ROASTTY_MODS_SUPER,
+        b"goto_tab:1",
+        ROASTTY_KEYBIND_FLAGS_DEFAULT,
+    ),
     default_unicode_entry(
         b'1' as u32,
         ROASTTY_MODS_SUPER,
         b"goto_tab:1",
+        ROASTTY_KEYBIND_FLAGS_DEFAULT,
+    ),
+    default_physical_entry(
+        key::Key::Digit2,
+        ROASTTY_MODS_SUPER,
+        b"goto_tab:2",
         ROASTTY_KEYBIND_FLAGS_DEFAULT,
     ),
     default_unicode_entry(
@@ -9666,10 +9672,22 @@ const DEFAULT_BINDINGS: &[DefaultBindingEntry] = &[
         b"goto_tab:2",
         ROASTTY_KEYBIND_FLAGS_DEFAULT,
     ),
+    default_physical_entry(
+        key::Key::Digit3,
+        ROASTTY_MODS_SUPER,
+        b"goto_tab:3",
+        ROASTTY_KEYBIND_FLAGS_DEFAULT,
+    ),
     default_unicode_entry(
         b'3' as u32,
         ROASTTY_MODS_SUPER,
         b"goto_tab:3",
+        ROASTTY_KEYBIND_FLAGS_DEFAULT,
+    ),
+    default_physical_entry(
+        key::Key::Digit4,
+        ROASTTY_MODS_SUPER,
+        b"goto_tab:4",
         ROASTTY_KEYBIND_FLAGS_DEFAULT,
     ),
     default_unicode_entry(
@@ -9678,10 +9696,22 @@ const DEFAULT_BINDINGS: &[DefaultBindingEntry] = &[
         b"goto_tab:4",
         ROASTTY_KEYBIND_FLAGS_DEFAULT,
     ),
+    default_physical_entry(
+        key::Key::Digit5,
+        ROASTTY_MODS_SUPER,
+        b"goto_tab:5",
+        ROASTTY_KEYBIND_FLAGS_DEFAULT,
+    ),
     default_unicode_entry(
         b'5' as u32,
         ROASTTY_MODS_SUPER,
         b"goto_tab:5",
+        ROASTTY_KEYBIND_FLAGS_DEFAULT,
+    ),
+    default_physical_entry(
+        key::Key::Digit6,
+        ROASTTY_MODS_SUPER,
+        b"goto_tab:6",
         ROASTTY_KEYBIND_FLAGS_DEFAULT,
     ),
     default_unicode_entry(
@@ -9690,10 +9720,22 @@ const DEFAULT_BINDINGS: &[DefaultBindingEntry] = &[
         b"goto_tab:6",
         ROASTTY_KEYBIND_FLAGS_DEFAULT,
     ),
+    default_physical_entry(
+        key::Key::Digit7,
+        ROASTTY_MODS_SUPER,
+        b"goto_tab:7",
+        ROASTTY_KEYBIND_FLAGS_DEFAULT,
+    ),
     default_unicode_entry(
         b'7' as u32,
         ROASTTY_MODS_SUPER,
         b"goto_tab:7",
+        ROASTTY_KEYBIND_FLAGS_DEFAULT,
+    ),
+    default_physical_entry(
+        key::Key::Digit8,
+        ROASTTY_MODS_SUPER,
+        b"goto_tab:8",
         ROASTTY_KEYBIND_FLAGS_DEFAULT,
     ),
     default_unicode_entry(
@@ -23336,14 +23378,14 @@ mod tests {
 
         u!(
             b',',
-            ROASTTY_MODS_SUPER,
-            b"open_config",
+            ROASTTY_MODS_SHIFT | ROASTTY_MODS_SUPER,
+            b"reload_config",
             ROASTTY_KEYBIND_FLAGS_DEFAULT
         );
         u!(
             b',',
-            ROASTTY_MODS_SHIFT | ROASTTY_MODS_SUPER,
-            b"reload_config",
+            ROASTTY_MODS_SUPER,
+            b"open_config",
             ROASTTY_KEYBIND_FLAGS_DEFAULT
         );
         p!(
@@ -23356,12 +23398,6 @@ mod tests {
             key::Key::Paste,
             ROASTTY_MODS_NONE,
             b"paste_from_clipboard",
-            ROASTTY_KEYBIND_FLAGS_DEFAULT
-        );
-        p!(
-            key::Key::Insert,
-            ROASTTY_MODS_SHIFT,
-            b"paste_from_selection",
             ROASTTY_KEYBIND_FLAGS_DEFAULT
         );
         u!(
@@ -23403,19 +23439,19 @@ mod tests {
         u!(
             b'j',
             ROASTTY_MODS_SHIFT | ROASTTY_MODS_CTRL | ROASTTY_MODS_SUPER,
-            b"write_screen_file:copy",
+            b"write_screen_file:copy,plain",
             ROASTTY_KEYBIND_FLAGS_DEFAULT
         );
         u!(
             b'j',
             ROASTTY_MODS_SHIFT | ROASTTY_MODS_SUPER,
-            b"write_screen_file:paste",
+            b"write_screen_file:paste,plain",
             ROASTTY_KEYBIND_FLAGS_DEFAULT
         );
         u!(
             b'j',
             ROASTTY_MODS_SHIFT | ROASTTY_MODS_ALT | ROASTTY_MODS_SUPER,
-            b"write_screen_file:open",
+            b"write_screen_file:open,plain",
             ROASTTY_KEYBIND_FLAGS_DEFAULT
         );
 
@@ -23452,6 +23488,23 @@ mod tests {
         for digit in b'1'..=b'8' {
             let action = format!("goto_tab:{}", digit - b'0').into_bytes();
             let action: &'static [u8] = Box::leak(action.into_boxed_slice());
+            let physical = match digit {
+                b'1' => key::Key::Digit1,
+                b'2' => key::Key::Digit2,
+                b'3' => key::Key::Digit3,
+                b'4' => key::Key::Digit4,
+                b'5' => key::Key::Digit5,
+                b'6' => key::Key::Digit6,
+                b'7' => key::Key::Digit7,
+                b'8' => key::Key::Digit8,
+                _ => unreachable!(),
+            };
+            expected.push(default_physical_entry(
+                physical,
+                ROASTTY_MODS_SUPER,
+                action,
+                ROASTTY_KEYBIND_FLAGS_DEFAULT,
+            ));
             expected.push(default_unicode_entry(
                 digit as u32,
                 ROASTTY_MODS_SUPER,

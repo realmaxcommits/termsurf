@@ -334,6 +334,12 @@ experiment files until they are proven.
   `Config::default().format_config(...)`. After app-name normalization, all 454
   comparable default lines now match exactly; the remaining default-format gaps
   are isolated to `keybind` and `command-palette-entry` repeatable surfaces.
+- **Ghostty keybind formatting does not print `performable:` flags.** Experiment
+  9 matched pinned Ghostty's default keybind output by preserving the runtime
+  performable flags internally while omitting them from formatted config lines,
+  using Ghostty's modifier order (`super`, `ctrl`, `alt`, `shift`), and adding
+  the physical `digit_1` through `digit_8` aliases that pair with the unicode
+  number shortcuts.
 
 ## Verification
 
@@ -362,4 +368,4 @@ remains open.
 - [Experiment 8: Default config format oracle](08-default-config-format-oracle.md)
   — **Pass**
 - [Experiment 9: Default keybind format parity](09-default-keybind-format-parity.md)
-  — **Designed**
+  — **Pass**

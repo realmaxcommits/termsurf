@@ -16330,13 +16330,13 @@ mod tests {
         let ghostty_keybind_count = default_config_lines_for_key(&ghostty, "keybind").len();
         let roastty_keybind_count = default_config_lines_for_key(&roastty, "keybind").len();
         assert_eq!(ghostty_keybind_count, 93);
-        assert_eq!(roastty_keybind_count, 86);
+        assert_eq!(roastty_keybind_count, 93);
         assert_eq!(
             default_config_multiset_mismatch_count(
                 &default_config_lines_for_key(&ghostty, "keybind"),
                 &default_config_lines_for_key(&roastty, "keybind")
             ),
-            135
+            0
         );
 
         let ghostty_command_palette =
@@ -16365,9 +16365,7 @@ mod tests {
     fn comparable_default_config_lines(input: &str) -> Vec<&str> {
         input
             .lines()
-            .filter(|line| {
-                !line.starts_with("keybind = ") && !line.starts_with("command-palette-entry = ")
-            })
+            .filter(|line| !line.starts_with("command-palette-entry = "))
             .collect()
     }
 
@@ -19922,6 +19920,10 @@ mod tests {
         let diagnostics = cfg.set_cli_args(["--keybind=clear", "--keybind=z=new_window"]);
         assert!(diagnostics.is_empty());
         assert_eq!(lines(&cfg), vec!["keybind = z=new_window"]);
+
+        cfg.set("keybind", Some("clear")).unwrap();
+        cfg.set("keybind", Some("key_a=quit")).unwrap();
+        assert_eq!(lines(&cfg), vec!["keybind = key_a=quit"]);
 
         let cloned = cfg.clone();
         assert_eq!(cloned, cfg);

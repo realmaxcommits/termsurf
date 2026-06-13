@@ -27,7 +27,7 @@ Capture Roastty's current default formatter output while running the oracle
 test:
 
 ```bash
-ROASTTY_DEFAULT_CONFIG_OUT=/Users/astrohacker/dev/termsurf/logs/issue805-exp8-roastty-default-config.txt \
+ROASTTY_DEFAULT_CONFIG_OUT=/Users/astrohacker/dev/termsurf/logs/issue805-exp9-roastty-default-config.txt \
   cargo test --manifest-path roastty/Cargo.toml config_default_format_oracle -- --nocapture
 ```
 
@@ -44,27 +44,28 @@ The test normalizes only the application rename:
 - `Ghostty` and `Roastty` become `{App}`.
 - `ghostty` and `roastty` become `{app}`.
 
-The test does not normalize semantic values. It compares all non-`keybind` and
-non-`command-palette-entry` lines exactly and in order.
+The test does not normalize semantic values. It compares all
+non-`command-palette-entry` lines exactly and in order, including `keybind`.
 
 ## Current Result
 
-Current counts from `logs/issue805-exp8-default-config-diff-summary.txt`:
+Current counts from `logs/issue805-exp9-default-config-diff-summary.txt`:
 
 - Ghostty raw lines: 635
-- Roastty raw lines: 628
-- Comparable lines excluding `keybind` and `command-palette-entry`: 454 on each
-  side
+- Roastty raw lines: 635
+- Comparable lines excluding only `command-palette-entry`: 547 on each side
 - Comparable exact match after app-name normalization: true
 - Ghostty `keybind` lines: 93
-- Roastty `keybind` lines: 86
-- `keybind` multiset mismatches: 135
+- Roastty `keybind` lines: 93
+- `keybind` ordered match: true
+- `keybind` multiset mismatches: 0
 - Ghostty `command-palette-entry` lines: 88
 - Roastty `command-palette-entry` lines: 88
+- `command-palette-entry` ordered match: false
 - `command-palette-entry` multiset mismatches: 2
-- Total missing normalized lines: 72
-- Total extra normalized lines: 65
-- Missing key counts: `keybind` 7
+- Total missing normalized lines: 1
+- Total extra normalized lines: 1
+- Missing key counts: none
 - Extra key counts: none
 
 ## Gaps
@@ -72,7 +73,6 @@ Current counts from `logs/issue805-exp8-default-config-diff-summary.txt`:
 The remaining default-format diffs are tracked as gaps, not intentional
 divergences:
 
-- Default keybinding formatting and default keybinding contents differ.
 - One command-palette default entry has different escaped text formatting,
   producing one missing and one extra multiset element.
 

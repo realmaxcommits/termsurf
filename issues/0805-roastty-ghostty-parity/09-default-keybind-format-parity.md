@@ -106,3 +106,107 @@ VERDICT: APPROVED
 
 Findings: None.
 ```
+
+## Result
+
+**Result:** Pass
+
+Roastty's default keybind output now matches the pinned Ghostty macOS default
+output exactly after the existing app-name normalization. The default-config
+oracle now includes `keybind` in the exact ordered comparison and leaves only
+`command-palette-entry` as the remaining default-format gap.
+
+Key changes:
+
+- `roastty/src/lib.rs`
+  - Reordered the default config/reload keybindings to match pinned Ghostty.
+  - Removed the non-macOS `shift+insert=paste_from_selection` default from the
+    macOS default table.
+  - Added physical `digit_1` through `digit_8` defaults before the unicode
+    number defaults.
+  - Stored `write_screen_file` defaults with the explicit `plain` format.
+  - Updated the default binding table self-test.
+- `roastty/src/config/keybind.rs`
+  - Matched Ghostty trigger modifier order: `super`, `ctrl`, `alt`, `shift`.
+  - Formatted physical keys with Ghostty's lowercase/snake config names.
+  - Omitted `performable:` from formatted config output while preserving the
+    runtime flags internally.
+  - Canonicalized formatted action text where Ghostty prints explicit default
+    parameters, while preserving Ghostty's `previous_tab`, `next_tab`, and
+    `last_tab` aliases.
+- `roastty/src/input/key.rs`
+  - Added a `Key::snake()` accessor so shared keybind formatting uses the
+    parser-accepted physical-key spelling for all keys.
+- `roastty/src/config/mod.rs`
+  - Tightened `config_default_format_oracle` so `keybind` participates in the
+    exact default-format comparison.
+  - Added a focused `key_a=quit` format check so shared physical-key formatting
+    cannot regress to invalid names such as `keya`.
+- Issue docs
+  - Updated the oracle, matrix, README learning, and Experiment 9 status.
+
+Current oracle counts:
+
+- Ghostty raw default output: 635 lines.
+- Roastty raw default output: 635 lines.
+- Comparable lines excluding only `command-palette-entry`: 547 on each side.
+- Comparable exact match after app-name normalization: true.
+- Ghostty `keybind` lines: 93.
+- Roastty `keybind` lines: 93.
+- `keybind` ordered match: true.
+- `keybind` multiset mismatches: 0.
+- `command-palette-entry` remains at 88 lines on each side with 2 multiset
+  mismatches.
+
+Verification:
+
+```bash
+ROASTTY_DEFAULT_CONFIG_OUT=/Users/astrohacker/dev/termsurf/logs/issue805-exp9-roastty-default-config.txt \
+  cargo test --manifest-path roastty/Cargo.toml config_default_format_oracle -- --nocapture
+cargo test --manifest-path roastty/Cargo.toml default_binding_table_matches_pinned_upstream_macos_defaults -- --nocapture
+cargo test --manifest-path roastty/Cargo.toml keybind -- --test-threads=1 --nocapture
+```
+
+Evidence:
+
+- `logs/issue805-exp9-config-default-format-oracle.log`
+- `logs/issue805-exp9-default-binding-table-test.log`
+- `logs/issue805-exp9-keybind-filtered-tests-single-thread.log`
+- `logs/issue805-exp9-default-config-diff-summary.txt`
+
+## Conclusion
+
+Default keybind config formatting and content now have exact pinned Ghostty
+parity. This does not prove general keybind parser parity, menu shortcut lookup,
+runtime shortcut execution, or GUI keyboard behavior; those remain separate
+Issue 805 audit surfaces. The next default-config formatter gap is the one
+remaining `command-palette-entry` escaped-text mismatch.
+
+## Completion Review
+
+Fresh-context adversarial completion review initially found one required issue:
+the shared physical-key formatter used lowercased W3C fallback names, which
+would format non-default keys such as `KeyA` as invalid config text `keya`.
+
+Fix:
+
+- Added `Key::snake()` in `roastty/src/input/key.rs`.
+- Changed `roastty/src/config/keybind.rs` to format physical keys through
+  `Key::snake()`.
+- Added the focused `key_a=quit` format regression check in
+  `roastty/src/config/mod.rs`.
+
+Re-review approved the result:
+
+```text
+VERDICT: APPROVED
+
+Prior Required finding resolved:
+- [Resolved] `roastty/src/config/keybind.rs:456` — physical keys now format
+  through `format_physical_key`, which calls `Key::snake()` at
+  `roastty/src/input/key.rs:441`; `KeyA` maps to `key_a` at
+  `roastty/src/input/key.rs:610`. Focused round-trip coverage added at
+  `roastty/src/config/mod.rs:19924`.
+
+New Required findings: none.
+```
