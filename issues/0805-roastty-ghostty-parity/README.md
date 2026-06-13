@@ -390,3 +390,5 @@ remains open.
   — **Pass**
 - [Experiment 12: Config matrix facet decomposition](12-config-matrix-facet-decomposition.md)
   — **Pass**
+- [Experiment 13: Non-default parser facet audit](13-non-default-parser-facet-audit.md)
+  — **Designed**
