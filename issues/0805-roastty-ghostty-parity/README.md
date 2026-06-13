@@ -399,3 +399,5 @@ remains open.
   — **Pass**
 - [Experiment 13: Non-default parser facet audit](13-non-default-parser-facet-audit.md)
   — **Pass**
+- [Experiment 14: Link parser recognition](14-link-parser-recognition.md) —
+  **Designed**
