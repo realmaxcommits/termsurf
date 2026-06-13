@@ -350,6 +350,11 @@ experiment files until they are proven.
   parser. The default parser gaps were void codepoint-map reset lines,
   `background-image-opacity`, and keybind triggers where `=` or `+` is both
   syntax and the key.
+- **Config parity rows are facet-based.** Experiment 12 decomposed the config
+  matrix so canonical option rows prove inventory/default-surface coverage only.
+  Remaining config work is tracked by explicit facet `Gap` rows for non-default
+  parsers, non-default formatters, diagnostics, validation/finalization,
+  precedence/load semantics, reload behavior, and runtime/UI effects.
 
 ## Verification
 
@@ -384,4 +389,4 @@ remains open.
 - [Experiment 11: Default config parser oracle](11-default-config-parser-oracle.md)
   — **Pass**
 - [Experiment 12: Config matrix facet decomposition](12-config-matrix-facet-decomposition.md)
-  — **Designed**
+  — **Pass**

@@ -165,3 +165,84 @@ VERDICT: APPROVED
 
 Findings: none Required.
 ```
+
+## Result
+
+**Result:** Pass
+
+The config matrix now separates proven canonical option
+inventory/default-surface coverage from the remaining behavior facets. The 203
+canonical option rows are now precise `Pass` rows for represented option
+coverage, while seven explicit facet rows remain `Gap` for the config work that
+Issue 805 still requires.
+
+Key changes:
+
+- `issues/0805-roastty-ghostty-parity/config_inventory.py`
+  - Regenerates canonical option rows as inventory/default-surface coverage rows
+    instead of broad behavior rows.
+  - Preserves compatibility alias rows as Experiment 7 `Pass` rows.
+  - Emits the existing default formatter/parser rows and the new behavior facet
+    gap rows deterministically.
+- `issues/0805-roastty-ghostty-parity/config-matrix.md`
+  - Contains 223 rows total.
+  - Contains 203 canonical inventory rows, all `Pass`.
+  - Contains 8 compatibility alias rows, all `Pass`.
+  - Contains 7 explicit remaining config facet rows, all `Gap`.
+- `issues/0805-roastty-ghostty-parity/config-inventory.md`
+  - Updated classification notes to explain that behavior proof is tracked by
+    explicit facet rows.
+- `issues/0805-roastty-ghostty-parity/README.md`
+  - Added the config facet decomposition learning and marked Experiment 12
+    `Pass`.
+
+Verification:
+
+```bash
+python3 issues/0805-roastty-ghostty-parity/config_inventory.py \
+  --upstream vendor/ghostty/src/config/Config.zig \
+  --roastty roastty/src/config/mod.rs \
+  --output issues/0805-roastty-ghostty-parity/config-inventory.md \
+  --matrix issues/0805-roastty-ghostty-parity/config-matrix.md
+```
+
+Output:
+
+```text
+ghostty_canonical=203
+ghostty_aliases=8
+ghostty_internal=6
+roastty=203
+represented=203
+missing=0
+extra=0
+```
+
+Matrix assertion output:
+
+```text
+rows=223 canonical_inventory=203 aliases=8 gaps=7
+```
+
+## Conclusion
+
+The config matrix now exposes the real remaining configuration work instead of
+hiding it in overbroad per-option rows. This experiment does not prove new
+runtime behavior; it makes the Issue 805 proof surface more accurate and harder
+to overclaim.
+
+## Completion Review
+
+Fresh-context adversarial completion review approved the result:
+
+```text
+VERDICT: APPROVED
+
+Findings: none.
+```
+
+The reviewer independently ran the generator against temporary output files,
+verified the working-tree matrix counts
+(`rows=223 canonical=203 aliases=8 gaps=7`), checked `git diff --check`, checked
+prettier formatting, and confirmed the result commit had not been made before
+review.

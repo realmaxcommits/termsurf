@@ -180,12 +180,11 @@ Issue 805 Experiment 6.
 {markdown_list(inventory.extra)}
 ## Classification Notes
 
-- All represented canonical options remain `Gap` in `config-matrix.md` until a
-  later experiment proves defaults, parser behavior, formatting, diagnostics,
-  precedence, and runtime effect where applicable.
-- Missing canonical options are `Gap`.
-- Compatibility aliases are `Gap` until a later experiment proves parsing and
-  compatibility semantics.
+- Represented canonical options are tracked as inventory coverage rows in
+  `config-matrix.md`. Broader behavior proof is tracked by explicit facet rows.
+- Missing canonical options are `Gap` because Roastty cannot have parity for an
+  option it does not represent.
+- Compatibility aliases are tracked separately from canonical options.
 - Private/internal Ghostty fields are not ordinary user config options and do
   not receive config matrix rows in this experiment.
 """
@@ -194,18 +193,23 @@ Issue 805 Experiment 6.
 
 def matrix_row(row_id: int, option: str, status: str, notes: str) -> str:
     return (
-        f"| CFG-{row_id:03d} | `{option}` | Ghostty canonical config option "
-        f"`{option}` in `vendor/ghostty/src/config/Config.zig`. | Roastty "
-        f"documented config option inventory from `roastty/src/config/mod.rs`. "
-        f"| {status} | Static inventory only; behavior is not proven by this "
-        f"experiment. | `issues/0805-roastty-ghostty-parity/config-inventory.md` "
+        f"| CFG-{row_id:03d} | canonical option `{option}` | Ghostty canonical "
+        f"config option `{option}` in `vendor/ghostty/src/config/Config.zig`. "
+        f"| Roastty documents the same canonical config option in "
+        f"`roastty/src/config/mod.rs`. | {status} | Static inventory plus "
+        f"default formatter/parser guards. | "
+        f"`issues/0805-roastty-ghostty-parity/config-inventory.md`; "
+        f"`issues/0805-roastty-ghostty-parity/default-config-oracle.md` "
         f"| Tier 0 | `python3 issues/0805-roastty-ghostty-parity/config_inventory.py "
         f"--upstream vendor/ghostty/src/config/Config.zig --roastty "
         f"roastty/src/config/mod.rs --output "
         f"issues/0805-roastty-ghostty-parity/config-inventory.md --matrix "
-        f"issues/0805-roastty-ghostty-parity/config-matrix.md` | When config "
-        f"fields change or before closing Issue 805. | Static inventory catches "
-        f"name coverage drift; later tests must prove semantics. | Experiment 6 "
+        f"issues/0805-roastty-ghostty-parity/config-matrix.md`; "
+        f"`cargo test --manifest-path roastty/Cargo.toml "
+        f"config_default_format_oracle config_default_parser_oracle` | When "
+        f"config fields change or before closing Issue 805. | Inventory catches "
+        f"name coverage drift; default guards prove the represented option appears "
+        f"in the pinned default formatter/parser surface. | Experiment 12 "
         f"| {notes} |\n"
     )
 
@@ -214,19 +218,197 @@ def alias_row(row_id: int, alias: str) -> str:
     return (
         f"| CFG-{row_id:03d} | compatibility alias `{alias}` | Ghostty "
         f"compatibility alias `{alias}` in `vendor/ghostty/src/config/Config.zig`. "
-        f"| Roastty compatibility alias behavior is not proven by this "
-        f"experiment. | Gap | Static inventory only; alias parser behavior is "
-        f"not proven by this experiment. | "
-        f"`issues/0805-roastty-ghostty-parity/config-inventory.md` | Tier 0 | "
-        f"`python3 issues/0805-roastty-ghostty-parity/config_inventory.py "
-        f"--upstream vendor/ghostty/src/config/Config.zig --roastty "
-        f"roastty/src/config/mod.rs --output "
-        f"issues/0805-roastty-ghostty-parity/config-inventory.md --matrix "
-        f"issues/0805-roastty-ghostty-parity/config-matrix.md` | When config "
-        f"compatibility aliases change or before closing Issue 805. | Static "
-        f"inventory catches alias drift; later parser tests must prove "
-        f"semantics. | Experiment 6 | Compatibility alias remains unproven. |\n"
+        f"| Roastty compatibility map entry is proven by focused parser tests. "
+        f"| Pass | `cargo test --manifest-path roastty/Cargo.toml "
+        f"config_compatibility_alias` | "
+        f"`logs/issue805-exp7-config-compatibility-alias-test.log` | Tier 1 | "
+        f"`cargo test --manifest-path roastty/Cargo.toml "
+        f"config_compatibility_alias` | On config parser changes and before "
+        f"closing Issue 805. | Focused unit tests prove parser effects for all "
+        f"eight Ghostty compatibility entries. | Experiment 7 | Compatibility "
+        f"semantics proven; runtime effects remain covered by canonical option "
+        f"facet rows. |\n"
     )
+
+
+def default_and_facet_rows(start_id: int) -> list[str]:
+    rows = [
+        (
+            "Default config format oracle, full surface",
+            "Ghostty `+show-config --default --no-pager` prints default config values in formatter order.",
+            "Roastty `Config::default().format_config(...)` matches every normalized default config line after app-name normalization.",
+            "Pass",
+            "Fixture-backed unit test plus A/B log comparison.",
+            "`issues/0805-roastty-ghostty-parity/default-config-oracle.md`; `logs/issue805-exp10-roastty-default-config.txt`; `logs/issue805-exp10-default-config-diff-summary.txt`",
+            "Tier 1",
+            "`cargo test --manifest-path roastty/Cargo.toml config_default_format_oracle`",
+            "On config formatter/default changes and before closing Issue 805.",
+            "The fixture test compares exact ordered default output for all 635 normalized default config lines.",
+            "Experiment 10",
+            "This does not prove non-default formatter behavior, diagnostics, precedence, reload, UI, or runtime-effect parity.",
+        ),
+        (
+            "Default `keybind` format and contents",
+            "Ghostty emits 93 normalized default `keybind` lines from the pinned default config output.",
+            "Roastty emits the same 93 normalized default `keybind` lines in the same order.",
+            "Pass",
+            "Fixture-backed unit test compares exact ordered keybind output.",
+            "`issues/0805-roastty-ghostty-parity/default-config-oracle.md`; `logs/issue805-exp9-default-config-oracle.log`; `logs/issue805-exp9-default-config-diff-summary.txt`",
+            "Tier 1",
+            "`cargo test --manifest-path roastty/Cargo.toml config_default_format_oracle`",
+            "On keybinding/config formatter changes and before closing Issue 805.",
+            "The guard proves default keybind config formatting and content only; parser/runtime behavior remains covered separately.",
+            "Experiment 9",
+            "Default keybind formatter parity is proven; general keybind behavior is not.",
+        ),
+        (
+            "Default `command-palette-entry` format",
+            "Ghostty emits 88 normalized default `command-palette-entry` lines from the pinned default config output.",
+            "Roastty emits the same 88 normalized default `command-palette-entry` lines in the same order.",
+            "Pass",
+            "Fixture-backed unit test compares exact ordered command-palette output.",
+            "`issues/0805-roastty-ghostty-parity/default-config-oracle.md`; `logs/issue805-exp10-roastty-default-config.txt`; `logs/issue805-exp10-default-config-diff-summary.txt`",
+            "Tier 1",
+            "`cargo test --manifest-path roastty/Cargo.toml config_default_format_oracle`",
+            "On command-palette/config formatter changes and before closing Issue 805.",
+            "The guard proves default command-palette config formatting and content only; UI dispatch and runtime behavior remain covered separately.",
+            "Experiment 10",
+            "Default command-palette formatter parity is proven; general command-palette behavior is not.",
+        ),
+        (
+            "Default config parser oracle",
+            "Ghostty `+show-config --default --no-pager` output is documented by Ghostty as valid config-file format.",
+            "Roastty accepts all 635 pinned Ghostty default config lines through its config-line parser and per-key parser.",
+            "Pass",
+            "Fixture-backed unit test parses every default config line independently.",
+            "`issues/0805-roastty-ghostty-parity/default-config-oracle.md`; `issues/0805-roastty-ghostty-parity/11-default-config-parser-oracle.md`",
+            "Tier 1",
+            "`cargo test --manifest-path roastty/Cargo.toml config_default_parser_oracle`",
+            "On config parser/default formatter changes and before closing Issue 805.",
+            "The guard proves default-line parser acceptance and names the rejected line/key on failure.",
+            "Experiment 11",
+            "This does not prove non-default values, whole-file repeatable replacement semantics, diagnostics, precedence, reload, UI, or runtime effects.",
+        ),
+        (
+            "Non-default parser semantics",
+            "Ghostty parsers accept and reject the full range of documented non-default values for every canonical option.",
+            "Roastty has focused parser tests for many option families, but this issue has not yet proven full non-default parser parity across all canonical options.",
+            "Gap",
+            "Explicit follow-up parser parity experiments are required.",
+            "`issues/0805-roastty-ghostty-parity/config-matrix.md`",
+            "Tier 1",
+            "TBD by future parser parity experiments.",
+            "Before closing Issue 805.",
+            "The default parser oracle proves only default-line acceptance, not the non-default value space.",
+            "Experiment 12",
+            "Unresolved config facet.",
+        ),
+        (
+            "Non-default formatter behavior and order",
+            "Ghostty formats configured non-default values and repeatable values with stable text and ordering.",
+            "Roastty has proven default formatter parity but not every non-default formatter form.",
+            "Gap",
+            "Explicit follow-up formatter parity experiments are required.",
+            "`issues/0805-roastty-ghostty-parity/config-matrix.md`",
+            "Tier 1",
+            "TBD by future formatter parity experiments.",
+            "Before closing Issue 805.",
+            "The default formatter oracle proves only the default surface.",
+            "Experiment 12",
+            "Unresolved config facet.",
+        ),
+        (
+            "Invalid-value diagnostics",
+            "Ghostty reports diagnostics for invalid config values with expected line/key behavior.",
+            "Roastty has focused diagnostic tests for some options, but full diagnostic parity is not proven.",
+            "Gap",
+            "Explicit follow-up diagnostic parity experiments are required.",
+            "`issues/0805-roastty-ghostty-parity/config-matrix.md`",
+            "Tier 1",
+            "TBD by future diagnostic parity experiments.",
+            "Before closing Issue 805.",
+            "Default parser acceptance does not exercise invalid values.",
+            "Experiment 12",
+            "Unresolved config facet.",
+        ),
+        (
+            "Validation and finalization behavior",
+            "Ghostty finalizes config values using platform/runtime context, including validation and derived defaults.",
+            "Roastty has focused finalization behavior in code, but full validation/finalization parity is not proven.",
+            "Gap",
+            "Explicit follow-up finalization parity experiments are required.",
+            "`issues/0805-roastty-ghostty-parity/config-matrix.md`",
+            "Tier 1",
+            "TBD by future validation/finalization parity experiments.",
+            "Before closing Issue 805.",
+            "Name/default parser guards do not prove finalize-time behavior.",
+            "Experiment 12",
+            "Unresolved config facet.",
+        ),
+        (
+            "Config source precedence and repeated-file load semantics",
+            "Ghostty applies defaults, config files, CLI args, repeatable values, and repeated config-file loads with documented precedence.",
+            "Roastty implements load paths, but full precedence and repeatable replacement parity is not proven.",
+            "Gap",
+            "Explicit follow-up precedence/load parity experiments are required.",
+            "`issues/0805-roastty-ghostty-parity/config-matrix.md`",
+            "Tier 2",
+            "TBD by future config load parity experiments.",
+            "Before closing Issue 805.",
+            "Per-line parser acceptance does not prove whole-file or source precedence semantics.",
+            "Experiment 12",
+            "Unresolved config facet.",
+        ),
+        (
+            "Config reload behavior",
+            "Ghostty reloads config and applies reloadable changes while preserving or rejecting non-reloadable state as designed.",
+            "Roastty reload behavior has not been fully audited against pinned Ghostty.",
+            "Gap",
+            "Explicit follow-up reload parity experiments are required.",
+            "`issues/0805-roastty-ghostty-parity/config-matrix.md`",
+            "Tier 2",
+            "TBD by future config reload parity experiments.",
+            "Before closing Issue 805.",
+            "Parser/formatter parity does not prove live reload behavior.",
+            "Experiment 12",
+            "Unresolved config facet.",
+        ),
+        (
+            "Runtime and UI effects",
+            "Ghostty config options that affect app, renderer, input, font, terminal, and platform behavior produce equivalent runtime effects.",
+            "Roastty runtime/UI effects are not yet fully proven for all config-affecting options.",
+            "Gap",
+            "Focused runtime and GUI parity experiments are required.",
+            "`issues/0805-roastty-ghostty-parity/config-matrix.md`; `issues/0805-roastty-ghostty-parity/walkthrough-matrix.md`",
+            "Tier 3",
+            "TBD by future runtime/GUI config parity experiments.",
+            "Before closing Issue 805.",
+            "Static and unit config guards cannot prove visible app behavior.",
+            "Experiment 12",
+            "Unresolved config facet.",
+        ),
+    ]
+    return [
+        (
+            f"| CFG-{start_id + index:03d} | {name} | {upstream} | {roastty} "
+            f"| {status} | {method} | {evidence} | {tier} | {guard} | {cadence} "
+            f"| {sufficiency} | {owner} | {notes} |\n"
+        )
+        for index, (
+            name,
+            upstream,
+            roastty,
+            status,
+            method,
+            evidence,
+            tier,
+            guard,
+            cadence,
+            sufficiency,
+            owner,
+            notes,
+        ) in enumerate(rows)
+    ]
 
 
 def emit_matrix(inventory: Inventory, matrix: Path) -> None:
@@ -264,14 +446,17 @@ defaults, diagnostics, precedence, formatting, and runtime effects.
     row_id = 2
     for option in inventory.upstream:
         if option in represented:
-            notes = "Name is represented, but behavior remains unproven."
+            status = "Pass"
+            notes = "Inventory/default-surface coverage only; behavior facets are tracked separately."
         else:
+            status = "Gap"
             notes = "Missing from Roastty documented config option inventory."
-        lines.append(matrix_row(row_id, option, "Gap", notes))
+        lines.append(matrix_row(row_id, option, status, notes))
         row_id += 1
     for alias in inventory.aliases:
         lines.append(alias_row(row_id, alias))
         row_id += 1
+    lines.extend(default_and_facet_rows(row_id))
     matrix.write_text("".join(lines))
 
 
