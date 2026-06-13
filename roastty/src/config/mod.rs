@@ -1867,6 +1867,13 @@ impl Config {
                     GtkToolbarStyle::from_keyword,
                 )?
             }
+            "adw-toolbar-style" => {
+                self.gtk_toolbar_style = set_enum_field(
+                    value,
+                    default.gtk_toolbar_style,
+                    GtkToolbarStyle::from_keyword,
+                )?
+            }
             "gtk-titlebar-style" => {
                 self.gtk_titlebar_style = set_enum_field(
                     value,
@@ -2026,6 +2033,13 @@ impl Config {
             "background-image-repeat" => {
                 self.bg_image_repeat = set_bool_field(value, default.bg_image_repeat)?
             }
+            "background-blur-radius" => {
+                if value == Some("") {
+                    self.background_blur = default.background_blur;
+                } else {
+                    self.background_blur.parse_cli(value)?;
+                }
+            }
             "background-opacity" => {
                 self.background_opacity = set_f64_field(value, default.background_opacity)?
             }
@@ -2056,6 +2070,12 @@ impl Config {
                 self.cursor_text =
                     set_optional_value_field(value, default.cursor_text, TerminalColor::parse_cli)?
             }
+            "cursor-invert-fg-bg" => {
+                if parse_compat_bool(value)? {
+                    self.cursor_color = Some(TerminalColor::CellForeground);
+                    self.cursor_text = Some(TerminalColor::CellBackground);
+                }
+            }
             "cursor-click-to-move" => {
                 self.cursor_click_to_move = set_bool_field(value, default.cursor_click_to_move)?
             }
@@ -2077,10 +2097,21 @@ impl Config {
                     TerminalColor::parse_cli,
                 )?
             }
+            "selection-invert-fg-bg" => {
+                if parse_compat_bool(value)? {
+                    self.selection_foreground = Some(TerminalColor::CellBackground);
+                    self.selection_background = Some(TerminalColor::CellForeground);
+                }
+            }
             "selection-word-chars" => self.selection_word_chars.parse_cli(value)?,
             "bold-color" => {
                 self.bold_color =
                     set_optional_value_field(value, default.bold_color, BoldColor::parse_cli)?
+            }
+            "bold-is-bright" => {
+                if parse_compat_bool(value)? {
+                    self.bold_color = Some(BoldColor::Bright);
+                }
             }
             "faint-opacity" => self.faint_opacity = set_f64_field(value, default.faint_opacity)?,
             "minimum-contrast" => {
@@ -3483,6 +3514,13 @@ fn set_bool_field(value: Option<&str>, default_value: bool) -> Result<bool, Conf
         Some("") => Ok(default_value),
         _ => parse_bool_field(value).map_err(|_| ConfigSetError::InvalidValue),
     }
+}
+
+/// Resolve a deprecated compatibility bool (upstream compatibility handlers use
+/// `parseBool(value orelse "t")`): a missing value is `true`, an explicit false
+/// is accepted and ignored by the caller, and invalid values are rejected.
+fn parse_compat_bool(value: Option<&str>) -> Result<bool, ConfigSetError> {
+    parse_bool(value.unwrap_or("t")).ok_or(ConfigSetError::InvalidValue)
 }
 
 /// Resolve an `f64` field (upstream's type-magic `parseFloat` case): a
@@ -11680,6 +11718,130 @@ mod tests {
 
         let cloned = cfg.clone();
         assert_eq!(cloned, cfg);
+    }
+
+    #[test]
+    fn config_compatibility_alias_semantics() {
+        let mut cfg = Config::default();
+
+        cfg.set("background-blur-radius", Some("12")).unwrap();
+        assert_eq!(cfg.background_blur, BackgroundBlur::Radius(12));
+        cfg.set("adw-toolbar-style", Some("flat")).unwrap();
+        assert_eq!(cfg.gtk_toolbar_style, GtkToolbarStyle::Flat);
+        cfg.set("gtk-tabs-location", Some("hidden")).unwrap();
+        assert_eq!(cfg.window_show_tab_bar, WindowShowTabBar::Never);
+        cfg.set("gtk-single-instance", Some("desktop")).unwrap();
+        assert_eq!(cfg.gtk_single_instance, GtkSingleInstance::Detect);
+        cfg.set("macos-dock-drop-behavior", Some("window")).unwrap();
+        assert_eq!(
+            cfg.macos_dock_drop_behavior,
+            MacOSDockDropBehavior::NewWindow
+        );
+
+        cfg.set("cursor-invert-fg-bg", Some("false")).unwrap();
+        assert_eq!(cfg.cursor_color, None);
+        assert_eq!(cfg.cursor_text, None);
+        cfg.set("cursor-invert-fg-bg", None).unwrap();
+        assert_eq!(cfg.cursor_color, Some(TerminalColor::CellForeground));
+        assert_eq!(cfg.cursor_text, Some(TerminalColor::CellBackground));
+
+        cfg.set("selection-invert-fg-bg", Some("0")).unwrap();
+        assert_eq!(cfg.selection_foreground, None);
+        assert_eq!(cfg.selection_background, None);
+        cfg.set("selection-invert-fg-bg", Some("true")).unwrap();
+        assert_eq!(
+            cfg.selection_foreground,
+            Some(TerminalColor::CellBackground)
+        );
+        assert_eq!(
+            cfg.selection_background,
+            Some(TerminalColor::CellForeground)
+        );
+
+        cfg.set("bold-is-bright", Some("f")).unwrap();
+        assert_eq!(cfg.bold_color, None);
+        cfg.set("bold-is-bright", None).unwrap();
+        assert_eq!(cfg.bold_color, Some(BoldColor::Bright));
+
+        for (key, value) in [
+            ("background-blur-radius", Some("999")),
+            ("adw-toolbar-style", Some("nope")),
+            ("gtk-tabs-location", Some("hidden-ish")),
+            ("cursor-invert-fg-bg", Some("maybe")),
+            ("selection-invert-fg-bg", Some("")),
+            ("bold-is-bright", Some("bright")),
+            ("gtk-single-instance", Some("desktop-ish")),
+            ("macos-dock-drop-behavior", Some("tab")),
+        ] {
+            assert_eq!(cfg.set(key, value), Err(ConfigSetError::InvalidValue));
+        }
+
+        let mut loaded = Config::default();
+        let diagnostics = loaded.load_str(
+            "background-blur-radius = 3\n\
+             adw-toolbar-style = raised-border\n\
+             gtk-tabs-location = hidden\n\
+             cursor-invert-fg-bg\n\
+             selection-invert-fg-bg = true\n\
+             bold-is-bright\n\
+             gtk-single-instance = desktop\n\
+             macos-dock-drop-behavior = window\n\
+             background-blur-radius = 300\n\
+             adw-toolbar-style = ornate\n\
+             cursor-invert-fg-bg = maybe\n\
+             selection-invert-fg-bg = \n\
+             bold-is-bright = maybe\n",
+        );
+
+        assert_eq!(loaded.background_blur, BackgroundBlur::Radius(3));
+        assert_eq!(loaded.gtk_toolbar_style, GtkToolbarStyle::RaisedBorder);
+        assert_eq!(loaded.window_show_tab_bar, WindowShowTabBar::Never);
+        assert_eq!(loaded.cursor_color, Some(TerminalColor::CellForeground));
+        assert_eq!(loaded.cursor_text, Some(TerminalColor::CellBackground));
+        assert_eq!(
+            loaded.selection_foreground,
+            Some(TerminalColor::CellBackground)
+        );
+        assert_eq!(
+            loaded.selection_background,
+            Some(TerminalColor::CellForeground)
+        );
+        assert_eq!(loaded.bold_color, Some(BoldColor::Bright));
+        assert_eq!(loaded.gtk_single_instance, GtkSingleInstance::Detect);
+        assert_eq!(
+            loaded.macos_dock_drop_behavior,
+            MacOSDockDropBehavior::NewWindow
+        );
+        assert_eq!(
+            diagnostics,
+            vec![
+                ConfigDiagnostic {
+                    line: 9,
+                    key: "background-blur-radius".to_string(),
+                    error: ConfigSetError::InvalidValue,
+                },
+                ConfigDiagnostic {
+                    line: 10,
+                    key: "adw-toolbar-style".to_string(),
+                    error: ConfigSetError::InvalidValue,
+                },
+                ConfigDiagnostic {
+                    line: 11,
+                    key: "cursor-invert-fg-bg".to_string(),
+                    error: ConfigSetError::InvalidValue,
+                },
+                ConfigDiagnostic {
+                    line: 12,
+                    key: "selection-invert-fg-bg".to_string(),
+                    error: ConfigSetError::InvalidValue,
+                },
+                ConfigDiagnostic {
+                    line: 13,
+                    key: "bold-is-bright".to_string(),
+                    error: ConfigSetError::InvalidValue,
+                },
+            ]
+        );
     }
 
     #[test]

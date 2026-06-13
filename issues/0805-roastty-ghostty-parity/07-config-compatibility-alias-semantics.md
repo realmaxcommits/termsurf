@@ -86,3 +86,64 @@ explicit tests and matrix evidence rather than relying on source inspection.
 
 Fresh-context adversarial design review approved the design with no required
 findings.
+
+## Result
+
+**Result:** Pass
+
+Roastty now implements and tests all eight Ghostty compatibility map entries
+from the pinned config source.
+
+Changes made:
+
+- `roastty/src/config/mod.rs`
+  - Added true renamed-key support for `background-blur-radius` and
+    `adw-toolbar-style`.
+  - Added removed boolean compatibility shims for `cursor-invert-fg-bg`,
+    `selection-invert-fg-bg`, and `bold-is-bright`.
+  - Reused the already-present canonical compatibility behavior for
+    `gtk-tabs-location = hidden`, `gtk-single-instance = desktop`, and
+    `macos-dock-drop-behavior = window`.
+  - Added `config_compatibility_alias_semantics`, a focused unit test covering
+    direct `Config::set` parsing, `load_str` config-file parsing, false/no-op
+    boolean values, and invalid diagnostics.
+- `issues/0805-roastty-ghostty-parity/config-matrix.md`
+  - Updated exactly the eight compatibility rows to `Pass`.
+  - Left all 203 canonical config option rows as `Gap`.
+- `issues/0805-roastty-ghostty-parity/README.md`
+  - Added a learning that Ghostty compatibility entries mix renamed keys, legacy
+    values, and removed boolean shims.
+
+Verification results:
+
+- `logs/issue805-exp7-config-compatibility-alias-test.log` records
+  `config::tests::config_compatibility_alias_semantics ... ok` with 1 passed, 0
+  failed.
+- `logs/issue805-exp7-config-matrix-counts.log` records:
+  - `total_cfg_rows=212`
+  - `alias_rows=8`
+  - `alias_pass_rows=8`
+  - `canonical_rows=203`
+  - `canonical_pass_rows=0`
+  - `total_pass_rows=9`
+- `cargo fmt --manifest-path roastty/Cargo.toml --check` passed and was saved to
+  `logs/issue805-exp7-cargo-fmt-check.log`.
+- `prettier --write --prose-wrap always --print-width 80` passed for the edited
+  markdown files.
+- `git diff --check` passed.
+
+## Conclusion
+
+The eight Ghostty compatibility map entries are no longer semantic gaps at the
+parser/config-state level. Canonical config behavior remains mostly unproven and
+should continue in narrow semantic groups such as defaults/formatting,
+diagnostics, file precedence, or runtime effects.
+
+## Completion Review
+
+Fresh-context adversarial completion review approved the result with no required
+findings. The reviewer confirmed that the result commit had not yet been made,
+the README and experiment statuses match `Pass`, exactly the eight compatibility
+rows are marked `Pass`, canonical config rows remain `Gap`, the focused test
+covers direct `Config::set`, `load_str`, false/no-op boolean cases, and invalid
+diagnostics, and the saved verification logs match the claimed results.

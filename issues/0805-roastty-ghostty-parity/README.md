@@ -323,6 +323,11 @@ experiment files until they are proven.
   produce false positives. Use the Experiment 6 helper to inventory only the
   top-level fields before the first `pub fn`, the static compatibility map, and
   Roastty's `pub(crate) struct Config`.
+- **Ghostty config compatibility entries are mixed.** Some compatibility map
+  entries are true renamed keys (`background-blur-radius`, `adw-toolbar-style`),
+  while others are legacy values or removed boolean shims on canonical keys
+  (`gtk-tabs-location = hidden`, `macos-dock-drop-behavior = window`, etc.).
+  Test the parser effect, not just whether the key name appears.
 
 ## Verification
 
@@ -347,4 +352,4 @@ remains open.
 - [Experiment 6: Config option inventory](06-config-option-inventory.md) —
   **Pass**
 - [Experiment 7: Config compatibility alias semantics](07-config-compatibility-alias-semantics.md)
-  — **Designed**
+  — **Pass**
