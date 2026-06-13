@@ -361,3 +361,5 @@ remains open.
   — **Pass**
 - [Experiment 8: Default config format oracle](08-default-config-format-oracle.md)
   — **Pass**
+- [Experiment 9: Default keybind format parity](09-default-keybind-format-parity.md)
+  — **Designed**
