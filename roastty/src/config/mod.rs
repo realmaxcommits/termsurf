@@ -306,12 +306,22 @@ pub(crate) struct Config {
     pub macos_titlebar_style: MacTitlebarStyle,
     /// `macos-titlebar-proxy-icon`.
     pub macos_titlebar_proxy_icon: MacTitlebarProxyIcon,
+    /// `macos-dock-drop-behavior`.
+    pub macos_dock_drop_behavior: MacOSDockDropBehavior,
+    /// `macos-option-as-alt`.
+    pub macos_option_as_alt: Option<key_mods::OptionAsAlt>,
     /// `macos-window-buttons`.
     pub macos_window_buttons: MacWindowButtons,
     /// `macos-window-shadow`.
     pub macos_window_shadow: bool,
     /// `macos-hidden`.
     pub macos_hidden: MacHidden,
+    /// `macos-auto-secure-input`.
+    pub macos_auto_secure_input: bool,
+    /// `macos-secure-input-indication`.
+    pub macos_secure_input_indication: bool,
+    /// `macos-applescript`.
+    pub macos_applescript: bool,
     /// `macos-icon`.
     pub macos_icon: MacAppIcon,
     /// `macos-custom-icon`.
@@ -324,8 +334,6 @@ pub(crate) struct Config {
     pub macos_icon_screen_color: Option<ColorList>,
     /// `macos-shortcuts`.
     pub macos_shortcuts: MacShortcuts,
-    /// `macos-option-as-alt`.
-    pub macos_option_as_alt: Option<key_mods::OptionAsAlt>,
     /// `linux-cgroup`.
     pub linux_cgroup: LinuxCgroup,
     /// `linux-cgroup-memory-limit`.
@@ -563,16 +571,20 @@ impl Default for Config {
             macos_non_native_fullscreen: NonNativeFullscreen::False,
             macos_titlebar_style: MacTitlebarStyle::Transparent,
             macos_titlebar_proxy_icon: MacTitlebarProxyIcon::Visible,
+            macos_dock_drop_behavior: MacOSDockDropBehavior::NewTab,
+            macos_option_as_alt: None,
             macos_window_buttons: MacWindowButtons::Visible,
             macos_window_shadow: true,
             macos_hidden: MacHidden::Never,
+            macos_auto_secure_input: true,
+            macos_secure_input_indication: true,
+            macos_applescript: true,
             macos_icon: MacAppIcon::Official,
             macos_custom_icon: None,
             macos_icon_frame: MacAppIconFrame::Aluminum,
             macos_icon_ghost_color: None,
             macos_icon_screen_color: None,
             macos_shortcuts: MacShortcuts::Ask,
-            macos_option_as_alt: None,
             linux_cgroup: if cfg!(target_os = "linux") {
                 LinuxCgroup::SingleInstance
             } else {
@@ -925,9 +937,20 @@ impl Config {
             .format_entry(&mut EntryFormatter::new("macos-titlebar-style", out));
         self.macos_titlebar_proxy_icon
             .format_entry(&mut EntryFormatter::new("macos-titlebar-proxy-icon", out));
+        self.macos_dock_drop_behavior
+            .format_entry(&mut EntryFormatter::new("macos-dock-drop-behavior", out));
+        EntryFormatter::new("macos-option-as-alt", out)
+            .entry_optional(self.macos_option_as_alt, |v, f| {
+                f.entry_str(option_as_alt_keyword(v))
+            });
         EntryFormatter::new("macos-window-shadow", out).entry_bool(self.macos_window_shadow);
         self.macos_hidden
             .format_entry(&mut EntryFormatter::new("macos-hidden", out));
+        EntryFormatter::new("macos-auto-secure-input", out)
+            .entry_bool(self.macos_auto_secure_input);
+        EntryFormatter::new("macos-secure-input-indication", out)
+            .entry_bool(self.macos_secure_input_indication);
+        EntryFormatter::new("macos-applescript", out).entry_bool(self.macos_applescript);
         self.macos_icon
             .format_entry(&mut EntryFormatter::new("macos-icon", out));
         EntryFormatter::new("macos-custom-icon", out)
@@ -942,10 +965,6 @@ impl Config {
             });
         self.macos_shortcuts
             .format_entry(&mut EntryFormatter::new("macos-shortcuts", out));
-        EntryFormatter::new("macos-option-as-alt", out)
-            .entry_optional(self.macos_option_as_alt, |v, f| {
-                f.entry_str(option_as_alt_keyword(v))
-            });
         self.linux_cgroup
             .format_entry(&mut EntryFormatter::new("linux-cgroup", out));
         EntryFormatter::new("linux-cgroup-memory-limit", out)
@@ -1483,6 +1502,20 @@ impl Config {
                     MacTitlebarProxyIcon::from_keyword,
                 )?
             }
+            "macos-dock-drop-behavior" => {
+                self.macos_dock_drop_behavior = set_enum_field(
+                    value,
+                    default.macos_dock_drop_behavior,
+                    MacOSDockDropBehavior::from_keyword_or_compat,
+                )?
+            }
+            "macos-option-as-alt" => {
+                self.macos_option_as_alt = set_optional_enum_field(
+                    value,
+                    default.macos_option_as_alt,
+                    option_as_alt_from_keyword,
+                )?
+            }
             "macos-window-buttons" => {
                 self.macos_window_buttons = set_enum_field(
                     value,
@@ -1496,6 +1529,17 @@ impl Config {
             "macos-hidden" => {
                 self.macos_hidden =
                     set_enum_field(value, default.macos_hidden, MacHidden::from_keyword)?
+            }
+            "macos-auto-secure-input" => {
+                self.macos_auto_secure_input =
+                    set_bool_field(value, default.macos_auto_secure_input)?
+            }
+            "macos-secure-input-indication" => {
+                self.macos_secure_input_indication =
+                    set_bool_field(value, default.macos_secure_input_indication)?
+            }
+            "macos-applescript" => {
+                self.macos_applescript = set_bool_field(value, default.macos_applescript)?
             }
             "macos-icon" => {
                 self.macos_icon =
@@ -1529,13 +1573,6 @@ impl Config {
             "macos-shortcuts" => {
                 self.macos_shortcuts =
                     set_enum_field(value, default.macos_shortcuts, MacShortcuts::from_keyword)?
-            }
-            "macos-option-as-alt" => {
-                self.macos_option_as_alt = set_optional_enum_field(
-                    value,
-                    default.macos_option_as_alt,
-                    option_as_alt_from_keyword,
-                )?
             }
             "linux-cgroup" => {
                 self.linux_cgroup =
@@ -5907,6 +5944,52 @@ impl MacTitlebarProxyIcon {
     }
 }
 
+/// The `macos-dock-drop-behavior` config (upstream
+/// `MacOSDockDropBehavior`): how files/folders dropped on the Dock icon open.
+/// The `Config` default is `NewTab`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum MacOSDockDropBehavior {
+    /// Open in a new tab, or a new window if none exists.
+    NewTab,
+    /// Always open a new window.
+    NewWindow,
+}
+
+impl MacOSDockDropBehavior {
+    /// The config keyword (upstream tag name).
+    pub(crate) fn keyword(self) -> &'static str {
+        match self {
+            MacOSDockDropBehavior::NewTab => "new-tab",
+            MacOSDockDropBehavior::NewWindow => "new-window",
+        }
+    }
+
+    /// Parse the config keyword (upstream `std.meta.stringToEnum`): an exact tag
+    /// match, else `None`.
+    pub(crate) fn from_keyword(value: &str) -> Option<Self> {
+        match value {
+            "new-tab" => Some(MacOSDockDropBehavior::NewTab),
+            "new-window" => Some(MacOSDockDropBehavior::NewWindow),
+            _ => None,
+        }
+    }
+
+    /// Parse the config keyword plus upstream's deprecated `window` alias
+    /// (`compatMacOSDockDropBehavior`).
+    pub(crate) fn from_keyword_or_compat(value: &str) -> Option<Self> {
+        if value == "window" {
+            return Some(MacOSDockDropBehavior::NewWindow);
+        }
+
+        MacOSDockDropBehavior::from_keyword(value)
+    }
+
+    /// Format as a config entry (upstream's enum branch): the keyword.
+    pub(crate) fn format_entry(self, formatter: &mut EntryFormatter) {
+        formatter.entry_str(self.keyword());
+    }
+}
+
 /// The `fullscreen` config (upstream `Fullscreen`): the startup fullscreen mode.
 /// The `Config` default is `False`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -8063,10 +8146,10 @@ mod tests {
         Duration, DurationParseError, FlagsParseError, FontShapingBreak, FontStyle,
         FontStyleParseError, FontSyntheticStyle, Fullscreen, GraphemeWidthMethod,
         GtkSingleInstance, GtkTabsLocation, GtkTitlebarStyle, GtkToolbarStyle, LinkPreviews,
-        LinuxCgroup, MacAppIcon, MacAppIconFrame, MacHidden, MacShortcuts, MacTitlebarProxyIcon,
-        MacTitlebarStyle, MacWindowButtons, MagicParseError, MiddleClickAction,
-        MouseScrollMultiplier, MouseScrollMultiplierParseError, MouseShiftCapture,
-        NonNativeFullscreen, NotifyOnCommandFinish, NotifyOnCommandFinishAction,
+        LinuxCgroup, MacAppIcon, MacAppIconFrame, MacHidden, MacOSDockDropBehavior, MacShortcuts,
+        MacTitlebarProxyIcon, MacTitlebarStyle, MacWindowButtons, MagicParseError,
+        MiddleClickAction, MouseScrollMultiplier, MouseScrollMultiplierParseError,
+        MouseShiftCapture, NonNativeFullscreen, NotifyOnCommandFinish, NotifyOnCommandFinishAction,
         OptionalFileAction, OscColorReportFormat, Palette, PaletteParseError,
         QuickTerminalDimensions, QuickTerminalKeyboardInteractivity, QuickTerminalLayer,
         QuickTerminalPosition, QuickTerminalScreen, QuickTerminalSize, QuickTerminalSizeParseError,
@@ -8424,9 +8507,14 @@ mod tests {
         assert_eq!(d.macos_non_native_fullscreen, NonNativeFullscreen::False);
         assert_eq!(d.macos_titlebar_style, MacTitlebarStyle::Transparent);
         assert_eq!(d.macos_titlebar_proxy_icon, MacTitlebarProxyIcon::Visible);
+        assert_eq!(d.macos_dock_drop_behavior, MacOSDockDropBehavior::NewTab);
+        assert_eq!(d.macos_option_as_alt, None);
         assert_eq!(d.macos_window_buttons, MacWindowButtons::Visible);
         assert!(d.macos_window_shadow);
         assert_eq!(d.macos_hidden, MacHidden::Never);
+        assert!(d.macos_auto_secure_input);
+        assert!(d.macos_secure_input_indication);
+        assert!(d.macos_applescript);
         assert_eq!(d.macos_icon, MacAppIcon::Official);
         assert_eq!(d.macos_custom_icon, None);
         assert_eq!(d.macos_icon_frame, MacAppIconFrame::Aluminum);
@@ -10507,6 +10595,136 @@ mod tests {
             ]
         );
         assert_eq!(cfg.macos_icon, MacAppIcon::CustomStyle);
+
+        let cloned = cfg.clone();
+        assert_eq!(cloned, cfg);
+    }
+
+    #[test]
+    fn macos_tail_config_parse_format_reset_and_diagnose() {
+        let mut cfg = Config::default();
+        assert_eq!(cfg.macos_dock_drop_behavior, MacOSDockDropBehavior::NewTab);
+        assert_eq!(cfg.macos_option_as_alt, None);
+        assert!(cfg.macos_auto_secure_input);
+        assert!(cfg.macos_secure_input_indication);
+        assert!(cfg.macos_applescript);
+
+        let lines = |cfg: &Config| {
+            let mut out = String::new();
+            cfg.format_config(&mut out);
+            [
+                "macos-dock-drop-behavior",
+                "macos-option-as-alt",
+                "macos-auto-secure-input",
+                "macos-secure-input-indication",
+                "macos-applescript",
+            ]
+            .into_iter()
+            .map(|key| {
+                out.lines()
+                    .find(|line| line.starts_with(&format!("{key} = ")))
+                    .unwrap()
+                    .to_string()
+            })
+            .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            lines(&cfg),
+            vec![
+                "macos-dock-drop-behavior = new-tab",
+                "macos-option-as-alt = ",
+                "macos-auto-secure-input = true",
+                "macos-secure-input-indication = true",
+                "macos-applescript = true",
+            ]
+        );
+
+        cfg.set("macos-dock-drop-behavior", Some("new-window"))
+            .unwrap();
+        assert_eq!(
+            cfg.macos_dock_drop_behavior,
+            MacOSDockDropBehavior::NewWindow
+        );
+        assert_eq!(lines(&cfg)[0], "macos-dock-drop-behavior = new-window");
+        cfg.set("macos-dock-drop-behavior", Some("window")).unwrap();
+        assert_eq!(
+            cfg.macos_dock_drop_behavior,
+            MacOSDockDropBehavior::NewWindow
+        );
+        cfg.set("macos-dock-drop-behavior", Some("")).unwrap();
+        assert_eq!(cfg.macos_dock_drop_behavior, MacOSDockDropBehavior::NewTab);
+        assert_eq!(
+            cfg.set("macos-dock-drop-behavior", None),
+            Err(ConfigSetError::ValueRequired)
+        );
+        assert_eq!(
+            cfg.set("macos-dock-drop-behavior", Some("tab")),
+            Err(ConfigSetError::InvalidValue)
+        );
+
+        for key in [
+            "macos-auto-secure-input",
+            "macos-secure-input-indication",
+            "macos-applescript",
+        ] {
+            cfg.set(key, Some("false")).unwrap();
+            assert_eq!(
+                lines(&cfg)
+                    .into_iter()
+                    .find(|line| line.starts_with(&format!("{key} = ")))
+                    .unwrap(),
+                format!("{key} = false")
+            );
+            cfg.set(key, None).unwrap();
+            assert_eq!(
+                lines(&cfg)
+                    .into_iter()
+                    .find(|line| line.starts_with(&format!("{key} = ")))
+                    .unwrap(),
+                format!("{key} = true")
+            );
+            cfg.set(key, Some("false")).unwrap();
+            cfg.set(key, Some("")).unwrap();
+            assert_eq!(
+                lines(&cfg)
+                    .into_iter()
+                    .find(|line| line.starts_with(&format!("{key} = ")))
+                    .unwrap(),
+                format!("{key} = true")
+            );
+            assert_eq!(
+                cfg.set(key, Some("maybe")),
+                Err(ConfigSetError::InvalidValue)
+            );
+        }
+
+        let diagnostics = cfg.load_str(
+            "macos-dock-drop-behavior = window\n\
+             macos-auto-secure-input = false\n\
+             macos-secure-input-indication = maybe\n\
+             macos-applescript = false\n\
+             macos-dock-drop-behavior = pane\n\
+             macos-dock-drop-behavior = new-tab\n",
+        );
+        assert_eq!(
+            diagnostics,
+            vec![
+                ConfigDiagnostic {
+                    line: 3,
+                    key: "macos-secure-input-indication".to_string(),
+                    error: ConfigSetError::InvalidValue,
+                },
+                ConfigDiagnostic {
+                    line: 5,
+                    key: "macos-dock-drop-behavior".to_string(),
+                    error: ConfigSetError::InvalidValue,
+                },
+            ]
+        );
+        assert_eq!(cfg.macos_dock_drop_behavior, MacOSDockDropBehavior::NewTab);
+        assert!(!cfg.macos_auto_secure_input);
+        assert!(cfg.macos_secure_input_indication);
+        assert!(!cfg.macos_applescript);
 
         let cloned = cfg.clone();
         assert_eq!(cloned, cfg);
@@ -15020,15 +15238,19 @@ mod tests {
             "macos-window-buttons",
             "macos-titlebar-style",
             "macos-titlebar-proxy-icon",
+            "macos-dock-drop-behavior",
+            "macos-option-as-alt",
             "macos-window-shadow",
             "macos-hidden",
+            "macos-auto-secure-input",
+            "macos-secure-input-indication",
+            "macos-applescript",
             "macos-icon",
             "macos-custom-icon",
             "macos-icon-frame",
             "macos-icon-ghost-color",
             "macos-icon-screen-color",
             "macos-shortcuts",
-            "macos-option-as-alt",
             "linux-cgroup",
             "linux-cgroup-memory-limit",
             "linux-cgroup-processes-limit",

@@ -210,6 +210,13 @@ the earlier "commit a small baseline PNG set" wording in Exp 2.
   `roastty_init` with only the `panic` integration and a custom transport that
   serializes envelopes into the existing local `.roasttycrash` directory; the
   default HTTP/TLS transports remain disabled.
+- **The remaining macOS scalar config tail is parser/formatter-only.** Exp 165
+  wires `macos-dock-drop-behavior`, `macos-auto-secure-input`,
+  `macos-secure-input-indication`, and `macos-applescript` with upstream
+  defaults/order, bool bare-flag handling, and the deprecated
+  `macos-dock-drop-behavior = window` compatibility alias. Runtime Dock drop
+  behavior, Secure Input heuristics/indicator, and AppleScript handling remain
+  app/platform integration work.
 - **Codepoint width needs more than scalar Rust ranges.** Exp 151 added a
   width-only helper and proved full Unicode-scalar parity with the generated
   table, but the release probe measured only 0.76x versus direct table width
@@ -954,9 +961,9 @@ the live app, verified by a Phase-D UI test.)
 
 **Phase F — Config completeness**
 
-- [ ] The remaining 28 public config options (language, font
+- [ ] The remaining 24 public config options (language, font
       feature/variation/metric/freetype knobs, cursor-click/mouse-hide, `input`,
-      `keybind`, and the remaining `macos-*` scalars)
+      and `keybind`)
 - [ ] `finalize()` — cross-field validation / derivation / clamping
 - [ ] Theme loading (themes-dir locator + file read + palette/option
       application)
@@ -1487,7 +1494,7 @@ stays unaltered except for the rename).
 - [Experiment 164: Phase F — palette config runtime](164-palette-config-runtime.md)
   — **Pass**
 - [Experiment 165: Phase F — macOS tail config](165-macos-tail-config.md) —
-  **Designed**
+  **Pass**
 
 ## Process
 
