@@ -1564,6 +1564,8 @@ stays unaltered except for the rename).
   — **Pass**
 - [Experiment 174: Phase F — conditional config runtime](174-conditional-config-runtime.md)
   — **Pass**
+- [Experiment 175: Phase C — display-link present driver](175-display-link-present-driver.md)
+  — **Designed**
 
 ## Process
 
