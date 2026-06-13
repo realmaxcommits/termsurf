@@ -1588,6 +1588,8 @@ stays unaltered except for the rename).
   — **Pass**
 - [Experiment 179: Phase C — renderer options propagation](179-renderer-options-propagation.md)
   — **Pass**
+- [Experiment 180: Phase C — live draw ownership audit](180-live-draw-ownership-audit.md)
+  — **Designed**
 
 ## Process
 
