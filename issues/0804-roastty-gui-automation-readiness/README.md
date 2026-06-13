@@ -269,3 +269,5 @@ not add the `## Experiments` index until Experiment 1 is designed.
 - [Experiment 10: Trace worker disconnect](10-trace-worker-disconnect.md) —
   **Pass** (fixed the live worker disconnect; guarded System Events keyboard
   input created the marker file through Roastty)
+- [Experiment 11: Final readiness smoke](11-final-readiness-smoke.md) —
+  **Designed**
