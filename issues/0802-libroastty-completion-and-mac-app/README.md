@@ -1537,6 +1537,8 @@ stays unaltered except for the rename).
   — **Pass**
 - [Experiment 171: Phase F — FreeType load flags config](171-freetype-load-flags-config.md)
   — **Pass**
+- [Experiment 172: Phase F — input config surface](172-input-config-surface.md)
+  — **Designed**
 
 ## Process
 
