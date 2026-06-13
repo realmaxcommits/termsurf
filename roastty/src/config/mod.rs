@@ -13,12 +13,14 @@ mod conditional;
 #[allow(dead_code)]
 mod edit;
 mod formatter;
+mod keybind;
 mod loader;
 pub(crate) mod string;
 mod unicode_range;
 
 use crate::config::comma_splitter::CommaSplitter;
 use crate::config::formatter::EntryFormatter;
+pub(crate) use crate::config::keybind::Keybinds;
 use crate::config::string::{codepoint_iterator, parse_quoted_string, parse_string_literal};
 use crate::config::unicode_range::{InvalidRange, UnicodeRangeParser};
 use crate::font::codepoint_map::CodepointMap;
@@ -333,6 +335,8 @@ pub(crate) struct Config {
     pub x11_instance_name: Option<String>,
     /// `working-directory`.
     pub working_directory: Option<WorkingDirectory>,
+    /// `keybind`.
+    pub keybind: Keybinds,
     /// `macos-non-native-fullscreen`.
     pub macos_non_native_fullscreen: NonNativeFullscreen,
     /// `macos-titlebar-style`.
@@ -631,6 +635,7 @@ impl Default for Config {
             class: None,
             x11_instance_name: None,
             working_directory: None,
+            keybind: Keybinds::default(),
             macos_non_native_fullscreen: NonNativeFullscreen::False,
             macos_titlebar_style: MacTitlebarStyle::Transparent,
             macos_titlebar_proxy_icon: MacTitlebarProxyIcon::Visible,
@@ -965,6 +970,8 @@ impl Config {
             .entry_optional(self.x11_instance_name.clone(), |v, f| f.entry_str(&v));
         EntryFormatter::new("working-directory", out)
             .entry_optional(self.working_directory.clone(), |v, f| v.format_entry(f));
+        self.keybind
+            .format_entry(&mut EntryFormatter::new("keybind", out));
         for entry in self.key_remap.format_entries() {
             EntryFormatter::new("key-remap", out).entry_str(&entry);
         }
@@ -1692,6 +1699,7 @@ impl Config {
                     parse_working_directory_field,
                 )?
             }
+            "keybind" => self.keybind.parse_cli(value)?,
             "key-remap" => self.key_remap.parse_cli(value)?,
             "window-padding-x" => {
                 self.window_padding_x =
@@ -15877,12 +15885,14 @@ mod tests {
             .position(|key| *key == "working-directory")
             .unwrap();
         let key_remap = keys.iter().position(|key| *key == "key-remap").unwrap();
+        let keybind = keys.iter().position(|key| *key == "keybind").unwrap();
         let window_padding_x = keys
             .iter()
             .position(|key| *key == "window-padding-x")
             .unwrap();
 
-        assert_eq!(key_remap, working_directory + 1);
+        assert_eq!(keybind, working_directory + 1);
+        assert_eq!(key_remap, keybind + cfg.keybind.format_entry_count());
         assert_eq!(window_padding_x, key_remap + 1);
     }
 
@@ -16009,6 +16019,9 @@ mod tests {
             "class",
             "x11-instance-name",
             "working-directory",
+        ]);
+        expected.extend(std::iter::repeat("keybind").take(cfg.keybind.format_entry_count()));
+        expected.extend([
             "key-remap",
             "window-padding-x",
             "window-padding-y",
@@ -19563,6 +19576,94 @@ mod tests {
         let cloned = cfg.clone();
         assert_eq!(cloned, cfg);
         assert_eq!(cloned.input, cfg.input);
+    }
+
+    #[test]
+    fn keybind_config_parse_format_reset_load_cli_and_clone() {
+        let lines = |cfg: &Config| -> Vec<String> {
+            let mut out = String::new();
+            cfg.format_config(&mut out);
+            out.lines()
+                .filter(|line| line.starts_with("keybind = "))
+                .map(str::to_string)
+                .collect()
+        };
+
+        let mut cfg = Config::default();
+        let default_lines = lines(&cfg);
+        assert!(!default_lines.is_empty());
+        assert!(default_lines
+            .iter()
+            .any(|line| line == "keybind = super+,=open_config"));
+        assert!(!cfg.keybind.triggers.is_empty());
+
+        cfg.set("keybind", Some("clear")).unwrap();
+        assert!(cfg.keybind.triggers.is_empty());
+        assert!(cfg.keybind.tables.is_empty());
+        assert_eq!(lines(&cfg), vec!["keybind = "]);
+
+        cfg.set("keybind", Some("")).unwrap();
+        assert_eq!(lines(&cfg), default_lines);
+
+        cfg.set("keybind", Some("clear")).unwrap();
+        cfg.set("keybind", Some("x=text:parent")).unwrap();
+        cfg.set("keybind", Some("chain=text:child")).unwrap();
+        cfg.set("keybind", Some("nav/a=quit")).unwrap();
+        cfg.set("keybind", Some("chain=new_window")).unwrap();
+        cfg.set("keybind", Some("nav/")).unwrap();
+        assert_eq!(
+            lines(&cfg),
+            vec![
+                "keybind = x=text:parent",
+                "keybind = chain=text:child",
+                "keybind = nav/",
+            ]
+        );
+
+        assert_eq!(cfg.set("keybind", None), Err(ConfigSetError::ValueRequired));
+        assert_eq!(
+            cfg.set("keybind", Some("chain=unbind")),
+            Err(ConfigSetError::InvalidValue)
+        );
+        assert_eq!(
+            cfg.set("keybind", Some("nav/chain=ignore")),
+            Err(ConfigSetError::InvalidValue)
+        );
+
+        let diagnostics = cfg.load_str(
+            "keybind = clear\n\
+             keybind = y=quit\n\
+             keybind = chain=new_tab\n\
+             keybind = chain=unbind\n\
+             keybind\n",
+        );
+        assert_eq!(
+            diagnostics,
+            vec![
+                ConfigDiagnostic {
+                    line: 4,
+                    key: "keybind".to_string(),
+                    error: ConfigSetError::InvalidValue,
+                },
+                ConfigDiagnostic {
+                    line: 5,
+                    key: "keybind".to_string(),
+                    error: ConfigSetError::ValueRequired,
+                },
+            ]
+        );
+        assert_eq!(
+            lines(&cfg),
+            vec!["keybind = y=quit", "keybind = chain=new_tab"]
+        );
+
+        let diagnostics = cfg.set_cli_args(["--keybind=clear", "--keybind=z=new_window"]);
+        assert!(diagnostics.is_empty());
+        assert_eq!(lines(&cfg), vec!["keybind = z=new_window"]);
+
+        let cloned = cfg.clone();
+        assert_eq!(cloned, cfg);
+        assert_eq!(cloned.keybind, cfg.keybind);
     }
 
     #[test]

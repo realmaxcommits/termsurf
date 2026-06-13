@@ -255,6 +255,13 @@ the earlier "commit a small baseline PNG set" wording in Exp 2.
   raw fallback, Zig string-literal validation of the original unparsed value,
   empty reset, diagnostics, config-file loading, and CLI append semantics.
   Runtime path reads and terminal-startup byte delivery remain later work.
+- **Keybind config is owned by `Config`.** Exp 173 moves `keybind` from the
+  app-layer raw config-file scanner into structured `Config.keybind` storage:
+  defaults, empty reset, `clear`, root bindings, sequences, named key tables,
+  table clears, chain targets, formatting, clone/equality, config-file loads,
+  recursive/default-file loads, and CLI keybind args now share one config-owned
+  parser/storage path. App and surface runtime keybinding state is derived from
+  that parsed config snapshot.
 - **Codepoint width needs more than scalar Rust ranges.** Exp 151 added a
   width-only helper and proved full Unicode-scalar parity with the generated
   table, but the release probe measured only 0.76x versus direct table width
@@ -999,7 +1006,7 @@ the live app, verified by a Phase-D UI test.)
 
 **Phase F — Config completeness**
 
-- [ ] The remaining public config option (`keybind`)
+- [x] The remaining public config option (`keybind`)
 - [ ] `finalize()` — cross-field validation / derivation / clamping
 - [ ] Theme loading (themes-dir locator + file read + palette/option
       application)
@@ -1545,7 +1552,7 @@ stays unaltered except for the rename).
 - [Experiment 172: Phase F — input config surface](172-input-config-surface.md)
   — **Pass**
 - [Experiment 173: Phase F — keybind config surface](173-keybind-config-surface.md)
-  — **Designed**
+  — **Pass**
 
 ## Process
 

@@ -4517,17 +4517,17 @@ int main(int argc, char **argv) {
   assert(trigger.key.unicode == ',');
   assert(trigger.mods == (ROASTTY_MODS_SHIFT | ROASTTY_MODS_SUPER));
   trigger = roastty_config_trigger(config, "copy_to_clipboard", 17);
-  assert(trigger.tag == ROASTTY_TRIGGER_PHYSICAL);
-  assert(trigger.key.physical == ROASTTY_KEY_COPY);
-  assert(trigger.mods == ROASTTY_MODS_NONE);
+  assert(trigger.tag == ROASTTY_TRIGGER_UNICODE);
+  assert(trigger.key.unicode == 'c');
+  assert(trigger.mods == ROASTTY_MODS_SUPER);
   trigger = roastty_config_trigger(config, "copy_to_clipboard:mixed", 23);
-  assert(trigger.tag == ROASTTY_TRIGGER_PHYSICAL);
-  assert(trigger.key.physical == ROASTTY_KEY_COPY);
-  assert(trigger.mods == ROASTTY_MODS_NONE);
+  assert(trigger.tag == ROASTTY_TRIGGER_UNICODE);
+  assert(trigger.key.unicode == 'c');
+  assert(trigger.mods == ROASTTY_MODS_SUPER);
   trigger = roastty_config_trigger(config, "paste_from_clipboard", 20);
-  assert(trigger.tag == ROASTTY_TRIGGER_PHYSICAL);
-  assert(trigger.key.physical == ROASTTY_KEY_PASTE);
-  assert(trigger.mods == ROASTTY_MODS_NONE);
+  assert(trigger.tag == ROASTTY_TRIGGER_UNICODE);
+  assert(trigger.key.unicode == 'v');
+  assert(trigger.mods == ROASTTY_MODS_SUPER);
   trigger = roastty_config_trigger(config, "increase_font_size:1", 20);
   assert(trigger.tag == ROASTTY_TRIGGER_UNICODE);
   assert(trigger.key.unicode == '+');
@@ -4604,14 +4604,14 @@ int main(int argc, char **argv) {
   assert(trigger.mods == (ROASTTY_MODS_SHIFT | ROASTTY_MODS_SUPER));
   trigger = roastty_config_trigger(config, "navigate_search:next",
                                    strlen("navigate_search:next"));
-  assert(trigger.tag == ROASTTY_TRIGGER_PHYSICAL);
-  assert(trigger.key.physical == ROASTTY_KEY_UNIDENTIFIED);
-  assert(trigger.mods == ROASTTY_MODS_NONE);
+  assert(trigger.tag == ROASTTY_TRIGGER_UNICODE);
+  assert(trigger.key.unicode == 'g');
+  assert(trigger.mods == ROASTTY_MODS_SUPER);
   trigger = roastty_config_trigger(config, "navigate_search:previous",
                                    strlen("navigate_search:previous"));
-  assert(trigger.tag == ROASTTY_TRIGGER_PHYSICAL);
-  assert(trigger.key.physical == ROASTTY_KEY_UNIDENTIFIED);
-  assert(trigger.mods == ROASTTY_MODS_NONE);
+  assert(trigger.tag == ROASTTY_TRIGGER_UNICODE);
+  assert(trigger.key.unicode == 'g');
+  assert(trigger.mods == (ROASTTY_MODS_SHIFT | ROASTTY_MODS_SUPER));
 
   char cli_arg0[] = "roastty";
   char cli_keybind1[] = "--keybind=ctrl+a=copy_to_clipboard";
@@ -4952,24 +4952,22 @@ int main(int argc, char **argv) {
   cli_config = roastty_config_new();
   assert(cli_config != NULL);
   roastty_config_load_cli_args(cli_config);
-  assert(roastty_config_diagnostics_count(cli_config) == 6);
+  assert(roastty_config_diagnostics_count(cli_config) == 5);
   assert(strstr(roastty_config_get_diagnostic(cli_config, 0).message,
                 "value required") != NULL);
   assert(strstr(roastty_config_get_diagnostic(cli_config, 1).message,
-                "missing `=` separator") != NULL);
+                "invalid trigger") != NULL);
   assert(strstr(roastty_config_get_diagnostic(cli_config, 2).message,
                 "invalid trigger") != NULL);
   assert(strstr(roastty_config_get_diagnostic(cli_config, 3).message,
                 "invalid trigger") != NULL);
   assert(strstr(roastty_config_get_diagnostic(cli_config, 4).message,
-                "invalid trigger") != NULL);
-  assert(strstr(roastty_config_get_diagnostic(cli_config, 5).message,
                 "missing action") != NULL);
-  assert(strcmp(roastty_config_get_diagnostic(cli_config, 6).message, "") == 0);
+  assert(strcmp(roastty_config_get_diagnostic(cli_config, 5).message, "") == 0);
   cli_clone = roastty_config_clone(cli_config);
   assert(cli_clone != NULL);
-  assert(roastty_config_diagnostics_count(cli_clone) == 6);
-  assert(strstr(roastty_config_get_diagnostic(cli_clone, 4).message,
+  assert(roastty_config_diagnostics_count(cli_clone) == 5);
+  assert(strstr(roastty_config_get_diagnostic(cli_clone, 3).message,
                 "F1=reload_config") != NULL);
   roastty_config_free(cli_clone);
   trigger = roastty_config_trigger(cli_config, "new_window",
@@ -5067,9 +5065,9 @@ int main(int argc, char **argv) {
   roastty_config_load_cli_args(cli_config);
   trigger = roastty_config_trigger(cli_config, "copy_to_clipboard",
                                    strlen("copy_to_clipboard"));
-  assert(trigger.tag == ROASTTY_TRIGGER_PHYSICAL);
-  assert(trigger.key.physical == ROASTTY_KEY_COPY);
-  assert(trigger.mods == ROASTTY_MODS_NONE);
+  assert(trigger.tag == ROASTTY_TRIGGER_UNICODE);
+  assert(trigger.key.unicode == 'c');
+  assert(trigger.mods == ROASTTY_MODS_SUPER);
   roastty_config_free(cli_config);
 
   assert(roastty_init((uintptr_t)argc, argv) == ROASTTY_SUCCESS);
@@ -5091,8 +5089,8 @@ int main(int argc, char **argv) {
   assert(trigger.mods == ROASTTY_MODS_NONE);
   trigger = roastty_config_trigger(config, "adjust_selection:left", 21);
   assert(trigger.tag == ROASTTY_TRIGGER_PHYSICAL);
-  assert(trigger.key.physical == ROASTTY_KEY_UNIDENTIFIED);
-  assert(trigger.mods == ROASTTY_MODS_NONE);
+  assert(trigger.key.physical == ROASTTY_KEY_ARROW_LEFT);
+  assert(trigger.mods == ROASTTY_MODS_SHIFT);
   trigger = roastty_config_trigger(config, "copy_to_clipboard:plain", 23);
   assert(trigger.tag == ROASTTY_TRIGGER_PHYSICAL);
   assert(trigger.key.physical == ROASTTY_KEY_UNIDENTIFIED);
@@ -5125,9 +5123,9 @@ int main(int argc, char **argv) {
   assert(trigger.mods == ROASTTY_MODS_NONE);
   trigger = roastty_config_trigger(config, "clear_screen",
                                    strlen("clear_screen"));
-  assert(trigger.tag == ROASTTY_TRIGGER_PHYSICAL);
-  assert(trigger.key.physical == ROASTTY_KEY_UNIDENTIFIED);
-  assert(trigger.mods == ROASTTY_MODS_NONE);
+  assert(trigger.tag == ROASTTY_TRIGGER_UNICODE);
+  assert(trigger.key.unicode == 'k');
+  assert(trigger.mods == ROASTTY_MODS_SUPER);
   assert(!roastty_config_key_is_binding_handle(config, NULL));
 
   roastty_key_event_t binding_event = NULL;

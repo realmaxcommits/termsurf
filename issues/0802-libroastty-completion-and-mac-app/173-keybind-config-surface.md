@@ -128,3 +128,79 @@ defaults, reset, clear, tables, chain targets, slash disambiguation, formatting,
 clone/equality, and the verification covers focused config tests, existing
 keybind file/default/recursive tests, runtime dispatch tests, the full roastty
 suite, Rust formatting, markdown formatting, and diff hygiene.
+
+## Result
+
+**Result:** Pass
+
+`keybind` is now owned by `roastty::config::Config` through a structured
+`Keybinds` field. The config layer initializes upstream default keybindings,
+parses `keybind = clear`, treats empty values as default reset, stores root
+bindings, root sequences, named key tables, table clears, and chained actions,
+formats structured keybind storage back into `keybind = ...` entries, and
+participates in config clone/equality.
+
+The old app-layer raw config-file keybind scanner and `UnknownField` filtering
+were removed. The C ABI/app runtime now derives its keybinding trigger,
+sequence, table, chain-parent, and global-keybind state from `Config.keybind`,
+including config-file/default-file/recursive-file loads and CLI keybind args.
+Because defaults now live in config storage, reverse trigger lookup reports the
+last matching config-owned default binding, including performable defaults,
+rather than consulting the old non-performable fallback helper.
+
+Verification:
+
+- `cargo test -p roastty keybind_config_parse_format_reset_load_cli_and_clone` —
+  pass.
+- `cargo test -p roastty config_file_keybind_load_file_overrides_unbinds_and_filters_diagnostics`
+  — pass.
+- `cargo test -p roastty config_file_keybind_default_files_load_and_rollback_with_cli_disable`
+  — pass.
+- `cargo test -p roastty config_file_keybind_recursive_load_preserves_chain_order`
+  — pass.
+- `cargo test -p roastty config_format_config_emits_fields_in_upstream_order` —
+  pass.
+- `cargo test -p roastty config_cli_keybind -- --test-threads=1` — pass.
+- `cargo test -p roastty parse_config_keybind` — pass.
+- `cargo test -p roastty config_trigger` — pass.
+- `cargo test -p roastty surface_key_configured` — pass.
+- `cargo test -p roastty app_key` — pass.
+- `cargo check -p roastty` — pass.
+- `cargo test -p roastty -- --test-threads=1` — Rust unit suite passed
+  `4869 passed; 0 failed; 4 ignored`; the integrated C ABI harness initially
+  exposed stale expectations and was fixed.
+- `cargo test -p roastty --test abi_harness` — pass, with pre-existing enum cast
+  warnings in the C harness.
+
+## Completion Review
+
+**Reviewer:** Codex-native adversarial review subagent `Mencius`, fresh context.
+
+**Initial verdict:** Changes required.
+
+The reviewer found that `Keybinds::has_global_keybinds` could stay latched true
+after a global binding was overwritten by a non-global binding in the same
+config-owned keybind set. That would make `roastty_app_has_global_keybinds`
+report a global keybind that no longer exists.
+
+**Fix:** `Keybinds` now recomputes `has_global_keybinds` from the current root
+and table binding storage after each successful store mutation. A regression was
+added for `global:ctrl+x=quit` followed by `ctrl+x=quit` in the same config, and
+the focused checks passed:
+
+- `cargo test -p roastty app_has_global_keybinds_tracks_config_prefix_flags -- --test-threads=1`
+- `cargo test -p roastty keybind_config_parse_format_reset_load_cli_and_clone`
+- `cargo test -p roastty parse_config_keybind`
+
+**Final verdict:** Approved.
+
+The reviewer re-checked the fix and confirmed the prior finding was resolved,
+with no new Required findings.
+
+## Conclusion
+
+The remaining public config option is no longer a Phase F gap. `keybind` now has
+the same ownership boundary as the rest of the config surface: `Config` owns
+parse/format/default/reset state, and app/surface runtime state is derived from
+the parsed config snapshot. The next Phase F work can continue with finalize,
+theme loading, or conditional reload gaps instead of keybind field plumbing.
