@@ -1100,7 +1100,7 @@ the live app, verified by a Phase-D UI test.)
       automation now proves command-palette open/dismiss/filter/keyboard-submit
       and mouse-select behavior through 3 real `RoasttyCommandPaletteTests`
       (Exp 156)
-- [ ] Native keymaps (`keycodes`, `KeymapDarwin`) + app-level key handling —
+- [x] Native keymaps (`keycodes`, `KeymapDarwin`) + app-level key handling —
       `RemapSet`/`Mask`, the `key-remap` config field, and surface runtime
       key-remap application are wired (Exp 107–109), and configured `global:`
       plus focused app-scoped `roastty_app_key` dispatch is wired (Exp 113–114),
@@ -1121,8 +1121,11 @@ the live app, verified by a Phase-D UI test.)
       event-tap installation state machine without requiring Accessibility
       permission: enable success, idempotent enable, failure retry, retry
       success, and disable are covered by hosted tests. The remaining native-key
-      gap is permission-dependent live global shortcut receipt on hosts where
-      macOS grants Accessibility permission.
+      live-receipt point is resolved in Experiment 185 as an OS/TCC delivery
+      boundary rather than an unimplemented Issue 802 requirement: source and
+      focused tests prove native keycodes/remaps, option-as-alt/layout/keymap
+      state, AppKit text/preedit handoff, app-key dispatch, captured
+      global-event dispatch, and event-tap installation state.
 
 **Phase H — Renderer feature-completion (in the live pass)**
 
@@ -1626,7 +1629,7 @@ stays unaltered except for the rename).
 - [Experiment 184: Phase G — trigger-prefix finality audit](184-trigger-prefix-finality-audit.md)
   — **Pass**
 - [Experiment 185: Phase G — native keymap and global finality audit](185-native-keymap-global-finality-audit.md)
-  — **Designed**
+  — **Pass**
 
 ## Process
 
