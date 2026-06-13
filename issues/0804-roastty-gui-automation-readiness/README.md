@@ -220,3 +220,5 @@ not add the `## Experiments` index until Experiment 1 is designed.
 - [Experiment 5: Rerun after Input Monitoring grant](05-rerun-after-input-monitoring-grant.md)
   — **Partial** (Input Monitoring grant confirmed for Ghostty; System Events and
   CGEvent keyboard still do not reach Roastty)
+- [Experiment 6: Click terminal before keyboard](06-click-terminal-before-keyboard.md)
+  — **Designed**
