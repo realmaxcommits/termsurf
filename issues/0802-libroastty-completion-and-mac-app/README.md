@@ -1566,6 +1566,8 @@ stays unaltered except for the rename).
   — **Pass**
 - [Experiment 175: Phase C — display-link present driver](175-display-link-present-driver.md)
   — **Partial** (needs live copied-app display-link verification)
+- [Experiment 176: Phase C — display-link live validation](176-display-link-live-validation.md)
+  — **Designed**
 
 ## Process
 
