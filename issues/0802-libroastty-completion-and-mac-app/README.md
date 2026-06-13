@@ -217,6 +217,11 @@ the earlier "commit a small baseline PNG set" wording in Exp 2.
   `macos-dock-drop-behavior = window` compatibility alias. Runtime Dock drop
   behavior, Secure Input heuristics/indicator, and AppleScript handling remain
   app/platform integration work.
+- **Cursor-click and mouse-hide config are parser/formatter-only.** Exp 166
+  wires `cursor-click-to-move` and `mouse-hide-while-typing` with upstream
+  defaults/order and bool bare-flag handling. Prompt-click cursor movement and
+  platform mouse hiding remain terminal/app runtime work, not public config
+  field gaps.
 - **Codepoint width needs more than scalar Rust ranges.** Exp 151 added a
   width-only helper and proved full Unicode-scalar parity with the generated
   table, but the release probe measured only 0.76x versus direct table width
@@ -961,9 +966,8 @@ the live app, verified by a Phase-D UI test.)
 
 **Phase F — Config completeness**
 
-- [ ] The remaining 24 public config options (language, font
-      feature/variation/metric/freetype knobs, cursor-click/mouse-hide, `input`,
-      and `keybind`)
+- [ ] The remaining 22 public config options (language, font
+      feature/variation/metric/freetype knobs, `input`, and `keybind`)
 - [ ] `finalize()` — cross-field validation / derivation / clamping
 - [ ] Theme loading (themes-dir locator + file read + palette/option
       application)
@@ -1496,7 +1500,7 @@ stays unaltered except for the rename).
 - [Experiment 165: Phase F — macOS tail config](165-macos-tail-config.md) —
   **Pass**
 - [Experiment 166: Phase F — cursor mouse tail config](166-cursor-mouse-tail-config.md)
-  — **Designed**
+  — **Pass**
 
 ## Process
 

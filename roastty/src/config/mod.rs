@@ -220,6 +220,10 @@ pub(crate) struct Config {
     pub cursor_style_blink: Option<bool>,
     /// `cursor-text`.
     pub cursor_text: Option<TerminalColor>,
+    /// `cursor-click-to-move`.
+    pub cursor_click_to_move: bool,
+    /// `mouse-hide-while-typing`.
+    pub mouse_hide_while_typing: bool,
     /// `selection-foreground`.
     pub selection_foreground: Option<TerminalColor>,
     /// `selection-background`.
@@ -526,6 +530,8 @@ impl Default for Config {
             cursor_style: CursorStyle::Block,
             cursor_style_blink: None,
             cursor_text: None,
+            cursor_click_to_move: true,
+            mouse_hide_while_typing: false,
             selection_foreground: None,
             selection_background: None,
             selection_word_chars: SelectionWordChars::default(),
@@ -762,6 +768,9 @@ impl Config {
             .entry_optional(self.cursor_style_blink, |v, f| f.entry_bool(v));
         EntryFormatter::new("cursor-text", out)
             .entry_optional(self.cursor_text, |v, f| v.format_entry(f));
+        EntryFormatter::new("cursor-click-to-move", out).entry_bool(self.cursor_click_to_move);
+        EntryFormatter::new("mouse-hide-while-typing", out)
+            .entry_bool(self.mouse_hide_while_typing);
         self.scroll_to_bottom
             .format_entry(&mut EntryFormatter::new("scroll-to-bottom", out));
         self.mouse_shift_capture
@@ -1813,6 +1822,13 @@ impl Config {
             "cursor-text" => {
                 self.cursor_text =
                     set_optional_value_field(value, default.cursor_text, TerminalColor::parse_cli)?
+            }
+            "cursor-click-to-move" => {
+                self.cursor_click_to_move = set_bool_field(value, default.cursor_click_to_move)?
+            }
+            "mouse-hide-while-typing" => {
+                self.mouse_hide_while_typing =
+                    set_bool_field(value, default.mouse_hide_while_typing)?
             }
             "selection-foreground" => {
                 self.selection_foreground = set_optional_value_field(
@@ -8477,6 +8493,8 @@ mod tests {
         assert_eq!(d.cursor_style, CursorStyle::Block);
         assert_eq!(d.cursor_style_blink, None);
         assert_eq!(d.cursor_text, None);
+        assert!(d.cursor_click_to_move);
+        assert!(!d.mouse_hide_while_typing);
         assert_eq!(d.selection_foreground, None);
         assert_eq!(d.selection_background, None);
         assert_eq!(
@@ -15141,6 +15159,8 @@ mod tests {
             "cursor-style",
             "cursor-style-blink",
             "cursor-text",
+            "cursor-click-to-move",
+            "mouse-hide-while-typing",
             "scroll-to-bottom",
             "mouse-shift-capture",
             "mouse-reporting",
@@ -17728,6 +17748,89 @@ mod tests {
             cfg.set("cursor-style-blink", Some("maybe")),
             Err(ConfigSetError::InvalidValue)
         );
+    }
+
+    #[test]
+    fn cursor_mouse_tail_config_parse_format_reset_and_diagnose() {
+        let lines = |cfg: &Config| {
+            let mut out = String::new();
+            cfg.format_config(&mut out);
+            ["cursor-click-to-move", "mouse-hide-while-typing"]
+                .into_iter()
+                .map(|key| {
+                    out.lines()
+                        .find(|line| line.starts_with(&format!("{key} = ")))
+                        .unwrap()
+                        .to_string()
+                })
+                .collect::<Vec<_>>()
+        };
+
+        let mut cfg = Config::default();
+        assert!(cfg.cursor_click_to_move);
+        assert!(!cfg.mouse_hide_while_typing);
+        assert_eq!(
+            lines(&cfg),
+            vec![
+                "cursor-click-to-move = true",
+                "mouse-hide-while-typing = false",
+            ]
+        );
+
+        cfg.set("cursor-click-to-move", Some("false")).unwrap();
+        assert!(!cfg.cursor_click_to_move);
+        assert_eq!(lines(&cfg)[0], "cursor-click-to-move = false");
+        cfg.set("cursor-click-to-move", None).unwrap();
+        assert!(cfg.cursor_click_to_move);
+        assert_eq!(lines(&cfg)[0], "cursor-click-to-move = true");
+        cfg.set("cursor-click-to-move", Some("false")).unwrap();
+        cfg.set("cursor-click-to-move", Some("")).unwrap();
+        assert!(cfg.cursor_click_to_move);
+        assert_eq!(
+            cfg.set("cursor-click-to-move", Some("maybe")),
+            Err(ConfigSetError::InvalidValue)
+        );
+
+        cfg.set("mouse-hide-while-typing", Some("true")).unwrap();
+        assert!(cfg.mouse_hide_while_typing);
+        assert_eq!(lines(&cfg)[1], "mouse-hide-while-typing = true");
+        cfg.set("mouse-hide-while-typing", None).unwrap();
+        assert!(cfg.mouse_hide_while_typing);
+        assert_eq!(lines(&cfg)[1], "mouse-hide-while-typing = true");
+        cfg.set("mouse-hide-while-typing", Some("")).unwrap();
+        assert!(!cfg.mouse_hide_while_typing);
+        assert_eq!(lines(&cfg)[1], "mouse-hide-while-typing = false");
+        assert_eq!(
+            cfg.set("mouse-hide-while-typing", Some("sometimes")),
+            Err(ConfigSetError::InvalidValue)
+        );
+
+        let diagnostics = cfg.load_str(
+            "cursor-click-to-move = false\n\
+             mouse-hide-while-typing\n\
+             cursor-click-to-move = maybe\n\
+             mouse-hide-while-typing = sometimes\n",
+        );
+        assert_eq!(
+            diagnostics,
+            vec![
+                ConfigDiagnostic {
+                    line: 3,
+                    key: "cursor-click-to-move".to_string(),
+                    error: ConfigSetError::InvalidValue,
+                },
+                ConfigDiagnostic {
+                    line: 4,
+                    key: "mouse-hide-while-typing".to_string(),
+                    error: ConfigSetError::InvalidValue,
+                },
+            ]
+        );
+        assert!(!cfg.cursor_click_to_move);
+        assert!(cfg.mouse_hide_while_typing);
+
+        let cloned = cfg.clone();
+        assert_eq!(cloned, cfg);
     }
 
     #[test]

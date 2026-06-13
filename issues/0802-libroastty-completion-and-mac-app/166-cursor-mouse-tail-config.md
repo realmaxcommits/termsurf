@@ -64,3 +64,51 @@ The reviewer verified that the README links Experiment 166 as `Designed`, the
 experiment has the required sections, upstream default/order semantics match
 `Config.zig`, local bool helper semantics match the plan, and no implementation
 was done before design review.
+
+## Result
+
+**Result:** Pass
+
+Roastty now stores, parses, and formats `cursor-click-to-move` and
+`mouse-hide-while-typing` as upstream bool config fields. The defaults match
+pinned upstream Ghostty: cursor click-to-move enabled, mouse hide-while-typing
+disabled.
+
+The formatter places both fields in upstream order after `cursor-text` and
+before `scroll-to-bottom`. The parser uses the existing upstream-style bool
+semantics: a bare key sets `true`, an empty value resets to the default, and an
+invalid value reports `InvalidValue`.
+
+The Phase F public-config tail is now 22 keys: language, font
+feature/variation/metric/freetype knobs, `input`, and `keybind`.
+
+Verification:
+
+- `cargo test -p roastty cursor_mouse_tail_config` passed 1 filtered unit test
+  plus the ABI harness filter.
+- `cargo test -p roastty config_format_config_emits_fields_in_upstream_order`
+  passed 1 filtered unit test plus the ABI harness filter.
+- `cargo test -p roastty` passed 4,862 Rust unit tests, 0 failed, 4 ignored; the
+  C ABI harness passed with the existing enum-conversion warnings; doc tests
+  passed with 0 tests.
+- `cargo fmt --check -p roastty` passed.
+- `prettier --check --prose-wrap always --print-width 80 issues/0802-libroastty-completion-and-mac-app/166-cursor-mouse-tail-config.md issues/0802-libroastty-completion-and-mac-app/README.md`
+  passed.
+- `git diff --check` passed.
+
+## Completion Review
+
+**Reviewer:** Codex-native adversarial review subagent `Halley`, fresh context.
+
+**Verdict:** Approved with no findings.
+
+The reviewer verified that the diff is limited to the experiment doc, issue
+README, and `roastty/src/config/mod.rs`; the result commit had not been made;
+upstream defaults/order match `Config.zig`; implementation stayed within
+parser/formatter/storage/tests/docs scope; and all claimed checks passed.
+
+## Conclusion
+
+The cursor/mouse bool config tail is complete at the parser/formatter/storage
+layer. Prompt-click cursor movement and platform mouse hiding remain
+terminal/app runtime behavior, not missing public config fields.
