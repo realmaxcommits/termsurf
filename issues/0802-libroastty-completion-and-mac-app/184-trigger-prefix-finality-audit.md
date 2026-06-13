@@ -118,3 +118,100 @@ the trigger-prefix finality audit, overclaims are explicitly excluded, the
 verification commands cover parser/storage/query flags, surface behavior,
 app-key dispatch, routing, and non-permission event-tap paths, hygiene checks
 are present, and the plan/result commit separation is stated.
+
+## Result
+
+**Result:** Pass.
+
+This audit found the configured trigger-prefix surface wired broadly enough to
+close the Phase G trigger-prefix checklist item while leaving the native
+keymap/global-shortcut item open.
+
+Source inspection confirmed:
+
+- `roastty/src/lib.rs` defines the configured prefix flag byte:
+  `ROASTTY_KEYBIND_FLAG_CONSUMED`, `ROASTTY_KEYBIND_FLAG_ALL`,
+  `ROASTTY_KEYBIND_FLAG_GLOBAL`, and `ROASTTY_KEYBIND_FLAG_PERFORMABLE`.
+- `parse_config_keybind_flags`, `ConfigKeybind`, `ConfiguredBindingMatch`,
+  `Config::store_keybind_entry`, `ConfigKeybindSet::has_global_keybinds`,
+  `roastty_app_has_global_keybinds`, and `roastty_config_trigger` carry the
+  parsed prefix metadata through config storage and query paths.
+- `Surface::dispatch_configured_binding` uses the same flags for surface
+  consumption, `performable:` fallthrough, and `all:` / `global:` app-wide
+  routing.
+- `roastty_app_key`, `perform_app_key_app_action`, and
+  `perform_app_key_surface_action` cover global app-key dispatch plus focused
+  app-scoped non-global dispatch.
+- `GlobalEventTap` and `GlobalEventTapTests` keep captured-event dispatch,
+  event-tap creation, retry scheduling, installed state, and pending-retry state
+  testable without requiring Accessibility permission.
+
+Focused verification passed:
+
+- Initial `cargo test -p roastty keybind` failed under the default parallel test
+  runner: `config_c_abi_cli_config_args_preserve_keybind_parsing` observed one
+  diagnostic instead of zero, and the remaining failures were poisoned shared
+  test state. The failing test passed in isolation with `--test-threads=1`.
+- `cargo test -p roastty keybind -- --test-threads=1` — 48 passed.
+- `cargo test -p roastty parse_config_keybind` — 23 passed.
+- `cargo test -p roastty config_trigger_ -- --test-threads=1` — 12 passed.
+- `cargo test -p roastty app_has_global_keybinds` — 2 passed.
+- `cargo test -p roastty app_key` — 31 passed.
+- `cargo test -p roastty app_key_global` — 11 passed.
+- `cargo test -p roastty surface_key_configured` — 11 passed.
+- `cargo test -p roastty surface_key_configured_global_all` — 2 passed.
+- `cargo test -p roastty surface_key_all` — 6 passed.
+- `cargo test -p roastty --test abi_harness` — 1 passed, with the existing 10
+  enum-conversion warnings and `[unknown](scope): message`.
+- `cd roastty && macos/build.nu --action test --only-testing RoasttyTests/GlobalEventTapTests`
+  — 10 Swift Testing tests in 1 suite passed; Xcode also reported the selected
+  XCTest bundle with 0 XCTest tests and `** TEST SUCCEEDED **`.
+
+Regression and hygiene checks passed:
+
+- `cargo fmt --check -p roastty`
+- `prettier --check --prose-wrap always --print-width 80 issues/0802-libroastty-completion-and-mac-app/184-trigger-prefix-finality-audit.md issues/0802-libroastty-completion-and-mac-app/README.md`
+- `git diff --check`
+
+No production code changed. The trigger-prefix roadmap checkbox is now justified
+for configured parser/storage/query flags, surface consumption, app-key
+global/focused dispatch, surface `all:` / `global:` routing, hosted
+captured-event dispatch, and non-permission event-tap state. Permission-granted
+live global keystroke receipt and native keymap behavior remain tracked by the
+separate native-keymap/global-shortcut item.
+
+## Completion Review
+
+**Reviewer:** Codex-native adversarial review subagent `Nash the 2nd`, fresh
+context.
+
+**Verdict:** Approved.
+
+Findings: None.
+
+The reviewer independently verified that only the two expected markdown files
+are modified, the diff from plan commit `27cb8f808bc98` has no production-code
+changes, the three source-audit `rg` commands find the expected Rust and macOS
+surfaces, and the result commit had not been made.
+
+The reviewer also reran and confirmed:
+
+- `cargo fmt --check -p roastty`
+- `prettier --check --prose-wrap always --print-width 80 issues/0802-libroastty-completion-and-mac-app/184-trigger-prefix-finality-audit.md issues/0802-libroastty-completion-and-mac-app/README.md`
+- `git diff --check`
+- `cargo test -p roastty keybind -- --test-threads=1` — 48 passed.
+- `cargo test -p roastty app_key_global` — 11 passed.
+- `cargo test -p roastty surface_key_configured` — 11 passed.
+- `cargo test -p roastty --test abi_harness` — 1 passed, with the recorded
+  existing warnings.
+- `cd roastty && macos/build.nu --action test --only-testing RoasttyTests/GlobalEventTapTests`
+  — 10 Swift Testing tests passed and Xcode reported `** TEST SUCCEEDED **`.
+
+## Conclusion
+
+The trigger-prefix item was stale rather than missing implementation. The
+current code and tests prove the configured prefix behavior from config parsing
+through surface/app dispatch and the copied macOS app's testable event-tap
+state. The remaining required Phase G work is the native keymap/global-shortcut
+item, specifically the host-permission live global-key receipt caveat and native
+keymap evidence; the optional debug overlay remains optional.

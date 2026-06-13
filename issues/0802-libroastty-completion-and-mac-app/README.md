@@ -1071,14 +1071,18 @@ the live app, verified by a Phase-D UI test.)
       sequence-control actions, chained leaves, direct app-key chains, surface
       `all:` / `global:` fanout, file-loaded keybinds, and the ABI harness;
       native keymaps/global shortcuts remain tracked by separate Phase G items.
-- [ ] Trigger-prefix flags (`global:` / `all:` / `unconsumed:` / `performable:`)
+- [x] Trigger-prefix flags (`global:` / `all:` / `unconsumed:` / `performable:`)
       — parser/storage/query metadata and surface unconsumed/performable
       consumption are wired (Exp 110–111), and configured `global:` app-key
       dispatch plus focused app-scoped app-key dispatch are wired (Exp 113–114);
       configured `all:` / `global:` leaves reached through the surface key path
       now dispatch app-wide (Exp 127), and the copied macOS event-tap callback
-      dispatch path is hosted-test validated (Exp 136), but permission-dependent
-      live tap installation remains later work
+      dispatch path is hosted-test validated (Exp 136). Experiment 184 proves
+      configured prefix parsing/storage/query, surface consumption, app-key
+      global/focused dispatch, surface `all:` / `global:` routing, hosted
+      captured-event dispatch, and non-permission event-tap state;
+      permission-granted live global shortcut receipt remains tracked by the
+      native-keymap/global shortcut item.
 - [x] `catch_all` trigger parsing and fallback lookup for configured single-key
       bindings (Exp 115)
 - [x] The full action set + the default-bindings data table + reverse
@@ -1620,7 +1624,7 @@ stays unaltered except for the rename).
 - [Experiment 183: Phase G — key sequence and table audit](183-key-sequence-table-audit.md)
   — **Pass**
 - [Experiment 184: Phase G — trigger-prefix finality audit](184-trigger-prefix-finality-audit.md)
-  — **Designed**
+  — **Pass**
 
 ## Process
 
