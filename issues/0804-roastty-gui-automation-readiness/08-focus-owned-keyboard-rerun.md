@@ -207,3 +207,66 @@ Overall result:
   the loss point, or if AX focus proof fails without typing.
 - **Fail** if Roastty cannot be launched normally with tracing or the run cannot
   safely avoid typing into the wrong window.
+
+## Result
+
+**Result:** Partial
+
+The focus-owned rerun proved that keyboard synthesis can target Roastty, but it
+did not make terminal input work end to end.
+
+Evidence:
+
+- `logs/issue804-exp8-launch.log` shows the normal app launch path succeeded:
+  PID `94548`, visible layer-0 window `id=431 bounds=(489,161 800x632)`, and a
+  pre-focus screenshot at
+  `/Users/astrohacker/.cache/termsurf/shots/issue-804-exp8-before-focus-20260613-140915.png`.
+- `logs/issue804-exp8-coordinate-and-click.log` recorded non-zero terminal
+  coordinates: focus point `(529,233)` and safe point `(609,301)`.
+- `logs/issue804-exp8-focus-before-keyboard.log` proved ownership before typing:
+  - `frontmost=roastty pid=94548`
+  - `roast-frontmost=true`
+  - `roast-visible=true`
+  - `focused-role=AXTextArea`
+  - `focused-description=text entry area`
+- `logs/issue804-exp8-system-events-keyboard.log` rechecked the immediate
+  pre-type target using PID, which is safer than display name because the
+  process name was lowercase `roastty`:
+  - `immediate-frontmost-name=roastty`
+  - `immediate-frontmost-pid=94548`
+  - `target-pid=94548`
+- The same log then captured `keyDown`, `insertText accumulated=...`, and
+  `keyAction text=...` trace lines for every character in the command
+  `/bin/echo ISSUE804_EXP8_SYSTEM_EVENTS > /tmp/termsurf-issue804-exp8-system-events/marker.txt`,
+  followed by Enter.
+- The marker oracle failed:
+  `cat: /tmp/termsurf-issue804-exp8-system-events/marker.txt: No such file or directory`.
+- The after screenshot at
+  `/Users/astrohacker/.cache/termsurf/shots/issue-804-exp8-after-keyboard-20260613-141009.png`
+  shows the terminal prompt unchanged; the typed command was not visible and did
+  not execute.
+- `logs/issue804-exp8-cleanup.log` shows the after screenshot was captured,
+  Roastty was still frontmost before cleanup, PID `94548` was killed by
+  `stop-app.sh`, and no debug Roastty process remained afterward.
+
+This invalidates the broad hypothesis that macOS VM permissions or window focus
+are blocking keyboard input. The external keyboard stream can reach Roastty.
+
+## Conclusion
+
+The remaining blocker is below the AppKit focus/key-entry layer:
+
+- System Events keyboard injection works in the VM.
+- The harness can focus Roastty rather than Ghostty/Codex.
+- Roastty's `SurfaceView_AppKit.keyDown`, `insertText`, and `keyAction` receive
+  the typed text.
+- The terminal does not display or execute the text, so either
+  `roastty_surface_key` returns false, key encoding produces no bytes, the
+  surface is read-only, `termio_worker` is absent/unwritable, or the queued
+  bytes do not reach the PTY/display.
+
+The next experiment should instrument the `keyAction` / `roastty_surface_key` /
+`write_encoded_key_event` path with trace-only logging so the failure can be
+fixed at the correct layer.
+
+Per user instruction, no adversarial review was run for this issue.

@@ -190,6 +190,16 @@ Roastty GUI automation work. Keep hypotheses in Analysis until they are proven.
   event source can generate keyboard input after the granted permissions, but it
   also invalidates the run as a Roastty keyboard test and shows the harness must
   prove the focused target immediately before typing.
+- **Focus-owned external keyboard input reaches Roastty's AppKit text path.**
+  Experiment 8 launched Roastty normally, proved the frontmost PID was the
+  Roastty PID immediately before typing, and AX reported the focused element as
+  an `AXTextArea` / `text entry area`. The trace captured every typed character
+  through `keyDown`, `insertText`, and `keyAction`.
+- **The current keyboard blocker is below AppKit, not VM permissions or window
+  focus.** In Experiment 8, the typed command did not appear in the terminal
+  screenshot and the marker file was not created even though the key trace
+  reached `keyAction`. The next probe needs to inspect `roastty_surface_key`,
+  encoded bytes, readonly state, and PTY queueing.
 
 ## Verification
 
@@ -237,4 +247,5 @@ not add the `## Experiments` index until Experiment 1 is designed.
   — **Partial** (initial run invalidated because keyboard input targeted
   Ghostty/Codex, not Roastty; focus targeting must be proven before retrying)
 - [Experiment 8: Focus-owned keyboard rerun](08-focus-owned-keyboard-rerun.md) —
-  **Designed**
+  **Partial** (focus ownership and AppKit key entry proven; marker still fails
+  because typed text is not displayed or executed by the terminal)
