@@ -369,3 +369,5 @@ remains open.
   — **Pass**
 - [Experiment 9: Default keybind format parity](09-default-keybind-format-parity.md)
   — **Pass**
+- [Experiment 10: Command palette default format parity](10-command-palette-default-format-parity.md)
+  — **Designed**
