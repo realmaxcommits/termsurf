@@ -227,6 +227,11 @@ the earlier "commit a small baseline PNG set" wording in Exp 2.
   it immediately before the font-family group, and preserves optional-string
   reset/diagnostic semantics. Runtime localization, GTK restart semantics, and
   platform UI integration remain app/runtime work.
+- **Font-feature config is parser/formatter-only.** Exp 168 wires `font-feature`
+  as upstream's repeatable string field between `font-synthetic-style` and
+  `font-size`, including repeatable reset, diagnostics, and CLI-append
+  semantics. Applying feature strings to actual shaping remains font/text
+  runtime work.
 - **Codepoint width needs more than scalar Rust ranges.** Exp 151 added a
   width-only helper and proved full Unicode-scalar parity with the generated
   table, but the release probe measured only 0.76x versus direct table width
@@ -971,8 +976,8 @@ the live app, verified by a Phase-D UI test.)
 
 **Phase F — Config completeness**
 
-- [ ] The remaining 21 public config options (font feature/variation/metric/
-      freetype knobs, `input`, and `keybind`)
+- [ ] The remaining 20 public config options (font variation/metric/freetype
+      knobs, `input`, and `keybind`)
 - [ ] `finalize()` — cross-field validation / derivation / clamping
 - [ ] Theme loading (themes-dir locator + file read + palette/option
       application)
@@ -1508,7 +1513,7 @@ stays unaltered except for the rename).
   — **Pass**
 - [Experiment 167: Phase F — language config](167-language-config.md) — **Pass**
 - [Experiment 168: Phase F — font feature config](168-font-feature-config.md) —
-  **Designed**
+  **Pass**
 
 ## Process
 

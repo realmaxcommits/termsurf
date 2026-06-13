@@ -388,6 +388,8 @@ pub(crate) struct Config {
     pub font_style_bold_italic: FontStyle,
     /// `font-synthetic-style`.
     pub font_synthetic_style: FontSyntheticStyle,
+    /// `font-feature`.
+    pub font_feature: RepeatableString,
     /// `font-size`.
     pub font_size: f32,
     /// `font-codepoint-map`.
@@ -622,6 +624,7 @@ impl Default for Config {
             font_style_italic: FontStyle::Default,
             font_style_bold_italic: FontStyle::Default,
             font_synthetic_style: FontSyntheticStyle::default(),
+            font_feature: RepeatableString::default(),
             font_size: if cfg!(target_os = "macos") {
                 13.0
             } else {
@@ -724,6 +727,8 @@ impl Config {
             .format_entry(&mut EntryFormatter::new("font-style-bold-italic", out));
         self.font_synthetic_style
             .format_entry(&mut EntryFormatter::new("font-synthetic-style", out));
+        self.font_feature
+            .format_entry(&mut EntryFormatter::new("font-feature", out));
         EntryFormatter::new("font-size", out).entry_float(self.font_size);
         self.font_codepoint_map
             .format_entry(&mut EntryFormatter::new("font-codepoint-map", out));
@@ -1901,6 +1906,7 @@ impl Config {
                     FontSyntheticStyle::parse_cli,
                 )?
             }
+            "font-feature" => self.font_feature.parse_cli(value)?,
             "font-size" => self.font_size = set_f32_field(value, default.font_size)?,
             "font-codepoint-map" => self.font_codepoint_map.parse_cli(value)?,
             "clipboard-codepoint-map" => self.clipboard_codepoint_map.parse_cli(value)?,
@@ -8483,6 +8489,7 @@ mod tests {
         assert!(d.font_family_italic.list.is_empty());
         assert!(d.font_family_bold_italic.list.is_empty());
         assert_eq!(d.font_synthetic_style, FontSyntheticStyle::default());
+        assert!(d.font_feature.list.is_empty());
         assert_eq!(
             d.font_size,
             if cfg!(target_os = "macos") {
@@ -14866,6 +14873,80 @@ mod tests {
     }
 
     #[test]
+    fn font_feature_config_parse_format_reset_load_cli_append_and_clone() {
+        let lines = |cfg: &Config| -> Vec<String> {
+            let mut out = String::new();
+            cfg.format_config(&mut out);
+            out.lines()
+                .filter(|l| l.starts_with("font-feature = "))
+                .map(str::to_string)
+                .collect()
+        };
+
+        let mut cfg = Config::default();
+        assert!(cfg.font_feature.list.is_empty());
+        assert_eq!(lines(&cfg), vec!["font-feature = "]);
+
+        cfg.set("font-feature", Some("calt")).unwrap();
+        cfg.set("font-feature", Some("-liga")).unwrap();
+        assert_eq!(cfg.font_feature.list, vec!["calt", "-liga"]);
+        assert_eq!(
+            lines(&cfg),
+            vec!["font-feature = calt", "font-feature = -liga"]
+        );
+
+        cfg.set("font-feature", Some("")).unwrap();
+        assert!(cfg.font_feature.list.is_empty());
+        assert_eq!(lines(&cfg), vec!["font-feature = "]);
+
+        assert_eq!(
+            cfg.set("font-feature", None),
+            Err(ConfigSetError::ValueRequired)
+        );
+
+        let diagnostics = cfg.load_str(
+            "font-feature = ss01\n\
+             font-feature = liga off\n\
+             font-feature\n\
+             font-feature =\n",
+        );
+        assert_eq!(cfg.font_feature.list, Vec::<String>::new());
+        assert_eq!(
+            diagnostics,
+            vec![ConfigDiagnostic {
+                line: 3,
+                key: "font-feature".to_string(),
+                error: ConfigSetError::ValueRequired,
+            }]
+        );
+
+        assert!(cfg
+            .load_str("font-feature = file-a\nfont-feature = file-b\n")
+            .is_empty());
+        assert_eq!(cfg.font_feature.list, vec!["file-a", "file-b"]);
+        let diagnostics = cfg.set_cli_args(["--font-feature=cli-a", "--font-feature=cli-b"]);
+        assert!(diagnostics.is_empty());
+        assert_eq!(
+            cfg.font_feature.list,
+            vec!["file-a", "file-b", "cli-a", "cli-b"]
+        );
+        assert!(cfg.set_cli_args(["--font-family=CLI Font"]).is_empty());
+        cfg.set("font-feature", Some("manual")).unwrap();
+        assert_eq!(
+            cfg.font_feature.list,
+            vec!["file-a", "file-b", "cli-a", "cli-b", "manual"]
+        );
+
+        let cloned = cfg.clone();
+        assert_eq!(cloned, cfg);
+        assert_eq!(
+            cloned.font_feature.list,
+            vec!["file-a", "file-b", "cli-a", "cli-b", "manual"]
+        );
+        assert!(!cloned.font_feature.overwrite_next);
+    }
+
+    #[test]
     fn config_font_family_finalize_inherits_regular_family() {
         let mut cfg = Config::default();
         cfg.set("font-family", Some("Regular A")).unwrap();
@@ -15139,6 +15220,7 @@ mod tests {
             "font-style-italic",
             "font-style-bold-italic",
             "font-synthetic-style",
+            "font-feature",
             "font-size",
             "font-codepoint-map",
             "clipboard-codepoint-map",
