@@ -522,3 +522,5 @@ remains open.
 - [Experiment 27: Color parser oracle](27-color-parser-oracle.md) — **Pass**
 - [Experiment 28: Metric modifier parser oracle](28-metric-modifier-parser-oracle.md)
   — **Pass**
+- [Experiment 29: Background blur parser oracle](29-background-blur-parser-oracle.md)
+  — **Designed**
