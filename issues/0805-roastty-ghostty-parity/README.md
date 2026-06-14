@@ -506,6 +506,12 @@ experiment files until they are proven.
   tests and source evidence prove 12 rows, while surface reload still needs to
   clear active key tables and apply configured font-size changes without
   overriding manually adjusted font sizes.
+- **Surface config reload must clear active key tables.** Experiment 104 matched
+  pinned Ghostty's `Surface.updateConfig` behavior by clearing
+  `active_key_tables` during Roastty surface config update and emitting the
+  existing deactivate-all notification when a stack was active. CFG-222 now has
+  one remaining reload gap: configured font-size reload behavior with manual
+  adjustment preservation.
 - **`py_compile` creates bytecode even with `PYTHONDONTWRITEBYTECODE=1`.** Treat
   `issues/0805-roastty-ghostty-parity/__pycache__/` as a generated verification
   artifact and remove it after running the inventory script compile check.
@@ -1104,4 +1110,4 @@ remains open.
 - [Experiment 103: Config reload inventory](103-config-reload-inventory.md) —
   **Partial**
 - [Experiment 104: Reload clears key tables](104-reload-clears-key-tables.md) —
-  **Designed**
+  **Pass**

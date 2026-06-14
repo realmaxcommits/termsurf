@@ -226,19 +226,16 @@ ROWS = [
         ghostty_reference="`vendor/ghostty/src/Surface.zig::updateConfig` `deactivateAllKeyTables` branch",
         roastty_reference="`roastty/src/lib.rs::Surface::apply_config`",
         family="surface reload",
-        status="Gap",
+        status="Oracle complete",
         evidence=(
-            "Source audit found `Surface::apply_config` updates key remaps and "
-            "keybind storage, but does not call `deactivate_all_key_tables` or "
-            "otherwise clear `active_key_tables` during config update."
+            "`surface_key_table_uses_updated_app_table_storage` proves a "
+            "surface with an active key table clears `active_key_tables` during "
+            "config update, emits `ROASTTY_KEY_TABLE_DEACTIVATE_ALL`, no-ops "
+            "without a stack, and then uses the updated app key-table storage."
         ),
-        missing_evidence=(
-            "Add Roastty behavior matching pinned Ghostty: config update should "
-            "clear active key tables and report the deactivation action when "
-            "needed."
-        ),
+        missing_evidence="None for key-table clearing on config reload.",
         guard_tier="Tier 1",
-        guard_command="TBD by follow-up reload gap experiment.",
+        guard_command="`cargo test --manifest-path roastty/Cargo.toml surface_key_table_uses_updated_app_table_storage`",
     ),
     ReloadRow(
         id="RELOAD-013",

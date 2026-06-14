@@ -94,3 +94,54 @@ Adversarial design review by fresh-context Codex subagent `Chandrasekhar`:
   `Designed`, scope is limited to `RELOAD-012`, `RELOAD-013` remains out of
   scope, the plan matches pinned Ghostty's `Surface.updateConfig` key-table
   clearing behavior, and verification keeps CFG-222 as `Gap`.
+
+## Result
+
+**Result:** Pass
+
+`Surface::apply_config` now clears active key tables during config update by
+calling the existing `deactivate_all_key_tables()` helper after replacing
+config-derived key behavior. The focused stale-table regression test now proves:
+
+- an active key table exists before config reload;
+- `roastty_app_update_config` clears `active_key_tables`;
+- `ROASTTY_KEY_TABLE_DEACTIVATE_ALL` is emitted when a stack existed;
+- a second reload with no active key tables emits no key-table action;
+- later key input uses the updated app key-table storage.
+
+`RELOAD-012` is now `Oracle complete` in the generated reload inventory. CFG-222
+still remains `Gap` because `RELOAD-013` is unresolved.
+
+Verification passed:
+
+```bash
+cargo fmt --manifest-path roastty/Cargo.toml
+cargo test --manifest-path roastty/Cargo.toml surface_key_table_uses_updated_app_table_storage
+cargo test --manifest-path roastty/Cargo.toml surface_key_table_deactivate_actions_notify_and_noop_when_empty
+
+PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/config_reload_inventory.py \
+  --output issues/0805-roastty-ghostty-parity/config-reload-inventory.md \
+  --matrix issues/0805-roastty-ghostty-parity/config-matrix.md
+# reload_rows=14 oracle_complete=13 closed=13 audit_covered=0 incomplete=1 gap=1 cfg222=Gap
+```
+
+## Conclusion
+
+`RELOAD-012` is closed with a Tier 1 unit guard. CFG-222 has one remaining
+reload gap, `RELOAD-013`, covering configured font-size reload behavior while
+preserving manual font-size adjustments.
+
+## Completion Review
+
+Adversarial completion review by fresh-context Codex subagent `Archimedes`:
+
+- **Verdict:** Approved.
+- **Findings:** None.
+- **Verification:** The reviewer independently confirmed the implementation is
+  scoped to `RELOAD-012`, matches pinned Ghostty's active key-table clearing in
+  `Surface.updateConfig`, the test catches the old behavior, `RELOAD-012` is
+  promoted to `Oracle complete`, CFG-222 remains `Gap` with only `RELOAD-013`
+  unresolved, and the required result docs are present.
+- **Independent checks:**
+  `cargo fmt --manifest-path roastty/Cargo.toml --check`, both focused key-table
+  tests, and `git diff --check` passed.

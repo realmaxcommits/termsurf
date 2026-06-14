@@ -3635,6 +3635,7 @@ impl Surface {
         self.mouse_reporting = parsed.mouse_reporting;
         self.mouse_scroll_multiplier = parsed.mouse_scroll_multiplier;
         self.click_repeat_interval_ns = click_repeat_interval_ns(&parsed);
+        let _ = self.deactivate_all_key_tables();
         let palette = derived_config_palette(&parsed);
         if let Some(worker) = &self.termio_worker {
             worker.with_termio_mut(|termio| {
@@ -24373,8 +24374,30 @@ mod tests {
             surface,
             key_press(key::Key::KeyX, b"x", b'x' as u32, ROASTTY_MODS_NONE)
         ));
-        roastty_app_update_config(app, new_config);
+        assert_eq!(
+            surface_from_handle(surface).unwrap().active_key_tables,
+            vec![ActiveKeyTable {
+                name: b"nav".to_vec(),
+                once: false,
+            }]
+        );
         reset_action_records(true);
+        roastty_app_update_config(app, new_config);
+        let records = action_records();
+        assert_eq!(records.len(), 1);
+        assert_eq!(
+            records[0].key_table,
+            Some((ROASTTY_KEY_TABLE_DEACTIVATE_ALL, Vec::new()))
+        );
+        assert!(surface_from_handle(surface)
+            .unwrap()
+            .active_key_tables
+            .is_empty());
+
+        reset_action_records(true);
+        roastty_app_update_config(app, new_config);
+        assert!(action_records().is_empty());
+
         assert!(!send_key(
             surface,
             key_press(key::Key::KeyA, b"a", b'a' as u32, ROASTTY_MODS_NONE)
