@@ -449,3 +449,5 @@ remains open.
 - [Experiment 19: Duration parser oracle](19-duration-parser-oracle.md) —
   **Pass**
 - [Experiment 20: Path parser oracle](20-path-parser-oracle.md) — **Pass**
+- [Experiment 21: Working directory parser oracle](21-working-directory-parser-oracle.md)
+  — **Designed**
