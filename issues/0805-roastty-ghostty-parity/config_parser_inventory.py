@@ -41,6 +41,7 @@ METRIC_MODIFIER_ORACLE_TEST = "metric_modifier_config_parser_family_oracle"
 BACKGROUND_BLUR_ORACLE_TEST = "background_blur_config_parser_family_oracle"
 CLICK_REPEAT_ORACLE_TEST = "click_repeat_interval_config_parser_family_oracle"
 CURSOR_STYLE_BLINK_ORACLE_TEST = "cursor_style_blink_config_parser_family_oracle"
+MACOS_ICON_SCREEN_COLOR_ORACLE_TEST = "macos_icon_screen_color_config_parser_family_oracle"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -326,6 +327,7 @@ def build_rows(
     background_blur_oracle_present: bool,
     click_repeat_oracle_present: bool,
     cursor_style_blink_oracle_present: bool,
+    macos_icon_screen_color_oracle_present: bool,
 ) -> tuple[list[ParserRow], list[str], list[str], list[str]]:
     arm_by_key: dict[str, ParserArm] = {}
     for arm in arms:
@@ -495,6 +497,15 @@ def build_rows(
                 "diagnostics, CLI, formatting, and clone semantics"
             )
             missing_evidence = "None for direct cursor-style-blink parser semantics."
+        elif macos_icon_screen_color_oracle_present and option == "macos-icon-screen-color":
+            status = "Oracle complete"
+            evidence = (
+                "macOS icon screen color parser oracle covers ColorList defaults, "
+                "named and hex colors, comma lists, token trimming, skipped empty "
+                "tokens, reset semantics, 64-color cap, empty unset, invalid "
+                "values, diagnostics, CLI, formatting, and clone semantics"
+            )
+            missing_evidence = "None for direct macos-icon-screen-color parser semantics."
         elif option == "config-default-files":
             missing_evidence = (
                 "Direct parser and effective default-file load-order semantics must "
@@ -551,6 +562,7 @@ def main() -> int:
     background_blur_oracle_present = BACKGROUND_BLUR_ORACLE_TEST in roastty_source
     click_repeat_oracle_present = CLICK_REPEAT_ORACLE_TEST in roastty_source
     cursor_style_blink_oracle_present = CURSOR_STYLE_BLINK_ORACLE_TEST in roastty_source
+    macos_icon_screen_color_oracle_present = MACOS_ICON_SCREEN_COLOR_ORACLE_TEST in roastty_source
     rows, missing, compatibility_only, noncanonical = build_rows(
         upstream,
         aliases,
@@ -572,13 +584,16 @@ def main() -> int:
         background_blur_oracle_present,
         click_repeat_oracle_present,
         cursor_style_blink_oracle_present,
+        macos_icon_screen_color_oracle_present,
     )
     emit_inventory(rows, compatibility_only, args.output)
     incomplete = [row for row in rows if row.status != "Oracle complete"]
     oracle_count = sum(row.status == "Oracle complete" for row in rows)
     gap_count = sum(row.status == "Gap" for row in rows)
     owner_experiment = (
-        31
+        32
+        if macos_icon_screen_color_oracle_present
+        else 31
         if cursor_style_blink_oracle_present
         else 30
         if click_repeat_oracle_present

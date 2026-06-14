@@ -479,6 +479,13 @@ experiment files until they are proven.
   bare/missing values set `true`, raw-empty config values reset to `null`, exact
   Ghostty bool spellings set `true` or `false`, and uppercase words,
   whitespace-padded values, and numeric values outside `0`/`1` are rejected.
+- **macOS icon screen colors use ColorList boundaries.** Experiment 32 proved
+  canonical `macos-icon-screen-color`: default `null` formats as blank,
+  comma-separated named and hex colors format as lowercase hex, spaces and tabs
+  are trimmed per token, leading/trailing/doubled comma empty tokens are
+  skipped, every parse resets the list, raw-empty config values reset to `null`,
+  direct missing or empty child-parser values are required, all-empty or invalid
+  lists are rejected, and the 65th color exceeds the upstream 64-color cap.
 
 ## Verification
 
@@ -546,4 +553,4 @@ remains open.
 - [Experiment 31: Cursor style blink parser oracle](31-cursor-style-blink-parser-oracle.md)
   — **Pass**
 - [Experiment 32: macOS icon screen color parser oracle](32-macos-icon-screen-color-parser-oracle.md)
-  — **Designed**
+  — **Pass**

@@ -10003,6 +10003,145 @@ mod tests {
     }
 
     #[test]
+    fn macos_icon_screen_color_config_parser_family_oracle() {
+        let black = Color { r: 0, g: 0, b: 0 };
+        let white = Color {
+            r: 255,
+            g: 255,
+            b: 255,
+        };
+        let color_0a0b0c = Color {
+            r: 0x0a,
+            g: 0x0b,
+            b: 0x0c,
+        };
+        let color_010203 = Color { r: 1, g: 2, b: 3 };
+
+        let screen_color_line = |cfg: &Config| {
+            let mut out = String::new();
+            cfg.format_config(&mut out);
+            out.lines()
+                .find(|line| line.starts_with("macos-icon-screen-color = "))
+                .unwrap()
+                .to_string()
+        };
+
+        let mut cfg = Config::default();
+        assert_eq!(cfg.macos_icon_screen_color, None);
+        assert_eq!(screen_color_line(&cfg), "macos-icon-screen-color = ");
+
+        cfg.set("macos-icon-screen-color", Some("black,#0A0B0C"))
+            .unwrap();
+        assert_eq!(
+            cfg.macos_icon_screen_color,
+            Some(ColorList {
+                colors: vec![black, color_0a0b0c],
+            })
+        );
+        assert_eq!(
+            screen_color_line(&cfg),
+            "macos-icon-screen-color = #000000,#0a0b0c"
+        );
+
+        cfg.set("macos-icon-screen-color", Some(", black,\t#ffffff,,"))
+            .unwrap();
+        assert_eq!(
+            cfg.macos_icon_screen_color,
+            Some(ColorList {
+                colors: vec![black, white],
+            })
+        );
+        assert_eq!(
+            screen_color_line(&cfg),
+            "macos-icon-screen-color = #000000,#ffffff"
+        );
+
+        cfg.set("macos-icon-screen-color", Some("#010203")).unwrap();
+        assert_eq!(
+            cfg.macos_icon_screen_color,
+            Some(ColorList {
+                colors: vec![color_010203],
+            })
+        );
+        assert_eq!(screen_color_line(&cfg), "macos-icon-screen-color = #010203");
+
+        let sixty_four = ["black"; 64].join(",");
+        cfg.set("macos-icon-screen-color", Some(&sixty_four))
+            .unwrap();
+        assert_eq!(
+            cfg.macos_icon_screen_color.as_ref().unwrap().colors.len(),
+            64
+        );
+        let too_many = ["black"; 65].join(",");
+        assert_eq!(
+            cfg.set("macos-icon-screen-color", Some(&too_many)),
+            Err(ConfigSetError::InvalidValue)
+        );
+
+        cfg.set("macos-icon-screen-color", Some("")).unwrap();
+        assert_eq!(cfg.macos_icon_screen_color, None);
+        assert_eq!(screen_color_line(&cfg), "macos-icon-screen-color = ");
+        assert_eq!(
+            cfg.set("macos-icon-screen-color", None),
+            Err(ConfigSetError::ValueRequired)
+        );
+
+        let mut direct = ColorList::default();
+        assert_eq!(direct.parse_cli(None), Err(ColorParseError::ValueRequired));
+        assert_eq!(
+            direct.parse_cli(Some("")),
+            Err(ColorParseError::ValueRequired)
+        );
+        for bad in [",", " ", "notacolor", "#xyzxyz"] {
+            assert_eq!(
+                cfg.set("macos-icon-screen-color", Some(bad)),
+                Err(ConfigSetError::InvalidValue),
+                "{bad}"
+            );
+        }
+
+        cfg.set("macos-icon-screen-color", Some("#010203")).unwrap();
+        let diagnostics = cfg.load_str("macos-icon-screen-color = notacolor\n");
+        assert_eq!(
+            diagnostics,
+            vec![ConfigDiagnostic {
+                line: 1,
+                key: "macos-icon-screen-color".to_string(),
+                error: ConfigSetError::InvalidValue,
+            }]
+        );
+        assert_eq!(
+            cfg.macos_icon_screen_color,
+            Some(ColorList {
+                colors: vec![color_010203],
+            })
+        );
+
+        cfg.load_str("macos-icon-screen-color = #0A0B0C\n");
+        assert_eq!(
+            cfg.macos_icon_screen_color,
+            Some(ColorList {
+                colors: vec![color_0a0b0c],
+            })
+        );
+
+        let mut cli_cfg = Config::default();
+        assert_eq!(
+            cli_cfg.set_cli_args(["--macos-icon-screen-color=black,white"]),
+            Vec::<ConfigDiagnostic>::new()
+        );
+        assert_eq!(
+            cli_cfg.macos_icon_screen_color,
+            Some(ColorList {
+                colors: vec![black, white],
+            })
+        );
+
+        let cloned = cli_cfg.clone();
+        assert_eq!(cloned, cli_cfg);
+    }
+
+    #[test]
     fn duration_parse_cli_sums_segments_in_nanoseconds() {
         let dur = |ns: u64| Ok(Duration { duration: ns });
 
