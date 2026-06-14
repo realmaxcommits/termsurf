@@ -117,6 +117,14 @@ COMMAND_PALETTE_DIAGNOSTIC_ORACLE_OPTIONS = {
     "command-palette-entry",
 }
 
+FONT_DIAGNOSTIC_ORACLE_OPTIONS = {
+    "font-family",
+    "font-family-bold",
+    "font-family-bold-italic",
+    "font-family-italic",
+    "font-feature",
+}
+
 
 @dataclasses.dataclass(frozen=True)
 class ParserInventoryRow:
@@ -176,7 +184,9 @@ def parse_parser_inventory(path: Path) -> dict[str, ParserInventoryRow]:
     return rows
 
 
-def diagnostic_family(row: ParserInventoryRow) -> str:
+def diagnostic_family(option: str, row: ParserInventoryRow) -> str:
+    if option in FONT_DIAGNOSTIC_ORACLE_OPTIONS:
+        return "required-value diagnostic"
     if row.family == "unsupported":
         return "not-implemented diagnostic"
     if row.family in {"font", "key binding", "custom parse_cli"}:
@@ -257,6 +267,21 @@ def diagnostic_override_evidence(option: str, row: ParserInventoryRow) -> str | 
                 "position/key/error, and invalid-value state retention; "
                 "`roastty/src/config/mod.rs::config_command_palette_diagnostic_oracle`"
             )
+        if option in FONT_DIAGNOSTIC_ORACLE_OPTIONS:
+            if row.family != "font":
+                raise ValueError(
+                    f"{option} is listed in the Experiment 94 font diagnostic oracle "
+                    f"but parser family is {row.family!r}"
+                )
+            return (
+                "Experiment 94 shared font diagnostic oracle covers explicit "
+                "repeatable string acceptance, NUL-containing value acceptance, "
+                "empty resets, direct missing-value errors, config-file "
+                "missing-value diagnostics with line/key/error, CLI missing-value "
+                "diagnostics with argument position/key/error, and missing-value "
+                "state retention; "
+                "`roastty/src/config/mod.rs::config_font_diagnostic_family_oracle`"
+            )
         if option in STRING_DIAGNOSTIC_ORACLE_OPTIONS:
             if row.family != "string":
                 raise ValueError(
@@ -319,6 +344,7 @@ def complete_missing_evidence(option: str, override_evidence: str | None) -> str
         option in STRING_DIAGNOSTIC_ORACLE_OPTIONS
         or option in WORKING_DIRECTORY_DIAGNOSTIC_ORACLE_OPTIONS
         or option in PATH_DIAGNOSTIC_ORACLE_OPTIONS
+        or option in FONT_DIAGNOSTIC_ORACLE_OPTIONS
     ):
         return "None for missing-value diagnostic behavior."
     return "None for invalid-value diagnostic behavior."
@@ -358,7 +384,7 @@ def build_rows(
                 option=option,
                 parser_path=parser_row.parser_path,
                 parser_family=parser_row.family,
-                diagnostic_family=diagnostic_family(parser_row),
+                diagnostic_family=diagnostic_family(option, parser_row),
                 status="Oracle complete" if has_diagnostics else "Audit covered",
                 evidence=(
                     override_evidence
@@ -389,6 +415,7 @@ def build_rows(
         | WORKING_DIRECTORY_DIAGNOSTIC_ORACLE_OPTIONS
         | PATH_DIAGNOSTIC_ORACLE_OPTIONS
         | COMMAND_PALETTE_DIAGNOSTIC_ORACLE_OPTIONS
+        | FONT_DIAGNOSTIC_ORACLE_OPTIONS
     )
     missing_overrides = sorted(override_options - set(canonical_options))
     if missing_overrides:

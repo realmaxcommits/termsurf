@@ -446,6 +446,14 @@ experiment files until they are proven.
   CLI diagnostics preserve argument position/key/error while retaining prior and
   later valid entries. Empty and missing direct values restore defaults. CFG-219
   now has 198 `Oracle complete` rows and 5 remaining incomplete diagnostic rows.
+- **Font RepeatableString diagnostics are missing-value diagnostics.**
+  Experiment 94 promoted `font-family`, `font-family-bold`,
+  `font-family-italic`, `font-family-bold-italic`, and `font-feature`, and
+  confirmed that explicit values, including NUL-containing values, append and
+  format while raw empty values reset. Missing direct, config-file, and CLI
+  values report `ConfigSetError::ValueRequired` while preserving prior state.
+  CFG-219 now has 203 `Oracle complete` rows and 0 remaining incomplete
+  diagnostic rows.
 - **`py_compile` creates bytecode even with `PYTHONDONTWRITEBYTECODE=1`.** Treat
   `issues/0805-roastty-ghostty-parity/__pycache__/` as a generated verification
   artifact and remove it after running the inventory script compile check.
@@ -1024,4 +1032,4 @@ remains open.
 - [Experiment 93: Command palette diagnostic oracle](93-command-palette-diagnostic-oracle.md)
   — **Pass**
 - [Experiment 94: Font diagnostic oracle](94-font-diagnostic-oracle.md) —
-  **Designed**
+  **Pass**

@@ -19358,6 +19358,165 @@ mod tests {
     }
 
     #[test]
+    fn config_font_diagnostic_family_oracle() {
+        struct FontDiagnosticCase {
+            key: &'static str,
+            first: &'static str,
+            second: &'static str,
+            nul_value: &'static str,
+            get_list: fn(&Config) -> Vec<String>,
+        }
+
+        fn config_lines(cfg: &Config, key: &str) -> Vec<String> {
+            let mut out = String::new();
+            cfg.format_config(&mut out);
+            out.lines()
+                .filter(|line| line.starts_with(&format!("{key} = ")))
+                .map(str::to_string)
+                .collect()
+        }
+
+        let cases = [
+            FontDiagnosticCase {
+                key: "font-family",
+                first: "Regular A",
+                second: "Regular B",
+                nul_value: "Regular\0C",
+                get_list: |cfg| cfg.font_family.list.clone(),
+            },
+            FontDiagnosticCase {
+                key: "font-family-bold",
+                first: "Bold A",
+                second: "Bold B",
+                nul_value: "Bold\0C",
+                get_list: |cfg| cfg.font_family_bold.list.clone(),
+            },
+            FontDiagnosticCase {
+                key: "font-family-italic",
+                first: "Italic A",
+                second: "Italic B",
+                nul_value: "Italic\0C",
+                get_list: |cfg| cfg.font_family_italic.list.clone(),
+            },
+            FontDiagnosticCase {
+                key: "font-family-bold-italic",
+                first: "Bold Italic A",
+                second: "Bold Italic B",
+                nul_value: "Bold Italic\0C",
+                get_list: |cfg| cfg.font_family_bold_italic.list.clone(),
+            },
+            FontDiagnosticCase {
+                key: "font-feature",
+                first: "calt",
+                second: "-liga",
+                nul_value: "ss01\0on",
+                get_list: |cfg| cfg.font_feature.list.clone(),
+            },
+        ];
+        assert_eq!(cases.len(), 5);
+
+        for case in cases {
+            let default_lines = config_lines(&Config::default(), case.key);
+
+            let mut cfg = Config::default();
+            cfg.set(case.key, Some(case.first)).unwrap();
+            cfg.set(case.key, Some(case.second)).unwrap();
+            assert_eq!(
+                (case.get_list)(&cfg),
+                vec![case.first.to_string(), case.second.to_string()],
+                "{} appends representative explicit values",
+                case.key
+            );
+            assert_eq!(
+                config_lines(&cfg, case.key),
+                vec![
+                    format!("{} = {}", case.key, case.first),
+                    format!("{} = {}", case.key, case.second),
+                ],
+                "{} formats appended values in order",
+                case.key
+            );
+
+            cfg.set(case.key, Some(case.nul_value)).unwrap();
+            assert_eq!(
+                (case.get_list)(&cfg),
+                vec![
+                    case.first.to_string(),
+                    case.second.to_string(),
+                    case.nul_value.to_string(),
+                ],
+                "{} accepts explicit NUL-containing value",
+                case.key
+            );
+            assert_eq!(
+                config_lines(&cfg, case.key).last().cloned(),
+                Some(format!("{} = {}", case.key, case.nul_value)),
+                "{} formats explicit NUL-containing value",
+                case.key
+            );
+
+            cfg.set(case.key, Some("")).unwrap();
+            assert_eq!((case.get_list)(&cfg), Vec::<String>::new());
+            assert_eq!(
+                config_lines(&cfg, case.key),
+                default_lines,
+                "{} raw empty value resets to default",
+                case.key
+            );
+
+            assert_eq!(
+                cfg.set(case.key, None),
+                Err(ConfigSetError::ValueRequired),
+                "{} bare missing value is required",
+                case.key
+            );
+
+            let mut file_cfg = Config::default();
+            file_cfg.set(case.key, Some(case.first)).unwrap();
+            let before = config_lines(&file_cfg, case.key);
+            let diagnostics = file_cfg.load_str(&format!("\n{}\n", case.key));
+            assert_eq!(
+                diagnostics,
+                vec![ConfigDiagnostic {
+                    line: 2,
+                    key: case.key.to_string(),
+                    error: ConfigSetError::ValueRequired,
+                }],
+                "{} file missing-value diagnostic preserves line/key/error",
+                case.key
+            );
+            assert_eq!(
+                config_lines(&file_cfg, case.key),
+                before,
+                "{} missing file value preserves previous state",
+                case.key
+            );
+
+            let mut cli_cfg = Config::default();
+            cli_cfg.set(case.key, Some(case.first)).unwrap();
+            let before = config_lines(&cli_cfg, case.key);
+            let arg = format!("--{}", case.key);
+            let diagnostics = cli_cfg.set_cli_args([arg.as_str()]);
+            assert_eq!(
+                diagnostics,
+                vec![ConfigDiagnostic {
+                    line: 1,
+                    key: case.key.to_string(),
+                    error: ConfigSetError::ValueRequired,
+                }],
+                "{} CLI missing-value diagnostic preserves argument position/key/error",
+                case.key
+            );
+            assert_eq!(
+                config_lines(&cli_cfg, case.key),
+                before,
+                "{} missing CLI value preserves previous state",
+                case.key
+            );
+        }
+    }
+
+    #[test]
     fn config_font_family_finalize_inherits_regular_family() {
         let mut cfg = Config::default();
         cfg.set("font-family", Some("Regular A")).unwrap();

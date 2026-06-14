@@ -147,3 +147,89 @@ The amendment narrows the generator plan so only the five remaining
 `RepeatableString` font rows are reclassified as `required-value diagnostic`.
 The reviewer confirmed this preserves already-complete parser-family `font` rows
 whose existing oracles prove invalid-value or stateful diagnostics.
+
+## Result
+
+**Result:** Pass.
+
+The shared `config_font_diagnostic_family_oracle` now covers the five remaining
+font diagnostic rows:
+
+- `font-family`
+- `font-family-bold`
+- `font-family-italic`
+- `font-family-bold-italic`
+- `font-feature`
+
+For each row, the oracle verifies explicit values append and format in order,
+NUL-containing explicit values are accepted and formatted, raw empty values
+reset to the default formatted state, direct missing values report
+`ConfigSetError::ValueRequired`, config-file bare keys report `ConfigDiagnostic`
+with the expected line/key/error, CLI missing values report the expected
+argument position/key/error, and missing-value diagnostics preserve the prior
+non-default formatted state.
+
+The diagnostic inventory generator now treats only those five exact
+parser-family `font` rows as `required-value diagnostic` rows with Experiment 94
+evidence. Other parser-family `font` rows keep their prior diagnostic families
+and evidence.
+
+Verification performed:
+
+```bash
+cargo fmt --manifest-path roastty/Cargo.toml
+cargo test --manifest-path roastty/Cargo.toml config_font_diagnostic_family_oracle
+PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile \
+  issues/0805-roastty-ghostty-parity/config_diagnostic_inventory.py
+PYTHONDONTWRITEBYTECODE=1 python3 \
+  issues/0805-roastty-ghostty-parity/config_diagnostic_inventory.py \
+  --config-inventory issues/0805-roastty-ghostty-parity/config-inventory.md \
+  --parser-inventory issues/0805-roastty-ghostty-parity/config-parser-inventory.md \
+  --roastty roastty/src/config/mod.rs \
+  --output issues/0805-roastty-ghostty-parity/config-diagnostic-inventory.md \
+  --matrix issues/0805-roastty-ghostty-parity/config-matrix.md
+```
+
+The targeted Rust test passed with 1 passed, 0 failed, and 4966 filtered out.
+The regenerated inventory reported:
+
+```text
+ghostty_canonical=203
+diagnostic_rows=203
+missing_canonical_diagnostic_rows=0
+extra_diagnostic_rows=0
+oracle_complete=203
+audit_covered=0
+gap=0
+```
+
+The matrix assertion confirmed that all five Experiment 94 font rows are
+`Oracle complete`, use diagnostic family `required-value diagnostic`, cite
+Experiment 94 evidence, and avoid invalid explicit-value wording. It also
+confirmed non-target parser-family `font` rows preserved their pre-existing
+diagnostic family and evidence, CFG-219 moved to `Pass` with the 203/0/0 counts,
+and CFG-217 plus CFG-218 were unchanged from the reviewed plan commit.
+
+## Conclusion
+
+Font `RepeatableString` diagnostics are missing-value diagnostics, not invalid
+explicit-value diagnostics. CFG-219 now has complete oracle coverage for all 203
+canonical diagnostic rows and no remaining diagnostic inventory gaps.
+
+## Completion Review
+
+Adversarial reviewer: Codex subagent with fresh context.
+
+Verdict: Approved.
+
+Required findings: None.
+
+Optional findings: None.
+
+Nit findings: None.
+
+The reviewer independently confirmed that the result diff was still uncommitted,
+Rust formatting passed, the targeted font diagnostic oracle test passed, the
+matrix assertions passed for 203 `Oracle complete` rows and exact five-row font
+promotion, CFG-217 and CFG-218 were unchanged, `git diff --check` passed, and
+Prettier checks passed for the changed Markdown files.
