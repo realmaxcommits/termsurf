@@ -428,3 +428,5 @@ remains open.
 - [Experiment 15: Boolean parser oracle](15-boolean-parser-oracle.md) — **Pass**
 - [Experiment 16: Integer parser oracle](16-integer-parser-oracle.md) — **Pass**
 - [Experiment 17: Float parser oracle](17-float-parser-oracle.md) — **Pass**
+- [Experiment 18: String parser oracle](18-string-parser-oracle.md) —
+  **Designed**
