@@ -209,3 +209,112 @@ Final verdict: Approved.
 
 Re-review confirmed the prior finding is resolved and found no remaining
 Required findings.
+
+## Result
+
+**Result:** Pass
+
+Experiment 84 added `custom_format_entry_config_formatter_family_oracle` and
+promoted the final nine formatter rows to `Oracle complete`:
+
+- `background-blur`
+- `env`
+- `input`
+- `mouse-scroll-multiplier`
+- `palette`
+- `quick-terminal-size`
+- `selection-word-chars`
+- `undo-timeout`
+- `window-decoration`
+
+The Rust oracle covers direct formatter output, representative `Config::set`
+plus `format_config` output, reset/no-op behavior, and local ordering for all
+nine rows. The generator now promotes exactly the `custom format_entry` family
+when that oracle is present, and the generated CFG-218 matrix row is now `Pass`.
+
+The regenerated formatter inventory reported:
+
+- `ghostty_canonical=203`
+- `roastty_formatter_rows=203`
+- `missing_canonical_formatter_rows=0`
+- `extra_formatter_rows=0`
+- `oracle_complete=203`
+- `audit_covered=0`
+- `gap=0`
+- `no_output_rows=1`
+
+Verification run:
+
+- `cargo test --manifest-path roastty/Cargo.toml custom_format_entry_config_formatter_family_oracle`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/config_formatter_inventory.py --upstream vendor/ghostty/src/config/Config.zig --upstream-formatter-file vendor/ghostty/src/config/formatter_file.zig --upstream-formatter vendor/ghostty/src/config/formatter.zig --roastty roastty/src/config/mod.rs --config-inventory issues/0805-roastty-ghostty-parity/config-inventory.md --output issues/0805-roastty-ghostty-parity/config-formatter-inventory.md --matrix issues/0805-roastty-ghostty-parity/config-matrix.md`
+  passed with the counts above.
+- The generated formatter inventory and CFG-218 assertion passed.
+- `cargo test --manifest-path roastty/Cargo.toml background_blur_config_parser_family_oracle`
+  passed.
+- `cargo test --manifest-path roastty/Cargo.toml env_config_parser_family_oracle`
+  passed.
+- `cargo test --manifest-path roastty/Cargo.toml input_config_parser_family_oracle`
+  passed.
+- `cargo test --manifest-path roastty/Cargo.toml mouse_scroll_multiplier_config_parser_family_oracle`
+  passed.
+- `cargo test --manifest-path roastty/Cargo.toml palette_config_parser_family_oracle`
+  passed.
+- `cargo test --manifest-path roastty/Cargo.toml quick_terminal_size_config_parser_family_oracle`
+  passed.
+- `cargo test --manifest-path roastty/Cargo.toml quick_terminal_size_config_parse_format_reset_and_diagnose`
+  passed.
+- `cargo test --manifest-path roastty/Cargo.toml selection_behavior_config_routes_and_formats`
+  passed.
+- `cargo test --manifest-path roastty/Cargo.toml undo_timeout_config_parse_format_reset_and_diagnose`
+  passed.
+- `cargo test --manifest-path roastty/Cargo.toml config_set_routes_enum_fields`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile issues/0805-roastty-ghostty-parity/config_formatter_inventory.py`
+  passed; generated `__pycache__/` was removed.
+- `cargo fmt --manifest-path roastty/Cargo.toml --check` passed.
+- `prettier --check issues/0805-roastty-ghostty-parity/README.md issues/0805-roastty-ghostty-parity/84-custom-format-entry-formatter-oracle.md`
+  passed.
+- `git diff --check` passed.
+
+## Conclusion
+
+CFG-218 is now closed: every formatter inventory row is `Oracle complete`.
+Formatter parity is no longer the blocking Issue 805 config facet. The next
+experiment should move to the remaining non-formatter config matrix gaps, such
+as diagnostics, validation/finalization, source precedence, reload behavior, or
+runtime/UI effects.
+
+## Completion Review
+
+Adversarial reviewer: Codex subagent with fresh context.
+
+Initial verdict: Changes required.
+
+Required findings:
+
+- The palette oracle asserted 256 output rows plus the first and last row, but
+  did not prove every middle `index=#rrggbb` row.
+- The `selection-word-chars` oracle claimed UTF-8 re-encoding coverage but only
+  used ASCII codepoints.
+
+Fixes:
+
+- Updated the palette oracle to enumerate all 256 output rows and compare each
+  line against `palette.value[idx]`.
+- Updated the `selection-word-chars` oracle to include non-ASCII `\u{e9}` and
+  assert the exact UTF-8 output.
+
+Re-verification after the fixes:
+
+- `cargo test --manifest-path roastty/Cargo.toml custom_format_entry_config_formatter_family_oracle`
+  passed.
+- `cargo fmt --manifest-path roastty/Cargo.toml --check` passed.
+- `prettier --check issues/0805-roastty-ghostty-parity/README.md issues/0805-roastty-ghostty-parity/84-custom-format-entry-formatter-oracle.md`
+  passed.
+- `git diff --check` passed.
+
+Final verdict: Approved.
+
+Re-review confirmed both prior findings are resolved and found no new Required
+findings.

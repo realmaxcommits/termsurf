@@ -384,6 +384,11 @@ experiment files until they are proven.
   `link-previews`, `linux-cgroup`, `shell-integration`, and `window-subtitle` by
   proving direct keyword output, config-level output, raw-empty resets, and
   local ordering, leaving the truly custom scalar/collection rows for later.
+- **The final formatter close condition is all rows Oracle complete.**
+  Experiment 84 promoted the last nine `custom format_entry` rows, moved CFG-218
+  to `Pass`, and changed the generated complete note to include the owner and
+  row counts. Formatter parity now has 203 `Oracle complete` rows, 0
+  audit-covered rows, and 0 gaps.
 - **`py_compile` creates bytecode even with `PYTHONDONTWRITEBYTECODE=1`.** Treat
   `issues/0805-roastty-ghostty-parity/__pycache__/` as a generated verification
   artifact and remove it after running the inventory script compile check.
@@ -942,4 +947,4 @@ remains open.
 - [Experiment 83: Misc direct enum formatter oracle](83-misc-direct-enum-formatter-oracle.md)
   — **Pass**
 - [Experiment 84: Custom format_entry formatter oracle](84-custom-format-entry-formatter-oracle.md)
-  — **Designed**
+  — **Pass**

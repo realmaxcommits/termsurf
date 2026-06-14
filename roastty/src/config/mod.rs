@@ -15217,6 +15217,248 @@ mod tests {
     }
 
     #[test]
+    fn custom_format_entry_config_formatter_family_oracle() {
+        let fmt = |v: &dyn Fn(&mut EntryFormatter)| {
+            let mut out = String::new();
+            let mut f = EntryFormatter::new("a", &mut out);
+            v(&mut f);
+            out
+        };
+        let formatted_lines = |cfg: &Config| -> Vec<String> {
+            let mut out = String::new();
+            cfg.format_config(&mut out);
+            out.lines().map(str::to_string).collect()
+        };
+        let line = |lines: &[String], key: &str| -> String {
+            let prefix = format!("{key} = ");
+            lines
+                .iter()
+                .find(|line| line.starts_with(&prefix))
+                .unwrap_or_else(|| panic!("missing formatted config line for {key}"))
+                .clone()
+        };
+        let lines_for = |lines: &[String], key: &str| -> Vec<String> {
+            let prefix = format!("{key} = ");
+            lines
+                .iter()
+                .filter(|line| line.starts_with(&prefix))
+                .cloned()
+                .collect()
+        };
+        let index = |lines: &[String], key: &str| -> usize {
+            let prefix = format!("{key} = ");
+            lines
+                .iter()
+                .position(|line| line.starts_with(&prefix))
+                .unwrap_or_else(|| panic!("missing formatted config line for {key}"))
+        };
+
+        for (value, expected) in [
+            (BackgroundBlur::False, "a = false\n"),
+            (BackgroundBlur::True, "a = true\n"),
+            (BackgroundBlur::Radius(42), "a = 42\n"),
+            (
+                BackgroundBlur::MacosGlassRegular,
+                "a = macos-glass-regular\n",
+            ),
+            (BackgroundBlur::MacosGlassClear, "a = macos-glass-clear\n"),
+        ] {
+            assert_eq!(fmt(&|f| value.format_entry(f)), expected);
+        }
+
+        let mut env = RepeatableStringMap::default();
+        assert_eq!(fmt(&|f| env.format_entry(f)), "a = \n");
+        env.parse_cli(Some("A=B")).unwrap();
+        env.parse_cli(Some("B = C")).unwrap();
+        assert_eq!(fmt(&|f| env.format_entry(f)), "a = A=B\na = B=C\n");
+
+        let input_empty = RepeatableReadableIo::default();
+        assert_eq!(fmt(&|f| input_empty.format_entry(f)), "a = \n");
+        let input = RepeatableReadableIo {
+            list: vec![
+                ReadableIo::Raw("hello\\n".to_string()),
+                ReadableIo::Path("/tmp/in.txt".to_string()),
+            ],
+        };
+        assert_eq!(
+            fmt(&|f| input.format_entry(f)),
+            "a = raw:hello\\n\na = path:/tmp/in.txt\n"
+        );
+
+        assert_eq!(
+            fmt(&|f| MouseScrollMultiplier {
+                precision: 1.5,
+                discrete: 2.5
+            }
+            .format_entry(f)),
+            "a = precision:1.5,discrete:2.5\n"
+        );
+
+        let mut palette = Palette::default();
+        palette.value[0] = Rgb::new(0xaa, 0xbb, 0xcc);
+        palette.value[255] = Rgb::new(0x01, 0x02, 0x03);
+        let palette_direct = fmt(&|f| palette.format_entry(f));
+        let palette_lines: Vec<&str> = palette_direct.lines().collect();
+        assert_eq!(palette_lines.len(), 256);
+        for (idx, line) in palette_lines.iter().enumerate() {
+            let rgb = palette.value[idx];
+            assert_eq!(
+                *line,
+                format!("a = {}=#{:02x}{:02x}{:02x}", idx, rgb.r, rgb.g, rgb.b)
+            );
+        }
+
+        assert_eq!(fmt(&|f| QuickTerminalSize::default().format_entry(f)), "");
+        assert_eq!(
+            fmt(&|f| QuickTerminalSize {
+                primary: Some(QuickTerminalSizeValue::Percentage(50.0)),
+                secondary: None
+            }
+            .format_entry(f)),
+            "a = 50%\n"
+        );
+        assert_eq!(
+            fmt(&|f| QuickTerminalSize {
+                primary: Some(QuickTerminalSizeValue::Percentage(50.0)),
+                secondary: Some(QuickTerminalSizeValue::Pixels(200))
+            }
+            .format_entry(f)),
+            "a = 50%,200px\n"
+        );
+
+        assert_eq!(
+            fmt(&|f| SelectionWordChars {
+                codepoints: vec![0, '_' as u32, '\u{e9}' as u32]
+            }
+            .format_entry(f)),
+            "a = _\u{e9}\n"
+        );
+        assert_eq!(
+            fmt(&|f| SelectionWordChars {
+                codepoints: vec![0]
+            }
+            .format_entry(f)),
+            "a = \n"
+        );
+
+        assert_eq!(
+            fmt(&|f| Duration {
+                duration: 90 * NS_PER_S
+            }
+            .format_entry(f)),
+            "a = 1m 30s\n"
+        );
+        assert_eq!(fmt(&|f| Duration { duration: 0 }.format_entry(f)), "a = \n");
+
+        for (value, expected) in [
+            (WindowDecoration::Auto, "a = auto\n"),
+            (WindowDecoration::Client, "a = client\n"),
+            (WindowDecoration::Server, "a = server\n"),
+            (WindowDecoration::None, "a = none\n"),
+        ] {
+            assert_eq!(fmt(&|f| value.format_entry(f)), expected);
+        }
+
+        let mut cfg = Config::default();
+        cfg.set("background-blur", Some("macos-glass-regular"))
+            .unwrap();
+        cfg.set("env", Some("A=B")).unwrap();
+        cfg.set("env", Some("B=C")).unwrap();
+        cfg.set("input", Some("raw:hello\\n")).unwrap();
+        cfg.set("input", Some("path:/tmp/in.txt")).unwrap();
+        cfg.set(
+            "mouse-scroll-multiplier",
+            Some("precision:1.5,discrete:2.5"),
+        )
+        .unwrap();
+        cfg.set("palette", Some("0=#aabbcc")).unwrap();
+        cfg.set("palette", Some("255=#010203")).unwrap();
+        cfg.set("quick-terminal-size", Some("50%,200px")).unwrap();
+        cfg.set("selection-word-chars", Some(" _")).unwrap();
+        cfg.set("undo-timeout", Some("1m 30s")).unwrap();
+        cfg.set("window-decoration", Some("server")).unwrap();
+        let lines = formatted_lines(&cfg);
+
+        assert_eq!(
+            line(&lines, "background-blur"),
+            "background-blur = macos-glass-regular"
+        );
+        assert_eq!(
+            lines_for(&lines, "env"),
+            vec!["env = A=B".to_string(), "env = B=C".to_string()]
+        );
+        assert_eq!(
+            lines_for(&lines, "input"),
+            vec![
+                "input = raw:hello\\n".to_string(),
+                "input = path:/tmp/in.txt".to_string()
+            ]
+        );
+        assert_eq!(
+            line(&lines, "mouse-scroll-multiplier"),
+            "mouse-scroll-multiplier = precision:1.5,discrete:2.5"
+        );
+        assert_eq!(line(&lines, "palette"), "palette = 0=#aabbcc");
+        assert!(lines.iter().any(|line| line == "palette = 255=#010203"));
+        assert_eq!(
+            line(&lines, "quick-terminal-size"),
+            "quick-terminal-size = 50%,200px"
+        );
+        assert_eq!(
+            line(&lines, "selection-word-chars"),
+            "selection-word-chars =  _"
+        );
+        assert_eq!(line(&lines, "undo-timeout"), "undo-timeout = 1m 30s");
+        assert_eq!(
+            line(&lines, "window-decoration"),
+            "window-decoration = server"
+        );
+
+        cfg.set("background-blur", Some("")).unwrap();
+        cfg.set("env", Some("")).unwrap();
+        cfg.set("input", Some("")).unwrap();
+        cfg.set("mouse-scroll-multiplier", Some("")).unwrap();
+        cfg.set("palette", Some("")).unwrap();
+        cfg.set("quick-terminal-size", Some("")).unwrap();
+        cfg.set("selection-word-chars", Some("")).unwrap();
+        cfg.set("undo-timeout", Some("")).unwrap();
+        let reset_lines = formatted_lines(&cfg);
+        assert_eq!(
+            line(&reset_lines, "background-blur"),
+            "background-blur = false"
+        );
+        assert_eq!(lines_for(&reset_lines, "env"), vec!["env = ".to_string()]);
+        assert_eq!(
+            lines_for(&reset_lines, "input"),
+            vec!["input = ".to_string()]
+        );
+        assert_eq!(
+            line(&reset_lines, "mouse-scroll-multiplier"),
+            "mouse-scroll-multiplier = precision:1.5,discrete:2.5"
+        );
+        assert_eq!(line(&reset_lines, "palette"), "palette = 0=#1d1f21");
+        assert!(lines_for(&reset_lines, "quick-terminal-size").is_empty());
+        assert_eq!(
+            line(&reset_lines, "selection-word-chars"),
+            "selection-word-chars = "
+        );
+        assert_eq!(line(&reset_lines, "undo-timeout"), "undo-timeout = 5s");
+
+        assert!(index(&lines, "selection-word-chars") < index(&lines, "palette"));
+        assert!(index(&lines, "palette") < index(&lines, "palette-generate"));
+        assert!(index(&lines, "mouse-scroll-multiplier") < index(&lines, "background-opacity"));
+        assert!(index(&lines, "background-opacity") < index(&lines, "background-blur"));
+        assert!(index(&lines, "background-blur") < index(&lines, "unfocused-split-opacity"));
+        assert!(index(&lines, "env") < index(&lines, "input"));
+        assert!(index(&lines, "input") < index(&lines, "wait-after-command"));
+        assert!(index(&lines, "window-padding-color") < index(&lines, "window-decoration"));
+        assert!(index(&lines, "window-decoration") < index(&lines, "window-title-font-family"));
+        assert!(index(&lines, "undo-timeout") < index(&lines, "quick-terminal-position"));
+        assert!(index(&lines, "quick-terminal-position") < index(&lines, "quick-terminal-size"));
+        assert!(index(&lines, "quick-terminal-size") < index(&lines, "gtk-quick-terminal-layer"));
+    }
+
+    #[test]
     fn enum_format_entries_misc() {
         let fmt = |v: &dyn Fn(&mut EntryFormatter)| {
             let mut out = String::new();
