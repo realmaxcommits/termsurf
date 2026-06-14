@@ -745,3 +745,5 @@ remains open.
   — **Pass**
 - [Experiment 58: Command palette formatter oracle](58-command-palette-formatter-oracle.md)
   — **Pass**
+- [Experiment 59: Keybind formatter oracle](59-keybind-formatter-oracle.md) —
+  **Designed**
