@@ -792,3 +792,5 @@ remains open.
   — **Pass**
 - [Experiment 64: Optional value formatter oracle](64-optional-value-formatter-oracle.md)
   — **Pass**
+- [Experiment 65: Font scalar formatter oracle](65-font-scalar-formatter-oracle.md)
+  — **Designed**
