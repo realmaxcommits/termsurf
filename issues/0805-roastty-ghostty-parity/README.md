@@ -816,3 +816,5 @@ remains open.
   — **Pass**
 - [Experiment 67: Font style formatter oracle](67-font-style-formatter-oracle.md)
   — **Pass**
+- [Experiment 68: Font variation formatter oracle](68-font-variation-formatter-oracle.md)
+  — **Designed**
