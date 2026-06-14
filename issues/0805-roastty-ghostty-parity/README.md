@@ -479,6 +479,12 @@ experiment files until they are proven.
   coverage for OS-provided values, fallback 500, nonzero preservation, and the
   parser/finalize boundary. CFG-220 now has 17 `Oracle complete` rows and 0
   incomplete finalization rows, so validation/finalization parity is `Pass`.
+- **CFG-221 now has an explicit load/precedence manifest.** Experiment 99 split
+  source precedence into 18 pinned Ghostty load rows. Existing Roastty tests
+  prove 15 rows; full end-to-end load pipeline order remains audit-covered, and
+  default template creation plus recursive replay placement before the initial
+  command suffix are structural gaps. CFG-221 remains `Gap` with 15
+  `Oracle complete` rows, 3 incomplete rows, and 2 load gaps.
 - **`py_compile` creates bytecode even with `PYTHONDONTWRITEBYTECODE=1`.** Treat
   `issues/0805-roastty-ghostty-parity/__pycache__/` as a generated verification
   artifact and remove it after running the inventory script compile check.
@@ -1067,4 +1073,4 @@ remains open.
 - [Experiment 98: Click repeat interval finalization](98-click-repeat-interval-finalization.md)
   — **Pass**
 - [Experiment 99: Source precedence load inventory](99-source-precedence-load-inventory.md)
-  — **Designed**
+  — **Pass**

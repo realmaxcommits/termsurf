@@ -252,3 +252,133 @@ Final verdict: Approved.
 Re-review confirmed that the explicit `LOAD-001` through `LOAD-018` manifest and
 exact row-ID assertion prevent CFG-221 from passing over an arbitrary incomplete
 subset of load rows.
+
+## Result
+
+**Result:** Pass
+
+Implemented the generated CFG-221 load/precedence inventory and matrix guard.
+The generator emits exactly 18 load rows:
+
+- 15 `Oracle complete`;
+- 1 `Audit covered`;
+- 2 `Gap`;
+- 3 rows not yet `Oracle complete` in total.
+
+CFG-221 remains `Gap`, as intended, because not every load row is
+`Oracle complete`. The incomplete rows are:
+
+- `LOAD-001` full load pipeline order — `Audit covered`;
+- `LOAD-008` default template creation when no default file exists — `Gap`;
+- `LOAD-017` recursive replay placement before `-e`/initial command suffix —
+  `Gap`.
+
+Verification run:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 python3 \
+  issues/0805-roastty-ghostty-parity/config_load_inventory.py \
+  --output issues/0805-roastty-ghostty-parity/config-load-inventory.md \
+  --matrix issues/0805-roastty-ghostty-parity/config-matrix.md
+prettier --write --prose-wrap always --print-width 80 \
+  issues/0805-roastty-ghostty-parity/config-load-inventory.md \
+  issues/0805-roastty-ghostty-parity/config-matrix.md
+PYTHONDONTWRITEBYTECODE=1 python3 - <<'PY'
+import subprocess
+from pathlib import Path
+issue=Path('issues/0805-roastty-ghostty-parity')
+matrix=(issue/'config-matrix.md').read_text()
+old_matrix=subprocess.check_output(['git','show','958be6502:issues/0805-roastty-ghostty-parity/config-matrix.md'], text=True)
+for cfg in ['CFG-217','CFG-218','CFG-219','CFG-220']:
+    old=next(line for line in old_matrix.splitlines() if line.startswith(f'| {cfg} |'))
+    new=next(line for line in matrix.splitlines() if line.startswith(f'| {cfg} |'))
+    assert old == new, cfg
+rows=[]
+for line in (issue/'config-load-inventory.md').read_text().splitlines():
+    if line.startswith('| LOAD-'):
+        rows.append([cell.strip() for cell in line.strip('|').split('|')])
+expected_ids=[f'LOAD-{i:03d}' for i in range(1,19)]
+ids=[row[0] for row in rows]
+assert ids == expected_ids, ids
+assert len(set(ids)) == len(ids)
+behaviors=[row[1] for row in rows]
+assert len(set(behaviors)) == len(behaviors)
+statuses=[row[5] for row in rows]
+oracle=sum(s=='Oracle complete' for s in statuses)
+incomplete=len(rows)-oracle
+gaps=sum(s=='Gap' for s in statuses)
+audit=sum(s=='Audit covered' for s in statuses)
+assert (len(rows), oracle, audit, gaps, incomplete)==(18,15,1,2,3), (len(rows), oracle, audit, gaps, incomplete)
+cfg221=next(line for line in matrix.splitlines() if line.startswith('| CFG-221 |'))
+cells=[c.strip() for c in cfg221.strip('|').split('|')]
+assert cells[4]=='Gap', cells[4]
+assert 'config-load-inventory.md' in cfg221
+assert '15 rows Oracle complete' in cfg221
+assert '3 rows are not Oracle complete' in cfg221
+assert '2 rows are load gaps' in cfg221
+print('load_rows=18 oracle_complete=15 audit_covered=1 incomplete=3 gaps=2 cfg221=Gap protected_cfg217_220_unchanged=true')
+PY
+cargo test --manifest-path roastty/Cargo.toml \
+  config_load_str_applies_lines_and_collects_diagnostics
+cargo test --manifest-path roastty/Cargo.toml config_load_file_reads_and_skips_bom
+cargo test --manifest-path roastty/Cargo.toml \
+  config_load_optional_file_three_way_action
+cargo test --manifest-path roastty/Cargo.toml config_load_default_files
+cargo test --manifest-path roastty/Cargo.toml \
+  config_set_cli_args_applies_and_collects_diagnostics
+cargo test --manifest-path roastty/Cargo.toml \
+  config_default_files_parser_family_oracle
+cargo test --manifest-path roastty/Cargo.toml \
+  config_path_cli_expands_relative_optional_absolute_home_and_missing
+cargo test --manifest-path roastty/Cargo.toml config_recursive
+cargo test --manifest-path roastty/Cargo.toml config_replay
+cargo test --manifest-path roastty/Cargo.toml \
+  config_theme_loading_preserves_user_replay_entries
+cargo test --manifest-path roastty/Cargo.toml \
+  config_conditional_theme_rebuild_preserves_replay_entries_without_duplication
+cargo test --manifest-path roastty/Cargo.toml \
+  bell_audio_path_expands_from_default_and_recursive_file_bases
+```
+
+All focused tests passed. The matrix assertion printed:
+
+```text
+load_rows=18 oracle_complete=15 audit_covered=1 incomplete=3 gaps=2 cfg221=Gap protected_cfg217_220_unchanged=true
+```
+
+## Conclusion
+
+CFG-221 now has a bounded proof surface instead of one broad unresolved row. The
+next CFG-221 work should promote the remaining rows one at a time: end-to-end
+load pipeline order, default template creation, and recursive replay placement
+before the initial command suffix.
+
+## Completion Review
+
+Adversarial reviewer: Codex subagent with fresh context.
+
+Initial verdict: Changes required.
+
+Required findings:
+
+- The first formatted `config-matrix.md` widened a table column, changing
+  CFG-217 through CFG-220 byte-for-byte from plan commit `958be6502`, even
+  though the experiment required those protected rows to remain unchanged after
+  formatting.
+- The first generator version derived `EXPECTED_IDS` from `len(ROWS)`, so a
+  deleted load row would have silently shrunk the expected manifest instead of
+  failing validation.
+
+Fix:
+
+- Shortened the generated CFG-221 verification-method cell so Prettier no longer
+  repads CFG-217 through CFG-220, then reran the final formatted protected-row
+  assertion.
+- Replaced the derived expected-ID list with a literal `LOAD-001` through
+  `LOAD-018` manifest.
+
+Final verdict: Approved.
+
+Re-review confirmed CFG-217 through CFG-220 are byte-for-byte unchanged from
+`958be6502` in the final formatted matrix, the expected load row manifest is
+independent and fixed, and CFG-221 remains honest and internally consistent.
