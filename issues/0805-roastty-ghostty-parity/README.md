@@ -307,6 +307,12 @@ experiment files until they are proven.
   wherever possible. Until a later experiment intentionally tests custom
   Roastty-only config options, keep these files aligned so Ghostty and Roastty
   should look nearly identical except for app naming.
+- **Runtime parity for config options must exercise parsed config.** Existing C
+  surface configuration tests can prove embedded ABI launch behavior, but they
+  do not prove user config options such as `command` and `input` unless the test
+  drives parsed app config or config loading. Future CFG-223 experiments should
+  keep parsed-config runtime effects separate from direct surface-config
+  behavior.
 - **App-facing ABI parity must be scoped before diffing.** Roastty's C header is
   intentionally larger than Ghostty's header, so full symbol-count equality is
   the wrong oracle. Experiment 4 uses Swift app-source identifiers as the
@@ -1191,3 +1197,5 @@ remains open.
   — **Pass**
 - [Experiment 115: Link open URL runtime split](115-link-open-url-runtime-split.md)
   — **Pass**
+- [Experiment 116: Process command input runtime split](116-process-command-input-runtime-split.md)
+  — **Designed**
