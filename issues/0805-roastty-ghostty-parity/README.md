@@ -436,6 +436,15 @@ experiment files until they are proven.
   values return the not-implemented parser error, raw-empty `link =` resets to
   defaults before parser dispatch, diagnostics preserve that distinction, and
   truly unknown keys still report `UnknownField`.
+- **Enum parser rows share exact keyword semantics plus compatibility
+  branches.** Experiment 26 proved the 52 enum rows: required and optional enum
+  fields accept exact keywords only, missing values are required, raw-empty
+  values reset to defaults, invalid
+  numeric/uppercase/snake-case/whitespace-padded values are rejected,
+  diagnostics preserve earlier valid values, and the pinned compatibility
+  branches for `macos-dock-drop-behavior = window`,
+  `gtk-single-instance = desktop`, and `gtk-tabs-location = hidden` are part of
+  the enum-family oracle.
 
 ## Verification
 
@@ -492,4 +501,4 @@ remains open.
   — **Pass**
 - [Experiment 25: Unsupported parser oracle](25-unsupported-parser-oracle.md) —
   **Pass**
-- [Experiment 26: Enum parser oracle](26-enum-parser-oracle.md) — **Designed**
+- [Experiment 26: Enum parser oracle](26-enum-parser-oracle.md) — **Pass**

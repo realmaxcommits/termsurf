@@ -23234,6 +23234,113 @@ mod tests {
     }
 
     #[test]
+    fn enum_config_parser_family_oracle() {
+        fn config_line(cfg: &Config, key: &str) -> String {
+            let mut out = String::new();
+            cfg.format_config(&mut out);
+            out.lines()
+                .find(|line| line.starts_with(&format!("{key} = ")))
+                .unwrap()
+                .to_string()
+        }
+
+        let default = Config::default();
+        let mut cfg = Config::default();
+
+        cfg.set("copy-on-select", Some("clipboard")).unwrap();
+        assert_eq!(cfg.copy_on_select, CopyOnSelect::Clipboard);
+        assert_eq!(
+            config_line(&cfg, "copy-on-select"),
+            "copy-on-select = clipboard"
+        );
+        assert_eq!(
+            cfg.set("copy-on-select", None),
+            Err(ConfigSetError::ValueRequired)
+        );
+        for value in ["1", "TRUE", "clipboard ", "copy_on_select"] {
+            assert_eq!(
+                cfg.set("copy-on-select", Some(value)),
+                Err(ConfigSetError::InvalidValue),
+                "copy-on-select rejects {value:?}"
+            );
+        }
+        cfg.set("copy-on-select", Some("")).unwrap();
+        assert_eq!(cfg.copy_on_select, default.copy_on_select);
+        assert_eq!(
+            config_line(&cfg, "copy-on-select"),
+            config_line(&default, "copy-on-select")
+        );
+
+        cfg.set("auto-update", Some("check")).unwrap();
+        assert_eq!(cfg.auto_update, Some(AutoUpdate::Check));
+        assert_eq!(
+            cfg.set("auto-update", None),
+            Err(ConfigSetError::ValueRequired)
+        );
+        assert_eq!(
+            cfg.set("auto-update", Some("always")),
+            Err(ConfigSetError::InvalidValue)
+        );
+        cfg.set("auto-update", Some("")).unwrap();
+        assert_eq!(cfg.auto_update, default.auto_update);
+
+        cfg.set("auto-update-channel", Some("stable")).unwrap();
+        assert_eq!(cfg.auto_update_channel, Some(ReleaseChannel::Stable));
+        assert_eq!(
+            cfg.set("auto-update-channel", Some("nightly")),
+            Err(ConfigSetError::InvalidValue)
+        );
+        cfg.set("auto-update-channel", Some("")).unwrap();
+        assert_eq!(cfg.auto_update_channel, default.auto_update_channel);
+
+        cfg.set("macos-dock-drop-behavior", Some("window")).unwrap();
+        assert_eq!(
+            cfg.macos_dock_drop_behavior,
+            MacOSDockDropBehavior::NewWindow
+        );
+        assert_eq!(
+            config_line(&cfg, "macos-dock-drop-behavior"),
+            "macos-dock-drop-behavior = new-window"
+        );
+
+        cfg.set("gtk-single-instance", Some("desktop")).unwrap();
+        assert_eq!(cfg.gtk_single_instance, GtkSingleInstance::Detect);
+        assert_eq!(
+            config_line(&cfg, "gtk-single-instance"),
+            "gtk-single-instance = detect"
+        );
+
+        cfg.set("gtk-tabs-location", Some("bottom")).unwrap();
+        assert_eq!(cfg.gtk_tabs_location, GtkTabsLocation::Bottom);
+        cfg.window_show_tab_bar = WindowShowTabBar::Auto;
+        cfg.set("gtk-tabs-location", Some("hidden")).unwrap();
+        assert_eq!(cfg.gtk_tabs_location, GtkTabsLocation::Bottom);
+        assert_eq!(cfg.window_show_tab_bar, WindowShowTabBar::Never);
+
+        let mut cfg = Config::default();
+        let diagnostics = cfg.load_str(
+            "copy-on-select = clipboard\ncopy-on-select = nope\nauto-update = check\nauto-update = always\n",
+        );
+        assert_eq!(cfg.copy_on_select, CopyOnSelect::Clipboard);
+        assert_eq!(cfg.auto_update, Some(AutoUpdate::Check));
+        assert_eq!(
+            diagnostics,
+            vec![
+                ConfigDiagnostic {
+                    line: 2,
+                    key: "copy-on-select".to_string(),
+                    error: ConfigSetError::InvalidValue,
+                },
+                ConfigDiagnostic {
+                    line: 4,
+                    key: "auto-update".to_string(),
+                    error: ConfigSetError::InvalidValue,
+                },
+            ]
+        );
+    }
+
+    #[test]
     fn packed_flags_parse_cli() {
         // Standalone bools set every flag.
         assert_eq!(

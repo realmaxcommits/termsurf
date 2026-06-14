@@ -35,6 +35,7 @@ COMMAND_PALETTE_ORACLE_TEST = "command_palette_config_parser_family_oracle"
 WINDOW_PADDING_ORACLE_TEST = "window_padding_config_parser_family_oracle"
 PACKED_FLAGS_ORACLE_TEST = "packed_flags_config_parser_family_oracle"
 UNSUPPORTED_ORACLE_TEST = "unsupported_config_parser_family_oracle"
+ENUM_ORACLE_TEST = "enum_config_parser_family_oracle"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -314,6 +315,7 @@ def build_rows(
     window_padding_oracle_present: bool,
     packed_flags_oracle_present: bool,
     unsupported_oracle_present: bool,
+    enum_oracle_present: bool,
 ) -> tuple[list[ParserRow], list[str], list[str], list[str]]:
     arm_by_key: dict[str, ParserArm] = {}
     for arm in arms:
@@ -432,6 +434,15 @@ def build_rows(
                 "and distinction from unknown fields"
             )
             missing_evidence = "None for direct unsupported parser semantics."
+        elif enum_oracle_present and family == "enum":
+            status = "Oracle complete"
+            evidence = (
+                "Shared enum parser oracle covers exact keywords, required and "
+                "optional enum dispatch, missing values, empty resets, invalid "
+                "values, diagnostics, formatting, and pinned compatibility "
+                "branches"
+            )
+            missing_evidence = "None for direct enum parser semantics."
         elif option == "config-default-files":
             missing_evidence = (
                 "Direct parser and effective default-file load-order semantics must "
@@ -482,6 +493,7 @@ def main() -> int:
     window_padding_oracle_present = WINDOW_PADDING_ORACLE_TEST in roastty_source
     packed_flags_oracle_present = PACKED_FLAGS_ORACLE_TEST in roastty_source
     unsupported_oracle_present = UNSUPPORTED_ORACLE_TEST in roastty_source
+    enum_oracle_present = ENUM_ORACLE_TEST in roastty_source
     rows, missing, compatibility_only, noncanonical = build_rows(
         upstream,
         aliases,
@@ -497,13 +509,16 @@ def main() -> int:
         window_padding_oracle_present,
         packed_flags_oracle_present,
         unsupported_oracle_present,
+        enum_oracle_present,
     )
     emit_inventory(rows, compatibility_only, args.output)
     incomplete = [row for row in rows if row.status != "Oracle complete"]
     oracle_count = sum(row.status == "Oracle complete" for row in rows)
     gap_count = sum(row.status == "Gap" for row in rows)
     owner_experiment = (
-        25
+        26
+        if enum_oracle_present
+        else 25
         if unsupported_oracle_present
         else 24
         if packed_flags_oracle_present

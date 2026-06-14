@@ -177,3 +177,116 @@ VERDICT: APPROVED
 
 No Required findings remain.
 ```
+
+## Result
+
+**Result:** Pass
+
+Roastty now has a focused enum parser family oracle for the 52 enum parser rows.
+The oracle proves the shared required and optional enum option boundary plus the
+pinned compatibility branches:
+
+- required enum dispatch accepts exact keywords and updates formatted config
+  output;
+- optional enum dispatch accepts exact keywords and stores `Some(...)`;
+- missing values are `ValueRequired` for required and optional enum fields;
+- raw empty values reset required and optional fields to their defaults;
+- invalid values, bool-like numeric strings, uppercase strings, snake-case
+  aliases, and whitespace-padded values are rejected as `InvalidValue`;
+- `macos-dock-drop-behavior = window` maps to `new-window`;
+- `gtk-single-instance = desktop` maps to `detect`;
+- `gtk-tabs-location = hidden` sets `window-show-tab-bar = never` while leaving
+  `gtk-tabs-location` unchanged;
+- load-string diagnostics preserve valid earlier enum values while reporting
+  invalid later lines.
+
+Focused Roastty verification passed:
+
+```bash
+cargo test --manifest-path roastty/Cargo.toml enum_config_parser_family_oracle
+```
+
+Output summary:
+
+```text
+running 1 test
+test config::tests::enum_config_parser_family_oracle ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 4916 filtered out; finished in 0.01s
+```
+
+Existing enum keyword and formatter regression tests also passed:
+
+```bash
+cargo test --manifest-path roastty/Cargo.toml enum_from_keyword_round_trips
+cargo test --manifest-path roastty/Cargo.toml enum_format_entries
+```
+
+Output summaries:
+
+```text
+running 4 tests
+test config::tests::enum_from_keyword_round_trips_shell_notify ... ok
+test config::tests::enum_from_keyword_round_trips_and_rejects_unknown ... ok
+test config::tests::enum_from_keyword_round_trips_mac_bgimage_shader ... ok
+test config::tests::enum_from_keyword_round_trips_misc_fullscreen ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 4913 filtered out; finished in 0.00s
+```
+
+```text
+running 7 tests
+test config::tests::enum_format_entries_misc ... ok
+test config::tests::enum_format_entries ... ok
+test config::tests::enum_format_entries_shader_mouse ... ok
+test config::tests::enum_format_entries_2 ... ok
+test config::tests::enum_format_entries_mac ... ok
+test config::tests::enum_format_entries_fullscreen ... ok
+test config::tests::enum_format_entries_bgimage ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 4910 filtered out; finished in 0.00s
+```
+
+The parser inventory generator passed and moved all 52 enum rows to
+`Oracle complete`:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/config_parser_inventory.py \
+  --upstream vendor/ghostty/src/config/Config.zig \
+  --roastty roastty/src/config/mod.rs \
+  --config-inventory issues/0805-roastty-ghostty-parity/config-inventory.md \
+  --output issues/0805-roastty-ghostty-parity/config-parser-inventory.md \
+  --matrix issues/0805-roastty-ghostty-parity/config-matrix.md
+```
+
+Output:
+
+```text
+ghostty_canonical=203
+roastty_parser_rows=203
+missing_canonical_parser_rows=0
+missing_dispatch_rows=0
+extra_parser_rows=0
+compatibility_only_parser_arms=5
+noncanonical_noncompat_parser_arms=0
+oracle_complete=140
+audit_covered=63
+gap=0
+```
+
+Matrix assertion output:
+
+```text
+parser_rows=203 enum_oracle=52 cfg217=Gap
+```
+
+## Conclusion
+
+The enum parser family is now `Oracle complete`. CFG-217 remains `Gap` because
+63 parser rows are still audit-covered only. The next parser-family experiment
+should continue reducing that count with another bounded family.
+
+## Completion Review
+
+Fresh-context adversarial completion review approved the result with no
+findings.
