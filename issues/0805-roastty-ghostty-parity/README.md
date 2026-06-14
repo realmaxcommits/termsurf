@@ -948,3 +948,5 @@ remains open.
   — **Pass**
 - [Experiment 84: Custom format_entry formatter oracle](84-custom-format-entry-formatter-oracle.md)
   — **Pass**
+- [Experiment 85: Invalid diagnostic facet audit](85-invalid-diagnostic-facet-audit.md)
+  — **Designed**
