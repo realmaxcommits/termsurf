@@ -1023,3 +1023,5 @@ remains open.
   **Pass**
 - [Experiment 93: Command palette diagnostic oracle](93-command-palette-diagnostic-oracle.md)
   — **Pass**
+- [Experiment 94: Font diagnostic oracle](94-font-diagnostic-oracle.md) —
+  **Designed**
