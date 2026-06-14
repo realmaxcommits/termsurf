@@ -899,3 +899,5 @@ remains open.
   — **Pass**
 - [Experiment 78: Command-finish notification formatter oracle](78-command-finish-notification-formatter-oracle.md)
   — **Pass**
+- [Experiment 79: Packed flag formatter oracle](79-packed-flag-formatter-oracle.md)
+  — **Designed**
