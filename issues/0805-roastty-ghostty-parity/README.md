@@ -397,6 +397,12 @@ experiment files until they are proven.
   whitespace, bare zero, malformed values, missing values, required/optional
   empty-reset behavior, product-overflow saturation, and over-wide decimal
   literal rejection.
+- **Path parser rows must use option-boundary semantics.** Experiment 20 proved
+  the 3 path parser rows against Ghostty's `?Path` plus `Path.parseCLI` and
+  `RepeatablePath.parseCLI` behavior: leading `?` optional markers, quoted
+  literal `?` paths, parsed-empty single-path no-ops, raw-empty resets,
+  repeatable accumulation/clearing, formatter output, and embedded NUL
+  acceptance at the parser layer.
 
 ## Verification
 
@@ -442,4 +448,4 @@ remains open.
 - [Experiment 18: String parser oracle](18-string-parser-oracle.md) — **Pass**
 - [Experiment 19: Duration parser oracle](19-duration-parser-oracle.md) —
   **Pass**
-- [Experiment 20: Path parser oracle](20-path-parser-oracle.md) — **Designed**
+- [Experiment 20: Path parser oracle](20-path-parser-oracle.md) — **Pass**

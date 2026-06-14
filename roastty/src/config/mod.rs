@@ -1395,13 +1395,11 @@ impl Config {
             "bell-audio-volume" => {
                 self.bell_audio_volume = set_f64_field(value, default.bell_audio_volume)?
             }
-            "bell-audio-path" => {
-                self.bell_audio_path = set_optional_value_field(
-                    value,
-                    default.bell_audio_path,
-                    ConfigFilePath::parse_single,
-                )?
-            }
+            "bell-audio-path" => set_optional_config_file_path_field(
+                &mut self.bell_audio_path,
+                value,
+                default.bell_audio_path,
+            )?,
             "notify-on-command-finish-after" => {
                 self.notify_on_command_finish_after = set_value_field(
                     value,
@@ -1569,13 +1567,11 @@ impl Config {
                     BackgroundImagePosition::from_keyword,
                 )?
             }
-            "background-image" => {
-                self.background_image = set_optional_value_field(
-                    value,
-                    default.background_image,
-                    ConfigFilePath::parse_single,
-                )?
-            }
+            "background-image" => set_optional_config_file_path_field(
+                &mut self.background_image,
+                value,
+                default.background_image,
+            )?,
             "background-image-fit" => {
                 self.bg_image_fit = set_enum_field(
                     value,
@@ -3239,10 +3235,6 @@ impl ConfigFilePath {
         if value.len() >= 2 && value.starts_with('"') && value.ends_with('"') {
             value = &value[1..value.len() - 1];
         }
-        if value.as_bytes().contains(&0) {
-            return Err(MagicParseError::InvalidValue);
-        }
-
         let path = value.to_string();
         Ok(if optional {
             ConfigFilePath::Optional(path)
@@ -3835,6 +3827,29 @@ fn set_optional_value_field<T, E: Into<ConfigSetError>>(
     match value {
         Some("") => Ok(default_value),
         _ => parse(value).map(Some).map_err(Into::into),
+    }
+}
+
+/// Resolve an optional `config.path.Path` field. Upstream optional fields are
+/// parsed as their child type: a raw empty value resets to the default, while
+/// `Path.parseCLI` ignores parsed-empty values after `?`/quote handling.
+fn set_optional_config_file_path_field(
+    field: &mut Option<ConfigFilePath>,
+    value: Option<&str>,
+    default_value: Option<ConfigFilePath>,
+) -> Result<(), ConfigSetError> {
+    match value {
+        Some("") => {
+            *field = default_value;
+            Ok(())
+        }
+        Some(_) | None => {
+            let path = ConfigFilePath::parse_single(value)?;
+            if !path.path().is_empty() {
+                *field = Some(path);
+            }
+            Ok(())
+        }
     }
 }
 
@@ -10283,6 +10298,131 @@ mod tests {
     }
 
     #[test]
+    fn path_config_parser_family_oracle() {
+        let mut cfg = Config::default();
+        assert_eq!(
+            cfg.set("bell-audio-path", None),
+            Err(ConfigSetError::ValueRequired)
+        );
+        assert_eq!(
+            cfg.set("background-image", None),
+            Err(ConfigSetError::ValueRequired)
+        );
+
+        cfg.set("bell-audio-path", Some("sound.wav")).unwrap();
+        assert_eq!(
+            cfg.bell_audio_path,
+            Some(ConfigFilePath::Required("sound.wav".to_string()))
+        );
+        cfg.set("bell-audio-path", Some("?optional.wav")).unwrap();
+        assert_eq!(
+            cfg.bell_audio_path,
+            Some(ConfigFilePath::Optional("optional.wav".to_string()))
+        );
+        cfg.set("bell-audio-path", Some("\"?required-literal.wav\""))
+            .unwrap();
+        assert_eq!(
+            cfg.bell_audio_path,
+            Some(ConfigFilePath::Required(
+                "?required-literal.wav".to_string()
+            ))
+        );
+        cfg.set("bell-audio-path", Some("?\"optional-quoted.wav\""))
+            .unwrap();
+        assert_eq!(
+            cfg.bell_audio_path,
+            Some(ConfigFilePath::Optional("optional-quoted.wav".to_string()))
+        );
+
+        let prior_bell = cfg.bell_audio_path.clone();
+        cfg.set("bell-audio-path", Some("?")).unwrap();
+        assert_eq!(cfg.bell_audio_path, prior_bell);
+        cfg.set("bell-audio-path", Some("\"\"")).unwrap();
+        assert_eq!(cfg.bell_audio_path, prior_bell);
+        cfg.set("bell-audio-path", Some("?\"\"")).unwrap();
+        assert_eq!(cfg.bell_audio_path, prior_bell);
+
+        cfg.set("bell-audio-path", Some("bad\0path")).unwrap();
+        assert_eq!(
+            cfg.bell_audio_path,
+            Some(ConfigFilePath::Required("bad\0path".to_string()))
+        );
+        cfg.set("bell-audio-path", Some("")).unwrap();
+        assert_eq!(cfg.bell_audio_path, None);
+
+        cfg.set("background-image", Some("backdrop.png")).unwrap();
+        assert_eq!(
+            cfg.background_image,
+            Some(ConfigFilePath::Required("backdrop.png".to_string()))
+        );
+        cfg.set("background-image", Some("?optional.png")).unwrap();
+        assert_eq!(
+            cfg.background_image,
+            Some(ConfigFilePath::Optional("optional.png".to_string()))
+        );
+        cfg.set("background-image", Some("\"?required-literal.png\""))
+            .unwrap();
+        assert_eq!(
+            cfg.background_image,
+            Some(ConfigFilePath::Required(
+                "?required-literal.png".to_string()
+            ))
+        );
+        cfg.set("background-image", Some("?\"optional-quoted.png\""))
+            .unwrap();
+        assert_eq!(
+            cfg.background_image,
+            Some(ConfigFilePath::Optional("optional-quoted.png".to_string()))
+        );
+
+        let prior_background = cfg.background_image.clone();
+        cfg.set("background-image", Some("?")).unwrap();
+        assert_eq!(cfg.background_image, prior_background);
+        cfg.set("background-image", Some("\"\"")).unwrap();
+        assert_eq!(cfg.background_image, prior_background);
+        cfg.set("background-image", Some("?\"\"")).unwrap();
+        assert_eq!(cfg.background_image, prior_background);
+        cfg.set("background-image", Some("")).unwrap();
+        assert_eq!(cfg.background_image, None);
+
+        assert_eq!(
+            cfg.set("config-file", None),
+            Err(ConfigSetError::ValueRequired)
+        );
+        cfg.set("config-file", Some("config.1")).unwrap();
+        cfg.set("config-file", Some("?config.2")).unwrap();
+        cfg.set("config-file", Some("\"?config.3\"")).unwrap();
+        cfg.set("config-file", Some("?\"config.4\"")).unwrap();
+        assert_eq!(
+            cfg.config_file.list,
+            vec![
+                ConfigFilePath::Required("config.1".to_string()),
+                ConfigFilePath::Optional("config.2".to_string()),
+                ConfigFilePath::Required("?config.3".to_string()),
+                ConfigFilePath::Optional("config.4".to_string()),
+            ]
+        );
+
+        cfg.set("config-file", Some("?")).unwrap();
+        cfg.set("config-file", Some("\"\"")).unwrap();
+        cfg.set("config-file", Some("?\"\"")).unwrap();
+        assert_eq!(cfg.config_file.list.len(), 4);
+
+        let mut out = String::new();
+        cfg.format_config(&mut out);
+        assert!(out.lines().any(|line| line == "config-file = config.1"));
+        assert!(out.lines().any(|line| line == "config-file = ?config.2"));
+        assert!(out.lines().any(|line| line == "config-file = ?config.3"));
+        assert!(out.lines().any(|line| line == "config-file = ?config.4"));
+
+        cfg.set("config-file", Some("")).unwrap();
+        assert!(cfg.config_file.list.is_empty());
+        let mut out = String::new();
+        cfg.format_config(&mut out);
+        assert!(out.lines().any(|line| line == "config-file = "));
+    }
+
+    #[test]
     fn bell_audio_path_parses_single_path_empty_optional_and_nul_values() {
         let mut cfg = Config::default();
         assert_eq!(cfg.bell_audio_path, None);
@@ -10315,23 +10455,15 @@ mod tests {
             Some(ConfigFilePath::Optional("optional-quoted.wav".to_string()))
         );
 
+        let prior = cfg.bell_audio_path.clone();
         cfg.set("bell-audio-path", Some("?")).unwrap();
-        assert_eq!(
-            cfg.bell_audio_path,
-            Some(ConfigFilePath::Optional(String::new()))
-        );
+        assert_eq!(cfg.bell_audio_path, prior);
 
         cfg.set("bell-audio-path", Some("\"\"")).unwrap();
-        assert_eq!(
-            cfg.bell_audio_path,
-            Some(ConfigFilePath::Required(String::new()))
-        );
+        assert_eq!(cfg.bell_audio_path, prior);
 
         cfg.set("bell-audio-path", Some("?\"\"")).unwrap();
-        assert_eq!(
-            cfg.bell_audio_path,
-            Some(ConfigFilePath::Optional(String::new()))
-        );
+        assert_eq!(cfg.bell_audio_path, prior);
 
         cfg.set("bell-audio-path", Some("")).unwrap();
         assert_eq!(cfg.bell_audio_path, None);
@@ -10340,9 +10472,10 @@ mod tests {
             cfg.set("bell-audio-path", None),
             Err(ConfigSetError::ValueRequired)
         );
+        assert_eq!(cfg.set("bell-audio-path", Some("bad\0path")), Ok(()));
         assert_eq!(
-            cfg.set("bell-audio-path", Some("bad\0path")),
-            Err(ConfigSetError::InvalidValue)
+            cfg.bell_audio_path,
+            Some(ConfigFilePath::Required("bad\0path".to_string()))
         );
     }
 
@@ -10409,6 +10542,14 @@ mod tests {
         );
         assert_eq!(line(&cfg), "background-image = ?required-literal.png");
 
+        let prior = cfg.background_image.clone();
+        cfg.set("background-image", Some("?")).unwrap();
+        assert_eq!(cfg.background_image, prior);
+        cfg.set("background-image", Some("\"\"")).unwrap();
+        assert_eq!(cfg.background_image, prior);
+        cfg.set("background-image", Some("?\"\"")).unwrap();
+        assert_eq!(cfg.background_image, prior);
+
         cfg.set("background-image", Some("")).unwrap();
         assert_eq!(cfg.background_image, None);
         assert_eq!(line(&cfg), "background-image = ");
@@ -10417,9 +10558,10 @@ mod tests {
             cfg.set("background-image", None),
             Err(ConfigSetError::ValueRequired)
         );
+        assert_eq!(cfg.set("background-image", Some("bad\0path")), Ok(()));
         assert_eq!(
-            cfg.set("background-image", Some("bad\0path")),
-            Err(ConfigSetError::InvalidValue)
+            cfg.background_image,
+            Some(ConfigFilePath::Required("bad\0path".to_string()))
         );
     }
 

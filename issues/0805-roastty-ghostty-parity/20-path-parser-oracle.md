@@ -158,3 +158,98 @@ prettier --write --prose-wrap always --print-width 80 \
   issues/0805-roastty-ghostty-parity/config-matrix.md
 git diff --check
 ```
+
+## Result
+
+**Result:** Pass
+
+Roastty now has a focused path parser family oracle for the 3 path rows:
+`background-image`, `bell-audio-path`, and `config-file`. The implementation now
+matches pinned Ghostty's option-boundary path behavior for optional single-path
+fields and repeatable paths:
+
+- optional single paths accept required, optional, quoted-required-literal, and
+  optional-quoted paths;
+- parsed-empty single-path values such as `?`, `""`, and `?""` leave the
+  existing value unchanged;
+- raw empty single-path values reset the optional field to default `None`;
+- embedded NUL bytes are accepted at the parser layer;
+- repeatable `config-file` values accumulate, ignore parsed-empty entries, clear
+  on raw empty values, and format as repeated config lines.
+
+Focused Roastty verification passed:
+
+```bash
+cargo test --manifest-path roastty/Cargo.toml path_config_parser_family_oracle
+```
+
+Output summary:
+
+```text
+running 1 test
+test config::tests::path_config_parser_family_oracle ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 4910 filtered out; finished in 0.01s
+```
+
+The changed legacy path tests also passed:
+
+```bash
+cargo test --manifest-path roastty/Cargo.toml config_file_repeatable_path_parse_cli_matches_upstream
+cargo test --manifest-path roastty/Cargo.toml bell_audio_path_parses_single_path_empty_optional_and_nul_values
+cargo test --manifest-path roastty/Cargo.toml background_image_config_parse_format_reset_and_diagnose
+cargo test --manifest-path roastty/Cargo.toml config_file_accumulates_resets_and_formats
+```
+
+The parser inventory generator passed and moved the 3 path rows to
+`Oracle complete`:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/config_parser_inventory.py \
+  --upstream vendor/ghostty/src/config/Config.zig \
+  --roastty roastty/src/config/mod.rs \
+  --config-inventory issues/0805-roastty-ghostty-parity/config-inventory.md \
+  --output issues/0805-roastty-ghostty-parity/config-parser-inventory.md \
+  --matrix issues/0805-roastty-ghostty-parity/config-matrix.md
+```
+
+Output:
+
+```text
+ghostty_canonical=203
+roastty_parser_rows=203
+missing_canonical_parser_rows=0
+missing_dispatch_rows=0
+extra_parser_rows=0
+compatibility_only_parser_arms=5
+noncanonical_noncompat_parser_arms=0
+oracle_complete=74
+audit_covered=129
+gap=0
+```
+
+The matrix assertion passed:
+
+```text
+parser_rows=203 path_oracle=3 cfg217=Gap
+```
+
+CFG-217 remains `Gap` because 129 parser rows are still audit-only, but the path
+parser family is now oracle-complete.
+
+## Conclusion
+
+Path parser semantics are now proven for the pinned Ghostty target at the
+config-option boundary. The main lesson is that path parity must follow
+`Path.parseCLI`/`RepeatablePath.parseCLI`, not only the lower-level `Path.parse`
+helper: parsed-empty single-path values are no-ops, raw empty values reset
+through `parseIntoField`, and parser-layer embedded NUL bytes are accepted.
+
+## Completion Review
+
+Fresh-context adversarial completion review approved the result with no
+findings. The reviewer independently verified the focused path oracle, the
+changed legacy path tests, Rust fmt check, `git diff --check`, and the generated
+matrix/inventory state: 203 parser rows, 3 path rows, 74 `Oracle complete`, 129
+`Audit covered`, 0 `Gap` rows, and CFG-217 still `Gap` with owner
+`Experiment 20`.

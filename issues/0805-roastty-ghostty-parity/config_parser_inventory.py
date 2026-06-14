@@ -29,6 +29,7 @@ INTEGER_ORACLE_TEST = "integer_config_parser_family_oracle"
 FLOAT_ORACLE_TEST = "float_config_parser_family_oracle"
 STRING_ORACLE_TEST = "string_config_parser_family_oracle"
 DURATION_ORACLE_TEST = "duration_config_parser_family_oracle"
+PATH_ORACLE_TEST = "path_config_parser_family_oracle"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -119,6 +120,7 @@ def parser_path(text: str) -> str:
         "set_optional_value_field",
         "set_value_field",
         "set_packed_field",
+        "set_optional_config_file_path_field",
         "set_f64_field",
         "set_f32_field",
         "parse_u32_scalar_field",
@@ -158,7 +160,11 @@ def parser_family(path_text: str, arm_text: str) -> str:
         return "duration"
     if "Color::parse_cli" in arm_text or "TerminalColor::parse_cli" in arm_text or "BoldColor::parse_cli" in arm_text:
         return "color"
-    if "ConfigFilePath::parse_single" in arm_text or "config_file.parse_cli" in arm_text:
+    if (
+        "ConfigFilePath::parse_single" in arm_text
+        or "set_optional_config_file_path_field" in arm_text
+        or "config_file.parse_cli" in arm_text
+    ):
         return "path"
     if "parse_string_field" in path_text:
         return "string"
@@ -251,6 +257,7 @@ def update_cfg217(
     oracle_count: int,
     incomplete_count: int,
     gap_count: int,
+    owner_experiment: int,
 ) -> None:
     lines = matrix.read_text().splitlines()
     updated: list[str] = []
@@ -261,7 +268,7 @@ def update_cfg217(
                 "All parser rows are Oracle complete."
                 if incomplete_count == 0
                 else (
-                    f"Experiment 19 proves {oracle_count} parser rows Oracle "
+                    f"Experiment {owner_experiment} proves {oracle_count} parser rows Oracle "
                     f"complete; {incomplete_count} parser rows are not Oracle "
                     f"complete and {gap_count} parser rows are dispatch gaps."
                 )
@@ -281,7 +288,7 @@ def update_cfg217(
                 "issues/0805-roastty-ghostty-parity/config-matrix.md` | Before closing "
                 "Issue 805 and when config parser dispatch changes. | CFG-217 only "
                 "passes when every parser inventory row is `Oracle complete`; audit "
-                f"coverage alone is insufficient. | Experiment 19 | {notes} |"
+                f"coverage alone is insufficient. | Experiment {owner_experiment} | {notes} |"
             )
         updated.append(line)
     matrix.write_text("\n".join(updated) + "\n")
@@ -296,6 +303,7 @@ def build_rows(
     float_oracle_present: bool,
     string_oracle_present: bool,
     duration_oracle_present: bool,
+    path_oracle_present: bool,
 ) -> tuple[list[ParserRow], list[str], list[str], list[str]]:
     arm_by_key: dict[str, ParserArm] = {}
     for arm in arms:
@@ -365,6 +373,14 @@ def build_rows(
                 "empty-reset semantics"
             )
             missing_evidence = "None for direct duration parser semantics."
+        elif path_oracle_present and family == "path":
+            status = "Oracle complete"
+            evidence = (
+                "Shared path parser oracle covers optional markers, quoted literal "
+                "markers, parsed-empty no-op behavior, raw-empty resets, embedded "
+                "NULs, repeatable accumulation, and formatting"
+            )
+            missing_evidence = "None for direct path parser semantics."
         elif option == "config-default-files":
             missing_evidence = (
                 "Direct parser and effective default-file load-order semantics must "
@@ -409,6 +425,7 @@ def main() -> int:
     float_oracle_present = FLOAT_ORACLE_TEST in roastty_source
     string_oracle_present = STRING_ORACLE_TEST in roastty_source
     duration_oracle_present = DURATION_ORACLE_TEST in roastty_source
+    path_oracle_present = PATH_ORACLE_TEST in roastty_source
     rows, missing, compatibility_only, noncanonical = build_rows(
         upstream,
         aliases,
@@ -418,12 +435,14 @@ def main() -> int:
         float_oracle_present,
         string_oracle_present,
         duration_oracle_present,
+        path_oracle_present,
     )
     emit_inventory(rows, compatibility_only, args.output)
     incomplete = [row for row in rows if row.status != "Oracle complete"]
     oracle_count = sum(row.status == "Oracle complete" for row in rows)
     gap_count = sum(row.status == "Gap" for row in rows)
-    update_cfg217(args.matrix, args.output, oracle_count, len(incomplete), gap_count)
+    owner_experiment = 20 if path_oracle_present else 19
+    update_cfg217(args.matrix, args.output, oracle_count, len(incomplete), gap_count, owner_experiment)
 
     print(f"ghostty_canonical={len(upstream)}")
     print(f"roastty_parser_rows={len(rows)}")
