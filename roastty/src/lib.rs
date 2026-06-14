@@ -23892,6 +23892,64 @@ mod tests {
     }
 
     #[test]
+    fn config_get_quit_after_last_window_closed_runtime() {
+        let config = roastty_config_new();
+
+        assert!(!config_get_bool_value(
+            config,
+            c"quit-after-last-window-closed"
+        ));
+
+        {
+            let config_ref = config_from_handle(config).unwrap();
+            config_ref
+                .parsed
+                .set("quit-after-last-window-closed", Some("true"))
+                .unwrap();
+            config_ref.sync_from_parsed_config();
+        }
+        assert!(config_get_bool_value(
+            config,
+            c"quit-after-last-window-closed"
+        ));
+
+        {
+            let config_ref = config_from_handle(config).unwrap();
+            config_ref
+                .parsed
+                .set("quit-after-last-window-closed", Some(""))
+                .unwrap();
+            config_ref.sync_from_parsed_config();
+        }
+        assert!(!config_get_bool_value(
+            config,
+            c"quit-after-last-window-closed"
+        ));
+
+        let mut value = true;
+        assert!(!roastty_config_get(
+            ptr::null_mut(),
+            (&mut value as *mut bool).cast(),
+            c"quit-after-last-window-closed".as_ptr(),
+            "quit-after-last-window-closed".len()
+        ));
+        assert!(!roastty_config_get(
+            config,
+            ptr::null_mut(),
+            c"quit-after-last-window-closed".as_ptr(),
+            "quit-after-last-window-closed".len()
+        ));
+        assert!(!roastty_config_get(
+            config,
+            (&mut value as *mut bool).cast(),
+            ptr::null(),
+            "quit-after-last-window-closed".len()
+        ));
+
+        roastty_config_free(config);
+    }
+
+    #[test]
     fn config_get_palette_default_set_generate_and_clone() {
         let config = roastty_config_new();
         let default_palette = config_get_palette_value(config);

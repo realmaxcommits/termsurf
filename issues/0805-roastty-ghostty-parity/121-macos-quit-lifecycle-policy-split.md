@@ -173,3 +173,103 @@ design and linked README entry.
 **Verdict:** Approved.
 
 Findings: none.
+
+## Result
+
+**Result:** Pass.
+
+Implemented the split:
+
+- added `config_get_quit_after_last_window_closed_runtime` in
+  `roastty/src/lib.rs` to prove `roastty_config_get` exposes
+  `quit-after-last-window-closed` with the macOS default `false`, parsed `true`,
+  reset/default `false`, and invalid null input rejection;
+- added `macos_quit_lifecycle_parity.py` to compare the pinned Ghostty and
+  Roastty macOS app delegate/config getter blocks after expected app-name
+  renaming, verify the embedded C ABI key exposure, and verify
+  `quit-after-last-window-closed-delay` is Linux-only upstream and unused by
+  Ghostty/Roastty macOS Swift sources;
+- replaced the old combined `RUNTIME-010B2B2B` gap with `RUNTIME-010B2B2B1` as
+  `Oracle complete` and `RUNTIME-010B2B2B2` as `Not applicable`;
+- regenerated `config-runtime-inventory.md` and `config-matrix.md`, leaving
+  `CFG-223` as `Gap` because unrelated runtime rows remain open;
+- added the README learning that macOS quit-after-last-window parity is a narrow
+  config bridge, while the quit delay is Linux/GTK-only upstream.
+
+Verification passed:
+
+```sh
+cargo test --manifest-path roastty/Cargo.toml config_get_quit_after_last_window_closed_runtime
+PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/macos_quit_lifecycle_parity.py
+PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile \
+  issues/0805-roastty-ghostty-parity/macos_quit_lifecycle_parity.py
+cargo fmt --manifest-path roastty/Cargo.toml -- --check
+PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/config_runtime_inventory.py \
+  --output issues/0805-roastty-ghostty-parity/config-runtime-inventory.md \
+  --matrix issues/0805-roastty-ghostty-parity/config-matrix.md
+PYTHONDONTWRITEBYTECODE=1 python3 - <<'PY'
+from pathlib import Path
+
+inventory = Path("issues/0805-roastty-ghostty-parity/config-runtime-inventory.md").read_text()
+matrix = Path("issues/0805-roastty-ghostty-parity/config-matrix.md").read_text()
+
+rows = {}
+for line in inventory.splitlines():
+    if not line.startswith("| RUNTIME-"):
+        continue
+    cells = [cell.strip() for cell in line.strip("|").split("|")]
+    rows[cells[0]] = cells
+
+assert "RUNTIME-010B2B2B" not in rows, rows.get("RUNTIME-010B2B2B")
+assert len(rows) == 30, len(rows)
+assert rows["RUNTIME-010B2B2B1"][5] == "Oracle complete", rows["RUNTIME-010B2B2B1"]
+assert "config_get_quit_after_last_window_closed_runtime" in (
+    rows["RUNTIME-010B2B2B1"][6] + rows["RUNTIME-010B2B2B1"][9]
+), rows["RUNTIME-010B2B2B1"]
+assert "macos_quit_lifecycle_parity.py" in (
+    rows["RUNTIME-010B2B2B1"][6] + rows["RUNTIME-010B2B2B1"][9]
+), rows["RUNTIME-010B2B2B1"]
+assert rows["RUNTIME-010B2B2B1"][7].startswith("None"), rows["RUNTIME-010B2B2B1"]
+assert rows["RUNTIME-010B2B2B2"][5] == "Not applicable", rows["RUNTIME-010B2B2B2"]
+assert "quit-after-last-window-closed-delay" in (
+    rows["RUNTIME-010B2B2B2"][1] + rows["RUNTIME-010B2B2B2"][6]
+), rows["RUNTIME-010B2B2B2"]
+cfg223 = next(line for line in matrix.splitlines() if line.startswith("| CFG-223 "))
+assert "| Gap " in cfg223, cfg223
+PY
+prettier --check issues/0805-roastty-ghostty-parity/README.md \
+  issues/0805-roastty-ghostty-parity/121-macos-quit-lifecycle-policy-split.md \
+  issues/0805-roastty-ghostty-parity/config-matrix.md \
+  issues/0805-roastty-ghostty-parity/config-runtime-inventory.md
+git diff --check
+```
+
+The inventory generator reported:
+
+```text
+runtime_rows=30
+oracle_complete=23
+closed=25
+audit_covered=0
+incomplete=5
+gap=5
+cfg223=Gap
+```
+
+## Conclusion
+
+The macOS `quit-after-last-window-closed` behavior is now guarded at the copied
+Swift app bridge and the embedded C ABI boundary. The
+`quit-after-last-window-closed-delay` runtime effect is not applicable to
+Roastty's copied macOS app because pinned Ghostty documents and implements it as
+Linux/GTK-only. `RUNTIME-011` still owns broader macOS app/window/menu lifecycle
+walkthrough work.
+
+## Completion Review
+
+Adversarial Codex subagent, fresh context, read-only review of the completed
+experiment, implementation diff, recorded result, and issue README status.
+
+**Verdict:** Approved.
+
+Findings: none.

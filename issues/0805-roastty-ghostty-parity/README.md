@@ -326,6 +326,12 @@ experiment files until they are proven.
   `runtime_ms <= abnormal-command-exit-runtime`, try the app action first, and
   hold after GUI or terminal fallback handling; normal exits can write fallback
   text when unhandled but still follow `wait-after-command` close/hold policy.
+- **macOS quit-after-last-window parity is a config bridge.** Pinned Ghostty's
+  macOS app returns `derivedConfig.shouldQuitAfterLastWindowClosed` from
+  `applicationShouldTerminateAfterLastWindowClosed`, while
+  `quit-after-last-window-closed-delay` is documented and implemented upstream
+  as Linux/GTK-only. Keep broad macOS app/window/menu lifecycle walkthrough work
+  separate from this narrow quit-after-last-window bridge.
 - **`scrollback-limit` runtime parity has two tiers.** Roastty's terminal core
   currently models scrollback capacity in rows, while pinned Ghostty documents
   `scrollback-limit` as a byte quota. A focused experiment may prove the
@@ -1227,4 +1233,4 @@ remains open.
 - [Experiment 120: Child exited fallback policy split](120-child-exited-fallback-policy-split.md)
   — **Pass**
 - [Experiment 121: macOS quit lifecycle policy split](121-macos-quit-lifecycle-policy-split.md)
-  — **Designed**
+  — **Pass**

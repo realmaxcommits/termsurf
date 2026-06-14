@@ -453,23 +453,46 @@ ROWS = [
         guard_command="`cargo test --manifest-path roastty/Cargo.toml child_exited_fallback_policy_runtime && cargo test --manifest-path roastty/Cargo.toml child_exited_payload_runtime && cargo test --manifest-path roastty/Cargo.toml wait_after_command_runtime && cargo test --manifest-path roastty/Cargo.toml process_exited && cargo test --manifest-path roastty/Cargo.toml close_surface`",
     ),
     RuntimeRow(
-        id="RUNTIME-010B2B2B",
-        behavior="PTY/process quit-after-last-window-closed, quit-after-last-window-closed-delay, and remaining lifecycle policy effects",
-        ghostty_reference="`vendor/ghostty/src/config/Config.zig` `abnormal-command-exit-runtime` and quit policy fields; `vendor/ghostty/src/Surface.zig::childExited`; app lifecycle quit policy paths",
-        roastty_reference="`roastty/src/lib.rs::start_termio`, app lifecycle callbacks, process exit handling, and macOS app lifecycle",
+        id="RUNTIME-010B2B2B1",
+        behavior="macOS app quit-after-last-window-closed config bridge",
+        ghostty_reference="`vendor/ghostty/macos/Sources/App/macOS/AppDelegate.swift::applicationShouldTerminateAfterLastWindowClosed`; `vendor/ghostty/macos/Sources/Ghostty/Ghostty.Config.swift::shouldQuitAfterLastWindowClosed`; `vendor/ghostty/src/config/Config.zig` `quit-after-last-window-closed`",
+        roastty_reference="`roastty/macos/Sources/App/macOS/AppDelegate.swift::applicationShouldTerminateAfterLastWindowClosed`; `roastty/macos/Sources/Roastty/Roastty.Config.swift::shouldQuitAfterLastWindowClosed`; `roastty/src/lib.rs::roastty_config_get`",
         family="process",
-        status="Gap",
+        status="Oracle complete",
         evidence=(
-            "Experiments 118 through 120 split out normal `wait-after-command` "
-            "child-exit close/hold behavior, child-exit payload/action "
-            "dispatch, terminal fallback text, and abnormal-exit close/hold "
-            "policy. `quit-after-last-window-closed`, "
-            "`quit-after-last-window-closed-delay`, and remaining app lifecycle "
-            "policy behavior still need focused runtime or GUI proof or fixes."
+            "Experiment 121 adds "
+            "`config_get_quit_after_last_window_closed_runtime` to prove "
+            "`roastty_config_get` returns the macOS default `false`, parsed "
+            "`true`, reset/default `false`, and rejects invalid null handles or "
+            "outputs for `quit-after-last-window-closed`. "
+            "`macos_quit_lifecycle_parity.py` proves the copied Roastty macOS "
+            "`applicationShouldTerminateAfterLastWindowClosed`, "
+            "`DerivedConfig.shouldQuitAfterLastWindowClosed`, and Swift config "
+            "getter blocks match pinned Ghostty after expected app-name "
+            "renaming, and that the embedded C ABI exposes the same config key."
         ),
-        missing_evidence="Add runtime proof or fixes for quit-after-last-window-closed, quit-after-last-window-closed-delay, and remaining lifecycle policy behavior.",
+        missing_evidence="None for the copied macOS quit-after-last-window-closed config bridge covered by these guards.",
         guard_tier="Tier 2",
-        guard_command="TBD by future CFG-223 PTY/process lifecycle experiment.",
+        guard_command="`cargo test --manifest-path roastty/Cargo.toml config_get_quit_after_last_window_closed_runtime && PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/macos_quit_lifecycle_parity.py`",
+    ),
+    RuntimeRow(
+        id="RUNTIME-010B2B2B2",
+        behavior="macOS app quit-after-last-window-closed-delay effect",
+        ghostty_reference="`vendor/ghostty/src/config/Config.zig` documents `quit-after-last-window-closed-delay` as Linux-only; `vendor/ghostty/src/apprt/gtk/class/application.zig` implements the GTK/Linux quit timer",
+        roastty_reference="`roastty/macos/Sources`; Roastty's Issue 805 target is the copied macOS app/runtime",
+        family="process",
+        status="Not applicable",
+        evidence=(
+            "Experiment 121's `macos_quit_lifecycle_parity.py` verifies "
+            "pinned Ghostty documents `quit-after-last-window-closed-delay` as "
+            "only implemented on Linux, verifies Ghostty's GTK app consumes "
+            "the delay through the quit timer path, and verifies neither "
+            "Ghostty nor Roastty macOS Swift sources consume "
+            "`quit-after-last-window-closed-delay`."
+        ),
+        missing_evidence="None for Roastty's copied macOS app; Linux/GTK quit delay behavior is outside the Issue 805 macOS app target.",
+        guard_tier="Tier 2",
+        guard_command="`PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/macos_quit_lifecycle_parity.py`",
     ),
     RuntimeRow(
         id="RUNTIME-011",
@@ -588,7 +611,8 @@ EXPECTED_IDS = [
     "RUNTIME-010B2A",
     "RUNTIME-010B2B1",
     "RUNTIME-010B2B2A",
-    "RUNTIME-010B2B2B",
+    "RUNTIME-010B2B2B1",
+    "RUNTIME-010B2B2B2",
     "RUNTIME-011",
     "RUNTIME-012A",
     "RUNTIME-012B",
