@@ -442,3 +442,4 @@ remains open.
 - [Experiment 18: String parser oracle](18-string-parser-oracle.md) — **Pass**
 - [Experiment 19: Duration parser oracle](19-duration-parser-oracle.md) —
   **Pass**
+- [Experiment 20: Path parser oracle](20-path-parser-oracle.md) — **Designed**
