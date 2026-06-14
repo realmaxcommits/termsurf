@@ -1285,3 +1285,5 @@ remains open.
   — **Pass**
 - [Experiment 127: Title PWD fallback runtime](127-title-pwd-fallback-runtime.md)
   — **Pass**
+- [Experiment 128: OSC 7 PWD normalization runtime](128-osc7-pwd-normalization-runtime.md)
+  — **Designed**
