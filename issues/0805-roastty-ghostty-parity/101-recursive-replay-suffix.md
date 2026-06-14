@@ -158,3 +158,132 @@ Fix:
   as suffix material or otherwise not applied as config.
 
 Final verdict: Approved.
+
+## Result
+
+**Result:** Pass
+
+Implemented the missing recursive replay suffix behavior. Roastty now has an
+internal replay marker for the initial-command suffix, and
+`load_recursive_files_from_config` temporarily removes that suffix before
+loading recursive config files, then appends it back afterward. This matches the
+pinned Ghostty ordering rule that recursive `config-file` replay steps must be
+before the `-e`/initial-command suffix.
+
+The new focused test proves:
+
+- recursive config-file replay entries are inserted before the marker;
+- recursive replay entries keep `ConfigSetSource::File` config-entry
+  representation;
+- the original suffix marker and arguments remain in order and unchanged;
+- replaying the resulting entries applies the recursive config value and
+  preserves the original direct initial command;
+- a config entry placed after the marker is treated as suffix material, does not
+  apply as config, and therefore fails the recursive-value-applied assertion.
+
+`LOAD-017` is now `Oracle complete`. The generated CFG-221 load inventory
+reports:
+
+- 18 total load rows;
+- 17 `Oracle complete` rows;
+- 1 `Audit covered` row;
+- 0 `Gap` rows;
+- 1 row not yet `Oracle complete`.
+
+CFG-221 remains `Gap` because `LOAD-001` remains audit-covered and still needs
+an end-to-end load pipeline oracle.
+
+Verification run:
+
+```bash
+cargo fmt --manifest-path roastty/Cargo.toml
+cargo test --manifest-path roastty/Cargo.toml config_recursive
+cargo test --manifest-path roastty/Cargo.toml config_replay
+cargo test --manifest-path roastty/Cargo.toml \
+  config_theme_loading_preserves_user_replay_entries
+cargo test --manifest-path roastty/Cargo.toml \
+  config_conditional_theme_rebuild_preserves_replay_entries_without_duplication
+PYTHONDONTWRITEBYTECODE=1 python3 \
+  issues/0805-roastty-ghostty-parity/config_load_inventory.py \
+  --output issues/0805-roastty-ghostty-parity/config-load-inventory.md \
+  --matrix issues/0805-roastty-ghostty-parity/config-matrix.md
+prettier --write --prose-wrap always --print-width 80 \
+  issues/0805-roastty-ghostty-parity/config-load-inventory.md \
+  issues/0805-roastty-ghostty-parity/config-matrix.md
+PYTHONDONTWRITEBYTECODE=1 python3 - <<'PY'
+import subprocess
+from pathlib import Path
+issue=Path('issues/0805-roastty-ghostty-parity')
+matrix=(issue/'config-matrix.md').read_text()
+old_matrix=subprocess.check_output(['git','show','3001b1880:issues/0805-roastty-ghostty-parity/config-matrix.md'], text=True)
+for cfg in ['CFG-217','CFG-218','CFG-219','CFG-220']:
+    old=next(line for line in old_matrix.splitlines() if line.startswith(f'| {cfg} |'))
+    new=next(line for line in matrix.splitlines() if line.startswith(f'| {cfg} |'))
+    assert old == new, cfg
+rows=[]
+for line in (issue/'config-load-inventory.md').read_text().splitlines():
+    if line.startswith('| LOAD-'):
+        rows.append([cell.strip() for cell in line.strip('|').split('|')])
+expected_ids=[f'LOAD-{i:03d}' for i in range(1,19)]
+ids=[row[0] for row in rows]
+assert ids == expected_ids, ids
+statuses={row[0]: row[5] for row in rows}
+assert statuses['LOAD-017']=='Oracle complete', statuses['LOAD-017']
+oracle=sum(s=='Oracle complete' for s in statuses.values())
+incomplete=len(rows)-oracle
+gaps=sum(s=='Gap' for s in statuses.values())
+audit=sum(s=='Audit covered' for s in statuses.values())
+assert (len(rows), oracle, audit, gaps, incomplete)==(18,17,1,0,1), (len(rows), oracle, audit, gaps, incomplete)
+cfg221=next(line for line in matrix.splitlines() if line.startswith('| CFG-221 |'))
+cells=[c.strip() for c in cfg221.strip('|').split('|')]
+assert cells[4]=='Gap', cells[4]
+assert 'config-load-inventory.md' in cfg221
+assert '17 rows Oracle complete' in cfg221
+assert '1 rows are not Oracle complete' in cfg221
+assert '0 rows are load gaps' in cfg221
+print('load_rows=18 oracle_complete=17 audit_covered=1 incomplete=1 gaps=0 cfg221=Gap load017=Oracle complete protected_cfg217_220_unchanged=true')
+PY
+```
+
+The focused test filters passed. The matrix assertion printed:
+
+```text
+load_rows=18 oracle_complete=17 audit_covered=1 incomplete=1 gaps=0 cfg221=Gap load017=Oracle complete protected_cfg217_220_unchanged=true
+```
+
+## Conclusion
+
+Recursive replay placement before the initial-command suffix now has a
+failure-sensitive ordering oracle and is no longer a structural load gap.
+CFG-221 now has no `Gap` rows left; the remaining work is the end-to-end
+`LOAD-001` pipeline oracle.
+
+## Completion Review
+
+Adversarial reviewer: Codex subagent with fresh context.
+
+Verdict: Approved.
+
+The reviewer found no required fixes before the result commit. The review
+confirmed:
+
+- the implementation matches pinned Ghostty's recursive replay suffix rule at
+  the config replay layer;
+- recursive replay entries are inserted before the initial-command marker;
+- entries after the marker are treated as suffix material;
+- replay preserves the original suffix;
+- the focused test is failure-sensitive and covers ordering, config-entry
+  representation, replay-as-config behavior, unchanged suffix, and the
+  after-marker negative case;
+- only `LOAD-017` is promoted; `LOAD-001` remains `Audit covered`, CFG-221
+  remains `Gap`, and CFG-217 through CFG-220 are unchanged.
+
+The reviewer also independently ran:
+
+```bash
+cargo test --manifest-path roastty/Cargo.toml \
+  config_recursive_replay_entries_insert_before_initial_command_suffix
+cargo test --manifest-path roastty/Cargo.toml config_replay
+```
+
+Both passed.

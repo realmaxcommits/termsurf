@@ -1167,7 +1167,7 @@ impl Config {
         begin_cli_batch: bool,
     ) -> Result<(), ConfigSetError> {
         self.set_from_source(key, value, source)?;
-        self.replay_entries.push(ConfigReplayEntry {
+        self.replay_entries.push(ConfigReplayEntry::Config {
             key: key.to_string(),
             value: value.map(ToString::to_string),
             source,
@@ -1185,23 +1185,59 @@ impl Config {
         target: &mut Config,
     ) -> Result<(), ConfigSetError> {
         let mut cli_replay_active = false;
+        let mut initial_command_args: Option<Vec<String>> = None;
         for entry in entries {
-            if entry.source == ConfigSetSource::Cli && entry.begin_cli_batch {
+            if let Some(args) = initial_command_args.as_mut() {
+                match entry {
+                    ConfigReplayEntry::InitialCommandMarker => {}
+                    ConfigReplayEntry::InitialCommandArg(arg) => args.push(arg.clone()),
+                    ConfigReplayEntry::Config { key, value, .. } => {
+                        args.push(match value {
+                            Some(value) => format!("{key}={value}"),
+                            None => key.clone(),
+                        });
+                    }
+                }
+                continue;
+            }
+            let ConfigReplayEntry::Config {
+                key,
+                value,
+                source,
+                begin_cli_batch,
+            } = entry
+            else {
+                if cli_replay_active {
+                    target.end_cli_replay();
+                    cli_replay_active = false;
+                }
+                match entry {
+                    ConfigReplayEntry::InitialCommandMarker => {
+                        initial_command_args = Some(Vec::new());
+                    }
+                    ConfigReplayEntry::InitialCommandArg(arg) => {
+                        if let Some(args) = initial_command_args.as_mut() {
+                            args.push(arg.clone());
+                        }
+                    }
+                    ConfigReplayEntry::Config { .. } => unreachable!(),
+                }
+                continue;
+            };
+            if *source == ConfigSetSource::Cli && *begin_cli_batch {
                 if cli_replay_active {
                     target.end_cli_replay();
                 }
                 target.begin_cli_replay();
                 cli_replay_active = true;
-            } else if entry.source == ConfigSetSource::Cli && !cli_replay_active {
+            } else if *source == ConfigSetSource::Cli && !cli_replay_active {
                 target.begin_cli_replay();
                 cli_replay_active = true;
-            } else if entry.source != ConfigSetSource::Cli && cli_replay_active {
+            } else if *source != ConfigSetSource::Cli && cli_replay_active {
                 target.end_cli_replay();
                 cli_replay_active = false;
             }
-            if let Err(error) =
-                target.set_from_source(&entry.key, entry.value.as_deref(), entry.source)
-            {
+            if let Err(error) = target.set_from_source(key, value.as_deref(), *source) {
                 if cli_replay_active {
                     target.end_cli_replay();
                 }
@@ -1210,6 +1246,9 @@ impl Config {
         }
         if cli_replay_active {
             target.end_cli_replay();
+        }
+        if let Some(args) = initial_command_args {
+            target.initial_command = Some(Command::Direct(args));
         }
         Ok(())
     }
@@ -1226,6 +1265,16 @@ impl Config {
         self.font_family_bold.overwrite_next = false;
         self.font_family_italic.overwrite_next = false;
         self.font_family_bold_italic.overwrite_next = false;
+    }
+
+    #[cfg(test)]
+    fn append_initial_command_replay_suffix_for_test(&mut self, args: &[&str]) {
+        self.replay_entries
+            .push(ConfigReplayEntry::InitialCommandMarker);
+        self.replay_entries.extend(
+            args.iter()
+                .map(|arg| ConfigReplayEntry::InitialCommandArg((*arg).to_string())),
+        );
     }
 
     fn set_from_source(
@@ -2925,6 +2974,11 @@ impl Config {
     pub(crate) fn load_recursive_files_from_config(&mut self) -> ConfigRecursiveLoadReport {
         let mut report = ConfigRecursiveLoadReport::default();
         let mut loaded = HashSet::new();
+        let replay_suffix = self
+            .replay_entries
+            .iter()
+            .position(|entry| matches!(entry, ConfigReplayEntry::InitialCommandMarker))
+            .map(|index| self.replay_entries.split_off(index));
         let mut index = 0;
         while index < self.config_file.list.len() {
             let path = self.config_file.list[index].path().to_string();
@@ -2961,6 +3015,9 @@ impl Config {
                     error: ConfigRecursiveFileErrorKind::Io(error),
                 }),
             }
+        }
+        if let Some(replay_suffix) = replay_suffix {
+            self.replay_entries.extend(replay_suffix);
         }
         report
     }
@@ -3216,11 +3273,15 @@ enum ConfigSetSource {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct ConfigReplayEntry {
-    key: String,
-    value: Option<String>,
-    source: ConfigSetSource,
-    begin_cli_batch: bool,
+enum ConfigReplayEntry {
+    Config {
+        key: String,
+        value: Option<String>,
+        source: ConfigSetSource,
+        begin_cli_batch: bool,
+    },
+    InitialCommandMarker,
+    InitialCommandArg(String),
 }
 
 /// An error parsing a `RepeatableConfigPath` (upstream `error.ValueRequired`).
@@ -13243,6 +13304,92 @@ mod tests {
     }
 
     #[test]
+    fn config_recursive_replay_entries_insert_before_initial_command_suffix() {
+        let dir = unique_config_test_dir("recursive-replay-suffix");
+        let child = dir.join("child.conf");
+        write_config_file(&child, "title = Recursive Title\n");
+        let child = std::fs::canonicalize(&child).unwrap();
+
+        let mut cfg = Config::default();
+        assert!(cfg
+            .set_cli_args_from_base(
+                [format!("--config-file={}", child.display()).as_str()],
+                &dir,
+            )
+            .is_empty());
+        cfg.append_initial_command_replay_suffix_for_test(&["printf", "hello"]);
+        let report = cfg.load_recursive_files_from_config();
+
+        assert!(report.errors.is_empty());
+        assert!(report.cycles.is_empty());
+        assert_eq!(report.loaded.len(), 1);
+        assert_eq!(cfg.title.as_deref(), Some("Recursive Title"));
+
+        let marker_index = cfg
+            .replay_entries
+            .iter()
+            .position(|entry| matches!(entry, ConfigReplayEntry::InitialCommandMarker))
+            .expect("marker");
+        let recursive_index = cfg
+            .replay_entries
+            .iter()
+            .position(|entry| replay_config_key(entry) == Some("title"))
+            .expect("recursive title replay entry");
+        assert!(recursive_index < marker_index);
+        assert_eq!(
+            replay_config_entry(&cfg.replay_entries[recursive_index]),
+            (
+                "title",
+                Some("Recursive Title"),
+                ConfigSetSource::File,
+                false
+            )
+        );
+        assert_eq!(
+            &cfg.replay_entries[marker_index..],
+            &[
+                ConfigReplayEntry::InitialCommandMarker,
+                ConfigReplayEntry::InitialCommandArg("printf".to_string()),
+                ConfigReplayEntry::InitialCommandArg("hello".to_string()),
+            ]
+        );
+
+        let mut replayed = Config::default();
+        cfg.replay_into(&mut replayed).unwrap();
+        assert_eq!(replayed.title.as_deref(), Some("Recursive Title"));
+        assert_eq!(
+            replayed.initial_command,
+            Some(Command::Direct(vec![
+                "printf".to_string(),
+                "hello".to_string()
+            ]))
+        );
+
+        let mut bad_order = Config::default();
+        let entries = vec![
+            ConfigReplayEntry::InitialCommandMarker,
+            ConfigReplayEntry::InitialCommandArg("printf".to_string()),
+            ConfigReplayEntry::Config {
+                key: "title".to_string(),
+                value: Some("Wrong Side".to_string()),
+                source: ConfigSetSource::File,
+                begin_cli_batch: false,
+            },
+        ];
+        Config::replay_entries_into(&entries, &mut bad_order).unwrap();
+        assert_eq!(bad_order.title, Config::default().title);
+        assert_eq!(
+            bad_order.initial_command,
+            Some(Command::Direct(vec![
+                "printf".to_string(),
+                "title=Wrong Side".to_string()
+            ]))
+        );
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
     fn config_default_files_parser_family_oracle() {
         let mut cfg = Config::default();
         assert!(cfg.config_default_files);
@@ -13306,10 +13453,13 @@ mod tests {
         assert_eq!(cfg.title.as_deref(), Some("CLI Only"));
         assert_eq!(cfg.fullscreen, Fullscreen::False);
         assert_eq!(cfg.replay_entries.len(), 2);
-        assert!(cfg
-            .replay_entries
-            .iter()
-            .all(|entry| entry.source == ConfigSetSource::Cli));
+        assert!(cfg.replay_entries.iter().all(|entry| matches!(
+            entry,
+            ConfigReplayEntry::Config {
+                source: ConfigSetSource::Cli,
+                ..
+            }
+        )));
 
         let mut cfg = Config::default();
         let report = cfg.load_default_files_from_paths(DefaultConfigPaths {
@@ -17795,6 +17945,27 @@ mod tests {
         DEFAULT_CONFIG_TEMPLATE.replace("{[path]s}", &path.display().to_string())
     }
 
+    fn replay_config_entry(
+        entry: &ConfigReplayEntry,
+    ) -> (&str, Option<&str>, ConfigSetSource, bool) {
+        match entry {
+            ConfigReplayEntry::Config {
+                key,
+                value,
+                source,
+                begin_cli_batch,
+            } => (key, value.as_deref(), *source, *begin_cli_batch),
+            other => panic!("expected config replay entry, got {other:?}"),
+        }
+    }
+
+    fn replay_config_key(entry: &ConfigReplayEntry) -> Option<&str> {
+        match entry {
+            ConfigReplayEntry::Config { key, .. } => Some(key),
+            _ => None,
+        }
+    }
+
     // Serializes all process-global env/cwd mutation across test threads so the
     // HOME/cwd guards below cannot race (Issue 801, Exp 837). Poison-resilient:
     // the lock guards no data (a pure serialization mutex over `()`), so a test
@@ -18329,25 +18500,22 @@ mod tests {
         );
 
         assert_eq!(cfg.replay_entries.len(), 4);
-        assert_eq!(cfg.replay_entries[0].key, "term");
         assert_eq!(
-            cfg.replay_entries[0].value.as_deref(),
-            Some("xterm-256color")
+            replay_config_entry(&cfg.replay_entries[0]),
+            ("term", Some("xterm-256color"), ConfigSetSource::File, false)
         );
-        assert_eq!(cfg.replay_entries[0].source, ConfigSetSource::File);
-        assert!(!cfg.replay_entries[0].begin_cli_batch);
-        assert_eq!(cfg.replay_entries[1].key, "title");
-        assert_eq!(cfg.replay_entries[1].value.as_deref(), Some("File Title"));
-        assert_eq!(cfg.replay_entries[1].source, ConfigSetSource::File);
-        assert!(!cfg.replay_entries[1].begin_cli_batch);
-        assert_eq!(cfg.replay_entries[2].key, "window-theme");
-        assert_eq!(cfg.replay_entries[2].value.as_deref(), Some("dark"));
-        assert_eq!(cfg.replay_entries[2].source, ConfigSetSource::Cli);
-        assert!(cfg.replay_entries[2].begin_cli_batch);
-        assert_eq!(cfg.replay_entries[3].key, "auto-update");
-        assert_eq!(cfg.replay_entries[3].value.as_deref(), Some("download"));
-        assert_eq!(cfg.replay_entries[3].source, ConfigSetSource::Cli);
-        assert!(!cfg.replay_entries[3].begin_cli_batch);
+        assert_eq!(
+            replay_config_entry(&cfg.replay_entries[1]),
+            ("title", Some("File Title"), ConfigSetSource::File, false)
+        );
+        assert_eq!(
+            replay_config_entry(&cfg.replay_entries[2]),
+            ("window-theme", Some("dark"), ConfigSetSource::Cli, true)
+        );
+        assert_eq!(
+            replay_config_entry(&cfg.replay_entries[3]),
+            ("auto-update", Some("download"), ConfigSetSource::Cli, false)
+        );
     }
 
     #[test]
@@ -18874,11 +19042,14 @@ mod tests {
         cfg.finalize();
 
         assert_eq!(cfg.replay_entries, before);
-        assert!(cfg.replay_entries.iter().any(|entry| entry.key == "theme"));
+        assert!(cfg
+            .replay_entries
+            .iter()
+            .any(|entry| replay_config_key(entry) == Some("theme")));
         assert!(!cfg
             .replay_entries
             .iter()
-            .any(|entry| entry.key == "background"));
+            .any(|entry| replay_config_key(entry) == Some("background")));
 
         std::fs::remove_dir_all(&dir).ok();
     }
@@ -19095,7 +19266,7 @@ mod tests {
         assert_eq!(
             dark.replay_entries
                 .iter()
-                .filter(|entry| entry.key == "theme")
+                .filter(|entry| replay_config_key(entry) == Some("theme"))
                 .count(),
             1
         );
@@ -19107,7 +19278,7 @@ mod tests {
     fn config_conditional_theme_replay_failure_returns_error() {
         let mut cfg = Config::default();
         cfg.conditional_set.insert(conditional::Key::Theme);
-        cfg.replay_entries.push(ConfigReplayEntry {
+        cfg.replay_entries.push(ConfigReplayEntry::Config {
             key: "not-a-real-field".to_string(),
             value: Some("x".to_string()),
             source: ConfigSetSource::File,

@@ -490,6 +490,12 @@ experiment files until they are proven.
   same selected target as pinned Ghostty and proving the generated file matches
   the pinned template text after substituting the selected path. CFG-221 now has
   16 `Oracle complete` rows, 2 incomplete rows, and 1 load gap.
+- **Recursive config-file replay must stay before the initial-command suffix.**
+  Experiment 101 added an internal replay boundary matching pinned Ghostty's
+  `-e` marker behavior. Recursive `config-file` replay entries are now inserted
+  before that boundary, keep file/config-entry representation, and replay as
+  config while the original initial-command suffix remains unchanged. CFG-221
+  now has 17 `Oracle complete` rows, 1 incomplete row, and 0 load gaps.
 - **`py_compile` creates bytecode even with `PYTHONDONTWRITEBYTECODE=1`.** Treat
   `issues/0805-roastty-ghostty-parity/__pycache__/` as a generated verification
   artifact and remove it after running the inventory script compile check.
@@ -1082,4 +1088,4 @@ remains open.
 - [Experiment 100: Default config template creation](100-default-config-template-creation.md)
   — **Pass**
 - [Experiment 101: Recursive replay suffix placement](101-recursive-replay-suffix.md)
-  — **Designed**
+  — **Pass**

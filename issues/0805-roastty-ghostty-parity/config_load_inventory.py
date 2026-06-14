@@ -254,18 +254,17 @@ ROWS = [
     LoadRow(
         behavior="recursive replay placement before initial command suffix",
         ghostty_reference="`vendor/ghostty/src/config/Config.zig::loadRecursiveFiles` replay-suffix branch before `-e`",
-        roastty_reference="No Roastty `-e` replay-suffix placement implementation found in `roastty/src/config/mod.rs`",
+        roastty_reference="`roastty/src/config/mod.rs::load_recursive_files_from_config`, `ConfigReplayEntry::InitialCommandMarker`",
         family="recursive config-file",
-        status="Gap",
+        status="Oracle complete",
         evidence=(
-            "Pinned Ghostty moves recursive `config-file` replay steps before "
-            "the `-e`/initial-command suffix so recursive config-file entries do "
-            "not become command arguments during replay."
+            "`config_recursive_replay_entries_insert_before_initial_command_suffix` "
+            "proves recursive config-file replay entries keep file/config-entry "
+            "representation, are inserted before the initial-command marker, "
+            "preserve the original suffix order, replay as config, and fail "
+            "the recursive-value assertion when placed after the marker."
         ),
-        missing_evidence=(
-            "Needs Roastty implementation/proof for recursive replay placement "
-            "relative to initial command suffix, or an intentional divergence."
-        ),
+        missing_evidence="None for recursive replay suffix placement behavior.",
     ),
     LoadRow(
         behavior="replay preservation for theme and conditional rebuilds",
