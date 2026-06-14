@@ -14731,6 +14731,71 @@ mod tests {
     }
 
     #[test]
+    fn font_shaping_break_config_formatter_family_oracle() {
+        fn formatted_lines(cfg: &Config) -> Vec<String> {
+            let mut out = String::new();
+            cfg.format_config(&mut out);
+            out.lines().map(ToString::to_string).collect()
+        }
+
+        fn line(lines: &[String], key: &str) -> String {
+            let prefix = format!("{key} = ");
+            lines
+                .iter()
+                .find(|line| line.starts_with(&prefix))
+                .unwrap_or_else(|| panic!("missing formatted line for {key}"))
+                .clone()
+        }
+
+        fn index(lines: &[String], key: &str) -> usize {
+            let prefix = format!("{key} = ");
+            lines
+                .iter()
+                .position(|line| line.starts_with(&prefix))
+                .unwrap_or_else(|| panic!("missing formatted line for {key}"))
+        }
+
+        let mut cfg = Config::default();
+        let default_lines = formatted_lines(&cfg);
+        assert_eq!(
+            line(&default_lines, "font-shaping-break"),
+            "font-shaping-break = cursor"
+        );
+
+        cfg.set("font-shaping-break", Some("no-cursor")).unwrap();
+        let lines = formatted_lines(&cfg);
+        assert_eq!(
+            line(&lines, "font-shaping-break"),
+            "font-shaping-break = no-cursor"
+        );
+
+        cfg.set("font-shaping-break", Some("false")).unwrap();
+        let lines = formatted_lines(&cfg);
+        assert_eq!(
+            line(&lines, "font-shaping-break"),
+            "font-shaping-break = no-cursor"
+        );
+
+        cfg.set("font-shaping-break", Some("true")).unwrap();
+        let lines = formatted_lines(&cfg);
+        assert_eq!(
+            line(&lines, "font-shaping-break"),
+            "font-shaping-break = cursor"
+        );
+
+        cfg.set("font-shaping-break", Some("")).unwrap();
+        let reset_lines = formatted_lines(&cfg);
+        assert_eq!(
+            line(&reset_lines, "font-shaping-break"),
+            "font-shaping-break = cursor"
+        );
+
+        assert!(index(&lines, "font-thicken") < index(&lines, "font-thicken-strength"));
+        assert!(index(&lines, "font-thicken-strength") < index(&lines, "font-shaping-break"));
+        assert!(index(&lines, "font-shaping-break") < index(&lines, "alpha-blending"));
+    }
+
+    #[test]
     fn enum_format_entries_shader_mouse() {
         let fmt = |v: &dyn Fn(&mut EntryFormatter)| {
             let mut out = String::new();

@@ -49,7 +49,7 @@ Pass criteria:
 - Existing representative parser/formatter tests for the covered value shape
   still pass:
   - `cargo test --manifest-path roastty/Cargo.toml font_shaping_break_format_entry`;
-  - `cargo test --manifest-path roastty/Cargo.toml packed_flag_config_parser_family_oracle`.
+  - `cargo test --manifest-path roastty/Cargo.toml packed_flags_config_parser_family_oracle`.
 - `cargo test --manifest-path roastty/Cargo.toml config_default_format_oracle`
   still passes.
 - `PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/config_formatter_inventory.py --upstream vendor/ghostty/src/config/Config.zig --upstream-formatter-file vendor/ghostty/src/config/formatter_file.zig --upstream-formatter vendor/ghostty/src/config/formatter.zig --roastty roastty/src/config/mod.rs --config-inventory issues/0805-roastty-ghostty-parity/config-inventory.md --output issues/0805-roastty-ghostty-parity/config-formatter-inventory.md --matrix issues/0805-roastty-ghostty-parity/config-matrix.md`
@@ -106,3 +106,62 @@ Reviewed by a fresh-context Codex adversarial subagent.
 Verdict: **Approved**.
 
 Findings: none.
+
+## Result
+
+**Result:** Pass
+
+Implemented `font_shaping_break_config_formatter_family_oracle` and promoted the
+single `font shaping break` formatter row in the CFG-218 inventory.
+
+Verification commands:
+
+- `cargo test --manifest-path roastty/Cargo.toml font_shaping_break_config_formatter_family_oracle`
+  passed.
+- `cargo test --manifest-path roastty/Cargo.toml font_shaping_break_format_entry`
+  passed.
+- `cargo test --manifest-path roastty/Cargo.toml packed_flags_config_parser_family_oracle`
+  passed.
+- `cargo test --manifest-path roastty/Cargo.toml config_default_format_oracle`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/config_formatter_inventory.py --upstream vendor/ghostty/src/config/Config.zig --upstream-formatter-file vendor/ghostty/src/config/formatter_file.zig --upstream-formatter vendor/ghostty/src/config/formatter.zig --roastty roastty/src/config/mod.rs --config-inventory issues/0805-roastty-ghostty-parity/config-inventory.md --output issues/0805-roastty-ghostty-parity/config-formatter-inventory.md --matrix issues/0805-roastty-ghostty-parity/config-matrix.md`
+  reported:
+  - `ghostty_canonical=203`;
+  - `roastty_formatter_rows=203`;
+  - `missing_canonical_formatter_rows=0`;
+  - `extra_formatter_rows=0`;
+  - `oracle_complete=134`;
+  - `audit_covered=69`;
+  - `gap=0`;
+  - `no_output_rows=1`.
+- The matrix assertion passed.
+
+## Conclusion
+
+The `font-shaping-break` formatter row now has a focused formatter oracle.
+CFG-218 remains `Gap`, but its formatter inventory moved from 133
+`Oracle complete` / 70 `Audit covered` / 0 gaps to 134 `Oracle complete` / 69
+`Audit covered` / 0 gaps. There are no remaining formatter rows classified as
+`font`; the remaining incomplete formatter rows are all `custom format_entry`
+rows.
+
+## Completion Review
+
+Reviewed by fresh-context Codex adversarial subagents.
+
+Initial verdict: **Changes required**.
+
+Initial findings:
+
+- Required: `config-formatter-inventory.md` was not Prettier-formatted after
+  regeneration.
+- Required: `config-matrix.md` was not Prettier-formatted after regeneration.
+
+Fix: ran Prettier on the changed Markdown files after the final generator run.
+
+Final verdict: **Approved**.
+
+The re-review confirmed both formatting findings were resolved, no new required
+findings were introduced, the Experiment 70 matrix assertion passed,
+`cargo fmt --manifest-path roastty/Cargo.toml --check` passed, and
+`git diff --check` passed.

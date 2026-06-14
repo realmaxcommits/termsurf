@@ -563,6 +563,11 @@ experiment files until they are proven.
   zero-padded, font values are descriptor family strings, and clipboard values
   are either `U+XXXX` replacement codepoints or literal strings.
   `font-shaping-break` remains unpromoted because it is a packed flag formatter.
+- **`font-shaping-break` is a one-flag packed formatter.** Experiment 70
+  promoted `font-shaping-break`. Pinned Ghostty defines only
+  `cursor: bool = true`, so the formatter emits `cursor` for the default/enabled
+  state and `no-cursor` for the disabled state; standalone boolean parser values
+  feed the same formatter output, and raw-empty values reset to `cursor`.
 - **Enum parser rows share exact keyword semantics plus compatibility
   branches.** Experiment 26 proved the 52 enum rows: required and optional enum
   fields accept exact keywords only, missing values are required, raw-empty
@@ -834,4 +839,4 @@ remains open.
 - [Experiment 69: Codepoint map formatter oracle](69-codepoint-map-formatter-oracle.md)
   — **Pass**
 - [Experiment 70: Font shaping break formatter oracle](70-font-shaping-break-formatter-oracle.md)
-  — **Designed**
+  — **Pass**

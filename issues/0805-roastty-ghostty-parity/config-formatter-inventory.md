@@ -8,8 +8,8 @@ for Issue 805 formatter-facet experiments.
 | Category                   | Count |
 | -------------------------- | ----: |
 | Canonical formatter rows   |   203 |
-| Oracle complete rows       |   133 |
-| Audit covered rows         |    70 |
+| Oracle complete rows       |   134 |
+| Audit covered rows         |    69 |
 | Gap rows                   |     0 |
 | Intentional no-output rows |     1 |
 
@@ -23,9 +23,9 @@ for Issue 805 formatter-facet experiments.
 | command palette        |     1 |
 | custom format_entry    |    69 |
 | float                  |     8 |
-| font                   |     1 |
 | font repeatable string |     5 |
 | font scalar            |     6 |
+| font shaping break     |     1 |
 | font style             |     5 |
 | font variation         |     4 |
 | integer                |     6 |
@@ -115,7 +115,7 @@ for Issue 805 formatter-facet experiments.
 | FORMAT-063 | `font-family-bold-italic`               | `.format_entry`                          | font repeatable string | Oracle complete | Font repeatable string formatter oracle covers empty-list void output, multiple formatted lines in insertion order, raw-empty resets, byte-preserving font-family and font-feature string output, and representative order checks; `roastty/src/config/mod.rs:749`                                                                                                                                                     | None for font repeatable string formatter rows.                                                           |
 | FORMAT-064 | `font-family-italic`                    | `.format_entry`                          | font repeatable string | Oracle complete | Font repeatable string formatter oracle covers empty-list void output, multiple formatted lines in insertion order, raw-empty resets, byte-preserving font-family and font-feature string output, and representative order checks; `roastty/src/config/mod.rs:747`                                                                                                                                                     | None for font repeatable string formatter rows.                                                           |
 | FORMAT-065 | `font-feature`                          | `.format_entry`                          | font repeatable string | Oracle complete | Font repeatable string formatter oracle covers empty-list void output, multiple formatted lines in insertion order, raw-empty resets, byte-preserving font-family and font-feature string output, and representative order checks; `roastty/src/config/mod.rs:761`                                                                                                                                                     | None for font repeatable string formatter rows.                                                           |
-| FORMAT-066 | `font-shaping-break`                    | `.format_entry`                          | font                   | Audit covered   | Formatter dispatch path identified; non-default oracle still required; `roastty/src/config/mod.rs:778`                                                                                                                                                                                                                                                                                                                 | Full non-default value formatting, repeatable/empty forms where applicable, and order are not yet proven. |
+| FORMAT-066 | `font-shaping-break`                    | `.format_entry`                          | font shaping break     | Oracle complete | Font shaping break formatter oracle covers default cursor output, no-cursor output, standalone boolean parsing feeding formatter output, raw-empty reset output, and representative order checks; `roastty/src/config/mod.rs:778`                                                                                                                                                                                      | None for font shaping break formatter rows.                                                               |
 | FORMAT-067 | `font-size`                             | `entry_float`                            | font scalar            | Oracle complete | Font scalar formatter oracle covers optional metric modifier void, absolute, percent, and raw-empty reset output; font-size float output; font-thicken boolean output; font-thicken-strength integer output; window-inherit-font-size boolean output; window-title-font-family optional void, string, raw-empty reset, byte-preserving string output, and representative order checks; `roastty/src/config/mod.rs:762` | None for font scalar formatter rows.                                                                      |
 | FORMAT-068 | `font-style`                            | `.format_entry`                          | font style             | Oracle complete | Font style formatter oracle covers FontStyle default, false, named style, whitespace-preserving named style, raw-empty reset output, FontSyntheticStyle default all-flags output, disabled all-flags output, mixed `[no-]flag` output, raw-empty reset output, and representative order checks; `roastty/src/config/mod.rs:751`                                                                                        | None for font style formatter rows.                                                                       |
 | FORMAT-069 | `font-style-bold`                       | `.format_entry`                          | font style             | Oracle complete | Font style formatter oracle covers FontStyle default, false, named style, whitespace-preserving named style, raw-empty reset output, FontSyntheticStyle default all-flags output, disabled all-flags output, mixed `[no-]flag` output, raw-empty reset output, and representative order checks; `roastty/src/config/mod.rs:753`                                                                                        | None for font style formatter rows.                                                                       |
