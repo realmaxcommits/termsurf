@@ -12838,6 +12838,111 @@ mod tests {
     }
 
     #[test]
+    fn working_directory_config_parser_family_oracle() {
+        let parse = |s: Option<&str>| {
+            let mut wd = WorkingDirectory::Inherit;
+            wd.parse_cli(s).map(|()| wd)
+        };
+
+        assert_eq!(parse(Some("home")), Ok(WorkingDirectory::Home));
+        assert_eq!(parse(Some("inherit")), Ok(WorkingDirectory::Inherit));
+        assert_eq!(
+            parse(Some("Home")),
+            Ok(WorkingDirectory::Path("Home".to_string()))
+        );
+        assert_eq!(
+            parse(Some("INHERIT")),
+            Ok(WorkingDirectory::Path("INHERIT".to_string()))
+        );
+        assert_eq!(
+            parse(Some(" \t\nhome\r\u{0B}\u{0C}")),
+            Ok(WorkingDirectory::Home)
+        );
+        assert_eq!(
+            parse(Some("  relative/path  ")),
+            Ok(WorkingDirectory::Path("relative/path".to_string()))
+        );
+        assert_eq!(
+            parse(Some("\"/tmp path\"")),
+            Ok(WorkingDirectory::Path("/tmp path".to_string()))
+        );
+        assert_eq!(parse(Some("\"home\"")), Ok(WorkingDirectory::Home));
+        assert_eq!(
+            parse(Some("\" home \"")),
+            Ok(WorkingDirectory::Path(" home ".to_string()))
+        );
+        assert_eq!(
+            parse(Some("\"\"")),
+            Ok(WorkingDirectory::Path(String::new()))
+        );
+        assert_eq!(
+            parse(Some("~/projects/app")),
+            Ok(WorkingDirectory::Path("~/projects/app".to_string()))
+        );
+        assert_eq!(
+            parse(Some("bad\0path")),
+            Ok(WorkingDirectory::Path("bad\0path".to_string()))
+        );
+        assert_eq!(parse(None), Err(WorkingDirectoryParseError::ValueRequired));
+        assert_eq!(
+            parse(Some("")),
+            Err(WorkingDirectoryParseError::ValueRequired)
+        );
+        assert_eq!(
+            parse(Some(" \t\n\r\u{0B}\u{0C}")),
+            Err(WorkingDirectoryParseError::ValueRequired)
+        );
+
+        let line = |cfg: &Config| -> String {
+            let mut out = String::new();
+            cfg.format_config(&mut out);
+            out.lines()
+                .find(|line| line.starts_with("working-directory = "))
+                .unwrap()
+                .to_string()
+        };
+
+        let mut cfg = Config::default();
+        assert_eq!(cfg.working_directory, None);
+        assert_eq!(line(&cfg), "working-directory = ");
+
+        cfg.set("working-directory", Some("home")).unwrap();
+        assert_eq!(cfg.working_directory, Some(WorkingDirectory::Home));
+        assert_eq!(line(&cfg), "working-directory = home");
+
+        cfg.set("working-directory", Some("inherit")).unwrap();
+        assert_eq!(cfg.working_directory, Some(WorkingDirectory::Inherit));
+        assert_eq!(line(&cfg), "working-directory = inherit");
+
+        cfg.set("working-directory", Some("\"\"")).unwrap();
+        assert_eq!(
+            cfg.working_directory,
+            Some(WorkingDirectory::Path(String::new()))
+        );
+        assert_eq!(line(&cfg), "working-directory = ");
+
+        cfg.set("working-directory", Some("relative/path")).unwrap();
+        assert_eq!(
+            cfg.working_directory,
+            Some(WorkingDirectory::Path("relative/path".to_string()))
+        );
+        assert_eq!(line(&cfg), "working-directory = relative/path");
+
+        assert_eq!(
+            cfg.set("working-directory", None),
+            Err(ConfigSetError::ValueRequired)
+        );
+        assert_eq!(
+            cfg.set("working-directory", Some("   ")),
+            Err(ConfigSetError::ValueRequired)
+        );
+
+        cfg.set("working-directory", Some("")).unwrap();
+        assert_eq!(cfg.working_directory, None);
+        assert_eq!(line(&cfg), "working-directory = ");
+    }
+
+    #[test]
     fn working_directory_finalize_expands_tilde_slash_paths() {
         let home = OsStr::new("/Users/tester");
 

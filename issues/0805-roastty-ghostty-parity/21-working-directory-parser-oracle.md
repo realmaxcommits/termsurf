@@ -129,3 +129,92 @@ prettier --write --prose-wrap always --print-width 80 \
   issues/0805-roastty-ghostty-parity/config-matrix.md
 git diff --check
 ```
+
+## Result
+
+**Result:** Pass
+
+Roastty now has a focused working-directory parser family oracle for the single
+`working-directory` parser row. The oracle proves pinned Ghostty's
+option-boundary parser behavior:
+
+- `home` and `inherit` are exact lowercase keywords;
+- non-matching values, including differently cased keywords, are paths;
+- ASCII whitespace is trimmed before parsing;
+- one surrounding pair of double quotes is stripped after trimming;
+- quoted keywords become keywords, while quoted strings with interior edge
+  spaces remain paths;
+- quoted empty strings become `Path("")`;
+- ordinary, tilde-prefixed, relative, and embedded-NUL paths are accepted;
+- missing and all-whitespace values are `ValueRequired`;
+- raw empty option values reset `working-directory` to default `None`;
+- formatter output is proven for keywords, ordinary paths, and empty paths.
+
+Focused Roastty verification passed:
+
+```bash
+cargo test --manifest-path roastty/Cargo.toml working_directory_config_parser_family_oracle
+```
+
+Output summary:
+
+```text
+running 1 test
+test config::tests::working_directory_config_parser_family_oracle ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 4911 filtered out; finished in 0.01s
+```
+
+The parser inventory generator passed and moved the 1 working-directory row to
+`Oracle complete`:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/config_parser_inventory.py \
+  --upstream vendor/ghostty/src/config/Config.zig \
+  --roastty roastty/src/config/mod.rs \
+  --config-inventory issues/0805-roastty-ghostty-parity/config-inventory.md \
+  --output issues/0805-roastty-ghostty-parity/config-parser-inventory.md \
+  --matrix issues/0805-roastty-ghostty-parity/config-matrix.md
+```
+
+Output:
+
+```text
+ghostty_canonical=203
+roastty_parser_rows=203
+missing_canonical_parser_rows=0
+missing_dispatch_rows=0
+extra_parser_rows=0
+compatibility_only_parser_arms=5
+noncanonical_noncompat_parser_arms=0
+oracle_complete=75
+audit_covered=128
+gap=0
+```
+
+The matrix assertion passed:
+
+```text
+parser_rows=203 working_directory_oracle=1 cfg217=Gap
+```
+
+CFG-217 remains `Gap` because 128 parser rows are still audit-only, but the
+working-directory parser family is now oracle-complete.
+
+## Conclusion
+
+Working-directory parser semantics are now proven for the pinned Ghostty target
+at the config-option boundary. The parser row can be separated cleanly from
+working-directory finalization: direct parsing handles trimming, quotes,
+keywords, path fallback, missing values, raw-empty reset, embedded NULs, and
+formatting; home expansion and command/default interaction remain later
+configuration facets.
+
+## Completion Review
+
+Fresh-context adversarial completion review approved the result with no
+findings. The reviewer independently verified the focused working-directory
+oracle, Rust fmt check, `git diff --check`, matrix assertions, and generator
+state: 203 parser rows, 75 `Oracle complete`, 128 `Audit covered`, 0 `Gap` rows,
+the single working-directory row promoted to `Oracle complete`, and CFG-217
+still `Gap` with owner `Experiment 21`.

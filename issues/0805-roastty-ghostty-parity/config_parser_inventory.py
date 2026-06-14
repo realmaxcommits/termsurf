@@ -30,6 +30,7 @@ FLOAT_ORACLE_TEST = "float_config_parser_family_oracle"
 STRING_ORACLE_TEST = "string_config_parser_family_oracle"
 DURATION_ORACLE_TEST = "duration_config_parser_family_oracle"
 PATH_ORACLE_TEST = "path_config_parser_family_oracle"
+WORKING_DIRECTORY_ORACLE_TEST = "working_directory_config_parser_family_oracle"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -304,6 +305,7 @@ def build_rows(
     string_oracle_present: bool,
     duration_oracle_present: bool,
     path_oracle_present: bool,
+    working_directory_oracle_present: bool,
 ) -> tuple[list[ParserRow], list[str], list[str], list[str]]:
     arm_by_key: dict[str, ParserArm] = {}
     for arm in arms:
@@ -381,6 +383,14 @@ def build_rows(
                 "NULs, repeatable accumulation, and formatting"
             )
             missing_evidence = "None for direct path parser semantics."
+        elif working_directory_oracle_present and family == "working directory":
+            status = "Oracle complete"
+            evidence = (
+                "Shared working-directory parser oracle covers whitespace trimming, "
+                "quote stripping, exact keywords, path fallback, embedded NULs, "
+                "missing values, empty resets, and formatting"
+            )
+            missing_evidence = "None for direct working-directory parser semantics."
         elif option == "config-default-files":
             missing_evidence = (
                 "Direct parser and effective default-file load-order semantics must "
@@ -426,6 +436,7 @@ def main() -> int:
     string_oracle_present = STRING_ORACLE_TEST in roastty_source
     duration_oracle_present = DURATION_ORACLE_TEST in roastty_source
     path_oracle_present = PATH_ORACLE_TEST in roastty_source
+    working_directory_oracle_present = WORKING_DIRECTORY_ORACLE_TEST in roastty_source
     rows, missing, compatibility_only, noncanonical = build_rows(
         upstream,
         aliases,
@@ -436,12 +447,13 @@ def main() -> int:
         string_oracle_present,
         duration_oracle_present,
         path_oracle_present,
+        working_directory_oracle_present,
     )
     emit_inventory(rows, compatibility_only, args.output)
     incomplete = [row for row in rows if row.status != "Oracle complete"]
     oracle_count = sum(row.status == "Oracle complete" for row in rows)
     gap_count = sum(row.status == "Gap" for row in rows)
-    owner_experiment = 20 if path_oracle_present else 19
+    owner_experiment = 21 if working_directory_oracle_present else 20 if path_oracle_present else 19
     update_cfg217(args.matrix, args.output, oracle_count, len(incomplete), gap_count, owner_experiment)
 
     print(f"ghostty_canonical={len(upstream)}")

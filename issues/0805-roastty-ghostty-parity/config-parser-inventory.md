@@ -9,8 +9,8 @@ Issue 805 parser-facet experiments.
 | ------------------------------ | ----: |
 | Canonical parser rows          |   203 |
 | Compatibility-only parser arms |     5 |
-| Oracle complete rows           |    74 |
-| Audit covered rows             |   129 |
+| Oracle complete rows           |    75 |
+| Audit covered rows             |   128 |
 | Gap rows                       |     0 |
 
 ## Parser Families
@@ -250,5 +250,5 @@ These arms are not canonical Ghostty option rows for CFG-217.
 | PARSE-199 | `window-titlebar-foreground`            | `set_optional_value_field, ::parse_cli`                   | color             | Audit covered   | Parser dispatch path identified; option still needs upstream-derived full-value oracle; `roastty/src/config/mod.rs:1659`                                                                                           | Full accepted variants/classes plus rejection/reset semantics are not yet proven.                    |
 | PARSE-200 | `window-vsync`                          | `set_bool_field`                                          | boolean           | Oracle complete | Shared boolean parser oracle covers upstream true/false spellings, bare true, empty reset, and invalid values; `roastty/src/config/mod.rs:1546`                                                                    | None for direct boolean parser semantics.                                                            |
 | PARSE-201 | `window-width`                          | `set_value_field, parse_u32_scalar_field`                 | integer scalar    | Oracle complete | Shared integer parser oracle covers Zig base-0 prefixes/signs/underscores, missing values, empty reset, invalid syntax, and overflow/range failures; `roastty/src/config/mod.rs:1616`                              | None for direct integer parser semantics.                                                            |
-| PARSE-202 | `working-directory`                     | `set_optional_value_field, parse_working_directory_field` | working directory | Audit covered   | Parser dispatch path identified; option still needs upstream-derived full-value oracle; `roastty/src/config/mod.rs:1698`                                                                                           | Full accepted variants/classes plus rejection/reset semantics are not yet proven.                    |
+| PARSE-202 | `working-directory`                     | `set_optional_value_field, parse_working_directory_field` | working directory | Oracle complete | Shared working-directory parser oracle covers whitespace trimming, quote stripping, exact keywords, path fallback, embedded NULs, missing values, empty resets, and formatting; `roastty/src/config/mod.rs:1698`   | None for direct working-directory parser semantics.                                                  |
 | PARSE-203 | `x11-instance-name`                     | `set_optional_value_field, parse_string_field`            | string            | Oracle complete | Shared string parser oracle covers exact byte-preserving copy, embedded NULs, missing values, explicit empty strings, and required/optional empty-reset semantics; `roastty/src/config/mod.rs:1694`                | None for direct string parser semantics.                                                             |

@@ -403,6 +403,12 @@ experiment files until they are proven.
   literal `?` paths, parsed-empty single-path no-ops, raw-empty resets,
   repeatable accumulation/clearing, formatter output, and embedded NUL
   acceptance at the parser layer.
+- **`working-directory` parser rows are parser-only before finalization.**
+  Experiment 21 proved the direct parser boundary for `working-directory`: ASCII
+  whitespace trimming, surrounding quote stripping, exact lowercase
+  `home`/`inherit` keywords, path fallback for all other strings, embedded NUL
+  acceptance, raw-empty optional reset, and formatter output. Home expansion and
+  probable-CLI defaults remain separate non-parser facets.
 
 ## Verification
 
@@ -450,4 +456,4 @@ remains open.
   **Pass**
 - [Experiment 20: Path parser oracle](20-path-parser-oracle.md) — **Pass**
 - [Experiment 21: Working directory parser oracle](21-working-directory-parser-oracle.md)
-  — **Designed**
+  — **Pass**
