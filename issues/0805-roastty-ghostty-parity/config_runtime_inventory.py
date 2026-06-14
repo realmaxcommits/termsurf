@@ -200,7 +200,7 @@ ROWS = [
             "semantics; refreshes existing surfaces on config update; and "
             "does not bypass terminal mouse reporting."
         ),
-        missing_evidence="None for non-link right-click-action surface runtime behavior; link-specific context-menu behavior remains tracked by RUNTIME-012B.",
+        missing_evidence="None for non-link right-click-action surface runtime behavior; link-specific context-menu behavior remains tracked by RUNTIME-012B2.",
         guard_tier="Tier 3",
         guard_command="`cargo test --manifest-path roastty/Cargo.toml right_click_action`",
     ),
@@ -558,20 +558,44 @@ ROWS = [
         guard_command="`cargo test --manifest-path roastty/Cargo.toml surface_open_url && cargo test --manifest-path roastty/Cargo.toml surface_binding_action_copy_url_to_clipboard && cargo test --manifest-path roastty/Cargo.toml renderer_link && cargo test --manifest-path roastty/Cargo.toml config_link_url_finalize`",
     ),
     RuntimeRow(
-        id="RUNTIME-012B",
-        behavior="bell, command-finish notifications, app-notifications, hover/cursor UI, link previews, and context/menu link flows",
-        ghostty_reference="`vendor/ghostty/src/config/Config.zig` notification, bell, link preview, and app-notification fields; `vendor/ghostty/src/Surface.zig` bell/link hover/menu paths",
-        roastty_reference="`roastty/src/lib.rs` bell/link/open-url actions; `roastty/macos/Sources` notification, pointer, preview, and context/menu handling",
+        id="RUNTIME-012B1",
+        behavior="terminal BEL to live surface ring-bell action dispatch",
+        ghostty_reference="`vendor/ghostty/src/termio/stream_handler.zig` BEL `.ring_bell`; `vendor/ghostty/src/Surface.zig` ring-bell throttle/action path",
+        roastty_reference="`roastty/src/terminal/terminal.rs` pending bell count; `roastty/src/termio.rs` bell pump count; `roastty/src/lib.rs` `ROASTTY_ACTION_RING_BELL` dispatch",
+        family="notifications",
+        status="Oracle complete",
+        evidence=(
+            "Experiment 123 proves terminal BEL reaches the live PTY-backed "
+            "surface action path without installing forbidden terminal "
+            "callbacks. `bell_runtime_pending_count_*` guards terminal-core "
+            "BEL counting and existing callback preservation. "
+            "`termio_bell_*` guards PTY and worker pump propagation. "
+            "`surface_bell_*` guards `ROASTTY_ACTION_RING_BELL` dispatch and "
+            "the 100ms repeated-BEL throttle. "
+            "`bell_runtime_dispatch_parity.py` statically checks the pinned "
+            "Ghostty BEL `.ring_bell` path and Roastty runtime/action wiring."
+        ),
+        missing_evidence="None for terminal BEL to live surface ring-bell action dispatch.",
+        guard_tier="Tier 2",
+        guard_command="`cargo test --manifest-path roastty/Cargo.toml bell_runtime && cargo test --manifest-path roastty/Cargo.toml termio_bell && cargo test --manifest-path roastty/Cargo.toml surface_bell && PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/bell_runtime_dispatch_parity.py`",
+    ),
+    RuntimeRow(
+        id="RUNTIME-012B2",
+        behavior="bell feature UI/audio effects, command-finish notifications, app-notifications, hover/cursor UI, link previews, and context/menu link flows",
+        ghostty_reference="`vendor/ghostty/src/config/Config.zig` notification, bell feature, link preview, and app-notification fields; `vendor/ghostty/src/Surface.zig` link hover/menu paths; macOS app notification/bell feature handling",
+        roastty_reference="`roastty/macos/Sources` notification, pointer, preview, and context/menu handling; app bell feature presentation beyond action dispatch",
         family="notifications",
         status="Gap",
         evidence=(
             "Experiment 115 split out the proven deterministic link/open-url "
-            "runtime slice. Bell actions, command-finish notifications, "
-            "app-notifications, link hover/cursor UI, link previews in the "
-            "real app, and context/menu link flows still need focused runtime "
-            "or GUI proof."
+            "runtime slice. Experiment 123 split out terminal BEL to live "
+            "surface ring-bell action dispatch. Bell feature UI/audio effects "
+            "such as system beep, custom audio, attention, title/border "
+            "presentation, command-finish notifications, app-notifications, "
+            "link hover/cursor UI, link previews in the real app, and "
+            "context/menu link flows still need focused runtime or GUI proof."
         ),
-        missing_evidence="Add bell, notification, app hover/cursor, preview, and context/menu link runtime or GUI walkthrough guards.",
+        missing_evidence="Add bell feature UI/audio, notification, app hover/cursor, preview, and context/menu link runtime or GUI walkthrough guards.",
         guard_tier="Tier 3",
         guard_command="TBD by future CFG-223 notification/link GUI or runtime experiment.",
     ),
@@ -641,7 +665,8 @@ EXPECTED_IDS = [
     "RUNTIME-010B2B2B2",
     "RUNTIME-011",
     "RUNTIME-012A",
-    "RUNTIME-012B",
+    "RUNTIME-012B1",
+    "RUNTIME-012B2",
     "RUNTIME-013",
     "RUNTIME-014",
 ]

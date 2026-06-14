@@ -66,6 +66,7 @@ pub(crate) struct Terminal {
     next_implicit_hyperlink_id: u32,
     previous_char: Option<char>,
     pending_clipboard_events: Vec<TerminalClipboardEvent>,
+    pending_bell_count: usize,
     default_cursor_visual_style: cursor::VisualStyle,
     default_cursor_blink: Option<bool>,
 }
@@ -819,6 +820,7 @@ struct TerminalStreamHandler<'a> {
     kitty_config: &'a mut KittyGraphicsConfig,
     flags: &'a mut TerminalFlags,
     pending_clipboard_events: &'a mut Vec<TerminalClipboardEvent>,
+    pending_bell_count: &'a mut usize,
     default_cursor_visual_style: cursor::VisualStyle,
     default_cursor_blink: Option<bool>,
 }
@@ -1077,6 +1079,7 @@ impl Terminal {
             next_implicit_hyperlink_id: 0,
             previous_char: None,
             pending_clipboard_events: Vec::new(),
+            pending_bell_count: 0,
             default_cursor_visual_style: options.cursor_visual_style,
             default_cursor_blink: options.cursor_blink,
         })
@@ -1105,6 +1108,7 @@ impl Terminal {
             next_implicit_hyperlink_id,
             previous_char,
             pending_clipboard_events,
+            pending_bell_count,
             flags,
             default_cursor_visual_style,
             default_cursor_blink,
@@ -1132,6 +1136,7 @@ impl Terminal {
             kitty_config,
             flags,
             pending_clipboard_events,
+            pending_bell_count,
             default_cursor_visual_style: *default_cursor_visual_style,
             default_cursor_blink: *default_cursor_blink,
         };
@@ -1156,6 +1161,10 @@ impl Terminal {
 
     pub(crate) fn drain_clipboard_events(&mut self) -> Vec<TerminalClipboardEvent> {
         std::mem::take(&mut self.pending_clipboard_events)
+    }
+
+    pub(crate) fn take_pending_bell_count(&mut self) -> usize {
+        std::mem::take(&mut self.pending_bell_count)
     }
 
     pub(crate) fn title(&self) -> &str {
@@ -3735,6 +3744,7 @@ impl TerminalStreamHandler<'_> {
     }
 
     fn bell(&mut self) {
+        *self.pending_bell_count = (*self.pending_bell_count).saturating_add(1);
         if let Some(callback) = self.effects.bell {
             unsafe {
                 callback(self.effects.handle, self.effects.userdata);
@@ -4891,10 +4901,16 @@ mod tests {
     use std::os::unix::ffi::OsStrExt;
     use std::path::{Path, PathBuf};
     use std::ptr;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::MutexGuard;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     const TMUX_SIMPLE_LAYOUT: &str = "d962,80x24,0,0,42";
+    static TEST_BELL_CALLBACK_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+    unsafe extern "C" fn test_bell_callback(_: *mut c_void, _: *mut c_void) {
+        TEST_BELL_CALLBACK_COUNT.fetch_add(1, Ordering::SeqCst);
+    }
 
     fn enter_tmux_dcs(terminal: &mut Terminal) {
         terminal.next_slice(b"\x1bP1000p").unwrap();
@@ -4925,6 +4941,29 @@ mod tests {
             .unwrap();
         assert_eq!(terminal.tmux_windows.len(), 1);
         terminal.clear_pty_response();
+    }
+
+    #[test]
+    fn bell_runtime_pending_count_accumulates_without_callback() {
+        let mut terminal = Terminal::init(10, 2, None).unwrap();
+
+        terminal.next_slice(b"\x07hello\x07").unwrap();
+
+        assert_eq!(terminal.take_pending_bell_count(), 2);
+        assert_eq!(terminal.take_pending_bell_count(), 0);
+        assert!(terminal.plain_screen(false).contains("hello"));
+    }
+
+    #[test]
+    fn bell_runtime_pending_count_preserves_callback_effect() {
+        TEST_BELL_CALLBACK_COUNT.store(0, Ordering::SeqCst);
+        let mut terminal = Terminal::init(10, 2, None).unwrap();
+        terminal.set_bell_callback(Some(test_bell_callback));
+
+        terminal.next_slice(b"\x07\x07").unwrap();
+
+        assert_eq!(terminal.take_pending_bell_count(), 2);
+        assert_eq!(TEST_BELL_CALLBACK_COUNT.load(Ordering::SeqCst), 2);
     }
 
     fn terminal_with_lines(lines: &[&str]) -> Terminal {

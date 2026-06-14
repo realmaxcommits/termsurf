@@ -85,6 +85,7 @@ pub(crate) struct TermioChildExit {
 pub(crate) struct TermioPump {
     pub(crate) readiness: PtyReadiness,
     pub(crate) bytes_read: usize,
+    pub(crate) bell_count: usize,
     pub(crate) eof: bool,
     pub(crate) bytes_written: usize,
     pub(crate) pending_write_bytes: usize,
@@ -280,6 +281,7 @@ impl Termio {
         } else {
             self.collect_terminal_response();
         }
+        let bell_count = self.terminal.take_pending_bell_count();
 
         let bytes_written = self.flush_pending_write()?;
         if self.child_exit.is_none() {
@@ -296,6 +298,7 @@ impl Termio {
         Ok(TermioPump {
             readiness,
             bytes_read,
+            bell_count,
             eof,
             bytes_written,
             pending_write_bytes: self.pending_write.len(),
@@ -523,6 +526,7 @@ fn run_termio_worker(
                     }
                 }
                 let should_emit = pump.bytes_read > 0
+                    || pump.bell_count > 0
                     || pump.bytes_written > 0
                     || pump.pending_write_bytes > 0
                     || pump.eof
@@ -759,6 +763,17 @@ mod tests {
 
         assert_eq!(pump.bytes_read, 5);
         assert!(termio.terminal().plain_screen(false).contains("hello"));
+    }
+
+    #[test]
+    fn termio_bell_pump_reports_child_bel_output() {
+        let _guard = pty_command_lock();
+        let mut termio = spawn_shell("printf '\\a\\a'");
+
+        let pump = pump_until(&mut termio, |_, pump| pump.bell_count == 2);
+
+        assert_eq!(pump.bell_count, 2);
+        assert_eq!(termio.terminal_mut().take_pending_bell_count(), 0);
     }
 
     #[test]
@@ -1491,6 +1506,23 @@ mod tests {
         assert!(
             worker.with_termio(|termio| termio.terminal().plain_screen(false).contains("hello"))
         );
+        worker.shutdown().expect("shutdown worker");
+    }
+
+    #[test]
+    fn termio_bell_worker_emits_bell_only_pump() {
+        let _guard = pty_command_lock();
+        let mut worker = spawn_worker("printf '\\a'");
+
+        let event = worker_event_until(
+            &worker,
+            |_, event| matches!(event, TermioWorkerEvent::Pump(pump) if pump.bell_count == 1),
+        );
+
+        assert!(matches!(
+            event,
+            TermioWorkerEvent::Pump(pump) if pump.bell_count == 1
+        ));
         worker.shutdown().expect("shutdown worker");
     }
 

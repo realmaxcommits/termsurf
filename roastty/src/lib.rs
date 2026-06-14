@@ -2717,6 +2717,7 @@ struct Surface {
     cursor_blink_visible: bool,
     cursor_blink_next: std::time::Instant,
     last_cursor_reset: Option<std::time::Instant>,
+    last_bell_time: Option<std::time::Instant>,
     last_termio_error: Option<String>,
     /// The app-provided `NSView` (macOS) captured from `surface_config.platform.macos.nsview`
     /// (Issue 802 / Exp 15) — the live-render target. Null off-macOS or when not supplied.
@@ -2733,6 +2734,7 @@ struct Surface {
 
 const CURSOR_BLINK_INTERVAL: std::time::Duration = std::time::Duration::from_millis(600);
 const CURSOR_BLINK_RESET_THROTTLE: std::time::Duration = std::time::Duration::from_millis(500);
+const BELL_REPEAT_THROTTLE: std::time::Duration = std::time::Duration::from_millis(100);
 
 #[derive(Debug)]
 struct ClipboardRequestState {
@@ -4408,6 +4410,17 @@ impl Surface {
 
     fn perform_action(&self, tag: c_int, storage: [usize; 8]) {
         let _ = self.perform_action_result(tag, storage);
+    }
+
+    fn ring_bell(&mut self, now: std::time::Instant) {
+        if self
+            .last_bell_time
+            .is_some_and(|last| now.duration_since(last) < BELL_REPEAT_THROTTLE)
+        {
+            return;
+        }
+        self.last_bell_time = Some(now);
+        self.perform_action(ROASTTY_ACTION_RING_BELL, [0usize; 8]);
     }
 
     fn perform_action_result(&self, tag: c_int, storage: [usize; 8]) -> bool {
@@ -7229,8 +7242,9 @@ impl Surface {
         match event {
             termio::TermioWorkerEvent::Pump(pump) => {
                 append_ui_key_trace(format!(
-                    "rust surface_apply_termio_event pump bytes_read={} bytes_written={} pending_write={} eof={} child_exited={}",
+                    "rust surface_apply_termio_event pump bytes_read={} bell_count={} bytes_written={} pending_write={} eof={} child_exited={}",
                     pump.bytes_read,
+                    pump.bell_count,
                     pump.bytes_written,
                     pump.pending_write_bytes,
                     pump.eof,
@@ -7239,7 +7253,11 @@ impl Surface {
                 if pump.bytes_read > 0 {
                     self.reset_cursor_blink_for_output(std::time::Instant::now());
                 }
+                if pump.bell_count > 0 {
+                    self.ring_bell(std::time::Instant::now());
+                }
                 if pump.bytes_read > 0
+                    || pump.bell_count > 0
                     || pump.bytes_written > 0
                     || pump.pending_write_bytes > 0
                     || pump.eof
@@ -18073,6 +18091,7 @@ pub extern "C" fn roastty_surface_new(
         cursor_blink_visible: false,
         cursor_blink_next: std::time::Instant::now() + CURSOR_BLINK_INTERVAL,
         last_cursor_reset: None,
+        last_bell_time: None,
         last_termio_error: None,
         // Capture the app's NSView (macOS) for the live-render target (Exp 15). Null off-macOS.
         nsview: if config.platform_tag == 1 {
@@ -20896,8 +20915,27 @@ mod tests {
         eof: bool,
         child_exited: bool,
     ) -> termio::TermioPump {
+        test_pump_with_bell(
+            bytes_read,
+            0,
+            bytes_written,
+            pending_write_bytes,
+            eof,
+            child_exited,
+        )
+    }
+
+    fn test_pump_with_bell(
+        bytes_read: usize,
+        bell_count: usize,
+        bytes_written: usize,
+        pending_write_bytes: usize,
+        eof: bool,
+        child_exited: bool,
+    ) -> termio::TermioPump {
         test_pump_with_child_exit(
             bytes_read,
+            bell_count,
             bytes_written,
             pending_write_bytes,
             eof,
@@ -20910,6 +20948,7 @@ mod tests {
 
     fn test_pump_with_child_exit(
         bytes_read: usize,
+        bell_count: usize,
         bytes_written: usize,
         pending_write_bytes: usize,
         eof: bool,
@@ -20918,6 +20957,7 @@ mod tests {
         termio::TermioPump {
             readiness: PtyReadiness::default(),
             bytes_read,
+            bell_count,
             eof,
             bytes_written,
             pending_write_bytes,
@@ -22012,6 +22052,7 @@ mod tests {
                 0,
                 0,
                 0,
+                0,
                 false,
                 Some(termio::TermioChildExit {
                     exit_code: 0,
@@ -22037,6 +22078,7 @@ mod tests {
         apply_test_pump(
             surface,
             test_pump_with_child_exit(
+                0,
                 0,
                 0,
                 0,
@@ -22542,6 +22584,64 @@ mod tests {
         assert!(surface_ref.cursor_blink_visible);
         assert!(surface_ref.last_cursor_reset.is_some());
         assert!(surface_ref.dirty);
+
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+    }
+
+    #[test]
+    fn surface_bell_pump_dispatches_ring_bell_action_with_throttle() {
+        let app = new_test_app_with_action(true);
+        let surface = new_test_surface(app);
+        let surface_ref = surface_from_handle(surface).unwrap();
+
+        apply_test_pump(surface, test_pump_with_bell(0, 1, 0, 0, false, false));
+        let records = action_records();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].action_tag, ROASTTY_ACTION_RING_BELL);
+        assert!(surface_ref.dirty);
+
+        surface_ref.dirty = false;
+        apply_test_pump(surface, test_pump_with_bell(0, 1, 0, 0, false, false));
+        assert_eq!(action_records().len(), 1);
+        assert!(surface_ref.dirty);
+
+        surface_ref.last_bell_time =
+            Some(std::time::Instant::now() - BELL_REPEAT_THROTTLE - Duration::from_millis(1));
+        apply_test_pump(surface, test_pump_with_bell(0, 1, 0, 0, false, false));
+        let records = action_records();
+        assert_eq!(records.len(), 2);
+        assert_eq!(records[1].action_tag, ROASTTY_ACTION_RING_BELL);
+
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+    }
+
+    #[test]
+    fn surface_bell_runtime_live_pty_bel_dispatches_ring_bell_action() {
+        let _guard = pty_command_lock();
+        let app = new_test_app_with_action(true);
+        let command = CString::new("printf '\\a'; sleep 0.2").unwrap();
+        let mut surface_config = roastty_surface_config_new();
+        surface_config.command = command.as_ptr();
+        let surface = new_test_surface_with_config(app, &surface_config);
+
+        assert_eq!(roastty_surface_start(surface), ROASTTY_SUCCESS);
+        wait_until(|| {
+            roastty_app_tick(app);
+            action_records()
+                .iter()
+                .any(|record| record.action_tag == ROASTTY_ACTION_RING_BELL)
+        });
+
+        let records = action_records();
+        assert_eq!(
+            records
+                .iter()
+                .filter(|record| record.action_tag == ROASTTY_ACTION_RING_BELL)
+                .count(),
+            1
+        );
 
         roastty_surface_free(surface);
         roastty_app_free(app);

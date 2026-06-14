@@ -116,3 +116,59 @@ Initial verdict: **Changes required**.
 
 Re-review verdict: **Approved**. The reviewer confirmed both required findings
 were resolved and reported no new required findings.
+
+## Result
+
+**Result:** Pass
+
+Implemented a callback-independent BEL dispatch path for live PTY-backed
+surfaces. The terminal now records pending BEL counts while preserving the
+existing embedded C bell callback. Termio drains those pending counts into
+`TermioPump::bell_count`, worker pumps are emitted for BEL-only output, and the
+surface converts nonzero bell counts into `ROASTTY_ACTION_RING_BELL` with a
+100ms repeated-BEL throttle matching pinned Ghostty's `.ring_bell` surface
+handling.
+
+`RUNTIME-012B` is now split into `RUNTIME-012B1` and `RUNTIME-012B2`.
+`RUNTIME-012B1` is `Oracle complete` for terminal BEL to live surface ring-bell
+action dispatch. `RUNTIME-012B2` remains `Gap` for bell feature UI/audio
+effects, command-finish notifications, app notifications, hover/cursor UI, link
+previews, and context/menu link flows. CFG-223 remains `Gap`.
+
+Verification passed:
+
+- `cargo fmt --manifest-path roastty/Cargo.toml --check`
+- `cargo test --manifest-path roastty/Cargo.toml bell_runtime`
+- `cargo test --manifest-path roastty/Cargo.toml termio_bell`
+- `cargo test --manifest-path roastty/Cargo.toml surface_bell`
+- `PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/bell_runtime_dispatch_parity.py`
+- `PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/config_runtime_inventory.py --output issues/0805-roastty-ghostty-parity/config-runtime-inventory.md --matrix issues/0805-roastty-ghostty-parity/config-matrix.md`
+- Matrix assertion for `RUNTIME-012B1`, `RUNTIME-012B2`, and CFG-223
+- `git diff --check`
+- No generated `__pycache__` remained under the issue directory.
+
+## Conclusion
+
+The live Roastty app could not use terminal bell callbacks because
+`TermioWorker` correctly rejects terminals with callbacks installed. BEL parity
+therefore belongs in the terminal-to-Termio pump state, not in the embedded C
+callback path. The action-dispatch layer is now guarded cheaply by unit tests
+and a static parity script; the broader app-visible bell feature and
+notification/link UI behavior remains for later experiments.
+
+## Completion Review
+
+An adversarial Codex subagent reviewed the completed experiment with fresh
+context.
+
+Verdict: **Approved**.
+
+The reviewer reported no required findings. It independently verified the format
+check, targeted bell runtime tests, static BEL parity guard, `git diff --check`,
+absence of generated Python bytecode, and that the result commit had not yet
+been made. It did not run the exact inventory regeneration command because that
+command writes generated files under the read-only review discipline, but it
+loaded the generator in-memory and verified the resulting row statuses and
+counts: `RUNTIME-012B1` is `Oracle complete`, `RUNTIME-012B2` remains `Gap`,
+CFG-223 remains `Gap`, with 25 oracle-complete rows, 27 closed rows, 5
+incomplete rows, and 5 gap rows.

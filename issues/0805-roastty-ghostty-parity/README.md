@@ -607,6 +607,12 @@ experiment files until they are proven.
   UX.** Experiment 115 split URL link finalization, renderer link ranges,
   explicit open-url dispatch, and OSC8 copy-url bindings from the bell,
   notification, hover, preview, and context/menu gaps.
+- **Live BEL dispatch must avoid terminal callbacks.** Experiment 123 found that
+  Roastty's embedded C bell callback path is intentionally unavailable to
+  `TermioWorker` terminals because workers reject callback-installed terminals.
+  Live PTY-backed BEL parity therefore flows through terminal pending bell
+  counts, `TermioPump::bell_count`, and surface `ROASTTY_ACTION_RING_BELL`
+  dispatch with a 100ms repeated-BEL throttle.
 - **`py_compile` creates bytecode even with `PYTHONDONTWRITEBYTECODE=1`.** Treat
   `issues/0805-roastty-ghostty-parity/__pycache__/` as a generated verification
   artifact and remove it after running the inventory script compile check.
@@ -1242,4 +1248,4 @@ remains open.
 - [Experiment 122: Title report runtime split](122-title-report-runtime-split.md)
   — **Pass**
 - [Experiment 123: Bell runtime dispatch split](123-bell-runtime-dispatch-split.md)
-  — **Designed**
+  — **Pass**
