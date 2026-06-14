@@ -925,3 +925,5 @@ remains open.
   — **Pass**
 - [Experiment 81: GTK enum formatter oracle](81-gtk-enum-formatter-oracle.md) —
   **Pass**
+- [Experiment 82: macOS enum formatter oracle](82-macos-enum-formatter-oracle.md)
+  — **Designed**
