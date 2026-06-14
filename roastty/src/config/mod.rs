@@ -4155,7 +4155,6 @@ fn parse_uint(buf: &str, base: u32, max: u64) -> Result<u64, IntParseError> {
     if bytes.is_empty() || bytes[0] == b'_' || bytes[bytes.len() - 1] == b'_' {
         return Err(IntParseError::Invalid);
     }
-
     let limit = max as i128;
     let mut acc: i128 = 0;
     for &c in bytes {
@@ -18243,6 +18242,156 @@ mod tests {
         assert_eq!(cloned, cfg);
         assert_eq!(cloned.adjust_cell_width, cfg.adjust_cell_width);
         assert_eq!(cloned.adjust_cell_height, cfg.adjust_cell_height);
+    }
+
+    #[test]
+    fn background_blur_config_parser_family_oracle() {
+        fn line(cfg: &Config, key: &str) -> String {
+            let prefix = format!("{} = ", key);
+            let mut out = String::new();
+            cfg.format_config(&mut out);
+            out.lines()
+                .find(|line| line.starts_with(&prefix))
+                .unwrap()
+                .to_string()
+        }
+
+        for (value, expected, formatted) in [
+            (None, BackgroundBlur::True, "background-blur = true"),
+            (Some("1"), BackgroundBlur::True, "background-blur = true"),
+            (Some("t"), BackgroundBlur::True, "background-blur = true"),
+            (Some("T"), BackgroundBlur::True, "background-blur = true"),
+            (Some("true"), BackgroundBlur::True, "background-blur = true"),
+            (Some("0"), BackgroundBlur::False, "background-blur = false"),
+            (Some("f"), BackgroundBlur::False, "background-blur = false"),
+            (Some("F"), BackgroundBlur::False, "background-blur = false"),
+            (
+                Some("false"),
+                BackgroundBlur::False,
+                "background-blur = false",
+            ),
+            (
+                Some("macos-glass-regular"),
+                BackgroundBlur::MacosGlassRegular,
+                "background-blur = macos-glass-regular",
+            ),
+            (
+                Some("macos-glass-clear"),
+                BackgroundBlur::MacosGlassClear,
+                "background-blur = macos-glass-clear",
+            ),
+            (
+                Some("42"),
+                BackgroundBlur::Radius(42),
+                "background-blur = 42",
+            ),
+            (
+                Some("+2_5"),
+                BackgroundBlur::Radius(25),
+                "background-blur = 25",
+            ),
+            (
+                Some("1__0"),
+                BackgroundBlur::Radius(10),
+                "background-blur = 10",
+            ),
+            (
+                Some("0x10"),
+                BackgroundBlur::Radius(16),
+                "background-blur = 16",
+            ),
+            (
+                Some("0X11"),
+                BackgroundBlur::Radius(17),
+                "background-blur = 17",
+            ),
+            (
+                Some("0b101"),
+                BackgroundBlur::Radius(5),
+                "background-blur = 5",
+            ),
+            (
+                Some("0o77"),
+                BackgroundBlur::Radius(63),
+                "background-blur = 63",
+            ),
+            (
+                Some("255"),
+                BackgroundBlur::Radius(255),
+                "background-blur = 255",
+            ),
+        ] {
+            let mut cfg = Config::default();
+            cfg.background_blur = BackgroundBlur::Radius(99);
+            cfg.set("background-blur", value).unwrap();
+            assert_eq!(cfg.background_blur, expected, "value {value:?}");
+            assert_eq!(line(&cfg, "background-blur"), formatted);
+        }
+
+        let mut cfg = Config::default();
+        cfg.set("background-blur", Some("64")).unwrap();
+        cfg.set("background-blur", Some("")).unwrap();
+        assert_eq!(cfg.background_blur, Config::default().background_blur);
+        assert_eq!(line(&cfg, "background-blur"), "background-blur = false");
+
+        for value in [
+            "aaaa",
+            "420",
+            "-1",
+            "0x100",
+            "0b1_0000_0000",
+            "0x",
+            "0b",
+            "_1",
+            "1_",
+            "macos-glass",
+            "MACOS-GLASS-REGULAR",
+        ] {
+            assert_eq!(
+                cfg.set("background-blur", Some(value)),
+                Err(ConfigSetError::InvalidValue),
+                "background-blur rejects {value:?}"
+            );
+        }
+
+        let mut retained = Config::default();
+        let diagnostics = retained.load_str(
+            "background-blur = 7\n\
+             background-blur = nope\n",
+        );
+        assert_eq!(retained.background_blur, BackgroundBlur::Radius(7));
+        assert_eq!(
+            diagnostics,
+            vec![ConfigDiagnostic {
+                line: 2,
+                key: "background-blur".to_string(),
+                error: ConfigSetError::InvalidValue,
+            }]
+        );
+
+        let mut cfg = Config::default();
+        let diagnostics = cfg.load_str(
+            "background-blur = 7\n\
+             background-blur = nope\n\
+             background-blur =\n",
+        );
+        assert_eq!(cfg.background_blur, BackgroundBlur::False);
+        assert_eq!(
+            diagnostics,
+            vec![ConfigDiagnostic {
+                line: 2,
+                key: "background-blur".to_string(),
+                error: ConfigSetError::InvalidValue,
+            }]
+        );
+
+        let diagnostics = cfg.set_cli_args(["--background-blur=0x20"]);
+        assert!(diagnostics.is_empty());
+        assert_eq!(cfg.background_blur, BackgroundBlur::Radius(32));
+
+        let cloned = cfg.clone();
+        assert_eq!(cloned, cfg);
+        assert_eq!(cloned.background_blur, BackgroundBlur::Radius(32));
     }
 
     #[test]

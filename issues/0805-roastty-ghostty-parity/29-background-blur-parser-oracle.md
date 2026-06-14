@@ -174,3 +174,141 @@ and returned `VERDICT: APPROVED`.
   block.
 - **Fix:** Added an explicit pass criterion that no `__pycache__` or other
   `py_compile` artifacts remain in the issue folder.
+
+## Result
+
+**Result:** Pass
+
+Implemented the background blur parser oracle and promoted the canonical
+`background-blur` row to `Oracle complete`.
+
+Changes made:
+
+- `roastty/src/config/mod.rs`
+  - Added `background_blur_config_parser_family_oracle`.
+  - Covered bare/missing true, bool-first parsing, exact glass keywords, base-0
+    `u8` radii, raw-empty reset, invalid values, diagnostics, CLI parsing,
+    formatting, and clone behavior.
+  - Verified the shared `parse_uint` helper follows Zig's underscore behavior:
+    leading/trailing underscores are rejected after prefix handling, while
+    interior underscores, including doubled interior underscores such as `1__0`,
+    are skipped.
+- `issues/0805-roastty-ghostty-parity/config_parser_inventory.py`
+  - Added the background blur oracle marker and Experiment 29 ownership.
+  - Promotes only canonical `background-blur`, leaving compatibility-only
+    `background-blur-radius` outside the canonical parser rows.
+- `issues/0805-roastty-ghostty-parity/config-parser-inventory.md`
+  - Regenerated with 170 `Oracle complete`, 33 `Audit covered`, and 0 `Gap`
+    rows.
+- `issues/0805-roastty-ghostty-parity/config-matrix.md`
+  - Regenerated CFG-217 with Experiment 29 as owner and the updated parser
+    counts.
+- `issues/0805-roastty-ghostty-parity/README.md`
+  - Added the background blur learning and updated this experiment to `Pass`.
+
+Verification run:
+
+```bash
+cargo test --manifest-path roastty/Cargo.toml background_blur_config_parser_family_oracle
+cargo test --manifest-path roastty/Cargo.toml background_blur_parse_cli_resolves_bool_glass_and_radius
+cargo test --manifest-path roastty/Cargo.toml cursor_style_config_keywords_parse_format_and_diagnose
+cargo test --manifest-path roastty/Cargo.toml integer_config_parser_family_oracle
+PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/config_parser_inventory.py \
+  --upstream vendor/ghostty/src/config/Config.zig \
+  --roastty roastty/src/config/mod.rs \
+  --config-inventory issues/0805-roastty-ghostty-parity/config-inventory.md \
+  --output issues/0805-roastty-ghostty-parity/config-parser-inventory.md \
+  --matrix issues/0805-roastty-ghostty-parity/config-matrix.md
+python3 - <<'PY'
+from pathlib import Path
+
+matrix_rows = []
+for line in Path('issues/0805-roastty-ghostty-parity/config-matrix.md').read_text().splitlines():
+    if line.startswith('| CFG-'):
+        matrix_rows.append([cell.strip() for cell in line.strip('|').split('|')])
+cfg217 = next(row for row in matrix_rows if row[0] == 'CFG-217')
+assert cfg217[4] == 'Gap', cfg217
+assert 'config-parser-inventory.md' in cfg217[6], cfg217
+assert cfg217[11] == 'Experiment 29', cfg217
+
+parser_rows = []
+for line in Path('issues/0805-roastty-ghostty-parity/config-parser-inventory.md').read_text().splitlines():
+    if line.startswith('| PARSE-'):
+        parser_rows.append([cell.strip() for cell in line.strip('|').split('|')])
+assert len(parser_rows) == 203, len(parser_rows)
+background_blur = [row for row in parser_rows if row[1] == '`background-blur`']
+assert len(background_blur) == 1, background_blur
+assert background_blur[0][4] == 'Oracle complete', background_blur[0]
+assert all(row[1] != '`background-blur-radius`' for row in parser_rows)
+assert sum(row[4] == 'Oracle complete' for row in parser_rows) == 170
+assert all(row[4] != 'Gap' for row in parser_rows)
+print(f'parser_rows={len(parser_rows)} background_blur={background_blur[0][4]} cfg217={cfg217[4]}')
+PY
+cargo fmt --manifest-path roastty/Cargo.toml
+python3 -m py_compile issues/0805-roastty-ghostty-parity/config_parser_inventory.py
+rm -rf issues/0805-roastty-ghostty-parity/__pycache__
+prettier --write --prose-wrap always --print-width 80 \
+  issues/0805-roastty-ghostty-parity/29-background-blur-parser-oracle.md \
+  issues/0805-roastty-ghostty-parity/README.md \
+  issues/0805-roastty-ghostty-parity/config-parser-inventory.md \
+  issues/0805-roastty-ghostty-parity/config-matrix.md
+git diff --check
+```
+
+Observed verification output:
+
+- `background_blur_config_parser_family_oracle`: passed.
+- `background_blur_parse_cli_resolves_bool_glass_and_radius`: passed.
+- `cursor_style_config_keywords_parse_format_and_diagnose`: passed.
+- `integer_config_parser_family_oracle`: passed, preserving the existing shared
+  integer parser oracle.
+- Parser generator:
+  - `ghostty_canonical=203`;
+  - `roastty_parser_rows=203`;
+  - `missing_dispatch_rows=0`;
+  - `extra_parser_rows=0`;
+  - `oracle_complete=170`;
+  - `audit_covered=33`;
+  - `gap=0`.
+- Matrix assertion:
+  - `parser_rows=203`;
+  - `background_blur=Oracle complete`;
+  - `cfg217=Gap`.
+- `python3 -m py_compile issues/0805-roastty-ghostty-parity/config_parser_inventory.py`:
+  passed, and the generated `__pycache__` directory was removed.
+- `git diff --check`: passed.
+
+## Conclusion
+
+The canonical `background-blur` parser row now has a durable Tier 1 oracle.
+Roastty matches pinned Ghostty's parser boundary for bool-first parsing, exact
+glass keywords, base-0 `u8` radii, raw-empty reset through config dispatch,
+invalid direct empty input, diagnostics, CLI, and formatting.
+
+This experiment also confirmed the shared integer helper's Zig-compatible
+underscore boundary: leading/trailing underscore forms are rejected after prefix
+handling, while interior underscores are skipped. CFG-217 remains `Gap` because
+33 parser rows are still only `Audit covered`. The next experiment should
+continue with another bounded parser row or family from those remaining rows.
+
+## Completion Review
+
+Adversarial subagent `019ec405-5f01-7f72-898f-92171384dfee` reviewed the
+completed experiment and initially returned `CHANGES REQUIRED`.
+
+- **Required:** The first result incorrectly changed `parse_uint` and the new
+  oracle to reject doubled interior underscores, but pinned Ghostty's
+  `std.fmt.parseInt(u8, input, 0)` path accepts interior underscores by skipping
+  them.
+- **Fix:** Restored `parse_uint` to the Zig-compatible boundary and updated the
+  oracle to accept `1__0` as radius `10`.
+- **Required:** The diagnostics case claimed invalid later lines preserve an
+  earlier valid value, but a later raw-empty reset masked whether the invalid
+  line clobbered state.
+- **Fix:** Added a separate retained-value diagnostics case with
+  `background-blur = 7` followed by invalid `background-blur = nope`, and
+  asserted the value remains `BackgroundBlur::Radius(7)`.
+
+The same adversarial subagent re-reviewed only those fixes and returned
+`VERDICT: APPROVED`, confirming both Required findings were resolved and no new
+Required findings were introduced.

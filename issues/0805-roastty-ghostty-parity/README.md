@@ -462,6 +462,13 @@ experiment files until they are proven.
   where Zig accepts them, malformed separators and payload NaNs are rejected,
   and formatter output intentionally preserves Zig-style floating precision
   artifacts such as `15.999999999999993%`.
+- **Background blur parses bools before radii.** Experiment 29 proved the
+  canonical `background-blur` parser row: a bare value sets `true`, `1` and `0`
+  are bools rather than radii, exact glass keywords are accepted, non-bool
+  numbers parse as base-0 `u8` radii, raw-empty config values reset to the
+  default `false`, direct empty parser input is invalid, and malformed numeric
+  boundaries such as leading or trailing underscores are rejected while interior
+  underscores, including doubled interior underscores, are accepted like Zig.
 
 ## Verification
 
@@ -523,4 +530,4 @@ remains open.
 - [Experiment 28: Metric modifier parser oracle](28-metric-modifier-parser-oracle.md)
   — **Pass**
 - [Experiment 29: Background blur parser oracle](29-background-blur-parser-oracle.md)
-  — **Designed**
+  — **Pass**
