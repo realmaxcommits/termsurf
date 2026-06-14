@@ -37,6 +37,7 @@ FONT_SHAPING_BREAK_ORACLE_TEST = "font_shaping_break_config_formatter_family_ora
 KEYWORD_ENUM_ORACLE_TEST = "keyword_enum_config_formatter_family_oracle"
 CLIPBOARD_ACCESS_ORACLE_TEST = "clipboard_access_config_formatter_family_oracle"
 DIRECT_COLOR_ORACLE_TEST = "direct_color_config_formatter_family_oracle"
+CLICK_ACTION_ORACLE_TEST = "click_action_config_formatter_family_oracle"
 METRIC_MODIFIER_ORACLE_TEST = "metric_modifier_config_formatter_family_oracle"
 WINDOW_PADDING_ORACLE_TEST = "window_padding_config_formatter_family_oracle"
 REPEATABLE_PATH_ORACLE_TEST = "repeatable_path_config_formatter_family_oracle"
@@ -99,6 +100,11 @@ DIRECT_COLOR_OPTIONS = {
     "search-background",
     "search-selected-foreground",
     "search-selected-background",
+}
+CLICK_ACTION_OPTIONS = {
+    "copy-on-select",
+    "right-click-action",
+    "middle-click-action",
 }
 OPTIONAL_COLOR_OPTIONS = {
     "bold-color",
@@ -220,6 +226,8 @@ def formatter_family(option: str, path_text: str, call_text: str) -> str:
         return "clipboard access"
     if option in DIRECT_COLOR_OPTIONS:
         return "direct color"
+    if option in CLICK_ACTION_OPTIONS:
+        return "click action"
     if "font_" in call_text or "Font" in call_text:
         return "font"
     if "window_padding" in call_text:
@@ -381,6 +389,7 @@ def build_rows(
     keyword_enum_oracle_present: bool,
     clipboard_access_oracle_present: bool,
     direct_color_oracle_present: bool,
+    click_action_oracle_present: bool,
     metric_modifier_oracle_present: bool,
     window_padding_oracle_present: bool,
     repeatable_path_oracle_present: bool,
@@ -591,6 +600,16 @@ def build_rows(
                 "for all six direct color rows; and representative order checks"
             )
             missing_evidence = "None for direct color formatter rows."
+        elif click_action_oracle_present and family == "click action":
+            status = "Oracle complete"
+            evidence = (
+                "Click action formatter oracle covers every CopyOnSelect, "
+                "RightClickAction, and MiddleClickAction keyword; direct enum "
+                "formatter output; representative Config::set plus "
+                "format_config output; raw-empty resets to defaults; and "
+                "representative order checks"
+            )
+            missing_evidence = "None for click action formatter rows."
         elif metric_modifier_oracle_present and family == "metric modifier":
             status = "Oracle complete"
             evidence = (
@@ -706,6 +725,7 @@ def main() -> int:
     keyword_enum_oracle_present = KEYWORD_ENUM_ORACLE_TEST in roastty_source
     clipboard_access_oracle_present = CLIPBOARD_ACCESS_ORACLE_TEST in roastty_source
     direct_color_oracle_present = DIRECT_COLOR_ORACLE_TEST in roastty_source
+    click_action_oracle_present = CLICK_ACTION_ORACLE_TEST in roastty_source
     metric_modifier_oracle_present = METRIC_MODIFIER_ORACLE_TEST in roastty_source
     window_padding_oracle_present = WINDOW_PADDING_ORACLE_TEST in roastty_source
     repeatable_path_oracle_present = REPEATABLE_PATH_ORACLE_TEST in roastty_source
@@ -732,6 +752,7 @@ def main() -> int:
         keyword_enum_oracle_present,
         clipboard_access_oracle_present,
         direct_color_oracle_present,
+        click_action_oracle_present,
         metric_modifier_oracle_present,
         window_padding_oracle_present,
         repeatable_path_oracle_present,
@@ -747,7 +768,9 @@ def main() -> int:
     oracle_count = sum(row.status == "Oracle complete" for row in rows)
     gap_count = sum(row.status == "Gap" for row in rows)
     owner_experiment = (
-        73
+        74
+        if click_action_oracle_present
+        else 73
         if direct_color_oracle_present
         else 72
         if clipboard_access_oracle_present

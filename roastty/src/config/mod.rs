@@ -15080,6 +15080,116 @@ mod tests {
     }
 
     #[test]
+    fn click_action_config_formatter_family_oracle() {
+        let fmt = |v: &dyn Fn(&mut EntryFormatter)| {
+            let mut out = String::new();
+            let mut f = EntryFormatter::new("a", &mut out);
+            v(&mut f);
+            out
+        };
+        let formatted_lines = |cfg: &Config| -> Vec<String> {
+            let mut out = String::new();
+            cfg.format_config(&mut out);
+            out.lines().map(str::to_string).collect()
+        };
+        let line = |lines: &[String], key: &str| -> String {
+            let prefix = format!("{key} = ");
+            lines
+                .iter()
+                .find(|line| line.starts_with(&prefix))
+                .unwrap_or_else(|| panic!("missing formatted config line for {key}"))
+                .clone()
+        };
+        let index = |lines: &[String], key: &str| -> usize {
+            let prefix = format!("{key} = ");
+            lines
+                .iter()
+                .position(|line| line.starts_with(&prefix))
+                .unwrap_or_else(|| panic!("missing formatted config line for {key}"))
+        };
+
+        for (variant, kw) in [
+            (CopyOnSelect::False, "false"),
+            (CopyOnSelect::True, "true"),
+            (CopyOnSelect::Clipboard, "clipboard"),
+        ] {
+            assert_eq!(fmt(&|f| variant.format_entry(f)), format!("a = {kw}\n"));
+        }
+        for (variant, kw) in [
+            (RightClickAction::Ignore, "ignore"),
+            (RightClickAction::Paste, "paste"),
+            (RightClickAction::Copy, "copy"),
+            (RightClickAction::CopyOrPaste, "copy-or-paste"),
+            (RightClickAction::ContextMenu, "context-menu"),
+        ] {
+            assert_eq!(fmt(&|f| variant.format_entry(f)), format!("a = {kw}\n"));
+        }
+        for (variant, kw) in [
+            (MiddleClickAction::PrimaryPaste, "primary-paste"),
+            (MiddleClickAction::Ignore, "ignore"),
+        ] {
+            assert_eq!(fmt(&|f| variant.format_entry(f)), format!("a = {kw}\n"));
+        }
+
+        let default = Config::default();
+        let default_lines = formatted_lines(&default);
+        assert_eq!(
+            line(&default_lines, "copy-on-select"),
+            "copy-on-select = true"
+        );
+        assert_eq!(
+            line(&default_lines, "right-click-action"),
+            "right-click-action = context-menu"
+        );
+        assert_eq!(
+            line(&default_lines, "middle-click-action"),
+            "middle-click-action = primary-paste"
+        );
+
+        let mut cfg = Config::default();
+        cfg.set("copy-on-select", Some("clipboard")).unwrap();
+        cfg.set("right-click-action", Some("copy-or-paste"))
+            .unwrap();
+        cfg.set("middle-click-action", Some("ignore")).unwrap();
+
+        let lines = formatted_lines(&cfg);
+        assert_eq!(line(&lines, "copy-on-select"), "copy-on-select = clipboard");
+        assert_eq!(
+            line(&lines, "right-click-action"),
+            "right-click-action = copy-or-paste"
+        );
+        assert_eq!(
+            line(&lines, "middle-click-action"),
+            "middle-click-action = ignore"
+        );
+
+        cfg.set("copy-on-select", Some("")).unwrap();
+        cfg.set("right-click-action", Some("")).unwrap();
+        cfg.set("middle-click-action", Some("")).unwrap();
+
+        let reset_lines = formatted_lines(&cfg);
+        assert_eq!(
+            line(&reset_lines, "copy-on-select"),
+            line(&default_lines, "copy-on-select")
+        );
+        assert_eq!(
+            line(&reset_lines, "right-click-action"),
+            "right-click-action = context-menu"
+        );
+        assert_eq!(
+            line(&reset_lines, "middle-click-action"),
+            "middle-click-action = primary-paste"
+        );
+
+        assert!(index(&lines, "title-report") < index(&lines, "image-storage-limit"));
+        assert!(index(&lines, "image-storage-limit") < index(&lines, "copy-on-select"));
+        assert!(index(&lines, "copy-on-select") < index(&lines, "right-click-action"));
+        assert!(index(&lines, "right-click-action") < index(&lines, "middle-click-action"));
+        assert!(index(&lines, "middle-click-action") < index(&lines, "click-repeat-interval"));
+        assert!(index(&lines, "click-repeat-interval") < index(&lines, "config-file"));
+    }
+
+    #[test]
     fn enum_format_entries_shader_mouse() {
         let fmt = |v: &dyn Fn(&mut EntryFormatter)| {
             let mut out = String::new();

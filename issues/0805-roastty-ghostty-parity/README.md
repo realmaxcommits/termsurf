@@ -327,6 +327,11 @@ experiment files until they are proven.
   rows through `Color`/`TerminalColor` `format_config` output while keeping
   palette, cursor/selection colors, window titlebar colors, and other optional
   color rows outside the promotion.
+- **Click-action enum rows should be proven as their own family.** Experiment 74
+  promoted `copy-on-select`, `right-click-action`, and `middle-click-action`
+  together because they share mouse/click enum formatting, while preserving the
+  separate status of window, platform, quick-terminal, and packed/list formatter
+  rows.
 - **Full-header ABI gaps must be split into symbol and semantic outcomes.**
   Experiment 5 proved the mapped Ghostty header can be closed at the
   declaration/export level while still recording honest semantic divergences for
@@ -862,4 +867,4 @@ remains open.
 - [Experiment 73: Direct color formatter oracle](73-direct-color-formatter-oracle.md)
   — **Pass**
 - [Experiment 74: Click action formatter oracle](74-click-action-formatter-oracle.md)
-  — **Designed**
+  — **Pass**

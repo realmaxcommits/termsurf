@@ -150,3 +150,58 @@ Reviewed by a fresh-context Codex adversarial subagent.
 Verdict: **Approved**.
 
 Findings: none.
+
+## Result
+
+**Result:** Pass
+
+Implemented `click_action_config_formatter_family_oracle` and promoted exactly
+the three click action formatter rows:
+
+- `copy-on-select`;
+- `right-click-action`;
+- `middle-click-action`.
+
+Verification commands:
+
+- `cargo fmt --manifest-path roastty/Cargo.toml` ran after the Rust edits.
+- `cargo test --manifest-path roastty/Cargo.toml click_action_config_formatter_family_oracle`
+  passed and ran 1 unit test.
+- `cargo test --manifest-path roastty/Cargo.toml enum_format_entries_misc`
+  passed and ran 1 unit test.
+- `cargo test --manifest-path roastty/Cargo.toml copy_on_select_enabled_unless_false`
+  passed and ran 1 unit test.
+- `cargo test --manifest-path roastty/Cargo.toml right_click_action_has_the_five_upstream_variants`
+  passed and ran 1 unit test.
+- `cargo test --manifest-path roastty/Cargo.toml middle_click_action_has_the_two_upstream_variants`
+  passed and ran 1 unit test.
+- `cargo test --manifest-path roastty/Cargo.toml config_default_format_oracle`
+  passed and ran 1 unit test.
+- `PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/config_formatter_inventory.py --upstream vendor/ghostty/src/config/Config.zig --upstream-formatter-file vendor/ghostty/src/config/formatter_file.zig --upstream-formatter vendor/ghostty/src/config/formatter.zig --roastty roastty/src/config/mod.rs --config-inventory issues/0805-roastty-ghostty-parity/config-inventory.md --output issues/0805-roastty-ghostty-parity/config-formatter-inventory.md --matrix issues/0805-roastty-ghostty-parity/config-matrix.md`
+  reported:
+  - `ghostty_canonical=203`;
+  - `roastty_formatter_rows=203`;
+  - `missing_canonical_formatter_rows=0`;
+  - `extra_formatter_rows=0`;
+  - `oracle_complete=149`;
+  - `audit_covered=54`;
+  - `gap=0`.
+- The planned matrix assertion passed.
+- `cargo fmt --manifest-path roastty/Cargo.toml --check` passed.
+- `prettier --check --prose-wrap always --print-width 80` passed on the changed
+  Markdown files.
+- `git diff --check` passed.
+
+## Conclusion
+
+The click action formatter family is now proven for `copy-on-select`,
+`right-click-action`, and `middle-click-action`. CFG-218 remains `Gap` because
+54 custom formatter rows still need non-default formatter oracles.
+
+## Completion Review
+
+Reviewed by a fresh-context Codex adversarial subagent.
+
+Verdict: **Approved**.
+
+Findings: none.
