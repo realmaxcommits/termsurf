@@ -191,3 +191,85 @@ experiment has the required sections, the design keeps CFG-220 as `Gap` unless
 every finalization row is `Oracle complete`, the listed finalization facets
 match the pinned Ghostty `Config.finalize` surface, and no implementation had
 started beyond the README link and design document.
+
+## Result
+
+**Result:** Pass.
+
+The finalization inventory generator now emits 17 explicit rows for the pinned
+Ghostty `Config.finalize` surface and updates CFG-220 from the generated counts.
+The generated inventory found 14 rows with existing oracle-grade finalization
+evidence, 3 audit-covered rows that still need focused proof, and 0 structural
+finalization gaps.
+
+CFG-220 remains `Gap`, as intended, because not every finalization row is
+`Oracle complete`.
+
+Verification output:
+
+```text
+finalization_rows=17
+oracle_complete=14
+audit_covered=3
+gap=0
+finalization_rows=17 incomplete=3 gaps=0 cfg220=Gap
+```
+
+The remaining audit-covered rows are:
+
+- click-repeat interval app OS defaulting;
+- unfocused split opacity clamping;
+- auto-update-channel release-channel defaulting.
+
+Focused finalization test filters passed:
+
+```bash
+cargo test --manifest-path roastty/Cargo.toml config_theme_loading
+cargo test --manifest-path roastty/Cargo.toml config_font_family_finalize_inherits_regular_family
+cargo test --manifest-path roastty/Cargo.toml config_finalize_scalar_tail
+cargo test --manifest-path roastty/Cargo.toml config_working_directory_finalize
+cargo test --manifest-path roastty/Cargo.toml config_command_home_finalize
+cargo test --manifest-path roastty/Cargo.toml working_directory_finalize
+cargo test --manifest-path roastty/Cargo.toml config_gtk_single_instance_finalize
+cargo test --manifest-path roastty/Cargo.toml mouse_behavior_finalize_resolves_and_clamps
+cargo test --manifest-path roastty/Cargo.toml window_size_step_config_parse_format_reset_finalize_and_diagnose
+cargo test --manifest-path roastty/Cargo.toml config_link_url_finalize
+cargo test --manifest-path roastty/Cargo.toml config_quit_delay_finalize_warning
+cargo test --manifest-path roastty/Cargo.toml key_remap_config_parser_family_oracle
+```
+
+Additional checks passed:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile \
+  issues/0805-roastty-ghostty-parity/config_finalization_inventory.py
+prettier --check \
+  issues/0805-roastty-ghostty-parity/README.md \
+  issues/0805-roastty-ghostty-parity/95-finalization-facet-inventory.md \
+  issues/0805-roastty-ghostty-parity/config-finalization-inventory.md \
+  issues/0805-roastty-ghostty-parity/config-matrix.md
+git diff --check
+```
+
+## Conclusion
+
+CFG-220 is now decomposed into a durable finalization inventory. The next
+finalization experiment should close one of the three remaining audit-covered
+rows with focused proof before CFG-220 can pass.
+
+## Completion Review
+
+Adversarial reviewer: Codex subagent with fresh context.
+
+Verdict: Approved.
+
+Findings: None.
+
+The reviewer verified that the result commit had not been made, the scope was
+limited to the expected issue docs, matrix row, generator, and generated
+inventory, the inventory has 17 rows with 14 `Oracle complete`, 3
+`Audit covered`, and 0 `Gap`, the audit-covered rows are exactly click-repeat
+interval OS defaulting, unfocused split opacity clamp, and auto-update-channel
+default, CFG-220 remains `Gap`, CFG-217 through CFG-219 are unchanged from the
+plan commit, and the formatting, whitespace, matrix, and targeted Rust checks
+passed.

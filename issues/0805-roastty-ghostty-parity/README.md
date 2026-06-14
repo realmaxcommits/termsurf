@@ -454,6 +454,12 @@ experiment files until they are proven.
   values report `ConfigSetError::ValueRequired` while preserving prior state.
   CFG-219 now has 203 `Oracle complete` rows and 0 remaining incomplete
   diagnostic rows.
+- **Finalization parity needs row-level runtime-context proof.** Experiment 95
+  split CFG-220 into 17 pinned Ghostty `Config.finalize` behaviors. Existing
+  Roastty tests prove 14 rows, while click-repeat interval app OS defaulting,
+  unfocused split opacity clamping, and auto-update-channel release-channel
+  defaulting remain audit-covered follow-ups. CFG-220 remains `Gap` with 14
+  `Oracle complete` rows, 3 incomplete rows, and 0 structural finalization gaps.
 - **`py_compile` creates bytecode even with `PYTHONDONTWRITEBYTECODE=1`.** Treat
   `issues/0805-roastty-ghostty-parity/__pycache__/` as a generated verification
   artifact and remove it after running the inventory script compile check.
@@ -1034,4 +1040,4 @@ remains open.
 - [Experiment 94: Font diagnostic oracle](94-font-diagnostic-oracle.md) —
   **Pass**
 - [Experiment 95: Finalization facet inventory](95-finalization-facet-inventory.md)
-  — **Designed**
+  — **Pass**
