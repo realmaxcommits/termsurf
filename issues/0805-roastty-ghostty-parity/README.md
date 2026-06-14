@@ -1226,3 +1226,5 @@ remains open.
   — **Pass**
 - [Experiment 120: Child exited fallback policy split](120-child-exited-fallback-policy-split.md)
   — **Pass**
+- [Experiment 121: macOS quit lifecycle policy split](121-macos-quit-lifecycle-policy-split.md)
+  — **Designed**
