@@ -44,6 +44,7 @@ CURSOR_STYLE_BLINK_ORACLE_TEST = "cursor_style_blink_config_parser_family_oracle
 MACOS_ICON_SCREEN_COLOR_ORACLE_TEST = "macos_icon_screen_color_config_parser_family_oracle"
 SELECTION_WORD_CHARS_ORACLE_TEST = "selection_word_chars_config_parser_family_oracle"
 WINDOW_DECORATION_ORACLE_TEST = "window_decoration_config_parser_family_oracle"
+MOUSE_SCROLL_MULTIPLIER_ORACLE_TEST = "mouse_scroll_multiplier_config_parser_family_oracle"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -332,6 +333,7 @@ def build_rows(
     macos_icon_screen_color_oracle_present: bool,
     selection_word_chars_oracle_present: bool,
     window_decoration_oracle_present: bool,
+    mouse_scroll_multiplier_oracle_present: bool,
 ) -> tuple[list[ParserRow], list[str], list[str], list[str]]:
     arm_by_key: dict[str, ParserArm] = {}
     for arm in arms:
@@ -527,6 +529,15 @@ def build_rows(
                 "formatting, and clone semantics"
             )
             missing_evidence = "None for direct window-decoration parser semantics."
+        elif mouse_scroll_multiplier_oracle_present and option == "mouse-scroll-multiplier":
+            status = "Oracle complete"
+            evidence = (
+                "Mouse scroll multiplier parser oracle covers defaults, bare "
+                "and auto-struct values, empty no-op values, Zig float syntax, "
+                "quoted field values, invalid values, diagnostics, CLI, "
+                "formatting, and clone semantics"
+            )
+            missing_evidence = "None for direct mouse-scroll-multiplier parser semantics."
         elif option == "config-default-files":
             missing_evidence = (
                 "Direct parser and effective default-file load-order semantics must "
@@ -586,6 +597,7 @@ def main() -> int:
     macos_icon_screen_color_oracle_present = MACOS_ICON_SCREEN_COLOR_ORACLE_TEST in roastty_source
     selection_word_chars_oracle_present = SELECTION_WORD_CHARS_ORACLE_TEST in roastty_source
     window_decoration_oracle_present = WINDOW_DECORATION_ORACLE_TEST in roastty_source
+    mouse_scroll_multiplier_oracle_present = MOUSE_SCROLL_MULTIPLIER_ORACLE_TEST in roastty_source
     rows, missing, compatibility_only, noncanonical = build_rows(
         upstream,
         aliases,
@@ -610,13 +622,16 @@ def main() -> int:
         macos_icon_screen_color_oracle_present,
         selection_word_chars_oracle_present,
         window_decoration_oracle_present,
+        mouse_scroll_multiplier_oracle_present,
     )
     emit_inventory(rows, compatibility_only, args.output)
     incomplete = [row for row in rows if row.status != "Oracle complete"]
     oracle_count = sum(row.status == "Oracle complete" for row in rows)
     gap_count = sum(row.status == "Gap" for row in rows)
     owner_experiment = (
-        34
+        35
+        if mouse_scroll_multiplier_oracle_present
+        else 34
         if window_decoration_oracle_present
         else 33
         if selection_word_chars_oracle_present

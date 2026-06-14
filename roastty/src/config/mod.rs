@@ -8634,25 +8634,39 @@ impl Default for MouseScrollMultiplier {
 }
 
 impl MouseScrollMultiplier {
+    fn parse_float(value: &str) -> Result<f64, MouseScrollMultiplierParseError> {
+        parse_zig_float_f64(value).map_err(|_| MouseScrollMultiplierParseError::InvalidValue)
+    }
+
+    fn parse_auto_struct_value(raw: &str) -> Result<String, MouseScrollMultiplierParseError> {
+        let trimmed = raw.trim_matches(|c: char| c == ' ' || c == '\t');
+        if trimmed.len() >= 2 && trimmed.starts_with('"') && trimmed.ends_with('"') {
+            let bytes = parse_quoted_string(trimmed.as_bytes())
+                .ok_or(MouseScrollMultiplierParseError::InvalidValue)?;
+            String::from_utf8(bytes).map_err(|_| MouseScrollMultiplierParseError::InvalidValue)
+        } else {
+            Ok(trimmed.to_string())
+        }
+    }
+
     pub(crate) fn parse_cli(
         &mut self,
         value: Option<&str>,
     ) -> Result<(), MouseScrollMultiplierParseError> {
         let input = value.ok_or(MouseScrollMultiplierParseError::ValueRequired)?;
         if input.is_empty() {
-            return Err(MouseScrollMultiplierParseError::InvalidValue);
+            return Ok(());
         }
 
         if !input.contains(':') {
-            let parsed = input
-                .parse::<f64>()
-                .map_err(|_| MouseScrollMultiplierParseError::InvalidValue)?;
+            let parsed = Self::parse_float(input)?;
             self.precision = parsed;
             self.discrete = parsed;
             return Ok(());
         }
 
         let ws = |c: char| c == ' ' || c == '\t';
+        let mut parsed = *self;
         let mut splitter = CommaSplitter::new(input);
         while let Some(entry) = splitter
             .next()
@@ -8665,16 +8679,15 @@ impl MouseScrollMultiplier {
                 .find(':')
                 .ok_or(MouseScrollMultiplierParseError::InvalidValue)?;
             let key = entry[..idx].trim_matches(ws);
-            let raw = entry[idx + 1..].trim_matches(ws);
-            let parsed = raw
-                .parse::<f64>()
-                .map_err(|_| MouseScrollMultiplierParseError::InvalidValue)?;
+            let raw = Self::parse_auto_struct_value(&entry[idx + 1..])?;
+            let value = Self::parse_float(&raw)?;
             match key {
-                "precision" => self.precision = parsed,
-                "discrete" => self.discrete = parsed,
+                "precision" => parsed.precision = value,
+                "discrete" => parsed.discrete = value,
                 _ => return Err(MouseScrollMultiplierParseError::InvalidValue),
             }
         }
+        *self = parsed;
         Ok(())
     }
 
@@ -18108,8 +18121,15 @@ mod tests {
             value.parse_cli(None),
             Err(MouseScrollMultiplierParseError::ValueRequired)
         );
+        assert_eq!(value.parse_cli(Some("")), Ok(()));
+        assert_eq!(
+            value,
+            MouseScrollMultiplier {
+                precision: 6.0,
+                discrete: 8.0,
+            }
+        );
         for bad in [
-            "",
             "foo:1",
             "precision:bar",
             "precision:1,discrete:3,foo:5",
@@ -18122,6 +18142,181 @@ mod tests {
                 "{bad}"
             );
         }
+    }
+
+    #[test]
+    fn mouse_scroll_multiplier_config_parser_family_oracle() {
+        let line = |cfg: &Config| {
+            let mut out = String::new();
+            cfg.format_config(&mut out);
+            out.lines()
+                .find(|line| line.starts_with("mouse-scroll-multiplier = "))
+                .unwrap()
+                .to_string()
+        };
+
+        let mut cfg = Config::default();
+        assert_eq!(
+            cfg.mouse_scroll_multiplier,
+            MouseScrollMultiplier {
+                precision: 1.0,
+                discrete: 3.0,
+            }
+        );
+        assert_eq!(
+            line(&cfg),
+            "mouse-scroll-multiplier = precision:1,discrete:3"
+        );
+
+        cfg.set("mouse-scroll-multiplier", Some("3")).unwrap();
+        assert_eq!(
+            cfg.mouse_scroll_multiplier,
+            MouseScrollMultiplier {
+                precision: 3.0,
+                discrete: 3.0,
+            }
+        );
+
+        cfg.set("mouse-scroll-multiplier", Some("")).unwrap();
+        assert_eq!(
+            cfg.mouse_scroll_multiplier,
+            MouseScrollMultiplier {
+                precision: 3.0,
+                discrete: 3.0,
+            }
+        );
+
+        cfg.set("mouse-scroll-multiplier", Some("precision:1"))
+            .unwrap();
+        assert_eq!(
+            cfg.mouse_scroll_multiplier,
+            MouseScrollMultiplier {
+                precision: 1.0,
+                discrete: 3.0,
+            }
+        );
+        cfg.set("mouse-scroll-multiplier", Some("discrete:5"))
+            .unwrap();
+        assert_eq!(
+            cfg.mouse_scroll_multiplier,
+            MouseScrollMultiplier {
+                precision: 1.0,
+                discrete: 5.0,
+            }
+        );
+        cfg.set(
+            "mouse-scroll-multiplier",
+            Some(" discrete : 8 , precision : 6 "),
+        )
+        .unwrap();
+        assert_eq!(
+            cfg.mouse_scroll_multiplier,
+            MouseScrollMultiplier {
+                precision: 6.0,
+                discrete: 8.0,
+            }
+        );
+        assert_eq!(
+            line(&cfg),
+            "mouse-scroll-multiplier = precision:6,discrete:8"
+        );
+
+        cfg.set(
+            "mouse-scroll-multiplier",
+            Some("precision:\"1.5\",discrete:\"2.5\""),
+        )
+        .unwrap();
+        assert_eq!(
+            cfg.mouse_scroll_multiplier,
+            MouseScrollMultiplier {
+                precision: 1.5,
+                discrete: 2.5,
+            }
+        );
+
+        cfg.set("mouse-scroll-multiplier", Some("0x1p4")).unwrap();
+        assert_eq!(
+            cfg.mouse_scroll_multiplier,
+            MouseScrollMultiplier {
+                precision: 16.0,
+                discrete: 16.0,
+            }
+        );
+        cfg.set("mouse-scroll-multiplier", Some("precision:+inf"))
+            .unwrap();
+        assert_eq!(cfg.mouse_scroll_multiplier.precision, f64::INFINITY);
+        cfg.set("mouse-scroll-multiplier", Some("discrete:-infinity"))
+            .unwrap();
+        assert_eq!(cfg.mouse_scroll_multiplier.discrete, f64::NEG_INFINITY);
+        cfg.set("mouse-scroll-multiplier", Some("nan")).unwrap();
+        assert!(cfg.mouse_scroll_multiplier.precision.is_nan());
+        assert!(cfg.mouse_scroll_multiplier.discrete.is_nan());
+
+        assert_eq!(
+            cfg.set("mouse-scroll-multiplier", None),
+            Err(ConfigSetError::ValueRequired)
+        );
+        for invalid in [
+            "foo:1",
+            "precision:bar",
+            "precision:\"1.5",
+            "precision:1,discrete:3,foo:5",
+            "precision:1,,discrete:3",
+            ",precision:1,discrete:3",
+            "precision:0x1p_4",
+        ] {
+            assert_eq!(
+                cfg.set("mouse-scroll-multiplier", Some(invalid)),
+                Err(ConfigSetError::InvalidValue),
+                "{invalid:?}"
+            );
+        }
+
+        let mut cfg = Config::default();
+        cfg.set("mouse-scroll-multiplier", Some("2")).unwrap();
+        let diagnostics = cfg.load_str("mouse-scroll-multiplier = precision:bad\n");
+        assert_eq!(
+            diagnostics,
+            vec![ConfigDiagnostic {
+                line: 1,
+                key: "mouse-scroll-multiplier".to_string(),
+                error: ConfigSetError::InvalidValue,
+            }]
+        );
+        assert_eq!(
+            cfg.mouse_scroll_multiplier,
+            MouseScrollMultiplier {
+                precision: 2.0,
+                discrete: 2.0,
+            }
+        );
+        assert_eq!(
+            cfg.set("mouse-scroll-multiplier", Some("precision:9,foo:1")),
+            Err(ConfigSetError::InvalidValue)
+        );
+        assert_eq!(
+            cfg.mouse_scroll_multiplier,
+            MouseScrollMultiplier {
+                precision: 2.0,
+                discrete: 2.0,
+            }
+        );
+
+        let mut cli_cfg = Config::default();
+        assert_eq!(
+            cli_cfg.set_cli_args(["--mouse-scroll-multiplier=precision:4,discrete:6"]),
+            Vec::<ConfigDiagnostic>::new()
+        );
+        assert_eq!(
+            cli_cfg.mouse_scroll_multiplier,
+            MouseScrollMultiplier {
+                precision: 4.0,
+                discrete: 6.0,
+            }
+        );
+
+        let cloned = cli_cfg.clone();
+        assert_eq!(cloned, cli_cfg);
     }
 
     #[test]

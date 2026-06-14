@@ -499,6 +499,12 @@ experiment files until they are proven.
   `auto`/`client`/`server`/`none` are accepted, empty strings, unknown values,
   whitespace-padded values, and case-changed values are rejected, and formatting
   emits the canonical keyword.
+- **Mouse scroll multiplier uses auto-struct plus Zig floats.** Experiment 35
+  proved canonical `mouse-scroll-multiplier`: bare values set both fields,
+  auto-struct fields preserve unspecified current values, explicit empty values
+  are no-ops, quoted field values are decoded before parsing, Zig float syntax
+  such as hex floats, infinities, and NaNs is accepted, malformed structures and
+  bad floats are rejected, and finalization/clamping remains a separate facet.
 
 ## Verification
 
@@ -572,4 +578,4 @@ remains open.
 - [Experiment 34: Window decoration parser oracle](34-window-decoration-parser-oracle.md)
   — **Pass**
 - [Experiment 35: Mouse scroll multiplier parser oracle](35-mouse-scroll-multiplier-parser-oracle.md)
-  — **Designed**
+  — **Pass**

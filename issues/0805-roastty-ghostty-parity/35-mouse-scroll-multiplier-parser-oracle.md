@@ -175,3 +175,94 @@ Required findings and fixes:
 **Re-review verdict:** Approved.
 
 No required findings remain.
+
+## Result
+
+**Result:** Pass
+
+Implemented the focused `mouse_scroll_multiplier_config_parser_family_oracle`
+test, fixed `MouseScrollMultiplier::parse_cli` to use Roastty's Zig-compatible
+float parser and upstream-compatible auto-struct empty/quoted value behavior,
+and promoted only canonical `mouse-scroll-multiplier` in the CFG-217 parser
+inventory. The generated inventory now reports:
+
+- `ghostty_canonical=203`
+- `roastty_parser_rows=203`
+- `missing_dispatch_rows=0`
+- `extra_parser_rows=0`
+- `oracle_complete=176`
+- `audit_covered=27`
+- `gap=0`
+
+The matrix assertion verified that `mouse-scroll-multiplier` is now
+`Oracle complete`, no parser row is `Gap`, and CFG-217 still remains `Gap` with
+owner `Experiment 35`.
+
+Verification commands run:
+
+```bash
+cargo test --manifest-path roastty/Cargo.toml mouse_scroll_multiplier_config_parser_family_oracle
+cargo test --manifest-path roastty/Cargo.toml mouse_scroll_multiplier_parse_and_format
+cargo test --manifest-path roastty/Cargo.toml mouse_behavior_config_routes_and_formats
+cargo test --manifest-path roastty/Cargo.toml mouse_behavior_finalize_resolves_and_clamps
+PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/config_parser_inventory.py \
+  --upstream vendor/ghostty/src/config/Config.zig \
+  --roastty roastty/src/config/mod.rs \
+  --config-inventory issues/0805-roastty-ghostty-parity/config-inventory.md \
+  --output issues/0805-roastty-ghostty-parity/config-parser-inventory.md \
+  --matrix issues/0805-roastty-ghostty-parity/config-matrix.md
+python3 - <<'PY'
+from pathlib import Path
+
+matrix_rows = []
+for line in Path('issues/0805-roastty-ghostty-parity/config-matrix.md').read_text().splitlines():
+    if line.startswith('| CFG-'):
+        matrix_rows.append([cell.strip() for cell in line.strip('|').split('|')])
+cfg217 = next(row for row in matrix_rows if row[0] == 'CFG-217')
+assert cfg217[4] == 'Gap', cfg217
+assert 'config-parser-inventory.md' in cfg217[6], cfg217
+assert cfg217[11] == 'Experiment 35', cfg217
+
+parser_rows = []
+for line in Path('issues/0805-roastty-ghostty-parity/config-parser-inventory.md').read_text().splitlines():
+    if line.startswith('| PARSE-'):
+        parser_rows.append([cell.strip() for cell in line.strip('|').split('|')])
+assert len(parser_rows) == 203, len(parser_rows)
+mouse_scroll = [row for row in parser_rows if row[1] == '`mouse-scroll-multiplier`']
+assert len(mouse_scroll) == 1, mouse_scroll
+assert mouse_scroll[0][4] == 'Oracle complete', mouse_scroll[0]
+assert sum(row[4] == 'Oracle complete' for row in parser_rows) == 176
+assert all(row[4] != 'Gap' for row in parser_rows)
+print(f'parser_rows={len(parser_rows)} mouse_scroll_multiplier={mouse_scroll[0][4]} cfg217={cfg217[4]}')
+PY
+cargo fmt --manifest-path roastty/Cargo.toml
+```
+
+## Conclusion
+
+`mouse-scroll-multiplier` matches the pinned Ghostty direct parser boundary for
+the covered `MouseScrollMultiplier` semantics: defaults, default formatting,
+bare values, auto-struct field updates, explicit empty no-op values, missing
+values, quoted auto-struct values, Zig float syntax, invalid structures and
+floats, diagnostics, CLI parsing, formatter output, clone semantics, and the
+parser/finalization boundary. CFG-217 remains open because 27 parser rows are
+still only `Audit covered`.
+
+## Completion Review
+
+Fresh-context adversarial subagent review completed after implementation and
+verification.
+
+**Initial verdict:** Changes required.
+
+Required finding and fix:
+
+- Invalid auto-struct values could partially mutate the multiplier before
+  returning `InvalidValue`. The parser now applies auto-struct field updates to
+  a temporary initialized from the current value and assigns it back only after
+  the whole input succeeds. The oracle now asserts `precision:9,foo:1` preserves
+  the prior valid value.
+
+**Re-review verdict:** Approved.
+
+No required findings remain.
