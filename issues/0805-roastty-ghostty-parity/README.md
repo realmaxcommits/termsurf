@@ -466,6 +466,12 @@ experiment files until they are proven.
   formatting plus below-minimum, above-maximum, and config-file parsed
   out-of-range clamps. CFG-220 remains `Gap` with 15 `Oracle complete` rows, 2
   incomplete rows, and 0 structural finalization gaps.
+- **Pinned Ghostty's auto-update channel finalizes to `tip`.** Experiment 97
+  promoted FINAL-015 by proving the pinned Ghostty `1.3.2-dev` prerelease build
+  derives `build_config.release_channel = tip`, and Roastty's
+  `config_finalize_scalar_tail` proves unset `auto-update-channel` finalizes to
+  `Tip` while explicit values are preserved. CFG-220 remains `Gap` with 16
+  `Oracle complete` rows, 1 incomplete row, and 0 structural finalization gaps.
 - **`py_compile` creates bytecode even with `PYTHONDONTWRITEBYTECODE=1`.** Treat
   `issues/0805-roastty-ghostty-parity/__pycache__/` as a generated verification
   artifact and remove it after running the inventory script compile check.
@@ -1050,4 +1056,4 @@ remains open.
 - [Experiment 96: Unfocused split opacity finalization](96-unfocused-split-opacity-finalization.md)
   — **Pass**
 - [Experiment 97: Auto-update channel finalization](97-auto-update-channel-finalization.md)
-  — **Designed**
+  — **Pass**

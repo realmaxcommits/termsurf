@@ -229,17 +229,18 @@ ROWS = [
         ghostty_reference="`vendor/ghostty/src/config/Config.zig::finalize`, release-channel default block",
         roastty_reference="`roastty/src/config/mod.rs::finalize_scalars` auto-update-channel block",
         family="build-config finalization",
-        status="Audit covered",
+        status="Oracle complete",
         evidence=(
-            "`config_finalize_scalar_tail` proves Roastty fills an unset "
-            "`auto-update-channel` with `ReleaseChannel::Tip` and preserves an "
-            "explicit value."
+            "Pinned Ghostty `build.zig.zon` uses version `1.3.2-dev`; "
+            "`vendor/ghostty/src/build/Config.zig` derives `.tip` for non-empty "
+            "prerelease versions; `vendor/ghostty/src/build_config.zig` exports "
+            "that value as `release_channel`; pinned `Config.finalize` assigns "
+            "unset `auto-update-channel` from `build_config.release_channel`; "
+            "Roastty pins `PINNED_BUILD_RELEASE_CHANNEL` to `ReleaseChannel::Tip`; "
+            "`config_finalize_scalar_tail` proves unset values finalize to `tip` "
+            "and explicit values are preserved."
         ),
-        missing_evidence=(
-            "Needs explicit parity proof that Roastty's pinned build release "
-            "channel is the correct app-name-normalized equivalent of Ghostty's "
-            "`build_config.release_channel` for the compared build."
-        ),
+        missing_evidence="None for auto-update-channel finalization behavior.",
     ),
     FinalizationRow(
         behavior="faint opacity clamp",

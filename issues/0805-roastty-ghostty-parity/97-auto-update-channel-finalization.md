@@ -130,3 +130,75 @@ supports `tip` for this checkout, Roastty pins the same `ReleaseChannel::Tip`
 default and preserves explicit `Stable`, the focused
 `config_finalize_scalar_tail` test passed, and no implementation had started
 beyond the README link and design document.
+
+## Result
+
+**Result:** Pass.
+
+FINAL-015 now uses pinned Ghostty source evidence plus Roastty's existing scalar
+finalization oracle as explicit finalization evidence and is marked
+`Oracle complete`. FINAL-008 click-repeat interval defaulting remains
+`Audit covered`.
+
+Verification output:
+
+```text
+finalization_rows=17
+oracle_complete=16
+audit_covered=1
+gap=0
+ghostty_release_channel=tip finalization_rows=17 oracle_complete=16 incomplete=1 gaps=0 cfg220=Gap protected_cfg217_219_unchanged=true
+```
+
+The source assertion confirmed that:
+
+- pinned Ghostty `build.zig.zon` uses version `1.3.2-dev`;
+- Ghostty's build config derives `.tip` from non-empty prerelease versions;
+- `build_config.zig` exports that derived release channel;
+- pinned `Config.finalize` assigns unset `auto-update-channel` from
+  `build_config.release_channel`;
+- Roastty pins `PINNED_BUILD_RELEASE_CHANNEL` to `ReleaseChannel::Tip`.
+
+The focused Rust oracle passed:
+
+```bash
+cargo test --manifest-path roastty/Cargo.toml config_finalize_scalar_tail
+```
+
+The test passed with 1 passed, 0 failed, and 4966 filtered out.
+
+Additional checks passed:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile \
+  issues/0805-roastty-ghostty-parity/config_finalization_inventory.py
+prettier --check \
+  issues/0805-roastty-ghostty-parity/README.md \
+  issues/0805-roastty-ghostty-parity/97-auto-update-channel-finalization.md \
+  issues/0805-roastty-ghostty-parity/config-finalization-inventory.md \
+  issues/0805-roastty-ghostty-parity/config-matrix.md
+git diff --check
+```
+
+## Conclusion
+
+Auto-update-channel default finalization is now complete for CFG-220. The
+finalization inventory has 16 `Oracle complete` rows and 1 remaining
+audit-covered row: click-repeat interval app OS defaulting.
+
+## Completion Review
+
+Adversarial reviewer: Codex subagent with fresh context.
+
+Verdict: Approved.
+
+Findings: None.
+
+The reviewer verified that only the five requested issue/inventory files
+changed, no Rust code changed, the result was still uncommitted, FINAL-015 is
+`Oracle complete` and cites both pinned Ghostty release-channel evidence and
+`config_finalize_scalar_tail`, FINAL-008 remains `Audit covered`, the inventory
+counts are 17 rows, 16 `Oracle complete`, 1 incomplete, and 0 `Gap`, CFG-220
+remains `Gap` with 16/1/0 counts, CFG-217 through CFG-219 are unchanged from the
+plan commit, the pinned source chain proves `tip`, and the focused Rust,
+Prettier, whitespace, syntax, and table/matrix checks passed.
