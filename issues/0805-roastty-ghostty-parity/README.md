@@ -1249,3 +1249,5 @@ remains open.
   — **Pass**
 - [Experiment 123: Bell runtime dispatch split](123-bell-runtime-dispatch-split.md)
   — **Pass**
+- [Experiment 124: Shell integration runtime split](124-shell-integration-runtime-split.md)
+  — **Designed**
