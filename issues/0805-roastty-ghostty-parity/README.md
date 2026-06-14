@@ -571,3 +571,5 @@ remains open.
   — **Pass**
 - [Experiment 34: Window decoration parser oracle](34-window-decoration-parser-oracle.md)
   — **Pass**
+- [Experiment 35: Mouse scroll multiplier parser oracle](35-mouse-scroll-multiplier-parser-oracle.md)
+  — **Designed**
