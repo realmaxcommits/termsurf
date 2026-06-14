@@ -1214,3 +1214,5 @@ remains open.
   — **Pass**
 - [Experiment 118: Wait after command runtime split](118-wait-after-command-runtime-split.md)
   — **Pass**
+- [Experiment 119: Child exited action payload split](119-child-exited-action-payload-split.md)
+  — **Designed**
