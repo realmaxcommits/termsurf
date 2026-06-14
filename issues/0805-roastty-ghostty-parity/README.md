@@ -1135,3 +1135,5 @@ remains open.
   — **Partial**
 - [Experiment 107: Mouse runtime subinventory](107-mouse-runtime-subinventory.md)
   — **Partial**
+- [Experiment 108: Cursor click to move runtime](108-cursor-click-to-move-runtime.md)
+  — **Designed**
