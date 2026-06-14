@@ -15744,6 +15744,210 @@ mod tests {
     }
 
     #[test]
+    fn packed_flag_config_formatter_family_oracle() {
+        let fmt = |v: &dyn Fn(&mut EntryFormatter)| {
+            let mut out = String::new();
+            let mut f = EntryFormatter::new("a", &mut out);
+            v(&mut f);
+            out
+        };
+        let formatted_lines = |cfg: &Config| -> Vec<String> {
+            let mut out = String::new();
+            cfg.format_config(&mut out);
+            out.lines().map(str::to_string).collect()
+        };
+        let line = |lines: &[String], key: &str| -> String {
+            let prefix = format!("{key} = ");
+            lines
+                .iter()
+                .find(|line| line.starts_with(&prefix))
+                .unwrap_or_else(|| panic!("missing formatted config line for {key}"))
+                .clone()
+        };
+        let index = |lines: &[String], key: &str| -> usize {
+            let prefix = format!("{key} = ");
+            lines
+                .iter()
+                .position(|line| line.starts_with(&prefix))
+                .unwrap_or_else(|| panic!("missing formatted config line for {key}"))
+        };
+
+        for (formatter, expected) in [
+            (
+                fmt(&|f| AppNotifications::default().format_entry(f)),
+                "a = clipboard-copy,config-reload\n",
+            ),
+            (
+                fmt(&|f| {
+                    AppNotifications {
+                        clipboard_copy: false,
+                        config_reload: true,
+                    }
+                    .format_entry(f)
+                }),
+                "a = no-clipboard-copy,config-reload\n",
+            ),
+            (
+                fmt(&|f| BellFeatures::default().format_entry(f)),
+                "a = no-system,no-audio,attention,title,no-border\n",
+            ),
+            (
+                fmt(&|f| {
+                    BellFeatures {
+                        system: true,
+                        audio: true,
+                        attention: true,
+                        title: false,
+                        border: true,
+                    }
+                    .format_entry(f)
+                }),
+                "a = system,audio,attention,no-title,border\n",
+            ),
+            (
+                fmt(&|f| FreetypeLoadFlags::default().format_entry(f)),
+                "a = hinting,no-force-autohint,no-monochrome,autohint,light\n",
+            ),
+            (
+                fmt(&|f| {
+                    FreetypeLoadFlags {
+                        hinting: false,
+                        force_autohint: true,
+                        monochrome: false,
+                        autohint: true,
+                        light: false,
+                    }
+                    .format_entry(f)
+                }),
+                "a = no-hinting,force-autohint,no-monochrome,autohint,no-light\n",
+            ),
+            (
+                fmt(&|f| ScrollToBottom::default().format_entry(f)),
+                "a = keystroke,no-output\n",
+            ),
+            (
+                fmt(&|f| {
+                    ScrollToBottom {
+                        keystroke: false,
+                        output: true,
+                    }
+                    .format_entry(f)
+                }),
+                "a = no-keystroke,output\n",
+            ),
+            (
+                fmt(&|f| ShellIntegrationFeatures::default().format_entry(f)),
+                "a = cursor,no-sudo,title,no-ssh-env,no-ssh-terminfo,path\n",
+            ),
+            (
+                fmt(&|f| {
+                    ShellIntegrationFeatures {
+                        cursor: false,
+                        sudo: true,
+                        title: true,
+                        ssh_env: true,
+                        ssh_terminfo: false,
+                        path: true,
+                    }
+                    .format_entry(f)
+                }),
+                "a = no-cursor,sudo,title,ssh-env,no-ssh-terminfo,path\n",
+            ),
+            (
+                fmt(&|f| SplitPreserveZoom::default().format_entry(f)),
+                "a = no-navigation\n",
+            ),
+            (
+                fmt(&|f| SplitPreserveZoom { navigation: true }.format_entry(f)),
+                "a = navigation\n",
+            ),
+        ] {
+            assert_eq!(formatter, expected);
+        }
+
+        let default = Config::default();
+        let default_lines = formatted_lines(&default);
+
+        let mut cfg = Config::default();
+        cfg.set("app-notifications", Some("no-clipboard-copy,config-reload"))
+            .unwrap();
+        cfg.set("bell-features", Some("system,audio,no-title,border"))
+            .unwrap();
+        cfg.set(
+            "freetype-load-flags",
+            Some("no-hinting,force-autohint,no-light"),
+        )
+        .unwrap();
+        cfg.set("scroll-to-bottom", Some("no-keystroke,output"))
+            .unwrap();
+        cfg.set("shell-integration-features", Some("no-cursor,sudo,ssh-env"))
+            .unwrap();
+        cfg.set("split-preserve-zoom", Some("navigation")).unwrap();
+
+        let lines = formatted_lines(&cfg);
+        assert_eq!(
+            line(&lines, "app-notifications"),
+            "app-notifications = no-clipboard-copy,config-reload"
+        );
+        assert_eq!(
+            line(&lines, "bell-features"),
+            "bell-features = system,audio,attention,no-title,border"
+        );
+        assert_eq!(
+            line(&lines, "freetype-load-flags"),
+            "freetype-load-flags = no-hinting,force-autohint,no-monochrome,autohint,no-light"
+        );
+        assert_eq!(
+            line(&lines, "scroll-to-bottom"),
+            "scroll-to-bottom = no-keystroke,output"
+        );
+        assert_eq!(
+            line(&lines, "shell-integration-features"),
+            "shell-integration-features = no-cursor,sudo,title,ssh-env,no-ssh-terminfo,path"
+        );
+        assert_eq!(
+            line(&lines, "split-preserve-zoom"),
+            "split-preserve-zoom = navigation"
+        );
+
+        for key in [
+            "app-notifications",
+            "bell-features",
+            "freetype-load-flags",
+            "scroll-to-bottom",
+            "shell-integration-features",
+            "split-preserve-zoom",
+        ] {
+            cfg.set(key, Some("")).unwrap();
+        }
+
+        let reset_lines = formatted_lines(&cfg);
+        for key in [
+            "app-notifications",
+            "bell-features",
+            "freetype-load-flags",
+            "scroll-to-bottom",
+            "shell-integration-features",
+            "split-preserve-zoom",
+        ] {
+            assert_eq!(line(&reset_lines, key), line(&default_lines, key));
+        }
+
+        assert!(index(&lines, "font-shaping-break") < index(&lines, "freetype-load-flags"));
+        assert!(index(&lines, "freetype-load-flags") < index(&lines, "theme"));
+        assert!(index(&lines, "scroll-to-bottom") < index(&lines, "mouse-shift-capture"));
+        assert!(index(&lines, "shell-integration") < index(&lines, "shell-integration-features"));
+        assert!(
+            index(&lines, "shell-integration-features") < index(&lines, "command-palette-entry")
+        );
+        assert!(index(&lines, "split-divider-color") < index(&lines, "split-preserve-zoom"));
+        assert!(index(&lines, "split-preserve-zoom") < index(&lines, "search-foreground"));
+        assert!(index(&lines, "bell-features") < index(&lines, "bell-audio-path"));
+        assert!(index(&lines, "bell-audio-path") < index(&lines, "bell-audio-volume"));
+        assert!(index(&lines, "bell-audio-volume") < index(&lines, "app-notifications"));
+    }
+
+    #[test]
     fn enum_format_entries_shader_mouse() {
         let fmt = |v: &dyn Fn(&mut EntryFormatter)| {
             let mut out = String::new();

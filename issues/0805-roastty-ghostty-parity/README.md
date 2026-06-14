@@ -355,6 +355,11 @@ experiment files until they are proven.
   together by covering enum keywords, packed flag output, duration output,
   resets, and order while leaving unrelated packed flags and duration rows for
   later proof.
+- **Packed-flag formatter rows need family-column assertions, not broad text
+  grep.** Experiment 79 promoted the six remaining packed-flag formatter rows
+  while keeping already-proven packed rows unpromoted. The matrix assertion must
+  inspect the family column because unrelated evidence text may legitimately
+  mention packed flag output.
 - **Full-header ABI gaps must be split into symbol and semantic outcomes.**
   Experiment 5 proved the mapped Ghostty header can be closed at the
   declaration/export level while still recording honest semantic divergences for
@@ -900,4 +905,4 @@ remains open.
 - [Experiment 78: Command-finish notification formatter oracle](78-command-finish-notification-formatter-oracle.md)
   — **Pass**
 - [Experiment 79: Packed flag formatter oracle](79-packed-flag-formatter-oracle.md)
-  — **Designed**
+  — **Pass**

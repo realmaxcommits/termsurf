@@ -134,7 +134,8 @@ Pass criteria:
 
   for option in ['font-shaping-break', 'font-synthetic-style', 'notify-on-command-finish-action', 'input', 'env', 'palette', 'quick-terminal-size']:
       row = row_for(option)
-      assert 'packed flag' not in row, row
+      cells = [cell.strip() for cell in row.strip('|').split('|')]
+      assert cells[3] != 'packed flag', row
 
   print('matrix assertions passed')
   PY
@@ -170,3 +171,76 @@ Fixes:
   `bell-audio-path`, `bell-audio-volume`, `app-notifications`.
 
 Final verdict after re-review: **Approved**.
+
+## Result
+
+**Result:** Pass
+
+Experiment 79 promoted exactly the six planned packed-flag formatter rows:
+`app-notifications`, `bell-features`, `freetype-load-flags`, `scroll-to-bottom`,
+`shell-integration-features`, and `split-preserve-zoom`.
+
+Implementation:
+
+- Added `packed_flag_config_formatter_family_oracle` in
+  `roastty/src/config/mod.rs`.
+- Classified exactly those six rows as the `packed flag` formatter family in
+  `config_formatter_inventory.py`.
+- Regenerated `config-formatter-inventory.md` and `config-matrix.md`.
+
+Verification completed:
+
+- `cargo fmt --manifest-path roastty/Cargo.toml`
+- `cargo test --manifest-path roastty/Cargo.toml packed_flag_config_formatter_family_oracle`
+  passed with 1 test.
+- Representative existing tests passed:
+  - `cargo test --manifest-path roastty/Cargo.toml packed_flags_parse_cli`
+    passed with 2 tests because the filter also matches
+    `packed_flags_parse_cli_shell_notify`.
+  - `cargo test --manifest-path roastty/Cargo.toml packed_flags_parse_cli_shell_notify`
+  - `cargo test --manifest-path roastty/Cargo.toml packed_flags_config_parser_family_oracle`
+  - `cargo test --manifest-path roastty/Cargo.toml config_set_routes_packed_and_bool_fields`
+  - `cargo test --manifest-path roastty/Cargo.toml config_default_format_oracle`
+- The formatter inventory generator reported:
+  - `ghostty_canonical=203`
+  - `roastty_formatter_rows=203`
+  - `missing_canonical_formatter_rows=0`
+  - `extra_formatter_rows=0`
+  - `oracle_complete=170`
+  - `audit_covered=33`
+  - `gap=0`
+  - `no_output_rows=1`
+- The matrix assertion passed after tightening the excluded-row check to inspect
+  the family column rather than searching the whole row text. This matters
+  because `notify-on-command-finish-action` is correctly owned by the command
+  notification family while its evidence text legitimately mentions packed flag
+  output.
+- The matrix assertion verified:
+  - CFG-218 remains `Gap`.
+  - The CFG-218 count text is now 170 Oracle complete rows, 33 not Oracle
+    complete rows, and 0 formatter gaps.
+  - Exactly the six planned rows have family `packed flag`.
+  - Exactly the six planned rows cite `Packed flag formatter oracle` evidence.
+  - `font-shaping-break`, `font-synthetic-style`,
+    `notify-on-command-finish-action`, `input`, `env`, `palette`, and
+    `quick-terminal-size` were not promoted as `packed flag`.
+- `cargo fmt --manifest-path roastty/Cargo.toml --check` passed.
+- `prettier --write --prose-wrap always --print-width 80` was run on changed
+  Markdown files after the generator run.
+- `prettier --check --prose-wrap always --print-width 80` passed on changed
+  Markdown files.
+- `git diff --check` passed.
+
+## Conclusion
+
+The remaining packed-flag formatter rows are now independently guarded. CFG-218
+remains open because 33 formatter rows still need non-default formatter oracles,
+but the packed-flag family has no remaining formatter evidence gap.
+
+## Completion Review
+
+Reviewed by a fresh-context Codex adversarial subagent.
+
+Verdict: **Approved**.
+
+Findings: none.
