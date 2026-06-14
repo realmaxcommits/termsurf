@@ -752,3 +752,5 @@ remains open.
   — **Pass**
 - [Experiment 59: Keybind formatter oracle](59-keybind-formatter-oracle.md) —
   **Pass**
+- [Experiment 60: Optional scalar formatter oracle](60-optional-scalar-formatter-oracle.md)
+  — **Designed**
