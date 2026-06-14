@@ -372,6 +372,12 @@ experiment files until they are proven.
   enum keyword output, config-level output, raw-empty resets, and compatibility
   shims such as `desktop`, `hidden`, and `adw-toolbar-style`, while leaving GTK
   booleans and `gtk-custom-css` out of the promoted family.
+- **macOS enum formatter rows are broad but still bounded.** Experiment 82
+  promoted the nine remaining macOS direct enum formatter rows together because
+  they share adjacent macOS formatter dispatch and keyword semantics, while
+  proving the `macos-dock-drop-behavior = window` compatibility shim and keeping
+  adjacent optional/scalar rows such as `macos-option-as-alt`,
+  `macos-custom-icon`, and icon color rows outside the family.
 - **`py_compile` creates bytecode even with `PYTHONDONTWRITEBYTECODE=1`.** Treat
   `issues/0805-roastty-ghostty-parity/__pycache__/` as a generated verification
   artifact and remove it after running the inventory script compile check.
@@ -926,4 +932,4 @@ remains open.
 - [Experiment 81: GTK enum formatter oracle](81-gtk-enum-formatter-oracle.md) —
   **Pass**
 - [Experiment 82: macOS enum formatter oracle](82-macos-enum-formatter-oracle.md)
-  — **Designed**
+  — **Pass**

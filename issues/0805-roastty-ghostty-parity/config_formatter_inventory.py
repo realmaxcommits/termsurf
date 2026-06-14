@@ -49,6 +49,7 @@ BACKGROUND_IMAGE_ENUM_ORACLE_TEST = (
     "background_image_enum_config_formatter_family_oracle"
 )
 GTK_ENUM_ORACLE_TEST = "gtk_enum_config_formatter_family_oracle"
+MACOS_ENUM_ORACLE_TEST = "macos_enum_config_formatter_family_oracle"
 METRIC_MODIFIER_ORACLE_TEST = "metric_modifier_config_formatter_family_oracle"
 WINDOW_PADDING_ORACLE_TEST = "window_padding_config_formatter_family_oracle"
 REPEATABLE_PATH_ORACLE_TEST = "repeatable_path_config_formatter_family_oracle"
@@ -157,6 +158,17 @@ GTK_ENUM_OPTIONS = {
     "gtk-tabs-location",
     "gtk-toolbar-style",
     "gtk-titlebar-style",
+}
+MACOS_ENUM_OPTIONS = {
+    "macos-non-native-fullscreen",
+    "macos-window-buttons",
+    "macos-titlebar-style",
+    "macos-titlebar-proxy-icon",
+    "macos-dock-drop-behavior",
+    "macos-hidden",
+    "macos-icon",
+    "macos-icon-frame",
+    "macos-shortcuts",
 }
 OPTIONAL_COLOR_OPTIONS = {
     "bold-color",
@@ -294,6 +306,8 @@ def formatter_family(option: str, path_text: str, call_text: str) -> str:
         return "background image enum"
     if option in GTK_ENUM_OPTIONS:
         return "gtk enum"
+    if option in MACOS_ENUM_OPTIONS:
+        return "macos enum"
     if "font_" in call_text or "Font" in call_text:
         return "font"
     if "window_padding" in call_text:
@@ -463,6 +477,7 @@ def build_rows(
     packed_flag_oracle_present: bool,
     background_image_enum_oracle_present: bool,
     gtk_enum_oracle_present: bool,
+    macos_enum_oracle_present: bool,
     metric_modifier_oracle_present: bool,
     window_padding_oracle_present: bool,
     repeatable_path_oracle_present: bool,
@@ -754,6 +769,18 @@ def build_rows(
                 "to defaults; and representative order checks"
             )
             missing_evidence = "None for GTK enum formatter rows."
+        elif macos_enum_oracle_present and family == "macos enum":
+            status = "Oracle complete"
+            evidence = (
+                "macOS enum formatter oracle covers every NonNativeFullscreen, "
+                "MacWindowButtons, MacTitlebarStyle, MacTitlebarProxyIcon, "
+                "MacOSDockDropBehavior, MacHidden, MacAppIcon, MacAppIconFrame, "
+                "and MacShortcuts keyword; direct enum formatter output; "
+                "representative Config::set plus format_config output; "
+                "compatibility inputs; raw-empty resets to defaults; and "
+                "representative order checks"
+            )
+            missing_evidence = "None for macOS enum formatter rows."
         elif metric_modifier_oracle_present and family == "metric modifier":
             status = "Oracle complete"
             evidence = (
@@ -883,6 +910,7 @@ def main() -> int:
         BACKGROUND_IMAGE_ENUM_ORACLE_TEST in roastty_source
     )
     gtk_enum_oracle_present = GTK_ENUM_ORACLE_TEST in roastty_source
+    macos_enum_oracle_present = MACOS_ENUM_ORACLE_TEST in roastty_source
     metric_modifier_oracle_present = METRIC_MODIFIER_ORACLE_TEST in roastty_source
     window_padding_oracle_present = WINDOW_PADDING_ORACLE_TEST in roastty_source
     repeatable_path_oracle_present = REPEATABLE_PATH_ORACLE_TEST in roastty_source
@@ -917,6 +945,7 @@ def main() -> int:
         packed_flag_oracle_present,
         background_image_enum_oracle_present,
         gtk_enum_oracle_present,
+        macos_enum_oracle_present,
         metric_modifier_oracle_present,
         window_padding_oracle_present,
         repeatable_path_oracle_present,
@@ -932,7 +961,9 @@ def main() -> int:
     oracle_count = sum(row.status == "Oracle complete" for row in rows)
     gap_count = sum(row.status == "Gap" for row in rows)
     owner_experiment = (
-        81
+        82
+        if macos_enum_oracle_present
+        else 81
         if gtk_enum_oracle_present
         else 80
         if background_image_enum_oracle_present

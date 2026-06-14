@@ -14746,6 +14746,249 @@ mod tests {
     }
 
     #[test]
+    fn macos_enum_config_formatter_family_oracle() {
+        let fmt = |v: &dyn Fn(&mut EntryFormatter)| {
+            let mut out = String::new();
+            let mut f = EntryFormatter::new("a", &mut out);
+            v(&mut f);
+            out
+        };
+        let formatted_lines = |cfg: &Config| -> Vec<String> {
+            let mut out = String::new();
+            cfg.format_config(&mut out);
+            out.lines().map(str::to_string).collect()
+        };
+        let line = |lines: &[String], key: &str| -> String {
+            let prefix = format!("{key} = ");
+            lines
+                .iter()
+                .find(|line| line.starts_with(&prefix))
+                .unwrap_or_else(|| panic!("missing formatted config line for {key}"))
+                .clone()
+        };
+        let index = |lines: &[String], key: &str| -> usize {
+            let prefix = format!("{key} = ");
+            lines
+                .iter()
+                .position(|line| line.starts_with(&prefix))
+                .unwrap_or_else(|| panic!("missing formatted config line for {key}"))
+        };
+
+        for (variant, kw) in [
+            (NonNativeFullscreen::False, "false"),
+            (NonNativeFullscreen::True, "true"),
+            (NonNativeFullscreen::VisibleMenu, "visible-menu"),
+            (NonNativeFullscreen::PaddedNotch, "padded-notch"),
+        ] {
+            assert_eq!(fmt(&|f| variant.format_entry(f)), format!("a = {kw}\n"));
+        }
+        for (variant, kw) in [
+            (MacWindowButtons::Visible, "visible"),
+            (MacWindowButtons::Hidden, "hidden"),
+        ] {
+            assert_eq!(fmt(&|f| variant.format_entry(f)), format!("a = {kw}\n"));
+        }
+        for (variant, kw) in [
+            (MacTitlebarStyle::Native, "native"),
+            (MacTitlebarStyle::Transparent, "transparent"),
+            (MacTitlebarStyle::Tabs, "tabs"),
+            (MacTitlebarStyle::Hidden, "hidden"),
+        ] {
+            assert_eq!(fmt(&|f| variant.format_entry(f)), format!("a = {kw}\n"));
+        }
+        for (variant, kw) in [
+            (MacTitlebarProxyIcon::Visible, "visible"),
+            (MacTitlebarProxyIcon::Hidden, "hidden"),
+        ] {
+            assert_eq!(fmt(&|f| variant.format_entry(f)), format!("a = {kw}\n"));
+        }
+        for (variant, kw) in [
+            (MacOSDockDropBehavior::NewTab, "new-tab"),
+            (MacOSDockDropBehavior::NewWindow, "new-window"),
+        ] {
+            assert_eq!(fmt(&|f| variant.format_entry(f)), format!("a = {kw}\n"));
+        }
+        for (variant, kw) in [(MacHidden::Never, "never"), (MacHidden::Always, "always")] {
+            assert_eq!(fmt(&|f| variant.format_entry(f)), format!("a = {kw}\n"));
+        }
+        for (variant, kw) in [
+            (MacAppIcon::Official, "official"),
+            (MacAppIcon::Blueprint, "blueprint"),
+            (MacAppIcon::Chalkboard, "chalkboard"),
+            (MacAppIcon::Microchip, "microchip"),
+            (MacAppIcon::Glass, "glass"),
+            (MacAppIcon::Holographic, "holographic"),
+            (MacAppIcon::Paper, "paper"),
+            (MacAppIcon::Retro, "retro"),
+            (MacAppIcon::Xray, "xray"),
+            (MacAppIcon::Custom, "custom"),
+            (MacAppIcon::CustomStyle, "custom-style"),
+        ] {
+            assert_eq!(fmt(&|f| variant.format_entry(f)), format!("a = {kw}\n"));
+        }
+        for (variant, kw) in [
+            (MacAppIconFrame::Aluminum, "aluminum"),
+            (MacAppIconFrame::Beige, "beige"),
+            (MacAppIconFrame::Plastic, "plastic"),
+            (MacAppIconFrame::Chrome, "chrome"),
+        ] {
+            assert_eq!(fmt(&|f| variant.format_entry(f)), format!("a = {kw}\n"));
+        }
+        for (variant, kw) in [
+            (MacShortcuts::Allow, "allow"),
+            (MacShortcuts::Deny, "deny"),
+            (MacShortcuts::Ask, "ask"),
+        ] {
+            assert_eq!(fmt(&|f| variant.format_entry(f)), format!("a = {kw}\n"));
+        }
+
+        let default_lines = formatted_lines(&Config::default());
+        assert_eq!(
+            line(&default_lines, "macos-non-native-fullscreen"),
+            "macos-non-native-fullscreen = false"
+        );
+        assert_eq!(
+            line(&default_lines, "macos-window-buttons"),
+            "macos-window-buttons = visible"
+        );
+        assert_eq!(
+            line(&default_lines, "macos-titlebar-style"),
+            "macos-titlebar-style = transparent"
+        );
+        assert_eq!(
+            line(&default_lines, "macos-titlebar-proxy-icon"),
+            "macos-titlebar-proxy-icon = visible"
+        );
+        assert_eq!(
+            line(&default_lines, "macos-dock-drop-behavior"),
+            "macos-dock-drop-behavior = new-tab"
+        );
+        assert_eq!(line(&default_lines, "macos-hidden"), "macos-hidden = never");
+        assert_eq!(line(&default_lines, "macos-icon"), "macos-icon = official");
+        assert_eq!(
+            line(&default_lines, "macos-icon-frame"),
+            "macos-icon-frame = aluminum"
+        );
+        assert_eq!(
+            line(&default_lines, "macos-shortcuts"),
+            "macos-shortcuts = ask"
+        );
+
+        let mut cfg = Config::default();
+        cfg.set("macos-non-native-fullscreen", Some("visible-menu"))
+            .unwrap();
+        cfg.set("macos-window-buttons", Some("hidden")).unwrap();
+        cfg.set("macos-titlebar-style", Some("tabs")).unwrap();
+        cfg.set("macos-titlebar-proxy-icon", Some("hidden"))
+            .unwrap();
+        cfg.set("macos-dock-drop-behavior", Some("new-window"))
+            .unwrap();
+        cfg.set("macos-hidden", Some("always")).unwrap();
+        cfg.set("macos-icon", Some("custom-style")).unwrap();
+        cfg.set("macos-icon-frame", Some("chrome")).unwrap();
+        cfg.set("macos-shortcuts", Some("deny")).unwrap();
+        let lines = formatted_lines(&cfg);
+        assert_eq!(
+            line(&lines, "macos-non-native-fullscreen"),
+            "macos-non-native-fullscreen = visible-menu"
+        );
+        assert_eq!(
+            line(&lines, "macos-window-buttons"),
+            "macos-window-buttons = hidden"
+        );
+        assert_eq!(
+            line(&lines, "macos-titlebar-style"),
+            "macos-titlebar-style = tabs"
+        );
+        assert_eq!(
+            line(&lines, "macos-titlebar-proxy-icon"),
+            "macos-titlebar-proxy-icon = hidden"
+        );
+        assert_eq!(
+            line(&lines, "macos-dock-drop-behavior"),
+            "macos-dock-drop-behavior = new-window"
+        );
+        assert_eq!(line(&lines, "macos-hidden"), "macos-hidden = always");
+        assert_eq!(line(&lines, "macos-icon"), "macos-icon = custom-style");
+        assert_eq!(
+            line(&lines, "macos-icon-frame"),
+            "macos-icon-frame = chrome"
+        );
+        assert_eq!(line(&lines, "macos-shortcuts"), "macos-shortcuts = deny");
+
+        cfg.set("macos-dock-drop-behavior", Some("window")).unwrap();
+        assert_eq!(
+            line(&formatted_lines(&cfg), "macos-dock-drop-behavior"),
+            "macos-dock-drop-behavior = new-window"
+        );
+
+        for key in [
+            "macos-non-native-fullscreen",
+            "macos-window-buttons",
+            "macos-titlebar-style",
+            "macos-titlebar-proxy-icon",
+            "macos-dock-drop-behavior",
+            "macos-hidden",
+            "macos-icon",
+            "macos-icon-frame",
+            "macos-shortcuts",
+        ] {
+            cfg.set(key, Some("")).unwrap();
+        }
+        let reset_lines = formatted_lines(&cfg);
+        assert_eq!(
+            line(&reset_lines, "macos-non-native-fullscreen"),
+            "macos-non-native-fullscreen = false"
+        );
+        assert_eq!(
+            line(&reset_lines, "macos-window-buttons"),
+            "macos-window-buttons = visible"
+        );
+        assert_eq!(
+            line(&reset_lines, "macos-titlebar-style"),
+            "macos-titlebar-style = transparent"
+        );
+        assert_eq!(
+            line(&reset_lines, "macos-titlebar-proxy-icon"),
+            "macos-titlebar-proxy-icon = visible"
+        );
+        assert_eq!(
+            line(&reset_lines, "macos-dock-drop-behavior"),
+            "macos-dock-drop-behavior = new-tab"
+        );
+        assert_eq!(line(&reset_lines, "macos-hidden"), "macos-hidden = never");
+        assert_eq!(line(&reset_lines, "macos-icon"), "macos-icon = official");
+        assert_eq!(
+            line(&reset_lines, "macos-icon-frame"),
+            "macos-icon-frame = aluminum"
+        );
+        assert_eq!(
+            line(&reset_lines, "macos-shortcuts"),
+            "macos-shortcuts = ask"
+        );
+
+        assert!(index(&lines, "app-notifications") < index(&lines, "macos-non-native-fullscreen"));
+        assert!(
+            index(&lines, "macos-non-native-fullscreen") < index(&lines, "macos-window-buttons")
+        );
+        assert!(index(&lines, "macos-window-buttons") < index(&lines, "macos-titlebar-style"));
+        assert!(index(&lines, "macos-titlebar-style") < index(&lines, "macos-titlebar-proxy-icon"));
+        assert!(
+            index(&lines, "macos-titlebar-proxy-icon") < index(&lines, "macos-dock-drop-behavior")
+        );
+        assert!(index(&lines, "macos-dock-drop-behavior") < index(&lines, "macos-option-as-alt"));
+        assert!(index(&lines, "macos-option-as-alt") < index(&lines, "macos-window-shadow"));
+        assert!(index(&lines, "macos-window-shadow") < index(&lines, "macos-hidden"));
+        assert!(index(&lines, "macos-hidden") < index(&lines, "macos-auto-secure-input"));
+        assert!(index(&lines, "macos-icon") < index(&lines, "macos-custom-icon"));
+        assert!(index(&lines, "macos-custom-icon") < index(&lines, "macos-icon-frame"));
+        assert!(index(&lines, "macos-icon-frame") < index(&lines, "macos-icon-ghost-color"));
+        assert!(index(&lines, "macos-icon-ghost-color") < index(&lines, "macos-icon-screen-color"));
+        assert!(index(&lines, "macos-icon-screen-color") < index(&lines, "macos-shortcuts"));
+        assert!(index(&lines, "macos-shortcuts") < index(&lines, "linux-cgroup"));
+    }
+
+    #[test]
     fn enum_format_entries_misc() {
         let fmt = |v: &dyn Fn(&mut EntryFormatter)| {
             let mut out = String::new();

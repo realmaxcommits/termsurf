@@ -183,3 +183,107 @@ Reviewer evidence:
 - Verification includes focused Rust tests, existing regression tests,
   regenerated inventory and matrix checks, non-vacuous matrix assertions,
   `py_compile`, `cargo fmt --check`, Prettier, and `git diff --check`.
+
+## Result
+
+**Result:** Pass
+
+Implemented the macOS enum formatter oracle and promoted exactly the nine
+planned CFG-218 rows:
+
+- `macos-non-native-fullscreen`;
+- `macos-window-buttons`;
+- `macos-titlebar-style`;
+- `macos-titlebar-proxy-icon`;
+- `macos-dock-drop-behavior`;
+- `macos-hidden`;
+- `macos-icon`;
+- `macos-icon-frame`;
+- `macos-shortcuts`.
+
+The regenerated formatter inventory reports:
+
+- `ghostty_canonical=203`;
+- `roastty_formatter_rows=203`;
+- `missing_canonical_formatter_rows=0`;
+- `extra_formatter_rows=0`;
+- `oracle_complete=185`;
+- `audit_covered=18`;
+- `gap=0`.
+
+The matrix assertion passed and confirmed that adjacent rows
+`macos-option-as-alt`, `macos-window-shadow`, `macos-auto-secure-input`,
+`macos-custom-icon`, `macos-icon-ghost-color`, `macos-icon-screen-color`, and
+`linux-cgroup` were not classified as `macos enum`.
+
+Verification run:
+
+- `cargo fmt --manifest-path roastty/Cargo.toml`
+- `cargo test --manifest-path roastty/Cargo.toml macos_enum_config_formatter_family_oracle`
+  — passed, 1 test.
+- `cargo test --manifest-path roastty/Cargo.toml enum_format_entries_mac` —
+  passed, 1 test.
+- `cargo test --manifest-path roastty/Cargo.toml enum_format_entries_fullscreen`
+  — passed, 1 test.
+- `cargo test --manifest-path roastty/Cargo.toml enum_from_keyword_round_trips_mac_bgimage_shader`
+  — passed, 1 test.
+- `cargo test --manifest-path roastty/Cargo.toml enum_from_keyword_round_trips_misc_fullscreen`
+  — passed, 1 test.
+- `cargo test --manifest-path roastty/Cargo.toml macos_icon_config_parse_format_reset_and_diagnose`
+  — passed, 1 test.
+- `cargo test --manifest-path roastty/Cargo.toml macos_tail_config_parse_format_reset_and_diagnose`
+  — passed, 1 test.
+- `cargo test --manifest-path roastty/Cargo.toml macos_shortcuts_config_parse_format_reset_and_diagnose`
+  — passed, 1 test.
+- `cargo test --manifest-path roastty/Cargo.toml config_compatibility_alias_semantics`
+  — passed, 1 test.
+- `cargo test --manifest-path roastty/Cargo.toml config_default_format_oracle` —
+  passed, 1 test.
+- Formatter inventory regeneration — passed with the expected counts above.
+- Matrix assertion — passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile issues/0805-roastty-ghostty-parity/config_formatter_inventory.py`
+  — passed, then the generated `__pycache__/` artifact was removed.
+- `cargo fmt --manifest-path roastty/Cargo.toml --check` — passed.
+- `prettier --check issues/0805-roastty-ghostty-parity/README.md issues/0805-roastty-ghostty-parity/82-macos-enum-formatter-oracle.md`
+  — passed.
+- `git diff --check` — passed.
+
+## Conclusion
+
+macOS enum formatting is now a durable CFG-218 oracle covering direct enum
+output, config-level output, raw-empty resets, the dock-drop compatibility shim,
+and local ordering across the adjacent macOS formatter block. The remaining
+formatter gap is 18 `Audit covered` rows and 0 formatter-dispatch gaps; CFG-218
+correctly remains `Gap` until those remaining rows receive focused formatter
+oracles.
+
+## Completion Review
+
+Adversarial reviewer: Codex subagent with fresh context.
+
+Verdict: Approved.
+
+Findings:
+
+- No Required findings.
+
+Reviewer verification:
+
+- The diff only adds the planned Rust oracle test plus inventory, matrix, and
+  README updates.
+- The test covers direct enum formatter output, `Config::set` plus
+  `format_config`, dock-drop `window` compatibility input, raw-empty resets, and
+  local ordering for the nine macOS enum rows.
+- The inventory classifies exactly those nine rows as `macos enum`; adjacent
+  macOS/scalar rows remain outside the family.
+- CFG-218 remains `Gap` with 185 `Oracle complete` rows, 18 rows not complete,
+  and 0 formatter gaps.
+- The README marks Experiment 82 as `Pass` and adds a relevant Learning.
+- `git status --short` showed the result was still uncommitted during review.
+- `cargo test --manifest-path roastty/Cargo.toml macos_enum_config_formatter_family_oracle`
+  passed.
+- `cargo fmt --manifest-path roastty/Cargo.toml --check`, Prettier, and
+  `git diff --check` passed.
+
+The reviewer did not rerun `py_compile` because it can create `__pycache__`
+artifacts and the review was read-only.
