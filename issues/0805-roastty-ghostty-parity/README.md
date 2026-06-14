@@ -1173,3 +1173,5 @@ remains open.
   — **Pass**
 - [Experiment 112: Platform runtime classification](112-platform-runtime-classification.md)
   — **Pass**
+- [Experiment 113: PTY process runtime split](113-pty-process-runtime-split.md)
+  — **Designed**
