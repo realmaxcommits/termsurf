@@ -689,3 +689,5 @@ remains open.
   — **Pass**
 - [Experiment 50: Non-default formatter facet audit](50-non-default-formatter-facet-audit.md)
   — **Pass**
+- [Experiment 51: Primitive formatter oracle](51-primitive-formatter-oracle.md)
+  — **Designed**
