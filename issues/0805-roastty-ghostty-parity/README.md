@@ -1127,3 +1127,5 @@ remains open.
 - [Experiment 105: Reload font size](105-reload-font-size.md) — **Pass**
 - [Experiment 106: Runtime UI effects inventory](106-runtime-ui-effects-inventory.md)
   — **Partial**
+- [Experiment 107: Mouse runtime subinventory](107-mouse-runtime-subinventory.md)
+  — **Designed**
