@@ -679,3 +679,5 @@ remains open.
   **Pass**
 - [Experiment 47: Theme parser oracle](47-theme-parser-oracle.md) — **Pass**
 - [Experiment 48: Keybind parser oracle](48-keybind-parser-oracle.md) — **Pass**
+- [Experiment 49: Config default files load oracle](49-config-default-files-load-oracle.md)
+  — **Designed**
