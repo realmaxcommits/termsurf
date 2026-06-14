@@ -138,3 +138,67 @@ Reviewed by a fresh-context Codex adversarial subagent.
 Verdict: **Approved**.
 
 Findings: none.
+
+## Result
+
+**Result:** Pass
+
+Experiment 76 promoted exactly the three planned resize overlay formatter rows:
+`resize-overlay`, `resize-overlay-position`, and `resize-overlay-duration`.
+
+Implementation:
+
+- Added `resize_overlay_config_formatter_family_oracle` in
+  `roastty/src/config/mod.rs`.
+- Classified exactly those three rows as the `resize overlay` formatter family
+  in `config_formatter_inventory.py`.
+- Regenerated `config-formatter-inventory.md` and `config-matrix.md`.
+
+Verification completed:
+
+- `cargo fmt --manifest-path roastty/Cargo.toml`
+- `cargo test --manifest-path roastty/Cargo.toml resize_overlay_config_formatter_family_oracle`
+  passed with 1 test.
+- Representative existing tests passed:
+  - `cargo test --manifest-path roastty/Cargo.toml resize_overlay_keywords_and_format_entry`
+  - `cargo test --manifest-path roastty/Cargo.toml resize_overlay_config_parse_format_reset_and_diagnose`
+  - `cargo test --manifest-path roastty/Cargo.toml config_default_format_oracle`
+- The formatter inventory generator reported:
+  - `ghostty_canonical=203`
+  - `roastty_formatter_rows=203`
+  - `missing_canonical_formatter_rows=0`
+  - `extra_formatter_rows=0`
+  - `oracle_complete=156`
+  - `audit_covered=47`
+  - `gap=0`
+  - `no_output_rows=1`
+- The matrix assertion passed and verified:
+  - CFG-218 remains `Gap`.
+  - The CFG-218 count text is now 156 Oracle complete rows, 47 not Oracle
+    complete rows, and 0 formatter gaps.
+  - Exactly the three planned rows have family `resize overlay`.
+  - Exactly the three planned rows cite `Resize overlay formatter oracle`
+    evidence.
+  - `notify-on-command-finish-after`, `undo-timeout`, `window-decoration`,
+    `quick-terminal-size`, and `quick-terminal-position` were not promoted as
+    `resize overlay`.
+- `cargo fmt --manifest-path roastty/Cargo.toml --check` passed.
+- `prettier --write --prose-wrap always --print-width 80` was run on changed
+  Markdown files after the generator run.
+- `prettier --check --prose-wrap always --print-width 80` passed on changed
+  Markdown files.
+- `git diff --check` passed.
+
+## Conclusion
+
+The resize overlay formatter cluster is now independently guarded. CFG-218
+remains open because 47 formatter rows still need non-default formatter oracles,
+but the resize overlay family has no remaining formatter evidence gap.
+
+## Completion Review
+
+Reviewed by a fresh-context Codex adversarial subagent.
+
+Verdict: **Approved**.
+
+Findings: none.

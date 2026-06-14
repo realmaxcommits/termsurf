@@ -15314,6 +15314,112 @@ mod tests {
     }
 
     #[test]
+    fn resize_overlay_config_formatter_family_oracle() {
+        let fmt = |v: &dyn Fn(&mut EntryFormatter)| {
+            let mut out = String::new();
+            let mut f = EntryFormatter::new("a", &mut out);
+            v(&mut f);
+            out
+        };
+        let formatted_lines = |cfg: &Config| -> Vec<String> {
+            let mut out = String::new();
+            cfg.format_config(&mut out);
+            out.lines().map(str::to_string).collect()
+        };
+        let line = |lines: &[String], key: &str| -> String {
+            let prefix = format!("{key} = ");
+            lines
+                .iter()
+                .find(|line| line.starts_with(&prefix))
+                .unwrap_or_else(|| panic!("missing formatted config line for {key}"))
+                .clone()
+        };
+        let index = |lines: &[String], key: &str| -> usize {
+            let prefix = format!("{key} = ");
+            lines
+                .iter()
+                .position(|line| line.starts_with(&prefix))
+                .unwrap_or_else(|| panic!("missing formatted config line for {key}"))
+        };
+
+        for (variant, kw) in [
+            (ResizeOverlay::Always, "always"),
+            (ResizeOverlay::Never, "never"),
+            (ResizeOverlay::AfterFirst, "after-first"),
+        ] {
+            assert_eq!(fmt(&|f| variant.format_entry(f)), format!("a = {kw}\n"));
+        }
+        for (variant, kw) in [
+            (ResizeOverlayPosition::Center, "center"),
+            (ResizeOverlayPosition::TopLeft, "top-left"),
+            (ResizeOverlayPosition::TopCenter, "top-center"),
+            (ResizeOverlayPosition::TopRight, "top-right"),
+            (ResizeOverlayPosition::BottomLeft, "bottom-left"),
+            (ResizeOverlayPosition::BottomCenter, "bottom-center"),
+            (ResizeOverlayPosition::BottomRight, "bottom-right"),
+        ] {
+            assert_eq!(fmt(&|f| variant.format_entry(f)), format!("a = {kw}\n"));
+        }
+
+        let default = Config::default();
+        let default_lines = formatted_lines(&default);
+        assert_eq!(
+            line(&default_lines, "resize-overlay"),
+            "resize-overlay = after-first"
+        );
+        assert_eq!(
+            line(&default_lines, "resize-overlay-position"),
+            "resize-overlay-position = center"
+        );
+        assert_eq!(
+            line(&default_lines, "resize-overlay-duration"),
+            "resize-overlay-duration = 750ms"
+        );
+
+        let mut cfg = Config::default();
+        cfg.set("resize-overlay", Some("always")).unwrap();
+        cfg.set("resize-overlay-position", Some("bottom-right"))
+            .unwrap();
+        cfg.set("resize-overlay-duration", Some("1s 250ms"))
+            .unwrap();
+
+        let lines = formatted_lines(&cfg);
+        assert_eq!(line(&lines, "resize-overlay"), "resize-overlay = always");
+        assert_eq!(
+            line(&lines, "resize-overlay-position"),
+            "resize-overlay-position = bottom-right"
+        );
+        assert_eq!(
+            line(&lines, "resize-overlay-duration"),
+            "resize-overlay-duration = 1s 250ms"
+        );
+
+        for key in [
+            "resize-overlay",
+            "resize-overlay-position",
+            "resize-overlay-duration",
+        ] {
+            cfg.set(key, Some("")).unwrap();
+        }
+
+        let reset_lines = formatted_lines(&cfg);
+        for key in [
+            "resize-overlay",
+            "resize-overlay-position",
+            "resize-overlay-duration",
+        ] {
+            assert_eq!(line(&reset_lines, key), line(&default_lines, key));
+        }
+
+        assert!(index(&lines, "window-titlebar-background") < index(&lines, "resize-overlay"));
+        assert!(index(&lines, "resize-overlay") < index(&lines, "resize-overlay-position"));
+        assert!(
+            index(&lines, "resize-overlay-position") < index(&lines, "resize-overlay-duration")
+        );
+        assert!(index(&lines, "resize-overlay-duration") < index(&lines, "focus-follows-mouse"));
+    }
+
+    #[test]
     fn enum_format_entries_shader_mouse() {
         let fmt = |v: &dyn Fn(&mut EntryFormatter)| {
             let mut out = String::new();

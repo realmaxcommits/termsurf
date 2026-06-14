@@ -338,6 +338,11 @@ experiment files until they are proven.
   keyword, default/non-default formatted output, raw-empty resets, and local
   order, while leaving `window-decoration`, padding, titlebar colors,
   resize-overlay, and platform-specific window rows for later proof.
+- **Resize overlay formatter proof can include its duration row without
+  generalizing all durations.** Experiment 76 promoted `resize-overlay`,
+  `resize-overlay-position`, and `resize-overlay-duration` together because they
+  are one adjacent UI cluster, while keeping unrelated duration rows such as
+  `notify-on-command-finish-after` and `undo-timeout` outside the promotion.
 - **Full-header ABI gaps must be split into symbol and semantic outcomes.**
   Experiment 5 proved the mapped Ghostty header can be closed at the
   declaration/export level while still recording honest semantic divergences for
@@ -877,4 +882,4 @@ remains open.
 - [Experiment 75: Window enum formatter oracle](75-window-enum-formatter-oracle.md)
   — **Pass**
 - [Experiment 76: Resize overlay formatter oracle](76-resize-overlay-formatter-oracle.md)
-  — **Designed**
+  — **Pass**
