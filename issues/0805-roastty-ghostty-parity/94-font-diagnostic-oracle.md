@@ -42,9 +42,10 @@ finalization, reload, runtime/UI, or non-diagnostic config facets.
   - Add an exact Experiment 94 evidence override for the five font options.
   - Fail generation if any listed override is missing from the canonical
     inventory or no longer has parser family `font`.
-  - Reclassify parser-family `font` diagnostic rows as
-    `required-value diagnostic` / missing-value coverage instead of
-    `stateful parser diagnostic`.
+  - Reclassify only these five `RepeatableString` font diagnostic rows as
+    `required-value diagnostic` / missing-value coverage. Do not reclassify
+    other parser-family `font` rows, such as metric modifier or font-variation
+    rows whose existing oracles prove invalid-value diagnostics.
   - Use missing-value wording for completed font evidence instead of
     invalid-value wording.
 
@@ -92,6 +93,8 @@ Pass criteria:
   - all five font rows are `Oracle complete`;
   - every promoted font row cites the Experiment 94 font diagnostic oracle;
   - every promoted font row uses diagnostic family `required-value diagnostic`;
+  - already-complete non-Experiment-94 parser-family `font` rows keep their
+    existing diagnostic families and evidence;
   - generated font evidence and missing-evidence wording does not claim invalid
     explicit-value coverage;
   - exactly 203 diagnostic rows are `Oracle complete`;
@@ -131,3 +134,16 @@ Required findings: None.
 Optional findings: None.
 
 Nit findings: None.
+
+## Design Amendment Review
+
+Adversarial reviewer: Codex subagent with fresh context.
+
+Verdict: Approved.
+
+Findings: None.
+
+The amendment narrows the generator plan so only the five remaining
+`RepeatableString` font rows are reclassified as `required-value diagnostic`.
+The reviewer confirmed this preserves already-complete parser-family `font` rows
+whose existing oracles prove invalid-value or stateful diagnostics.
