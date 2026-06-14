@@ -168,3 +168,98 @@ prettier --write --prose-wrap always --print-width 80 \
   issues/0805-roastty-ghostty-parity/config-matrix.md
 git diff --check
 ```
+
+## Result
+
+**Result:** Pass
+
+Roastty now has a focused command parser family oracle for the two canonical
+rows that share pinned Ghostty's `config.Command.parseCLI` semantics:
+
+- `command`;
+- `initial-command`.
+
+Implementation notes:
+
+- Renamed and extended the existing command regression test as
+  `command_config_parser_family_oracle`.
+- Added coverage for whole missing/empty/all-space rejection, prefixed
+  empty/all-space payloads, exact `shell:` / `direct:` prefixes, unknown-prefix
+  shell fallback, ASCII-space-only trimming, repeated-space direct splitting,
+  formatter output, `Command::string`, diagnostics, empty optional resets, and
+  clone semantics.
+- Taught `config_parser_inventory.py` to detect the command oracle, promote only
+  `command` and `initial-command`, and make CFG-217's owner `Experiment 37` when
+  this oracle is present.
+
+Verification commands run:
+
+```bash
+cargo test --manifest-path roastty/Cargo.toml command_config_parser_family_oracle
+```
+
+Result:
+
+```text
+test config::tests::command_config_parser_family_oracle ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 4926 filtered out
+```
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/config_parser_inventory.py \
+  --upstream vendor/ghostty/src/config/Config.zig \
+  --roastty roastty/src/config/mod.rs \
+  --config-inventory issues/0805-roastty-ghostty-parity/config-inventory.md \
+  --output issues/0805-roastty-ghostty-parity/config-parser-inventory.md \
+  --matrix issues/0805-roastty-ghostty-parity/config-matrix.md
+```
+
+Result:
+
+```text
+ghostty_canonical=203
+roastty_parser_rows=203
+missing_canonical_parser_rows=0
+missing_dispatch_rows=0
+extra_parser_rows=0
+compatibility_only_parser_arms=5
+noncanonical_noncompat_parser_arms=0
+oracle_complete=179
+audit_covered=24
+gap=0
+```
+
+The matrix assertion passed and printed:
+
+```text
+command_oracle_rows=2 oracle_complete=179 cfg217=Gap
+```
+
+Additional hygiene checks passed:
+
+```bash
+python3 -m py_compile issues/0805-roastty-ghostty-parity/config_parser_inventory.py
+rm -rf issues/0805-roastty-ghostty-parity/__pycache__
+cargo fmt --manifest-path roastty/Cargo.toml
+```
+
+## Conclusion
+
+The shared command parser boundary is now oracle-complete for CFG-217. The
+important upstream edge case is that Ghostty rejects only whole missing, empty,
+or all-space input before prefix handling; empty prefixed payloads remain valid
+commands. CFG-217 remains `Gap` because 24 parser rows are still only
+audit-covered.
+
+## Completion Review
+
+Reviewed by a fresh-context Codex adversarial subagent.
+
+Verdict: **Approved**.
+
+Findings: none.
+
+The reviewer independently verified the focused command oracle test, Rust format
+check, `git diff --check`, generated inventory counts, the two promoted
+`command` / `initial-command` rows, CFG-217's `Gap` status and Experiment 37
+ownership, and that the result commit had not yet been made.

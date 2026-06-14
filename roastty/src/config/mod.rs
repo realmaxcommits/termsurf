@@ -8883,17 +8883,18 @@ mod tests {
         BackgroundBlur, BackgroundBlurParseError, BackgroundImageFit, BackgroundImagePosition,
         BellFeatures, BoldColor, ClipboardAccess, ClipboardCodepointMapEntry,
         ClipboardCodepointMapParseError, ClipboardReplacement, Color, ColorList, ColorParseError,
-        Command, CommandPaletteEntry, Config, ConfigAppRuntime, ConfigDiagnostic, ConfigFilePath,
-        ConfigFinalizeReport, ConfigFinalizeWarning, ConfigRecursiveFileErrorKind,
-        ConfigReplayEntry, ConfigSetError, ConfigSetSource, ConfigThemeLoadReport,
-        ConfirmCloseSurface, CopyOnSelect, CursorStyle, CustomShaderAnimation, DefaultConfigPaths,
-        Duration, DurationParseError, FlagsParseError, FontShapingBreak, FontStyle,
-        FontStyleParseError, FontSyntheticStyle, FontVariation, FreetypeLoadFlags, Fullscreen,
-        GraphemeWidthMethod, GtkSingleInstance, GtkTabsLocation, GtkTitlebarStyle, GtkToolbarStyle,
-        LinkPreviews, LinuxCgroup, MacAppIcon, MacAppIconFrame, MacHidden, MacOSDockDropBehavior,
-        MacShortcuts, MacTitlebarProxyIcon, MacTitlebarStyle, MacWindowButtons, MagicParseError,
-        MetricModifier, MiddleClickAction, MouseScrollMultiplier, MouseScrollMultiplierParseError,
-        MouseShiftCapture, NonNativeFullscreen, NotifyOnCommandFinish, NotifyOnCommandFinishAction,
+        Command, CommandPaletteEntry, CommandParseError, Config, ConfigAppRuntime,
+        ConfigDiagnostic, ConfigFilePath, ConfigFinalizeReport, ConfigFinalizeWarning,
+        ConfigRecursiveFileErrorKind, ConfigReplayEntry, ConfigSetError, ConfigSetSource,
+        ConfigThemeLoadReport, ConfirmCloseSurface, CopyOnSelect, CursorStyle,
+        CustomShaderAnimation, DefaultConfigPaths, Duration, DurationParseError, FlagsParseError,
+        FontShapingBreak, FontStyle, FontStyleParseError, FontSyntheticStyle, FontVariation,
+        FreetypeLoadFlags, Fullscreen, GraphemeWidthMethod, GtkSingleInstance, GtkTabsLocation,
+        GtkTitlebarStyle, GtkToolbarStyle, LinkPreviews, LinuxCgroup, MacAppIcon, MacAppIconFrame,
+        MacHidden, MacOSDockDropBehavior, MacShortcuts, MacTitlebarProxyIcon, MacTitlebarStyle,
+        MacWindowButtons, MagicParseError, MetricModifier, MiddleClickAction,
+        MouseScrollMultiplier, MouseScrollMultiplierParseError, MouseShiftCapture,
+        NonNativeFullscreen, NotifyOnCommandFinish, NotifyOnCommandFinishAction,
         OptionalFileAction, OscColorReportFormat, Palette, PaletteParseError,
         QuickTerminalDimensions, QuickTerminalKeyboardInteractivity, QuickTerminalLayer,
         QuickTerminalPosition, QuickTerminalScreen, QuickTerminalSize, QuickTerminalSizeParseError,
@@ -21638,7 +21639,7 @@ mod tests {
     }
 
     #[test]
-    fn command_config_parse_format_reset_and_diagnose() {
+    fn command_config_parser_family_oracle() {
         let line = |cfg: &Config, key: &str| -> String {
             let mut out = String::new();
             cfg.format_config(&mut out);
@@ -21661,6 +21662,29 @@ mod tests {
         cfg.set("command", Some(" shell:  echo hello ")).unwrap();
         assert_eq!(cfg.command, Some(Command::Shell("echo hello".to_string())));
         assert_eq!(line(&cfg, "command"), "command = echo hello");
+
+        cfg.set("command", Some(" shell:\techo\t ")).unwrap();
+        assert_eq!(cfg.command, Some(Command::Shell("\techo\t".to_string())));
+        assert_eq!(line(&cfg, "command"), "command = \techo\t");
+
+        cfg.set("command", Some("\tshell:echo")).unwrap();
+        assert_eq!(
+            cfg.command,
+            Some(Command::Shell("\tshell:echo".to_string()))
+        );
+
+        assert_eq!(
+            Command::parse_cli(Some("   ")),
+            Err(CommandParseError::ValueRequired)
+        );
+        assert_eq!(
+            Command::parse_cli(Some(" direct:   ")),
+            Ok(Command::Direct(vec![String::new()]))
+        );
+        assert_eq!(
+            Command::parse_cli(Some(" shell:   ")),
+            Ok(Command::Shell(String::new()))
+        );
 
         cfg.set("initial-command", Some("direct:echo hello"))
             .unwrap();
@@ -21688,6 +21712,31 @@ mod tests {
         assert_eq!(
             line(&cfg, "initial-command"),
             "initial-command = direct:echo hello"
+        );
+
+        cfg.set("initial-command", Some("direct:echo  hello"))
+            .unwrap();
+        assert_eq!(
+            cfg.initial_command,
+            Some(Command::Direct(vec![
+                "echo".to_string(),
+                String::new(),
+                "hello".to_string()
+            ]))
+        );
+        assert_eq!(
+            line(&cfg, "initial-command"),
+            "initial-command = direct:echo  hello"
+        );
+
+        cfg.set("initial-command", Some("direct:echo  ")).unwrap();
+        assert_eq!(
+            cfg.initial_command,
+            Some(Command::Direct(vec!["echo".to_string()]))
+        );
+        assert_eq!(
+            line(&cfg, "initial-command"),
+            "initial-command = direct:echo"
         );
 
         cfg.set("initial-command", Some("direct:")).unwrap();

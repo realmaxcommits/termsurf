@@ -511,6 +511,14 @@ experiment files until they are proven.
   primary/secondary values trim CLI whitespace, empty config values reset to
   default, invalid units and malformed numbers are rejected, and formatter plus
   representative calculation behavior match the pinned helper.
+- **Command parser rejects whole-empty input, not empty prefixed payloads.**
+  Experiment 37 proved canonical `command` and `initial-command`: the shared
+  parser trims ASCII spaces before prefix detection and rejects only missing,
+  empty, or all-space whole inputs; `direct:` / `direct:   ` produce a direct
+  command with one empty argument, `shell:` / `shell:   ` produce an empty shell
+  command, exact `direct:` and `shell:` prefixes select parser mode, unknown
+  colon prefixes remain shell commands, and direct payloads split naively on
+  ASCII spaces.
 
 ## Verification
 
@@ -587,5 +595,4 @@ remains open.
   — **Pass**
 - [Experiment 36: Quick terminal size parser oracle](36-quick-terminal-size-parser-oracle.md)
   — **Pass**
-- [Experiment 37: Command parser oracle](37-command-parser-oracle.md) —
-  **Designed**
+- [Experiment 37: Command parser oracle](37-command-parser-oracle.md) — **Pass**
