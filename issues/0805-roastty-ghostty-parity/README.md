@@ -1220,3 +1220,5 @@ remains open.
   — **Pass**
 - [Experiment 119: Child exited action payload split](119-child-exited-action-payload-split.md)
   — **Pass**
+- [Experiment 120: Child exited fallback policy split](120-child-exited-fallback-policy-split.md)
+  — **Designed**
