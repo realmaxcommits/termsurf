@@ -652,3 +652,5 @@ remains open.
   **Pass**
 - [Experiment 44: Font variation parser oracle](44-font-variation-parser-oracle.md)
   — **Pass**
+- [Experiment 45: Codepoint map parser oracle](45-codepoint-map-parser-oracle.md)
+  — **Designed**
