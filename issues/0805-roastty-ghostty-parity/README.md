@@ -536,6 +536,12 @@ experiment files until they are proven.
   mode from `OSC 133;A;click_events=1` or `OSC 133;A;cl=line`. Roastty now
   persists prompt-click mode across input/output semantic markers and guards
   `cursor-click-to-move` with pty-backed surface mouse tests.
+- **Middle-click paste follows copy-on-select, but not mouse reporting.**
+  Experiment 109 matched pinned Ghostty's `middle-click-action` behavior:
+  `primary-paste` reads the selection clipboard for `copy-on-select = true` or
+  `false`, falls back to standard when selection clipboards are unsupported,
+  reads standard for `copy-on-select = clipboard`, and does not bypass terminal
+  mouse reporting.
 - **`py_compile` creates bytecode even with `PYTHONDONTWRITEBYTECODE=1`.** Treat
   `issues/0805-roastty-ghostty-parity/__pycache__/` as a generated verification
   artifact and remove it after running the inventory script compile check.
@@ -1143,4 +1149,4 @@ remains open.
 - [Experiment 108: Cursor click to move runtime](108-cursor-click-to-move-runtime.md)
   — **Pass**
 - [Experiment 109: Middle click action runtime](109-middle-click-action-runtime.md)
-  — **Designed**
+  — **Pass**

@@ -203,16 +203,19 @@ ROWS = [
         id="RUNTIME-004H",
         behavior="middle-click-action runtime effects",
         ghostty_reference="`vendor/ghostty/src/config/Config.zig` `middle-click-action`; `vendor/ghostty/src/Surface.zig` middle-click action dispatch",
-        roastty_reference="`roastty/src/lib.rs` mouse button handlers and clipboard paste paths",
+        roastty_reference="`roastty/src/lib.rs` mouse button handlers, middle-click action state, and clipboard paste paths",
         family="mouse",
-        status="Gap",
+        status="Oracle complete",
         evidence=(
-            "`middle-click-action` is parsed and formatted, but CFG-223 still "
-            "needs runtime proof for primary-paste and ignore behavior."
+            "`middle_click_action_*` tests prove middle-button press honors "
+            "`primary-paste` and `ignore`, chooses the standard or selection "
+            "clipboard according to `copy-on-select` and selection clipboard "
+            "support, refreshes existing surfaces on config update, and does "
+            "not bypass terminal mouse reporting."
         ),
-        missing_evidence="Add focused runtime/UI tests for middle-click-action variants.",
+        missing_evidence="None for middle-click-action runtime dispatch behavior.",
         guard_tier="Tier 2",
-        guard_command="TBD by future CFG-223 middle-click-action experiment.",
+        guard_command="`cargo test --manifest-path roastty/Cargo.toml middle_click_action`",
     ),
     RuntimeRow(
         id="RUNTIME-005",

@@ -2651,12 +2651,14 @@ struct Surface {
     clipboard_write: config::ClipboardAccess,
     clipboard_paste_protection: bool,
     clipboard_paste_bracketed_safe: bool,
+    copy_on_select: config::CopyOnSelect,
     selection_clear_on_typing: bool,
     selection_word_chars: Vec<u32>,
     vt_kam_allowed: bool,
     key_remaps: key_mods::RemapSet,
     macos_option_as_alt: Option<key_mods::OptionAsAlt>,
     cursor_click_to_move: bool,
+    middle_click_action: config::MiddleClickAction,
     mouse_scroll_multiplier: config::MouseScrollMultiplier,
     click_repeat_interval_ns: u64,
     preedit: Option<String>,
@@ -3628,12 +3630,14 @@ impl Surface {
         self.confirm_close_surface = config.confirm_close_surface;
         self.clipboard_paste_protection = parsed.clipboard_paste_protection;
         self.clipboard_paste_bracketed_safe = parsed.clipboard_paste_bracketed_safe;
+        self.copy_on_select = parsed.copy_on_select;
         self.selection_clear_on_typing = parsed.selection_clear_on_typing;
         self.selection_word_chars = parsed.selection_word_chars.codepoints.clone();
         self.vt_kam_allowed = parsed.vt_kam_allowed;
         self.key_remaps = parsed.key_remap.clone();
         self.macos_option_as_alt = parsed.macos_option_as_alt;
         self.cursor_click_to_move = parsed.cursor_click_to_move;
+        self.middle_click_action = parsed.middle_click_action;
         self.mouse_reporting = parsed.mouse_reporting;
         self.mouse_scroll_multiplier = parsed.mouse_scroll_multiplier;
         self.click_repeat_interval_ns = click_repeat_interval_ns(&parsed);
@@ -5629,6 +5633,7 @@ impl Surface {
         if reporting && !shift_override {
             // Reporting (no override): clear+reset on ANY button + press/release (Exp 32).
             self.selection_clear_and_reset();
+            return self.dispatch_mouse_report(action, Some(button));
         } else if matches!(button, mouse::MouseButton::Left) {
             // Not reporting, OR shift overrides reporting: run the selection.
             match state {
@@ -5645,8 +5650,36 @@ impl Surface {
         // On a shift override, suppress the report and report not-consumed (upstream returns false).
         if shift_override {
             false
+        } else if matches!(
+            (button, state),
+            (mouse::MouseButton::Middle, SurfaceMouseButtonState::Press)
+        ) {
+            self.middle_click_action()
         } else {
             self.dispatch_mouse_report(action, Some(button))
+        }
+    }
+
+    fn middle_click_action(&mut self) -> bool {
+        match self.middle_click_action {
+            config::MiddleClickAction::Ignore => false,
+            config::MiddleClickAction::PrimaryPaste => {
+                self.paste_from_clipboard(self.middle_click_clipboard())
+            }
+        }
+    }
+
+    fn middle_click_clipboard(&self) -> c_int {
+        if self.copy_on_select == config::CopyOnSelect::Clipboard {
+            return ROASTTY_CLIPBOARD_STANDARD;
+        }
+        let supports_selection = app_from_handle(self.app)
+            .map(|app| app.runtime.supports_selection_clipboard)
+            .unwrap_or(false);
+        if supports_selection {
+            ROASTTY_CLIPBOARD_SELECTION
+        } else {
+            ROASTTY_CLIPBOARD_STANDARD
         }
     }
 
@@ -17585,12 +17618,14 @@ pub extern "C" fn roastty_surface_new(
         clipboard_write,
         clipboard_paste_protection,
         clipboard_paste_bracketed_safe,
+        copy_on_select,
         selection_clear_on_typing,
         selection_word_chars,
         vt_kam_allowed,
         key_remaps,
         macos_option_as_alt,
         cursor_click_to_move,
+        middle_click_action,
         mouse_reporting,
         mouse_scroll_multiplier,
         click_repeat_interval_ns,
@@ -17608,12 +17643,14 @@ pub extern "C" fn roastty_surface_new(
                 app.clipboard_write,
                 parsed.clipboard_paste_protection,
                 parsed.clipboard_paste_bracketed_safe,
+                parsed.copy_on_select,
                 parsed.selection_clear_on_typing,
                 parsed.selection_word_chars.codepoints.clone(),
                 parsed.vt_kam_allowed,
                 parsed.key_remap.clone(),
                 parsed.macos_option_as_alt,
                 parsed.cursor_click_to_move,
+                parsed.middle_click_action,
                 parsed.mouse_reporting,
                 parsed.mouse_scroll_multiplier,
                 click_repeat_interval_ns(&parsed),
@@ -17627,12 +17664,14 @@ pub extern "C" fn roastty_surface_new(
             config::ClipboardAccess::Allow,
             true,
             true,
+            config::CopyOnSelect::True,
             true,
             config::SelectionWordChars::default().codepoints,
             false,
             key_mods::RemapSet::default(),
             None,
             true,
+            config::MiddleClickAction::PrimaryPaste,
             true,
             config::MouseScrollMultiplier::default(),
             500_000_000,
@@ -17681,12 +17720,14 @@ pub extern "C" fn roastty_surface_new(
         clipboard_write,
         clipboard_paste_protection,
         clipboard_paste_bracketed_safe,
+        copy_on_select,
         selection_clear_on_typing,
         selection_word_chars,
         vt_kam_allowed,
         key_remaps,
         macos_option_as_alt,
         cursor_click_to_move,
+        middle_click_action,
         mouse_scroll_multiplier,
         click_repeat_interval_ns,
         preedit: None,
@@ -19489,6 +19530,18 @@ mod tests {
         handle
     }
 
+    fn new_test_config_with_middle_click_action(
+        middle_click_action: config::MiddleClickAction,
+        copy_on_select: config::CopyOnSelect,
+    ) -> RoasttyConfig {
+        let handle = roastty_config_new();
+        let config = config_from_handle(handle).unwrap();
+        config.parsed.middle_click_action = middle_click_action;
+        config.parsed.copy_on_select = copy_on_select;
+        config.sync_from_parsed_config();
+        handle
+    }
+
     fn new_test_config_with_font_size(font_size: f32) -> RoasttyConfig {
         let handle = roastty_config_new();
         config_from_handle(handle).unwrap().parsed.font_size = font_size;
@@ -20041,6 +20094,26 @@ mod tests {
         roastty_app_new(&runtime, ptr::null_mut())
     }
 
+    fn new_test_app_with_clipboard_read_config(
+        userdata: usize,
+        result: bool,
+        supports_selection_clipboard: bool,
+        config: RoasttyConfig,
+    ) -> RoasttyApp {
+        reset_clipboard_read_records(result);
+        let runtime = RoasttyRuntimeConfig {
+            userdata: userdata as *mut c_void,
+            supports_selection_clipboard,
+            wakeup_cb: None,
+            action_cb: None,
+            read_clipboard_cb: Some(read_clipboard_record_cb),
+            confirm_read_clipboard_cb: None,
+            write_clipboard_cb: None,
+            close_surface_cb: None,
+        };
+        roastty_app_new(&runtime, config)
+    }
+
     fn new_test_app_with_clipboard_read_confirm(
         userdata: usize,
         result: bool,
@@ -20514,14 +20587,7 @@ mod tests {
     }
 
     fn set_surface_worker_mouse_tracking(surface: RoasttySurface, enabled: bool) {
-        let surface = surface_from_handle(surface).unwrap();
-        surface
-            .termio_worker
-            .as_ref()
-            .unwrap()
-            .with_termio_mut(|termio| {
-                assert!(termio.terminal_mut().mode_set(1000, false, enabled));
-            });
+        set_surface_worker_mouse_mode(surface, 1000, enabled);
     }
 
     fn set_surface_worker_mouse_mode(surface: RoasttySurface, mode: u16, enabled: bool) {
@@ -20699,6 +20765,15 @@ mod tests {
             surface,
             ROASTTY_MOUSE_BUTTON_RELEASE,
             mouse_button_to_int(mouse::MouseButton::Left),
+            ROASTTY_MODS_NONE,
+        )
+    }
+
+    fn press_middle(surface: RoasttySurface) -> bool {
+        roastty_surface_mouse_button(
+            surface,
+            ROASTTY_MOUSE_BUTTON_PRESS,
+            mouse_button_to_int(mouse::MouseButton::Middle),
             ROASTTY_MODS_NONE,
         )
     }
@@ -21725,6 +21800,170 @@ mod tests {
 
         roastty_surface_free(surface);
         roastty_app_free(app);
+        roastty_config_free(config);
+    }
+
+    #[test]
+    fn middle_click_action_primary_paste_prefers_selection_clipboard() {
+        let _guard = pty_command_lock();
+        let config = new_test_config_with_middle_click_action(
+            config::MiddleClickAction::PrimaryPaste,
+            config::CopyOnSelect::True,
+        );
+        let app = new_test_app_with_clipboard_read_config(0x1091, true, true, config);
+        let surface = new_test_surface(app);
+        surface_from_handle(surface).unwrap().termio_worker = Some(test_worker("sleep 1"));
+
+        assert!(press_middle(surface));
+
+        let records = clipboard_read_records();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].userdata, 0x1091);
+        assert_eq!(records[0].clipboard, ROASTTY_CLIPBOARD_SELECTION);
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+        roastty_config_free(config);
+    }
+
+    #[test]
+    fn middle_click_action_copy_on_select_false_still_uses_selection_clipboard() {
+        let _guard = pty_command_lock();
+        let config = new_test_config_with_middle_click_action(
+            config::MiddleClickAction::PrimaryPaste,
+            config::CopyOnSelect::False,
+        );
+        let app = new_test_app_with_clipboard_read_config(0x1092, true, true, config);
+        let surface = new_test_surface(app);
+        surface_from_handle(surface).unwrap().termio_worker = Some(test_worker("sleep 1"));
+
+        assert!(press_middle(surface));
+
+        let records = clipboard_read_records();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].userdata, 0x1092);
+        assert_eq!(records[0].clipboard, ROASTTY_CLIPBOARD_SELECTION);
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+        roastty_config_free(config);
+    }
+
+    #[test]
+    fn middle_click_action_primary_paste_falls_back_to_standard_clipboard() {
+        let _guard = pty_command_lock();
+        let config = new_test_config_with_middle_click_action(
+            config::MiddleClickAction::PrimaryPaste,
+            config::CopyOnSelect::True,
+        );
+        let app = new_test_app_with_clipboard_read_config(0x1093, true, false, config);
+        let surface = new_test_surface(app);
+        surface_from_handle(surface).unwrap().termio_worker = Some(test_worker("sleep 1"));
+
+        assert!(press_middle(surface));
+
+        let records = clipboard_read_records();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].userdata, 0x1093);
+        assert_eq!(records[0].clipboard, ROASTTY_CLIPBOARD_STANDARD);
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+        roastty_config_free(config);
+    }
+
+    #[test]
+    fn middle_click_action_copy_on_select_clipboard_uses_standard_clipboard() {
+        let _guard = pty_command_lock();
+        let config = new_test_config_with_middle_click_action(
+            config::MiddleClickAction::PrimaryPaste,
+            config::CopyOnSelect::Clipboard,
+        );
+        let app = new_test_app_with_clipboard_read_config(0x1094, true, true, config);
+        let surface = new_test_surface(app);
+        surface_from_handle(surface).unwrap().termio_worker = Some(test_worker("sleep 1"));
+
+        assert!(press_middle(surface));
+
+        let records = clipboard_read_records();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].userdata, 0x1094);
+        assert_eq!(records[0].clipboard, ROASTTY_CLIPBOARD_STANDARD);
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+        roastty_config_free(config);
+    }
+
+    #[test]
+    fn middle_click_action_ignore_starts_no_clipboard_request() {
+        let _guard = pty_command_lock();
+        let config = new_test_config_with_middle_click_action(
+            config::MiddleClickAction::Ignore,
+            config::CopyOnSelect::True,
+        );
+        let app = new_test_app_with_clipboard_read_config(0x1095, true, true, config);
+        let surface = new_test_surface(app);
+        surface_from_handle(surface).unwrap().termio_worker = Some(test_worker("sleep 1"));
+
+        assert!(!press_middle(surface));
+        assert!(clipboard_read_records().is_empty());
+
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+        roastty_config_free(config);
+    }
+
+    #[test]
+    fn middle_click_action_respects_mouse_reporting_before_paste() {
+        let _guard = pty_command_lock();
+        let config = new_test_config_with_middle_click_action(
+            config::MiddleClickAction::PrimaryPaste,
+            config::CopyOnSelect::True,
+        );
+        let app = new_test_app_with_clipboard_read_config(0x1096, true, true, config);
+        let surface = new_test_surface(app);
+        surface_from_handle(surface).unwrap().termio_worker = Some(test_worker("sleep 1"));
+        set_surface_test_geometry(surface, 10, 5, 10, 20);
+        set_surface_worker_mouse_tracking(surface, true);
+        roastty_surface_mouse_pos(surface, 5.0, 5.0, ROASTTY_MODS_NONE);
+        assert!(surface_from_handle(surface)
+            .unwrap()
+            .mouse_report_context()
+            .is_some());
+
+        assert!(press_middle(surface));
+        assert!(clipboard_read_records().is_empty());
+
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+        roastty_config_free(config);
+    }
+
+    #[test]
+    fn middle_click_action_config_update_changes_existing_surface() {
+        let _guard = pty_command_lock();
+        let config = new_test_config_with_middle_click_action(
+            config::MiddleClickAction::Ignore,
+            config::CopyOnSelect::True,
+        );
+        let app = new_test_app_with_clipboard_read_config(0x1097, true, true, config);
+        let surface = new_test_surface(app);
+        surface_from_handle(surface).unwrap().termio_worker = Some(test_worker("sleep 1"));
+
+        assert!(!press_middle(surface));
+        assert!(clipboard_read_records().is_empty());
+
+        let enabled = new_test_config_with_middle_click_action(
+            config::MiddleClickAction::PrimaryPaste,
+            config::CopyOnSelect::True,
+        );
+        roastty_surface_update_config(surface, enabled);
+        assert!(press_middle(surface));
+
+        let records = clipboard_read_records();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].userdata, 0x1097);
+        assert_eq!(records[0].clipboard, ROASTTY_CLIPBOARD_SELECTION);
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+        roastty_config_free(enabled);
         roastty_config_free(config);
     }
 

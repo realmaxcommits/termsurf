@@ -142,3 +142,56 @@ Fix:
 
 Re-review verdict: **Approved**. The reviewer confirmed both prior findings are
 resolved and found no remaining required design issues.
+
+## Result
+
+**Result:** Pass
+
+Implemented `middle-click-action` as surface runtime state. Roastty now
+initializes `middle_click_action` and `copy_on_select` from app config,
+refreshes both on surface config update, and handles non-reporting middle-button
+presses according to pinned Ghostty behavior:
+
+- `middle-click-action = primary-paste` starts a paste request.
+- `middle-click-action = ignore` starts no clipboard request.
+- `copy-on-select = true` and `copy-on-select = false` request the selection
+  clipboard when supported.
+- unsupported selection clipboard falls back to the standard clipboard.
+- `copy-on-select = clipboard` requests the standard clipboard.
+- terminal mouse reporting returns before middle-click paste, so middle-click
+  reporting does not start a clipboard request.
+
+The test helper for enabling terminal mouse tracking now sends the real DEC mode
+sequence instead of toggling the raw mode bit directly. This matters because the
+mouse-reporting path reads the terminal runtime mouse event flag, which is
+updated by the stream/mode-change path.
+
+`RUNTIME-004H` is now `Oracle complete`. `RUNTIME-004F` and `RUNTIME-004G`
+remain `Gap`, and `CFG-223` remains `Gap`.
+
+Verification passed:
+
+```text
+cargo test --manifest-path roastty/Cargo.toml middle_click_action
+# 8 passed
+
+PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/config_runtime_inventory.py \
+  --output issues/0805-roastty-ghostty-parity/config-runtime-inventory.md \
+  --matrix issues/0805-roastty-ghostty-parity/config-matrix.md
+# runtime_rows=21 oracle_complete=11 closed=12 audit_covered=0 incomplete=9 gap=9 cfg223=Gap
+```
+
+## Conclusion
+
+`middle-click-action` now has a durable Tier 2 runtime guard through
+`cargo test --manifest-path roastty/Cargo.toml middle_click_action`. The
+remaining explicit mouse runtime gaps are `mouse-hide-while-typing` and
+`right-click-action`.
+
+## Result Review
+
+Fresh-context Codex adversarial reviewer `Euclid` returned **Approved** with no
+findings. The reviewer independently verified the focused middle-click tests,
+the existing mouse runtime tests, `cargo fmt --check`, Prettier,
+`git diff --check`, and the runtime/matrix assertions for `RUNTIME-004H`,
+`RUNTIME-004F/G`, and `CFG-223`.
