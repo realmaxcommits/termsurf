@@ -776,3 +776,5 @@ remains open.
   — **Pass**
 - [Experiment 62: Optional path formatter oracle](62-optional-path-formatter-oracle.md)
   — **Pass**
+- [Experiment 63: Optional command formatter oracle](63-optional-command-formatter-oracle.md)
+  — **Designed**
