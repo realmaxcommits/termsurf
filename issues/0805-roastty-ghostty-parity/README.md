@@ -1004,3 +1004,5 @@ remains open.
   — **Pass**
 - [Experiment 91: Working directory diagnostic oracle](91-working-directory-diagnostic-oracle.md)
   — **Pass**
+- [Experiment 92: Path diagnostic oracle](92-path-diagnostic-oracle.md) —
+  **Designed**
