@@ -883,3 +883,5 @@ remains open.
   — **Pass**
 - [Experiment 76: Resize overlay formatter oracle](76-resize-overlay-formatter-oracle.md)
   — **Pass**
+- [Experiment 77: Quick terminal enum formatter oracle](77-quick-terminal-enum-formatter-oracle.md)
+  — **Designed**
