@@ -847,3 +847,5 @@ remains open.
   — **Pass**
 - [Experiment 71: Keyword enum formatter oracle](71-keyword-enum-formatter-oracle.md)
   — **Pass**
+- [Experiment 72: Clipboard access formatter oracle](72-clipboard-access-formatter-oracle.md)
+  — **Designed**
