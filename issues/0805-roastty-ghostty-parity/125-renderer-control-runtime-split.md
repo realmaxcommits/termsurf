@@ -121,3 +121,60 @@ Re-review verdict: **Approved**.
 
 The reviewer confirmed all required findings were resolved and reported no new
 required findings.
+
+## Result
+
+**Result:** Pass
+
+Added `renderer_control_runtime_parity.py` and split the renderer runtime
+inventory so the already-proven renderer control slice is tracked separately
+from the remaining visible-renderer gap. `RUNTIME-008A` is now `Oracle complete`
+for `window-vsync` present scheduling, cursor blink timing, output reset
+throttling, focus behavior, occlusion presentation gating, and live renderer
+rebuild requests. `RUNTIME-008B` remains `Gap` for visible opacity, blur,
+padding, cursor style shape/rendering, window padding color, custom shader
+output, and other renderer-visible effects. CFG-223 remains `Gap`.
+
+Implementation found one narrow runtime bug in the existing guard tests:
+`set_font_size_points` requested a render even when the requested font size was
+unchanged. That made ABI-only config updates dirty surfaces even when there was
+no live view and no effective font-size change. The setter is now idempotent,
+preserving real font-change reload behavior while keeping no-op config updates
+quiet.
+
+Verification passed:
+
+- `cargo test --manifest-path roastty/Cargo.toml present_driver`
+- `cargo test --manifest-path roastty/Cargo.toml live_cursor_blink`
+- `cargo test --manifest-path roastty/Cargo.toml live_renderer_options`
+- `PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/renderer_control_runtime_parity.py`
+- `PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/config_runtime_inventory.py --output issues/0805-roastty-ghostty-parity/config-runtime-inventory.md --matrix issues/0805-roastty-ghostty-parity/config-matrix.md`
+- `prettier --check --prose-wrap always --print-width 80 issues/0805-roastty-ghostty-parity/125-renderer-control-runtime-split.md issues/0805-roastty-ghostty-parity/README.md issues/0805-roastty-ghostty-parity/config-runtime-inventory.md issues/0805-roastty-ghostty-parity/config-matrix.md`
+- `cargo fmt --manifest-path roastty/Cargo.toml -- --check`
+- `git diff --check`
+- No generated `__pycache__` remained under the issue directory.
+
+## Conclusion
+
+The renderer parity gap is smaller than the broad `RUNTIME-008` row implied.
+Roastty now has a durable guard for the non-visual renderer control layer:
+present-driver scheduling from `window-vsync`, cursor blink timing and reset
+behavior, focus/occlusion control, and live renderer rebuild requests. The
+remaining renderer gap should focus on visible output: opacity, blur, padding,
+cursor shape/style rendering, window padding color, custom shader output, and
+GUI-visible renderer effects.
+
+## Completion Review
+
+An adversarial Codex subagent reviewed the completed experiment with fresh
+context.
+
+Verdict: **Approved**.
+
+The reviewer reported no findings. It independently reran the `present_driver`,
+`live_cursor_blink`, and `live_renderer_options` test filters, the
+`renderer_control_runtime_parity.py` static guard, `prettier --check`,
+`cargo fmt --check`, `git diff --check`, and the no-`__pycache__` check. It also
+confirmed the result commit had not yet been made, `RUNTIME-008A` is
+`Oracle complete`, `RUNTIME-008B` remains `Gap`, and CFG-223 remains `Gap` with
+27 oracle-complete rows and 5 gap rows.

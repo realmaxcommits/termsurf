@@ -277,21 +277,49 @@ ROWS = [
         guard_command="TBD by future CFG-223 font runtime experiment.",
     ),
     RuntimeRow(
-        id="RUNTIME-008",
-        behavior="renderer presentation effects",
-        ghostty_reference="`vendor/ghostty/src/config/Config.zig` renderer/window visual fields; `vendor/ghostty/src/Surface.zig` renderer config messages",
-        roastty_reference="`roastty/src/lib.rs` live renderer, render state, present driver, and config update paths",
+        id="RUNTIME-008A",
+        behavior="renderer scheduler, cursor blink, focus, occlusion, and live renderer rebuild control runtime effects",
+        ghostty_reference="`vendor/ghostty/src/config/Config.zig` `window-vsync` and `cursor-style-blink`; `vendor/ghostty/src/renderer/generic.zig` vsync renderer config; `vendor/ghostty/src/Surface.zig` cursor blink and renderer update paths",
+        roastty_reference="`roastty/src/lib.rs` present driver, cursor blink helpers, live renderer visibility, focus, occlusion, and config update paths",
+        family="renderer",
+        status="Oracle complete",
+        evidence=(
+            "Experiment 125 split out the proven renderer control slice. "
+            "`present_driver_*` tests prove `window-vsync` drives fallback or "
+            "display-link present scheduling for new live surfaces, display id "
+            "updates reach active display links, and present drivers stop "
+            "before surface drop. `live_cursor_blink_*` tests prove cursor "
+            "blink ticks, output reset throttling, terminal-output-only reset, "
+            "focus-loss pause, and focus-gain reset behavior. "
+            "`live_renderer_options_*` tests prove occlusion gates live "
+            "presentation, live config updates request a renderer rebuild, "
+            "and ABI-only surfaces stay quiet. "
+            "`renderer_control_runtime_parity.py` statically checks pinned "
+            "Ghostty's `window-vsync`, `cursor-style-blink`, "
+            "`renderer/generic.zig` vsync config, and surface renderer "
+            "control markers against Roastty's runtime/test markers."
+        ),
+        missing_evidence="None for renderer scheduler, cursor blink, focus, occlusion, and live renderer rebuild control runtime behavior.",
+        guard_tier="Tier 2",
+        guard_command="`cargo test --manifest-path roastty/Cargo.toml present_driver && cargo test --manifest-path roastty/Cargo.toml live_cursor_blink && cargo test --manifest-path roastty/Cargo.toml live_renderer_options && PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/renderer_control_runtime_parity.py`",
+    ),
+    RuntimeRow(
+        id="RUNTIME-008B",
+        behavior="visible opacity, blur, padding, cursor style shape/rendering, window padding color, custom shader output, and remaining renderer-visible effects",
+        ghostty_reference="`vendor/ghostty/src/config/Config.zig` renderer/window visual fields; `vendor/ghostty/src/renderer/generic.zig` derived renderer config; `vendor/ghostty/src/Surface.zig` renderer config messages",
+        roastty_reference="`roastty/src/lib.rs` live renderer and render state; `roastty/src/renderer`",
         family="renderer",
         status="Gap",
         evidence=(
-            "Roastty has live renderer config-update and cursor blink tests, but "
-            "CFG-223 still needs representative proof for config-driven "
-            "opacity, blur, padding, cursor style, window padding color, vsync, "
-            "custom shader, and other renderer-visible effects."
+            "Experiment 125 split out the proven scheduler/cursor/focus/"
+            "occlusion/rebuild control slice, but CFG-223 still needs "
+            "representative runtime or GUI proof for visible opacity, blur, "
+            "padding, cursor style shape/rendering, window padding color, "
+            "custom shader output, and other renderer-visible effects."
         ),
-        missing_evidence="Add renderer/runtime or GUI smoke rows for visible config effects.",
+        missing_evidence="Add renderer/runtime or GUI smoke rows for visible opacity, blur, padding, cursor style shape/rendering, window padding color, custom shader output, and other renderer-visible effects.",
         guard_tier="Tier 3",
-        guard_command="TBD by future CFG-223 renderer runtime experiment.",
+        guard_command="TBD by future CFG-223 renderer visual experiment.",
     ),
     RuntimeRow(
         id="RUNTIME-009A",
@@ -679,7 +707,8 @@ EXPECTED_IDS = [
     "RUNTIME-005",
     "RUNTIME-006",
     "RUNTIME-007",
-    "RUNTIME-008",
+    "RUNTIME-008A",
+    "RUNTIME-008B",
     "RUNTIME-009A",
     "RUNTIME-009B1",
     "RUNTIME-009B2A",

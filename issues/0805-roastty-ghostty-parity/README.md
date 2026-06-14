@@ -620,6 +620,17 @@ experiment files until they are proven.
   runtime tests plus a static Ghostty/Roastty marker check; exact nonzero
   scrollback byte quota and configured/static surface-title reporting remain
   separate terminal gaps.
+- **Renderer control parity is separate from visible renderer parity.**
+  Experiment 125 split `window-vsync` present scheduling, cursor blink
+  timing/reset behavior, focus/occlusion control, and live renderer rebuild
+  requests from the broader renderer gap. Visible opacity, blur, padding, cursor
+  shape/style rendering, window padding color, custom shader output, and GUI
+  visual effects still need focused runtime or walkthrough proof.
+- **Font-size runtime updates should be idempotent.** Experiment 125 found that
+  applying an unchanged font size dirtied ABI-only surfaces because
+  `set_font_size_points` always requested a render. The setter now returns
+  without requesting render when the requested point size is already active,
+  preserving real font-change reload behavior while keeping no-op updates quiet.
 - **`py_compile` creates bytecode even with `PYTHONDONTWRITEBYTECODE=1`.** Treat
   `issues/0805-roastty-ghostty-parity/__pycache__/` as a generated verification
   artifact and remove it after running the inventory script compile check.
@@ -1259,4 +1270,4 @@ remains open.
 - [Experiment 124: Shell integration runtime split](124-shell-integration-runtime-split.md)
   — **Pass**
 - [Experiment 125: Renderer control runtime split](125-renderer-control-runtime-split.md)
-  — **Designed**
+  — **Pass**

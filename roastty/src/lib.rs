@@ -5595,6 +5595,9 @@ impl Surface {
     }
 
     fn set_font_size_points(&mut self, points: f32) {
+        if self.font_size_points == points {
+            return;
+        }
         self.font_size_points = points;
         self.request_render();
     }
