@@ -801,3 +801,5 @@ remains open.
   — **Pass**
 - [Experiment 65: Font scalar formatter oracle](65-font-scalar-formatter-oracle.md)
   — **Pass**
+- [Experiment 66: Font repeatable string formatter oracle](66-font-repeatable-string-formatter-oracle.md)
+  — **Designed**
