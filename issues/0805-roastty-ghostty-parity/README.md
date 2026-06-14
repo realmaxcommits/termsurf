@@ -1118,3 +1118,5 @@ remains open.
 - [Experiment 104: Reload clears key tables](104-reload-clears-key-tables.md) —
   **Pass**
 - [Experiment 105: Reload font size](105-reload-font-size.md) — **Pass**
+- [Experiment 106: Runtime UI effects inventory](106-runtime-ui-effects-inventory.md)
+  — **Designed**
