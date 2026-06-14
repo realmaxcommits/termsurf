@@ -17793,6 +17793,74 @@ mod tests {
     }
 
     #[test]
+    fn primitive_config_formatter_family_oracle() {
+        fn formatted_lines(cfg: &Config) -> Vec<String> {
+            let mut out = String::new();
+            cfg.format_config(&mut out);
+            out.lines().map(ToString::to_string).collect()
+        }
+
+        fn line(lines: &[String], key: &str) -> String {
+            let prefix = format!("{key} = ");
+            lines
+                .iter()
+                .find(|line| line.starts_with(&prefix))
+                .unwrap_or_else(|| panic!("missing formatted line for {key}"))
+                .clone()
+        }
+
+        fn index(lines: &[String], key: &str) -> usize {
+            let prefix = format!("{key} = ");
+            lines
+                .iter()
+                .position(|line| line.starts_with(&prefix))
+                .unwrap_or_else(|| panic!("missing formatted line for {key}"))
+        }
+
+        let mut cfg = Config::default();
+        cfg.selection_clear_on_copy = true;
+        cfg.clipboard_trim_trailing_spaces = false;
+        cfg.scrollback_limit = 12_345;
+        cfg.abnormal_command_exit_runtime = 987;
+        cfg.background_opacity = 0.125;
+        cfg.minimum_contrast = f64::NAN;
+        cfg.term = "xterm-roastty".to_string();
+        cfg.enquiry_response = "answer=42,raw".to_string();
+
+        let lines = formatted_lines(&cfg);
+        assert_eq!(
+            line(&lines, "selection-clear-on-copy"),
+            "selection-clear-on-copy = true"
+        );
+        assert_eq!(
+            line(&lines, "clipboard-trim-trailing-spaces"),
+            "clipboard-trim-trailing-spaces = false"
+        );
+        assert_eq!(line(&lines, "scrollback-limit"), "scrollback-limit = 12345");
+        assert_eq!(
+            line(&lines, "abnormal-command-exit-runtime"),
+            "abnormal-command-exit-runtime = 987"
+        );
+        assert_eq!(
+            line(&lines, "background-opacity"),
+            "background-opacity = 0.125"
+        );
+        assert_eq!(line(&lines, "minimum-contrast"), "minimum-contrast = nan");
+        assert_eq!(line(&lines, "term"), "term = xterm-roastty");
+        assert_eq!(
+            line(&lines, "enquiry-response"),
+            "enquiry-response = answer=42,raw"
+        );
+
+        assert!(
+            index(&lines, "selection-clear-on-typing") < index(&lines, "selection-clear-on-copy")
+        );
+        assert!(index(&lines, "abnormal-command-exit-runtime") < index(&lines, "scrollback-limit"));
+        assert!(index(&lines, "background-opacity") < index(&lines, "background-opacity-cells"));
+        assert!(index(&lines, "term") < index(&lines, "enquiry-response"));
+    }
+
+    #[test]
     fn config_default_parser_oracle() {
         let fixture = include_str!("../../testdata/issue805-ghostty-default-config.txt");
         let lines: Vec<&str> = fixture.lines().collect();

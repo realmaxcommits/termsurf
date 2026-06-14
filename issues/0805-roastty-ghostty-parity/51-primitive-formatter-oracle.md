@@ -93,3 +93,82 @@ Nit noted:
 
 - `prettier --write` is a formatting step rather than a pass/fail check. The
   experiment keeps it as the required Markdown formatting step.
+
+## Result
+
+**Result:** Pass
+
+Added `primitive_config_formatter_family_oracle` and promoted only formatter
+inventory rows whose family is `boolean`, `integer`, `float`, or `string`.
+
+The oracle proves representative direct primitive formatter behavior through
+`Config::format_config`:
+
+- booleans format as `true` and `false`;
+- integers format as decimal text;
+- floats format as shortest decimal text and lowercase `nan`;
+- strings are emitted as raw byte-preserving text with no escaping or quoting;
+- representative primitive rows remain in the expected formatter order relative
+  to nearby entries.
+
+The regenerated formatter inventory now reports:
+
+```text
+ghostty_canonical=203
+roastty_formatter_rows=203
+missing_canonical_formatter_rows=0
+extra_formatter_rows=0
+oracle_complete=55
+audit_covered=148
+gap=0
+no_output_rows=1
+```
+
+CFG-218 remains `Gap`, as intended, because 148 non-primitive formatter rows
+still need dedicated non-default formatter oracles.
+
+Verification:
+
+- `cargo test --manifest-path roastty/Cargo.toml primitive_config_formatter_family_oracle`
+  passed.
+- `cargo test --manifest-path roastty/Cargo.toml config_default_format_oracle`
+  passed.
+- Matrix assertion passed: CFG-217 remains `Pass`; CFG-218 remains `Gap`;
+  primitive formatter families are `Oracle complete`; non-primitive formatter
+  rows are not promoted.
+- `cargo fmt --manifest-path roastty/Cargo.toml --check` passed.
+- `prettier --write --prose-wrap always --print-width 80 issues/0805-roastty-ghostty-parity/51-primitive-formatter-oracle.md issues/0805-roastty-ghostty-parity/README.md issues/0805-roastty-ghostty-parity/config-formatter-inventory.md issues/0805-roastty-ghostty-parity/config-matrix.md`
+  completed.
+- `git diff --check` passed.
+
+## Conclusion
+
+The primitive formatter family is now oracle-complete. CFG-218 remains open with
+148 audit-covered formatter rows. The next formatter experiments should target
+another coherent family, likely optional values, repeatable paths, or metric
+modifiers.
+
+## Completion Review
+
+Reviewed by a fresh-context Codex adversarial subagent.
+
+Verdict: **Approved**.
+
+Findings: none.
+
+The reviewer independently verified:
+
+- `primitive_config_formatter_family_oracle` passed.
+- `config_default_format_oracle` passed.
+- `cargo fmt --manifest-path roastty/Cargo.toml --check` passed.
+- `git diff --check` passed.
+- The formatter inventory has 203 rows, 55 `Oracle complete` rows, 148
+  `Audit covered` rows, 0 `Gap` rows, and 1 no-output row.
+- CFG-217 remains `Pass`.
+- CFG-218 remains `Gap`, points to `config-formatter-inventory.md`, and is owned
+  by Experiment 51.
+- The README marks Experiment 51 `Pass` and records the primitive formatter
+  learning.
+
+The reviewer did not run the formatter inventory generator because it writes
+files, but inspected the generated output and approved the completed experiment.

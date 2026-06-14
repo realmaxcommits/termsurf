@@ -457,6 +457,11 @@ experiment files until they are proven.
   set. Formatter inventories and oracles should count `link` as a canonical
   no-output row rather than forcing a nonexistent Roastty
   `Config::format_config` helper.
+- **Primitive formatter rows are inventory-family scoped.** Experiment 51
+  promoted only rows classified as `boolean`, `integer`, `float`, or `string` in
+  `config-formatter-inventory.md`. Rows that happen to use primitive helpers but
+  are classified under another family, such as `font`, remain out of scope for
+  the primitive oracle and need their own family-specific formatter proof.
 - **Enum parser rows share exact keyword semantics plus compatibility
   branches.** Experiment 26 proved the 52 enum rows: required and optional enum
   fields accept exact keywords only, missing values are required, raw-empty
@@ -690,4 +695,4 @@ remains open.
 - [Experiment 50: Non-default formatter facet audit](50-non-default-formatter-facet-audit.md)
   — **Pass**
 - [Experiment 51: Primitive formatter oracle](51-primitive-formatter-oracle.md)
-  — **Designed**
+  — **Pass**

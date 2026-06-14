@@ -22,6 +22,8 @@ if str(SCRIPT_DIR) not in sys.path:
 import config_inventory
 
 ENTRY_FORMATTER_RE = re.compile(r'EntryFormatter::new\(\s*"(?P<key>[^"]+)"', re.DOTALL)
+PRIMITIVE_ORACLE_TEST = "primitive_config_formatter_family_oracle"
+PRIMITIVE_FAMILIES = {"boolean", "integer", "float", "string"}
 
 NO_OUTPUT_FORMATTERS = {
     "link": (
@@ -245,7 +247,11 @@ def update_cfg218(
     matrix.write_text("\n".join(updated) + "\n")
 
 
-def build_rows(upstream: list[str], calls: list[FormatterCall]) -> tuple[list[FormatterRow], list[str], list[str]]:
+def build_rows(
+    upstream: list[str],
+    calls: list[FormatterCall],
+    primitive_oracle_present: bool,
+) -> tuple[list[FormatterRow], list[str], list[str]]:
     call_by_key = {call.key: call for call in calls}
     canonical = set(upstream)
     rows: list[FormatterRow] = []
@@ -289,17 +295,30 @@ def build_rows(upstream: list[str], calls: list[FormatterCall]) -> tuple[list[Fo
             continue
 
         path_text = formatter_path(call.text)
+        family = formatter_family(path_text, call.text)
+        status = "Audit covered"
+        evidence = "Formatter dispatch path identified; non-default oracle still required"
+        missing_evidence = (
+            "Full non-default value formatting, repeatable/empty forms where "
+            "applicable, and order are not yet proven."
+        )
+        if primitive_oracle_present and family in PRIMITIVE_FAMILIES:
+            status = "Oracle complete"
+            evidence = (
+                "Primitive formatter oracle covers direct boolean, integer, "
+                "float, and string config rows using Ghostty-compatible "
+                "true/false, decimal integer, shortest float, lowercase nan, "
+                "byte-preserving string text, and representative order checks"
+            )
+            missing_evidence = "None for direct primitive formatter rows."
         rows.append(
             FormatterRow(
                 option=option,
                 formatter_path=f"`{path_text}`",
-                family=formatter_family(path_text, call.text),
-                status="Audit covered",
-                evidence="Formatter dispatch path identified; non-default oracle still required",
-                missing_evidence=(
-                    "Full non-default value formatting, repeatable/empty forms where "
-                    "applicable, and order are not yet proven."
-                ),
+                family=family,
+                status=status,
+                evidence=evidence,
+                missing_evidence=missing_evidence,
                 source_line=call.line,
             )
         )
@@ -331,13 +350,16 @@ def main() -> int:
 
     upstream, _aliases, _internal = config_inventory.extract_ghostty(args.upstream)
     calls = extract_formatter_calls(args.roastty)
-    rows, missing, extra = build_rows(upstream, calls)
+    roastty_source = args.roastty.read_text()
+    primitive_oracle_present = PRIMITIVE_ORACLE_TEST in roastty_source
+    rows, missing, extra = build_rows(upstream, calls, primitive_oracle_present)
     emit_inventory(rows, extra, args.output)
 
     incomplete = [row for row in rows if row.status != "Oracle complete"]
     oracle_count = sum(row.status == "Oracle complete" for row in rows)
     gap_count = sum(row.status == "Gap" for row in rows)
-    update_cfg218(args.matrix, args.output, oracle_count, len(incomplete), gap_count, 50)
+    owner_experiment = 51 if primitive_oracle_present else 50
+    update_cfg218(args.matrix, args.output, oracle_count, len(incomplete), gap_count, owner_experiment)
 
     print(f"ghostty_canonical={len(upstream)}")
     print(f"roastty_formatter_rows={len(rows)}")
