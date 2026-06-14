@@ -1166,3 +1166,5 @@ remains open.
   — **Pass**
 - [Experiment 111: Mouse hide while typing runtime](111-mouse-hide-while-typing-runtime.md)
   — **Pass**
+- [Experiment 112: Platform runtime classification](112-platform-runtime-classification.md)
+  — **Designed**
