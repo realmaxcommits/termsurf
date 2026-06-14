@@ -23,6 +23,7 @@ import config_inventory
 
 ENTRY_FORMATTER_RE = re.compile(r'EntryFormatter::new\(\s*"(?P<key>[^"]+)"', re.DOTALL)
 PRIMITIVE_ORACLE_TEST = "primitive_config_formatter_family_oracle"
+METRIC_MODIFIER_ORACLE_TEST = "metric_modifier_config_formatter_family_oracle"
 PRIMITIVE_FAMILIES = {"boolean", "integer", "float", "string"}
 
 NO_OUTPUT_FORMATTERS = {
@@ -251,6 +252,7 @@ def build_rows(
     upstream: list[str],
     calls: list[FormatterCall],
     primitive_oracle_present: bool,
+    metric_modifier_oracle_present: bool,
 ) -> tuple[list[FormatterRow], list[str], list[str]]:
     call_by_key = {call.key: call for call in calls}
     canonical = set(upstream)
@@ -311,6 +313,15 @@ def build_rows(
                 "byte-preserving string text, and representative order checks"
             )
             missing_evidence = "None for direct primitive formatter rows."
+        elif metric_modifier_oracle_present and family == "metric modifier":
+            status = "Oracle complete"
+            evidence = (
+                "Metric modifier formatter oracle covers non-font adjust rows, "
+                "absolute decimal output, percent output as `(stored - 1) * 100%`, "
+                "clamped negative percents, infinity, nan, empty optional output, "
+                "and representative order checks"
+            )
+            missing_evidence = "None for metric modifier formatter rows."
         rows.append(
             FormatterRow(
                 option=option,
@@ -352,13 +363,25 @@ def main() -> int:
     calls = extract_formatter_calls(args.roastty)
     roastty_source = args.roastty.read_text()
     primitive_oracle_present = PRIMITIVE_ORACLE_TEST in roastty_source
-    rows, missing, extra = build_rows(upstream, calls, primitive_oracle_present)
+    metric_modifier_oracle_present = METRIC_MODIFIER_ORACLE_TEST in roastty_source
+    rows, missing, extra = build_rows(
+        upstream,
+        calls,
+        primitive_oracle_present,
+        metric_modifier_oracle_present,
+    )
     emit_inventory(rows, extra, args.output)
 
     incomplete = [row for row in rows if row.status != "Oracle complete"]
     oracle_count = sum(row.status == "Oracle complete" for row in rows)
     gap_count = sum(row.status == "Gap" for row in rows)
-    owner_experiment = 51 if primitive_oracle_present else 50
+    owner_experiment = (
+        52
+        if metric_modifier_oracle_present
+        else 51
+        if primitive_oracle_present
+        else 50
+    )
     update_cfg218(args.matrix, args.output, oracle_count, len(incomplete), gap_count, owner_experiment)
 
     print(f"ghostty_canonical={len(upstream)}")

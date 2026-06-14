@@ -462,6 +462,11 @@ experiment files until they are proven.
   `config-formatter-inventory.md`. Rows that happen to use primitive helpers but
   are classified under another family, such as `font`, remain out of scope for
   the primitive oracle and need their own family-specific formatter proof.
+- **Metric modifier formatter rows are inventory-family scoped.** Experiment 52
+  promoted the 12 non-font rows classified as `metric modifier`. Font-classified
+  adjust rows such as `adjust-font-baseline` still need the broader font
+  formatter oracle even though they use the same local `format_metric_modifier`
+  helper.
 - **Enum parser rows share exact keyword semantics plus compatibility
   branches.** Experiment 26 proved the 52 enum rows: required and optional enum
   fields accept exact keywords only, missing values are required, raw-empty
@@ -697,4 +702,4 @@ remains open.
 - [Experiment 51: Primitive formatter oracle](51-primitive-formatter-oracle.md)
   — **Pass**
 - [Experiment 52: Metric modifier formatter oracle](52-metric-modifier-formatter-oracle.md)
-  — **Designed**
+  — **Pass**

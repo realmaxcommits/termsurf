@@ -17861,6 +17861,93 @@ mod tests {
     }
 
     #[test]
+    fn metric_modifier_config_formatter_family_oracle() {
+        fn formatted_lines(cfg: &Config) -> Vec<String> {
+            let mut out = String::new();
+            cfg.format_config(&mut out);
+            out.lines().map(ToString::to_string).collect()
+        }
+
+        fn line(lines: &[String], key: &str) -> String {
+            let prefix = format!("{key} = ");
+            lines
+                .iter()
+                .find(|line| line.starts_with(&prefix))
+                .unwrap_or_else(|| panic!("missing formatted line for {key}"))
+                .clone()
+        }
+
+        fn index(lines: &[String], key: &str) -> usize {
+            let prefix = format!("{key} = ");
+            lines
+                .iter()
+                .position(|line| line.starts_with(&prefix))
+                .unwrap_or_else(|| panic!("missing formatted line for {key}"))
+        }
+
+        let mut cfg = Config::default();
+        let cases = [
+            ("adjust-box-thickness", "1", "adjust-box-thickness = 1"),
+            ("adjust-cell-height", "-2", "adjust-cell-height = -2"),
+            ("adjust-cell-width", "+3", "adjust-cell-width = 3"),
+            ("adjust-cursor-height", "4", "adjust-cursor-height = 4"),
+            (
+                "adjust-cursor-thickness",
+                "5",
+                "adjust-cursor-thickness = 5",
+            ),
+            (
+                "adjust-icon-height",
+                "0x1p4%",
+                "adjust-icon-height = 15.999999999999993%",
+            ),
+            (
+                "adjust-overline-position",
+                "-50%",
+                "adjust-overline-position = -50%",
+            ),
+            (
+                "adjust-overline-thickness",
+                "-150%",
+                "adjust-overline-thickness = -100%",
+            ),
+            (
+                "adjust-strikethrough-position",
+                "1_000",
+                "adjust-strikethrough-position = 1000",
+            ),
+            (
+                "adjust-strikethrough-thickness",
+                "1_0.5%",
+                "adjust-strikethrough-thickness = 10.499999999999998%",
+            ),
+            (
+                "adjust-underline-position",
+                "Inf%",
+                "adjust-underline-position = inf%",
+            ),
+            (
+                "adjust-underline-thickness",
+                "nAn%",
+                "adjust-underline-thickness = nan%",
+            ),
+        ];
+        for (key, value, expected) in cases {
+            cfg.set(key, Some(value)).unwrap();
+            let lines = formatted_lines(&cfg);
+            assert_eq!(line(&lines, key), expected);
+        }
+
+        cfg.set("adjust-cell-width", Some("")).unwrap();
+        let lines = formatted_lines(&cfg);
+        assert_eq!(line(&lines, "adjust-cell-width"), "adjust-cell-width = ");
+
+        assert!(index(&lines, "adjust-cell-width") < index(&lines, "adjust-cell-height"));
+        assert!(index(&lines, "adjust-cursor-thickness") < index(&lines, "adjust-cursor-height"));
+        assert!(index(&lines, "adjust-box-thickness") < index(&lines, "adjust-icon-height"));
+    }
+
+    #[test]
     fn config_default_parser_oracle() {
         let fixture = include_str!("../../testdata/issue805-ghostty-default-config.txt");
         let lines: Vec<&str> = fixture.lines().collect();

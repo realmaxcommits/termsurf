@@ -77,6 +77,69 @@ Findings: none.
 
 The reviewer verified that the README links Experiment 52 as `Designed`, the
 experiment has the required sections, the 67/136 expected counts are consistent
-with 55 existing oracle rows plus 12 metric modifier rows, font-classified metric
-helper rows remain out of scope, CFG-218 remains `Gap`, and the verification
-criteria are concrete.
+with 55 existing oracle rows plus 12 metric modifier rows, font-classified
+metric helper rows remain out of scope, CFG-218 remains `Gap`, and the
+verification criteria are concrete.
+
+## Result
+
+**Result:** Pass
+
+Added `metric_modifier_config_formatter_family_oracle` and promoted only
+formatter inventory rows whose family is `metric modifier`.
+
+The oracle proves representative metric modifier formatter behavior through
+`Config::format_config`:
+
+- absolute modifiers format as decimal strings;
+- percent modifiers format as `(stored_value - 1) * 100` plus `%`;
+- clamped negative percentages format at the clamped stored value;
+- infinity and `nan` percentage values format as `inf%` and `nan%`;
+- raw-empty optional metric modifier values format as the void line;
+- representative metric modifier rows remain in the expected formatter order.
+
+The regenerated formatter inventory now reports:
+
+```text
+ghostty_canonical=203
+roastty_formatter_rows=203
+missing_canonical_formatter_rows=0
+extra_formatter_rows=0
+oracle_complete=67
+audit_covered=136
+gap=0
+no_output_rows=1
+```
+
+CFG-218 remains `Gap`, as intended, because 136 formatter rows still need
+dedicated non-default formatter oracles.
+
+Verification:
+
+- `cargo test --manifest-path roastty/Cargo.toml metric_modifier_config_formatter_family_oracle`
+  passed.
+- `cargo test --manifest-path roastty/Cargo.toml config_default_format_oracle`
+  passed.
+- Matrix assertion passed: CFG-217 remains `Pass`; CFG-218 remains `Gap`;
+  primitive and metric modifier formatter families are `Oracle complete`;
+  non-target formatter rows are not promoted, including font-classified metric
+  helper rows.
+- `cargo fmt --manifest-path roastty/Cargo.toml --check` passed.
+- `prettier --write --prose-wrap always --print-width 80 issues/0805-roastty-ghostty-parity/52-metric-modifier-formatter-oracle.md issues/0805-roastty-ghostty-parity/README.md issues/0805-roastty-ghostty-parity/config-formatter-inventory.md issues/0805-roastty-ghostty-parity/config-matrix.md`
+  completed.
+- `git diff --check` passed.
+
+## Conclusion
+
+The metric modifier formatter family is now oracle-complete. CFG-218 remains
+open with 136 audit-covered formatter rows. The next formatter experiments
+should target another coherent family such as window padding, repeatable paths,
+or optional values.
+
+## Completion Review
+
+Reviewed by a fresh-context Codex adversarial subagent.
+
+Verdict: **Approved**.
+
+Findings: none.
