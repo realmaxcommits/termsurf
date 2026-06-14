@@ -1258,3 +1258,5 @@ remains open.
   — **Pass**
 - [Experiment 124: Shell integration runtime split](124-shell-integration-runtime-split.md)
   — **Pass**
+- [Experiment 125: Renderer control runtime split](125-renderer-control-runtime-split.md)
+  — **Designed**
