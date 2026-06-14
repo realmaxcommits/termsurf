@@ -18192,6 +18192,79 @@ mod tests {
     }
 
     #[test]
+    fn key_remap_config_formatter_family_oracle() {
+        fn formatted_lines(cfg: &Config) -> Vec<String> {
+            let mut out = String::new();
+            cfg.format_config(&mut out);
+            out.lines().map(ToString::to_string).collect()
+        }
+
+        fn lines_for(lines: &[String], key: &str) -> Vec<String> {
+            let prefix = format!("{key} = ");
+            lines
+                .iter()
+                .filter(|line| line.starts_with(&prefix))
+                .cloned()
+                .collect()
+        }
+
+        fn index(lines: &[String], key: &str) -> usize {
+            let prefix = format!("{key} = ");
+            lines
+                .iter()
+                .position(|line| line.starts_with(&prefix))
+                .unwrap_or_else(|| panic!("missing formatted line for {key}"))
+        }
+
+        let mut cfg = Config::default();
+        let lines = formatted_lines(&cfg);
+        assert_eq!(lines_for(&lines, "key-remap"), vec!["key-remap = "]);
+
+        cfg.set("key-remap", Some("ctrl=super")).unwrap();
+        cfg.set("key-remap", Some("right_ctrl=alt")).unwrap();
+        cfg.set("key-remap", Some("left_alt=right_ctrl")).unwrap();
+        cfg.finalize();
+        let lines = formatted_lines(&cfg);
+        assert_eq!(
+            lines_for(&lines, "key-remap"),
+            vec![
+                "key-remap = right_ctrl=left_alt",
+                "key-remap = left_ctrl=left_super",
+                "key-remap = left_alt=right_ctrl",
+            ]
+        );
+
+        cfg.set("key-remap", Some("")).unwrap();
+        let lines = formatted_lines(&cfg);
+        assert_eq!(lines_for(&lines, "key-remap"), vec!["key-remap = "]);
+
+        let mut cli_cfg = Config::default();
+        assert!(cli_cfg
+            .set_cli_args([
+                "--key-remap=control=command",
+                "--key-remap=right_option=left_control"
+            ])
+            .is_empty());
+        cli_cfg.finalize();
+        let lines = formatted_lines(&cli_cfg);
+        assert_eq!(
+            lines_for(&lines, "key-remap"),
+            vec![
+                "key-remap = right_ctrl=left_super",
+                "key-remap = right_alt=left_ctrl",
+                "key-remap = left_ctrl=left_super",
+            ]
+        );
+
+        assert!(cli_cfg.set_cli_args(["--key-remap"]).is_empty());
+        let lines = formatted_lines(&cli_cfg);
+        assert_eq!(lines_for(&lines, "key-remap"), vec!["key-remap = "]);
+
+        assert!(index(&lines, "keybind") < index(&lines, "key-remap"));
+        assert!(index(&lines, "key-remap") < index(&lines, "window-padding-x"));
+    }
+
+    #[test]
     fn config_default_parser_oracle() {
         let fixture = include_str!("../../testdata/issue805-ghostty-default-config.txt");
         let lines: Vec<&str> = fixture.lines().collect();

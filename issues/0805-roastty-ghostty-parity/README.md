@@ -482,6 +482,11 @@ experiment files until they are proven.
   keyword/enum-style rows associated with color behavior, not arbitrary RGB
   color formatters. The actual `Config::format_config` order is
   `window-colorspace` before `osc-color-report-format`.
+- **Key-remap formatter output is normalized and ordered by remap internals.**
+  Experiment 56 promoted the single `key-remap` formatter row. Alias inputs such
+  as `control`, `command`, and `option` format as concrete side-specific names,
+  and one observed CLI normalized order is `right_ctrl=left_super`,
+  `right_alt=left_ctrl`, then `left_ctrl=left_super`.
 - **Enum parser rows share exact keyword semantics plus compatibility
   branches.** Experiment 26 proved the 52 enum rows: required and optional enum
   fields accept exact keywords only, missing values are required, raw-empty
@@ -725,4 +730,4 @@ remains open.
 - [Experiment 55: Color keyword formatter oracle](55-color-keyword-formatter-oracle.md)
   — **Pass**
 - [Experiment 56: Key remap formatter oracle](56-key-remap-formatter-oracle.md)
-  — **Designed**
+  — **Pass**

@@ -76,3 +76,72 @@ Reviewed by a fresh-context Codex adversarial subagent.
 Verdict: **Approved**.
 
 Findings: none.
+
+## Result
+
+**Result:** Pass
+
+Added `key_remap_config_formatter_family_oracle` and promoted only formatter
+inventory rows whose family is `key remap`.
+
+The oracle proves representative key-remap formatter behavior through
+`Config::format_config`:
+
+- the default empty remap set formats as `key-remap = `;
+- direct modifier remaps and side-specific modifier remaps format as normalized
+  side-specific pairs;
+- aliases such as `control`, `command`, and `option` normalize to their concrete
+  formatter names;
+- raw-empty config values and bare CLI `--key-remap` reset the formatter output
+  to the single void line;
+- `key-remap` remains after the full `keybind` formatter output and before
+  `window-padding-x`.
+
+The implementation also confirmed one normalized CLI output order:
+`right_ctrl=left_super`, then `right_alt=left_ctrl`, then
+`left_ctrl=left_super`.
+
+The regenerated formatter inventory now reports:
+
+```text
+ghostty_canonical=203
+roastty_formatter_rows=203
+missing_canonical_formatter_rows=0
+extra_formatter_rows=0
+oracle_complete=77
+audit_covered=126
+gap=0
+no_output_rows=1
+```
+
+CFG-218 remains `Gap`, as intended, because 126 formatter rows still need
+dedicated non-default formatter oracles.
+
+Verification:
+
+- `cargo test --manifest-path roastty/Cargo.toml key_remap_config_formatter_family_oracle`
+  passed.
+- `cargo test --manifest-path roastty/Cargo.toml config_default_format_oracle`
+  passed.
+- Matrix assertion passed: CFG-217 remains `Pass`; CFG-218 remains `Gap`; all
+  previously promoted formatter families remain `Oracle complete`; the
+  `key remap` formatter row is `Oracle complete`; representative non-target
+  formatter families remain `Audit covered`.
+- `cargo fmt --manifest-path roastty/Cargo.toml --check` passed.
+- `prettier --write --prose-wrap always --print-width 80 issues/0805-roastty-ghostty-parity/56-key-remap-formatter-oracle.md issues/0805-roastty-ghostty-parity/README.md issues/0805-roastty-ghostty-parity/config-formatter-inventory.md issues/0805-roastty-ghostty-parity/config-matrix.md`
+  completed.
+- `git diff --check` passed.
+
+## Conclusion
+
+The key-remap formatter row is now oracle-complete. CFG-218 remains open with
+126 audit-covered formatter rows. The next compact formatter experiments should
+target `keybind`, `command-palette-entry`, or the no-output `link` row.
+
+## Completion Review
+
+Reviewed by a fresh-context Codex adversarial subagent.
+
+Verdict: **Approved**.
+
+Findings: none.
