@@ -13,8 +13,8 @@ use crate::os::pty::{PtyChild, PtyCommand, PtyReadiness, PtySize};
 use crate::terminal::color;
 use crate::terminal::cursor;
 use crate::terminal::terminal::{
-    Terminal, TerminalClipboardEvent, TerminalDesktopNotification, TerminalInitError,
-    TerminalInitOptions, TerminalStreamError,
+    Terminal, TerminalClipboardEvent, TerminalCommandEvent, TerminalDesktopNotification,
+    TerminalInitError, TerminalInitOptions, TerminalStreamError,
 };
 
 mod shell_integration;
@@ -100,6 +100,7 @@ pub(crate) struct TermioPump {
     pub(crate) titles: Vec<String>,
     pub(crate) pwd: Vec<String>,
     pub(crate) desktop_notifications: Vec<TerminalDesktopNotification>,
+    pub(crate) command_events: Vec<TerminalCommandEvent>,
     pub(crate) eof: bool,
     pub(crate) bytes_written: usize,
     pub(crate) pending_write_bytes: usize,
@@ -313,6 +314,7 @@ impl Termio {
         let titles = self.terminal.take_pending_title_updates();
         let pwd = self.terminal.take_pending_pwd_updates();
         let desktop_notifications = self.terminal.take_pending_desktop_notifications();
+        let command_events = self.terminal.take_pending_command_events();
 
         let bytes_written = self.flush_pending_write()?;
         if self.child_exit.is_none() {
@@ -333,6 +335,7 @@ impl Termio {
             titles,
             pwd,
             desktop_notifications,
+            command_events,
             eof,
             bytes_written,
             pending_write_bytes: self.pending_write.len(),
@@ -564,6 +567,7 @@ fn run_termio_worker(
                     || !pump.titles.is_empty()
                     || !pump.pwd.is_empty()
                     || !pump.desktop_notifications.is_empty()
+                    || !pump.command_events.is_empty()
                     || pump.bytes_written > 0
                     || pump.pending_write_bytes > 0
                     || pump.eof
@@ -837,6 +841,26 @@ mod tests {
         assert!(termio
             .terminal_mut()
             .take_pending_desktop_notifications()
+            .is_empty());
+    }
+
+    #[test]
+    fn termio_command_event_runtime_pump_reports_child_osc133() {
+        let _guard = pty_command_lock();
+        let mut termio = spawn_shell("printf '\\033]133;C\\007\\033]133;D;7\\007'");
+
+        let pump = pump_until(&mut termio, |_, pump| !pump.command_events.is_empty());
+
+        assert_eq!(
+            pump.command_events,
+            vec![
+                TerminalCommandEvent::Start,
+                TerminalCommandEvent::Stop { exit_code: 7 },
+            ]
+        );
+        assert!(termio
+            .terminal_mut()
+            .take_pending_command_events()
             .is_empty());
     }
 

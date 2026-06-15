@@ -144,3 +144,89 @@ parsed out-of-range values map to `1`. The reviewer also recommended explicitly
 including `ROASTTY_ACTION_COMMAND_FINISHED` storage-to-union conversion so the
 copied Swift app can read `action.action.command_finished`. The revised design
 adds both requirements and was approved on re-review.
+
+## Result
+
+**Result:** Pass
+
+Roastty now carries pinned Ghostty's command-finished runtime path through the
+terminal parser, termio pump, surface timer, and app action ABI:
+
+- `Terminal` queues `TerminalCommandEvent::Start` for OSC 133 `C`
+  (`end_input_start_output`) and `TerminalCommandEvent::Stop` for OSC 133 `D`.
+- Exit-code mapping matches pinned Ghostty: absent or malformed values map to
+  `0`, parsed out-of-range values map to `1`, and valid `0..255` values are
+  preserved.
+- `TermioPump` forwards command events and emits command-only pumps to the
+  surface.
+- `Surface` records a command timer on start, ignores stop-without-start, resets
+  the timer on repeated start, and dispatches `ROASTTY_ACTION_COMMAND_FINISHED`
+  with exit code and nanosecond duration on stop.
+- `RoasttyActionU` now includes `command_finished`, and the storage-to-union
+  conversion used by the copied Swift app is covered by the test action
+  recorder.
+- `RUNTIME-012B2B2B2A` is now `Oracle complete`; the remaining
+  notification/link/bell GUI gap is narrowed to `RUNTIME-012B2B2B2B`.
+
+One design assumption was corrected during implementation: OSC 133 `B` is not
+the command-start event. Pinned Ghostty's parser and stream handler use OSC 133
+`C` (`end_input_start_output`) to emit `start_command`, while OSC 133 `D` emits
+`stop_command`.
+
+Verification:
+
+```text
+cargo test --manifest-path roastty/Cargo.toml terminal_command_event_runtime
+# 2 passed
+
+cargo test --manifest-path roastty/Cargo.toml termio_command_event_runtime
+# 1 passed
+
+cargo test --manifest-path roastty/Cargo.toml surface_command_finished_runtime
+# 5 passed
+
+cargo test --manifest-path roastty/Cargo.toml command_finished_runtime
+# 5 passed
+
+PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/config_runtime_inventory.py --output issues/0805-roastty-ghostty-parity/config-runtime-inventory.md --matrix issues/0805-roastty-ghostty-parity/config-matrix.md
+# runtime_rows=65
+# oracle_complete=59
+# closed=61
+# audit_covered=0
+# incomplete=4
+# gap=4
+# cfg223=Gap
+
+for f in issues/0805-roastty-ghostty-parity/*_runtime_parity.py; do
+  PYTHONDONTWRITEBYTECODE=1 python3 "$f" || exit 1
+done
+# all runtime parity guards passed
+
+PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/terminal_runtime_residual_audit.py
+# terminal_runtime_residual_audit=pass
+
+cargo fmt --manifest-path roastty/Cargo.toml --check
+# pass
+
+git diff --check
+# pass
+```
+
+## Conclusion
+
+Command-finished runtime action dispatch is no longer part of the CFG-223
+notification/link/bell gap. Future notification experiments should focus on the
+remaining live GUI/app effects in `RUNTIME-012B2B2B2B`: app-notifications, OS
+banner/sound delivery, actual bell side effects, link hover/cursor UI, link
+previews, and context/menu link flows.
+
+## Completion Review
+
+**Reviewer:** Turing the 2nd
+
+**Verdict:** Approved
+
+The fresh-context adversarial review found no required, optional, or nit
+findings. The reviewer confirmed the result commit had not yet been made:
+`a7bd4661f Plan command-finish runtime` was still `HEAD`, and the experiment
+result changes were uncommitted.

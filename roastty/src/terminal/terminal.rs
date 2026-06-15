@@ -74,6 +74,7 @@ pub(crate) struct Terminal {
     previous_char: Option<char>,
     pending_clipboard_events: Vec<TerminalClipboardEvent>,
     pending_desktop_notifications: Vec<TerminalDesktopNotification>,
+    pending_command_events: Vec<TerminalCommandEvent>,
     pending_bell_count: usize,
     default_cursor: bool,
     default_cursor_visual_style: cursor::VisualStyle,
@@ -786,6 +787,12 @@ pub(crate) struct TerminalDesktopNotification {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TerminalCommandEvent {
+    Start,
+    Stop { exit_code: u8 },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum KittyImageMedium {
     File,
     TemporaryFile,
@@ -850,6 +857,7 @@ struct TerminalStreamHandler<'a> {
     flags: &'a mut TerminalFlags,
     pending_clipboard_events: &'a mut Vec<TerminalClipboardEvent>,
     pending_desktop_notifications: &'a mut Vec<TerminalDesktopNotification>,
+    pending_command_events: &'a mut Vec<TerminalCommandEvent>,
     pending_bell_count: &'a mut usize,
     default_cursor: &'a mut bool,
     default_cursor_visual_style: cursor::VisualStyle,
@@ -1117,6 +1125,7 @@ impl Terminal {
             previous_char: None,
             pending_clipboard_events: Vec::new(),
             pending_desktop_notifications: Vec::new(),
+            pending_command_events: Vec::new(),
             pending_bell_count: 0,
             default_cursor: true,
             default_cursor_visual_style: options.cursor_visual_style,
@@ -1153,6 +1162,7 @@ impl Terminal {
             previous_char,
             pending_clipboard_events,
             pending_desktop_notifications,
+            pending_command_events,
             pending_bell_count,
             default_cursor,
             flags,
@@ -1188,6 +1198,7 @@ impl Terminal {
             flags,
             pending_clipboard_events,
             pending_desktop_notifications,
+            pending_command_events,
             pending_bell_count,
             default_cursor,
             default_cursor_visual_style: *default_cursor_visual_style,
@@ -1211,6 +1222,7 @@ impl Terminal {
         self.previous_char = None;
         self.pending_clipboard_events.clear();
         self.pending_desktop_notifications.clear();
+        self.pending_command_events.clear();
         self.pending_title_updates.clear();
         self.pending_pwd_updates.clear();
     }
@@ -1223,6 +1235,10 @@ impl Terminal {
         &mut self,
     ) -> Vec<TerminalDesktopNotification> {
         std::mem::take(&mut self.pending_desktop_notifications)
+    }
+
+    pub(crate) fn take_pending_command_events(&mut self) -> Vec<TerminalCommandEvent> {
+        std::mem::take(&mut self.pending_command_events)
     }
 
     pub(crate) fn take_pending_bell_count(&mut self) -> usize {
@@ -4439,10 +4455,19 @@ impl TerminalStreamHandler<'_> {
                         .clear_current_row_semantic_prompt()
                         .map_err(TerminalStreamError::from)?;
                 }
+                self.pending_command_events
+                    .push(TerminalCommandEvent::Start);
                 Ok(())
             }
             Action::EndCommand => {
                 self.screens.active_mut().set_cursor_semantic_output();
+                let exit_code = match prompt.exit_code() {
+                    Some(code @ 0..=255) => code as u8,
+                    Some(_) => 1,
+                    None => 0,
+                };
+                self.pending_command_events
+                    .push(TerminalCommandEvent::Stop { exit_code });
                 Ok(())
             }
         }
@@ -10837,6 +10862,64 @@ mod tests {
         assert!(terminal.pty_response_for_tests().is_empty());
         assert!(!terminal.is_dirty_for_tests(0, 0));
         assert!(!terminal.is_dirty_for_tests(9, 0));
+    }
+
+    #[test]
+    fn terminal_command_event_runtime_captures_osc133_without_display_side_effects() {
+        let mut terminal = Terminal::init(10, 3, None).unwrap();
+
+        terminal.next_slice(b"abc").unwrap();
+        terminal.set_mode_for_tests(Mode::Insert, true);
+        terminal
+            .screens
+            .active_mut()
+            .set_cursor_position_for_tests(5, 1);
+        terminal.clear_dirty_for_tests();
+
+        terminal
+            .next_slice(b"\x1b]133;C\x07\x1b]133;D;7\x07")
+            .unwrap();
+
+        assert_eq!(
+            terminal.take_pending_command_events(),
+            vec![
+                TerminalCommandEvent::Start,
+                TerminalCommandEvent::Stop { exit_code: 7 },
+            ]
+        );
+        assert!(terminal.take_pending_command_events().is_empty());
+        assert_eq!(plain_with_unwrap(&terminal, false), "abc");
+        assert_eq!(terminal.cursor_position_for_tests(), (5, 1));
+        assert!(terminal.get_mode_for_tests(Mode::Insert));
+        assert!(terminal.pty_response_for_tests().is_empty());
+        assert!(!terminal.is_dirty_for_tests(0, 0));
+        assert!(!terminal.is_dirty_for_tests(9, 0));
+    }
+
+    #[test]
+    fn terminal_command_event_runtime_maps_osc133_exit_codes_like_ghostty() {
+        let mut terminal = Terminal::init(10, 3, None).unwrap();
+
+        terminal
+            .next_slice(
+                b"\x1b]133;D\x07\
+                  \x1b]133;D;abc\x07\
+                  \x1b]133;D;-1\x07\
+                  \x1b]133;D;256\x07\
+                  \x1b]133;D;255\x07",
+            )
+            .unwrap();
+
+        assert_eq!(
+            terminal.take_pending_command_events(),
+            vec![
+                TerminalCommandEvent::Stop { exit_code: 0 },
+                TerminalCommandEvent::Stop { exit_code: 0 },
+                TerminalCommandEvent::Stop { exit_code: 1 },
+                TerminalCommandEvent::Stop { exit_code: 1 },
+                TerminalCommandEvent::Stop { exit_code: 255 },
+            ]
+        );
     }
 
     #[test]

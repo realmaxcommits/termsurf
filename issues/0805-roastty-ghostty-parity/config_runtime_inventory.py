@@ -200,7 +200,7 @@ ROWS = [
             "semantics; refreshes existing surfaces on config update; and "
             "does not bypass terminal mouse reporting."
         ),
-        missing_evidence="None for non-link right-click-action surface runtime behavior; link-specific context-menu behavior remains tracked by RUNTIME-012B2B2B2.",
+        missing_evidence="None for non-link right-click-action surface runtime behavior; link-specific context-menu behavior remains tracked by RUNTIME-012B2B2B2B.",
         guard_tier="Tier 3",
         guard_command="`cargo test --manifest-path roastty/Cargo.toml right_click_action`",
     ),
@@ -1483,7 +1483,7 @@ ROWS = [
             "`bell-features = attention`, `bell-features = title`, and "
             "`bell-features = border` gates."
         ),
-        missing_evidence="None for copied macOS bell presentation plumbing source parity; actual OS/audio/dock/border/title runtime side effects remain tracked by RUNTIME-012B2B2B2.",
+        missing_evidence="None for copied macOS bell presentation plumbing source parity; actual OS/audio/dock/border/title runtime side effects remain tracked by RUNTIME-012B2B2B2B.",
         guard_tier="Tier 0",
         guard_command="`PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/bell_runtime_dispatch_parity.py && PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/bell_presentation_runtime_parity.py`",
     ),
@@ -1507,7 +1507,7 @@ ROWS = [
             "construction, `requireFocus` userInfo, delivery, delayed focused "
             "cleanup, and click-to-focus routing."
         ),
-        missing_evidence="None for copied macOS user-notification presentation/lifecycle source parity; live OS banner/sound behavior remains tracked by RUNTIME-012B2B2B2.",
+        missing_evidence="None for copied macOS user-notification presentation/lifecycle source parity; live OS banner/sound behavior remains tracked by RUNTIME-012B2B2B2B.",
         guard_tier="Tier 0",
         guard_command="`PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/macos_user_notification_runtime_parity.py`",
     ),
@@ -1540,7 +1540,34 @@ ROWS = [
         guard_command="`cargo test --manifest-path roastty/Cargo.toml surface_desktop_notification_runtime && PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/desktop_notification_rate_limit_runtime_parity.py`",
     ),
     RuntimeRow(
-        id="RUNTIME-012B2B2B2",
+        id="RUNTIME-012B2B2B2A",
+        behavior="command-finished notification runtime dispatch",
+        ghostty_reference="`vendor/ghostty/src/termio/stream_handler.zig` semantic prompt `.start_command` / `.stop_command` emission; `vendor/ghostty/src/Surface.zig` command timer and `.command_finished` action dispatch",
+        roastty_reference="`roastty/src/terminal/terminal.rs` OSC 133 command-event queue, `roastty/src/termio.rs` pump forwarding, `roastty/src/lib.rs` command timer and `ROASTTY_ACTION_COMMAND_FINISHED` dispatch",
+        family="notifications",
+        status="Oracle complete",
+        evidence=(
+            "Experiment 157 ports pinned Ghostty's command-finished runtime "
+            "path. Terminal tests prove OSC 133 `C` queues command start and "
+            "`D` queues command stop without display side effects, including "
+            "Ghostty's exit-code mapping of absent or malformed codes to 0, "
+            "out-of-range parsed codes to 1, and valid `0..255` codes to their "
+            "value. Termio tests prove child PTY OSC 133 output reaches the "
+            "surface pump. Surface tests prove start records a timer without "
+            "dispatch, stop without start does nothing, repeated start resets "
+            "the timer, stop dispatches `ROASTTY_ACTION_COMMAND_FINISHED` with "
+            "exit code and nanosecond duration, command events mark the surface "
+            "dirty, and child-exited dispatch remains intact when both events "
+            "arrive in one pump. `command_finished_runtime_parity.py` statically "
+            "checks pinned Ghostty source, Roastty parser/pump/surface/ABI "
+            "implementation, tests, and this inventory split."
+        ),
+        missing_evidence="None for command-finished runtime action dispatch; the app-level notification presentation that may consume the action remains tracked by RUNTIME-012B2B2B2B.",
+        guard_tier="Tier 1",
+        guard_command="`cargo test --manifest-path roastty/Cargo.toml terminal_command_event_runtime && cargo test --manifest-path roastty/Cargo.toml termio_command_event_runtime && cargo test --manifest-path roastty/Cargo.toml surface_command_finished_runtime && PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/command_finished_runtime_parity.py`",
+    ),
+    RuntimeRow(
+        id="RUNTIME-012B2B2B2B",
         behavior="remaining notification/link/bell GUI effects",
         ghostty_reference="`vendor/ghostty/src/config/Config.zig` notification, link preview, and app-notification fields; `vendor/ghostty/src/Surface.zig` notification/link hover/menu paths; macOS native notification and link handling",
         roastty_reference="`roastty/macos/Sources` notification, pointer, preview, and context/menu handling beyond copied bell and user-notification plumbing",
@@ -1555,12 +1582,13 @@ ROWS = [
             "copied macOS bell presentation plumbing. Experiment 155 split "
             "out copied macOS user-notification presentation and lifecycle "
             "plumbing. Experiment 156 split out desktop notification rate "
-            "limiting. Command-finish notifications, app-notifications, actual "
-            "OS banner/sound delivery, actual audio/dock/border/title GUI "
-            "effects, link hover/cursor UI, link previews in the real app, and "
-            "context/menu link flows still need focused runtime or GUI proof."
+            "limiting. Experiment 157 split out command-finished terminal, "
+            "termio, surface action, and ABI dispatch. App-notifications, "
+            "actual OS banner/sound delivery, actual audio/dock/border/title "
+            "GUI effects, link hover/cursor UI, link previews in the real app, "
+            "and context/menu link flows still need focused runtime or GUI proof."
         ),
-        missing_evidence="Add command-finish notification, app-notification, live OS notification delivery, actual bell side-effect, app hover/cursor, preview, and context/menu link runtime or GUI walkthrough guards.",
+        missing_evidence="Add app-notification, live OS notification delivery, actual bell side-effect, app hover/cursor, preview, and context/menu link runtime or GUI walkthrough guards.",
         guard_tier="Tier 3",
         guard_command="TBD by future CFG-223 notification/link GUI or runtime experiment.",
     ),
@@ -1663,7 +1691,8 @@ EXPECTED_IDS = [
     "RUNTIME-012B2B1",
     "RUNTIME-012B2B2A",
     "RUNTIME-012B2B2B1",
-    "RUNTIME-012B2B2B2",
+    "RUNTIME-012B2B2B2A",
+    "RUNTIME-012B2B2B2B",
     "RUNTIME-013",
     "RUNTIME-014",
 ]

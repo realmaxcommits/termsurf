@@ -1302,6 +1302,13 @@ pub struct RoasttySurfaceMessageChildExited {
     timetime_ms: u64,
 }
 
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RoasttyActionCommandFinished {
+    exit_code: i16,
+    duration: u64,
+}
+
 /// The embedded `roastty_action_u` — a tagged-union payload (24 bytes / align 8,
 /// matching the upstream `action_u`). Only the data-carrying members are named; `raw`
 /// forces the size/align and carries roastty-only tags (e.g. NAVIGATE_SEARCH).
@@ -1332,6 +1339,7 @@ pub union RoasttyActionU {
     mouse_visibility: c_int,
     child_exited: RoasttySurfaceMessageChildExited,
     desktop_notification: RoasttyActionDesktopNotification,
+    command_finished: RoasttyActionCommandFinished,
 }
 
 #[repr(C)]
@@ -1373,6 +1381,12 @@ fn action_u_from_storage(tag: c_int, storage: [usize; 8]) -> RoasttyActionU {
             u.desktop_notification = RoasttyActionDesktopNotification {
                 title: storage[0] as *const c_char,
                 body: storage[1] as *const c_char,
+            }
+        }
+        ROASTTY_ACTION_COMMAND_FINISHED => {
+            u.command_finished = RoasttyActionCommandFinished {
+                exit_code: storage[0] as i16,
+                duration: storage[1] as u64,
             }
         }
         ROASTTY_ACTION_READONLY => u.readonly = storage[0] as c_int,
@@ -1459,6 +1473,10 @@ fn action_u_to_storage(tag: c_int, u: &RoasttyActionU) -> [usize; 8] {
             ROASTTY_ACTION_DESKTOP_NOTIFICATION => {
                 s[0] = u.desktop_notification.title as usize;
                 s[1] = u.desktop_notification.body as usize;
+            }
+            ROASTTY_ACTION_COMMAND_FINISHED => {
+                s[0] = u.command_finished.exit_code as usize;
+                s[1] = u.command_finished.duration as usize;
             }
             ROASTTY_ACTION_READONLY => s[0] = u.readonly as usize,
             ROASTTY_ACTION_INSPECTOR => s[0] = u.inspector as usize,
@@ -2770,6 +2788,7 @@ struct Surface {
     kitty_clipboard_write: Option<KittyClipboardWriteTransaction>,
     process_exited: bool,
     child_exit_handled: bool,
+    command_timer: Option<std::time::Instant>,
     dirty: bool,
     cursor_blink_visible: bool,
     cursor_blink_next: std::time::Instant,
@@ -4682,6 +4701,25 @@ impl Surface {
         storage[0] = title.as_ptr() as usize;
         storage[1] = body.as_ptr() as usize;
         self.perform_action_result(ROASTTY_ACTION_DESKTOP_NOTIFICATION, storage)
+    }
+
+    fn command_started_at(&mut self, now: std::time::Instant) {
+        self.command_timer = Some(now);
+    }
+
+    fn command_stopped_at(&mut self, exit_code: u8, now: std::time::Instant) -> bool {
+        let Some(start) = self.command_timer.take() else {
+            return false;
+        };
+        let duration = now.duration_since(start).as_nanos().min(u64::MAX as u128) as u64;
+        self.perform_command_finished(exit_code as i16, duration)
+    }
+
+    fn perform_command_finished(&self, exit_code: i16, duration: u64) -> bool {
+        let mut storage = [0usize; 8];
+        storage[0] = exit_code as usize;
+        storage[1] = duration as usize;
+        self.perform_action_result(ROASTTY_ACTION_COMMAND_FINISHED, storage)
     }
 
     fn perform_targeted_action_result(
@@ -7434,12 +7472,13 @@ impl Surface {
         match event {
             termio::TermioWorkerEvent::Pump(pump) => {
                 append_ui_key_trace(format!(
-                    "rust surface_apply_termio_event pump bytes_read={} bell_count={} titles={} pwd={} desktop_notifications={} bytes_written={} pending_write={} eof={} child_exited={}",
+                    "rust surface_apply_termio_event pump bytes_read={} bell_count={} titles={} pwd={} desktop_notifications={} command_events={} bytes_written={} pending_write={} eof={} child_exited={}",
                     pump.bytes_read,
                     pump.bell_count,
                     pump.titles.len(),
                     pump.pwd.len(),
                     pump.desktop_notifications.len(),
+                    pump.command_events.len(),
                     pump.bytes_written,
                     pump.pending_write_bytes,
                     pump.eof,
@@ -7462,11 +7501,23 @@ impl Surface {
                 for notification in &pump.desktop_notifications {
                     let _ = self.perform_desktop_notification(notification);
                 }
+                for event in &pump.command_events {
+                    let now = std::time::Instant::now();
+                    match event {
+                        terminal::terminal::TerminalCommandEvent::Start => {
+                            self.command_started_at(now);
+                        }
+                        terminal::terminal::TerminalCommandEvent::Stop { exit_code } => {
+                            let _ = self.command_stopped_at(*exit_code, now);
+                        }
+                    }
+                }
                 if pump.bytes_read > 0
                     || pump.bell_count > 0
                     || !pump.titles.is_empty()
                     || !pump.pwd.is_empty()
                     || !pump.desktop_notifications.is_empty()
+                    || !pump.command_events.is_empty()
                     || pump.bytes_written > 0
                     || pump.pending_write_bytes > 0
                     || pump.eof
@@ -18313,6 +18364,7 @@ pub extern "C" fn roastty_surface_new(
         kitty_clipboard_write: None,
         process_exited: false,
         child_exit_handled: false,
+        command_timer: None,
         dirty: false,
         cursor_blink_visible: false,
         cursor_blink_next: std::time::Instant::now() + CURSOR_BLINK_INTERVAL,
@@ -19956,6 +20008,7 @@ mod tests {
         key_sequence: Option<(bool, c_int, usize, c_int)>,
         child_exited: Option<(u32, u64)>,
         desktop_notification: Option<(String, String)>,
+        command_finished: Option<(i16, u64)>,
         close_count_at_action: usize,
     }
 
@@ -20423,6 +20476,8 @@ mod tests {
             };
             let child_exited = (action.tag == ROASTTY_ACTION_SHOW_CHILD_EXITED)
                 .then_some((storage[0] as u32, storage[1] as u64));
+            let command_finished = (action.tag == ROASTTY_ACTION_COMMAND_FINISHED)
+                .then_some((storage[0] as i16, storage[1] as u64));
             let desktop_notification = if action.tag == ROASTTY_ACTION_DESKTOP_NOTIFICATION {
                 let title = storage[0] as *const c_char;
                 let body = storage[1] as *const c_char;
@@ -20459,6 +20514,7 @@ mod tests {
                 key_sequence,
                 child_exited,
                 desktop_notification,
+                command_finished,
                 close_count_at_action: CLOSE_COUNT.load(Ordering::SeqCst),
             });
         });
@@ -21225,6 +21281,7 @@ mod tests {
             titles: Vec::new(),
             pwd: Vec::new(),
             desktop_notifications: Vec::new(),
+            command_events: Vec::new(),
             eof,
             bytes_written,
             pending_write_bytes,
@@ -21245,6 +21302,7 @@ mod tests {
             titles: titles.into_iter().map(ToOwned::to_owned).collect(),
             pwd: Vec::new(),
             desktop_notifications: Vec::new(),
+            command_events: Vec::new(),
             eof: false,
             bytes_written: 0,
             pending_write_bytes: 0,
@@ -21261,6 +21319,7 @@ mod tests {
             titles: Vec::new(),
             pwd: vec![pwd.to_string()],
             desktop_notifications: Vec::new(),
+            command_events: Vec::new(),
             eof: false,
             bytes_written: 0,
             pending_write_bytes: 0,
@@ -21285,6 +21344,26 @@ mod tests {
             titles: Vec::new(),
             pwd: Vec::new(),
             desktop_notifications: notifications,
+            command_events: Vec::new(),
+            eof: false,
+            bytes_written: 0,
+            pending_write_bytes: 0,
+            child_exited: false,
+            child_exit: None,
+        }
+    }
+
+    fn test_pump_with_command_events(
+        events: Vec<terminal::terminal::TerminalCommandEvent>,
+    ) -> termio::TermioPump {
+        termio::TermioPump {
+            readiness: PtyReadiness::default(),
+            bytes_read: 1,
+            bell_count: 0,
+            titles: Vec::new(),
+            pwd: Vec::new(),
+            desktop_notifications: Vec::new(),
+            command_events: events,
             eof: false,
             bytes_written: 0,
             pending_write_bytes: 0,
@@ -23747,6 +23826,131 @@ mod tests {
 
         roastty_surface_free(surface_b);
         roastty_surface_free(surface_a);
+        roastty_app_free(app);
+    }
+
+    #[test]
+    fn surface_command_finished_runtime_dispatches_after_start_stop() {
+        let app = new_test_app_with_action(true);
+        let surface = new_test_surface(app);
+        let surface_ref = surface_from_handle(surface).unwrap();
+        let start = Instant::now();
+
+        surface_ref.command_started_at(start);
+        assert!(action_records().is_empty());
+        assert!(surface_ref.command_stopped_at(7, start + Duration::from_millis(25)));
+
+        let records = action_records();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].target_tag, ROASTTY_TARGET_SURFACE);
+        assert_eq!(records[0].surface, surface);
+        assert_eq!(records[0].action_tag, ROASTTY_ACTION_COMMAND_FINISHED);
+        assert_eq!(records[0].command_finished, Some((7, 25_000_000)));
+        assert!(surface_ref.command_timer.is_none());
+
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+    }
+
+    #[test]
+    fn surface_command_finished_runtime_stop_without_start_does_not_dispatch() {
+        let app = new_test_app_with_action(true);
+        let surface = new_test_surface(app);
+        let surface_ref = surface_from_handle(surface).unwrap();
+
+        assert!(!surface_ref.command_stopped_at(9, Instant::now()));
+
+        assert!(action_records().is_empty());
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+    }
+
+    #[test]
+    fn surface_command_finished_runtime_repeated_start_resets_timer() {
+        let app = new_test_app_with_action(true);
+        let surface = new_test_surface(app);
+        let surface_ref = surface_from_handle(surface).unwrap();
+        let start = Instant::now();
+
+        surface_ref.command_started_at(start);
+        surface_ref.command_started_at(start + Duration::from_millis(10));
+        assert!(surface_ref.command_stopped_at(0, start + Duration::from_millis(30)));
+
+        let records = action_records();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].command_finished, Some((0, 20_000_000)));
+
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+    }
+
+    #[test]
+    fn surface_command_finished_runtime_pump_events_dispatch_and_mark_dirty() {
+        let app = new_test_app_with_action(true);
+        let surface = new_test_surface(app);
+        let surface_ref = surface_from_handle(surface).unwrap();
+
+        apply_test_pump(
+            surface,
+            test_pump_with_command_events(vec![terminal::terminal::TerminalCommandEvent::Start]),
+        );
+        assert!(action_records().is_empty());
+        assert!(surface_ref.dirty);
+        surface_ref.dirty = false;
+        surface_ref.command_timer = Some(Instant::now() - Duration::from_millis(25));
+
+        apply_test_pump(
+            surface,
+            test_pump_with_command_events(vec![terminal::terminal::TerminalCommandEvent::Stop {
+                exit_code: 13,
+            }]),
+        );
+
+        let records = action_records();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].action_tag, ROASTTY_ACTION_COMMAND_FINISHED);
+        let (exit_code, duration) = records[0]
+            .command_finished
+            .expect("command finished payload");
+        assert_eq!(exit_code, 13);
+        assert!(duration >= 25_000_000, "{records:?}");
+        assert!(surface_ref.dirty);
+
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+    }
+
+    #[test]
+    fn surface_command_finished_runtime_child_exited_dispatch_remains() {
+        let app = new_test_app_with_action(true);
+        let surface = new_test_surface(app);
+        let surface_ref = surface_from_handle(surface).unwrap();
+        surface_ref.command_started_at(Instant::now() - Duration::from_millis(10));
+        let mut pump = test_pump_with_child_exit(
+            0,
+            0,
+            0,
+            0,
+            false,
+            Some(termio::TermioChildExit {
+                exit_code: 3,
+                runtime_ms: 1_000,
+            }),
+        );
+        pump.command_events = vec![terminal::terminal::TerminalCommandEvent::Stop { exit_code: 3 }];
+
+        apply_test_pump(surface, pump);
+
+        let records = action_records();
+        assert!(records
+            .iter()
+            .any(|record| record.action_tag == ROASTTY_ACTION_COMMAND_FINISHED));
+        assert!(records
+            .iter()
+            .any(|record| record.action_tag == ROASTTY_ACTION_SHOW_CHILD_EXITED));
+        assert!(surface_ref.process_exited);
+
+        roastty_surface_free(surface);
         roastty_app_free(app);
     }
 

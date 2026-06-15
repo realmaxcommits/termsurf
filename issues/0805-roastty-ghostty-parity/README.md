@@ -439,6 +439,13 @@ experiment files until they are proven.
   together by covering enum keywords, packed flag output, duration output,
   resets, and order while leaving unrelated packed flags and duration rows for
   later proof.
+- **OSC 133 `C` is the command-start runtime boundary.** Pinned Ghostty maps
+  semantic prompt `end_input_start_output` / OSC 133 `C` to `start_command` and
+  OSC 133 `D` to `stop_command`; OSC 133 `B` is an end-prompt/input boundary,
+  not the command timer start. Command-finished runtime parity should use `C`
+  for start and preserve Ghostty's exit-code mapping: absent or malformed values
+  map to `0`, parsed out-of-range values map to `1`, and valid `0..255` values
+  are preserved.
 - **Packed-flag formatter rows need family-column assertions, not broad text
   grep.** Experiment 79 promoted the six remaining packed-flag formatter rows
   while keeping already-proven packed rows unpromoted. The matrix assertion must
@@ -667,7 +674,7 @@ experiment files until they are proven.
   title bell prefix, and separate `bell-features = system`, `audio`,
   `attention`, `title`, and `border` gates after expected Roastty renames.
   Actual OS/audio/dock/border/title side effects still need GUI or platform
-  walkthrough proof in `RUNTIME-012B2B2B2`.
+  walkthrough proof in `RUNTIME-012B2B2B2B`.
 - **OSC desktop notifications need a PTY event queue.** Experiment 141 found
   that Roastty already parsed OSC 9 and OSC 777 desktop notification commands,
   but the live terminal path dropped them. PTY-backed parity now queues terminal
@@ -679,9 +686,8 @@ experiment files until they are proven.
   registration, foreground presentation gate, authorization/settings gate,
   surface notification content/request lifecycle, identifier cleanup, delayed
   focused cleanup, and click-to-focus routing after expected Roastty renames.
-  Command-finish notifications, app-notifications, live OS banner/sound
-  delivery, actual bell side effects, and link UI flows remain in
-  `RUNTIME-012B2B2B2`.
+  App-notifications, live OS banner/sound delivery, actual bell side effects,
+  and link UI flows remain in `RUNTIME-012B2B2B2B`.
 - **Desktop notification throttling is app-level runtime state.** Experiment 156
   split Ghostty's one-second desktop-notification throttle and five-second
   identical-notification suppression out of the remaining notification gap.
@@ -1521,4 +1527,4 @@ remains open.
 - [Experiment 156: Desktop notification rate limit](156-desktop-notification-rate-limit.md)
   — **Pass**
 - [Experiment 157: Command-finished runtime](157-command-finished-runtime.md) —
-  **Designed**
+  **Pass**
