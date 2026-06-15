@@ -320,6 +320,16 @@ def update_cfg217(
     for line in lines:
         if line.startswith("| CFG-217 |"):
             status = "Pass" if incomplete_count == 0 else "Gap"
+            roastty_status = (
+                "Roastty parser dispatch is inventoried per canonical option "
+                "with upstream-derived parser oracles."
+                if incomplete_count == 0
+                else (
+                    "Roastty parser dispatch is inventoried per canonical "
+                    "option, but full upstream-derived parser oracles are not "
+                    "complete."
+                )
+            )
             notes = (
                 "All parser rows are Oracle complete."
                 if incomplete_count == 0
@@ -332,8 +342,7 @@ def update_cfg217(
             line = (
                 "| CFG-217 | Non-default parser semantics | Ghostty parsers accept "
                 "and reject the full documented non-default value space for every "
-                "canonical option. | Roastty parser dispatch is inventoried per "
-                f"canonical option, but full upstream-derived parser oracles are not complete. | {status} | "
+                f"canonical option. | {roastty_status} | {status} | "
                 "Generated parser-facet inventory plus matrix consistency assertion. | "
                 f"`{parser_inventory_path}` | Tier 1 | "
                 "`python3 issues/0805-roastty-ghostty-parity/config_parser_inventory.py "

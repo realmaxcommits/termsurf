@@ -492,6 +492,15 @@ def update_cfg219(
     for line in lines:
         if line.startswith("| CFG-219 |"):
             status = "Pass" if incomplete_count == 0 else "Gap"
+            roastty_status = (
+                "Roastty diagnostic behavior is inventoried per canonical option "
+                "with Oracle-complete diagnostic coverage."
+                if incomplete_count == 0
+                else (
+                    "Roastty diagnostic behavior is inventoried per canonical "
+                    "option, but full diagnostic parity is not proven."
+                )
+            )
             notes = (
                 f"Diagnostic inventory coverage: {oracle_count} rows Oracle "
                 f"complete; {incomplete_count} rows are not Oracle complete and "
@@ -500,8 +509,7 @@ def update_cfg219(
             line = (
                 "| CFG-219 | Invalid-value diagnostics | Ghostty reports "
                 "diagnostics for invalid config values with expected line/key "
-                "behavior. | Roastty diagnostic behavior is inventoried per "
-                f"canonical option, but full diagnostic parity is not proven. | {status} | "
+                f"behavior. | {roastty_status} | {status} | "
                 "Generated diagnostic-facet inventory plus matrix consistency assertion. | "
                 f"`{diagnostic_inventory_path}` | Tier 1 | "
                 "`PYTHONDONTWRITEBYTECODE=1 python3 "

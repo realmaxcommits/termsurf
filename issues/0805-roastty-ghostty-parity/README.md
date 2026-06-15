@@ -731,6 +731,12 @@ experiment files until they are proven.
   completed rows. The remaining CFG-223 gaps are now explicitly non-terminal:
   font renderer output, renderer-visible GUI/pixel effects, macOS app UI, and
   native notification/link/bell presentation flows.
+- **Facet inventories can outpace their aggregate matrix rows.** Experiment 169
+  found CFG-217 through CFG-222 were complete in their generated facet
+  inventories while the top-level matrix still reported stale `Gap` rows. The
+  matrix reconciliation guard now rejects stale incomplete/proven/follow-up
+  wording when a facet row has become `Pass`, leaving CFG-223 as the only real
+  config gap.
 - **ENQ responses must avoid terminal callbacks in worker PTYs.** Experiment 135
   found the same worker constraint applies to `enquiry-response`: embedded
   callback ENQ handling can remain for direct terminal users, but live
@@ -1629,4 +1635,4 @@ remains open.
 - [Experiment 168: Split divider color crash](168-split-divider-color-crash.md)
   — **Pass**
 - [Experiment 169: Config facet matrix reconciliation](169-config-facet-matrix-reconciliation.md)
-  — **Designed**
+  — **Pass**

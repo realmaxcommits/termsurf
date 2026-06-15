@@ -125,3 +125,99 @@ Fix:
   `unresolved config facet`.
 
 Re-review verdict: **Approved**.
+
+## Result
+
+**Result:** Pass
+
+The facet generators were rerun in dependency order and reconciled the stale
+top-level matrix rows:
+
+- CFG-217, CFG-218, CFG-219, CFG-220, CFG-221, and CFG-222 now report `Pass`.
+- CFG-223 remains `Gap`.
+- The matrix now has 222 `Pass` rows and 1 `Gap` row.
+- The runtime inventory remains unchanged at 75 rows, 68 Oracle-complete rows,
+  71 closed rows, 4 incomplete rows, and 4 runtime gaps.
+
+The generator wording for CFG-217, CFG-218, and CFG-219 now changes with row
+status, so regenerated `Pass` rows no longer claim the completed facet remains
+incomplete or unproven.
+
+Verification run:
+
+```text
+ghostty_canonical=203
+roastty_parser_rows=203
+missing_canonical_parser_rows=0
+missing_dispatch_rows=0
+extra_parser_rows=0
+compatibility_only_parser_arms=5
+noncanonical_noncompat_parser_arms=0
+oracle_complete=203
+audit_covered=0
+gap=0
+ghostty_canonical=203
+roastty_formatter_rows=203
+missing_canonical_formatter_rows=0
+extra_formatter_rows=0
+oracle_complete=203
+audit_covered=0
+gap=0
+no_output_rows=1
+ghostty_canonical=203
+diagnostic_rows=203
+missing_canonical_diagnostic_rows=0
+extra_diagnostic_rows=0
+oracle_complete=203
+audit_covered=0
+gap=0
+finalization_rows=17
+oracle_complete=17
+audit_covered=0
+gap=0
+load_rows=18
+oracle_complete=18
+audit_covered=0
+gap=0
+reload_rows=14
+oracle_complete=14
+closed=14
+audit_covered=0
+incomplete=0
+gap=0
+cfg222=Pass
+runtime_rows=75
+oracle_complete=68
+closed=71
+audit_covered=0
+incomplete=4
+gap=4
+cfg223=Gap
+matrix assertions passed
+{'Pass': 222, 'Gap': 1}
+```
+
+## Conclusion
+
+Experiment 169 closed the stale aggregate config rows and confirmed the
+remaining Issue 805 config parity work is concentrated in CFG-223 runtime/UI
+effects. The next experiment should target one of the four remaining CFG-223
+runtime gaps rather than parser, formatter, diagnostic, finalization, load, or
+reload coverage.
+
+## Completion Review
+
+Reviewed by a fresh-context Codex adversarial subagent.
+
+Verdict: **Approved**.
+
+Findings: none.
+
+The reviewer independently confirmed that the result commit had not yet been
+made, the changed files were limited to issue docs, generated inventories, and
+inventory generator scripts, CFG-217 through CFG-222 were `Pass`, CFG-223
+remained `Gap`, the matrix count was 222 `Pass` rows and 1 `Gap` row, the
+reconciled rows did not contain the stale phrase classes from the design, the
+runtime count text matched CFG-223, the README marked Experiment 169 as `Pass`,
+the experiment file had `Result` and `Conclusion`, and `git diff --check`
+passed.
