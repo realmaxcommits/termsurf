@@ -1386,3 +1386,5 @@ remains open.
   — **Pass**
 - [Experiment 141: Desktop notification runtime](141-desktop-notification-runtime.md)
   — **Pass**
+- [Experiment 142: Terminal runtime residual audit](142-terminal-runtime-residual-audit.md)
+  — **Designed**
