@@ -1785,3 +1785,5 @@ remains open.
   — **Pass**
 - [Experiment 186: Notification/link/bell GUI residual proof](186-notification-link-bell-gui-residual-proof.md)
   — **Partial**
+- [Experiment 187: Native menu and URL-opening proof](187-native-menu-url-opening-proof.md)
+  — **Designed**
