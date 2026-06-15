@@ -281,6 +281,13 @@ experiment files until they are proven.
   `send mouse scroll` can be proven by non-empty SGR/X10-style report bytes in
   the child PTY. This is command-delivery proof, not cursor/pointer pixel or
   full GUI walkthrough proof.
+- **Native menu tests should separate menu inspection from app object checks.**
+  Experiment 172 showed that System Events can target the exact launched Roastty
+  Unix PID and prove native menu visibility, validation, and dispatch. After
+  menu inspection, send Escape before querying the app through AppleScript; an
+  open native menu can otherwise stall object-model queries. Prefer the
+  launch-created terminal window for validation checks so New Window undo state
+  does not change the expected Edit menu state.
 - **Passing behavior needs a durable but cheap guard.** Future experiments
   should record the cheapest sufficient regression guard for each passing parity
   row. Prefer static checks and unit tests when they prove the behavior; reserve
@@ -895,9 +902,11 @@ experiment files until they are proven.
   Experiment 166 split copied window/tab/split/menu/titlebar/fullscreen and
   quick-terminal command/action/config plumbing out of the live macOS app gap.
   Full-file renamed source parity plus focused split helper tests now guard that
-  plumbing, while actual GUI rendering, native menu display/validation,
-  screenshots/pixels, input navigation, fullscreen visuals, quick-terminal
-  visuals, and broader command-palette GUI behavior remain in `RUNTIME-011B2B`.
+  plumbing. Experiment 172 later split out live native-menu visibility,
+  representative validation, and representative menu action dispatch. Actual GUI
+  rendering, screenshots/pixels, input navigation, fullscreen visuals,
+  quick-terminal visuals, and broader command-palette GUI behavior remain in
+  `RUNTIME-011B2B`.
 - **Live AppleScript automation needs side-effect markers.** Experiment 167
   proved the built debug Roastty app can be launched by absolute bundle path
   with an isolated `ROASTTY_CONFIG_PATH` using `open --env`, and that
@@ -1658,5 +1667,4 @@ remains open.
   — **Pass**
 - [Experiment 171: AppleScript keyboard and mouse events](171-applescript-keyboard-mouse-events.md)
   — **Pass**
-- [Experiment 172: Native menu runtime](172-native-menu-runtime.md) —
-  **Designed**
+- [Experiment 172: Native menu runtime](172-native-menu-runtime.md) — **Pass**

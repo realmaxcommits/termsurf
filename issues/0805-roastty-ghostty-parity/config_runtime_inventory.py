@@ -1518,7 +1518,7 @@ ROWS = [
     ),
     RuntimeRow(
         id="RUNTIME-011B2B",
-        behavior="remaining live macOS GUI visual/native-menu/fullscreen/quick-terminal and broader command palette effects",
+        behavior="remaining live macOS GUI visual/fullscreen/quick-terminal and broader command palette effects",
         ghostty_reference="`vendor/ghostty/macos/Sources`; app/window/tab/split/menu/titlebar/fullscreen/quick-terminal and GUI walkthrough behavior",
         roastty_reference="`roastty/macos/Sources`; Roastty app wrapper and Swift UI",
         family="macOS app",
@@ -1537,14 +1537,17 @@ ROWS = [
             "dispatch. Experiment 168 split out the split-divider color crash "
             "path and strengthened the live AppleScript guard to fail on new "
             "Roastty crash reports. CFG-223 still needs real app walkthrough or "
-            "focused macOS GUI tests for native menu display/validation, "
-            "titlebar/fullscreen/quick-terminal visuals, screenshot/pixel "
-            "evidence, broader command-palette GUI behavior, split visual/"
-            "layout parity, and broader input navigation/pixel walkthroughs. "
+            "focused macOS GUI tests for titlebar/fullscreen/quick-terminal "
+            "visuals, screenshot/pixel evidence, broader command-palette GUI "
+            "behavior, split visual/layout parity, and broader input "
+            "navigation/pixel walkthroughs. "
             "Experiment 171 split out lower-level AppleScript keyboard and "
-            "mouse command delivery with child-process side effects."
+            "mouse command delivery with child-process side effects. "
+            "Experiment 172 split out live native menu visibility, "
+            "representative validation, and representative menu action "
+            "dispatch."
         ),
-        missing_evidence="Add focused live macOS app walkthrough rows and GUI guards for native menu display/validation, titlebar/fullscreen/quick-terminal visuals, screenshot/pixel evidence, broader command-palette GUI behavior, split visual/layout parity, and broader input navigation/pixel walkthroughs.",
+        missing_evidence="Add focused live macOS app walkthrough rows and GUI guards for titlebar/fullscreen/quick-terminal visuals, screenshot/pixel evidence, broader command-palette GUI behavior, split visual/layout parity, and broader input navigation/pixel walkthroughs.",
         guard_tier="Tier 3",
         guard_command="TBD by future CFG-223 macOS app walkthrough experiment.",
     ),
@@ -1622,9 +1625,36 @@ ROWS = [
             "live guard keeps the absolute app bundle launch, isolated config, "
             "scoped cleanup, and new-crash-report failure behavior."
         ),
-        missing_evidence="None for lower-level AppleScript keyboard and mouse command delivery to controlled child processes. Cursor/pointer pixels, native menu/fullscreen/quick-terminal visuals, screenshots, split visual/layout parity, broader command-palette GUI behavior, and broader keyboard/mouse walkthrough parity remain in RUNTIME-011B2B.",
+        missing_evidence="None for lower-level AppleScript keyboard and mouse command delivery to controlled child processes. Cursor/pointer pixels, titlebar/fullscreen/quick-terminal visuals, screenshots, split visual/layout parity, broader command-palette GUI behavior, and broader keyboard/mouse walkthrough parity remain in RUNTIME-011B2B.",
         guard_tier="Tier 3",
         guard_command="`(cd roastty && macos/build.nu --action build) && PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/macos_applescript_workflow_runtime.py`",
+    ),
+    RuntimeRow(
+        id="RUNTIME-011B2F",
+        behavior="live native menu visibility, validation, and representative dispatch",
+        ghostty_reference="`vendor/ghostty/macos/Sources/App/macOS/MainMenu.xib`; `vendor/ghostty/macos/Sources/App/macOS/AppDelegate.swift` menu outlets, shortcut syncing, and `NSMenuItemValidation`",
+        roastty_reference="`roastty/macos/Sources/App/macOS/MainMenu.xib`; `roastty/macos/Sources/App/macOS/AppDelegate.swift`; live debug `Roastty.app`; `macos_native_menu_runtime.py`",
+        family="macOS app",
+        status="Oracle complete",
+        evidence=(
+            "Experiment 172 adds `macos_native_menu_runtime.py`, a live "
+            "debug-app guard that targets the exact launched Roastty Unix PID "
+            "through System Events before inspecting or clicking native menus. "
+            "The guard proves the native menu bar exposes the expected "
+            "top-level Roastty, File, Edit, View, Window, and Help menus; "
+            "proves representative File/Edit/View/Window menu items are "
+            "visible; proves representative validation states including "
+            "Undo/Redo disabled with no undo stack and terminal-window items "
+            "enabled while a primary terminal window is key; clicks New Tab "
+            "through the native File menu and observes the tab count increase "
+            "through AppleScript; clicks Split Right through the native File "
+            "menu and observes the selected-tab terminal count increase; and "
+            "keeps the absolute app bundle launch, isolated config, scoped "
+            "cleanup, and new-crash-report failure behavior."
+        ),
+        missing_evidence="None for live native menu visibility, representative validation, and representative New Tab / Split Right dispatch. Titlebar/fullscreen/quick-terminal visuals, screenshots/pixels, split visual/layout parity, broader command-palette GUI behavior, cursor/pointer pixels, and broader keyboard/mouse walkthrough parity remain in RUNTIME-011B2B.",
+        guard_tier="Tier 3",
+        guard_command="`(cd roastty && macos/build.nu --action build) && PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/macos_native_menu_runtime.py`",
     ),
     RuntimeRow(
         id="RUNTIME-012A",
@@ -2067,6 +2097,7 @@ EXPECTED_IDS = [
     "RUNTIME-011B2C",
     "RUNTIME-011B2D",
     "RUNTIME-011B2E",
+    "RUNTIME-011B2F",
     "RUNTIME-012A",
     "RUNTIME-012B1",
     "RUNTIME-012B2A",

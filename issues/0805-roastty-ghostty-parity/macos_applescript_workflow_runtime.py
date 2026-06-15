@@ -219,8 +219,9 @@ def assert_inventory_split() -> None:
         "missing input side-effect evidence",
     )
     require(
-        "native menu display/validation" in runtime_inventory,
-        "remaining macOS GUI gap omitted native menu evidence",
+        "live native menu visibility, validation, and representative dispatch"
+        in runtime_inventory,
+        "missing native menu runtime evidence",
     )
     require(
         "titlebar/fullscreen/quick-terminal visuals" in runtime_inventory,
@@ -234,8 +235,8 @@ def assert_inventory_split() -> None:
         "fails if a new Roastty crash report appears" in runtime_inventory,
         "missing new crash-report guard evidence",
     )
-    require("70 rows Oracle complete" in config_matrix, "CFG-223 oracle count not updated")
-    require("73 rows closed" in config_matrix, "CFG-223 closed count not updated")
+    require("71 rows Oracle complete" in config_matrix, "CFG-223 oracle count not updated")
+    require("74 rows closed" in config_matrix, "CFG-223 closed count not updated")
     require("4 rows are incomplete" in config_matrix, "CFG-223 incomplete count changed")
     require("4 rows are runtime gaps" in config_matrix, "CFG-223 gap count changed")
     require(cfg223 is not None and len(cfg223) > 4 and cfg223[4] == "Gap", "CFG-223 should remain Gap")

@@ -129,3 +129,121 @@ Adversarial review was performed by a fresh-context Codex subagent.
 Verdict: Approved.
 
 Findings: none.
+
+## Result
+
+**Result:** Pass
+
+Experiment 172 implemented and verified a live native-menu runtime guard.
+
+Changes:
+
+- `issues/0805-roastty-ghostty-parity/macos_native_menu_runtime.py`
+  - Added a live debug-app guard using the absolute `Roastty.app` bundle,
+    isolated config, exact launched Unix PID targeting through System Events,
+    scoped cleanup, and new-crash-report detection.
+  - Proved the native menu bar exposes the expected top-level Roastty, File,
+    Edit, View, Window, and Help menus.
+  - Proved representative File/Edit/View/Window menu items are visible.
+  - Proved representative validation states: Undo and Redo are disabled with no
+    undo stack, and representative terminal-window menu items are enabled while
+    a primary terminal window is key.
+  - Clicked New Tab through the native File menu and observed the front window's
+    tab count increase through AppleScript.
+  - Clicked Split Right through the native File menu and observed the selected
+    tab's terminal count increase through AppleScript.
+  - Dismissed native menus with Escape before switching from System Events back
+    to AppleScript object-model queries, avoiding open-menu stalls.
+- `issues/0805-roastty-ghostty-parity/config_runtime_inventory.py`
+  - Added `RUNTIME-011B2F` as Oracle complete for live native menu visibility,
+    representative validation, and representative New Tab / Split Right
+    dispatch.
+  - Reduced the remaining `RUNTIME-011B2B` gap so native menu display/validation
+    is no longer part of the open macOS app bucket.
+  - Updated CFG-223 count assertions to `78` runtime rows, `71` Oracle-complete
+    rows, `74` closed rows, `4` incomplete rows, and `4` gap rows.
+- Existing CFG-223 runtime guard scripts
+  - Updated shared CFG-223 count expectations from `70` Oracle-complete / `73`
+    closed rows to `71` Oracle-complete / `74` closed rows.
+  - Updated stale remaining-gap assertions that still expected native menu
+    display/validation to remain open.
+- Generated docs
+  - Regenerated `config-runtime-inventory.md`, `config-matrix.md`, and
+    `platform-runtime-classification.md`.
+
+Verification:
+
+```bash
+(cd roastty && macos/build.nu --action build)
+# passed
+
+PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/macos_native_menu_runtime.py
+# macos_native_menu_runtime=pass
+
+PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/config_runtime_inventory.py --output issues/0805-roastty-ghostty-parity/config-runtime-inventory.md --matrix issues/0805-roastty-ghostty-parity/config-matrix.md
+# runtime_rows=78
+# oracle_complete=71
+# closed=74
+# audit_covered=0
+# incomplete=4
+# gap=4
+# cfg223=Gap
+
+PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/platform_runtime_classification.py --config-inventory issues/0805-roastty-ghostty-parity/config-inventory.md --output issues/0805-roastty-ghostty-parity/platform-runtime-classification.md
+# platform_options=32
+# gap=15
+# not_applicable=15
+# oracle_complete=2
+
+for f in issues/0805-roastty-ghostty-parity/*_runtime_parity.py issues/0805-roastty-ghostty-parity/terminal_runtime_residual_audit.py issues/0805-roastty-ghostty-parity/link_hover_preview_dispatch_parity.py issues/0805-roastty-ghostty-parity/link_hover_modifier_refresh_parity.py issues/0805-roastty-ghostty-parity/link_preview_context_runtime_parity.py; do
+  PYTHONDONTWRITEBYTECODE=1 python3 "$f"
+done
+# all listed guards passed
+
+PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/macos_app_workflow_plumbing_parity.py
+# macos_app_workflow_plumbing_parity=pass
+
+PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/macos_applescript_workflow_runtime.py && PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/macos_native_menu_runtime.py
+# macos_applescript_workflow_runtime=pass
+# macos_native_menu_runtime=pass
+```
+
+## Conclusion
+
+Native menu visibility, representative validation, and representative native
+menu action dispatch are no longer part of the remaining CFG-223 macOS app gap.
+The live guard now proves this through the real macOS menu bar, exact-PID System
+Events targeting, and AppleScript-observed app state changes after menu clicks.
+
+CFG-223 remains `Gap` because unrelated GUI work still needs proof:
+titlebar/fullscreen/quick-terminal visuals, screenshot/pixel evidence, broader
+command-palette GUI behavior, split visual/layout parity, cursor/pointer pixels,
+and broader keyboard/mouse walkthrough parity.
+
+## Completion Review
+
+Fresh-context adversarial reviewer `Planck the 2nd` reviewed the completed
+experiment and approved it with no findings.
+
+The reviewer did not rerun `macos_native_menu_runtime.py` because the guard
+writes a temporary config, launches/quits the app, and drives GUI state, which
+was outside the reviewer's read-only discipline. The reviewer did inspect the
+guard and verified that it targets the exact launched Unix PID before menu
+inspection/clicks, checks menu visibility and validation, dismisses menus before
+AppleScript object queries, and observes New Tab / Split Right state changes.
+
+Read-only checks performed by the reviewer:
+
+- `git status --short` and `git log` confirmed the result commit had not been
+  made and only the plan commit existed.
+- Scoped diffs matched the experiment scope.
+- Other changed `*_runtime_parity.py` files only updated CFG-223 `70/73` to
+  `71/74`; scoped exceptions removed stale native-menu gap assertions.
+- `git diff --check` passed.
+- `command_palette_runtime_parity.py` passed.
+- `macos_app_workflow_plumbing_parity.py` passed.
+- In-memory inventory validation reported `runtime_rows=78`,
+  `oracle_complete=71`, `closed=74`, `audit_covered=0`, `incomplete=4`, `gap=4`,
+  and `cfg223=Gap`.
+
+Final verdict: **Approved**.
