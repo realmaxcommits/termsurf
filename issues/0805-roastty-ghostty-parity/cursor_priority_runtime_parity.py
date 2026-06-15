@@ -83,7 +83,8 @@ def main() -> int:
             ("FrameRenderState::from_terminal_for_frame(terminal, preedit.is_some())", "default active preedit wiring"),
             ("FrameRenderState::from_terminal_for_frame", "factored active frame state"),
             ("FrameCursorOptions::default().with_preedit(preedit)", "factored preedit option"),
-            ("cursor_options.with_preedit(preedit.is_some())", "caller option preedit wiring"),
+            (".with_preedit(preedit.is_some())", "caller option preedit wiring"),
+            (".with_config(config)", "caller option config cursor-color wiring"),
             ("cursor::style(", "active frame calls shared priority helper"),
             ("StyleOptions {", "active frame builds style options"),
             ("password_input: bool", "password input option"),
@@ -127,8 +128,7 @@ def main() -> int:
         row_gap,
         [
             ("Gap", "RUNTIME-008B2B2B2B2B status"),
-            ("GUI cursor pixels", "RUNTIME-008B2B2B2B2B GUI cursor gap"),
-            ("broader GUI/pixel parity", "RUNTIME-008B2B2B2B2B GUI parity gap"),
+                        ("broader GUI/pixel parity", "RUNTIME-008B2B2B2B2B GUI parity gap"),
         ],
     )
     if "RUNTIME-008B2B |" in runtime_inventory:
@@ -140,8 +140,8 @@ def main() -> int:
         [
             ("Runtime and UI effects", "CFG-223 row"),
             ("Gap", "CFG-223 status"),
-            ("76 rows Oracle complete", "CFG-223 oracle count"),
-            ("79 rows closed", "CFG-223 closed count"),
+            ("77 rows Oracle complete", "CFG-223 oracle count"),
+            ("80 rows closed", "CFG-223 closed count"),
             ("4 rows are incomplete", "CFG-223 incomplete count"),
             ("4 rows are runtime gaps", "CFG-223 gap count"),
         ],

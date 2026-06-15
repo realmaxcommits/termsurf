@@ -186,3 +186,123 @@ Fix made:
   states that `EXPECTED_IDS` must include it.
 
 Final design verdict: **Approved**.
+
+## Result
+
+**Result:** Pass
+
+Experiment 178 added
+`issues/0805-roastty-ghostty-parity/macos_gui_cursor_pixel_runtime.py`, a live
+macOS GUI guard for focused app/GUI block cursor pixel proof.
+
+The guard launches the debug Roastty app with isolated config/defaults and a
+high-contrast, non-blinking cursor setup:
+
+- `cursor-style = block`
+- `cursor-style-blink = false`
+- `cursor-color = #ff00ff`
+- `cursor-text = #00ff00`
+- `background = #102030`
+- `window-padding-x = 0`
+- `window-padding-y = 0`
+- `macos-titlebar-style = hidden`
+
+It creates a terminal running a deterministic Python painter. The painter writes
+a marker file, paints a bright yellow background landmark at a known grid
+rectangle, positions the visible block cursor at row 10, column 12, and sleeps.
+The guard waits for the marker before screenshot capture.
+
+The first live run failed usefully: the exact-window screenshot showed a visible
+white cursor instead of the configured magenta cursor. That exposed a real
+Roastty mismatch: the active frame renderer used OSC 12 cursor color and default
+foreground, but did not thread `cursor-color` or `cursor-text` from `Config`
+through the live render paths.
+
+The implementation now threads config-derived cursor color state into
+`FrameRenderState`:
+
+- `cursor-color` drives the cursor overlay/sprite color;
+- `cursor-text` drives the block-cursor text recolor uniform;
+- both normal and custom-shader render entry points call
+  `FrameCursorOptions::with_config(config)`;
+- `render_state_cursor_colors_come_from_config` guards the deterministic Rust
+  path.
+
+The final live guard run passed after rebuilding the app. It proves the
+screenshot target is the exact debug-app PID, maps the focused accessibility
+window to a PID-owned layer-0 CGWindowID, captures that exact window with
+`screencapture -l`, derives terminal grid geometry from the painted landmark,
+and samples the expected cursor cell plus negative neighboring/background
+regions.
+
+Debug artifacts from the passing run:
+
+- `/tmp/termsurf-issue805-exp178-gui-cursor.png`
+- `/tmp/termsurf-issue805-exp178-gui-cursor.json`
+
+Latest focused guard output:
+
+```text
+macos_gui_cursor_pixel_runtime=pass terminal=ED95DCCE-016A-47D9-9543-36B64C70A4E7
+```
+
+Representative metric summary from the passing debug JSON:
+
+```text
+landmark = {x: 64, y: 94, width: 319, height: 149}
+cellSize = {width: 15.95, height: 29.8}
+cursorCell = {x: 177, y: 335, width: 15, height: 26}
+totalMagenta = 120
+outsideCursorMagenta = 0
+cursor sample: 195 / 195 magenta
+left/right background samples: 0 magenta, 240 / 240 background
+landmark sample: 0 magenta, 240 / 240 bright
+```
+
+Inventory impact:
+
+- Added `RUNTIME-008B2B2B2B2D` for focused live app/GUI block cursor pixel
+  proof.
+- Narrowed `RUNTIME-008B2B2B2B2B` to remaining broader GUI/pixel parity.
+- CFG-223 remains `Gap` with 77 Oracle-complete rows, 80 closed rows, 4
+  incomplete rows, and 4 runtime gaps.
+
+Verification performed:
+
+```text
+(cd roastty && macos/build.nu --action build)
+cargo test --manifest-path roastty/Cargo.toml render_state_cursor -- --test-threads=1
+PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/macos_gui_cursor_pixel_runtime.py
+PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/config_runtime_inventory.py --output issues/0805-roastty-ghostty-parity/config-runtime-inventory.md --matrix issues/0805-roastty-ghostty-parity/config-matrix.md
+PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/platform_runtime_classification.py --config-inventory issues/0805-roastty-ghostty-parity/config-inventory.md --output issues/0805-roastty-ghostty-parity/platform-runtime-classification.md
+for f in issues/0805-roastty-ghostty-parity/*_runtime_parity.py issues/0805-roastty-ghostty-parity/terminal_runtime_residual_audit.py issues/0805-roastty-ghostty-parity/link_hover_preview_dispatch_parity.py issues/0805-roastty-ghostty-parity/link_hover_modifier_refresh_parity.py issues/0805-roastty-ghostty-parity/link_preview_context_runtime_parity.py; do PYTHONDONTWRITEBYTECODE=1 python3 "$f" || exit 1; done
+```
+
+The macOS app build succeeded with existing Swift/linker warnings.
+
+## Completion Review
+
+Fresh-context adversarial reviewer `Dewey the 3rd` reviewed the completed
+experiment and returned `APPROVED`.
+
+Optional finding:
+
+- `window_padding_layout_runtime_parity.py` still checked only that the
+  remaining renderer row was `Gap`; the reviewer recommended also asserting the
+  newly narrowed `broader GUI/pixel parity` wording.
+
+Fix made:
+
+- The guard now requires `broader GUI/pixel parity` in the remaining
+  `RUNTIME-008B2B2B2B2B` row, and the focused guard was rerun successfully.
+
+Final completion verdict: **Approved**.
+
+## Conclusion
+
+Focused live app/GUI block cursor pixel proof is now complete, and the guard
+caught a real config propagation bug before passing. The remaining renderer row
+no longer owns GUI cursor pixels; it is limited to broader GUI/pixel parity
+outside this focused cursor proof. The next experiment should target one of the
+four remaining CFG-223 gaps: broader renderer pixels, broad font output, broader
+macOS app walkthrough, or notification/link/bell GUI effects.

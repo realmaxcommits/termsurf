@@ -11,7 +11,10 @@ use crate::config::{Config, FontShapingBreak, WindowPaddingColor};
 use crate::font::run::Wide;
 use crate::font::shape;
 use crate::font::shared_grid::SharedGrid;
-use crate::renderer::cell::{row_never_extend_bg_flags, Contents, Highlight, SelectionConfig};
+use crate::renderer::cell::{
+    cursor_color, cursor_text_color, row_never_extend_bg_flags, Contents, Highlight,
+    SelectionColor, SelectionConfig,
+};
 use crate::renderer::cursor::{self, Style as CursorStyle, StyleOptions};
 use crate::renderer::frame_rebuild::{
     FrameCustomShaderInput, FramePaddingExtendInput, FramePreparedFrameApplication,
@@ -29,7 +32,7 @@ use crate::renderer::shadertoy::CustomShaderUniforms;
 use crate::renderer::size::GridSize;
 use crate::renderer::state::Preedit;
 use crate::terminal::color::{Palette, Rgb};
-use crate::terminal::style::BoldColor;
+use crate::terminal::style::{BoldColor, Style as TermStyle};
 use crate::terminal::terminal::{Terminal, TerminalColorKind};
 use crate::{render_cursor_visual_style, RenderStateCursorViewport, RenderStateScalar};
 
@@ -262,7 +265,9 @@ impl FrameRenderer {
         background.update_from_config(config);
         let mut state = FrameRenderState::from_terminal_with_cursor_options(
             terminal,
-            cursor_options.with_preedit(preedit.is_some()),
+            cursor_options
+                .with_preedit(preedit.is_some())
+                .with_config(config),
         );
         state.link_ranges = link_ranges;
         let knobs = FrameRenderKnobs::from_config(config);
@@ -360,7 +365,9 @@ impl FrameRenderer {
         background.update_from_config(config);
         let mut state = FrameRenderState::from_terminal_with_cursor_options(
             terminal,
-            cursor_options.with_preedit(preedit.is_some()),
+            cursor_options
+                .with_preedit(preedit.is_some())
+                .with_config(config),
         );
         state.link_ranges = link_ranges;
         state.update_custom_shader_uniforms_from_state(custom_uniforms);
@@ -504,11 +511,19 @@ pub(crate) struct FrameCursorOptions {
     pub(crate) blink_visible: bool,
     pub(crate) preedit: bool,
     pub(crate) password_input: bool,
+    pub(crate) cursor_color: Option<SelectionColor>,
+    pub(crate) cursor_text: Option<SelectionColor>,
 }
 
 impl FrameCursorOptions {
     pub(crate) fn with_preedit(mut self, preedit: bool) -> Self {
         self.preedit = preedit;
+        self
+    }
+
+    pub(crate) fn with_config(mut self, config: &Config) -> Self {
+        self.cursor_color = config.cursor_color.map(SelectionColor::from);
+        self.cursor_text = config.cursor_text.map(SelectionColor::from);
         self
     }
 }
@@ -520,8 +535,17 @@ impl Default for FrameCursorOptions {
             blink_visible: true,
             preedit: false,
             password_input: false,
+            cursor_color: None,
+            cursor_text: None,
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct FrameCursorState {
+    style: CursorStyle,
+    color: Rgb,
+    text_color: Rgb,
 }
 
 /// Render data derived from the live terminal — the effective default fg/bg,
@@ -532,8 +556,8 @@ pub(crate) struct FrameRenderState {
     default_fg: Rgb,
     default_bg: Rgb,
     palette: Palette,
-    // `Some((style, color))` when the terminal cursor is visible; `None` otherwise.
-    cursor: Option<(CursorStyle, Rgb)>,
+    // `Some` when the terminal cursor is visible; `None` otherwise.
+    cursor: Option<FrameCursorState>,
     screen_fg: Rgb,
     highlights: Vec<Vec<Highlight>>,
     link_ranges: Vec<Vec<[u16; 2]>>,
@@ -576,11 +600,30 @@ impl FrameRenderState {
         // upstream `renderer/cursor.zig` for the live inputs Roastty currently has:
         // viewport presence, terminal visibility, focus hollowing, and blink-visible state.
         let cursor = cursor_style_from_terminal(terminal, cursor_options).map(|style| {
-            let color = terminal
+            let terminal_cursor_color = terminal
                 .color_effective(TerminalColorKind::Cursor)
-                .map(|(r, g, b)| Rgb::new(r, g, b))
-                .unwrap_or(default_fg);
-            (style, color)
+                .map(|(r, g, b)| Rgb::new(r, g, b));
+            let cursor_cell_style = cursor_cell_style(terminal);
+            FrameCursorState {
+                style,
+                color: cursor_color(
+                    terminal_cursor_color,
+                    cursor_options.cursor_color,
+                    cursor_cell_style,
+                    default_fg,
+                    default_bg,
+                    &palette,
+                    None,
+                ),
+                text_color: cursor_text_color(
+                    cursor_cell_style,
+                    cursor_options.cursor_text,
+                    default_fg,
+                    default_bg,
+                    &palette,
+                    None,
+                ),
+            }
         });
 
         // Per-row "never extend window padding into this row" flags, derived from
@@ -628,14 +671,12 @@ impl FrameRenderState {
                 shape_options: &knobs.shape_options,
             },
             text_overlay: FrameSnapshotTextOverlayInput {
-                cursor: self
-                    .cursor
-                    .map(|(style, color)| FrameSnapshotCursorOverlayInput {
-                        style,
-                        wide: false,
-                        color,
-                        alpha: knobs.cursor_overlay_alpha,
-                    }),
+                cursor: self.cursor.map(|cursor| FrameSnapshotCursorOverlayInput {
+                    style: cursor.style,
+                    wide: false,
+                    color: cursor.color,
+                    alpha: knobs.cursor_overlay_alpha,
+                }),
                 screen_fg: self.screen_fg,
                 alpha: knobs.overlay_alpha,
             },
@@ -644,10 +685,10 @@ impl FrameRenderState {
                 // only to the Block style (other styles render as the overlay only).
                 block_cursor: self
                     .cursor
-                    .filter(|(style, _)| matches!(style, CursorStyle::Block))
-                    .map(|(_, color)| FrameSnapshotBlockCursorUniformInput {
+                    .filter(|cursor| matches!(cursor.style, CursorStyle::Block))
+                    .map(|cursor| FrameSnapshotBlockCursorUniformInput {
                         wide: Wide::Narrow,
-                        color,
+                        color: cursor.text_color,
                     }),
             },
             rebuild_uniform: FrameRebuildUniformInput {
@@ -668,17 +709,29 @@ impl FrameRenderState {
         uniforms.update_state_colors(
             self.default_bg,
             self.default_fg,
-            self.cursor.map(|(_, color)| color),
-            None,
+            self.cursor.map(|cursor| cursor.color),
+            self.cursor.map(|cursor| cursor.text_color),
             None,
             None,
         );
         let (visible, style) = self
             .cursor
-            .map(|(style, _)| (true, style))
+            .map(|cursor| (true, cursor.style))
             .unwrap_or((false, CursorStyle::Block));
         uniforms.update_cursor_style(visible, style);
     }
+}
+
+fn cursor_cell_style(terminal: &Terminal) -> TermStyle {
+    let Some((x, y)) = terminal.cursor_viewport_position() else {
+        return TermStyle::default();
+    };
+    terminal
+        .render_rows_snapshot()
+        .get(y as usize)
+        .and_then(|row| row.cells.get(x as usize))
+        .and_then(|cell| cell.style)
+        .unwrap_or_default()
 }
 
 fn cursor_style_from_terminal(
@@ -1367,10 +1420,10 @@ mod tests {
         let term = terminal(4, 3); // default: cursor visible, Block style
         let state = FrameRenderState::from_terminal(&term);
 
-        let (style, color) = state.cursor.expect("visible cursor");
-        assert!(matches!(style, CursorStyle::Block));
+        let cursor = state.cursor.expect("visible cursor");
+        assert!(matches!(cursor.style, CursorStyle::Block));
         // No OSC-12 set, so the cursor color is the default-foreground fallback.
-        assert_eq!(color, state.default_fg);
+        assert_eq!(cursor.color, state.default_fg);
 
         let knobs = render_knobs();
         let input = state.rebuild_input(&knobs);
@@ -1390,9 +1443,41 @@ mod tests {
             .expect("osc12 cursor color");
         let state = FrameRenderState::from_terminal(&term);
 
-        let (_, color) = state.cursor.expect("visible cursor");
-        assert_eq!(color, Rgb::new(0xab, 0xcd, 0xef));
-        assert_ne!(color, state.default_fg);
+        let cursor = state.cursor.expect("visible cursor");
+        assert_eq!(cursor.color, Rgb::new(0xab, 0xcd, 0xef));
+        assert_ne!(cursor.color, state.default_fg);
+    }
+
+    #[test]
+    fn render_state_cursor_colors_come_from_config() {
+        let term = terminal(4, 3);
+        let state = FrameRenderState::from_terminal_with_cursor_options(
+            &term,
+            FrameCursorOptions {
+                cursor_color: Some(SelectionColor::Color(Rgb::new(0xff, 0x00, 0xff))),
+                cursor_text: Some(SelectionColor::Color(Rgb::new(0x00, 0xff, 0x00))),
+                ..FrameCursorOptions::default()
+            },
+        );
+
+        let cursor = state.cursor.expect("visible cursor");
+        assert_eq!(cursor.color, Rgb::new(0xff, 0x00, 0xff));
+        assert_eq!(cursor.text_color, Rgb::new(0x00, 0xff, 0x00));
+
+        let knobs = render_knobs();
+        let input = state.rebuild_input(&knobs);
+        assert_eq!(
+            input.text_overlay.cursor.expect("overlay cursor").color,
+            Rgb::new(0xff, 0x00, 0xff)
+        );
+        assert_eq!(
+            input
+                .cursor_uniform
+                .block_cursor
+                .expect("block cursor")
+                .color,
+            Rgb::new(0x00, 0xff, 0x00)
+        );
     }
 
     #[test]
@@ -1447,8 +1532,8 @@ mod tests {
             },
         );
 
-        let (style, _) = state.cursor.expect("visible cursor");
-        assert!(matches!(style, CursorStyle::Block));
+        let cursor = state.cursor.expect("visible cursor");
+        assert!(matches!(cursor.style, CursorStyle::Block));
     }
 
     #[test]
@@ -1463,8 +1548,8 @@ mod tests {
             },
         );
 
-        let (style, _) = state.cursor.expect("unfocused cursor");
-        assert!(matches!(style, CursorStyle::BlockHollow));
+        let cursor = state.cursor.expect("unfocused cursor");
+        assert!(matches!(cursor.style, CursorStyle::BlockHollow));
     }
 
     #[test]
@@ -1481,8 +1566,8 @@ mod tests {
             },
         );
 
-        let (style, _) = state.cursor.expect("preedit cursor");
-        assert!(matches!(style, CursorStyle::Block));
+        let cursor = state.cursor.expect("preedit cursor");
+        assert!(matches!(cursor.style, CursorStyle::Block));
         let knobs = render_knobs();
         let input = state.rebuild_input(&knobs);
         assert!(input.text_overlay.cursor.is_some());
@@ -1502,8 +1587,8 @@ mod tests {
             },
         );
 
-        let (style, _) = state.cursor.expect("password cursor");
-        assert!(matches!(style, CursorStyle::Lock));
+        let cursor = state.cursor.expect("password cursor");
+        assert!(matches!(cursor.style, CursorStyle::Lock));
         let knobs = render_knobs();
         let input = state.rebuild_input(&knobs);
         assert!(matches!(
@@ -1526,8 +1611,8 @@ mod tests {
             },
         );
 
-        let (style, _) = state.cursor.expect("preedit cursor");
-        assert!(matches!(style, CursorStyle::Block));
+        let cursor = state.cursor.expect("preedit cursor");
+        assert!(matches!(cursor.style, CursorStyle::Block));
     }
 
     #[test]
@@ -1555,7 +1640,7 @@ mod tests {
         term.next_slice(b"\x1b[?25l").expect("hide cursor");
         let state = FrameRenderState::from_terminal_for_frame(&term, true);
         assert!(matches!(
-            state.cursor.expect("preedit frame cursor").0,
+            state.cursor.expect("preedit frame cursor").style,
             CursorStyle::Block
         ));
 

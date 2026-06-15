@@ -902,6 +902,13 @@ experiment files until they are proven.
   recolor the second cell, and non-wide cursors do not. Actual app/GUI cursor
   screenshots, broader GUI/pixel parity, and screenshot-level padding pixel
   proof remain in `RUNTIME-008B2B2B2B2B`.
+- **Live cursor screenshots catch config propagation gaps.** Experiment 178
+  showed that deterministic cursor renderer tests were not enough: the first
+  exact-window screenshot found a visible white cursor where
+  `cursor-color = #ff00ff` should have produced magenta. Threading
+  `cursor-color` and `cursor-text` through the active frame render paths fixed
+  the live app, and the screenshot guard now proves the expected cursor cell is
+  magenta-dominant with no magenta outside the expected cursor region.
 - **Command palette runtime plumbing can be proven without a full GUI
   walkthrough.** Experiment 152 split copied command palette source parity,
   toggle notification delivery, `commandPaletteIsShowing` state, focus return,
@@ -1711,4 +1718,4 @@ remains open.
 - [Experiment 177: Window padding pixel runtime](177-window-padding-pixel-runtime.md)
   — **Pass**
 - [Experiment 178: GUI cursor pixel runtime](178-gui-cursor-pixel-runtime.md) —
-  **Designed**
+  **Pass**

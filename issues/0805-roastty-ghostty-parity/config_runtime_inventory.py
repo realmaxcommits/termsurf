@@ -611,11 +611,13 @@ ROWS = [
             "slice without claiming GUI cursor pixels or full cursor-style "
             "priority. `render_state_derives_visible_block_cursor_overlay`, "
             "`render_state_cursor_color_comes_from_osc12`, "
+            "`render_state_cursor_colors_come_from_config`, "
             "`render_state_block_sets_uniform_underline_does_not`, and "
             "`cursor_blink_render_state_*` tests prove active non-password/"
             "non-preedit cursor overlay/uniform branches, focus/blink "
-            "visibility, hollow unfocused cursors, OSC 12 cursor color, and "
-            "block-uniform versus overlay cursor routing. "
+            "visibility, hollow unfocused cursors, OSC 12 cursor color, "
+            "config-derived cursor color/text color, and block-uniform versus "
+            "overlay cursor routing. "
             "`cursor_text_color_resolves_the_cursor_text_config` and "
             "`cursor_color_resolves_with_precedence` prove cursor text and "
             "cursor color resolution. `add_cursor_maps_styles_and_routes`, "
@@ -630,7 +632,7 @@ ROWS = [
         ),
         missing_evidence="None for deterministic active cursor overlay/uniform branches, cursor color/text color resolution, selected cursor render data, wide cursor render data, lock fallback rendering after lock style selection, and cursor list routing.",
         guard_tier="Tier 1",
-        guard_command="`cargo test --manifest-path roastty/Cargo.toml render_state_derives_visible_block_cursor_overlay && cargo test --manifest-path roastty/Cargo.toml render_state_cursor_color_comes_from_osc12 && cargo test --manifest-path roastty/Cargo.toml render_state_block_sets_uniform_underline_does_not && cargo test --manifest-path roastty/Cargo.toml cursor_blink_render_state && cargo test --manifest-path roastty/Cargo.toml add_cursor && cargo test --manifest-path roastty/Cargo.toml cursor_text_color_resolves_the_cursor_text_config && cargo test --manifest-path roastty/Cargo.toml cursor_color_resolves_with_precedence && cargo test --manifest-path roastty/Cargo.toml block_cursor_pos_adjusts_for_wide_kind && cargo test --manifest-path roastty/Cargo.toml set_cursor && PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/cursor_renderer_runtime_parity.py`",
+        guard_command="`cargo test --manifest-path roastty/Cargo.toml render_state_derives_visible_block_cursor_overlay && cargo test --manifest-path roastty/Cargo.toml render_state_cursor_color_comes_from_osc12 && cargo test --manifest-path roastty/Cargo.toml render_state_cursor_colors_come_from_config && cargo test --manifest-path roastty/Cargo.toml render_state_block_sets_uniform_underline_does_not && cargo test --manifest-path roastty/Cargo.toml cursor_blink_render_state && cargo test --manifest-path roastty/Cargo.toml add_cursor && cargo test --manifest-path roastty/Cargo.toml cursor_text_color_resolves_the_cursor_text_config && cargo test --manifest-path roastty/Cargo.toml cursor_color_resolves_with_precedence && cargo test --manifest-path roastty/Cargo.toml block_cursor_pos_adjusts_for_wide_kind && cargo test --manifest-path roastty/Cargo.toml set_cursor && PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/cursor_renderer_runtime_parity.py`",
     ),
     RuntimeRow(
         id="RUNTIME-008B2B1",
@@ -791,7 +793,7 @@ ROWS = [
     ),
     RuntimeRow(
         id="RUNTIME-008B2B2B2B2B",
-        behavior="remaining renderer-visible effects: actual app/GUI cursor pixels/screenshots and broader GUI/pixel parity",
+        behavior="remaining renderer-visible effects: broader GUI/pixel parity",
         ghostty_reference="`vendor/ghostty/src/config/Config.zig` renderer/window visual fields; `vendor/ghostty/src/renderer/generic.zig` derived renderer config and draw paths; `vendor/ghostty/src/Surface.zig` renderer config messages; screenshot/pixel walkthrough paths",
         roastty_reference="`roastty/src/lib.rs` live renderer and render state; `roastty/src/renderer`; copied macOS renderer/window host",
         family="renderer",
@@ -815,12 +817,12 @@ ROWS = [
             "Experiment 163 split out deterministic Metal custom shader output "
             "readback. Experiment 164 split out deterministic Metal text "
             "shader cursor pixel readback. Experiment 177 split out focused "
-            "live window-padding pixel proof in the macOS app. "
-            "CFG-223 still needs representative runtime or GUI proof for GUI "
-            "cursor pixels, including actual app/GUI cursor screenshots, "
-            "and broader GUI/pixel parity."
+            "live window-padding pixel proof in the macOS app. Experiment "
+            "178 split out focused live app/GUI block cursor pixel proof. "
+            "CFG-223 still needs representative runtime or GUI proof for "
+            "broader GUI/pixel parity."
         ),
-        missing_evidence="Add renderer/runtime or GUI smoke rows for GUI cursor pixels and broader GUI/pixel parity.",
+        missing_evidence="Add renderer/runtime or GUI smoke rows for broader GUI/pixel parity.",
         guard_tier="Tier 3",
         guard_command="TBD by future CFG-223 renderer visual experiment.",
     ),
@@ -849,9 +851,39 @@ ROWS = [
             "marker path, focused accessibility bounds, CGWindowID, configured "
             "padding, sample rectangles, and observed color counts."
         ),
-        missing_evidence="None for focused live screenshot-level window-padding pixel proof. GUI cursor pixels, broader GUI/pixel parity, broad font output parity, and full app screenshot parity remain outside this slice.",
+        missing_evidence="None for focused live screenshot-level window-padding pixel proof. Broader GUI/pixel parity, broad font output parity, and full app screenshot parity remain outside this slice.",
         guard_tier="Tier 3",
         guard_command="`(cd roastty && macos/build.nu --action build) && PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/macos_window_padding_pixel_runtime.py`",
+    ),
+    RuntimeRow(
+        id="RUNTIME-008B2B2B2B2D",
+        behavior="focused live app/GUI block cursor pixel proof",
+        ghostty_reference="`vendor/ghostty/src/config/Config.zig` `cursor-color`, `cursor-text`, `cursor-style`, and `cursor-style-blink`; `vendor/ghostty/src/renderer/generic.zig` cursor draw paths; `vendor/ghostty/src/renderer/shaders/shaders.metal` cursor shader paths",
+        roastty_reference="live debug `Roastty.app`; `roastty/src/renderer/metal/shaders.metal`; `roastty/src/renderer/frame_renderer.rs`; `macos_gui_cursor_pixel_runtime.py`",
+        family="renderer",
+        status="Oracle complete",
+        evidence=(
+            "Experiment 178 adds `macos_gui_cursor_pixel_runtime.py`, a live "
+            "debug-app guard that launches Roastty with isolated config, a "
+            "non-blinking block cursor, high-contrast `cursor-color`, and a "
+            "deterministic child process that writes a marker file before "
+            "painting a known background-color landmark and positioning the "
+            "cursor at a known grid cell. The guard proves the frontmost "
+            "process Unix PID is the exact debug-app PID, maps the focused "
+            "accessibility window bounds to the captured PID-owned layer-0 "
+            "CGWindowID, captures that exact window with `screencapture -l`, "
+            "derives terminal grid origin and cell size from the landmark "
+            "rectangle, and requires geometry-derived sample rectangles to "
+            "show the expected cursor cell is magenta-dominant while adjacent "
+            "background cells and landmark cells are not magenta-dominant. "
+            "The debug JSON records the terminal id, painter command path, "
+            "marker path, focused accessibility bounds, CGWindowID, measured "
+            "grid geometry, expected cursor rectangle, sample rectangles, and "
+            "observed color counts."
+        ),
+        missing_evidence="None for focused live app/GUI block cursor pixel proof. Broader GUI/pixel parity, broad font output parity, and full app screenshot parity remain outside this slice.",
+        guard_tier="Tier 3",
+        guard_command="`(cd roastty && macos/build.nu --action build) && PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/macos_gui_cursor_pixel_runtime.py`",
     ),
     RuntimeRow(
         id="RUNTIME-009A",
@@ -2220,6 +2252,7 @@ EXPECTED_IDS = [
     "RUNTIME-008B2B2B2B2A",
     "RUNTIME-008B2B2B2B2B",
     "RUNTIME-008B2B2B2B2C",
+    "RUNTIME-008B2B2B2B2D",
     "RUNTIME-009A",
     "RUNTIME-009B1",
     "RUNTIME-009B2A",

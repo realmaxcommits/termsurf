@@ -118,6 +118,11 @@ def main() -> int:
                 "Roastty OSC12 cursor color test",
             ),
             (
+                "fn render_state_cursor_colors_come_from_config",
+                "Roastty config cursor color/text test",
+            ),
+            ("with_config(config)", "Roastty live render config cursor-color wiring"),
+            (
                 "fn render_state_block_sets_uniform_underline_does_not",
                 "Roastty block uniform vs underline overlay test",
             ),
@@ -205,8 +210,7 @@ def main() -> int:
         row_gap,
         [
             ("Gap", "RUNTIME-008B2B2B2B2B status"),
-            ("GUI cursor pixels", "RUNTIME-008B2B2B2B2B GUI cursor gap"),
-            ("broader GUI/pixel parity", "RUNTIME-008B2B2B2B2B GUI parity gap"),
+                        ("broader GUI/pixel parity", "RUNTIME-008B2B2B2B2B GUI parity gap"),
         ],
     )
     if "RUNTIME-008B2 |" in runtime_inventory:
@@ -218,8 +222,8 @@ def main() -> int:
         [
             ("Runtime and UI effects", "CFG-223 row"),
             ("Gap", "CFG-223 status"),
-            ("76 rows Oracle complete", "CFG-223 oracle count"),
-            ("79 rows closed", "CFG-223 closed count"),
+            ("77 rows Oracle complete", "CFG-223 oracle count"),
+            ("80 rows closed", "CFG-223 closed count"),
             ("4 rows are incomplete", "CFG-223 incomplete count"),
             ("4 rows are runtime gaps", "CFG-223 gap count"),
         ],

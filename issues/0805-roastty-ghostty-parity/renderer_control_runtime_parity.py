@@ -159,8 +159,7 @@ def main() -> int:
         row_008b,
         [
             ("Gap", "RUNTIME-008B2B2B2B2B status"),
-            ("GUI cursor pixels", "RUNTIME-008B2B2B2B2B GUI cursor gap"),
-        ],
+                    ],
     )
 
     cfg223 = require_matrix_cfg223(config_matrix)
@@ -169,8 +168,8 @@ def main() -> int:
         [
             ("Runtime and UI effects", "CFG-223 row"),
             ("Gap", "CFG-223 remains gap"),
-            ("76 rows Oracle complete", "CFG-223 oracle count"),
-            ("79 rows closed", "CFG-223 closed count"),
+            ("77 rows Oracle complete", "CFG-223 oracle count"),
+            ("80 rows closed", "CFG-223 closed count"),
             ("4 rows are incomplete", "CFG-223 incomplete count"),
             ("4 rows are runtime gaps", "CFG-223 gap count"),
         ],
