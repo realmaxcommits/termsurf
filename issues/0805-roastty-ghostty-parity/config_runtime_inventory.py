@@ -237,7 +237,7 @@ ROWS = [
         ),
         missing_evidence=(
             "None for key remap/keybind dispatch runtime behavior; "
-            "command-palette UI dispatch remains tracked by `RUNTIME-011B2`."
+            "command-palette UI dispatch remains tracked by `RUNTIME-011B2B`."
         ),
         guard_tier="Tier 1",
         guard_command="`cargo test --manifest-path roastty/Cargo.toml surface_key_remap && cargo test --manifest-path roastty/Cargo.toml surface_key_table`",
@@ -1493,8 +1493,32 @@ ROWS = [
         guard_command="`(cd roastty && macos/build.nu --action test) && PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/macos_app_workflow_plumbing_parity.py`",
     ),
     RuntimeRow(
-        id="RUNTIME-011B2",
-        behavior="remaining live macOS app/window/tab/split/menu/titlebar/fullscreen/quick-terminal and broader command palette GUI effects",
+        id="RUNTIME-011B2A",
+        behavior="live AppleScript-driven Roastty app workflow automation",
+        ghostty_reference="`vendor/ghostty/macos/Ghostty.sdef`; pinned Ghostty AppleScript app/window/tab/terminal workflow commands",
+        roastty_reference="`roastty/macos/Roastty.sdef`; `roastty/macos/Sources/Features/AppleScript`; built debug `Roastty.app`",
+        family="macOS app",
+        status="Oracle complete",
+        evidence=(
+            "Experiment 167 adds `macos_applescript_workflow_runtime.py`, a "
+            "live guard that launches the built debug Roastty app with an "
+            "isolated `ROASTTY_CONFIG_PATH` enabling `macos-applescript`, "
+            "targets the app by absolute bundle path, creates a window, "
+            "queries the window/tab/terminal object model, creates/selects/"
+            "closes a tab, creates a split terminal from a controlled surface "
+            "configuration whose command writes a temp-file marker, and quits "
+            "or kills only the launched debug process. The guard also proves "
+            "terminal text input dispatch with a side effect: a controlled "
+            "child process records the `input text` marker in a temp file "
+            "before the row is considered passing."
+        ),
+        missing_evidence="None for the live AppleScript workflow slice covering app dictionary access, window creation, tab creation/selection/close, split creation with a command side effect, scoped cleanup, and side-effect-proven `input text` dispatch.",
+        guard_tier="Tier 3",
+        guard_command="`(cd roastty && macos/build.nu --action build) && PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/macos_applescript_workflow_runtime.py`",
+    ),
+    RuntimeRow(
+        id="RUNTIME-011B2B",
+        behavior="remaining live macOS GUI visual/native-menu/fullscreen/quick-terminal and broader command palette effects",
         ghostty_reference="`vendor/ghostty/macos/Sources`; app/window/tab/split/menu/titlebar/fullscreen/quick-terminal and GUI walkthrough behavior",
         roastty_reference="`roastty/macos/Sources`; Roastty app wrapper and Swift UI",
         family="macOS app",
@@ -1505,15 +1529,19 @@ ROWS = [
             "quit-after-last-window-closed config behavior, Experiment 152 "
             "split out command palette runtime plumbing, custom command "
             "entries, hosted action dispatch, toggle notification delivery, "
-            "focus return, and keyboard-event shielding, and Experiment 166 "
-            "split out copied macOS workflow command/action/config plumbing "
-            "plus focused split helper behavior. CFG-223 still needs real app "
-            "walkthrough or focused macOS GUI tests for actual "
-            "window/tab/split/menu/titlebar/fullscreen/quick-terminal GUI "
-            "behavior, native menu validation/display, screenshot/pixel/input "
-            "navigation, and broader command-palette GUI behavior."
+            "focus return, and keyboard-event shielding, Experiment 166 split "
+            "out copied macOS workflow command/action/config plumbing plus "
+            "focused split helper behavior, and Experiment 167 split out "
+            "live AppleScript-driven app workflow automation with "
+            "side-effect-proven split creation and terminal `input text` "
+            "dispatch. CFG-223 still needs real app walkthrough or focused "
+            "macOS GUI tests for native menu display/validation, "
+            "titlebar/fullscreen/quick-terminal visuals, screenshot/pixel "
+            "evidence, returned split-terminal object re-resolution and "
+            "focus/close commands, broader command-palette GUI behavior, and "
+            "deeper input navigation/pixel walkthroughs."
         ),
-        missing_evidence="Add focused live macOS app walkthrough rows and GUI guards for actual window/tab/split/menu/titlebar/fullscreen/quick-terminal GUI behavior, native menu validation/display, screenshot/pixel/input navigation, and broader command-palette GUI behavior.",
+        missing_evidence="Add focused live macOS app walkthrough rows and GUI guards for native menu display/validation, titlebar/fullscreen/quick-terminal visuals, screenshot/pixel evidence, returned split-terminal object re-resolution and focus/close commands, broader command-palette GUI behavior, and deeper input navigation/pixel walkthroughs.",
         guard_tier="Tier 3",
         guard_command="TBD by future CFG-223 macOS app walkthrough experiment.",
     ),
@@ -1868,10 +1896,11 @@ ROWS = [
             "`linux-*`, and `macos-*` canonical option from the regenerated "
             "config inventory. GTK and Linux runtime effects are marked not "
             "applicable to Roastty's macOS runtime; `macos-option-as-alt` points "
-            "to existing key translation guards; remaining macOS app effects "
-            "stay owned by `RUNTIME-011B2`."
+            "to existing key translation guards; `macos-applescript` points to "
+            "`RUNTIME-011B2A`; remaining macOS app effects stay owned by "
+            "`RUNTIME-011B2B`."
         ),
-        missing_evidence="None for platform-specific runtime classification; macOS app behavior gaps remain tracked by RUNTIME-011B2.",
+        missing_evidence="None for platform-specific runtime classification; remaining macOS app behavior gaps are tracked by RUNTIME-011B2B.",
         guard_tier="Tier 0",
         guard_command="`PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/platform_runtime_classification.py --config-inventory issues/0805-roastty-ghostty-parity/config-inventory.md --output issues/0805-roastty-ghostty-parity/platform-runtime-classification.md`",
     ),
@@ -1952,7 +1981,8 @@ EXPECTED_IDS = [
     "RUNTIME-010B2B2B2",
     "RUNTIME-011A",
     "RUNTIME-011B1",
-    "RUNTIME-011B2",
+    "RUNTIME-011B2A",
+    "RUNTIME-011B2B",
     "RUNTIME-012A",
     "RUNTIME-012B1",
     "RUNTIME-012B2A",

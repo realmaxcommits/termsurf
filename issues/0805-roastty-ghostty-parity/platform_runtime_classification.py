@@ -68,14 +68,33 @@ def macos_gap(option: str, family: str) -> PlatformRow:
         platform="macOS",
         applicability="Applicable to Roastty's copied macOS app.",
         status="Gap",
-        owner="RUNTIME-011B2",
+        owner="RUNTIME-011B2B",
         evidence=(
             f"`{option}` affects macOS {family}. Parser/default/formatter coverage "
             "exists, but real macOS app/runtime behavior remains owned by the "
-            "`RUNTIME-011B2` walkthrough row."
+            "`RUNTIME-011B2B` walkthrough row."
         ),
         guard_tier="Tier 3",
         guard="TBD by future CFG-223 macOS app walkthrough experiment.",
+    )
+
+
+def macos_oracle_complete(
+    option: str,
+    family: str,
+    owner: str,
+    evidence: str,
+    guard: str,
+) -> PlatformRow:
+    return PlatformRow(
+        option=option,
+        platform="macOS",
+        applicability="Applicable to Roastty's copied macOS app.",
+        status="Oracle complete",
+        owner=owner,
+        evidence=f"`{option}` affects macOS {family}. {evidence}",
+        guard_tier="Tier 3",
+        guard=guard,
     )
 
 
@@ -101,7 +120,20 @@ ROWS: dict[str, PlatformRow] = {
     "linux-cgroup-processes-limit": linux_row(
         "linux-cgroup-processes-limit", "cgroup process limit"
     ),
-    "macos-applescript": macos_gap("macos-applescript", "AppleScript automation"),
+    "macos-applescript": macos_oracle_complete(
+        "macos-applescript",
+        "AppleScript automation",
+        "RUNTIME-011B2A",
+        (
+            "Experiment 167 proves the built debug Roastty app becomes "
+            "AppleScript-addressable when launched with an isolated config enabling "
+            "`macos-applescript`, and the live guard covers dictionary access, "
+            "window creation, tab creation/selection/close, split creation with a "
+            "command side effect, scoped cleanup, and side-effect-proven terminal "
+            "`input text` dispatch."
+        ),
+        "`PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/macos_applescript_workflow_runtime.py`",
+    ),
     "macos-auto-secure-input": macos_gap("macos-auto-secure-input", "secure input"),
     "macos-custom-icon": macos_gap("macos-custom-icon", "app icon selection"),
     "macos-dock-drop-behavior": macos_gap("macos-dock-drop-behavior", "Dock drop handling"),

@@ -14808,6 +14808,13 @@ pub extern "C" fn roastty_config_get(
                     .write(config.parsed.macos_window_shadow);
                 true
             }
+            b"macos-applescript" => {
+                let Some(config) = config_from_handle(config) else {
+                    return false;
+                };
+                output.cast::<bool>().write(config.parsed.macos_applescript);
+                true
+            }
             b"resize-overlay" => {
                 let Some(config) = config_from_handle(config) else {
                     return false;
@@ -26278,6 +26285,7 @@ mod tests {
         assert!(!config_get_bool_value(config, c"focus-follows-mouse"));
         assert!(!config_get_bool_value(config, c"maximize"));
         assert!(config_get_bool_value(config, c"macos-window-shadow"));
+        assert!(config_get_bool_value(config, c"macos-applescript"));
 
         {
             let config_ref = config_from_handle(config).unwrap();
@@ -26300,6 +26308,10 @@ mod tests {
                 .unwrap();
             config_ref
                 .parsed
+                .set("macos-applescript", Some("false"))
+                .unwrap();
+            config_ref
+                .parsed
                 .set("resize-overlay", Some("never"))
                 .unwrap();
             config_ref.parsed.set("scrollbar", Some("never")).unwrap();
@@ -26317,6 +26329,7 @@ mod tests {
             Some("tabs")
         );
         assert!(!config_get_bool_value(config, c"macos-window-shadow"));
+        assert!(!config_get_bool_value(config, c"macos-applescript"));
         assert_eq!(
             config_get_string_value(config, c"resize-overlay").as_deref(),
             Some("never")

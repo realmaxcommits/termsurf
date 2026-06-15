@@ -679,7 +679,7 @@ experiment files until they are proven.
   `gtk-*`, `linux-*`, and `macos-*` canonical option. GTK/Linux rows are not
   applicable to Roastty's macOS runtime, `macos-option-as-alt` is covered by
   input guards, and after Experiment 166 the remaining live macOS app behavior
-  stays owned by `RUNTIME-011B2`.
+  stays owned by `RUNTIME-011B2B`.
 - **Broad runtime rows should split proven slices from real gaps.** Experiment
   113 split PTY/process launch coverage so initial-command, environment, and
   working-directory behavior are guarded separately while config-level command,
@@ -852,7 +852,7 @@ experiment files until they are proven.
   action filtering, shortcut display, and hosted action dispatch out of the
   macOS app gap. Windows, tabs, splits, menus, titlebar, fullscreen, quick
   terminal, broader command palette GUI/pixel/input navigation, and full app
-  walkthrough evidence now remain in `RUNTIME-011B2` after Experiment 166.
+  walkthrough evidence now remain in `RUNTIME-011B2B` after Experiment 167.
 - **Font variations are style-specific font descriptors.** Experiment 149 split
   deterministic `font-variation*` config propagation out of the remaining font
   renderer gap by threading the four parsed variation lists into regular, bold,
@@ -879,7 +879,17 @@ experiment files until they are proven.
   Full-file renamed source parity plus focused split helper tests now guard that
   plumbing, while actual GUI rendering, native menu display/validation,
   screenshots/pixels, input navigation, fullscreen visuals, quick-terminal
-  visuals, and broader command-palette GUI behavior remain in `RUNTIME-011B2`.
+  visuals, and broader command-palette GUI behavior remain in `RUNTIME-011B2B`.
+- **Live AppleScript automation needs side-effect markers.** Experiment 167
+  proved the built debug Roastty app can be launched by absolute bundle path
+  with an isolated `ROASTTY_CONFIG_PATH` using `open --env`, and that
+  AppleScript can create windows, create/select/close tabs, create split
+  terminals, and deliver `input text` when controlled child commands write
+  temp-file markers. The experiment also found and fixed two automation
+  blockers: `roastty_config_get` did not expose `macos-applescript`, and
+  ScriptWindow IDs based on AppKit tab-group identity did not survive tab-group
+  creation. Returned split-terminal object re-resolution and split focus/close
+  commands remain in `RUNTIME-011B2B`.
 - **Font-size runtime updates should be idempotent.** Experiment 125 found that
   applying an unchanged font size dirtied ABI-only surfaces because
   `set_font_size_points` always requested a render. The setter now returns
@@ -1605,4 +1615,4 @@ remains open.
 - [Experiment 166: macOS app workflow plumbing](166-macos-app-workflow-plumbing.md)
   — **Pass**
 - [Experiment 167: macOS AppleScript workflow runtime](167-macos-applescript-workflow-runtime.md)
-  — **Designed**
+  — **Pass**

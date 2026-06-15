@@ -233,19 +233,16 @@ final class ScriptWindow: NSObject {
 extension ScriptWindow {
     /// Produces the window-level stable ID from the primary controller.
     ///
-    /// - Tabbed windows are keyed by tab-group identity.
-    /// - Standalone windows are keyed by window identity.
+    /// - Windows are keyed by the primary controller identity so references
+    ///   survive AppKit converting a standalone window into a tab group.
     /// - Detached controllers fall back to controller identity.
     static func stableID(primaryController: BaseTerminalController) -> String {
-        guard let window = primaryController.window else {
-            return "controller-\(ObjectIdentifier(primaryController).hexString)"
-        }
+        stableID(controller: primaryController)
+    }
 
-        if let tabGroup = window.tabGroup {
-            return stableID(tabGroup: tabGroup)
-        }
-
-        return stableID(window: window)
+    /// Stable ID for a native terminal controller.
+    static func stableID(controller: BaseTerminalController) -> String {
+        "controller-\(ObjectIdentifier(controller).hexString)"
     }
 
     /// Stable ID for a standalone native window.

@@ -1,0 +1,246 @@
+#!/usr/bin/env python3
+"""Live macOS AppleScript workflow guard for Issue 805 CFG-223."""
+
+from __future__ import annotations
+
+import os
+import subprocess
+import tempfile
+import textwrap
+import time
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[2]
+ISSUE = ROOT / "issues/0805-roastty-ghostty-parity"
+APP = ROOT / "roastty/macos/build/Debug/Roastty.app"
+BINARY = APP / "Contents/MacOS/roastty"
+MARKER = "ISSUE805_EXP167_INPUT_MARKER"
+
+
+def require(condition: bool, message: str) -> None:
+    if not condition:
+        raise AssertionError(message)
+
+
+def run_osascript(script: str, timeout: int = 30) -> subprocess.CompletedProcess[str]:
+    result = subprocess.run(
+        ["osascript", "-e", script],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        timeout=timeout,
+    )
+    if result.returncode != 0:
+        raise AssertionError(
+            "osascript failed\n"
+            f"stdout:\n{result.stdout}\n"
+            f"stderr:\n{result.stderr}\n"
+            f"script:\n{script}"
+        )
+    return result
+
+
+def quote_applescript(value: str | Path) -> str:
+    text = str(value)
+    return '"' + text.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def scoped_pids() -> set[int]:
+    scoped = subprocess.run(
+        ["pgrep", "-f", f"{APP}/Contents/MacOS/roastty"],
+        text=True,
+        capture_output=True,
+    )
+    return {int(pid_text) for pid_text in scoped.stdout.split()}
+
+
+def launch_app(config: Path) -> int:
+    before = scoped_pids()
+    require(not before, f"debug Roastty app is already running: {sorted(before)}")
+    result = subprocess.run(
+        [
+            "open",
+            "-n",
+            "--env",
+            f"ROASTTY_CONFIG_PATH={config}",
+            "--env",
+            "ROASTTY_CLEAR_USER_DEFAULTS=1",
+            "--env",
+            "ROASTTY_USER_DEFAULTS_SUITE=com.termsurf.roastty.issue805.exp167",
+            str(APP),
+        ],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+    )
+    if result.returncode != 0:
+        raise AssertionError(
+            "open failed\n"
+            f"stdout:\n{result.stdout}\n"
+            f"stderr:\n{result.stderr}"
+        )
+
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline:
+        after = scoped_pids()
+        created = sorted(after - before)
+        if created:
+            return created[0]
+        time.sleep(0.25)
+    raise AssertionError("open did not start a scoped debug Roastty process")
+
+
+def wait_for_app(pid: int, timeout: float = 20.0) -> None:
+    deadline = time.monotonic() + timeout
+    app_literal = quote_applescript(APP)
+    while time.monotonic() < deadline:
+        if subprocess.run(["ps", "-p", str(pid)], stdout=subprocess.DEVNULL).returncode != 0:
+            raise AssertionError("Roastty debug process exited before AppleScript was ready")
+        try:
+            result = run_osascript(
+                f'tell application {app_literal} to count of windows',
+                timeout=5,
+            )
+        except (AssertionError, subprocess.TimeoutExpired):
+            time.sleep(0.5)
+            continue
+        if result.stdout.strip().isdigit():
+            return
+        time.sleep(0.5)
+    raise AssertionError("Roastty did not become AppleScript-addressable in time")
+
+
+def terminate_process(pid: int) -> None:
+    try:
+        try:
+            run_osascript(f'tell application {quote_applescript(APP)} to quit', timeout=5)
+        except Exception:
+            pass
+        for _ in range(20):
+            if pid not in scoped_pids():
+                return
+            time.sleep(0.25)
+    finally:
+        if pid in scoped_pids():
+            try:
+                os.kill(pid, 9)
+            except ProcessLookupError:
+                pass
+
+
+def assert_inventory_split() -> None:
+    runtime_inventory = (ISSUE / "config-runtime-inventory.md").read_text()
+    config_matrix = (ISSUE / "config-matrix.md").read_text()
+
+    require("| RUNTIME-011B2A" in runtime_inventory, "missing RUNTIME-011B2A row")
+    require("| RUNTIME-011B2B" in runtime_inventory, "missing RUNTIME-011B2B row")
+    require(
+        "live AppleScript-driven Roastty app workflow automation" in runtime_inventory,
+        "missing AppleScript workflow evidence",
+    )
+    require(
+        "controlled child process records the `input text` marker" in runtime_inventory,
+        "missing input side-effect evidence",
+    )
+    require(
+        "native menu display/validation" in runtime_inventory,
+        "remaining macOS GUI gap omitted native menu evidence",
+    )
+    require(
+        "titlebar/fullscreen/quick-terminal visuals" in runtime_inventory,
+        "remaining macOS GUI gap omitted visual evidence",
+    )
+    require("67 rows Oracle complete" in config_matrix, "CFG-223 oracle count not updated")
+    require("70 rows closed" in config_matrix, "CFG-223 closed count not updated")
+    require("4 rows are incomplete" in config_matrix, "CFG-223 incomplete count changed")
+    require("4 rows are runtime gaps" in config_matrix, "CFG-223 gap count changed")
+    require("| CFG-223 " in config_matrix and "| Gap    |" in config_matrix, "CFG-223 should remain Gap")
+
+
+def main() -> int:
+    require(APP.is_dir(), f"app not built: {APP}")
+    require(BINARY.is_file(), f"app binary not built: {BINARY}")
+
+    with tempfile.TemporaryDirectory(prefix="termsurf-issue805-exp167-") as temp_dir:
+        temp = Path(temp_dir)
+        config = temp / "config.roastty"
+        marker_file = temp / "input-marker.txt"
+        split_marker_file = temp / "split-marker.txt"
+        config.write_text("macos-applescript = true\nquit-after-last-window-closed = true\n")
+
+        command = (
+            "/bin/sh -c 'IFS= read -r line; "
+            f"printf %s\\\\n \"$line\" > {marker_file}; "
+            "sleep 30'"
+        )
+        split_command = f"/bin/sh -c 'printf split-ok > {split_marker_file}; sleep 30'"
+        pid = launch_app(config)
+
+        try:
+            wait_for_app(pid)
+            app_literal = quote_applescript(APP)
+            command_literal = quote_applescript(command)
+            split_command_literal = quote_applescript(split_command)
+            marker_literal = quote_applescript(MARKER)
+
+            workflow = textwrap.dedent(
+                f"""
+                tell application {app_literal}
+                  activate
+                  set originalWindowCount to count of windows
+                  set cfg to new surface configuration from {{command:{command_literal}, wait after command:true}}
+                  set splitCfg to new surface configuration from {{command:{split_command_literal}, wait after command:true}}
+                  new window with configuration cfg
+                  delay 1
+                  if (count of windows) < originalWindowCount + 1 then error "new window was not created"
+                  set w to front window
+                  set t0 to focused terminal of selected tab of w
+                  if (id of t0) is "" then error "initial terminal id was empty"
+                  input text ({marker_literal} & linefeed) to t0
+                  set tab2 to new tab in w
+                  delay 1
+                  if (count of tabs of w) < 2 then error "new tab was not created"
+                  select tab tab2
+                  if selected of tab2 is not true then error "new tab did not select"
+                  close tab tab2
+                  delay 1
+                  split t0 direction right with configuration splitCfg
+                end tell
+                """
+            )
+            run_osascript(workflow, timeout=45)
+
+            deadline = time.monotonic() + 10
+            while time.monotonic() < deadline:
+                if marker_file.exists() and marker_file.read_text().strip() == MARKER:
+                    break
+                time.sleep(0.25)
+            else:
+                observed = marker_file.read_text() if marker_file.exists() else "<missing>"
+                raise AssertionError(
+                    f"input text marker was not recorded by child process: {observed!r}"
+                )
+
+            deadline = time.monotonic() + 10
+            while time.monotonic() < deadline:
+                if split_marker_file.exists() and split_marker_file.read_text().strip() == "split-ok":
+                    break
+                time.sleep(0.25)
+            else:
+                observed = (
+                    split_marker_file.read_text() if split_marker_file.exists() else "<missing>"
+                )
+                raise AssertionError(
+                    f"split terminal command marker was not recorded: {observed!r}"
+                )
+        finally:
+            terminate_process(pid)
+
+    assert_inventory_split()
+    print("macos_applescript_workflow_runtime=pass")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
