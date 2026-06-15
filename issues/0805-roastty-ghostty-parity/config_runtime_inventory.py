@@ -487,7 +487,7 @@ ROWS = [
             "surfaces, and `osc7_pwd_normalization_runtime_parity.py` "
             "statically checks pinned Ghostty and Roastty markers."
         ),
-        missing_evidence="None for this local OSC 7 PWD validation, normalization, PWD dispatch, and title fallback path dispatch slice. Remaining terminal gaps stay in RUNTIME-009B2B2B3B.",
+        missing_evidence="None for this local OSC 7 PWD validation, normalization, PWD dispatch, and title fallback path dispatch slice. Remaining terminal gaps stay in RUNTIME-009B2B2B3B2.",
         guard_tier="Tier 2",
         guard_command="`cargo test --manifest-path roastty/Cargo.toml terminal_stream_osc7_pwd_normalization && cargo test --manifest-path roastty/Cargo.toml terminal_stream_title_pwd_fallback && cargo test --manifest-path roastty/Cargo.toml termio_osc7_pwd_normalization && cargo test --manifest-path roastty/Cargo.toml termio_title_pwd_fallback && cargo test --manifest-path roastty/Cargo.toml surface_osc7_pwd_normalization && PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/osc7_pwd_normalization_runtime_parity.py`",
     ),
@@ -519,26 +519,52 @@ ROWS = [
         guard_command="`cargo test --manifest-path roastty/Cargo.toml config_scrollback_limit_runtime && cargo test --manifest-path roastty/Cargo.toml terminal_stream_scrollback_byte_limit && cargo test --manifest-path roastty/Cargo.toml page_list_scrollback_byte_limit && PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/scrollback_byte_limit_runtime_parity.py`",
     ),
     RuntimeRow(
-        id="RUNTIME-009B2B2B3B",
-        behavior="remaining shell-specific startup rewrite coverage, unproven exotic OSC 7 URI edge cases, and other remaining terminal behavior effects",
-        ghostty_reference="remaining `vendor/ghostty/src/termio/stream_handler.zig` terminal behavior and shell integration startup paths",
+        id="RUNTIME-009B2B2B3B1",
+        behavior="shell-specific startup rewrite helper coverage for supported shells",
+        ghostty_reference="`vendor/ghostty/src/termio/shell_integration.zig` shell detection, forced-shell setup, bash, XDG, nushell, zsh, and missing-resource helper tests",
+        roastty_reference="`roastty/src/termio/shell_integration.rs` shell detection, forced-shell setup, bash, XDG, nushell, zsh, and missing-resource helper tests",
+        family="terminal",
+        status="Oracle complete",
+        evidence=(
+            "Experiment 130 mirrors pinned Ghostty's shell startup rewrite "
+            "helper coverage with Roastty-named expectations. "
+            "`shell_integration` tests prove supported shell detection, "
+            "forced-shell setup for every supported shell, bash unsupported "
+            "option fallback, bash inject flags, rcfile/init-file handling, "
+            "inherited `ENV`, `HISTFILE`, `-`/`--` separator preservation, "
+            "XDG default/prepend/missing-resource behavior, nushell execute "
+            "injection and unsupported-option fallback that keeps XDG env, "
+            "nushell missing-resource fallback, zsh `ZDOTDIR` preservation, "
+            "and zsh missing-resource fallback. "
+            "`shell_startup_rewrite_runtime_parity.py` statically checks "
+            "pinned Ghostty's corresponding helper/test markers and Roastty's "
+            "runtime/test markers."
+        ),
+        missing_evidence="None for shell-specific startup rewrite helper coverage covered by these guards. Script-body parity and live-shell PTY parity are not claimed by this row.",
+        guard_tier="Tier 1",
+        guard_command="`cargo test --manifest-path roastty/Cargo.toml shell_integration && PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/shell_startup_rewrite_runtime_parity.py`",
+    ),
+    RuntimeRow(
+        id="RUNTIME-009B2B2B3B2",
+        behavior="unproven exotic OSC 7 URI edge cases and other remaining terminal behavior effects",
+        ghostty_reference="remaining `vendor/ghostty/src/termio/stream_handler.zig` terminal behavior paths",
         roastty_reference="`roastty/src/lib.rs` terminal/termio config use; `roastty/src/termio.rs`; `roastty/src/terminal`",
         family="terminal",
         status="Gap",
         evidence=(
-            "Experiments 117, 122, 124, 126, 127, 128, and 129 split out "
+            "Experiments 117, 122, 124, 126, 127, 128, 129, and 130 split out "
             "zero/no-history scrollback, nonzero scrollback byte quota, "
             "alternate-screen no-scrollback, CSI `21t` title-report gating, "
-            "shell-integration feature env and terminal identity, zsh "
-            "bootstrap, configured/static non-empty surface title behavior, "
+            "shell-integration feature env and terminal identity, "
+            "per-shell helper rewrite coverage, zsh bootstrap, "
+            "configured/static non-empty surface title behavior, "
             "and stored-PWD title fallback/empty title app dispatch, plus the "
             "common local OSC 7 PWD validation, path normalization, surface "
-            "PWD dispatch, and title fallback path behavior. Remaining "
-            "shell-specific startup rewrite coverage, unproven exotic OSC 7 "
-            "URI edge cases, and other remaining terminal behavior toggles "
-            "still need focused CFG-223 runtime proof or fixes."
+            "PWD dispatch, and title fallback path behavior. Unproven exotic "
+            "OSC 7 URI edge cases and other remaining terminal behavior "
+            "toggles still need focused CFG-223 runtime proof or fixes."
         ),
-        missing_evidence="Add runtime proof or fixes for remaining shell-specific startup rewrite coverage, unproven exotic OSC 7 URI edge cases, and other remaining terminal behavior effects.",
+        missing_evidence="Add runtime proof or fixes for unproven exotic OSC 7 URI edge cases and other remaining terminal behavior effects.",
         guard_tier="Tier 2",
         guard_command="TBD by future CFG-223 terminal runtime experiment.",
     ),
@@ -830,7 +856,8 @@ EXPECTED_IDS = [
     "RUNTIME-009B2B2B1",
     "RUNTIME-009B2B2B2",
     "RUNTIME-009B2B2B3A",
-    "RUNTIME-009B2B2B3B",
+    "RUNTIME-009B2B2B3B1",
+    "RUNTIME-009B2B2B3B2",
     "RUNTIME-010A",
     "RUNTIME-010B1",
     "RUNTIME-010B2A",

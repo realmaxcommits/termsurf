@@ -322,6 +322,60 @@ mod tests {
     }
 
     #[test]
+    fn detect_shell_matches_supported_programs() {
+        assert_eq!(detect_shell(OsStr::new("sh")), None);
+        assert_eq!(detect_shell(OsStr::new("bash")), Some(Shell::Bash));
+        assert_eq!(detect_shell(OsStr::new("elvish")), Some(Shell::Elvish));
+        assert_eq!(detect_shell(OsStr::new("fish")), Some(Shell::Fish));
+        assert_eq!(detect_shell(OsStr::new("nu")), Some(Shell::Nushell));
+        assert_eq!(detect_shell(OsStr::new("zsh")), Some(Shell::Zsh));
+
+        if cfg!(target_os = "macos") {
+            assert_eq!(detect_shell(OsStr::new("/bin/bash")), None);
+        }
+
+        assert_eq!(
+            detect_shell(OsStr::new("/opt/homebrew/bin/bash")),
+            Some(Shell::Bash)
+        );
+    }
+
+    #[test]
+    fn force_shell_overrides_detection_for_all_supported_shells() {
+        for (shell, integration) in [
+            (Shell::Bash, ShellIntegration::Bash),
+            (Shell::Elvish, ShellIntegration::Elvish),
+            (Shell::Fish, ShellIntegration::Fish),
+            (Shell::Nushell, ShellIntegration::Nushell),
+            (Shell::Zsh, ShellIntegration::Zsh),
+        ] {
+            let resources = TempResources::new(shell);
+            let cmd = setup(command("sh", &[]), &resources.path, integration);
+
+            match shell {
+                Shell::Bash => {
+                    assert_eq!(cmd.program, OsString::from("sh"));
+                    assert_eq!(cmd.args, [OsString::from("--posix")]);
+                    assert!(get_env(&cmd.env, "ENV").is_some());
+                }
+                Shell::Elvish | Shell::Fish => {
+                    assert!(get_env(&cmd.env, "ROASTTY_SHELL_INTEGRATION_XDG_DIR").is_some());
+                    assert!(get_env(&cmd.env, "XDG_DATA_DIRS").is_some());
+                }
+                Shell::Nushell => {
+                    assert_eq!(
+                        cmd.args,
+                        [OsString::from("--execute"), OsString::from("use roastty *")]
+                    );
+                }
+                Shell::Zsh => {
+                    assert!(get_env(&cmd.env, "ZDOTDIR").is_some());
+                }
+            }
+        }
+    }
+
+    #[test]
     fn features_are_sorted_and_include_cursor_mode() {
         let mut env = Vec::new();
         setup_features(
@@ -399,6 +453,8 @@ mod tests {
         let resources = TempResources::new(Shell::Bash);
         for args in [
             &["--posix"][..],
+            &["--rcfile", "profile.sh", "--posix"][..],
+            &["--init-file", "profile.sh", "--posix"][..],
             &["-c", "echo nope"][..],
             &["-ic", "echo nope"][..],
         ] {
@@ -411,8 +467,114 @@ mod tests {
     }
 
     #[test]
+    fn bash_setup_inject_flags_rcfiles_history_env_and_separators() {
+        let resources = TempResources::new(Shell::Bash);
+
+        let cmd = setup(
+            command("bash", &["--noprofile", "--init-file", "profile.sh"]),
+            &resources.path,
+            ShellIntegration::Detect,
+        );
+        assert_eq!(cmd.args, [OsString::from("--posix")]);
+        assert_eq!(
+            get_env(&cmd.env, "ROASTTY_BASH_INJECT"),
+            Some("1 --noprofile")
+        );
+        assert_eq!(get_env(&cmd.env, "ROASTTY_BASH_RCFILE"), Some("profile.sh"));
+
+        let mut with_env = command("bash", &[]);
+        with_env.env.push(("ENV".to_string(), "env.sh".to_string()));
+        let with_env = setup(with_env, &resources.path, ShellIntegration::Detect);
+        assert_eq!(get_env(&with_env.env, "ROASTTY_BASH_ENV"), Some("env.sh"));
+        assert!(get_env(&with_env.env, "ENV")
+            .expect("ENV")
+            .ends_with("shell-integration/bash/roastty.bash"));
+
+        let hist_unset = setup(
+            command("bash", &[]),
+            &resources.path,
+            ShellIntegration::Detect,
+        );
+        assert!(get_env(&hist_unset.env, "HISTFILE")
+            .expect("HISTFILE")
+            .ends_with(".bash_history"));
+        assert_eq!(
+            get_env(&hist_unset.env, "ROASTTY_BASH_UNEXPORT_HISTFILE"),
+            Some("1")
+        );
+
+        let mut hist_set = command("bash", &[]);
+        hist_set
+            .env
+            .push(("HISTFILE".to_string(), "my_history".to_string()));
+        let hist_set = setup(hist_set, &resources.path, ShellIntegration::Detect);
+        assert_eq!(get_env(&hist_set.env, "HISTFILE"), Some("my_history"));
+        assert_eq!(
+            get_env(&hist_set.env, "ROASTTY_BASH_UNEXPORT_HISTFILE"),
+            None
+        );
+
+        let dash = setup(
+            command("bash", &["-", "--arg", "file1", "file2"]),
+            &resources.path,
+            ShellIntegration::Detect,
+        );
+        assert_eq!(
+            dash.args,
+            [
+                OsString::from("--posix"),
+                OsString::from("-"),
+                OsString::from("--arg"),
+                OsString::from("file1"),
+                OsString::from("file2"),
+            ]
+        );
+
+        let dashdash = setup(
+            command("bash", &["--", "--arg", "file1", "file2"]),
+            &resources.path,
+            ShellIntegration::Detect,
+        );
+        assert_eq!(
+            dashdash.args,
+            [
+                OsString::from("--posix"),
+                OsString::from("--"),
+                OsString::from("--arg"),
+                OsString::from("file1"),
+                OsString::from("file2"),
+            ]
+        );
+    }
+
+    #[test]
+    fn bash_setup_missing_resources_falls_back_without_env_changes() {
+        let temp = std::env::temp_dir().join(format!(
+            "roastty-shell-integration-bash-missing-{}",
+            std::process::id()
+        ));
+        let original = command("bash", &[]);
+
+        assert_eq!(
+            setup(original.clone(), &temp, ShellIntegration::Detect),
+            original
+        );
+    }
+
+    #[test]
     fn zsh_setup_preserves_zdotdir() {
         let resources = TempResources::new(Shell::Zsh);
+        let plain = setup(
+            command("zsh", &[]),
+            &resources.path,
+            ShellIntegration::Detect,
+        );
+
+        assert!(get_env(&plain.env, "ZDOTDIR")
+            .expect("ZDOTDIR")
+            .ends_with("shell-integration/zsh"));
+        assert_eq!(get_env(&plain.env, "ROASTTY_ZSH_ZDOTDIR"), None);
+
         let mut cmd = command("zsh", &[]);
         cmd.env
             .push(("ZDOTDIR".to_string(), "/old/zdotdir".to_string()));
@@ -457,6 +619,20 @@ mod tests {
         assert!(get_env(&cmd.env, "XDG_DATA_DIRS")
             .expect("data dirs")
             .ends_with("shell-integration:/usr/local/share:/usr/share"));
+    }
+
+    #[test]
+    fn xdg_setup_missing_resources_falls_back_without_env_changes() {
+        let temp = std::env::temp_dir().join(format!(
+            "roastty-shell-integration-xdg-missing-{}",
+            std::process::id()
+        ));
+        let original = command("fish", &[]);
+
+        assert_eq!(
+            setup(original.clone(), &temp, ShellIntegration::Detect),
+            original
+        );
     }
 
     #[test]
@@ -509,6 +685,20 @@ mod tests {
     }
 
     #[test]
+    fn nushell_setup_missing_resources_falls_back_without_env_changes() {
+        let temp = std::env::temp_dir().join(format!(
+            "roastty-shell-integration-nu-missing-{}",
+            std::process::id()
+        ));
+        let original = command("nu", &[]);
+
+        assert_eq!(
+            setup(original.clone(), &temp, ShellIntegration::Detect),
+            original
+        );
+    }
+
+    #[test]
     fn missing_resources_fall_back() {
         let temp = std::env::temp_dir().join(format!(
             "roastty-shell-integration-missing-{}",
@@ -519,13 +709,5 @@ mod tests {
             setup(original.clone(), &temp, ShellIntegration::Detect),
             original
         );
-    }
-
-    #[test]
-    fn force_shell_overrides_detection() {
-        let resources = TempResources::new(Shell::Zsh);
-        let cmd = setup(command("sh", &[]), &resources.path, ShellIntegration::Zsh);
-
-        assert!(get_env(&cmd.env, "ZDOTDIR").is_some());
     }
 }

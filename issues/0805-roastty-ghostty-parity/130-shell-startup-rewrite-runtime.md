@@ -120,3 +120,64 @@ updated to run `cargo fmt --manifest-path roastty/Cargo.toml` before the check.
 
 The reviewer confirmed the prior finding is resolved and reported no new
 findings.
+
+## Result
+
+**Result:** Pass.
+
+Roastty now has focused shell startup rewrite helper tests corresponding to
+pinned Ghostty's `termio/shell_integration.zig` helper coverage. The tests prove
+supported shell detection, forced-shell setup for every supported shell, bash
+unsupported-option fallback, bash inject flags, rcfile/init-file handling,
+inherited `ENV`, `HISTFILE`, `-`/`--` separator preservation, bash
+missing-resource fallback, XDG default/prepend/missing-resource behavior,
+nushell execute injection and unsupported-option fallback that keeps XDG env,
+nushell missing-resource fallback, zsh `ZDOTDIR` preservation, and zsh
+missing-resource fallback.
+
+Added `shell_startup_rewrite_runtime_parity.py` to statically check pinned
+Ghostty's helper/test markers and Roastty's corresponding helper/test markers.
+The runtime inventory now splits the old terminal gap into `RUNTIME-009B2B2B3B1`
+as Oracle complete for shell startup rewrite helper coverage and
+`RUNTIME-009B2B2B3B2` as the reduced remaining terminal gap. `CFG-223` remains
+`Gap`.
+
+Verification passed:
+
+```bash
+cargo test --manifest-path roastty/Cargo.toml shell_integration
+PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/shell_startup_rewrite_runtime_parity.py
+PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/config_runtime_inventory.py --output issues/0805-roastty-ghostty-parity/config-runtime-inventory.md --matrix issues/0805-roastty-ghostty-parity/config-matrix.md
+PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/scrollback_byte_limit_runtime_parity.py
+PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/osc7_pwd_normalization_runtime_parity.py
+PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/surface_title_runtime_parity.py
+PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/title_pwd_fallback_runtime_parity.py
+cargo fmt --manifest-path roastty/Cargo.toml
+cargo fmt --manifest-path roastty/Cargo.toml --check
+git diff --check
+```
+
+## Conclusion
+
+The shell-specific startup rewrite helper coverage clause is closed. The
+remaining terminal CFG-223 row is now limited to unproven exotic OSC 7 URI edge
+cases and other remaining terminal behavior effects. This experiment does not
+claim shell integration script-body parity or live-shell PTY behavior.
+
+## Completion Review
+
+**Reviewer:** Codex adversarial subagent with fresh context.
+
+**Initial verdict:** Changes required.
+
+The reviewer found that the static guard did not require a Roastty counterpart
+for pinned Ghostty's explicit bash missing-resource helper test. The fix added
+`bash_setup_missing_resources_falls_back_without_env_changes`, updated the
+static guard to require it, and updated the result text to name bash
+missing-resource fallback.
+
+**Re-review verdict:** Approved.
+
+The reviewer confirmed the finding is resolved, reran the focused shell test,
+static guard, `cargo fmt --check`, and `git diff --check`, and reported no
+remaining findings.

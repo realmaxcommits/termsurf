@@ -138,14 +138,12 @@ def main() -> int:
         ],
     )
 
-    row_gap = require_row(runtime_inventory, "RUNTIME-009B2B2B2")
+    row_gap = require_row(runtime_inventory, "RUNTIME-009B2B2B3B2")
     require_all(
         row_gap,
         [
-            ("Gap", "RUNTIME-009B2B2B2 status"),
-            ("exact nonzero scrollback byte quota", "remaining scrollback gap"),
-            ("OSC 7 URI parsing/hostname/path normalization", "remaining OSC 7 gap"),
-            ("remaining shell-specific startup rewrite", "remaining shell gap"),
+            ("Gap", "RUNTIME-009B2B2B3B2 status"),
+            ("unproven exotic OSC 7 URI edge cases", "remaining OSC 7 edge gap"),
             ("other remaining terminal behavior effects", "remaining terminal gap"),
         ],
     )
@@ -156,8 +154,8 @@ def main() -> int:
         [
             ("Runtime and UI effects", "CFG-223 row"),
             ("Gap", "CFG-223 status"),
-            ("29 rows Oracle complete", "CFG-223 oracle count"),
-            ("31 rows closed", "CFG-223 closed count"),
+            ("32 rows Oracle complete", "CFG-223 oracle count"),
+            ("34 rows closed", "CFG-223 closed count"),
             ("5 rows are incomplete", "CFG-223 incomplete count"),
             ("5 rows are runtime gaps", "CFG-223 gap count"),
         ],

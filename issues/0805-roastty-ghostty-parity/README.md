@@ -359,6 +359,12 @@ experiment files until they are proven.
   values through app startup, `TermioSpawnOptions`, `Terminal`, `Screen`, and
   `PageList`; a tiny byte quota keeps less history than a large byte quota for
   the same workload, with PageList pruning guarded by byte-size page growth.
+- **Shell startup rewrites can be proven without live shells.** Pinned Ghostty's
+  `termio/shell_integration.zig` helper tests define a cheap oracle for shell
+  detection, forced-shell setup, bash option/env rewrites, XDG directory setup,
+  nushell `--execute` injection/fallback, zsh `ZDOTDIR`, and missing-resource
+  fallback. Roastty now mirrors that helper surface with `ROASTTY_*` names while
+  leaving script-body and live-shell PTY parity as separate concerns if needed.
 - **App-facing ABI parity must be scoped before diffing.** Roastty's C header is
   intentionally larger than Ghostty's header, so full symbol-count equality is
   the wrong oracle. Experiment 4 uses Swift app-source identifiers as the
@@ -1296,4 +1302,4 @@ remains open.
 - [Experiment 129: Scrollback byte limit runtime](129-scrollback-byte-limit-runtime.md)
   — **Pass**
 - [Experiment 130: Shell startup rewrite runtime](130-shell-startup-rewrite-runtime.md)
-  — **Designed**
+  — **Pass**
