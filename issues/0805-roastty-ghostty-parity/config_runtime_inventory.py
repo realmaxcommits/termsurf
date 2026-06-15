@@ -337,20 +337,53 @@ ROWS = [
         guard_command="`cargo test --manifest-path roastty/Cargo.toml present_driver && cargo test --manifest-path roastty/Cargo.toml live_cursor_blink && cargo test --manifest-path roastty/Cargo.toml live_renderer_options && PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/renderer_control_runtime_parity.py`",
     ),
     RuntimeRow(
-        id="RUNTIME-008B",
-        behavior="visible opacity, blur, padding, cursor style shape/rendering, window padding color, custom shader output, and remaining renderer-visible effects",
-        ghostty_reference="`vendor/ghostty/src/config/Config.zig` renderer/window visual fields; `vendor/ghostty/src/renderer/generic.zig` derived renderer config; `vendor/ghostty/src/Surface.zig` renderer config messages",
-        roastty_reference="`roastty/src/lib.rs` live renderer and render state; `roastty/src/renderer`",
+        id="RUNTIME-008B1",
+        behavior="deterministic render knob sourcing, opacity conversion/clamping, background-opacity-cells, window-padding-color padding decisions, and font-thicken knob sourcing",
+        ghostty_reference="`vendor/ghostty/src/config/Config.zig` renderer/window visual fields; `vendor/ghostty/src/renderer/generic.zig` derived renderer config, background-opacity clamp, padding-color decisions, and glyph render thicken options; `vendor/ghostty/src/renderer/cell.zig` padding extension helper",
+        roastty_reference="`roastty/src/renderer/frame_renderer.rs` `FrameRenderKnobs::from_config`; `roastty/src/renderer/cell.rs` background opacity cell rebuild behavior; `roastty/src/renderer/frame_rebuild.rs` padding extension refinement",
+        family="renderer",
+        status="Oracle complete",
+        evidence=(
+            "Experiment 133 split out the deterministic renderer-knob slice. "
+            "`from_config_sources_config_values` proves renderer knob sourcing "
+            "for `font-thicken`, `font-thicken-strength`, "
+            "`background-opacity`, `bold-color`, and selection colors. "
+            "`background_opacity_clamps_for_renderer_knob`, "
+            "`from_config_sources_opacity_options`, and "
+            "`cursor_opacity_clamps_to_cursor_overlay_alpha_only` prove "
+            "background/faint/cursor opacity conversion and renderer-use "
+            "clamping. `rebuild_bg_row_background_opacity_cells`, "
+            "`rebuild_bg_row_opacity_cells_off_is_unchanged`, and "
+            "`rebuild_bg_row_opacity_cells_skips_covering_derived` prove "
+            "background-opacity-cells behavior. `refine_padding_extend_rows_*` "
+            "tests prove deterministic window-padding-color padding-extension "
+            "decisions. `renderer_knobs_runtime_parity.py` statically checks "
+            "the pinned Ghostty renderer markers against Roastty's "
+            "implementation, tests, and this inventory split."
+        ),
+        missing_evidence="None for deterministic renderer knob sourcing, opacity conversion/clamping, background-opacity-cells behavior, window-padding-color padding-extension decisions, and font-thicken knob sourcing.",
+        guard_tier="Tier 1",
+        guard_command="`cargo test --manifest-path roastty/Cargo.toml from_config_sources_config_values && cargo test --manifest-path roastty/Cargo.toml background_opacity_clamps_for_renderer_knob && cargo test --manifest-path roastty/Cargo.toml from_config_sources_opacity_options && cargo test --manifest-path roastty/Cargo.toml cursor_opacity_clamps_to_cursor_overlay_alpha_only && cargo test --manifest-path roastty/Cargo.toml rebuild_bg_row_background_opacity_cells && cargo test --manifest-path roastty/Cargo.toml refine_padding_extend_rows && PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/renderer_knobs_runtime_parity.py`",
+    ),
+    RuntimeRow(
+        id="RUNTIME-008B2",
+        behavior="remaining renderer-visible effects: background blur, real compositor opacity, window padding layout pixels, cursor style shape/rendering pixels, custom shader output, and broader GUI/pixel parity",
+        ghostty_reference="`vendor/ghostty/src/config/Config.zig` renderer/window visual fields; `vendor/ghostty/src/renderer/generic.zig` derived renderer config and draw paths; `vendor/ghostty/src/Surface.zig` renderer config messages",
+        roastty_reference="`roastty/src/lib.rs` live renderer and render state; `roastty/src/renderer`; copied macOS renderer host",
         family="renderer",
         status="Gap",
         evidence=(
             "Experiment 125 split out the proven scheduler/cursor/focus/"
-            "occlusion/rebuild control slice, but CFG-223 still needs "
-            "representative runtime or GUI proof for visible opacity, blur, "
-            "padding, cursor style shape/rendering, window padding color, "
-            "custom shader output, and other renderer-visible effects."
+            "occlusion/rebuild control slice. Experiment 133 split out "
+            "deterministic renderer knob sourcing, background-opacity-cells "
+            "behavior, opacity conversion/clamping, window-padding-color "
+            "padding-extension decisions, and thicken knob sourcing. CFG-223 "
+            "still needs representative runtime or GUI proof for background "
+            "blur, real compositor opacity, window padding layout pixels, "
+            "cursor style shape/rendering pixels, custom shader output, and "
+            "broader GUI/pixel parity."
         ),
-        missing_evidence="Add renderer/runtime or GUI smoke rows for visible opacity, blur, padding, cursor style shape/rendering, window padding color, custom shader output, and other renderer-visible effects.",
+        missing_evidence="Add renderer/runtime or GUI smoke rows for background blur, real compositor opacity, window padding layout pixels, cursor style shape/rendering pixels, custom shader output, and broader GUI/pixel parity.",
         guard_tier="Tier 3",
         guard_command="TBD by future CFG-223 renderer visual experiment.",
     ),
@@ -910,7 +943,8 @@ EXPECTED_IDS = [
     "RUNTIME-007A",
     "RUNTIME-007B",
     "RUNTIME-008A",
-    "RUNTIME-008B",
+    "RUNTIME-008B1",
+    "RUNTIME-008B2",
     "RUNTIME-009A",
     "RUNTIME-009B1",
     "RUNTIME-009B2A",

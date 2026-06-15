@@ -163,3 +163,76 @@ plan now explicitly requires Roastty markers for `config.font_thicken`,
 `config.font_thicken_strength`, and thicken-focused
 `from_config_sources_config_values` assertions. The reviewer reported no new
 required findings.
+
+## Result
+
+**Result:** Pass
+
+Implemented the deterministic renderer-knob split and kept the remaining
+renderer-visible pixel work explicit:
+
+- `FrameRenderKnobs::from_config` now clamps `background-opacity` to `0.0..1.0`
+  at renderer use, matching pinned Ghostty's `renderer/generic.zig` derived
+  renderer config.
+- Added `background_opacity_clamps_for_renderer_knob` to prove low, in-range,
+  and high `background-opacity` values feed the renderer knob as `0.0`, `0.5`,
+  and `1.0`.
+- Added `renderer_knobs_runtime_parity.py` to statically guard pinned Ghostty
+  renderer markers, Roastty renderer knob tests, background-opacity-cells tests,
+  padding-extension tests, and the CFG-223 inventory split.
+- Split `RUNTIME-008B` into:
+  - `RUNTIME-008B1`: **Oracle complete** for deterministic render knob sourcing,
+    opacity conversion/clamping, background-opacity-cells behavior,
+    window-padding-color padding decisions, and font-thicken knob sourcing.
+  - `RUNTIME-008B2`: **Gap** for background blur, real compositor opacity,
+    window padding layout pixels, cursor style shape/rendering pixels, custom
+    shader output, and broader GUI/pixel parity.
+
+Verification passed:
+
+```bash
+cargo test --manifest-path roastty/Cargo.toml from_config_sources_config_values
+cargo test --manifest-path roastty/Cargo.toml background_opacity_clamps_for_renderer_knob
+cargo test --manifest-path roastty/Cargo.toml from_config_sources_opacity_options
+cargo test --manifest-path roastty/Cargo.toml cursor_opacity_clamps_to_cursor_overlay_alpha_only
+cargo test --manifest-path roastty/Cargo.toml rebuild_bg_row_background_opacity_cells
+cargo test --manifest-path roastty/Cargo.toml refine_padding_extend_rows
+PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/renderer_knobs_runtime_parity.py
+PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/renderer_control_runtime_parity.py
+PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/font_grid_runtime_parity.py
+PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/osc7_edge_runtime_parity.py
+PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/osc7_pwd_normalization_runtime_parity.py
+PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/title_pwd_fallback_runtime_parity.py
+PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/scrollback_byte_limit_runtime_parity.py
+PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/shell_startup_rewrite_runtime_parity.py
+PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/surface_title_runtime_parity.py
+PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/config_runtime_inventory.py --output issues/0805-roastty-ghostty-parity/config-runtime-inventory.md --matrix issues/0805-roastty-ghostty-parity/config-matrix.md
+```
+
+The regenerated inventory reported:
+
+```text
+runtime_rows=42
+oracle_complete=35
+closed=37
+audit_covered=0
+incomplete=5
+gap=5
+cfg223=Gap
+```
+
+## Conclusion
+
+The deterministic config-to-renderer-state slice is now guarded without
+overclaiming visual parity. CFG-223 remains `Gap` with five runtime gaps, and
+the remaining renderer-visible work is isolated in `RUNTIME-008B2` for a later
+GUI/runtime visual experiment.
+
+## Completion Review
+
+**Reviewer:** Codex adversarial subagent with fresh context.
+
+**Verdict:** Approved.
+
+The reviewer reported no required findings for the completed implementation,
+verification, inventory split, or recorded result.

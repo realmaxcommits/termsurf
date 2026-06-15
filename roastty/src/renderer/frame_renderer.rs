@@ -465,9 +465,10 @@ impl FrameRenderKnobs {
     /// Source the render knobs from a `Config`. `faint_opacity` converts the f64
     /// `faint-opacity` to the `u8` knob — clamped to `[0, 1]` at this use site
     /// (roastty has no config finalize step) and `ceil(x × 255)` (matching upstream
-    /// `generic.zig`). `cursor_opacity` uses the same clamp-and-ceil conversion
-    /// for the cursor overlay. Only `alpha`/`overlay_alpha` are constants: the
-    /// faithful opaque `255` (upstream hardcodes non-faint text alpha to 255).
+    /// `generic.zig`). `background_opacity` and `cursor_opacity` also clamp at
+    /// renderer use; `cursor_opacity` uses clamp-and-ceil conversion for the
+    /// cursor overlay. Only `alpha`/`overlay_alpha` are constants: the faithful
+    /// opaque `255` (upstream hardcodes non-faint text alpha to 255).
     pub(crate) fn from_config(config: &Config) -> Self {
         Self {
             bold: config.bold_color.map(|c| c.to_terminal()),
@@ -476,7 +477,7 @@ impl FrameRenderKnobs {
             thicken: config.font_thicken,
             thicken_strength: config.font_thicken_strength,
             background_opacity_cells: config.background_opacity_cells,
-            background_opacity: config.background_opacity,
+            background_opacity: config.background_opacity.clamp(0.0, 1.0),
             padding_color: config.window_padding_color,
             overlay_alpha: 255,
             cursor_overlay_alpha: (config.cursor_opacity.clamp(0.0, 1.0) * 255.0).ceil() as u8,
@@ -1430,6 +1431,19 @@ mod tests {
         assert_eq!(FrameRenderKnobs::from_config(&cfg).faint_opacity, 255);
         cfg.set("faint-opacity", Some("2.0")).unwrap();
         assert_eq!(FrameRenderKnobs::from_config(&cfg).faint_opacity, 255);
+    }
+
+    #[test]
+    fn background_opacity_clamps_for_renderer_knob() {
+        let mut cfg = Config::default();
+        cfg.set("background-opacity", Some("-0.25")).unwrap();
+        assert_eq!(FrameRenderKnobs::from_config(&cfg).background_opacity, 0.0);
+
+        cfg.set("background-opacity", Some("0.5")).unwrap();
+        assert_eq!(FrameRenderKnobs::from_config(&cfg).background_opacity, 0.5);
+
+        cfg.set("background-opacity", Some("1.5")).unwrap();
+        assert_eq!(FrameRenderKnobs::from_config(&cfg).background_opacity, 1.0);
     }
 
     #[test]

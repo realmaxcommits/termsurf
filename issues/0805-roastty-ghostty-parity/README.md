@@ -659,6 +659,15 @@ experiment files until they are proven.
   requests from the broader renderer gap. Visible opacity, blur, padding, cursor
   shape/style rendering, window padding color, custom shader output, and GUI
   visual effects still need focused runtime or walkthrough proof.
+- **Deterministic renderer knobs can close before GUI pixel parity.** Experiment
+  133 split config-to-renderer-state and renderer-decision behavior from the
+  remaining visual renderer gap. `FrameRenderKnobs::from_config` now clamps
+  `background-opacity` at renderer use like pinned Ghostty, and unit/static
+  guards prove opacity conversion, `background-opacity-cells`,
+  `window-padding-color` padding-extension decisions, and `font-thicken` knob
+  sourcing. Background blur, real compositor opacity, window padding layout
+  pixels, cursor style shape/rendering pixels, custom shader output, and broader
+  GUI/pixel parity remain in `RUNTIME-008B2`.
 - **Font-size runtime updates should be idempotent.** Experiment 125 found that
   applying an unchanged font size dirtied ABI-only surfaces because
   `set_font_size_points` always requested a render. The setter now returns
@@ -1317,4 +1326,4 @@ remains open.
 - [Experiment 131: OSC 7 edge runtime](131-osc7-edge-runtime.md) — **Pass**
 - [Experiment 132: Font grid runtime](132-font-grid-runtime.md) — **Pass**
 - [Experiment 133: Renderer knobs runtime](133-renderer-knobs-runtime.md) —
-  **Designed**
+  **Pass**
