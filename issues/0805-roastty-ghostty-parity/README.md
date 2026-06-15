@@ -1710,3 +1710,5 @@ remains open.
   — **Pass**
 - [Experiment 177: Window padding pixel runtime](177-window-padding-pixel-runtime.md)
   — **Pass**
+- [Experiment 178: GUI cursor pixel runtime](178-gui-cursor-pixel-runtime.md) —
+  **Designed**
