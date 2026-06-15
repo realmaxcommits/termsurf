@@ -439,6 +439,11 @@ experiment files until they are proven.
   together by covering enum keywords, packed flag output, duration output,
   resets, and order while leaving unrelated packed flags and duration rows for
   later proof.
+- **`app-notifications` is GTK-only runtime behavior.** Pinned Ghostty documents
+  `app-notifications` as applying only to GTK, and its runtime consumers are GTK
+  config-reload and clipboard-copy toast gates. Roastty should keep
+  parser/formatter parity for the option, but there is no macOS runtime toast
+  behavior to reproduce.
 - **OSC 133 `C` is the command-start runtime boundary.** Pinned Ghostty maps
   semantic prompt `end_input_start_output` / OSC 133 `C` to `start_command` and
   OSC 133 `D` to `stop_command`; OSC 133 `B` is an end-prompt/input boundary,
@@ -674,7 +679,7 @@ experiment files until they are proven.
   title bell prefix, and separate `bell-features = system`, `audio`,
   `attention`, `title`, and `border` gates after expected Roastty renames.
   Actual OS/audio/dock/border/title side effects still need GUI or platform
-  walkthrough proof in `RUNTIME-012B2B2B2B`.
+  walkthrough proof in `RUNTIME-012B2B2B2B2`.
 - **OSC desktop notifications need a PTY event queue.** Experiment 141 found
   that Roastty already parsed OSC 9 and OSC 777 desktop notification commands,
   but the live terminal path dropped them. PTY-backed parity now queues terminal
@@ -686,8 +691,8 @@ experiment files until they are proven.
   registration, foreground presentation gate, authorization/settings gate,
   surface notification content/request lifecycle, identifier cleanup, delayed
   focused cleanup, and click-to-focus routing after expected Roastty renames.
-  App-notifications, live OS banner/sound delivery, actual bell side effects,
-  and link UI flows remain in `RUNTIME-012B2B2B2B`.
+  Live OS banner/sound delivery, actual bell side effects, and link UI flows
+  remain in `RUNTIME-012B2B2B2B2`.
 - **Desktop notification throttling is app-level runtime state.** Experiment 156
   split Ghostty's one-second desktop-notification throttle and five-second
   identical-notification suppression out of the remaining notification gap.
@@ -1529,4 +1534,4 @@ remains open.
 - [Experiment 157: Command-finished runtime](157-command-finished-runtime.md) —
   **Pass**
 - [Experiment 158: App notifications platform classification](158-app-notifications-platform-classification.md)
-  — **Designed**
+  — **Pass**

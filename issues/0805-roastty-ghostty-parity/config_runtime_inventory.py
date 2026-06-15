@@ -200,7 +200,7 @@ ROWS = [
             "semantics; refreshes existing surfaces on config update; and "
             "does not bypass terminal mouse reporting."
         ),
-        missing_evidence="None for non-link right-click-action surface runtime behavior; link-specific context-menu behavior remains tracked by RUNTIME-012B2B2B2B.",
+        missing_evidence="None for non-link right-click-action surface runtime behavior; link-specific context-menu behavior remains tracked by RUNTIME-012B2B2B2B2.",
         guard_tier="Tier 3",
         guard_command="`cargo test --manifest-path roastty/Cargo.toml right_click_action`",
     ),
@@ -1483,7 +1483,7 @@ ROWS = [
             "`bell-features = attention`, `bell-features = title`, and "
             "`bell-features = border` gates."
         ),
-        missing_evidence="None for copied macOS bell presentation plumbing source parity; actual OS/audio/dock/border/title runtime side effects remain tracked by RUNTIME-012B2B2B2B.",
+        missing_evidence="None for copied macOS bell presentation plumbing source parity; actual OS/audio/dock/border/title runtime side effects remain tracked by RUNTIME-012B2B2B2B2.",
         guard_tier="Tier 0",
         guard_command="`PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/bell_runtime_dispatch_parity.py && PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/bell_presentation_runtime_parity.py`",
     ),
@@ -1507,7 +1507,7 @@ ROWS = [
             "construction, `requireFocus` userInfo, delivery, delayed focused "
             "cleanup, and click-to-focus routing."
         ),
-        missing_evidence="None for copied macOS user-notification presentation/lifecycle source parity; live OS banner/sound behavior remains tracked by RUNTIME-012B2B2B2B.",
+        missing_evidence="None for copied macOS user-notification presentation/lifecycle source parity; live OS banner/sound behavior remains tracked by RUNTIME-012B2B2B2B2.",
         guard_tier="Tier 0",
         guard_command="`PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/macos_user_notification_runtime_parity.py`",
     ),
@@ -1562,14 +1562,39 @@ ROWS = [
             "checks pinned Ghostty source, Roastty parser/pump/surface/ABI "
             "implementation, tests, and this inventory split."
         ),
-        missing_evidence="None for command-finished runtime action dispatch; the app-level notification presentation that may consume the action remains tracked by RUNTIME-012B2B2B2B.",
+        missing_evidence="None for command-finished runtime action dispatch; the app-level notification presentation that may consume the action remains tracked by RUNTIME-012B2B2B2B2.",
         guard_tier="Tier 1",
         guard_command="`cargo test --manifest-path roastty/Cargo.toml terminal_command_event_runtime && cargo test --manifest-path roastty/Cargo.toml termio_command_event_runtime && cargo test --manifest-path roastty/Cargo.toml surface_command_finished_runtime && PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/command_finished_runtime_parity.py`",
     ),
     RuntimeRow(
-        id="RUNTIME-012B2B2B2B",
+        id="RUNTIME-012B2B2B2B1",
+        behavior="app-notifications GTK-only runtime effects",
+        ghostty_reference="`vendor/ghostty/src/config/Config.zig` `app-notifications`; `vendor/ghostty/src/apprt/gtk/class/window.zig` GTK config-reload and clipboard-copy toast gates",
+        roastty_reference="`roastty/src/config/mod.rs` parser/formatter support; no Roastty macOS runtime consumer because the pinned Ghostty runtime effect is GTK-only",
+        family="notifications",
+        status="Not applicable",
+        evidence=(
+            "Experiment 158 classifies `app-notifications` as GTK-only runtime "
+            "behavior for Roastty parity. Pinned Ghostty documents the option "
+            "with `This configuration only applies to GTK.` and runtime "
+            "consumption is in `src/apprt/gtk/class/window.zig` for "
+            "`config-reload` and `clipboard-copy` toasts. Pinned Ghostty macOS "
+            "sources do not consume the option. Roastty keeps parser and "
+            "formatter parity for the config field but has no GTK in-app toast "
+            "runtime to reproduce in the macOS app. "
+            "`app_notifications_platform_runtime_parity.py` statically checks "
+            "the pinned GTK-only documentation and consumers, absence of macOS "
+            "consumers, Roastty parser/formatter coverage, and this inventory "
+            "split."
+        ),
+        missing_evidence="None; the runtime effect is GTK-only in pinned Ghostty and therefore not applicable to Roastty's macOS runtime.",
+        guard_tier="Tier 0",
+        guard_command="`cargo test --manifest-path roastty/Cargo.toml app_notifications && PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/app_notifications_platform_runtime_parity.py`",
+    ),
+    RuntimeRow(
+        id="RUNTIME-012B2B2B2B2",
         behavior="remaining notification/link/bell GUI effects",
-        ghostty_reference="`vendor/ghostty/src/config/Config.zig` notification, link preview, and app-notification fields; `vendor/ghostty/src/Surface.zig` notification/link hover/menu paths; macOS native notification and link handling",
+        ghostty_reference="`vendor/ghostty/src/config/Config.zig` notification and link preview fields; `vendor/ghostty/src/Surface.zig` notification/link hover/menu paths; macOS native notification and link handling",
         roastty_reference="`roastty/macos/Sources` notification, pointer, preview, and context/menu handling beyond copied bell and user-notification plumbing",
         family="notifications",
         status="Gap",
@@ -1583,12 +1608,14 @@ ROWS = [
             "out copied macOS user-notification presentation and lifecycle "
             "plumbing. Experiment 156 split out desktop notification rate "
             "limiting. Experiment 157 split out command-finished terminal, "
-            "termio, surface action, and ABI dispatch. App-notifications, "
-            "actual OS banner/sound delivery, actual audio/dock/border/title "
-            "GUI effects, link hover/cursor UI, link previews in the real app, "
-            "and context/menu link flows still need focused runtime or GUI proof."
+            "termio, surface action, and ABI dispatch. Experiment 158 split "
+            "out GTK-only `app-notifications` as not applicable to Roastty's "
+            "macOS runtime. Actual OS banner/sound delivery, actual "
+            "audio/dock/border/title GUI effects, link hover/cursor UI, link "
+            "previews in the real app, and context/menu link flows still need "
+            "focused runtime or GUI proof."
         ),
-        missing_evidence="Add app-notification, live OS notification delivery, actual bell side-effect, app hover/cursor, preview, and context/menu link runtime or GUI walkthrough guards.",
+        missing_evidence="Add live OS notification delivery, actual bell side-effect, app hover/cursor, preview, and context/menu link runtime or GUI walkthrough guards.",
         guard_tier="Tier 3",
         guard_command="TBD by future CFG-223 notification/link GUI or runtime experiment.",
     ),
@@ -1692,7 +1719,8 @@ EXPECTED_IDS = [
     "RUNTIME-012B2B2A",
     "RUNTIME-012B2B2B1",
     "RUNTIME-012B2B2B2A",
-    "RUNTIME-012B2B2B2B",
+    "RUNTIME-012B2B2B2B1",
+    "RUNTIME-012B2B2B2B2",
     "RUNTIME-013",
     "RUNTIME-014",
 ]
