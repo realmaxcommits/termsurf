@@ -118,3 +118,82 @@ Fail criteria:
 
 The reviewer found no findings. The reviewer verified the design and referenced
 code paths read-only, and did not run mutating format commands.
+
+## Result
+
+**Result:** Pass.
+
+Roastty now applies `FontShapingBreak` in the active frame row-format path,
+matching pinned Ghostty's renderer-side `run_iter_opts.applyBreakConfig` step.
+The terminal-owned `shape_run_options()` path remains unchanged; row formatting
+clones each row's `RunOptions`, applies the config-derived break behavior, and
+then passes the adjusted options to shaping.
+
+The focused tests prove default `font-shaping-break = cursor` preserves the
+cursor run break, while `font-shaping-break = no-cursor` removes it before
+shaping without mutating the original snapshot row. The active-frame test proves
+`FrameRenderKnobs::from_config` sources `Config.font_shaping_break` into the
+rebuild input.
+
+The CFG-223 inventory now splits `RUNTIME-007B2` into:
+
+- `RUNTIME-007B2A`: **Oracle complete** for deterministic `font-shaping-break`
+  cursor-run break behavior through active frame row formatting.
+- `RUNTIME-007B2B`: **Gap** for remaining font renderer output effects: OpenType
+  feature/variation effects, thicken/thicken-strength rendering, metric
+  adjustment, fallback/shaping visual output, glyph metrics as seen by the
+  renderer, and broader font pixel parity.
+
+The regenerated inventory reported:
+
+```text
+runtime_rows=53
+oracle_complete=47
+closed=49
+audit_covered=0
+incomplete=4
+gap=4
+cfg223=Gap
+```
+
+Verification passed:
+
+```bash
+cargo test --manifest-path roastty/Cargo.toml font_shaping_break_runtime
+cargo test --manifest-path roastty/Cargo.toml apply_break_config_clears_cursor_x_when_off
+cargo test --manifest-path roastty/Cargo.toml next_breaks_on_cursor
+PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/font_shaping_break_runtime_parity.py
+PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/font_grid_runtime_parity.py
+PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/font_live_grid_update_runtime_parity.py
+PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/config_runtime_inventory.py --output issues/0805-roastty-ghostty-parity/config-runtime-inventory.md --matrix issues/0805-roastty-ghostty-parity/config-matrix.md
+for f in issues/0805-roastty-ghostty-parity/*_runtime_parity.py; do PYTHONDONTWRITEBYTECODE=1 python3 "$f" >/tmp/$(basename "$f").out || { echo FAIL:$f; cat /tmp/$(basename "$f").out; exit 1; }; done; echo all_runtime_parity_guards=pass
+cargo fmt --manifest-path roastty/Cargo.toml
+cargo fmt --manifest-path roastty/Cargo.toml --check
+git diff --check
+```
+
+## Conclusion
+
+The `font-shaping-break` runtime effect is now proven below GUI/pixel output:
+active row formatting applies the config to row-local shaping options in the
+same stage as pinned Ghostty. Font features, variations, thickening, metric
+adjustments, fallback visual output, glyph metrics, and broader font pixel
+parity remain in the reduced font gap.
+
+## Completion Review
+
+**Reviewer:** Codex adversarial subagent with fresh context.
+
+**Initial verdict:** Changes required.
+
+The reviewer found one required issue: `terminal_runtime_residual_audit.py`
+still checked the old `RUNTIME-007B2` row ID as a substring for the remaining
+font gap, which would also match the new complete row `RUNTIME-007B2A`.
+
+**Fix:** Updated the guard to require the exact source marker
+`id="RUNTIME-007B2B"` for the remaining font gap.
+
+**Final verdict:** Approved.
+
+The reviewer confirmed the prior finding was resolved and no new required
+findings were introduced.

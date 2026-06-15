@@ -320,7 +320,36 @@ ROWS = [
         guard_command="`cargo test --manifest-path roastty/Cargo.toml font_live_grid_update && cargo test --manifest-path roastty/Cargo.toml surface_reload_font_size && PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/font_live_grid_update_runtime_parity.py`",
     ),
     RuntimeRow(
-        id="RUNTIME-007B2",
+        id="RUNTIME-007B2A",
+        behavior="font-shaping-break cursor-run break behavior through active frame row formatting",
+        ghostty_reference="`vendor/ghostty/src/renderer/generic.zig` `DerivedConfig.font_shaping_break` and `run_iter_opts.applyBreakConfig`; `vendor/ghostty/src/font/shape.zig` `RunOptions.applyBreakConfig`",
+        roastty_reference="`roastty/src/renderer/frame_rebuild.rs` row-format `FontShapingBreak` application; `roastty/src/renderer/frame_renderer.rs` `FrameRenderKnobs::from_config`; `roastty/src/font/run.rs` `RunOptions::apply_break_config`",
+        family="font",
+        status="Oracle complete",
+        evidence=(
+            "Experiment 145 wires `font-shaping-break` into active frame row "
+            "formatting without mutating terminal-owned `shape_run_options`. "
+            "`FrameRenderKnobs::from_config` sources `config.font_shaping_break`, "
+            "`FrameRenderState::rebuild_input` passes it into row formatting, "
+            "and `FrameRebuildPlan::format_rows` applies it to a row-local "
+            "`RunOptions` clone immediately before shaping. "
+            "`font_shaping_break_runtime_default_preserves_cursor_break` proves "
+            "the default `cursor` setting keeps the viewport-derived cursor "
+            "run break, while "
+            "`font_shaping_break_runtime_no_cursor_removes_cursor_break` proves "
+            "`no-cursor` clears it before shaping without mutating the snapshot "
+            "row. `font_shaping_break_runtime_active_frame_sources_config` "
+            "proves active frame render input sources the value from `Config`. "
+            "`font_shaping_break_runtime_parity.py` statically checks pinned "
+            "Ghostty's renderer-side markers against Roastty's wiring, tests, "
+            "and inventory split."
+        ),
+        missing_evidence="None for deterministic font-shaping-break cursor-run break behavior through active frame row formatting.",
+        guard_tier="Tier 1",
+        guard_command="`cargo test --manifest-path roastty/Cargo.toml font_shaping_break_runtime && cargo test --manifest-path roastty/Cargo.toml apply_break_config_clears_cursor_x_when_off && cargo test --manifest-path roastty/Cargo.toml next_breaks_on_cursor && PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/font_shaping_break_runtime_parity.py`",
+    ),
+    RuntimeRow(
+        id="RUNTIME-007B2B",
         behavior="remaining font renderer output effects",
         ghostty_reference="`vendor/ghostty/src/config/Config.zig` font feature, variation, thicken, metric, and shaping fields; `vendor/ghostty/src/font` shaping/rendering paths",
         roastty_reference="`roastty/src/font`; `roastty/src/renderer` font shaping, metrics, glyph output, and visual renderer behavior",
@@ -332,13 +361,15 @@ ROWS = [
             "construction plus initial live renderer grid wiring, and "
             "Experiment 143 split out live renderer font-grid rebuild/update "
             "triggers after config reload and manual font-size changes. "
+            "Experiment 145 split out deterministic `font-shaping-break` "
+            "cursor-run break behavior through active frame row formatting. "
             "Remaining font parity still needs focused runtime/renderer or GUI "
             "proof for OpenType feature and variation config effects, thicken "
-            "and thicken-strength rendering, metric adjustment, shaping-break "
-            "behavior, fallback/shaping visual output, glyph metrics as seen "
-            "by the renderer, and broader renderer-visible font pixel parity."
+            "and thicken-strength rendering, metric adjustment, fallback/"
+            "shaping visual output, glyph metrics as seen by the renderer, "
+            "and broader renderer-visible font pixel parity."
         ),
-        missing_evidence="Add focused font renderer/runtime or GUI proof for feature/variation, thicken, metric adjustment, shaping-break, renderer-visible glyph output, glyph metrics, and broader font pixel parity.",
+        missing_evidence="Add focused font renderer/runtime or GUI proof for feature/variation, thicken, metric adjustment, renderer-visible glyph output, glyph metrics, and broader font pixel parity.",
         guard_tier="Tier 3",
         guard_command="TBD by future CFG-223 font renderer experiment.",
     ),
@@ -1257,7 +1288,8 @@ EXPECTED_IDS = [
     "RUNTIME-006",
     "RUNTIME-007A",
     "RUNTIME-007B1",
-    "RUNTIME-007B2",
+    "RUNTIME-007B2A",
+    "RUNTIME-007B2B",
     "RUNTIME-008A",
     "RUNTIME-008B1",
     "RUNTIME-008B2A",

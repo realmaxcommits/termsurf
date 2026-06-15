@@ -730,6 +730,12 @@ experiment files until they are proven.
   split out as `RUNTIME-008B2B1`; GUI cursor pixels, blur, compositor opacity,
   padding pixels, custom shader output, and broader GUI/pixel parity remain in
   `RUNTIME-008B2B2`.
+- **Font shaping break is renderer row-format state.** Experiment 145 split
+  `font-shaping-break` cursor-run break behavior out of the remaining font
+  renderer gap. Roastty now applies `FontShapingBreak` to row-local `RunOptions`
+  in active frame row formatting, matching pinned Ghostty's renderer-side
+  application after viewport cursor derivation. Remaining font work stays in
+  `RUNTIME-007B2B`.
 - **Font-size runtime updates should be idempotent.** Experiment 125 found that
   applying an unchanged font size dirtied ABI-only surfaces because
   `set_font_size_points` always requested a render. The setter now returns
@@ -1412,4 +1418,4 @@ remains open.
 - [Experiment 144: Cursor priority active renderer](144-cursor-priority-active-renderer.md)
   — **Pass**
 - [Experiment 145: Font shaping break runtime](145-font-shaping-break-runtime.md)
-  — **Designed**
+  — **Pass**

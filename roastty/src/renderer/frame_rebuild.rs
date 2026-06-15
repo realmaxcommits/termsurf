@@ -10,7 +10,7 @@
 //! row. Actual terminal row formatting, glyph emission, cursor drawing, and
 //! `Contents` mutation remain later integration work.
 
-use crate::config::WindowPaddingColor;
+use crate::config::{FontShapingBreak, WindowPaddingColor};
 use crate::font::atlas::Atlas;
 use crate::font::codepoint_resolver::ResolverRenderError;
 use crate::font::run::{shape_row_cached, RunOptions, Wide};
@@ -139,6 +139,7 @@ impl FrameTerminalSnapshot {
             thicken_strength: input.thicken_strength,
             background_opacity_cells: input.background_opacity_cells,
             background_opacity: input.background_opacity,
+            font_shaping_break: input.font_shaping_break,
         }
     }
 
@@ -616,6 +617,7 @@ pub(crate) struct FrameRowFormatInput<'a> {
     pub(crate) thicken_strength: u8,
     pub(crate) background_opacity_cells: bool,
     pub(crate) background_opacity: f64,
+    pub(crate) font_shaping_break: FontShapingBreak,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -633,6 +635,7 @@ pub(crate) struct FrameSnapshotRowFormatInput<'a> {
     pub(crate) thicken_strength: u8,
     pub(crate) background_opacity_cells: bool,
     pub(crate) background_opacity: f64,
+    pub(crate) font_shaping_break: FontShapingBreak,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1062,7 +1065,7 @@ impl FrameRebuildPlan {
         self.validate_format_rows_input(&input)?;
 
         self.drive_row_rebuilds(contents, row_dirty, |contents, row| {
-            let opts = &input.rows[row as usize];
+            let opts = row_format_options(&input, row);
             let row_highlights = input
                 .highlights
                 .get(row as usize)
@@ -1095,7 +1098,7 @@ impl FrameRebuildPlan {
                 input.background_opacity,
             );
 
-            let runs = shape_row_cached(opts, &mut grid.resolver, &mut grid.shaper_cache);
+            let runs = shape_row_cached(&opts, &mut grid.resolver, &mut grid.shaper_cache);
             rebuild_row(
                 contents,
                 grid,
@@ -1711,6 +1714,12 @@ fn rgb_array(rgb: Rgb) -> [u8; 3] {
     [rgb.r, rgb.g, rgb.b]
 }
 
+fn row_format_options(input: &FrameRowFormatInput<'_>, row: Unit) -> RunOptions {
+    let mut opts = input.rows[usize::from(row)].clone();
+    opts.apply_break_config(input.font_shaping_break);
+    opts
+}
+
 fn preedit_width(codepoints: &[crate::renderer::state::Codepoint]) -> Unit {
     codepoints
         .iter()
@@ -2018,6 +2027,7 @@ mod tests {
             thicken_strength: 255,
             background_opacity_cells: false,
             background_opacity: 1.0,
+            font_shaping_break: FontShapingBreak::default(),
         }
     }
 
@@ -2040,6 +2050,7 @@ mod tests {
             thicken_strength: 77,
             background_opacity_cells: true,
             background_opacity: 0.42,
+            font_shaping_break: FontShapingBreak::default(),
         }
     }
 
@@ -2098,6 +2109,43 @@ mod tests {
         assert_eq!(input.thicken_strength, 77);
         assert_eq!(input.background_opacity_cells, true);
         assert_eq!(input.background_opacity, 0.42);
+        assert_eq!(input.font_shaping_break, FontShapingBreak::default());
+    }
+
+    #[test]
+    fn font_shaping_break_runtime_default_preserves_cursor_break() {
+        let rows = vec![RunOptions {
+            cells: vec![
+                run_cell('A' as u32, Color::None),
+                run_cell('B' as u32, Color::None),
+            ],
+            cursor_x: Some(1),
+            ..Default::default()
+        }];
+        let input = format_input(&rows);
+
+        let opts = row_format_options(&input, 0);
+
+        assert_eq!(opts.cursor_x, Some(1));
+    }
+
+    #[test]
+    fn font_shaping_break_runtime_no_cursor_removes_cursor_break() {
+        let rows = vec![RunOptions {
+            cells: vec![
+                run_cell('A' as u32, Color::None),
+                run_cell('B' as u32, Color::None),
+            ],
+            cursor_x: Some(1),
+            ..Default::default()
+        }];
+        let mut input = format_input(&rows);
+        input.font_shaping_break = FontShapingBreak { cursor: false };
+
+        let opts = row_format_options(&input, 0);
+
+        assert_eq!(opts.cursor_x, None);
+        assert_eq!(input.rows[0].cursor_x, Some(1));
     }
 
     #[test]

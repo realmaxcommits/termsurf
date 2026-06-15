@@ -7,7 +7,7 @@
 //! state, wiring into `surface.draw()`, and clearing the terminal's dirty bits
 //! are all later slices.
 
-use crate::config::{Config, WindowPaddingColor};
+use crate::config::{Config, FontShapingBreak, WindowPaddingColor};
 use crate::font::run::Wide;
 use crate::font::shared_grid::SharedGrid;
 use crate::renderer::cell::{row_never_extend_bg_flags, Contents, Highlight, SelectionConfig};
@@ -461,6 +461,7 @@ pub(crate) struct FrameRenderKnobs {
     pub(crate) background_opacity_cells: bool,
     pub(crate) background_opacity: f64,
     pub(crate) padding_color: WindowPaddingColor,
+    pub(crate) font_shaping_break: FontShapingBreak,
     pub(crate) overlay_alpha: u8,
     pub(crate) cursor_overlay_alpha: u8,
     pub(crate) selection_config: SelectionConfig,
@@ -484,6 +485,7 @@ impl FrameRenderKnobs {
             background_opacity_cells: config.background_opacity_cells,
             background_opacity: config.background_opacity.clamp(0.0, 1.0),
             padding_color: config.window_padding_color,
+            font_shaping_break: config.font_shaping_break,
             overlay_alpha: 255,
             cursor_overlay_alpha: (config.cursor_opacity.clamp(0.0, 1.0) * 255.0).ceil() as u8,
             selection_config: SelectionConfig::from_config(config),
@@ -617,6 +619,7 @@ impl FrameRenderState {
                 thicken_strength: knobs.thicken_strength,
                 background_opacity_cells: knobs.background_opacity_cells,
                 background_opacity: knobs.background_opacity,
+                font_shaping_break: knobs.font_shaping_break,
             },
             text_overlay: FrameSnapshotTextOverlayInput {
                 cursor: self
@@ -868,6 +871,7 @@ mod tests {
                 thicken_strength: 77,
                 background_opacity_cells: true,
                 background_opacity: 0.42,
+                font_shaping_break: FontShapingBreak::default(),
             },
             text_overlay: FrameSnapshotTextOverlayInput {
                 cursor: Some(FrameSnapshotCursorOverlayInput {
@@ -1227,6 +1231,7 @@ mod tests {
             background_opacity_cells: true,
             background_opacity: 0.42,
             padding_color: WindowPaddingColor::Extend,
+            font_shaping_break: FontShapingBreak::default(),
             overlay_alpha: 219,
             cursor_overlay_alpha: 211,
             selection_config: SelectionConfig::default(),
@@ -1278,6 +1283,22 @@ mod tests {
         assert!(app.rows.reset_contents);
         assert_eq!(app.rows.rebuilt_rows, vec![0, 1, 2]);
         assert_eq!(renderer.current_grid(), grid(4, 3));
+    }
+
+    #[test]
+    fn font_shaping_break_runtime_active_frame_sources_config() {
+        let term = terminal(4, 3);
+        let mut config = Config::default();
+        config.font_shaping_break = FontShapingBreak { cursor: false };
+        let knobs = FrameRenderKnobs::from_config(&config);
+        let state = FrameRenderState::from_terminal(&term);
+
+        let input = state.rebuild_input(&knobs);
+
+        assert_eq!(
+            input.row_format.font_shaping_break,
+            FontShapingBreak { cursor: false }
+        );
     }
 
     #[test]
