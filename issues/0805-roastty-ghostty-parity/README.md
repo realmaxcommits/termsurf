@@ -1471,3 +1471,5 @@ remains open.
   — **Pass**
 - [Experiment 151: macOS glass visual runtime](151-macos-glass-visual-runtime.md)
   — **Pass**
+- [Experiment 152: Command palette runtime](152-command-palette-runtime.md) —
+  **Designed**
