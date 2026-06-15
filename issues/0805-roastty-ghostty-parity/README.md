@@ -1554,3 +1554,5 @@ remains open.
   — **Pass**
 - [Experiment 160: Link preview context runtime](160-link-preview-context-runtime.md)
   — **Pass**
+- [Experiment 161: Link hover preview dispatch](161-link-hover-preview-dispatch.md)
+  — **Designed**
