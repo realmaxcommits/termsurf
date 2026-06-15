@@ -3734,6 +3734,7 @@ impl Surface {
                 terminal.set_title_report(parsed.title_report);
                 terminal.set_enquiry_response(parsed.enquiry_response.as_bytes().to_vec());
                 terminal.set_osc_color_report_format(parsed.osc_color_report_format);
+                terminal.set_clipboard_write(parsed.clipboard_write);
             });
             self.dirty = true;
         }
@@ -4002,6 +4003,7 @@ impl Surface {
             title_report: config.title_report,
             enquiry_response: config.enquiry_response.as_bytes().to_vec(),
             osc_color_report_format: config.osc_color_report_format,
+            clipboard_write: config.clipboard_write,
         };
 
         let termio = match (surface_command, initial_command, config_command) {
@@ -22350,6 +22352,51 @@ mod tests {
                     .unwrap();
                 terminal.pty_response().to_vec()
             })
+    }
+
+    fn surface_device_attributes_response(surface: RoasttySurface) -> Vec<u8> {
+        surface_from_handle(surface)
+            .unwrap()
+            .termio_worker
+            .as_ref()
+            .unwrap()
+            .with_termio_mut(|termio| {
+                let terminal = termio.terminal_mut();
+                terminal.clear_pty_response();
+                terminal.next_slice(b"\x1b[c").unwrap();
+                terminal.pty_response().to_vec()
+            })
+    }
+
+    #[test]
+    fn surface_device_attributes_clipboard_write_runtime_startup_and_update() {
+        let _guard = pty_command_lock();
+
+        let config = new_test_config_from_str("clipboard-write = deny\ncommand = sleep 5\n");
+        let app = roastty_app_new(ptr::null(), config);
+        let surface = new_test_surface(app);
+        assert_eq!(roastty_surface_start(surface), ROASTTY_SUCCESS);
+        assert_eq!(surface_device_attributes_response(surface), b"\x1b[?62;22c");
+
+        let ask = new_test_config_from_str("clipboard-write = ask\n");
+        roastty_app_update_config(app, ask);
+        assert_eq!(
+            surface_device_attributes_response(surface),
+            b"\x1b[?62;22;52c"
+        );
+
+        let allow = new_test_config_from_str("clipboard-write = allow\n");
+        roastty_app_update_config(app, allow);
+        assert_eq!(
+            surface_device_attributes_response(surface),
+            b"\x1b[?62;22;52c"
+        );
+
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+        roastty_config_free(allow);
+        roastty_config_free(ask);
+        roastty_config_free(config);
     }
 
     #[test]

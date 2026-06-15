@@ -740,7 +740,38 @@ ROWS = [
         guard_command="`cargo test --manifest-path roastty/Cargo.toml terminal_stream_osc_color_report_format && cargo test --manifest-path roastty/Cargo.toml termio_osc_color_report_format && cargo test --manifest-path roastty/Cargo.toml surface_osc_color_report_format && PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/osc_color_report_format_runtime_parity.py`",
     ),
     RuntimeRow(
-        id="RUNTIME-009B2B2B3B2B2B",
+        id="RUNTIME-009B2B2B3B2B2B1",
+        behavior="`clipboard-write` primary device-attributes clipboard capability advertisement",
+        ghostty_reference="`vendor/ghostty/src/config/Config.zig` `clipboard-write`; `vendor/ghostty/src/termio/Termio.zig` derived config; `vendor/ghostty/src/termio/stream_handler.zig` `changeConfig` and `deviceAttributes` primary response",
+        roastty_reference="`roastty/src/config/mod.rs` `clipboard-write`; `roastty/src/terminal/device_attributes.rs`; `roastty/src/terminal/terminal.rs`; `roastty/src/termio.rs`; `roastty/src/lib.rs` surface config startup/update wiring",
+        family="terminal",
+        status="Oracle complete",
+        evidence=(
+            "Experiment 137 proves `clipboard-write` primary device-attributes "
+            "runtime parity. "
+            "`terminal_stream_device_attributes_clipboard_write_config_and_runtime_update` "
+            "proves `clipboard-write = deny` omits feature `52`, while `ask` "
+            "and `allow` include feature `52`, and that runtime terminal "
+            "updates affect subsequent primary DA and DECID responses. "
+            "`terminal_stream_device_attributes_clipboard_write_callback_precedence` "
+            "proves the embedded callback path remains an override for direct "
+            "terminal users. "
+            "`termio_device_attributes_clipboard_write_reaches_child_pty` "
+            "proves a PTY-backed child can read the configured deny response. "
+            "`surface_device_attributes_clipboard_write_runtime_startup_and_update` "
+            "proves parsed app config reaches initial surfaces and live app "
+            "config updates. "
+            "`clipboard_device_attributes_runtime_parity.py` statically checks "
+            "pinned Ghostty config, derived-config, `changeConfig`, and "
+            "device-attributes markers plus Roastty parser/runtime/update "
+            "guards."
+        ),
+        missing_evidence="None for `clipboard-write` primary device-attributes clipboard capability advertisement.",
+        guard_tier="Tier 2",
+        guard_command="`cargo test --manifest-path roastty/Cargo.toml terminal_stream_device_attributes_clipboard_write && cargo test --manifest-path roastty/Cargo.toml termio_device_attributes_clipboard_write && cargo test --manifest-path roastty/Cargo.toml surface_device_attributes_clipboard_write && PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/clipboard_device_attributes_runtime_parity.py`",
+    ),
+    RuntimeRow(
+        id="RUNTIME-009B2B2B3B2B2B2",
         behavior="other remaining terminal behavior effects",
         ghostty_reference="remaining `vendor/ghostty/src/termio/stream_handler.zig` terminal behavior paths",
         roastty_reference="`roastty/src/lib.rs` terminal/termio config use; `roastty/src/termio.rs`; `roastty/src/terminal`",
@@ -748,7 +779,7 @@ ROWS = [
         status="Gap",
         evidence=(
             "Experiments 117, 122, 124, 126, 127, 128, 129, 130, 131, 135, "
-            "and 136 "
+            "136, and 137 "
             "split out zero/no-history scrollback, nonzero scrollback byte "
             "quota, alternate-screen no-scrollback, CSI `21t` title-report "
             "gating, shell-integration feature env and terminal identity, "
@@ -758,7 +789,9 @@ ROWS = [
             "OSC 7 PWD validation, path normalization, surface PWD dispatch, "
             "title fallback path behavior, and remaining OSC 7 URI edge "
             "semantics, config-driven ENQ `enquiry-response` replies, and "
-            "`osc-color-report-format` OSC color query replies. "
+            "`osc-color-report-format` OSC color query replies, and "
+            "`clipboard-write` primary device-attributes clipboard capability "
+            "advertisement. "
             "Other remaining terminal behavior toggles still need focused "
             "CFG-223 runtime proof or fixes."
         ),
@@ -1061,7 +1094,8 @@ EXPECTED_IDS = [
     "RUNTIME-009B2B2B3B2A",
     "RUNTIME-009B2B2B3B2B1",
     "RUNTIME-009B2B2B3B2B2A",
-    "RUNTIME-009B2B2B3B2B2B",
+    "RUNTIME-009B2B2B3B2B2B1",
+    "RUNTIME-009B2B2B3B2B2B2",
     "RUNTIME-010A",
     "RUNTIME-010B1",
     "RUNTIME-010B2A",

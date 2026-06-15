@@ -43,6 +43,7 @@ pub(crate) struct TermioSpawnOptions {
     pub(crate) title_report: bool,
     pub(crate) enquiry_response: Vec<u8>,
     pub(crate) osc_color_report_format: crate::config::OscColorReportFormat,
+    pub(crate) clipboard_write: crate::config::ClipboardAccess,
 }
 
 impl Default for TermioSpawnOptions {
@@ -61,6 +62,7 @@ impl Default for TermioSpawnOptions {
             title_report: false,
             enquiry_response: Vec::new(),
             osc_color_report_format: crate::config::OscColorReportFormat::Bits16,
+            clipboard_write: crate::config::ClipboardAccess::Allow,
         }
     }
 }
@@ -196,6 +198,7 @@ impl Termio {
                 title_report: options.title_report,
                 enquiry_response: options.enquiry_response,
                 osc_color_report_format: options.osc_color_report_format,
+                clipboard_write: options.clipboard_write,
             },
         )?;
         terminal.set_palette_default(Some(palette_tuple(options.palette)));
@@ -820,13 +823,13 @@ mod tests {
         let mut termio = spawn_shell(
             "stty raw -echo min 0 time 10; \
              printf '\\033[c'; \
-             response=$(dd bs=1 count=9 2>/dev/null); \
-             expected=$(printf '\\033[?62;22c'); \
+             response=$(dd bs=1 count=12 2>/dev/null); \
+             expected=$(printf '\\033[?62;22;52c'); \
              if [ \"$response\" = \"$expected\" ]; then printf da-ok; else printf da-bad; fi",
         );
 
         let first = pump_until(&mut termio, |_, pump| pump.bytes_written > 0);
-        assert_eq!(first.bytes_written, b"\x1b[?62;22c".len());
+        assert_eq!(first.bytes_written, b"\x1b[?62;22;52c".len());
         assert_eq!(first.pending_write_bytes, 0);
         assert_eq!(termio.pending_write_bytes(), 0);
 
@@ -834,6 +837,34 @@ mod tests {
             termio.terminal().plain_screen(false).contains("da-ok")
         });
         assert!(termio.terminal().plain_screen(false).contains("da-ok"));
+    }
+
+    #[test]
+    fn termio_device_attributes_clipboard_write_reaches_child_pty() {
+        let _guard = pty_command_lock();
+        let mut termio = Termio::spawn_with_options(
+            "/bin/sh",
+            [
+                "-c",
+                "stty raw -echo min 0 time 10; \
+                 printf '\\033[c'; \
+                 response=$(dd bs=1 count=9 2>/dev/null); \
+                 expected=$(printf '\\033[?62;22c'); \
+                 if [ \"$response\" = \"$expected\" ]; then printf deny-ok; else printf 'bad:%s' \"$response\"; fi",
+            ],
+            TermioSpawnOptions {
+                clipboard_write: crate::config::ClipboardAccess::Deny,
+                ..TermioSpawnOptions::default()
+            },
+            test_size(),
+        )
+        .expect("spawn termio with clipboard-write deny");
+
+        pump_until(&mut termio, |termio, _| {
+            termio.terminal().plain_screen(false).contains("deny-ok")
+        });
+
+        assert!(termio.terminal().plain_screen(false).contains("deny-ok"));
     }
 
     #[test]

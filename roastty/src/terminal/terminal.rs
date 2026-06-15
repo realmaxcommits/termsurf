@@ -39,7 +39,7 @@ use super::stream::{self, Action, Handler};
 use super::style;
 use super::tabstops;
 use super::tmux;
-use crate::config::OscColorReportFormat;
+use crate::config::{ClipboardAccess, OscColorReportFormat};
 use crate::font::run::RunOptions;
 
 const TABSTOP_INTERVAL: usize = 8;
@@ -69,6 +69,7 @@ pub(crate) struct Terminal {
     title_report: bool,
     enquiry_response: Vec<u8>,
     osc_color_report_format: OscColorReportFormat,
+    clipboard_write: ClipboardAccess,
     next_implicit_hyperlink_id: u32,
     previous_char: Option<char>,
     pending_clipboard_events: Vec<TerminalClipboardEvent>,
@@ -795,6 +796,7 @@ pub(crate) struct TerminalInitOptions {
     pub(crate) title_report: bool,
     pub(crate) enquiry_response: Vec<u8>,
     pub(crate) osc_color_report_format: OscColorReportFormat,
+    pub(crate) clipboard_write: ClipboardAccess,
 }
 
 impl Default for TerminalInitOptions {
@@ -805,6 +807,7 @@ impl Default for TerminalInitOptions {
             title_report: false,
             enquiry_response: Vec::new(),
             osc_color_report_format: OscColorReportFormat::Bits16,
+            clipboard_write: ClipboardAccess::Allow,
         }
     }
 }
@@ -826,6 +829,7 @@ struct TerminalStreamHandler<'a> {
     title_report: &'a bool,
     enquiry_response: &'a Vec<u8>,
     osc_color_report_format: &'a OscColorReportFormat,
+    clipboard_write: &'a ClipboardAccess,
     next_implicit_hyperlink_id: &'a mut u32,
     previous_char: &'a mut Option<char>,
     dcs: &'a mut dcs::Handler,
@@ -1095,6 +1099,7 @@ impl Terminal {
             title_report: options.title_report,
             enquiry_response: options.enquiry_response,
             osc_color_report_format: options.osc_color_report_format,
+            clipboard_write: options.clipboard_write,
             next_implicit_hyperlink_id: 0,
             previous_char: None,
             pending_clipboard_events: Vec::new(),
@@ -1128,6 +1133,7 @@ impl Terminal {
             title_report,
             enquiry_response,
             osc_color_report_format,
+            clipboard_write,
             next_implicit_hyperlink_id,
             previous_char,
             pending_clipboard_events,
@@ -1154,6 +1160,7 @@ impl Terminal {
             title_report,
             enquiry_response,
             osc_color_report_format,
+            clipboard_write,
             next_implicit_hyperlink_id,
             previous_char,
             dcs,
@@ -1261,6 +1268,10 @@ impl Terminal {
 
     pub(crate) fn set_osc_color_report_format(&mut self, format: OscColorReportFormat) {
         self.osc_color_report_format = format;
+    }
+
+    pub(crate) fn set_clipboard_write(&mut self, access: ClipboardAccess) {
+        self.clipboard_write = access;
     }
 
     pub(crate) fn set_size_callback(&mut self, callback: Option<TerminalSizeCallback>) {
@@ -3878,8 +3889,15 @@ impl TerminalStreamHandler<'_> {
 
     fn device_attributes(
         &mut self,
-        _request: device_attributes::Request,
+        request: device_attributes::Request,
     ) -> device_attributes::Attributes {
+        if request == device_attributes::Request::Primary
+            && self.effects.device_attributes.is_none()
+        {
+            return device_attributes::Attributes::with_clipboard_write(
+                !self.clipboard_write.denied(),
+            );
+        }
         let Some(callback) = self.effects.device_attributes else {
             return device_attributes::Attributes::default();
         };
@@ -7765,6 +7783,24 @@ mod tests {
         }
     }
 
+    unsafe extern "C" fn test_device_attributes_callback(
+        _: *mut c_void,
+        _: *mut c_void,
+        attrs: *mut TerminalDeviceAttributes,
+    ) -> bool {
+        unsafe {
+            (*attrs).primary.conformance_level = 64;
+            (*attrs).primary.features[0] = 1;
+            (*attrs).primary.features[1] = 6;
+            (*attrs).primary.num_features = 2;
+            (*attrs).secondary.device_type = 2;
+            (*attrs).secondary.firmware_version = 3;
+            (*attrs).secondary.rom_cartridge = 4;
+            (*attrs).tertiary.unit_id = 0xAABBCCDD;
+        }
+        true
+    }
+
     #[test]
     fn terminal_stream_enquiry_response_configured_and_runtime_update() {
         let mut terminal = Terminal::init_with_options(
@@ -7814,7 +7850,7 @@ mod tests {
         let mut terminal = Terminal::init(10, 2, None).unwrap();
 
         terminal.next_slice(b"\x1b[c").unwrap();
-        assert_eq!(terminal.take_pty_response_for_tests(), b"\x1b[?62;22c");
+        assert_eq!(terminal.take_pty_response_for_tests(), b"\x1b[?62;22;52c");
 
         terminal.next_slice(b"\x1b[>c").unwrap();
         assert_eq!(terminal.take_pty_response_for_tests(), b"\x1b[>1;0;0c");
@@ -7826,7 +7862,57 @@ mod tests {
         );
 
         terminal.next_slice(b"\x1bZ").unwrap();
-        assert_eq!(terminal.take_pty_response_for_tests(), b"\x1b[?62;22c");
+        assert_eq!(terminal.take_pty_response_for_tests(), b"\x1b[?62;22;52c");
+    }
+
+    #[test]
+    fn terminal_stream_device_attributes_clipboard_write_config_and_runtime_update() {
+        let mut terminal = Terminal::init_with_options(
+            10,
+            2,
+            None,
+            TerminalInitOptions {
+                clipboard_write: ClipboardAccess::Deny,
+                ..TerminalInitOptions::default()
+            },
+        )
+        .unwrap();
+
+        terminal.next_slice(b"\x1b[c\x1bZ").unwrap();
+        assert_eq!(
+            terminal.take_pty_response_for_tests(),
+            b"\x1b[?62;22c\x1b[?62;22c"
+        );
+
+        terminal.set_clipboard_write(ClipboardAccess::Ask);
+        terminal.next_slice(b"\x1b[c").unwrap();
+        assert_eq!(terminal.take_pty_response_for_tests(), b"\x1b[?62;22;52c");
+
+        terminal.set_clipboard_write(ClipboardAccess::Allow);
+        terminal.next_slice(b"\x1b[c").unwrap();
+        assert_eq!(terminal.take_pty_response_for_tests(), b"\x1b[?62;22;52c");
+    }
+
+    #[test]
+    fn terminal_stream_device_attributes_clipboard_write_callback_precedence() {
+        let mut terminal = Terminal::init_with_options(
+            10,
+            2,
+            None,
+            TerminalInitOptions {
+                clipboard_write: ClipboardAccess::Deny,
+                ..TerminalInitOptions::default()
+            },
+        )
+        .unwrap();
+        terminal.set_device_attributes_callback(Some(test_device_attributes_callback));
+
+        terminal.next_slice(b"\x1b[c\x1b[>c\x1b[=c").unwrap();
+
+        assert_eq!(
+            terminal.take_pty_response_for_tests(),
+            b"\x1b[?64;1;6c\x1b[>2;3;4c\x1bP!|AABBCCDD\x1b\\"
+        );
     }
 
     #[test]

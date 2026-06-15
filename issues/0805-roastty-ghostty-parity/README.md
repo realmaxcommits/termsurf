@@ -280,6 +280,11 @@ experiment files until they are proven.
   `zig build -Demit-macos-app=false` and
   `nu macos/build.nu --configuration Debug`; the old build-only
   `macos-only-xcframework.patch` is no longer needed for the baseline.
+- **Device attributes can be config-derived terminal state.** Pinned Ghostty's
+  primary device-attributes reply advertises feature `52` only when
+  `clipboard-write != deny`. Roastty now treats that as terminal runtime state:
+  deny suppresses `52`, while ask and allow advertise it. This is distinct from
+  app-level clipboard read/write policy tests.
 - **The pinned A/B build/render rig works.** Experiment 1 proved the debug
   Ghostty and Roastty apps can both build, launch side by side, render the same
   startup recipe through the live A/B smoke harness, capture comparable
@@ -1351,4 +1356,4 @@ remains open.
 - [Experiment 136: OSC color report format runtime](136-osc-color-report-format-runtime.md)
   — **Pass**
 - [Experiment 137: Clipboard device attributes runtime](137-clipboard-device-attributes-runtime.md)
-  — **Designed**
+  — **Pass**

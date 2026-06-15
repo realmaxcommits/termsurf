@@ -68,6 +68,14 @@ impl Default for Tertiary {
 }
 
 impl Attributes {
+    pub(super) fn with_clipboard_write(enabled: bool) -> Self {
+        let mut attrs = Self::default();
+        if enabled {
+            attrs.primary.features.push(52);
+        }
+        attrs
+    }
+
     pub(super) fn encode_vt(self, request: Request) -> String {
         match request {
             Request::Primary => self.primary.encode_vt(),
@@ -111,6 +119,14 @@ mod tests {
     fn device_attributes_primary_default_and_custom_encoding() {
         assert_eq!(
             Attributes::default().encode_vt(Request::Primary),
+            "\x1b[?62;22c"
+        );
+        assert_eq!(
+            Attributes::with_clipboard_write(true).encode_vt(Request::Primary),
+            "\x1b[?62;22;52c"
+        );
+        assert_eq!(
+            Attributes::with_clipboard_write(false).encode_vt(Request::Primary),
             "\x1b[?62;22c"
         );
         let attrs = Attributes {

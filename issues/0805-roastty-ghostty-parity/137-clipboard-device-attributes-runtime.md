@@ -133,3 +133,67 @@ Fail criteria:
 **Verdict:** Approved.
 
 The reviewer found no required, optional, or nit findings.
+
+## Result
+
+**Result:** Pass.
+
+Roastty now carries `clipboard-write` into terminal-owned runtime state and uses
+that state for primary device-attributes replies when no embedded
+device-attributes callback is installed. `clipboard-write = deny` omits feature
+`52`; `ask` and `allow` advertise feature `52`, matching pinned Ghostty's
+`clipboard_write != .deny` behavior. `DECID` follows the same primary response
+path as `CSI c`.
+
+The implementation preserves callback precedence for direct terminal users,
+threads startup config through `TermioSpawnOptions`, and applies live config
+updates to existing surfaces. The CFG-223 inventory now splits
+`RUNTIME-009B2B2B3B2B2B` into:
+
+- `RUNTIME-009B2B2B3B2B2B1`: **Oracle complete** for `clipboard-write` primary
+  device-attributes clipboard capability advertisement.
+- `RUNTIME-009B2B2B3B2B2B2`: **Gap** for other remaining terminal behavior
+  effects.
+
+Verification passed:
+
+```bash
+cargo fmt --manifest-path roastty/Cargo.toml
+cargo test --manifest-path roastty/Cargo.toml terminal_stream_device_attributes_clipboard_write
+cargo test --manifest-path roastty/Cargo.toml termio_device_attributes_clipboard_write
+cargo test --manifest-path roastty/Cargo.toml surface_device_attributes_clipboard_write
+cargo test --manifest-path roastty/Cargo.toml terminal_response_flushes_to_child_without_dropping_bytes
+cargo test --manifest-path roastty/Cargo.toml terminal_stream_query_response_device_attributes_and_decid
+PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/config_runtime_inventory.py --output issues/0805-roastty-ghostty-parity/config-runtime-inventory.md --matrix issues/0805-roastty-ghostty-parity/config-matrix.md
+for f in issues/0805-roastty-ghostty-parity/*_runtime_parity.py; do PYTHONDONTWRITEBYTECODE=1 python3 "$f" >/tmp/$(basename "$f").out || { echo FAIL:$f; cat /tmp/$(basename "$f").out; exit 1; }; done; echo all_runtime_parity_guards=pass
+```
+
+The regenerated inventory reported:
+
+```text
+runtime_rows=46
+oracle_complete=39
+closed=41
+audit_covered=0
+incomplete=5
+gap=5
+cfg223=Gap
+```
+
+## Conclusion
+
+Primary device attributes are config-derived terminal runtime state in pinned
+Ghostty, not only a static terminal capability string. Roastty now mirrors that
+for `clipboard-write`: deny suppresses feature `52`, while ask and allow
+advertise it. This is separate from app-level clipboard action policy, which
+remains owned by `RUNTIME-001`.
+
+## Completion Review
+
+**Reviewer:** Codex adversarial subagent with fresh context.
+
+**Verdict:** Approved.
+
+The reviewer found no findings and confirmed the result commit had not yet been
+made. The reviewer specifically confirmed that `HEAD` was still
+`c684dd278 Plan clipboard DA parity` with result changes uncommitted.
