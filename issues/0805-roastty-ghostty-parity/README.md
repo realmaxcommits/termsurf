@@ -1576,3 +1576,5 @@ remains open.
   — **Pass**
 - [Experiment 163: Custom shader output runtime](163-custom-shader-output-runtime.md)
   — **Pass**
+- [Experiment 164: Metal cursor pixel readback](164-metal-cursor-pixel-readback.md)
+  — **Designed**
