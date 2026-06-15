@@ -4148,6 +4148,12 @@ impl Surface {
         self.wakeup_app();
     }
 
+    fn invalidate_live_font_grid(&mut self) {
+        if self.has_live_view() {
+            self.renderer = None;
+        }
+    }
+
     fn has_live_view(&self) -> bool {
         !self.nsview.is_null()
     }
@@ -5682,6 +5688,7 @@ impl Surface {
             return;
         }
         self.font_size_points = points;
+        self.invalidate_live_font_grid();
         self.request_render();
     }
 
@@ -23576,6 +23583,103 @@ mod tests {
         assert_eq!(WAKEUP_COUNT.load(Ordering::SeqCst), 0);
 
         roastty_config_free(config);
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+    }
+
+    #[test]
+    fn font_live_grid_update_manual_size_changes_dirty_and_wake_live_view() {
+        let _guard = WAKEUP_LOCK.lock().unwrap();
+        let app = new_test_app_with_wakeup(0x184);
+        let surface = new_test_surface(app);
+        let surface_ref = surface_from_handle(surface).unwrap();
+        surface_ref.nsview = std::ptr::NonNull::<c_void>::dangling().as_ptr();
+        surface_ref.dirty = false;
+
+        assert!(surface_binding_action(surface, b"increase_font_size:2"));
+
+        let surface_ref = surface_from_handle(surface).unwrap();
+        assert_eq!(surface_ref.font_size_points, DEFAULT_FONT_SIZE_POINTS + 2.0);
+        assert!(surface_ref.font_size_adjusted);
+        assert!(surface_ref.dirty);
+        assert!(surface_ref.renderer.is_none());
+        assert_eq!(WAKEUP_COUNT.load(Ordering::SeqCst), 1);
+        assert_eq!(WAKEUP_USERDATA.load(Ordering::SeqCst), 0x184);
+
+        surface_ref.dirty = false;
+        assert!(surface_binding_action(surface, b"reset_font_size"));
+
+        let surface_ref = surface_from_handle(surface).unwrap();
+        assert_eq!(surface_ref.font_size_points, DEFAULT_FONT_SIZE_POINTS);
+        assert!(!surface_ref.font_size_adjusted);
+        assert!(surface_ref.dirty);
+        assert!(surface_ref.renderer.is_none());
+        assert_eq!(WAKEUP_COUNT.load(Ordering::SeqCst), 2);
+        assert_eq!(WAKEUP_USERDATA.load(Ordering::SeqCst), 0x184);
+
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+    }
+
+    #[test]
+    fn font_live_grid_update_same_size_is_idempotent() {
+        let _guard = WAKEUP_LOCK.lock().unwrap();
+        let app = new_test_app_with_wakeup(0x185);
+        let surface = new_test_surface(app);
+        let surface_ref = surface_from_handle(surface).unwrap();
+        surface_ref.nsview = std::ptr::NonNull::<c_void>::dangling().as_ptr();
+        surface_ref.dirty = false;
+
+        assert!(surface_binding_action(surface, b"set_font_size:13"));
+
+        let surface_ref = surface_from_handle(surface).unwrap();
+        assert_eq!(surface_ref.font_size_points, DEFAULT_FONT_SIZE_POINTS);
+        assert!(surface_ref.font_size_adjusted);
+        assert!(!surface_ref.dirty);
+        assert!(surface_ref.renderer.is_none());
+        assert_eq!(WAKEUP_COUNT.load(Ordering::SeqCst), 0);
+
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+    }
+
+    #[test]
+    fn font_live_grid_update_config_reload_preserves_state_and_rebuild_trigger() {
+        let _guard = WAKEUP_LOCK.lock().unwrap();
+        let app = new_test_app_with_wakeup(0x186);
+        let mut surface_config = roastty_surface_config_new();
+        surface_config.font_size = 12.0;
+        let surface = new_test_surface_with_config(app, &surface_config);
+        let surface_ref = surface_from_handle(surface).unwrap();
+        surface_ref.nsview = std::ptr::NonNull::<c_void>::dangling().as_ptr();
+        surface_ref.dirty = false;
+
+        let reload_18 = new_test_config_with_font_size(18.0);
+        roastty_surface_update_config(surface, reload_18);
+        let surface_ref = surface_from_handle(surface).unwrap();
+        assert_eq!(surface_ref.font_size_points, 18.0);
+        assert_eq!(surface_ref.original_font_size_points, 18.0);
+        assert!(!surface_ref.font_size_adjusted);
+        assert!(surface_ref.dirty);
+        assert!(surface_ref.renderer.is_none());
+        assert_eq!(WAKEUP_COUNT.load(Ordering::SeqCst), 2);
+        assert_eq!(WAKEUP_USERDATA.load(Ordering::SeqCst), 0x186);
+
+        surface_ref.dirty = false;
+        assert!(surface_binding_action(surface, b"set_font_size:20"));
+        let reload_15 = new_test_config_with_font_size(15.0);
+        roastty_surface_update_config(surface, reload_15);
+        let surface_ref = surface_from_handle(surface).unwrap();
+        assert_eq!(surface_ref.font_size_points, 20.0);
+        assert_eq!(surface_ref.original_font_size_points, 15.0);
+        assert!(surface_ref.font_size_adjusted);
+        assert!(surface_ref.dirty);
+        assert!(surface_ref.renderer.is_none());
+        assert_eq!(WAKEUP_COUNT.load(Ordering::SeqCst), 4);
+        assert_eq!(WAKEUP_USERDATA.load(Ordering::SeqCst), 0x186);
+
+        roastty_config_free(reload_15);
+        roastty_config_free(reload_18);
         roastty_surface_free(surface);
         roastty_app_free(app);
     }

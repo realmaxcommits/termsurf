@@ -143,17 +143,17 @@ def main() -> int:
         ],
     )
 
-    row_gap = require_row(runtime_inventory, "RUNTIME-007B")
+    row_gap = require_row(runtime_inventory, "RUNTIME-007B2")
     require_all(
         row_gap,
         [
-            ("Gap", "RUNTIME-007B status"),
+            ("Gap", "RUNTIME-007B2 status"),
             ("feature and variation", "remaining feature variation gap"),
             ("thicken", "remaining thicken gap"),
-            ("renderer grid rebuild/update", "remaining live font-grid update gap"),
+            ("renderer-visible font pixel parity", "remaining font pixel gap"),
         ],
     )
-    if "RUNTIME-007 |" in runtime_inventory:
+    if "RUNTIME-007 |" in runtime_inventory or "RUNTIME-007B |" in runtime_inventory:
         raise AssertionError("old broad RUNTIME-007 row is still present")
 
     cfg223 = require_row(config_matrix, "CFG-223")
@@ -162,10 +162,10 @@ def main() -> int:
         [
             ("Runtime and UI effects", "CFG-223 row"),
             ("Gap", "CFG-223 status"),
-            ("41 rows Oracle complete", "CFG-223 oracle count"),
-            ("43 rows closed", "CFG-223 closed count"),
-            ("5 rows are incomplete", "CFG-223 incomplete count"),
-            ("5 rows are runtime gaps", "CFG-223 gap count"),
+            ("45 rows Oracle complete", "CFG-223 oracle count"),
+            ("47 rows closed", "CFG-223 closed count"),
+            ("4 rows are incomplete", "CFG-223 incomplete count"),
+            ("4 rows are runtime gaps", "CFG-223 gap count"),
         ],
     )
 

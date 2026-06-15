@@ -288,24 +288,57 @@ ROWS = [
         guard_command="`cargo test --manifest-path roastty/Cargo.toml shared_grid_set && cargo test --manifest-path roastty/Cargo.toml complete_styles && cargo test --manifest-path roastty/Cargo.toml codepoint_override && cargo test --manifest-path roastty/Cargo.toml surface_reload_font_size && PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/font_grid_runtime_parity.py`",
     ),
     RuntimeRow(
-        id="RUNTIME-007B",
-        behavior="remaining font renderer output and live font-grid update effects",
-        ghostty_reference="`vendor/ghostty/src/config/Config.zig` font feature, variation, thicken, metric, and shaping fields; `vendor/ghostty/src/Surface.zig` font grid update paths; `vendor/ghostty/src/font` shaping/rendering paths",
-        roastty_reference="`roastty/src/font`; `roastty/src/renderer`; `roastty/src/lib.rs` live renderer font-grid update behavior",
+        id="RUNTIME-007B1",
+        behavior="live renderer font-grid rebuild/update triggers after config reload and manual font-size changes",
+        ghostty_reference="`vendor/ghostty/src/Surface.zig` `updateConfig`, `setFontSize`, `.font_grid` renderer message, and font-size action paths",
+        roastty_reference="`roastty/src/lib.rs` live renderer invalidation, font-size actions, config reload, and `build_live_renderer` font grid construction",
+        family="font",
+        status="Oracle complete",
+        evidence=(
+            "Experiment 143 proves live renderer font-grid rebuild/update "
+            "triggers without claiming visual glyph output. "
+            "`font_live_grid_update_manual_size_changes_dirty_and_wake_live_view` "
+            "proves manual increase/reset font-size actions dirty live-view "
+            "surfaces and wake the app, while the implementation marker and "
+            "static guard prove these changes invalidate the live renderer so "
+            "the next present rebuilds the grid. "
+            "`font_live_grid_update_same_size_is_idempotent` proves same-size "
+            "updates avoid unnecessary dirty/wakeup/rebuild triggers. "
+            "`font_live_grid_update_config_reload_preserves_state_and_rebuild_trigger` "
+            "proves config reload preserves adjusted/unadjusted font-size "
+            "semantics while still requesting a live renderer rebuild. "
+            "`surface_reload_font_size_updates_unadjusted_and_preserves_manual` "
+            "continues to guard the non-live surface-state rules from "
+            "Experiment 105. `font_live_grid_update_runtime_parity.py` "
+            "statically checks pinned Ghostty's `setFontSize`/`.font_grid` "
+            "renderer message and font-size action markers against Roastty's "
+            "font-size invalidation, initial live grid construction, tests, "
+            "and inventory split."
+        ),
+        missing_evidence="None for live renderer font-grid rebuild/update triggers after config reload and manual font-size changes.",
+        guard_tier="Tier 2",
+        guard_command="`cargo test --manifest-path roastty/Cargo.toml font_live_grid_update && cargo test --manifest-path roastty/Cargo.toml surface_reload_font_size && PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/font_live_grid_update_runtime_parity.py`",
+    ),
+    RuntimeRow(
+        id="RUNTIME-007B2",
+        behavior="remaining font renderer output effects",
+        ghostty_reference="`vendor/ghostty/src/config/Config.zig` font feature, variation, thicken, metric, and shaping fields; `vendor/ghostty/src/font` shaping/rendering paths",
+        roastty_reference="`roastty/src/font`; `roastty/src/renderer` font shaping, metrics, glyph output, and visual renderer behavior",
         family="font",
         status="Gap",
         evidence=(
             "Experiment 105 proves surface-state font-size reload/manual/reset "
-            "semantics, and Experiment 132 split out config-derived font grid "
-            "construction plus initial live renderer grid wiring. Remaining "
-            "font parity still needs focused runtime/renderer or GUI proof for "
-            "OpenType feature and variation config effects, thicken and "
-            "thicken-strength rendering, metric adjustment, shaping-break "
+            "semantics, Experiment 132 split out config-derived font grid "
+            "construction plus initial live renderer grid wiring, and "
+            "Experiment 143 split out live renderer font-grid rebuild/update "
+            "triggers after config reload and manual font-size changes. "
+            "Remaining font parity still needs focused runtime/renderer or GUI "
+            "proof for OpenType feature and variation config effects, thicken "
+            "and thicken-strength rendering, metric adjustment, shaping-break "
             "behavior, fallback/shaping visual output, glyph metrics as seen "
-            "by the renderer, and renderer grid rebuild/update after "
-            "reload/manual font-size changes."
+            "by the renderer, and broader renderer-visible font pixel parity."
         ),
-        missing_evidence="Add focused font renderer/runtime or GUI proof for feature/variation, thicken, metric adjustment, shaping-break, renderer-visible glyph output, glyph metrics, and live renderer grid update behavior after reload/manual font-size changes.",
+        missing_evidence="Add focused font renderer/runtime or GUI proof for feature/variation, thicken, metric adjustment, shaping-break, renderer-visible glyph output, glyph metrics, and broader font pixel parity.",
         guard_tier="Tier 3",
         guard_command="TBD by future CFG-223 font renderer experiment.",
     ),
@@ -881,7 +914,7 @@ ROWS = [
             "oracle-complete rows and proves there are no remaining pinned "
             "Ghostty config-driven terminal-runtime fields hidden behind the "
             "old residual bucket. Remaining CFG-223 gaps are now explicitly "
-            "non-terminal: font renderer output/live grid effects, "
+            "non-terminal: font renderer output effects, "
             "renderer-visible GUI/pixel effects, macOS app/window/tab/split/"
             "menu UI, and native notification/link/bell presentation flows."
         ),
@@ -1197,7 +1230,8 @@ EXPECTED_IDS = [
     "RUNTIME-005",
     "RUNTIME-006",
     "RUNTIME-007A",
-    "RUNTIME-007B",
+    "RUNTIME-007B1",
+    "RUNTIME-007B2",
     "RUNTIME-008A",
     "RUNTIME-008B1",
     "RUNTIME-008B2A",

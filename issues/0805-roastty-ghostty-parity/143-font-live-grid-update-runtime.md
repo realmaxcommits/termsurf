@@ -83,3 +83,64 @@ findings. The reviewer confirmed the README link, required experiment sections,
 narrow scope, explicit exclusion of visual glyph-output parity, and the
 technical gap: Roastty currently updates font size and requests render, while
 pinned Ghostty rebuilds/pushes a font grid.
+
+## Result
+
+**Result:** Pass
+
+Roastty now invalidates live renderer font grids when the effective surface font
+size changes. `set_font_size_points` calls the live font-grid invalidation path
+before requesting render, so manual `increase_font_size`, `decrease_font_size`,
+`reset_font_size`, and `set_font_size` actions force the next live present to
+rebuild the config-derived shared font grid at the active size. Same-size
+updates remain idempotent.
+
+The config reload behavior was also kept covered: live config reload still
+invalidates the renderer and preserves the adjusted/unadjusted font-size rules
+from Experiment 105. `RUNTIME-007B` was split into `RUNTIME-007B1` for completed
+live renderer font-grid rebuild/update triggers and `RUNTIME-007B2` for the
+remaining renderer-visible font-output gap.
+
+Verification completed:
+
+- `cargo fmt --manifest-path roastty/Cargo.toml -- --check` — pass.
+- `cargo test --manifest-path roastty/Cargo.toml font_live_grid_update` — pass:
+  3 tests passed, 0 failed.
+- `cargo test --manifest-path roastty/Cargo.toml surface_reload_font_size` —
+  pass: 1 test passed, 0 failed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/font_live_grid_update_runtime_parity.py`
+  — pass.
+- `PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/config_runtime_inventory.py --output issues/0805-roastty-ghostty-parity/config-runtime-inventory.md --matrix issues/0805-roastty-ghostty-parity/config-matrix.md`
+  — pass: `runtime_rows=51`, `oracle_complete=45`, `closed=47`, `incomplete=4`,
+  `gap=4`, `cfg223=Gap`.
+- Full runtime static guard loop over `*runtime_parity.py` plus
+  `terminal_runtime_residual_audit.py` — pass.
+- `git diff --check` — pass.
+
+## Conclusion
+
+The live font-grid update trigger slice is now covered without claiming visual
+font-rendering parity. The remaining font row is limited to renderer-visible
+font output: OpenType feature/variation effects, thicken rendering, metric
+adjustment, shaping-break behavior, fallback/shaping visual output, glyph
+metrics as seen by the renderer, and broader pixel parity.
+
+## Completion Review
+
+Fresh-context adversarial completion review initially returned **Changes
+required**:
+
+- the terminal residual audit row still described the remaining font CFG-223 gap
+  as "font renderer output/live grid effects", which contradicted this
+  experiment's split that moved live grid update triggers into completed
+  `RUNTIME-007B1`.
+
+The inventory text was updated to say "font renderer output effects", generated
+inventory files were regenerated, and the result wording was tightened to
+distinguish dirty/wakeup unit-test evidence from implementation/static-guard
+evidence for the live renderer invalidation call.
+
+Re-review returned **Approved**. The reviewer confirmed the stale phrase was
+gone, the regenerated inventory matched the source, the wording no longer
+overclaimed the unit test, and the targeted parity guards plus
+`git diff --check` passed.

@@ -688,6 +688,12 @@ experiment files until they are proven.
   `grapheme_cluster` during `Termio.init`, storing it as both current and reset
   default mode state. Roastty parity therefore requires startup wiring plus
   direct reset/RIS proof, not just setting the current mode bit.
+- **Manual font-size changes must rebuild live font grids.** Experiment 143
+  found that requesting render after changing `font_size_points` is not enough
+  for a live Metal renderer: the existing renderer can keep its old
+  config-derived `SharedGrid`. Roastty now invalidates the live renderer on
+  effective font-size changes so the next present rebuilds the grid at the
+  active surface size.
 - **Shell integration parity has a proven Termio env slice.** Experiment 124
   split terminal identity, resource-backed `TERMINFO`, explicit env override
   ordering, shell feature env, and zsh bootstrap behavior out of the broader
@@ -1395,4 +1401,4 @@ remains open.
 - [Experiment 142: Terminal runtime residual audit](142-terminal-runtime-residual-audit.md)
   — **Pass**
 - [Experiment 143: Font live grid update runtime](143-font-live-grid-update-runtime.md)
-  — **Designed**
+  — **Pass**
