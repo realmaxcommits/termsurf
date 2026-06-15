@@ -392,11 +392,18 @@ def main() -> int:
         if forbidden in scroll_row:
             raise AssertionError(f"{forbidden} still appears in scroll-to-bottom row")
 
-    require_row(runtime_inventory, "RUNTIME-007B2B2B2B2")
+    font_row = require_row(runtime_inventory, "RUNTIME-007B2B2B2B2")
+    require_all(
+        font_row,
+        [
+            ("Oracle complete", "font residual row status"),
+            ("font renderer residual output effects", "font residual behavior"),
+            ("font_renderer_residual_parity.py", "font residual guard"),
+        ],
+    )
     require_row(runtime_inventory, "RUNTIME-011B2B")
     require_row(runtime_inventory, "RUNTIME-012B2B2B2B2B3")
     for row_id, label in [
-        ("RUNTIME-007B2B2B2B2", "font gap"),
         ("RUNTIME-011B2B", "macOS walkthrough gap"),
         ("RUNTIME-012B2B2B2B2B3", "notification/link/bell gap"),
     ]:
@@ -416,7 +423,8 @@ def main() -> int:
                 "scroll_to_bottom_output_runtime_parity.py",
                 "source scroll-to-bottom guard",
             ),
-            ('id="RUNTIME-007B2B2B2B2"', "font gap remains tracked"),
+            ('id="RUNTIME-007B2B2B2B2"', "font residual row remains tracked"),
+            ("font_renderer_residual_parity.py", "font residual guard tracked"),
             ('id="RUNTIME-011B2B"', "macOS walkthrough gap remains tracked"),
             ('id="RUNTIME-012B2B2B2B2B3"', "notification gap remains tracked"),
         ],
@@ -430,10 +438,10 @@ def main() -> int:
         [
             ("Runtime and UI effects", "CFG-223 row"),
             ("Gap", "CFG-223 remains open"),
-            ("81 rows Oracle complete", "CFG-223 oracle count"),
-            ("84 rows closed", "CFG-223 closed count"),
-            ("3 rows are incomplete", "CFG-223 incomplete count"),
-            ("3 rows are runtime gaps", "CFG-223 gap count"),
+            ("82 rows Oracle complete", "CFG-223 oracle count"),
+            ("85 rows closed", "CFG-223 closed count"),
+            ("2 rows are incomplete", "CFG-223 incomplete count"),
+            ("2 rows are runtime gaps", "CFG-223 gap count"),
         ],
     )
 

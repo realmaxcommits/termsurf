@@ -958,10 +958,20 @@ experiment files until they are proven.
 - **Font fallback has a deterministic runtime slice before visual parity.**
   Experiment 165 split fallback resolution, `U+FFFD`/space substitution,
   CoreText fallback discovery, LastResort rejection, fallback-face cache
-  behavior, and present-codepoint render data out of the remaining font gap.
-  Broad fallback/shaping visual output, bitmap/color font thickening edge cases,
-  renderer-visible glyph metrics, and broad font pixel parity remain in
-  `RUNTIME-007B2B2B2B2`.
+  behavior, and present-codepoint render data out of the remaining font gap. At
+  that point, broad fallback/shaping visual output, bitmap/color font thickening
+  edge cases, renderer-visible glyph metrics, and broad font pixel parity
+  remained in `RUNTIME-007B2B2B2B2`; Experiment 184 later closed that residual
+  row.
+- **Font renderer residuals can close with renderer-visible glyph evidence.**
+  Experiment 184 closed `RUNTIME-007B2B2B2B2` by tying the residual font row to
+  concrete Rust tests and a CFG-223 guard: grayscale glyph rasterization,
+  stretched-cell pixels/bearings, non-`sbix` thickening, `sbix` bitmap-color
+  thicken-padding suppression, Apple Color Emoji BGRA atlas rendering, wrong
+  atlas rejection, CoreText fallback discovery, shaping clusters, and
+  renderer-facing metric propagation. The remaining CFG-223 gaps are now only
+  broader live macOS app walkthrough behavior and notification/link/bell GUI
+  effects.
 - **Copied macOS workflow plumbing is not the same as live GUI parity.**
   Experiment 166 split copied window/tab/split/menu/titlebar/fullscreen and
   quick-terminal command/action/config plumbing out of the live macOS app gap.
@@ -1755,4 +1765,4 @@ remains open.
 - [Experiment 183: Scroll-to-bottom output runtime](183-scroll-to-bottom-output-runtime.md)
   — **Pass**
 - [Experiment 184: Font renderer residual proof](184-font-renderer-residual-proof.md)
-  — **Designed**
+  — **Pass**

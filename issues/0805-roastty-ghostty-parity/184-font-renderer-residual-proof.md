@@ -89,3 +89,61 @@ and returned `VERDICT: APPROVED` with no findings. After the review, the
 verification count expectation was corrected from 84 closed / 3 incomplete rows
 to 85 closed / 2 incomplete rows for the successful font-row-closure path,
 matching `config_runtime_inventory.py`'s closed-row calculation.
+
+## Result
+
+**Result:** Pass
+
+The residual font renderer row is now closed. The implementation added
+`font_renderer_residual_color_sbix_thicken_skips_canvas_padding`, a focused
+CoreText test proving the Ghostty-compatible bitmap-color `sbix` path ignores
+`font-thicken` canvas padding while preserving the rendered glyph metrics and
+bearings. The new `font_renderer_residual_parity.py` guard ties the closed row
+to pinned Ghostty source anchors and Roastty evidence for:
+
+- grayscale glyph rasterization and atlas placement;
+- stretched-cell glyph pixels and bearings;
+- non-`sbix` thicken padding and strength effects;
+- `sbix` bitmap-color thicken-padding suppression;
+- Apple Color Emoji BGRA atlas rendering and wrong-atlas-format rejection;
+- CoreText fallback discovery for CJK and supplementary emoji plus LastResort
+  rejection;
+- shaping clusters for ASCII, RTL, supplementary scalars, and combining marks;
+- renderer-facing font-grid metric propagation.
+
+`RUNTIME-007B2B2B2B2` is now `Oracle complete`. CFG-223 now reports 87 runtime
+rows, 82 Oracle-complete rows, 85 closed rows, 2 incomplete rows, and 2 runtime
+gaps.
+
+Verification run:
+
+```bash
+cargo test --manifest-path roastty/Cargo.toml font_renderer_residual_color_sbix_thicken_skips_canvas_padding -- --test-threads=1
+cargo test --manifest-path roastty/Cargo.toml render_glyph -- --test-threads=1
+cargo test --manifest-path roastty/Cargo.toml shape_ -- --test-threads=1
+cargo test --manifest-path roastty/Cargo.toml font -- --test-threads=1
+PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/font_renderer_residual_parity.py
+PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/config_runtime_inventory.py --output issues/0805-roastty-ghostty-parity/config-runtime-inventory.md --matrix issues/0805-roastty-ghostty-parity/config-matrix.md
+for f in issues/0805-roastty-ghostty-parity/font_*_runtime_parity.py issues/0805-roastty-ghostty-parity/font_renderer_residual_parity.py issues/0805-roastty-ghostty-parity/renderer_visual_residual_audit.py; do PYTHONDONTWRITEBYTECODE=1 python3 "$f" || exit 1; done
+PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/terminal_runtime_residual_audit.py
+python3 -m py_compile issues/0805-roastty-ghostty-parity/font_renderer_residual_parity.py issues/0805-roastty-ghostty-parity/font_fallback_runtime_parity.py issues/0805-roastty-ghostty-parity/font_grid_runtime_parity.py issues/0805-roastty-ghostty-parity/font_live_grid_update_runtime_parity.py issues/0805-roastty-ghostty-parity/font_shaping_break_runtime_parity.py issues/0805-roastty-ghostty-parity/font_thicken_render_runtime_parity.py issues/0805-roastty-ghostty-parity/font_feature_runtime_parity.py issues/0805-roastty-ghostty-parity/font_variation_runtime_parity.py issues/0805-roastty-ghostty-parity/font_metric_modifier_runtime_parity.py issues/0805-roastty-ghostty-parity/renderer_visual_residual_audit.py issues/0805-roastty-ghostty-parity/terminal_runtime_residual_audit.py
+cargo fmt --check --manifest-path roastty/Cargo.toml
+```
+
+## Conclusion
+
+Font renderer parity no longer has a residual CFG-223 gap. The remaining Issue
+805 runtime/UI gaps are the live macOS app walkthrough row `RUNTIME-011B2B` and
+notification/link/bell GUI effects row `RUNTIME-012B2B2B2B2B3`.
+
+## Completion Review
+
+Fresh-context Codex adversarial reviewer `Arendt the 3rd` reviewed the completed
+experiment and returned `VERDICT: CHANGES REQUIRED` for one required finding:
+the regenerated `config-runtime-inventory.md` and `config-matrix.md` files were
+not prettier-formatted. The generated markdown files were formatted with
+prettier, and the failing formatting check plus the font residual, renderer
+residual, terminal residual, and `git diff --check` guards were rerun.
+
+Fresh-context Codex re-reviewer `Nietzsche the 3rd` reviewed the formatting fix
+and returned `VERDICT: APPROVED` with no findings.

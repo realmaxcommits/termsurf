@@ -1764,6 +1764,59 @@ mod tests {
     }
 
     #[test]
+    fn font_renderer_residual_color_sbix_thicken_skips_canvas_padding() {
+        let face = Face::new("Apple Color Emoji", 32.0);
+        assert!(
+            face.color.as_ref().is_some_and(|c| c.sbix),
+            "Apple Color Emoji should exercise the sbix bitmap-color path"
+        );
+
+        let utf16: Vec<u16> = '\u{1F600}'.encode_utf16(&mut [0u16; 2]).to_vec();
+        let glyph = face.glyphs_for_characters(&utf16)[0];
+        assert_ne!(glyph, 0, "the emoji glyph should resolve");
+
+        let opts = RenderOptions {
+            grid_metrics: Metrics::calc(face.get_metrics()),
+            cell_width: None,
+            constraint: Constraint::default(),
+            constraint_width: 1,
+            thicken: false,
+            thicken_strength: 255,
+        };
+        let mut plain_atlas = Atlas::new(1024, Format::Bgra);
+        let plain = face
+            .render_glyph(&mut plain_atlas, glyph, &opts)
+            .expect("plain sbix emoji should render");
+
+        let mut thick_atlas = Atlas::new(1024, Format::Bgra);
+        let thick = face
+            .render_glyph(
+                &mut thick_atlas,
+                glyph,
+                &RenderOptions {
+                    thicken: true,
+                    thicken_strength: 64,
+                    ..opts
+                },
+            )
+            .expect("thickened sbix emoji should render");
+
+        assert_eq!(thick.width, plain.width, "sbix thicken skips width padding");
+        assert_eq!(
+            thick.height, plain.height,
+            "sbix thicken skips height padding"
+        );
+        assert_eq!(
+            thick.offset_x, plain.offset_x,
+            "sbix thicken keeps x bearing"
+        );
+        assert_eq!(
+            thick.offset_y, plain.offset_y,
+            "sbix thicken keeps y bearing"
+        );
+    }
+
+    #[test]
     fn mono_glyph_still_renders() {
         let mut atlas = Atlas::new(512, Format::Grayscale);
         let face = Face::new("Menlo", 32.0);
