@@ -135,7 +135,6 @@ def main() -> int:
             ("Gap", "RUNTIME-012B2B2B2B2B3C status"),
             ("actual OS notification delivery/banner/sound", "remaining OS notification gap"),
             ("audible bell output", "remaining bell GUI gap"),
-            ("real OS cursor pixels", "remaining hover cursor gap"),
             ("native link preview display", "remaining link preview gap"),
             ("external Launch Services handler delivery", "remaining external URL-handler gap"),
         ],
@@ -156,8 +155,8 @@ def main() -> int:
     require_all(
         cfg223,
         [
-            ("90 rows Oracle complete", "CFG-223 oracle count"),
-            ("93 rows closed", "CFG-223 closed count"),
+            ("91 rows Oracle complete", "CFG-223 oracle count"),
+            ("94 rows closed", "CFG-223 closed count"),
             ("1 rows are incomplete", "CFG-223 incomplete count"),
             ("1 rows are runtime gaps", "CFG-223 gap count"),
         ],

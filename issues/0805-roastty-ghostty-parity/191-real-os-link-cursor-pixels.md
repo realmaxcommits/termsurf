@@ -125,3 +125,98 @@ pixels, cursor-mask bounding boxes, cursorless-background stability, and
 link-versus-non-link mask dissimilarity.
 
 Final verdict after re-review: **Approved**.
+
+## Result
+
+**Result:** Partial
+
+The focused guard passed after one implementation fix.
+
+The first live run failed before sampling because the guard multiplied the
+global mouse point by the measured Retina screenshot scale before passing it to
+`screencapture -R`:
+
+```text
+rect (2058.0, 942.0, 180.0, 180.0) does not intersect any displays
+```
+
+That showed `screencapture -R` expects global display coordinates in points,
+even though the output PNG is Retina-scaled. The guard now preserves the
+measured scale in the evidence JSON but captures the source rectangle in global
+display points.
+
+The second live run passed:
+
+```text
+macos_real_link_cursor_pixels=pass
+```
+
+Evidence from `/tmp/termsurf-issue805-exp191-real-cursor-latest.json`:
+
+- `scale = 2.0`
+- terminal resize: `cols = 100`, `rows = 37`, `width_px = 1600`,
+  `height_px = 1136`
+- trace tail included `cursorShape raw=3 pointerStyle=link` and
+  `mouseOverLink url=https://example.com/issue805-exp191-real-cursor`
+- non-link cursor mask: 350 changed pixels, stable cursorless background, bbox
+  `16x38`
+- link cursor mask: 701 changed pixels, stable cursorless background, bbox
+  `30x38`
+- link/non-link mask difference: 721-pixel symmetric difference and 15-pixel
+  bbox delta
+
+The inventory now splits `RUNTIME-012B2B2B2B2B3C6` as Oracle complete for live
+macOS real OS link cursor pixels. `RUNTIME-012B2B2B2B2B3C` remains a `Gap`, but
+only for actual OS notification delivery/banner/sound after authorization is
+available, audible bell output, measurable dock-attention state, Quick
+Look/native link preview display beyond the copied SwiftUI URLHoverBanner, and
+external Launch Services handler delivery.
+
+The regenerated CFG-223 counts are:
+
+- runtime rows: 95
+- Oracle complete: 91
+- closed: 94
+- audit covered: 0
+- incomplete: 1
+- runtime gaps: 1
+- CFG-223 status: `Gap`
+
+Verification logs:
+
+- `logs/issue805-exp191-build-1.log`
+- `logs/issue805-exp191-real-cursor-1.log` for the initial point/scale failure
+- `logs/issue805-exp191-real-cursor-2.log` for the passing live run
+- `logs/issue805-exp191-config-runtime-inventory-1.log`
+- `logs/issue805-exp191-residual-guard-1.log`
+- `logs/issue805-exp191-broad-guard-sweep-1.log`
+- `logs/issue805-exp191-py-compile-2.log`
+- `logs/issue805-exp191-prettier-check-1.log`
+- `logs/issue805-exp191-diff-check-1.log`
+
+## Conclusion
+
+Experiment 191 proves the real OS-rendered macOS link cursor over the live
+Roastty window. The remaining CFG-223 work is now narrower: notification
+delivery/banner/sound, audible bell output, dock attention, Quick Look/native
+preview display, and external Launch Services handler delivery.
+
+## Completion Review
+
+Fresh-context Codex adversarial reviewer `Epicurus the 3rd` reviewed the
+completed experiment, implementation diff, inventory split, residual guard, and
+verification logs.
+
+Initial verdict: **Changes required**.
+
+Required finding resolved: the reviewer found that `RUNTIME-012B2B2B2B2A` still
+said real pointer/link cursor pixels remained tracked by
+`RUNTIME-012B2B2B2B2B3C`. The inventory source now points real OS link cursor
+pixels at `RUNTIME-012B2B2B2B2B3C6`, leaves Quick Look/native preview in
+`RUNTIME-012B2B2B2B2B3C`, and the generated inventory was regenerated.
+
+Optional finding resolved: the result log list omitted the successful residual
+guard, broad sweep, py_compile, prettier, and diff-check logs. Those logs are
+now listed in the result.
+
+Final verdict after re-review: **Approved**.

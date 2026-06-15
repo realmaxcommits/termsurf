@@ -1036,7 +1036,8 @@ experiment files until they are proven.
   dispatch on Retina displays. The live guard now proves Command-modified mouse
   movement over a deterministic URL emits `cursorShape raw=3 pointerStyle=link`
   and the exact `mouseOverLink` URL in the real debug app. Native link preview
-  display and real OS cursor pixels remain in `RUNTIME-012B2B2B2B2B3C`.
+  display remains in `RUNTIME-012B2B2B2B2B3C`; real OS link cursor pixels are
+  now tracked separately by `RUNTIME-012B2B2B2B2B3C6`.
 - **The copied SwiftUI URL hover banner can be proven with localized pixels.**
   Experiment 189 reused the live link-hover path and captured exact-window
   before/after screenshots. A Swift sampler saw 32674 changed pixels in the
@@ -1052,6 +1053,15 @@ experiment files until they are proven.
   sampler saw 6375 changed pixels on each side edge, 9390 on the bottom edge,
   and zero changed pixels in the center and titlebar/control regions. Audible
   output and dock attention remain separate OS-controlled gaps.
+- **`screencapture -R` uses display points even when the output PNG is Retina
+  scaled.** Experiment 191 initially multiplied the capture rectangle by the
+  measured `CGWindowID` screenshot scale and pushed the rectangle off-screen.
+  Keeping the source rectangle in global display points while preserving the
+  scale in evidence let `screencapture -C` capture real cursor pixels. The live
+  guard proved stable cursorless backgrounds, 350 normal-cursor changed pixels,
+  701 link-cursor changed pixels, a 721-pixel symmetric difference, and a
+  15-pixel bounding-box delta. CFG-223 now has 91 Oracle-complete runtime rows,
+  94 closed rows, and the one remaining gap excludes real OS cursor pixels.
 - **Font-size runtime updates should be idempotent.** Experiment 125 found that
   applying an unchanged font size dirtied ABI-only surfaces because
   `set_font_size_points` always requested a render. The setter now returns
@@ -1824,4 +1834,4 @@ remains open.
 - [Experiment 190: Live bell title and border pixels](190-live-bell-title-border-pixels.md)
   — **Partial**
 - [Experiment 191: Real OS link cursor pixels](191-real-os-link-cursor-pixels.md)
-  — **Designed**
+  — **Partial**

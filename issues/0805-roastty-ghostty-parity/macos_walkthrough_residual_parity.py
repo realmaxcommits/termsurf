@@ -202,7 +202,7 @@ def main() -> int:
         notification_row,
         [
             ("Gap", "notification/link/bell residual status"),
-            ("remaining OS-controlled notification, audible bell, dock-attention, Quick Look/native preview, cursor-pixel, and external URL-handler GUI effects", "notification residual behavior"),
+            ("remaining OS-controlled notification, audible bell, dock-attention, Quick Look/native preview, and external URL-handler GUI effects", "notification residual behavior"),
         ],
     )
 
@@ -210,8 +210,8 @@ def main() -> int:
     require_all(
         cfg223,
         [
-            ("90 rows Oracle complete", "CFG-223 oracle count"),
-            ("93 rows closed", "CFG-223 closed count"),
+            ("91 rows Oracle complete", "CFG-223 oracle count"),
+            ("94 rows closed", "CFG-223 closed count"),
             ("1 rows are incomplete", "CFG-223 incomplete count"),
             ("1 rows are runtime gaps", "CFG-223 gap count"),
         ],
