@@ -14818,6 +14818,30 @@ pub extern "C" fn roastty_config_get(
                     .write(config.parsed.focus_follows_mouse);
                 true
             }
+            b"bell-features" => {
+                let Some(config) = config_from_handle(config) else {
+                    return false;
+                };
+                let features = config.parsed.bell_features;
+                let mut raw: u32 = 0;
+                if features.system {
+                    raw |= 1 << 0;
+                }
+                if features.audio {
+                    raw |= 1 << 1;
+                }
+                if features.attention {
+                    raw |= 1 << 2;
+                }
+                if features.title {
+                    raw |= 1 << 3;
+                }
+                if features.border {
+                    raw |= 1 << 4;
+                }
+                output.cast::<u32>().write(raw);
+                true
+            }
             b"maximize" => {
                 let Some(config) = config_from_handle(config) else {
                     return false;
@@ -26557,6 +26581,17 @@ mod tests {
         value
     }
 
+    fn config_get_u32_value(config: RoasttyConfig, key: &'static CStr) -> u32 {
+        let mut value: u32 = 0;
+        assert!(roastty_config_get(
+            config,
+            (&mut value as *mut u32).cast(),
+            key.as_ptr(),
+            key.to_bytes().len()
+        ));
+        value
+    }
+
     fn config_get_palette_value(config: RoasttyConfig) -> RoasttyPalette {
         let mut value = [RoasttyRgb::default(); 256];
         assert!(roastty_config_get(
@@ -26750,6 +26785,51 @@ mod tests {
             (&mut value as *mut bool).cast(),
             ptr::null(),
             "quit-after-last-window-closed".len()
+        ));
+
+        roastty_config_free(config);
+    }
+
+    #[test]
+    fn config_get_bell_features_runtime() {
+        let config = roastty_config_new();
+
+        assert_eq!(
+            config_get_u32_value(config, c"bell-features"),
+            (1 << 2) | (1 << 3)
+        );
+
+        {
+            let config_ref = config_from_handle(config).unwrap();
+            config_ref
+                .parsed
+                .set("bell-features", Some("system,audio,no-title,border"))
+                .unwrap();
+            config_ref.sync_from_parsed_config();
+        }
+
+        assert_eq!(
+            config_get_u32_value(config, c"bell-features"),
+            (1 << 0) | (1 << 1) | (1 << 2) | (1 << 4)
+        );
+
+        {
+            let config_ref = config_from_handle(config).unwrap();
+            config_ref
+                .parsed
+                .set("bell-features", Some("false"))
+                .unwrap();
+            config_ref.sync_from_parsed_config();
+        }
+
+        assert_eq!(config_get_u32_value(config, c"bell-features"), 0);
+
+        let mut value: u32 = 0;
+        assert!(!roastty_config_get(
+            ptr::null_mut(),
+            (&mut value as *mut u32).cast(),
+            c"bell-features".as_ptr(),
+            "bell-features".len()
         ));
 
         roastty_config_free(config);

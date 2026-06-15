@@ -91,7 +91,7 @@ def main() -> int:
             ('status="Oracle complete"', "macOS residual source complete status"),
             ("Experiment 185 closes the macOS walkthrough residual row", "Experiment 185 source evidence"),
             ("macos_walkthrough_residual_parity.py", "macOS residual guard command"),
-            ('id="RUNTIME-012B2B2B2B2B3"', "notification gap source row remains"),
+            ('id="RUNTIME-012B2B2B2B2B3C"', "notification gap source row remains"),
         ],
     )
 
@@ -197,12 +197,12 @@ def main() -> int:
         if forbidden in macos_row:
             raise AssertionError(f"macOS residual row still contains stale gap text: {forbidden}")
 
-    notification_row = require_row(runtime_inventory, "RUNTIME-012B2B2B2B2B3")
+    notification_row = require_row(runtime_inventory, "RUNTIME-012B2B2B2B2B3C")
     require_all(
         notification_row,
         [
             ("Gap", "notification/link/bell residual status"),
-            ("remaining notification/link/bell GUI effects", "notification residual behavior"),
+            ("remaining OS-controlled notification, bell, link, menu, preview, and URL-opening GUI effects", "notification residual behavior"),
         ],
     )
 
@@ -210,8 +210,8 @@ def main() -> int:
     require_all(
         cfg223,
         [
-            ("83 rows Oracle complete", "CFG-223 oracle count"),
-            ("86 rows closed", "CFG-223 closed count"),
+            ("85 rows Oracle complete", "CFG-223 oracle count"),
+            ("88 rows closed", "CFG-223 closed count"),
             ("1 rows are incomplete", "CFG-223 incomplete count"),
             ("1 rows are runtime gaps", "CFG-223 gap count"),
         ],

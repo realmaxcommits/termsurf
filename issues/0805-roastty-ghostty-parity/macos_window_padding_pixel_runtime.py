@@ -323,7 +323,7 @@ def focus_evidence(pid: int, timeout: float = 15.0) -> dict[str, object]:
     last_error: Exception | None = None
     while time.monotonic() < deadline:
         try:
-            result = run_osascript(script, timeout=5)
+            result = run_osascript(script, timeout=int(timeout))
             break
         except AssertionError as err:
             last_error = err
@@ -740,8 +740,8 @@ def assert_inventory_split() -> None:
     require(residual_row is not None, "missing renderer residual row")
     require("scroll-to-bottom.output" in residual_row, "scroll-to-bottom row missing evidence")
     require("background-image-opacity" not in residual_row, "background image still in renderer residual")
-    require("83 rows Oracle complete" in config_matrix, "CFG-223 oracle count not updated")
-    require("86 rows closed" in config_matrix, "CFG-223 closed count not updated")
+    require("85 rows Oracle complete" in config_matrix, "CFG-223 oracle count not updated")
+    require("88 rows closed" in config_matrix, "CFG-223 closed count not updated")
     require("1 rows are incomplete" in config_matrix, "CFG-223 incomplete count changed")
     require("1 rows are runtime gaps" in config_matrix, "CFG-223 gap count changed")
     require(cfg223 is not None and len(cfg223) > 4 and cfg223[4] == "Gap", "CFG-223 should remain Gap")

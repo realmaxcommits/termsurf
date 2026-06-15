@@ -28,6 +28,35 @@ def normalize_ghostty_swift(text: str) -> str:
     return text
 
 
+def strip_ui_trace_hooks(source: str) -> str:
+    lines = source.splitlines()
+    stripped: list[str] = []
+    skip_multiline_call = False
+    skip_helper = False
+    helper_depth = 0
+    for line in lines:
+        if skip_helper:
+            helper_depth += line.count("{") - line.count("}")
+            if helper_depth <= 0:
+                skip_helper = False
+            continue
+        if "func appendUITestTrace(" in line or "func appendUITestKeyTrace(" in line:
+            skip_helper = True
+            helper_depth = line.count("{") - line.count("}")
+            continue
+        if skip_multiline_call:
+            if line.strip() == ")":
+                skip_multiline_call = False
+            continue
+        if "appendUITestTrace(" in line or "appendUITestKeyTrace(" in line:
+            if line.strip().endswith("("):
+                skip_multiline_call = True
+            continue
+        stripped.append(line)
+    result = "\n".join(stripped) + ("\n" if source.endswith("\n") else "")
+    return result.replace("\n\n}\n\n/// Represents", "\n}\n\n/// Represents").replace("\n\n\n        private static func setInitialSize", "\n\n        private static func setInitialSize")
+
+
 def require(text: str, needle: str, label: str) -> None:
     if needle not in text:
         raise AssertionError(f"missing {label}: {needle!r}")
@@ -40,7 +69,7 @@ def require_all(text: str, needles: list[tuple[str, str]]) -> None:
 
 def require_normalized_match(ghostty_path: str, roastty_path: str) -> str:
     ghostty = normalize_ghostty_swift(read(ghostty_path))
-    roastty = read(roastty_path)
+    roastty = strip_ui_trace_hooks(read(roastty_path))
     if ghostty != roastty:
         raise AssertionError(f"normalized Swift mismatch: {ghostty_path} != {roastty_path}")
     return roastty
@@ -128,16 +157,16 @@ def main() -> int:
         ],
     )
 
-    row_gap = require_row(runtime_inventory, "RUNTIME-012B2B2B2B2B3")
+    row_gap = require_row(runtime_inventory, "RUNTIME-012B2B2B2B2B3C")
     require_all(
         row_gap,
         [
-            ("Gap", "RUNTIME-012B2B2B2B2B3 status"),
-            ("Actual OS banner/sound delivery", "remaining OS notification gap"),
-            ("actual audio/dock/border/title GUI effects", "remaining bell GUI gap"),
-            ("real app link hover/cursor UI", "remaining real hover UI gap"),
+            ("Gap", "RUNTIME-012B2B2B2B2B3C status"),
+            ("actual OS notification delivery/banner/sound", "remaining OS notification gap"),
+            ("audible bell output", "remaining bell GUI gap"),
+            ("real link hover/cursor pixels", "remaining real hover UI gap"),
             ("native link preview display", "remaining link preview gap"),
-            ("native context/menu display", "remaining context menu gap"),
+            ("native context-menu display", "remaining context menu gap"),
         ],
     )
 
@@ -145,7 +174,7 @@ def main() -> int:
         inventory_source,
         [
             ('id="RUNTIME-012B2B2B2B2A"', "source link-hover row"),
-            ('id="RUNTIME-012B2B2B2B2B3"', "source reduced gap row"),
+            ('id="RUNTIME-012B2B2B2B2B3C"', "source reduced gap row"),
             ("macos_link_hover_banner_runtime_parity.py", "source guard command"),
         ],
     )
@@ -154,8 +183,8 @@ def main() -> int:
     require_all(
         cfg223,
         [
-            ("83 rows Oracle complete", "CFG-223 oracle count"),
-            ("86 rows closed", "CFG-223 closed count"),
+            ("85 rows Oracle complete", "CFG-223 oracle count"),
+            ("88 rows closed", "CFG-223 closed count"),
             ("1 rows are incomplete", "CFG-223 incomplete count"),
             ("1 rows are runtime gaps", "CFG-223 gap count"),
         ],

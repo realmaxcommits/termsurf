@@ -519,6 +519,7 @@ extension Roastty {
                 // We ignore unknown shapes.
                 return
             }
+            appendUITestKeyTrace("cursorShape raw=\(shape.rawValue) pointerStyle=\(pointerStyle)")
         }
 
         func setCursorVisibility(_ visible: Bool) {
@@ -764,6 +765,7 @@ extension Roastty {
         @objc private func roasttyBellDidRing(_ notification: SwiftUI.Notification) {
             // Bell state goes to true
             bell = true
+            appendUITestKeyTrace("surfaceBell state=true title=\(title)")
         }
 
         @objc private func windowDidChangeScreen(notification: SwiftUI.Notification) {
@@ -1608,6 +1610,7 @@ extension Roastty {
             item.setImageIfDesired(systemSymbolName: "pencil.line")
             item = menu.addItem(withTitle: "Change Terminal Title...", action: #selector(changeTitle(_:)), keyEquivalent: "")
 
+            appendUITestKeyTrace("contextMenu items=\(menu.items.map { $0.title }.joined(separator: "|"))")
             return menu
         }
 
@@ -1755,6 +1758,7 @@ extension Roastty {
             ]
 
             let uuid = UUID().uuidString
+            appendUITestKeyTrace("userNotification request id=\(uuid) title=\(title) body=\(body) requireFocus=\(requireFocus)")
             let request = UNNotificationRequest(
                 identifier: uuid,
                 content: content,
@@ -1766,12 +1770,14 @@ extension Roastty {
             UNUserNotificationCenter.current().add(request) { @MainActor error in
                 if let error = error {
                     AppDelegate.logger.error("Error scheduling user notification: \(error)")
+                    self.appendUITestKeyTrace("userNotification addError id=\(uuid) error=\(error)")
                     return
                 }
 
                 // We need to keep track of this notification so we can remove it
                 // under certain circumstances
                 self.notificationIdentifiers.insert(uuid)
+                self.appendUITestKeyTrace("userNotification added id=\(uuid) tracked=\(self.notificationIdentifiers.contains(uuid))")
 
                 // If we're focused then we schedule to remove the notification
                 // after a few seconds. If we gain focus we automatically remove it

@@ -1,0 +1,121 @@
+#!/usr/bin/env python3
+"""Residual split guard for Issue 805 Experiment 186."""
+
+from __future__ import annotations
+
+import subprocess
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[2]
+ISSUE = ROOT / "issues/0805-roastty-ghostty-parity"
+RUNTIME = ISSUE / "config-runtime-inventory.md"
+MATRIX = ISSUE / "config-matrix.md"
+SOURCE = ISSUE / "config_runtime_inventory.py"
+LIVE_GUARD = ISSUE / "macos_notification_link_bell_trace_runtime.py"
+
+
+def require(condition: bool, message: str) -> None:
+    if not condition:
+        raise AssertionError(message)
+
+
+def require_text(text: str, needle: str, description: str) -> None:
+    require(needle in text, f"missing {description}: {needle}")
+
+
+def require_absent(text: str, needle: str, description: str) -> None:
+    require(needle not in text, f"unexpected {description}: {needle}")
+
+
+def row_line(inventory: str, row_id: str) -> str:
+    prefix = f"| {row_id} "
+    for line in inventory.splitlines():
+        if line.startswith(prefix):
+            return line
+    raise AssertionError(f"missing runtime row {row_id}")
+
+
+def row_cells(markdown: str, row_id: str) -> list[str]:
+    line = row_line(markdown, row_id)
+    return [cell.strip() for cell in line.strip().strip("|").split("|")]
+
+
+def matrix_row(markdown: str, row_id: str) -> list[str]:
+    for line in markdown.splitlines():
+        if not line.startswith("|"):
+            continue
+        cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+        if cells and cells[0] == row_id:
+            return cells
+    raise AssertionError(f"missing matrix row {row_id}")
+
+
+def main() -> int:
+    runtime = RUNTIME.read_text()
+    matrix = MATRIX.read_text()
+    source = SOURCE.read_text()
+
+    cfg223 = matrix_row(matrix, "CFG-223")
+    require(cfg223[1] == "Runtime and UI effects", f"unexpected CFG-223 behavior: {cfg223[1]}")
+    require("Gap" in cfg223, f"CFG-223 should remain Gap: {cfg223}")
+    require_text(
+        matrix,
+        "Runtime inventory coverage: 85 rows Oracle complete; 88 rows closed; 1 rows are incomplete and 1 rows are runtime gaps.",
+        "CFG-223 split counts",
+    )
+
+    require_absent(runtime, "| RUNTIME-012B2B2B2B2B3     | remaining OS-controlled notification, bell, link, menu, preview, and URL-opening GUI effects", "old broad residual row")
+    require_absent(source, 'id="RUNTIME-012B2B2B2B2B3"', "old broad residual source row")
+
+    notification_cells = row_cells(runtime, "RUNTIME-012B2B2B2B2B3A")
+    notification = row_line(runtime, "RUNTIME-012B2B2B2B2B3A")
+    require(notification_cells[4] == "notifications", f"unexpected notification row family: {notification_cells}")
+    require(notification_cells[5] == "Oracle complete", f"unexpected notification row status: {notification_cells}")
+    require_text(notification, "authorizationStatus=1", "notification denied authorization evidence")
+    require_text(notification, "macos_notification_link_bell_trace_runtime.py", "notification live guard command")
+
+    bell_cells = row_cells(runtime, "RUNTIME-012B2B2B2B2B3B")
+    bell = row_line(runtime, "RUNTIME-012B2B2B2B2B3B")
+    require(bell_cells[4] == "notifications", f"unexpected bell row family: {bell_cells}")
+    require(bell_cells[5] == "Oracle complete", f"unexpected bell row status: {bell_cells}")
+    require_text(bell, "configured audio-path request trace", "bell audio trace evidence")
+    require_text(bell, "macos_notification_link_bell_trace_runtime.py", "bell live guard command")
+
+    gap_cells = row_cells(runtime, "RUNTIME-012B2B2B2B2B3C")
+    gap = row_line(runtime, "RUNTIME-012B2B2B2B2B3C")
+    require(gap_cells[4] == "notifications", f"unexpected gap row family: {gap_cells}")
+    require(gap_cells[5] == "Gap", f"unexpected gap row status: {gap_cells}")
+    for needle in [
+        "actual OS notification delivery/banner/sound",
+        "audible bell output",
+        "measurable dock-attention state",
+        "bell border/title visible effects",
+        "real link hover/cursor pixels",
+        "native link preview display",
+        "native context-menu display",
+        "OS URL-opening with a controlled handler",
+    ]:
+        require_text(gap, needle, f"remaining exact gap slice {needle}")
+
+    result = subprocess.run(
+        ["python3", str(LIVE_GUARD)],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        timeout=90,
+    )
+    require(
+        result.returncode == 0,
+        "live notification/link/bell trace guard failed\n"
+        f"stdout:\n{result.stdout}\n"
+        f"stderr:\n{result.stderr}",
+    )
+    require_text(result.stdout, "macos_notification_link_bell_trace_runtime=pass", "live guard pass marker")
+
+    print("notification_link_bell_gui_residual_parity=pass")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

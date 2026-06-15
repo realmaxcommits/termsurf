@@ -157,16 +157,16 @@ def main() -> int:
         ],
     )
 
-    row_gap = require_row(runtime_inventory, "RUNTIME-012B2B2B2B2B3")
+    row_gap = require_row(runtime_inventory, "RUNTIME-012B2B2B2B2B3C")
     require_all(
         row_gap,
         [
-            ("Gap", "RUNTIME-012B2B2B2B2B3 status"),
-            ("Actual OS banner/sound delivery", "remaining OS delivery gap"),
-            ("actual audio/dock/border/title GUI effects", "remaining bell GUI gap"),
-            ("hover/cursor UI", "remaining hover cursor gap"),
+            ("Gap", "RUNTIME-012B2B2B2B2B3C status"),
+            ("actual OS notification delivery/banner/sound", "remaining OS delivery gap"),
+            ("audible bell output", "remaining bell GUI gap"),
+            ("real link hover/cursor pixels", "remaining hover cursor gap"),
             ("native link preview display", "remaining link preview gap"),
-            ("native context/menu display", "remaining context menu gap"),
+            ("native context-menu display", "remaining context menu gap"),
         ],
     )
     if "Command-finish notifications" in row_gap:
@@ -176,8 +176,8 @@ def main() -> int:
     require_all(
         cfg223,
         [
-            ("83 rows Oracle complete", "CFG-223 oracle count"),
-            ("86 rows closed", "CFG-223 closed count"),
+            ("85 rows Oracle complete", "CFG-223 oracle count"),
+            ("88 rows closed", "CFG-223 closed count"),
             ("1 rows are incomplete", "CFG-223 incomplete count"),
             ("1 rows are runtime gaps", "CFG-223 gap count"),
         ],

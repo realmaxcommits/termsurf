@@ -144,3 +144,86 @@ assertions cannot survive silently.
 
 James re-reviewed the fixes and returned `VERDICT: APPROVED` with no remaining
 required findings.
+
+## Result
+
+**Result:** Partial
+
+The experiment eliminated the vague `RUNTIME-012B2B2B2B2B3` bucket and split it
+into exact rows:
+
+- `RUNTIME-012B2B2B2B2B3A` — **Oracle complete** for live macOS OSC notification
+  request dispatch and `UNUserNotificationCenter` authorization state capture.
+- `RUNTIME-012B2B2B2B2B3B` — **Oracle complete** for the live macOS
+  `bell-features` bridge, app-level bell branch dispatch, surface bell state
+  dispatch, and configured audio-path request trace.
+- `RUNTIME-012B2B2B2B2B3C` — **Gap** for remaining OS-controlled/native GUI
+  effects: actual OS notification delivery/banner/sound, audible bell output,
+  measurable dock-attention state, bell border/title visible effects, real link
+  hover/cursor pixels, native link preview display, native context-menu display,
+  and OS URL-opening with a controlled handler.
+
+The implementation also fixed a real app bridge bug: Swift was reading
+`bell-features` through `roastty_config_get`, but `libroastty` did not implement
+that key. `roastty_config_get` now returns the packed bitset for system, audio,
+attention, title, and border features, with a focused Rust regression test.
+
+The new residual guard is
+`issues/0805-roastty-ghostty-parity/notification_link_bell_gui_residual_parity.py`.
+It statically enforces the split rows and exact CFG-223 counts, rejects the old
+broad row, and runs the live macOS trace guard
+`macos_notification_link_bell_trace_runtime.py`.
+
+The live guard found that this VM reports notifications denied for the debug app
+(`desktopNotification authorizationStatus=1`). Therefore this experiment cannot
+honestly claim OS banner/sound delivery. Attempts to prove native context-menu
+display with CGEvent right-click and Accessibility `AXShowMenu` did not produce
+a deterministic `SurfaceView.menu(for:)` trace in this VM, so native menu
+display remains in the exact residual gap.
+
+Final CFG-223 split counts:
+
+- Runtime rows: 89
+- Oracle-complete rows: 85
+- Closed rows: 88
+- Incomplete rows: 1
+- Runtime gaps: 1
+- Remaining gap ID: `RUNTIME-012B2B2B2B2B3C`
+- CFG-223 status: `Gap`
+
+Verification performed:
+
+```bash
+cargo test --manifest-path roastty/Cargo.toml config_get_bell_features_runtime
+(cd roastty && macos/build.nu --action build)
+PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/notification_link_bell_gui_residual_parity.py
+PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/macos_walkthrough_residual_parity.py
+PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/renderer_visual_residual_audit.py
+PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/terminal_runtime_residual_audit.py
+```
+
+`macos_walkthrough_residual_parity.py` initially exposed a repeated
+Accessibility timing flake inside `macos_window_padding_pixel_runtime.py` when
+run after several GUI guards. The window-padding guard passed standalone, and
+the composite guard passed after wiring its existing `focus_evidence` timeout
+parameter through to the internal AppleScript call.
+
+## Conclusion
+
+Experiment 186 made concrete progress but did not close CFG-223. The remaining
+Issue 805 work is now sharply bounded to `RUNTIME-012B2B2B2B2B3C`, not a broad
+notification/link/bell bucket. The next experiment should focus on obtaining
+deterministic OS/native GUI proof for that row or fixing the app/VM automation
+path that prevents that proof.
+
+## Completion Review
+
+Fresh-context Codex adversarial reviewer `Dalton the 3rd` reviewed the completed
+Experiment 186 result, implementation diff, generated matrices, residual guard,
+and live guard evidence. The reviewer returned:
+
+```text
+VERDICT: APPROVED
+
+No findings.
+```

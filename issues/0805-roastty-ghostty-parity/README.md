@@ -1013,9 +1013,15 @@ experiment files until they are proven.
   split-terminal ID lifecycle proof, keyboard and mouse side effects, native
   menu action dispatch, fullscreen/command-palette screenshots, Quick Terminal
   screenshots, right-split layout screenshots, hidden-titlebar traffic-light
-  pixels, window-padding pixels, and GUI cursor pixels. CFG-223 now has only one
-  remaining runtime gap: notification/link/bell GUI effects in
-  `RUNTIME-012B2B2B2B2B3`.
+  pixels, window-padding pixels, and GUI cursor pixels.
+- **Live notification and bell proof must split OS requests from OS-visible
+  effects.** Experiment 186 proved live OSC 777 notification request dispatch,
+  VM notification authorization-state capture, live BEL-to-app/surface dispatch,
+  and the Swift `bell-features` bridge. macOS reports notifications denied for
+  the debug app in this VM (`authorizationStatus=1`), and the VM did not expose
+  deterministic proof for OS banner delivery, audible output, dock attention,
+  link hover pixels, native previews/menus, or URL-opening handlers. CFG-223 now
+  has one exact remaining gap in `RUNTIME-012B2B2B2B2B3C`.
 - **Font-size runtime updates should be idempotent.** Experiment 125 found that
   applying an unchanged font size dirtied ABI-only surfaces because
   `set_font_size_points` always requested a render. The setter now returns
@@ -1778,4 +1784,4 @@ remains open.
 - [Experiment 185: macOS walkthrough residual proof](185-macos-walkthrough-residual-proof.md)
   — **Pass**
 - [Experiment 186: Notification/link/bell GUI residual proof](186-notification-link-bell-gui-residual-proof.md)
-  — **Designed**
+  — **Partial**

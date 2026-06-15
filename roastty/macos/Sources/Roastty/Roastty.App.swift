@@ -1060,6 +1060,7 @@ extension Roastty {
             case ROASTTY_TARGET_SURFACE:
                 guard let surface = target.target.surface else { return }
                 guard let surfaceView = self.surfaceView(from: surface) else { return }
+                appendUITestTrace("ringBell target=surface id=\(surfaceView.id.uuidString)")
                 NotificationCenter.default.post(
                     name: .roasttyBellDidRing,
                     object: surfaceView
@@ -1397,13 +1398,18 @@ extension Roastty {
             body: String,
             requireFocus: Bool = true) {
             let center = UNUserNotificationCenter.current()
+            appendUITestTrace(
+                "desktopNotification request title=\(title) body=\(body) requireFocus=\(requireFocus) surface=\(surfaceView.id.uuidString)"
+            )
             center.requestAuthorization(options: [.alert, .sound]) { _, error in
                 if let error = error {
                     Roastty.logger.error("Error while requesting notification authorization: \(error)")
+                    appendUITestTrace("desktopNotification authorizationError=\(error)")
                 }
             }
 
             center.getNotificationSettings { settings in
+                appendUITestTrace("desktopNotification authorizationStatus=\(settings.authorizationStatus.rawValue)")
                 guard settings.authorizationStatus == .authorized else { return }
                 surfaceView.showUserNotification(
                     title: title,
@@ -1813,6 +1819,19 @@ extension Roastty {
 
             default:
                 assertionFailure()
+            }
+        }
+
+        private static func appendUITestTrace(_ line: String) {
+            guard let path = ProcessInfo.processInfo.environment["ROASTTY_UI_KEY_TRACE_PATH"] else { return }
+            let data = Data((line + "\n").utf8)
+            if FileManager.default.fileExists(atPath: path),
+               let handle = try? FileHandle(forWritingTo: URL(fileURLWithPath: path)) {
+                defer { try? handle.close() }
+                _ = try? handle.seekToEnd()
+                try? handle.write(contentsOf: data)
+            } else {
+                try? data.write(to: URL(fileURLWithPath: path), options: .atomic)
             }
         }
 

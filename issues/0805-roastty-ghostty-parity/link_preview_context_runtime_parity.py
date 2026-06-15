@@ -120,21 +120,21 @@ def main() -> int:
         ],
     )
 
-    row_gap = require_row(runtime_inventory, "RUNTIME-012B2B2B2B2B3")
+    row_gap = require_row(runtime_inventory, "RUNTIME-012B2B2B2B2B3C")
     require_all(
         row_gap,
         [
             ("Gap", "remaining row status"),
-            ("Actual OS banner/sound delivery", "remaining OS notification gap"),
-            ("actual audio/dock/border/title GUI effects", "remaining bell GUI gap"),
-            ("real app link hover/cursor UI", "remaining hover/cursor gap"),
+            ("actual OS notification delivery/banner/sound", "remaining OS notification gap"),
+            ("audible bell output", "remaining bell GUI gap"),
+            ("real link hover/cursor pixels", "remaining hover/cursor gap"),
             ("native link preview display", "remaining native preview gap"),
-            ("native context/menu display", "remaining native context menu gap"),
-            ("OS URL-opening flows", "remaining OS URL opening gap"),
+            ("native context-menu display", "remaining native context menu gap"),
+            ("OS URL-opening with a controlled handler", "remaining OS URL opening gap"),
         ],
     )
 
-    old_gap_absent = "RUNTIME-012B2B2B2B2B | remaining notification/link/bell GUI effects"
+    old_gap_absent = "RUNTIME-012B2B2B2B2B | remaining OS-controlled notification, bell, link, menu, preview, and URL-opening GUI effects"
     if old_gap_absent in runtime_inventory:
         raise AssertionError("old unsplit RUNTIME-012B2B2B2B2B gap row remains")
 
@@ -142,8 +142,8 @@ def main() -> int:
     require_all(
         cfg223,
         [
-            ("83 rows Oracle complete", "CFG-223 oracle count"),
-            ("86 rows closed", "CFG-223 closed count"),
+            ("85 rows Oracle complete", "CFG-223 oracle count"),
+            ("88 rows closed", "CFG-223 closed count"),
             ("1 rows are incomplete", "CFG-223 incomplete count"),
             ("1 rows are runtime gaps", "CFG-223 gap count"),
         ],

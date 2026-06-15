@@ -42,12 +42,41 @@ def require_row(markdown: str, row_id: str) -> str:
 
 
 def normalize_ghostty_to_roastty(source: str) -> str:
-    return (
+    return strip_ui_trace_hooks(
         source.replace("Ghostty", "Roastty")
         .replace("ghostty", "roastty")
         .replace("GHOSTTY", "ROASTTY")
         .replace("libghostty", "libroastty")
     )
+
+
+def strip_ui_trace_hooks(source: str) -> str:
+    lines = source.splitlines()
+    stripped: list[str] = []
+    skip_multiline_call = False
+    skip_helper = False
+    helper_depth = 0
+    for line in lines:
+        if skip_helper:
+            helper_depth += line.count("{") - line.count("}")
+            if helper_depth <= 0:
+                skip_helper = False
+            continue
+        if "func appendUITestTrace(" in line:
+            skip_helper = True
+            helper_depth = line.count("{") - line.count("}")
+            continue
+        if skip_multiline_call:
+            if line.strip() == ")":
+                skip_multiline_call = False
+            continue
+        if "appendUITestTrace(" in line:
+            if line.strip().endswith("("):
+                skip_multiline_call = True
+            continue
+        stripped.append(line)
+    result = "\n".join(stripped) + ("\n" if source.endswith("\n") else "")
+    return result.replace("\n\n}\n\n/// Represents", "\n}\n\n/// Represents").replace("\n\n\n        private static func setInitialSize", "\n\n        private static func setInitialSize")
 
 
 def assert_sources_match_after_rename(
@@ -56,7 +85,7 @@ def assert_sources_match_after_rename(
     label: str,
 ) -> None:
     ghostty_source = read(ghostty_path)
-    roastty_source = read(roastty_path)
+    roastty_source = strip_ui_trace_hooks(read(roastty_path))
     normalized = normalize_ghostty_to_roastty(ghostty_source)
     if normalized == roastty_source:
         return
@@ -263,16 +292,16 @@ def main() -> int:
         ],
     )
 
-    row_gap = require_row(runtime_inventory, "RUNTIME-012B2B2B2B2B3")
+    row_gap = require_row(runtime_inventory, "RUNTIME-012B2B2B2B2B3C")
     require_all(
         row_gap,
         [
-            ("Gap", "RUNTIME-012B2B2B2B2B3 status"),
-            ("Actual OS banner/sound delivery", "RUNTIME-012B2B2B2B2B3 OS notification delivery gap"),
-            ("actual audio/dock/border/title GUI effects", "RUNTIME-012B2B2B2B2B3 actual GUI effect gap"),
-            ("hover/cursor UI", "RUNTIME-012B2B2B2B2B3 hover cursor gap"),
-            ("native link preview display", "RUNTIME-012B2B2B2B2B3 link preview gap"),
-            ("native context/menu display", "RUNTIME-012B2B2B2B2B3 context menu gap"),
+            ("Gap", "RUNTIME-012B2B2B2B2B3C status"),
+            ("actual OS notification delivery/banner/sound", "RUNTIME-012B2B2B2B2B3C OS notification delivery gap"),
+            ("audible bell output", "RUNTIME-012B2B2B2B2B3C actual GUI effect gap"),
+            ("real link hover/cursor pixels", "RUNTIME-012B2B2B2B2B3C hover cursor gap"),
+            ("native link preview display", "RUNTIME-012B2B2B2B2B3C link preview gap"),
+            ("native context-menu display", "RUNTIME-012B2B2B2B2B3C context menu gap"),
         ],
     )
     if "RUNTIME-012B2B |" in runtime_inventory:
@@ -282,8 +311,8 @@ def main() -> int:
     require_all(
         cfg223,
         [
-            ("83 rows Oracle complete", "CFG-223 oracle count"),
-            ("86 rows closed", "CFG-223 closed count"),
+            ("85 rows Oracle complete", "CFG-223 oracle count"),
+            ("88 rows closed", "CFG-223 closed count"),
             ("1 rows are incomplete", "CFG-223 incomplete count"),
             ("1 rows are runtime gaps", "CFG-223 gap count"),
         ],

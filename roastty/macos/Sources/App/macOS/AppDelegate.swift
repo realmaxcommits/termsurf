@@ -636,7 +636,11 @@ class AppDelegate: NSObject,
     }
 
     @objc private func roasttyBellDidRing(_ notification: Notification) {
+        appendUITestTrace(
+            "appBell system=\(roastty.config.bellFeatures.contains(.system)) audio=\(roastty.config.bellFeatures.contains(.audio)) attention=\(roastty.config.bellFeatures.contains(.attention))"
+        )
         if roastty.config.bellFeatures.contains(.system) {
+            appendUITestTrace("appBell systemBeep=true")
             NSSound.beep()
         }
 
@@ -644,12 +648,14 @@ class AppDelegate: NSObject,
             if let configPath = roastty.config.bellAudioPath,
                let sound = NSSound(contentsOfFile: configPath.path, byReference: false) {
                 sound.volume = roastty.config.bellAudioVolume
+                appendUITestTrace("appBell audio path=\(configPath.path) volume=\(roastty.config.bellAudioVolume)")
                 sound.play()
             }
         }
 
         if roastty.config.bellFeatures.contains(.attention) {
             // Bounce the dock icon if we're not focused.
+            appendUITestTrace("appBell attention=true")
             NSApp.requestUserAttention(.informationalRequest)
         }
     }
@@ -735,6 +741,7 @@ class AppDelegate: NSObject,
         let label = wantsBadge ? (bellCount > 99 ? "99+" : String(bellCount)) : nil
         NSApp.dockTile.badgeLabel = label
         NSApp.dockTile.display()
+        appendUITestTrace("dockBadge bellCount=\(bellCount) label=\(label ?? "<nil>")")
     }
 
     private func roasttyConfigDidChange(config: Roastty.Config) {
@@ -890,6 +897,7 @@ class AppDelegate: NSObject,
     ) {
         let shouldPresent = roastty.shouldPresentNotification(notification: willPresent)
         let options: UNNotificationPresentationOptions = shouldPresent ? [.banner, .sound] : []
+        appendUITestTrace("notificationWillPresent id=\(willPresent.request.identifier) shouldPresent=\(shouldPresent)")
         withCompletionHandler(options)
     }
 
@@ -1361,6 +1369,19 @@ extension AppDelegate {
                 }
             }
             await NSApp.reply(toApplicationShouldTerminate: true)
+        }
+    }
+
+    private func appendUITestTrace(_ line: String) {
+        guard let path = ProcessInfo.processInfo.environment["ROASTTY_UI_KEY_TRACE_PATH"] else { return }
+        let data = Data((line + "\n").utf8)
+        if FileManager.default.fileExists(atPath: path),
+           let handle = try? FileHandle(forWritingTo: URL(fileURLWithPath: path)) {
+            defer { try? handle.close() }
+            _ = try? handle.seekToEnd()
+            try? handle.write(contentsOf: data)
+        } else {
+            try? data.write(to: URL(fileURLWithPath: path), options: .atomic)
         }
     }
 }
