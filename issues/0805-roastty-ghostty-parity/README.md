@@ -1343,3 +1343,5 @@ remains open.
   **Pass**
 - [Experiment 135: Enquiry response runtime](135-enquiry-response-runtime.md) —
   **Pass**
+- [Experiment 136: OSC color report format runtime](136-osc-color-report-format-runtime.md)
+  — **Designed**
