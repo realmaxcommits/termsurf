@@ -366,9 +366,44 @@ ROWS = [
         guard_command="`cargo test --manifest-path roastty/Cargo.toml from_config_sources_config_values && cargo test --manifest-path roastty/Cargo.toml background_opacity_clamps_for_renderer_knob && cargo test --manifest-path roastty/Cargo.toml from_config_sources_opacity_options && cargo test --manifest-path roastty/Cargo.toml cursor_opacity_clamps_to_cursor_overlay_alpha_only && cargo test --manifest-path roastty/Cargo.toml rebuild_bg_row_background_opacity_cells && cargo test --manifest-path roastty/Cargo.toml refine_padding_extend_rows && PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/renderer_knobs_runtime_parity.py`",
     ),
     RuntimeRow(
-        id="RUNTIME-008B2",
-        behavior="remaining renderer-visible effects: background blur, real compositor opacity, window padding layout pixels, cursor style shape/rendering pixels, custom shader output, and broader GUI/pixel parity",
-        ghostty_reference="`vendor/ghostty/src/config/Config.zig` renderer/window visual fields; `vendor/ghostty/src/renderer/generic.zig` derived renderer config and draw paths; `vendor/ghostty/src/Surface.zig` renderer config messages",
+        id="RUNTIME-008B2A",
+        behavior="deterministic active cursor overlay/uniform branches, cursor color/text color resolution, selected cursor sprite/glyph render data, wide cursor render data, lock fallback rendering, and cursor list routing",
+        ghostty_reference="`vendor/ghostty/src/renderer/generic.zig` cursor style, color, opacity, sprite, lock, and vertex render paths; `vendor/ghostty/src/renderer/cell.zig` cursor list routing; `vendor/ghostty/src/renderer/cursor.zig` password/preedit priority markers kept in the remaining gap",
+        roastty_reference="`roastty/src/renderer/frame_renderer.rs` active cursor render state; `roastty/src/renderer/cell.rs` cursor color, render-data, wide, lock fallback, and list-routing helpers",
+        family="renderer",
+        status="Oracle complete",
+        evidence=(
+            "Experiment 134 split out the deterministic cursor renderer data "
+            "slice without claiming GUI cursor pixels or full cursor-style "
+            "priority. `render_state_derives_visible_block_cursor_overlay`, "
+            "`render_state_cursor_color_comes_from_osc12`, "
+            "`render_state_block_sets_uniform_underline_does_not`, and "
+            "`cursor_blink_render_state_*` tests prove active non-password/"
+            "non-preedit cursor overlay/uniform branches, focus/blink "
+            "visibility, hollow unfocused cursors, OSC 12 cursor color, and "
+            "block-uniform versus overlay cursor routing. "
+            "`cursor_text_color_resolves_the_cursor_text_config` and "
+            "`cursor_color_resolves_with_precedence` prove cursor text and "
+            "cursor color resolution. `add_cursor_maps_styles_and_routes`, "
+            "`add_cursor_wide_uses_two_cells`, and "
+            "`add_cursor_lock_falls_back_when_glyph_absent` prove selected "
+            "cursor sprite/glyph render data, wide cursor render data, and "
+            "lock fallback rendering after lock style selection. "
+            "`block_cursor_pos_adjusts_for_wide_kind` and `set_cursor_*` "
+            "tests prove wide-tail cursor placement and cursor list routing. "
+            "`cursor_renderer_runtime_parity.py` statically checks pinned "
+            "Ghostty's cursor render markers against Roastty's tests and "
+            "verifies password/preedit cursor priority remains assigned to "
+            "`RUNTIME-008B2B`."
+        ),
+        missing_evidence="None for deterministic active cursor overlay/uniform branches, cursor color/text color resolution, selected cursor render data, wide cursor render data, lock fallback rendering after lock style selection, and cursor list routing.",
+        guard_tier="Tier 1",
+        guard_command="`cargo test --manifest-path roastty/Cargo.toml render_state_derives_visible_block_cursor_overlay && cargo test --manifest-path roastty/Cargo.toml render_state_cursor_color_comes_from_osc12 && cargo test --manifest-path roastty/Cargo.toml render_state_block_sets_uniform_underline_does_not && cargo test --manifest-path roastty/Cargo.toml cursor_blink_render_state && cargo test --manifest-path roastty/Cargo.toml add_cursor && cargo test --manifest-path roastty/Cargo.toml cursor_text_color_resolves_the_cursor_text_config && cargo test --manifest-path roastty/Cargo.toml cursor_color_resolves_with_precedence && cargo test --manifest-path roastty/Cargo.toml block_cursor_pos_adjusts_for_wide_kind && cargo test --manifest-path roastty/Cargo.toml set_cursor && PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/cursor_renderer_runtime_parity.py`",
+    ),
+    RuntimeRow(
+        id="RUNTIME-008B2B",
+        behavior="remaining renderer-visible effects: background blur, real compositor opacity, window padding layout pixels, password/preedit cursor-style priority through the active renderer path, GUI cursor pixels, custom shader output, and broader GUI/pixel parity",
+        ghostty_reference="`vendor/ghostty/src/config/Config.zig` renderer/window visual fields; `vendor/ghostty/src/renderer/generic.zig` derived renderer config and draw paths; `vendor/ghostty/src/renderer/cursor.zig` preedit/password cursor priority; `vendor/ghostty/src/Surface.zig` renderer config messages",
         roastty_reference="`roastty/src/lib.rs` live renderer and render state; `roastty/src/renderer`; copied macOS renderer host",
         family="renderer",
         status="Gap",
@@ -377,13 +412,17 @@ ROWS = [
             "occlusion/rebuild control slice. Experiment 133 split out "
             "deterministic renderer knob sourcing, background-opacity-cells "
             "behavior, opacity conversion/clamping, window-padding-color "
-            "padding-extension decisions, and thicken knob sourcing. CFG-223 "
-            "still needs representative runtime or GUI proof for background "
-            "blur, real compositor opacity, window padding layout pixels, "
-            "cursor style shape/rendering pixels, custom shader output, and "
+            "padding-extension decisions, and thicken knob sourcing. "
+            "Experiment 134 split out deterministic selected cursor render "
+            "data, color/text-color resolution, wide cursor render data, lock "
+            "fallback rendering, and cursor list routing. CFG-223 still needs "
+            "representative runtime or GUI proof for background blur, real "
+            "compositor opacity, window padding layout pixels, "
+            "password/preedit cursor-style priority through the active "
+            "renderer path, GUI cursor pixels, custom shader output, and "
             "broader GUI/pixel parity."
         ),
-        missing_evidence="Add renderer/runtime or GUI smoke rows for background blur, real compositor opacity, window padding layout pixels, cursor style shape/rendering pixels, custom shader output, and broader GUI/pixel parity.",
+        missing_evidence="Add renderer/runtime or GUI smoke rows for background blur, real compositor opacity, window padding layout pixels, password/preedit cursor-style priority through the active renderer path, GUI cursor pixels, custom shader output, and broader GUI/pixel parity.",
         guard_tier="Tier 3",
         guard_command="TBD by future CFG-223 renderer visual experiment.",
     ),
@@ -944,7 +983,8 @@ EXPECTED_IDS = [
     "RUNTIME-007B",
     "RUNTIME-008A",
     "RUNTIME-008B1",
-    "RUNTIME-008B2",
+    "RUNTIME-008B2A",
+    "RUNTIME-008B2B",
     "RUNTIME-009A",
     "RUNTIME-009B1",
     "RUNTIME-009B2A",

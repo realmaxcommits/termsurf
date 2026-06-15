@@ -163,3 +163,82 @@ non-password/non-preedit cursor slice, assigns password/preedit cursor-style
 priority through the active renderer path to `RUNTIME-008B2B`, and prevents a
 full cursor-priority claim without active-path proof. The reviewer reported no
 new required findings.
+
+## Result
+
+**Result:** Pass
+
+Implemented the deterministic cursor renderer split without claiming GUI cursor
+pixel parity or full Ghostty cursor-style priority:
+
+- Added `cursor_renderer_runtime_parity.py` to statically guard pinned Ghostty's
+  cursor render markers, Roastty's active cursor render-state tests, cursor
+  render-data tests, color-resolution tests, list-routing tests, and the
+  remaining password/preedit cursor-priority gap assignment.
+- Split `RUNTIME-008B2` into:
+  - `RUNTIME-008B2A`: **Oracle complete** for deterministic active cursor
+    overlay/uniform branches, cursor color/text-color resolution, selected
+    cursor sprite/glyph render data, wide cursor render data, lock fallback
+    rendering after lock selection, and cursor list routing.
+  - `RUNTIME-008B2B`: **Gap** for background blur, real compositor opacity,
+    window padding layout pixels, password/preedit cursor-style priority through
+    the active renderer path, GUI cursor pixels, custom shader output, and
+    broader GUI/pixel parity.
+
+Verification passed:
+
+```bash
+cargo test --manifest-path roastty/Cargo.toml render_state_derives_visible_block_cursor_overlay
+cargo test --manifest-path roastty/Cargo.toml render_state_cursor_color_comes_from_osc12
+cargo test --manifest-path roastty/Cargo.toml render_state_block_sets_uniform_underline_does_not
+cargo test --manifest-path roastty/Cargo.toml cursor_blink_render_state
+cargo test --manifest-path roastty/Cargo.toml add_cursor
+cargo test --manifest-path roastty/Cargo.toml cursor_text_color_resolves_the_cursor_text_config
+cargo test --manifest-path roastty/Cargo.toml cursor_color_resolves_with_precedence
+cargo test --manifest-path roastty/Cargo.toml block_cursor_pos_adjusts_for_wide_kind
+cargo test --manifest-path roastty/Cargo.toml set_cursor
+PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/cursor_renderer_runtime_parity.py
+PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/renderer_knobs_runtime_parity.py
+PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/renderer_control_runtime_parity.py
+PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/font_grid_runtime_parity.py
+PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/osc7_edge_runtime_parity.py
+PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/osc7_pwd_normalization_runtime_parity.py
+PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/title_pwd_fallback_runtime_parity.py
+PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/scrollback_byte_limit_runtime_parity.py
+PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/shell_startup_rewrite_runtime_parity.py
+PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/surface_title_runtime_parity.py
+PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/config_runtime_inventory.py --output issues/0805-roastty-ghostty-parity/config-runtime-inventory.md --matrix issues/0805-roastty-ghostty-parity/config-matrix.md
+cargo fmt --manifest-path roastty/Cargo.toml --check
+python3 -m py_compile issues/0805-roastty-ghostty-parity/cursor_renderer_runtime_parity.py issues/0805-roastty-ghostty-parity/config_runtime_inventory.py issues/0805-roastty-ghostty-parity/renderer_knobs_runtime_parity.py issues/0805-roastty-ghostty-parity/renderer_control_runtime_parity.py
+prettier --write --prose-wrap always --print-width 80 issues/0805-roastty-ghostty-parity/README.md issues/0805-roastty-ghostty-parity/134-cursor-renderer-runtime.md issues/0805-roastty-ghostty-parity/config-runtime-inventory.md issues/0805-roastty-ghostty-parity/config-matrix.md
+git diff --check
+```
+
+The regenerated inventory reported:
+
+```text
+runtime_rows=43
+oracle_complete=36
+closed=38
+audit_covered=0
+incomplete=5
+gap=5
+cfg223=Gap
+```
+
+## Conclusion
+
+The deterministic selected-cursor renderer data slice is now guarded while the
+remaining renderer gap stays honest. CFG-223 remains `Gap` with five runtime
+gaps, and `RUNTIME-008B2B` owns the remaining renderer visual work, including
+password/preedit active-path cursor priority and actual GUI cursor pixels.
+
+## Completion Review
+
+**Reviewer:** Codex adversarial subagent with fresh context.
+
+**Verdict:** Approved.
+
+The reviewer reported no required findings. One nit noted that the result
+verification block omitted the already-run Prettier and `git diff --check`
+hygiene commands; this file was updated to record them.

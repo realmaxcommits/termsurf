@@ -667,7 +667,14 @@ experiment files until they are proven.
   `window-padding-color` padding-extension decisions, and `font-thicken` knob
   sourcing. Background blur, real compositor opacity, window padding layout
   pixels, cursor style shape/rendering pixels, custom shader output, and broader
-  GUI/pixel parity remain in `RUNTIME-008B2`.
+  GUI/pixel parity remain in the renderer visual gap.
+- **Selected cursor render data is not the same as full cursor priority or GUI
+  pixels.** Experiment 134 split deterministic active cursor overlay/uniform
+  branches, cursor color/text-color resolution, selected cursor sprite/glyph
+  data, wide cursor data, lock fallback rendering after lock selection, and
+  cursor list routing out of the renderer visual gap. Password/preedit cursor
+  style priority through the active renderer path and actual GUI cursor pixels
+  remain in `RUNTIME-008B2B`.
 - **Font-size runtime updates should be idempotent.** Experiment 125 found that
   applying an unchanged font size dirtied ABI-only surfaces because
   `set_font_size_points` always requested a render. The setter now returns
@@ -1328,4 +1335,4 @@ remains open.
 - [Experiment 133: Renderer knobs runtime](133-renderer-knobs-runtime.md) —
   **Pass**
 - [Experiment 134: Cursor renderer runtime](134-cursor-renderer-runtime.md) —
-  **Designed**
+  **Pass**
