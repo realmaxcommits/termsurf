@@ -1327,3 +1327,5 @@ remains open.
 - [Experiment 132: Font grid runtime](132-font-grid-runtime.md) — **Pass**
 - [Experiment 133: Renderer knobs runtime](133-renderer-knobs-runtime.md) —
   **Pass**
+- [Experiment 134: Cursor renderer runtime](134-cursor-renderer-runtime.md) —
+  **Designed**
