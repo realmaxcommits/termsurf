@@ -219,3 +219,132 @@ numeric `pngdiff` thresholds, and a post-dismiss near-baseline control
 screenshot.
 
 Final design verdict: **Approved**.
+
+## Result
+
+**Result:** Pass
+
+Experiment 173 implemented and verified a live macOS GUI-state guard for focused
+fullscreen and command-palette behavior.
+
+Changes:
+
+- `issues/0805-roastty-ghostty-parity/macos_gui_state_runtime.py`
+  - Added a live debug-app guard using the absolute `Roastty.app` bundle,
+    isolated config, exact launched Unix PID targeting through System Events,
+    scoped cleanup, and new-crash-report detection.
+  - Configures the launched app with `macos-applescript = true`,
+    `quit-after-last-window-closed = true`, `cursor-style-blink = false`,
+    `window-width = 90`, `window-height = 28`, `fullscreen = true`, and a custom
+    command-palette entry.
+  - Clicks `Window > Toggle Full Screen` through the real native menu, waits for
+    PID-scoped CoreGraphics layer-0 window geometry to grow by the approved
+    threshold, waits for `AXFullScreen` when exposed, captures a fullscreen
+    screenshot, toggles back, and requires geometry/accessibility to return near
+    baseline.
+  - Clicks `View > Command Palette`, captures same-PID/same-window baseline and
+    visible screenshots, requires the approved `pngdiff` visible-overlay
+    thresholds, sends Escape, then requires a post-dismiss screenshot to return
+    near baseline.
+  - Records `palette_accessibility=fallback:{reason}` when the VM does not
+    expose stable SwiftUI command-palette accessibility cues, while still
+    requiring screenshot proof.
+- `issues/0805-roastty-ghostty-parity/config_runtime_inventory.py`
+  - Added `RUNTIME-011B2G` as Oracle complete for live fullscreen and
+    command-palette GUI state proof.
+  - Reduced `RUNTIME-011B2B` so it no longer owns the focused fullscreen
+    enter/exit and command-palette visibility screenshot evidence.
+  - Updated CFG-223 count assertions to `79` runtime rows, `72` Oracle-complete
+    rows, `75` closed rows, `4` incomplete rows, and `4` gap rows.
+- Existing CFG-223 runtime guard scripts
+  - Updated shared CFG-223 count expectations from `71` Oracle-complete / `74`
+    closed rows to `72` Oracle-complete / `75` closed rows.
+  - Updated stale remaining-gap assertions that still expected focused
+    fullscreen or command-palette visibility to remain open.
+- Generated docs
+  - Regenerated `config-runtime-inventory.md`, `config-matrix.md`, and
+    `platform-runtime-classification.md`.
+- `issues/0805-roastty-ghostty-parity/README.md`
+  - Updated Experiment 173 to `Pass`.
+  - Added a learning about waiting for native fullscreen accessibility state and
+    using screenshot proof for command-palette visibility in this VM.
+
+Verification:
+
+```bash
+(cd roastty && macos/build.nu --action build)
+# passed
+
+PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/macos_gui_state_runtime.py
+# palette_accessibility=fallback:missing-expected-cue
+# macos_gui_state_runtime=pass
+
+PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/config_runtime_inventory.py --output issues/0805-roastty-ghostty-parity/config-runtime-inventory.md --matrix issues/0805-roastty-ghostty-parity/config-matrix.md
+# runtime_rows=79
+# oracle_complete=72
+# closed=75
+# audit_covered=0
+# incomplete=4
+# gap=4
+# cfg223=Gap
+
+PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/platform_runtime_classification.py --config-inventory issues/0805-roastty-ghostty-parity/config-inventory.md --output issues/0805-roastty-ghostty-parity/platform-runtime-classification.md
+# platform_options=32
+# gap=15
+# not_applicable=15
+# oracle_complete=2
+
+for f in issues/0805-roastty-ghostty-parity/*_runtime_parity.py issues/0805-roastty-ghostty-parity/terminal_runtime_residual_audit.py issues/0805-roastty-ghostty-parity/link_hover_preview_dispatch_parity.py issues/0805-roastty-ghostty-parity/link_hover_modifier_refresh_parity.py issues/0805-roastty-ghostty-parity/link_preview_context_runtime_parity.py; do
+  PYTHONDONTWRITEBYTECODE=1 python3 "$f"
+done
+# all listed guards passed
+
+PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/macos_app_workflow_plumbing_parity.py && PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/macos_applescript_workflow_runtime.py && PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/macos_native_menu_runtime.py && PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/macos_gui_state_runtime.py
+# macos_app_workflow_plumbing_parity=pass
+# macos_applescript_workflow_runtime=pass
+# macos_native_menu_runtime=pass
+# palette_accessibility=fallback:missing-expected-cue
+# macos_gui_state_runtime=pass
+```
+
+The debug app build succeeded. Xcode emitted existing linker warnings about
+objects built for macOS 26.5 while linking for macOS 13.0, but the build
+completed with `** BUILD SUCCEEDED **`.
+
+## Conclusion
+
+Focused fullscreen enter/exit and command-palette visibility are no longer part
+of the remaining CFG-223 macOS app gap. The new live guard proves fullscreen
+through native menu dispatch, exact-PID CoreGraphics geometry, screenshot
+capture, and `AXFullScreen` when exposed; it proves command-palette visibility
+through same-window screenshot deltas and post-dismiss near-baseline control
+screenshots.
+
+CFG-223 remains `Gap` because unrelated GUI work still needs proof: titlebar
+visuals, quick-terminal visuals, split visual/layout parity, screenshot/pixel
+evidence beyond this focused proof, cursor/pointer pixels, and broader
+keyboard/mouse walkthrough parity.
+
+## Completion Review
+
+Fresh-context adversarial reviewer `Heisenberg the 2nd` reviewed the completed
+experiment and approved it with no required findings.
+
+The reviewer reported one optional finding: the initial accessibility fallback
+output was too broad because it did not distinguish timeout, query failure,
+empty tree, or missing expected command-palette cues. The screenshot proof kept
+the guard non-vacuous, so this was not blocking, but the finding was real.
+
+Fix made:
+
+- `macos_gui_state_runtime.py` now returns both accessibility text and a
+  fallback reason, distinguishing `timeout`, `query-failed`, `empty-tree`, and
+  `missing-expected-cue`.
+- The focused guard was rerun and passed with
+  `palette_accessibility=fallback:missing-expected-cue` and
+  `macos_gui_state_runtime=pass`.
+
+Focused re-review approved the fix and found no new required findings. The
+reviewer did not rerun the GUI guard under read-only discipline.
+
+Final completion verdict: **Approved**.

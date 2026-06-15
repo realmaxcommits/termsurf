@@ -288,6 +288,14 @@ experiment files until they are proven.
   open native menu can otherwise stall object-model queries. Prefer the
   launch-created terminal window for validation checks so New Window undo state
   does not change the expected Edit menu state.
+- **Native fullscreen and command-palette GUI proof need separate oracles.**
+  Experiment 173 showed that native fullscreen geometry can change before
+  `AXFullScreen` reports the new state, so the guard must wait for both
+  PID-scoped CoreGraphics bounds and any exposed accessibility state. The
+  command-palette SwiftUI overlay did not expose stable accessibility text in
+  this VM, so the durable proof is same-PID/same-window screenshots with a
+  visible baseline-to-palette pixel delta and a post-Escape near-baseline
+  control screenshot.
 - **Passing behavior needs a durable but cheap guard.** Future experiments
   should record the cheapest sufficient regression guard for each passing parity
   row. Prefer static checks and unit tests when they prove the behavior; reserve
@@ -1669,4 +1677,4 @@ remains open.
   — **Pass**
 - [Experiment 172: Native menu runtime](172-native-menu-runtime.md) — **Pass**
 - [Experiment 173: macOS GUI state runtime](173-macos-gui-state-runtime.md) —
-  **Designed**
+  **Pass**

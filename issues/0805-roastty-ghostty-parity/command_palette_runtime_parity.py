@@ -236,13 +236,13 @@ def main() -> int:
         [
             ("Gap", "RUNTIME-011B2B status"),
             (
-                "titlebar/fullscreen/quick-terminal visuals",
-                "RUNTIME-011B2B titlebar/fullscreen/quick-terminal gap",
+                "titlebar and quick-terminal visuals",
+                "RUNTIME-011B2B titlebar/quick-terminal gap",
             ),
             ("screenshot/pixel evidence", "RUNTIME-011B2B screenshot/pixel gap"),
             (
-                "broader command-palette GUI behavior",
-                "RUNTIME-011B2B remaining command palette gap",
+                "focused fullscreen and command-palette proof",
+                "RUNTIME-011B2B narrowed command palette/fullscreen evidence",
             ),
         ],
     )
@@ -253,8 +253,8 @@ def main() -> int:
     require_all(
         cfg223,
         [
-            ("71 rows Oracle complete", "CFG-223 oracle count"),
-            ("74 rows closed", "CFG-223 closed count"),
+            ("72 rows Oracle complete", "CFG-223 oracle count"),
+            ("75 rows closed", "CFG-223 closed count"),
             ("4 rows are incomplete", "CFG-223 incomplete count"),
             ("4 rows are runtime gaps", "CFG-223 gap count"),
         ],
