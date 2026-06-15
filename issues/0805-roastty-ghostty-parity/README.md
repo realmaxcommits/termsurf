@@ -1636,3 +1636,5 @@ remains open.
   — **Pass**
 - [Experiment 169: Config facet matrix reconciliation](169-config-facet-matrix-reconciliation.md)
   — **Pass**
+- [Experiment 170: AppleScript split terminal lifecycle](170-applescript-split-terminal-lifecycle.md)
+  — **Designed**
