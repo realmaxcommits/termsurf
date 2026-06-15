@@ -1777,3 +1777,5 @@ remains open.
   — **Pass**
 - [Experiment 185: macOS walkthrough residual proof](185-macos-walkthrough-residual-proof.md)
   — **Pass**
+- [Experiment 186: Notification/link/bell GUI residual proof](186-notification-link-bell-gui-residual-proof.md)
+  — **Designed**
