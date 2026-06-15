@@ -1501,3 +1501,5 @@ remains open.
   — **Pass**
 - [Experiment 154: Non-glass opacity runtime](154-non-glass-opacity-runtime.md)
   — **Pass**
+- [Experiment 155: macOS user notification runtime](155-macos-user-notification-runtime.md)
+  — **Designed**
