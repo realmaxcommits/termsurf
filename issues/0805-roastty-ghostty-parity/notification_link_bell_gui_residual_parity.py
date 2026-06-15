@@ -167,6 +167,7 @@ def main() -> int:
     require(gap_cells[5] == "Gap", f"unexpected gap row status: {gap_cells}")
     for needle in [
         "actual OS notification delivery/banner/sound",
+        "authorizationStatus=1",
         "audible bell output",
         "OS-visible dock-attention bounce/state beyond AppKit request dispatch",
     ]:
@@ -199,6 +200,7 @@ def main() -> int:
         ISSUE / "macos_live_bell_attention_dock_state.py",
         ISSUE / "macos_live_quicklook_definition.py",
         ISSUE / "macos_launch_services_url_handler_delivery.py",
+        ISSUE / "macos_live_user_notification_delivery.py",
     ]:
         result = subprocess.run(
             ["python3", str(guard)],

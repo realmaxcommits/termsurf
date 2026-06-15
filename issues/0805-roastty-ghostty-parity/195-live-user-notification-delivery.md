@@ -106,3 +106,100 @@ user-notification lifecycle parity, and that guard is currently broken because
 it does not account for newer intentional Roastty UI-test trace hooks. The
 design now includes updating and running that guard before the new live
 notification-delivery guard.
+
+Re-review verdict after the fix: **Approved**.
+
+## Result
+
+**Result:** Partial
+
+The experiment fixed the existing static macOS user-notification lifecycle guard
+and added a live same-app delivered-notification guard, but the current VM still
+blocks actual notification delivery before scheduling.
+
+Implementation changes:
+
+- `macos_user_notification_runtime_parity.py` now normalizes the intentional
+  Roastty UI-test trace hooks and current CFG-223 counts/residual wording while
+  preserving the source-parity checks for notification request construction,
+  category/action registration, authorization gates, delivered-notification
+  cleanup, and notification response handling.
+- `ScriptTerminal.perform(action:)` gained an env-gated
+  `ui_test_user_notification` action.
+- `SurfaceView.showUserNotification` gained an optional identifier parameter so
+  the live guard can use a deterministic notification ID while production
+  callers still get a UUID.
+- `SurfaceView.showUITestUserNotification` records notification settings,
+  schedules the deterministic notification only when authorization is
+  `.authorized`, and then queries
+  `UNUserNotificationCenter.getDeliveredNotifications` from the Roastty app
+  process.
+- `macos_live_user_notification_delivery.py` launches the built debug app with
+  isolated config/defaults, invokes the env-gated action through AppleScript,
+  and records either exact delivered-notification content or the exact
+  authorization boundary.
+
+The passing live guard recorded the authorization boundary:
+
+- `authorization_status = 1`;
+- `alert_setting = 2`;
+- `sound_setting = 2`;
+- trace `userNotification settings status=1 alert=2 sound=2`;
+- trace `userNotification uiTestAction=blocked status=1`;
+- no new Roastty crash report.
+
+Because authorization was not `.authorized`, the guard did not schedule the
+notification and did not claim delivered-notification parity. If a future VM run
+reports `authorization_status = 2`, the same guard will require the
+deterministic notification ID, title, subtitle, body, category, surface ID, and
+`requireFocus=false` userInfo to appear in `getDeliveredNotifications`.
+
+The regenerated CFG-223 counts are unchanged:
+
+- runtime rows: 98
+- Oracle complete: 94
+- closed: 97
+- audit covered: 0
+- incomplete: 1
+- runtime gaps: 1
+- CFG-223 status: `Gap`
+
+Verification logs:
+
+- `logs/issue805-exp195-build-2.log`
+- `logs/issue805-exp195-user-notification-2.log`
+- `logs/issue805-exp195-config-runtime-inventory-1.log`
+- `logs/issue805-exp195-residual-guard-2.log`
+
+Additional verification:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/macos_user_notification_runtime_parity.py`
+- `python3 -m py_compile issues/0805-roastty-ghostty-parity/macos_live_user_notification_delivery.py issues/0805-roastty-ghostty-parity/macos_user_notification_runtime_parity.py`
+- `prettier --check issues/0805-roastty-ghostty-parity/README.md issues/0805-roastty-ghostty-parity/195-live-user-notification-delivery.md issues/0805-roastty-ghostty-parity/config-runtime-inventory.md issues/0805-roastty-ghostty-parity/config-matrix.md`
+- `git diff --check`
+
+## Completion Review
+
+Fresh-context Codex adversarial reviewer `Linnaeus the 3rd` reviewed the
+completed experiment, implementation diff, issue/inventory updates, and
+verification logs.
+
+Verdict: **Approved**.
+
+Findings: no required findings.
+
+Optional finding accepted and fixed: the first implementation used callback
+forms that introduced new Swift concurrency warnings in
+`SurfaceView_AppKit.swift`. The code now uses async UserNotifications APIs for
+notification add/settings/delivered queries, and the rebuilt
+`logs/issue805-exp195-build-2.log` no longer reports the experiment-specific
+UserNotifications concurrency warnings. Remaining build warnings are preexisting
+unrelated warnings.
+
+## Conclusion
+
+Experiment 195 narrowed the notification slice to an OS authorization boundary:
+the current VM reports denied notification authorization before scheduling, so
+actual delivered notification/banner/sound proof remains in
+`RUNTIME-012B2B2B2B2B3C`. The guard is now ready to prove delivered notification
+content on an authorized macOS state.

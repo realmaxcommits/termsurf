@@ -2538,11 +2538,16 @@ ROWS = [
             "UI pixels into `RUNTIME-012B2B2B2B2B3C8`. Experiment 194 splits "
             "external Launch Services handler delivery through an unsuppressed "
             "`NSWorkspace.shared.open(url)` call into "
-            "`RUNTIME-012B2B2B2B2B3C9`. The remaining unproven behavior is "
-            "limited to OS-controlled notification, audio, and Dock effects "
-            "that the current VM run did not expose deterministically."
+            "`RUNTIME-012B2B2B2B2B3C9`. Experiment 195 adds a live "
+            "`UNUserNotificationCenter` delivered-notification guard and shows "
+            "the current VM blocks delivery before scheduling because Roastty's "
+            "notification settings report `authorizationStatus=1`, "
+            "`alertSetting=2`, and `soundSetting=2`. The remaining unproven "
+            "behavior is limited to OS-controlled notification delivery after "
+            "authorization is available, audio, and Dock effects that the "
+            "current VM run did not expose deterministically."
         ),
-        missing_evidence="Still need deterministic proof for actual OS notification delivery/banner/sound after authorization is available, audible bell output, and OS-visible dock-attention bounce/state beyond AppKit request dispatch.",
+        missing_evidence="Still need deterministic proof for actual OS notification delivery/banner/sound after authorization is available; the current VM reports notification authorizationStatus=1 before scheduling. Also still need deterministic proof for audible bell output and OS-visible dock-attention bounce/state beyond AppKit request dispatch.",
         guard_tier="Tier 3",
         guard_command="TBD by future focused OS/native GUI experiment.",
     ),

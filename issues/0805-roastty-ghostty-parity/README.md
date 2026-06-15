@@ -1092,6 +1092,13 @@ experiment files until they are proven.
   Roastty's unsuppressed `NSWorkspace.shared.open(url)` request to the
   controlled handler. CFG-223 now has 94 Oracle-complete runtime rows and 97
   closed rows.
+- **User notification delivery is blocked by VM authorization state.**
+  Experiment 195 added a same-app delivered-notification guard using
+  `UNUserNotificationCenter.getDeliveredNotifications`, but the current VM stops
+  before scheduling: Roastty reports `authorizationStatus=1`, `alertSetting=2`,
+  and `soundSetting=2`. The env-gated hook and static lifecycle parity guard are
+  in place, so a future run with authorized notifications can prove delivered
+  notification content without redesigning the guard.
 - **Font-size runtime updates should be idempotent.** Experiment 125 found that
   applying an unchanged font size dirtied ABI-only surfaces because
   `set_font_size_points` always requested a render. The setter now returns
@@ -1872,4 +1879,4 @@ remains open.
 - [Experiment 194: Launch Services URL handler delivery](194-launch-services-url-handler-delivery.md)
   — **Pass**
 - [Experiment 195: Live user notification delivery](195-live-user-notification-delivery.md)
-  — **Designed**
+  — **Partial**

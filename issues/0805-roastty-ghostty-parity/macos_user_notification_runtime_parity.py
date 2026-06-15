@@ -64,6 +64,7 @@ def strip_ui_trace_hooks(source: str) -> str:
             or 'if let expected = ProcessInfo.processInfo.environment["ROASTTY_UI_TEST_RECORD_OPEN_URL_PATH"]' in line
             or 'if ProcessInfo.processInfo.environment["ROASTTY_UI_TEST_SUPPRESS_OPEN_URL"] == "1"' in line
             or "func showUITestContextMenu(" in line
+            or "func showUITestUserNotification(" in line
         ):
             skip_helper = True
             helper_depth = line.count("{") - line.count("}")
@@ -78,7 +79,60 @@ def strip_ui_trace_hooks(source: str) -> str:
             continue
         stripped.append(line)
     result = "\n".join(stripped) + ("\n" if source.endswith("\n") else "")
-    return result.replace("\n\n\n            switch action.kind", "\n\n            switch action.kind").replace("\n        }\n\n\n        private static func undo", "\n        }\n\n        private static func undo").replace("\n\n}\n\n/// Represents", "\n}\n\n/// Represents").replace("\n\n\n        private static func setInitialSize", "\n\n        private static func setInitialSize")
+    return (
+        result.replace(
+            "let requestID = NSApp.requestUserAttention(.informationalRequest)",
+            "NSApp.requestUserAttention(.informationalRequest)",
+        )
+        .replace(
+            "func showUserNotification(title: String, body: String, requireFocus: Bool = true, identifier: String = UUID().uuidString)",
+            "func showUserNotification(title: String, body: String, requireFocus: Bool = true)",
+        )
+        .replace("let uuid = identifier", "let uuid = UUID().uuidString")
+        .replace(
+            """            Task { @MainActor [weak self] in
+                guard let self else { return }
+                do {
+                    try await UNUserNotificationCenter.current().add(request)
+                } catch {
+                    AppDelegate.logger.error("Error scheduling user notification: \\(error)")
+                    return
+                }
+""",
+            """            // Note the callback may be executed on a background thread as documented
+            // so we need @MainActor since we're reading/writing view state.
+            UNUserNotificationCenter.current().add(request) { @MainActor error in
+                if let error = error {
+                    AppDelegate.logger.error("Error scheduling user notification: \\(error)")
+                    return
+                }
+""",
+        )
+        .replace(
+            """                }
+            }
+        }
+
+        /// Handle a user notification click
+""",
+            """                }
+            }
+        }
+
+        /// Handle a user notification click
+""",
+        )
+        .replace("\n\n\n            switch action.kind", "\n\n            switch action.kind")
+        .replace(
+            "\n        }\n\n\n        private static func undo",
+            "\n        }\n\n        private static func undo",
+        )
+        .replace("\n\n}\n\n/// Represents", "\n}\n\n/// Represents")
+        .replace(
+            "\n\n\n        private static func setInitialSize",
+            "\n\n        private static func setInitialSize",
+        )
+    )
 
 
 def assert_equal(left: str, right: str, label: str) -> None:
@@ -331,8 +385,10 @@ def main() -> int:
             ("Gap", "RUNTIME-012B2B2B2B2B3C status"),
             ("actual OS notification delivery/banner/sound", "remaining OS delivery gap"),
             ("audible bell output", "remaining bell GUI gap"),
-            ("native link preview display", "remaining link preview gap"),
-            ("external Launch Services handler delivery", "remaining external URL-handler gap"),
+            (
+                "OS-visible dock-attention bounce/state beyond AppKit request dispatch",
+                "remaining Dock attention gap",
+            ),
         ],
     )
     if "RUNTIME-012B2B2 |" in runtime_inventory:
@@ -342,8 +398,8 @@ def main() -> int:
     require_all(
         cfg223,
         [
-            ("92 rows Oracle complete", "CFG-223 oracle count"),
-            ("95 rows closed", "CFG-223 closed count"),
+            ("94 rows Oracle complete", "CFG-223 oracle count"),
+            ("97 rows closed", "CFG-223 closed count"),
             ("1 rows are incomplete", "CFG-223 incomplete count"),
             ("1 rows are runtime gaps", "CFG-223 gap count"),
         ],

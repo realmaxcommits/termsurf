@@ -1804,7 +1804,7 @@ extension Roastty {
         }
 
         /// Show a user notification and associate it with this surface
-        func showUserNotification(title: String, body: String, requireFocus: Bool = true) {
+        func showUserNotification(title: String, body: String, requireFocus: Bool = true, identifier: String = UUID().uuidString) {
             let content = UNMutableNotificationContent()
             content.title = title
             content.subtitle = self.title
@@ -1816,7 +1816,7 @@ extension Roastty {
                 "requireFocus": requireFocus,
             ]
 
-            let uuid = UUID().uuidString
+            let uuid = identifier
             appendUITestKeyTrace("userNotification request id=\(uuid) title=\(title) body=\(body) requireFocus=\(requireFocus)")
             let request = UNNotificationRequest(
                 identifier: uuid,
@@ -1824,10 +1824,11 @@ extension Roastty {
                 trigger: nil
             )
 
-            // Note the callback may be executed on a background thread as documented
-            // so we need @MainActor since we're reading/writing view state.
-            UNUserNotificationCenter.current().add(request) { @MainActor error in
-                if let error = error {
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                do {
+                    try await UNUserNotificationCenter.current().add(request)
+                } catch {
                     AppDelegate.logger.error("Error scheduling user notification: \(error)")
                     self.appendUITestKeyTrace("userNotification addError id=\(uuid) error=\(error)")
                     return
@@ -1849,6 +1850,37 @@ extension Roastty {
                             .removeDeliveredNotifications(withIdentifiers: [uuid])
                     }
                 }
+            }
+        }
+
+        @objc func showUITestUserNotification(_ sender: Any?) {
+            guard ProcessInfo.processInfo.environment["ROASTTY_UI_TEST_ENABLE_USER_NOTIFICATION_ACTION"] == "1" else { return }
+            let title = "Issue805Exp195Notification"
+            let body = "Issue 805 Experiment 195 Body"
+            let id = "issue805-exp195-\(self.id.uuidString)"
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                let center = UNUserNotificationCenter.current()
+                let settings = await center.notificationSettings()
+                self.appendUITestKeyTrace(
+                    "userNotification settings status=\(settings.authorizationStatus.rawValue) alert=\(settings.alertSetting.rawValue) sound=\(settings.soundSetting.rawValue)"
+                )
+                guard settings.authorizationStatus == .authorized else {
+                    self.appendUITestKeyTrace("userNotification uiTestAction=blocked status=\(settings.authorizationStatus.rawValue)")
+                    return
+                }
+                self.showUserNotification(title: title, body: body, requireFocus: false, identifier: id)
+                try? await Task.sleep(for: .milliseconds(750))
+                let matches = await center.deliveredNotifications().filter { $0.request.identifier == id }
+                let summary = matches.map { notification in
+                    let content = notification.request.content
+                    let surface = content.userInfo["surface"] as? String ?? ""
+                    let requireFocus = content.userInfo["requireFocus"] as? Bool ?? true
+                    return "id=\(notification.request.identifier) title=\(content.title) subtitle=\(content.subtitle) body=\(content.body) category=\(content.categoryIdentifier) surface=\(surface) requireFocus=\(requireFocus)"
+                }.joined(separator: "|")
+                self.appendUITestKeyTrace("userNotification delivered count=\(matches.count) \(summary)")
+                center.removeDeliveredNotifications(withIdentifiers: [id])
+                self.notificationIdentifiers.remove(id)
             }
         }
 
