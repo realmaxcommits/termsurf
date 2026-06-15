@@ -793,7 +793,7 @@ ROWS = [
     ),
     RuntimeRow(
         id="RUNTIME-008B2B2B2B2B",
-        behavior="remaining renderer-visible background image, colorspace, alpha blending, scroll-to-bottom, and custom shader animation effects",
+        behavior="remaining renderer-visible background image, colorspace, alpha blending, and scroll-to-bottom effects",
         ghostty_reference="`vendor/ghostty/src/config/Config.zig` renderer/window visual fields; `vendor/ghostty/src/renderer/generic.zig` derived renderer config and draw paths; `vendor/ghostty/src/Surface.zig` renderer config messages; screenshot/pixel walkthrough paths",
         roastty_reference="`roastty/src/lib.rs` live renderer and render state; `roastty/src/renderer`; copied macOS renderer/window host",
         family="renderer",
@@ -824,11 +824,37 @@ ROWS = [
             "macOS render-host sources. The audit proves the old broad "
             "renderer residual is narrowed to concrete remaining "
             "renderer-visible effects rather than hidden broad GUI/pixel "
-            "parity."
+            "parity. Experiment 180 split out the custom shader animation "
+            "draw-timer policy."
         ),
-        missing_evidence="Add runtime or renderer proof for `custom-shader-animation` focus/always/false draw-timer policy; background image rendering and `background-image-opacity`, `background-image-position`, `background-image-fit`, `background-image-repeat`; `window-colorspace`; `alpha-blending`; and `scroll-to-bottom.output` renderer behavior.",
+        missing_evidence="Add runtime or renderer proof for background image rendering and `background-image-opacity`, `background-image-position`, `background-image-fit`, `background-image-repeat`; `window-colorspace`; `alpha-blending`; and `scroll-to-bottom.output` renderer behavior.",
         guard_tier="Tier 3",
         guard_command="TBD by future CFG-223 renderer visual experiments.",
+    ),
+    RuntimeRow(
+        id="RUNTIME-008B2B2B2B2B1",
+        behavior="custom-shader-animation focus/always/false draw-timer policy",
+        ghostty_reference="`vendor/ghostty/src/config/Config.zig` `custom-shader-animation`; `vendor/ghostty/src/renderer/Thread.zig::syncDrawTimer`",
+        roastty_reference="`roastty/src/config/mod.rs::CustomShaderAnimation`; `roastty/src/lib.rs` present tick custom shader animation gate",
+        family="renderer",
+        status="Oracle complete",
+        evidence=(
+            "Experiment 180 wires Roastty's live present tick to Ghostty's "
+            "`custom-shader-animation` policy. `custom_shader_animation_tick_enabled` "
+            "requires active custom shader pipelines and applies the parsed "
+            "`always`/focused `true`/`false` policy through "
+            "`CustomShaderAnimation::should_animate`. The present tick now "
+            "renders an otherwise-clean frame when that policy says an active "
+            "custom shader should animate, while preserving dirty-frame and "
+            "live-visibility gates. Focused Rust tests cover all three policy "
+            "values, no-pipeline behavior, and the dirty-or-animated present "
+            "decision. `custom_shader_animation_runtime_parity.py` statically "
+            "checks pinned Ghostty `syncDrawTimer`, Roastty implementation "
+            "markers, tests, and this inventory split."
+        ),
+        missing_evidence="None for custom-shader-animation focus/always/false draw-timer policy. Background image, colorspace, alpha blending, and scroll-to-bottom renderer behavior remain in RUNTIME-008B2B2B2B2B.",
+        guard_tier="Tier 2",
+        guard_command="`cargo test --manifest-path roastty/Cargo.toml custom_shader_animation -- --test-threads=1 && PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/custom_shader_animation_runtime_parity.py`",
     ),
     RuntimeRow(
         id="RUNTIME-008B2B2B2B2C",
@@ -2255,6 +2281,7 @@ EXPECTED_IDS = [
     "RUNTIME-008B2B2B2B1",
     "RUNTIME-008B2B2B2B2A",
     "RUNTIME-008B2B2B2B2B",
+    "RUNTIME-008B2B2B2B2B1",
     "RUNTIME-008B2B2B2B2C",
     "RUNTIME-008B2B2B2B2D",
     "RUNTIME-009A",

@@ -74,3 +74,47 @@ Fresh-context adversarial design review returned **Approved** with no required
 findings. The reviewer confirmed the README link, required sections, narrow
 scope, fidelity to pinned Ghostty `syncDrawTimer`, and verification coverage for
 all three policy values plus no-pipeline/config/focus behavior.
+
+## Result
+
+**Result:** Pass
+
+Roastty now applies `custom-shader-animation` to the live present tick. The tick
+path computes whether a custom shader should animate from three inputs: active
+custom shader pipelines, the parsed `CustomShaderAnimation` policy, and the
+surface focus state. An otherwise-clean frame is presented only when the surface
+is live-visible and either already dirty or the custom shader animation policy
+requires another frame.
+
+The inventory now splits out `RUNTIME-008B2B2B2B2B1` as Oracle complete for the
+`custom-shader-animation` focus/always/false draw-timer policy. The remaining
+renderer residual row stays a gap for background image rendering/options,
+`window-colorspace`, `alpha-blending`, and `scroll-to-bottom.output`.
+
+Verification completed:
+
+- `cargo fmt --manifest-path roastty/Cargo.toml` — pass.
+- `cargo test --manifest-path roastty/Cargo.toml custom_shader_animation -- --test-threads=1`
+  — pass: 4 tests passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/custom_shader_animation_runtime_parity.py`
+  — pass.
+- `PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/renderer_visual_residual_audit.py`
+  — pass.
+- `PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/config_runtime_inventory.py --output issues/0805-roastty-ghostty-parity/config-runtime-inventory.md --matrix issues/0805-roastty-ghostty-parity/config-matrix.md`
+  — pass: `runtime_rows=85`, `oracle_complete=78`, `closed=81`,
+  `audit_covered=0`, `incomplete=4`, `gap=4`, `cfg223=Gap`.
+
+## Conclusion
+
+`custom-shader-animation` is now guarded as runtime behavior rather than only a
+parser/formatter option. The remaining renderer row is smaller and should next
+target background image rendering/options, `window-colorspace`,
+`alpha-blending`, or `scroll-to-bottom.output`.
+
+## Completion Review
+
+Fresh-context adversarial completion review returned **Approved** with no
+required findings. The reviewer independently reran the focused Rust test,
+`custom_shader_animation_runtime_parity.py`,
+`renderer_visual_residual_audit.py`, and `git diff --check`, and confirmed no
+result commit had been made before the review.

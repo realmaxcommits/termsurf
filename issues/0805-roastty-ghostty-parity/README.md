@@ -789,6 +789,12 @@ experiment files until they are proven.
   `custom-shader-animation`, background image rendering/options,
   `window-colorspace`, `alpha-blending`, and `scroll-to-bottom.output`, rather
   than a vague broader GUI/pixel bucket.
+- **Custom shader animation is a present-tick policy.** Experiment 180 showed
+  that `custom-shader-animation` does not change shader output directly; it
+  decides whether an otherwise-clean frame should keep presenting while custom
+  shader pipelines are active. Roastty now mirrors Ghostty's `always`, focused
+  `true`, and `false` policy without bypassing the dirty-frame or
+  live-visibility gates.
 - **Facet inventories can outpace their aggregate matrix rows.** Experiment 169
   found CFG-217 through CFG-222 were complete in their generated facet
   inventories while the top-level matrix still reported stale `Gap` rows. The
@@ -1729,4 +1735,4 @@ remains open.
 - [Experiment 179: Renderer visual residual audit](179-renderer-visual-residual-audit.md)
   — **Pass**
 - [Experiment 180: Custom shader animation runtime](180-custom-shader-animation-runtime.md)
-  — **Designed**
+  — **Pass**

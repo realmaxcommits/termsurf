@@ -3214,11 +3214,29 @@ fn enqueue_present_tick(
         // (no-op otherwise); before the dirty check so the scrolled row presents now.
         surface.selection_autoscroll_tick();
         surface.advance_cursor_blink(now);
-        if surface.dirty && surface.should_present_live() {
+        let should_present_live = surface.should_present_live();
+        let animate_custom_shader = surface.should_animate_custom_shader_frame();
+        if should_present_on_tick(surface.dirty, should_present_live, animate_custom_shader) {
             surface.present_live();
             surface.dirty = false;
         }
     });
+}
+
+fn should_present_on_tick(
+    dirty: bool,
+    should_present_live: bool,
+    animate_custom_shader: bool,
+) -> bool {
+    should_present_live && (dirty || animate_custom_shader)
+}
+
+fn custom_shader_animation_tick_enabled(
+    policy: config::CustomShaderAnimation,
+    focused: bool,
+    pipelines_active: bool,
+) -> bool {
+    pipelines_active && policy.should_animate(focused)
 }
 
 #[cfg(target_os = "macos")]
@@ -4280,6 +4298,20 @@ impl Surface {
 
     fn should_present_live(&self) -> bool {
         self.has_live_view() && self.visible
+    }
+
+    fn should_animate_custom_shader_frame(&self) -> bool {
+        if !self.should_present_live() {
+            return false;
+        }
+        let Some(live) = self.renderer.as_ref() else {
+            return false;
+        };
+        custom_shader_animation_tick_enabled(
+            self.active_config().custom_shader_animation,
+            self.focused,
+            !live.custom_shader.pipelines.is_empty(),
+        )
     }
 
     fn reset_cursor_blink(&mut self, now: std::time::Instant) {
@@ -23918,6 +23950,67 @@ mod tests {
 
         roastty_surface_free(surface);
         roastty_app_free(app);
+    }
+
+    #[test]
+    fn custom_shader_animation_tick_policy_matches_focus() {
+        use config::CustomShaderAnimation;
+
+        assert!(custom_shader_animation_tick_enabled(
+            CustomShaderAnimation::Always,
+            true,
+            true
+        ));
+        assert!(custom_shader_animation_tick_enabled(
+            CustomShaderAnimation::Always,
+            false,
+            true
+        ));
+        assert!(custom_shader_animation_tick_enabled(
+            CustomShaderAnimation::True,
+            true,
+            true
+        ));
+        assert!(!custom_shader_animation_tick_enabled(
+            CustomShaderAnimation::True,
+            false,
+            true
+        ));
+        assert!(!custom_shader_animation_tick_enabled(
+            CustomShaderAnimation::False,
+            true,
+            true
+        ));
+        assert!(!custom_shader_animation_tick_enabled(
+            CustomShaderAnimation::False,
+            false,
+            true
+        ));
+    }
+
+    #[test]
+    fn custom_shader_animation_tick_requires_pipeline() {
+        use config::CustomShaderAnimation;
+
+        assert!(!custom_shader_animation_tick_enabled(
+            CustomShaderAnimation::Always,
+            true,
+            false
+        ));
+        assert!(!custom_shader_animation_tick_enabled(
+            CustomShaderAnimation::True,
+            true,
+            false
+        ));
+    }
+
+    #[test]
+    fn custom_shader_animation_tick_present_decision_preserves_dirty_gate() {
+        assert!(should_present_on_tick(true, true, false));
+        assert!(should_present_on_tick(false, true, true));
+        assert!(!should_present_on_tick(false, true, false));
+        assert!(!should_present_on_tick(true, false, true));
+        assert!(!should_present_on_tick(true, false, false));
     }
 
     #[test]
