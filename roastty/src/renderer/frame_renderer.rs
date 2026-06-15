@@ -11,7 +11,7 @@ use crate::config::{Config, WindowPaddingColor};
 use crate::font::run::Wide;
 use crate::font::shared_grid::SharedGrid;
 use crate::renderer::cell::{row_never_extend_bg_flags, Contents, Highlight, SelectionConfig};
-use crate::renderer::cursor::Style as CursorStyle;
+use crate::renderer::cursor::{self, Style as CursorStyle, StyleOptions};
 use crate::renderer::frame_rebuild::{
     FrameCustomShaderInput, FramePaddingExtendInput, FramePreparedFrameApplication,
     FramePreparedFrameError, FramePreparedPresentationInput, FramePreparedRebuildApplication,
@@ -30,6 +30,7 @@ use crate::renderer::state::Preedit;
 use crate::terminal::color::{Palette, Rgb};
 use crate::terminal::style::BoldColor;
 use crate::terminal::terminal::{Terminal, TerminalColorKind};
+use crate::{render_cursor_visual_style, RenderStateCursorViewport, RenderStateScalar};
 
 /// Owns the persistent CPU-side frame-rebuild state across frames: the rebuilt
 /// `Contents`, the `MetalUniforms`, the last-rendered grid (for resize
@@ -170,7 +171,7 @@ impl FrameRenderer {
         preedit: Option<Preedit>,
         config: &Config,
     ) -> Result<FramePreparedRebuildApplication, FramePreparedRebuildError> {
-        let state = FrameRenderState::from_terminal(terminal);
+        let state = FrameRenderState::from_terminal_for_frame(terminal, preedit.is_some());
         let knobs = FrameRenderKnobs::from_config(config);
         let input = state.rebuild_input(&knobs);
         self.update_frame(terminal, grid, dirty, preedit, input)
@@ -188,7 +189,7 @@ impl FrameRenderer {
         config: &Config,
         presentation: FramePreparedPresentationInput<'_>,
     ) -> Result<FramePreparedFrameApplication, FramePreparedFrameError> {
-        let state = FrameRenderState::from_terminal(terminal);
+        let state = FrameRenderState::from_terminal_for_frame(terminal, preedit.is_some());
         let knobs = FrameRenderKnobs::from_config(config);
         let input = state.rebuild_input(&knobs);
         self.update_and_present_frame(terminal, grid, dirty, preedit, input, presentation)
@@ -258,8 +259,10 @@ impl FrameRenderer {
         cursor_options: FrameCursorOptions,
     ) -> Result<FramePreparedFrameApplication, FramePreparedFrameError> {
         background.update_from_config(config);
-        let mut state =
-            FrameRenderState::from_terminal_with_cursor_options(terminal, cursor_options);
+        let mut state = FrameRenderState::from_terminal_with_cursor_options(
+            terminal,
+            cursor_options.with_preedit(preedit.is_some()),
+        );
         state.link_ranges = link_ranges;
         let knobs = FrameRenderKnobs::from_config(config);
         let input = state.rebuild_input(&knobs);
@@ -354,8 +357,10 @@ impl FrameRenderer {
         cursor_options: FrameCursorOptions,
     ) -> Result<FramePreparedFrameApplication, FramePreparedFrameError> {
         background.update_from_config(config);
-        let mut state =
-            FrameRenderState::from_terminal_with_cursor_options(terminal, cursor_options);
+        let mut state = FrameRenderState::from_terminal_with_cursor_options(
+            terminal,
+            cursor_options.with_preedit(preedit.is_some()),
+        );
         state.link_ranges = link_ranges;
         state.update_custom_shader_uniforms_from_state(custom_uniforms);
         let knobs = FrameRenderKnobs::from_config(config);
@@ -490,6 +495,15 @@ impl FrameRenderKnobs {
 pub(crate) struct FrameCursorOptions {
     pub(crate) focused: bool,
     pub(crate) blink_visible: bool,
+    pub(crate) preedit: bool,
+    pub(crate) password_input: bool,
+}
+
+impl FrameCursorOptions {
+    pub(crate) fn with_preedit(mut self, preedit: bool) -> Self {
+        self.preedit = preedit;
+        self
+    }
 }
 
 impl Default for FrameCursorOptions {
@@ -497,6 +511,8 @@ impl Default for FrameCursorOptions {
         Self {
             focused: true,
             blink_visible: true,
+            preedit: false,
+            password_input: false,
         }
     }
 }
@@ -518,6 +534,13 @@ pub(crate) struct FrameRenderState {
 }
 
 impl FrameRenderState {
+    pub(crate) fn from_terminal_for_frame(terminal: &Terminal, preedit: bool) -> Self {
+        Self::from_terminal_with_cursor_options(
+            terminal,
+            FrameCursorOptions::default().with_preedit(preedit),
+        )
+    }
+
     /// Derive the effective colors and palette from the terminal, mirroring the
     /// existing GUI render path (`render_state_from_terminal`): background → black
     /// fallback, foreground → white fallback, the 256-entry palette. The dynamic
@@ -653,21 +676,37 @@ fn cursor_style_from_terminal(
     terminal: &Terminal,
     options: FrameCursorOptions,
 ) -> Option<CursorStyle> {
-    terminal.cursor_viewport_position()?;
+    let state = cursor_render_state_from_terminal(terminal, options.password_input);
+    cursor::style(
+        &state,
+        StyleOptions {
+            preedit: options.preedit,
+            focused: options.focused,
+            blink_visible: options.blink_visible,
+        },
+    )
+}
 
-    if !terminal.cursor_visible() {
-        return None;
-    }
-
-    if !options.focused {
-        return Some(CursorStyle::BlockHollow);
-    }
-
-    if terminal.cursor_blinking() && !options.blink_visible {
-        return None;
-    }
-
-    Some(CursorStyle::from_terminal(terminal.cursor_visual_style()))
+fn cursor_render_state_from_terminal(
+    terminal: &Terminal,
+    password_input: bool,
+) -> RenderStateScalar {
+    let mut state = crate::render_state_default();
+    state.cols = terminal.columns();
+    state.rows = terminal.rows();
+    state.cursor_visual_style = render_cursor_visual_style(terminal.cursor_visual_style());
+    state.cursor_visible = terminal.cursor_visible();
+    state.cursor_blinking = terminal.cursor_blinking();
+    state.cursor_password_input = password_input;
+    state.cursor_viewport =
+        terminal
+            .cursor_viewport_position()
+            .map(|(x, y)| RenderStateCursorViewport {
+                x,
+                y,
+                wide_tail: false,
+            });
+    state
 }
 
 #[cfg(test)]
@@ -683,6 +722,7 @@ mod tests {
         FrameSnapshotCursorOverlayInput, FrameSnapshotCursorUniformInput,
         FrameSnapshotRowFormatInput, FrameSnapshotTextOverlayInput,
     };
+    use crate::renderer::state::Codepoint;
     use crate::terminal::color::{Rgb, DEFAULT_PALETTE};
     use crate::terminal::style::BoldColor;
 
@@ -738,6 +778,29 @@ mod tests {
     fn terminal(columns: u16, rows: u16) -> Terminal {
         let mut terminal = Terminal::init(columns, rows, None).expect("terminal");
         terminal.next_slice(b"A").expect("terminal input");
+        terminal
+    }
+
+    fn preedit() -> Preedit {
+        Preedit {
+            codepoints: vec![Codepoint {
+                codepoint: 'x' as u32,
+                wide: false,
+            }],
+        }
+    }
+
+    fn terminal_scrolled_off_cursor() -> Terminal {
+        let mut terminal = Terminal::init(20, 6, None).expect("terminal");
+        let mut content = String::new();
+        for i in 0..40 {
+            content.push_str(&format!("line{i}\r\n"));
+        }
+        terminal
+            .next_slice(content.as_bytes())
+            .expect("terminal scrollback");
+        terminal.scroll_viewport_delta_row(-100);
+        assert_eq!(terminal.cursor_viewport_position(), None);
         terminal
     }
 
@@ -1279,6 +1342,7 @@ mod tests {
             FrameCursorOptions {
                 focused: true,
                 blink_visible: false,
+                ..FrameCursorOptions::default()
             },
         );
 
@@ -1297,6 +1361,7 @@ mod tests {
             FrameCursorOptions {
                 focused: true,
                 blink_visible: true,
+                ..FrameCursorOptions::default()
             },
         );
 
@@ -1312,11 +1377,122 @@ mod tests {
             FrameCursorOptions {
                 focused: false,
                 blink_visible: false,
+                ..FrameCursorOptions::default()
             },
         );
 
         let (style, _) = state.cursor.expect("unfocused cursor");
         assert!(matches!(style, CursorStyle::BlockHollow));
+    }
+
+    #[test]
+    fn cursor_priority_active_renderer_preedit_overrides_hidden_focus_and_blink() {
+        let mut term = terminal(4, 3);
+        term.next_slice(b"\x1b[?25l").expect("hide cursor");
+        let state = FrameRenderState::from_terminal_with_cursor_options(
+            &term,
+            FrameCursorOptions {
+                focused: false,
+                blink_visible: false,
+                preedit: true,
+                ..FrameCursorOptions::default()
+            },
+        );
+
+        let (style, _) = state.cursor.expect("preedit cursor");
+        assert!(matches!(style, CursorStyle::Block));
+        let knobs = render_knobs();
+        let input = state.rebuild_input(&knobs);
+        assert!(input.text_overlay.cursor.is_some());
+        assert!(input.cursor_uniform.block_cursor.is_some());
+    }
+
+    #[test]
+    fn cursor_priority_active_renderer_password_overrides_hidden_and_blink() {
+        let mut term = terminal(4, 3);
+        term.next_slice(b"\x1b[?25l").expect("hide cursor");
+        let state = FrameRenderState::from_terminal_with_cursor_options(
+            &term,
+            FrameCursorOptions {
+                blink_visible: false,
+                password_input: true,
+                ..FrameCursorOptions::default()
+            },
+        );
+
+        let (style, _) = state.cursor.expect("password cursor");
+        assert!(matches!(style, CursorStyle::Lock));
+        let knobs = render_knobs();
+        let input = state.rebuild_input(&knobs);
+        assert!(matches!(
+            input.text_overlay.cursor.expect("lock overlay").style,
+            CursorStyle::Lock
+        ));
+        assert!(input.cursor_uniform.block_cursor.is_none());
+    }
+
+    #[test]
+    fn cursor_priority_active_renderer_preedit_beats_password() {
+        let mut term = terminal(4, 3);
+        term.next_slice(b"\x1b[?25l").expect("hide cursor");
+        let state = FrameRenderState::from_terminal_with_cursor_options(
+            &term,
+            FrameCursorOptions {
+                preedit: true,
+                password_input: true,
+                ..FrameCursorOptions::default()
+            },
+        );
+
+        let (style, _) = state.cursor.expect("preedit cursor");
+        assert!(matches!(style, CursorStyle::Block));
+    }
+
+    #[test]
+    fn cursor_priority_active_renderer_viewport_absence_suppresses_priority() {
+        let term = terminal_scrolled_off_cursor();
+        let state = FrameRenderState::from_terminal_with_cursor_options(
+            &term,
+            FrameCursorOptions {
+                preedit: true,
+                password_input: true,
+                ..FrameCursorOptions::default()
+            },
+        );
+
+        assert!(state.cursor.is_none());
+        let knobs = render_knobs();
+        let input = state.rebuild_input(&knobs);
+        assert!(input.text_overlay.cursor.is_none());
+        assert!(input.cursor_uniform.block_cursor.is_none());
+    }
+
+    #[test]
+    fn cursor_priority_active_renderer_render_frame_uses_real_preedit_argument() {
+        let mut term = terminal(4, 3);
+        term.next_slice(b"\x1b[?25l").expect("hide cursor");
+        let state = FrameRenderState::from_terminal_for_frame(&term, true);
+        assert!(matches!(
+            state.cursor.expect("preedit frame cursor").0,
+            CursorStyle::Block
+        ));
+
+        let mut shared = menlo_grid();
+        let mut renderer = FrameRenderer::new(uniforms());
+
+        let app = renderer
+            .render_frame(
+                &term,
+                &mut shared,
+                RenderDirty::Partial,
+                Some(preedit()),
+                &Config::default(),
+            )
+            .expect("render frame with preedit");
+
+        assert!(app.text_overlays.preedit_drawn);
+        assert_eq!(app.text_overlays.cursor_drawn, None);
+        assert!(app.cursor_uniforms.cursor_cleared);
     }
 
     #[test]

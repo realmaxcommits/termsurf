@@ -723,6 +723,13 @@ experiment files until they are proven.
   cursor list routing out of the renderer visual gap. Password/preedit cursor
   style priority through the active renderer path and actual GUI cursor pixels
   remain in `RUNTIME-008B2B`.
+- **Cursor priority belongs on the active frame path, not only in the isolated
+  helper.** Experiment 144 routed active frame cursor derivation through the
+  shared Ghostty-port cursor priority helper and derives preedit priority from
+  the real render method's `preedit` argument. Password/preedit priority is now
+  split out as `RUNTIME-008B2B1`; GUI cursor pixels, blur, compositor opacity,
+  padding pixels, custom shader output, and broader GUI/pixel parity remain in
+  `RUNTIME-008B2B2`.
 - **Font-size runtime updates should be idempotent.** Experiment 125 found that
   applying an unchanged font size dirtied ABI-only surfaces because
   `set_font_size_points` always requested a render. The setter now returns
@@ -1403,4 +1410,4 @@ remains open.
 - [Experiment 143: Font live grid update runtime](143-font-live-grid-update-runtime.md)
   — **Pass**
 - [Experiment 144: Cursor priority active renderer](144-cursor-priority-active-renderer.md)
-  — **Designed**
+  — **Pass**

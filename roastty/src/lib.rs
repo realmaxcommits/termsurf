@@ -4279,6 +4279,7 @@ impl Surface {
         let cursor_options = renderer::frame_renderer::FrameCursorOptions {
             focused,
             blink_visible: self.cursor_blink_visible,
+            ..renderer::frame_renderer::FrameCursorOptions::default()
         };
         let mouse_position = self.mouse.position;
         let mouse_mods = self.mouse.mods;

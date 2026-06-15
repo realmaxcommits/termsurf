@@ -401,7 +401,7 @@ ROWS = [
     RuntimeRow(
         id="RUNTIME-008B2A",
         behavior="deterministic active cursor overlay/uniform branches, cursor color/text color resolution, selected cursor sprite/glyph render data, wide cursor render data, lock fallback rendering, and cursor list routing",
-        ghostty_reference="`vendor/ghostty/src/renderer/generic.zig` cursor style, color, opacity, sprite, lock, and vertex render paths; `vendor/ghostty/src/renderer/cell.zig` cursor list routing; `vendor/ghostty/src/renderer/cursor.zig` password/preedit priority markers kept in the remaining gap",
+        ghostty_reference="`vendor/ghostty/src/renderer/generic.zig` cursor style, color, opacity, sprite, lock, and vertex render paths; `vendor/ghostty/src/renderer/cell.zig` cursor list routing",
         roastty_reference="`roastty/src/renderer/frame_renderer.rs` active cursor render state; `roastty/src/renderer/cell.rs` cursor color, render-data, wide, lock fallback, and list-routing helpers",
         family="renderer",
         status="Oracle complete",
@@ -425,18 +425,44 @@ ROWS = [
             "`block_cursor_pos_adjusts_for_wide_kind` and `set_cursor_*` "
             "tests prove wide-tail cursor placement and cursor list routing. "
             "`cursor_renderer_runtime_parity.py` statically checks pinned "
-            "Ghostty's cursor render markers against Roastty's tests and "
-            "verifies password/preedit cursor priority remains assigned to "
-            "`RUNTIME-008B2B`."
+            "Ghostty's cursor render markers against Roastty's tests."
         ),
         missing_evidence="None for deterministic active cursor overlay/uniform branches, cursor color/text color resolution, selected cursor render data, wide cursor render data, lock fallback rendering after lock style selection, and cursor list routing.",
         guard_tier="Tier 1",
         guard_command="`cargo test --manifest-path roastty/Cargo.toml render_state_derives_visible_block_cursor_overlay && cargo test --manifest-path roastty/Cargo.toml render_state_cursor_color_comes_from_osc12 && cargo test --manifest-path roastty/Cargo.toml render_state_block_sets_uniform_underline_does_not && cargo test --manifest-path roastty/Cargo.toml cursor_blink_render_state && cargo test --manifest-path roastty/Cargo.toml add_cursor && cargo test --manifest-path roastty/Cargo.toml cursor_text_color_resolves_the_cursor_text_config && cargo test --manifest-path roastty/Cargo.toml cursor_color_resolves_with_precedence && cargo test --manifest-path roastty/Cargo.toml block_cursor_pos_adjusts_for_wide_kind && cargo test --manifest-path roastty/Cargo.toml set_cursor && PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/cursor_renderer_runtime_parity.py`",
     ),
     RuntimeRow(
-        id="RUNTIME-008B2B",
-        behavior="remaining renderer-visible effects: background blur, real compositor opacity, window padding layout pixels, password/preedit cursor-style priority through the active renderer path, GUI cursor pixels, custom shader output, and broader GUI/pixel parity",
-        ghostty_reference="`vendor/ghostty/src/config/Config.zig` renderer/window visual fields; `vendor/ghostty/src/renderer/generic.zig` derived renderer config and draw paths; `vendor/ghostty/src/renderer/cursor.zig` preedit/password cursor priority; `vendor/ghostty/src/Surface.zig` renderer config messages",
+        id="RUNTIME-008B2B1",
+        behavior="password/preedit cursor-style priority through the active frame renderer path",
+        ghostty_reference="`vendor/ghostty/src/renderer/cursor.zig` preedit/password cursor priority; `vendor/ghostty/src/renderer/generic.zig` cursor state consumption",
+        roastty_reference="`roastty/src/renderer/cursor.rs` shared cursor priority helper; `roastty/src/renderer/frame_renderer.rs` active frame cursor state construction and preedit-derived cursor options",
+        family="renderer",
+        status="Oracle complete",
+        evidence=(
+            "Experiment 144 wires the active frame renderer through the "
+            "shared Ghostty-port `renderer::cursor::style` priority helper. "
+            "`FrameCursorOptions::with_preedit(preedit.is_some())` is applied "
+            "on active frame render paths before cursor state derivation. "
+            "`cursor_priority_active_renderer_*` tests prove preedit forces "
+            "a block cursor ahead of hidden cursor, focus, blink, and "
+            "password state; password input forces the lock cursor ahead of "
+            "hidden cursor and blink; preedit beats password; and no viewport "
+            "still suppresses both priority states. "
+            "`cursor_priority_active_renderer_render_frame_uses_real_preedit_argument` "
+            "drives a real active `render_frame` call with `Some(Preedit)` "
+            "and a hidden terminal cursor. "
+            "`cursor_priority_runtime_parity.py` statically checks pinned "
+            "Ghostty priority markers, Roastty's shared helper, the active "
+            "frame preedit wiring, focused tests, and this inventory split."
+        ),
+        missing_evidence="None for password/preedit cursor-style priority through the active frame renderer path. Actual shell password-prompt detection and GUI cursor pixels remain outside this slice.",
+        guard_tier="Tier 1",
+        guard_command="`cargo test --manifest-path roastty/Cargo.toml cursor_priority_active_renderer && PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/cursor_priority_runtime_parity.py`",
+    ),
+    RuntimeRow(
+        id="RUNTIME-008B2B2",
+        behavior="remaining renderer-visible effects: background blur, real compositor opacity, window padding layout pixels, GUI cursor pixels, custom shader output, and broader GUI/pixel parity",
+        ghostty_reference="`vendor/ghostty/src/config/Config.zig` renderer/window visual fields; `vendor/ghostty/src/renderer/generic.zig` derived renderer config and draw paths; `vendor/ghostty/src/Surface.zig` renderer config messages",
         roastty_reference="`roastty/src/lib.rs` live renderer and render state; `roastty/src/renderer`; copied macOS renderer host",
         family="renderer",
         status="Gap",
@@ -448,14 +474,14 @@ ROWS = [
             "padding-extension decisions, and thicken knob sourcing. "
             "Experiment 134 split out deterministic selected cursor render "
             "data, color/text-color resolution, wide cursor render data, lock "
-            "fallback rendering, and cursor list routing. CFG-223 still needs "
-            "representative runtime or GUI proof for background blur, real "
-            "compositor opacity, window padding layout pixels, "
-            "password/preedit cursor-style priority through the active "
-            "renderer path, GUI cursor pixels, custom shader output, and "
-            "broader GUI/pixel parity."
+            "fallback rendering, and cursor list routing. Experiment 144 "
+            "split out password/preedit cursor-style priority through the "
+            "active frame renderer path. CFG-223 still needs representative "
+            "runtime or GUI proof for background blur, real compositor "
+            "opacity, window padding layout pixels, GUI cursor pixels, "
+            "custom shader output, and broader GUI/pixel parity."
         ),
-        missing_evidence="Add renderer/runtime or GUI smoke rows for background blur, real compositor opacity, window padding layout pixels, password/preedit cursor-style priority through the active renderer path, GUI cursor pixels, custom shader output, and broader GUI/pixel parity.",
+        missing_evidence="Add renderer/runtime or GUI smoke rows for background blur, real compositor opacity, window padding layout pixels, GUI cursor pixels, custom shader output, and broader GUI/pixel parity.",
         guard_tier="Tier 3",
         guard_command="TBD by future CFG-223 renderer visual experiment.",
     ),
@@ -1235,7 +1261,8 @@ EXPECTED_IDS = [
     "RUNTIME-008A",
     "RUNTIME-008B1",
     "RUNTIME-008B2A",
-    "RUNTIME-008B2B",
+    "RUNTIME-008B2B1",
+    "RUNTIME-008B2B2",
     "RUNTIME-009A",
     "RUNTIME-009B1",
     "RUNTIME-009B2A",

@@ -166,3 +166,92 @@ the frame rebuild input.
 
 The reviewer confirmed the prior finding was resolved and no new required
 findings were introduced.
+
+## Result
+
+**Result:** Pass.
+
+Roastty now derives active frame cursor style through the shared
+`renderer::cursor::style` helper, which is the value-level port of pinned
+Ghostty's cursor priority rule. Active frame rendering paths that receive
+`preedit: Option<Preedit>` now feed `preedit.is_some()` into cursor options
+before constructing the frame render state, so the real render path and the
+isolated helper cannot drift for preedit priority.
+
+The focused tests prove that preedit forces a block cursor ahead of hidden
+cursor state, focus, blink, and password state; password input forces the lock
+cursor ahead of hidden cursor and blink; preedit beats password; and a cursor
+outside the viewport suppresses both priority states. A real `render_frame` call
+with `Some(Preedit)` and a hidden terminal cursor is also covered.
+
+The CFG-223 inventory now splits `RUNTIME-008B2B` into:
+
+- `RUNTIME-008B2B1`: **Oracle complete** for password/preedit cursor-style
+  priority through the active frame renderer path.
+- `RUNTIME-008B2B2`: **Gap** for remaining renderer-visible effects: background
+  blur, real compositor opacity, window padding layout pixels, GUI cursor
+  pixels, custom shader output, and broader GUI/pixel parity.
+
+The regenerated inventory reported:
+
+```text
+runtime_rows=52
+oracle_complete=46
+closed=48
+audit_covered=0
+incomplete=4
+gap=4
+cfg223=Gap
+```
+
+Verification passed:
+
+```bash
+cargo test --manifest-path roastty/Cargo.toml cursor_priority_active_renderer
+cargo test --manifest-path roastty/Cargo.toml render_state_derives_visible_block_cursor_overlay
+cargo test --manifest-path roastty/Cargo.toml render_state_cursor_color_comes_from_osc12
+cargo test --manifest-path roastty/Cargo.toml render_state_block_sets_uniform_underline_does_not
+cargo test --manifest-path roastty/Cargo.toml cursor_blink_render_state
+cargo test --manifest-path roastty/Cargo.toml render_state_hidden_cursor_has_no_overlay_or_uniform
+cargo test --manifest-path roastty/Cargo.toml add_cursor
+cargo test --manifest-path roastty/Cargo.toml set_cursor
+PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/cursor_priority_runtime_parity.py
+PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/cursor_renderer_runtime_parity.py
+PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/renderer_control_runtime_parity.py
+PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/renderer_knobs_runtime_parity.py
+PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/terminal_runtime_residual_audit.py
+PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/config_runtime_inventory.py --output issues/0805-roastty-ghostty-parity/config-runtime-inventory.md --matrix issues/0805-roastty-ghostty-parity/config-matrix.md
+for f in issues/0805-roastty-ghostty-parity/*_runtime_parity.py; do PYTHONDONTWRITEBYTECODE=1 python3 "$f" >/tmp/$(basename "$f").out || { echo FAIL:$f; cat /tmp/$(basename "$f").out; exit 1; }; done; echo all_runtime_parity_guards=pass
+cargo fmt --manifest-path roastty/Cargo.toml
+cargo fmt --manifest-path roastty/Cargo.toml --check
+git diff --check
+```
+
+## Conclusion
+
+Cursor priority is now proven on the active frame renderer path rather than only
+in the isolated cursor helper. This closes the deterministic password/preedit
+priority slice without claiming password-prompt detection, IME text behavior
+beyond existing preedit rendering, or GUI/pixel cursor parity.
+
+## Completion Review
+
+**Reviewer:** Codex adversarial subagent with fresh context.
+
+**Initial verdict:** Changes required.
+
+The reviewer found one required issue: the first real `render_frame` preedit
+test was vacuous for cursor priority because it only asserted rebuild preedit
+suppression artifacts. Those artifacts would still pass if the active render
+path stopped deriving cursor priority from the `preedit` argument.
+
+**Fix:** Factored the active frame render-state construction into
+`FrameRenderState::from_terminal_for_frame`, made `render_frame` and
+`render_and_present_frame` call it with `preedit.is_some()`, and updated the
+real preedit test to assert the pre-rebuild frame state produces
+`CursorStyle::Block` with a hidden terminal cursor.
+
+**Final verdict:** Approved.
+
+The reviewer confirmed the prior finding was resolved and no new required
+findings were introduced.
