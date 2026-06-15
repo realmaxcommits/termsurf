@@ -179,3 +179,79 @@ proof whenever a cell size is available.
 
 The reviewer confirmed both prior findings were resolved and no new required
 findings were introduced.
+
+## Result
+
+**Result:** Pass
+
+Roastty now computes renderer size from parsed `window-padding-x`,
+`window-padding-y`, and `window-padding-balance` config. The helper mirrors
+pinned Ghostty's `floor(points * dpi / 72)` conversion, keeps X and Y scaling
+independent, applies the ported `Size::balance_padding` behavior for `true` and
+`equal`, and computes grid size from `screen - padding`.
+
+The live surface path now stores internal renderer padding, recomputes padded
+rows/columns before `pty_size()` is read when a cell size is available, and
+passes the padded `Size` into `FrameRenderer::update_screen`. `set_size` and
+content-scale changes recompute the padded grid and resize the PTY when needed.
+Mouse reporting geometry now also receives the same renderer padding.
+
+`RUNTIME-008B2B2` was split as planned:
+
+- `RUNTIME-008B2B2A` is **Oracle complete** for deterministic
+  `window-padding-x`/`window-padding-y` scaling, `window-padding-balance` layout
+  math, content-scale dependent unbalanced padding updates, active live renderer
+  padded `Size`/grid wiring, and padded PTY row/column state.
+- `RUNTIME-008B2B2B` remains **Gap** for background blur, real compositor
+  opacity, GUI cursor pixels, custom shader output, broader GUI/pixel parity,
+  and screenshot-level padding pixel proof.
+
+The regenerated CFG-223 inventory reports:
+
+- `runtime_rows=56`
+- `oracle_complete=50`
+- `closed=52`
+- `incomplete=4`
+- `gap=4`
+- `cfg223=Gap`
+
+Verification run:
+
+```bash
+cargo test --manifest-path roastty/Cargo.toml window_padding_layout_runtime
+cargo test --manifest-path roastty/Cargo.toml size_balance_padding
+cargo test --manifest-path roastty/Cargo.toml size_grid_and_terminal
+cargo test --manifest-path roastty/Cargo.toml coordinate_conversion
+PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/window_padding_layout_runtime_parity.py
+PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/config_runtime_inventory.py --output issues/0805-roastty-ghostty-parity/config-runtime-inventory.md --matrix issues/0805-roastty-ghostty-parity/config-matrix.md
+PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/terminal_runtime_residual_audit.py
+for guard in issues/0805-roastty-ghostty-parity/*_runtime_parity.py; do PYTHONDONTWRITEBYTECODE=1 python3 "$guard" || exit 1; done
+cargo fmt --manifest-path roastty/Cargo.toml --check
+git diff --check
+```
+
+All commands passed.
+
+## Conclusion
+
+The deterministic window-padding layout runtime slice is no longer part of the
+renderer GUI/pixel gap. The remaining CFG-223 gap is smaller but still real:
+`RUNTIME-007B2B2B`, `RUNTIME-008B2B2B`, `RUNTIME-011`, and `RUNTIME-012B2B`
+remain open.
+
+## Completion Review
+
+**Reviewer:** Codex adversarial subagent with fresh context.
+
+**Verdict:** Approved.
+
+The reviewer found no findings. It independently verified the focused window
+padding runtime tests, size balance/grid/coordinate tests, static padding
+runtime guard, residual audit, Rust formatting, whitespace hygiene, and CFG-223
+counts:
+
+- `runtime_rows=56`
+- `oracle_complete=50`
+- `closed=52`
+- `incomplete=4`
+- `gap=4`

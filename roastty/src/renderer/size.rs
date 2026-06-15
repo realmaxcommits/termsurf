@@ -8,6 +8,8 @@
 //! The `Size` aggregate, the `Coordinate` conversions, and the `PaddingBalance`
 //! enum build on these and are ported separately.
 
+use crate::config;
+
 /// Grid dimension unit. Mirrors `terminal::size::CellCountInt` (`u16`), which is
 /// private to the terminal module.
 pub(crate) type Unit = u16;
@@ -212,6 +214,51 @@ impl Size {
             }
         }
     }
+
+    /// Build the renderer size from parsed window-padding config. Pinned Ghostty
+    /// converts point padding to physical pixels as
+    /// `floor(configured * dpi / 72)`, using independent X/Y DPI values.
+    pub(crate) fn from_config(
+        config: &config::Config,
+        screen: ScreenSize,
+        cell: CellSize,
+        x_scale: f64,
+        y_scale: f64,
+    ) -> Size {
+        let x_dpi = x_scale.max(0.0) * 72.0;
+        let y_dpi = y_scale.max(0.0) * 72.0;
+        let explicit = Padding::scaled_from_config(config, x_dpi, y_dpi);
+        let mut size = Size {
+            screen,
+            cell,
+            padding: explicit,
+        };
+        match config.window_padding_balance {
+            config::WindowPaddingBalance::False => {}
+            config::WindowPaddingBalance::True => {
+                size.balance_padding(explicit, PaddingBalance::True);
+            }
+            config::WindowPaddingBalance::Equal => {
+                size.balance_padding(explicit, PaddingBalance::Equal);
+            }
+        }
+        size
+    }
+}
+
+impl Padding {
+    pub(crate) fn scaled_from_config(config: &config::Config, x_dpi: f64, y_dpi: f64) -> Padding {
+        fn scaled(points: u32, dpi: f64) -> u32 {
+            ((points as f64) * dpi / 72.0).floor().max(0.0) as u32
+        }
+
+        Padding {
+            top: scaled(config.window_padding_y.top_left, y_dpi),
+            bottom: scaled(config.window_padding_y.bottom_right, y_dpi),
+            left: scaled(config.window_padding_x.top_left, x_dpi),
+            right: scaled(config.window_padding_x.bottom_right, x_dpi),
+        }
+    }
 }
 
 /// The coordinate system a [`Coordinate`] is expressed in.
@@ -309,6 +356,24 @@ impl Coordinate {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn config_with_padding(
+        x: (u32, u32),
+        y: (u32, u32),
+        balance: config::WindowPaddingBalance,
+    ) -> config::Config {
+        let mut cfg = config::Config::default();
+        cfg.window_padding_x = config::WindowPadding {
+            top_left: x.0,
+            bottom_right: x.1,
+        };
+        cfg.window_padding_y = config::WindowPadding {
+            top_left: y.0,
+            bottom_right: y.1,
+        };
+        cfg.window_padding_balance = balance;
+        cfg
+    }
 
     // Upstream "Padding balanced on zero": a zero-sized screen yields no
     // negative padding.
@@ -684,5 +749,152 @@ mod tests {
         let term = surface.convert(CoordinateTag::Terminal, size);
         assert_eq!(term, Coordinate::Terminal { x: 35.0, y: 19.0 });
         assert_eq!(term.convert(CoordinateTag::Surface, size), surface);
+    }
+
+    #[test]
+    fn window_padding_layout_runtime_unbalanced_scale_one() {
+        let cfg = config_with_padding((3, 5), (7, 11), config::WindowPaddingBalance::False);
+        let size = Size::from_config(
+            &cfg,
+            ScreenSize {
+                width: 100,
+                height: 100,
+            },
+            CellSize {
+                width: 10,
+                height: 10,
+            },
+            1.0,
+            1.0,
+        );
+
+        assert_eq!(
+            size.padding,
+            Padding {
+                top: 7,
+                bottom: 11,
+                left: 3,
+                right: 5,
+            }
+        );
+        assert_eq!(
+            size.grid(),
+            GridSize {
+                columns: 9,
+                rows: 8,
+            }
+        );
+    }
+
+    #[test]
+    fn window_padding_layout_runtime_unbalanced_symmetric_scale_two() {
+        let cfg = config_with_padding((3, 5), (7, 11), config::WindowPaddingBalance::False);
+        let size = Size::from_config(
+            &cfg,
+            ScreenSize {
+                width: 100,
+                height: 100,
+            },
+            CellSize {
+                width: 10,
+                height: 10,
+            },
+            2.0,
+            2.0,
+        );
+
+        assert_eq!(
+            size.padding,
+            Padding {
+                top: 14,
+                bottom: 22,
+                left: 6,
+                right: 10,
+            }
+        );
+    }
+
+    #[test]
+    fn window_padding_layout_runtime_asymmetric_scale_uses_axes_independently() {
+        let cfg = config_with_padding((3, 5), (7, 11), config::WindowPaddingBalance::False);
+        let size = Size::from_config(
+            &cfg,
+            ScreenSize {
+                width: 200,
+                height: 200,
+            },
+            CellSize {
+                width: 10,
+                height: 10,
+            },
+            2.0,
+            3.0,
+        );
+
+        assert_eq!(
+            size.padding,
+            Padding {
+                top: 21,
+                bottom: 33,
+                left: 6,
+                right: 10,
+            }
+        );
+    }
+
+    #[test]
+    fn window_padding_layout_runtime_balance_true_uses_ghostty_top_cap() {
+        let cfg = config_with_padding((0, 0), (0, 0), config::WindowPaddingBalance::True);
+        let size = Size::from_config(
+            &cfg,
+            ScreenSize {
+                width: 1090,
+                height: 1070,
+            },
+            CellSize {
+                width: 20,
+                height: 40,
+            },
+            1.0,
+            1.0,
+        );
+
+        assert_eq!(
+            size.padding,
+            Padding {
+                top: 10,
+                bottom: 20,
+                left: 5,
+                right: 5,
+            }
+        );
+    }
+
+    #[test]
+    fn window_padding_layout_runtime_balance_equal_centers_grid() {
+        let cfg = config_with_padding((4, 4), (4, 4), config::WindowPaddingBalance::Equal);
+        let size = Size::from_config(
+            &cfg,
+            ScreenSize {
+                width: 1050,
+                height: 850,
+            },
+            CellSize {
+                width: 10,
+                height: 20,
+            },
+            1.0,
+            1.0,
+        );
+
+        assert_eq!(
+            size.padding,
+            Padding {
+                top: 5,
+                bottom: 5,
+                left: 5,
+                right: 5,
+            }
+        );
     }
 }

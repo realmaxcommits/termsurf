@@ -2703,6 +2703,7 @@ struct Surface {
     focused: bool,
     visible: bool,
     size: RoasttySurfaceSize,
+    renderer_padding: renderer::size::Padding,
     color_scheme: c_int,
     config_conditional_state: config::conditional::State,
     confirm_close_surface: config::ConfirmCloseSurface,
@@ -3942,6 +3943,64 @@ impl Surface {
         }
     }
 
+    fn active_config(&self) -> config::Config {
+        app_from_handle(self.app)
+            .map(|app| app.parsed_config.clone())
+            .unwrap_or_default()
+    }
+
+    fn recompute_renderer_size_from_config(
+        &mut self,
+        config: &config::Config,
+    ) -> Option<renderer::size::Size> {
+        if self.size.width_px == 0
+            || self.size.height_px == 0
+            || self.size.cell_width_px == 0
+            || self.size.cell_height_px == 0
+        {
+            return None;
+        }
+
+        let size = renderer::size::Size::from_config(
+            config,
+            renderer::size::ScreenSize {
+                width: self.size.width_px,
+                height: self.size.height_px,
+            },
+            renderer::size::CellSize {
+                width: self.size.cell_width_px,
+                height: self.size.cell_height_px,
+            },
+            Self::sanitized_scale(self.scale_factor_x),
+            Self::sanitized_scale(self.scale_factor_y),
+        );
+        let grid = size.grid();
+        self.renderer_padding = size.padding;
+        self.size.columns = grid.columns;
+        self.size.rows = grid.rows;
+        Some(size)
+    }
+
+    fn recompute_renderer_size(&mut self) -> Option<renderer::size::Size> {
+        let config = self.active_config();
+        self.recompute_renderer_size_from_config(&config)
+    }
+
+    fn resize_pty_to_current_size(&mut self, report_in_band_size: bool) {
+        let size = self.pty_size();
+        let mut resize_err = None;
+        if let Some(worker) = &self.termio_worker {
+            if let Err(err) = worker.resize_pty(size) {
+                resize_err = Some(format!("{err:?}"));
+            } else if report_in_band_size {
+                worker.with_termio_mut(|termio| termio.terminal_mut().report_in_band_size());
+            }
+        }
+        if let Some(err) = resize_err {
+            self.apply_termio_event(termio::TermioWorkerEvent::Error(err));
+        }
+    }
+
     fn start_termio(&mut self) -> c_int {
         append_ui_key_trace(format!(
             "rust surface_start_termio begin app_null={} has_worker={} initial_surface={} process_exited={} size={}x{} rows={} cols={}",
@@ -3965,11 +4024,12 @@ impl Surface {
             return ROASTTY_SUCCESS;
         }
 
-        let cwd = self.working_directory.as_ref().map(PathBuf::from);
-        let size = self.pty_size();
         let config = app_from_handle(self.app)
             .map(|app| app.parsed_config.clone())
             .unwrap_or_default();
+        self.recompute_renderer_size_from_config(&config);
+        let cwd = self.working_directory.as_ref().map(PathBuf::from);
+        let size = self.pty_size();
         let resource_dir = os::resources_dir::resources_dir()
             .ok()
             .and_then(|resources| resources.host().map(PathBuf::from));
@@ -4128,19 +4188,8 @@ impl Surface {
         self.size.width_px = width;
         self.size.height_px = height;
 
-        let size = self.pty_size();
-        let mut resize_err = None;
-        if let Some(worker) = &self.termio_worker {
-            if let Err(err) = worker.resize_pty(size) {
-                resize_err = Some(format!("{err:?}"));
-            } else if changed {
-                // On an actual resize, emit the in-band size report if mode 2048 is enabled (Exp 37).
-                worker.with_termio_mut(|termio| termio.terminal_mut().report_in_band_size());
-            }
-        }
-        if let Some(err) = resize_err {
-            self.apply_termio_event(termio::TermioWorkerEvent::Error(err));
-        }
+        self.recompute_renderer_size();
+        self.resize_pty_to_current_size(changed);
     }
 
     fn request_render(&mut self) {
@@ -4243,10 +4292,8 @@ impl Surface {
         if !self.should_present_live() {
             return;
         }
+        let config = self.active_config();
         if self.renderer.is_none() {
-            let config = app_from_handle(self.app)
-                .map(|app| app.parsed_config.clone())
-                .unwrap_or_default();
             self.renderer = build_live_renderer(
                 self.nsview,
                 &config,
@@ -4256,7 +4303,9 @@ impl Surface {
                 self.scale_factor_x,
             );
         }
-        if let Some(cell) = self
+        let old_columns = self.size.columns;
+        let old_rows = self.size.rows;
+        let render_size = if let Some(cell) = self
             .renderer
             .as_ref()
             .map(|live| live.shared_grid.cell_size())
@@ -4264,11 +4313,17 @@ impl Surface {
             if cell.width > 0 && cell.height > 0 {
                 self.size.cell_width_px = cell.width;
                 self.size.cell_height_px = cell.height;
-                self.size.columns =
-                    (self.size.width_px / cell.width).min(u32::from(u16::MAX)) as u16;
-                self.size.rows =
-                    (self.size.height_px / cell.height).min(u32::from(u16::MAX)) as u16;
+                self.recompute_renderer_size_from_config(&config)
+            } else {
+                None
             }
+        } else {
+            None
+        };
+        if self.termio_worker.is_some()
+            && (self.size.columns != old_columns || self.size.rows != old_rows)
+        {
+            self.resize_pty_to_current_size(false);
         }
         let width = self.size.width_px.max(1) as usize;
         let height = self.size.height_px.max(1) as usize;
@@ -4311,20 +4366,17 @@ impl Surface {
         // rebuild updates grid_size but not the projection, so without this glyphs render
         // off-screen. Physical-pixel space throughout (clamped width/height, scaled cell).
         frame_renderer.update_screen(
-            renderer::size::Size {
+            render_size.unwrap_or(renderer::size::Size {
                 screen: renderer::size::ScreenSize {
                     width: width as u32,
                     height: height as u32,
                 },
                 cell: shared_grid.cell_size(),
                 padding: renderer::size::Padding::default(),
-            },
+            }),
             renderer::size::GridSize { columns, rows },
             &shared_grid.metrics,
         );
-        let config = app_from_handle(self.app)
-            .map(|app| app.parsed_config.clone())
-            .unwrap_or_default();
         link_set.sync_from_config(&config.link);
         custom_shader.sync_from_config(device, &config);
         worker.with_termio(|termio| {
@@ -6628,7 +6680,12 @@ impl Surface {
                 width: cell_width,
                 height: cell_height,
             },
-            padding: mouse_encode::Padding::default(),
+            padding: mouse_encode::Padding {
+                top: self.renderer_padding.top,
+                bottom: self.renderer_padding.bottom,
+                right: self.renderer_padding.right,
+                left: self.renderer_padding.left,
+            },
         })
     }
 
@@ -18170,6 +18227,7 @@ pub extern "C" fn roastty_surface_new(
             cell_width_px: 0,
             cell_height_px: 0,
         },
+        renderer_padding: renderer::size::Padding::default(),
         color_scheme: 0,
         config_conditional_state,
         confirm_close_surface,
@@ -18389,6 +18447,8 @@ pub extern "C" fn roastty_surface_set_content_scale(surface: RoasttySurface, x: 
             // glyphs are rasterized at `font_size * scale`, so without a rebuild text stays at the
             // old DPI (blurry/chunky). Only the change case drops/dirties (idempotent otherwise).
             surface.renderer = None;
+            surface.recompute_renderer_size();
+            surface.resize_pty_to_current_size(false);
             surface.dirty = true;
         }
     }
@@ -21321,6 +21381,122 @@ mod tests {
             cell_width_px,
             cell_height_px,
         };
+    }
+
+    fn set_surface_pixel_geometry(
+        surface: RoasttySurface,
+        width_px: u32,
+        height_px: u32,
+        cell_width_px: u32,
+        cell_height_px: u32,
+    ) {
+        let surface = surface_from_handle(surface).unwrap();
+        surface.size = RoasttySurfaceSize {
+            columns: 0,
+            rows: 0,
+            width_px,
+            height_px,
+            cell_width_px,
+            cell_height_px,
+        };
+    }
+
+    #[test]
+    fn window_padding_layout_runtime_surface_grid_uses_asymmetric_scaled_padding() {
+        let config = new_test_config_from_str(
+            "window-padding-x = 3,5\nwindow-padding-y = 7,11\nwindow-padding-balance = false\n",
+        );
+        let app = new_test_app_with_action_config(true, config);
+        let surface = new_test_surface(app);
+        set_surface_pixel_geometry(surface, 200, 200, 10, 10);
+
+        let surface_ref = surface_from_handle(surface).unwrap();
+        surface_ref.scale_factor_x = 2.0;
+        surface_ref.scale_factor_y = 3.0;
+        let size = surface_ref
+            .recompute_renderer_size()
+            .expect("renderer size");
+
+        assert_eq!(
+            size.padding,
+            renderer::size::Padding {
+                top: 21,
+                bottom: 33,
+                left: 6,
+                right: 10,
+            }
+        );
+        assert_eq!(surface_ref.renderer_padding, size.padding);
+        assert_eq!(surface_ref.size.columns, 18);
+        assert_eq!(surface_ref.size.rows, 14);
+        assert_eq!(surface_ref.pty_size().cols, 18);
+        assert_eq!(surface_ref.pty_size().rows, 14);
+
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+        roastty_config_free(config);
+    }
+
+    #[test]
+    fn window_padding_layout_runtime_set_size_recomputes_padded_pty_grid() {
+        let config = new_test_config_from_str(
+            "window-padding-x = 10\nwindow-padding-y = 10\nwindow-padding-balance = false\n",
+        );
+        let app = new_test_app_with_action_config(true, config);
+        let surface = new_test_surface(app);
+        set_surface_pixel_geometry(surface, 80, 80, 10, 10);
+
+        let surface_ref = surface_from_handle(surface).unwrap();
+        surface_ref.set_size(100, 100);
+
+        assert_eq!(
+            surface_ref.renderer_padding,
+            renderer::size::Padding {
+                top: 10,
+                bottom: 10,
+                left: 10,
+                right: 10,
+            }
+        );
+        assert_eq!(surface_ref.size.columns, 8);
+        assert_eq!(surface_ref.size.rows, 8);
+        assert_eq!(surface_ref.pty_size().cols, 8);
+        assert_eq!(surface_ref.pty_size().rows, 8);
+
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+        roastty_config_free(config);
+    }
+
+    #[test]
+    fn window_padding_layout_runtime_content_scale_updates_unbalanced_padding() {
+        let config = new_test_config_from_str(
+            "window-padding-x = 10\nwindow-padding-y = 10\nwindow-padding-balance = false\n",
+        );
+        let app = new_test_app_with_action_config(true, config);
+        let surface = new_test_surface(app);
+        set_surface_pixel_geometry(surface, 100, 100, 10, 10);
+
+        roastty_surface_set_content_scale(surface, 2.0, 3.0);
+        let surface_ref = surface_from_handle(surface).unwrap();
+
+        assert_eq!(
+            surface_ref.renderer_padding,
+            renderer::size::Padding {
+                top: 30,
+                bottom: 30,
+                left: 20,
+                right: 20,
+            }
+        );
+        assert_eq!(surface_ref.size.columns, 6);
+        assert_eq!(surface_ref.size.rows, 4);
+        assert_eq!(surface_ref.pty_size().cols, 6);
+        assert_eq!(surface_ref.pty_size().rows, 4);
+
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+        roastty_config_free(config);
     }
 
     fn set_surface_worker_mouse_tracking(surface: RoasttySurface, enabled: bool) {

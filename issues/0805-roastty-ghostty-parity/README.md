@@ -750,6 +750,13 @@ experiment files until they are proven.
   by feature set. Font variations, metric adjustment, fallback visual output,
   bitmap/color thickening edge cases, glyph metrics, broader font pixel parity,
   and GUI-visible A/B font rendering remain in `RUNTIME-007B2B2B`.
+- **Window padding layout is renderer size state.** Experiment 148 split
+  deterministic `window-padding-x`/`window-padding-y` scaling,
+  `window-padding-balance` math, active live renderer padded `Size`/grid wiring,
+  and padded PTY row/column state out of the renderer GUI gap. Background blur,
+  real compositor opacity, GUI cursor pixels, custom shader output, broader
+  GUI/pixel parity, and screenshot-level padding pixel proof remain in
+  `RUNTIME-008B2B2B`.
 - **Font-size runtime updates should be idempotent.** Experiment 125 found that
   applying an unchanged font size dirtied ABI-only surfaces because
   `set_font_size_points` always requested a render. The setter now returns
@@ -1437,4 +1444,4 @@ remains open.
   — **Pass**
 - [Experiment 147: Font feature runtime](147-font-feature-runtime.md) — **Pass**
 - [Experiment 148: Window padding layout runtime](148-window-padding-layout-runtime.md)
-  — **Designed**
+  — **Pass**

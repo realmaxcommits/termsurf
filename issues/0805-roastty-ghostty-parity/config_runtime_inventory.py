@@ -559,8 +559,35 @@ ROWS = [
         guard_command="`cargo test --manifest-path roastty/Cargo.toml cursor_priority_active_renderer && PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/cursor_priority_runtime_parity.py`",
     ),
     RuntimeRow(
-        id="RUNTIME-008B2B2",
-        behavior="remaining renderer-visible effects: background blur, real compositor opacity, window padding layout pixels, GUI cursor pixels, custom shader output, and broader GUI/pixel parity",
+        id="RUNTIME-008B2B2A",
+        behavior="window-padding-x/window-padding-y scaling, window-padding-balance layout math, and active live renderer padded Size/grid wiring",
+        ghostty_reference="`vendor/ghostty/src/Surface.zig` DerivedConfig window padding fields, `scaledPadding`, init/resize/content-scale padding application; `vendor/ghostty/src/renderer/size.zig` padding balance and grid math",
+        roastty_reference="`roastty/src/renderer/size.rs` config-derived renderer Size helper; `roastty/src/lib.rs` live surface padded size/grid state, PTY sizing, and `FrameRenderer::update_screen` wiring",
+        family="renderer",
+        status="Oracle complete",
+        evidence=(
+            "Experiment 148 splits out deterministic window padding layout "
+            "runtime behavior without claiming screenshot-level padding pixel "
+            "parity. `window_padding_layout_runtime_*` tests prove "
+            "config-derived `window-padding-x`/`window-padding-y` conversion "
+            "uses Ghostty's `floor(points * dpi / 72)` rule, preserves "
+            "independent X/Y scale for left/right versus top/bottom padding, "
+            "applies `window-padding-balance = true` and `equal` with the "
+            "ported `Size::balance_padding` math, computes grid size from "
+            "`screen - padding`, updates content-scale dependent unbalanced "
+            "padding, and feeds padded rows/columns into surface PTY sizing. "
+            "`window_padding_layout_runtime_parity.py` statically checks "
+            "pinned Ghostty's derived config, scaling, init/resize/"
+            "content-scale markers, Roastty's helper/wiring/tests, and this "
+            "inventory split."
+        ),
+        missing_evidence="None for deterministic window-padding scaling, balance layout math, active renderer Size/grid wiring, and padded PTY row/column state. Screenshot-level padding pixel parity remains outside this slice.",
+        guard_tier="Tier 1",
+        guard_command="`cargo test --manifest-path roastty/Cargo.toml window_padding_layout_runtime && cargo test --manifest-path roastty/Cargo.toml size_balance_padding && cargo test --manifest-path roastty/Cargo.toml size_grid_and_terminal && cargo test --manifest-path roastty/Cargo.toml coordinate_conversion && PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/window_padding_layout_runtime_parity.py`",
+    ),
+    RuntimeRow(
+        id="RUNTIME-008B2B2B",
+        behavior="remaining renderer-visible effects: background blur, real compositor opacity, GUI cursor pixels, custom shader output, broader GUI/pixel parity, and screenshot-level padding pixel proof",
         ghostty_reference="`vendor/ghostty/src/config/Config.zig` renderer/window visual fields; `vendor/ghostty/src/renderer/generic.zig` derived renderer config and draw paths; `vendor/ghostty/src/Surface.zig` renderer config messages",
         roastty_reference="`roastty/src/lib.rs` live renderer and render state; `roastty/src/renderer`; copied macOS renderer host",
         family="renderer",
@@ -575,12 +602,15 @@ ROWS = [
             "data, color/text-color resolution, wide cursor render data, lock "
             "fallback rendering, and cursor list routing. Experiment 144 "
             "split out password/preedit cursor-style priority through the "
-            "active frame renderer path. CFG-223 still needs representative "
-            "runtime or GUI proof for background blur, real compositor "
-            "opacity, window padding layout pixels, GUI cursor pixels, "
-            "custom shader output, and broader GUI/pixel parity."
+            "active frame renderer path. Experiment 148 split out "
+            "deterministic window-padding scaling, balance layout math, "
+            "active live renderer padded Size/grid wiring, and padded PTY "
+            "row/column state. CFG-223 still needs representative runtime or "
+            "GUI proof for background blur, real compositor opacity, GUI "
+            "cursor pixels, custom shader output, broader GUI/pixel parity, "
+            "and screenshot-level padding pixel proof."
         ),
-        missing_evidence="Add renderer/runtime or GUI smoke rows for background blur, real compositor opacity, window padding layout pixels, GUI cursor pixels, custom shader output, and broader GUI/pixel parity.",
+        missing_evidence="Add renderer/runtime or GUI smoke rows for background blur, real compositor opacity, GUI cursor pixels, custom shader output, broader GUI/pixel parity, and screenshot-level padding pixel proof.",
         guard_tier="Tier 3",
         guard_command="TBD by future CFG-223 renderer visual experiment.",
     ),
@@ -1364,7 +1394,8 @@ EXPECTED_IDS = [
     "RUNTIME-008B1",
     "RUNTIME-008B2A",
     "RUNTIME-008B2B1",
-    "RUNTIME-008B2B2",
+    "RUNTIME-008B2B2A",
+    "RUNTIME-008B2B2B",
     "RUNTIME-009A",
     "RUNTIME-009B1",
     "RUNTIME-009B2A",
