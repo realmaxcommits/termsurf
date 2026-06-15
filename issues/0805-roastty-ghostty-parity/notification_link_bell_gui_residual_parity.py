@@ -61,7 +61,7 @@ def main() -> int:
     require("Gap" in cfg223, f"CFG-223 should remain Gap: {cfg223}")
     require_text(
         matrix,
-        "Runtime inventory coverage: 89 rows Oracle complete; 92 rows closed; 1 rows are incomplete and 1 rows are runtime gaps.",
+        "Runtime inventory coverage: 90 rows Oracle complete; 93 rows closed; 1 rows are incomplete and 1 rows are runtime gaps.",
         "CFG-223 split counts",
     )
 
@@ -112,6 +112,15 @@ def main() -> int:
     require_text(banner, "32674 changed pixels", "URL hover banner pixel evidence")
     require_text(banner, "macos_live_link_hover_banner_pixels.py", "URL hover banner live guard command")
 
+    bell_ui_cells = row_cells(runtime, "RUNTIME-012B2B2B2B2B3C5")
+    bell_ui = row_line(runtime, "RUNTIME-012B2B2B2B2B3C5")
+    require(bell_ui_cells[4] == "notifications", f"unexpected bell UI row family: {bell_ui_cells}")
+    require(bell_ui_cells[5] == "Oracle complete", f"unexpected bell UI row status: {bell_ui_cells}")
+    require_text(bell_ui, "bell title prefix and border overlay pixels", "bell title/border behavior")
+    require_text(bell_ui, "🔔 Issue805Exp190BellTitle", "bell title prefix evidence")
+    require_text(bell_ui, "6375 changed pixels", "bell border side pixel evidence")
+    require_text(bell_ui, "macos_live_bell_title_border_pixels.py", "bell title/border live guard command")
+
     gap_cells = row_cells(runtime, "RUNTIME-012B2B2B2B2B3C")
     gap = row_line(runtime, "RUNTIME-012B2B2B2B2B3C")
     require(gap_cells[4] == "notifications", f"unexpected gap row family: {gap_cells}")
@@ -120,7 +129,6 @@ def main() -> int:
         "actual OS notification delivery/banner/sound",
         "audible bell output",
         "measurable dock-attention state",
-        "bell border/title visible effects",
         "real OS cursor pixels",
         "Quick Look/native link preview display beyond the copied SwiftUI URLHoverBanner",
         "external Launch Services handler delivery",
@@ -146,6 +154,7 @@ def main() -> int:
         ISSUE / "macos_native_context_menu_trace_runtime.py",
         ISSUE / "macos_controlled_url_open_runtime.py",
         ISSUE / "macos_live_link_hover_banner_pixels.py",
+        ISSUE / "macos_live_bell_title_border_pixels.py",
     ]:
         result = subprocess.run(
             ["python3", str(guard)],

@@ -2018,7 +2018,7 @@ ROWS = [
             "`bell-features = attention`, `bell-features = title`, and "
             "`bell-features = border` gates."
         ),
-        missing_evidence="None for copied macOS bell presentation plumbing source parity; actual OS/audio/dock/border/title runtime side effects remain tracked by RUNTIME-012B2B2B2B2B3C.",
+        missing_evidence="None for copied macOS bell presentation plumbing source parity. Live bell title/border UI effects are tracked by RUNTIME-012B2B2B2B2B3C5, while actual OS/audio/dock runtime side effects remain tracked by RUNTIME-012B2B2B2B2B3C.",
         guard_tier="Tier 0",
         guard_command="`PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/bell_runtime_dispatch_parity.py && PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/bell_presentation_runtime_parity.py`",
     ),
@@ -2274,7 +2274,7 @@ ROWS = [
             "disabled, and separately drives the audio branch with the configured "
             "`/System/Library/Sounds/Ping.aiff` path and volume."
         ),
-        missing_evidence="None for live bell feature bridge, app branch dispatch, surface bell state dispatch, and configured audio-path request trace. Audible sound output, measurable dock-attention state, and border/title pixel effects remain tracked by RUNTIME-012B2B2B2B2B3C.",
+        missing_evidence="None for live bell feature bridge, app branch dispatch, surface bell state dispatch, and configured audio-path request trace. Live bell title/border UI effects are tracked by RUNTIME-012B2B2B2B2B3C5, while audible sound output and measurable dock-attention state remain tracked by RUNTIME-012B2B2B2B2B3C.",
         guard_tier="Tier 3",
         guard_command="`PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/macos_notification_link_bell_trace_runtime.py`",
     ),
@@ -2370,10 +2370,38 @@ ROWS = [
         guard_command="`PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/macos_live_link_hover_banner_pixels.py`",
     ),
     RuntimeRow(
+        id="RUNTIME-012B2B2B2B2B3C5",
+        behavior="live macOS bell title prefix and border overlay pixels",
+        ghostty_reference="Pinned Ghostty macOS bell `title` and `border` feature behavior",
+        roastty_reference="`roastty/macos/Sources/Features/Terminal/BaseTerminalController.swift` `computeTitle`; `roastty/macos/Sources/Roastty/Surface View/SurfaceView.swift` `BellBorderOverlay`; `roastty/macos/Sources/Roastty/Surface View/SurfaceView_AppKit.swift` bell state handling",
+        family="notifications",
+        status="Oracle complete",
+        evidence=(
+            "Experiment 190 adds `macos_live_bell_title_border_pixels.py`, "
+            "which launches the built debug app with an isolated config using "
+            "`bell-features = no-system,no-audio,no-attention,title,border`, "
+            "sets a deterministic OSC 2 title, captures the exact focused "
+            "CGWindowID before BEL, triggers BEL from the live terminal, and "
+            "requires trace evidence for `ringBell target=surface`, "
+            "`appBell system=false audio=false attention=false`, and "
+            "`surfaceBell state=true title=Issue805Exp190BellTitle`. The "
+            "guard proves the title path with AX title state changing from "
+            "`Issue805Exp190BellTitle` to `🔔 Issue805Exp190BellTitle`, then "
+            "compares before/after screenshots with a Swift sampler that masks "
+            "the titlebar area and proves localized edge-band deltas: 6375 "
+            "changed pixels on each side edge, 9390 on the bottom edge, zero "
+            "changed pixels in the center control region, and zero changed "
+            "pixels in the titlebar/control mask."
+        ),
+        missing_evidence="None for live copied macOS bell title prefix state and `BellBorderOverlay` pixels. Audible sound output and measurable dock-attention state remain tracked by RUNTIME-012B2B2B2B2B3C.",
+        guard_tier="Tier 3",
+        guard_command="`PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/macos_live_bell_title_border_pixels.py`",
+    ),
+    RuntimeRow(
         id="RUNTIME-012B2B2B2B2B3C",
-        behavior="remaining OS-controlled notification, bell, Quick Look/native preview, cursor-pixel, and external URL-handler GUI effects",
-        ghostty_reference="Pinned Ghostty macOS native notification, bell, Quick Look/native preview, cursor-pixel, and external URL-handler behavior",
-        roastty_reference="`roastty/macos/Sources` native notification, bell, Quick Look/native preview, cursor, and `NSWorkspace.open` handling",
+        behavior="remaining OS-controlled notification, audible bell, dock-attention, Quick Look/native preview, cursor-pixel, and external URL-handler GUI effects",
+        ghostty_reference="Pinned Ghostty macOS native notification, audible bell, dock-attention, Quick Look/native preview, cursor-pixel, and external URL-handler behavior",
+        roastty_reference="`roastty/macos/Sources` native notification, audible bell, dock-attention, Quick Look/native preview, cursor, and `NSWorkspace.open` handling",
         family="notifications",
         status="Gap",
         evidence=(
@@ -2387,11 +2415,13 @@ ROWS = [
             "and exact hovered-URL app routing into "
             "`RUNTIME-012B2B2B2B2B3C3`. Experiment 189 splits live copied "
             "SwiftUI URL hover banner display pixels into "
-            "`RUNTIME-012B2B2B2B2B3C4`. The remaining unproven behavior is "
+            "`RUNTIME-012B2B2B2B2B3C4`. Experiment 190 splits live copied "
+            "bell title prefix state and border overlay pixels into "
+            "`RUNTIME-012B2B2B2B2B3C5`. The remaining unproven behavior is "
             "limited to OS-controlled GUI effects that the current VM run did "
             "not expose deterministically."
         ),
-        missing_evidence="Still need deterministic proof for actual OS notification delivery/banner/sound after authorization is available, audible bell output, measurable dock-attention state, bell border/title visible effects, real OS cursor pixels, Quick Look/native link preview display beyond the copied SwiftUI URLHoverBanner, and external Launch Services handler delivery.",
+        missing_evidence="Still need deterministic proof for actual OS notification delivery/banner/sound after authorization is available, audible bell output, measurable dock-attention state, real OS cursor pixels, Quick Look/native link preview display beyond the copied SwiftUI URLHoverBanner, and external Launch Services handler delivery.",
         guard_tier="Tier 3",
         guard_command="TBD by future focused OS/native GUI experiment.",
     ),
@@ -2524,6 +2554,7 @@ EXPECTED_IDS = [
     "RUNTIME-012B2B2B2B2B3C2",
     "RUNTIME-012B2B2B2B2B3C3",
     "RUNTIME-012B2B2B2B2B3C4",
+    "RUNTIME-012B2B2B2B2B3C5",
     "RUNTIME-012B2B2B2B2B3C",
     "RUNTIME-013",
     "RUNTIME-014",

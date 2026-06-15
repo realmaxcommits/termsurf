@@ -1044,6 +1044,14 @@ experiment files until they are proven.
   1086 in a bottom-right control band, proving the visible `URLHoverBanner`
   overlay without claiming real OS cursor pixels or Quick Look/native preview
   behavior.
+- **Bell title and border UI can be proven without audio or dock claims.**
+  Experiment 190 used
+  `bell-features = no-system,no-audio,no-attention,title,border` to isolate
+  copied UI effects. The live guard proved the AX title changed from
+  `Issue805Exp190BellTitle` to `🔔 Issue805Exp190BellTitle` and the screenshot
+  sampler saw 6375 changed pixels on each side edge, 9390 on the bottom edge,
+  and zero changed pixels in the center and titlebar/control regions. Audible
+  output and dock attention remain separate OS-controlled gaps.
 - **Font-size runtime updates should be idempotent.** Experiment 125 found that
   applying an unchanged font size dirtied ABI-only surfaces because
   `set_font_size_points` always requested a render. The setter now returns
@@ -1814,4 +1822,4 @@ remains open.
 - [Experiment 189: Live link hover banner pixels](189-live-link-hover-banner-pixels.md)
   — **Partial**
 - [Experiment 190: Live bell title and border pixels](190-live-bell-title-border-pixels.md)
-  — **Designed**
+  — **Partial**

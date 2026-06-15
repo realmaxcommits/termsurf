@@ -124,3 +124,84 @@ pixels, and requires the screenshot sampler to mask or exclude titlebar/title
 pixels while proving narrow surface-edge deltas independent of the title change.
 
 Final verdict after re-review: **Approved**.
+
+## Result
+
+**Result:** Partial
+
+The focused guard passed and split the deterministic copied bell title/border UI
+effects out of the remaining residual GUI gap.
+
+Evidence:
+
+- `macos_live_bell_title_border_pixels.py` launches the built debug app with an
+  isolated config using
+  `bell-features = no-system,no-audio,no-attention,title,border`.
+- The guard creates a real terminal surface, sets the deterministic OSC 2 title
+  `Issue805Exp190BellTitle`, captures the exact focused CGWindowID before BEL,
+  then triggers BEL from the live terminal.
+- The live trace records `ringBell target=surface`,
+  `appBell system=false audio=false attention=false`, and
+  `surfaceBell state=true title=Issue805Exp190BellTitle`.
+- The AX title oracle changes from `Issue805Exp190BellTitle` before BEL to
+  `🔔 Issue805Exp190BellTitle` after BEL.
+- The screenshot sampler masks the titlebar/control area and proves a localized
+  edge-band delta: 6375 changed pixels on each side edge, 9390 changed pixels on
+  the bottom edge, 0 changed pixels in the center control region, and 0 changed
+  pixels in the titlebar/control mask.
+- No new Roastty crash report was written during the workflow.
+
+Updated inventory counts:
+
+- `runtime_rows=94`
+- `oracle_complete=90`
+- `closed=93`
+- `audit_covered=0`
+- `incomplete=1`
+- `gap=1`
+- `cfg223=Gap`
+- Remaining gap ID: `RUNTIME-012B2B2B2B2B3C`
+
+Verification logs:
+
+- `logs/issue805-exp190-build-1.log`
+- `logs/issue805-exp190-live-bell-title-border-2.log`
+- `logs/issue805-exp190-config-runtime-inventory-2.log`
+- `logs/issue805-exp190-residual-guard-1.log`
+- `logs/issue805-exp190-py-compile-1.log`
+- `logs/issue805-exp190-prettier-check-2.log`
+- `logs/issue805-exp190-diff-check-2.log`
+- `logs/issue805-exp190-broad-guard-sweep-1.log`
+
+This result does not claim audible bell output, dock attention, OS notification
+delivery, real OS cursor pixels, external URL delivery, or Quick Look/native
+preview behavior.
+
+## Conclusion
+
+Roastty now has live app proof for copied bell title-prefix state and copied
+SwiftUI `BellBorderOverlay` pixels. `RUNTIME-012B2B2B2B2B3C5` is Oracle
+complete, while `RUNTIME-012B2B2B2B2B3C` remains a `Gap` for actual OS
+notification delivery/banner/sound, audible bell output, measurable
+dock-attention state, real OS cursor pixels, Quick Look/native link preview
+display beyond the copied SwiftUI URLHoverBanner, and external Launch Services
+handler delivery.
+
+## Completion Review
+
+Fresh-context Codex adversarial reviewer `Einstein the 3rd` reviewed the
+completed experiment, working-tree diff, relevant Swift/app sources, and
+verification logs.
+
+Verdict: **Approved**.
+
+Findings: none.
+
+The reviewer confirmed the result was still uncommitted, the README status was
+`Partial`, CFG-223 remained `Gap`, the counts matched `runtime_rows=94`,
+`oracle_complete=90`, `closed=93`, `incomplete=1`, `gap=1`, and the remaining
+gap stayed `RUNTIME-012B2B2B2B2B3C`. The reviewer also confirmed that the guard
+uses AX title state for the title-prefix proof, masks/excludes titlebar/title
+pixels for the border oracle, and does not overclaim audible bell output, dock
+attention, OS notification delivery, cursor pixels, Quick Look/native preview,
+or external URL delivery.
