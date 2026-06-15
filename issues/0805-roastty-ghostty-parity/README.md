@@ -1481,3 +1481,5 @@ remains open.
   — **Pass**
 - [Experiment 152: Command palette runtime](152-command-palette-runtime.md) —
   **Pass**
+- [Experiment 153: Bell presentation runtime](153-bell-presentation-runtime.md)
+  — **Designed**
