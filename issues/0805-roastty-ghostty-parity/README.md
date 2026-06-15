@@ -792,20 +792,20 @@ experiment files until they are proven.
   renderer gap. Roastty now applies `FontShapingBreak` to row-local `RunOptions`
   in active frame row formatting, matching pinned Ghostty's renderer-side
   application after viewport cursor derivation. Remaining font work stays in
-  `RUNTIME-007B2B2B2B`.
+  `RUNTIME-007B2B2B2B2`.
 - **Font thickening has a deterministic non-`sbix` render slice.** Experiment
   146 split `font-thicken` and `font-thicken-strength` option propagation,
   shared glyph-cache key separation, and CoreText non-`sbix` canvas
   padding/strength behavior out of the remaining font renderer gap. Bitmap/color
   font thickening edge cases, feature effects, fallback visual output, glyph
-  metrics, and broad font pixel parity remain in `RUNTIME-007B2B2B2B`.
+  metrics, and broad font pixel parity remain in `RUNTIME-007B2B2B2B2`.
 - **Font features are active renderer shaping options.** Experiment 147 split
   deterministic `font-feature` propagation out of the remaining font renderer
   gap by threading config-derived shape options into active row shaping,
   preserving default feature merging, and namespacing shaped-run cache entries
   by feature set. Fallback visual output, bitmap/color thickening edge cases,
   glyph metrics, broader font pixel parity, and GUI-visible A/B font rendering
-  remain in `RUNTIME-007B2B2B2B`.
+  remain in `RUNTIME-007B2B2B2B2`.
 - **Window padding layout is renderer size state.** Experiment 148 split
   deterministic `window-padding-x`/`window-padding-y` scaling,
   `window-padding-balance` math, active live renderer padded `Size`/grid wiring,
@@ -858,13 +858,20 @@ experiment files until they are proven.
   italic, and bold-italic discovery descriptors, splitting font-grid keys by
   variation values, preserving deferred CoreText face application, and carrying
   pinned Ghostty's styled variation retry. Remaining font renderer work stays in
-  `RUNTIME-007B2B2B2B`.
+  `RUNTIME-007B2B2B2B2`.
 - **Font metric modifiers are grid metrics state.** Experiment 150 split
   deterministic `adjust-*` metric modifier propagation out of the remaining font
   renderer gap by threading all 13 parsed modifiers into font-grid keys and
   `Collection::update_metrics`, preserving empty-set defaults, and proving
   modified grid metrics from `build_grid_from_config`. Remaining font renderer
-  work stays in `RUNTIME-007B2B2B2B`.
+  work stays in `RUNTIME-007B2B2B2B2`.
+- **Font fallback has a deterministic runtime slice before visual parity.**
+  Experiment 165 split fallback resolution, `U+FFFD`/space substitution,
+  CoreText fallback discovery, LastResort rejection, fallback-face cache
+  behavior, and present-codepoint render data out of the remaining font gap.
+  Broad fallback/shaping visual output, bitmap/color font thickening edge cases,
+  renderer-visible glyph metrics, and broad font pixel parity remain in
+  `RUNTIME-007B2B2B2B2`.
 - **Font-size runtime updates should be idempotent.** Experiment 125 found that
   applying an unchanged font size dirtied ABI-only surfaces because
   `set_font_size_points` always requested a render. The setter now returns
@@ -1586,4 +1593,4 @@ remains open.
 - [Experiment 164: Metal cursor pixel readback](164-metal-cursor-pixel-readback.md)
   — **Pass**
 - [Experiment 165: Font fallback render runtime](165-font-fallback-render-runtime.md)
-  — **Designed**
+  — **Pass**

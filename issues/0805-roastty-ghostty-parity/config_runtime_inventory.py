@@ -477,8 +477,34 @@ ROWS = [
         guard_command="`cargo test --manifest-path roastty/Cargo.toml font_metric_modifier_runtime && cargo test --manifest-path roastty/Cargo.toml metric_modifier_config_parser_family_oracle && cargo test --manifest-path roastty/Cargo.toml metric_modifier_config_formatter_family_oracle && PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/font_metric_modifier_runtime_parity.py`",
     ),
     RuntimeRow(
-        id="RUNTIME-007B2B2B2B",
-        behavior="remaining font renderer output effects",
+        id="RUNTIME-007B2B2B2B1",
+        behavior="font fallback resolution, substitution, discovery caching, and present-glyph render-codepoint data",
+        ghostty_reference="`vendor/ghostty/src/font/shaper/run.zig` fallback substitution; `vendor/ghostty/src/font/CodepointResolver.zig` fallback discovery; `vendor/ghostty/src/font/SharedGrid.zig` render-codepoint path",
+        roastty_reference="`roastty/src/font/run.rs` fallback substitution; `roastty/src/font/face/coretext.rs` fallback discovery; `roastty/src/font/shared_grid.rs` fallback cache and render-codepoint tests",
+        family="font",
+        status="Oracle complete",
+        evidence=(
+            "Experiment 165 splits out deterministic font fallback runtime "
+            "mechanics before full visual comparison. Roastty's run iterator "
+            "tests prove unrenderable cells substitute a single `U+FFFD` "
+            "codepoint and kitty placeholders substitute a space. CoreText "
+            "`font_for_codepoint_*` tests prove Menlo-missing CJK and emoji "
+            "codepoints resolve through fallback discovery while LastResort-only "
+            "noncharacters are rejected. Shared-grid tests prove fallback "
+            "discovery caches without duplicate faces, deferred discovered "
+            "faces are preloaded before caching, present codepoints render via "
+            "resolved glyph ids, and missing codepoints return `None`. "
+            "`font_fallback_runtime_parity.py` statically checks pinned "
+            "Ghostty fallback-chain, resolver, and shared-grid anchors against "
+            "Roastty tests and this inventory split."
+        ),
+        missing_evidence="None for deterministic font fallback resolution, substitution, discovery caching, LastResort rejection, and present-glyph render-codepoint data. Broad fallback visual/pixel parity remains outside this slice.",
+        guard_tier="Tier 1",
+        guard_command="`cargo test --manifest-path roastty/Cargo.toml next_missing_codepoint_substitutes_replacement && cargo test --manifest-path roastty/Cargo.toml next_placeholder_is_space && cargo test --manifest-path roastty/Cargo.toml font_for_codepoint && cargo test --manifest-path roastty/Cargo.toml get_index_discovery_fallback && cargo test --manifest-path roastty/Cargo.toml get_index_deferred_discovery_preloads_face_before_caching && cargo test --manifest-path roastty/Cargo.toml render_codepoint && PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/font_fallback_runtime_parity.py`",
+    ),
+    RuntimeRow(
+        id="RUNTIME-007B2B2B2B2",
+        behavior="remaining font renderer output effects: broad fallback/shaping visual output, bitmap/color font thickening edge cases, glyph metrics beyond modifier math, and broader font pixel parity",
         ghostty_reference="`vendor/ghostty/src/config/Config.zig` font feature, variation, thicken, metric, and shaping fields; `vendor/ghostty/src/font` shaping/rendering paths",
         roastty_reference="`roastty/src/font`; `roastty/src/renderer` font shaping, metrics, glyph output, and visual renderer behavior",
         family="font",
@@ -503,14 +529,17 @@ ROWS = [
             "variation application mechanics. Experiment 150 split out "
             "deterministic `adjust-*` metric modifier propagation, font-grid "
             "key separation, collection metric application, and modified "
-            "grid metrics returned by `build_grid_from_config`. "
+            "grid metrics returned by `build_grid_from_config`. Experiment "
+            "165 split out deterministic font fallback resolution, "
+            "substitution, fallback discovery caching, LastResort rejection, "
+            "and present-glyph render-codepoint data. "
             "Remaining font parity still needs focused runtime/renderer or GUI "
-            "proof for fallback/shaping visual output, bitmap/color font "
+            "proof for broad fallback/shaping visual output, bitmap/color font "
             "thickening edge cases, glyph metrics as seen by the renderer "
             "beyond modifier math, and broader renderer-visible font pixel "
             "parity."
         ),
-        missing_evidence="Add focused font renderer/runtime or GUI proof for fallback/shaping visual output, bitmap/color font thickening edge cases, glyph metrics beyond modifier math, and broader font pixel parity.",
+        missing_evidence="Add focused font renderer/runtime or GUI proof for broad fallback/shaping visual output, bitmap/color font thickening edge cases, glyph metrics beyond modifier math, and broader font pixel parity.",
         guard_tier="Tier 3",
         guard_command="TBD by future CFG-223 font renderer experiment.",
     ),
@@ -1853,7 +1882,8 @@ EXPECTED_IDS = [
     "RUNTIME-007B2B2A",
     "RUNTIME-007B2B2B1",
     "RUNTIME-007B2B2B2A",
-    "RUNTIME-007B2B2B2B",
+    "RUNTIME-007B2B2B2B1",
+    "RUNTIME-007B2B2B2B2",
     "RUNTIME-008A",
     "RUNTIME-008B1",
     "RUNTIME-008B2A",

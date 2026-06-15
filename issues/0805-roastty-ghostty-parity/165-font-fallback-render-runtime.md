@@ -140,3 +140,74 @@ The reviewer found no required, optional, or nit findings. It confirmed the
 README links Experiment 165 as `Designed`, the design has the required sections,
 the scope keeps broad visual/font pixel parity in the remaining gap, and the
 proposed checks align with pinned Ghostty fallback paths.
+
+## Result
+
+**Result:** Pass
+
+Implemented the deterministic font fallback runtime split:
+
+- Added `next_missing_codepoint_substitutes_replacement` to prove the run
+  iterator substitutes a single `U+FFFD` codepoint for an unrenderable cell
+  while preserving the cell cluster and surrounding run content.
+- Added `font_fallback_runtime_parity.py` to guard pinned Ghostty's fallback
+  chain, resolver discovery, and shared-grid render-codepoint path against
+  Roastty's run, CoreText fallback, shared-grid, and inventory evidence.
+- Split `RUNTIME-007B2B2B2B` into:
+  - `RUNTIME-007B2B2B2B1`: **Oracle complete** for deterministic font fallback
+    resolution, substitution, discovery caching, LastResort rejection, and
+    present-glyph render-codepoint data.
+  - `RUNTIME-007B2B2B2B2`: **Gap** for broad fallback/shaping visual output,
+    bitmap/color font thickening edge cases, glyph metrics beyond modifier math,
+    and broader renderer-visible font pixel parity.
+
+Verification passed:
+
+```bash
+cargo test --manifest-path roastty/Cargo.toml next_missing_codepoint_substitutes_replacement -- --test-threads=1
+cargo test --manifest-path roastty/Cargo.toml next_placeholder_is_space -- --test-threads=1
+cargo test --manifest-path roastty/Cargo.toml font_for_codepoint -- --test-threads=1
+cargo test --manifest-path roastty/Cargo.toml get_index_discovery_fallback -- --test-threads=1
+cargo test --manifest-path roastty/Cargo.toml get_index_deferred_discovery_preloads_face_before_caching -- --test-threads=1
+cargo test --manifest-path roastty/Cargo.toml render_codepoint -- --test-threads=1
+PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/config_runtime_inventory.py --output issues/0805-roastty-ghostty-parity/config-runtime-inventory.md --matrix issues/0805-roastty-ghostty-parity/config-matrix.md
+PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/font_fallback_runtime_parity.py
+for f in issues/0805-roastty-ghostty-parity/*_runtime_parity.py issues/0805-roastty-ghostty-parity/terminal_runtime_residual_audit.py issues/0805-roastty-ghostty-parity/link_hover_preview_dispatch_parity.py issues/0805-roastty-ghostty-parity/link_hover_modifier_refresh_parity.py issues/0805-roastty-ghostty-parity/link_preview_context_runtime_parity.py; do PYTHONDONTWRITEBYTECODE=1 python3 "$f" >/tmp/$(basename "$f").out || { echo FAIL:$f; cat /tmp/$(basename "$f").out; exit 1; }; done; echo parity_guards=pass
+cargo fmt --manifest-path roastty/Cargo.toml
+cargo fmt --manifest-path roastty/Cargo.toml --check
+prettier --write --prose-wrap always --print-width 80 issues/0805-roastty-ghostty-parity/README.md issues/0805-roastty-ghostty-parity/165-font-fallback-render-runtime.md issues/0805-roastty-ghostty-parity/config-runtime-inventory.md issues/0805-roastty-ghostty-parity/config-matrix.md
+git diff --check
+```
+
+The regenerated inventory reported:
+
+```text
+runtime_rows=72
+oracle_complete=65
+closed=68
+audit_covered=0
+incomplete=4
+gap=4
+cfg223=Gap
+```
+
+## Conclusion
+
+The fallback runtime path is now proven below full visual parity. CFG-223
+remains `Gap`; the reduced font gap now owns broad fallback/shaping visual
+output, bitmap/color font thickening edge cases, renderer-visible glyph metrics,
+and broad font pixel parity.
+
+## Completion Review
+
+**Reviewer:** Codex adversarial subagent with fresh context.
+
+**Verdict:** Approved.
+
+The reviewer found no required, optional, or nit findings. It independently
+verified the focused fallback tests, `font_fallback_runtime_parity.py`, the full
+parity guard loop, `cargo fmt --check`, Prettier check, and `git diff --check`.
+It confirmed the result commit had not yet been made and the experiment keeps
+broad fallback/shaping visual output, bitmap/color thickening edge cases,
+renderer-visible metrics, and broad font pixel parity in `RUNTIME-007B2B2B2B2`
+as a `Gap`.

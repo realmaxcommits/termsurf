@@ -991,6 +991,28 @@ mod tests {
     }
 
     #[test]
+    fn next_missing_codepoint_substitutes_replacement() {
+        // Menlo does not cover this Private Use Area codepoint. The run iterator
+        // mirrors upstream's fallback chain: if the cell/grapheme cannot resolve,
+        // shape a single replacement character for that cell.
+        let opts = RunOptions {
+            cells: vec![narrow('A' as u32), narrow(0xE000), narrow('B' as u32)],
+            ..Default::default()
+        };
+        let mut r = menlo_resolver();
+        let mut it = RunIterator::new(&opts, &mut r);
+        let out = it.next().expect("one run");
+        assert_eq!(out.run.offset, 0);
+        assert_eq!(out.run.cells, 3);
+        assert_eq!(
+            cps(&out),
+            vec![('A' as u32, 0), (0xFFFD, 1), ('B' as u32, 2)],
+            "the missing cell contributes one replacement codepoint at its cluster"
+        );
+        assert!(it.next().is_none());
+    }
+
+    #[test]
     fn next_all_empty_is_none() {
         let mut r = menlo_resolver();
         // An all-empty row.
