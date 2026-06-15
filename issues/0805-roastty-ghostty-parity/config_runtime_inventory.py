@@ -679,14 +679,43 @@ ROWS = [
         guard_command="`cargo test --manifest-path roastty/Cargo.toml terminal_stream_osc7_pwd_edge && cargo test --manifest-path roastty/Cargo.toml termio_osc7_pwd_edge && cargo test --manifest-path roastty/Cargo.toml surface_osc7_pwd_edge && PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/osc7_edge_runtime_parity.py`",
     ),
     RuntimeRow(
-        id="RUNTIME-009B2B2B3B2B",
+        id="RUNTIME-009B2B2B3B2B1",
+        behavior="config-driven `enquiry-response` ENQ replies through terminal core and PTY-backed runtime",
+        ghostty_reference="`vendor/ghostty/src/config/Config.zig` `enquiry-response`; `vendor/ghostty/src/termio/Termio.zig` derived config; `vendor/ghostty/src/termio/stream_handler.zig` `changeConfig` and `.enquiry` write request path",
+        roastty_reference="`roastty/src/config/mod.rs` `enquiry-response`; `roastty/src/terminal/terminal.rs` ENQ response state; `roastty/src/termio.rs` spawn options; `roastty/src/lib.rs` surface config startup/update wiring",
+        family="terminal",
+        status="Oracle complete",
+        evidence=(
+            "Experiment 135 proves config-driven ENQ reply parity. "
+            "`terminal_stream_enquiry_response_configured_and_runtime_update` "
+            "proves terminal-core ENQ writes the configured response, updates "
+            "the response at runtime, and treats the default empty response as "
+            "inert. "
+            "`terminal_stream_enquiry_response_callback_precedence_is_preserved` "
+            "proves the existing embedded callback path still takes "
+            "precedence when installed. "
+            "`termio_enquiry_response_reaches_child_pty` proves a PTY-backed "
+            "child that emits ENQ can read the configured response through "
+            "`TermioSpawnOptions`. "
+            "`surface_enquiry_response_runtime_startup_and_update` proves "
+            "parsed app config reaches initial surfaces and live app config "
+            "updates. `enquiry_response_runtime_parity.py` statically checks "
+            "pinned Ghostty config, derived-config, `changeConfig`, and ENQ "
+            "write-request markers plus Roastty parser/runtime/update guards."
+        ),
+        missing_evidence="None for config-driven `enquiry-response` ENQ replies through terminal core and PTY-backed runtime.",
+        guard_tier="Tier 2",
+        guard_command="`cargo test --manifest-path roastty/Cargo.toml terminal_stream_enquiry_response && cargo test --manifest-path roastty/Cargo.toml termio_enquiry_response && cargo test --manifest-path roastty/Cargo.toml surface_enquiry_response && PYTHONDONTWRITEBYTECODE=1 python3 issues/0805-roastty-ghostty-parity/enquiry_response_runtime_parity.py`",
+    ),
+    RuntimeRow(
+        id="RUNTIME-009B2B2B3B2B2",
         behavior="other remaining terminal behavior effects",
         ghostty_reference="remaining `vendor/ghostty/src/termio/stream_handler.zig` terminal behavior paths",
         roastty_reference="`roastty/src/lib.rs` terminal/termio config use; `roastty/src/termio.rs`; `roastty/src/terminal`",
         family="terminal",
         status="Gap",
         evidence=(
-            "Experiments 117, 122, 124, 126, 127, 128, 129, 130, and 131 "
+            "Experiments 117, 122, 124, 126, 127, 128, 129, 130, 131, and 135 "
             "split out zero/no-history scrollback, nonzero scrollback byte "
             "quota, alternate-screen no-scrollback, CSI `21t` title-report "
             "gating, shell-integration feature env and terminal identity, "
@@ -695,8 +724,9 @@ ROWS = [
             "stored-PWD title fallback/empty title app dispatch, common local "
             "OSC 7 PWD validation, path normalization, surface PWD dispatch, "
             "title fallback path behavior, and remaining OSC 7 URI edge "
-            "semantics. Other remaining terminal behavior toggles still need "
-            "focused CFG-223 runtime proof or fixes."
+            "semantics, and config-driven ENQ `enquiry-response` replies. "
+            "Other remaining terminal behavior toggles still need focused "
+            "CFG-223 runtime proof or fixes."
         ),
         missing_evidence="Add runtime proof or fixes for other remaining terminal behavior effects.",
         guard_tier="Tier 2",
@@ -995,7 +1025,8 @@ EXPECTED_IDS = [
     "RUNTIME-009B2B2B3A",
     "RUNTIME-009B2B2B3B1",
     "RUNTIME-009B2B2B3B2A",
-    "RUNTIME-009B2B2B3B2B",
+    "RUNTIME-009B2B2B3B2B1",
+    "RUNTIME-009B2B2B3B2B2",
     "RUNTIME-010A",
     "RUNTIME-010B1",
     "RUNTIME-010B2A",

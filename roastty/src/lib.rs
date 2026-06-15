@@ -3732,6 +3732,7 @@ impl Surface {
                 let terminal = termio.terminal_mut();
                 terminal.set_palette_default(Some(palette_color_tuples(palette)));
                 terminal.set_title_report(parsed.title_report);
+                terminal.set_enquiry_response(parsed.enquiry_response.as_bytes().to_vec());
             });
             self.dirty = true;
         }
@@ -3998,6 +3999,7 @@ impl Surface {
             max_scrollback_bytes: scrollback_limit_to_bytes(config.scrollback_limit),
             palette: derived_config_palette(&config),
             title_report: config.title_report,
+            enquiry_response: config.enquiry_response.as_bytes().to_vec(),
         };
 
         let termio = match (surface_command, initial_command, config_command) {
@@ -22316,6 +22318,45 @@ mod tests {
                 terminal.next_slice(bytes).unwrap();
                 terminal.pty_response().to_vec()
             })
+    }
+
+    fn surface_enquiry_response(surface: RoasttySurface) -> Vec<u8> {
+        surface_from_handle(surface)
+            .unwrap()
+            .termio_worker
+            .as_ref()
+            .unwrap()
+            .with_termio_mut(|termio| {
+                let terminal = termio.terminal_mut();
+                terminal.clear_pty_response();
+                terminal.next_slice(b"\x05").unwrap();
+                terminal.pty_response().to_vec()
+            })
+    }
+
+    #[test]
+    fn surface_enquiry_response_runtime_startup_and_update() {
+        let _guard = pty_command_lock();
+
+        let config = new_test_config_from_str("enquiry-response = first-enq\ncommand = sleep 5\n");
+        let app = roastty_app_new(ptr::null(), config);
+        let surface = new_test_surface(app);
+        assert_eq!(roastty_surface_start(surface), ROASTTY_SUCCESS);
+        assert_eq!(surface_enquiry_response(surface), b"first-enq");
+
+        let updated = new_test_config_from_str("enquiry-response = second-enq\n");
+        roastty_app_update_config(app, updated);
+        assert_eq!(surface_enquiry_response(surface), b"second-enq");
+
+        let disabled = new_test_config_from_str("enquiry-response = \n");
+        roastty_app_update_config(app, disabled);
+        assert_eq!(surface_enquiry_response(surface), b"");
+
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+        roastty_config_free(disabled);
+        roastty_config_free(updated);
+        roastty_config_free(config);
     }
 
     #[test]

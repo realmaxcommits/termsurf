@@ -41,6 +41,7 @@ pub(crate) struct TermioSpawnOptions {
     pub(crate) max_scrollback_bytes: Option<usize>,
     pub(crate) palette: color::Palette,
     pub(crate) title_report: bool,
+    pub(crate) enquiry_response: Vec<u8>,
 }
 
 impl Default for TermioSpawnOptions {
@@ -57,6 +58,7 @@ impl Default for TermioSpawnOptions {
             max_scrollback_bytes: None,
             palette: color::DEFAULT_PALETTE,
             title_report: false,
+            enquiry_response: Vec::new(),
         }
     }
 }
@@ -190,6 +192,7 @@ impl Termio {
                 cursor_visual_style: options.cursor_visual_style,
                 cursor_blink: options.cursor_blink,
                 title_report: options.title_report,
+                enquiry_response: options.enquiry_response,
             },
         )?;
         terminal.set_palette_default(Some(palette_tuple(options.palette)));
@@ -906,6 +909,36 @@ mod tests {
         termio.queue_write(b"x");
         assert_eq!(termio.pending_write_bytes(), 1);
         assert_eq!(termio.terminal_mut().pty_response(), b"");
+    }
+
+    #[test]
+    fn termio_enquiry_response_reaches_child_pty() {
+        let _guard = pty_command_lock();
+        let mut termio = Termio::spawn_with_options(
+            "/bin/bash",
+            [
+                "-lc",
+                "printf '\\005'; IFS= read -r -n 14 response; printf 'got:%s' \"$response\"",
+            ],
+            TermioSpawnOptions {
+                enquiry_response: b"roastty-enq-42".to_vec(),
+                ..TermioSpawnOptions::default()
+            },
+            test_size(),
+        )
+        .expect("spawn termio with enquiry response");
+
+        pump_until(&mut termio, |termio, _| {
+            termio
+                .terminal()
+                .plain_screen(false)
+                .contains("got:roastty-enq-42")
+        });
+
+        assert!(termio
+            .terminal()
+            .plain_screen(false)
+            .contains("got:roastty-enq-42"));
     }
 
     #[test]

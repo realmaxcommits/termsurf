@@ -646,6 +646,11 @@ experiment files until they are proven.
   Live PTY-backed BEL parity therefore flows through terminal pending bell
   counts, `TermioPump::bell_count`, and surface `ROASTTY_ACTION_RING_BELL`
   dispatch with a 100ms repeated-BEL throttle.
+- **ENQ responses must avoid terminal callbacks in worker PTYs.** Experiment 135
+  found the same worker constraint applies to `enquiry-response`: embedded
+  callback ENQ handling can remain for direct terminal users, but live
+  PTY-backed parity needs owned terminal response state populated from parsed
+  config, passed through `TermioSpawnOptions`, and updated on app config reload.
 - **Shell integration parity has a proven Termio env slice.** Experiment 124
   split terminal identity, resource-backed `TERMINFO`, explicit env override
   ordering, shell feature env, and zsh bootstrap behavior out of the broader
@@ -1337,4 +1342,4 @@ remains open.
 - [Experiment 134: Cursor renderer runtime](134-cursor-renderer-runtime.md) —
   **Pass**
 - [Experiment 135: Enquiry response runtime](135-enquiry-response-runtime.md) —
-  **Designed**
+  **Pass**

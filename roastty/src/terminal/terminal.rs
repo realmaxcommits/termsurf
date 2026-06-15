@@ -66,6 +66,7 @@ pub(crate) struct Terminal {
     pending_pwd_updates: Vec<String>,
     mouse_shape: mouse::MouseShape,
     title_report: bool,
+    enquiry_response: Vec<u8>,
     next_implicit_hyperlink_id: u32,
     previous_char: Option<char>,
     pending_clipboard_events: Vec<TerminalClipboardEvent>,
@@ -785,11 +786,12 @@ pub(crate) enum TerminalInitError {
     PageAlloc,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct TerminalInitOptions {
     pub(crate) cursor_visual_style: cursor::VisualStyle,
     pub(crate) cursor_blink: Option<bool>,
     pub(crate) title_report: bool,
+    pub(crate) enquiry_response: Vec<u8>,
 }
 
 impl Default for TerminalInitOptions {
@@ -798,6 +800,7 @@ impl Default for TerminalInitOptions {
             cursor_visual_style: cursor::VisualStyle::Block,
             cursor_blink: None,
             title_report: false,
+            enquiry_response: Vec::new(),
         }
     }
 }
@@ -817,6 +820,7 @@ struct TerminalStreamHandler<'a> {
     pending_pwd_updates: &'a mut Vec<String>,
     mouse_shape: &'a mut mouse::MouseShape,
     title_report: &'a bool,
+    enquiry_response: &'a Vec<u8>,
     next_implicit_hyperlink_id: &'a mut u32,
     previous_char: &'a mut Option<char>,
     dcs: &'a mut dcs::Handler,
@@ -1084,6 +1088,7 @@ impl Terminal {
             pending_pwd_updates: Vec::new(),
             mouse_shape: mouse::MouseShape::Text,
             title_report: options.title_report,
+            enquiry_response: options.enquiry_response,
             next_implicit_hyperlink_id: 0,
             previous_char: None,
             pending_clipboard_events: Vec::new(),
@@ -1115,6 +1120,7 @@ impl Terminal {
             pending_pwd_updates,
             mouse_shape,
             title_report,
+            enquiry_response,
             next_implicit_hyperlink_id,
             previous_char,
             pending_clipboard_events,
@@ -1139,6 +1145,7 @@ impl Terminal {
             pending_pwd_updates,
             mouse_shape,
             title_report,
+            enquiry_response,
             next_implicit_hyperlink_id,
             previous_char,
             dcs,
@@ -1238,6 +1245,10 @@ impl Terminal {
 
     pub(crate) fn set_title_report(&mut self, enabled: bool) {
         self.title_report = enabled;
+    }
+
+    pub(crate) fn set_enquiry_response(&mut self, response: impl Into<Vec<u8>>) {
+        self.enquiry_response = response.into();
     }
 
     pub(crate) fn set_size_callback(&mut self, callback: Option<TerminalSizeCallback>) {
@@ -3774,14 +3785,18 @@ impl TerminalStreamHandler<'_> {
     }
 
     fn enquiry(&mut self) {
-        let Some(callback) = self.effects.enquiry else {
+        if let Some(callback) = self.effects.enquiry {
+            let response = unsafe { callback(self.effects.handle, self.effects.userdata) };
+            let Some(bytes) = copied_effect_string::<255>(response) else {
+                return;
+            };
+            self.write_pty_response_bytes(&bytes);
             return;
-        };
-        let response = unsafe { callback(self.effects.handle, self.effects.userdata) };
-        let Some(bytes) = copied_effect_string::<255>(response) else {
+        }
+        if self.enquiry_response.is_empty() {
             return;
-        };
-        self.write_pty_response_bytes(&bytes);
+        }
+        self.write_pty_response_bytes(self.enquiry_response);
     }
 
     fn xtversion(&mut self) {
@@ -7703,6 +7718,61 @@ mod tests {
         assert!(terminal.pty_response_for_tests().is_empty());
         assert!(!terminal.is_dirty_for_tests(0, 0));
         assert!(!terminal.is_dirty_for_tests(9, 0));
+    }
+
+    unsafe extern "C" fn test_enquiry_callback(
+        _: *mut c_void,
+        _: *mut c_void,
+    ) -> TerminalEffectString {
+        TerminalEffectString {
+            ptr: c"callback-enq".as_ptr(),
+            len: b"callback-enq".len(),
+            sentinel: false,
+        }
+    }
+
+    #[test]
+    fn terminal_stream_enquiry_response_configured_and_runtime_update() {
+        let mut terminal = Terminal::init_with_options(
+            10,
+            2,
+            None,
+            TerminalInitOptions {
+                enquiry_response: b"first-enq".to_vec(),
+                ..TerminalInitOptions::default()
+            },
+        )
+        .unwrap();
+
+        terminal.next_slice(b"\x05").unwrap();
+        assert_eq!(terminal.take_pty_response_for_tests(), b"first-enq");
+
+        terminal.set_enquiry_response(b"second-enq".to_vec());
+        terminal.next_slice(b"\x05").unwrap();
+        assert_eq!(terminal.take_pty_response_for_tests(), b"second-enq");
+
+        terminal.set_enquiry_response(Vec::new());
+        terminal.next_slice(b"\x05").unwrap();
+        assert!(terminal.pty_response_for_tests().is_empty());
+    }
+
+    #[test]
+    fn terminal_stream_enquiry_response_callback_precedence_is_preserved() {
+        let mut terminal = Terminal::init_with_options(
+            10,
+            2,
+            None,
+            TerminalInitOptions {
+                enquiry_response: b"configured-enq".to_vec(),
+                ..TerminalInitOptions::default()
+            },
+        )
+        .unwrap();
+        terminal.set_enquiry_callback(Some(test_enquiry_callback));
+
+        terminal.next_slice(b"\x05").unwrap();
+
+        assert_eq!(terminal.take_pty_response_for_tests(), b"callback-enq");
     }
 
     #[test]
