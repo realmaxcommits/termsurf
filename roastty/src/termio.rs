@@ -9,11 +9,13 @@ use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::Instant;
 
+use crate::input::key_encode;
 use crate::os::pty::{PtyChild, PtyCommand, PtyReadiness, PtySize};
 use crate::terminal::color;
 use crate::terminal::cursor;
 use crate::terminal::terminal::{
-    Terminal, TerminalClipboardEvent, TerminalInitError, TerminalInitOptions, TerminalStreamError,
+    Terminal, TerminalClipboardEvent, TerminalCommandEvent, TerminalDesktopNotification,
+    TerminalInitError, TerminalInitOptions, TerminalStreamError,
 };
 
 mod shell_integration;
@@ -38,9 +40,14 @@ pub(crate) struct TermioSpawnOptions {
     pub(crate) shell_integration_features: crate::config::ShellIntegrationFeatures,
     pub(crate) resource_dir: Option<PathBuf>,
     pub(crate) term: String,
-    pub(crate) max_scrollback_rows: Option<usize>,
+    pub(crate) max_scrollback_bytes: Option<usize>,
     pub(crate) palette: color::Palette,
+    pub(crate) image_storage_limit: usize,
+    pub(crate) grapheme_cluster: bool,
     pub(crate) title_report: bool,
+    pub(crate) enquiry_response: Vec<u8>,
+    pub(crate) osc_color_report_format: crate::config::OscColorReportFormat,
+    pub(crate) clipboard_write: crate::config::ClipboardAccess,
 }
 
 impl Default for TermioSpawnOptions {
@@ -54,9 +61,14 @@ impl Default for TermioSpawnOptions {
             shell_integration_features: crate::config::ShellIntegrationFeatures::default(),
             resource_dir: None,
             term: "xterm-roastty".to_string(),
-            max_scrollback_rows: None,
+            max_scrollback_bytes: None,
             palette: color::DEFAULT_PALETTE,
+            image_storage_limit: crate::terminal::kitty::graphics_storage::DEFAULT_TOTAL_LIMIT,
+            grapheme_cluster: crate::config::GraphemeWidthMethod::Unicode.grapheme_cluster(),
             title_report: false,
+            enquiry_response: Vec::new(),
+            osc_color_report_format: crate::config::OscColorReportFormat::Bits16,
+            clipboard_write: crate::config::ClipboardAccess::Allow,
         }
     }
 }
@@ -86,12 +98,31 @@ pub(crate) struct TermioPump {
     pub(crate) readiness: PtyReadiness,
     pub(crate) bytes_read: usize,
     pub(crate) bell_count: usize,
-    pub(crate) title: Option<String>,
+    pub(crate) titles: Vec<String>,
+    pub(crate) pwd: Vec<String>,
+    pub(crate) desktop_notifications: Vec<TerminalDesktopNotification>,
+    pub(crate) command_events: Vec<TerminalCommandEvent>,
     pub(crate) eof: bool,
     pub(crate) bytes_written: usize,
     pub(crate) pending_write_bytes: usize,
     pub(crate) child_exited: bool,
     pub(crate) child_exit: Option<TermioChildExit>,
+    pub(crate) input_state: TermioInputState,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) struct TermioInputState {
+    pub(crate) key_encode_options: key_encode::Options,
+    pub(crate) terminal_kam_enabled: bool,
+}
+
+impl TermioInputState {
+    pub(crate) fn from_terminal(terminal: &Terminal) -> Self {
+        Self {
+            key_encode_options: terminal.key_encode_options(),
+            terminal_kam_enabled: terminal.mode_get(2, true).unwrap_or(false),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -184,14 +215,28 @@ impl Termio {
         let mut terminal = Terminal::init_with_options(
             size.cols,
             size.rows,
-            options.max_scrollback_rows,
+            options.max_scrollback_bytes,
             TerminalInitOptions {
                 cursor_visual_style: options.cursor_visual_style,
                 cursor_blink: options.cursor_blink,
+                grapheme_cluster: options.grapheme_cluster,
                 title_report: options.title_report,
+                enquiry_response: options.enquiry_response,
+                osc_color_report_format: options.osc_color_report_format,
+                clipboard_write: options.clipboard_write,
             },
         )?;
         terminal.set_palette_default(Some(palette_tuple(options.palette)));
+        terminal.set_kitty_image_storage_limit(options.image_storage_limit);
+        terminal.set_kitty_image_medium(crate::terminal::terminal::KittyImageMedium::File, true);
+        terminal.set_kitty_image_medium(
+            crate::terminal::terminal::KittyImageMedium::TemporaryFile,
+            true,
+        );
+        terminal.set_kitty_image_medium(
+            crate::terminal::terminal::KittyImageMedium::SharedMemory,
+            true,
+        );
         let mut command = PtyCommand::new(program, size);
         for arg in &args {
             command.arg(arg);
@@ -260,7 +305,6 @@ impl Termio {
 
         let mut bytes_read = 0;
         let mut eof = false;
-        let title_before = self.terminal.title().to_string();
         if readiness.readable || readiness.hangup || readiness.error {
             self.output_buf.clear();
             let read = self
@@ -284,8 +328,10 @@ impl Termio {
             self.collect_terminal_response();
         }
         let bell_count = self.terminal.take_pending_bell_count();
-        let title_after = self.terminal.title();
-        let title = (title_after != title_before).then(|| title_after.to_string());
+        let titles = self.terminal.take_pending_title_updates();
+        let pwd = self.terminal.take_pending_pwd_updates();
+        let desktop_notifications = self.terminal.take_pending_desktop_notifications();
+        let command_events = self.terminal.take_pending_command_events();
 
         let bytes_written = self.flush_pending_write()?;
         if self.child_exit.is_none() {
@@ -298,17 +344,22 @@ impl Termio {
         }
         let child_exit = self.child_exit;
         let child_exited = child_exit.is_some();
+        let input_state = TermioInputState::from_terminal(&self.terminal);
 
         Ok(TermioPump {
             readiness,
             bytes_read,
             bell_count,
-            title,
+            titles,
+            pwd,
+            desktop_notifications,
+            command_events,
             eof,
             bytes_written,
             pending_write_bytes: self.pending_write.len(),
             child_exited,
             child_exit,
+            input_state,
         })
     }
 
@@ -451,6 +502,10 @@ impl TermioWorker {
     }
 
     pub(crate) fn queue_write(&self, bytes: &[u8]) -> Result<(), TermioWorkerError> {
+        crate::append_ui_key_trace(format!(
+            "rust termio_worker_queue_write len={}",
+            bytes.len()
+        ));
         self.commands
             .send(TermioWorkerCommand::Write(bytes.to_vec()))
             .map_err(|_| TermioWorkerError::CommandDisconnected)
@@ -511,10 +566,12 @@ fn run_termio_worker(
             }
         }
 
+        let pump_started = std::time::Instant::now();
         let pump = {
             let mut termio = termio.lock().expect("termio worker mutex poisoned");
             termio.pump_once(pump_timeout_ms, max_read_bytes)
         };
+        let pump_duration_ms = pump_started.elapsed().as_secs_f64() * 1000.0;
 
         match pump {
             Ok(pump) => {
@@ -532,7 +589,10 @@ fn run_termio_worker(
                 }
                 let should_emit = pump.bytes_read > 0
                     || pump.bell_count > 0
-                    || pump.title.is_some()
+                    || !pump.titles.is_empty()
+                    || !pump.pwd.is_empty()
+                    || !pump.desktop_notifications.is_empty()
+                    || !pump.command_events.is_empty()
                     || pump.bytes_written > 0
                     || pump.pending_write_bytes > 0
                     || pump.eof
@@ -542,6 +602,15 @@ fn run_termio_worker(
                 let bytes_read = pump.bytes_read;
                 let bytes_written = pump.bytes_written;
                 let pending_write_bytes = pump.pending_write_bytes;
+                if should_emit {
+                    crate::append_ui_key_trace(format!(
+                        "rust termio_worker_pump emit bytes_read={} bytes_written={} pending_write={} duration_ms={:.3}",
+                        bytes_read,
+                        bytes_written,
+                        pending_write_bytes,
+                        pump_duration_ms
+                    ));
+                }
                 if should_emit && events.send(TermioWorkerEvent::Pump(pump)).is_err() {
                     crate::append_ui_key_trace(
                         "rust termio_worker_loop exit reason=event-receiver-disconnected",
@@ -562,7 +631,7 @@ fn run_termio_worker(
             }
             Err(err) => {
                 crate::append_ui_key_trace(format!(
-                    "rust termio_worker_loop exit reason=pump-error error={err:?}"
+                    "rust termio_worker_loop exit reason=pump-error duration_ms={pump_duration_ms:.3} error={err:?}"
                 ));
                 let _ = events.send(TermioWorkerEvent::Error(format!("{err:?}")));
                 break;
@@ -788,6 +857,48 @@ mod tests {
     }
 
     #[test]
+    fn termio_desktop_notification_runtime_pump_reports_child_osc() {
+        let _guard = pty_command_lock();
+        let mut termio = spawn_shell("printf '\\033]9;Hello from pty\\007'");
+
+        let pump = pump_until(&mut termio, |_, pump| {
+            !pump.desktop_notifications.is_empty()
+        });
+
+        assert_eq!(
+            pump.desktop_notifications,
+            vec![TerminalDesktopNotification {
+                title: Vec::new(),
+                body: b"Hello from pty".to_vec(),
+            }]
+        );
+        assert!(termio
+            .terminal_mut()
+            .take_pending_desktop_notifications()
+            .is_empty());
+    }
+
+    #[test]
+    fn termio_command_event_runtime_pump_reports_child_osc133() {
+        let _guard = pty_command_lock();
+        let mut termio = spawn_shell("printf '\\033]133;C\\007\\033]133;D;7\\007'");
+
+        let pump = pump_until(&mut termio, |_, pump| !pump.command_events.is_empty());
+
+        assert_eq!(
+            pump.command_events,
+            vec![
+                TerminalCommandEvent::Start,
+                TerminalCommandEvent::Stop { exit_code: 7 },
+            ]
+        );
+        assert!(termio
+            .terminal_mut()
+            .take_pending_command_events()
+            .is_empty());
+    }
+
+    #[test]
     fn queue_write_reaches_child_and_output_returns_to_terminal() {
         let _guard = pty_command_lock();
         let mut termio =
@@ -812,13 +923,13 @@ mod tests {
         let mut termio = spawn_shell(
             "stty raw -echo min 0 time 10; \
              printf '\\033[c'; \
-             response=$(dd bs=1 count=9 2>/dev/null); \
-             expected=$(printf '\\033[?62;22c'); \
+             response=$(dd bs=1 count=12 2>/dev/null); \
+             expected=$(printf '\\033[?62;22;52c'); \
              if [ \"$response\" = \"$expected\" ]; then printf da-ok; else printf da-bad; fi",
         );
 
         let first = pump_until(&mut termio, |_, pump| pump.bytes_written > 0);
-        assert_eq!(first.bytes_written, b"\x1b[?62;22c".len());
+        assert_eq!(first.bytes_written, b"\x1b[?62;22;52c".len());
         assert_eq!(first.pending_write_bytes, 0);
         assert_eq!(termio.pending_write_bytes(), 0);
 
@@ -826,6 +937,34 @@ mod tests {
             termio.terminal().plain_screen(false).contains("da-ok")
         });
         assert!(termio.terminal().plain_screen(false).contains("da-ok"));
+    }
+
+    #[test]
+    fn termio_device_attributes_clipboard_write_reaches_child_pty() {
+        let _guard = pty_command_lock();
+        let mut termio = Termio::spawn_with_options(
+            "/bin/sh",
+            [
+                "-c",
+                "stty raw -echo min 0 time 10; \
+                 printf '\\033[c'; \
+                 response=$(dd bs=1 count=9 2>/dev/null); \
+                 expected=$(printf '\\033[?62;22c'); \
+                 if [ \"$response\" = \"$expected\" ]; then printf deny-ok; else printf 'bad:%s' \"$response\"; fi",
+            ],
+            TermioSpawnOptions {
+                clipboard_write: crate::config::ClipboardAccess::Deny,
+                ..TermioSpawnOptions::default()
+            },
+            test_size(),
+        )
+        .expect("spawn termio with clipboard-write deny");
+
+        pump_until(&mut termio, |termio, _| {
+            termio.terminal().plain_screen(false).contains("deny-ok")
+        });
+
+        assert!(termio.terminal().plain_screen(false).contains("deny-ok"));
     }
 
     #[test]
@@ -904,6 +1043,60 @@ mod tests {
         termio.queue_write(b"x");
         assert_eq!(termio.pending_write_bytes(), 1);
         assert_eq!(termio.terminal_mut().pty_response(), b"");
+    }
+
+    #[test]
+    fn termio_enquiry_response_reaches_child_pty() {
+        let _guard = pty_command_lock();
+        let mut termio = Termio::spawn_with_options(
+            "/bin/bash",
+            [
+                "-lc",
+                "printf '\\005'; IFS= read -r -n 14 response; printf 'got:%s' \"$response\"",
+            ],
+            TermioSpawnOptions {
+                enquiry_response: b"roastty-enq-42".to_vec(),
+                ..TermioSpawnOptions::default()
+            },
+            test_size(),
+        )
+        .expect("spawn termio with enquiry response");
+
+        pump_until(&mut termio, |termio, _| {
+            termio
+                .terminal()
+                .plain_screen(false)
+                .contains("got:roastty-enq-42")
+        });
+
+        assert!(termio
+            .terminal()
+            .plain_screen(false)
+            .contains("got:roastty-enq-42"));
+    }
+
+    #[test]
+    fn termio_osc_color_report_format_reaches_child_pty() {
+        let _guard = pty_command_lock();
+        let mut termio = Termio::spawn_with_options(
+            "/bin/bash",
+            [
+                "-lc",
+                "printf '\\033]4;4;#123456\\033\\\\\\033]4;4;?\\033\\\\'; IFS= read -r -d '\\\\' response; case \"$response\" in *'rgb:12/34/56'*) printf got-8-bit;; *) printf 'bad:%s' \"$response\";; esac",
+            ],
+            TermioSpawnOptions {
+                osc_color_report_format: crate::config::OscColorReportFormat::Bits8,
+                ..TermioSpawnOptions::default()
+            },
+            test_size(),
+        )
+        .expect("spawn termio with OSC color report format");
+
+        pump_until(&mut termio, |termio, _| {
+            termio.terminal().plain_screen(false).contains("got-8-bit")
+        });
+
+        assert!(termio.terminal().plain_screen(false).contains("got-8-bit"));
     }
 
     #[test]
@@ -1388,6 +1581,103 @@ mod tests {
     }
 
     #[test]
+    fn termio_cursor_default_runtime_spawn_options_reach_terminal() {
+        let _guard = pty_command_lock();
+        let mut termio = Termio::spawn_with_options(
+            "/bin/sleep",
+            ["1"],
+            TermioSpawnOptions {
+                cursor_visual_style: cursor::VisualStyle::Bar,
+                cursor_blink: Some(true),
+                ..TermioSpawnOptions::default()
+            },
+            test_size(),
+        )
+        .expect("spawn termio with cursor defaults");
+
+        assert_eq!(
+            termio.terminal().cursor_visual_style(),
+            cursor::VisualStyle::Bar
+        );
+        assert!(termio.terminal().cursor_blinking());
+
+        termio
+            .terminal_mut()
+            .set_cursor_defaults(cursor::VisualStyle::Underline, Some(false));
+        assert_eq!(
+            termio.terminal().cursor_visual_style(),
+            cursor::VisualStyle::Underline
+        );
+        assert!(!termio.terminal().cursor_blinking());
+    }
+
+    #[test]
+    fn termio_image_storage_limit_runtime_spawn_options_reach_terminal() {
+        let _guard = pty_command_lock();
+        let termio = Termio::spawn_with_options(
+            "/bin/sleep",
+            ["1"],
+            TermioSpawnOptions {
+                image_storage_limit: 12345,
+                ..TermioSpawnOptions::default()
+            },
+            test_size(),
+        )
+        .expect("spawn termio with image storage limit");
+
+        assert_eq!(termio.terminal().kitty_image_storage_limit(), 12345);
+        assert!(termio
+            .terminal()
+            .kitty_image_medium_enabled(crate::terminal::terminal::KittyImageMedium::File));
+        assert!(termio.terminal().kitty_image_medium_enabled(
+            crate::terminal::terminal::KittyImageMedium::TemporaryFile
+        ));
+        assert!(termio
+            .terminal()
+            .kitty_image_medium_enabled(crate::terminal::terminal::KittyImageMedium::SharedMemory));
+    }
+
+    #[test]
+    fn grapheme_width_method_runtime_spawn_options_reach_terminal() {
+        let _guard = pty_command_lock();
+
+        for grapheme_cluster in [true, false] {
+            let mut termio = Termio::spawn_with_options(
+                "/bin/sleep",
+                ["1"],
+                TermioSpawnOptions {
+                    grapheme_cluster,
+                    ..TermioSpawnOptions::default()
+                },
+                test_size(),
+            )
+            .expect("spawn termio with grapheme width method");
+
+            assert_eq!(
+                termio.terminal().grapheme_cluster_enabled(),
+                grapheme_cluster
+            );
+
+            let toggle = if grapheme_cluster {
+                b"\x1b[?2027l".as_slice()
+            } else {
+                b"\x1b[?2027h"
+            };
+            termio.terminal_mut().next_slice(toggle).unwrap();
+            assert_ne!(
+                termio.terminal().grapheme_cluster_enabled(),
+                grapheme_cluster
+            );
+
+            termio.terminal_mut().next_slice(b"\x1bc").unwrap();
+            assert_eq!(
+                termio.terminal().grapheme_cluster_enabled(),
+                grapheme_cluster
+            );
+        }
+    }
+
+    #[test]
     fn spawn_with_options_initializes_palette_defaults() {
         let _guard = pty_command_lock();
         let mut palette = color::DEFAULT_PALETTE;
@@ -1544,16 +1834,128 @@ mod tests {
 
         let event = worker_event_until(
             &worker,
-            |_, event| matches!(event, TermioWorkerEvent::Pump(pump) if pump.title.as_deref() == Some("termio title")),
+            |_, event| matches!(event, TermioWorkerEvent::Pump(pump) if pump.titles.iter().any(|title| title == "termio title")),
         );
 
         assert!(matches!(
             event,
-            TermioWorkerEvent::Pump(pump) if pump.title.as_deref() == Some("termio title")
+            TermioWorkerEvent::Pump(pump) if pump.titles.iter().any(|title| title == "termio title")
         ));
         assert_eq!(
             worker.with_termio(|termio| termio.terminal().title().to_string()),
             "termio title"
+        );
+        worker.shutdown().expect("shutdown worker");
+    }
+
+    #[test]
+    fn termio_title_pwd_fallback_worker_emits_empty_title_pump() {
+        let _guard = pty_command_lock();
+        let mut worker = spawn_worker("printf '\\033]0;\\007'");
+
+        let event = worker_event_until(
+            &worker,
+            |_, event| matches!(event, TermioWorkerEvent::Pump(pump) if pump.titles.iter().any(|title| title.is_empty())),
+        );
+
+        assert!(matches!(
+            event,
+            TermioWorkerEvent::Pump(pump) if pump.titles.iter().any(|title| title.is_empty())
+        ));
+        assert_eq!(
+            worker.with_termio(|termio| termio.terminal().title().to_string()),
+            ""
+        );
+        worker.shutdown().expect("shutdown worker");
+    }
+
+    #[test]
+    fn termio_title_pwd_fallback_worker_emits_pwd_title_pump() {
+        let _guard = pty_command_lock();
+        let mut worker =
+            spawn_worker("printf '\\033]7;file://localhost/termio-pwd\\007\\033]0;\\007'");
+
+        let event = worker_event_until(
+            &worker,
+            |_, event| matches!(event, TermioWorkerEvent::Pump(pump) if pump.titles.iter().any(|title| title == "/termio-pwd")),
+        );
+
+        assert!(matches!(
+            &event,
+            TermioWorkerEvent::Pump(pump) if pump.titles.iter().any(|title| title == "/termio-pwd")
+                && pump.pwd.iter().any(|pwd| pwd == "/termio-pwd")
+        ));
+        assert_eq!(
+            worker.with_termio(|termio| termio.terminal().title().to_string()),
+            "/termio-pwd"
+        );
+        worker.shutdown().expect("shutdown worker");
+    }
+
+    #[test]
+    fn termio_osc7_pwd_normalization_worker_emits_normalized_pwd_pump() {
+        let _guard = pty_command_lock();
+        let mut worker = spawn_worker("printf '\\033]7;file://localhost/termio%%20pwd\\007'");
+
+        let event = worker_event_until(
+            &worker,
+            |_, event| matches!(event, TermioWorkerEvent::Pump(pump) if pump.pwd.iter().any(|pwd| pwd == "/termio pwd")),
+        );
+
+        assert!(matches!(
+            event,
+            TermioWorkerEvent::Pump(pump) if pump.pwd.iter().any(|pwd| pwd == "/termio pwd")
+                && pump.titles.iter().any(|title| title == "/termio pwd")
+        ));
+        assert_eq!(
+            worker.with_termio(|termio| termio.terminal().pwd().map(str::to_owned)),
+            Some("/termio pwd".to_string())
+        );
+        worker.shutdown().expect("shutdown worker");
+    }
+
+    #[test]
+    fn termio_osc7_pwd_edge_worker_emits_raw_kitty_pwd_pump() {
+        let _guard = pty_command_lock();
+        let mut worker =
+            spawn_worker("printf '\\033]7;kitty-shell-cwd://localhost/termio%%2Fraw?x#y\\007'");
+
+        let event = worker_event_until(
+            &worker,
+            |_, event| matches!(event, TermioWorkerEvent::Pump(pump) if pump.pwd.iter().any(|pwd| pwd == "/termio%2Fraw?x#y")),
+        );
+
+        assert!(matches!(
+            event,
+            TermioWorkerEvent::Pump(pump) if pump.pwd.iter().any(|pwd| pwd == "/termio%2Fraw?x#y")
+                && pump.titles.iter().any(|title| title == "/termio%2Fraw?x#y")
+        ));
+        assert_eq!(
+            worker.with_termio(|termio| termio.terminal().pwd().map(str::to_owned)),
+            Some("/termio%2Fraw?x#y".to_string())
+        );
+        worker.shutdown().expect("shutdown worker");
+    }
+
+    #[test]
+    fn termio_title_pwd_fallback_worker_preserves_multiple_title_events() {
+        let _guard = pty_command_lock();
+        let mut worker =
+            spawn_worker("printf '\\033]7;file://localhost/one\\007\\033]0;two\\007\\033]0;\\007'");
+
+        let expected = vec!["/one".to_string(), "two".to_string(), "/one".to_string()];
+        let event = worker_event_until(
+            &worker,
+            |_, event| matches!(event, TermioWorkerEvent::Pump(pump) if pump.titles == expected),
+        );
+
+        assert!(matches!(
+            event,
+            TermioWorkerEvent::Pump(pump) if pump.titles == expected
+        ));
+        assert_eq!(
+            worker.with_termio(|termio| termio.terminal().title().to_string()),
+            "/one"
         );
         worker.shutdown().expect("shutdown worker");
     }

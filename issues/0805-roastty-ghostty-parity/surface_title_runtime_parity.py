@@ -64,10 +64,9 @@ def main() -> int:
     require_all(
         roastty_termio,
         [
-            ("pub(crate) title: Option<String>", "Roastty TermioPump title field"),
-            ("let title_before = self.terminal.title().to_string();", "Roastty title before snapshot"),
-            ("let title = (title_after != title_before).then", "Roastty title pump diff"),
-            ("|| pump.title.is_some()", "Roastty worker emits title pump"),
+            ("pub(crate) titles: Vec<String>", "Roastty TermioPump title event field"),
+            ("let titles = self.terminal.take_pending_title_updates();", "Roastty title pump events"),
+            ("|| !pump.titles.is_empty()", "Roastty worker emits title pump"),
             ("TermioWorkerError::TerminalCallbacksInstalled", "Roastty callback rejection intact"),
             ("termio_title_worker_emits_non_empty_osc_title_pump", "Roastty Termio title test"),
         ],
@@ -79,7 +78,7 @@ def main() -> int:
             ("self.static_title = parsed.title.clone();", "Roastty config update stores static title"),
             ("if let Some(title) = config.title.as_ref()", "Roastty configured title startup"),
             ("config::Command::Direct(args)", "Roastty direct command title branch"),
-            ("if !title.is_empty() && self.static_title.is_none()", "Roastty non-empty OSC static-title gate"),
+            ("if self.static_title.is_none()", "Roastty terminal title static-title gate"),
             ("surface_title_runtime_configured_title_dispatches_on_startup_and_update", "configured title test"),
             ("surface_title_runtime_direct_command_title_and_shell_noop", "direct/shell title test"),
             ("surface_title_runtime_non_empty_osc_title_dispatch_and_static_suppression", "OSC title gate test"),
@@ -99,15 +98,12 @@ def main() -> int:
         ],
     )
 
-    row_gap = require_row(runtime_inventory, "RUNTIME-009B2B2B")
+    row_gap = require_row(runtime_inventory, "RUNTIME-009B2B2B3B2B2B2B3")
     require_all(
         row_gap,
         [
-            ("Gap", "RUNTIME-009B2B2B status"),
-            ("exact nonzero scrollback byte quota", "remaining scrollback gap"),
-            ("empty-title/PWD fallback semantics", "remaining empty-title/PWD gap"),
-            ("remaining shell-specific startup rewrite", "remaining shell gap"),
-            ("other remaining terminal behavior effects", "remaining terminal gap"),
+            ("Oracle complete", "RUNTIME-009B2B2B3B2B2B2B3 status"),
+            ("terminal-runtime residual audit", "terminal residual audit"),
         ],
     )
 
@@ -117,10 +113,10 @@ def main() -> int:
         [
             ("Runtime and UI effects", "CFG-223 row"),
             ("Gap", "CFG-223 status"),
-            ("28 rows Oracle complete", "CFG-223 oracle count"),
-            ("30 rows closed", "CFG-223 closed count"),
-            ("5 rows are incomplete", "CFG-223 incomplete count"),
-            ("5 rows are runtime gaps", "CFG-223 gap count"),
+            ("92 rows Oracle complete", "CFG-223 oracle count"),
+            ("95 rows closed", "CFG-223 closed count"),
+            ("1 rows are incomplete", "CFG-223 incomplete count"),
+            ("1 rows are runtime gaps", "CFG-223 gap count"),
         ],
     )
 

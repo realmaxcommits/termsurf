@@ -4,6 +4,7 @@ use std::ffi::{c_char, c_void};
 use std::ptr::NonNull;
 
 use crate::input::key_encode;
+use crate::os::hostname;
 
 use super::charsets;
 use super::color;
@@ -38,6 +39,7 @@ use super::stream::{self, Action, Handler};
 use super::style;
 use super::tabstops;
 use super::tmux;
+use crate::config::{ClipboardAccess, OscColorReportFormat};
 use crate::font::run::RunOptions;
 
 const TABSTOP_INTERVAL: usize = 8;
@@ -61,12 +63,20 @@ pub(crate) struct Terminal {
     flags: TerminalFlags,
     title: TerminalTitle,
     pwd: TerminalPwd,
+    pending_title_updates: Vec<String>,
+    pending_pwd_updates: Vec<String>,
     mouse_shape: mouse::MouseShape,
     title_report: bool,
+    enquiry_response: Vec<u8>,
+    osc_color_report_format: OscColorReportFormat,
+    clipboard_write: ClipboardAccess,
     next_implicit_hyperlink_id: u32,
     previous_char: Option<char>,
     pending_clipboard_events: Vec<TerminalClipboardEvent>,
+    pending_desktop_notifications: Vec<TerminalDesktopNotification>,
+    pending_command_events: Vec<TerminalCommandEvent>,
     pending_bell_count: usize,
+    default_cursor: bool,
     default_cursor_visual_style: cursor::VisualStyle,
     default_cursor_blink: Option<bool>,
 }
@@ -504,10 +514,10 @@ impl TerminalScreens {
     fn init(
         cols: CellCountInt,
         rows: CellCountInt,
-        max_scrollback_rows: Option<usize>,
+        max_scrollback_bytes: Option<usize>,
     ) -> Result<Self, PageListAllocError> {
         Ok(Self {
-            primary: Screen::init(cols, rows, max_scrollback_rows)?,
+            primary: Screen::init(cols, rows, max_scrollback_bytes)?,
             alternate: None,
             active: TerminalScreenKey::Primary,
             primary_generation: 0,
@@ -754,6 +764,7 @@ impl KittyGraphicsConfig {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 struct TerminalTitle {
     text: String,
+    seen_explicit: bool,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -769,6 +780,18 @@ pub(crate) enum TerminalStreamError {
     UnsupportedCodepoint(char),
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct TerminalDesktopNotification {
+    pub(crate) title: Vec<u8>,
+    pub(crate) body: Vec<u8>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TerminalCommandEvent {
+    Start,
+    Stop { exit_code: u8 },
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum KittyImageMedium {
     File,
@@ -781,11 +804,15 @@ pub(crate) enum TerminalInitError {
     PageAlloc,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct TerminalInitOptions {
     pub(crate) cursor_visual_style: cursor::VisualStyle,
     pub(crate) cursor_blink: Option<bool>,
+    pub(crate) grapheme_cluster: bool,
     pub(crate) title_report: bool,
+    pub(crate) enquiry_response: Vec<u8>,
+    pub(crate) osc_color_report_format: OscColorReportFormat,
+    pub(crate) clipboard_write: ClipboardAccess,
 }
 
 impl Default for TerminalInitOptions {
@@ -793,7 +820,11 @@ impl Default for TerminalInitOptions {
         Self {
             cursor_visual_style: cursor::VisualStyle::Block,
             cursor_blink: None,
+            grapheme_cluster: false,
             title_report: false,
+            enquiry_response: Vec::new(),
+            osc_color_report_format: OscColorReportFormat::Bits16,
+            clipboard_write: ClipboardAccess::Allow,
         }
     }
 }
@@ -809,8 +840,13 @@ struct TerminalStreamHandler<'a> {
     effects: &'a mut TerminalEffects,
     title: &'a mut TerminalTitle,
     pwd: &'a mut TerminalPwd,
+    pending_title_updates: &'a mut Vec<String>,
+    pending_pwd_updates: &'a mut Vec<String>,
     mouse_shape: &'a mut mouse::MouseShape,
     title_report: &'a bool,
+    enquiry_response: &'a Vec<u8>,
+    osc_color_report_format: &'a OscColorReportFormat,
+    clipboard_write: &'a ClipboardAccess,
     next_implicit_hyperlink_id: &'a mut u32,
     previous_char: &'a mut Option<char>,
     dcs: &'a mut dcs::Handler,
@@ -820,7 +856,10 @@ struct TerminalStreamHandler<'a> {
     kitty_config: &'a mut KittyGraphicsConfig,
     flags: &'a mut TerminalFlags,
     pending_clipboard_events: &'a mut Vec<TerminalClipboardEvent>,
+    pending_desktop_notifications: &'a mut Vec<TerminalDesktopNotification>,
+    pending_command_events: &'a mut Vec<TerminalCommandEvent>,
     pending_bell_count: &'a mut usize,
+    default_cursor: &'a mut bool,
     default_cursor_visual_style: cursor::VisualStyle,
     default_cursor_blink: Option<bool>,
 }
@@ -1023,12 +1062,12 @@ impl Terminal {
     pub(crate) fn init(
         cols: CellCountInt,
         rows: CellCountInt,
-        max_scrollback_rows: Option<usize>,
+        max_scrollback_bytes: Option<usize>,
     ) -> Result<Self, TerminalInitError> {
         Self::init_with_options(
             cols,
             rows,
-            max_scrollback_rows,
+            max_scrollback_bytes,
             TerminalInitOptions::default(),
         )
     }
@@ -1036,11 +1075,11 @@ impl Terminal {
     pub(crate) fn init_with_options(
         cols: CellCountInt,
         rows: CellCountInt,
-        max_scrollback_rows: Option<usize>,
+        max_scrollback_bytes: Option<usize>,
         options: TerminalInitOptions,
     ) -> Result<Self, TerminalInitError> {
         let size = TerminalSize { cols, rows };
-        let mut screens = TerminalScreens::init(cols, rows, max_scrollback_rows)
+        let mut screens = TerminalScreens::init(cols, rows, max_scrollback_bytes)
             .map_err(|_| TerminalInitError::PageAlloc)?;
         screens
             .active_mut()
@@ -1050,6 +1089,7 @@ impl Terminal {
             modes::Mode::CursorBlinking,
             options.cursor_blink.unwrap_or(true),
         );
+        modes.set_default(modes::Mode::GraphemeCluster, options.grapheme_cluster);
         Ok(Self {
             size,
             screens,
@@ -1074,12 +1114,20 @@ impl Terminal {
             flags: TerminalFlags::default(),
             title: TerminalTitle::default(),
             pwd: TerminalPwd::default(),
+            pending_title_updates: Vec::new(),
+            pending_pwd_updates: Vec::new(),
             mouse_shape: mouse::MouseShape::Text,
             title_report: options.title_report,
+            enquiry_response: options.enquiry_response,
+            osc_color_report_format: options.osc_color_report_format,
+            clipboard_write: options.clipboard_write,
             next_implicit_hyperlink_id: 0,
             previous_char: None,
             pending_clipboard_events: Vec::new(),
+            pending_desktop_notifications: Vec::new(),
+            pending_command_events: Vec::new(),
             pending_bell_count: 0,
+            default_cursor: true,
             default_cursor_visual_style: options.cursor_visual_style,
             default_cursor_blink: options.cursor_blink,
         })
@@ -1103,12 +1151,20 @@ impl Terminal {
             kitty_config,
             title,
             pwd,
+            pending_title_updates,
+            pending_pwd_updates,
             mouse_shape,
             title_report,
+            enquiry_response,
+            osc_color_report_format,
+            clipboard_write,
             next_implicit_hyperlink_id,
             previous_char,
             pending_clipboard_events,
+            pending_desktop_notifications,
+            pending_command_events,
             pending_bell_count,
+            default_cursor,
             flags,
             default_cursor_visual_style,
             default_cursor_blink,
@@ -1125,8 +1181,13 @@ impl Terminal {
             effects,
             title,
             pwd,
+            pending_title_updates,
+            pending_pwd_updates,
             mouse_shape,
             title_report,
+            enquiry_response,
+            osc_color_report_format,
+            clipboard_write,
             next_implicit_hyperlink_id,
             previous_char,
             dcs,
@@ -1136,7 +1197,10 @@ impl Terminal {
             kitty_config,
             flags,
             pending_clipboard_events,
+            pending_desktop_notifications,
+            pending_command_events,
             pending_bell_count,
+            default_cursor,
             default_cursor_visual_style: *default_cursor_visual_style,
             default_cursor_blink: *default_cursor_blink,
         };
@@ -1157,14 +1221,36 @@ impl Terminal {
         self.flags = TerminalFlags::default();
         self.previous_char = None;
         self.pending_clipboard_events.clear();
+        self.pending_desktop_notifications.clear();
+        self.pending_command_events.clear();
+        self.pending_title_updates.clear();
+        self.pending_pwd_updates.clear();
     }
 
     pub(crate) fn drain_clipboard_events(&mut self) -> Vec<TerminalClipboardEvent> {
         std::mem::take(&mut self.pending_clipboard_events)
     }
 
+    pub(crate) fn take_pending_desktop_notifications(
+        &mut self,
+    ) -> Vec<TerminalDesktopNotification> {
+        std::mem::take(&mut self.pending_desktop_notifications)
+    }
+
+    pub(crate) fn take_pending_command_events(&mut self) -> Vec<TerminalCommandEvent> {
+        std::mem::take(&mut self.pending_command_events)
+    }
+
     pub(crate) fn take_pending_bell_count(&mut self) -> usize {
         std::mem::take(&mut self.pending_bell_count)
+    }
+
+    pub(crate) fn take_pending_title_updates(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.pending_title_updates)
+    }
+
+    pub(crate) fn take_pending_pwd_updates(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.pending_pwd_updates)
     }
 
     pub(crate) fn title(&self) -> &str {
@@ -1216,6 +1302,34 @@ impl Terminal {
 
     pub(crate) fn set_title_report(&mut self, enabled: bool) {
         self.title_report = enabled;
+    }
+
+    pub(crate) fn set_enquiry_response(&mut self, response: impl Into<Vec<u8>>) {
+        self.enquiry_response = response.into();
+    }
+
+    pub(crate) fn set_osc_color_report_format(&mut self, format: OscColorReportFormat) {
+        self.osc_color_report_format = format;
+    }
+
+    pub(crate) fn set_clipboard_write(&mut self, access: ClipboardAccess) {
+        self.clipboard_write = access;
+    }
+
+    pub(crate) fn set_cursor_defaults(
+        &mut self,
+        visual_style: cursor::VisualStyle,
+        blink: Option<bool>,
+    ) {
+        self.default_cursor_visual_style = visual_style;
+        self.default_cursor_blink = blink;
+        if self.default_cursor {
+            self.screens
+                .active_mut()
+                .set_cursor_visual_style(visual_style);
+            self.modes
+                .set(modes::Mode::CursorBlinking, blink.unwrap_or(true));
+        }
     }
 
     pub(crate) fn set_size_callback(&mut self, callback: Option<TerminalSizeCallback>) {
@@ -2128,6 +2242,13 @@ impl Terminal {
             .map(|(top_left, bottom_right)| (top_left.into(), bottom_right.into()))
     }
 
+    pub(crate) fn active_screen_bottom_right(&self) -> Option<TerminalGridRef> {
+        self.screens
+            .active()
+            .bottom_right(super::point::Tag::Screen)
+            .map(Into::into)
+    }
+
     pub(crate) fn grid_ref_before(
         &self,
         a: TerminalGridRef,
@@ -2235,6 +2356,20 @@ impl Terminal {
             .select_line(ref_.into(), whitespace, semantic_prompt_boundary)
             .map(Self::selection_from_tuple)
             .map_err(Into::into)
+    }
+
+    pub(crate) fn selection_viewport_string_map(
+        &self,
+        selection: TerminalSelection,
+        trim: bool,
+    ) -> Result<super::string_map::ViewportStringMap, TerminalGridRefPointError> {
+        let screen = self.screens.active();
+        let selection = screen.selection_from_grid_refs(
+            selection.start.into(),
+            selection.end.into(),
+            selection.rectangle,
+        )?;
+        Ok(screen.selection_viewport_string_map(selection, trim))
     }
 
     pub(crate) fn select_all(&self) -> Option<TerminalSelection> {
@@ -2461,6 +2596,10 @@ impl Terminal {
         true
     }
 
+    pub(crate) fn synchronized_output_enabled(&self) -> bool {
+        self.modes.get(modes::Mode::SynchronizedOutput)
+    }
+
     pub(crate) fn bracketed_paste_enabled(&self) -> bool {
         self.modes.get(modes::Mode::BracketedPaste)
     }
@@ -2504,6 +2643,10 @@ impl Terminal {
     #[cfg(test)]
     pub(super) fn get_mode_for_tests(&self, mode: modes::Mode) -> bool {
         self.modes.get(mode)
+    }
+
+    pub(crate) fn grapheme_cluster_enabled(&self) -> bool {
+        self.modes.get(modes::Mode::GraphemeCluster)
     }
 
     #[cfg(test)]
@@ -2679,9 +2822,13 @@ impl Terminal {
         self.pwd.logical_str()
     }
 
+    pub(crate) fn mouse_shape(&self) -> mouse::MouseShape {
+        self.mouse_shape
+    }
+
     #[cfg(test)]
     pub(super) fn mouse_shape_for_tests(&self) -> mouse::MouseShape {
-        self.mouse_shape
+        self.mouse_shape()
     }
 
     #[cfg(test)]
@@ -3201,11 +3348,17 @@ impl Handler for TerminalStreamHandler<'_> {
             }
             Action::CursorVisualStyle { style, blinking } => {
                 let (style, blinking) = match style {
-                    Some(style) => (style, blinking),
-                    None => (
-                        self.default_cursor_visual_style,
-                        self.default_cursor_blink.unwrap_or(true),
-                    ),
+                    Some(style) => {
+                        *self.default_cursor = false;
+                        (style, blinking)
+                    }
+                    None => {
+                        *self.default_cursor = true;
+                        (
+                            self.default_cursor_visual_style,
+                            self.default_cursor_blink.unwrap_or(true),
+                        )
+                    }
                 };
                 self.modes.set(modes::Mode::CursorBlinking, blinking);
                 self.screens.active_mut().set_cursor_visual_style(style);
@@ -3280,11 +3433,10 @@ impl Handler for TerminalStreamHandler<'_> {
     fn osc(&mut self, action: stream::OscAction<'_>) -> Result<(), Self::Error> {
         match action {
             stream::OscAction::WindowTitle { title } => {
-                self.title.set(title);
-                self.title_changed();
+                self.window_title(title);
             }
             stream::OscAction::ReportPwd { url } => {
-                self.pwd.set(url);
+                self.report_pwd(url);
             }
             stream::OscAction::ClipboardContents { value } => {
                 self.pending_clipboard_events
@@ -3294,7 +3446,13 @@ impl Handler for TerminalStreamHandler<'_> {
                     });
             }
             stream::OscAction::ContextSignal { .. } => {}
-            stream::OscAction::DesktopNotification { .. } => {}
+            stream::OscAction::DesktopNotification { title, body } => {
+                self.pending_desktop_notifications
+                    .push(TerminalDesktopNotification {
+                        title: title.to_vec(),
+                        body: body.to_vec(),
+                    });
+            }
             stream::OscAction::MouseShape { shape } => {
                 *self.mouse_shape = shape;
             }
@@ -3753,14 +3911,18 @@ impl TerminalStreamHandler<'_> {
     }
 
     fn enquiry(&mut self) {
-        let Some(callback) = self.effects.enquiry else {
+        if let Some(callback) = self.effects.enquiry {
+            let response = unsafe { callback(self.effects.handle, self.effects.userdata) };
+            let Some(bytes) = copied_effect_string::<255>(response) else {
+                return;
+            };
+            self.write_pty_response_bytes(&bytes);
             return;
-        };
-        let response = unsafe { callback(self.effects.handle, self.effects.userdata) };
-        let Some(bytes) = copied_effect_string::<255>(response) else {
+        }
+        if self.enquiry_response.is_empty() {
             return;
-        };
-        self.write_pty_response_bytes(&bytes);
+        }
+        self.write_pty_response_bytes(self.enquiry_response);
     }
 
     fn xtversion(&mut self) {
@@ -3787,10 +3949,58 @@ impl TerminalStreamHandler<'_> {
         }
     }
 
+    fn queue_title_update(&mut self, title: &str) {
+        self.pending_title_updates.push(title.to_string());
+        self.title_changed();
+    }
+
+    fn window_title(&mut self, title: &str) {
+        if title.is_empty() {
+            let fallback = self.pwd.logical_str().unwrap_or("").to_string();
+            self.title.set_fallback(&fallback);
+            self.queue_title_update(&fallback);
+            return;
+        }
+
+        self.title.set_explicit(title);
+        self.queue_title_update(title);
+    }
+
+    fn report_pwd(&mut self, url: &str) {
+        if url.is_empty() {
+            self.pwd.clear();
+            self.pending_pwd_updates.push(String::new());
+            if !self.title.seen_explicit {
+                self.title.set_fallback("");
+                self.queue_title_update("");
+            }
+            return;
+        }
+
+        let Some(path) = normalize_report_pwd_url(url) else {
+            return;
+        };
+
+        self.pwd.set(&path);
+        self.pending_pwd_updates.push(path.clone());
+        if !self.title.seen_explicit {
+            let fallback = self.pwd.logical_str().unwrap_or("").to_string();
+            self.title.set_fallback(&fallback);
+            self.queue_title_update(&fallback);
+        }
+    }
+
     fn device_attributes(
         &mut self,
-        _request: device_attributes::Request,
+        request: device_attributes::Request,
     ) -> device_attributes::Attributes {
+        if request == device_attributes::Request::Primary
+            && self.effects.device_attributes.is_none()
+        {
+            return device_attributes::Attributes::with_clipboard_write(
+                !self.clipboard_write.denied(),
+            );
+        }
         let Some(callback) = self.effects.device_attributes else {
             return device_attributes::Attributes::default();
         };
@@ -3919,12 +4129,15 @@ impl TerminalStreamHandler<'_> {
         self.tabstops.reset(TABSTOP_INTERVAL);
         self.title.clear();
         self.pwd.clear();
+        self.pending_title_updates.clear();
+        self.pending_pwd_updates.clear();
         *self.dcs = dcs::Handler::new();
         self.clear_tmux_state();
         self.kitty_graphics.reset();
         *self.flags = TerminalFlags::default();
         *self.previous_char = None;
         self.pending_clipboard_events.clear();
+        self.pending_desktop_notifications.clear();
         Ok(())
     }
 
@@ -4158,14 +4371,11 @@ impl TerminalStreamHandler<'_> {
     }
 
     fn write_palette_query_response(&mut self, index: u8, terminator: osc::Terminator) {
+        let Some(format) = color_report_format(*self.osc_color_report_format) else {
+            return;
+        };
         let rgb = self.colors.palette.current()[index as usize];
-        let response = format!(
-            "\x1b]4;{};rgb:{:04x}/{:04x}/{:04x}",
-            index,
-            u16::from(rgb.r) * 257,
-            u16::from(rgb.g) * 257,
-            u16::from(rgb.b) * 257
-        );
+        let response = format!("\x1b]4;{};{}", index, format.rgb(rgb));
         self.write_pty_response(&response);
         self.write_pty_response_bytes(terminator.bytes());
     }
@@ -4178,13 +4388,10 @@ impl TerminalStreamHandler<'_> {
         let Some(rgb) = self.dynamic_color(target) else {
             return;
         };
-        let response = format!(
-            "\x1b]{};rgb:{:04x}/{:04x}/{:04x}",
-            target.number(),
-            u16::from(rgb.r) * 257,
-            u16::from(rgb.g) * 257,
-            u16::from(rgb.b) * 257
-        );
+        let Some(format) = color_report_format(*self.osc_color_report_format) else {
+            return;
+        };
+        let response = format!("\x1b]{};{}", target.number(), format.rgb(rgb));
         self.write_pty_response(&response);
         self.write_pty_response_bytes(terminator.bytes());
     }
@@ -4277,10 +4484,19 @@ impl TerminalStreamHandler<'_> {
                         .clear_current_row_semantic_prompt()
                         .map_err(TerminalStreamError::from)?;
                 }
+                self.pending_command_events
+                    .push(TerminalCommandEvent::Start);
                 Ok(())
             }
             Action::EndCommand => {
                 self.screens.active_mut().set_cursor_semantic_output();
+                let exit_code = match prompt.exit_code() {
+                    Some(code @ 0..=255) => code as u8,
+                    Some(_) => 1,
+                    None => 0,
+                };
+                self.pending_command_events
+                    .push(TerminalCommandEvent::Stop { exit_code });
                 Ok(())
             }
         }
@@ -4468,7 +4684,89 @@ impl ScrollingRegion {
     }
 }
 
+fn normalize_report_pwd_url(url: &str) -> Option<String> {
+    let (scheme, rest) = url.split_once("://")?;
+    if scheme != "file" && scheme != "kitty-shell-cwd" {
+        return None;
+    }
+
+    let host_end = rest
+        .find(|c| matches!(c, '/' | '?' | '#'))
+        .unwrap_or(rest.len());
+    let host = &rest[..host_end];
+    if host.is_empty() {
+        return None;
+    }
+    if !hostname::is_local(host.as_bytes()).ok()? {
+        return None;
+    }
+
+    match scheme {
+        "file" => {
+            let path = if rest.as_bytes().get(host_end) == Some(&b'/') {
+                let path_with_suffix = &rest[host_end..];
+                let path_end = path_with_suffix
+                    .find(|c| matches!(c, '?' | '#'))
+                    .unwrap_or(path_with_suffix.len());
+                &path_with_suffix[..path_end]
+            } else {
+                ""
+            };
+            percent_decode_path(path)
+        }
+        "kitty-shell-cwd" => {
+            let path = if rest.as_bytes().get(host_end) == Some(&b'/') {
+                &rest[host_end..]
+            } else {
+                ""
+            };
+            Some(path.to_string())
+        }
+        _ => None,
+    }
+}
+
+fn percent_decode_path(path: &str) -> Option<String> {
+    let bytes = path.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut i = 0usize;
+    while i < bytes.len() {
+        if bytes[i] == b'%' {
+            let hi = *bytes.get(i + 1)?;
+            let lo = *bytes.get(i + 2)?;
+            decoded.push((hex_value(hi)? << 4) | hex_value(lo)?);
+            i += 3;
+        } else {
+            decoded.push(bytes[i]);
+            i += 1;
+        }
+    }
+
+    String::from_utf8(decoded).ok()
+}
+
+fn hex_value(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
+}
+
 impl TerminalTitle {
+    fn set_explicit(&mut self, title: &str) {
+        self.text.clear();
+        self.text.push_str(title);
+        self.seen_explicit = true;
+    }
+
+    fn set_fallback(&mut self, title: &str) {
+        self.text.clear();
+        self.text.push_str(title);
+        self.seen_explicit = false;
+    }
+
     fn set(&mut self, title: &str) {
         self.text.clear();
         self.text.push_str(title);
@@ -4476,6 +4774,7 @@ impl TerminalTitle {
 
     fn clear(&mut self) {
         self.text.clear();
+        self.seen_explicit = false;
     }
 
     fn as_str(&self) -> &str {
@@ -4817,6 +5116,34 @@ fn append_kitty_color_response(
     output.push('=');
     if let Some(rgb) = rgb {
         output.push_str(&format!("rgb:{:02x}/{:02x}/{:02x}", rgb.r, rgb.g, rgb.b));
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ColorReportFormat {
+    Bits8,
+    Bits16,
+}
+
+impl ColorReportFormat {
+    fn rgb(self, rgb: color::Rgb) -> String {
+        match self {
+            Self::Bits8 => format!("rgb:{:02x}/{:02x}/{:02x}", rgb.r, rgb.g, rgb.b),
+            Self::Bits16 => format!(
+                "rgb:{:04x}/{:04x}/{:04x}",
+                u16::from(rgb.r) * 257,
+                u16::from(rgb.g) * 257,
+                u16::from(rgb.b) * 257
+            ),
+        }
+    }
+}
+
+fn color_report_format(format: OscColorReportFormat) -> Option<ColorReportFormat> {
+    match format {
+        OscColorReportFormat::None => None,
+        OscColorReportFormat::Bits8 => Some(ColorReportFormat::Bits8),
+        OscColorReportFormat::Bits16 => Some(ColorReportFormat::Bits16),
     }
 }
 
@@ -7558,12 +7885,85 @@ mod tests {
         assert!(!terminal.is_dirty_for_tests(9, 0));
     }
 
+    unsafe extern "C" fn test_enquiry_callback(
+        _: *mut c_void,
+        _: *mut c_void,
+    ) -> TerminalEffectString {
+        TerminalEffectString {
+            ptr: c"callback-enq".as_ptr(),
+            len: b"callback-enq".len(),
+            sentinel: false,
+        }
+    }
+
+    unsafe extern "C" fn test_device_attributes_callback(
+        _: *mut c_void,
+        _: *mut c_void,
+        attrs: *mut TerminalDeviceAttributes,
+    ) -> bool {
+        unsafe {
+            (*attrs).primary.conformance_level = 64;
+            (*attrs).primary.features[0] = 1;
+            (*attrs).primary.features[1] = 6;
+            (*attrs).primary.num_features = 2;
+            (*attrs).secondary.device_type = 2;
+            (*attrs).secondary.firmware_version = 3;
+            (*attrs).secondary.rom_cartridge = 4;
+            (*attrs).tertiary.unit_id = 0xAABBCCDD;
+        }
+        true
+    }
+
+    #[test]
+    fn terminal_stream_enquiry_response_configured_and_runtime_update() {
+        let mut terminal = Terminal::init_with_options(
+            10,
+            2,
+            None,
+            TerminalInitOptions {
+                enquiry_response: b"first-enq".to_vec(),
+                ..TerminalInitOptions::default()
+            },
+        )
+        .unwrap();
+
+        terminal.next_slice(b"\x05").unwrap();
+        assert_eq!(terminal.take_pty_response_for_tests(), b"first-enq");
+
+        terminal.set_enquiry_response(b"second-enq".to_vec());
+        terminal.next_slice(b"\x05").unwrap();
+        assert_eq!(terminal.take_pty_response_for_tests(), b"second-enq");
+
+        terminal.set_enquiry_response(Vec::new());
+        terminal.next_slice(b"\x05").unwrap();
+        assert!(terminal.pty_response_for_tests().is_empty());
+    }
+
+    #[test]
+    fn terminal_stream_enquiry_response_callback_precedence_is_preserved() {
+        let mut terminal = Terminal::init_with_options(
+            10,
+            2,
+            None,
+            TerminalInitOptions {
+                enquiry_response: b"configured-enq".to_vec(),
+                ..TerminalInitOptions::default()
+            },
+        )
+        .unwrap();
+        terminal.set_enquiry_callback(Some(test_enquiry_callback));
+
+        terminal.next_slice(b"\x05").unwrap();
+
+        assert_eq!(terminal.take_pty_response_for_tests(), b"callback-enq");
+    }
+
     #[test]
     fn terminal_stream_query_response_device_attributes_and_decid() {
         let mut terminal = Terminal::init(10, 2, None).unwrap();
 
         terminal.next_slice(b"\x1b[c").unwrap();
-        assert_eq!(terminal.take_pty_response_for_tests(), b"\x1b[?62;22c");
+        assert_eq!(terminal.take_pty_response_for_tests(), b"\x1b[?62;22;52c");
 
         terminal.next_slice(b"\x1b[>c").unwrap();
         assert_eq!(terminal.take_pty_response_for_tests(), b"\x1b[>1;0;0c");
@@ -7575,7 +7975,57 @@ mod tests {
         );
 
         terminal.next_slice(b"\x1bZ").unwrap();
-        assert_eq!(terminal.take_pty_response_for_tests(), b"\x1b[?62;22c");
+        assert_eq!(terminal.take_pty_response_for_tests(), b"\x1b[?62;22;52c");
+    }
+
+    #[test]
+    fn terminal_stream_device_attributes_clipboard_write_config_and_runtime_update() {
+        let mut terminal = Terminal::init_with_options(
+            10,
+            2,
+            None,
+            TerminalInitOptions {
+                clipboard_write: ClipboardAccess::Deny,
+                ..TerminalInitOptions::default()
+            },
+        )
+        .unwrap();
+
+        terminal.next_slice(b"\x1b[c\x1bZ").unwrap();
+        assert_eq!(
+            terminal.take_pty_response_for_tests(),
+            b"\x1b[?62;22c\x1b[?62;22c"
+        );
+
+        terminal.set_clipboard_write(ClipboardAccess::Ask);
+        terminal.next_slice(b"\x1b[c").unwrap();
+        assert_eq!(terminal.take_pty_response_for_tests(), b"\x1b[?62;22;52c");
+
+        terminal.set_clipboard_write(ClipboardAccess::Allow);
+        terminal.next_slice(b"\x1b[c").unwrap();
+        assert_eq!(terminal.take_pty_response_for_tests(), b"\x1b[?62;22;52c");
+    }
+
+    #[test]
+    fn terminal_stream_device_attributes_clipboard_write_callback_precedence() {
+        let mut terminal = Terminal::init_with_options(
+            10,
+            2,
+            None,
+            TerminalInitOptions {
+                clipboard_write: ClipboardAccess::Deny,
+                ..TerminalInitOptions::default()
+            },
+        )
+        .unwrap();
+        terminal.set_device_attributes_callback(Some(test_device_attributes_callback));
+
+        terminal.next_slice(b"\x1b[c\x1b[>c\x1b[=c").unwrap();
+
+        assert_eq!(
+            terminal.take_pty_response_for_tests(),
+            b"\x1b[?64;1;6c\x1b[>2;3;4c\x1bP!|AABBCCDD\x1b\\"
+        );
     }
 
     #[test]
@@ -7757,6 +8207,49 @@ mod tests {
     }
 
     #[test]
+    fn grapheme_width_method_runtime_initializes_mode_and_reset_default() {
+        for (grapheme_cluster, expected_report) in [
+            (true, b"\x1b[?2027;1$y".as_slice()),
+            (false, b"\x1b[?2027;2$y"),
+        ] {
+            let mut terminal = Terminal::init_with_options(
+                10,
+                2,
+                None,
+                TerminalInitOptions {
+                    grapheme_cluster,
+                    ..TerminalInitOptions::default()
+                },
+            )
+            .unwrap();
+
+            assert_eq!(terminal.grapheme_cluster_enabled(), grapheme_cluster);
+            terminal.next_slice(b"\x1b[?2027$p").unwrap();
+            assert_eq!(terminal.take_pty_response_for_tests(), expected_report);
+
+            let toggle = if grapheme_cluster {
+                b"\x1b[?2027l".as_slice()
+            } else {
+                b"\x1b[?2027h"
+            };
+            terminal.next_slice(toggle).unwrap();
+            assert_ne!(terminal.grapheme_cluster_enabled(), grapheme_cluster);
+
+            terminal.reset();
+            assert_eq!(terminal.grapheme_cluster_enabled(), grapheme_cluster);
+            terminal.next_slice(b"\x1b[?2027$p").unwrap();
+            assert_eq!(terminal.take_pty_response_for_tests(), expected_report);
+
+            terminal.next_slice(toggle).unwrap();
+            assert_ne!(terminal.grapheme_cluster_enabled(), grapheme_cluster);
+            terminal.next_slice(b"\x1bc").unwrap();
+            assert_eq!(terminal.grapheme_cluster_enabled(), grapheme_cluster);
+            terminal.next_slice(b"\x1b[?2027$p").unwrap();
+            assert_eq!(terminal.take_pty_response_for_tests(), expected_report);
+        }
+    }
+
+    #[test]
     fn terminal_cursor_default_config_decscusr_resets_to_configured_default() {
         let mut terminal = Terminal::init_with_options(
             10,
@@ -7778,6 +8271,159 @@ mod tests {
             cursor::VisualStyle::Underline
         );
         assert!(!terminal.get_mode_for_tests(Mode::CursorBlinking));
+    }
+
+    #[test]
+    fn terminal_cursor_default_runtime_update_applies_when_default() {
+        let mut terminal = Terminal::init_with_options(
+            10,
+            2,
+            None,
+            TerminalInitOptions {
+                cursor_visual_style: cursor::VisualStyle::Block,
+                cursor_blink: Some(true),
+                ..TerminalInitOptions::default()
+            },
+        )
+        .unwrap();
+
+        terminal.set_cursor_defaults(cursor::VisualStyle::Bar, Some(false));
+        assert_eq!(
+            terminal.cursor_visual_style_for_tests(),
+            cursor::VisualStyle::Bar
+        );
+        assert!(!terminal.get_mode_for_tests(Mode::CursorBlinking));
+
+        terminal.set_cursor_defaults(cursor::VisualStyle::Underline, Some(true));
+        assert_eq!(
+            terminal.cursor_visual_style_for_tests(),
+            cursor::VisualStyle::Underline
+        );
+        assert!(terminal.get_mode_for_tests(Mode::CursorBlinking));
+    }
+
+    #[test]
+    fn terminal_cursor_default_runtime_update_preserves_program_cursor_until_reset() {
+        let mut terminal = Terminal::init_with_options(
+            10,
+            2,
+            None,
+            TerminalInitOptions {
+                cursor_visual_style: cursor::VisualStyle::Block,
+                cursor_blink: Some(true),
+                ..TerminalInitOptions::default()
+            },
+        )
+        .unwrap();
+
+        terminal.next_slice(b"\x1b[5 q").unwrap();
+        assert_eq!(
+            terminal.cursor_visual_style_for_tests(),
+            cursor::VisualStyle::Bar
+        );
+        assert!(terminal.get_mode_for_tests(Mode::CursorBlinking));
+
+        terminal.set_cursor_defaults(cursor::VisualStyle::Underline, Some(false));
+        assert_eq!(
+            terminal.cursor_visual_style_for_tests(),
+            cursor::VisualStyle::Bar
+        );
+        assert!(terminal.get_mode_for_tests(Mode::CursorBlinking));
+
+        terminal.next_slice(b"\x1b[0 q").unwrap();
+        assert_eq!(
+            terminal.cursor_visual_style_for_tests(),
+            cursor::VisualStyle::Underline
+        );
+        assert!(!terminal.get_mode_for_tests(Mode::CursorBlinking));
+    }
+
+    #[test]
+    fn terminal_cursor_default_runtime_direct_reset_does_not_apply_configured_default() {
+        let mut terminal = Terminal::init_with_options(
+            10,
+            2,
+            None,
+            TerminalInitOptions {
+                cursor_visual_style: cursor::VisualStyle::Underline,
+                cursor_blink: Some(false),
+                ..TerminalInitOptions::default()
+            },
+        )
+        .unwrap();
+
+        terminal.reset();
+
+        assert_eq!(
+            terminal.cursor_visual_style_for_tests(),
+            cursor::VisualStyle::Block
+        );
+        assert!(terminal.get_mode_for_tests(Mode::CursorBlinking));
+    }
+
+    #[test]
+    fn terminal_cursor_default_runtime_ris_preserves_program_cursor_state_until_reset() {
+        let mut terminal = Terminal::init_with_options(
+            10,
+            2,
+            None,
+            TerminalInitOptions {
+                cursor_visual_style: cursor::VisualStyle::Block,
+                cursor_blink: Some(true),
+                ..TerminalInitOptions::default()
+            },
+        )
+        .unwrap();
+
+        terminal.next_slice(b"\x1b[5 q\x1bc").unwrap();
+        assert_eq!(
+            terminal.cursor_visual_style_for_tests(),
+            cursor::VisualStyle::Block
+        );
+        assert!(terminal.get_mode_for_tests(Mode::CursorBlinking));
+
+        terminal.set_cursor_defaults(cursor::VisualStyle::Underline, Some(false));
+        assert_eq!(
+            terminal.cursor_visual_style_for_tests(),
+            cursor::VisualStyle::Block
+        );
+        assert!(terminal.get_mode_for_tests(Mode::CursorBlinking));
+
+        terminal.next_slice(b"\x1b[0 q").unwrap();
+        assert_eq!(
+            terminal.cursor_visual_style_for_tests(),
+            cursor::VisualStyle::Underline
+        );
+        assert!(!terminal.get_mode_for_tests(Mode::CursorBlinking));
+    }
+
+    #[test]
+    fn terminal_cursor_default_runtime_blink_update_controls_dec_mode_12_gate() {
+        let mut terminal = Terminal::init_with_options(
+            10,
+            2,
+            None,
+            TerminalInitOptions {
+                cursor_visual_style: cursor::VisualStyle::Block,
+                cursor_blink: None,
+                ..TerminalInitOptions::default()
+            },
+        )
+        .unwrap();
+
+        terminal.set_cursor_defaults(cursor::VisualStyle::Block, Some(false));
+        assert!(!terminal.get_mode_for_tests(Mode::CursorBlinking));
+        terminal.next_slice(b"\x1b[?12h").unwrap();
+        assert!(!terminal.get_mode_for_tests(Mode::CursorBlinking));
+        terminal.next_slice(b"\x1b[?12l").unwrap();
+        assert!(!terminal.get_mode_for_tests(Mode::CursorBlinking));
+
+        terminal.set_cursor_defaults(cursor::VisualStyle::Block, None);
+        assert!(terminal.get_mode_for_tests(Mode::CursorBlinking));
+        terminal.next_slice(b"\x1b[?12l").unwrap();
+        assert!(!terminal.get_mode_for_tests(Mode::CursorBlinking));
+        terminal.next_slice(b"\x1b[?12h").unwrap();
+        assert!(terminal.get_mode_for_tests(Mode::CursorBlinking));
     }
 
     #[test]
@@ -9532,12 +10178,12 @@ mod tests {
 
         terminal
             .next_slice(
-                b"\x1b]0;window title\x07\x1b]7;file://host/home\x1b\\\x1b]8;id=tab;https://e\x07",
+                b"\x1b]0;window title\x07\x1b]7;file://localhost/home\x1b\\\x1b]8;id=tab;https://e\x07",
             )
             .unwrap();
 
         assert_eq!(terminal.title_for_tests(), "window title");
-        assert_eq!(terminal.pwd_for_tests(), Some("file://host/home"));
+        assert_eq!(terminal.pwd_for_tests(), Some("/home"));
         assert_eq!(
             terminal.cursor_hyperlink_for_tests(),
             Some((
@@ -9548,6 +10194,229 @@ mod tests {
 
         terminal.next_slice(b"\x1b]8;;\x1b\\").unwrap();
         assert_eq!(terminal.cursor_hyperlink_for_tests(), None);
+    }
+
+    #[test]
+    fn terminal_stream_title_pwd_fallback_state_machine() {
+        let mut terminal = Terminal::init(10, 2, None).unwrap();
+
+        terminal
+            .next_slice(b"\x1b]7;file://localhost/home\x07")
+            .unwrap();
+        assert_eq!(terminal.pwd_for_tests(), Some("/home"));
+        assert_eq!(
+            terminal.take_pending_pwd_updates(),
+            vec!["/home".to_string()]
+        );
+        assert_eq!(terminal.title_for_tests(), "/home");
+        assert_eq!(
+            terminal.take_pending_title_updates(),
+            vec!["/home".to_string()]
+        );
+
+        terminal.next_slice(b"\x1b]0;explicit\x07").unwrap();
+        assert_eq!(terminal.title_for_tests(), "explicit");
+        assert_eq!(
+            terminal.take_pending_title_updates(),
+            vec!["explicit".to_string()]
+        );
+
+        terminal
+            .next_slice(b"\x1b]7;file://localhost/ignored\x07")
+            .unwrap();
+        assert_eq!(terminal.pwd_for_tests(), Some("/ignored"));
+        assert_eq!(
+            terminal.take_pending_pwd_updates(),
+            vec!["/ignored".to_string()]
+        );
+        assert_eq!(terminal.title_for_tests(), "explicit");
+        assert!(terminal.take_pending_title_updates().is_empty());
+
+        terminal.next_slice(b"\x1b]0;\x07").unwrap();
+        assert_eq!(terminal.title_for_tests(), "/ignored");
+        assert_eq!(
+            terminal.take_pending_title_updates(),
+            vec!["/ignored".to_string()]
+        );
+
+        terminal.next_slice(b"\x1b]7;\x07").unwrap();
+        assert_eq!(terminal.pwd_for_tests(), None);
+        assert_eq!(terminal.take_pending_pwd_updates(), vec!["".to_string()]);
+        assert_eq!(terminal.title_for_tests(), "");
+        assert_eq!(terminal.take_pending_title_updates(), vec!["".to_string()]);
+    }
+
+    #[test]
+    fn terminal_stream_title_pwd_fallback_queues_noop_title_events() {
+        let mut terminal = Terminal::init(10, 2, None).unwrap();
+
+        terminal.next_slice(b"\x1b]0;\x07").unwrap();
+        assert_eq!(terminal.title_for_tests(), "");
+        assert_eq!(terminal.take_pending_title_updates(), vec!["".to_string()]);
+
+        terminal
+            .next_slice(b"\x1b]7;file://localhost/same\x07")
+            .unwrap();
+        assert_eq!(terminal.title_for_tests(), "/same");
+        assert_eq!(
+            terminal.take_pending_title_updates(),
+            vec!["/same".to_string()]
+        );
+
+        terminal.next_slice(b"\x1b]0;\x07").unwrap();
+        assert_eq!(terminal.title_for_tests(), "/same");
+        assert_eq!(
+            terminal.take_pending_title_updates(),
+            vec!["/same".to_string()]
+        );
+    }
+
+    #[test]
+    fn terminal_stream_title_pwd_fallback_preserves_multiple_events_in_one_slice() {
+        let mut terminal = Terminal::init(10, 2, None).unwrap();
+
+        terminal
+            .next_slice(b"\x1b]7;file://localhost/one\x07\x1b]0;two\x07\x1b]0;\x07")
+            .unwrap();
+
+        assert_eq!(terminal.title_for_tests(), "/one");
+        assert_eq!(
+            terminal.take_pending_title_updates(),
+            vec!["/one".to_string(), "two".to_string(), "/one".to_string()]
+        );
+    }
+
+    #[test]
+    fn terminal_stream_osc7_pwd_normalization_accepts_local_paths() {
+        let mut terminal = Terminal::init(10, 2, None).unwrap();
+
+        terminal
+            .next_slice(b"\x1b]7;file://localhost/tmp/hello%20world\x07")
+            .unwrap();
+        assert_eq!(terminal.pwd_for_tests(), Some("/tmp/hello world"));
+        assert_eq!(
+            terminal.take_pending_pwd_updates(),
+            vec!["/tmp/hello world".to_string()]
+        );
+        assert_eq!(terminal.title_for_tests(), "/tmp/hello world");
+        assert_eq!(
+            terminal.take_pending_title_updates(),
+            vec!["/tmp/hello world".to_string()]
+        );
+
+        terminal
+            .next_slice(b"\x1b]7;kitty-shell-cwd://localhost/tmp/raw%20path\x07")
+            .unwrap();
+        assert_eq!(terminal.pwd_for_tests(), Some("/tmp/raw%20path"));
+        assert_eq!(
+            terminal.take_pending_pwd_updates(),
+            vec!["/tmp/raw%20path".to_string()]
+        );
+
+        terminal.next_slice(b"\x1b]7;file://localhost\x07").unwrap();
+        assert_eq!(terminal.pwd_for_tests(), None);
+        assert_eq!(terminal.take_pending_pwd_updates(), vec!["".to_string()]);
+    }
+
+    #[test]
+    fn terminal_stream_osc7_pwd_normalization_rejects_invalid_urls() {
+        let mut terminal = Terminal::init(10, 2, None).unwrap();
+
+        terminal
+            .next_slice(b"\x1b]7;file://localhost/original\x07")
+            .unwrap();
+        assert_eq!(
+            terminal.take_pending_pwd_updates(),
+            vec!["/original".to_string()]
+        );
+        assert_eq!(
+            terminal.take_pending_title_updates(),
+            vec!["/original".to_string()]
+        );
+
+        for url in [
+            "http://localhost/bad",
+            "file:///missing-host",
+            "file://remote.example/bad",
+            "file://localhost/bad%ZZ",
+            "kitty-shell-cwd:///missing-host",
+        ] {
+            terminal
+                .next_slice(format!("\x1b]7;{url}\x07").as_bytes())
+                .unwrap();
+            assert_eq!(terminal.pwd_for_tests(), Some("/original"));
+            assert_eq!(terminal.title_for_tests(), "/original");
+            assert!(terminal.take_pending_pwd_updates().is_empty());
+            assert!(terminal.take_pending_title_updates().is_empty());
+        }
+    }
+
+    #[test]
+    fn terminal_stream_osc7_pwd_edge_file_paths_trim_and_decode() {
+        let mut terminal = Terminal::init(10, 2, None).unwrap();
+
+        terminal
+            .next_slice(b"\x1b]7;file://localhost/tmp/edge%20name?ignored#ignored\x07")
+            .unwrap();
+        assert_eq!(terminal.pwd_for_tests(), Some("/tmp/edge name"));
+        assert_eq!(
+            terminal.take_pending_pwd_updates(),
+            vec!["/tmp/edge name".to_string()]
+        );
+        assert_eq!(terminal.title_for_tests(), "/tmp/edge name");
+        assert_eq!(
+            terminal.take_pending_title_updates(),
+            vec!["/tmp/edge name".to_string()]
+        );
+
+        terminal
+            .next_slice(b"\x1b]7;file://localhost/tmp/%E2%82%AC%2Fpath\x07")
+            .unwrap();
+        assert_eq!(terminal.pwd_for_tests(), Some("/tmp/\u{20ac}/path"));
+        assert_eq!(
+            terminal.take_pending_pwd_updates(),
+            vec!["/tmp/\u{20ac}/path".to_string()]
+        );
+        assert_eq!(
+            terminal.take_pending_title_updates(),
+            vec!["/tmp/\u{20ac}/path".to_string()]
+        );
+    }
+
+    #[test]
+    fn terminal_stream_osc7_pwd_edge_kitty_raw_path_keeps_suffixes() {
+        let mut terminal = Terminal::init(10, 2, None).unwrap();
+
+        terminal
+            .next_slice(b"\x1b]7;kitty-shell-cwd://localhost/tmp/raw%2Fpath?ignored#fragment\x07")
+            .unwrap();
+        assert_eq!(
+            terminal.pwd_for_tests(),
+            Some("/tmp/raw%2Fpath?ignored#fragment")
+        );
+        assert_eq!(
+            terminal.take_pending_pwd_updates(),
+            vec!["/tmp/raw%2Fpath?ignored#fragment".to_string()]
+        );
+        assert_eq!(
+            terminal.title_for_tests(),
+            "/tmp/raw%2Fpath?ignored#fragment"
+        );
+        assert_eq!(
+            terminal.take_pending_title_updates(),
+            vec!["/tmp/raw%2Fpath?ignored#fragment".to_string()]
+        );
+    }
+
+    #[test]
+    fn terminal_stream_osc7_pwd_edge_no_slash_dispatches_empty_path() {
+        let mut terminal = Terminal::init(10, 2, None).unwrap();
+
+        terminal.next_slice(b"\x1b]7;file://localhost\x07").unwrap();
+        assert_eq!(terminal.pwd_for_tests(), None);
+        assert_eq!(terminal.take_pending_pwd_updates(), vec!["".to_string()]);
+        assert_eq!(terminal.title_for_tests(), "");
+        assert_eq!(terminal.take_pending_title_updates(), vec!["".to_string()]);
     }
 
     #[test]
@@ -9611,7 +10480,7 @@ mod tests {
         let mut terminal = Terminal::init(10, 2, None).unwrap();
 
         terminal
-            .next_slice(b"\x1b]0;original\x07\x1b]7;file://host/original\x07")
+            .next_slice(b"\x1b]0;original\x07\x1b]7;file://localhost/original\x07")
             .unwrap();
         terminal
             .next_slice(
@@ -9620,7 +10489,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(terminal.title_for_tests(), "original");
-        assert_eq!(terminal.pwd_for_tests(), Some("file://host/original"));
+        assert_eq!(terminal.pwd_for_tests(), Some("/original"));
         assert_eq!(terminal.cursor_hyperlink_for_tests(), None);
         assert_eq!(plain_with_unwrap(&terminal, false), "");
     }
@@ -9630,10 +10499,10 @@ mod tests {
         let mut terminal = Terminal::init(10, 2, None).unwrap();
 
         terminal
-            .next_slice(b"\x1b]1337;CurrentDir=file://host/osc1337\x07")
+            .next_slice(b"\x1b]1337;CurrentDir=file://localhost/osc1337\x07")
             .unwrap();
 
-        assert_eq!(terminal.pwd_for_tests(), Some("file://host/osc1337"));
+        assert_eq!(terminal.pwd_for_tests(), Some("/osc1337"));
     }
 
     #[test]
@@ -9697,7 +10566,9 @@ mod tests {
 
         terminal.next_slice(b"abc").unwrap();
         terminal
-            .next_slice(b"\x1b]0;title\x07\x1b]7;file://host/home\x07\x1b]8;id=x;https://e\x07")
+            .next_slice(
+                b"\x1b]0;title\x07\x1b]7;file://localhost/home\x07\x1b]8;id=x;https://e\x07",
+            )
             .unwrap();
         terminal.next_slice(b"\x1b]10;#112233\x07").unwrap();
         terminal.set_mode_for_tests(Mode::Insert, true);
@@ -9714,7 +10585,7 @@ mod tests {
 
         assert_eq!(plain_with_unwrap(&terminal, false), "abc");
         assert_eq!(terminal.title_for_tests(), "title");
-        assert_eq!(terminal.pwd_for_tests(), Some("file://host/home"));
+        assert_eq!(terminal.pwd_for_tests(), Some("/home"));
         assert_eq!(
             terminal.cursor_hyperlink_for_tests(),
             Some((
@@ -9949,7 +10820,9 @@ mod tests {
 
         terminal.next_slice(b"abc").unwrap();
         terminal
-            .next_slice(b"\x1b]0;title\x07\x1b]7;file://host/home\x07\x1b]8;id=x;https://e\x07")
+            .next_slice(
+                b"\x1b]0;title\x07\x1b]7;file://localhost/home\x07\x1b]8;id=x;https://e\x07",
+            )
             .unwrap();
         terminal.next_slice(b"\x1b]10;#112233\x07").unwrap();
         terminal.set_mode_for_tests(Mode::Insert, true);
@@ -9966,7 +10839,7 @@ mod tests {
 
         assert_eq!(plain_with_unwrap(&terminal, false), "abc");
         assert_eq!(terminal.title_for_tests(), "title");
-        assert_eq!(terminal.pwd_for_tests(), Some("file://host/home"));
+        assert_eq!(terminal.pwd_for_tests(), Some("/home"));
         assert_eq!(
             terminal.cursor_hyperlink_for_tests(),
             Some((
@@ -9983,12 +10856,110 @@ mod tests {
     }
 
     #[test]
+    fn terminal_desktop_notification_runtime_captures_osc_events_without_side_effects() {
+        let mut terminal = Terminal::init(10, 3, None).unwrap();
+
+        terminal.next_slice(b"abc").unwrap();
+        terminal.set_mode_for_tests(Mode::Insert, true);
+        terminal
+            .screens
+            .active_mut()
+            .set_cursor_position_for_tests(5, 1);
+        terminal.clear_dirty_for_tests();
+
+        terminal
+            .next_slice(b"\x1b]9;Hello\x07\x1b]777;notify;Title;Body\x1b\\")
+            .unwrap();
+
+        assert_eq!(
+            terminal.take_pending_desktop_notifications(),
+            vec![
+                TerminalDesktopNotification {
+                    title: Vec::new(),
+                    body: b"Hello".to_vec(),
+                },
+                TerminalDesktopNotification {
+                    title: b"Title".to_vec(),
+                    body: b"Body".to_vec(),
+                },
+            ]
+        );
+        assert!(terminal.take_pending_desktop_notifications().is_empty());
+        assert_eq!(plain_with_unwrap(&terminal, false), "abc");
+        assert_eq!(terminal.cursor_position_for_tests(), (5, 1));
+        assert!(terminal.get_mode_for_tests(Mode::Insert));
+        assert!(terminal.pty_response_for_tests().is_empty());
+        assert!(!terminal.is_dirty_for_tests(0, 0));
+        assert!(!terminal.is_dirty_for_tests(9, 0));
+    }
+
+    #[test]
+    fn terminal_command_event_runtime_captures_osc133_without_display_side_effects() {
+        let mut terminal = Terminal::init(10, 3, None).unwrap();
+
+        terminal.next_slice(b"abc").unwrap();
+        terminal.set_mode_for_tests(Mode::Insert, true);
+        terminal
+            .screens
+            .active_mut()
+            .set_cursor_position_for_tests(5, 1);
+        terminal.clear_dirty_for_tests();
+
+        terminal
+            .next_slice(b"\x1b]133;C\x07\x1b]133;D;7\x07")
+            .unwrap();
+
+        assert_eq!(
+            terminal.take_pending_command_events(),
+            vec![
+                TerminalCommandEvent::Start,
+                TerminalCommandEvent::Stop { exit_code: 7 },
+            ]
+        );
+        assert!(terminal.take_pending_command_events().is_empty());
+        assert_eq!(plain_with_unwrap(&terminal, false), "abc");
+        assert_eq!(terminal.cursor_position_for_tests(), (5, 1));
+        assert!(terminal.get_mode_for_tests(Mode::Insert));
+        assert!(terminal.pty_response_for_tests().is_empty());
+        assert!(!terminal.is_dirty_for_tests(0, 0));
+        assert!(!terminal.is_dirty_for_tests(9, 0));
+    }
+
+    #[test]
+    fn terminal_command_event_runtime_maps_osc133_exit_codes_like_ghostty() {
+        let mut terminal = Terminal::init(10, 3, None).unwrap();
+
+        terminal
+            .next_slice(
+                b"\x1b]133;D\x07\
+                  \x1b]133;D;abc\x07\
+                  \x1b]133;D;-1\x07\
+                  \x1b]133;D;256\x07\
+                  \x1b]133;D;255\x07",
+            )
+            .unwrap();
+
+        assert_eq!(
+            terminal.take_pending_command_events(),
+            vec![
+                TerminalCommandEvent::Stop { exit_code: 0 },
+                TerminalCommandEvent::Stop { exit_code: 0 },
+                TerminalCommandEvent::Stop { exit_code: 1 },
+                TerminalCommandEvent::Stop { exit_code: 1 },
+                TerminalCommandEvent::Stop { exit_code: 255 },
+            ]
+        );
+    }
+
+    #[test]
     fn terminal_stream_clipboard_protocols_are_retained_without_terminal_side_effects() {
         let mut terminal = Terminal::init(10, 3, None).unwrap();
 
         terminal.next_slice(b"abc").unwrap();
         terminal
-            .next_slice(b"\x1b]0;title\x07\x1b]7;file://host/home\x07\x1b]8;id=x;https://e\x07")
+            .next_slice(
+                b"\x1b]0;title\x07\x1b]7;file://localhost/home\x07\x1b]8;id=x;https://e\x07",
+            )
             .unwrap();
         terminal.next_slice(b"\x1b]10;#112233\x07").unwrap();
         terminal.set_mode_for_tests(Mode::Insert, true);
@@ -10021,7 +10992,7 @@ mod tests {
 
         assert_eq!(plain_with_unwrap(&terminal, false), "abc");
         assert_eq!(terminal.title_for_tests(), "title");
-        assert_eq!(terminal.pwd_for_tests(), Some("file://host/home"));
+        assert_eq!(terminal.pwd_for_tests(), Some("/home"));
         assert_eq!(
             terminal.cursor_hyperlink_for_tests(),
             Some((
@@ -10097,7 +11068,9 @@ mod tests {
 
         terminal.next_slice(b"abc").unwrap();
         terminal
-            .next_slice(b"\x1b]0;title\x07\x1b]7;file://host/home\x07\x1b]8;id=x;https://e\x07")
+            .next_slice(
+                b"\x1b]0;title\x07\x1b]7;file://localhost/home\x07\x1b]8;id=x;https://e\x07",
+            )
             .unwrap();
         terminal.next_slice(b"\x1b]10;#112233\x07").unwrap();
         terminal.set_mode_for_tests(Mode::Insert, true);
@@ -10116,7 +11089,7 @@ mod tests {
 
         assert_eq!(plain_with_unwrap(&terminal, false), "abc");
         assert_eq!(terminal.title_for_tests(), "title");
-        assert_eq!(terminal.pwd_for_tests(), Some("file://host/home"));
+        assert_eq!(terminal.pwd_for_tests(), Some("/home"));
         assert_eq!(
             terminal.cursor_hyperlink_for_tests(),
             Some((
@@ -10145,7 +11118,7 @@ mod tests {
         terminal.clear_dirty_for_tests();
 
         terminal
-            .next_slice(b"\x1b]0;t\x07\x1b]7;file://host/p\x07\x1b]8;;https://e\x1b\\")
+            .next_slice(b"\x1b]0;t\x07\x1b]7;file://localhost/p\x07\x1b]8;;https://e\x1b\\")
             .unwrap();
 
         assert_eq!(plain_with_unwrap(&terminal, false), "abc");
@@ -10551,6 +11524,91 @@ mod tests {
     }
 
     #[test]
+    fn terminal_stream_osc_color_report_format_defaults_to_16_bit() {
+        let mut terminal = Terminal::init(5, 2, None).unwrap();
+
+        terminal
+            .next_slice(b"\x1b]4;4;#123456\x1b\\\x1b]4;4;?\x1b\\")
+            .unwrap();
+
+        assert_eq!(
+            terminal.pty_response_for_tests(),
+            b"\x1b]4;4;rgb:1212/3434/5656\x1b\\"
+        );
+    }
+
+    #[test]
+    fn terminal_stream_osc_color_report_format_8_bit_and_runtime_update() {
+        let mut terminal = Terminal::init_with_options(
+            5,
+            2,
+            None,
+            TerminalInitOptions {
+                osc_color_report_format: OscColorReportFormat::Bits8,
+                ..TerminalInitOptions::default()
+            },
+        )
+        .unwrap();
+
+        terminal
+            .next_slice(b"\x1b]10;#123456\x1b\\\x1b]10;?\x07")
+            .unwrap();
+        assert_eq!(
+            terminal.take_pty_response_for_tests(),
+            b"\x1b]10;rgb:12/34/56\x07"
+        );
+
+        terminal.set_osc_color_report_format(OscColorReportFormat::Bits16);
+        terminal.next_slice(b"\x1b]10;?\x1b\\").unwrap();
+        assert_eq!(
+            terminal.take_pty_response_for_tests(),
+            b"\x1b]10;rgb:1212/3434/5656\x1b\\"
+        );
+    }
+
+    #[test]
+    fn terminal_stream_osc_color_report_format_none_suppresses_queries_only() {
+        let mut terminal = Terminal::init_with_options(
+            5,
+            2,
+            None,
+            TerminalInitOptions {
+                osc_color_report_format: OscColorReportFormat::None,
+                ..TerminalInitOptions::default()
+            },
+        )
+        .unwrap();
+
+        terminal
+            .next_slice(b"\x1b]4;4;#123456\x1b\\\x1b]4;4;?\x1b\\")
+            .unwrap();
+        assert!(terminal.pty_response_for_tests().is_empty());
+        assert_eq!(
+            terminal.colors.palette.current()[4],
+            color::Rgb::new(0x12, 0x34, 0x56)
+        );
+
+        terminal.next_slice(b"\x1b]104;4\x1b\\").unwrap();
+        assert_eq!(
+            terminal.colors.palette.current()[4],
+            color::DEFAULT_PALETTE[4]
+        );
+
+        terminal.set_osc_color_report_format(OscColorReportFormat::Bits8);
+        terminal.next_slice(b"\x1b]4;4;?\x1b\\").unwrap();
+        assert_eq!(
+            terminal.pty_response_for_tests(),
+            format!(
+                "\x1b]4;4;rgb:{:02x}/{:02x}/{:02x}\x1b\\",
+                color::DEFAULT_PALETTE[4].r,
+                color::DEFAULT_PALETTE[4].g,
+                color::DEFAULT_PALETTE[4].b
+            )
+            .as_bytes()
+        );
+    }
+
+    #[test]
     fn terminal_stream_osc_dynamic_resets_restore_defaults() {
         let mut terminal = Terminal::init(5, 2, None).unwrap();
 
@@ -10721,11 +11779,11 @@ mod tests {
         terminal.next_slice(b"0;split").unwrap();
         terminal.next_slice(b"\x1b").unwrap();
         terminal.next_slice(b"\\").unwrap();
-        terminal.next_slice(b"\x1b]7;file://host/s").unwrap();
+        terminal.next_slice(b"\x1b]7;file://localhost/s").unwrap();
         terminal.next_slice(b"plit\x07").unwrap();
 
         assert_eq!(terminal.title_for_tests(), "split");
-        assert_eq!(terminal.pwd_for_tests(), Some("file://host/split"));
+        assert_eq!(terminal.pwd_for_tests(), Some("/split"));
         assert_eq!(plain_with_unwrap(&terminal, false), "");
     }
 
@@ -13809,6 +14867,27 @@ mod tests {
         assert_eq!(plain_with_unwrap(&terminal, false), "BBBBB\nCCCCC");
         assert_eq!(terminal.full_screen_plain_for_tests(false), "BBBBB\nCCCCC");
         assert_eq!(terminal.scrollback_rows_for_tests(), 0);
+    }
+
+    #[test]
+    fn terminal_stream_scrollback_byte_limit_bounds_history() {
+        fn rows_for_limit(max_scrollback_bytes: Option<usize>) -> usize {
+            let mut terminal = Terminal::init(80, 24, max_scrollback_bytes).unwrap();
+            for i in 0..5000 {
+                let line = format!("line-{i:04}\n");
+                terminal.next_slice(line.as_bytes()).unwrap();
+            }
+            terminal.scrollback_rows_for_tests()
+        }
+
+        let small_rows = rows_for_limit(Some(1));
+        let large_rows = rows_for_limit(Some(100_000_000));
+
+        assert!(small_rows > 0, "{small_rows}");
+        assert!(
+            large_rows > small_rows,
+            "large_rows={large_rows} small_rows={small_rows}"
+        );
     }
 
     #[test]

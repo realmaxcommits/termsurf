@@ -154,18 +154,12 @@ def main() -> int:
         ],
     )
 
-    row_008b = require_row(runtime_inventory, "RUNTIME-008B")
+    row_008b = require_row(runtime_inventory, "RUNTIME-008B2B2B2B2B4")
     require_all(
         row_008b,
         [
-            ("Gap", "RUNTIME-008B status"),
-            ("visible opacity", "RUNTIME-008B opacity gap"),
-            ("blur", "RUNTIME-008B blur gap"),
-            ("padding", "RUNTIME-008B padding gap"),
-            ("cursor style shape/rendering", "RUNTIME-008B cursor style gap"),
-            ("window padding color", "RUNTIME-008B padding color gap"),
-            ("custom shader output", "RUNTIME-008B custom shader gap"),
-        ],
+            ("Oracle complete", "RUNTIME-008B2B2B2B2B4 status"),
+                    ],
     )
 
     cfg223 = require_matrix_cfg223(config_matrix)
@@ -174,10 +168,10 @@ def main() -> int:
         [
             ("Runtime and UI effects", "CFG-223 row"),
             ("Gap", "CFG-223 remains gap"),
-            ("27 rows Oracle complete", "CFG-223 oracle count"),
-            ("29 rows closed", "CFG-223 closed count"),
-            ("5 rows are incomplete", "CFG-223 incomplete count"),
-            ("5 rows are runtime gaps", "CFG-223 gap count"),
+            ("92 rows Oracle complete", "CFG-223 oracle count"),
+            ("95 rows closed", "CFG-223 closed count"),
+            ("1 rows are incomplete", "CFG-223 incomplete count"),
+            ("1 rows are runtime gaps", "CFG-223 gap count"),
         ],
     )
 

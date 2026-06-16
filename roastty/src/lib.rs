@@ -39,10 +39,10 @@ use terminal::selection_gesture::{
 use terminal::terminal::{
     ClearScreenResult, EmbeddedPointCoord, KittyImageMedium, PromptClickAction,
     Terminal as InnerTerminal, TerminalBellCallback, TerminalClipboardEvent, TerminalColorKind,
-    TerminalColorSchemeCallback, TerminalDeviceAttributesCallback, TerminalEnquiryCallback,
-    TerminalFormatterExtra, TerminalGridRef, TerminalGridRefPointError, TerminalPointTag,
-    TerminalScreen, TerminalSelection, TerminalSelectionAdjustment, TerminalSelectionFormat,
-    TerminalSelectionOrder, TerminalSizeCallback, TerminalStreamError,
+    TerminalColorSchemeCallback, TerminalDesktopNotification, TerminalDeviceAttributesCallback,
+    TerminalEnquiryCallback, TerminalFormatterExtra, TerminalGridRef, TerminalGridRefPointError,
+    TerminalPointTag, TerminalScreen, TerminalSelection, TerminalSelectionAdjustment,
+    TerminalSelectionFormat, TerminalSelectionOrder, TerminalSizeCallback, TerminalStreamError,
     TerminalTitleChangedCallback, TerminalTrackedGridRef, TerminalWritePtyCallback,
     TerminalXtversionCallback,
 };
@@ -112,6 +112,7 @@ const ROASTTY_INVALID_VALUE: c_int = 2;
 const ROASTTY_OUT_OF_SPACE: c_int = 3;
 const ROASTTY_NO_VALUE: c_int = 4;
 const ROASTTY_BUILD_MODE_DEBUG: c_int = 0;
+const ROASTTY_BUILD_MODE_RELEASE_FAST: c_int = 2;
 
 const DEFAULT_FONT_SIZE_POINTS: f32 = 13.0;
 
@@ -215,6 +216,10 @@ const ROASTTY_ACTION_CONFIG_CHANGE: c_int = 48;
 
 const ROASTTY_MOUSE_VISIBLE: c_int = 0;
 const ROASTTY_MOUSE_HIDDEN: c_int = 1;
+const ROASTTY_MOUSE_SHAPE_DEFAULT: c_int = 0;
+const ROASTTY_MOUSE_SHAPE_POINTER: c_int = 3;
+const ROASTTY_MOUSE_SHAPE_CROSSHAIR: c_int = 7;
+const ROASTTY_MOUSE_SHAPE_TEXT: c_int = 8;
 #[allow(dead_code)] // reserved ABI tag; roastty emits it in Phase C
 const ROASTTY_ACTION_RING_BELL: c_int = 50;
 #[allow(dead_code)] // reserved ABI tag; roastty emits it in Phase C
@@ -233,6 +238,11 @@ const ROASTTY_KEY_TABLE_DEACTIVATE: c_int = 1;
 const ROASTTY_KEY_TABLE_DEACTIVATE_ALL: c_int = 2;
 
 const MAX_ACTIVE_KEY_TABLES: usize = 8;
+const DESKTOP_NOTIFICATION_TITLE_LIMIT: usize = 63;
+const DESKTOP_NOTIFICATION_BODY_LIMIT: usize = 255;
+const DESKTOP_NOTIFICATION_RATE_LIMIT: std::time::Duration = std::time::Duration::from_secs(1);
+const DESKTOP_NOTIFICATION_IDENTICAL_RATE_LIMIT: std::time::Duration =
+    std::time::Duration::from_secs(5);
 
 const ROASTTY_INSPECTOR_TOGGLE: c_int = 0;
 const ROASTTY_INSPECTOR_SHOW: c_int = 1;
@@ -1229,6 +1239,11 @@ pub struct RoasttyActionSetTitle {
 }
 #[repr(C)]
 #[derive(Clone, Copy)]
+pub struct RoasttyActionPwd {
+    pwd: *const c_char,
+}
+#[repr(C)]
+#[derive(Clone, Copy)]
 pub struct RoasttyActionStartSearch {
     needle: *const c_char,
 }
@@ -1236,6 +1251,18 @@ pub struct RoasttyActionStartSearch {
 #[derive(Clone, Copy)]
 pub struct RoasttyActionOpenUrl {
     kind: c_int,
+    url: *const c_char,
+    len: usize,
+}
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RoasttyActionDesktopNotification {
+    title: *const c_char,
+    body: *const c_char,
+}
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RoasttyActionMouseOverLink {
     url: *const c_char,
     len: usize,
 }
@@ -1286,6 +1313,13 @@ pub struct RoasttySurfaceMessageChildExited {
     timetime_ms: u64,
 }
 
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RoasttyActionCommandFinished {
+    exit_code: i16,
+    duration: u64,
+}
+
 /// The embedded `roastty_action_u` — a tagged-union payload (24 bytes / align 8,
 /// matching the upstream `action_u`). Only the data-carrying members are named; `raw`
 /// forces the size/align and carries roastty-only tags (e.g. NAVIGATE_SEARCH).
@@ -1304,6 +1338,7 @@ pub union RoasttyActionU {
     reload_config: RoasttyActionReloadConfig,
     set_title: RoasttyActionSetTitle,
     prompt_title: c_int,
+    pwd: RoasttyActionPwd,
     float_window: c_int,
     secure_input: c_int,
     close_tab_mode: c_int,
@@ -1312,8 +1347,12 @@ pub union RoasttyActionU {
     start_search: RoasttyActionStartSearch,
     key_table: RoasttyActionKeyTable,
     key_sequence: RoasttyActionKeySequence,
+    mouse_shape: c_int,
     mouse_visibility: c_int,
+    mouse_over_link: RoasttyActionMouseOverLink,
     child_exited: RoasttySurfaceMessageChildExited,
+    desktop_notification: RoasttyActionDesktopNotification,
+    command_finished: RoasttyActionCommandFinished,
 }
 
 #[repr(C)]
@@ -1334,6 +1373,11 @@ fn action_u_from_storage(tag: c_int, storage: [usize; 8]) -> RoasttyActionU {
                 title: storage[0] as *const c_char,
             }
         }
+        ROASTTY_ACTION_PWD => {
+            u.pwd = RoasttyActionPwd {
+                pwd: storage[0] as *const c_char,
+            }
+        }
         ROASTTY_ACTION_START_SEARCH => {
             u.start_search = RoasttyActionStartSearch {
                 needle: storage[0] as *const c_char,
@@ -1344,6 +1388,18 @@ fn action_u_from_storage(tag: c_int, storage: [usize; 8]) -> RoasttyActionU {
                 kind: storage[0] as c_int,
                 url: storage[1] as *const c_char,
                 len: storage[2],
+            }
+        }
+        ROASTTY_ACTION_DESKTOP_NOTIFICATION => {
+            u.desktop_notification = RoasttyActionDesktopNotification {
+                title: storage[0] as *const c_char,
+                body: storage[1] as *const c_char,
+            }
+        }
+        ROASTTY_ACTION_COMMAND_FINISHED => {
+            u.command_finished = RoasttyActionCommandFinished {
+                exit_code: storage[0] as i16,
+                duration: storage[1] as u64,
             }
         }
         ROASTTY_ACTION_READONLY => u.readonly = storage[0] as c_int,
@@ -1374,7 +1430,14 @@ fn action_u_from_storage(tag: c_int, storage: [usize; 8]) -> RoasttyActionU {
             }
         }
         ROASTTY_ACTION_NAVIGATE_SEARCH => u.raw = [storage[0], 0, 0],
+        ROASTTY_ACTION_MOUSE_SHAPE => u.mouse_shape = storage[0] as c_int,
         ROASTTY_ACTION_MOUSE_VISIBILITY => u.mouse_visibility = storage[0] as c_int,
+        ROASTTY_ACTION_MOUSE_OVER_LINK => {
+            u.mouse_over_link = RoasttyActionMouseOverLink {
+                url: storage[0] as *const c_char,
+                len: storage[1],
+            }
+        }
         ROASTTY_ACTION_SHOW_CHILD_EXITED => {
             u.child_exited = RoasttySurfaceMessageChildExited {
                 exit_code: storage[0] as u32,
@@ -1420,11 +1483,20 @@ fn action_u_to_storage(tag: c_int, u: &RoasttyActionU) -> [usize; 8] {
             ROASTTY_ACTION_SET_TITLE | ROASTTY_ACTION_SET_TAB_TITLE => {
                 s[0] = u.set_title.title as usize
             }
+            ROASTTY_ACTION_PWD => s[0] = u.pwd.pwd as usize,
             ROASTTY_ACTION_START_SEARCH => s[0] = u.start_search.needle as usize,
             ROASTTY_ACTION_OPEN_URL => {
                 s[0] = u.open_url.kind as usize;
                 s[1] = u.open_url.url as usize;
                 s[2] = u.open_url.len;
+            }
+            ROASTTY_ACTION_DESKTOP_NOTIFICATION => {
+                s[0] = u.desktop_notification.title as usize;
+                s[1] = u.desktop_notification.body as usize;
+            }
+            ROASTTY_ACTION_COMMAND_FINISHED => {
+                s[0] = u.command_finished.exit_code as usize;
+                s[1] = u.command_finished.duration as usize;
             }
             ROASTTY_ACTION_READONLY => s[0] = u.readonly as usize,
             ROASTTY_ACTION_INSPECTOR => s[0] = u.inspector as usize,
@@ -1444,7 +1516,12 @@ fn action_u_to_storage(tag: c_int, u: &RoasttyActionU) -> [usize; 8] {
             ROASTTY_ACTION_PROMPT_TITLE => s[0] = u.prompt_title as usize,
             ROASTTY_ACTION_RELOAD_CONFIG => s[0] = usize::from(u.reload_config.soft),
             ROASTTY_ACTION_NAVIGATE_SEARCH => s[0] = u.raw[0],
+            ROASTTY_ACTION_MOUSE_SHAPE => s[0] = u.mouse_shape as usize,
             ROASTTY_ACTION_MOUSE_VISIBILITY => s[0] = u.mouse_visibility as usize,
+            ROASTTY_ACTION_MOUSE_OVER_LINK => {
+                s[0] = u.mouse_over_link.url as usize;
+                s[1] = u.mouse_over_link.len;
+            }
             ROASTTY_ACTION_SHOW_CHILD_EXITED => {
                 s[0] = u.child_exited.exit_code as usize;
                 s[1] = u.child_exited.timetime_ms as usize;
@@ -2507,9 +2584,29 @@ struct App {
     keybind_tables: Vec<ConfigKeybindTable>,
     initial_surface_pending: bool,
     surfaces: Vec<NonNull<Surface>>,
+    last_notification_time: Option<std::time::Instant>,
+    last_notification_identity: Vec<u8>,
 }
 
 impl App {
+    fn allow_desktop_notification_at(&mut self, now: std::time::Instant, identity: &[u8]) -> bool {
+        if let Some(last) = self.last_notification_time {
+            if now.duration_since(last) < DESKTOP_NOTIFICATION_RATE_LIMIT {
+                return false;
+            }
+            if self.last_notification_identity == identity
+                && now.duration_since(last) < DESKTOP_NOTIFICATION_IDENTICAL_RATE_LIMIT
+            {
+                return false;
+            }
+        }
+
+        self.last_notification_time = Some(now);
+        self.last_notification_identity.clear();
+        self.last_notification_identity.extend_from_slice(identity);
+        true
+    }
+
     fn key_event_binding(&self, event: &key::KeyEvent) -> Option<ConfiguredBindingMatch> {
         configured_key_event_binding(&self.keybind_triggers, event)
     }
@@ -2672,17 +2769,22 @@ struct Surface {
     focused: bool,
     visible: bool,
     size: RoasttySurfaceSize,
+    renderer_padding: renderer::size::Padding,
     color_scheme: c_int,
     config_conditional_state: config::conditional::State,
     confirm_close_surface: config::ConfirmCloseSurface,
     clipboard_read: config::ClipboardAccess,
     clipboard_write: config::ClipboardAccess,
+    desktop_notifications: bool,
+    link_previews: config::LinkPreviews,
     clipboard_paste_protection: bool,
     clipboard_paste_bracketed_safe: bool,
     copy_on_select: config::CopyOnSelect,
     selection_clear_on_typing: bool,
     selection_word_chars: Vec<u32>,
     vt_kam_allowed: bool,
+    cached_key_encode_options: key_encode::Options,
+    cached_terminal_kam_enabled: bool,
     key_remaps: key_mods::RemapSet,
     macos_option_as_alt: Option<key_mods::OptionAsAlt>,
     cursor_click_to_move: bool,
@@ -2714,11 +2816,13 @@ struct Surface {
     kitty_clipboard_write: Option<KittyClipboardWriteTransaction>,
     process_exited: bool,
     child_exit_handled: bool,
+    command_timer: Option<std::time::Instant>,
     dirty: bool,
     cursor_blink_visible: bool,
     cursor_blink_next: std::time::Instant,
     last_cursor_reset: Option<std::time::Instant>,
     last_bell_time: Option<std::time::Instant>,
+    last_output_bottom_marker: Option<OutputBottomMarker>,
     last_termio_error: Option<String>,
     /// The app-provided `NSView` (macOS) captured from `surface_config.platform.macos.nsview`
     /// (Issue 802 / Exp 15) — the live-render target. Null off-macOS or when not supplied.
@@ -2731,6 +2835,21 @@ struct Surface {
     present_driver: Option<PresentDriver>,
     #[cfg(test)]
     test_termio_events: VecDeque<termio::TermioWorkerEvent>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct OutputBottomMarker {
+    node: *const (),
+    y: u16,
+}
+
+impl From<TerminalGridRef> for OutputBottomMarker {
+    fn from(value: TerminalGridRef) -> Self {
+        Self {
+            node: value.node,
+            y: value.y,
+        }
+    }
 }
 
 const CURSOR_BLINK_INTERVAL: std::time::Duration = std::time::Duration::from_millis(600);
@@ -3097,12 +3216,19 @@ fn enqueue_present_tick(
     ptr: SendSurfacePtr,
     running: std::sync::Arc<std::sync::atomic::AtomicBool>,
 ) {
+    append_ui_key_trace("rust present_driver_enqueue_tick");
     dispatch2::DispatchQueue::main().exec_async(move || {
+        let tick_started = std::time::Instant::now();
+        append_ui_key_trace("rust present_driver_tick begin");
         // Re-bind the whole `SendSurfacePtr` (Rust 2021 disjoint capture would otherwise grab
         // the `!Send` `*mut Surface` field directly, bypassing the Send wrapper).
         let ptr = ptr;
         use std::sync::atomic::Ordering;
         if !running.load(Ordering::SeqCst) {
+            append_ui_key_trace(format!(
+                "rust present_driver_tick end reason=stopped-before-surface duration_ms={:.3}",
+                tick_started.elapsed().as_secs_f64() * 1000.0
+            ));
             return;
         }
         // SAFETY: main thread + running == true → the surface is alive (free flips running false
@@ -3114,11 +3240,33 @@ fn enqueue_present_tick(
         // (no-op otherwise); before the dirty check so the scrolled row presents now.
         surface.selection_autoscroll_tick();
         surface.advance_cursor_blink(now);
-        if surface.dirty && surface.should_present_live() {
+        let should_present_live = surface.should_present_live();
+        let animate_custom_shader = surface.should_animate_custom_shader_frame();
+        if should_present_on_tick(surface.dirty, should_present_live, animate_custom_shader) {
             surface.present_live();
             surface.dirty = false;
         }
+        append_ui_key_trace(format!(
+            "rust present_driver_tick end duration_ms={:.3}",
+            tick_started.elapsed().as_secs_f64() * 1000.0
+        ));
     });
+}
+
+fn should_present_on_tick(
+    dirty: bool,
+    should_present_live: bool,
+    animate_custom_shader: bool,
+) -> bool {
+    should_present_live && (dirty || animate_custom_shader)
+}
+
+fn custom_shader_animation_tick_enabled(
+    policy: config::CustomShaderAnimation,
+    focused: bool,
+    pipelines_active: bool,
+) -> bool {
+    pipelines_active && policy.should_animate(focused)
 }
 
 #[cfg(target_os = "macos")]
@@ -3335,6 +3483,8 @@ struct MouseViewportGeometry {
     fallback_rows: u16,
     cell_width: u32,
     cell_height: u32,
+    scale_x: f64,
+    scale_y: f64,
 }
 
 fn mouse_viewport_from_geometry(
@@ -3374,6 +3524,8 @@ fn mouse_viewport_from_geometry(
         geometry.cell_height
     }
     .max(1);
+    let scale_x = Surface::sanitized_scale(geometry.scale_x);
+    let scale_y = Surface::sanitized_scale(geometry.scale_y);
 
     let geometry = mouse_encode::Geometry {
         screen: mouse_encode::PixelSize {
@@ -3386,6 +3538,11 @@ fn mouse_viewport_from_geometry(
         },
         padding: mouse_encode::Padding::default(),
     };
+    let x = x * scale_x;
+    let y = y * scale_y;
+    if !x.is_finite() || !y.is_finite() || x > f64::from(f32::MAX) || y > f64::from(f32::MAX) {
+        return None;
+    }
     let pos = mouse_encode::Position {
         x: x as f32,
         y: y as f32,
@@ -3517,6 +3674,9 @@ struct SurfaceMouseState {
     position: Option<(f64, f64)>,
     mods: key_mods::Mods,
     buttons: [Option<SurfaceMouseButtonState>; 12],
+    left_press_cell: Option<point::Coordinate>,
+    link_point: Option<point::Coordinate>,
+    over_link: bool,
     scroll: Option<(f64, f64, u8)>,
     pending_scroll_x: f64,
     pending_scroll_y: f64,
@@ -3687,6 +3847,8 @@ impl Surface {
             self.config_conditional_state,
         );
         self.confirm_close_surface = config.confirm_close_surface;
+        self.desktop_notifications = parsed.desktop_notifications;
+        self.link_previews = parsed.link_previews;
         self.clipboard_paste_protection = parsed.clipboard_paste_protection;
         self.clipboard_paste_bracketed_safe = parsed.clipboard_paste_bracketed_safe;
         self.copy_on_select = parsed.copy_on_select;
@@ -3720,6 +3882,17 @@ impl Surface {
                 let terminal = termio.terminal_mut();
                 terminal.set_palette_default(Some(palette_color_tuples(palette)));
                 terminal.set_title_report(parsed.title_report);
+                terminal.set_enquiry_response(parsed.enquiry_response.as_bytes().to_vec());
+                terminal.set_osc_color_report_format(parsed.osc_color_report_format);
+                terminal.set_clipboard_write(parsed.clipboard_write);
+                terminal.set_cursor_defaults(
+                    parsed.cursor_style.to_terminal(),
+                    parsed.cursor_style_blink,
+                );
+                terminal.set_kitty_image_storage_limit(parsed.image_storage_limit as usize);
+                terminal.set_kitty_image_medium(KittyImageMedium::File, true);
+                terminal.set_kitty_image_medium(KittyImageMedium::TemporaryFile, true);
+                terminal.set_kitty_image_medium(KittyImageMedium::SharedMemory, true);
             });
             self.dirty = true;
         }
@@ -3898,6 +4071,64 @@ impl Surface {
         }
     }
 
+    fn active_config(&self) -> config::Config {
+        app_from_handle(self.app)
+            .map(|app| app.parsed_config.clone())
+            .unwrap_or_default()
+    }
+
+    fn recompute_renderer_size_from_config(
+        &mut self,
+        config: &config::Config,
+    ) -> Option<renderer::size::Size> {
+        if self.size.width_px == 0
+            || self.size.height_px == 0
+            || self.size.cell_width_px == 0
+            || self.size.cell_height_px == 0
+        {
+            return None;
+        }
+
+        let size = renderer::size::Size::from_config(
+            config,
+            renderer::size::ScreenSize {
+                width: self.size.width_px,
+                height: self.size.height_px,
+            },
+            renderer::size::CellSize {
+                width: self.size.cell_width_px,
+                height: self.size.cell_height_px,
+            },
+            Self::sanitized_scale(self.scale_factor_x),
+            Self::sanitized_scale(self.scale_factor_y),
+        );
+        let grid = size.grid();
+        self.renderer_padding = size.padding;
+        self.size.columns = grid.columns;
+        self.size.rows = grid.rows;
+        Some(size)
+    }
+
+    fn recompute_renderer_size(&mut self) -> Option<renderer::size::Size> {
+        let config = self.active_config();
+        self.recompute_renderer_size_from_config(&config)
+    }
+
+    fn resize_pty_to_current_size(&mut self, report_in_band_size: bool) {
+        let size = self.pty_size();
+        let mut resize_err = None;
+        if let Some(worker) = &self.termio_worker {
+            if let Err(err) = worker.resize_pty(size) {
+                resize_err = Some(format!("{err:?}"));
+            } else if report_in_band_size {
+                worker.with_termio_mut(|termio| termio.terminal_mut().report_in_band_size());
+            }
+        }
+        if let Some(err) = resize_err {
+            self.apply_termio_event(termio::TermioWorkerEvent::Error(err));
+        }
+    }
+
     fn start_termio(&mut self) -> c_int {
         append_ui_key_trace(format!(
             "rust surface_start_termio begin app_null={} has_worker={} initial_surface={} process_exited={} size={}x{} rows={} cols={}",
@@ -3921,11 +4152,12 @@ impl Surface {
             return ROASTTY_SUCCESS;
         }
 
-        let cwd = self.working_directory.as_ref().map(PathBuf::from);
-        let size = self.pty_size();
         let config = app_from_handle(self.app)
             .map(|app| app.parsed_config.clone())
             .unwrap_or_default();
+        self.recompute_renderer_size_from_config(&config);
+        let cwd = self.working_directory.as_ref().map(PathBuf::from);
+        let size = self.pty_size();
         let resource_dir = os::resources_dir::resources_dir()
             .ok()
             .and_then(|resources| resources.host().map(PathBuf::from));
@@ -3983,9 +4215,14 @@ impl Surface {
             shell_integration_features: config.shell_integration_features,
             resource_dir: resource_dir.clone(),
             term: config.term.clone(),
-            max_scrollback_rows: scrollback_limit_to_rows(config.scrollback_limit),
+            max_scrollback_bytes: scrollback_limit_to_bytes(config.scrollback_limit),
             palette: derived_config_palette(&config),
+            image_storage_limit: config.image_storage_limit as usize,
+            grapheme_cluster: config.grapheme_width_method.grapheme_cluster(),
             title_report: config.title_report,
+            enquiry_response: config.enquiry_response.as_bytes().to_vec(),
+            osc_color_report_format: config.osc_color_report_format,
+            clipboard_write: config.clipboard_write,
         };
 
         let termio = match (surface_command, initial_command, config_command) {
@@ -4079,24 +4316,19 @@ impl Surface {
         self.size.width_px = width;
         self.size.height_px = height;
 
-        let size = self.pty_size();
-        let mut resize_err = None;
-        if let Some(worker) = &self.termio_worker {
-            if let Err(err) = worker.resize_pty(size) {
-                resize_err = Some(format!("{err:?}"));
-            } else if changed {
-                // On an actual resize, emit the in-band size report if mode 2048 is enabled (Exp 37).
-                worker.with_termio_mut(|termio| termio.terminal_mut().report_in_band_size());
-            }
-        }
-        if let Some(err) = resize_err {
-            self.apply_termio_event(termio::TermioWorkerEvent::Error(err));
-        }
+        self.recompute_renderer_size();
+        self.resize_pty_to_current_size(changed);
     }
 
     fn request_render(&mut self) {
         self.dirty = true;
         self.wakeup_app();
+    }
+
+    fn invalidate_live_font_grid(&mut self) {
+        if self.has_live_view() {
+            self.renderer = None;
+        }
     }
 
     fn has_live_view(&self) -> bool {
@@ -4105,6 +4337,20 @@ impl Surface {
 
     fn should_present_live(&self) -> bool {
         self.has_live_view() && self.visible
+    }
+
+    fn should_animate_custom_shader_frame(&self) -> bool {
+        if !self.should_present_live() {
+            return false;
+        }
+        let Some(live) = self.renderer.as_ref() else {
+            return false;
+        };
+        custom_shader_animation_tick_enabled(
+            self.active_config().custom_shader_animation,
+            self.focused,
+            !live.custom_shader.pipelines.is_empty(),
+        )
     }
 
     fn reset_cursor_blink(&mut self, now: std::time::Instant) {
@@ -4188,10 +4434,18 @@ impl Surface {
         if !self.should_present_live() {
             return;
         }
+        let present_started = std::time::Instant::now();
+        append_ui_key_trace(format!(
+            "rust present_live begin dirty={} has_renderer={} columns={} rows={} width_px={} height_px={}",
+            self.dirty,
+            self.renderer.is_some(),
+            self.size.columns,
+            self.size.rows,
+            self.size.width_px,
+            self.size.height_px
+        ));
+        let config = self.active_config();
         if self.renderer.is_none() {
-            let config = app_from_handle(self.app)
-                .map(|app| app.parsed_config.clone())
-                .unwrap_or_default();
             self.renderer = build_live_renderer(
                 self.nsview,
                 &config,
@@ -4201,7 +4455,9 @@ impl Surface {
                 self.scale_factor_x,
             );
         }
-        if let Some(cell) = self
+        let old_columns = self.size.columns;
+        let old_rows = self.size.rows;
+        let render_size = if let Some(cell) = self
             .renderer
             .as_ref()
             .map(|live| live.shared_grid.cell_size())
@@ -4209,11 +4465,17 @@ impl Surface {
             if cell.width > 0 && cell.height > 0 {
                 self.size.cell_width_px = cell.width;
                 self.size.cell_height_px = cell.height;
-                self.size.columns =
-                    (self.size.width_px / cell.width).min(u32::from(u16::MAX)) as u16;
-                self.size.rows =
-                    (self.size.height_px / cell.height).min(u32::from(u16::MAX)) as u16;
+                self.recompute_renderer_size_from_config(&config)
+            } else {
+                None
             }
+        } else {
+            None
+        };
+        if self.termio_worker.is_some()
+            && (self.size.columns != old_columns || self.size.rows != old_rows)
+        {
+            self.resize_pty_to_current_size(false);
         }
         let width = self.size.width_px.max(1) as usize;
         let height = self.size.height_px.max(1) as usize;
@@ -4224,6 +4486,7 @@ impl Surface {
         let cursor_options = renderer::frame_renderer::FrameCursorOptions {
             focused,
             blink_visible: self.cursor_blink_visible,
+            ..renderer::frame_renderer::FrameCursorOptions::default()
         };
         let mouse_position = self.mouse.position;
         let mouse_mods = self.mouse.mods;
@@ -4234,7 +4497,10 @@ impl Surface {
             fallback_rows: self.pty_size().rows,
             cell_width: self.size.cell_width_px,
             cell_height: self.size.cell_height_px,
+            scale_x: self.scale_factor_x,
+            scale_y: self.scale_factor_y,
         };
+        self.scroll_to_bottom_on_output_before_present(&config);
         let Some(live) = self.renderer.as_mut() else {
             return;
         };
@@ -4255,20 +4521,17 @@ impl Surface {
         // rebuild updates grid_size but not the projection, so without this glyphs render
         // off-screen. Physical-pixel space throughout (clamped width/height, scaled cell).
         frame_renderer.update_screen(
-            renderer::size::Size {
+            render_size.unwrap_or(renderer::size::Size {
                 screen: renderer::size::ScreenSize {
                     width: width as u32,
                     height: height as u32,
                 },
                 cell: shared_grid.cell_size(),
                 padding: renderer::size::Padding::default(),
-            },
+            }),
             renderer::size::GridSize { columns, rows },
             &shared_grid.metrics,
         );
-        let config = app_from_handle(self.app)
-            .map(|app| app.parsed_config.clone())
-            .unwrap_or_default();
         link_set.sync_from_config(&config.link);
         custom_shader.sync_from_config(device, &config);
         worker.with_termio(|termio| {
@@ -4344,6 +4607,35 @@ impl Surface {
                 eprintln!("[roastty] live present error: {e:?}");
             }
         });
+        append_ui_key_trace(format!(
+            "rust present_live end duration_ms={:.3}",
+            present_started.elapsed().as_secs_f64() * 1000.0
+        ));
+    }
+
+    fn scroll_to_bottom_on_output_before_present(&mut self, config: &config::Config) {
+        if !config.scroll_to_bottom.output {
+            return;
+        }
+        let Some(worker) = self.termio_worker.as_ref() else {
+            return;
+        };
+        let last_marker = self.last_output_bottom_marker;
+        let next_marker = worker.with_termio_mut(|termio| {
+            let terminal = termio.terminal_mut();
+            if terminal.synchronized_output_enabled() {
+                return None;
+            }
+            let marker = OutputBottomMarker::from(terminal.active_screen_bottom_right()?);
+            if Some(marker) == last_marker {
+                return None;
+            }
+            terminal.scroll_viewport_to_bottom();
+            Some(marker)
+        });
+        if let Some(marker) = next_marker {
+            self.last_output_bottom_marker = Some(marker);
+        }
     }
 
     fn wakeup_app(&self) {
@@ -4513,6 +4805,69 @@ impl Surface {
         self.perform_action_result(ROASTTY_ACTION_MOUSE_VISIBILITY, storage)
     }
 
+    fn perform_mouse_shape(&self, shape: c_int) -> bool {
+        let mut storage = [0usize; 8];
+        storage[0] = shape as usize;
+        self.perform_action_result(ROASTTY_ACTION_MOUSE_SHAPE, storage)
+    }
+
+    fn perform_mouse_over_link(&self, url: &CStr) -> bool {
+        let bytes = url.to_bytes();
+        let mut storage = [0usize; 8];
+        storage[0] = url.as_ptr() as usize;
+        storage[1] = bytes.len();
+        self.perform_action_result(ROASTTY_ACTION_MOUSE_OVER_LINK, storage)
+    }
+
+    fn mouse_shape_to_abi(shape: mouse::MouseShape) -> c_int {
+        match shape {
+            mouse::MouseShape::Default => ROASTTY_MOUSE_SHAPE_DEFAULT,
+            mouse::MouseShape::ContextMenu => 1,
+            mouse::MouseShape::Help => 2,
+            mouse::MouseShape::Pointer => ROASTTY_MOUSE_SHAPE_POINTER,
+            mouse::MouseShape::Progress => 4,
+            mouse::MouseShape::Wait => 5,
+            mouse::MouseShape::Cell => 6,
+            mouse::MouseShape::Crosshair => ROASTTY_MOUSE_SHAPE_CROSSHAIR,
+            mouse::MouseShape::Text => ROASTTY_MOUSE_SHAPE_TEXT,
+            mouse::MouseShape::VerticalText => 9,
+            mouse::MouseShape::Alias => 10,
+            mouse::MouseShape::Copy => 11,
+            mouse::MouseShape::Move => 12,
+            mouse::MouseShape::NoDrop => 13,
+            mouse::MouseShape::NotAllowed => 14,
+            mouse::MouseShape::Grab => 15,
+            mouse::MouseShape::Grabbing => 16,
+            mouse::MouseShape::AllScroll => 17,
+            mouse::MouseShape::ColResize => 18,
+            mouse::MouseShape::RowResize => 19,
+            mouse::MouseShape::NResize => 20,
+            mouse::MouseShape::EResize => 21,
+            mouse::MouseShape::SResize => 22,
+            mouse::MouseShape::WResize => 23,
+            mouse::MouseShape::NeResize => 24,
+            mouse::MouseShape::NwResize => 25,
+            mouse::MouseShape::SeResize => 26,
+            mouse::MouseShape::SwResize => 27,
+            mouse::MouseShape::EwResize => 28,
+            mouse::MouseShape::NsResize => 29,
+            mouse::MouseShape::NeswResize => 30,
+            mouse::MouseShape::NwseResize => 31,
+            mouse::MouseShape::ZoomIn => 32,
+            mouse::MouseShape::ZoomOut => 33,
+        }
+    }
+
+    fn terminal_mouse_shape(&self) -> c_int {
+        self.termio_worker
+            .as_ref()
+            .map(|worker| {
+                worker
+                    .with_termio(|termio| Self::mouse_shape_to_abi(termio.terminal().mouse_shape()))
+            })
+            .unwrap_or(ROASTTY_MOUSE_SHAPE_TEXT)
+    }
+
     #[allow(dead_code)]
     fn perform_open_url_result(&self, kind: c_int, url: &[u8]) -> bool {
         let mut storage = [0usize; 8];
@@ -4520,6 +4875,56 @@ impl Surface {
         storage[1] = url.as_ptr() as usize;
         storage[2] = url.len();
         self.perform_action_result(ROASTTY_ACTION_OPEN_URL, storage)
+    }
+
+    fn perform_desktop_notification(&mut self, notification: &TerminalDesktopNotification) -> bool {
+        self.perform_desktop_notification_at(notification, std::time::Instant::now())
+    }
+
+    fn perform_desktop_notification_at(
+        &mut self,
+        notification: &TerminalDesktopNotification,
+        now: std::time::Instant,
+    ) -> bool {
+        if !self.desktop_notifications {
+            return false;
+        }
+
+        let title = nul_terminated_truncated(&notification.title, DESKTOP_NOTIFICATION_TITLE_LIMIT);
+        let body = nul_terminated_truncated(&notification.body, DESKTOP_NOTIFICATION_BODY_LIMIT);
+        let mut identity = Vec::with_capacity(title.len() + body.len());
+        identity.extend_from_slice(&title[..title.len().saturating_sub(1)]);
+        identity.extend_from_slice(&body[..body.len().saturating_sub(1)]);
+        let Some(app) = app_from_handle(self.app) else {
+            return false;
+        };
+        if !app.allow_desktop_notification_at(now, &identity) {
+            return false;
+        }
+
+        let mut storage = [0usize; 8];
+        storage[0] = title.as_ptr() as usize;
+        storage[1] = body.as_ptr() as usize;
+        self.perform_action_result(ROASTTY_ACTION_DESKTOP_NOTIFICATION, storage)
+    }
+
+    fn command_started_at(&mut self, now: std::time::Instant) {
+        self.command_timer = Some(now);
+    }
+
+    fn command_stopped_at(&mut self, exit_code: u8, now: std::time::Instant) -> bool {
+        let Some(start) = self.command_timer.take() else {
+            return false;
+        };
+        let duration = now.duration_since(start).as_nanos().min(u64::MAX as u128) as u64;
+        self.perform_command_finished(exit_code as i16, duration)
+    }
+
+    fn perform_command_finished(&self, exit_code: i16, duration: u64) -> bool {
+        let mut storage = [0usize; 8];
+        storage[0] = exit_code as usize;
+        storage[1] = duration as usize;
+        self.perform_action_result(ROASTTY_ACTION_COMMAND_FINISHED, storage)
     }
 
     fn perform_targeted_action_result(
@@ -4561,6 +4966,15 @@ impl Surface {
         let mut storage = [0usize; 8];
         storage[0] = title.as_ptr() as usize;
         self.perform_action_result(tag, storage)
+    }
+
+    fn set_pwd(&self, pwd: &[u8]) -> bool {
+        let Ok(pwd) = CString::new(pwd) else {
+            return false;
+        };
+        let mut storage = [0usize; 8];
+        storage[0] = pwd.as_ptr() as usize;
+        self.perform_action_result(ROASTTY_ACTION_PWD, storage)
     }
 
     fn inherited_config(&mut self, context: c_int) -> RoasttySurfaceConfig {
@@ -4894,10 +5308,7 @@ impl Surface {
         let uri = worker.with_termio(|termio| {
             let terminal = termio.terminal();
             let geometry = self.mouse_report_geometry(terminal)?;
-            let pos = mouse_encode::Position {
-                x: x as f32,
-                y: y as f32,
-            };
+            let pos = self.mouse_position_for_geometry(x, y)?;
             if geometry.pos_out_of_viewport(pos) {
                 return None;
             }
@@ -5611,6 +6022,7 @@ impl Surface {
             return;
         }
         self.font_size_points = points;
+        self.invalidate_live_font_grid();
         self.request_render();
     }
 
@@ -5787,6 +6199,7 @@ impl Surface {
         } else {
             None
         };
+        self.refresh_link_hover();
         if self.mouse.position.is_some() {
             let reporting = self.mouse_report_context().is_some();
             let shift_override = reporting && self.mouse.mods.shift && !self.mouse_shift_capture();
@@ -5818,6 +6231,12 @@ impl Surface {
         self.show_mouse();
         self.mouse.mods = key_mods_from_raw(mods);
         self.mouse.buttons[mouse_button_index(button)] = Some(state);
+        if matches!(button, mouse::MouseButton::Left) {
+            self.mouse.left_press_cell = match state {
+                SurfaceMouseButtonState::Press => self.current_mouse_cell(),
+                SurfaceMouseButtonState::Release => None,
+            };
+        }
         let action = match state {
             SurfaceMouseButtonState::Release => mouse::MouseAction::Release,
             SurfaceMouseButtonState::Press => mouse::MouseAction::Press,
@@ -5908,13 +6327,11 @@ impl Surface {
             return false;
         };
         let boundary_codepoints = self.selection_word_boundaries().to_vec();
+        let mouse_mods = self.mouse_mods_with_capture();
         let selected = worker.with_termio_mut(|termio| {
             let terminal = termio.terminal();
             let geometry = self.mouse_report_geometry(terminal)?;
-            let pos = mouse_encode::Position {
-                x: x as f32,
-                y: y as f32,
-            };
+            let pos = self.mouse_position_for_geometry(x, y)?;
             if geometry.pos_out_of_viewport(pos) {
                 return None;
             }
@@ -5930,10 +6347,14 @@ impl Surface {
                     return Some(false);
                 }
             }
-            let ref_ = terminal.grid_ref(TerminalPointTag::Viewport, cell)?;
-            let selection = terminal
-                .select_word(ref_, Some(&boundary_codepoints))
-                .ok()??;
+            let selection = self
+                .link_selection_at_viewport_cell(terminal, cell, mouse_mods)
+                .or_else(|| {
+                    let ref_ = terminal.grid_ref(TerminalPointTag::Viewport, cell)?;
+                    terminal
+                        .select_word(ref_, Some(&boundary_codepoints))
+                        .ok()?
+                })?;
             termio.terminal_mut().set_selection(Some(selection)).ok()?;
             Some(true)
         });
@@ -5941,6 +6362,211 @@ impl Surface {
             self.request_render();
         }
         false
+    }
+
+    fn link_selection_at_viewport_cell(
+        &self,
+        terminal: &InnerTerminal,
+        cell: point::Coordinate,
+        mouse_mods: key_mods::Mods,
+    ) -> Option<TerminalSelection> {
+        if mouse_mods == key_mods::ctrl_or_super(key_mods::Mods::new()) {
+            if let Some(selection) = self.osc8_link_selection_at_viewport_cell(terminal, cell) {
+                return Some(selection);
+            }
+        }
+        self.regex_link_selection_at_viewport_cell(terminal, cell, mouse_mods)
+    }
+
+    fn osc8_link_selection_at_viewport_cell(
+        &self,
+        terminal: &InnerTerminal,
+        cell: point::Coordinate,
+    ) -> Option<TerminalSelection> {
+        let ref_ = terminal.grid_ref(TerminalPointTag::Viewport, cell)?;
+        let uri = ref_.hyperlink_uri().ok()?;
+        if uri.is_empty() {
+            return None;
+        }
+        Some(TerminalSelection {
+            start: ref_,
+            end: ref_,
+            rectangle: false,
+        })
+    }
+
+    fn regex_link_selection_at_viewport_cell(
+        &self,
+        terminal: &InnerTerminal,
+        cell: point::Coordinate,
+        mouse_mods: key_mods::Mods,
+    ) -> Option<TerminalSelection> {
+        let config = app_from_handle(self.app)?;
+        let ref_ = terminal.grid_ref(TerminalPointTag::Viewport, cell)?;
+        let line = terminal.select_line(ref_, None, true).ok()??;
+        let map = terminal.selection_viewport_string_map(line, false).ok()?;
+        for link in &config.parsed_config.link {
+            match link.highlight {
+                input::link::Highlight::Always | input::link::Highlight::Hover => {}
+                input::link::Highlight::AlwaysMods(mods)
+                | input::link::Highlight::HoverMods(mods) => {
+                    if mods != mouse_mods {
+                        continue;
+                    }
+                }
+            }
+
+            let Ok(pattern) = std::str::from_utf8(&link.regex) else {
+                continue;
+            };
+            let Ok(regex) = onig::Regex::new(pattern) else {
+                continue;
+            };
+            for (start, end) in regex.find_iter(&map.string) {
+                if end <= start || end > map.map.len() {
+                    continue;
+                }
+                let matched = &map.map[start..end];
+                if !matched.contains(&cell) {
+                    continue;
+                }
+                return Some(TerminalSelection {
+                    start: terminal.grid_ref(TerminalPointTag::Viewport, matched[0])?,
+                    end: terminal.grid_ref(TerminalPointTag::Viewport, *matched.last()?)?,
+                    rectangle: false,
+                });
+            }
+        }
+        None
+    }
+
+    fn current_mouse_cell(&self) -> Option<point::Coordinate> {
+        let (x, y) = self.mouse.position?;
+        let worker = self.termio_worker.as_ref()?;
+        worker.with_termio(|termio| self.position_to_cell(termio.terminal(), x, y))
+    }
+
+    fn link_hover_url_at_viewport_cell(
+        &self,
+        terminal: &InnerTerminal,
+        cell: point::Coordinate,
+        mouse_mods: key_mods::Mods,
+    ) -> Option<(String, bool)> {
+        if mouse_mods == key_mods::ctrl_or_super(key_mods::Mods::new()) {
+            let ref_ = terminal.grid_ref(TerminalPointTag::Viewport, cell)?;
+            if let Ok(uri) = ref_.hyperlink_uri() {
+                if !uri.is_empty() {
+                    return Some((
+                        String::from_utf8_lossy(&uri).into_owned(),
+                        self.link_previews.previews_osc8_link(),
+                    ));
+                }
+            }
+        }
+
+        let selection = self.regex_link_selection_at_viewport_cell(terminal, cell, mouse_mods)?;
+        let url = terminal
+            .selection_format(TerminalSelectionFormat::Plain, true, false, Some(selection))
+            .ok()?;
+        Some((url, self.link_previews.previews_regular_link()))
+    }
+
+    fn clear_link_hover(&mut self) {
+        let shape = self.terminal_mouse_shape();
+        self.mouse.link_point = None;
+        if !self.mouse.over_link {
+            return;
+        }
+        self.mouse.over_link = false;
+        self.dispatch_link_hover_clear(shape);
+    }
+
+    fn dispatch_link_hover_clear(&mut self, shape: c_int) {
+        let empty = CString::new("").expect("empty string has no interior NUL");
+        let _ = self.perform_mouse_shape(shape);
+        let _ = self.perform_mouse_over_link(&empty);
+        self.request_render();
+    }
+
+    fn refresh_link_hover(&mut self) {
+        let reporting = self.mouse_report_context().is_some();
+        let shift_override = reporting && self.mouse.mods.shift && !self.mouse_shift_capture();
+        if reporting && !shift_override {
+            return;
+        }
+
+        let Some(cell) = self.current_mouse_cell() else {
+            self.clear_link_hover();
+            return;
+        };
+
+        let over_link = self.mouse.over_link;
+        if !over_link && self.mouse.link_point.is_some_and(|point| point == cell) {
+            return;
+        }
+
+        if self.left_button_pressed()
+            && self
+                .mouse
+                .left_press_cell
+                .is_some_and(|press_cell| press_cell != cell)
+        {
+            self.mouse.link_point = Some(cell);
+            if over_link {
+                self.clear_link_hover();
+            }
+            return;
+        }
+
+        let mouse_mods = self.mouse_mods_with_capture();
+        let hover = self.termio_worker.as_ref().and_then(|worker| {
+            worker.with_termio(|termio| {
+                self.link_hover_url_at_viewport_cell(termio.terminal(), cell, mouse_mods)
+            })
+        });
+        self.mouse.link_point = Some(cell);
+        let Some((url, preview)) = hover else {
+            if over_link {
+                self.clear_link_hover();
+            }
+            return;
+        };
+
+        self.mouse.over_link = true;
+        let _ = self.perform_mouse_shape(ROASTTY_MOUSE_SHAPE_POINTER);
+        if preview {
+            if let Ok(url) = CString::new(url) {
+                let _ = self.perform_mouse_over_link(&url);
+            }
+        }
+        self.request_render();
+    }
+
+    fn refresh_link_hover_for_key_mods(&mut self, mods: key_mods::Mods) {
+        let mods = mods.binding();
+        if self.mouse.mods == mods {
+            return;
+        }
+        self.mouse.mods = mods;
+
+        let reporting = self.mouse_report_context().is_some();
+        let shift_override = reporting && self.mouse.mods.shift && !self.mouse_shift_capture();
+        if !reporting || shift_override {
+            self.mouse.link_point = None;
+            self.refresh_link_hover();
+        } else if !self.mouse.mods.shift {
+            self.mouse.link_point = None;
+            self.mouse.over_link = false;
+            self.dispatch_link_hover_clear(self.terminal_mouse_shape());
+        }
+    }
+
+    fn mouse_mods_with_capture(&self) -> key_mods::Mods {
+        let mut mods = self.mouse.mods;
+        if self.mouse_report_context().is_some() && mods.shift && !self.mouse_shift_capture() {
+            mods.shift = false;
+        }
+        mods
     }
 
     fn has_active_selection(&self) -> bool {
@@ -6115,10 +6741,7 @@ impl Surface {
         y: f64,
     ) -> Option<point::Coordinate> {
         let geometry = self.mouse_report_geometry(terminal)?;
-        let pos = mouse_encode::Position {
-            x: x as f32,
-            y: y as f32,
-        };
+        let pos = self.mouse_position_for_geometry(x, y)?;
         if geometry.pos_out_of_viewport(pos) {
             return None;
         }
@@ -6135,10 +6758,7 @@ impl Surface {
         y: f64,
     ) -> Option<point::Coordinate> {
         let geometry = self.mouse_report_geometry(terminal)?;
-        Some(geometry.pos_to_cell(mouse_encode::Position {
-            x: x as f32,
-            y: y as f32,
-        }))
+        Some(geometry.pos_to_cell(self.mouse_position_for_geometry(x, y)?))
     }
 
     /// Geometry the drag gesture needs (cell width / padding / screen height for x-mapping + edge
@@ -6429,9 +7049,9 @@ impl Surface {
             action,
             button,
             mods: mouse_mods_from_key_mods(self.mouse.mods),
-            pos: mouse_encode::Position {
-                x: x as f32,
-                y: y as f32,
+            pos: match self.mouse_position_for_geometry(x, y) {
+                Some(pos) => pos,
+                None => return false,
             },
         };
         let encoded = mouse_encode::encode(
@@ -6549,7 +7169,24 @@ impl Surface {
                 width: cell_width,
                 height: cell_height,
             },
-            padding: mouse_encode::Padding::default(),
+            padding: mouse_encode::Padding {
+                top: self.renderer_padding.top,
+                bottom: self.renderer_padding.bottom,
+                right: self.renderer_padding.right,
+                left: self.renderer_padding.left,
+            },
+        })
+    }
+
+    fn mouse_position_for_geometry(&self, x: f64, y: f64) -> Option<mouse_encode::Position> {
+        let x = x * Self::sanitized_scale(self.scale_factor_x);
+        let y = y * Self::sanitized_scale(self.scale_factor_y);
+        if !x.is_finite() || !y.is_finite() || x > f64::from(f32::MAX) || y > f64::from(f32::MAX) {
+            return None;
+        }
+        Some(mouse_encode::Position {
+            x: x as f32,
+            y: y as f32,
         })
     }
 
@@ -6570,10 +7207,7 @@ impl Surface {
         let selection = worker.with_termio(|termio| {
             let terminal = termio.terminal();
             let geometry = self.mouse_report_geometry(terminal)?;
-            let pos = mouse_encode::Position {
-                x: x as f32,
-                y: y as f32,
-            };
+            let pos = self.mouse_position_for_geometry(x, y)?;
             if geometry.pos_out_of_viewport(pos) {
                 return None;
             }
@@ -7047,6 +7681,7 @@ impl Surface {
         }
         let event = self.remapped_key_event(&event.event);
         self.last_key_event = Some(event.clone());
+        self.refresh_link_hover_for_key_mods(event.mods);
         if self.consume_default_binding_release(&event) {
             return true;
         }
@@ -7130,10 +7765,7 @@ impl Surface {
     }
 
     fn terminal_kam_enabled(&self) -> bool {
-        self.termio_worker
-            .as_ref()
-            .and_then(|worker| worker.with_termio(|termio| termio.terminal().mode_get(2, true)))
-            .unwrap_or(false)
+        self.cached_terminal_kam_enabled
     }
 
     fn write_encoded_key_event(&mut self, event: &key::KeyEvent) -> bool {
@@ -7222,10 +7854,7 @@ impl Surface {
     }
 
     fn key_encode_options(&self) -> key_encode::Options {
-        self.termio_worker
-            .as_ref()
-            .map(|worker| worker.with_termio(|termio| termio.terminal().key_encode_options()))
-            .unwrap_or_default()
+        self.cached_key_encode_options
     }
 
     fn tick_termio(&mut self) {
@@ -7256,10 +7885,16 @@ impl Surface {
     fn apply_termio_event(&mut self, event: termio::TermioWorkerEvent) {
         match event {
             termio::TermioWorkerEvent::Pump(pump) => {
+                self.cached_key_encode_options = pump.input_state.key_encode_options;
+                self.cached_terminal_kam_enabled = pump.input_state.terminal_kam_enabled;
                 append_ui_key_trace(format!(
-                    "rust surface_apply_termio_event pump bytes_read={} bell_count={} bytes_written={} pending_write={} eof={} child_exited={}",
+                    "rust surface_apply_termio_event pump bytes_read={} bell_count={} titles={} pwd={} desktop_notifications={} command_events={} bytes_written={} pending_write={} eof={} child_exited={}",
                     pump.bytes_read,
                     pump.bell_count,
+                    pump.titles.len(),
+                    pump.pwd.len(),
+                    pump.desktop_notifications.len(),
+                    pump.command_events.len(),
                     pump.bytes_written,
                     pump.pending_write_bytes,
                     pump.eof,
@@ -7271,14 +7906,34 @@ impl Surface {
                 if pump.bell_count > 0 {
                     self.ring_bell(std::time::Instant::now());
                 }
-                if let Some(title) = pump.title.as_deref() {
-                    if !title.is_empty() && self.static_title.is_none() {
+                if self.static_title.is_none() {
+                    for title in &pump.titles {
                         self.set_title(ROASTTY_ACTION_SET_TITLE, title.as_bytes());
+                    }
+                }
+                for pwd in &pump.pwd {
+                    self.set_pwd(pwd.as_bytes());
+                }
+                for notification in &pump.desktop_notifications {
+                    let _ = self.perform_desktop_notification(notification);
+                }
+                for event in &pump.command_events {
+                    let now = std::time::Instant::now();
+                    match event {
+                        terminal::terminal::TerminalCommandEvent::Start => {
+                            self.command_started_at(now);
+                        }
+                        terminal::terminal::TerminalCommandEvent::Stop { exit_code } => {
+                            let _ = self.command_stopped_at(*exit_code, now);
+                        }
                     }
                 }
                 if pump.bytes_read > 0
                     || pump.bell_count > 0
-                    || pump.title.is_some()
+                    || !pump.titles.is_empty()
+                    || !pump.pwd.is_empty()
+                    || !pump.desktop_notifications.is_empty()
+                    || !pump.command_events.is_empty()
                     || pump.bytes_written > 0
                     || pump.pending_write_bytes > 0
                     || pump.eof
@@ -7502,6 +8157,13 @@ fn copied_config_string(ptr: *const c_char) -> Option<String> {
         .map(str::to_owned)
 }
 
+fn nul_terminated_truncated(bytes: &[u8], limit: usize) -> Vec<u8> {
+    let mut out = Vec::with_capacity(limit.saturating_add(1));
+    out.extend_from_slice(&bytes[..bytes.len().min(limit)]);
+    out.push(0);
+    out
+}
+
 fn config_startup_input_bytes(input: &config::RepeatableReadableIo) -> Option<Vec<u8>> {
     if input.list.is_empty() {
         return None;
@@ -7536,8 +8198,8 @@ fn config_startup_input_bytes(input: &config::RepeatableReadableIo) -> Option<Ve
     Some(bytes)
 }
 
-fn scrollback_limit_to_rows(limit: usize) -> Option<usize> {
-    (limit == 0).then_some(0)
+fn scrollback_limit_to_bytes(limit: usize) -> Option<usize> {
+    Some(limit)
 }
 
 fn valid_env_key(key: &str) -> bool {
@@ -13510,7 +14172,11 @@ pub extern "C" fn roastty_init(argc: usize, argv: *mut *mut c_char) -> c_int {
 #[no_mangle]
 pub extern "C" fn roastty_info() -> RoasttyInfo {
     RoasttyInfo {
-        build_mode: ROASTTY_BUILD_MODE_DEBUG,
+        build_mode: if cfg!(debug_assertions) {
+            ROASTTY_BUILD_MODE_DEBUG
+        } else {
+            ROASTTY_BUILD_MODE_RELEASE_FAST
+        },
         version: VERSION.as_ptr().cast::<c_char>(),
         version_len: VERSION.len() - 1,
     }
@@ -14188,6 +14854,30 @@ pub extern "C" fn roastty_config_get(
                     .write(config.parsed.focus_follows_mouse);
                 true
             }
+            b"bell-features" => {
+                let Some(config) = config_from_handle(config) else {
+                    return false;
+                };
+                let features = config.parsed.bell_features;
+                let mut raw: u32 = 0;
+                if features.system {
+                    raw |= 1 << 0;
+                }
+                if features.audio {
+                    raw |= 1 << 1;
+                }
+                if features.attention {
+                    raw |= 1 << 2;
+                }
+                if features.title {
+                    raw |= 1 << 3;
+                }
+                if features.border {
+                    raw |= 1 << 4;
+                }
+                output.cast::<u32>().write(raw);
+                true
+            }
             b"maximize" => {
                 let Some(config) = config_from_handle(config) else {
                     return false;
@@ -14250,6 +14940,13 @@ pub extern "C" fn roastty_config_get(
                 output
                     .cast::<bool>()
                     .write(config.parsed.macos_window_shadow);
+                true
+            }
+            b"macos-applescript" => {
+                let Some(config) = config_from_handle(config) else {
+                    return false;
+                };
+                output.cast::<bool>().write(config.parsed.macos_applescript);
                 true
             }
             b"resize-overlay" => {
@@ -14570,6 +15267,8 @@ pub extern "C" fn roastty_app_new(
         keybind_tables,
         initial_surface_pending: true,
         surfaces: Vec::new(),
+        last_notification_time: None,
+        last_notification_identity: Vec::new(),
     }))
     .cast()
 }
@@ -14591,15 +15290,24 @@ pub extern "C" fn roastty_app_free(app: RoasttyApp) {
 
 #[no_mangle]
 pub extern "C" fn roastty_app_tick(app: RoasttyApp) {
+    let tick_started = std::time::Instant::now();
     let surfaces = app_from_handle(app)
         .map(|app| app.surfaces.clone())
         .unwrap_or_default();
+    append_ui_key_trace(format!("rust app_tick begin surfaces={}", surfaces.len()));
+    let mut drained = 0usize;
     for mut surface in surfaces {
         let surface = unsafe { surface.as_mut() };
         if surface.app == app {
             surface.tick_termio();
+            drained += 1;
         }
     }
+    append_ui_key_trace(format!(
+        "rust app_tick end drained_surfaces={} duration_ms={:.3}",
+        drained,
+        tick_started.elapsed().as_secs_f64() * 1000.0
+    ));
 }
 
 #[no_mangle]
@@ -14702,12 +15410,12 @@ pub extern "C" fn roastty_terminal_new(
         return ROASTTY_INVALID_VALUE;
     }
 
-    let max_scrollback_rows = if max_scrollback_rows == usize::MAX {
+    let max_scrollback_bytes = if max_scrollback_rows == usize::MAX {
         None
     } else {
         Some(max_scrollback_rows)
     };
-    let terminal = match InnerTerminal::init(columns, rows, max_scrollback_rows) {
+    let terminal = match InnerTerminal::init(columns, rows, max_scrollback_bytes) {
         Ok(terminal) => terminal,
         Err(_) => return ROASTTY_OUT_OF_MEMORY,
     };
@@ -17968,6 +18676,8 @@ pub extern "C" fn roastty_surface_new(
         click_repeat_interval_ns,
         parsed_wait_after_command,
         parsed_abnormal_command_exit_runtime,
+        desktop_notifications,
+        link_previews,
         window_vsync,
         config_conditional_state,
     ) = app_from_handle(app)
@@ -17997,6 +18707,8 @@ pub extern "C" fn roastty_surface_new(
                 click_repeat_interval_ns(&parsed),
                 parsed.wait_after_command,
                 parsed.abnormal_command_exit_runtime,
+                parsed.desktop_notifications,
+                parsed.link_previews,
                 parsed.window_vsync,
                 app.config_conditional_state,
             )
@@ -18022,6 +18734,8 @@ pub extern "C" fn roastty_surface_new(
             500_000_000,
             false,
             config::Config::default().abnormal_command_exit_runtime,
+            true,
+            config::LinkPreviews::True,
             true,
             config::conditional::State::default(),
         ));
@@ -18070,17 +18784,22 @@ pub extern "C" fn roastty_surface_new(
             cell_width_px: 0,
             cell_height_px: 0,
         },
+        renderer_padding: renderer::size::Padding::default(),
         color_scheme: 0,
         config_conditional_state,
         confirm_close_surface,
         clipboard_read,
         clipboard_write,
+        desktop_notifications,
+        link_previews,
         clipboard_paste_protection,
         clipboard_paste_bracketed_safe,
         copy_on_select,
         selection_clear_on_typing,
         selection_word_chars,
         vt_kam_allowed,
+        cached_key_encode_options: key_encode::Options::default(),
+        cached_terminal_kam_enabled: false,
         key_remaps,
         macos_option_as_alt,
         cursor_click_to_move,
@@ -18111,11 +18830,13 @@ pub extern "C" fn roastty_surface_new(
         kitty_clipboard_write: None,
         process_exited: false,
         child_exit_handled: false,
+        command_timer: None,
         dirty: false,
         cursor_blink_visible: false,
         cursor_blink_next: std::time::Instant::now() + CURSOR_BLINK_INTERVAL,
         last_cursor_reset: None,
         last_bell_time: None,
+        last_output_bottom_marker: None,
         last_termio_error: None,
         // Capture the app's NSView (macOS) for the live-render target (Exp 15). Null off-macOS.
         nsview: if config.platform_tag == 1 {
@@ -18288,6 +19009,8 @@ pub extern "C" fn roastty_surface_set_content_scale(surface: RoasttySurface, x: 
             // glyphs are rasterized at `font_size * scale`, so without a rebuild text stays at the
             // old DPI (blurry/chunky). Only the change case drops/dirties (idempotent otherwise).
             surface.renderer = None;
+            surface.recompute_renderer_size();
+            surface.resize_pty_to_current_size(false);
             surface.dirty = true;
         }
     }
@@ -18517,8 +19240,26 @@ pub extern "C" fn roastty_inspector_text(inspector: RoasttyInspector, text: *con
 }
 
 #[no_mangle]
-pub extern "C" fn roastty_surface_quicklook_font(_surface: RoasttySurface) -> *mut c_void {
-    ptr::null_mut()
+pub extern "C" fn roastty_surface_quicklook_font(surface: RoasttySurface) -> *mut c_void {
+    let Some(surface) = surface_from_handle(surface) else {
+        return ptr::null_mut();
+    };
+    let scale_y = Surface::sanitized_scale(surface.scale_factor_y);
+    let Some(renderer) = surface.renderer.as_mut() else {
+        return ptr::null_mut();
+    };
+    let Ok(face) = renderer
+        .shared_grid
+        .resolver
+        .collection_mut()
+        .get_face(font::collection::Index::default())
+    else {
+        return ptr::null_mut();
+    };
+    let font = face.copy_quicklook_font(scale_y);
+    objc2_core_foundation::CFRetained::into_raw(font)
+        .as_ptr()
+        .cast()
 }
 
 #[no_mangle]
@@ -18612,6 +19353,13 @@ fn trace_hex(bytes: &[u8]) -> String {
         .join("")
 }
 
+fn trace_timestamp() -> String {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default();
+    format!("ts_ns={}", now.as_nanos())
+}
+
 fn trace_input_text_hex(event: &RoasttyInputKey) -> String {
     if event.text.is_null() {
         return String::new();
@@ -18633,7 +19381,7 @@ pub(crate) fn append_ui_key_trace(line: impl AsRef<str>) {
         return;
     };
 
-    let _ = writeln!(file, "{}", line.as_ref());
+    let _ = writeln!(file, "{} {}", trace_timestamp(), line.as_ref());
 }
 
 /// Embedded by-value `surface_key` (the app's path) — supersedes the opaque
@@ -19745,11 +20493,16 @@ mod tests {
         action_tag: c_int,
         storage: [usize; 8],
         title: Option<String>,
+        pwd: Option<String>,
         needle: Option<String>,
         open_url: Option<(c_int, Vec<u8>)>,
         key_table: Option<(c_int, Vec<u8>)>,
         key_sequence: Option<(bool, c_int, usize, c_int)>,
         child_exited: Option<(u32, u64)>,
+        desktop_notification: Option<(String, String)>,
+        command_finished: Option<(i16, u64)>,
+        mouse_shape: Option<c_int>,
+        mouse_over_link: Option<String>,
         close_count_at_action: usize,
     }
 
@@ -19915,6 +20668,52 @@ mod tests {
         let handle = roastty_config_new();
         let config = config_from_handle(handle).unwrap();
         config.parsed.right_click_action = right_click_action;
+        config.sync_from_parsed_config();
+        handle
+    }
+
+    fn new_test_config_with_right_click_action_and_links(
+        right_click_action: config::RightClickAction,
+        links: Vec<input::link::Link>,
+    ) -> RoasttyConfig {
+        let handle = roastty_config_new();
+        let config = config_from_handle(handle).unwrap();
+        config.parsed.right_click_action = right_click_action;
+        config.parsed.link_url = false;
+        config.parsed.link = links;
+        config.sync_from_parsed_config();
+        handle
+    }
+
+    fn new_test_config_with_link_previews(link_previews: config::LinkPreviews) -> RoasttyConfig {
+        let handle = roastty_config_new();
+        let config = config_from_handle(handle).unwrap();
+        config.parsed.link_previews = link_previews;
+        config.sync_from_parsed_config();
+        handle
+    }
+
+    fn new_test_config_with_link_previews_and_mouse_shift_capture(
+        link_previews: config::LinkPreviews,
+        mouse_shift_capture: config::MouseShiftCapture,
+    ) -> RoasttyConfig {
+        let handle = roastty_config_new();
+        let config = config_from_handle(handle).unwrap();
+        config.parsed.link_previews = link_previews;
+        config.parsed.mouse_shift_capture = mouse_shift_capture;
+        config.sync_from_parsed_config();
+        handle
+    }
+
+    fn new_test_config_with_link_previews_and_links(
+        link_previews: config::LinkPreviews,
+        links: Vec<input::link::Link>,
+    ) -> RoasttyConfig {
+        let handle = roastty_config_new();
+        let config = config_from_handle(handle).unwrap();
+        config.parsed.link_previews = link_previews;
+        config.parsed.link_url = false;
+        config.parsed.link = links;
         config.sync_from_parsed_config();
         handle
     }
@@ -20172,6 +20971,16 @@ mod tests {
             } else {
                 None
             };
+            let pwd = if action.tag == ROASTTY_ACTION_PWD {
+                let ptr = storage[0] as *const c_char;
+                (!ptr.is_null()).then(|| {
+                    unsafe { CStr::from_ptr(ptr) }
+                        .to_string_lossy()
+                        .into_owned()
+                })
+            } else {
+                None
+            };
             let open_url = if action.tag == ROASTTY_ACTION_OPEN_URL {
                 let ptr = storage[1] as *const u8;
                 let len = storage[2];
@@ -20207,6 +21016,44 @@ mod tests {
             };
             let child_exited = (action.tag == ROASTTY_ACTION_SHOW_CHILD_EXITED)
                 .then_some((storage[0] as u32, storage[1] as u64));
+            let command_finished = (action.tag == ROASTTY_ACTION_COMMAND_FINISHED)
+                .then_some((storage[0] as i16, storage[1] as u64));
+            let mouse_shape =
+                (action.tag == ROASTTY_ACTION_MOUSE_SHAPE).then_some(storage[0] as c_int);
+            let mouse_over_link = if action.tag == ROASTTY_ACTION_MOUSE_OVER_LINK {
+                let ptr = storage[0] as *const u8;
+                let len = storage[1];
+                if ptr.is_null() {
+                    Some(String::new())
+                } else {
+                    let bytes = unsafe { slice::from_raw_parts(ptr, len) };
+                    Some(String::from_utf8_lossy(bytes).into_owned())
+                }
+            } else {
+                None
+            };
+            let desktop_notification = if action.tag == ROASTTY_ACTION_DESKTOP_NOTIFICATION {
+                let title = storage[0] as *const c_char;
+                let body = storage[1] as *const c_char;
+                Some((
+                    (!title.is_null())
+                        .then(|| {
+                            unsafe { CStr::from_ptr(title) }
+                                .to_string_lossy()
+                                .into_owned()
+                        })
+                        .unwrap_or_default(),
+                    (!body.is_null())
+                        .then(|| {
+                            unsafe { CStr::from_ptr(body) }
+                                .to_string_lossy()
+                                .into_owned()
+                        })
+                        .unwrap_or_default(),
+                ))
+            } else {
+                None
+            };
             records.borrow_mut().push(ActionRecord {
                 app,
                 target_tag: target.tag,
@@ -20214,11 +21061,16 @@ mod tests {
                 action_tag: action.tag,
                 storage,
                 title,
+                pwd,
                 needle,
                 open_url,
                 key_table,
                 key_sequence,
                 child_exited,
+                desktop_notification,
+                command_finished,
+                mouse_shape,
+                mouse_over_link,
                 close_count_at_action: CLOSE_COUNT.load(Ordering::SeqCst),
             });
         });
@@ -20242,6 +21094,20 @@ mod tests {
 
     fn action_records() -> Vec<ActionRecord> {
         ACTION_RECORDS.with(|records| records.borrow().clone())
+    }
+
+    fn mouse_shape_records() -> Vec<c_int> {
+        action_records()
+            .into_iter()
+            .filter_map(|record| record.mouse_shape)
+            .collect()
+    }
+
+    fn mouse_over_link_records() -> Vec<String> {
+        action_records()
+            .into_iter()
+            .filter_map(|record| record.mouse_over_link)
+            .collect()
     }
 
     fn new_test_app_with_action(result: bool) -> RoasttyApp {
@@ -20811,6 +21677,225 @@ mod tests {
         termio::TermioWorker::spawn(termio, 10, 4096).expect("spawn termio worker")
     }
 
+    fn scroll_to_bottom_output_test_size() -> PtySize {
+        PtySize {
+            rows: 6,
+            cols: 20,
+            width_px: 200,
+            height_px: 120,
+        }
+    }
+
+    fn attach_scroll_to_bottom_output_worker(surface: RoasttySurface) {
+        surface_from_handle(surface).unwrap().termio_worker = Some(test_worker_with_size(
+            "sleep 1",
+            scroll_to_bottom_output_test_size(),
+        ));
+    }
+
+    fn with_surface_terminal<R>(
+        surface: RoasttySurface,
+        f: impl FnOnce(&terminal::terminal::Terminal) -> R,
+    ) -> R {
+        surface_from_handle(surface)
+            .unwrap()
+            .termio_worker
+            .as_ref()
+            .unwrap()
+            .with_termio(|termio| f(termio.terminal()))
+    }
+
+    fn with_surface_terminal_mut<R>(
+        surface: RoasttySurface,
+        f: impl FnOnce(&mut terminal::terminal::Terminal) -> R,
+    ) -> R {
+        surface_from_handle(surface)
+            .unwrap()
+            .termio_worker
+            .as_ref()
+            .unwrap()
+            .with_termio_mut(|termio| f(termio.terminal_mut()))
+    }
+
+    fn scroll_to_bottom_output_seed_terminal(surface: RoasttySurface) {
+        with_surface_terminal_mut(surface, |terminal| {
+            let mut content = String::new();
+            for i in 0..24 {
+                content.push_str(&format!("seed-{i:02}\r\n"));
+            }
+            terminal.next_slice(content.as_bytes()).unwrap();
+        });
+    }
+
+    fn scroll_to_bottom_output_write(surface: RoasttySurface, label: &str) {
+        with_surface_terminal_mut(surface, |terminal| {
+            terminal
+                .next_slice(format!("{label}\r\n").as_bytes())
+                .unwrap();
+        });
+    }
+
+    fn scroll_to_bottom_output_scroll_history(surface: RoasttySurface) {
+        with_surface_terminal_mut(surface, |terminal| {
+            terminal.scroll_viewport_delta_row(-100);
+        });
+    }
+
+    fn scroll_to_bottom_output_at_bottom(surface: RoasttySurface) -> bool {
+        with_surface_terminal(surface, |terminal| {
+            let Some((_, viewport_bottom)) = terminal.viewport_bounds() else {
+                return false;
+            };
+            let Some(active_bottom) = terminal.active_screen_bottom_right() else {
+                return false;
+            };
+            viewport_bottom.node == active_bottom.node && viewport_bottom.y == active_bottom.y
+        })
+    }
+
+    fn run_scroll_to_bottom_output_helper(surface: RoasttySurface) {
+        let surface_ref = surface_from_handle(surface).unwrap();
+        let config = surface_ref.active_config();
+        surface_ref.scroll_to_bottom_on_output_before_present(&config);
+    }
+
+    #[test]
+    fn scroll_to_bottom_output_disabled_preserves_history_viewport() {
+        let _guard = pty_command_lock();
+        let app = new_test_app();
+        let surface = new_test_surface(app);
+        attach_scroll_to_bottom_output_worker(surface);
+
+        scroll_to_bottom_output_seed_terminal(surface);
+        scroll_to_bottom_output_scroll_history(surface);
+        assert!(!scroll_to_bottom_output_at_bottom(surface));
+
+        scroll_to_bottom_output_write(surface, "disabled-output");
+        run_scroll_to_bottom_output_helper(surface);
+
+        assert!(
+            !scroll_to_bottom_output_at_bottom(surface),
+            "disabled scroll-to-bottom.output must not scroll on output"
+        );
+        assert_eq!(
+            surface_from_handle(surface)
+                .unwrap()
+                .last_output_bottom_marker,
+            None
+        );
+
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+    }
+
+    #[test]
+    fn scroll_to_bottom_output_enabled_scrolls_once_per_bottom_marker() {
+        let _guard = pty_command_lock();
+        let config = new_test_config_from_str("scroll-to-bottom = output\n");
+        let app = roastty_app_new(ptr::null(), config);
+        let surface = new_test_surface(app);
+        attach_scroll_to_bottom_output_worker(surface);
+
+        scroll_to_bottom_output_seed_terminal(surface);
+        scroll_to_bottom_output_scroll_history(surface);
+        assert!(!scroll_to_bottom_output_at_bottom(surface));
+
+        scroll_to_bottom_output_write(surface, "enabled-output");
+        run_scroll_to_bottom_output_helper(surface);
+        assert!(
+            scroll_to_bottom_output_at_bottom(surface),
+            "changed bottom marker should scroll to bottom"
+        );
+        let first_marker = surface_from_handle(surface)
+            .unwrap()
+            .last_output_bottom_marker
+            .expect("marker after output scroll");
+
+        scroll_to_bottom_output_scroll_history(surface);
+        assert!(!scroll_to_bottom_output_at_bottom(surface));
+        run_scroll_to_bottom_output_helper(surface);
+        assert!(
+            !scroll_to_bottom_output_at_bottom(surface),
+            "unchanged bottom marker must not scroll on a later render"
+        );
+        assert_eq!(
+            surface_from_handle(surface)
+                .unwrap()
+                .last_output_bottom_marker,
+            Some(first_marker)
+        );
+
+        scroll_to_bottom_output_write(surface, "enabled-output-2");
+        run_scroll_to_bottom_output_helper(surface);
+        assert!(
+            scroll_to_bottom_output_at_bottom(surface),
+            "new bottom marker should scroll after manual history scroll"
+        );
+        let second_marker = surface_from_handle(surface)
+            .unwrap()
+            .last_output_bottom_marker
+            .expect("marker after second output scroll");
+        assert_ne!(first_marker, second_marker);
+
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+        roastty_config_free(config);
+    }
+
+    #[test]
+    fn scroll_to_bottom_output_synchronized_output_skips_scroll_and_marker() {
+        let _guard = pty_command_lock();
+        let config = new_test_config_from_str("scroll-to-bottom = output\n");
+        let app = roastty_app_new(ptr::null(), config);
+        let surface = new_test_surface(app);
+        attach_scroll_to_bottom_output_worker(surface);
+
+        scroll_to_bottom_output_seed_terminal(surface);
+        run_scroll_to_bottom_output_helper(surface);
+        let initial_marker = surface_from_handle(surface)
+            .unwrap()
+            .last_output_bottom_marker
+            .expect("initial marker");
+
+        scroll_to_bottom_output_scroll_history(surface);
+        assert!(!scroll_to_bottom_output_at_bottom(surface));
+        with_surface_terminal_mut(surface, |terminal| {
+            assert!(terminal.mode_set(2026, false, true));
+        });
+        scroll_to_bottom_output_write(surface, "sync-held-output");
+        run_scroll_to_bottom_output_helper(surface);
+        assert!(
+            !scroll_to_bottom_output_at_bottom(surface),
+            "synchronized output should skip scroll"
+        );
+        assert_eq!(
+            surface_from_handle(surface)
+                .unwrap()
+                .last_output_bottom_marker,
+            Some(initial_marker),
+            "synchronized output should not advance the marker"
+        );
+
+        with_surface_terminal_mut(surface, |terminal| {
+            assert!(terminal.mode_set(2026, false, false));
+        });
+        run_scroll_to_bottom_output_helper(surface);
+        assert!(
+            scroll_to_bottom_output_at_bottom(surface),
+            "disabling synchronized output should allow the pending bottom marker to scroll"
+        );
+        assert_ne!(
+            surface_from_handle(surface)
+                .unwrap()
+                .last_output_bottom_marker,
+            Some(initial_marker)
+        );
+
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+        roastty_config_free(config);
+    }
+
     fn wait_until(mut done: impl FnMut() -> bool) {
         for _ in 0..100 {
             if done() {
@@ -20982,26 +22067,56 @@ mod tests {
             readiness: PtyReadiness::default(),
             bytes_read,
             bell_count,
-            title: None,
+            titles: Vec::new(),
+            pwd: Vec::new(),
+            desktop_notifications: Vec::new(),
+            command_events: Vec::new(),
             eof,
             bytes_written,
             pending_write_bytes,
             child_exited: child_exit.is_some(),
             child_exit,
+            input_state: termio::TermioInputState::default(),
         }
     }
 
     fn test_pump_with_title(title: &str) -> termio::TermioPump {
+        test_pump_with_titles([title])
+    }
+
+    fn test_pump_with_titles<'a>(titles: impl IntoIterator<Item = &'a str>) -> termio::TermioPump {
         termio::TermioPump {
             readiness: PtyReadiness::default(),
             bytes_read: 1,
             bell_count: 0,
-            title: Some(title.to_string()),
+            titles: titles.into_iter().map(ToOwned::to_owned).collect(),
+            pwd: Vec::new(),
+            desktop_notifications: Vec::new(),
+            command_events: Vec::new(),
             eof: false,
             bytes_written: 0,
             pending_write_bytes: 0,
             child_exited: false,
             child_exit: None,
+            input_state: termio::TermioInputState::default(),
+        }
+    }
+
+    fn test_pump_with_pwd(pwd: &str) -> termio::TermioPump {
+        termio::TermioPump {
+            readiness: PtyReadiness::default(),
+            bytes_read: 1,
+            bell_count: 0,
+            titles: Vec::new(),
+            pwd: vec![pwd.to_string()],
+            desktop_notifications: Vec::new(),
+            command_events: Vec::new(),
+            eof: false,
+            bytes_written: 0,
+            pending_write_bytes: 0,
+            child_exited: false,
+            child_exit: None,
+            input_state: termio::TermioInputState::default(),
         }
     }
 
@@ -21009,6 +22124,46 @@ mod tests {
         surface_from_handle(surface)
             .unwrap()
             .apply_termio_event(termio::TermioWorkerEvent::Pump(pump));
+    }
+
+    fn test_pump_with_desktop_notifications(
+        notifications: Vec<TerminalDesktopNotification>,
+    ) -> termio::TermioPump {
+        termio::TermioPump {
+            readiness: PtyReadiness::default(),
+            bytes_read: 1,
+            bell_count: 0,
+            titles: Vec::new(),
+            pwd: Vec::new(),
+            desktop_notifications: notifications,
+            command_events: Vec::new(),
+            eof: false,
+            bytes_written: 0,
+            pending_write_bytes: 0,
+            child_exited: false,
+            child_exit: None,
+            input_state: termio::TermioInputState::default(),
+        }
+    }
+
+    fn test_pump_with_command_events(
+        events: Vec<terminal::terminal::TerminalCommandEvent>,
+    ) -> termio::TermioPump {
+        termio::TermioPump {
+            readiness: PtyReadiness::default(),
+            bytes_read: 1,
+            bell_count: 0,
+            titles: Vec::new(),
+            pwd: Vec::new(),
+            desktop_notifications: Vec::new(),
+            command_events: events,
+            eof: false,
+            bytes_written: 0,
+            pending_write_bytes: 0,
+            child_exited: false,
+            child_exit: None,
+            input_state: termio::TermioInputState::default(),
+        }
     }
 
     fn render_state_text(state: RoasttyRenderStateHandle) -> String {
@@ -21144,6 +22299,122 @@ mod tests {
         };
     }
 
+    fn set_surface_pixel_geometry(
+        surface: RoasttySurface,
+        width_px: u32,
+        height_px: u32,
+        cell_width_px: u32,
+        cell_height_px: u32,
+    ) {
+        let surface = surface_from_handle(surface).unwrap();
+        surface.size = RoasttySurfaceSize {
+            columns: 0,
+            rows: 0,
+            width_px,
+            height_px,
+            cell_width_px,
+            cell_height_px,
+        };
+    }
+
+    #[test]
+    fn window_padding_layout_runtime_surface_grid_uses_asymmetric_scaled_padding() {
+        let config = new_test_config_from_str(
+            "window-padding-x = 3,5\nwindow-padding-y = 7,11\nwindow-padding-balance = false\n",
+        );
+        let app = new_test_app_with_action_config(true, config);
+        let surface = new_test_surface(app);
+        set_surface_pixel_geometry(surface, 200, 200, 10, 10);
+
+        let surface_ref = surface_from_handle(surface).unwrap();
+        surface_ref.scale_factor_x = 2.0;
+        surface_ref.scale_factor_y = 3.0;
+        let size = surface_ref
+            .recompute_renderer_size()
+            .expect("renderer size");
+
+        assert_eq!(
+            size.padding,
+            renderer::size::Padding {
+                top: 21,
+                bottom: 33,
+                left: 6,
+                right: 10,
+            }
+        );
+        assert_eq!(surface_ref.renderer_padding, size.padding);
+        assert_eq!(surface_ref.size.columns, 18);
+        assert_eq!(surface_ref.size.rows, 14);
+        assert_eq!(surface_ref.pty_size().cols, 18);
+        assert_eq!(surface_ref.pty_size().rows, 14);
+
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+        roastty_config_free(config);
+    }
+
+    #[test]
+    fn window_padding_layout_runtime_set_size_recomputes_padded_pty_grid() {
+        let config = new_test_config_from_str(
+            "window-padding-x = 10\nwindow-padding-y = 10\nwindow-padding-balance = false\n",
+        );
+        let app = new_test_app_with_action_config(true, config);
+        let surface = new_test_surface(app);
+        set_surface_pixel_geometry(surface, 80, 80, 10, 10);
+
+        let surface_ref = surface_from_handle(surface).unwrap();
+        surface_ref.set_size(100, 100);
+
+        assert_eq!(
+            surface_ref.renderer_padding,
+            renderer::size::Padding {
+                top: 10,
+                bottom: 10,
+                left: 10,
+                right: 10,
+            }
+        );
+        assert_eq!(surface_ref.size.columns, 8);
+        assert_eq!(surface_ref.size.rows, 8);
+        assert_eq!(surface_ref.pty_size().cols, 8);
+        assert_eq!(surface_ref.pty_size().rows, 8);
+
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+        roastty_config_free(config);
+    }
+
+    #[test]
+    fn window_padding_layout_runtime_content_scale_updates_unbalanced_padding() {
+        let config = new_test_config_from_str(
+            "window-padding-x = 10\nwindow-padding-y = 10\nwindow-padding-balance = false\n",
+        );
+        let app = new_test_app_with_action_config(true, config);
+        let surface = new_test_surface(app);
+        set_surface_pixel_geometry(surface, 100, 100, 10, 10);
+
+        roastty_surface_set_content_scale(surface, 2.0, 3.0);
+        let surface_ref = surface_from_handle(surface).unwrap();
+
+        assert_eq!(
+            surface_ref.renderer_padding,
+            renderer::size::Padding {
+                top: 30,
+                bottom: 30,
+                left: 20,
+                right: 20,
+            }
+        );
+        assert_eq!(surface_ref.size.columns, 6);
+        assert_eq!(surface_ref.size.rows, 4);
+        assert_eq!(surface_ref.pty_size().cols, 6);
+        assert_eq!(surface_ref.pty_size().rows, 4);
+
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+        roastty_config_free(config);
+    }
+
     fn set_surface_worker_mouse_tracking(surface: RoasttySurface, enabled: bool) {
         set_surface_worker_mouse_mode(surface, 1000, enabled);
     }
@@ -21163,8 +22434,9 @@ mod tests {
                 termio
                     .terminal_mut()
                     .next_slice(command.as_bytes())
-                    .expect("set mouse mode through terminal stream");
+                    .expect("set DEC mode through terminal stream");
             });
+        refresh_surface_cached_input_state_from_worker_for_test(surface);
     }
 
     fn set_surface_worker_ansi_mode(surface: RoasttySurface, mode: u16, enabled: bool) {
@@ -21174,8 +22446,13 @@ mod tests {
             .as_ref()
             .unwrap()
             .with_termio_mut(|termio| {
-                assert!(termio.terminal_mut().mode_set(mode, true, enabled));
+                let command = format!("\x1b[{mode}{}", if enabled { 'h' } else { 'l' });
+                termio
+                    .terminal_mut()
+                    .next_slice(command.as_bytes())
+                    .expect("set ANSI mode through terminal stream");
             });
+        refresh_surface_cached_input_state_from_worker_for_test(surface);
     }
 
     fn set_surface_worker_kitty_keyboard(surface: RoasttySurface, flags: u8) {
@@ -21191,6 +22468,7 @@ mod tests {
                     .next_slice(command.as_bytes())
                     .expect("set Kitty keyboard flags through terminal stream");
             });
+        refresh_surface_cached_input_state_from_worker_for_test(surface);
     }
 
     fn set_surface_worker_modify_other_keys_2(surface: RoasttySurface, enabled: bool) {
@@ -21204,6 +22482,17 @@ mod tests {
                     .terminal_mut()
                     .set_modify_other_keys_2_for_tests(enabled);
             });
+        refresh_surface_cached_input_state_from_worker_for_test(surface);
+    }
+
+    fn refresh_surface_cached_input_state_from_worker_for_test(surface: &mut Surface) {
+        let input_state = surface
+            .termio_worker
+            .as_ref()
+            .unwrap()
+            .with_termio(|termio| termio::TermioInputState::from_terminal(termio.terminal()));
+        surface.cached_key_encode_options = input_state.key_encode_options;
+        surface.cached_terminal_kam_enabled = input_state.terminal_kam_enabled;
     }
 
     fn set_surface_worker_pwd(surface: RoasttySurface, pwd: &str) {
@@ -21332,6 +22621,17 @@ mod tests {
             });
     }
 
+    fn write_surface_worker_bytes(surface: RoasttySurface, bytes: &[u8]) {
+        surface_from_handle(surface)
+            .unwrap()
+            .termio_worker
+            .as_ref()
+            .unwrap()
+            .with_termio_mut(|termio| {
+                termio.terminal_mut().next_slice(bytes).unwrap();
+            });
+    }
+
     fn release_left_at_cell(surface: RoasttySurface, column: u16, row: u32) -> bool {
         roastty_surface_mouse_pos(
             surface,
@@ -21357,11 +22657,15 @@ mod tests {
     }
 
     fn press_right(surface: RoasttySurface) -> bool {
+        press_right_with_mods(surface, ROASTTY_MODS_NONE)
+    }
+
+    fn press_right_with_mods(surface: RoasttySurface, mods: c_int) -> bool {
         roastty_surface_mouse_button(
             surface,
             ROASTTY_MOUSE_BUTTON_PRESS,
             mouse_button_to_int(mouse::MouseButton::Right),
-            ROASTTY_MODS_NONE,
+            mods,
         )
     }
 
@@ -22208,6 +23512,42 @@ mod tests {
         roastty_config_free(config);
     }
 
+    #[test]
+    fn config_scrollback_limit_runtime_nonzero_byte_limit_bounds_history() {
+        fn rows_for_limit(limit: usize, label: &str) -> usize {
+            let config = new_test_config_from_str(&format!(
+                "scrollback-limit = {limit}\ncommand = i=0; while [ $i -lt 5000 ]; do printf '{label}-%04d\\n' \"$i\"; i=$((i + 1)); done\n",
+            ));
+            let app = roastty_app_new(ptr::null(), config);
+            let surface = new_test_surface(app);
+
+            let text =
+                surface_snapshot_text_after_start_until(app, surface, &format!("{label}-4999"));
+            let scrollback_rows = surface_from_handle(surface)
+                .unwrap()
+                .termio_worker
+                .as_ref()
+                .unwrap()
+                .with_termio(|termio| termio.terminal().scrollback_rows());
+
+            assert!(text.contains(&format!("{label}-4999")));
+            roastty_surface_free(surface);
+            roastty_app_free(app);
+            roastty_config_free(config);
+            scrollback_rows
+        }
+
+        let _guard = pty_command_lock();
+        let small_rows = rows_for_limit(1, "small");
+        let large_rows = rows_for_limit(100_000_000, "large");
+
+        assert!(small_rows > 0, "{small_rows}");
+        assert!(
+            large_rows > small_rows,
+            "large_rows={large_rows} small_rows={small_rows}"
+        );
+    }
+
     fn surface_title_report_response(surface: RoasttySurface, bytes: &[u8]) -> Vec<u8> {
         surface_from_handle(surface)
             .unwrap()
@@ -22220,6 +23560,292 @@ mod tests {
                 terminal.next_slice(bytes).unwrap();
                 terminal.pty_response().to_vec()
             })
+    }
+
+    fn surface_enquiry_response(surface: RoasttySurface) -> Vec<u8> {
+        surface_from_handle(surface)
+            .unwrap()
+            .termio_worker
+            .as_ref()
+            .unwrap()
+            .with_termio_mut(|termio| {
+                let terminal = termio.terminal_mut();
+                terminal.clear_pty_response();
+                terminal.next_slice(b"\x05").unwrap();
+                terminal.pty_response().to_vec()
+            })
+    }
+
+    fn surface_osc_color_report_response(surface: RoasttySurface) -> Vec<u8> {
+        surface_from_handle(surface)
+            .unwrap()
+            .termio_worker
+            .as_ref()
+            .unwrap()
+            .with_termio_mut(|termio| {
+                let terminal = termio.terminal_mut();
+                terminal.clear_pty_response();
+                terminal
+                    .next_slice(b"\x1b]4;4;#123456\x1b\\\x1b]4;4;?\x1b\\")
+                    .unwrap();
+                terminal.pty_response().to_vec()
+            })
+    }
+
+    fn surface_device_attributes_response(surface: RoasttySurface) -> Vec<u8> {
+        surface_from_handle(surface)
+            .unwrap()
+            .termio_worker
+            .as_ref()
+            .unwrap()
+            .with_termio_mut(|termio| {
+                let terminal = termio.terminal_mut();
+                terminal.clear_pty_response();
+                terminal.next_slice(b"\x1b[c").unwrap();
+                terminal.pty_response().to_vec()
+            })
+    }
+
+    fn surface_cursor_default_state(surface: RoasttySurface) -> (cursor::VisualStyle, bool) {
+        surface_from_handle(surface)
+            .unwrap()
+            .termio_worker
+            .as_ref()
+            .unwrap()
+            .with_termio(|termio| {
+                (
+                    termio.terminal().cursor_visual_style(),
+                    termio.terminal().cursor_blinking(),
+                )
+            })
+    }
+
+    fn surface_image_storage_state(surface: RoasttySurface) -> (usize, bool, bool, bool) {
+        surface_from_handle(surface)
+            .unwrap()
+            .termio_worker
+            .as_ref()
+            .unwrap()
+            .with_termio(|termio| {
+                let terminal = termio.terminal();
+                (
+                    terminal.kitty_image_storage_limit(),
+                    terminal.kitty_image_medium_enabled(KittyImageMedium::File),
+                    terminal.kitty_image_medium_enabled(KittyImageMedium::TemporaryFile),
+                    terminal.kitty_image_medium_enabled(KittyImageMedium::SharedMemory),
+                )
+            })
+    }
+
+    fn surface_grapheme_cluster_enabled(surface: RoasttySurface) -> bool {
+        surface_from_handle(surface)
+            .unwrap()
+            .termio_worker
+            .as_ref()
+            .unwrap()
+            .with_termio(|termio| termio.terminal().grapheme_cluster_enabled())
+    }
+
+    #[test]
+    fn surface_grapheme_width_method_runtime_startup_config() {
+        let _guard = pty_command_lock();
+
+        for (body, expected) in [
+            ("command = sleep 5\n", true),
+            ("grapheme-width-method = unicode\ncommand = sleep 5\n", true),
+            ("grapheme-width-method = legacy\ncommand = sleep 5\n", false),
+        ] {
+            let config = new_test_config_from_str(body);
+            let app = roastty_app_new(ptr::null(), config);
+            let surface = new_test_surface(app);
+
+            assert_eq!(roastty_surface_start(surface), ROASTTY_SUCCESS);
+            assert_eq!(surface_grapheme_cluster_enabled(surface), expected);
+
+            surface_from_handle(surface)
+                .unwrap()
+                .termio_worker
+                .as_ref()
+                .unwrap()
+                .with_termio_mut(|termio| {
+                    let toggle = if expected {
+                        b"\x1b[?2027l".as_slice()
+                    } else {
+                        b"\x1b[?2027h"
+                    };
+                    termio.terminal_mut().next_slice(toggle).unwrap();
+                    assert_ne!(termio.terminal().grapheme_cluster_enabled(), expected);
+                    termio.terminal_mut().next_slice(b"\x1bc").unwrap();
+                    assert_eq!(termio.terminal().grapheme_cluster_enabled(), expected);
+                });
+
+            roastty_surface_free(surface);
+            roastty_app_free(app);
+            roastty_config_free(config);
+        }
+    }
+
+    #[test]
+    fn surface_image_storage_limit_runtime_startup_and_update() {
+        let _guard = pty_command_lock();
+
+        let config = new_test_config_from_str("image-storage-limit = 12345\ncommand = sleep 5\n");
+        let app = roastty_app_new(ptr::null(), config);
+        let surface = new_test_surface(app);
+        assert_eq!(roastty_surface_start(surface), ROASTTY_SUCCESS);
+        assert_eq!(
+            surface_image_storage_state(surface),
+            (12345, true, true, true)
+        );
+
+        surface_from_handle(surface)
+            .unwrap()
+            .termio_worker
+            .as_ref()
+            .unwrap()
+            .with_termio_mut(|termio| {
+                let terminal = termio.terminal_mut();
+                terminal.set_kitty_image_medium(KittyImageMedium::File, false);
+                terminal.set_kitty_image_medium(KittyImageMedium::TemporaryFile, false);
+                terminal.set_kitty_image_medium(KittyImageMedium::SharedMemory, false);
+            });
+
+        let update = new_test_config_from_str("image-storage-limit = 67890\n");
+        roastty_app_update_config(app, update);
+        assert_eq!(
+            surface_image_storage_state(surface),
+            (67890, true, true, true)
+        );
+
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+        roastty_config_free(update);
+        roastty_config_free(config);
+    }
+
+    #[test]
+    fn surface_cursor_default_runtime_startup_and_update() {
+        let _guard = pty_command_lock();
+
+        let config = new_test_config_from_str(
+            "cursor-style = bar\ncursor-style-blink = false\ncommand = sleep 5\n",
+        );
+        let app = roastty_app_new(ptr::null(), config);
+        let surface = new_test_surface(app);
+        assert_eq!(roastty_surface_start(surface), ROASTTY_SUCCESS);
+        assert_eq!(
+            surface_cursor_default_state(surface),
+            (cursor::VisualStyle::Bar, false)
+        );
+
+        let update =
+            new_test_config_from_str("cursor-style = underline\ncursor-style-blink = true\n");
+        roastty_app_update_config(app, update);
+        assert_eq!(
+            surface_cursor_default_state(surface),
+            (cursor::VisualStyle::Underline, true)
+        );
+
+        let unset = new_test_config_from_str("cursor-style = block\ncursor-style-blink = \n");
+        roastty_app_update_config(app, unset);
+        assert_eq!(
+            surface_cursor_default_state(surface),
+            (cursor::VisualStyle::Block, true)
+        );
+
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+        roastty_config_free(unset);
+        roastty_config_free(update);
+        roastty_config_free(config);
+    }
+
+    #[test]
+    fn surface_device_attributes_clipboard_write_runtime_startup_and_update() {
+        let _guard = pty_command_lock();
+
+        let config = new_test_config_from_str("clipboard-write = deny\ncommand = sleep 5\n");
+        let app = roastty_app_new(ptr::null(), config);
+        let surface = new_test_surface(app);
+        assert_eq!(roastty_surface_start(surface), ROASTTY_SUCCESS);
+        assert_eq!(surface_device_attributes_response(surface), b"\x1b[?62;22c");
+
+        let ask = new_test_config_from_str("clipboard-write = ask\n");
+        roastty_app_update_config(app, ask);
+        assert_eq!(
+            surface_device_attributes_response(surface),
+            b"\x1b[?62;22;52c"
+        );
+
+        let allow = new_test_config_from_str("clipboard-write = allow\n");
+        roastty_app_update_config(app, allow);
+        assert_eq!(
+            surface_device_attributes_response(surface),
+            b"\x1b[?62;22;52c"
+        );
+
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+        roastty_config_free(allow);
+        roastty_config_free(ask);
+        roastty_config_free(config);
+    }
+
+    #[test]
+    fn surface_osc_color_report_format_runtime_startup_and_update() {
+        let _guard = pty_command_lock();
+
+        let config =
+            new_test_config_from_str("osc-color-report-format = 8-bit\ncommand = sleep 5\n");
+        let app = roastty_app_new(ptr::null(), config);
+        let surface = new_test_surface(app);
+        assert_eq!(roastty_surface_start(surface), ROASTTY_SUCCESS);
+        assert_eq!(
+            surface_osc_color_report_response(surface),
+            b"\x1b]4;4;rgb:12/34/56\x1b\\"
+        );
+
+        let updated = new_test_config_from_str("osc-color-report-format = 16-bit\n");
+        roastty_app_update_config(app, updated);
+        assert_eq!(
+            surface_osc_color_report_response(surface),
+            b"\x1b]4;4;rgb:1212/3434/5656\x1b\\"
+        );
+
+        let disabled = new_test_config_from_str("osc-color-report-format = none\n");
+        roastty_app_update_config(app, disabled);
+        assert_eq!(surface_osc_color_report_response(surface), b"");
+
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+        roastty_config_free(disabled);
+        roastty_config_free(updated);
+        roastty_config_free(config);
+    }
+
+    #[test]
+    fn surface_enquiry_response_runtime_startup_and_update() {
+        let _guard = pty_command_lock();
+
+        let config = new_test_config_from_str("enquiry-response = first-enq\ncommand = sleep 5\n");
+        let app = roastty_app_new(ptr::null(), config);
+        let surface = new_test_surface(app);
+        assert_eq!(roastty_surface_start(surface), ROASTTY_SUCCESS);
+        assert_eq!(surface_enquiry_response(surface), b"first-enq");
+
+        let updated = new_test_config_from_str("enquiry-response = second-enq\n");
+        roastty_app_update_config(app, updated);
+        assert_eq!(surface_enquiry_response(surface), b"second-enq");
+
+        let disabled = new_test_config_from_str("enquiry-response = \n");
+        roastty_app_update_config(app, disabled);
+        assert_eq!(surface_enquiry_response(surface), b"");
+
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+        roastty_config_free(disabled);
+        roastty_config_free(updated);
+        roastty_config_free(config);
     }
 
     #[test]
@@ -22343,6 +23969,90 @@ mod tests {
         reset_action_records(true);
 
         apply_test_pump(surface, test_pump_with_title("ignored osc title"));
+        assert!(action_records().is_empty());
+
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+        roastty_config_free(config);
+    }
+
+    #[test]
+    fn surface_title_pwd_fallback_empty_title_dispatches() {
+        let app = new_test_app_with_action(true);
+        let surface = new_test_surface(app);
+
+        apply_test_pump(surface, test_pump_with_title(""));
+        let records = action_records();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].action_tag, ROASTTY_ACTION_SET_TITLE);
+        assert_eq!(records[0].title.as_deref(), Some(""));
+
+        reset_action_records(true);
+        apply_test_pump(surface, test_pump_with_title("/fallback"));
+        let records = action_records();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].action_tag, ROASTTY_ACTION_SET_TITLE);
+        assert_eq!(records[0].title.as_deref(), Some("/fallback"));
+
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+    }
+
+    #[test]
+    fn surface_osc7_pwd_normalization_dispatches_pwd_path() {
+        let app = new_test_app_with_action(true);
+        let surface = new_test_surface(app);
+
+        apply_test_pump(surface, test_pump_with_pwd("/surface pwd"));
+        let records = action_records();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].action_tag, ROASTTY_ACTION_PWD);
+        assert_eq!(records[0].pwd.as_deref(), Some("/surface pwd"));
+
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+    }
+
+    #[test]
+    fn surface_osc7_pwd_edge_dispatches_raw_kitty_path() {
+        let app = new_test_app_with_action(true);
+        let surface = new_test_surface(app);
+
+        apply_test_pump(surface, test_pump_with_pwd("/surface%2Fraw?x#y"));
+        let records = action_records();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].action_tag, ROASTTY_ACTION_PWD);
+        assert_eq!(records[0].pwd.as_deref(), Some("/surface%2Fraw?x#y"));
+
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+    }
+
+    #[test]
+    fn surface_title_pwd_fallback_dispatches_multiple_titles_in_order() {
+        let app = new_test_app_with_action(true);
+        let surface = new_test_surface(app);
+
+        apply_test_pump(surface, test_pump_with_titles(["/one", "two", "/one"]));
+        let records = action_records();
+        assert_eq!(records.len(), 3);
+        assert_eq!(records[0].title.as_deref(), Some("/one"));
+        assert_eq!(records[1].title.as_deref(), Some("two"));
+        assert_eq!(records[2].title.as_deref(), Some("/one"));
+
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+    }
+
+    #[test]
+    fn surface_title_pwd_fallback_static_title_suppresses_empty_and_fallback() {
+        let config = new_test_config_from_str("title = Static Title\n");
+        let app = new_test_app_with_action_config(true, config);
+        let surface = new_test_surface(app);
+        reset_action_records(true);
+
+        apply_test_pump(surface, test_pump_with_title(""));
+        apply_test_pump(surface, test_pump_with_title("/fallback"));
         assert!(action_records().is_empty());
 
         roastty_surface_free(surface);
@@ -22624,6 +24334,67 @@ mod tests {
     }
 
     #[test]
+    fn custom_shader_animation_tick_policy_matches_focus() {
+        use config::CustomShaderAnimation;
+
+        assert!(custom_shader_animation_tick_enabled(
+            CustomShaderAnimation::Always,
+            true,
+            true
+        ));
+        assert!(custom_shader_animation_tick_enabled(
+            CustomShaderAnimation::Always,
+            false,
+            true
+        ));
+        assert!(custom_shader_animation_tick_enabled(
+            CustomShaderAnimation::True,
+            true,
+            true
+        ));
+        assert!(!custom_shader_animation_tick_enabled(
+            CustomShaderAnimation::True,
+            false,
+            true
+        ));
+        assert!(!custom_shader_animation_tick_enabled(
+            CustomShaderAnimation::False,
+            true,
+            true
+        ));
+        assert!(!custom_shader_animation_tick_enabled(
+            CustomShaderAnimation::False,
+            false,
+            true
+        ));
+    }
+
+    #[test]
+    fn custom_shader_animation_tick_requires_pipeline() {
+        use config::CustomShaderAnimation;
+
+        assert!(!custom_shader_animation_tick_enabled(
+            CustomShaderAnimation::Always,
+            true,
+            false
+        ));
+        assert!(!custom_shader_animation_tick_enabled(
+            CustomShaderAnimation::True,
+            true,
+            false
+        ));
+    }
+
+    #[test]
+    fn custom_shader_animation_tick_present_decision_preserves_dirty_gate() {
+        assert!(should_present_on_tick(true, true, false));
+        assert!(should_present_on_tick(false, true, true));
+        assert!(!should_present_on_tick(false, true, false));
+        assert!(!should_present_on_tick(true, false, true));
+        assert!(!should_present_on_tick(true, false, false));
+    }
+
+    #[test]
     fn live_cursor_blink_tick_toggles_focused_surface_and_marks_dirty() {
         let app = new_test_app();
         let surface = new_test_surface(app);
@@ -22736,6 +24507,336 @@ mod tests {
         let records = action_records();
         assert_eq!(records.len(), 2);
         assert_eq!(records[1].action_tag, ROASTTY_ACTION_RING_BELL);
+
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+    }
+
+    #[test]
+    fn surface_desktop_notification_runtime_dispatches_config_enabled_action() {
+        let config = new_test_config_from_str("desktop-notifications = true\n");
+        let app = new_test_app_with_action_config(true, config);
+        let surface = new_test_surface(app);
+
+        apply_test_pump(
+            surface,
+            test_pump_with_desktop_notifications(vec![TerminalDesktopNotification {
+                title: b"Title".to_vec(),
+                body: b"Body".to_vec(),
+            }]),
+        );
+
+        let records = action_records();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].target_tag, ROASTTY_TARGET_SURFACE);
+        assert_eq!(records[0].surface, surface);
+        assert_eq!(records[0].action_tag, ROASTTY_ACTION_DESKTOP_NOTIFICATION);
+        assert_eq!(
+            records[0].desktop_notification,
+            Some(("Title".to_string(), "Body".to_string()))
+        );
+
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+        roastty_config_free(config);
+    }
+
+    #[test]
+    fn surface_desktop_notification_runtime_suppresses_config_disabled_action() {
+        let config = new_test_config_from_str("desktop-notifications = false\n");
+        let app = new_test_app_with_action_config(true, config);
+        let surface = new_test_surface(app);
+
+        apply_test_pump(
+            surface,
+            test_pump_with_desktop_notifications(vec![TerminalDesktopNotification {
+                title: b"Title".to_vec(),
+                body: b"Body".to_vec(),
+            }]),
+        );
+
+        assert!(action_records().is_empty());
+        let app_ref = app_from_handle(app).unwrap();
+        assert!(app_ref.last_notification_time.is_none());
+        assert!(app_ref.last_notification_identity.is_empty());
+
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+        roastty_config_free(config);
+    }
+
+    #[test]
+    fn surface_desktop_notification_runtime_truncates_overlong_payloads() {
+        let app = new_test_app_with_action(true);
+        let surface = new_test_surface(app);
+
+        apply_test_pump(
+            surface,
+            test_pump_with_desktop_notifications(vec![TerminalDesktopNotification {
+                title: vec![b'T'; DESKTOP_NOTIFICATION_TITLE_LIMIT + 10],
+                body: vec![b'B'; DESKTOP_NOTIFICATION_BODY_LIMIT + 10],
+            }]),
+        );
+
+        let records = action_records();
+        assert_eq!(records.len(), 1);
+        let (title, body) = records[0]
+            .desktop_notification
+            .as_ref()
+            .expect("desktop notification payload");
+        assert_eq!(title.len(), DESKTOP_NOTIFICATION_TITLE_LIMIT);
+        assert_eq!(body.len(), DESKTOP_NOTIFICATION_BODY_LIMIT);
+        assert!(title.bytes().all(|byte| byte == b'T'));
+        assert!(body.bytes().all(|byte| byte == b'B'));
+
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+    }
+
+    fn desktop_notification(title: &[u8], body: &[u8]) -> TerminalDesktopNotification {
+        TerminalDesktopNotification {
+            title: title.to_vec(),
+            body: body.to_vec(),
+        }
+    }
+
+    fn desktop_notification_state(app: RoasttyApp) -> (Option<Instant>, Vec<u8>) {
+        let app_ref = app_from_handle(app).unwrap();
+        (
+            app_ref.last_notification_time,
+            app_ref.last_notification_identity.clone(),
+        )
+    }
+
+    #[test]
+    fn surface_desktop_notification_runtime_rate_limits_without_sleeping() {
+        let app = new_test_app_with_action(true);
+        let surface = new_test_surface(app);
+        let surface_ref = surface_from_handle(surface).unwrap();
+        let start = Instant::now();
+
+        assert!(
+            surface_ref.perform_desktop_notification_at(&desktop_notification(b"a", b"bc"), start)
+        );
+        assert_eq!(action_records().len(), 1);
+        assert_eq!(
+            desktop_notification_state(app),
+            (Some(start), b"abc".to_vec())
+        );
+
+        assert!(!surface_ref.perform_desktop_notification_at(
+            &desktop_notification(b"different", b"payload"),
+            start + Duration::from_millis(999)
+        ));
+        assert_eq!(action_records().len(), 1);
+        assert_eq!(
+            desktop_notification_state(app),
+            (Some(start), b"abc".to_vec())
+        );
+
+        let second = start + Duration::from_millis(1001);
+        assert!(surface_ref
+            .perform_desktop_notification_at(&desktop_notification(b"other", b"payload"), second));
+        assert_eq!(action_records().len(), 2);
+        assert_eq!(
+            desktop_notification_state(app),
+            (Some(second), b"otherpayload".to_vec())
+        );
+
+        assert!(!surface_ref.perform_desktop_notification_at(
+            &desktop_notification(b"other", b"payload"),
+            second + Duration::from_secs(4)
+        ));
+        assert_eq!(action_records().len(), 2);
+        assert_eq!(
+            desktop_notification_state(app),
+            (Some(second), b"otherpayload".to_vec())
+        );
+
+        let third = second + Duration::from_millis(5001);
+        assert!(surface_ref
+            .perform_desktop_notification_at(&desktop_notification(b"other", b"payload"), third));
+        assert_eq!(action_records().len(), 3);
+        assert_eq!(
+            desktop_notification_state(app),
+            (Some(third), b"otherpayload".to_vec())
+        );
+
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+    }
+
+    #[test]
+    fn surface_desktop_notification_runtime_uses_delimiterless_identity() {
+        let app = new_test_app_with_action(true);
+        let surface = new_test_surface(app);
+        let surface_ref = surface_from_handle(surface).unwrap();
+        let start = Instant::now();
+
+        assert!(
+            surface_ref.perform_desktop_notification_at(&desktop_notification(b"a", b"bc"), start)
+        );
+        assert!(!surface_ref.perform_desktop_notification_at(
+            &desktop_notification(b"ab", b"c"),
+            start + Duration::from_secs(4)
+        ));
+        assert_eq!(action_records().len(), 1);
+        assert_eq!(
+            desktop_notification_state(app),
+            (Some(start), b"abc".to_vec())
+        );
+
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+    }
+
+    #[test]
+    fn surface_desktop_notification_runtime_rate_limit_is_app_level() {
+        let app = new_test_app_with_action(true);
+        let surface_a = new_test_surface(app);
+        let surface_b = new_test_surface(app);
+        let start = Instant::now();
+
+        assert!(surface_from_handle(surface_a)
+            .unwrap()
+            .perform_desktop_notification_at(&desktop_notification(b"first", b""), start));
+        assert!(!surface_from_handle(surface_b)
+            .unwrap()
+            .perform_desktop_notification_at(
+                &desktop_notification(b"second", b""),
+                start + Duration::from_millis(999)
+            ));
+        assert_eq!(action_records().len(), 1);
+        assert_eq!(
+            desktop_notification_state(app),
+            (Some(start), b"first".to_vec())
+        );
+
+        roastty_surface_free(surface_b);
+        roastty_surface_free(surface_a);
+        roastty_app_free(app);
+    }
+
+    #[test]
+    fn surface_command_finished_runtime_dispatches_after_start_stop() {
+        let app = new_test_app_with_action(true);
+        let surface = new_test_surface(app);
+        let surface_ref = surface_from_handle(surface).unwrap();
+        let start = Instant::now();
+
+        surface_ref.command_started_at(start);
+        assert!(action_records().is_empty());
+        assert!(surface_ref.command_stopped_at(7, start + Duration::from_millis(25)));
+
+        let records = action_records();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].target_tag, ROASTTY_TARGET_SURFACE);
+        assert_eq!(records[0].surface, surface);
+        assert_eq!(records[0].action_tag, ROASTTY_ACTION_COMMAND_FINISHED);
+        assert_eq!(records[0].command_finished, Some((7, 25_000_000)));
+        assert!(surface_ref.command_timer.is_none());
+
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+    }
+
+    #[test]
+    fn surface_command_finished_runtime_stop_without_start_does_not_dispatch() {
+        let app = new_test_app_with_action(true);
+        let surface = new_test_surface(app);
+        let surface_ref = surface_from_handle(surface).unwrap();
+
+        assert!(!surface_ref.command_stopped_at(9, Instant::now()));
+
+        assert!(action_records().is_empty());
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+    }
+
+    #[test]
+    fn surface_command_finished_runtime_repeated_start_resets_timer() {
+        let app = new_test_app_with_action(true);
+        let surface = new_test_surface(app);
+        let surface_ref = surface_from_handle(surface).unwrap();
+        let start = Instant::now();
+
+        surface_ref.command_started_at(start);
+        surface_ref.command_started_at(start + Duration::from_millis(10));
+        assert!(surface_ref.command_stopped_at(0, start + Duration::from_millis(30)));
+
+        let records = action_records();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].command_finished, Some((0, 20_000_000)));
+
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+    }
+
+    #[test]
+    fn surface_command_finished_runtime_pump_events_dispatch_and_mark_dirty() {
+        let app = new_test_app_with_action(true);
+        let surface = new_test_surface(app);
+        let surface_ref = surface_from_handle(surface).unwrap();
+
+        apply_test_pump(
+            surface,
+            test_pump_with_command_events(vec![terminal::terminal::TerminalCommandEvent::Start]),
+        );
+        assert!(action_records().is_empty());
+        assert!(surface_ref.dirty);
+        surface_ref.dirty = false;
+        surface_ref.command_timer = Some(Instant::now() - Duration::from_millis(25));
+
+        apply_test_pump(
+            surface,
+            test_pump_with_command_events(vec![terminal::terminal::TerminalCommandEvent::Stop {
+                exit_code: 13,
+            }]),
+        );
+
+        let records = action_records();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].action_tag, ROASTTY_ACTION_COMMAND_FINISHED);
+        let (exit_code, duration) = records[0]
+            .command_finished
+            .expect("command finished payload");
+        assert_eq!(exit_code, 13);
+        assert!(duration >= 25_000_000, "{records:?}");
+        assert!(surface_ref.dirty);
+
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+    }
+
+    #[test]
+    fn surface_command_finished_runtime_child_exited_dispatch_remains() {
+        let app = new_test_app_with_action(true);
+        let surface = new_test_surface(app);
+        let surface_ref = surface_from_handle(surface).unwrap();
+        surface_ref.command_started_at(Instant::now() - Duration::from_millis(10));
+        let mut pump = test_pump_with_child_exit(
+            0,
+            0,
+            0,
+            0,
+            false,
+            Some(termio::TermioChildExit {
+                exit_code: 3,
+                runtime_ms: 1_000,
+            }),
+        );
+        pump.command_events = vec![terminal::terminal::TerminalCommandEvent::Stop { exit_code: 3 }];
+
+        apply_test_pump(surface, pump);
+
+        let records = action_records();
+        assert!(records
+            .iter()
+            .any(|record| record.action_tag == ROASTTY_ACTION_COMMAND_FINISHED));
+        assert!(records
+            .iter()
+            .any(|record| record.action_tag == ROASTTY_ACTION_SHOW_CHILD_EXITED));
+        assert!(surface_ref.process_exited);
 
         roastty_surface_free(surface);
         roastty_app_free(app);
@@ -22921,6 +25022,103 @@ mod tests {
         assert_eq!(WAKEUP_COUNT.load(Ordering::SeqCst), 0);
 
         roastty_config_free(config);
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+    }
+
+    #[test]
+    fn font_live_grid_update_manual_size_changes_dirty_and_wake_live_view() {
+        let _guard = WAKEUP_LOCK.lock().unwrap();
+        let app = new_test_app_with_wakeup(0x184);
+        let surface = new_test_surface(app);
+        let surface_ref = surface_from_handle(surface).unwrap();
+        surface_ref.nsview = std::ptr::NonNull::<c_void>::dangling().as_ptr();
+        surface_ref.dirty = false;
+
+        assert!(surface_binding_action(surface, b"increase_font_size:2"));
+
+        let surface_ref = surface_from_handle(surface).unwrap();
+        assert_eq!(surface_ref.font_size_points, DEFAULT_FONT_SIZE_POINTS + 2.0);
+        assert!(surface_ref.font_size_adjusted);
+        assert!(surface_ref.dirty);
+        assert!(surface_ref.renderer.is_none());
+        assert_eq!(WAKEUP_COUNT.load(Ordering::SeqCst), 1);
+        assert_eq!(WAKEUP_USERDATA.load(Ordering::SeqCst), 0x184);
+
+        surface_ref.dirty = false;
+        assert!(surface_binding_action(surface, b"reset_font_size"));
+
+        let surface_ref = surface_from_handle(surface).unwrap();
+        assert_eq!(surface_ref.font_size_points, DEFAULT_FONT_SIZE_POINTS);
+        assert!(!surface_ref.font_size_adjusted);
+        assert!(surface_ref.dirty);
+        assert!(surface_ref.renderer.is_none());
+        assert_eq!(WAKEUP_COUNT.load(Ordering::SeqCst), 2);
+        assert_eq!(WAKEUP_USERDATA.load(Ordering::SeqCst), 0x184);
+
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+    }
+
+    #[test]
+    fn font_live_grid_update_same_size_is_idempotent() {
+        let _guard = WAKEUP_LOCK.lock().unwrap();
+        let app = new_test_app_with_wakeup(0x185);
+        let surface = new_test_surface(app);
+        let surface_ref = surface_from_handle(surface).unwrap();
+        surface_ref.nsview = std::ptr::NonNull::<c_void>::dangling().as_ptr();
+        surface_ref.dirty = false;
+
+        assert!(surface_binding_action(surface, b"set_font_size:13"));
+
+        let surface_ref = surface_from_handle(surface).unwrap();
+        assert_eq!(surface_ref.font_size_points, DEFAULT_FONT_SIZE_POINTS);
+        assert!(surface_ref.font_size_adjusted);
+        assert!(!surface_ref.dirty);
+        assert!(surface_ref.renderer.is_none());
+        assert_eq!(WAKEUP_COUNT.load(Ordering::SeqCst), 0);
+
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+    }
+
+    #[test]
+    fn font_live_grid_update_config_reload_preserves_state_and_rebuild_trigger() {
+        let _guard = WAKEUP_LOCK.lock().unwrap();
+        let app = new_test_app_with_wakeup(0x186);
+        let mut surface_config = roastty_surface_config_new();
+        surface_config.font_size = 12.0;
+        let surface = new_test_surface_with_config(app, &surface_config);
+        let surface_ref = surface_from_handle(surface).unwrap();
+        surface_ref.nsview = std::ptr::NonNull::<c_void>::dangling().as_ptr();
+        surface_ref.dirty = false;
+
+        let reload_18 = new_test_config_with_font_size(18.0);
+        roastty_surface_update_config(surface, reload_18);
+        let surface_ref = surface_from_handle(surface).unwrap();
+        assert_eq!(surface_ref.font_size_points, 18.0);
+        assert_eq!(surface_ref.original_font_size_points, 18.0);
+        assert!(!surface_ref.font_size_adjusted);
+        assert!(surface_ref.dirty);
+        assert!(surface_ref.renderer.is_none());
+        assert_eq!(WAKEUP_COUNT.load(Ordering::SeqCst), 2);
+        assert_eq!(WAKEUP_USERDATA.load(Ordering::SeqCst), 0x186);
+
+        surface_ref.dirty = false;
+        assert!(surface_binding_action(surface, b"set_font_size:20"));
+        let reload_15 = new_test_config_with_font_size(15.0);
+        roastty_surface_update_config(surface, reload_15);
+        let surface_ref = surface_from_handle(surface).unwrap();
+        assert_eq!(surface_ref.font_size_points, 20.0);
+        assert_eq!(surface_ref.original_font_size_points, 15.0);
+        assert!(surface_ref.font_size_adjusted);
+        assert!(surface_ref.dirty);
+        assert!(surface_ref.renderer.is_none());
+        assert_eq!(WAKEUP_COUNT.load(Ordering::SeqCst), 4);
+        assert_eq!(WAKEUP_USERDATA.load(Ordering::SeqCst), 0x186);
+
+        roastty_config_free(reload_15);
+        roastty_config_free(reload_18);
         roastty_surface_free(surface);
         roastty_app_free(app);
     }
@@ -23530,6 +25728,473 @@ mod tests {
     }
 
     #[test]
+    fn link_preview_context_runtime_gates_preview_by_link_kind() {
+        use config::LinkPreviews;
+
+        assert!(!LinkPreviews::False.previews_regular_link());
+        assert!(!LinkPreviews::False.previews_osc8_link());
+        assert!(LinkPreviews::True.previews_regular_link());
+        assert!(LinkPreviews::True.previews_osc8_link());
+        assert!(!LinkPreviews::Osc8.previews_regular_link());
+        assert!(LinkPreviews::Osc8.previews_osc8_link());
+    }
+
+    #[test]
+    fn link_preview_context_runtime_context_menu_selects_regex_link() {
+        let _guard = pty_command_lock();
+        let config = new_test_config_with_right_click_action(config::RightClickAction::ContextMenu);
+        let app = new_test_app_with_clipboard_read_write_config(0x1109, true, false, config);
+        let surface = new_test_surface(app);
+        surface_from_handle(surface).unwrap().termio_worker = Some(test_worker("sleep 1"));
+        set_surface_test_geometry(surface, 80, 5, 10, 20);
+        write_surface_worker_bytes(surface, b"go https://example.com now");
+        roastty_surface_mouse_pos(surface, 65.0, 5.0, ROASTTY_MODS_SUPER);
+
+        assert!(!press_right_with_mods(surface, ROASTTY_MODS_SUPER));
+        assert_eq!(
+            surface_selection_plain_text(surface).as_deref(),
+            Some("https://example.com")
+        );
+        assert!(clipboard_read_records().is_empty());
+        assert!(clipboard_write_records().is_empty());
+
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+        roastty_config_free(config);
+    }
+
+    #[test]
+    fn link_preview_context_runtime_context_menu_regex_is_line_scoped() {
+        let _guard = pty_command_lock();
+        let config = new_test_config_with_right_click_action_and_links(
+            config::RightClickAction::ContextMenu,
+            vec![input::link::Link {
+                regex: b"AAA\nBBB".to_vec(),
+                action: input::link::Action::Open,
+                highlight: input::link::Highlight::Always,
+            }],
+        );
+        let app = new_test_app_with_clipboard_read_write_config(0x1112, true, false, config);
+        let surface = new_test_surface(app);
+        surface_from_handle(surface).unwrap().termio_worker = Some(test_worker("sleep 1"));
+        set_surface_test_geometry(surface, 80, 5, 10, 20);
+        write_surface_worker_bytes(surface, b"AAA\r\nBBB");
+        roastty_surface_mouse_pos(surface, 5.0, 5.0, ROASTTY_MODS_NONE);
+
+        assert!(!press_right(surface));
+        assert_eq!(
+            surface_selection_plain_text(surface).as_deref(),
+            Some("AAA")
+        );
+
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+        roastty_config_free(config);
+    }
+
+    #[test]
+    fn link_preview_context_runtime_context_menu_preserves_containing_link_selection() {
+        let _guard = pty_command_lock();
+        let config = new_test_config_with_right_click_action(config::RightClickAction::ContextMenu);
+        let app = new_test_app_with_clipboard_read_write_config(0x1110, true, false, config);
+        let surface = new_test_surface(app);
+        surface_from_handle(surface).unwrap().termio_worker = Some(test_worker("sleep 1"));
+        set_surface_test_geometry(surface, 80, 5, 10, 20);
+        write_surface_worker_bytes(surface, b"go https://example.com now");
+        set_surface_worker_active_selection(
+            surface,
+            Some(surface_worker_selection(surface, (3, 0), (21, 0))),
+        );
+        roastty_surface_mouse_pos(surface, 65.0, 5.0, ROASTTY_MODS_SUPER);
+
+        assert!(!press_right_with_mods(surface, ROASTTY_MODS_SUPER));
+        assert_eq!(
+            surface_selection_plain_text(surface).as_deref(),
+            Some("https://example.com")
+        );
+
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+        roastty_config_free(config);
+    }
+
+    #[test]
+    fn link_preview_context_runtime_context_menu_selects_osc8_with_ctrl_or_super() {
+        let _guard = pty_command_lock();
+        let config = new_test_config_with_right_click_action(config::RightClickAction::ContextMenu);
+        let app = new_test_app_with_clipboard_read_write_config(0x1111, true, false, config);
+        let surface = new_test_surface(app);
+        surface_from_handle(surface).unwrap().termio_worker = Some(test_worker("sleep 1"));
+        set_surface_test_geometry(surface, 80, 5, 10, 20);
+        write_surface_worker_bytes(
+            surface,
+            b"\x1b]8;;https://osc8.example\x1b\\link\x1b]8;;\x1b\\ plain",
+        );
+        roastty_surface_mouse_pos(surface, 15.0, 5.0, ROASTTY_MODS_SUPER);
+
+        assert!(!press_right_with_mods(surface, ROASTTY_MODS_SUPER));
+        assert_eq!(surface_selection_plain_text(surface).as_deref(), Some("i"));
+
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+        roastty_config_free(config);
+    }
+
+    #[test]
+    fn link_hover_preview_dispatch_regular_link_gates_preview_and_shape() {
+        let _guard = pty_command_lock();
+        let config = new_test_config_with_link_previews(config::LinkPreviews::True);
+        let app = new_test_app_with_action_config(true, config);
+        let surface = new_test_surface(app);
+        surface_from_handle(surface).unwrap().termio_worker = Some(test_worker("sleep 1"));
+        set_surface_test_geometry(surface, 80, 5, 10, 20);
+        write_surface_worker_bytes(surface, b"go https://example.com now");
+
+        roastty_surface_mouse_pos(surface, 65.0, 5.0, ROASTTY_MODS_SUPER);
+
+        assert_eq!(mouse_shape_records(), vec![ROASTTY_MOUSE_SHAPE_POINTER]);
+        assert_eq!(
+            mouse_over_link_records(),
+            vec!["https://example.com".to_string()]
+        );
+
+        let disabled = new_test_config_with_link_previews(config::LinkPreviews::Osc8);
+        roastty_surface_update_config(surface, disabled);
+        reset_action_records(true);
+        roastty_surface_mouse_pos(surface, 65.0, 5.0, ROASTTY_MODS_SUPER);
+
+        assert_eq!(mouse_shape_records(), vec![ROASTTY_MOUSE_SHAPE_POINTER]);
+        assert!(mouse_over_link_records().is_empty());
+
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+        roastty_config_free(disabled);
+        roastty_config_free(config);
+    }
+
+    #[test]
+    fn link_hover_preview_dispatch_scales_macos_point_coordinates() {
+        let _guard = pty_command_lock();
+        let config = new_test_config_with_link_previews(config::LinkPreviews::True);
+        let app = new_test_app_with_action_config(true, config);
+        let surface = new_test_surface(app);
+        surface_from_handle(surface).unwrap().termio_worker = Some(test_worker("sleep 1"));
+        set_surface_test_geometry(surface, 80, 5, 20, 40);
+        {
+            let surface_ref = surface_from_handle(surface).unwrap();
+            surface_ref.scale_factor_x = 2.0;
+            surface_ref.scale_factor_y = 2.0;
+        }
+        write_surface_worker_bytes(surface, b"go https://example.com now");
+
+        roastty_surface_mouse_pos(surface, 45.0, 5.0, ROASTTY_MODS_SUPER);
+
+        assert_eq!(mouse_shape_records(), vec![ROASTTY_MOUSE_SHAPE_POINTER]);
+        assert_eq!(
+            mouse_over_link_records(),
+            vec!["https://example.com".to_string()]
+        );
+
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+        roastty_config_free(config);
+    }
+
+    #[test]
+    fn link_hover_preview_dispatch_osc8_link_gates_preview_with_ctrl_or_super() {
+        let _guard = pty_command_lock();
+        let config = new_test_config_with_link_previews(config::LinkPreviews::Osc8);
+        let app = new_test_app_with_action_config(true, config);
+        let surface = new_test_surface(app);
+        surface_from_handle(surface).unwrap().termio_worker = Some(test_worker("sleep 1"));
+        set_surface_test_geometry(surface, 80, 5, 10, 20);
+        write_surface_worker_bytes(
+            surface,
+            b"\x1b]8;;https://osc8.example\x1b\\link\x1b]8;;\x1b\\ plain",
+        );
+
+        roastty_surface_mouse_pos(surface, 15.0, 5.0, ROASTTY_MODS_SUPER);
+        assert_eq!(mouse_shape_records(), vec![ROASTTY_MOUSE_SHAPE_POINTER]);
+        assert_eq!(
+            mouse_over_link_records(),
+            vec!["https://osc8.example".to_string()]
+        );
+
+        let disabled = new_test_config_with_link_previews(config::LinkPreviews::False);
+        roastty_surface_update_config(surface, disabled);
+        reset_action_records(true);
+        roastty_surface_mouse_pos(surface, 15.0, 5.0, ROASTTY_MODS_SUPER);
+        assert_eq!(mouse_shape_records(), vec![ROASTTY_MOUSE_SHAPE_POINTER]);
+        assert!(mouse_over_link_records().is_empty());
+
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+        roastty_config_free(disabled);
+        roastty_config_free(config);
+    }
+
+    #[test]
+    fn link_hover_preview_dispatch_repeats_while_over_link_and_clears_on_leave() {
+        let _guard = pty_command_lock();
+        let config = new_test_config_with_link_previews(config::LinkPreviews::True);
+        let app = new_test_app_with_action_config(true, config);
+        let surface = new_test_surface(app);
+        surface_from_handle(surface).unwrap().termio_worker = Some(test_worker("sleep 1"));
+        set_surface_test_geometry(surface, 80, 5, 10, 20);
+        write_surface_worker_bytes(surface, b"\x1b]22;crosshair\x07go https://example.com now");
+
+        roastty_surface_mouse_pos(surface, 65.0, 5.0, ROASTTY_MODS_SUPER);
+        reset_action_records(true);
+        roastty_surface_mouse_pos(surface, 65.0, 5.0, ROASTTY_MODS_SUPER);
+
+        assert_eq!(mouse_shape_records(), vec![ROASTTY_MOUSE_SHAPE_POINTER]);
+        assert_eq!(
+            mouse_over_link_records(),
+            vec!["https://example.com".to_string()]
+        );
+
+        reset_action_records(true);
+        roastty_surface_mouse_pos(surface, 275.0, 5.0, ROASTTY_MODS_SUPER);
+        assert_eq!(mouse_shape_records(), vec![ROASTTY_MOUSE_SHAPE_CROSSHAIR]);
+        assert_eq!(mouse_over_link_records(), vec![String::new()]);
+
+        roastty_surface_mouse_pos(surface, 65.0, 5.0, ROASTTY_MODS_SUPER);
+        reset_action_records(true);
+        roastty_surface_mouse_pos(surface, 900.0, 5.0, ROASTTY_MODS_SUPER);
+        assert_eq!(mouse_shape_records(), vec![ROASTTY_MOUSE_SHAPE_CROSSHAIR]);
+        assert_eq!(mouse_over_link_records(), vec![String::new()]);
+
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+        roastty_config_free(config);
+    }
+
+    #[test]
+    fn link_hover_preview_dispatch_respects_mouse_reporting_and_shift_override() {
+        let _guard = pty_command_lock();
+        let config = new_test_config_with_link_previews(config::LinkPreviews::True);
+        let app = new_test_app_with_action_config(true, config);
+        let surface = new_test_surface(app);
+        surface_from_handle(surface).unwrap().termio_worker = Some(test_worker("sleep 1"));
+        set_surface_test_geometry(surface, 80, 5, 10, 20);
+        write_surface_worker_bytes(surface, b"go https://example.com now");
+        set_surface_worker_mouse_tracking(surface, true);
+
+        roastty_surface_mouse_pos(surface, 65.0, 5.0, ROASTTY_MODS_NONE);
+        assert!(mouse_shape_records().is_empty());
+        assert!(mouse_over_link_records().is_empty());
+
+        roastty_surface_mouse_pos(surface, 75.0, 5.0, ROASTTY_MODS_SHIFT | ROASTTY_MODS_SUPER);
+        assert_eq!(mouse_shape_records(), vec![ROASTTY_MOUSE_SHAPE_POINTER]);
+        assert_eq!(
+            mouse_over_link_records(),
+            vec!["https://example.com".to_string()]
+        );
+
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+        roastty_config_free(config);
+    }
+
+    #[test]
+    fn link_hover_modifier_refresh_super_enables_regular_link_without_mouse_move() {
+        let _guard = pty_command_lock();
+        let config = new_test_config_with_link_previews(config::LinkPreviews::True);
+        let app = new_test_app_with_action_config(true, config);
+        let surface = new_test_surface(app);
+        surface_from_handle(surface).unwrap().termio_worker = Some(test_worker("sleep 1"));
+        set_surface_test_geometry(surface, 80, 5, 10, 20);
+        write_surface_worker_bytes(surface, b"go https://example.com now");
+
+        roastty_surface_mouse_pos(surface, 65.0, 5.0, ROASTTY_MODS_NONE);
+        assert!(mouse_shape_records().is_empty());
+        assert!(mouse_over_link_records().is_empty());
+
+        send_key(
+            surface,
+            key_press(key::Key::MetaLeft, b"", 0, ROASTTY_MODS_SUPER),
+        );
+
+        assert_eq!(mouse_shape_records(), vec![ROASTTY_MOUSE_SHAPE_POINTER]);
+        assert_eq!(
+            mouse_over_link_records(),
+            vec!["https://example.com".to_string()]
+        );
+
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+        roastty_config_free(config);
+    }
+
+    #[test]
+    fn link_hover_modifier_refresh_super_release_clears_regular_link() {
+        let _guard = pty_command_lock();
+        let config = new_test_config_with_link_previews(config::LinkPreviews::True);
+        let app = new_test_app_with_action_config(true, config);
+        let surface = new_test_surface(app);
+        surface_from_handle(surface).unwrap().termio_worker = Some(test_worker("sleep 1"));
+        set_surface_test_geometry(surface, 80, 5, 10, 20);
+        write_surface_worker_bytes(surface, b"\x1b]22;crosshair\x07go https://example.com now");
+
+        roastty_surface_mouse_pos(surface, 65.0, 5.0, ROASTTY_MODS_SUPER);
+        reset_action_records(true);
+        send_key(
+            surface,
+            key_release(key::Key::MetaLeft, b"", 0, ROASTTY_MODS_NONE),
+        );
+
+        assert_eq!(mouse_shape_records(), vec![ROASTTY_MOUSE_SHAPE_CROSSHAIR]);
+        assert_eq!(mouse_over_link_records(), vec![String::new()]);
+
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+        roastty_config_free(config);
+    }
+
+    #[test]
+    fn link_hover_modifier_refresh_super_enables_osc8_without_mouse_move() {
+        let _guard = pty_command_lock();
+        let config = new_test_config_with_link_previews(config::LinkPreviews::Osc8);
+        let app = new_test_app_with_action_config(true, config);
+        let surface = new_test_surface(app);
+        surface_from_handle(surface).unwrap().termio_worker = Some(test_worker("sleep 1"));
+        set_surface_test_geometry(surface, 80, 5, 10, 20);
+        write_surface_worker_bytes(
+            surface,
+            b"\x1b]8;;https://osc8.example\x1b\\link\x1b]8;;\x1b\\ plain",
+        );
+
+        roastty_surface_mouse_pos(surface, 15.0, 5.0, ROASTTY_MODS_NONE);
+        assert!(mouse_shape_records().is_empty());
+        assert!(mouse_over_link_records().is_empty());
+
+        send_key(
+            surface,
+            key_press(key::Key::MetaLeft, b"", 0, ROASTTY_MODS_SUPER),
+        );
+
+        assert_eq!(mouse_shape_records(), vec![ROASTTY_MOUSE_SHAPE_POINTER]);
+        assert_eq!(
+            mouse_over_link_records(),
+            vec!["https://osc8.example".to_string()]
+        );
+
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+        roastty_config_free(config);
+    }
+
+    #[test]
+    fn link_hover_modifier_refresh_respects_reporting_and_shift_override() {
+        let _guard = pty_command_lock();
+        let config = new_test_config_with_link_previews(config::LinkPreviews::True);
+        let app = new_test_app_with_action_config(true, config);
+        let surface = new_test_surface(app);
+        surface_from_handle(surface).unwrap().termio_worker = Some(test_worker("sleep 1"));
+        set_surface_test_geometry(surface, 80, 5, 10, 20);
+        write_surface_worker_bytes(surface, b"go https://example.com now");
+        set_surface_worker_mouse_tracking(surface, true);
+
+        roastty_surface_mouse_pos(surface, 65.0, 5.0, ROASTTY_MODS_NONE);
+        reset_action_records(true);
+        send_key(
+            surface,
+            key_press(key::Key::MetaLeft, b"", 0, ROASTTY_MODS_SUPER),
+        );
+        assert_eq!(mouse_over_link_records(), vec![String::new()]);
+
+        reset_action_records(true);
+        send_key(
+            surface,
+            key_press(
+                key::Key::ShiftLeft,
+                b"",
+                0,
+                ROASTTY_MODS_SHIFT | ROASTTY_MODS_SUPER,
+            ),
+        );
+
+        assert_eq!(mouse_shape_records(), vec![ROASTTY_MOUSE_SHAPE_POINTER]);
+        assert_eq!(
+            mouse_over_link_records(),
+            vec!["https://example.com".to_string()]
+        );
+
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+        roastty_config_free(config);
+    }
+
+    #[test]
+    fn link_hover_modifier_refresh_reporting_captured_shift_noops() {
+        let _guard = pty_command_lock();
+        let config = new_test_config_with_link_previews_and_mouse_shift_capture(
+            config::LinkPreviews::True,
+            config::MouseShiftCapture::Always,
+        );
+        let app = new_test_app_with_action_config(true, config);
+        let surface = new_test_surface(app);
+        surface_from_handle(surface).unwrap().termio_worker = Some(test_worker("sleep 1"));
+        set_surface_test_geometry(surface, 80, 5, 10, 20);
+        write_surface_worker_bytes(surface, b"go https://example.com now");
+        set_surface_worker_mouse_tracking(surface, true);
+
+        roastty_surface_mouse_pos(surface, 65.0, 5.0, ROASTTY_MODS_NONE);
+        reset_action_records(true);
+        send_key(
+            surface,
+            key_press(
+                key::Key::ShiftLeft,
+                b"",
+                0,
+                ROASTTY_MODS_SHIFT | ROASTTY_MODS_SUPER,
+            ),
+        );
+
+        assert!(mouse_shape_records().is_empty());
+        assert!(mouse_over_link_records().is_empty());
+
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+        roastty_config_free(config);
+    }
+
+    #[test]
+    fn link_hover_preview_dispatch_suppresses_left_drag_hover() {
+        let _guard = pty_command_lock();
+        let config = new_test_config_with_link_previews_and_links(
+            config::LinkPreviews::True,
+            vec![input::link::Link {
+                regex: b"https://[^ ]+".to_vec(),
+                action: input::link::Action::Open,
+                highlight: input::link::Highlight::Always,
+            }],
+        );
+        let app = new_test_app_with_action_config(true, config);
+        let surface = new_test_surface(app);
+        surface_from_handle(surface).unwrap().termio_worker = Some(test_worker("sleep 1"));
+        set_surface_test_geometry(surface, 80, 5, 10, 20);
+        write_surface_worker_bytes(surface, b"go https://example.com now");
+
+        roastty_surface_mouse_pos(surface, 5.0, 5.0, ROASTTY_MODS_NONE);
+        assert!(!roastty_surface_mouse_button(
+            surface,
+            ROASTTY_MOUSE_BUTTON_PRESS,
+            mouse_button_to_int(mouse::MouseButton::Left),
+            ROASTTY_MODS_NONE
+        ));
+        reset_action_records(true);
+        roastty_surface_mouse_pos(surface, 65.0, 5.0, ROASTTY_MODS_NONE);
+
+        assert!(mouse_shape_records().is_empty());
+        assert!(mouse_over_link_records().is_empty());
+
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+        roastty_config_free(config);
+    }
+
+    #[test]
     fn right_click_action_mouse_reporting_clears_selection_and_skips_actions() {
         let _guard = pty_command_lock();
         let config = new_test_config_with_right_click_action(config::RightClickAction::Paste);
@@ -23876,6 +26541,86 @@ mod tests {
     }
 
     #[test]
+    fn input_state_cache_updates_from_pump_snapshot() {
+        let app = new_test_app();
+        let surface = new_test_surface(app);
+        let mut pump = test_pump(0, 0, 0, false, false);
+        pump.input_state = termio::TermioInputState {
+            key_encode_options: key_encode::Options {
+                cursor_key_application: true,
+                kitty_flags: terminal::kitty::KeyFlags {
+                    disambiguate: true,
+                    report_events: false,
+                    report_alternates: false,
+                    report_all: false,
+                    report_associated: false,
+                },
+                ..key_encode::Options::default()
+            },
+            terminal_kam_enabled: true,
+        };
+
+        apply_test_pump(surface, pump);
+
+        let surface_ref = surface_from_handle(surface).unwrap();
+        assert!(surface_ref.key_encode_options().cursor_key_application);
+        assert!(surface_ref.key_encode_options().kitty_flags.disambiguate);
+        assert!(surface_ref.terminal_kam_enabled());
+
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+    }
+
+    #[test]
+    fn cached_key_encode_options_follow_real_terminal_dec_sequence() {
+        let _guard = pty_command_lock();
+        let app = new_test_app();
+        let surface = new_test_surface(app);
+        surface_from_handle(surface).unwrap().termio_worker = Some(test_worker("sleep 1"));
+
+        assert!(
+            !surface_from_handle(surface)
+                .unwrap()
+                .key_encode_options()
+                .cursor_key_application
+        );
+        set_surface_worker_dec_mode(surface, 1, true);
+        assert!(
+            surface_from_handle(surface)
+                .unwrap()
+                .key_encode_options()
+                .cursor_key_application
+        );
+        set_surface_worker_dec_mode(surface, 1, false);
+        assert!(
+            !surface_from_handle(surface)
+                .unwrap()
+                .key_encode_options()
+                .cursor_key_application
+        );
+
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+    }
+
+    #[test]
+    fn cached_kam_follows_real_terminal_ansi_sequence() {
+        let _guard = pty_command_lock();
+        let app = new_test_app();
+        let surface = new_test_surface(app);
+        surface_from_handle(surface).unwrap().termio_worker = Some(test_worker("sleep 1"));
+
+        assert!(!surface_from_handle(surface).unwrap().terminal_kam_enabled());
+        set_surface_worker_ansi_mode(surface, 2, true);
+        assert!(surface_from_handle(surface).unwrap().terminal_kam_enabled());
+        set_surface_worker_ansi_mode(surface, 2, false);
+        assert!(!surface_from_handle(surface).unwrap().terminal_kam_enabled());
+
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+    }
+
+    #[test]
     fn vt_kam_allowed_false_does_not_block_key_input_when_terminal_kam_is_enabled() {
         let _guard = pty_command_lock();
         let config = new_test_config_with_vt_kam_allowed(false);
@@ -24039,6 +26784,17 @@ mod tests {
         value
     }
 
+    fn config_get_u32_value(config: RoasttyConfig, key: &'static CStr) -> u32 {
+        let mut value: u32 = 0;
+        assert!(roastty_config_get(
+            config,
+            (&mut value as *mut u32).cast(),
+            key.as_ptr(),
+            key.to_bytes().len()
+        ));
+        value
+    }
+
     fn config_get_palette_value(config: RoasttyConfig) -> RoasttyPalette {
         let mut value = [RoasttyRgb::default(); 256];
         assert!(roastty_config_get(
@@ -24122,6 +26878,7 @@ mod tests {
         assert!(!config_get_bool_value(config, c"focus-follows-mouse"));
         assert!(!config_get_bool_value(config, c"maximize"));
         assert!(config_get_bool_value(config, c"macos-window-shadow"));
+        assert!(config_get_bool_value(config, c"macos-applescript"));
 
         {
             let config_ref = config_from_handle(config).unwrap();
@@ -24144,6 +26901,10 @@ mod tests {
                 .unwrap();
             config_ref
                 .parsed
+                .set("macos-applescript", Some("false"))
+                .unwrap();
+            config_ref
+                .parsed
                 .set("resize-overlay", Some("never"))
                 .unwrap();
             config_ref.parsed.set("scrollbar", Some("never")).unwrap();
@@ -24161,6 +26922,7 @@ mod tests {
             Some("tabs")
         );
         assert!(!config_get_bool_value(config, c"macos-window-shadow"));
+        assert!(!config_get_bool_value(config, c"macos-applescript"));
         assert_eq!(
             config_get_string_value(config, c"resize-overlay").as_deref(),
             Some("never")
@@ -24226,6 +26988,51 @@ mod tests {
             (&mut value as *mut bool).cast(),
             ptr::null(),
             "quit-after-last-window-closed".len()
+        ));
+
+        roastty_config_free(config);
+    }
+
+    #[test]
+    fn config_get_bell_features_runtime() {
+        let config = roastty_config_new();
+
+        assert_eq!(
+            config_get_u32_value(config, c"bell-features"),
+            (1 << 2) | (1 << 3)
+        );
+
+        {
+            let config_ref = config_from_handle(config).unwrap();
+            config_ref
+                .parsed
+                .set("bell-features", Some("system,audio,no-title,border"))
+                .unwrap();
+            config_ref.sync_from_parsed_config();
+        }
+
+        assert_eq!(
+            config_get_u32_value(config, c"bell-features"),
+            (1 << 0) | (1 << 1) | (1 << 2) | (1 << 4)
+        );
+
+        {
+            let config_ref = config_from_handle(config).unwrap();
+            config_ref
+                .parsed
+                .set("bell-features", Some("false"))
+                .unwrap();
+            config_ref.sync_from_parsed_config();
+        }
+
+        assert_eq!(config_get_u32_value(config, c"bell-features"), 0);
+
+        let mut value: u32 = 0;
+        assert!(!roastty_config_get(
+            ptr::null_mut(),
+            (&mut value as *mut u32).cast(),
+            c"bell-features".as_ptr(),
+            "bell-features".len()
         ));
 
         roastty_config_free(config);

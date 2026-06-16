@@ -170,7 +170,7 @@ impl Screen {
     pub(super) fn init(
         cols: CellCountInt,
         rows: CellCountInt,
-        max_scrollback_rows: Option<usize>,
+        max_scrollback_bytes: Option<usize>,
     ) -> Result<Self, PageListAllocError> {
         Ok(Self {
             cursor: ScreenCursor::default(),
@@ -178,7 +178,7 @@ impl Screen {
             charset: ScreenCharsetState::default(),
             kitty_keyboard: kitty::KeyFlagStack::default(),
             kitty_images: ImageStorage::new(),
-            pages: PageList::init(cols, rows, max_scrollback_rows)?,
+            pages: PageList::init(cols, rows, max_scrollback_bytes)?,
             selection: None,
             prompt_click_mode: PromptClickMode::None,
         })
@@ -318,6 +318,37 @@ impl Screen {
             None, // codepoint_map
         );
         StringMap::from_page_string(page_string)
+    }
+
+    pub(in crate::terminal) fn selection_viewport_string_map(
+        &self,
+        selection: selection::Selection,
+        trim: bool,
+    ) -> ViewportStringMap {
+        let page_string = self.pages.screen_format_string_with_pin_map(
+            Some(selection),
+            trim,
+            true,
+            PageOutputFormat::Plain,
+            None,
+            None,
+        );
+
+        let mut map = Vec::with_capacity(page_string.pin_map.len());
+        for pin in page_string.pin_map {
+            let grid_ref = GridRef::from(pin);
+            let Ok(coord) = self.point_from_grid_ref(
+                grid_ref.node,
+                grid_ref.x,
+                grid_ref.y,
+                point::Tag::Viewport,
+            ) else {
+                return ViewportStringMap::new(String::new(), Vec::new());
+            };
+            map.push(coord);
+        }
+
+        ViewportStringMap::new(page_string.text, map)
     }
 
     /// Flatten the visible viewport to text plus one viewport coordinate per
@@ -1943,6 +1974,10 @@ impl Screen {
 
     pub(super) fn viewport_bounds(&self) -> Option<(GridRef, GridRef)> {
         self.pages.viewport_bounds()
+    }
+
+    pub(super) fn bottom_right(&self, tag: point::Tag) -> Option<GridRef> {
+        self.pages.get_bottom_right(tag).map(GridRef::from)
     }
 
     pub(super) fn pin(&self, point: point::Point) -> Option<Pin> {

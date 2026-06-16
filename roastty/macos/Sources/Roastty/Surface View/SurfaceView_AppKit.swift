@@ -192,6 +192,11 @@ extension Roastty {
             ProcessInfo.processInfo.environment["ROASTTY_UI_KEY_TRACE_PATH"]
         }
 
+        private var uiTestTraceTimestamp: String {
+            let ns = UInt64(Date().timeIntervalSince1970 * 1_000_000_000)
+            return "ts_ns=\(ns)"
+        }
+
         // True when we've consumed a left mouse-down only to move focus and
         // should suppress the matching mouse-up from being reported.
         private var suppressNextLeftMouseUp: Bool = false
@@ -519,6 +524,7 @@ extension Roastty {
                 // We ignore unknown shapes.
                 return
             }
+            appendUITestKeyTrace("cursorShape raw=\(shape.rawValue) pointerStyle=\(pointerStyle)")
         }
 
         func setCursorVisibility(_ visible: Bool) {
@@ -764,6 +770,7 @@ extension Roastty {
         @objc private func roasttyBellDidRing(_ notification: SwiftUI.Notification) {
             // Bell state goes to true
             bell = true
+            appendUITestKeyTrace("surfaceBell state=true title=\(title)")
         }
 
         @objc private func windowDidChangeScreen(notification: SwiftUI.Notification) {
@@ -985,6 +992,9 @@ extension Roastty {
             mouseLocationInSurface = pos
 
             guard let surfaceModel else { return }
+            appendUITestKeyTrace(
+                "mouseMoved posX=\(pos.x) posY=\(pos.y) frameW=\(frame.width) frameH=\(frame.height) mods=\(event.modifierFlags.rawValue)"
+            )
 
             // Convert window position to view position. Note (0, 0) is bottom left.
             let mouseEvent = Roastty.Input.MousePosEvent(
@@ -1457,16 +1467,30 @@ extension Roastty {
                 appendUITestKeyTrace(
                     "keyAction text=\(text) \(Self.uiTestTextDetails(text)) composing=\(composing) keycode=\(key_ev.keycode) mods=\(key_ev.mods) consumedMods=\(key_ev.consumed_mods)"
                 )
+                let start = Date()
                 let result = text.withCString { ptr in
                     key_ev.text = ptr
                     return roastty_surface_key(surface, key_ev)
                 }
-                appendUITestKeyTrace("keyAction result=\(result) path=roastty_surface_key text")
+                appendUITestKeyTrace(
+                    String(
+                        format: "keyAction result=%@ path=roastty_surface_key text duration_ms=%.3f",
+                        result ? "true" : "false",
+                        Date().timeIntervalSince(start) * 1000
+                    )
+                )
                 return result
             } else {
                 appendUITestKeyTrace("keyAction raw composing=\(composing)")
+                let start = Date()
                 let result = roastty_surface_key(surface, key_ev)
-                appendUITestKeyTrace("keyAction result=\(result) path=roastty_surface_key raw")
+                appendUITestKeyTrace(
+                    String(
+                        format: "keyAction result=%@ path=roastty_surface_key raw duration_ms=%.3f",
+                        result ? "true" : "false",
+                        Date().timeIntervalSince(start) * 1000
+                    )
+                )
                 return result
             }
         }
@@ -1510,20 +1534,31 @@ extension Roastty {
         }
 
         override func quickLook(with event: NSEvent) {
-            guard let surface = self.surface else { return super.quickLook(with: event) }
+            guard let surface = self.surface else {
+                appendUITestKeyTrace("quickLook fallback=no-surface")
+                return super.quickLook(with: event)
+            }
 
             // Grab the text under the cursor
             var text = roastty_text_s()
-            guard roastty_surface_quicklook_word(surface, &text) else { return super.quickLook(with: event) }
+            guard roastty_surface_quicklook_word(surface, &text) else {
+                appendUITestKeyTrace("quickLook fallback=no-word")
+                return super.quickLook(with: event)
+            }
             defer { roastty_surface_free_text(surface, &text) }
-            guard text.text_len > 0  else { return super.quickLook(with: event) }
+            guard text.text_len > 0  else {
+                appendUITestKeyTrace("quickLook fallback=empty-word")
+                return super.quickLook(with: event)
+            }
 
             // If we can get a font then we use the font. This should always work
             // since we always have a primary font. The only scenario this doesn't
             // work is if someone is using a non-CoreText build which would be
             // unofficial.
             var attributes: [ NSAttributedString.Key: Any ] = [:]
+            var fontPresent = false
             if let fontRaw = roastty_surface_quicklook_font(surface) {
+                fontPresent = true
                 // Memory management here is wonky: roastty_surface_quicklook_font
                 // will create a copy of a CTFont, Swift will auto-retain the
                 // unretained value passed into the dict, so we release the original.
@@ -1535,7 +1570,11 @@ extension Roastty {
             // Roastty coordinate system is top-left, convert to bottom-left for AppKit
             let pt = NSPoint(x: text.tl_px_x, y: frame.size.height - text.tl_px_y)
             let str = NSAttributedString.init(string: String(cString: text.text), attributes: attributes)
+            appendUITestKeyTrace(
+                "quickLook text=\(str.string) len=\(text.text_len) tl=(\(text.tl_px_x),\(text.tl_px_y)) appkit=(\(pt.x),\(pt.y)) fontPresent=\(fontPresent)"
+            )
             self.showDefinition(for: str, at: pt)
+            appendUITestKeyTrace("quickLook showDefinition=true")
         }
 
         override func menu(for event: NSEvent) -> NSMenu? {
@@ -1608,7 +1647,49 @@ extension Roastty {
             item.setImageIfDesired(systemSymbolName: "pencil.line")
             item = menu.addItem(withTitle: "Change Terminal Title...", action: #selector(changeTitle(_:)), keyEquivalent: "")
 
+            appendUITestKeyTrace("contextMenu items=\(menu.items.map { $0.title }.joined(separator: "|"))")
             return menu
+        }
+
+        @objc func showUITestContextMenu(_ sender: Any?) {
+            guard ProcessInfo.processInfo.environment["ROASTTY_UI_TEST_ENABLE_CONTEXT_MENU_ACTION"] == "1" else { return }
+            let event = NSEvent.mouseEvent(
+                with: .rightMouseDown,
+                location: CGPoint(x: bounds.midX, y: bounds.midY),
+                modifierFlags: [],
+                timestamp: ProcessInfo.processInfo.systemUptime,
+                windowNumber: window?.windowNumber ?? 0,
+                context: nil,
+                eventNumber: 0,
+                clickCount: 1,
+                pressure: 1
+            )
+            guard let event, let menu = menu(for: event) else {
+                appendUITestKeyTrace("contextMenu uiTestAction=no-menu")
+                return
+            }
+            appendUITestKeyTrace("contextMenu uiTestAction items=\(menu.items.map { $0.title }.joined(separator: "|"))")
+        }
+
+        @objc func showUITestQuickLook(_ sender: Any?) {
+            guard ProcessInfo.processInfo.environment["ROASTTY_UI_TEST_ENABLE_QUICKLOOK_ACTION"] == "1" else { return }
+            let event = NSEvent.mouseEvent(
+                with: .leftMouseDown,
+                location: CGPoint(x: bounds.midX, y: bounds.midY),
+                modifierFlags: [],
+                timestamp: ProcessInfo.processInfo.systemUptime,
+                windowNumber: window?.windowNumber ?? 0,
+                context: nil,
+                eventNumber: 0,
+                clickCount: 1,
+                pressure: 1
+            )
+            guard let event else {
+                appendUITestKeyTrace("quickLook uiTestAction=no-event")
+                return
+            }
+            appendUITestKeyTrace("quickLook uiTestAction=invoke")
+            quickLook(with: event)
         }
 
         // MARK: Menu Handlers
@@ -1742,7 +1823,7 @@ extension Roastty {
         }
 
         /// Show a user notification and associate it with this surface
-        func showUserNotification(title: String, body: String, requireFocus: Bool = true) {
+        func showUserNotification(title: String, body: String, requireFocus: Bool = true, identifier: String = UUID().uuidString) {
             let content = UNMutableNotificationContent()
             content.title = title
             content.subtitle = self.title
@@ -1754,24 +1835,28 @@ extension Roastty {
                 "requireFocus": requireFocus,
             ]
 
-            let uuid = UUID().uuidString
+            let uuid = identifier
+            appendUITestKeyTrace("userNotification request id=\(uuid) title=\(title) body=\(body) requireFocus=\(requireFocus)")
             let request = UNNotificationRequest(
                 identifier: uuid,
                 content: content,
                 trigger: nil
             )
 
-            // Note the callback may be executed on a background thread as documented
-            // so we need @MainActor since we're reading/writing view state.
-            UNUserNotificationCenter.current().add(request) { @MainActor error in
-                if let error = error {
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                do {
+                    try await UNUserNotificationCenter.current().add(request)
+                } catch {
                     AppDelegate.logger.error("Error scheduling user notification: \(error)")
+                    self.appendUITestKeyTrace("userNotification addError id=\(uuid) error=\(error)")
                     return
                 }
 
                 // We need to keep track of this notification so we can remove it
                 // under certain circumstances
                 self.notificationIdentifiers.insert(uuid)
+                self.appendUITestKeyTrace("userNotification added id=\(uuid) tracked=\(self.notificationIdentifiers.contains(uuid))")
 
                 // If we're focused then we schedule to remove the notification
                 // after a few seconds. If we gain focus we automatically remove it
@@ -1784,6 +1869,37 @@ extension Roastty {
                             .removeDeliveredNotifications(withIdentifiers: [uuid])
                     }
                 }
+            }
+        }
+
+        @objc func showUITestUserNotification(_ sender: Any?) {
+            guard ProcessInfo.processInfo.environment["ROASTTY_UI_TEST_ENABLE_USER_NOTIFICATION_ACTION"] == "1" else { return }
+            let title = "Issue805Exp195Notification"
+            let body = "Issue 805 Experiment 195 Body"
+            let id = "issue805-exp195-\(self.id.uuidString)"
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                let center = UNUserNotificationCenter.current()
+                let settings = await center.notificationSettings()
+                self.appendUITestKeyTrace(
+                    "userNotification settings status=\(settings.authorizationStatus.rawValue) alert=\(settings.alertSetting.rawValue) sound=\(settings.soundSetting.rawValue)"
+                )
+                guard settings.authorizationStatus == .authorized else {
+                    self.appendUITestKeyTrace("userNotification uiTestAction=blocked status=\(settings.authorizationStatus.rawValue)")
+                    return
+                }
+                self.showUserNotification(title: title, body: body, requireFocus: false, identifier: id)
+                try? await Task.sleep(for: .milliseconds(750))
+                let matches = await center.deliveredNotifications().filter { $0.request.identifier == id }
+                let summary = matches.map { notification in
+                    let content = notification.request.content
+                    let surface = content.userInfo["surface"] as? String ?? ""
+                    let requireFocus = content.userInfo["requireFocus"] as? Bool ?? true
+                    return "id=\(notification.request.identifier) title=\(content.title) subtitle=\(content.subtitle) body=\(content.body) category=\(content.categoryIdentifier) surface=\(surface) requireFocus=\(requireFocus)"
+                }.joined(separator: "|")
+                self.appendUITestKeyTrace("userNotification delivered count=\(matches.count) \(summary)")
+                center.removeDeliveredNotifications(withIdentifiers: [id])
+                self.notificationIdentifiers.remove(id)
             }
         }
 
@@ -2096,7 +2212,7 @@ extension Roastty.SurfaceView: NSTextInputClient {
 
     private func appendUITestKeyTrace(_ line: String) {
         guard let path = uiTestKeyTracePath else { return }
-        let data = Data((line + "\n").utf8)
+        let data = Data(("\(uiTestTraceTimestamp) \(line)\n").utf8)
         if FileManager.default.fileExists(atPath: path),
            let handle = try? FileHandle(forWritingTo: URL(fileURLWithPath: path)) {
             defer { try? handle.close() }

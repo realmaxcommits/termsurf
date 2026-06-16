@@ -431,6 +431,16 @@ def update_cfg218(
     for line in lines:
         if line.startswith("| CFG-218 |"):
             status = "Pass" if incomplete_count == 0 else "Gap"
+            roastty_status = (
+                "Roastty formatter dispatch is inventoried per canonical option "
+                "with upstream-derived formatter oracles."
+                if incomplete_count == 0
+                else (
+                    "Roastty formatter dispatch is inventoried per canonical "
+                    "option, but full upstream-derived formatter oracles are not "
+                    "complete."
+                )
+            )
             notes = (
                 f"Experiment {owner_experiment} completes formatter coverage: "
                 f"{oracle_count} rows Oracle complete; {incomplete_count} rows "
@@ -445,9 +455,7 @@ def update_cfg218(
             line = (
                 "| CFG-218 | Non-default formatter behavior and order | Ghostty "
                 "formats configured non-default values and repeatable values with "
-                "stable text and ordering. | Roastty formatter dispatch is "
-                f"inventoried per canonical option, but full upstream-derived "
-                f"formatter oracles are not complete. | {status} | Generated "
+                f"stable text and ordering. | {roastty_status} | {status} | Generated "
                 "formatter-facet inventory plus matrix consistency assertion. | "
                 f"`{formatter_inventory_path}` | Tier 1 | "
                 "`PYTHONDONTWRITEBYTECODE=1 python3 "

@@ -1,6 +1,7 @@
 +++
-status = "open"
+status = "closed"
 opened = "2026-06-13"
+closed = "2026-06-15"
 +++
 
 # Issue 805: Roastty Parity with Ghostty 2c62d182
@@ -269,6 +270,57 @@ experiment files until they are proven.
   screenshots, and cleanup against the current Roastty app after the required
   permissions were granted to Ghostty, the responsible host app for this Codex
   session.
+- **AppleScript `send key` needs text for printable keys.** Experiment 171
+  showed that sending only the physical key code is not enough for printable
+  AppleScript keyboard events to reach the child PTY as bytes. Roastty's
+  AppleScript key handler now attaches `text` and `unshiftedCodepoint` for
+  scriptable printable keys, and the live guard proves `send key "a"` plus
+  `send key "b"` records exact raw `ab` bytes.
+- **AppleScript mouse delivery can be proven through terminal mouse reports.**
+  Experiment 171 showed that a controlled child process can enable terminal
+  mouse reporting, then `send mouse position`, `send mouse button`, and
+  `send mouse scroll` can be proven by non-empty SGR/X10-style report bytes in
+  the child PTY. This is command-delivery proof, not cursor/pointer pixel or
+  full GUI walkthrough proof.
+- **Native menu tests should separate menu inspection from app object checks.**
+  Experiment 172 showed that System Events can target the exact launched Roastty
+  Unix PID and prove native menu visibility, validation, and dispatch. After
+  menu inspection, send Escape before querying the app through AppleScript; an
+  open native menu can otherwise stall object-model queries. Prefer the
+  launch-created terminal window for validation checks so New Window undo state
+  does not change the expected Edit menu state.
+- **Native fullscreen and command-palette GUI proof need separate oracles.**
+  Experiment 173 showed that native fullscreen geometry can change before
+  `AXFullScreen` reports the new state, so the guard must wait for both
+  PID-scoped CoreGraphics bounds and any exposed accessibility state. The
+  command-palette SwiftUI overlay did not expose stable accessibility text in
+  this VM, so the durable proof is same-PID/same-window screenshots with a
+  visible baseline-to-palette pixel delta and a post-Escape near-baseline
+  control screenshot.
+- **Quick Terminal is a floating panel, not a layer-0 terminal window.**
+  Experiment 174 showed that live Quick Terminal GUI proof should diff PID-owned
+  CoreGraphics window ids, expect the new panel to use a nonzero popup/floating
+  layer, and capture that exact CGWindowID with `screencapture`. PID-only
+  screenshot helpers prefer layer-0 terminal windows and can capture the wrong
+  window while the Quick Terminal panel is visible.
+- **Split layout proof should sample stable colored regions.** Experiment 175
+  showed that a live right split can be proven by running controlled child
+  processes that paint distinct truecolor ANSI backgrounds, capturing the exact
+  PID-owned layer-0 CGWindowID, and sampling stable visible regions inside each
+  pane. Broad right-third sampling can hit renderer wrap gaps, so the durable
+  oracle avoids the titlebar, divider, window edges, and known wrap bands.
+- **Hidden titlebar proof needs a positive control.** Experiment 176 showed that
+  `macos-titlebar-style = hidden` can be proven by comparing it to a
+  `transparent` control window, both launched from the debug app with isolated
+  config. On this VM, `AXFocused` on the window remains false even when the app
+  is active; the stable focus proof is exact frontmost Unix PID plus `AXMain` on
+  the target window and on the process `AXFocusedWindow`.
+- **Padding pixel proof must ignore small bright chrome artifacts.** Experiment
+  177 showed that the debug-build warning icon can match a bright-content color
+  classifier near the titlebar. Durable screenshot guards should identify
+  terminal content from broad bright rows/columns or equivalent connected
+  regions, then derive padding/content sample rectangles from that measured
+  content box instead of treating isolated bright pixels as content bounds.
 - **Passing behavior needs a durable but cheap guard.** Future experiments
   should record the cheapest sufficient regression guard for each passing parity
   row. Prefer static checks and unit tests when they prove the behavior; reserve
@@ -280,6 +332,30 @@ experiment files until they are proven.
   `zig build -Demit-macos-app=false` and
   `nu macos/build.nu --configuration Debug`; the old build-only
   `macos-only-xcframework.patch` is no longer needed for the baseline.
+- **Runtime dispatch should read surface-owned config when config can reload.**
+  Experiment 161 showed that link-hover preview dispatch must use the
+  surface-cached `link_previews` value, not only app-level parsed config, so
+  `roastty_surface_update_config` changes are reflected by existing surfaces.
+- **Link hover parity includes key/modifier callbacks.** Experiment 162 showed
+  that pinned Ghostty refreshes hover state from `keyCallback` when mouse
+  modifiers change, not only from mouse-motion callbacks. Future hover GUI tests
+  should include stationary modifier press/release cases so the same-cell
+  no-link cache and mouse-reporting/shift branches stay covered.
+- **Device attributes can be config-derived terminal state.** Pinned Ghostty's
+  primary device-attributes reply advertises feature `52` only when
+  `clipboard-write != deny`. Roastty now treats that as terminal runtime state:
+  deny suppresses `52`, while ask and allow advertise it. This is distinct from
+  app-level clipboard read/write policy tests.
+- **Default cursor config is live terminal state.** Pinned Ghostty reloads
+  `cursor-style` and `cursor-style-blink` into the active stream handler, but
+  applies the visible cursor immediately only while the cursor is still in the
+  default DECSCUSR state. Roastty now mirrors that: explicit program cursor
+  choices survive reload until a default cursor reset is received.
+- **Kitty image storage quota is PTY-backed terminal config.** Pinned Ghostty
+  applies `image-storage-limit` at terminal startup and live config update, and
+  live updates restore kitty image loading limits to all media. Roastty now
+  threads the parsed quota through `TermioSpawnOptions` and active surface
+  config updates.
 - **The pinned A/B build/render rig works.** Experiment 1 proved the debug
   Ghostty and Roastty apps can both build, launch side by side, render the same
   startup recipe through the live A/B smoke harness, capture comparable
@@ -342,12 +418,40 @@ experiment files until they are proven.
   title changes should travel through `TermioPump`. Configured static titles and
   direct command argv[0] startup titles are now proven separately from
   empty-title/PWD fallback semantics, which remain a CFG-223 gap.
-- **`scrollback-limit` runtime parity has two tiers.** Roastty's terminal core
-  currently models scrollback capacity in rows, while pinned Ghostty documents
-  `scrollback-limit` as a byte quota. A focused experiment may prove the
-  important `scrollback-limit = 0` no-history behavior, but exact nonzero
-  byte-quota parity must remain a separate gap until Roastty has a byte-accurate
-  oracle.
+- **Empty title reset is an event, not just a string diff.** Pinned Ghostty
+  sends title messages for empty-title resets even when the effective title is
+  blank or unchanged. Roastty now drains explicit pending title events through
+  `TermioPump`; OSC 7 PWD normalization and exact nonzero scrollback byte-quota
+  wiring are proven separately from other remaining terminal gaps.
+- **OSC 7 PWD reports are paths, not raw URLs.** Pinned Ghostty accepts local
+  `file` and `kitty-shell-cwd` OSC 7 URLs, requires a local hostname, stores the
+  normalized path, dispatches that path as `pwd`, and uses that path for title
+  fallback. Roastty now mirrors this common local path behavior through terminal
+  state, `TermioPump`, and `ROASTTY_ACTION_PWD`; exact URI edge semantics are
+  tracked and guarded separately.
+- **OSC 7 `file` and `kitty-shell-cwd` paths intentionally differ.** Pinned
+  Ghostty trims query/fragment suffixes and percent-decodes `file` paths, but
+  enables raw-path parsing for `kitty-shell-cwd`, preserving percent escapes and
+  query/fragment suffixes inside the path. Roastty now guards those edge
+  semantics through terminal-core, `TermioPump`, and `ROASTTY_ACTION_PWD` tests.
+- **`scrollback-limit` runtime parity has two tiers.** `scrollback-limit = 0`
+  disables PTY-backed surface history, while nonzero parsed values must travel
+  as byte quotas into terminal storage. Roastty now preserves nonzero parsed
+  values through app startup, `TermioSpawnOptions`, `Terminal`, `Screen`, and
+  `PageList`; a tiny byte quota keeps less history than a large byte quota for
+  the same workload, with PageList pruning guarded by byte-size page growth.
+- **Shell startup rewrites can be proven without live shells.** Pinned Ghostty's
+  `termio/shell_integration.zig` helper tests define a cheap oracle for shell
+  detection, forced-shell setup, bash option/env rewrites, XDG directory setup,
+  nushell `--execute` injection/fallback, zsh `ZDOTDIR`, and missing-resource
+  fallback. Roastty now mirrors that helper surface with `ROASTTY_*` names while
+  leaving script-body and live-shell PTY parity as separate concerns if needed.
+- **Font-grid parity has an initial-construction slice and an update slice.**
+  Roastty now proves parsed font family/style/codepoint-map/synthetic-style
+  config reaches config-derived shared font grid construction and initial live
+  renderer setup. Renderer-visible font output, feature/variation/thicken/metric
+  effects, and live renderer grid rebuild/update after reload/manual font-size
+  changes remain in the reduced font gap.
 - **App-facing ABI parity must be scoped before diffing.** Roastty's C header is
   intentionally larger than Ghostty's header, so full symbol-count equality is
   the wrong oracle. Experiment 4 uses Swift app-source identifiers as the
@@ -396,6 +500,33 @@ experiment files until they are proven.
   together by covering enum keywords, packed flag output, duration output,
   resets, and order while leaving unrelated packed flags and duration rows for
   later proof.
+- **`app-notifications` is GTK-only runtime behavior.** Pinned Ghostty documents
+  `app-notifications` as applying only to GTK, and its runtime consumers are GTK
+  config-reload and clipboard-copy toast gates. Roastty should keep
+  parser/formatter parity for the option, but there is no macOS runtime toast
+  behavior to reproduce.
+- **macOS link-hover banner plumbing is copied source parity.** The copied macOS
+  app preserves pinned Ghostty's `mouse_over_link` action handling into
+  `hoverUrl`, `URLHoverBanner(url:)`, URL text truncation, and side-switching
+  hover banner layout after expected Roastty renames. Live mouse hover delivery,
+  cursor shape changes, link previews, and context/menu link flows remain
+  separate GUI gaps.
+- **OSC 133 `C` is the command-start runtime boundary.** Pinned Ghostty maps
+  semantic prompt `end_input_start_output` / OSC 133 `C` to `start_command` and
+  OSC 133 `D` to `stop_command`; OSC 133 `B` is an end-prompt/input boundary,
+  not the command timer start. Command-finished runtime parity should use `C`
+  for start and preserve Ghostty's exit-code mapping: absent or malformed values
+  map to `0`, parsed out-of-range values map to `1`, and valid `0..255` values
+  are preserved.
+- **Link context-menu selection has deterministic core semantics.** Pinned
+  Ghostty's right-click `context-menu` path calls `linkAtPos` before word
+  fallback, and configured regex links are searched only within the clicked line
+  with semantic prompt boundaries. Roastty must select configured regex links
+  and ctrl/super OSC 8 links before returning unhandled to the native menu
+  layer. Regular link preview predicates are gated by `link-previews = true`,
+  while OSC 8 preview predicates are gated by `link-previews != false`; actual
+  `mouse_over_link` dispatch and native preview/menu display remain GUI/runtime
+  gaps.
 - **Packed-flag formatter rows need family-column assertions, not broad text
   grep.** Experiment 79 promoted the six remaining packed-flag formatter rows
   while keeping already-proven packed rows unpromoted. The matrix assertion must
@@ -599,7 +730,8 @@ experiment files until they are proven.
   closure.** Experiment 112 generated a platform runtime manifest for every
   `gtk-*`, `linux-*`, and `macos-*` canonical option. GTK/Linux rows are not
   applicable to Roastty's macOS runtime, `macos-option-as-alt` is covered by
-  input guards, and remaining macOS app behavior stays owned by `RUNTIME-011`.
+  input guards, and after Experiment 166 the remaining live macOS app behavior
+  stays owned by `RUNTIME-011B2B`.
 - **Broad runtime rows should split proven slices from real gaps.** Experiment
   113 split PTY/process launch coverage so initial-command, environment, and
   working-directory behavior are guarded separately while config-level command,
@@ -618,6 +750,91 @@ experiment files until they are proven.
   Live PTY-backed BEL parity therefore flows through terminal pending bell
   counts, `TermioPump::bell_count`, and surface `ROASTTY_ACTION_RING_BELL`
   dispatch with a 100ms repeated-BEL throttle.
+- **Copied macOS bell presentation has source-level gates.** Experiment 153
+  proved the copied macOS host preserves pinned Ghostty's aggregate window bell
+  publisher, close-time bell clear, dock badge count, surface border overlay,
+  title bell prefix, and separate `bell-features = system`, `audio`,
+  `attention`, `title`, and `border` gates after expected Roastty renames.
+  Actual OS/audio/dock/border/title side effects still need GUI or platform
+  walkthrough proof in `RUNTIME-012B2B2B2B2B`.
+- **OSC desktop notifications need a PTY event queue.** Experiment 141 found
+  that Roastty already parsed OSC 9 and OSC 777 desktop notification commands,
+  but the live terminal path dropped them. PTY-backed parity now queues terminal
+  desktop notification events through `TermioPump`, applies the
+  `desktop-notifications` gate at the surface, and dispatches the app action
+  with Ghostty's fixed 63-byte title and 255-byte body C-string truncation.
+- **macOS user-notification plumbing is copied source parity.** Experiment 155
+  proved the copied macOS host preserves pinned Ghostty's notification category
+  registration, foreground presentation gate, authorization/settings gate,
+  surface notification content/request lifecycle, identifier cleanup, delayed
+  focused cleanup, and click-to-focus routing after expected Roastty renames.
+  Live OS banner/sound delivery, actual bell side effects, and link UI flows
+  remain in `RUNTIME-012B2B2B2B2B`.
+- **Desktop notification throttling is app-level runtime state.** Experiment 156
+  split Ghostty's one-second desktop-notification throttle and five-second
+  identical-notification suppression out of the remaining notification gap.
+  Roastty now stores app-level limiter state, compares the delimiterless
+  truncated `title || body` byte stream that Ghostty feeds to Wyhash, suppresses
+  without updating state, and shares the limiter across surfaces on the same
+  app.
+- **The terminal residual gap was an audit problem, not a hidden runtime
+  toggle.** Experiment 142 exhaustively mapped pinned Ghostty `DerivedConfig`,
+  direct termio config uses, and stream-handler config updates to existing
+  completed rows. The remaining CFG-223 gaps are now explicitly non-terminal:
+  font renderer output, renderer-visible GUI/pixel effects, macOS app UI, and
+  native notification/link/bell presentation flows.
+- **The renderer visual residual gap is now concrete.** Experiment 179 mapped
+  pinned Ghostty's renderer, shader, surface, config, and macOS render-host
+  sources to the already-completed renderer rows, and found the residual was not
+  empty. The remaining renderer work is now explicitly
+  `custom-shader-animation`, background image rendering/options,
+  `window-colorspace`, `alpha-blending`, and `scroll-to-bottom.output`, rather
+  than a vague broader GUI/pixel bucket.
+- **Custom shader animation is a present-tick policy.** Experiment 180 showed
+  that `custom-shader-animation` does not change shader output directly; it
+  decides whether an otherwise-clean frame should keep presenting while custom
+  shader pipelines are active. Roastty now mirrors Ghostty's `always`, focused
+  `true`, and `false` policy without bypassing the dirty-frame or
+  live-visibility gates.
+- **Background image parity is a renderer/runtime slice.** Experiment 181 split
+  `background-image` and its opacity, position, fit, and repeat options out of
+  the renderer residual. Roastty now has guarded evidence for config sourcing,
+  image load/upload/replace/reset, vertex packing, Metal shader/render-pass
+  output, compositor routing, and live frame reset behavior. The remaining
+  renderer residual is now `window-colorspace`, `alpha-blending`, and
+  `scroll-to-bottom.output`.
+- **Colorspace and alpha parity are uniform booleans.** Experiment 182 split
+  `window-colorspace` and `alpha-blending` out of the renderer residual by
+  proving Ghostty and Roastty map them to the same Metal uniform bools:
+  `use_display_p3`, `use_linear_blending`, and `use_linear_correction`. The
+  remaining renderer residual is now only `scroll-to-bottom.output`.
+- **Facet inventories can outpace their aggregate matrix rows.** Experiment 169
+  found CFG-217 through CFG-222 were complete in their generated facet
+  inventories while the top-level matrix still reported stale `Gap` rows. The
+  matrix reconciliation guard now rejects stale incomplete/proven/follow-up
+  wording when a facet row has become `Pass`, leaving CFG-223 as the only real
+  config gap.
+- **ENQ responses must avoid terminal callbacks in worker PTYs.** Experiment 135
+  found the same worker constraint applies to `enquiry-response`: embedded
+  callback ENQ handling can remain for direct terminal users, but live
+  PTY-backed parity needs owned terminal response state populated from parsed
+  config, passed through `TermioSpawnOptions`, and updated on app config reload.
+- **OSC color report format is terminal response state.** Experiment 136 found
+  that `osc-color-report-format` belongs on the live terminal, not only in the
+  parser: OSC 4/10/11/12 query replies must use the configured `none`, `8-bit`,
+  or `16-bit` response format at startup and after app config updates, while
+  set/reset color operations still run when query replies are disabled.
+- **Grapheme width method is a terminal default mode.** Experiment 140 found
+  that pinned Ghostty maps `grapheme-width-method` into DEC 2027
+  `grapheme_cluster` during `Termio.init`, storing it as both current and reset
+  default mode state. Roastty parity therefore requires startup wiring plus
+  direct reset/RIS proof, not just setting the current mode bit.
+- **Manual font-size changes must rebuild live font grids.** Experiment 143
+  found that requesting render after changing `font_size_points` is not enough
+  for a live Metal renderer: the existing renderer can keep its old
+  config-derived `SharedGrid`. Roastty now invalidates the live renderer on
+  effective font-size changes so the next present rebuilds the grid at the
+  active surface size.
 - **Shell integration parity has a proven Termio env slice.** Experiment 124
   split terminal identity, resource-backed `TERMINFO`, explicit env override
   ordering, shell feature env, and zsh bootstrap behavior out of the broader
@@ -631,6 +848,275 @@ experiment files until they are proven.
   requests from the broader renderer gap. Visible opacity, blur, padding, cursor
   shape/style rendering, window padding color, custom shader output, and GUI
   visual effects still need focused runtime or walkthrough proof.
+- **Deterministic renderer knobs can close before GUI pixel parity.** Experiment
+  133 split config-to-renderer-state and renderer-decision behavior from the
+  remaining visual renderer gap. `FrameRenderKnobs::from_config` now clamps
+  `background-opacity` at renderer use like pinned Ghostty, and unit/static
+  guards prove opacity conversion, `background-opacity-cells`,
+  `window-padding-color` padding-extension decisions, and `font-thicken` knob
+  sourcing. macOS glass host behavior, non-glass compositor opacity, window
+  padding layout pixels, cursor style shape/rendering pixels, custom shader
+  output, and broader GUI/pixel parity remain in the renderer visual gap.
+- **Selected cursor render data is not the same as full cursor priority or GUI
+  pixels.** Experiment 134 split deterministic active cursor overlay/uniform
+  branches, cursor color/text-color resolution, selected cursor sprite/glyph
+  data, wide cursor data, lock fallback rendering after lock selection, and
+  cursor list routing out of the renderer visual gap. Password/preedit cursor
+  style priority through the active renderer path and actual GUI cursor pixels
+  remain in `RUNTIME-008B2B`.
+- **Cursor priority belongs on the active frame path, not only in the isolated
+  helper.** Experiment 144 routed active frame cursor derivation through the
+  shared Ghostty-port cursor priority helper and derives preedit priority from
+  the real render method's `preedit` argument. Password/preedit priority is now
+  split out as `RUNTIME-008B2B1`; GUI cursor pixels, macOS glass/non-glass
+  compositor visuals, padding pixels, custom shader output, and broader GUI/
+  pixel parity remain in `RUNTIME-008B2B2`.
+- **Font shaping break is renderer row-format state.** Experiment 145 split
+  `font-shaping-break` cursor-run break behavior out of the remaining font
+  renderer gap. Roastty now applies `FontShapingBreak` to row-local `RunOptions`
+  in active frame row formatting, matching pinned Ghostty's renderer-side
+  application after viewport cursor derivation. Remaining font work stays in
+  `RUNTIME-007B2B2B2B2`.
+- **Font thickening has a deterministic non-`sbix` render slice.** Experiment
+  146 split `font-thicken` and `font-thicken-strength` option propagation,
+  shared glyph-cache key separation, and CoreText non-`sbix` canvas
+  padding/strength behavior out of the remaining font renderer gap. Bitmap/color
+  font thickening edge cases, feature effects, fallback visual output, glyph
+  metrics, and broad font pixel parity remain in `RUNTIME-007B2B2B2B2`.
+- **Font features are active renderer shaping options.** Experiment 147 split
+  deterministic `font-feature` propagation out of the remaining font renderer
+  gap by threading config-derived shape options into active row shaping,
+  preserving default feature merging, and namespacing shaped-run cache entries
+  by feature set. Fallback visual output, bitmap/color thickening edge cases,
+  glyph metrics, broader font pixel parity, and GUI-visible A/B font rendering
+  remain in `RUNTIME-007B2B2B2B2`.
+- **Window padding layout is renderer size state.** Experiment 148 split
+  deterministic `window-padding-x`/`window-padding-y` scaling,
+  `window-padding-balance` math, active live renderer padded `Size`/grid wiring,
+  and padded PTY row/column state out of the renderer GUI gap. After Experiment
+  151, non-glass compositor opacity, GUI cursor pixels, custom shader output,
+  broader GUI/pixel parity, and screenshot-level padding pixel proof remain in
+  `RUNTIME-008B2B2B2`.
+- **macOS glass blur/opacity lives in the copied app host.** Experiment 151
+  proved that `TerminalViewContainer.swift` is identical to pinned Ghostty after
+  expected Ghostty-to-Roastty renames, including `NSGlassEffectView`,
+  `macosGlassRegular`, `macosGlassClear`, background opacity tinting, corner
+  radius, inactive tint overlay, and safe-area top-inset handling. Non-glass
+  compositor opacity, GUI cursor pixels, custom shader output, broader GUI/
+  pixel parity, and screenshot-level padding pixel proof remain in
+  `RUNTIME-008B2B2B2`.
+- **Non-glass opacity also lives in the copied macOS host.** Experiment 154
+  proved `TerminalWindow.swift`, `TransparentTitlebarTerminalWindow.swift`, and
+  `QuickTerminalController.swift` are rename-equivalent to pinned Ghostty and
+  preserve background opacity thresholding, fullscreen/opaque-toggle
+  suppression, the 0.001 white background workaround, non-glass blur ABI calls,
+  preferred background alpha clamping, titlebar forwarding, and quick-terminal
+  opacity handling. GUI cursor pixels, custom shader output, broader GUI/pixel
+  parity, and screenshot-level padding pixel proof remain in
+  `RUNTIME-008B2B2B2B`.
+- **Custom shader output can be proven with Metal readback.** Experiment 163
+  uses the Metal compositor's target-byte readback tests to prove custom shader
+  offscreen rendering, post-process pipeline order, ping-pong textures, sampler
+  settings, resize behavior, and image-aware source frames. It requires a
+  non-skipping Metal device assertion so the proof is not vacuous. GUI cursor
+  pixels, broader GUI/pixel parity, and screenshot-level padding pixel proof
+  remain in `RUNTIME-008B2B2B2B2`.
+- **Cursor shader pixels can be proven without a full app screenshot.**
+  Experiment 164 uses Metal render-target readback tests to prove the copied
+  text shader cursor branch: non-cursor glyphs under the cursor recolor to
+  `cursor_color`, cursor glyphs preserve their vertex color, wide cursors
+  recolor the second cell, and non-wide cursors do not. Actual app/GUI cursor
+  screenshots, broader GUI/pixel parity, and screenshot-level padding pixel
+  proof remain in `RUNTIME-008B2B2B2B2B`.
+- **Live cursor screenshots catch config propagation gaps.** Experiment 178
+  showed that deterministic cursor renderer tests were not enough: the first
+  exact-window screenshot found a visible white cursor where
+  `cursor-color = #ff00ff` should have produced magenta. Threading
+  `cursor-color` and `cursor-text` through the active frame render paths fixed
+  the live app, and the screenshot guard now proves the expected cursor cell is
+  magenta-dominant with no magenta outside the expected cursor region.
+- **Command palette runtime plumbing can be proven without a full GUI
+  walkthrough.** Experiment 152 split copied command palette source parity,
+  toggle notification delivery, `commandPaletteIsShowing` state, focus return,
+  keyboard-event shielding, config-derived custom command options, unsupported
+  action filtering, shortcut display, and hosted action dispatch out of the
+  macOS app gap. Windows, tabs, splits, menus, titlebar, fullscreen, quick
+  terminal, broader command palette GUI/pixel/input navigation, and full app
+  walkthrough evidence now remain in `RUNTIME-011B2B` after Experiment 167.
+- **Font variations are style-specific font descriptors.** Experiment 149 split
+  deterministic `font-variation*` config propagation out of the remaining font
+  renderer gap by threading the four parsed variation lists into regular, bold,
+  italic, and bold-italic discovery descriptors, splitting font-grid keys by
+  variation values, preserving deferred CoreText face application, and carrying
+  pinned Ghostty's styled variation retry. Remaining font renderer work stays in
+  `RUNTIME-007B2B2B2B2`.
+- **Font metric modifiers are grid metrics state.** Experiment 150 split
+  deterministic `adjust-*` metric modifier propagation out of the remaining font
+  renderer gap by threading all 13 parsed modifiers into font-grid keys and
+  `Collection::update_metrics`, preserving empty-set defaults, and proving
+  modified grid metrics from `build_grid_from_config`. Remaining font renderer
+  work stays in `RUNTIME-007B2B2B2B2`.
+- **Font fallback has a deterministic runtime slice before visual parity.**
+  Experiment 165 split fallback resolution, `U+FFFD`/space substitution,
+  CoreText fallback discovery, LastResort rejection, fallback-face cache
+  behavior, and present-codepoint render data out of the remaining font gap. At
+  that point, broad fallback/shaping visual output, bitmap/color font thickening
+  edge cases, renderer-visible glyph metrics, and broad font pixel parity
+  remained in `RUNTIME-007B2B2B2B2`; Experiment 184 later closed that residual
+  row.
+- **Font renderer residuals can close with renderer-visible glyph evidence.**
+  Experiment 184 closed `RUNTIME-007B2B2B2B2` by tying the residual font row to
+  concrete Rust tests and a CFG-223 guard: grayscale glyph rasterization,
+  stretched-cell pixels/bearings, non-`sbix` thickening, `sbix` bitmap-color
+  thicken-padding suppression, Apple Color Emoji BGRA atlas rendering, wrong
+  atlas rejection, CoreText fallback discovery, shaping clusters, and
+  renderer-facing metric propagation. The remaining CFG-223 gaps are now only
+  broader live macOS app walkthrough behavior and notification/link/bell GUI
+  effects.
+- **Copied macOS workflow plumbing is not the same as live GUI parity.**
+  Experiment 166 split copied window/tab/split/menu/titlebar/fullscreen and
+  quick-terminal command/action/config plumbing out of the live macOS app gap.
+  Full-file renamed source parity plus focused split helper tests now guard that
+  plumbing. Experiment 172 later split out live native-menu visibility,
+  representative validation, and representative menu action dispatch. Actual GUI
+  rendering, screenshots/pixels, input navigation, fullscreen visuals,
+  quick-terminal visuals, and broader command-palette GUI behavior remain in
+  `RUNTIME-011B2B`.
+- **Live AppleScript automation needs side-effect markers.** Experiment 167
+  proved the built debug Roastty app can be launched by absolute bundle path
+  with an isolated `ROASTTY_CONFIG_PATH` using `open --env`, and that
+  AppleScript can create windows, create/select/close tabs, create split
+  terminals, and deliver `input text` when controlled child commands write
+  temp-file markers. The experiment also found and fixed two automation
+  blockers: `roastty_config_get` did not expose `macos-applescript`, and
+  ScriptWindow IDs based on AppKit tab-group identity did not survive tab-group
+  creation.
+- **Returned AppleScript split terminals need ID lifecycle proof.** Experiment
+  170 extended the live AppleScript guard so a returned split terminal must have
+  a stable ID, re-resolve from application/window/tab collections, receive
+  `input text` into its own controlled child process, become the focused
+  terminal after `focus`, and disappear from the selected tab after `close`.
+  Split object lifecycle is now proven; split visual/layout parity and broader
+  GUI walkthrough work remain in `RUNTIME-011B2B`.
+- **Live GUI guards must watch for crash reports.** A user-visible
+  `Roastty[DEBUG] quit unexpectedly` dialog after Experiment 167 corresponded to
+  fresh `roastty-*.ips` reports. The stack was `NSColor.getHue` →
+  `OSColor.darken(by:)` → `Roastty.Config.splitDividerColor` →
+  `TerminalSplitSubtreeView.body`, meaning the split side-effect guard passed
+  while the app still crashed during split rendering. Experiment 168 fixed
+  `OSColor.darken(by:)` to convert AppKit colors to sRGB before reading HSB
+  components, added focused color tests, and made the live AppleScript guard
+  snapshot macOS diagnostic reports and fail on new Roastty crash reports, not
+  only on missing command side effects.
+- **Broad macOS walkthrough residuals can close by binding focused live guards
+  together.** Experiment 185 closed `RUNTIME-011B2B` by tying copied macOS
+  workflow source parity to live AppleScript window/tab/split/input automation,
+  split-terminal ID lifecycle proof, keyboard and mouse side effects, native
+  menu action dispatch, fullscreen/command-palette screenshots, Quick Terminal
+  screenshots, right-split layout screenshots, hidden-titlebar traffic-light
+  pixels, window-padding pixels, and GUI cursor pixels.
+- **Live notification and bell proof must split OS requests from OS-visible
+  effects.** Experiment 186 proved live OSC 777 notification request dispatch,
+  VM notification authorization-state capture, live BEL-to-app/surface dispatch,
+  and the Swift `bell-features` bridge. macOS reports notifications denied for
+  the debug app in this VM (`authorizationStatus=1`), and the VM did not expose
+  deterministic proof for OS banner delivery, audible output, dock attention,
+  link hover pixels, native previews/menus, or URL-opening handlers. CFG-223 now
+  has one exact remaining gap in `RUNTIME-012B2B2B2B2B3C`.
+- **Native menu and URL-opening request proof can be deterministic without
+  external OS side effects.** Experiment 187 closed native context-menu
+  construction with a live `SurfaceView.menu(for:)` trace and closed native
+  URL-opening request construction by calling the real `Roastty.App.openURL`
+  path with an env-gated test action and suppressed final `NSWorkspace.open`.
+  External Launch Services handler delivery remains an honest VM/OS-controlled
+  gap in `RUNTIME-012B2B2B2B2B3C`.
+- **Live link hover needs AppKit point-to-pixel scaling.** Experiment 188 found
+  that the copied macOS app sends mouse coordinates in AppKit points while
+  Roastty's renderer/grid geometry is in backing pixels. Applying the surface
+  content scale before point-to-cell conversion fixed live regular-link hover
+  dispatch on Retina displays. The live guard now proves Command-modified mouse
+  movement over a deterministic URL emits `cursorShape raw=3 pointerStyle=link`
+  and the exact `mouseOverLink` URL in the real debug app. Real OS link cursor
+  pixels are now tracked separately by `RUNTIME-012B2B2B2B2B3C6`; live Quick
+  Look/native definition UI is tracked separately by `RUNTIME-012B2B2B2B2B3C8`.
+- **The copied SwiftUI URL hover banner can be proven with localized pixels.**
+  Experiment 189 reused the live link-hover path and captured exact-window
+  before/after screenshots. A Swift sampler saw 32674 changed pixels in the
+  expected bottom-left banner band versus 373 in an upper-left control band and
+  1086 in a bottom-right control band, proving the visible `URLHoverBanner`
+  overlay without claiming real OS cursor pixels or Quick Look/native preview
+  behavior.
+- **Bell title and border UI can be proven without audio or dock claims.**
+  Experiment 190 used
+  `bell-features = no-system,no-audio,no-attention,title,border` to isolate
+  copied UI effects. The live guard proved the AX title changed from
+  `Issue805Exp190BellTitle` to `🔔 Issue805Exp190BellTitle` and the screenshot
+  sampler saw 6375 changed pixels on each side edge, 9390 on the bottom edge,
+  and zero changed pixels in the center and titlebar/control regions. Audible
+  output and dock attention remain separate OS-controlled gaps.
+- **`screencapture -R` uses display points even when the output PNG is Retina
+  scaled.** Experiment 191 initially multiplied the capture rectangle by the
+  measured `CGWindowID` screenshot scale and pushed the rectangle off-screen.
+  Keeping the source rectangle in global display points while preserving the
+  scale in evidence let `screencapture -C` capture real cursor pixels. The live
+  guard proved stable cursorless backgrounds, 350 normal-cursor changed pixels,
+  701 link-cursor changed pixels, a 721-pixel symmetric difference, and a
+  15-pixel bounding-box delta. CFG-223 now has 91 Oracle-complete runtime rows,
+  94 closed rows, and the one remaining gap excludes real OS cursor pixels.
+- **Inactive AppKit attention dispatch is observable, but Dock bounce is still
+  OS-controlled.** Experiment 192 proved Roastty can be backgrounded before BEL
+  and still run the attention branch with `appBell active=false`. On this
+  VM/macOS build, `NSApp.requestUserAttention(.informationalRequest)` returned
+  `0` while inactive, so a nonzero request ID is not a valid oracle here. The
+  guard also records `dockBadge authorizationStatus=1 badgeSetting=2`, which
+  explains why the app does not set a badge label in this VM. CFG-223 now has 92
+  Oracle-complete runtime rows and 95 closed rows, while OS-visible Dock
+  bounce/state remains in the residual gap.
+- **Quick Look definition UI needs the CoreText font ABI.** Experiment 193 found
+  that Roastty's `roastty_surface_quicklook_font` still returned null, while
+  pinned Ghostty returns a copied primary CoreText font for
+  `showDefinition(for:at:)`. Fixing that ABI let the live guard prove
+  `fontPresent=true`, exact word selection for `serendipity`, and visible native
+  AppKit definition UI: the guard waits for the post-Quick-Look window capture
+  to expand by at least 100 pixels at the same height and requires at least
+  50000 nonblack pixels in the extra native-popover band. The latest exact
+  dimensions and pixel counts stay in
+  `logs/issue805-exp193-quicklook-latest.json` because AppKit popover geometry
+  can drift by a few pixels between runs. CFG-223 now has 93 Oracle-complete
+  runtime rows and 96 closed rows.
+- **Launch Services handler delivery needs a stable handler app location.**
+  Experiment 194 found that per-run URL handler apps under the per-user temp
+  directory could return successful CoreServices registration calls while direct
+  `open <private-url>` still failed with `kLSApplicationNotFoundErr`. Building
+  the per-run native Cocoa handler under `logs/` made Launch Services report the
+  expected current handler and deliver both direct `open <private-url>` and
+  Roastty's unsuppressed `NSWorkspace.shared.open(url)` request to the
+  controlled handler. CFG-223 now has 94 Oracle-complete runtime rows and 97
+  closed rows.
+- **User notification delivery is blocked by VM authorization state.**
+  Experiment 195 added a same-app delivered-notification guard using
+  `UNUserNotificationCenter.getDeliveredNotifications`, but the current VM stops
+  before scheduling: Roastty reports `authorizationStatus=1`, `alertSetting=2`,
+  and `soundSetting=2`. The env-gated hook and static lifecycle parity guard are
+  in place, so a future run with authorized notifications can prove delivered
+  notification content without redesigning the guard.
+- **TCC prompts are diagnostic, not regression-guard dependencies.** While
+  preparing Experiment 196, the live bell-audio guard triggered a macOS prompt:
+  `"Roastty" would like to access the Microphone.` Roastty declares that prompt
+  through `INFOPLIST_KEY_NSMicrophoneUsageDescription` in the Xcode project, and
+  rebuilds can invalidate prior grants for the debug app identity. After
+  granting screenshot permission to the host terminal app, Codex can capture the
+  prompt for evidence, but unattended guards must avoid requiring a human to
+  press `Allow` or must classify the OS audio-device path as a TCC-gated
+  residual.
+- **Close OS presentation at the app-controlled request boundary.** Experiment
+  197 closed CFG-223 by proving copied UserNotifications, `NSSound`, Dock
+  attention, and Dock badge request paths plus live authorization/request-state
+  evidence. Roastty parity is claimed at the copied macOS API request and
+  authorization-state boundary, not at nondeterministic notification banner,
+  physical speaker, microphone TCC, or Dock animation presentation. CFG-223 now
+  has 95 Oracle-complete runtime rows, 98 closed rows, 0 incomplete rows, and 0
+  runtime gaps.
 - **Font-size runtime updates should be idempotent.** Experiment 125 found that
   applying an unchanged font size dirtied ABI-only surfaces because
   `set_font_size_points` always requested a render. The setter now returns
@@ -1279,4 +1765,177 @@ remains open.
 - [Experiment 126: Surface title runtime split](126-surface-title-runtime-split.md)
   — **Pass**
 - [Experiment 127: Title PWD fallback runtime](127-title-pwd-fallback-runtime.md)
-  — **Designed**
+  — **Pass**
+- [Experiment 128: OSC 7 PWD normalization runtime](128-osc7-pwd-normalization-runtime.md)
+  — **Pass**
+- [Experiment 129: Scrollback byte limit runtime](129-scrollback-byte-limit-runtime.md)
+  — **Pass**
+- [Experiment 130: Shell startup rewrite runtime](130-shell-startup-rewrite-runtime.md)
+  — **Pass**
+- [Experiment 131: OSC 7 edge runtime](131-osc7-edge-runtime.md) — **Pass**
+- [Experiment 132: Font grid runtime](132-font-grid-runtime.md) — **Pass**
+- [Experiment 133: Renderer knobs runtime](133-renderer-knobs-runtime.md) —
+  **Pass**
+- [Experiment 134: Cursor renderer runtime](134-cursor-renderer-runtime.md) —
+  **Pass**
+- [Experiment 135: Enquiry response runtime](135-enquiry-response-runtime.md) —
+  **Pass**
+- [Experiment 136: OSC color report format runtime](136-osc-color-report-format-runtime.md)
+  — **Pass**
+- [Experiment 137: Clipboard device attributes runtime](137-clipboard-device-attributes-runtime.md)
+  — **Pass**
+- [Experiment 138: Cursor default runtime](138-cursor-default-runtime.md) —
+  **Pass**
+- [Experiment 139: Image storage limit runtime](139-image-storage-limit-runtime.md)
+  — **Pass**
+- [Experiment 140: Grapheme width method runtime](140-grapheme-width-method-runtime.md)
+  — **Pass**
+- [Experiment 141: Desktop notification runtime](141-desktop-notification-runtime.md)
+  — **Pass**
+- [Experiment 142: Terminal runtime residual audit](142-terminal-runtime-residual-audit.md)
+  — **Pass**
+- [Experiment 143: Font live grid update runtime](143-font-live-grid-update-runtime.md)
+  — **Pass**
+- [Experiment 144: Cursor priority active renderer](144-cursor-priority-active-renderer.md)
+  — **Pass**
+- [Experiment 145: Font shaping break runtime](145-font-shaping-break-runtime.md)
+  — **Pass**
+- [Experiment 146: Font thicken render runtime](146-font-thicken-render-runtime.md)
+  — **Pass**
+- [Experiment 147: Font feature runtime](147-font-feature-runtime.md) — **Pass**
+- [Experiment 148: Window padding layout runtime](148-window-padding-layout-runtime.md)
+  — **Pass**
+- [Experiment 149: Font variation runtime](149-font-variation-runtime.md) —
+  **Pass**
+- [Experiment 150: Font metric modifier runtime](150-font-metric-modifier-runtime.md)
+  — **Pass**
+- [Experiment 151: macOS glass visual runtime](151-macos-glass-visual-runtime.md)
+  — **Pass**
+- [Experiment 152: Command palette runtime](152-command-palette-runtime.md) —
+  **Pass**
+- [Experiment 153: Bell presentation runtime](153-bell-presentation-runtime.md)
+  — **Pass**
+- [Experiment 154: Non-glass opacity runtime](154-non-glass-opacity-runtime.md)
+  — **Pass**
+- [Experiment 155: macOS user notification runtime](155-macos-user-notification-runtime.md)
+  — **Pass**
+- [Experiment 156: Desktop notification rate limit](156-desktop-notification-rate-limit.md)
+  — **Pass**
+- [Experiment 157: Command-finished runtime](157-command-finished-runtime.md) —
+  **Pass**
+- [Experiment 158: App notifications platform classification](158-app-notifications-platform-classification.md)
+  — **Pass**
+- [Experiment 159: macOS link hover banner plumbing](159-macos-link-hover-banner-plumbing.md)
+  — **Pass**
+- [Experiment 160: Link preview context runtime](160-link-preview-context-runtime.md)
+  — **Pass**
+- [Experiment 161: Link hover preview dispatch](161-link-hover-preview-dispatch.md)
+  — **Pass**
+- [Experiment 162: Link hover modifier refresh](162-link-hover-modifier-refresh.md)
+  — **Pass**
+- [Experiment 163: Custom shader output runtime](163-custom-shader-output-runtime.md)
+  — **Pass**
+- [Experiment 164: Metal cursor pixel readback](164-metal-cursor-pixel-readback.md)
+  — **Pass**
+- [Experiment 165: Font fallback render runtime](165-font-fallback-render-runtime.md)
+  — **Pass**
+- [Experiment 166: macOS app workflow plumbing](166-macos-app-workflow-plumbing.md)
+  — **Pass**
+- [Experiment 167: macOS AppleScript workflow runtime](167-macos-applescript-workflow-runtime.md)
+  — **Pass**
+- [Experiment 168: Split divider color crash](168-split-divider-color-crash.md)
+  — **Pass**
+- [Experiment 169: Config facet matrix reconciliation](169-config-facet-matrix-reconciliation.md)
+  — **Pass**
+- [Experiment 170: AppleScript split terminal lifecycle](170-applescript-split-terminal-lifecycle.md)
+  — **Pass**
+- [Experiment 171: AppleScript keyboard and mouse events](171-applescript-keyboard-mouse-events.md)
+  — **Pass**
+- [Experiment 172: Native menu runtime](172-native-menu-runtime.md) — **Pass**
+- [Experiment 173: macOS GUI state runtime](173-macos-gui-state-runtime.md) —
+  **Pass**
+- [Experiment 174: Quick Terminal GUI runtime](174-quick-terminal-gui-runtime.md)
+  — **Pass**
+- [Experiment 175: macOS split layout runtime](175-macos-split-layout-runtime.md)
+  — **Pass**
+- [Experiment 176: macOS hidden titlebar runtime](176-macos-hidden-titlebar-runtime.md)
+  — **Pass**
+- [Experiment 177: Window padding pixel runtime](177-window-padding-pixel-runtime.md)
+  — **Pass**
+- [Experiment 178: GUI cursor pixel runtime](178-gui-cursor-pixel-runtime.md) —
+  **Pass**
+- [Experiment 179: Renderer visual residual audit](179-renderer-visual-residual-audit.md)
+  — **Pass**
+- [Experiment 180: Custom shader animation runtime](180-custom-shader-animation-runtime.md)
+  — **Pass**
+- [Experiment 181: Background image renderer runtime](181-background-image-renderer-runtime.md)
+  — **Pass**
+- [Experiment 182: Colorspace and alpha uniform runtime](182-colorspace-alpha-uniform-runtime.md)
+  — **Pass**
+- [Experiment 183: Scroll-to-bottom output runtime](183-scroll-to-bottom-output-runtime.md)
+  — **Pass**
+- [Experiment 184: Font renderer residual proof](184-font-renderer-residual-proof.md)
+  — **Pass**
+- [Experiment 185: macOS walkthrough residual proof](185-macos-walkthrough-residual-proof.md)
+  — **Pass**
+- [Experiment 186: Notification/link/bell GUI residual proof](186-notification-link-bell-gui-residual-proof.md)
+  — **Partial**
+- [Experiment 187: Native menu and URL-opening proof](187-native-menu-url-opening-proof.md)
+  — **Partial**
+- [Experiment 188: Live link hover GUI proof](188-live-link-hover-gui-proof.md)
+  — **Partial**
+- [Experiment 189: Live link hover banner pixels](189-live-link-hover-banner-pixels.md)
+  — **Partial**
+- [Experiment 190: Live bell title and border pixels](190-live-bell-title-border-pixels.md)
+  — **Partial**
+- [Experiment 191: Real OS link cursor pixels](191-real-os-link-cursor-pixels.md)
+  — **Partial**
+- [Experiment 192: Live dock attention state](192-live-dock-attention-state.md)
+  — **Partial**
+- [Experiment 193: Live Quick Look definition dispatch](193-live-quicklook-definition.md)
+  — **Pass**
+- [Experiment 194: Launch Services URL handler delivery](194-launch-services-url-handler-delivery.md)
+  — **Pass**
+- [Experiment 195: Live user notification delivery](195-live-user-notification-delivery.md)
+  — **Partial**
+- [Experiment 196: Live bell audio playback](196-live-bell-audio-playback.md) —
+  **Partial**
+- [Experiment 197: OS-controlled native boundary closure](197-os-controlled-native-boundary.md)
+  — **Pass**
+
+## Conclusion
+
+Issue 805 is complete. Roastty parity is certified against Ghostty commit
+`2c62d182cec246764ff725096a70b9ef44996f7f` (`tip-1608-g2c62d182c`,
+`build.zig.zon` version `1.3.2-dev`, Zig `0.15.2`) for the copied macOS app,
+embedded C ABI surface, and `libroastty` terminal/runtime behavior covered by
+this issue.
+
+Final matrix state:
+
+- `feature-matrix.md`: 2 rows, all `Pass`.
+- `source-audit.md`: 13 rows, all `Pass`.
+- `walkthrough-matrix.md`: 10 rows, all `Pass`.
+- `config-matrix.md`: 223 rows, all `Pass`.
+- `config-runtime-inventory.md`: 98 runtime rows, 95 `Oracle complete`, 2
+  `Not applicable`, 1 `Intentional divergence`, 0 gaps.
+- `config-parser-inventory.md`, `config-formatter-inventory.md`, and
+  `config-diagnostic-inventory.md`: 203 rows each, all `Oracle complete`.
+- `config-finalization-inventory.md`: 17 rows, all `Oracle complete`.
+- `config-load-inventory.md`: 18 rows, all `Oracle complete`.
+- `config-reload-inventory.md`: 14 rows, all `Oracle complete`.
+- `divergences.md`: 2 accepted intentional divergences, both documented with
+  guard evidence.
+
+The last runtime/UI blocker was `CFG-223`. Experiment 197 closed its final
+residual by proving the copied macOS UserNotifications, `NSSound`, Dock
+attention, and Dock badge request paths plus live authorization/request-state
+evidence. Parity for OS-native notification/audio/Dock presentation is claimed
+at the app-controlled macOS API request and authorization-state boundary, not at
+nondeterministic macOS banner pixels, physical speaker output, microphone TCC
+prompt automation, or Dock animation pixels.
+
+The issue retains historical `Partial` experiment outcomes where earlier work
+narrowed a gap without closing it. Those partials are superseded by later
+experiments and by the final matrices above; there are no unresolved `Gap` rows
+left in the active certification artifacts.

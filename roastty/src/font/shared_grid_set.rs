@@ -13,8 +13,9 @@ use crate::config;
 use crate::font::codepoint_map::CodepointMap;
 use crate::font::codepoint_resolver::CodepointResolver;
 use crate::font::collection::{Collection, CompleteError, SetPointSizeError, SyntheticStyle};
-use crate::font::discovery::Descriptor;
+use crate::font::discovery::{Descriptor, Variation};
 use crate::font::face::coretext::Face;
+use crate::font::metrics::{Key as MetricKey, Modifier, ModifierSet};
 use crate::font::shared_grid::SharedGrid;
 use crate::font::Style;
 
@@ -147,8 +148,25 @@ pub(crate) struct DerivedConfig {
     pub font_style_bold: config::FontStyle,
     pub font_style_italic: config::FontStyle,
     pub font_style_bold_italic: config::FontStyle,
+    pub font_variation: config::RepeatableFontVariation,
+    pub font_variation_bold: config::RepeatableFontVariation,
+    pub font_variation_italic: config::RepeatableFontVariation,
+    pub font_variation_bold_italic: config::RepeatableFontVariation,
     pub font_codepoint_map: config::RepeatableCodepointMap,
     pub font_synthetic_style: config::FontSyntheticStyle,
+    pub adjust_cell_width: Option<Modifier>,
+    pub adjust_cell_height: Option<Modifier>,
+    pub adjust_font_baseline: Option<Modifier>,
+    pub adjust_underline_position: Option<Modifier>,
+    pub adjust_underline_thickness: Option<Modifier>,
+    pub adjust_strikethrough_position: Option<Modifier>,
+    pub adjust_strikethrough_thickness: Option<Modifier>,
+    pub adjust_overline_position: Option<Modifier>,
+    pub adjust_overline_thickness: Option<Modifier>,
+    pub adjust_cursor_thickness: Option<Modifier>,
+    pub adjust_cursor_height: Option<Modifier>,
+    pub adjust_box_thickness: Option<Modifier>,
+    pub adjust_icon_height: Option<Modifier>,
 }
 
 impl DerivedConfig {
@@ -162,8 +180,25 @@ impl DerivedConfig {
             font_style_bold: config.font_style_bold.clone(),
             font_style_italic: config.font_style_italic.clone(),
             font_style_bold_italic: config.font_style_bold_italic.clone(),
+            font_variation: config.font_variation.clone(),
+            font_variation_bold: config.font_variation_bold.clone(),
+            font_variation_italic: config.font_variation_italic.clone(),
+            font_variation_bold_italic: config.font_variation_bold_italic.clone(),
             font_codepoint_map: config.font_codepoint_map.clone(),
             font_synthetic_style: config.font_synthetic_style,
+            adjust_cell_width: config.adjust_cell_width,
+            adjust_cell_height: config.adjust_cell_height,
+            adjust_font_baseline: config.adjust_font_baseline,
+            adjust_underline_position: config.adjust_underline_position,
+            adjust_underline_thickness: config.adjust_underline_thickness,
+            adjust_strikethrough_position: config.adjust_strikethrough_position,
+            adjust_strikethrough_thickness: config.adjust_strikethrough_thickness,
+            adjust_overline_position: config.adjust_overline_position,
+            adjust_overline_thickness: config.adjust_overline_thickness,
+            adjust_cursor_thickness: config.adjust_cursor_thickness,
+            adjust_cursor_height: config.adjust_cursor_height,
+            adjust_box_thickness: config.adjust_box_thickness,
+            adjust_icon_height: config.adjust_icon_height,
         }
     }
 }
@@ -174,6 +209,7 @@ pub(crate) struct Key {
     descriptors: Vec<Descriptor>,
     style_offsets: [usize; 4],
     codepoint_map: CodepointMap,
+    metric_modifiers: ModifierSet,
     font_size_points: f32,
 }
 
@@ -187,6 +223,7 @@ impl Key {
             &config.font_style,
             Style::Regular,
             font_size_points,
+            &config.font_variation,
         );
         let regular_offset = descriptors.len();
         append_descriptors(
@@ -195,6 +232,7 @@ impl Key {
             &config.font_style_bold,
             Style::Bold,
             font_size_points,
+            &config.font_variation_bold,
         );
         let bold_offset = descriptors.len();
         append_descriptors(
@@ -203,6 +241,7 @@ impl Key {
             &config.font_style_italic,
             Style::Italic,
             font_size_points,
+            &config.font_variation_italic,
         );
         let italic_offset = descriptors.len();
         append_descriptors(
@@ -211,6 +250,7 @@ impl Key {
             &config.font_style_bold_italic,
             Style::BoldItalic,
             font_size_points,
+            &config.font_variation_bold_italic,
         );
         let bold_italic_offset = descriptors.len();
 
@@ -223,6 +263,7 @@ impl Key {
                 bold_italic_offset,
             ],
             codepoint_map: config.font_codepoint_map.map.clone(),
+            metric_modifiers: metric_modifiers_from_config(config),
             font_size_points,
         }
     }
@@ -242,6 +283,10 @@ impl Key {
         &self.codepoint_map
     }
 
+    pub(crate) fn metric_modifiers(&self) -> &ModifierSet {
+        &self.metric_modifiers
+    }
+
     pub(crate) fn hashcode(&self) -> u64 {
         let mut h = std::collections::hash_map::DefaultHasher::new();
         self.hash(&mut h);
@@ -255,6 +300,7 @@ impl PartialEq for Key {
             && self.style_offsets == other.style_offsets
             && self.descriptors == other.descriptors
             && self.codepoint_map == other.codepoint_map
+            && self.metric_modifiers == other.metric_modifiers
     }
 }
 
@@ -269,6 +315,13 @@ impl Hash for Key {
             descriptor.hashcode().hash(state);
         }
         self.codepoint_map.hashcode().hash(state);
+        self.metric_modifiers.len().hash(state);
+        for key in MetricKey::ALL {
+            if let Some(modifier) = self.metric_modifiers.get(&key) {
+                key.hash(state);
+                modifier.hash(state);
+            }
+        }
     }
 }
 
@@ -278,14 +331,17 @@ fn append_descriptors(
     style_config: &config::FontStyle,
     style: Style,
     font_size_points: f32,
+    variations: &config::RepeatableFontVariation,
 ) {
     let exact_style = style_config.name_value();
+    let variations = discovery_variations(variations);
     for family in &families.list {
         let mut descriptor = Descriptor {
             family: Some(family.clone()),
             style: exact_style.map(ToOwned::to_owned),
             size: font_size_points,
             monospace: true,
+            variations: variations.clone(),
             ..Default::default()
         };
         if exact_style.is_none() {
@@ -301,6 +357,57 @@ fn append_descriptors(
         }
         descriptors.push(descriptor);
     }
+}
+
+fn discovery_variations(variations: &config::RepeatableFontVariation) -> Vec<Variation> {
+    variations
+        .list
+        .iter()
+        .map(|v| Variation {
+            id: Variation::id_from_tag(&v.id),
+            value: v.value,
+        })
+        .collect()
+}
+
+fn metric_modifiers_from_config(config: &DerivedConfig) -> ModifierSet {
+    let mut set = ModifierSet::new();
+    let pairs = [
+        (MetricKey::CellWidth, config.adjust_cell_width),
+        (MetricKey::CellHeight, config.adjust_cell_height),
+        (MetricKey::CellBaseline, config.adjust_font_baseline),
+        (
+            MetricKey::UnderlinePosition,
+            config.adjust_underline_position,
+        ),
+        (
+            MetricKey::UnderlineThickness,
+            config.adjust_underline_thickness,
+        ),
+        (
+            MetricKey::StrikethroughPosition,
+            config.adjust_strikethrough_position,
+        ),
+        (
+            MetricKey::StrikethroughThickness,
+            config.adjust_strikethrough_thickness,
+        ),
+        (MetricKey::OverlinePosition, config.adjust_overline_position),
+        (
+            MetricKey::OverlineThickness,
+            config.adjust_overline_thickness,
+        ),
+        (MetricKey::CursorThickness, config.adjust_cursor_thickness),
+        (MetricKey::CursorHeight, config.adjust_cursor_height),
+        (MetricKey::BoxThickness, config.adjust_box_thickness),
+        (MetricKey::IconHeight, config.adjust_icon_height),
+    ];
+    for (key, modifier) in pairs {
+        if let Some(modifier) = modifier {
+            set.insert(key, modifier);
+        }
+    }
+    set
 }
 
 /// Errors building a shared grid from config.
@@ -359,6 +466,7 @@ fn build_grid_for_key(key: &Key, config: &DerivedConfig) -> Result<SharedGrid, B
 
 fn collection_for_key(key: &Key, config: &DerivedConfig) -> Result<Collection, BuildGridError> {
     let mut collection = Collection::new();
+    collection.set_metric_modifiers(key.metric_modifiers().clone());
 
     for style in [
         Style::Regular,
@@ -367,7 +475,15 @@ fn collection_for_key(key: &Key, config: &DerivedConfig) -> Result<Collection, B
         Style::BoldItalic,
     ] {
         for descriptor in key.descriptors_for_style(style) {
-            if let Some(face) = descriptor.discover_deferred_faces().next() {
+            let mut face = descriptor.discover_deferred_faces().next();
+            if face.is_none() && style != Style::Regular && !descriptor.variations.is_empty() {
+                let mut retry = descriptor.clone();
+                retry.bold = false;
+                retry.italic = false;
+                face = retry.discover_deferred_faces().next();
+            }
+
+            if let Some(face) = face {
                 collection
                     .add_deferred_with_adjustment(
                         face,
@@ -422,9 +538,9 @@ mod tests {
     use std::sync::Arc;
 
     use super::*;
-    use crate::config::{Config, FontStyle};
+    use crate::config::{Config, FontStyle, FontSyntheticStyle};
     use crate::font::codepoint_resolver::CodepointResolver;
-    use crate::font::collection::Collection;
+    use crate::font::collection::{Collection, Index};
     use crate::font::face::coretext::Face;
     use crate::font::Style;
 
@@ -436,6 +552,13 @@ mod tests {
         collection.update_metrics().unwrap();
         let metrics = *collection.metrics().unwrap();
         SharedGrid::new(CodepointResolver::new(collection), metrics)
+    }
+
+    fn variation(tag: &[u8; 4], value: f64) -> Variation {
+        Variation {
+            id: Variation::id_from_tag(tag),
+            value,
+        }
     }
 
     #[test]
@@ -551,6 +674,290 @@ mod tests {
     }
 
     #[test]
+    fn font_variation_runtime_key_maps_each_style_variations() {
+        let mut cfg = Config::default();
+        cfg.font_family.parse_cli(Some("Regular")).unwrap();
+        cfg.font_family_bold.parse_cli(Some("Bold")).unwrap();
+        cfg.font_family_italic.parse_cli(Some("Italic")).unwrap();
+        cfg.font_family_bold_italic
+            .parse_cli(Some("Bold Italic"))
+            .unwrap();
+        cfg.set("font-variation", Some("wght=200")).unwrap();
+        cfg.set("font-variation-bold", Some("wght=700")).unwrap();
+        cfg.set("font-variation-italic", Some("slnt=-10")).unwrap();
+        cfg.set("font-variation-bold-italic", Some("wdth=95"))
+            .unwrap();
+        cfg.finalize();
+
+        let derived = DerivedConfig::from_config(&cfg);
+        let key = Key::new(&derived, 13.0);
+
+        assert_eq!(
+            key.descriptors_for_style(Style::Regular)[0].variations,
+            vec![variation(b"wght", 200.0)]
+        );
+        assert_eq!(
+            key.descriptors_for_style(Style::Bold)[0].variations,
+            vec![variation(b"wght", 700.0)]
+        );
+        assert_eq!(
+            key.descriptors_for_style(Style::Italic)[0].variations,
+            vec![variation(b"slnt", -10.0)]
+        );
+        assert_eq!(
+            key.descriptors_for_style(Style::BoldItalic)[0].variations,
+            vec![variation(b"wdth", 95.0)]
+        );
+    }
+
+    #[test]
+    fn font_variation_runtime_key_hash_changes_with_variation_value() {
+        let mut base = Config::default();
+        base.font_family.parse_cli(Some("Menlo")).unwrap();
+        base.set("font-variation", Some("wght=200")).unwrap();
+
+        let mut changed = base.clone();
+        changed.set("font-variation", Some("")).unwrap();
+        changed.set("font-variation", Some("wght=700")).unwrap();
+
+        let base_key = Key::new(&DerivedConfig::from_config(&base), 13.0);
+        let changed_key = Key::new(&DerivedConfig::from_config(&changed), 13.0);
+
+        assert_ne!(base_key, changed_key);
+        assert_ne!(base_key.hashcode(), changed_key.hashcode());
+    }
+
+    #[test]
+    fn font_variation_runtime_key_preserves_style_offsets() {
+        let mut cfg = Config::default();
+        cfg.font_family.parse_cli(Some("Regular One")).unwrap();
+        cfg.font_family.parse_cli(Some("Regular Two")).unwrap();
+        cfg.font_family_bold.parse_cli(Some("Bold One")).unwrap();
+        cfg.font_family_italic
+            .parse_cli(Some("Italic One"))
+            .unwrap();
+        cfg.font_family_bold_italic
+            .parse_cli(Some("Bold Italic One"))
+            .unwrap();
+        cfg.set("font-variation", Some("wght=200")).unwrap();
+        cfg.set("font-variation-bold", Some("wght=700")).unwrap();
+        cfg.set("font-variation-italic", Some("slnt=-10")).unwrap();
+        cfg.set("font-variation-bold-italic", Some("wdth=95"))
+            .unwrap();
+
+        let key = Key::new(&DerivedConfig::from_config(&cfg), 13.0);
+
+        assert_eq!(key.descriptors_for_style(Style::Regular).len(), 2);
+        assert_eq!(key.descriptors_for_style(Style::Bold).len(), 1);
+        assert_eq!(key.descriptors_for_style(Style::Italic).len(), 1);
+        assert_eq!(key.descriptors_for_style(Style::BoldItalic).len(), 1);
+        assert_eq!(
+            key.descriptors_for_style(Style::Regular)[1].variations,
+            vec![variation(b"wght", 200.0)]
+        );
+        assert_eq!(
+            key.descriptors_for_style(Style::BoldItalic)[0]
+                .family
+                .as_deref(),
+            Some("Bold Italic One")
+        );
+    }
+
+    #[test]
+    fn font_variation_runtime_default_key_has_no_variations() {
+        let mut cfg = Config::default();
+        cfg.font_family.parse_cli(Some("Menlo")).unwrap();
+
+        let key = Key::new(&DerivedConfig::from_config(&cfg), 13.0);
+
+        assert!(
+            key.descriptors_for_style(Style::Regular)[0]
+                .variations
+                .is_empty(),
+            "no-variation config keeps descriptor variations empty"
+        );
+    }
+
+    #[test]
+    fn font_variation_runtime_build_grid_with_configured_variations() {
+        let mut cfg = Config::default();
+        cfg.font_family.parse_cli(Some("Menlo")).unwrap();
+        cfg.set("font-variation", Some("wght=700")).unwrap();
+
+        let mut grid = build_grid_from_config(&cfg, 13.0).expect("grid builds");
+        let index = grid
+            .get_index('A' as u32, Style::Regular, None)
+            .unwrap()
+            .expect("configured variation grid resolves ASCII");
+
+        assert!(grid.has_codepoint(index, 'A' as u32, None));
+    }
+
+    #[test]
+    fn font_metric_modifier_runtime_key_maps_all_adjust_fields() {
+        let mut cfg = Config::default();
+        cfg.set("adjust-cell-width", Some("1")).unwrap();
+        cfg.set("adjust-cell-height", Some("2")).unwrap();
+        cfg.set("adjust-font-baseline", Some("3")).unwrap();
+        cfg.set("adjust-underline-position", Some("4")).unwrap();
+        cfg.set("adjust-underline-thickness", Some("5")).unwrap();
+        cfg.set("adjust-strikethrough-position", Some("6")).unwrap();
+        cfg.set("adjust-strikethrough-thickness", Some("7"))
+            .unwrap();
+        cfg.set("adjust-overline-position", Some("8")).unwrap();
+        cfg.set("adjust-overline-thickness", Some("9")).unwrap();
+        cfg.set("adjust-cursor-thickness", Some("10")).unwrap();
+        cfg.set("adjust-cursor-height", Some("11")).unwrap();
+        cfg.set("adjust-box-thickness", Some("12")).unwrap();
+        cfg.set("adjust-icon-height", Some("25%")).unwrap();
+
+        let key = Key::new(&DerivedConfig::from_config(&cfg), 13.0);
+        let modifiers = key.metric_modifiers();
+
+        assert_eq!(modifiers.len(), 13);
+        assert_eq!(
+            modifiers.get(&MetricKey::CellWidth),
+            Some(&Modifier::Absolute(1))
+        );
+        assert_eq!(
+            modifiers.get(&MetricKey::CellHeight),
+            Some(&Modifier::Absolute(2))
+        );
+        assert_eq!(
+            modifiers.get(&MetricKey::CellBaseline),
+            Some(&Modifier::Absolute(3))
+        );
+        assert_eq!(
+            modifiers.get(&MetricKey::UnderlinePosition),
+            Some(&Modifier::Absolute(4))
+        );
+        assert_eq!(
+            modifiers.get(&MetricKey::UnderlineThickness),
+            Some(&Modifier::Absolute(5))
+        );
+        assert_eq!(
+            modifiers.get(&MetricKey::StrikethroughPosition),
+            Some(&Modifier::Absolute(6))
+        );
+        assert_eq!(
+            modifiers.get(&MetricKey::StrikethroughThickness),
+            Some(&Modifier::Absolute(7))
+        );
+        assert_eq!(
+            modifiers.get(&MetricKey::OverlinePosition),
+            Some(&Modifier::Absolute(8))
+        );
+        assert_eq!(
+            modifiers.get(&MetricKey::OverlineThickness),
+            Some(&Modifier::Absolute(9))
+        );
+        assert_eq!(
+            modifiers.get(&MetricKey::CursorThickness),
+            Some(&Modifier::Absolute(10))
+        );
+        assert_eq!(
+            modifiers.get(&MetricKey::CursorHeight),
+            Some(&Modifier::Absolute(11))
+        );
+        assert_eq!(
+            modifiers.get(&MetricKey::BoxThickness),
+            Some(&Modifier::Absolute(12))
+        );
+        assert_eq!(
+            modifiers.get(&MetricKey::IconHeight),
+            Some(&Modifier::Percent(1.25))
+        );
+    }
+
+    #[test]
+    fn font_metric_modifier_runtime_key_hash_changes_with_modifiers() {
+        let mut base = Config::default();
+        base.font_family.parse_cli(Some("Menlo")).unwrap();
+
+        let mut adjusted = base.clone();
+        adjusted.set("adjust-cell-width", Some("2")).unwrap();
+
+        let base_key = Key::new(&DerivedConfig::from_config(&base), 13.0);
+        let adjusted_key = Key::new(&DerivedConfig::from_config(&adjusted), 13.0);
+
+        assert_ne!(base_key, adjusted_key);
+        assert_ne!(base_key.hashcode(), adjusted_key.hashcode());
+    }
+
+    #[test]
+    fn font_metric_modifier_runtime_build_grid_applies_config_modifiers() {
+        let mut cfg = Config::default();
+        cfg.font_family.parse_cli(Some("Menlo")).unwrap();
+        let default_grid = build_grid_from_config(&cfg, 13.0).expect("default grid");
+
+        cfg.set("adjust-cell-width", Some("3")).unwrap();
+        cfg.set("adjust-cursor-thickness", Some("2")).unwrap();
+        let adjusted_grid = build_grid_from_config(&cfg, 13.0).expect("adjusted grid");
+
+        assert_eq!(
+            adjusted_grid.metrics.cell_width,
+            default_grid.metrics.cell_width + 3
+        );
+        assert_eq!(
+            adjusted_grid.metrics.cursor_thickness,
+            default_grid.metrics.cursor_thickness + 2
+        );
+    }
+
+    #[test]
+    fn font_metric_modifier_runtime_build_grid_recenters_cell_height() {
+        let mut cfg = Config::default();
+        cfg.font_family.parse_cli(Some("Menlo")).unwrap();
+        let default_grid = build_grid_from_config(&cfg, 13.0).expect("default grid");
+
+        cfg.set("adjust-cell-height", Some("5")).unwrap();
+        let adjusted_grid = build_grid_from_config(&cfg, 13.0).expect("adjusted grid");
+
+        assert_eq!(
+            adjusted_grid.metrics.cell_height,
+            default_grid.metrics.cell_height + 5
+        );
+        assert_ne!(
+            adjusted_grid.metrics.cell_baseline,
+            default_grid.metrics.cell_baseline
+        );
+        assert_ne!(
+            adjusted_grid.metrics.underline_position,
+            default_grid.metrics.underline_position
+        );
+    }
+
+    #[test]
+    fn shared_grid_set_key_preserves_multiple_family_order() {
+        let mut cfg = Config::default();
+        cfg.font_family.parse_cli(Some("Regular First")).unwrap();
+        cfg.font_family.parse_cli(Some("Regular Second")).unwrap();
+        cfg.font_family_bold.parse_cli(Some("Bold First")).unwrap();
+        cfg.font_family_bold.parse_cli(Some("Bold Second")).unwrap();
+        cfg.font_style = FontStyle::Name("Book".to_string());
+        cfg.finalize();
+
+        let derived = DerivedConfig::from_config(&cfg);
+        let key = Key::new(&derived, 13.0);
+        let regular = key.descriptors_for_style(Style::Regular);
+        let bold = key.descriptors_for_style(Style::Bold);
+
+        assert_eq!(regular.len(), 2);
+        assert_eq!(regular[0].family.as_deref(), Some("Regular First"));
+        assert_eq!(regular[1].family.as_deref(), Some("Regular Second"));
+        assert_eq!(regular[0].style.as_deref(), Some("Book"));
+        assert_eq!(regular[1].style.as_deref(), Some("Book"));
+        assert!(!regular[0].bold);
+        assert!(!regular[1].bold);
+
+        assert_eq!(bold.len(), 2);
+        assert_eq!(bold[0].family.as_deref(), Some("Bold First"));
+        assert_eq!(bold[1].family.as_deref(), Some("Bold Second"));
+        assert!(bold[0].bold);
+        assert!(bold[1].bold);
+    }
+
+    #[test]
     fn shared_grid_set_key_includes_codepoint_map() {
         let mut cfg = Config::default();
         let base = Key::new(&DerivedConfig::from_config(&cfg), 13.0);
@@ -598,5 +1005,37 @@ mod tests {
             regular.int(),
             "font-codepoint-map should change the resolved face"
         );
+    }
+
+    #[test]
+    fn shared_grid_set_build_grid_honors_disabled_synthetic_styles() {
+        let mut cfg = Config::default();
+        cfg.font_synthetic_style = FontSyntheticStyle {
+            bold: false,
+            italic: false,
+            bold_italic: false,
+        };
+
+        let mut grid = build_grid_from_config(&cfg, 13.0).expect("grid builds");
+        let collection = grid.resolver.collection_mut();
+        let bold_is_synthetic = collection
+            .get_face(Index::new(Style::Bold, 0))
+            .unwrap()
+            .synthetic_bold_width()
+            .is_some();
+        let italic_is_synthetic = collection
+            .get_face(Index::new(Style::Italic, 0))
+            .unwrap()
+            .is_skewed();
+        let bold_italic = collection
+            .get_face(Index::new(Style::BoldItalic, 0))
+            .unwrap();
+        let bold_italic_is_bold = bold_italic.synthetic_bold_width().is_some();
+        let bold_italic_is_italic = bold_italic.is_skewed();
+
+        assert!(!bold_is_synthetic);
+        assert!(!italic_is_synthetic);
+        assert!(!bold_italic_is_bold);
+        assert!(!bold_italic_is_italic);
     }
 }
