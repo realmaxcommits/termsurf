@@ -12,6 +12,7 @@ const max_frame_size: usize = 1024 * 1024;
 const max_clients: usize = 128;
 const max_panes: usize = 256;
 const max_servers: usize = 64;
+const max_tab_lookups: usize = 512;
 const max_pane_id_len: usize = 128;
 const max_profile_len: usize = 128;
 const max_browser_len: usize = 64;
@@ -80,6 +81,29 @@ const ServerState = struct {
     }
 };
 
+const TabLookupState = struct {
+    in_use: bool = false,
+    profile: [max_profile_len]u8 = undefined,
+    profile_len: usize = 0,
+    browser: [max_browser_len]u8 = undefined,
+    browser_len: usize = 0,
+    tab_id: i64 = 0,
+    pane_id: [max_pane_id_len]u8 = undefined,
+    pane_id_len: usize = 0,
+
+    fn profileName(self: *const TabLookupState) []const u8 {
+        return self.profile[0..self.profile_len];
+    }
+
+    fn browserName(self: *const TabLookupState) []const u8 {
+        return self.browser[0..self.browser_len];
+    }
+
+    fn paneId(self: *const TabLookupState) []const u8 {
+        return self.pane_id[0..self.pane_id_len];
+    }
+};
+
 var mutex: std.Thread.Mutex = .{};
 var clients_mutex: std.Thread.Mutex = .{};
 var state_mutex: std.Thread.Mutex = .{};
@@ -91,6 +115,9 @@ var socket_path_len: usize = 0;
 var clients: [max_clients]ClientSlot = [_]ClientSlot{.{}} ** max_clients;
 var panes: [max_panes]PaneState = [_]PaneState{.{}} ** max_panes;
 var servers: [max_servers]ServerState = [_]ServerState{.{}} ** max_servers;
+var tab_lookups: [max_tab_lookups]TabLookupState = [_]TabLookupState{.{}} ** max_tab_lookups;
+var last_browser_pane: [max_pane_id_len]u8 = undefined;
+var last_browser_pane_len: usize = 0;
 
 pub fn start() !void {
     mutex.lock();
@@ -287,6 +314,9 @@ fn handleClient(fd: std.posix.fd_t, slot_index: usize) void {
                 },
                 c.TERMSURF__TERM_SURF_MESSAGE__MSG_SERVER_REGISTER => {
                     handleServerRegister(fd, msg.*.unnamed_0.server_register);
+                },
+                c.TERMSURF__TERM_SURF_MESSAGE__MSG_TAB_READY => {
+                    handleTabReady(msg.*.unnamed_0.tab_ready);
                 },
                 else => {
                     log.info("TermSurf message ignored type={s}", .{msgTypeName(msg.*.msg_case)});
@@ -636,6 +666,89 @@ fn sendCreateTab(fd: std.posix.fd_t, pane: *const PaneState) !void {
     log.info("sent CreateTab: pane_id={s} url={s}", .{ pane.paneId(), pane.url[0..pane.url_len] });
 }
 
+fn handleTabReady(req: ?*c.Termsurf__TabReady) void {
+    const ready = req orelse {
+        log.warn("TabReady: missing payload", .{});
+        return;
+    };
+    const pane_id = cString(ready.*.pane_id);
+    const tab_id = ready.*.tab_id;
+
+    state_mutex.lock();
+    defer state_mutex.unlock();
+
+    const pane_index = findPane(pane_id) orelse {
+        log.warn("TabReady: unknown pane_id={s}", .{pane_id});
+        return;
+    };
+
+    panes[pane_index].tab_id = tab_id;
+    const lookup_count = upsertTabLookup(&panes[pane_index], tab_id);
+    _ = copyText(&last_browser_pane, &last_browser_pane_len, pane_id);
+
+    log.info(
+        "TabReady lookup: key={s}/{s} tab_id={} pane_id={s}",
+        .{ panes[pane_index].profileName(), panes[pane_index].browserName(), tab_id, pane_id },
+    );
+    log.info("last_browser_pane={s}", .{last_browser_pane[0..last_browser_pane_len]});
+    log.info("TabReady pending=false pane_id={s} tab_id={}", .{ pane_id, tab_id });
+    log.info(
+        "TabReady: pane_id={s} tab_id={} tab_to_pane_count={}",
+        .{ pane_id, tab_id, lookup_count },
+    );
+}
+
+fn upsertTabLookup(pane: *const PaneState, tab_id: i64) usize {
+    if (findTabLookup(pane.profileName(), pane.browserName(), tab_id)) |index| {
+        _ = copyText(&tab_lookups[index].pane_id, &tab_lookups[index].pane_id_len, pane.paneId());
+        return countTabLookups();
+    }
+
+    const index = reserveTabLookup() orelse {
+        log.warn(
+            "TabReady: tab lookup limit reached key={s}/{s} tab_id={}",
+            .{ pane.profileName(), pane.browserName(), tab_id },
+        );
+        return countTabLookups();
+    };
+
+    var lookup = &tab_lookups[index];
+    _ = copyText(&lookup.profile, &lookup.profile_len, pane.profileName());
+    _ = copyText(&lookup.browser, &lookup.browser_len, pane.browserName());
+    _ = copyText(&lookup.pane_id, &lookup.pane_id_len, pane.paneId());
+    lookup.tab_id = tab_id;
+    lookup.in_use = true;
+    return countTabLookups();
+}
+
+fn findTabLookup(profile: []const u8, browser: []const u8, tab_id: i64) ?usize {
+    for (&tab_lookups, 0..) |*lookup, i| {
+        if (lookup.in_use and
+            lookup.tab_id == tab_id and
+            std.mem.eql(u8, lookup.profileName(), profile) and
+            std.mem.eql(u8, lookup.browserName(), browser))
+        {
+            return i;
+        }
+    }
+    return null;
+}
+
+fn reserveTabLookup() ?usize {
+    for (&tab_lookups, 0..) |*lookup, i| {
+        if (!lookup.in_use) return i;
+    }
+    return null;
+}
+
+fn countTabLookups() usize {
+    var count: usize = 0;
+    for (&tab_lookups) |*lookup| {
+        if (lookup.in_use) count += 1;
+    }
+    return count;
+}
+
 fn setServer(server: *ServerState, profile: []const u8, browser: []const u8) bool {
     if (!copyText(&server.profile, &server.profile_len, profile)) {
         log.warn("SetOverlay: server profile too long len={} max={}", .{ profile.len, max_profile_len });
@@ -741,6 +854,7 @@ fn msgTypeName(msg_case: c.Termsurf__TermSurfMessage__MsgCase) []const u8 {
         c.TERMSURF__TERM_SURF_MESSAGE__MSG_HELLO_REQUEST => "HelloRequest",
         c.TERMSURF__TERM_SURF_MESSAGE__MSG_HELLO_REPLY => "HelloReply",
         c.TERMSURF__TERM_SURF_MESSAGE__MSG_CREATE_TAB => "CreateTab",
+        c.TERMSURF__TERM_SURF_MESSAGE__MSG_TAB_READY => "TabReady",
         c.TERMSURF__TERM_SURF_MESSAGE__MSG_QUERY_LAST_REQUEST => "QueryLastRequest",
         c.TERMSURF__TERM_SURF_MESSAGE__MSG_QUERY_LAST_REPLY => "QueryLastReply",
         c.TERMSURF__TERM_SURF_MESSAGE__MSG_QUERY_DEVTOOLS_REQUEST => "QueryDevtoolsRequest",

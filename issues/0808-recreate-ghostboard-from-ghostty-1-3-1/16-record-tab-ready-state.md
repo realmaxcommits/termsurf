@@ -112,3 +112,93 @@ correctly. The design now requires a concrete log proving
 Fresh-context adversarial re-review returned **APPROVED**. The reviewer
 confirmed both required findings were resolved and that the fixes introduced no
 new required issues.
+
+## Result
+
+**Result:** Pass
+
+Implemented `TabReady` state handling in `ghostboard/src/apprt/termsurf.zig`.
+
+The socket handler now:
+
+- recognizes `TabReady` in the decoded message switch;
+- stores the browser `tab_id` on the matching pane;
+- records a bounded `profile/browser/tab_id -> pane_id` lookup;
+- records `last_browser_pane`;
+- logs the exact lookup key/value and lookup count;
+- logs `pending=false` once the pane has a nonzero `tab_id`;
+- warns on unknown `pane_id`;
+- still does not send `BrowserReady`, launch a browser process, create overlay
+  UI, or forward input.
+
+Verification passed:
+
+- `zig fmt src/apprt/termsurf.zig src/main_c.zig src/build/SharedDeps.zig`
+  passed.
+- Native GhosttyKit framework build passed:
+  `logs/ghostboard-exp16-zig-native-xcframework-20260616-104029.log`.
+- macOS app build passed:
+  `logs/ghostboard-exp16-macos-build-debug-20260616-104052.log`.
+- Runtime harness passed:
+  `logs/ghostboard-exp16-runtime-harness-20260616-104155.log`.
+- Runtime app log: `logs/ghostboard-exp16-runtime-app-20260616-104155.log`.
+- `git diff --check` passed.
+
+Observed successful runtime checks:
+
+```text
+PASS: browser socket received pane-a CreateTab
+PASS: socket fd=11 classified exactly once as Browser
+PASS: TabReady stored pane-a tab id
+PASS: TabReady lookup key/value is correct
+PASS: last_browser_pane updated
+PASS: TabReady logged pending=false
+PASS: no pane-a CreateTab after pending=false
+PASS: unknown TabReady warning logged
+PASS: no BrowserReady emitted
+PASS: no overlay presentation message emitted
+PASS: fresh TUI client received HelloReply
+PASS: socket fd=11 classified exactly once as Tui
+PASS: app exited after SIGTERM
+PASS: socket file removed after shutdown
+PASS: no stale TermSurf process remains
+runtime verification passed
+```
+
+The app log proves the specific state updates:
+
+```text
+info(termsurf): TabReady lookup: key=default/roamium tab_id=42 pane_id=pane-a
+info(termsurf): last_browser_pane=pane-a
+info(termsurf): TabReady pending=false pane_id=pane-a tab_id=42
+info(termsurf): TabReady: pane_id=pane-a tab_id=42 tab_to_pane_count=1
+warning(termsurf): TabReady: unknown pane_id=missing
+```
+
+## Result Review
+
+Fresh-context adversarial result review returned **APPROVED** with no required,
+optional, or nit findings.
+
+The reviewer confirmed:
+
+- the implementation stays in scope and does not add `BrowserReady`, browser
+  launch, or overlay UI;
+- `TabReady` stores `tab_id`, records the scoped
+  `profile/browser/tab_id -> pane_id` lookup, updates `last_browser_pane`, and
+  warns on unknown `pane_id`;
+- `CreateTab` flushing still skips panes with nonzero `tab_id`;
+- `HelloRequest` and first-message classification remain intact;
+- the build and runtime logs support the recorded result;
+- the result commit had not been made before review.
+
+## Conclusion
+
+Ghostboard now records the browser tab id returned by `TabReady`, maintains a
+server-scoped tab-to-pane lookup, and tracks the last browser pane. This closes
+the basic `SetOverlay -> ServerRegister -> CreateTab -> TabReady` state loop
+without yet sending `BrowserReady` or rendering overlays.
+
+The next experiment can use this state to implement a correct `BrowserReady`
+path once Ghostboard has enough TUI socket metadata to send it to the requesting
+TUI.
