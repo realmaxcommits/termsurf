@@ -171,3 +171,174 @@ confirmed that visual proof is now mandatory, logs are explicitly necessary but
 not sufficient, the forbidden-path diff check is required, no new required
 findings were introduced, and the issue README still links Experiment 31 as
 `Designed`.
+
+## Result
+
+**Result:** Pass
+
+Experiment 31 implemented normal-tab native overlay presentation for real
+Roamium output. Ghostboard now routes `CaContext` from the browser server to the
+owning normal pane, records the context id and browser pixel size, and calls a
+macOS bridge with the pane id, context id, and current overlay cell rectangle.
+The AppKit side resolves the pane id to `Ghostty.SurfaceView`, creates or
+updates a `CALayerHost`, and positions it over the terminal surface.
+
+Changes:
+
+- `ghostboard/src/apprt/termsurf.zig`
+  - added `termsurf_present_overlay` bridge declaration;
+  - added `termsurf_clear_overlay` bridge declaration;
+  - added normal-pane `ca_context_id`, `ca_pixel_width`, and `ca_pixel_height`
+    state;
+  - added `CaContext` handling through the existing browser-fd server state and
+    tab-to-pane lookup;
+  - added `PresentOverlay` snapshots after `CaContext` and later `SetOverlay`
+    geometry updates;
+  - clears AppKit overlay layers when a TUI pane with an attached context is
+    cleaned up;
+  - kept DevTools overlay presentation out of scope.
+- `ghostboard/macos/Sources/App/macOS/AppDelegate+TermSurf.swift`
+  - added the `@_cdecl("termsurf_present_overlay")` bridge;
+  - added the `@_cdecl("termsurf_clear_overlay")` bridge;
+  - dispatches AppKit overlay work to the main queue;
+  - resolves pane UUIDs through the existing `AppDelegate.findSurface` helper.
+- `ghostboard/macos/Sources/Ghostty/Surface View/SurfaceView_AppKit.swift`
+  - added per-surface overlay layer ownership;
+  - dynamically creates `CALayerHost` with the received `contextId`;
+  - positions the hosted layer from the overlay grid rectangle and current
+    terminal `cellSize`;
+  - removes overlay layers during pane cleanup and surface teardown.
+
+Verification:
+
+- `cargo build -p webtui` passed.
+  - Log: `logs/ghostboard-exp31-cargo-build-webtui-20260616.log`
+- `./scripts/build.sh roamium` passed and used
+  `chromium/src/out/Default/roamium`.
+  - Log: `logs/ghostboard-exp31-build-roamium-script-20260616.log`
+- `zig fmt src/apprt/termsurf.zig src/main_c.zig src/build/SharedDeps.zig`
+  passed.
+  - Log: `logs/ghostboard-exp31-zig-fmt-20260616.log`
+- Native GhosttyKit framework build passed.
+  - Log: `logs/ghostboard-exp31-zig-native-xcframework-20260616.log`
+- SwiftLint passed on the touched Swift files with zero violations.
+  - Log: `logs/ghostboard-exp31-swiftlint-20260616.log`
+- macOS app build passed.
+  - Log: `logs/ghostboard-exp31-macos-build-debug-20260616.log`
+- `git diff --name-only` listed only expected Ghostboard source files and issue
+  documentation:
+  - `ghostboard/macos/Sources/App/macOS/AppDelegate+TermSurf.swift`
+  - `ghostboard/macos/Sources/Ghostty/Surface View/SurfaceView_AppKit.swift`
+  - `ghostboard/src/apprt/termsurf.zig`
+  - `issues/0808-recreate-ghostboard-from-ghostty-1-3-1/31-present-normal-roamium-overlay.md`
+  - `issues/0808-recreate-ghostboard-from-ghostty-1-3-1/README.md`
+  - no forbidden `webtui/`, `roamium/`, `chromium/`, or `proto/termsurf.proto`
+    paths were present.
+  - Log: `logs/ghostboard-exp31-git-diff-name-only-20260616.log`
+- `git diff --check` passed.
+
+Runtime verification launched
+`ghostboard/macos/build/Debug/TermSurf.app/Contents/MacOS/termsurf` with
+`GHOSTTY_LOG=stderr` and a temporary config whose command was:
+
+```text
+/Users/astrohacker/dev/termsurf/target/debug/web --browser /Users/astrohacker/dev/termsurf/chromium/src/out/Default/roamium https://example.com
+```
+
+The runtime harness proved the normal Roamium lifecycle still works:
+
+- Ghostboard spawned
+  `/Users/astrohacker/dev/termsurf/chromium/src/out/Default/roamium` with
+  `--ipc-socket`, `--user-data-dir`, and `--listen-socket`;
+- Roamium sent `ServerRegister(profile=default)`;
+- Ghostboard sent `CreateTab`;
+- Roamium sent `TabReady`;
+- Ghostboard sent `BrowserReady`;
+- the real `webtui` process connected to Roamium's direct browser socket;
+- `web last` returned the normal Roamium tab;
+- cleanup left no stale matching app, `web`, or Roamium processes and removed
+  the GUI socket.
+- cleanup also cleared the AppKit overlay:
+
+  ```text
+  ClearOverlay: pane_id=4109BD34-38F5-44C6-A14E-745CA689E782
+  TermSurf overlay cleared pane_id=4109BD34-38F5-44C6-A14E-745CA689E782
+  ```
+
+The runtime harness also proved the new overlay path:
+
+- Ghostboard received `CaContext` for `tab_id=1`;
+- Ghostboard mapped that tab to pane `4109BD34-38F5-44C6-A14E-745CA689E782`;
+- Ghostboard called the macOS bridge:
+
+  ```text
+  PresentOverlay: pane_id=4109BD34-38F5-44C6-A14E-745CA689E782 context_id=2036760821 grid=78x16+1+1 pixel=780x320
+  ```
+
+- AppKit presented the overlay:
+
+  ```text
+  TermSurf overlay presented pane_id=4109BD34-38F5-44C6-A14E-745CA689E782 context_id=2036760821 frame={{8, 17}, {624, 272}} pixel=780x320
+  ```
+
+Visual verification was performed from:
+
+```text
+logs/ghostboard-exp31-screenshot-20260616.png
+```
+
+The screenshot shows recognizable browser content inside the expected terminal
+pane overlay rectangle: a white browser page headed `Example Domain`, followed
+by the standard explanatory text. This satisfies the mandatory visual proof
+criterion; the overlay is not merely logged, it is visibly composited in the
+TermSurf window.
+
+Logs:
+
+- Runtime harness: `logs/ghostboard-exp31-runtime-harness-20260616.log`
+- App/Roamium: `logs/ghostboard-exp31-runtime-app-20260616.log`
+- `web last`: `logs/ghostboard-exp31-querylast-20260616.log`
+- Screenshot: `logs/ghostboard-exp31-screenshot-20260616.png`
+
+One residual issue remains unchanged from Experiment 30: Roamium still crashes
+during shutdown after the harness terminates Ghostboard and the browser socket
+reaches EOF. The crash is still in Chromium compositor shutdown. No stale
+process remains, and shutdown hardening remains out of scope for this
+experiment.
+
+## Conclusion
+
+Ghostboard can now visually present a normal real-Roamium browser tab through
+native macOS `CALayerHost` compositing. This closes the major gap between
+protocol lifecycle proof and visible browser output for the normal browsing
+path.
+
+The remaining parity work should proceed to browser input forwarding, DevTools
+overlay presentation, richer browser state handling, and graceful browser
+shutdown.
+
+## Completion Review
+
+A fresh-context adversarial Codex subagent reviewed the completed Experiment 31
+result and returned **CHANGES REQUIRED** with one required finding: pane cleanup
+cleared TermSurf state without clearing the AppKit `CALayerHost`, so browser
+pixels could remain attached if `webtui` exited while the surface view stayed
+alive.
+
+The finding was accepted. The implementation now includes a
+`termsurf_clear_overlay` bridge, calls it from `cleanupTuiPanes` before pane
+state is erased, removes the surface's overlay layers on the main queue, and
+logs the clear path. The runtime harness was rerun and now requires:
+
+```text
+ClearOverlay: pane_id=4109BD34-38F5-44C6-A14E-745CA689E782
+TermSurf overlay clear request pane_id=4109BD34-38F5-44C6-A14E-745CA689E782
+TermSurf overlay cleared pane_id=4109BD34-38F5-44C6-A14E-745CA689E782
+```
+
+The same reviewer re-reviewed the cleanup fix and returned **APPROVED** with no
+findings. The reviewer confirmed that the working-tree diff adds
+`termsurf_clear_overlay`, snapshots pane ids before `pane.* = .{}`, calls the
+clear bridge after releasing `state_mutex`, dispatches layer removal to the main
+queue on the Swift side, has runtime logs proving request and clear, passes
+SwiftLint/build checks, and keeps `git diff --check` clean.

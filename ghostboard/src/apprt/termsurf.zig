@@ -29,6 +29,19 @@ extern "c" fn termsurf_open_split(
     command: [*:0]const u8,
 ) void;
 
+extern "c" fn termsurf_present_overlay(
+    pane_id: [*:0]const u8,
+    context_id: u64,
+    col: u64,
+    row: u64,
+    width: u64,
+    height: u64,
+    pixel_width: u64,
+    pixel_height: u64,
+) void;
+
+extern "c" fn termsurf_clear_overlay(pane_id: [*:0]const u8) void;
+
 const ConnType = enum {
     unknown,
     tui,
@@ -58,6 +71,9 @@ const PaneState = struct {
     browsing: bool = false,
     inspected_tab_id: i64 = 0,
     tab_id: i64 = 0,
+    ca_context_id: u64 = 0,
+    ca_pixel_width: u64 = 0,
+    ca_pixel_height: u64 = 0,
     tui_fd: std.posix.fd_t = -1,
 
     fn paneId(self: *const PaneState) []const u8 {
@@ -165,6 +181,31 @@ const FocusChangedSnapshot = struct {
     focused: bool = false,
 
     fn paneId(self: *const FocusChangedSnapshot) []const u8 {
+        return self.pane_id[0..self.pane_id_len];
+    }
+};
+
+const OverlaySnapshot = struct {
+    pane_id: [max_pane_id_len]u8 = undefined,
+    pane_id_len: usize = 0,
+    context_id: u64 = 0,
+    col: u64 = 0,
+    row: u64 = 0,
+    width: u64 = 0,
+    height: u64 = 0,
+    pixel_width: u64 = 0,
+    pixel_height: u64 = 0,
+
+    fn paneId(self: *const OverlaySnapshot) []const u8 {
+        return self.pane_id[0..self.pane_id_len];
+    }
+};
+
+const ClearOverlaySnapshot = struct {
+    pane_id: [max_pane_id_len]u8 = undefined,
+    pane_id_len: usize = 0,
+
+    fn paneId(self: *const ClearOverlaySnapshot) []const u8 {
         return self.pane_id[0..self.pane_id_len];
     }
 };
@@ -410,6 +451,9 @@ fn handleClient(fd: std.posix.fd_t, slot_index: usize) void {
                 },
                 c.TERMSURF__TERM_SURF_MESSAGE__MSG_TAB_READY => {
                     handleTabReady(msg.*.unnamed_0.tab_ready);
+                },
+                c.TERMSURF__TERM_SURF_MESSAGE__MSG_CA_CONTEXT => {
+                    handleCaContext(fd, msg.*.unnamed_0.ca_context);
                 },
                 c.TERMSURF__TERM_SURF_MESSAGE__MSG_MODE_CHANGED => {
                     handleModeChanged(msg.*.unnamed_0.mode_changed);
@@ -778,6 +822,7 @@ fn handleSetOverlay(tui_fd: std.posix.fd_t, req: ?*c.Termsurf__SetOverlay) void 
     var spawn_listen_socket_buf: [max_listen_socket_len]u8 = undefined;
     var spawn_listen_socket_len: usize = 0;
     var resize_snapshot: ?ResizeSnapshot = null;
+    var overlay_snapshot: ?OverlaySnapshot = null;
 
     state_mutex.lock();
 
@@ -790,6 +835,7 @@ fn handleSetOverlay(tui_fd: std.posix.fd_t, req: ?*c.Termsurf__SetOverlay) void 
         const server_index = findServer(profile, browser);
         const pane_count = if (server_index) |index| servers[index].pane_count else 0;
         resize_snapshot = snapshotResize(&panes[pane_index]);
+        overlay_snapshot = snapshotOverlay(&panes[pane_index]);
         log.info(
             "SetOverlay: updated pane_id={s} profile={s} browser={s} pane_count={}",
             .{ pane_id, profile, browser, pane_count },
@@ -800,6 +846,7 @@ fn handleSetOverlay(tui_fd: std.posix.fd_t, req: ?*c.Termsurf__SetOverlay) void 
                 log.warn("Resize send failed pane_id={s} err={}", .{ snapshot.paneId(), err });
             };
         }
+        if (overlay_snapshot) |snapshot| presentOverlay(&snapshot);
         return;
     }
 
@@ -1287,6 +1334,106 @@ fn sendBrowserReady(snapshot: *const BrowserReadySnapshot) !void {
     );
 }
 
+fn handleCaContext(fd: std.posix.fd_t, req: ?*c.Termsurf__CaContext) void {
+    const ca_context = req orelse {
+        log.warn("CaContext: missing payload", .{});
+        return;
+    };
+    if (ca_context.*.ca_context_id == 0) {
+        log.warn("CaContext: missing context id tab_id={}", .{ca_context.*.tab_id});
+        return;
+    }
+
+    var overlay_snapshot: ?OverlaySnapshot = null;
+
+    state_mutex.lock();
+
+    const server_index = findServerByFd(fd) orelse {
+        log.warn("CaContext: unknown browser fd={} tab_id={}", .{ fd, ca_context.*.tab_id });
+        state_mutex.unlock();
+        return;
+    };
+    const profile = servers[server_index].profileName();
+    const browser = servers[server_index].browserName();
+    const lookup_index = findTabLookup(profile, browser, ca_context.*.tab_id) orelse {
+        log.warn(
+            "CaContext: unknown tab key={s}/{s} tab_id={}",
+            .{ profile, browser, ca_context.*.tab_id },
+        );
+        state_mutex.unlock();
+        return;
+    };
+    const pane_id = tab_lookups[lookup_index].paneId();
+    const pane_index = findPane(pane_id) orelse {
+        log.warn("CaContext: tab maps to missing pane_id={s}", .{pane_id});
+        state_mutex.unlock();
+        return;
+    };
+
+    panes[pane_index].ca_context_id = ca_context.*.ca_context_id;
+    panes[pane_index].ca_pixel_width = ca_context.*.pixel_width;
+    panes[pane_index].ca_pixel_height = ca_context.*.pixel_height;
+    overlay_snapshot = snapshotOverlay(&panes[pane_index]);
+
+    log.info(
+        "CaContext: tab_id={} pane_id={s} context_id={} pixel={}x{}",
+        .{
+            ca_context.*.tab_id,
+            pane_id,
+            ca_context.*.ca_context_id,
+            ca_context.*.pixel_width,
+            ca_context.*.pixel_height,
+        },
+    );
+    state_mutex.unlock();
+
+    if (overlay_snapshot) |snapshot| presentOverlay(&snapshot);
+}
+
+fn snapshotOverlay(pane: *const PaneState) ?OverlaySnapshot {
+    if (pane.inspected_tab_id != 0) return null;
+    if (pane.ca_context_id == 0) return null;
+    if (pane.width == 0 or pane.height == 0) return null;
+
+    var snapshot: OverlaySnapshot = .{
+        .context_id = pane.ca_context_id,
+        .col = pane.col,
+        .row = pane.row,
+        .width = pane.width,
+        .height = pane.height,
+        .pixel_width = pane.ca_pixel_width,
+        .pixel_height = pane.ca_pixel_height,
+    };
+    if (!copyText(&snapshot.pane_id, &snapshot.pane_id_len, pane.paneId())) return null;
+    return snapshot;
+}
+
+fn presentOverlay(snapshot: *const OverlaySnapshot) void {
+    termsurf_present_overlay(
+        snapshot.pane_id[0..snapshot.pane_id_len :0].ptr,
+        snapshot.context_id,
+        snapshot.col,
+        snapshot.row,
+        snapshot.width,
+        snapshot.height,
+        snapshot.pixel_width,
+        snapshot.pixel_height,
+    );
+    log.info(
+        "PresentOverlay: pane_id={s} context_id={} grid={}x{}+{}+{} pixel={}x{}",
+        .{
+            snapshot.paneId(),
+            snapshot.context_id,
+            snapshot.width,
+            snapshot.height,
+            snapshot.col,
+            snapshot.row,
+            snapshot.pixel_width,
+            snapshot.pixel_height,
+        },
+    );
+}
+
 fn upsertTabLookup(pane: *const PaneState, tab_id: i64) usize {
     if (findTabLookup(pane.profileName(), pane.browserName(), tab_id)) |index| {
         _ = copyText(&tab_lookups[index].pane_id, &tab_lookups[index].pane_id_len, pane.paneId());
@@ -1368,6 +1515,8 @@ fn recordServerChild(profile: []const u8, browser: []const u8, pid: std.process.
 fn cleanupTuiPanes(fd: std.posix.fd_t) void {
     var close_tabs: [max_panes]CloseTabSnapshot = undefined;
     var close_tab_count: usize = 0;
+    var clear_overlays: [max_panes]ClearOverlaySnapshot = undefined;
+    var clear_overlay_count: usize = 0;
 
     state_mutex.lock();
 
@@ -1404,17 +1553,34 @@ fn cleanupTuiPanes(fd: std.posix.fd_t) void {
             }
         }
 
+        if (pane.ca_context_id != 0) {
+            var clear_snapshot: ClearOverlaySnapshot = .{};
+            if (copyText(&clear_snapshot.pane_id, &clear_snapshot.pane_id_len, pane_id)) {
+                clear_overlays[clear_overlay_count] = clear_snapshot;
+                clear_overlay_count += 1;
+            }
+        }
+
         log.info("TUI disconnect cleanup: pane_id={s} tab_id={}", .{ pane_id, tab_id });
         pane.* = .{};
     }
 
     state_mutex.unlock();
 
+    for (clear_overlays[0..clear_overlay_count]) |*snapshot| {
+        clearOverlay(snapshot);
+    }
+
     for (close_tabs[0..close_tab_count]) |*snapshot| {
         sendCloseTab(snapshot) catch |err| {
             log.warn("CloseTab send failed pane_id={s} err={}", .{ snapshot.paneId(), err });
         };
     }
+}
+
+fn clearOverlay(snapshot: *const ClearOverlaySnapshot) void {
+    termsurf_clear_overlay(snapshot.pane_id[0..snapshot.pane_id_len :0].ptr);
+    log.info("ClearOverlay: pane_id={s}", .{snapshot.paneId()});
 }
 
 fn removeTabLookupForPane(profile: []const u8, browser: []const u8, tab_id: i64, pane_id: []const u8) void {
@@ -1555,6 +1721,13 @@ fn findServer(profile: []const u8, browser: []const u8) ?usize {
         {
             return i;
         }
+    }
+    return null;
+}
+
+fn findServerByFd(fd: std.posix.fd_t) ?usize {
+    for (&servers, 0..) |*server, i| {
+        if (server.in_use and server.attached_fd == fd) return i;
     }
     return null;
 }

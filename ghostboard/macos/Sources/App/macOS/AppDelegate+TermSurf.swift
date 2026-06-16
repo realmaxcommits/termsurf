@@ -2,6 +2,80 @@ import AppKit
 import Darwin
 import GhosttyKit
 
+@_cdecl("termsurf_clear_overlay")
+func termsurf_clear_overlay(_ paneIDPointer: UnsafePointer<CChar>?) {
+    guard let paneIDPointer else {
+        termsurfLogOverlay("TermSurf overlay clear rejected: missing pane id")
+        return
+    }
+
+    let paneID = String(cString: paneIDPointer)
+    termsurfLogOverlay("TermSurf overlay clear request pane_id=\(paneID)")
+
+    DispatchQueue.main.async {
+        guard let appDelegate = NSApplication.shared.delegate as? AppDelegate else {
+            termsurfLogOverlay("TermSurf overlay clear rejected: missing app delegate")
+            return
+        }
+        guard let uuid = UUID(uuidString: paneID) else {
+            termsurfLogOverlay("TermSurf overlay clear rejected: invalid pane id \(paneID)")
+            return
+        }
+        guard let target = appDelegate.findSurface(forUUID: uuid) else {
+            termsurfLogOverlay("TermSurf overlay clear rejected: no surface for pane id \(paneID)")
+            return
+        }
+
+        target.clearTermSurfOverlay()
+    }
+}
+
+@_cdecl("termsurf_present_overlay")
+// swiftlint:disable:next function_parameter_count
+func termsurf_present_overlay(
+    _ paneIDPointer: UnsafePointer<CChar>?,
+    _ contextID: UInt64,
+    _ col: UInt64,
+    _ row: UInt64,
+    _ width: UInt64,
+    _ height: UInt64,
+    _ pixelWidth: UInt64,
+    _ pixelHeight: UInt64
+) {
+    guard let paneIDPointer else {
+        termsurfLogOverlay("TermSurf overlay rejected: missing pane id")
+        return
+    }
+
+    let paneID = String(cString: paneIDPointer)
+    termsurfLogOverlay(
+        "TermSurf overlay request pane_id=\(paneID) context_id=\(contextID) grid=\(width)x\(height)+\(col)+\(row) pixel=\(pixelWidth)x\(pixelHeight)")
+
+    DispatchQueue.main.async {
+        guard let appDelegate = NSApplication.shared.delegate as? AppDelegate else {
+            termsurfLogOverlay("TermSurf overlay rejected: missing app delegate")
+            return
+        }
+        guard let uuid = UUID(uuidString: paneID) else {
+            termsurfLogOverlay("TermSurf overlay rejected: invalid pane id \(paneID)")
+            return
+        }
+        guard let target = appDelegate.findSurface(forUUID: uuid) else {
+            termsurfLogOverlay("TermSurf overlay rejected: no surface for pane id \(paneID)")
+            return
+        }
+
+        target.presentTermSurfOverlay(
+            contextID: contextID,
+            col: col,
+            row: row,
+            width: width,
+            height: height,
+            pixelWidth: pixelWidth,
+            pixelHeight: pixelHeight)
+    }
+}
+
 @_cdecl("termsurf_open_split")
 func termsurf_open_split(
     _ paneIDPointer: UnsafePointer<CChar>?,
@@ -59,6 +133,11 @@ func termsurf_open_split(
 }
 
 private func termsurfLogOpenSplit(_ message: String) {
+    AppDelegate.logger.info("\(message)")
+    fputs("\(message)\n", stderr)
+}
+
+private func termsurfLogOverlay(_ message: String) {
     AppDelegate.logger.info("\(message)")
     fputs("\(message)\n", stderr)
 }

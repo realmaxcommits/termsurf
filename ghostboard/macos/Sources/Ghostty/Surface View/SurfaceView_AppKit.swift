@@ -238,6 +238,11 @@ extension Ghostty {
         // Timer to remove progress report after 15 seconds
         private var progressReportTimer: Timer?
 
+        private var termsurfOverlayRootLayer: CALayer?
+        private var termsurfOverlayPositioningLayer: CALayer?
+        private var termsurfOverlayHostLayer: CALayer?
+        private var termsurfOverlayContextID: UInt64 = 0
+
         // This is the title from the terminal. This is nil if we're currently using
         // the terminal title as the main title property. If the title is set manually
         // by the user, this is set to the prior value (which may be empty, but non-nil).
@@ -437,6 +442,106 @@ extension Ghostty {
 
             // Cancel progress report timer
             progressReportTimer?.invalidate()
+
+            clearTermSurfOverlay()
+        }
+
+        // swiftlint:disable:next function_parameter_count
+        func presentTermSurfOverlay(
+            contextID: UInt64,
+            col: UInt64,
+            row: UInt64,
+            width: UInt64,
+            height: UInt64,
+            pixelWidth: UInt64,
+            pixelHeight: UInt64
+        ) {
+            dispatchPrecondition(condition: .onQueue(.main))
+
+            guard contextID != 0 else {
+                AppDelegate.logger.warning("TermSurf overlay rejected: context id is zero")
+                return
+            }
+
+            wantsLayer = true
+            guard let surfaceLayer = layer else {
+                AppDelegate.logger.warning("TermSurf overlay rejected: surface has no backing layer")
+                return
+            }
+
+            let cellWidth = cellSize.width > 0 ? cellSize.width : 10
+            let cellHeight = cellSize.height > 0 ? cellSize.height : 20
+            let frame = CGRect(
+                x: CGFloat(col) * cellWidth,
+                y: CGFloat(row) * cellHeight,
+                width: CGFloat(width) * cellWidth,
+                height: CGFloat(height) * cellHeight)
+            guard frame.width > 0, frame.height > 0 else {
+                AppDelegate.logger.warning("TermSurf overlay rejected: empty frame")
+                return
+            }
+
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            defer { CATransaction.commit() }
+
+            let root = termsurfOverlayRootLayer ?? {
+                let layer = CALayer()
+                layer.name = "TermSurfOverlayRoot"
+                layer.isGeometryFlipped = true
+                layer.anchorPoint = .zero
+                layer.frame = bounds
+                surfaceLayer.addSublayer(layer)
+                termsurfOverlayRootLayer = layer
+                return layer
+            }()
+            root.frame = bounds
+
+            let positioning = termsurfOverlayPositioningLayer ?? {
+                let layer = CALayer()
+                layer.name = "TermSurfOverlayPositioning"
+                layer.anchorPoint = .zero
+                root.addSublayer(layer)
+                termsurfOverlayPositioningLayer = layer
+                return layer
+            }()
+            positioning.frame = frame
+
+            if termsurfOverlayHostLayer == nil || termsurfOverlayContextID != contextID {
+                termsurfOverlayHostLayer?.removeFromSuperlayer()
+                guard let hostClass = NSClassFromString("CALayerHost") as? CALayer.Type else {
+                    AppDelegate.logger.warning("TermSurf overlay rejected: CALayerHost unavailable")
+                    return
+                }
+                let host = hostClass.init()
+                host.name = "TermSurfOverlayHost"
+                host.anchorPoint = .zero
+                host.setValue(NSNumber(value: contextID), forKey: "contextId")
+                positioning.addSublayer(host)
+                termsurfOverlayHostLayer = host
+                termsurfOverlayContextID = contextID
+            }
+
+            termsurfOverlayHostLayer?.frame = CGRect(origin: .zero, size: frame.size)
+            termsurfOverlayHostLayer?.contentsScale = window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 1
+
+            AppDelegate.logger.info(
+                "TermSurf overlay presented pane_id=\(self.id.uuidString) context_id=\(contextID) frame=\(NSStringFromRect(frame)) pixel=\(pixelWidth)x\(pixelHeight)")
+            fputs(
+                "TermSurf overlay presented pane_id=\(self.id.uuidString) context_id=\(contextID) frame=\(NSStringFromRect(frame)) pixel=\(pixelWidth)x\(pixelHeight)\n",
+                stderr)
+        }
+
+        func clearTermSurfOverlay() {
+            termsurfOverlayHostLayer?.removeFromSuperlayer()
+            termsurfOverlayPositioningLayer?.removeFromSuperlayer()
+            termsurfOverlayRootLayer?.removeFromSuperlayer()
+            termsurfOverlayHostLayer = nil
+            termsurfOverlayPositioningLayer = nil
+            termsurfOverlayRootLayer = nil
+            termsurfOverlayContextID = 0
+            AppDelegate.logger.info("TermSurf overlay cleared pane_id=\(self.id.uuidString)")
+            fputs("TermSurf overlay cleared pane_id=\(self.id.uuidString)\n", stderr)
         }
 
         func focusDidChange(_ focused: Bool) {
