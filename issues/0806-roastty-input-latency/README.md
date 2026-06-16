@@ -83,3 +83,5 @@ work.
 
 - [Experiment 1: Measure live input latency](01-measure-live-input-latency.md) —
   **Pass**
+- [Experiment 2: Remove key-path termio mutex waits](02-remove-key-path-termio-mutex-waits.md)
+  — **Designed**
