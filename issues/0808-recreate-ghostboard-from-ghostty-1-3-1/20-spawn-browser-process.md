@@ -130,3 +130,94 @@ incognito-specific launch argument parity to a later experiment.
 Fresh-context adversarial re-review returned **APPROVED**. The reviewer
 confirmed the required finding was resolved, the incognito omission is now
 explicitly deferred, and the fixes introduced no new required issues.
+
+## Result
+
+**Result:** Pass
+
+Implemented browser process launch mechanics for new `SetOverlay` servers in
+`ghostboard/src/apprt/termsurf.zig`.
+
+The implementation now:
+
+- widens stored browser specs so absolute executable paths fit in pane, server,
+  and tab lookup state;
+- records a generated per-server listen socket path on `ServerState`;
+- stores the spawned child pid on `ServerState`;
+- launches absolute browser paths with `--ipc-socket`, `--user-data-dir`,
+  `--listen-socket`, `--hidden`, `--no-sandbox`, `--enable-logging`, and
+  `--log-file`;
+- keeps named browser resolution, incognito launch arguments, `BrowserReady`,
+  direct browser-client routing, overlay presentation, navigation, and input
+  forwarding out of scope.
+
+Verification passed:
+
+- `zig fmt src/apprt/termsurf.zig src/main_c.zig src/build/SharedDeps.zig`
+  passed.
+- Native GhosttyKit framework build passed:
+  `logs/ghostboard-exp20-zig-native-xcframework-20260616-111912.log`.
+- macOS app build passed:
+  `logs/ghostboard-exp20-macos-build-debug-20260616-111932.log`.
+- Runtime harness passed:
+  `logs/ghostboard-exp20-runtime-harness-20260616-112056.log`.
+- Runtime app log: `logs/ghostboard-exp20-runtime-app-20260616-112056.log`.
+- `git diff --check` passed.
+
+Observed successful runtime checks:
+
+```text
+PASS: helper path is longer than old 64-byte browser limit
+PASS: child wrote TERMSURF_SOCKET
+PASS: socket path is under TMPDIR/termsurf
+PASS: socket exists while app is running
+PASS: helper spawned and exited
+PASS: helper argv[0] is absolute helper path
+PASS: helper received GUI ipc socket
+PASS: helper received generated listen socket
+PASS: helper received profile user-data-dir
+PASS: helper received --hidden
+PASS: helper received --no-sandbox
+PASS: helper received --enable-logging
+PASS: helper received log-file
+PASS: helper received CreateTab for pending pane
+PASS: fresh TUI client received HelloReply
+PASS: app exited after SIGTERM
+PASS: socket file removed after shutdown
+PASS: no stale TermSurf process remains
+PASS: no stale helper process remains
+PASS: app log contains browser spawn
+PASS: app log contains matched ServerRegister
+PASS: app log contains sent CreateTab
+PASS: no BrowserReady emitted
+PASS: no CaContext emitted
+PASS: no overlay presentation message emitted
+runtime verification passed
+```
+
+The runtime harness used an absolute helper path with length 196, proving the
+old short browser-name limit no longer blocks absolute executable paths.
+
+## Conclusion
+
+Ghostboard can now launch an absolute browser executable for a new overlay
+server and complete the existing browser callback path:
+`SetOverlay -> spawn process -> ServerRegister -> CreateTab`. This moves the
+port from manually simulated browser connections toward real Roamium launch
+without changing `webtui`, `roamium`, or the protocol schema.
+
+## Result Review
+
+Fresh-context adversarial result review returned **APPROVED** with no findings.
+
+The reviewer confirmed:
+
+- the result commit had not been made before review;
+- the changed files are scoped to `ghostboard/src/apprt/termsurf.zig` and the
+  Issue 808 experiment docs;
+- `zig fmt --check src/apprt/termsurf.zig src/main_c.zig src/build/SharedDeps.zig`
+  passed;
+- the logs substantiate the key runtime claim: a long absolute helper path was
+  spawned, expected TermSurf args were received, `ServerRegister -> CreateTab`
+  completed, and no `BrowserReady`, `CaContext`, or overlay presentation was
+  emitted.

@@ -244,4 +244,4 @@ and against `ghostboard-legacy/` where useful.
 - [Experiment 19: Reply to QueryDevtools from tab state](19-query-devtools-from-tab-state.md)
   — **Pass**
 - [Experiment 20: Spawn browser process for SetOverlay](20-spawn-browser-process.md)
-  — **Designed**
+  — **Pass**

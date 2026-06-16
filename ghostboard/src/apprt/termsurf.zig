@@ -2,6 +2,7 @@ const std = @import("std");
 const internal_os = @import("../os/main.zig");
 
 const c = @cImport({
+    @cInclude("unistd.h");
     @cInclude("termsurf.pb-c.h");
 });
 
@@ -15,8 +16,9 @@ const max_servers: usize = 64;
 const max_tab_lookups: usize = 512;
 const max_pane_id_len: usize = 128;
 const max_profile_len: usize = 128;
-const max_browser_len: usize = 64;
+const max_browser_len: usize = std.fs.max_path_bytes;
 const max_url_len: usize = 2048;
+const max_listen_socket_len: usize = std.fs.max_path_bytes;
 const default_browser = "roamium";
 const fallback_cell_width: u64 = 10;
 const fallback_cell_height: u64 = 20;
@@ -69,8 +71,11 @@ const ServerState = struct {
     profile_len: usize = 0,
     browser: [max_browser_len]u8 = undefined,
     browser_len: usize = 0,
+    listen_socket: [max_listen_socket_len]u8 = undefined,
+    listen_socket_len: usize = 0,
     pane_count: usize = 0,
     attached_fd: std.posix.fd_t = -1,
+    child_pid: std.process.Child.Id = 0,
 
     fn profileName(self: *const ServerState) []const u8 {
         return self.profile[0..self.profile_len];
@@ -78,6 +83,10 @@ const ServerState = struct {
 
     fn browserName(self: *const ServerState) []const u8 {
         return self.browser[0..self.browser_len];
+    }
+
+    fn listenSocket(self: *const ServerState) []const u8 {
+        return self.listen_socket[0..self.listen_socket_len];
     }
 };
 
@@ -671,25 +680,40 @@ fn handleSetOverlay(req: ?*c.Termsurf__SetOverlay) void {
         .{ pane_id, profile, browser, url },
     );
 
+    var should_spawn = false;
+    var spawn_profile_buf: [max_profile_len]u8 = undefined;
+    var spawn_profile_len: usize = 0;
+    var spawn_browser_buf: [max_browser_len]u8 = undefined;
+    var spawn_browser_len: usize = 0;
+    var spawn_listen_socket_buf: [max_listen_socket_len]u8 = undefined;
+    var spawn_listen_socket_len: usize = 0;
+
     state_mutex.lock();
-    defer state_mutex.unlock();
 
     if (findPane(pane_id)) |pane_index| {
-        if (!updatePane(&panes[pane_index], overlay, pane_id, profile, browser, url)) return;
+        if (!updatePane(&panes[pane_index], overlay, pane_id, profile, browser, url)) {
+            state_mutex.unlock();
+            return;
+        }
         const server_index = findServer(profile, browser);
         const pane_count = if (server_index) |index| servers[index].pane_count else 0;
         log.info(
             "SetOverlay: updated pane_id={s} profile={s} browser={s} pane_count={}",
             .{ pane_id, profile, browser, pane_count },
         );
+        state_mutex.unlock();
         return;
     }
 
     const pane_index = reservePane() orelse {
         log.warn("SetOverlay: pane limit reached pane_id={s}", .{pane_id});
+        state_mutex.unlock();
         return;
     };
-    if (!updatePane(&panes[pane_index], overlay, pane_id, profile, browser, url)) return;
+    if (!updatePane(&panes[pane_index], overlay, pane_id, profile, browser, url)) {
+        state_mutex.unlock();
+        return;
+    }
 
     if (findServer(profile, browser)) |server_index| {
         servers[server_index].pane_count += 1;
@@ -701,16 +725,40 @@ fn handleSetOverlay(req: ?*c.Termsurf__SetOverlay) void {
         const server_index = reserveServer() orelse {
             log.warn("SetOverlay: server limit reached profile={s} browser={s}", .{ profile, browser });
             panes[pane_index] = .{};
+            state_mutex.unlock();
             return;
         };
         if (!setServer(&servers[server_index], profile, browser)) {
             panes[pane_index] = .{};
+            state_mutex.unlock();
             return;
         }
+        if (buildListenSocket(&servers[server_index])) {
+            if (isAbsolutePath(browser)) {
+                should_spawn =
+                    copyText(&spawn_profile_buf, &spawn_profile_len, servers[server_index].profileName()) and
+                    copyText(&spawn_browser_buf, &spawn_browser_len, servers[server_index].browserName()) and
+                    copyText(&spawn_listen_socket_buf, &spawn_listen_socket_len, servers[server_index].listenSocket());
+            } else {
+                log.warn("SetOverlay: named browser launch not implemented browser={s}", .{browser});
+            }
+        } else {
+            log.warn("SetOverlay: listen socket path too long profile={s} browser={s}", .{ profile, browser });
+        }
         log.info(
-            "SetOverlay: created pending server key={s}/{s} pane_count={}",
-            .{ servers[server_index].profileName(), servers[server_index].browserName(), servers[server_index].pane_count },
+            "SetOverlay: created pending server key={s}/{s} pane_count={} listen_socket={s}",
+            .{ servers[server_index].profileName(), servers[server_index].browserName(), servers[server_index].pane_count, servers[server_index].listenSocket() },
         );
+    }
+    state_mutex.unlock();
+
+    if (should_spawn) {
+        const profile_z = spawn_profile_buf[0..spawn_profile_len :0];
+        const browser_z = spawn_browser_buf[0..spawn_browser_len :0];
+        const listen_socket_z = spawn_listen_socket_buf[0..spawn_listen_socket_len :0];
+        if (spawnBrowserProcess(profile_z, browser_z, listen_socket_z)) |pid| {
+            recordServerChild(profile_z, browser_z, pid);
+        }
     }
 }
 
@@ -858,6 +906,125 @@ fn countTabLookups() usize {
     return count;
 }
 
+fn buildListenSocket(server: *ServerState) bool {
+    const tmpdir = std.posix.getenv("TMPDIR") orelse "/tmp";
+    const sep = if (std.mem.endsWith(u8, tmpdir, "/")) "" else "/";
+    const browser_base = std.fs.path.basename(server.browserName());
+    const pid = c.getpid();
+    const socket = std.fmt.bufPrintZ(
+        &server.listen_socket,
+        "{s}{s}termsurf/{s}-{}-{s}.sock",
+        .{ tmpdir, sep, browser_base, pid, server.profileName() },
+    ) catch return false;
+    server.listen_socket_len = socket.len;
+    return true;
+}
+
+fn isAbsolutePath(path: []const u8) bool {
+    return path.len > 0 and path[0] == '/';
+}
+
+fn recordServerChild(profile: []const u8, browser: []const u8, pid: std.process.Child.Id) void {
+    state_mutex.lock();
+    defer state_mutex.unlock();
+
+    if (findServer(profile, browser)) |index| {
+        servers[index].child_pid = pid;
+    }
+}
+
+fn spawnBrowserProcess(profile_z: [:0]const u8, browser_z: [:0]const u8, listen_socket_z: [:0]const u8) ?std.process.Child.Id {
+    const gui_socket = socket_path_buf[0..socket_path_len];
+    if (gui_socket.len == 0) {
+        log.warn("browser spawn skipped: GUI socket path is empty", .{});
+        return null;
+    }
+
+    var ipc_arg_buf: [std.fs.max_path_bytes + 32]u8 = undefined;
+    const ipc_arg = std.fmt.bufPrintZ(&ipc_arg_buf, "--ipc-socket={s}", .{gui_socket}) catch {
+        log.warn("browser spawn skipped: ipc socket arg too long", .{});
+        return null;
+    };
+
+    var listen_arg_buf: [std.fs.max_path_bytes + 32]u8 = undefined;
+    const listen_arg = std.fmt.bufPrintZ(&listen_arg_buf, "--listen-socket={s}", .{listen_socket_z}) catch {
+        log.warn("browser spawn skipped: listen socket arg too long", .{});
+        return null;
+    };
+
+    var user_data_dir_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const user_data_dir = buildUserDataDir(&user_data_dir_buf, profile_z) orelse return null;
+    var data_arg_buf: [std.fs.max_path_bytes + 32]u8 = undefined;
+    const data_arg = std.fmt.bufPrintZ(&data_arg_buf, "--user-data-dir={s}", .{user_data_dir}) catch {
+        log.warn("browser spawn skipped: user-data-dir arg too long", .{});
+        return null;
+    };
+
+    var log_file_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const log_file = buildBrowserLogFile(&log_file_buf) orelse return null;
+    var log_arg_buf: [std.fs.max_path_bytes + 32]u8 = undefined;
+    const log_arg = std.fmt.bufPrintZ(&log_arg_buf, "--log-file={s}", .{log_file}) catch {
+        log.warn("browser spawn skipped: log-file arg too long", .{});
+        return null;
+    };
+
+    const argv = [_][]const u8{
+        browser_z,
+        ipc_arg,
+        data_arg,
+        listen_arg,
+        "--hidden",
+        "--no-sandbox",
+        "--enable-logging",
+        log_arg,
+    };
+
+    var child = std.process.Child.init(&argv, std.heap.c_allocator);
+    child.stdin_behavior = .Ignore;
+    child.stdout_behavior = .Inherit;
+    child.stderr_behavior = .Inherit;
+    child.spawn() catch |err| {
+        log.warn("browser spawn failed path={s} profile={s} err={}", .{ browser_z, profile_z, err });
+        return null;
+    };
+
+    log.info(
+        "spawned browser path={s} pid={} profile={s} listen_socket={s}",
+        .{ browser_z, child.id, profile_z, listen_socket_z },
+    );
+    return child.id;
+}
+
+fn buildUserDataDir(buf: []u8, profile: []const u8) ?[:0]u8 {
+    const home = std.posix.getenv("HOME") orelse {
+        log.warn("browser spawn skipped: HOME is not set", .{});
+        return null;
+    };
+    const data_home = std.posix.getenv("XDG_DATA_HOME");
+    return if (data_home) |base|
+        std.fmt.bufPrintZ(buf, "{s}/termsurf/chromium-profiles/{s}", .{ base, profile }) catch null
+    else
+        std.fmt.bufPrintZ(buf, "{s}/.local/share/termsurf/chromium-profiles/{s}", .{ home, profile }) catch null;
+}
+
+fn buildBrowserLogFile(buf: []u8) ?[:0]u8 {
+    const home = std.posix.getenv("HOME") orelse {
+        log.warn("browser spawn skipped: HOME is not set", .{});
+        return null;
+    };
+    const state_home = std.posix.getenv("XDG_STATE_HOME");
+    var dir_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const dir = if (state_home) |base|
+        std.fmt.bufPrintZ(&dir_buf, "{s}/termsurf", .{base}) catch return null
+    else
+        std.fmt.bufPrintZ(&dir_buf, "{s}/.local/state/termsurf", .{home}) catch return null;
+    std.fs.makeDirAbsolute(dir) catch |err| switch (err) {
+        error.PathAlreadyExists => {},
+        else => log.warn("browser log directory create failed path={s} err={}", .{ dir, err }),
+    };
+    return std.fmt.bufPrintZ(buf, "{s}/chromium-server.log", .{dir}) catch null;
+}
+
 fn setServer(server: *ServerState, profile: []const u8, browser: []const u8) bool {
     if (!copyText(&server.profile, &server.profile_len, profile)) {
         log.warn("SetOverlay: server profile too long len={} max={}", .{ profile.len, max_profile_len });
@@ -871,6 +1038,8 @@ fn setServer(server: *ServerState, profile: []const u8, browser: []const u8) boo
     server.in_use = true;
     server.pane_count = 1;
     server.attached_fd = -1;
+    server.listen_socket_len = 0;
+    server.child_pid = 0;
     return true;
 }
 
