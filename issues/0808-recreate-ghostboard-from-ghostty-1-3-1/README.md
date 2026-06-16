@@ -219,4 +219,4 @@ and against `ghostboard-legacy/` where useful.
 - [Experiment 5: Apply the macOS-only GhosttyKit build patch](05-apply-macos-only-ghosttykit-build-patch.md)
   — **Pass**
 - [Experiment 6: Establish minimal TermSurf identity](06-minimal-ghostboard-identity.md)
-  — **Designed**
+  — **Pass**

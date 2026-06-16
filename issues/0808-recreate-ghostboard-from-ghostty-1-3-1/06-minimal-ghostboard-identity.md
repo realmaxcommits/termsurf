@@ -188,3 +188,199 @@ standalone CLI, the design was corrected to scope `termsurf` to the app bundle
 executable only. A second focused re-review returned `APPROVED` with no required
 findings and confirmed this does not conflict with Issue 808's eventual
 standalone CLI requirement.
+
+## Result
+
+**Result:** Pass
+
+The minimal TermSurf identity pass builds and launches locally without changing
+the standalone CLI emission/install path, protocol code, `webtui`, or `roamium`.
+
+Implemented changes:
+
+- The macOS Debug app builds as `TermSurf.app`.
+- The app bundle executable is `Contents/MacOS/termsurf`.
+- The built app metadata reports:
+  - `CFBundleDisplayName = TermSurf`
+  - `CFBundleExecutable = termsurf`
+  - `CFBundleIdentifier = com.termsurf.debug`
+  - `CFBundleName = TermSurf`
+  - `CFBundleIconFile = TermSurf`
+- The default config path now resolves to `~/.config/termsurf/config`.
+- The no-config template path was verified with `XDG_CONFIG_HOME` pointing at a
+  temporary directory; the app created
+  `/tmp/termsurf-exp6-config.h7O6wa/.config/termsurf/config` and did not create
+  a Ghostty config path.
+- The About page uses the primary `AppIconImage` asset, and the primary app icon
+  assets were generated from `wezboard/assets/icon/wezboard-icon.svg`.
+- The built app launched from
+  `ghostboard/macos/build/Debug/TermSurf.app/Contents/MacOS/termsurf`.
+
+Verification commands:
+
+```bash
+cd ghostboard
+zig build -Demit-xcframework=true -Dxcframework-target=native -Demit-macos-app=false
+```
+
+Log: `logs/ghostboard-exp6-zig-native-xcframework-20260616-075410.log`
+
+```bash
+cd ghostboard
+macos/build.nu --scheme Ghostty --configuration Debug --action build
+```
+
+Log: `logs/ghostboard-exp6-macos-build-debug-20260616-075443.log`
+
+```bash
+app="ghostboard/macos/build/Debug/TermSurf.app"
+test -d "$app"
+test -x "$app/Contents/MacOS/termsurf"
+/usr/libexec/PlistBuddy -c 'Print :CFBundleDisplayName' "$app/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$app/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c 'Print :CFBundleName' "$app/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c 'Print :CFBundleIconFile' "$app/Contents/Info.plist"
+```
+
+Output:
+
+```text
+TermSurf
+termsurf
+com.termsurf.debug
+TermSurf
+TermSurf
+```
+
+Config verification:
+
+```bash
+tmp=$(mktemp -d /tmp/termsurf-exp6-config.XXXXXX)
+XDG_CONFIG_HOME="$tmp/.config" \
+  EDITOR=/usr/bin/true \
+  ghostboard/macos/build/Debug/TermSurf.app/Contents/MacOS/termsurf +edit-config
+find "$tmp" -maxdepth 5 -type f -print | sort
+test -f "$tmp/.config/termsurf/config"
+test ! -e "$tmp/.config/ghostty/config"
+test ! -e "$tmp/.config/ghostty/config.ghostty"
+```
+
+Output included:
+
+```text
+/tmp/termsurf-exp6-config.h7O6wa/.config/termsurf/config
+```
+
+Icon verification:
+
+```bash
+shasum -a 256 \
+  ghostboard/macos/Assets.xcassets/TermSurf.appiconset/termsurf-icon-1024.png \
+  ghostboard/macos/Assets.xcassets/AppIconImage.imageset/macOS-AppIcon-1024px.png
+```
+
+Output:
+
+```text
+fa2608dd96a19842cc0fcacecb6b0c257739ab89d0a9a7443b374d43baf80823  ghostboard/macos/Assets.xcassets/TermSurf.appiconset/termsurf-icon-1024.png
+fa2608dd96a19842cc0fcacecb6b0c257739ab89d0a9a7443b374d43baf80823  ghostboard/macos/Assets.xcassets/AppIconImage.imageset/macOS-AppIcon-1024px.png
+```
+
+Built icon verification:
+
+```bash
+app="ghostboard/macos/build/Debug/TermSurf.app"
+/usr/libexec/PlistBuddy -c 'Print :CFBundleIconFile' "$app/Contents/Info.plist"
+iconutil -c iconset "$app/Contents/Resources/TermSurf.icns" \
+  -o /tmp/termsurf-exp6-built-icon.iconset
+find /tmp/termsurf-exp6-built-icon.iconset -maxdepth 1 -type f -print | sort
+```
+
+Output:
+
+```text
+TermSurf
+/tmp/termsurf-exp6-built-icon.iconset/icon_128x128.png
+/tmp/termsurf-exp6-built-icon.iconset/icon_128x128@2x.png
+/tmp/termsurf-exp6-built-icon.iconset/icon_16x16.png
+/tmp/termsurf-exp6-built-icon.iconset/icon_16x16@2x.png
+```
+
+The built `TermSurf.icns` was then compared against the generated
+Wezboard-derived TermSurf app icon assets by decoding PNG pixels. The 32 px, 128
+px, and 256 px extracted built icon slots exactly match the generated source
+assets:
+
+```text
+ghostboard/macos/Assets.xcassets/TermSurf.appiconset/termsurf-icon-32.png -> /tmp/termsurf-exp6-built-icon.iconset/icon_16x16@2x.png
+  source=32x32 built=32x32
+  source_pixel_sha256=25d68846d9a120eac1d732b698ce6c979d50453d3ea496b2f3d1005f44490335
+  built_pixel_sha256=25d68846d9a120eac1d732b698ce6c979d50453d3ea496b2f3d1005f44490335
+  pixels_equal=True
+ghostboard/macos/Assets.xcassets/TermSurf.appiconset/termsurf-icon-128.png -> /tmp/termsurf-exp6-built-icon.iconset/icon_128x128.png
+  source=128x128 built=128x128
+  source_pixel_sha256=4daf5706c381e2e7b761f8d2f10a8a21360d1ea8edf83a43d6633a27848f599b
+  built_pixel_sha256=4daf5706c381e2e7b761f8d2f10a8a21360d1ea8edf83a43d6633a27848f599b
+  pixels_equal=True
+ghostboard/macos/Assets.xcassets/TermSurf.appiconset/termsurf-icon-256.png -> /tmp/termsurf-exp6-built-icon.iconset/icon_128x128@2x.png
+  source=256x256 built=256x256
+  source_pixel_sha256=958ecf97c58ba4a86001dc22c22ff3cf1938b690061e9f1ea82e9c4af063969e
+  built_pixel_sha256=958ecf97c58ba4a86001dc22c22ff3cf1938b690061e9f1ea82e9c4af063969e
+  pixels_equal=True
+```
+
+Built icon comparison log:
+`logs/ghostboard-exp6-built-icon-pixel-compare-20260616-080807.log`
+
+Launch verification:
+
+```bash
+open -n ghostboard/macos/build/Debug/TermSurf.app
+pgrep -fl "$PWD/ghostboard/macos/build/Debug/TermSurf.app/Contents/MacOS/termsurf"
+```
+
+Output:
+
+```text
+42723 /Users/astrohacker/dev/termsurf/ghostboard/macos/build/Debug/TermSurf.app/Contents/MacOS/termsurf
+```
+
+Scope verification:
+
+```bash
+git diff -- ghostboard/build.zig ghostboard/src/build/GhosttyExe.zig webtui roamium
+git diff --check
+```
+
+Both checks passed with no output.
+
+Full verification log: `logs/ghostboard-exp6-verification-20260616-075813.log`
+
+## Conclusion
+
+Experiment 6 established the minimal app identity required before protocol work:
+the app now presents as TermSurf, uses the TermSurf bundle executable and config
+path, and uses a Wezboard-derived primary icon while keeping upstream Ghostty
+implementation names mostly intact.
+
+The next experiment should begin the TermSurf protocol port from the now-named
+app baseline. It should compare the current Wezboard implementation and
+`ghostboard-legacy/` reference code, then add the smallest verifiable protocol
+surface needed to launch a terminal session with a GUI socket and
+`TERMSURF_SOCKET` propagation.
+
+## Result Review
+
+Fresh-context adversarial result review initially returned `CHANGES REQUIRED`.
+
+Required finding accepted and fixed:
+
+- The recorded icon verification compared generated asset files but did not
+  compare the actual built `TermSurf.icns` selected by the app bundle. The
+  result now records `CFBundleIconFile = TermSurf`, extracts the built
+  `TermSurf.icns`, and compares extracted built icon slots against the generated
+  Wezboard-derived TermSurf assets at decoded-pixel level.
+
+Re-review returned `APPROVED`. The reviewer confirmed the prior required finding
+is resolved and no new required finding was introduced.
