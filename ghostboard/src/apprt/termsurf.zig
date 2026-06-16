@@ -51,6 +51,7 @@ const PaneState = struct {
     height: u64 = 0,
     browsing: bool = false,
     tab_id: i64 = 0,
+    tui_fd: std.posix.fd_t = -1,
 
     fn paneId(self: *const PaneState) []const u8 {
         return self.pane_id[0..self.pane_id_len];
@@ -110,6 +111,29 @@ const TabLookupState = struct {
 
     fn paneId(self: *const TabLookupState) []const u8 {
         return self.pane_id[0..self.pane_id_len];
+    }
+};
+
+const BrowserReadySnapshot = struct {
+    tui_fd: std.posix.fd_t = -1,
+    pane_id: [max_pane_id_len]u8 = undefined,
+    pane_id_len: usize = 0,
+    browser: [max_browser_len]u8 = undefined,
+    browser_len: usize = 0,
+    browser_socket: [max_listen_socket_len]u8 = undefined,
+    browser_socket_len: usize = 0,
+    tab_id: i64 = 0,
+
+    fn paneId(self: *const BrowserReadySnapshot) []const u8 {
+        return self.pane_id[0..self.pane_id_len];
+    }
+
+    fn browserName(self: *const BrowserReadySnapshot) []const u8 {
+        return self.browser[0..self.browser_len];
+    }
+
+    fn browserSocket(self: *const BrowserReadySnapshot) []const u8 {
+        return self.browser_socket[0..self.browser_socket_len];
     }
 };
 
@@ -239,13 +263,14 @@ fn acceptLoop(fd: std.posix.fd_t) void {
 }
 
 fn handleClient(fd: std.posix.fd_t, slot_index: usize) void {
+    var conn_type: ConnType = .unknown;
     defer {
+        if (conn_type == .tui) clearPaneTuiFd(fd);
         markClientDone(slot_index);
         std.posix.close(fd);
     }
 
     const allocator = std.heap.c_allocator;
-    var conn_type: ConnType = .unknown;
     while (!stopping.load(.acquire)) {
         const frame = readFrame(fd, allocator) catch |err| {
             log.warn("TermSurf client read failed fd={} err={}", .{ fd, err });
@@ -319,7 +344,7 @@ fn handleClient(fd: std.posix.fd_t, slot_index: usize) void {
                     };
                 },
                 c.TERMSURF__TERM_SURF_MESSAGE__MSG_SET_OVERLAY => {
-                    handleSetOverlay(msg.*.unnamed_0.set_overlay);
+                    handleSetOverlay(fd, msg.*.unnamed_0.set_overlay);
                 },
                 c.TERMSURF__TERM_SURF_MESSAGE__MSG_SERVER_REGISTER => {
                     handleServerRegister(fd, msg.*.unnamed_0.server_register);
@@ -663,7 +688,7 @@ fn serverRegisterProfile(req: ?*c.Termsurf__ServerRegister) []const u8 {
     return "";
 }
 
-fn handleSetOverlay(req: ?*c.Termsurf__SetOverlay) void {
+fn handleSetOverlay(tui_fd: std.posix.fd_t, req: ?*c.Termsurf__SetOverlay) void {
     const overlay = req orelse {
         log.warn("SetOverlay: missing payload", .{});
         return;
@@ -695,6 +720,7 @@ fn handleSetOverlay(req: ?*c.Termsurf__SetOverlay) void {
             state_mutex.unlock();
             return;
         }
+        panes[pane_index].tui_fd = tui_fd;
         const server_index = findServer(profile, browser);
         const pane_count = if (server_index) |index| servers[index].pane_count else 0;
         log.info(
@@ -714,6 +740,7 @@ fn handleSetOverlay(req: ?*c.Termsurf__SetOverlay) void {
         state_mutex.unlock();
         return;
     }
+    panes[pane_index].tui_fd = tui_fd;
 
     if (findServer(profile, browser)) |server_index| {
         servers[server_index].pane_count += 1;
@@ -830,18 +857,20 @@ fn handleTabReady(req: ?*c.Termsurf__TabReady) void {
     };
     const pane_id = cString(ready.*.pane_id);
     const tab_id = ready.*.tab_id;
+    var browser_ready: ?BrowserReadySnapshot = null;
 
     state_mutex.lock();
-    defer state_mutex.unlock();
 
     const pane_index = findPane(pane_id) orelse {
         log.warn("TabReady: unknown pane_id={s}", .{pane_id});
+        state_mutex.unlock();
         return;
     };
 
     panes[pane_index].tab_id = tab_id;
     const lookup_count = upsertTabLookup(&panes[pane_index], tab_id);
     _ = copyText(&last_browser_pane, &last_browser_pane_len, pane_id);
+    browser_ready = snapshotBrowserReady(&panes[pane_index], tab_id);
 
     log.info(
         "TabReady lookup: key={s}/{s} tab_id={} pane_id={s}",
@@ -852,6 +881,48 @@ fn handleTabReady(req: ?*c.Termsurf__TabReady) void {
     log.info(
         "TabReady: pane_id={s} tab_id={} tab_to_pane_count={}",
         .{ pane_id, tab_id, lookup_count },
+    );
+    state_mutex.unlock();
+
+    if (browser_ready) |snapshot| {
+        sendBrowserReady(&snapshot) catch |err| {
+            log.warn("BrowserReady send failed pane_id={s} err={}", .{ snapshot.paneId(), err });
+        };
+    }
+}
+
+fn snapshotBrowserReady(pane: *const PaneState, tab_id: i64) ?BrowserReadySnapshot {
+    if (pane.tui_fd < 0) return null;
+    const server_index = findServer(pane.profileName(), pane.browserName()) orelse return null;
+    if (servers[server_index].listen_socket_len == 0) return null;
+
+    var snapshot: BrowserReadySnapshot = .{
+        .tui_fd = pane.tui_fd,
+        .tab_id = tab_id,
+    };
+    if (!copyText(&snapshot.pane_id, &snapshot.pane_id_len, pane.paneId())) return null;
+    if (!copyText(&snapshot.browser, &snapshot.browser_len, pane.browserName())) return null;
+    if (!copyText(&snapshot.browser_socket, &snapshot.browser_socket_len, servers[server_index].listenSocket())) return null;
+    return snapshot;
+}
+
+fn sendBrowserReady(snapshot: *const BrowserReadySnapshot) !void {
+    var ready: c.Termsurf__BrowserReady = undefined;
+    c.termsurf__browser_ready__init(&ready);
+    ready.pane_id = @constCast(snapshot.pane_id[0..snapshot.pane_id_len :0].ptr);
+    ready.tab_id = snapshot.tab_id;
+    ready.browser_socket = @constCast(snapshot.browser_socket[0..snapshot.browser_socket_len :0].ptr);
+    ready.browser = @constCast(snapshot.browser[0..snapshot.browser_len :0].ptr);
+
+    var wrapper: c.Termsurf__TermSurfMessage = undefined;
+    c.termsurf__term_surf_message__init(&wrapper);
+    wrapper.msg_case = c.TERMSURF__TERM_SURF_MESSAGE__MSG_BROWSER_READY;
+    wrapper.unnamed_0.browser_ready = &ready;
+
+    try sendProtobuf(snapshot.tui_fd, &wrapper);
+    log.info(
+        "BrowserReady: pane_id={s} tab_id={} socket={s} browser={s}",
+        .{ snapshot.paneId(), snapshot.tab_id, snapshot.browserSocket(), snapshot.browserName() },
     );
 }
 
@@ -930,6 +1001,17 @@ fn recordServerChild(profile: []const u8, browser: []const u8, pid: std.process.
 
     if (findServer(profile, browser)) |index| {
         servers[index].child_pid = pid;
+    }
+}
+
+fn clearPaneTuiFd(fd: std.posix.fd_t) void {
+    state_mutex.lock();
+    defer state_mutex.unlock();
+
+    for (&panes) |*pane| {
+        if (pane.in_use and pane.tui_fd == fd) {
+            pane.tui_fd = -1;
+        }
     }
 }
 

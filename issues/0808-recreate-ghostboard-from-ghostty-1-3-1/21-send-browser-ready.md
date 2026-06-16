@@ -100,3 +100,103 @@ writing to the TUI fd.
 
 Nit accepted and fixed: the expected app log check now includes the browser
 value because the design requires logging it.
+
+## Result
+
+**Result:** Pass
+
+Implemented state-backed `BrowserReady` delivery in
+`ghostboard/src/apprt/termsurf.zig`.
+
+The implementation now:
+
+- records the originating TUI fd on pane state when handling `SetOverlay`;
+- preserves the TUI fd when updating an existing pane;
+- clears matching pane TUI fds when a TUI client disconnects, preventing
+  `BrowserReady` from being sent to a stale or reused fd;
+- after `TabReady`, snapshots pane id, tab id, browser spec, server listen
+  socket, and TUI fd under `state_mutex`;
+- releases `state_mutex` before writing `BrowserReady` to the TUI fd;
+- sends `BrowserReady` only when the pane has a TUI fd and the matched server
+  has a nonempty real listen socket.
+
+Verification passed:
+
+- `zig fmt src/apprt/termsurf.zig src/main_c.zig src/build/SharedDeps.zig`
+  passed.
+- Native GhosttyKit framework build passed:
+  `logs/ghostboard-exp21-zig-native-xcframework-20260616-113218-after-review.log`.
+- macOS app build passed:
+  `logs/ghostboard-exp21-macos-build-debug-20260616-113240-after-review.log`.
+- Runtime harness passed:
+  `logs/ghostboard-exp21-runtime-harness-20260616-113407-after-review.log`.
+- Initial runtime app log:
+  `logs/ghostboard-exp21-runtime-app-20260616-112936.log`.
+- Post-review runtime app log:
+  `logs/ghostboard-exp21-runtime-app-20260616-113407-after-review.log`.
+- `git diff --check` passed.
+
+Observed successful runtime checks:
+
+```text
+PASS: helper path is longer than old 64-byte browser limit
+PASS: child wrote TERMSURF_SOCKET
+PASS: socket path is under TMPDIR/termsurf
+PASS: socket exists while app is running
+PASS: TUI socket received BrowserReady with real listen socket
+PASS: BrowserReady browser_socket is not GUI socket
+PASS: stale helper received CreateTab
+PASS: stale helper sent TabReady after TUI disconnect
+PASS: fresh TUI client received HelloReply
+PASS: app exited after SIGTERM
+PASS: socket file removed after shutdown
+PASS: no stale normal helper process remains
+PASS: no stale stale helper process remains
+PASS: no stale TermSurf process remains
+PASS: app log contains normal BrowserReady
+PASS: no BrowserReady emitted for disconnected TUI
+PASS: no CaContext emitted
+PASS: no overlay presentation message emitted
+runtime verification passed
+```
+
+The runtime harness decoded `BrowserReady` on the original TUI socket after
+`TabReady` and verified:
+
+- `pane_id = "pane-a"`;
+- `tab_id = 42`;
+- `browser_socket` equals the helper's `--listen-socket` argument;
+- `browser_socket` is not the GUI socket;
+- `browser` equals the absolute helper browser spec used by `SetOverlay`.
+
+The post-review harness also verified a stale-fd case: a second TUI socket sent
+`SetOverlay`, disconnected before the helper sent `TabReady`, and the app log
+did not contain `BrowserReady: pane_id=pane-stale`.
+
+## Conclusion
+
+Ghostboard now completes the first end-to-end browser readiness notification:
+`SetOverlay -> spawn browser -> ServerRegister -> CreateTab -> TabReady -> BrowserReady`.
+This gives `webtui` the real browser listen socket it needs to establish its
+direct browser connection, while direct browser-client routing, CALayerHost
+overlay presentation, navigation forwarding, and input forwarding remain for
+later experiments.
+
+## Result Review
+
+Fresh-context adversarial result review initially returned **CHANGES REQUIRED**
+with one required finding: `BrowserReady` could be sent to a stale or reused TUI
+fd because pane state did not clear `tui_fd` when the originating TUI client
+exited.
+
+Required finding accepted and fixed: `handleClient` now clears matching pane
+`tui_fd` values when a TUI connection exits. The post-review runtime harness
+added a stale-fd case where a TUI sends `SetOverlay`, disconnects before
+`TabReady`, and the app does not emit `BrowserReady` for that pane.
+
+Fresh-context adversarial re-review returned **APPROVED**. The reviewer
+confirmed the stale/reused fd finding is resolved because TUI client teardown
+now clears matching pane `tui_fd` values before fd close, `snapshotBrowserReady`
+refuses panes without a live TUI fd, and the post-review runtime harness proves
+no `BrowserReady` is emitted for the disconnected `pane-stale` case. No new
+required findings were introduced by the fix.
