@@ -10,7 +10,8 @@ BIN="$APP/Contents/MacOS/roastty"
 SWIFT="$(command -v swift || echo /usr/bin/swift)"
 
 RUN_ID="issue806-exp1-$(date +%Y%m%d-%H%M%S)"
-RUN_DIR="/tmp/termsurf-$RUN_ID"
+SHORT_ID="$(date +%H%M%S)"
+RUN_DIR="$(mktemp -d /tmp/ts806.XXXXXX)"
 TRACE="$LOG_DIR/$RUN_ID.trace"
 HARNESS_LOG="$LOG_DIR/$RUN_ID.harness.log"
 STDOUT_LOG="$LOG_DIR/$RUN_ID.stdout.log"
@@ -18,10 +19,11 @@ STDERR_LOG="$LOG_DIR/$RUN_ID.stderr.log"
 BUILD_LOG="$LOG_DIR/$RUN_ID-build.log"
 SAMPLE_LOG="$LOG_DIR/$RUN_ID.sample.txt"
 SUMMARY="$LOG_DIR/$RUN_ID-summary.txt"
-MARKER_FILE="$RUN_DIR/marker.txt"
-VISIBLE_MARKER="ISSUE806_EXP1_VISIBLE_$RUN_ID"
-MARKER_TEXT="ISSUE806_EXP1_MARKER_$RUN_ID"
+MARKER_FILE="$RUN_DIR/m"
+VISIBLE_MARKER="V806_$SHORT_ID"
 TYPE_FILE="$RUN_DIR/type.txt"
+MAX_VISIBLE_MS="${ISSUE806_MAX_VISIBLE_MS:-}"
+MAX_MARKER_MS="${ISSUE806_MAX_MARKER_MS:-${ISSUE806_MAX_VISIBLE_MS:-}}"
 
 ROASTTY_PID=""
 SAMPLE_PID=""
@@ -46,8 +48,14 @@ cleanup() {
 trap cleanup EXIT
 
 write_type_file() {
+  local visible_esc
+  visible_esc="$(python3 - "$VISIBLE_MARKER" <<'PY'
+import sys
+print("".join(f"\\x{byte:02x}" for byte in sys.argv[1].encode()))
+PY
+)"
   cat > "$TYPE_FILE" <<EOF
-printf '$VISIBLE_MARKER\n'; printf '$MARKER_TEXT' > '$MARKER_FILE'
+printf '$visible_esc';touch '$MARKER_FILE'
 EOF
 }
 
@@ -254,7 +262,12 @@ print(time.time_ns())
 PY
 )"
   if [ -z "$MARKER_NS" ] && [ -f "$MARKER_FILE" ]; then
-    MARKER_NS="$now_ns"
+    MARKER_NS="$(python3 - "$MARKER_FILE" <<'PY'
+import os
+import sys
+print(os.stat(sys.argv[1]).st_mtime_ns)
+PY
+)"
     log "marker_file observed marker_latency_ms=$(python3 - "$TYPE_START_NS" "$MARKER_NS" <<'PY'
 import sys
 print(f"{(int(sys.argv[2]) - int(sys.argv[1])) / 1_000_000:.3f}")
@@ -306,7 +319,37 @@ import sys
 print(f"visible_latency_ms={(int(sys.argv[2]) - int(sys.argv[1])) / 1_000_000:.3f}")
 PY
   fi
+  if [ -n "$MAX_VISIBLE_MS" ]; then
+    echo "max_visible_ms=$MAX_VISIBLE_MS"
+  fi
+  if [ -n "$MAX_MARKER_MS" ]; then
+    echo "max_marker_ms=$MAX_MARKER_MS"
+  fi
 } | tee -a "$SUMMARY"
 
 [ -n "$MARKER_NS" ] || { echo "marker file was not observed" >&2; exit 1; }
 [ -n "$VISIBLE_NS" ] || { echo "visible marker was not observed via accessibility" >&2; exit 1; }
+if [ -n "$MAX_VISIBLE_MS" ]; then
+  python3 - "$TYPE_START_NS" "$VISIBLE_NS" "$MAX_VISIBLE_MS" <<'PY'
+import sys
+
+visible_ms = (int(sys.argv[2]) - int(sys.argv[1])) / 1_000_000
+max_ms = float(sys.argv[3])
+if visible_ms > max_ms:
+    raise SystemExit(
+        f"visible latency {visible_ms:.3f}ms exceeded ISSUE806_MAX_VISIBLE_MS={max_ms:.3f}"
+    )
+PY
+fi
+if [ -n "$MAX_MARKER_MS" ]; then
+  python3 - "$TYPE_START_NS" "$MARKER_NS" "$MAX_MARKER_MS" <<'PY'
+import sys
+
+marker_ms = (int(sys.argv[2]) - int(sys.argv[1])) / 1_000_000
+max_ms = float(sys.argv[3])
+if marker_ms > max_ms:
+    raise SystemExit(
+        f"marker latency {marker_ms:.3f}ms exceeded ISSUE806_MAX_MARKER_MS={max_ms:.3f}"
+    )
+PY
+fi

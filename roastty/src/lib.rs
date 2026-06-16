@@ -2783,6 +2783,8 @@ struct Surface {
     selection_clear_on_typing: bool,
     selection_word_chars: Vec<u32>,
     vt_kam_allowed: bool,
+    cached_key_encode_options: key_encode::Options,
+    cached_terminal_kam_enabled: bool,
     key_remaps: key_mods::RemapSet,
     macos_option_as_alt: Option<key_mods::OptionAsAlt>,
     cursor_click_to_move: bool,
@@ -7763,10 +7765,7 @@ impl Surface {
     }
 
     fn terminal_kam_enabled(&self) -> bool {
-        self.termio_worker
-            .as_ref()
-            .and_then(|worker| worker.with_termio(|termio| termio.terminal().mode_get(2, true)))
-            .unwrap_or(false)
+        self.cached_terminal_kam_enabled
     }
 
     fn write_encoded_key_event(&mut self, event: &key::KeyEvent) -> bool {
@@ -7855,10 +7854,7 @@ impl Surface {
     }
 
     fn key_encode_options(&self) -> key_encode::Options {
-        self.termio_worker
-            .as_ref()
-            .map(|worker| worker.with_termio(|termio| termio.terminal().key_encode_options()))
-            .unwrap_or_default()
+        self.cached_key_encode_options
     }
 
     fn tick_termio(&mut self) {
@@ -7889,6 +7885,8 @@ impl Surface {
     fn apply_termio_event(&mut self, event: termio::TermioWorkerEvent) {
         match event {
             termio::TermioWorkerEvent::Pump(pump) => {
+                self.cached_key_encode_options = pump.input_state.key_encode_options;
+                self.cached_terminal_kam_enabled = pump.input_state.terminal_kam_enabled;
                 append_ui_key_trace(format!(
                     "rust surface_apply_termio_event pump bytes_read={} bell_count={} titles={} pwd={} desktop_notifications={} command_events={} bytes_written={} pending_write={} eof={} child_exited={}",
                     pump.bytes_read,
@@ -18800,6 +18798,8 @@ pub extern "C" fn roastty_surface_new(
         selection_clear_on_typing,
         selection_word_chars,
         vt_kam_allowed,
+        cached_key_encode_options: key_encode::Options::default(),
+        cached_terminal_kam_enabled: false,
         key_remaps,
         macos_option_as_alt,
         cursor_click_to_move,
@@ -22076,6 +22076,7 @@ mod tests {
             pending_write_bytes,
             child_exited: child_exit.is_some(),
             child_exit,
+            input_state: termio::TermioInputState::default(),
         }
     }
 
@@ -22097,6 +22098,7 @@ mod tests {
             pending_write_bytes: 0,
             child_exited: false,
             child_exit: None,
+            input_state: termio::TermioInputState::default(),
         }
     }
 
@@ -22114,6 +22116,7 @@ mod tests {
             pending_write_bytes: 0,
             child_exited: false,
             child_exit: None,
+            input_state: termio::TermioInputState::default(),
         }
     }
 
@@ -22139,6 +22142,7 @@ mod tests {
             pending_write_bytes: 0,
             child_exited: false,
             child_exit: None,
+            input_state: termio::TermioInputState::default(),
         }
     }
 
@@ -22158,6 +22162,7 @@ mod tests {
             pending_write_bytes: 0,
             child_exited: false,
             child_exit: None,
+            input_state: termio::TermioInputState::default(),
         }
     }
 
@@ -22429,8 +22434,9 @@ mod tests {
                 termio
                     .terminal_mut()
                     .next_slice(command.as_bytes())
-                    .expect("set mouse mode through terminal stream");
+                    .expect("set DEC mode through terminal stream");
             });
+        refresh_surface_cached_input_state_from_worker_for_test(surface);
     }
 
     fn set_surface_worker_ansi_mode(surface: RoasttySurface, mode: u16, enabled: bool) {
@@ -22440,8 +22446,13 @@ mod tests {
             .as_ref()
             .unwrap()
             .with_termio_mut(|termio| {
-                assert!(termio.terminal_mut().mode_set(mode, true, enabled));
+                let command = format!("\x1b[{mode}{}", if enabled { 'h' } else { 'l' });
+                termio
+                    .terminal_mut()
+                    .next_slice(command.as_bytes())
+                    .expect("set ANSI mode through terminal stream");
             });
+        refresh_surface_cached_input_state_from_worker_for_test(surface);
     }
 
     fn set_surface_worker_kitty_keyboard(surface: RoasttySurface, flags: u8) {
@@ -22457,6 +22468,7 @@ mod tests {
                     .next_slice(command.as_bytes())
                     .expect("set Kitty keyboard flags through terminal stream");
             });
+        refresh_surface_cached_input_state_from_worker_for_test(surface);
     }
 
     fn set_surface_worker_modify_other_keys_2(surface: RoasttySurface, enabled: bool) {
@@ -22470,6 +22482,17 @@ mod tests {
                     .terminal_mut()
                     .set_modify_other_keys_2_for_tests(enabled);
             });
+        refresh_surface_cached_input_state_from_worker_for_test(surface);
+    }
+
+    fn refresh_surface_cached_input_state_from_worker_for_test(surface: &mut Surface) {
+        let input_state = surface
+            .termio_worker
+            .as_ref()
+            .unwrap()
+            .with_termio(|termio| termio::TermioInputState::from_terminal(termio.terminal()));
+        surface.cached_key_encode_options = input_state.key_encode_options;
+        surface.cached_terminal_kam_enabled = input_state.terminal_kam_enabled;
     }
 
     fn set_surface_worker_pwd(surface: RoasttySurface, pwd: &str) {
@@ -26515,6 +26538,86 @@ mod tests {
         roastty_app_free(app);
         roastty_config_free(disabled);
         roastty_config_free(config);
+    }
+
+    #[test]
+    fn input_state_cache_updates_from_pump_snapshot() {
+        let app = new_test_app();
+        let surface = new_test_surface(app);
+        let mut pump = test_pump(0, 0, 0, false, false);
+        pump.input_state = termio::TermioInputState {
+            key_encode_options: key_encode::Options {
+                cursor_key_application: true,
+                kitty_flags: terminal::kitty::KeyFlags {
+                    disambiguate: true,
+                    report_events: false,
+                    report_alternates: false,
+                    report_all: false,
+                    report_associated: false,
+                },
+                ..key_encode::Options::default()
+            },
+            terminal_kam_enabled: true,
+        };
+
+        apply_test_pump(surface, pump);
+
+        let surface_ref = surface_from_handle(surface).unwrap();
+        assert!(surface_ref.key_encode_options().cursor_key_application);
+        assert!(surface_ref.key_encode_options().kitty_flags.disambiguate);
+        assert!(surface_ref.terminal_kam_enabled());
+
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+    }
+
+    #[test]
+    fn cached_key_encode_options_follow_real_terminal_dec_sequence() {
+        let _guard = pty_command_lock();
+        let app = new_test_app();
+        let surface = new_test_surface(app);
+        surface_from_handle(surface).unwrap().termio_worker = Some(test_worker("sleep 1"));
+
+        assert!(
+            !surface_from_handle(surface)
+                .unwrap()
+                .key_encode_options()
+                .cursor_key_application
+        );
+        set_surface_worker_dec_mode(surface, 1, true);
+        assert!(
+            surface_from_handle(surface)
+                .unwrap()
+                .key_encode_options()
+                .cursor_key_application
+        );
+        set_surface_worker_dec_mode(surface, 1, false);
+        assert!(
+            !surface_from_handle(surface)
+                .unwrap()
+                .key_encode_options()
+                .cursor_key_application
+        );
+
+        roastty_surface_free(surface);
+        roastty_app_free(app);
+    }
+
+    #[test]
+    fn cached_kam_follows_real_terminal_ansi_sequence() {
+        let _guard = pty_command_lock();
+        let app = new_test_app();
+        let surface = new_test_surface(app);
+        surface_from_handle(surface).unwrap().termio_worker = Some(test_worker("sleep 1"));
+
+        assert!(!surface_from_handle(surface).unwrap().terminal_kam_enabled());
+        set_surface_worker_ansi_mode(surface, 2, true);
+        assert!(surface_from_handle(surface).unwrap().terminal_kam_enabled());
+        set_surface_worker_ansi_mode(surface, 2, false);
+        assert!(!surface_from_handle(surface).unwrap().terminal_kam_enabled());
+
+        roastty_surface_free(surface);
+        roastty_app_free(app);
     }
 
     #[test]

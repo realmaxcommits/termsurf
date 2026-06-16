@@ -9,6 +9,7 @@ use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::Instant;
 
+use crate::input::key_encode;
 use crate::os::pty::{PtyChild, PtyCommand, PtyReadiness, PtySize};
 use crate::terminal::color;
 use crate::terminal::cursor;
@@ -106,6 +107,22 @@ pub(crate) struct TermioPump {
     pub(crate) pending_write_bytes: usize,
     pub(crate) child_exited: bool,
     pub(crate) child_exit: Option<TermioChildExit>,
+    pub(crate) input_state: TermioInputState,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) struct TermioInputState {
+    pub(crate) key_encode_options: key_encode::Options,
+    pub(crate) terminal_kam_enabled: bool,
+}
+
+impl TermioInputState {
+    pub(crate) fn from_terminal(terminal: &Terminal) -> Self {
+        Self {
+            key_encode_options: terminal.key_encode_options(),
+            terminal_kam_enabled: terminal.mode_get(2, true).unwrap_or(false),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -327,6 +344,7 @@ impl Termio {
         }
         let child_exit = self.child_exit;
         let child_exited = child_exit.is_some();
+        let input_state = TermioInputState::from_terminal(&self.terminal);
 
         Ok(TermioPump {
             readiness,
@@ -341,6 +359,7 @@ impl Termio {
             pending_write_bytes: self.pending_write.len(),
             child_exited,
             child_exit,
+            input_state,
         })
     }
 
