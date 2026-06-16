@@ -1,6 +1,7 @@
 +++
-status = "open"
+status = "closed"
 opened = "2026-06-13"
+closed = "2026-06-15"
 +++
 
 # Issue 805: Roastty Parity with Ghostty 2c62d182
@@ -1901,3 +1902,40 @@ remains open.
   **Partial**
 - [Experiment 197: OS-controlled native boundary closure](197-os-controlled-native-boundary.md)
   — **Pass**
+
+## Conclusion
+
+Issue 805 is complete. Roastty parity is certified against Ghostty commit
+`2c62d182cec246764ff725096a70b9ef44996f7f` (`tip-1608-g2c62d182c`,
+`build.zig.zon` version `1.3.2-dev`, Zig `0.15.2`) for the copied macOS app,
+embedded C ABI surface, and `libroastty` terminal/runtime behavior covered by
+this issue.
+
+Final matrix state:
+
+- `feature-matrix.md`: 2 rows, all `Pass`.
+- `source-audit.md`: 13 rows, all `Pass`.
+- `walkthrough-matrix.md`: 10 rows, all `Pass`.
+- `config-matrix.md`: 223 rows, all `Pass`.
+- `config-runtime-inventory.md`: 98 runtime rows, 95 `Oracle complete`, 2
+  `Not applicable`, 1 `Intentional divergence`, 0 gaps.
+- `config-parser-inventory.md`, `config-formatter-inventory.md`, and
+  `config-diagnostic-inventory.md`: 203 rows each, all `Oracle complete`.
+- `config-finalization-inventory.md`: 17 rows, all `Oracle complete`.
+- `config-load-inventory.md`: 18 rows, all `Oracle complete`.
+- `config-reload-inventory.md`: 14 rows, all `Oracle complete`.
+- `divergences.md`: 2 accepted intentional divergences, both documented with
+  guard evidence.
+
+The last runtime/UI blocker was `CFG-223`. Experiment 197 closed its final
+residual by proving the copied macOS UserNotifications, `NSSound`, Dock
+attention, and Dock badge request paths plus live authorization/request-state
+evidence. Parity for OS-native notification/audio/Dock presentation is claimed
+at the app-controlled macOS API request and authorization-state boundary, not at
+nondeterministic macOS banner pixels, physical speaker output, microphone TCC
+prompt automation, or Dock animation pixels.
+
+The issue retains historical `Partial` experiment outcomes where earlier work
+narrowed a gap without closing it. Those partials are superseded by later
+experiments and by the final matrices above; there are no unresolved `Gap` rows
+left in the active certification artifacts.
