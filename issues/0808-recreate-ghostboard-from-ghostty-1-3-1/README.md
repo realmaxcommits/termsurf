@@ -259,3 +259,5 @@ and against `ghostboard-legacy/` where useful.
   — **Pass**
 - [Experiment 27: Open native splits from protocol](27-open-native-splits-from-protocol.md)
   — **Pass**
+- [Experiment 28: Validate webtui DevTools flow](28-validate-webtui-devtools-flow.md)
+  — **Designed**
