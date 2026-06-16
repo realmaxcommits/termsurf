@@ -17,6 +17,8 @@ const max_profile_len: usize = 128;
 const max_browser_len: usize = 64;
 const max_url_len: usize = 2048;
 const default_browser = "roamium";
+const fallback_cell_width: u64 = 10;
+const fallback_cell_height: u64 = 20;
 
 const ConnType = enum {
     unknown,
@@ -45,6 +47,7 @@ const PaneState = struct {
     width: u64 = 0,
     height: u64 = 0,
     browsing: bool = false,
+    tab_id: i64 = 0,
 
     fn paneId(self: *const PaneState) []const u8 {
         return self.pane_id[0..self.pane_id_len];
@@ -496,6 +499,9 @@ fn handleServerRegister(fd: std.posix.fd_t, req: ?*c.Termsurf__ServerRegister) v
             "ServerRegister: matched server key={s}/{s}",
             .{ servers[index].profileName(), servers[index].browserName() },
         );
+        sendPendingCreateTabs(fd, &servers[index]) catch |err| {
+            log.warn("ServerRegister: pending CreateTab flush failed err={}", .{err});
+        };
         return;
     }
 
@@ -603,6 +609,33 @@ fn updatePane(
     return true;
 }
 
+fn sendPendingCreateTabs(fd: std.posix.fd_t, server: *const ServerState) !void {
+    for (&panes) |*pane| {
+        if (!pane.in_use or pane.tab_id != 0) continue;
+        if (!std.mem.eql(u8, pane.profileName(), server.profileName())) continue;
+        if (!std.mem.eql(u8, pane.browserName(), server.browserName())) continue;
+        try sendCreateTab(fd, pane);
+    }
+}
+
+fn sendCreateTab(fd: std.posix.fd_t, pane: *const PaneState) !void {
+    var create_tab: c.Termsurf__CreateTab = undefined;
+    c.termsurf__create_tab__init(&create_tab);
+    create_tab.url = @constCast(pane.url[0..pane.url_len :0].ptr);
+    create_tab.pane_id = @constCast(pane.pane_id[0..pane.pane_id_len :0].ptr);
+    create_tab.pixel_width = pane.width * fallback_cell_width;
+    create_tab.pixel_height = pane.height * fallback_cell_height;
+    create_tab.dark = 0;
+
+    var wrapper: c.Termsurf__TermSurfMessage = undefined;
+    c.termsurf__term_surf_message__init(&wrapper);
+    wrapper.msg_case = c.TERMSURF__TERM_SURF_MESSAGE__MSG_CREATE_TAB;
+    wrapper.unnamed_0.create_tab = &create_tab;
+
+    try sendProtobuf(fd, &wrapper);
+    log.info("sent CreateTab: pane_id={s} url={s}", .{ pane.paneId(), pane.url[0..pane.url_len] });
+}
+
 fn setServer(server: *ServerState, profile: []const u8, browser: []const u8) bool {
     if (!copyText(&server.profile, &server.profile_len, profile)) {
         log.warn("SetOverlay: server profile too long len={} max={}", .{ profile.len, max_profile_len });
@@ -670,8 +703,9 @@ fn cString(ptr: [*c]u8) []const u8 {
 }
 
 fn copyText(buf: []u8, len: *usize, value: []const u8) bool {
-    if (value.len > buf.len) return false;
+    if (value.len >= buf.len) return false;
     @memcpy(buf[0..value.len], value);
+    buf[value.len] = 0;
     len.* = value.len;
     return true;
 }
@@ -706,6 +740,7 @@ fn msgTypeName(msg_case: c.Termsurf__TermSurfMessage__MsgCase) []const u8 {
     return switch (msg_case) {
         c.TERMSURF__TERM_SURF_MESSAGE__MSG_HELLO_REQUEST => "HelloRequest",
         c.TERMSURF__TERM_SURF_MESSAGE__MSG_HELLO_REPLY => "HelloReply",
+        c.TERMSURF__TERM_SURF_MESSAGE__MSG_CREATE_TAB => "CreateTab",
         c.TERMSURF__TERM_SURF_MESSAGE__MSG_QUERY_LAST_REQUEST => "QueryLastRequest",
         c.TERMSURF__TERM_SURF_MESSAGE__MSG_QUERY_LAST_REPLY => "QueryLastReply",
         c.TERMSURF__TERM_SURF_MESSAGE__MSG_QUERY_DEVTOOLS_REQUEST => "QueryDevtoolsRequest",

@@ -234,4 +234,4 @@ and against `ghostboard-legacy/` where useful.
 - [Experiment 14: Track pending overlay servers](14-track-pending-overlay-servers.md)
   — **Pass**
 - [Experiment 15: Flush pending CreateTab](15-flush-pending-create-tab.md) —
-  **Designed**
+  **Pass**

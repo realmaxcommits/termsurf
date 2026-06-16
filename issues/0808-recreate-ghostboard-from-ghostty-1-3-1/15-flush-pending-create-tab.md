@@ -117,3 +117,107 @@ flushed to that browser socket.
 Fresh-context adversarial re-review returned **APPROVED**. The reviewer
 confirmed both required findings were resolved and that the fixes introduced no
 new required issues.
+
+## Result
+
+**Result:** Pass
+
+Implemented pending `CreateTab` flushing in `ghostboard/src/apprt/termsurf.zig`.
+
+The socket handler now:
+
+- tracks `tab_id: i64 = 0` on pane state so pending panes can be identified;
+- sends `CreateTab` frames after `ServerRegister` matches an unattached pending
+  server;
+- flushes every pending pane with matching `profile/browser` and `tab_id == 0`;
+- excludes pending panes for other profiles or browsers;
+- encodes `CreateTab.url`, `pane_id`, fallback `pixel_width`, fallback
+  `pixel_height`, and `dark = false`;
+- keeps browser launch, `TabReady`, `BrowserReady`, overlay UI, and input
+  forwarding out of scope.
+
+Verification passed:
+
+- `zig fmt src/apprt/termsurf.zig src/main_c.zig src/build/SharedDeps.zig`
+  passed.
+- Native GhosttyKit framework build passed:
+  `logs/ghostboard-exp15-zig-native-xcframework-20260616-102953.log`.
+- macOS app build passed:
+  `logs/ghostboard-exp15-macos-build-debug-20260616-103014.log`.
+- Runtime harness passed:
+  `logs/ghostboard-exp15-runtime-harness-20260616-103130.log`.
+- Runtime app log: `logs/ghostboard-exp15-runtime-app-20260616-103130.log`.
+- `git diff --check` passed.
+
+Observed successful runtime checks:
+
+```text
+PASS: default pending server created
+PASS: second matching pane reused default server
+PASS: nonmatching pending server created
+PASS: browser socket received exactly two CreateTab frames
+PASS: CreateTab frames were for matching panes only
+PASS: pane-a CreateTab url matches
+PASS: pane-a CreateTab fallback pixel size matches
+PASS: pane-a CreateTab dark is false
+PASS: pane-b CreateTab url matches
+PASS: pane-b CreateTab fallback pixel size matches
+PASS: pane-b CreateTab dark is false
+PASS: nonmatching pane was not flushed
+PASS: app log contains pane-a CreateTab send
+PASS: app log contains pane-b CreateTab send
+PASS: app log does not contain nonmatching CreateTab send
+PASS: no BrowserReady emitted
+PASS: no TabReady emitted
+PASS: no overlay presentation message emitted
+PASS: fresh TUI client received HelloReply
+PASS: app exited after SIGTERM
+PASS: socket file removed after shutdown
+PASS: no stale TermSurf process remains
+runtime verification passed
+```
+
+The runtime harness decoded the browser socket frames and verified:
+
+- `pane-a` received `url=https://a.example`, `pixel_width=800`,
+  `pixel_height=480`, and `dark=false`;
+- `pane-b` received `url=https://b.example`, `pixel_width=1000`,
+  `pixel_height=600`, and `dark=false`;
+- `pane-other` was not flushed to the `default/roamium` browser socket.
+
+The app log also records the flush:
+
+```text
+info(termsurf): sent CreateTab: pane_id=pane-a url=https://a.example
+info(termsurf): sent CreateTab: pane_id=pane-b url=https://b.example
+```
+
+## Result Review
+
+Fresh-context adversarial result review returned **APPROVED** with no required,
+optional, or nit findings.
+
+The reviewer confirmed:
+
+- scope stayed within `ghostboard/src/apprt/termsurf.zig` plus issue docs;
+- no browser launch, `BrowserReady`, `TabReady`, or overlay UI was added;
+- `ServerRegister` flushes `CreateTab` only for matching pending panes with
+  `tab_id == 0`;
+- pending `tab_id` state is present and future `TabReady` remains out of scope;
+- existing `HelloRequest` replies and first-message connection classification
+  are preserved;
+- the native build, macOS app build, runtime harness, decoded frame checks, and
+  absence of `BrowserReady`/`TabReady`/overlay presentation logs support the
+  result;
+- the result commit had not been made before review.
+
+## Conclusion
+
+Ghostboard can now deliver browser-directed `CreateTab` messages to an attached
+browser socket for every pending pane that matches the registered
+`profile/browser` server. This proves the GUI can move from TUI overlay intent
+to browser tab creation over the current TermSurf protobuf wire format without
+modifying `webtui`, `roamium`, or the schema.
+
+The next experiment can implement `TabReady` handling so the browser can assign
+tab ids back to the pending pane state.
