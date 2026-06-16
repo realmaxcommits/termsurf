@@ -11,8 +11,8 @@ Create a new `ghostboard/` GUI by importing Ghostty `v1.3.1` with full upstream
 history preserved, then implement the current TermSurf protocol inside that new
 app so `webtui` can run in Ghostboard without changes to `webtui` or `roamium`.
 
-When solved, Ghostboard should be usable as a Ghostty-based alternative to
-Wezboard.
+When solved, the app built from `ghostboard/` should be the Ghostty-based
+TermSurf app and should be usable as an alternative to Wezboard.
 
 ## Background
 
@@ -105,11 +105,11 @@ In scope:
 - Keep Ghostty implementation names intact by default.
 - Rename only the minimum user-facing and packaging surfaces needed for the new
   app identity.
-- Make the CLI tool name `ghostboard`.
-- Make the user-facing app name `TermSurf Ghostboard`.
-- Make the dock name, menu bar, and about page say `TermSurf Ghostboard`.
-- Use the current Wezboard app icon for Ghostboard, including the dock icon and
-  about page icon.
+- Make the CLI tool name `termsurf`.
+- Make the user-facing app bundle `TermSurf.app`.
+- Make the dock name, menu bar, and about page say `TermSurf`.
+- Use the current Wezboard app icon for the TermSurf app built from
+  `ghostboard/`, including the dock icon and about page icon.
 - Make the configuration path `~/.config/termsurf/config`.
 - Implement the current TermSurf protobuf/Unix-socket protocol inside
   Ghostboard.
@@ -125,7 +125,7 @@ Out of scope:
 - Running the old wholesale `rename-ghostty.sh` flow.
 - Modifying `webtui` or `roamium` to accommodate Ghostboard.
 - Treating `ghostboard-legacy/` as active code.
-- Using Ghostty's original icon as the new Ghostboard app icon.
+- Using Ghostty's original icon as the new TermSurf app icon.
 - Supporting any protocol shape other than the current TermSurf protocol.
 
 ## Naming and Branding Requirements
@@ -135,22 +135,24 @@ The new port should be deliberately minimal:
 | Surface                    | Required value                              |
 | -------------------------- | ------------------------------------------- |
 | Source directory           | `ghostboard/`                               |
-| CLI command                | `ghostboard`                                |
-| User-facing app name       | `TermSurf Ghostboard`                       |
-| Dock/menu/about page name  | `TermSurf Ghostboard`                       |
+| CLI command                | `termsurf`                                  |
+| User-facing app name       | `TermSurf`                                  |
+| App bundle                 | `TermSurf.app`                              |
+| Dock/menu/about page name  | `TermSurf`                                  |
 | Config directory/file      | `~/.config/termsurf/config`                 |
 | App icon                   | Same icon currently used by Wezboard        |
 | Internal implementation    | Keep upstream Ghostty names unless required |
 | Legacy reference directory | `ghostboard-legacy/`                        |
 
-The config path intentionally does not include `ghostboard`.
+The source folder remains `ghostboard/`, but the shipped app identity is
+`TermSurf`. The config path intentionally does not include `ghostboard`.
 
 ## Protocol Requirements
 
-Ghostboard must implement the current TermSurf protocol in the GUI. It should be
-able to accept the existing `webtui` process as a client and coordinate browser
-engine processes such as Roamium using the current protobuf/Unix-socket message
-set.
+The app built from `ghostboard/` must implement the current TermSurf protocol in
+the GUI. It should be able to accept the existing `webtui` process as a client
+and coordinate browser engine processes such as Roamium using the current
+protobuf/Unix-socket message set.
 
 Expected protocol areas include, at minimum:
 
@@ -180,15 +182,16 @@ The issue is solved when:
   and runs on macOS without errors, with any required build-only deviations
   explicitly documented.
 - The app builds in the local development environment.
-- The app can be launched as `TermSurf Ghostboard`.
-- The CLI command is `ghostboard`.
+- The app can be launched as `TermSurf.app`.
+- The CLI command is `termsurf`.
 - The app uses `~/.config/termsurf/config`.
-- Dock, menu, and about page branding say `TermSurf Ghostboard`.
-- The Ghostboard icon matches the current Wezboard icon.
-- `webtui` can run inside Ghostboard without changes.
-- Roamium can be launched and controlled by Ghostboard without changes.
-- The current TermSurf protocol is implemented well enough for Ghostboard to
-  replace Wezboard for ordinary browsing workflows.
+- Dock, menu, and about page branding say `TermSurf`.
+- The TermSurf app icon matches the current Wezboard icon.
+- `webtui` can run inside the app built from `ghostboard/` without changes.
+- Roamium can be launched and controlled by the app built from `ghostboard/`
+  without changes.
+- The current TermSurf protocol is implemented well enough for the app built
+  from `ghostboard/` to replace Wezboard for ordinary browsing workflows.
 - The issue records experiments one at a time, with each experiment documenting
   design, changes, verification, result, and conclusion.
 
@@ -197,8 +200,8 @@ The issue is solved when:
 This issue should not start by trying to port every historical Ghostboard change
 blindly. Start with a clean Ghostty `v1.3.1` subtree, prove the pristine import
 builds and runs on macOS with no source changes, establish the smallest renaming
-and packaging surface needed for `TermSurf Ghostboard`, then add the TermSurf
-protocol implementation incrementally.
+and packaging surface needed for `TermSurf`, then add the TermSurf protocol
+implementation incrementally.
 
 Each experiment should preserve the ability to compare against upstream Ghostty
 and against `ghostboard-legacy/` where useful.
@@ -215,3 +218,5 @@ and against `ghostboard-legacy/` where useful.
   — **Fail**
 - [Experiment 5: Apply the macOS-only GhosttyKit build patch](05-apply-macos-only-ghosttykit-build-patch.md)
   — **Pass**
+- [Experiment 6: Establish minimal TermSurf identity](06-minimal-ghostboard-identity.md)
+  — **Designed**
