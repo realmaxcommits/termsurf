@@ -9,6 +9,7 @@
 | [0797](0797-pdf-core-workflow-coverage/README.md) | PDF Core Workflow Coverage           | 2026-05-30 |
 | [0798](0798-pdf-advanced-features/README.md)      | PDF Advanced Features                | 2026-05-30 |
 | [0803](0803-roastty-debug-overlay/README.md)      | Roastty Debug Overlay                | 2026-06-13 |
+| [0807](0807-restore-ghostboard-code/README.md)    | Restore Ghostboard Code              | 2026-06-16 |
 
 ## Closed
 
