@@ -173,4 +173,4 @@ and against `ghostboard-legacy/` where useful.
 ## Experiments
 
 - [Experiment 1: Import Ghostty 1.3.1 subtree](01-import-ghostty-1-3-1-subtree.md)
-  — **Designed**
+  — **Pass**

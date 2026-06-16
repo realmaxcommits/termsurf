@@ -148,3 +148,97 @@ Fresh-context adversarial re-review returned `APPROVED`.
   `22efb0be2bbea73e5339f5426fa3b20edabcaa11` and peeled commit
   `332b2aefc6e72d363aa93ab6ecfc86eeeeb5ed28`.
 - No new required findings were reported.
+
+## Result
+
+**Result:** Pass
+
+Imported Ghostty `v1.3.1` into `ghostboard/` with:
+
+```bash
+git subtree add --prefix=ghostboard ghostty v1.3.1 \
+  -m "Import Ghostty v1.3.1 into ghostboard"
+```
+
+The import created merge commit:
+
+```text
+493817fd94ee3bc6bdefb24274132e7862378226 Import Ghostty v1.3.1 into ghostboard
+```
+
+Verification completed:
+
+- Confirmed the working tree was clean before import.
+- Confirmed `ghostboard/` did not exist before import.
+- Confirmed the `ghostty` remote points to
+  `https://github.com/ghostty-org/ghostty.git`.
+- Confirmed the remote `v1.3.1` annotated tag object:
+
+  ```text
+  22efb0be2bbea73e5339f5426fa3b20edabcaa11 refs/tags/v1.3.1
+  ```
+
+- Confirmed the remote `v1.3.1` peeled commit:
+
+  ```text
+  332b2aefc6e72d363aa93ab6ecfc86eeeeb5ed28 refs/tags/v1.3.1^{}
+  ```
+
+- Confirmed the local `v1.3.1` tag resolves to
+  `22efb0be2bbea73e5339f5426fa3b20edabcaa11`.
+- Confirmed local `v1.3.1^{commit}` resolves to
+  `332b2aefc6e72d363aa93ab6ecfc86eeeeb5ed28`.
+- Confirmed `ghostboard/` exists after import.
+- Confirmed representative upstream files exist under the new prefix:
+  - `ghostboard/build.zig`;
+  - `ghostboard/build.zig.zon`;
+  - `ghostboard/src/Surface.zig`;
+  - `ghostboard/macos/`;
+  - `ghostboard/README.md`.
+- Confirmed representative imported files match upstream `v1.3.1` content by
+  SHA-256:
+  - `build.zig`:
+    `2a100b316cffd1eb9bb80e99093542baec12d70d7721b95c4c94ad88a2b7a1fa`;
+  - `src/Surface.zig`:
+    `320f36fba48cdcd9ed3add5c0e2e294137732f5d779ff064c0c7b62f7b129f5c`;
+  - `README.md`:
+    `aac5ca0698f31b78df5c11fe581a23a0ca276e0050b89d857be94817955739e2`.
+- Confirmed the import commit is a merge commit with parents:
+
+  ```text
+  493817fd94ee3bc6bdefb24274132e7862378226 248e06fde20e6259b3001e04c7396b65a178fe3e 332b2aefc6e72d363aa93ab6ecfc86eeeeb5ed28
+  ```
+
+- Confirmed the import commit's second parent equals `v1.3.1^{commit}`.
+- Confirmed `find ghostboard -type f | wc -l` returns `5544`.
+- Confirmed `git status --short` was clean immediately after the import
+  verification.
+
+No branding, config-path, icon, CLI, build-system, protocol, `webtui`, or
+`roamium` changes were made in this experiment.
+
+## Completion Review
+
+Fresh-context adversarial completion review returned `APPROVED`.
+
+- The reviewer confirmed the import commit is a merge commit with parents
+  `248e06fde20e6259b3001e04c7396b65a178fe3e` and
+  `332b2aefc6e72d363aa93ab6ecfc86eeeeb5ed28`.
+- The reviewer confirmed `v1.3.1^{commit}` resolves to
+  `332b2aefc6e72d363aa93ab6ecfc86eeeeb5ed28`, matching the import commit's
+  second parent.
+- The reviewer confirmed the `ghostty` remote, remote tag object, and remote
+  peeled commit match the documented values.
+- The reviewer confirmed `ghostboard/build.zig`, `ghostboard/src/Surface.zig`,
+  and `ghostboard/README.md` match upstream `v1.3.1` exactly.
+- The reviewer confirmed the first-parent import diff contains `5544` files, all
+  under `ghostboard/`.
+- The reviewer confirmed the working tree had only the two issue documentation
+  result updates.
+- No findings were reported.
+
+## Conclusion
+
+Experiment 1 established a clean upstream Ghostty `v1.3.1` base at `ghostboard/`
+with upstream history preserved. The next experiment can start from this
+imported tree and make the first minimal Ghostboard-specific change.
