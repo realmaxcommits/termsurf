@@ -177,10 +177,11 @@ Verification:
   - harness log: `logs/issue806-exp1-20260615-211649.harness.log`.
 - Trace evidence from the harness shows the old key-path mutex bottleneck is
   gone:
-  - `keyAction result=true` starts at `1.467ms`, then low-millisecond values
-    rather than hundreds of milliseconds;
+  - `keyAction result=true` starts at `11.540ms`, with most sampled key actions
+    in the low-millisecond to low-tens-of-milliseconds range rather than the old
+    repeated hundreds-of-milliseconds mutex stalls;
   - `termio_worker_queue_write` appears immediately after key actions;
-  - the largest traced gap was `105.359ms`, not a multi-second
+  - the largest traced gap was `108.999ms`, not a multi-second
     `TermioWorker::with_termio` mutex wait;
   - `rg` inspection shows `Surface::terminal_kam_enabled` and
     `Surface::key_encode_options` no longer call `TermioWorker::with_termio`.

@@ -1,6 +1,7 @@
 +++
-status = "open"
+status = "closed"
 opened = "2026-06-16"
+closed = "2026-06-16"
 +++
 
 # Issue 806: Roastty input latency
@@ -85,3 +86,24 @@ work.
   **Pass**
 - [Experiment 2: Remove key-path termio mutex waits](02-remove-key-path-termio-mutex-waits.md)
   — **Pass**
+
+## Conclusion
+
+Issue 806 is solved. Experiment 1 reproduced the unusable input delay in
+`ReleaseLocal`, measured visible output at roughly `34s`, and profiled the root
+cause to synchronous key handling blocking on the `TermioWorker` mutex while the
+worker held it inside `pump_once`.
+
+Experiment 2 fixed the proven root cause by caching terminal input state on
+`Surface` and refreshing it from worker pump snapshots. Key encoding and KAM
+checks no longer take the `TermioWorker` lock from the synchronous key path.
+
+The lightweight regression guard is:
+
+```bash
+ISSUE806_MAX_VISIBLE_MS=2000 scripts/roastty-app/issue806-exp1-latency.sh
+```
+
+The final verified run was `issue806-exp1-20260615-211649`, with visible output
+latency `143.167ms` and marker-file command completion latency `1575.755ms`,
+both under the `2000ms` budget.
