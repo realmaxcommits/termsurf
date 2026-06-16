@@ -72,7 +72,9 @@ pub fn main() !MainReturn {
     }
 
     if (comptime build_config.app_runtime == .none) {
-        const stdout = std.io.getStdOut().writer();
+        var buffer: [2048]u8 = undefined;
+        var stdout_writer = std.fs.File.stdout().writer(&buffer);
+        const stdout = &stdout_writer.interface;
         try stdout.print("Usage: termsurf +<action> [flags]\n\n", .{});
         try stdout.print(
             \\This is the TermSurf helper CLI that accompanies the graphical TermSurf app.
@@ -89,6 +91,7 @@ pub fn main() !MainReturn {
         ,
             .{},
         );
+        try stdout.flush();
 
         posix.exit(0);
     }

@@ -89,3 +89,91 @@ failure, matches existing stdout writer patterns in `src/cli/help.zig`, keeps
 the `build.zig` wiring narrow and gated by `config.emit_exe`, and verifies
 positive CLI install/run, negative `emit-exe=false`, no `ghostty` binary, and
 macOS app bundle non-regression.
+
+## Result
+
+**Result:** Pass
+
+Experiment 36 fixed the `.none` helper CLI compile error and installed the
+helper command as `zig-out/bin/termsurf` when `emit-exe` is true. The helper now
+uses the same Zig 0.15 stdout writer pattern as the other CLI commands, and the
+`.none` runtime branch in `build.zig` wires the already-created executable
+install step only behind `config.emit_exe`.
+
+### Changes
+
+- `ghostboard/src/main_ghostty.zig`
+  - replaced the removed `std.io.getStdOut()` usage with
+    `std.fs.File.stdout().writer(&buffer)`;
+  - writes through `&stdout_writer.interface`;
+  - flushes the writer before `posix.exit(0)`.
+- `ghostboard/build.zig`
+  - installs the main executable in the `.none` runtime branch only when
+    `config.emit_exe` is true.
+
+### Verification
+
+- `zig fmt ghostboard/build.zig ghostboard/src/main_ghostty.zig` succeeded.
+- `git diff --check` succeeded.
+- `logs/ghostboard-exp36-static-checks-20260616.log` shows:
+  - `ghostboard/src/main_ghostty.zig` uses
+    `std.fs.File.stdout().writer(&buffer)`;
+  - `ghostboard/build.zig` has gated `config.emit_exe` / `exe.install()` paths.
+- `logs/ghostboard-exp36-positive-cli-build-20260616.log` shows:
+  - command:
+    `cd ghostboard && rm -rf zig-out && zig build -Demit-macos-app=false -Demit-xcframework=false -Demit-docs=false`;
+  - `build_exit=0`;
+  - `zig-out/bin/termsurf` was produced;
+  - `termsurf_executable_status=0`;
+  - `ghostty_binary_exists_status=1`, meaning `zig-out/bin/ghostty` does not
+    exist.
+- `logs/ghostboard-exp36-positive-cli-run-20260616.log` and
+  `logs/ghostboard-exp36-positive-cli-run-exit-20260616.log` show:
+  - `run_exit=0`;
+  - helper output contains `Usage: termsurf +<action> [flags]`;
+  - helper output tells users to launch `TermSurf.app` for the graphical app.
+- `logs/ghostboard-exp36-negative-emit-exe-build-20260616.log` shows:
+  - command:
+    `cd ghostboard && rm -rf zig-out && zig build -Demit-exe=false -Demit-macos-app=false -Demit-xcframework=false -Demit-docs=false`;
+  - `build_exit=0`;
+  - `termsurf_exists_status=1`, meaning `zig-out/bin/termsurf` does not exist;
+  - `ghostty_exists_status=1`, meaning `zig-out/bin/ghostty` does not exist.
+- `logs/ghostboard-exp36-app-bundle-regression-20260616.log` shows:
+  - command:
+    `cd ghostboard && rm -rf zig-out && zig build -Demit-macos-app=true`;
+  - `build_exit=0`;
+  - `zig-out/TermSurf.app` exists;
+  - `zig-out/bin/termsurf` also exists under the default `emit-exe=true` build;
+  - `app_termsurf_executable_status=0`;
+  - `ghostty_app_exists_status=1`, meaning `zig-out/Ghostty.app` does not exist;
+  - bundle metadata reports `CFBundleName = TermSurf` and
+    `CFBundleExecutable = termsurf`.
+- `git status --short --untracked-files=all` showed only the declared product
+  files before the result docs were edited:
+  - `ghostboard/build.zig`;
+  - `ghostboard/src/main_ghostty.zig`.
+
+## Conclusion
+
+The Issue 808 CLI-command requirement is now satisfied for the Ghostboard Zig
+build: a normal macOS `.none` runtime build produces a runnable
+`zig-out/bin/termsurf` helper command, `emit-exe=false` suppresses it, and no
+`zig-out/bin/ghostty` command is produced.
+
+Issue 808 still needs a final acceptance check before closure because the last
+full audit was Experiment 33, before the CLI command was fixed. The next
+experiment should do a short closeout audit against the acceptance matrix,
+including the newly passing CLI command, and close the issue if no blockers
+remain.
+
+## Completion Review
+
+A fresh-context adversarial reviewer returned **APPROVED** with no required
+findings.
+
+The reviewer confirmed that the diff only touches the declared files,
+`build.zig` installs the `.none` helper only behind `config.emit_exe`, the
+stdout fix uses the Zig 0.15 buffered writer pattern and flushes before exit,
+the logs prove positive CLI build/run behavior, `emit-exe=false` suppression, no
+`ghostty` binary, and app bundle non-regression, and the result commit had not
+yet been made.
