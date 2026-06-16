@@ -130,3 +130,82 @@ confirmed the `Navigate` and `SetColorScheme` findings are resolved by narrowing
 the experiment to `ModeChanged -> FocusChanged`, and confirmed the verification
 now includes the unknown-pane and pre-`TabReady` no-forward checks. No new
 required findings were introduced by the fix.
+
+## Result
+
+**Result:** Pass
+
+Implemented state-backed `ModeChanged -> FocusChanged` forwarding in
+`ghostboard/src/apprt/termsurf.zig`.
+
+The implementation now:
+
+- decodes `ModeChanged`;
+- resolves the target pane by `pane_id`;
+- updates `PaneState.browsing`;
+- skips forwarding until the pane has a nonzero browser `tab_id`;
+- skips forwarding unless the matched server has an attached browser fd;
+- snapshots browser fd, pane id, tab id, and focus value under `state_mutex`;
+- releases `state_mutex` before writing `FocusChanged` to the browser fd;
+- logs successful forwards as
+  `FocusChanged: pane_id=... tab_id=... focused=...`.
+
+Verification passed:
+
+- `zig fmt src/apprt/termsurf.zig src/main_c.zig src/build/SharedDeps.zig`
+  passed: `logs/ghostboard-exp23-zig-fmt-20260616.log`.
+- Native GhosttyKit framework build passed:
+  `logs/ghostboard-exp23-zig-native-xcframework-20260616.log`.
+- macOS app build passed on the serial rerun after the framework existed:
+  `logs/ghostboard-exp23-macos-build-debug-20260616-rerun.log`.
+- Runtime harness passed: `logs/ghostboard-exp23-runtime-harness-20260616.log`.
+- Runtime app log: `logs/ghostboard-exp23-runtime-app-20260616.log`.
+- `git diff --check` passed.
+
+Observed successful runtime checks:
+
+```text
+PASS: helper path is longer than old 64-byte browser limit
+PASS: child wrote TERMSURF_SOCKET
+PASS: socket path is under TMPDIR/termsurf
+PASS: socket exists while app is running
+PASS: unknown-pane ModeChanged did not crash app
+PASS: sent pre-TabReady ModeChanged for known pane
+PASS: TUI socket received BrowserReady with real listen socket
+PASS: BrowserReady browser_socket is not GUI socket
+PASS: pre-TabReady ModeChanged did not emit FocusChanged
+PASS: helper received FocusChanged false then true after TabReady
+PASS: repeated SetOverlay still emitted Resize
+PASS: fresh TUI client received HelloReply
+PASS: app exited after SIGTERM
+PASS: socket file removed after shutdown
+PASS: app log contains unknown ModeChanged and FocusChanged lines
+PASS: app log contains Resize
+runtime verification passed
+```
+
+The runtime harness verified that the helper browser received no `FocusChanged`
+before `TabReady`, then received:
+
+- `FocusChanged(tab_id=42, focused=false)`;
+- `FocusChanged(tab_id=42, focused=true)`.
+
+The same run also verified the Experiment 21 `BrowserReady` path and the
+Experiment 22 repeated `SetOverlay -> Resize` path still work.
+
+## Conclusion
+
+Ghostboard now forwards browsing-mode focus changes from the TUI to the browser
+server once a browser tab is ready. This gives Roamium focus state for the
+normal browser-mode transition while leaving `Navigate`, `SetColorScheme`,
+browser-originated state forwarding, CALayerHost overlay presentation, DevTools
+creation, split creation, and input forwarding for later experiments.
+
+## Result Review
+
+Fresh-context adversarial result review returned **APPROVED** with no required
+findings. The reviewer confirmed the implementation matches the narrowed scope,
+does not forward `Navigate` or `SetColorScheme`, sends `FocusChanged` only after
+`TabReady` to the browser fd, releases `state_mutex` before socket writes, and
+that the logs prove unknown-pane handling, pre-`TabReady` no-forward,
+post-`TabReady` false/true focus forwarding, `BrowserReady`, and `Resize`.

@@ -150,6 +150,18 @@ const ResizeSnapshot = struct {
     }
 };
 
+const FocusChangedSnapshot = struct {
+    browser_fd: std.posix.fd_t = -1,
+    pane_id: [max_pane_id_len]u8 = undefined,
+    pane_id_len: usize = 0,
+    tab_id: i64 = 0,
+    focused: bool = false,
+
+    fn paneId(self: *const FocusChangedSnapshot) []const u8 {
+        return self.pane_id[0..self.pane_id_len];
+    }
+};
+
 var mutex: std.Thread.Mutex = .{};
 var clients_mutex: std.Thread.Mutex = .{};
 var state_mutex: std.Thread.Mutex = .{};
@@ -364,6 +376,9 @@ fn handleClient(fd: std.posix.fd_t, slot_index: usize) void {
                 },
                 c.TERMSURF__TERM_SURF_MESSAGE__MSG_TAB_READY => {
                     handleTabReady(msg.*.unnamed_0.tab_ready);
+                },
+                c.TERMSURF__TERM_SURF_MESSAGE__MSG_MODE_CHANGED => {
+                    handleModeChanged(msg.*.unnamed_0.mode_changed);
                 },
                 else => {
                     log.info("TermSurf message ignored type={s}", .{msgTypeName(msg.*.msg_case)});
@@ -909,6 +924,66 @@ fn sendResize(snapshot: *const ResizeSnapshot) !void {
     );
 }
 
+fn handleModeChanged(req: ?*c.Termsurf__ModeChanged) void {
+    const mode = req orelse {
+        log.warn("ModeChanged: missing payload", .{});
+        return;
+    };
+    const pane_id = cString(mode.*.pane_id);
+    const browsing = mode.*.browsing != 0;
+    var focus_changed: ?FocusChangedSnapshot = null;
+
+    state_mutex.lock();
+    const pane_index = findPane(pane_id) orelse {
+        log.warn("ModeChanged: unknown pane_id={s} browsing={}", .{ pane_id, browsing });
+        state_mutex.unlock();
+        return;
+    };
+
+    panes[pane_index].browsing = browsing;
+    focus_changed = snapshotFocusChanged(&panes[pane_index], browsing);
+    log.info("ModeChanged: pane_id={s} browsing={}", .{ pane_id, browsing });
+    state_mutex.unlock();
+
+    if (focus_changed) |snapshot| {
+        sendFocusChanged(&snapshot) catch |err| {
+            log.warn("FocusChanged send failed pane_id={s} err={}", .{ snapshot.paneId(), err });
+        };
+    }
+}
+
+fn snapshotFocusChanged(pane: *const PaneState, focused: bool) ?FocusChangedSnapshot {
+    if (pane.tab_id == 0) return null;
+    const server_index = findServer(pane.profileName(), pane.browserName()) orelse return null;
+    if (servers[server_index].attached_fd < 0) return null;
+
+    var snapshot: FocusChangedSnapshot = .{
+        .browser_fd = servers[server_index].attached_fd,
+        .tab_id = pane.tab_id,
+        .focused = focused,
+    };
+    if (!copyText(&snapshot.pane_id, &snapshot.pane_id_len, pane.paneId())) return null;
+    return snapshot;
+}
+
+fn sendFocusChanged(snapshot: *const FocusChangedSnapshot) !void {
+    var focus: c.Termsurf__FocusChanged = undefined;
+    c.termsurf__focus_changed__init(&focus);
+    focus.tab_id = snapshot.tab_id;
+    focus.focused = if (snapshot.focused) 1 else 0;
+
+    var wrapper: c.Termsurf__TermSurfMessage = undefined;
+    c.termsurf__term_surf_message__init(&wrapper);
+    wrapper.msg_case = c.TERMSURF__TERM_SURF_MESSAGE__MSG_FOCUS_CHANGED;
+    wrapper.unnamed_0.focus_changed = &focus;
+
+    try sendProtobuf(snapshot.browser_fd, &wrapper);
+    log.info(
+        "FocusChanged: pane_id={s} tab_id={} focused={}",
+        .{ snapshot.paneId(), snapshot.tab_id, snapshot.focused },
+    );
+}
+
 fn handleTabReady(req: ?*c.Termsurf__TabReady) void {
     const ready = req orelse {
         log.warn("TabReady: missing payload", .{});
@@ -1274,7 +1349,9 @@ fn msgTypeName(msg_case: c.Termsurf__TermSurfMessage__MsgCase) []const u8 {
         c.TERMSURF__TERM_SURF_MESSAGE__MSG_HELLO_REPLY => "HelloReply",
         c.TERMSURF__TERM_SURF_MESSAGE__MSG_CREATE_TAB => "CreateTab",
         c.TERMSURF__TERM_SURF_MESSAGE__MSG_RESIZE => "Resize",
+        c.TERMSURF__TERM_SURF_MESSAGE__MSG_FOCUS_CHANGED => "FocusChanged",
         c.TERMSURF__TERM_SURF_MESSAGE__MSG_TAB_READY => "TabReady",
+        c.TERMSURF__TERM_SURF_MESSAGE__MSG_MODE_CHANGED => "ModeChanged",
         c.TERMSURF__TERM_SURF_MESSAGE__MSG_QUERY_LAST_REQUEST => "QueryLastRequest",
         c.TERMSURF__TERM_SURF_MESSAGE__MSG_QUERY_LAST_REPLY => "QueryLastReply",
         c.TERMSURF__TERM_SURF_MESSAGE__MSG_QUERY_DEVTOOLS_REQUEST => "QueryDevtoolsRequest",
