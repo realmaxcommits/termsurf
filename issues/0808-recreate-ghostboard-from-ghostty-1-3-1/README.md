@@ -269,3 +269,5 @@ and against `ghostboard-legacy/` where useful.
   — **Pass**
 - [Experiment 32: Forward normal browser input](32-forward-normal-browser-input.md)
   — **Pass**
+- [Experiment 33: Acceptance audit and walkthrough](33-acceptance-audit-and-walkthrough.md)
+  — **Designed**
