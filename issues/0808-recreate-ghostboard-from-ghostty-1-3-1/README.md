@@ -265,3 +265,5 @@ and against `ghostboard-legacy/` where useful.
   — **Fail**
 - [Experiment 30: Validate Chromium-output Roamium lifecycle](30-validate-chromium-output-roamium-lifecycle.md)
   — **Pass**
+- [Experiment 31: Present the normal Roamium overlay](31-present-normal-roamium-overlay.md)
+  — **Designed**
