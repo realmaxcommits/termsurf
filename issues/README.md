@@ -9,12 +9,12 @@
 | [0797](0797-pdf-core-workflow-coverage/README.md) | PDF Core Workflow Coverage           | 2026-05-30 |
 | [0798](0798-pdf-advanced-features/README.md)      | PDF Advanced Features                | 2026-05-30 |
 | [0803](0803-roastty-debug-overlay/README.md)      | Roastty Debug Overlay                | 2026-06-13 |
-| [0807](0807-restore-ghostboard-code/README.md)    | Restore Ghostboard Code              | 2026-06-16 |
 
 ## Closed
 
 | #                                                        | Title                                                                         | Opened     | Closed     |
 | -------------------------------------------------------- | ----------------------------------------------------------------------------- | ---------- | ---------- |
+| [0807](0807-restore-ghostboard-code/README.md)           | Restore Ghostboard Code                                                       | 2026-06-16 | 2026-06-16 |
 | [0806](0806-roastty-input-latency/README.md)             | Roastty input latency                                                         | 2026-06-16 | 2026-06-16 |
 | [0805](0805-roastty-ghostty-parity/README.md)            | Roastty Parity with Ghostty 2c62d182                                          | 2026-06-13 | 2026-06-15 |
 | [0804](0804-roastty-gui-automation-readiness/README.md)  | Roastty GUI Automation Readiness                                              | 2026-06-13 | 2026-06-13 |
