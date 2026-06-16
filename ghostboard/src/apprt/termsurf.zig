@@ -166,6 +166,19 @@ fn handleClient(fd: std.posix.fd_t, slot_index: usize) void {
                         return;
                     };
                 },
+                c.TERMSURF__TERM_SURF_MESSAGE__MSG_QUERY_LAST_REQUEST => {
+                    const req = msg.*.unnamed_0.query_last_request;
+                    if (req) |query| {
+                        log.info(
+                            "TermSurf QueryLastRequest pane_id={s} profile={s}",
+                            .{ query.*.pane_id, query.*.profile },
+                        );
+                    }
+                    sendQueryLastReply(fd) catch |err| {
+                        log.warn("TermSurf QueryLastReply failed fd={} err={}", .{ fd, err });
+                        return;
+                    };
+                },
                 c.TERMSURF__TERM_SURF_MESSAGE__MSG_QUERY_TABS_REQUEST => {
                     const req = msg.*.unnamed_0.query_tabs_request;
                     if (req) |query| {
@@ -310,6 +323,20 @@ fn sendHelloReply(fd: std.posix.fd_t) !void {
     log.info("TermSurf HelloReply sent", .{});
 }
 
+fn sendQueryLastReply(fd: std.posix.fd_t) !void {
+    var reply: c.Termsurf__QueryLastReply = undefined;
+    c.termsurf__query_last_reply__init(&reply);
+    reply.@"error" = @constCast("No browser pane yet");
+
+    var wrapper: c.Termsurf__TermSurfMessage = undefined;
+    c.termsurf__term_surf_message__init(&wrapper);
+    wrapper.msg_case = c.TERMSURF__TERM_SURF_MESSAGE__MSG_QUERY_LAST_REPLY;
+    wrapper.unnamed_0.query_last_reply = &reply;
+
+    try sendProtobuf(fd, &wrapper);
+    log.info("TermSurf QueryLastReply sent", .{});
+}
+
 fn sendQueryTabsReply(fd: std.posix.fd_t) !void {
     var reply: c.Termsurf__QueryTabsReply = undefined;
     c.termsurf__query_tabs_reply__init(&reply);
@@ -353,6 +380,8 @@ fn msgTypeName(msg_case: c.Termsurf__TermSurfMessage__MsgCase) []const u8 {
     return switch (msg_case) {
         c.TERMSURF__TERM_SURF_MESSAGE__MSG_HELLO_REQUEST => "HelloRequest",
         c.TERMSURF__TERM_SURF_MESSAGE__MSG_HELLO_REPLY => "HelloReply",
+        c.TERMSURF__TERM_SURF_MESSAGE__MSG_QUERY_LAST_REQUEST => "QueryLastRequest",
+        c.TERMSURF__TERM_SURF_MESSAGE__MSG_QUERY_LAST_REPLY => "QueryLastReply",
         c.TERMSURF__TERM_SURF_MESSAGE__MSG_QUERY_TABS_REQUEST => "QueryTabsRequest",
         c.TERMSURF__TERM_SURF_MESSAGE__MSG_QUERY_TABS_REPLY => "QueryTabsReply",
         c.TERMSURF__TERM_SURF_MESSAGE__MSG_SERVER_REGISTER => "ServerRegister",

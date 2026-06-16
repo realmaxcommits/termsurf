@@ -76,3 +76,114 @@ Required finding accepted and fixed:
 
 Re-review returned `APPROVED`. The reviewer confirmed the prior finding is
 resolved and that no new required finding was introduced by the fix.
+
+## Result
+
+**Result:** Pass
+
+Implemented `QueryLastRequest` handling on Ghostboard's TermSurf socket.
+
+`ghostboard/src/apprt/termsurf.zig` now:
+
+- recognizes decoded `QueryLastRequest` messages;
+- logs the request `pane_id` and `profile`;
+- sends a length-prefixed `QueryLastReply`;
+- sets `error = "No browser pane yet"` while leaving `pane_id`, `tab_id`, and
+  `profile` at protobuf defaults because Ghostboard does not yet track browser
+  pane state;
+- includes `QueryLastRequest` and `QueryLastReply` in the decoded-message type
+  name helper.
+
+The encoded no-state reply observed by the harness was:
+
+```text
+18 00 00 00 d2 01 15 22 13 4e 6f 20 62 72 6f 77 73 65 72 20 70 61 6e 65 20 79 65 74
+```
+
+That is a 24-byte length-prefixed `TermSurfMessage` payload using oneof field 26
+(`QueryLastReply`) with field 4 (`error`) set to `No browser pane yet`.
+
+Verification performed:
+
+- `zig fmt src/apprt/termsurf.zig src/main_c.zig src/build/SharedDeps.zig`
+  passed.
+- Native GhosttyKit framework build passed:
+  `logs/ghostboard-exp10-zig-native-xcframework-20260616-093232.log`.
+- macOS app build passed:
+  `logs/ghostboard-exp10-macos-build-debug-20260616-093252.log`.
+- Runtime verification passed:
+  `logs/ghostboard-exp10-runtime-harness-20260616-093416.log`. The app's stderr
+  log for that run is `logs/ghostboard-exp10-runtime-app-20260616-093416.log`.
+- `git diff --check` passed.
+- No Swift files were edited in this experiment, so SwiftLint was not required.
+- Scope check found no diffs in `webtui`, `roamium`, `proto/termsurf.proto`,
+  `ghostboard/build.zig`, `ghostboard/macos`,
+  `ghostboard/src/build/GhosttyExe.zig`, app branding, config paths, icon
+  assets, or CLI install behavior.
+
+The first runtime harness used the wrong expected protobuf tag for the nested
+`error` field and reported a local harness expectation failure even though the
+app replied correctly. The final harness corrected the expected protobuf field 4
+tag and exited hard on Python assertion failures.
+
+Observed successful runtime output:
+
+```text
+PASS: socket path is under TMPDIR/termsurf
+PASS: socket exists while app is running
+PASS: HelloReply frame 03000000c20100
+PASS: QueryTabsReply empty frame 03000000f20100
+PASS: QueryLastReply no-state frame 18000000d2011522134e6f2062726f777365722070616e6520796574
+runtime socket checks passed
+PASS: app log contains TermSurf socket listening
+PASS: app log contains TermSurf client connected
+PASS: app log contains TermSurf message decoded type=HelloRequest
+PASS: app log contains TermSurf HelloReply sent
+PASS: app log contains TermSurf message decoded type=QueryTabsRequest
+PASS: app log contains TermSurf QueryTabsReply sent
+PASS: app log contains TermSurf message decoded type=QueryLastRequest
+PASS: app log contains TermSurf QueryLastRequest pane_id=exp10 profile=default
+PASS: app log contains TermSurf QueryLastReply sent
+PASS: app exited after SIGTERM
+PASS: socket file removed after shutdown
+PASS: no stale TermSurf process remains
+runtime verification passed
+```
+
+The app log for the same run contained:
+
+```text
+info(termsurf): TermSurf socket listening on /var/folders/vx/wbmx10nd7tx8259xgg3v4vf80000gn/T/termsurf/termsurf-ghostboard-55673.sock
+info(termsurf): TermSurf client connected fd=13
+info(termsurf): TermSurf message decoded type=HelloRequest
+info(termsurf): TermSurf HelloReply sent
+info(termsurf): TermSurf client connected fd=13
+info(termsurf): TermSurf message decoded type=QueryTabsRequest
+info(termsurf): TermSurf QueryTabsReply sent
+info(termsurf): TermSurf client connected fd=13
+info(termsurf): TermSurf message decoded type=QueryLastRequest
+info(termsurf): TermSurf QueryLastRequest pane_id=exp10 profile=default
+info(termsurf): TermSurf QueryLastReply sent
+```
+
+## Conclusion
+
+Ghostboard now handles the synchronous no-state `QueryLastRequest` path used by
+`web last`, while keeping the previously implemented `HelloRequest` and
+`QueryTabsRequest` paths working.
+
+The next experiment should either implement the remaining no-state synchronous
+query, `QueryDevtoolsRequest`, or introduce explicit TUI-versus-browser
+connection classification before browser registration and launch behavior.
+
+## Result Review
+
+Fresh-context adversarial result review returned `APPROVED` with no findings.
+
+The reviewer confirmed the diff is limited to
+`ghostboard/src/apprt/termsurf.zig` and the Experiment 10 docs, the no-state
+`QueryLastReply` matches Wezboard's behavior, protobuf-c initialization and
+string lifetime are valid for packing, the runtime log proves `HelloRequest`,
+`QueryTabsRequest`, and `QueryLastRequest` all received replies, the
+`QueryLastReply` frame contains field 4 `error`, the README status is `Pass`,
+the result commit had not yet been made, and `git diff --check` is clean.
