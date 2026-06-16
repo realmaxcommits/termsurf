@@ -225,3 +225,5 @@ and against `ghostboard-legacy/` where useful.
 - [Experiment 8: Decode HelloRequest](08-decode-hello-request.md) — **Pass**
 - [Experiment 9: Reply to QueryTabsRequest](09-query-tabs-reply.md) — **Pass**
 - [Experiment 10: Reply to QueryLastRequest](10-query-last-reply.md) — **Pass**
+- [Experiment 11: Reply to QueryDevtoolsRequest](11-query-devtools-reply.md) —
+  **Designed**
