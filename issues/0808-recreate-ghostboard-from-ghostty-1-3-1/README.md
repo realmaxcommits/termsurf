@@ -227,3 +227,5 @@ and against `ghostboard-legacy/` where useful.
 - [Experiment 10: Reply to QueryLastRequest](10-query-last-reply.md) — **Pass**
 - [Experiment 11: Reply to QueryDevtoolsRequest](11-query-devtools-reply.md) —
   **Pass**
+- [Experiment 12: Classify TermSurf connections](12-classify-termsurf-connections.md)
+  — **Designed**
