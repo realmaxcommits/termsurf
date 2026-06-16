@@ -258,4 +258,4 @@ and against `ghostboard-legacy/` where useful.
 - [Experiment 26: Propagate pane ids to surfaces](26-propagate-pane-ids-to-surfaces.md)
   — **Pass**
 - [Experiment 27: Open native splits from protocol](27-open-native-splits-from-protocol.md)
-  — **Designed**
+  — **Pass**

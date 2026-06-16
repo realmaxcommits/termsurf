@@ -23,6 +23,12 @@ const default_browser = "roamium";
 const fallback_cell_width: u64 = 10;
 const fallback_cell_height: u64 = 20;
 
+extern "c" fn termsurf_open_split(
+    pane_id: [*:0]const u8,
+    direction: [*:0]const u8,
+    command: [*:0]const u8,
+) void;
+
 const ConnType = enum {
     unknown,
     tui,
@@ -407,6 +413,9 @@ fn handleClient(fd: std.posix.fd_t, slot_index: usize) void {
                 },
                 c.TERMSURF__TERM_SURF_MESSAGE__MSG_MODE_CHANGED => {
                     handleModeChanged(msg.*.unnamed_0.mode_changed);
+                },
+                c.TERMSURF__TERM_SURF_MESSAGE__MSG_OPEN_SPLIT => {
+                    handleOpenSplit(msg.*.unnamed_0.open_split);
                 },
                 else => {
                     log.info("TermSurf message ignored type={s}", .{msgTypeName(msg.*.msg_case)});
@@ -931,6 +940,31 @@ fn handleSetDevtoolsOverlay(tui_fd: std.posix.fd_t, req: ?*c.Termsurf__SetDevtoo
             log.warn("CreateDevtoolsTab send failed pane_id={s} err={}", .{ snapshot.paneId(), err });
         };
     }
+}
+
+fn handleOpenSplit(req: ?*c.Termsurf__OpenSplit) void {
+    const open_split = req orelse {
+        log.warn("OpenSplit: missing payload", .{});
+        return;
+    };
+    const pane_id = open_split.*.pane_id orelse {
+        log.warn("OpenSplit: missing pane_id", .{});
+        return;
+    };
+    const direction = open_split.*.direction orelse {
+        log.warn("OpenSplit: missing direction", .{});
+        return;
+    };
+    const command = open_split.*.command orelse {
+        log.warn("OpenSplit: missing command", .{});
+        return;
+    };
+
+    log.info(
+        "OpenSplit: pane_id={s} direction={s} command={s}",
+        .{ pane_id, direction, command },
+    );
+    termsurf_open_split(pane_id, direction, command);
 }
 
 fn updatePane(
@@ -1610,6 +1644,7 @@ fn msgTypeName(msg_case: c.Termsurf__TermSurfMessage__MsgCase) []const u8 {
         c.TERMSURF__TERM_SURF_MESSAGE__MSG_SERVER_REGISTER => "ServerRegister",
         c.TERMSURF__TERM_SURF_MESSAGE__MSG_SET_OVERLAY => "SetOverlay",
         c.TERMSURF__TERM_SURF_MESSAGE__MSG_SET_DEVTOOLS_OVERLAY => "SetDevtoolsOverlay",
+        c.TERMSURF__TERM_SURF_MESSAGE__MSG_OPEN_SPLIT => "OpenSplit",
         else => "Other",
     };
 }

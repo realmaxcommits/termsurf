@@ -123,3 +123,98 @@ Fail criteria:
 
 A fresh-context adversarial Codex subagent reviewed the Experiment 27 design and
 returned **APPROVED** with no findings.
+
+## Result
+
+**Result:** Pass
+
+Implemented the macOS `OpenSplit` protocol bridge.
+
+The implementation now:
+
+- decodes and dispatches `OpenSplit` in `ghostboard/src/apprt/termsurf.zig`;
+- logs and validates the `pane_id`, `direction`, and `command` protobuf fields;
+- calls a C-callable Swift bridge with the protobuf C strings;
+- copies those strings into Swift before hopping to the AppKit main queue;
+- parses `pane_id` as a `UUID` and resolves it with
+  `AppDelegate.findSurface(forUUID:)`;
+- maps `right`, `left`, `down`, and `up` to native split directions;
+- builds a split `Ghostty.SurfaceConfiguration` from
+  `ghostty_surface_inherited_config(..., GHOSTTY_SURFACE_CONTEXT_SPLIT)`;
+- overrides `config.command` with the requested command;
+- calls `BaseTerminalController.newSplit(at:direction:baseConfig:)`;
+- mirrors request, rejection, and success bridge logs to stderr so runtime
+  harnesses can verify them from the captured app log.
+
+Verification passed:
+
+- Zig format passed: `logs/ghostboard-exp27-zig-fmt-20260616.log`.
+- Swift format/lint fix pass succeeded:
+  `logs/ghostboard-exp27-swiftlint-fix-20260616.log`.
+- Swift non-mutating lint check succeeded with 0 violations:
+  `logs/ghostboard-exp27-swiftlint-check-20260616.log`.
+- Native GhosttyKit framework build passed:
+  `logs/ghostboard-exp27-zig-native-xcframework-20260616.log`.
+- macOS app build passed:
+  `logs/ghostboard-exp27-macos-build-debug-20260616.log`.
+- Runtime harness passed: `logs/ghostboard-exp27-runtime-harness-20260616.log`.
+- Runtime app log: `logs/ghostboard-exp27-runtime-app-20260616.log`.
+- `git diff --check` passed.
+
+Observed successful runtime checks:
+
+```text
+PASS: bad UUID did not create split
+PASS: unknown direction did not create split
+PASS: socket namespace is Ghostboard
+PASS: first pane id 9FE1B730-7822-4AAA-8FCE-ACEFF0CC50BC
+PASS: second pane id 94E5CE67-71CB-4403-A04F-394FF36D84CD
+PASS: shared socket /var/folders/vx/wbmx10nd7tx8259xgg3v4vf80000gn/T/termsurf/termsurf-ghostboard-80774.sock
+PASS: app log contains OpenSplit request, rejections, and success
+PASS: app exited and socket cleaned up
+runtime verification passed
+```
+
+The runtime harness launched the built `TermSurf.app` with a temporary config
+that made the first terminal surface write its `TERMSURF_PANE_ID` and
+`TERMSURF_SOCKET` to a capture file. The harness then connected directly to that
+captured socket and sent length-prefixed `OpenSplit` protobuf frames.
+
+Two negative frames were rejected without adding a second capture line:
+
+- `pane_id = not-a-uuid`, `direction = right`;
+- `pane_id = <first pane UUID>`, `direction = sideways`.
+
+The valid frame used the first surface's pane UUID, `direction = right`, and a
+shell command that appended the new split's `TERMSURF_PANE_ID` and
+`TERMSURF_SOCKET` to the same capture file. That produced a second capture line
+with a different UUID and the same Ghostboard socket, without using System
+Events keyboard automation.
+
+One implementation detail from verification: Ghostty's `Surface.Options.command`
+already treats the string as a shell command. The runtime harness therefore
+passes `/bin/sh -lc ...` as the `OpenSplit.command`, not
+`shell:/bin/sh -lc ...`. The earlier `shell:`-prefixed attempt created the split
+but did not run the intended command because the prefix was treated as part of
+the shell command.
+
+## Conclusion
+
+Ghostboard can now create native terminal splits from the TermSurf `OpenSplit`
+protobuf message. This completes the missing GUI-side step that lets `webtui`
+ask Ghostboard to open a DevTools TUI process in a split. Full DevTools
+end-to-end validation still needs a later experiment that drives `webtui`
+through `QueryDevtools -> OpenSplit -> SetDevtoolsOverlay` against an attached
+browser server.
+
+## Completion Review
+
+A fresh-context adversarial Codex subagent reviewed the completed Experiment 27
+result and returned **APPROVED** with no findings.
+
+The reviewer confirmed that the implementation stayed within the approved scope,
+dispatches `OpenSplit`, copies C strings before asynchronous Swift work,
+resolves pane UUIDs through `AppDelegate.findSurface(forUUID:)`, creates native
+splits through `BaseTerminalController.newSplit`, and that the logs prove
+formatting, linting, native build, macOS app build, protocol-driven split
+creation, malformed-request rejection, and cleanup.
