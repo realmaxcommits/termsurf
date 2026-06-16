@@ -1891,3 +1891,5 @@ remains open.
   — **Partial**
 - [Experiment 196: Live bell audio playback](196-live-bell-audio-playback.md) —
   **Partial**
+- [Experiment 197: OS-controlled native boundary closure](197-os-controlled-native-boundary.md)
+  — **Designed**
