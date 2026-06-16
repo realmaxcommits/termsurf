@@ -1099,6 +1099,15 @@ experiment files until they are proven.
   and `soundSetting=2`. The env-gated hook and static lifecycle parity guard are
   in place, so a future run with authorized notifications can prove delivered
   notification content without redesigning the guard.
+- **TCC prompts are diagnostic, not regression-guard dependencies.** While
+  preparing Experiment 196, the live bell-audio guard triggered a macOS prompt:
+  `"Roastty" would like to access the Microphone.` Roastty declares that prompt
+  through `INFOPLIST_KEY_NSMicrophoneUsageDescription` in the Xcode project, and
+  rebuilds can invalidate prior grants for the debug app identity. After
+  granting screenshot permission to the host terminal app, Codex can capture the
+  prompt for evidence, but unattended guards must avoid requiring a human to
+  press `Allow` or must classify the OS audio-device path as a TCC-gated
+  residual.
 - **Font-size runtime updates should be idempotent.** Experiment 125 found that
   applying an unchanged font size dirtied ABI-only surfaces because
   `set_font_size_points` always requested a render. The setter now returns

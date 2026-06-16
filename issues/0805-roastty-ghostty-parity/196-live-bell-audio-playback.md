@@ -66,6 +66,21 @@ Pass criteria:
 - Inventory counts and remaining gap IDs are updated exactly and asserted by
   guards.
 
+Automation constraint discovered before implementation:
+
+- On this macOS VM, launching the Exp196 audio guard can trigger a TCC prompt:
+  `"Roastty" would like to access the Microphone.` The prompt text is declared
+  by `INFOPLIST_KEY_NSMicrophoneUsageDescription` in
+  `roastty/macos/Roastty.xcodeproj/project.pbxproj`.
+- The prompt is not exposed as a normal System Events `Allow` button and must
+  not be a required human step for an unattended regression guard.
+- Before claiming a pass, revise the implementation so the durable guard avoids
+  depending on accepting this microphone prompt, or record the audio-device path
+  as an OS/TCC-gated residual with exact evidence.
+- The guard runner can now capture such prompts after granting screenshot
+  permission to the host terminal app, but prompt visibility is diagnostic
+  evidence only, not a viable automation dependency.
+
 Commands:
 
 ```bash
