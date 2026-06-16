@@ -11,6 +11,12 @@ const env_key: [:0]const u8 = "TERMSURF_SOCKET";
 const max_frame_size: usize = 1024 * 1024;
 const max_clients: usize = 128;
 
+const ConnType = enum {
+    unknown,
+    tui,
+    browser,
+};
+
 const ClientSlot = struct {
     fd: std.posix.fd_t = -1,
     thread: ?std.Thread = null,
@@ -143,6 +149,7 @@ fn handleClient(fd: std.posix.fd_t, slot_index: usize) void {
     }
 
     const allocator = std.heap.c_allocator;
+    var conn_type: ConnType = .unknown;
     while (!stopping.load(.acquire)) {
         const frame = readFrame(fd, allocator) catch |err| {
             log.warn("TermSurf client read failed fd={} err={}", .{ fd, err });
@@ -159,6 +166,11 @@ fn handleClient(fd: std.posix.fd_t, slot_index: usize) void {
             defer c.termsurf__term_surf_message__free_unpacked(msg, null);
 
             log.info("TermSurf message decoded type={s}", .{msgTypeName(msg.*.msg_case)});
+            if (conn_type == .unknown) {
+                conn_type = classifyConnection(msg.*.msg_case);
+                log.info("TermSurf connection type={s} fd={}", .{ connTypeName(conn_type), fd });
+            }
+
             switch (msg.*.msg_case) {
                 c.TERMSURF__TERM_SURF_MESSAGE__MSG_HELLO_REQUEST => {
                     sendHelloReply(fd) catch |err| {
@@ -447,6 +459,21 @@ fn msgTypeName(msg_case: c.Termsurf__TermSurfMessage__MsgCase) []const u8 {
         c.TERMSURF__TERM_SURF_MESSAGE__MSG_SERVER_REGISTER => "ServerRegister",
         c.TERMSURF__TERM_SURF_MESSAGE__MSG_SET_OVERLAY => "SetOverlay",
         else => "Other",
+    };
+}
+
+fn classifyConnection(msg_case: c.Termsurf__TermSurfMessage__MsgCase) ConnType {
+    return switch (msg_case) {
+        c.TERMSURF__TERM_SURF_MESSAGE__MSG_SERVER_REGISTER => .browser,
+        else => .tui,
+    };
+}
+
+fn connTypeName(conn_type: ConnType) []const u8 {
+    return switch (conn_type) {
+        .unknown => "Unknown",
+        .tui => "Tui",
+        .browser => "Browser",
     };
 }
 

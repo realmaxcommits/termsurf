@@ -93,3 +93,110 @@ harness can prove each accepted socket is classified exactly once.
 Fresh-context adversarial re-review approved the updated design. The reviewer
 confirmed the prior required finding was resolved by the same-socket mixed
 message pass criteria and found no remaining issues.
+
+## Result
+
+**Result:** Pass
+
+Implemented first-message TermSurf connection classification in
+`ghostboard/src/apprt/termsurf.zig`.
+
+The socket handler now:
+
+- tracks a per-client `ConnType` initialized to `unknown`;
+- classifies the connection after the first decoded `TermSurfMessage`;
+- classifies `ServerRegister` as `Browser`;
+- classifies every other first message as `Tui`;
+- logs the selected type as `TermSurf connection type={type} fd={fd}`;
+- leaves the existing message dispatch behavior unchanged.
+
+Verification passed:
+
+- `zig fmt src/apprt/termsurf.zig src/main_c.zig src/build/SharedDeps.zig`
+  passed.
+- Native GhosttyKit framework build passed:
+  `logs/ghostboard-exp12-zig-native-xcframework-20260616-095924.log`.
+- macOS app build passed:
+  `logs/ghostboard-exp12-macos-build-debug-20260616-095938.log`.
+- Runtime harness passed:
+  `logs/ghostboard-exp12-runtime-harness-20260616-100207.log`.
+- Runtime app log: `logs/ghostboard-exp12-runtime-app-20260616-100207.log`.
+- `git diff --check` passed.
+
+The runtime harness launched the debug `TermSurf.app` binary with a temporary
+`GHOSTTY_CONFIG_PATH` and `GHOSTTY_LOG=stderr`, read the inherited
+`TERMSURF_SOCKET` from the terminal child, and connected directly to the GUI
+socket with length-prefixed current-schema protobuf messages.
+
+Observed successful runtime checks:
+
+```text
+PASS: child wrote TERMSURF_SOCKET
+PASS: socket path is under TMPDIR/termsurf
+PASS: socket exists while app is running
+PASS: app log contains TermSurf socket listening
+PASS: Tui client received expected reply
+PASS: socket fd=11 classified exactly once as Tui
+PASS: app log contains TermSurf message decoded type=HelloRequest
+PASS: Tui client received expected reply
+PASS: socket fd=11 classified exactly once as Tui
+PASS: app log contains TermSurf message decoded type=QueryTabsRequest
+PASS: socket fd=11 classified exactly once as Browser
+PASS: ServerRegister ignored log present
+PASS: same-socket TUI-first client received HelloReply
+PASS: socket fd=11 classified exactly once as Tui
+PASS: same socket fd=11 did not reclassify to Browser
+PASS: same-socket later ServerRegister used existing dispatch
+PASS: same-socket browser-first client kept existing HelloReply dispatch
+PASS: socket fd=11 classified exactly once as Browser
+PASS: same socket fd=11 did not reclassify to Tui
+PASS: same-socket first ServerRegister ignored log present
+PASS: app exited after SIGTERM
+PASS: socket file removed after shutdown
+PASS: no stale TermSurf process remains
+runtime verification passed
+```
+
+The app log shows the sticky classification behavior on the mixed-message
+same-socket cases:
+
+```text
+info(termsurf): TermSurf client connected fd=11
+info(termsurf): TermSurf message decoded type=HelloRequest
+info(termsurf): TermSurf connection type=Tui fd=11
+info(termsurf): TermSurf HelloReply sent
+info(termsurf): TermSurf message decoded type=ServerRegister
+info(termsurf): TermSurf message ignored type=ServerRegister
+info(termsurf): TermSurf client connected fd=11
+info(termsurf): TermSurf message decoded type=ServerRegister
+info(termsurf): TermSurf connection type=Browser fd=11
+info(termsurf): TermSurf message ignored type=ServerRegister
+info(termsurf): TermSurf message decoded type=HelloRequest
+info(termsurf): TermSurf HelloReply sent
+```
+
+## Result Review
+
+Fresh-context adversarial result review returned **APPROVED** with no required
+findings.
+
+The reviewer confirmed:
+
+- the implementation scope stayed limited to classification and logging in
+  `ghostboard/src/apprt/termsurf.zig`;
+- classification happens only on the first decoded message;
+- `ServerRegister` maps to browser and all other first messages map to TUI;
+- the existing request/reply dispatch remains unchanged;
+- the README marks Experiment 12 as `Pass`;
+- the native build, macOS app build, runtime harness, and `git diff --check`
+  evidence support the recorded result.
+
+## Conclusion
+
+Ghostboard now has the same first-message connection classification foundation
+as Wezboard: browser-engine connections are identified by an initial
+`ServerRegister`, while TUI connections are identified by any other initial
+message. Classification is per socket and does not change after later messages.
+
+The next experiment can build on this by adding browser server registration
+state without changing the already-working synchronous TUI request/reply paths.
