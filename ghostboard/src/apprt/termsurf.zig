@@ -50,6 +50,7 @@ const PaneState = struct {
     width: u64 = 0,
     height: u64 = 0,
     browsing: bool = false,
+    inspected_tab_id: i64 = 0,
     tab_id: i64 = 0,
     tui_fd: std.posix.fd_t = -1,
 
@@ -169,6 +170,19 @@ const CloseTabSnapshot = struct {
     tab_id: i64 = 0,
 
     fn paneId(self: *const CloseTabSnapshot) []const u8 {
+        return self.pane_id[0..self.pane_id_len];
+    }
+};
+
+const CreateDevtoolsTabSnapshot = struct {
+    browser_fd: std.posix.fd_t = -1,
+    pane_id: [max_pane_id_len]u8 = undefined,
+    pane_id_len: usize = 0,
+    inspected_tab_id: i64 = 0,
+    pixel_width: u64 = 0,
+    pixel_height: u64 = 0,
+
+    fn paneId(self: *const CreateDevtoolsTabSnapshot) []const u8 {
         return self.pane_id[0..self.pane_id_len];
     }
 };
@@ -381,6 +395,9 @@ fn handleClient(fd: std.posix.fd_t, slot_index: usize) void {
                 },
                 c.TERMSURF__TERM_SURF_MESSAGE__MSG_SET_OVERLAY => {
                     handleSetOverlay(fd, msg.*.unnamed_0.set_overlay);
+                },
+                c.TERMSURF__TERM_SURF_MESSAGE__MSG_SET_DEVTOOLS_OVERLAY => {
+                    handleSetDevtoolsOverlay(fd, msg.*.unnamed_0.set_devtools_overlay);
                 },
                 c.TERMSURF__TERM_SURF_MESSAGE__MSG_SERVER_REGISTER => {
                     handleServerRegister(fd, msg.*.unnamed_0.server_register);
@@ -835,6 +852,87 @@ fn handleSetOverlay(tui_fd: std.posix.fd_t, req: ?*c.Termsurf__SetOverlay) void 
     }
 }
 
+fn handleSetDevtoolsOverlay(tui_fd: std.posix.fd_t, req: ?*c.Termsurf__SetDevtoolsOverlay) void {
+    const overlay = req orelse {
+        log.warn("SetDevtoolsOverlay: missing payload", .{});
+        return;
+    };
+
+    const pane_id = cString(overlay.*.pane_id);
+    const profile = cString(overlay.*.profile);
+    const requested_browser = cString(overlay.*.browser);
+    const browser = if (requested_browser.len == 0) default_browser else requested_browser;
+    const inspected_tab_id = overlay.*.inspected_tab_id;
+    var create_devtools: ?CreateDevtoolsTabSnapshot = null;
+    var resize_snapshot: ?ResizeSnapshot = null;
+
+    log.info(
+        "SetDevtoolsOverlay: pane_id={s} profile={s} browser={s} inspected_tab_id={}",
+        .{ pane_id, profile, browser, inspected_tab_id },
+    );
+
+    state_mutex.lock();
+
+    if (findPane(pane_id)) |pane_index| {
+        if (!updateDevtoolsPane(&panes[pane_index], overlay, pane_id, profile, browser)) {
+            state_mutex.unlock();
+            return;
+        }
+        panes[pane_index].tui_fd = tui_fd;
+        resize_snapshot = snapshotResize(&panes[pane_index]);
+        log.info(
+            "SetDevtoolsOverlay: updated pane_id={s} profile={s} browser={s}",
+            .{ pane_id, profile, browser },
+        );
+        state_mutex.unlock();
+        if (resize_snapshot) |snapshot| {
+            sendResize(&snapshot) catch |err| {
+                log.warn("Resize send failed pane_id={s} err={}", .{ snapshot.paneId(), err });
+            };
+        }
+        return;
+    }
+
+    const pane_index = reservePane() orelse {
+        log.warn("SetDevtoolsOverlay: pane limit reached pane_id={s}", .{pane_id});
+        state_mutex.unlock();
+        return;
+    };
+    if (!updateDevtoolsPane(&panes[pane_index], overlay, pane_id, profile, browser)) {
+        panes[pane_index] = .{};
+        state_mutex.unlock();
+        return;
+    }
+    panes[pane_index].tui_fd = tui_fd;
+
+    const server_index = findServer(profile, browser) orelse {
+        log.warn("SetDevtoolsOverlay: no server profile={s} browser={s}", .{ profile, browser });
+        panes[pane_index] = .{};
+        state_mutex.unlock();
+        return;
+    };
+    if (servers[server_index].attached_fd < 0) {
+        log.warn("SetDevtoolsOverlay: server not attached profile={s} browser={s}", .{ profile, browser });
+        panes[pane_index] = .{};
+        state_mutex.unlock();
+        return;
+    }
+
+    servers[server_index].pane_count += 1;
+    create_devtools = snapshotCreateDevtoolsTab(&panes[pane_index], servers[server_index].attached_fd);
+    log.info(
+        "SetDevtoolsOverlay: created pane_id={s} profile={s} browser={s} pane_count={}",
+        .{ pane_id, profile, browser, servers[server_index].pane_count },
+    );
+    state_mutex.unlock();
+
+    if (create_devtools) |snapshot| {
+        sendCreateDevtoolsTab(&snapshot) catch |err| {
+            log.warn("CreateDevtoolsTab send failed pane_id={s} err={}", .{ snapshot.paneId(), err });
+        };
+    }
+}
+
 fn updatePane(
     pane: *PaneState,
     overlay: *c.Termsurf__SetOverlay,
@@ -866,12 +964,48 @@ fn updatePane(
     pane.width = overlay.*.width;
     pane.height = overlay.*.height;
     pane.browsing = overlay.*.browsing != 0;
+    pane.inspected_tab_id = 0;
+    return true;
+}
+
+fn updateDevtoolsPane(
+    pane: *PaneState,
+    overlay: *c.Termsurf__SetDevtoolsOverlay,
+    pane_id: []const u8,
+    profile: []const u8,
+    browser: []const u8,
+) bool {
+    if (!copyText(&pane.pane_id, &pane.pane_id_len, pane_id)) {
+        log.warn("SetDevtoolsOverlay: pane_id too long len={} max={}", .{ pane_id.len, max_pane_id_len });
+        return false;
+    }
+    if (!copyText(&pane.profile, &pane.profile_len, profile)) {
+        log.warn("SetDevtoolsOverlay: profile too long len={} max={}", .{ profile.len, max_profile_len });
+        return false;
+    }
+    if (!copyText(&pane.browser, &pane.browser_len, browser)) {
+        log.warn("SetDevtoolsOverlay: browser too long len={} max={}", .{ browser.len, max_browser_len });
+        return false;
+    }
+    if (!copyText(&pane.url, &pane.url_len, "")) {
+        log.warn("SetDevtoolsOverlay: url clear failed", .{});
+        return false;
+    }
+
+    pane.in_use = true;
+    pane.col = overlay.*.col;
+    pane.row = overlay.*.row;
+    pane.width = overlay.*.width;
+    pane.height = overlay.*.height;
+    pane.browsing = overlay.*.browsing != 0;
+    pane.inspected_tab_id = overlay.*.inspected_tab_id;
     return true;
 }
 
 fn sendPendingCreateTabs(fd: std.posix.fd_t, server: *const ServerState) !void {
     for (&panes) |*pane| {
         if (!pane.in_use or pane.tab_id != 0) continue;
+        if (pane.inspected_tab_id != 0) continue;
         if (!std.mem.eql(u8, pane.profileName(), server.profileName())) continue;
         if (!std.mem.eql(u8, pane.browserName(), server.browserName())) continue;
         try sendCreateTab(fd, pane);
@@ -894,6 +1028,38 @@ fn sendCreateTab(fd: std.posix.fd_t, pane: *const PaneState) !void {
 
     try sendProtobuf(fd, &wrapper);
     log.info("sent CreateTab: pane_id={s} url={s}", .{ pane.paneId(), pane.url[0..pane.url_len] });
+}
+
+fn snapshotCreateDevtoolsTab(pane: *const PaneState, browser_fd: std.posix.fd_t) ?CreateDevtoolsTabSnapshot {
+    var snapshot: CreateDevtoolsTabSnapshot = .{
+        .browser_fd = browser_fd,
+        .inspected_tab_id = pane.inspected_tab_id,
+        .pixel_width = pane.width * fallback_cell_width,
+        .pixel_height = pane.height * fallback_cell_height,
+    };
+    if (!copyText(&snapshot.pane_id, &snapshot.pane_id_len, pane.paneId())) return null;
+    return snapshot;
+}
+
+fn sendCreateDevtoolsTab(snapshot: *const CreateDevtoolsTabSnapshot) !void {
+    var create_devtools_tab: c.Termsurf__CreateDevtoolsTab = undefined;
+    c.termsurf__create_devtools_tab__init(&create_devtools_tab);
+    create_devtools_tab.pane_id = @constCast(snapshot.pane_id[0..snapshot.pane_id_len :0].ptr);
+    create_devtools_tab.inspected_tab_id = snapshot.inspected_tab_id;
+    create_devtools_tab.pixel_width = snapshot.pixel_width;
+    create_devtools_tab.pixel_height = snapshot.pixel_height;
+    create_devtools_tab.dark = 0;
+
+    var wrapper: c.Termsurf__TermSurfMessage = undefined;
+    c.termsurf__term_surf_message__init(&wrapper);
+    wrapper.msg_case = c.TERMSURF__TERM_SURF_MESSAGE__MSG_CREATE_DEVTOOLS_TAB;
+    wrapper.unnamed_0.create_devtools_tab = &create_devtools_tab;
+
+    try sendProtobuf(snapshot.browser_fd, &wrapper);
+    log.info(
+        "CreateDevtoolsTab: pane_id={s} inspected_tab_id={}",
+        .{ snapshot.paneId(), snapshot.inspected_tab_id },
+    );
 }
 
 fn snapshotResize(pane: *const PaneState) ?ResizeSnapshot {
@@ -1028,7 +1194,9 @@ fn handleTabReady(req: ?*c.Termsurf__TabReady) void {
 
     panes[pane_index].tab_id = tab_id;
     const lookup_count = upsertTabLookup(&panes[pane_index], tab_id);
-    _ = copyText(&last_browser_pane, &last_browser_pane_len, pane_id);
+    if (panes[pane_index].inspected_tab_id == 0) {
+        _ = copyText(&last_browser_pane, &last_browser_pane_len, pane_id);
+    }
     browser_ready = snapshotBrowserReady(&panes[pane_index], tab_id);
 
     log.info(
@@ -1427,7 +1595,9 @@ fn msgTypeName(msg_case: c.Termsurf__TermSurfMessage__MsgCase) []const u8 {
         c.TERMSURF__TERM_SURF_MESSAGE__MSG_HELLO_REQUEST => "HelloRequest",
         c.TERMSURF__TERM_SURF_MESSAGE__MSG_HELLO_REPLY => "HelloReply",
         c.TERMSURF__TERM_SURF_MESSAGE__MSG_CREATE_TAB => "CreateTab",
+        c.TERMSURF__TERM_SURF_MESSAGE__MSG_CREATE_DEVTOOLS_TAB => "CreateDevtoolsTab",
         c.TERMSURF__TERM_SURF_MESSAGE__MSG_RESIZE => "Resize",
+        c.TERMSURF__TERM_SURF_MESSAGE__MSG_CLOSE_TAB => "CloseTab",
         c.TERMSURF__TERM_SURF_MESSAGE__MSG_FOCUS_CHANGED => "FocusChanged",
         c.TERMSURF__TERM_SURF_MESSAGE__MSG_TAB_READY => "TabReady",
         c.TERMSURF__TERM_SURF_MESSAGE__MSG_MODE_CHANGED => "ModeChanged",
@@ -1439,6 +1609,7 @@ fn msgTypeName(msg_case: c.Termsurf__TermSurfMessage__MsgCase) []const u8 {
         c.TERMSURF__TERM_SURF_MESSAGE__MSG_QUERY_TABS_REPLY => "QueryTabsReply",
         c.TERMSURF__TERM_SURF_MESSAGE__MSG_SERVER_REGISTER => "ServerRegister",
         c.TERMSURF__TERM_SURF_MESSAGE__MSG_SET_OVERLAY => "SetOverlay",
+        c.TERMSURF__TERM_SURF_MESSAGE__MSG_SET_DEVTOOLS_OVERLAY => "SetDevtoolsOverlay",
         else => "Other",
     };
 }

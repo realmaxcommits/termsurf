@@ -134,3 +134,88 @@ uses `TabReady(pane-normal, 42)`.
 
 The reviewer re-reviewed those fixes and approved the design with no remaining
 required findings.
+
+## Result
+
+**Result:** Pass
+
+Implemented DevTools browser tab creation in
+`ghostboard/src/apprt/termsurf.zig`.
+
+The implementation now:
+
+- decodes and dispatches `SetDevtoolsOverlay`;
+- tracks `inspected_tab_id` in `PaneState`;
+- creates a DevTools pane for a TUI that targets an existing attached browser
+  server;
+- sends `CreateDevtoolsTab` to the browser server with pane id, inspected tab
+  id, and pixel geometry;
+- sends DevTools `BrowserReady` through the existing `TabReady` path;
+- keeps `last_browser_pane` pointed at normal browser panes by updating it only
+  when `inspected_tab_id == 0`;
+- sends `Resize(tab_id=...)` for repeated `SetDevtoolsOverlay` messages after
+  the DevTools pane is ready;
+- lets Experiment 24's disconnect cleanup send `CloseTab` for DevTools tabs;
+- logs successful DevTools tab creation as
+  `CreateDevtoolsTab: pane_id=... inspected_tab_id=...`.
+
+Verification passed:
+
+- `zig fmt src/apprt/termsurf.zig src/main_c.zig src/build/SharedDeps.zig`
+  passed: `logs/ghostboard-exp25-zig-fmt-20260616.log`.
+- Native GhosttyKit framework build passed:
+  `logs/ghostboard-exp25-zig-native-xcframework-20260616.log`.
+- macOS app build passed:
+  `logs/ghostboard-exp25-macos-build-debug-20260616.log`.
+- Runtime harness passed: `logs/ghostboard-exp25-runtime-harness-20260616.log`.
+- Runtime app log: `logs/ghostboard-exp25-runtime-app-20260616.log`.
+- `git diff --check` passed.
+
+Observed successful runtime checks:
+
+```text
+PASS: socket exists at deterministic PID path
+PASS: normal pane reached BrowserReady tab_id=42
+PASS: QueryDevtoolsRequest succeeded for normal tab 42
+PASS: DevTools TUI received BrowserReady tab_id=99
+PASS: QueryLast still returns pane-normal tab_id=42 after DevTools TabReady
+PASS: repeated SetDevtoolsOverlay emitted Resize to helper
+PASS: QueryTabs reports gui_panes=2 while normal and DevTools panes are live
+PASS: closing DevTools TUI sent CloseTab 99 and left normal pane live
+PASS: app log contains CreateDevtoolsTab and DevTools CloseTab
+PASS: app exited after SIGTERM
+PASS: socket file removed after shutdown
+PASS: no stale matching TermSurf.app/Contents/MacOS/termsurf or devtools-helper.py processes
+runtime verification passed
+```
+
+The runtime harness created a normal browser pane, had the helper send
+`TabReady(pane-normal, 42)`, verified `QueryDevtoolsRequest` succeeded for that
+tab, then sent `SetDevtoolsOverlay` for `pane-dev`. The attached helper received
+`CreateDevtoolsTab(pane-dev, inspected_tab_id=42)`, sent
+`TabReady(pane-dev, 99)`, and the DevTools TUI received `BrowserReady`.
+
+After DevTools `TabReady`, `QueryLastRequest(profile=default)` still returned
+`pane-normal` with `tab_id=42`, proving DevTools panes do not take over the
+normal "last browser pane" slot. A repeated `SetDevtoolsOverlay` sent
+`Resize(tab_id=99)`, and closing the DevTools TUI sent `CloseTab(tab_id=99)`
+without removing the normal pane.
+
+## Conclusion
+
+Ghostboard can now create DevTools browser tabs for an existing attached browser
+server and keep normal-pane `QueryLast` semantics intact. DevTools split
+creation, duplicate DevTools detection, native overlay presentation, and
+standalone missing-server DevTools startup remain separate future work.
+
+## Completion Review
+
+A fresh-context adversarial Codex subagent reviewed the completed Experiment 25
+result and returned **APPROVED** with no findings.
+
+The reviewer confirmed that the diff is limited to
+`ghostboard/src/apprt/termsurf.zig` and the issue docs, that no `webtui`,
+`roamium`, or protocol changes were made, and that the runtime logs prove normal
+`TabReady` 42, `QueryDevtools` success, `CreateDevtoolsTab`, DevTools
+`BrowserReady` 99, `QueryLast` still returning the normal pane, `Resize` 99,
+`QueryTabs` 2, DevTools `CloseTab` 99, and no stale matching processes.
