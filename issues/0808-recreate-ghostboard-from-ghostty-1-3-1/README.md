@@ -176,3 +176,5 @@ and against `ghostboard-legacy/` where useful.
   — **Pass**
 - [Experiment 2: Build the pristine Ghostty import](02-build-pristine-ghostty-import.md)
   — **Partial**
+- [Experiment 3: Fix pristine macOS app link](03-fix-pristine-macos-app-link.md)
+  — **Designed**
