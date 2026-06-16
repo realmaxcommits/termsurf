@@ -235,3 +235,5 @@ and against `ghostboard-legacy/` where useful.
   — **Pass**
 - [Experiment 15: Flush pending CreateTab](15-flush-pending-create-tab.md) —
   **Pass**
+- [Experiment 16: Record TabReady state](16-record-tab-ready-state.md) —
+  **Designed**
