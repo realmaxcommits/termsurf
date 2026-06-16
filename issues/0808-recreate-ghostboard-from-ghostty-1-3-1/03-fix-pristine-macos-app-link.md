@@ -104,3 +104,46 @@ Fresh-context adversarial review returned `APPROVED`.
   experiment has the required sections, the scope stays limited to the baseline
   macOS app link failure, and the verification criteria are concrete.
 - No required findings were reported.
+
+## Result
+
+**Result:** Fail
+
+The experiment was stopped because its premise was wrong for this issue. A fresh
+Ghostty `v1.3.1` import should build without source changes; changing
+`ghostboard/` build files to compensate for the local build failure would
+violate the baseline-build goal.
+
+The attempted `ghostboard/` edits were unwound:
+
+- `ghostboard/src/build/LibtoolStep.zig` was restored.
+- `ghostboard/src/build/combine-static-libs.sh` was removed.
+
+After the unwind, `git status --short` showed no tracked or untracked
+`ghostboard/` source changes.
+
+## Completion Review
+
+Fresh-context adversarial completion review returned `APPROVED`.
+
+- The reviewer confirmed this experiment has a `Result` and `Conclusion`.
+- The reviewer confirmed the issue README marks Experiment 3 as `Fail`.
+- The reviewer confirmed the documentation says no `ghostboard/` source changes
+  should happen before the pristine Ghostty build and run baseline is proven.
+- The reviewer confirmed `git diff -- ghostboard` showed no tracked
+  `ghostboard/` source diffs.
+- No required findings were reported.
+
+## Conclusion
+
+Do not fix the pristine Ghostty app build by modifying imported Ghostty source
+in this experiment. Before any Ghostboard-specific modifications begin, the
+imported Ghostty `v1.3.1` tree must build and run on macOS without errors as
+plain upstream Ghostty.
+
+Until that baseline is proven, make zero source changes under `ghostboard/`.
+Assume failures are environment, toolchain, cache, permission, or invocation
+issues to be fixed outside the imported source tree. The next experiment should
+identify the missing environment or exact build/run invocation difference that
+lets upstream Ghostty `v1.3.1` build and run as imported, with no source edits
+to `ghostboard/`.

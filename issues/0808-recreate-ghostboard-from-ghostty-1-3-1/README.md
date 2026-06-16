@@ -70,6 +70,20 @@ the subtree merge strategy is unreliable for this repo's Ghostty history.
 
 ## Scope
 
+Before any Ghostboard porting modifications begin, the imported Ghostty `v1.3.1`
+tree must build and run on macOS without errors as plain upstream Ghostty. Until
+that baseline is proven:
+
+- make zero source changes under `ghostboard/`;
+- do not change branding, config paths, CLI names, icons, protocol code, build
+  scripts, Xcode project files, Zig build files, or vendored source;
+- assume build, link, launch, or runtime failures are environment, toolchain,
+  cache, permission, or invocation issues;
+- fix failures by fixing the environment or the build invocation, not by
+  modifying imported Ghostty code;
+- only begin Ghostboard-specific modifications after the pristine macOS build
+  and launch are verified and recorded in an experiment.
+
 In scope:
 
 - Import Ghostty `v1.3.1` into `ghostboard/` with upstream history preserved.
@@ -147,6 +161,8 @@ The issue is solved when:
 
 - `ghostboard/` exists as a subtree import of Ghostty `v1.3.1`.
 - The import preserves upstream Ghostty history.
+- Before any Ghostboard-specific code changes, pristine imported Ghostty
+  `v1.3.1` builds and runs on macOS without errors.
 - The app builds in the local development environment.
 - The app can be launched as `TermSurf Ghostboard`.
 - The CLI command is `ghostboard`.
@@ -163,9 +179,10 @@ The issue is solved when:
 ## Notes
 
 This issue should not start by trying to port every historical Ghostboard change
-blindly. Start with a clean Ghostty `v1.3.1` subtree, establish the smallest
-renaming and packaging surface needed for `TermSurf Ghostboard`, then add the
-TermSurf protocol implementation incrementally.
+blindly. Start with a clean Ghostty `v1.3.1` subtree, prove the pristine import
+builds and runs on macOS with no source changes, establish the smallest renaming
+and packaging surface needed for `TermSurf Ghostboard`, then add the TermSurf
+protocol implementation incrementally.
 
 Each experiment should preserve the ability to compare against upstream Ghostty
 and against `ghostboard-legacy/` where useful.
@@ -177,4 +194,4 @@ and against `ghostboard-legacy/` where useful.
 - [Experiment 2: Build the pristine Ghostty import](02-build-pristine-ghostty-import.md)
   — **Partial**
 - [Experiment 3: Fix pristine macOS app link](03-fix-pristine-macos-app-link.md)
-  — **Designed**
+  — **Fail**
