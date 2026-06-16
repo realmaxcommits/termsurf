@@ -1,6 +1,7 @@
 +++
-status = "open"
+status = "closed"
 opened = "2026-06-16"
+closed = "2026-06-16"
 +++
 
 # Issue 808: Re-create Ghostboard from Ghostty 1.3.1
@@ -278,4 +279,34 @@ and against `ghostboard-legacy/` where useful.
 - [Experiment 36: Fix and install helper CLI](36-fix-and-install-helper-cli.md)
   — **Pass**
 - [Experiment 37: Closeout acceptance audit](37-closeout-acceptance-audit.md) —
-  **Designed**
+  **Pass**
+
+## Conclusion
+
+Issue 808 re-created Ghostboard from Ghostty `v1.3.1` and brought it to parity
+for ordinary TermSurf browsing workflows.
+
+The final state is:
+
+- `ghostboard/` is a history-preserving subtree import of Ghostty `v1.3.1`, with
+  upstream commit `22efb0be2bbea73e5339f5426fa3b20edabcaa11` reachable from the
+  TermSurf history.
+- The local macOS build baseline is documented, including the build-only
+  deviations needed for this VM's Zig/Xcode/macOS SDK combination.
+- The app builds and launches as `TermSurf.app`, with bundle executable
+  `termsurf`, user-facing app/menu/about identity `TermSurf`, the TermSurf
+  config path, and the Wezboard-derived icon.
+- The Zig build now produces a runnable `zig-out/bin/termsurf` helper command
+  when `emit-exe` is true, suppresses it when `emit-exe=false`, and no
+  `zig-out/bin/ghostty` command is produced.
+- The current TermSurf protocol is implemented well enough for ordinary browsing
+  workflows: `webtui` runs in Ghostboard without changes, Roamium is launched
+  and controlled without changes, the normal browser overlay is presented,
+  keyboard/mouse/scroll input reaches Roamium, DevTools flow works, and
+  `web last` resolves the active tab.
+
+Known follow-up debt remains outside Issue 808's closure scope: internal Ghostty
+implementation names are intentionally retained by the minimal port, some
+Roamium listen sockets can remain after runs, and a future lifecycle issue
+should clean up that socket shutdown behavior. None of those block replacing
+Wezboard with Ghostboard for the ordinary browsing path covered by this issue.

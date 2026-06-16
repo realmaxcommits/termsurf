@@ -68,3 +68,65 @@ only, the verification requires every Issue 808 acceptance criterion to have
 concrete evidence and pass before closure, the design includes issue-level
 conclusion and index regeneration, and completion review is required before the
 result commit.
+
+## Result
+
+**Result:** Pass
+
+The closeout audit found concrete passing evidence for every Issue 808
+acceptance criterion. Issue 808 was closed on 2026-06-16, an issue-level
+conclusion was added to the README, and the issue index was regenerated.
+
+### Acceptance Matrix
+
+| Criterion                                                              | Status | Evidence                                                                                                                            |
+| ---------------------------------------------------------------------- | ------ | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `ghostboard/` exists as Ghostty `v1.3.1` subtree import                | Pass   | Experiment 1; `logs/ghostboard-exp37-history-20260616.log` finds `493817fd9 Import Ghostty v1.3.1 into ghostboard`                  |
+| Upstream Ghostty history is preserved                                  | Pass   | Experiment 33; `git merge-base --is-ancestor 22efb0be2bbea73e5339f5426fa3b20edabcaa11 HEAD` returned `merge_base_exit=0`            |
+| Imported Ghostty built before port changes, with deviations documented | Pass   | Experiments 2-5 document pristine failures and the macOS-only GhosttyKit/libtool build patch                                        |
+| App builds locally                                                     | Pass   | Experiments 31-34 and 36; `logs/ghostboard-exp36-app-bundle-regression-20260616.log` has `build_exit=0`                             |
+| App can be launched as `TermSurf.app`                                  | Pass   | Experiment 33 launched `ghostboard/macos/build/Debug/TermSurf.app`; Experiment 36 verifies `zig-out/TermSurf.app` is still built    |
+| CLI command is `termsurf`                                              | Pass   | Experiment 36; `logs/ghostboard-exp36-positive-cli-build-20260616.log` and `logs/ghostboard-exp36-positive-cli-run-20260616.log`    |
+| App uses `~/.config/termsurf/config`                                   | Pass   | Experiments 6 and 33 source/config audits                                                                                           |
+| Dock/menu/about branding says `TermSurf`                               | Pass   | Experiments 6 and 33 bundle/source audits; `MainMenu.xib`, `AboutView.swift`, and bundle metadata                                   |
+| App icon matches the current Wezboard icon                             | Pass   | Experiment 6 icon setup and pixel comparison; Experiment 33 confirms current `TermSurf.icns` bundle metadata                        |
+| `webtui` runs inside Ghostboard without changes                        | Pass   | Experiments 28 and 30-33 use real `target/debug/web`                                                                                |
+| Roamium launches and is controlled without changes                     | Pass   | Experiments 30-33 use Chromium-output Roamium and Roamium-side logs                                                                 |
+| Current TermSurf protocol supports ordinary browsing workflows         | Pass   | Experiments 7-32 implement/query/control protocol pieces; Experiments 31-33 prove overlay presentation and browser input forwarding |
+| Experiments are recorded one at a time                                 | Pass   | Issue README links Experiments 1-37; each has a result/conclusion before the next implementation step                               |
+
+### Current Evidence
+
+- `logs/ghostboard-exp37-git-hygiene-20260616.log`
+  - `git status --short --untracked-files=all` was clean before closeout docs;
+  - `git diff --check` returned `diff_check_exit=0`;
+  - HEAD was `8bb04d183 Plan issue 808 closeout`.
+- `logs/ghostboard-exp37-history-20260616.log`
+  - found the Ghostty subtree import commit;
+  - proved exact upstream `v1.3.1` commit reachability with `merge_base_exit=0`;
+  - confirmed the `ghostty` remote points to
+    `https://github.com/ghostty-org/ghostty.git`.
+- `logs/ghostboard-exp37-current-artifacts-20260616.log`
+  - current `ghostboard/zig-out/bin/termsurf` exists and runs;
+  - current `ghostboard/zig-out/TermSurf.app` exists;
+  - current app bundle metadata reports `TermSurf` and `termsurf`.
+- `logs/ghostboard-exp37-build-issues-index-20260616.log`
+  - `scripts/build-issues-index.sh` exited with `exit=0`;
+  - regenerated `issues/README.md` with 5 open issues and 314 closed issues.
+
+## Completion Review
+
+A fresh-context adversarial reviewer returned **APPROVED** with no required
+findings. The reviewer confirmed that Issue 808 frontmatter is closed, the issue
+README has an issue-level conclusion, Experiment 37 is marked **Pass**, the
+acceptance matrix covers all 13 issue acceptance criteria, the issue index moved
+Issue 808 from open to closed, `git diff --check` was clean, and the closeout
+diff touches only issue documentation and the generated issue index.
+
+## Conclusion
+
+Issue 808 is complete. The fresh Ghostty `v1.3.1` subtree has been imported,
+renamed minimally to the TermSurf user-facing identity, wired to the current
+TermSurf protocol, verified with real `webtui` and Roamium workflows, given a
+working `termsurf` helper command, and closed with all acceptance criteria
+passing.
