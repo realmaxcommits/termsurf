@@ -51,9 +51,9 @@ Pass criteria:
 
 - Swift formatting/linting follows the nested Ghostboard instructions for the
   touched Swift file. During implementation, run
-  `swiftlint lint --strict --fix --path "macos/Sources/Ghostty/Surface View/SurfaceView_AppKit.swift"`
+  `swiftlint lint --strict --fix "macos/Sources/Ghostty/Surface View/SurfaceView_AppKit.swift"`
   inside `ghostboard/`, then run the non-mutating check
-  `swiftlint lint --strict --path "macos/Sources/Ghostty/Surface View/SurfaceView_AppKit.swift"`
+  `swiftlint lint --strict "macos/Sources/Ghostty/Surface View/SurfaceView_AppKit.swift"`
   and record the command, cwd, and exit status in logs.
 - The native GhosttyKit framework build passes:
   `zig build -Demit-xcframework=true -Dxcframework-target=native -Demit-macos-app=false`,
@@ -109,3 +109,80 @@ AppKit Swift file.
 
 The reviewer re-reviewed those fixes and approved the design with no remaining
 required findings.
+
+## Result
+
+**Result:** Pass
+
+Implemented pane id propagation for macOS Ghostboard surfaces in
+`ghostboard/macos/Sources/Ghostty/Surface View/SurfaceView_AppKit.swift`.
+
+The implementation now makes the per-surface `SurfaceConfiguration` mutable
+while constructing a macOS `SurfaceView`, then sets
+`TERMSURF_PANE_ID = self.id.uuidString` before `ghostty_surface_new` starts the
+underlying terminal IO. Existing inherited environment variables are preserved,
+and `TERMSURF_PANE_ID` is intentionally overwritten at construction time so a
+new split receives its own UUID instead of inheriting the parent surface's pane
+id.
+
+Verification passed:
+
+- Swift format/lint fix pass succeeded:
+  `logs/ghostboard-exp26-swiftlint-fix-20260616.log`.
+- Swift non-mutating lint check succeeded with 0 violations:
+  `logs/ghostboard-exp26-swiftlint-check-20260616.log`.
+- Native GhosttyKit framework build passed:
+  `logs/ghostboard-exp26-zig-native-xcframework-20260616.log`.
+- macOS app build passed:
+  `logs/ghostboard-exp26-macos-build-debug-20260616.log`.
+- Runtime harness passed: `logs/ghostboard-exp26-runtime-harness-20260616.log`.
+- Runtime app log: `logs/ghostboard-exp26-runtime-app-20260616.log`.
+- `git diff --check` passed.
+
+Observed successful runtime checks:
+
+```text
+PASS: socket namespace is Ghostboard
+PASS: first pane id 9FE1B730-7822-4AAA-8FCE-ACEFF0CC50BC
+PASS: second pane id 3F05DE57-06D5-42E3-AE5C-5A277E211A47
+PASS: shared socket /var/folders/vx/wbmx10nd7tx8259xgg3v4vf80000gn/T/termsurf/termsurf-ghostboard-78130.sock
+PASS: app exited and socket cleaned up
+PASS: app log has no targeted surface/env/launch error markers
+runtime verification passed
+```
+
+The runtime harness launched the built `TermSurf.app` with a temporary
+`GHOSTTY_CONFIG_PATH`. The config made every terminal surface append
+`TERMSURF_PANE_ID` and `TERMSURF_SOCKET` to a temporary capture file. The first
+surface wrote a UUID pane id and the expected Ghostboard GUI socket. The harness
+then used System Events to send the native `Cmd-D` split shortcut, causing a
+second terminal surface to launch the same command. The second surface wrote a
+different UUID pane id and the same GUI socket, proving pane identity is per
+surface while the socket remains per app instance.
+
+During verification, direct custom AppleScript commands such as
+`count terminals` and app-level `quit` against the built app hung in this VM.
+System Events keyboard automation did work and successfully triggered Ghostty's
+native split action. This is useful for future experiments that need to drive
+native Ghostboard UI state without depending on custom AppleScript handlers.
+
+## Conclusion
+
+Ghostboard now provides `TERMSURF_PANE_ID` to terminal child processes on macOS.
+This unblocks real `webtui` compositor connections from processes launched
+inside Ghostboard surfaces and gives future `OpenSplit` work a concrete surface
+UUID to target. The next experiment should implement the GUI-side `OpenSplit`
+bridge that uses those pane ids to create a native split running the requested
+command.
+
+## Completion Review
+
+A fresh-context adversarial Codex subagent reviewed the completed Experiment 26
+result and returned **APPROVED** with no findings.
+
+The reviewer confirmed that the implementation stayed within the approved
+AppKit-only scope, did not edit UIKit or protocol code, set `TERMSURF_PANE_ID`
+to the current macOS `SurfaceView` UUID before `ghostty_surface_new`, preserved
+inherited environment variables, and recorded the required Swift lint, native
+framework build, macOS app build, runtime two-surface verification, shutdown
+cleanup, and `git diff --check` evidence.

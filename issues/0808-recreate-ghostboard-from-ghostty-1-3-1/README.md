@@ -256,4 +256,4 @@ and against `ghostboard-legacy/` where useful.
 - [Experiment 25: Create DevTools browser tabs](25-create-devtools-browser-tabs.md)
   — **Pass**
 - [Experiment 26: Propagate pane ids to surfaces](26-propagate-pane-ids-to-surfaces.md)
-  — **Designed**
+  — **Pass**
