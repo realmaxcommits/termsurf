@@ -162,6 +162,17 @@ const FocusChangedSnapshot = struct {
     }
 };
 
+const CloseTabSnapshot = struct {
+    browser_fd: std.posix.fd_t = -1,
+    pane_id: [max_pane_id_len]u8 = undefined,
+    pane_id_len: usize = 0,
+    tab_id: i64 = 0,
+
+    fn paneId(self: *const CloseTabSnapshot) []const u8 {
+        return self.pane_id[0..self.pane_id_len];
+    }
+};
+
 var mutex: std.Thread.Mutex = .{};
 var clients_mutex: std.Thread.Mutex = .{};
 var state_mutex: std.Thread.Mutex = .{};
@@ -290,7 +301,7 @@ fn acceptLoop(fd: std.posix.fd_t) void {
 fn handleClient(fd: std.posix.fd_t, slot_index: usize) void {
     var conn_type: ConnType = .unknown;
     defer {
-        if (conn_type == .tui) clearPaneTuiFd(fd);
+        if (conn_type == .tui) cleanupTuiPanes(fd);
         markClientDone(slot_index);
         std.posix.close(fd);
     }
@@ -984,6 +995,20 @@ fn sendFocusChanged(snapshot: *const FocusChangedSnapshot) !void {
     );
 }
 
+fn sendCloseTab(snapshot: *const CloseTabSnapshot) !void {
+    var close_tab: c.Termsurf__CloseTab = undefined;
+    c.termsurf__close_tab__init(&close_tab);
+    close_tab.tab_id = snapshot.tab_id;
+
+    var wrapper: c.Termsurf__TermSurfMessage = undefined;
+    c.termsurf__term_surf_message__init(&wrapper);
+    wrapper.msg_case = c.TERMSURF__TERM_SURF_MESSAGE__MSG_CLOSE_TAB;
+    wrapper.unnamed_0.close_tab = &close_tab;
+
+    try sendProtobuf(snapshot.browser_fd, &wrapper);
+    log.info("CloseTab: pane_id={s} tab_id={}", .{ snapshot.paneId(), snapshot.tab_id });
+}
+
 fn handleTabReady(req: ?*c.Termsurf__TabReady) void {
     const ready = req orelse {
         log.warn("TabReady: missing payload", .{});
@@ -1138,13 +1163,67 @@ fn recordServerChild(profile: []const u8, browser: []const u8, pid: std.process.
     }
 }
 
-fn clearPaneTuiFd(fd: std.posix.fd_t) void {
+fn cleanupTuiPanes(fd: std.posix.fd_t) void {
+    var close_tabs: [max_panes]CloseTabSnapshot = undefined;
+    var close_tab_count: usize = 0;
+
     state_mutex.lock();
-    defer state_mutex.unlock();
 
     for (&panes) |*pane| {
-        if (pane.in_use and pane.tui_fd == fd) {
-            pane.tui_fd = -1;
+        if (!pane.in_use or pane.tui_fd != fd) continue;
+
+        const pane_id = pane.paneId();
+        const profile = pane.profileName();
+        const browser = pane.browserName();
+        const tab_id = pane.tab_id;
+
+        if (last_browser_pane_len > 0 and
+            std.mem.eql(u8, last_browser_pane[0..last_browser_pane_len], pane_id))
+        {
+            last_browser_pane_len = 0;
+        }
+
+        if (tab_id != 0) removeTabLookupForPane(profile, browser, tab_id, pane_id);
+
+        if (findServer(profile, browser)) |server_index| {
+            if (servers[server_index].pane_count > 0) {
+                servers[server_index].pane_count -= 1;
+            }
+
+            if (tab_id != 0 and servers[server_index].attached_fd >= 0) {
+                var snapshot: CloseTabSnapshot = .{
+                    .browser_fd = servers[server_index].attached_fd,
+                    .tab_id = tab_id,
+                };
+                if (copyText(&snapshot.pane_id, &snapshot.pane_id_len, pane_id)) {
+                    close_tabs[close_tab_count] = snapshot;
+                    close_tab_count += 1;
+                }
+            }
+        }
+
+        log.info("TUI disconnect cleanup: pane_id={s} tab_id={}", .{ pane_id, tab_id });
+        pane.* = .{};
+    }
+
+    state_mutex.unlock();
+
+    for (close_tabs[0..close_tab_count]) |*snapshot| {
+        sendCloseTab(snapshot) catch |err| {
+            log.warn("CloseTab send failed pane_id={s} err={}", .{ snapshot.paneId(), err });
+        };
+    }
+}
+
+fn removeTabLookupForPane(profile: []const u8, browser: []const u8, tab_id: i64, pane_id: []const u8) void {
+    for (&tab_lookups) |*lookup| {
+        if (lookup.in_use and
+            lookup.tab_id == tab_id and
+            std.mem.eql(u8, lookup.profileName(), profile) and
+            std.mem.eql(u8, lookup.browserName(), browser) and
+            std.mem.eql(u8, lookup.paneId(), pane_id))
+        {
+            lookup.* = .{};
         }
     }
 }

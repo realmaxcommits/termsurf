@@ -126,3 +126,86 @@ runtime socket via `$TMPDIR/termsurf/termsurf-ghostboard-{pid}.sock`.
 
 The reviewer re-reviewed those fixes and approved the design with no remaining
 required findings.
+
+## Result
+
+**Result:** Pass
+
+Implemented TUI disconnect cleanup in `ghostboard/src/apprt/termsurf.zig`.
+
+The implementation now:
+
+- replaces the old `clearPaneTuiFd` behavior with `cleanupTuiPanes`;
+- removes every pane owned by the disconnected TUI fd from pane/query state;
+- decrements the matched server `pane_count` for every removed pane without
+  underflow;
+- clears `last_browser_pane` when it points at a removed pane;
+- removes matching tab lookup state for ready tabs;
+- snapshots `CloseTab` sends only for panes with nonzero `tab_id` and an
+  attached browser fd;
+- releases `state_mutex` before writing `CloseTab` to the browser fd;
+- logs successful sends as `CloseTab: pane_id=... tab_id=...`.
+
+Verification passed:
+
+- `zig fmt src/apprt/termsurf.zig src/main_c.zig src/build/SharedDeps.zig`
+  passed: `logs/ghostboard-exp24-zig-fmt-20260616.log`.
+- Native GhosttyKit framework build passed:
+  `logs/ghostboard-exp24-zig-native-xcframework-20260616.log`.
+- macOS app build passed:
+  `logs/ghostboard-exp24-macos-build-debug-20260616.log`.
+- Runtime harness passed: `logs/ghostboard-exp24-runtime-harness-20260616.log`.
+- Runtime app log: `logs/ghostboard-exp24-runtime-app-20260616.log`.
+- A process check found no stale matching
+  `TermSurf.app/Contents/MacOS/termsurf`, `pre-helper.py`, or `ready-helper.py`
+  processes, and the explicit command/result were appended to
+  `logs/ghostboard-exp24-runtime-harness-20260616.log`.
+- `git diff --check` passed.
+
+Observed successful runtime checks:
+
+```text
+PASS: socket exists at deterministic PID path
+PASS: pre-TabReady disconnected pane absent from QueryLast/QueryTabs
+PASS: pre-ready helper did not receive CloseTab
+PASS: TUI socket received BrowserReady with real helper listen socket
+PASS: ready disconnected pane absent from QueryLast/QueryTabs
+PASS: app log contains CloseTab, pre cleanup, and pane_count=1 reused server
+PASS: app exited after SIGTERM
+PASS: socket file removed after shutdown
+PASS: no stale matching TermSurf.app/Contents/MacOS/termsurf, pre-helper.py, or ready-helper.py processes
+runtime verification passed
+```
+
+The pre-`TabReady` path was exercised by sending `SetOverlay` for `pane-pre`,
+closing the TUI before the helper registered, then querying a fresh TUI client.
+`QueryLastRequest(profile=default)` returned an error and
+`QueryTabsRequest(profile=default)` reported zero GUI panes. A later overlay for
+the same profile/browser reused the server at `pane_count=1`, proving the
+pre-ready disconnect did not leave the server count inflated.
+
+The ready-tab path was exercised by sending `SetOverlay` for `pane-a`, letting
+the helper send `TabReady(pane-a, 42)`, receiving `BrowserReady` on the TUI
+socket, then closing that TUI socket. The helper received `CloseTab(tab_id=42)`,
+and fresh `QueryLast`/`QueryTabs` requests no longer reported the disconnected
+pane.
+
+## Conclusion
+
+Ghostboard now performs the first useful browser-tab teardown on TUI disconnect:
+disconnected panes are removed from GUI query state, ready browser tabs receive
+`CloseTab`, and pre-ready panes are cleaned up without sending a premature
+browser close. Browser process shutdown, native overlay cleanup, and broader
+lifecycle cleanup remain separate future work.
+
+## Completion Review
+
+A fresh-context adversarial Codex subagent reviewed the completed Experiment 24
+result and returned **APPROVED** with no required findings.
+
+The reviewer had one optional finding: the no-stale-process check was summarized
+in the experiment result, but the runtime harness log did not include the exact
+command/result. The check was rerun and appended to
+`logs/ghostboard-exp24-runtime-harness-20260616.log` with an explicit pass line
+for `TermSurf.app/Contents/MacOS/termsurf`, `pre-helper.py`, and
+`ready-helper.py`.
