@@ -230,4 +230,4 @@ and against `ghostboard-legacy/` where useful.
 - [Experiment 12: Classify TermSurf connections](12-classify-termsurf-connections.md)
   — **Pass**
 - [Experiment 13: Handle unmatched ServerRegister](13-handle-unmatched-server-register.md)
-  — **Designed**
+  — **Pass**

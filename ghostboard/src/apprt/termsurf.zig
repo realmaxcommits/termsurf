@@ -222,6 +222,9 @@ fn handleClient(fd: std.posix.fd_t, slot_index: usize) void {
                         return;
                     };
                 },
+                c.TERMSURF__TERM_SURF_MESSAGE__MSG_SERVER_REGISTER => {
+                    handleServerRegister(msg.*.unnamed_0.server_register);
+                },
                 else => {
                     log.info("TermSurf message ignored type={s}", .{msgTypeName(msg.*.msg_case)});
                 },
@@ -418,6 +421,19 @@ fn sendQueryTabsReply(fd: std.posix.fd_t) !void {
 
     try sendProtobuf(fd, &wrapper);
     log.info("TermSurf QueryTabsReply sent", .{});
+}
+
+fn handleServerRegister(req: ?*c.Termsurf__ServerRegister) void {
+    const profile = serverRegisterProfile(req);
+    log.info("ServerRegister: profile={s}", .{profile});
+    log.warn("ServerRegister: no matching server for profile={s}", .{profile});
+}
+
+fn serverRegisterProfile(req: ?*c.Termsurf__ServerRegister) []const u8 {
+    if (req) |server| {
+        if (server.*.profile) |profile| return std.mem.span(profile);
+    }
+    return "";
 }
 
 fn sendProtobuf(fd: std.posix.fd_t, wrapper: *c.Termsurf__TermSurfMessage) !void {

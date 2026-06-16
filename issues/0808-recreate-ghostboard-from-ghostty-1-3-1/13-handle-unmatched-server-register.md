@@ -87,3 +87,85 @@ experiment has the required sections, the scope is narrow, and the planned
 unmatched `ServerRegister` behavior matches Wezboard's no-pending-server path:
 log the profile, find no matching pending server, return no server key, keep the
 socket alive, and avoid fake server, browser, or tab state.
+
+## Result
+
+**Result:** Pass
+
+Implemented explicit unmatched `ServerRegister` handling in
+`ghostboard/src/apprt/termsurf.zig`.
+
+The socket handler now:
+
+- routes `ServerRegister` to a dedicated branch instead of the generic
+  ignored-message branch;
+- extracts the protobuf-c profile C string into a Zig slice;
+- logs `ServerRegister: profile={profile}`;
+- logs `ServerRegister: no matching server for profile={profile}`;
+- keeps the socket open and leaves all existing request/reply dispatch behavior
+  unchanged.
+
+Verification passed:
+
+- `zig fmt src/apprt/termsurf.zig src/main_c.zig src/build/SharedDeps.zig`
+  passed.
+- Native GhosttyKit framework build passed:
+  `logs/ghostboard-exp13-zig-native-xcframework-20260616-100912.log`.
+- macOS app build passed:
+  `logs/ghostboard-exp13-macos-build-debug-20260616-100946.log`.
+- Runtime harness passed:
+  `logs/ghostboard-exp13-runtime-harness-20260616-101031.log`.
+- Runtime app log: `logs/ghostboard-exp13-runtime-app-20260616-101031.log`.
+- `git diff --check` passed.
+
+The first native build attempt failed because the helper mixed a protobuf-c
+`[*c]u8` profile pointer with a Zig string literal fallback. I fixed that by
+normalizing the optional protobuf-c profile pointer with `std.mem.span` and
+returning an empty Zig slice when the request or profile pointer is missing.
+
+Observed successful runtime checks:
+
+```text
+PASS: child wrote TERMSURF_SOCKET
+PASS: socket path is under TMPDIR/termsurf
+PASS: socket exists while app is running
+PASS: app log contains TermSurf socket listening
+PASS: browser-classified socket stayed open and received later HelloReply
+PASS: client connection was logged
+PASS: socket fd=11 classified exactly once as Browser
+PASS: ServerRegister profile log present
+PASS: unmatched ServerRegister warning present
+PASS: ServerRegister did not use generic ignored branch
+PASS: fresh TUI client received HelloReply
+PASS: client connection was logged
+PASS: socket fd=11 classified exactly once as Tui
+PASS: app exited after SIGTERM
+PASS: socket file removed after shutdown
+PASS: no stale TermSurf process remains
+runtime verification passed
+```
+
+## Result Review
+
+Fresh-context adversarial result review returned **APPROVED** with no findings.
+
+The reviewer confirmed:
+
+- `ServerRegister` is handled explicitly;
+- the helper logs the profile and unmatched-server warning without creating fake
+  server state or launching browsers;
+- the behavior matches Wezboard's no-matching-server path;
+- the claimed native build, macOS app build, runtime harness, and
+  `git diff --check` evidence support the result;
+- the README marks Experiment 13 as `Pass`;
+- the result commit had not been made before review.
+
+## Conclusion
+
+Ghostboard now has an explicit browser registration hook. A registering browser
+connection is classified as `Browser`, logs its profile, and follows Wezboard's
+no-pending-server behavior by warning that no matching server exists yet.
+
+The next experiment can introduce actual pending server records from the GUI/TUI
+side, then attach a registering browser connection to those records instead of
+warning unconditionally.
