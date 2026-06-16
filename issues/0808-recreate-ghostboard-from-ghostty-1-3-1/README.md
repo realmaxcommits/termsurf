@@ -231,3 +231,5 @@ and against `ghostboard-legacy/` where useful.
   — **Pass**
 - [Experiment 13: Handle unmatched ServerRegister](13-handle-unmatched-server-register.md)
   — **Pass**
+- [Experiment 14: Track pending overlay servers](14-track-pending-overlay-servers.md)
+  — **Designed**
