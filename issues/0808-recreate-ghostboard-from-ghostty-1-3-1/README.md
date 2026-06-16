@@ -196,4 +196,6 @@ and against `ghostboard-legacy/` where useful.
 - [Experiment 3: Fix pristine macOS app link](03-fix-pristine-macos-app-link.md)
   — **Fail**
 - [Experiment 4: Reproduce the upstream macOS baseline](04-reproduce-upstream-macos-baseline.md)
+  — **Fail**
+- [Experiment 5: Apply the macOS-only GhosttyKit build patch](05-apply-macos-only-ghosttykit-build-patch.md)
   — **Designed**
