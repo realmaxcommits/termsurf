@@ -92,11 +92,14 @@ committed.
 
 - [Experiment 1: Restore the archived directory](01-restore-archived-directory.md)
   — **Pass**
+- [Experiment 2: Rename restored directory to ghostboard-legacy](02-rename-to-ghostboard-legacy.md)
+  — **Pass**
 
 ## Conclusion
 
 Ghostboard has been restored to the working tree from the documented archive
-point, `90b966458bd17`. The restore was kept mechanical: no build, run,
-modernization, dependency update, whitespace cleanup, or integration work was
-performed. Future work can start from the restored `ghostboard/` source in a new
-issue.
+point, `90b966458bd17`, and then renamed from `ghostboard/` to
+`ghostboard-legacy/`. The restore and rename were kept mechanical: no build,
+run, modernization, dependency update, whitespace cleanup, or integration work
+was performed. Future work can start from the restored `ghostboard-legacy/`
+source in a new issue.
