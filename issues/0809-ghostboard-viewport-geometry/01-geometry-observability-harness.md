@@ -189,3 +189,151 @@ webview-relative coordinates.
 A fresh-context re-review returned **APPROVED**. The reviewer confirmed that the
 two required findings were resolved and that the fixes introduced no new
 required findings.
+
+## Result
+
+**Result:** Pass
+
+Experiment 1 added geometry trace instrumentation and the first reusable matrix
+harness scenario without changing overlay geometry behavior.
+
+Implemented files:
+
+- `ghostboard/src/apprt/termsurf.zig`
+  - added `TERMSURF_GEOMETRY_TRACE`-gated Zig-side geometry records for
+    `SetOverlay`, `CreateTab`, `Resize`, `TabReady`, `CaContext`,
+    `PresentOverlay`, and `ClearOverlay`;
+  - records include the fields Zig can know directly, plus explicit
+    `unknown:<reason>` markers for AppKit-only identity fields.
+- `ghostboard/macos/Sources/App/macOS/AppDelegate+TermSurf.swift`
+  - added bridge-level geometry records for overlay present/clear requests,
+    rejected requests, and target-surface correlation.
+- `ghostboard/macos/Sources/Ghostty/Surface View/SurfaceView_AppKit.swift`
+  - added AppKit geometry records for presentation, backing-property changes,
+    frame-size changes, surface-size changes, window movement, hide/unhide,
+    clearing, and hit testing;
+  - records include window/surface/pane identity, bounds, cell size, overlay
+    frame, layer frames, browser pixel size, backing scale, visibility, hit
+    result, raw event point, top-origin point, and webview-relative point.
+- `scripts/ghostboard-geometry-matrix.sh`
+  - added the `initial-open` matrix scenario;
+  - launches repo-built `TermSurf.app`, `target/debug/web`, and repo-built
+    Roamium with `TERMSURF_GEOMETRY_TRACE=1`;
+  - captures app logs, harness logs, and a screenshot under `logs/`;
+  - derives the target CGWindow from the AppKit `presented` geometry record,
+    activates that exact app process, sends deterministic mouse input, and
+    requires a hit-test geometry record.
+
+Verification passed:
+
+```bash
+cd ghostboard
+zig fmt src/apprt/termsurf.zig
+```
+
+```bash
+cd ghostboard
+swiftlint lint --strict --fix \
+  macos/Sources/App/macOS/AppDelegate+TermSurf.swift \
+  "macos/Sources/Ghostty/Surface View/SurfaceView_AppKit.swift"
+swiftlint lint --strict \
+  macos/Sources/App/macOS/AppDelegate+TermSurf.swift \
+  "macos/Sources/Ghostty/Surface View/SurfaceView_AppKit.swift"
+```
+
+```bash
+bash -n scripts/ghostboard-geometry-matrix.sh
+```
+
+```bash
+cd ghostboard
+zig build -Demit-macos-app=false
+macos/build.nu --scheme Ghostty --configuration Debug --action build
+```
+
+```bash
+scripts/ghostboard-geometry-matrix.sh initial-open
+```
+
+```bash
+git diff --check
+```
+
+Passing `initial-open` artifacts:
+
+- app log: `logs/ghostboard-geometry-initial-open-app-20260617-070928.log`
+- harness log:
+  `logs/ghostboard-geometry-initial-open-harness-20260617-070928.log`
+- screenshot:
+  `logs/ghostboard-geometry-initial-open-screenshot-20260617-070928.png`
+
+The harness correlated one run across Zig, bridge, AppKit, screenshot, and
+input:
+
+- `pane_id=A59654BE-BAF0-42B7-9068-FC9C476EC3F1`
+- `browser_tab_id=1`
+- `window_id=10058`
+- `selected_tab_id=10058`
+- `context_id=3658317292`
+- `grid=78x16+1+1`
+- `browser_pixel=780x320`
+- `overlay_frame={{8, 17}, {624, 272}}`
+- Zig present record:
+  `grid=78x16+1+1 browser_pixel=780x320 context_id=3658317292`
+- bridge target record:
+  `window_id:10058 surface_id:A59654BE-BAF0-42B7-9068-FC9C476EC3F1`
+- AppKit presented record:
+  `bounds={{0, 0}, {648, 384}} cell=8.0x17.0 overlay_frame={{8, 17}, {624, 272}} host_frame={{0, 0}, {624, 272}} browser_pixel=780x320 backing_scale=2.0`
+- AppKit hit-test record:
+  `hit=true raw_point={324, 224} top_point={324, 160} web_point={316, 143}`
+
+The harness now fails unless it can correlate the same run across:
+
+- Zig `tab_ready` and `ca_context` records with a concrete browser tab id;
+- Zig, bridge, and AppKit records with the same pane id, grid, browser pixel
+  size, and context id;
+- an AppKit presented record with a concrete overlay frame;
+- an AppKit hit-test record with the same context id, `hit=true`, and a
+  webview-relative point;
+- the scenario id, timestamped app log, harness log, and screenshot path.
+
+The screenshot reproduces the 2026-06-17 viewport-fill failure: browser content
+is visible, but it does not fill the terminal viewport, leaving empty terminal
+space to the right and below. The recorded geometry shows a likely mismatch for
+the next experiment to localize: the TUI/AppKit overlay frame is `624x272`
+points while Roamium reported a browser pixel size of `780x320`.
+
+## Completion Review
+
+A fresh-context adversarial completion reviewer first returned **CHANGES
+REQUIRED** with one required finding and one optional finding:
+
+- **Required:** the harness did not prove the approved canonical correlation
+  contract. It only checked pane id, context id, and the presence of identity
+  fields, but did not assert browser tab id, overlay/grid/browser-pixel
+  correlation, or timestamp/scenario/artifact correlation.
+- **Optional:** AppKit instrumentation did not cover the full planned resize and
+  hide/show observability surface.
+
+The required finding was fixed by making `scripts/ghostboard-geometry-matrix.sh`
+extract and assert the concrete Zig browser tab id, pane id, context id, grid,
+browser pixel size, AppKit overlay frame, scenario id, timestamp, and artifact
+paths. The optional finding was addressed by adding non-behavioral AppKit
+geometry logs for frame-size changes, surface-size changes, window movement,
+hide, and unhide.
+
+A focused re-review returned **APPROVED**. The reviewer confirmed the required
+correlation finding was resolved by the stricter harness assertions and that the
+optional lifecycle-observability finding was resolved by the new AppKit
+`size_did_change`, `frame_size_changed`, `view_moved_to_window`,
+`view_did_hide`, and `view_did_unhide` records. No new required findings were
+reported.
+
+## Conclusion
+
+Experiment 1 provides the required observability and a reusable first matrix
+harness. The first failing product behavior is now reproducible with durable
+evidence, including identity correlation and mouse hit-test coordinates. The
+next experiment should use these logs to localize why the initial browser
+viewport is smaller than the terminal viewport, comparing current Ghostboard
+against `ghostboard-legacy/` before designing a fix.

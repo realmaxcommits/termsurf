@@ -22,6 +22,7 @@ const max_listen_socket_len: usize = std.fs.max_path_bytes;
 const default_browser = "roamium";
 const fallback_cell_width: u64 = 10;
 const fallback_cell_height: u64 = 20;
+const geometry_trace_env = "TERMSURF_GEOMETRY_TRACE";
 
 extern "c" fn termsurf_open_split(
     pane_id: [*:0]const u8,
@@ -211,6 +212,66 @@ const OverlaySnapshot = struct {
         return self.pane_id[0..self.pane_id_len];
     }
 };
+
+fn geometryTraceEnabled() bool {
+    const value = std.posix.getenv(geometry_trace_env) orelse return false;
+    return !std.mem.eql(u8, value, "0") and !std.mem.eql(u8, value, "false");
+}
+
+fn geometryTracePane(event: []const u8, pane: *const PaneState, note: []const u8) void {
+    if (!geometryTraceEnabled()) return;
+    log.info(
+        "TermSurf geometry layer=zig event={s} scenario={s} identity=window_id:unknown:appkit-only surface_id:unknown:appkit-only selected_tab_id:unknown:appkit-only pane_id:{s} browser_tab_id:{} grid={}x{}+{}+{} browser_pixel={}x{} context_id={} browsing={} visible={} note={s}",
+        .{
+            event,
+            geometryScenario(),
+            pane.paneId(),
+            pane.tab_id,
+            pane.width,
+            pane.height,
+            pane.col,
+            pane.row,
+            pane.ca_pixel_width,
+            pane.ca_pixel_height,
+            pane.ca_context_id,
+            pane.browsing,
+            pane.ca_context_id != 0 and pane.width != 0 and pane.height != 0,
+            note,
+        },
+    );
+}
+
+fn geometryTraceOverlay(event: []const u8, snapshot: *const OverlaySnapshot, note: []const u8) void {
+    if (!geometryTraceEnabled()) return;
+    log.info(
+        "TermSurf geometry layer=zig event={s} scenario={s} identity=window_id:unknown:appkit-only surface_id:unknown:appkit-only selected_tab_id:unknown:appkit-only pane_id:{s} browser_tab_id:unknown:see-tabready grid={}x{}+{}+{} browser_pixel={}x{} context_id={} visible=true note={s}",
+        .{
+            event,
+            geometryScenario(),
+            snapshot.paneId(),
+            snapshot.width,
+            snapshot.height,
+            snapshot.col,
+            snapshot.row,
+            snapshot.pixel_width,
+            snapshot.pixel_height,
+            snapshot.context_id,
+            note,
+        },
+    );
+}
+
+fn geometryTraceClear(event: []const u8, snapshot: *const ClearOverlaySnapshot, note: []const u8) void {
+    if (!geometryTraceEnabled()) return;
+    log.info(
+        "TermSurf geometry layer=zig event={s} scenario={s} identity=window_id:unknown:appkit-only surface_id:unknown:appkit-only selected_tab_id:unknown:appkit-only pane_id:{s} browser_tab_id:unknown:clearing visible=false note={s}",
+        .{ event, geometryScenario(), snapshot.paneId(), note },
+    );
+}
+
+fn geometryScenario() []const u8 {
+    return std.posix.getenv("TERMSURF_GEOMETRY_SCENARIO") orelse "unknown";
+}
 
 const ClearOverlaySnapshot = struct {
     pane_id: [max_pane_id_len]u8 = undefined,
@@ -851,6 +912,7 @@ fn handleSetOverlay(tui_fd: std.posix.fd_t, req: ?*c.Termsurf__SetOverlay) void 
             "SetOverlay: updated pane_id={s} profile={s} browser={s} pane_count={}",
             .{ pane_id, profile, browser, pane_count },
         );
+        geometryTracePane("set_overlay_update", &panes[pane_index], "updated-existing-pane");
         state_mutex.unlock();
         if (resize_snapshot) |snapshot| {
             sendResize(&snapshot) catch |err| {
@@ -871,6 +933,7 @@ fn handleSetOverlay(tui_fd: std.posix.fd_t, req: ?*c.Termsurf__SetOverlay) void 
         return;
     }
     panes[pane_index].tui_fd = tui_fd;
+    geometryTracePane("set_overlay_new", &panes[pane_index], "reserved-new-pane");
 
     if (findServer(profile, browser)) |server_index| {
         servers[server_index].pane_count += 1;
@@ -1120,6 +1183,7 @@ fn sendCreateTab(fd: std.posix.fd_t, pane: *const PaneState) !void {
 
     try sendProtobuf(fd, &wrapper);
     log.info("sent CreateTab: pane_id={s} url={s}", .{ pane.paneId(), pane.url[0..pane.url_len] });
+    geometryTracePane("create_tab", pane, "sent-create-tab");
 }
 
 fn snapshotCreateDevtoolsTab(pane: *const PaneState, browser_fd: std.posix.fd_t) ?CreateDevtoolsTabSnapshot {
@@ -1191,6 +1255,12 @@ fn sendResize(snapshot: *const ResizeSnapshot) !void {
         "Resize: pane_id={s} tab_id={} pixel={}x{}",
         .{ snapshot.paneId(), snapshot.tab_id, snapshot.pixel_width, snapshot.pixel_height },
     );
+    if (geometryTraceEnabled()) {
+        log.info(
+            "TermSurf geometry layer=zig event=resize scenario={s} identity=window_id:unknown:appkit-only surface_id:unknown:appkit-only selected_tab_id:unknown:appkit-only pane_id:{s} browser_tab_id:{} browser_pixel={}x{} visible=true note=sent-browser-resize",
+            .{ geometryScenario(), snapshot.paneId(), snapshot.tab_id, snapshot.pixel_width, snapshot.pixel_height },
+        );
+    }
 }
 
 fn handleModeChanged(req: ?*c.Termsurf__ModeChanged) void {
@@ -1452,6 +1522,7 @@ fn handleTabReady(req: ?*c.Termsurf__TabReady) void {
         _ = copyText(&last_browser_pane, &last_browser_pane_len, pane_id);
     }
     browser_ready = snapshotBrowserReady(&panes[pane_index], tab_id);
+    geometryTracePane("tab_ready", &panes[pane_index], "mapped-browser-tab-to-pane");
 
     log.info(
         "TabReady lookup: key={s}/{s} tab_id={} pane_id={s}",
@@ -1547,6 +1618,7 @@ fn handleCaContext(fd: std.posix.fd_t, req: ?*c.Termsurf__CaContext) void {
     panes[pane_index].ca_pixel_width = ca_context.*.pixel_width;
     panes[pane_index].ca_pixel_height = ca_context.*.pixel_height;
     overlay_snapshot = snapshotOverlay(&panes[pane_index]);
+    geometryTracePane("ca_context", &panes[pane_index], "received-ca-context");
 
     log.info(
         "CaContext: tab_id={} pane_id={s} context_id={} pixel={}x{}",
@@ -1582,6 +1654,7 @@ fn snapshotOverlay(pane: *const PaneState) ?OverlaySnapshot {
 }
 
 fn presentOverlay(snapshot: *const OverlaySnapshot) void {
+    geometryTraceOverlay("present_overlay_call", snapshot, "calling-appkit-bridge");
     termsurf_present_overlay(
         snapshot.pane_id[0..snapshot.pane_id_len :0].ptr,
         snapshot.context_id,
@@ -1752,6 +1825,7 @@ fn cleanupTuiPanes(fd: std.posix.fd_t) void {
 }
 
 fn clearOverlay(snapshot: *const ClearOverlaySnapshot) void {
+    geometryTraceClear("clear_overlay_call", snapshot, "calling-appkit-bridge");
     termsurf_clear_overlay(snapshot.pane_id[0..snapshot.pane_id_len :0].ptr);
     log.info("ClearOverlay: pane_id={s}", .{snapshot.paneId()});
 }

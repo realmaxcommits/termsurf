@@ -176,4 +176,4 @@ work together, not just individually.
 ## Experiments
 
 - [Experiment 1: Geometry observability harness](01-geometry-observability-harness.md)
-  — **Designed**
+  — **Pass**

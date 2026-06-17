@@ -245,6 +245,45 @@ extension Ghostty {
         private var termsurfOverlayFrame: CGRect?
         private var termsurfPressedBrowserKeys: Set<UInt16> = []
 
+        func termSurfGeometryIdentity(browserTabID: String = "unknown:appkit") -> String {
+            let windowID = window.map { String($0.windowNumber) } ?? "unknown:no-window"
+            let surfaceID = id.uuidString
+            let selectedTabID = window?.tabGroup?.selectedWindow.map { String($0.windowNumber) } ?? windowID
+            return termsurfGeometryIdentity(
+                paneID: id.uuidString,
+                browserTabID: browserTabID,
+                surfaceID: surfaceID,
+                windowID: windowID,
+                selectedTabID: selectedTabID)
+        }
+
+        private func termSurfLogGeometry(
+            event: String,
+            browserTabID: String = "unknown:appkit",
+            grid: String = "unknown:not-provided",
+            browserPixel: String = "unknown:not-provided",
+            contextID: UInt64? = nil,
+            hit: Bool? = nil,
+            rawPoint: CGPoint? = nil,
+            topPoint: CGPoint? = nil,
+            webPoint: CGPoint? = nil,
+            note: String
+        ) {
+            let context = contextID.map { String($0) } ?? String(termsurfOverlayContextID)
+            let rootFrame = termsurfOverlayRootLayer.map { NSStringFromRect($0.frame) } ?? "none"
+            let positioningFrame = termsurfOverlayPositioningLayer.map { NSStringFromRect($0.frame) } ?? "none"
+            let hostFrame = termsurfOverlayHostLayer.map { NSStringFromRect($0.frame) } ?? "none"
+            let overlayFrame = termsurfOverlayFrame.map { NSStringFromRect($0) } ?? "none"
+            let scale = window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 1
+            let hitValue = hit.map { String($0) } ?? "unknown:not-hit-test"
+            let raw = rawPoint.map { NSStringFromPoint($0) } ?? "none"
+            let top = topPoint.map { NSStringFromPoint($0) } ?? "none"
+            let web = webPoint.map { NSStringFromPoint($0) } ?? "none"
+
+            termsurfLogGeometry(
+                "layer=appkit event=\(event) scenario=\(termsurfGeometryScenario()) identity=\(termSurfGeometryIdentity(browserTabID: browserTabID)) bounds=\(NSStringFromRect(bounds)) cell=\(cellSize.width)x\(cellSize.height) grid=\(grid) overlay_frame=\(overlayFrame) root_frame=\(rootFrame) positioning_frame=\(positioningFrame) host_frame=\(hostFrame) browser_pixel=\(browserPixel) backing_scale=\(scale) context_id=\(context) visible=\(termsurfOverlayHostLayer != nil) hit=\(hitValue) raw_point=\(raw) top_point=\(top) web_point=\(web) note=\(note)")
+        }
+
         // This is the title from the terminal. This is nil if we're currently using
         // the terminal title as the main title property. If the title is set manually
         // by the user, this is set to the prior value (which may be empty, but non-nil).
@@ -459,15 +498,29 @@ extension Ghostty {
             pixelHeight: UInt64
         ) {
             dispatchPrecondition(condition: .onQueue(.main))
+            let grid = "\(width)x\(height)+\(col)+\(row)"
+            let browserPixel = "\(pixelWidth)x\(pixelHeight)"
 
             guard contextID != 0 else {
                 AppDelegate.logger.warning("TermSurf overlay rejected: context id is zero")
+                termSurfLogGeometry(
+                    event: "present_rejected",
+                    grid: grid,
+                    browserPixel: browserPixel,
+                    contextID: contextID,
+                    note: "context-id-zero")
                 return
             }
 
             wantsLayer = true
             guard let surfaceLayer = layer else {
                 AppDelegate.logger.warning("TermSurf overlay rejected: surface has no backing layer")
+                termSurfLogGeometry(
+                    event: "present_rejected",
+                    grid: grid,
+                    browserPixel: browserPixel,
+                    contextID: contextID,
+                    note: "missing-surface-layer")
                 return
             }
 
@@ -480,6 +533,12 @@ extension Ghostty {
                 height: CGFloat(height) * cellHeight)
             guard frame.width > 0, frame.height > 0 else {
                 AppDelegate.logger.warning("TermSurf overlay rejected: empty frame")
+                termSurfLogGeometry(
+                    event: "present_rejected",
+                    grid: grid,
+                    browserPixel: browserPixel,
+                    contextID: contextID,
+                    note: "empty-frame")
                 return
             }
 
@@ -514,6 +573,12 @@ extension Ghostty {
                 termsurfOverlayHostLayer?.removeFromSuperlayer()
                 guard let hostClass = NSClassFromString("CALayerHost") as? CALayer.Type else {
                     AppDelegate.logger.warning("TermSurf overlay rejected: CALayerHost unavailable")
+                    termSurfLogGeometry(
+                        event: "present_rejected",
+                        grid: grid,
+                        browserPixel: browserPixel,
+                        contextID: contextID,
+                        note: "calayerhost-unavailable")
                     return
                 }
                 let host = hostClass.init()
@@ -527,6 +592,12 @@ extension Ghostty {
 
             termsurfOverlayHostLayer?.frame = CGRect(origin: .zero, size: frame.size)
             termsurfOverlayHostLayer?.contentsScale = window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 1
+            termSurfLogGeometry(
+                event: "presented",
+                grid: grid,
+                browserPixel: browserPixel,
+                contextID: contextID,
+                note: "overlay-presented")
 
             AppDelegate.logger.info(
                 "TermSurf overlay presented pane_id=\(self.id.uuidString) context_id=\(contextID) frame=\(NSStringFromRect(frame)) pixel=\(pixelWidth)x\(pixelHeight)")
@@ -536,6 +607,7 @@ extension Ghostty {
         }
 
         func clearTermSurfOverlay() {
+            termSurfLogGeometry(event: "clear", note: "clearing-overlay")
             termsurfOverlayHostLayer?.removeFromSuperlayer()
             termsurfOverlayPositioningLayer?.removeFromSuperlayer()
             termsurfOverlayRootLayer?.removeFromSuperlayer()
@@ -591,6 +663,7 @@ extension Ghostty {
             // here that we use "size" and NOT the view frame. If we're in the middle of
             // an animation (i.e. a fullscreen animation), the frame will not yet be updated.
             // The size represents our final size we're going for.
+            termSurfLogGeometry(event: "size_did_change", note: "surface-size-did-change")
             let scaledSize = self.convertToBacking(size)
             setSurfaceSize(width: UInt32(scaledSize.width), height: UInt32(scaledSize.height))
             // Store this size so we can reuse it when backing properties change
@@ -912,6 +985,26 @@ extension Ghostty {
 
         // MARK: - NSView
 
+        override func setFrameSize(_ newSize: NSSize) {
+            super.setFrameSize(newSize)
+            termSurfLogGeometry(event: "frame_size_changed", note: "view-frame-size-changed")
+        }
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            termSurfLogGeometry(event: "view_moved_to_window", note: "window-membership-changed")
+        }
+
+        override func viewDidHide() {
+            super.viewDidHide()
+            termSurfLogGeometry(event: "view_did_hide", note: "view-hidden")
+        }
+
+        override func viewDidUnhide() {
+            super.viewDidUnhide()
+            termSurfLogGeometry(event: "view_did_unhide", note: "view-unhidden")
+        }
+
         override func becomeFirstResponder() -> Bool {
             let result = super.becomeFirstResponder()
             if result { focusDidChange(true) }
@@ -973,6 +1066,7 @@ extension Ghostty {
                 layer?.contentsScale = window.backingScaleFactor
                 CATransaction.commit()
             }
+            termSurfLogGeometry(event: "backing_properties_changed", note: "updated-backing-scale")
 
             guard let surface = self.surface else { return }
 
@@ -1562,6 +1656,14 @@ extension Ghostty {
             let viewPoint = convert(event.locationInWindow, from: nil)
             let topOriginPoint = CGPoint(x: viewPoint.x, y: bounds.height - viewPoint.y)
             let hit = overlayFrame.contains(topOriginPoint)
+            let webPoint = CGPoint(x: topOriginPoint.x - overlayFrame.minX, y: topOriginPoint.y - overlayFrame.minY)
+            termSurfLogGeometry(
+                event: "hit_test",
+                hit: hit,
+                rawPoint: viewPoint,
+                topPoint: topOriginPoint,
+                webPoint: webPoint,
+                note: "browser-input-hit-test")
             if ProcessInfo.processInfo.environment["TERMSURF_INPUT_TRACE"] == "1" {
                 fputs(
                     "TermSurf input hit_test pane_id=\(id.uuidString) event=\(event.type.rawValue) view=\(NSStringFromPoint(viewPoint)) top=\(NSStringFromPoint(topOriginPoint)) overlay=\(NSStringFromRect(overlayFrame)) hit=\(hit)\n",
@@ -1570,8 +1672,8 @@ extension Ghostty {
             guard hit else { return nil }
 
             return TermSurfOverlayPoint(
-                x: Double(topOriginPoint.x - overlayFrame.minX),
-                y: Double(topOriginPoint.y - overlayFrame.minY))
+                x: Double(webPoint.x),
+                y: Double(webPoint.y))
         }
 
         private func forwardTermSurfKeyDown(_ event: NSEvent) -> Bool {
