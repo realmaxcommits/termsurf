@@ -204,3 +204,5 @@ work together, not just individually.
   — **Pass**
 - [Experiment 16: Multiple windows with browsers](16-multiple-windows-with-browsers.md)
   — **Pass**
+- [Experiment 17: Display move and backing scale](17-display-move-backing-scale.md)
+  — **Designed**
