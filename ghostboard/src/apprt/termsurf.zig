@@ -1597,7 +1597,6 @@ fn snapshotBrowserInput(pane_id: []const u8, require_browsing: bool) ?BrowserInp
 
     const pane_index = findPane(pane_id) orelse return null;
     const pane = &panes[pane_index];
-    if (pane.inspected_tab_id != 0) return null;
     if (require_browsing and !pane.browsing) return null;
     if (pane.tab_id == 0) return null;
     const server_index = findServer(pane.profileName(), pane.browserName()) orelse return null;
@@ -1762,7 +1761,6 @@ fn handleCaContext(fd: std.posix.fd_t, req: ?*c.Termsurf__CaContext) void {
 }
 
 fn snapshotOverlay(pane: *const PaneState) ?OverlaySnapshot {
-    if (pane.inspected_tab_id != 0) return null;
     if (pane.ca_context_id == 0) return null;
     if (pane.width == 0 or pane.height == 0) return null;
 

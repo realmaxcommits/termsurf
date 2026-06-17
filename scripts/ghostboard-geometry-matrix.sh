@@ -45,6 +45,7 @@ SCREENSHOT_TUI_RESET="$LOG_DIR/ghostboard-geometry-${SCENARIO}-tui-reset-screens
 SCREENSHOT_SCROLLBACK_UP="$LOG_DIR/ghostboard-geometry-${SCENARIO}-scrollback-up-screenshot-${TS}.png"
 SCREENSHOT_SCROLLBACK_BOTTOM="$LOG_DIR/ghostboard-geometry-${SCENARIO}-scrollback-bottom-screenshot-${TS}.png"
 SCREENSHOT_NAVIGATED="$LOG_DIR/ghostboard-geometry-${SCENARIO}-navigated-screenshot-${TS}.png"
+SCREENSHOT_DEVTOOLS_SPLIT="$LOG_DIR/ghostboard-geometry-${SCENARIO}-devtools-split-screenshot-${TS}.png"
 ROAMIUM_TRACE="$LOG_DIR/ghostboard-geometry-${SCENARIO}-roamium-${TS}.log"
 SIBLING_ALIVE_COMMAND="$RUN_DIR/sibling-alive-command.txt"
 SIBLING_FOCUS_COMMAND="$RUN_DIR/sibling-focus-command.txt"
@@ -52,6 +53,7 @@ BROWSER_FOCUS_COMMAND="$RUN_DIR/browser-focus-command.txt"
 TUI_VIEWPORT_SHRINK_COMMAND="$RUN_DIR/tui-viewport-shrink-command.txt"
 TUI_VIEWPORT_RESET_COMMAND="$RUN_DIR/tui-viewport-reset-command.txt"
 NAVIGATION_APPEND_COMMAND="$RUN_DIR/navigation-append-command.txt"
+DEVTOOLS_COMMAND="$RUN_DIR/devtools-command.txt"
 NEW_TAB_COMMAND_LOG="$RUN_DIR/new-tab-command.log"
 NEW_TAB_MARKER_COMMAND="$RUN_DIR/new-tab-marker-command.txt"
 SECOND_BROWSER_COMMAND="$RUN_DIR/second-browser-command.txt"
@@ -178,6 +180,25 @@ require_no_trace_after() {
     fail "$label"
   fi
   log "PASS: $label"
+}
+
+wait_for_trace_line_after() {
+  local start_line="$1"
+  local pattern="$2"
+  local label="$3"
+  local attempts="${4:-30}"
+  local line
+  for _ in $(seq 1 "$attempts"); do
+    line="$(tail -n +"$((start_line + 1))" "$ROAMIUM_TRACE" |
+      grep -E "$pattern" |
+      tail -1 || true)"
+    if [ -n "$line" ]; then
+      printf '%s\n' "$line"
+      return 0
+    fi
+    delay 1
+  done
+  fail "timed out waiting for $label"
 }
 
 require_text() {
@@ -1062,7 +1083,7 @@ click_negative_global_point() {
 }
 
 case "$SCENARIO" in
-  initial-open|window-resize|split-right|split-down|split-right-resize|split-right-equalize|split-right-zoom|split-right-close-sibling|split-right-close-browser-pane|split-right-focus-switch|new-terminal-tab-visibility|open-browser-in-new-tab|close-browser-tab|open-browser-in-new-window|multiple-windows-with-browsers|display-move-backing-scale|fullscreen-unfullscreen|minimize-hide-restore|font-size-cell-metrics|tui-overlay-resize-command|terminal-scrollback-movement|browser-navigation-geometry) ;;
+  initial-open|window-resize|split-right|split-down|split-right-resize|split-right-equalize|split-right-zoom|split-right-close-sibling|split-right-close-browser-pane|split-right-focus-switch|new-terminal-tab-visibility|open-browser-in-new-tab|close-browser-tab|open-browser-in-new-window|multiple-windows-with-browsers|display-move-backing-scale|fullscreen-unfullscreen|minimize-hide-restore|font-size-cell-metrics|tui-overlay-resize-command|terminal-scrollback-movement|browser-navigation-geometry|devtools-split-geometry) ;;
   *)
     fail "unsupported scenario: $SCENARIO"
     ;;
@@ -1783,6 +1804,10 @@ fi
 if [ "$SCENARIO" = "browser-navigation-geometry" ]; then
   log "navigated_screenshot=$SCREENSHOT_NAVIGATED"
   log "navigation_append_command=$NAVIGATION_APPEND_COMMAND"
+fi
+if [ "$SCENARIO" = "devtools-split-geometry" ]; then
+  log "devtools_split_screenshot=$SCREENSHOT_DEVTOOLS_SPLIT"
+  log "devtools_command=$DEVTOOLS_COMMAND"
 fi
 
 GHOSTTY_CONFIG_PATH="$CONFIG" \
@@ -3965,6 +3990,152 @@ if [ "$SCENARIO" = "browser-navigation-geometry" ]; then
   printf 'ISSUE809_EXP23_NAVIGATION\n' >"$BROWSER_FOCUS_COMMAND"
   swift "$ROOT/scripts/ghostty-app/inject.swift" type "$BROWSER_FOCUS_COMMAND" >>"$HARNESS_LOG" 2>&1
   require_trace_after "$NAV_KEY_START_LINE" "key-event tab=${A_BROWSER_TAB_ID} pane=${A_PANE_ID}" "post-navigation keyboard marker reached browser"
+fi
+
+if [ "$SCENARIO" = "devtools-split-geometry" ]; then
+  A_WINDOW_ID="$WID"
+  A_SURFACE_ID="$(extract_surface_id "$APPKIT_PRESENT_LINE")"
+  A_SELECTED_TAB_ID="$(extract_selected_tab_id "$APPKIT_PRESENT_LINE")"
+  A_PANE_ID="$PANE_ID"
+  A_BROWSER_TAB_ID="$BROWSER_TAB_ID"
+  A_CONTEXT_ID="$CONTEXT_ID"
+  A_GRID="$(extract_grid "$APPKIT_PRESENT_LINE")"
+  A_FRAME="$OVERLAY_FRAME"
+  A_FRAME_SIZE="$OVERLAY_FRAME_SIZE"
+  A_PIXEL="$APPKIT_PIXEL"
+  A_BACKING_SCALE="$(extract_backing_scale "$APPKIT_PRESENT_LINE")"
+  log "devtools_normal_baseline_window_id=$A_WINDOW_ID"
+  log "devtools_normal_baseline_surface_id=$A_SURFACE_ID"
+  log "devtools_normal_baseline_selected_tab_id=$A_SELECTED_TAB_ID"
+  log "devtools_normal_baseline_pane_id=$A_PANE_ID"
+  log "devtools_normal_baseline_browser_tab_id=$A_BROWSER_TAB_ID"
+  log "devtools_normal_baseline_context_id=$A_CONTEXT_ID"
+  log "devtools_normal_baseline_grid=$A_GRID"
+  log "devtools_normal_baseline_frame=$A_FRAME"
+  log "devtools_normal_baseline_appkit_pixel=$A_PIXEL"
+  log "devtools_normal_baseline_backing_scale=$A_BACKING_SCALE"
+
+  DEVTOOLS_START_LINE="$(log_line_count)"
+  DEVTOOLS_TRACE_START_LINE="$(trace_line_count)"
+  printf ':devtools right' >"$DEVTOOLS_COMMAND"
+  log "devtools_command_text=$(cat "$DEVTOOLS_COMMAND")"
+  swift "$ROOT/scripts/ghostty-app/inject.swift" type "$DEVTOOLS_COMMAND" >>"$HARNESS_LOG" 2>&1
+  swift "$ROOT/scripts/ghostty-app/inject.swift" key 36 >>"$HARNESS_LOG" 2>&1
+  delay 1
+
+  wait_for_log_after "$DEVTOOLS_START_LINE" "TermSurf QueryDevtoolsRequest pane_id=${A_PANE_ID} inspected_tab_id=${A_BROWSER_TAB_ID}" "DevTools query request for normal browser tab" 45
+  wait_for_log_after "$DEVTOOLS_START_LINE" "TermSurf QueryDevtoolsReply sent" "DevTools query reply" 45
+  wait_for_log_after "$DEVTOOLS_START_LINE" "OpenSplit: pane_id=${A_PANE_ID} direction=right" "DevTools split opened to the right" 45
+  DEVTOOLS_SET_LINE="$(wait_for_line_after "$DEVTOOLS_START_LINE" "SetDevtoolsOverlay: pane_id=[^ ]+ .*inspected_tab_id=${A_BROWSER_TAB_ID}" "DevTools SetDevtoolsOverlay" 60)"
+  DT_PANE_ID="$(printf '%s\n' "$DEVTOOLS_SET_LINE" | sed -E 's/.*SetDevtoolsOverlay: pane_id=([^ ]+) .*/\1/')"
+  [ -n "$DT_PANE_ID" ] || fail "failed to extract DevTools pane id"
+  [ "$DT_PANE_ID" != "$A_PANE_ID" ] || fail "DevTools pane id reused normal browser pane id"
+  log "devtools_pane_id=$DT_PANE_ID"
+  wait_for_log_after "$DEVTOOLS_START_LINE" "CreateDevtoolsTab: pane_id=${DT_PANE_ID} inspected_tab_id=${A_BROWSER_TAB_ID}" "Ghostboard sent CreateDevtoolsTab for DevTools pane" 60
+
+  A_SPLIT_PRESENT_LINE="$(wait_for_split_right_frame_after "$DEVTOOLS_START_LINE" "$A_PANE_ID" "$A_CONTEXT_ID" "$A_FRAME_SIZE" "normal browser split-resized AppKit overlay frame" 60)"
+  A_SPLIT_PIXELS_LINE="$(wait_for_split_right_pixels_after "$DEVTOOLS_START_LINE" "$A_PANE_ID" "$A_CONTEXT_ID" "$A_PIXEL" "normal browser split-resized AppKit pixels" 60)"
+  A_SPLIT_FRAME="$(extract_overlay_frame "$A_SPLIT_PRESENT_LINE")"
+  A_SPLIT_FRAME_SIZE="$(extract_frame_size "$A_SPLIT_PRESENT_LINE")"
+  A_SPLIT_FRAME_X="$(extract_frame_x "$A_SPLIT_PRESENT_LINE")"
+  A_SPLIT_FRAME_Y="$(extract_frame_y "$A_SPLIT_PRESENT_LINE")"
+  A_SPLIT_FRAME_WIDTH="$(pair_width "$A_SPLIT_FRAME_SIZE")"
+  A_SPLIT_FRAME_HEIGHT="$(pair_height "$A_SPLIT_FRAME_SIZE")"
+  A_SPLIT_ROOT_FRAME_WIDTH="$(pair_width "$(extract_root_frame_size "$A_SPLIT_PRESENT_LINE")")"
+  A_SPLIT_PIXEL="$(extract_appkit_pixel "$A_SPLIT_PIXELS_LINE")"
+  A_SPLIT_PIXEL_WIDTH="${A_SPLIT_PIXEL%x*}"
+  A_SPLIT_PIXEL_HEIGHT="${A_SPLIT_PIXEL#*x}"
+  log "devtools_normal_split_frame=$A_SPLIT_FRAME"
+  log "devtools_normal_split_appkit_pixel=$A_SPLIT_PIXEL"
+  require_trace_after "$DEVTOOLS_TRACE_START_LINE" "resize tab_id=${A_BROWSER_TAB_ID} pane_id=${A_PANE_ID} pixel_width=${A_SPLIT_PIXEL_WIDTH} pixel_height=${A_SPLIT_PIXEL_HEIGHT} screen_x=0 screen_y=0 screen_width=0 screen_height=0 screen_scale=0 ffi=ts_set_view_size" "Roamium resized normal browser after DevTools split"
+
+  DT_CREATE_TRACE_LINE="$(wait_for_trace_line_after "$DEVTOOLS_TRACE_START_LINE" "create-devtools-tab pane=${DT_PANE_ID} inspected_tab_id=${A_BROWSER_TAB_ID} pixel_width=[0-9]+ pixel_height=[0-9]+" "Roamium received CreateDevtoolsTab" 60)"
+  DT_TAB_READY_LINE="$(wait_for_trace_line_after "$DEVTOOLS_TRACE_START_LINE" "tab-ready tab=[0-9]+ pane=${DT_PANE_ID} inspected_tab_id=${A_BROWSER_TAB_ID}" "Roamium reported DevTools tab ready" 60)"
+  DT_BROWSER_TAB_ID="$(printf '%s\n' "$DT_TAB_READY_LINE" | sed -E 's/.*tab-ready tab=([0-9]+) .*/\1/')"
+  [ -n "$DT_BROWSER_TAB_ID" ] || fail "failed to extract DevTools browser tab id"
+  [ "$DT_BROWSER_TAB_ID" != "$A_BROWSER_TAB_ID" ] || fail "DevTools browser tab id reused normal browser tab id"
+  log "devtools_create_trace=$DT_CREATE_TRACE_LINE"
+  log "devtools_browser_tab_id=$DT_BROWSER_TAB_ID"
+
+  DT_PRESENT_LINE="$(wait_for_line_after "$DEVTOOLS_START_LINE" "TermSurf geometry layer=appkit event=presented .*pane_id:${DT_PANE_ID} .*overlay_frame=\\{\\{.*context_id=[1-9][0-9]*" "DevTools AppKit overlay frame" 60)"
+  DT_CONTEXT_ID="$(printf '%s\n' "$DT_PRESENT_LINE" | sed -E 's/.*context_id=([0-9]+) .*/\1/')"
+  [ -n "$DT_CONTEXT_ID" ] || fail "failed to extract DevTools context id"
+  [ "$DT_CONTEXT_ID" != "$A_CONTEXT_ID" ] || fail "DevTools context id reused normal browser context id"
+  DT_SURFACE_ID="$(extract_surface_id "$DT_PRESENT_LINE")"
+  DT_SELECTED_TAB_ID="$(extract_selected_tab_id "$DT_PRESENT_LINE")"
+  DT_GRID="$(extract_grid "$DT_PRESENT_LINE")"
+  DT_FRAME="$(extract_overlay_frame "$DT_PRESENT_LINE")"
+  DT_FRAME_SIZE="$(extract_frame_size "$DT_PRESENT_LINE")"
+  DT_FRAME_X="$(extract_frame_x "$DT_PRESENT_LINE")"
+  DT_FRAME_Y="$(extract_frame_y "$DT_PRESENT_LINE")"
+  DT_FRAME_WIDTH="$(pair_width "$DT_FRAME_SIZE")"
+  DT_FRAME_HEIGHT="$(pair_height "$DT_FRAME_SIZE")"
+  DT_BACKING_SCALE="$(extract_backing_scale "$DT_PRESENT_LINE")"
+  DT_PIXELS_LINE="$(wait_for_line_after "$DEVTOOLS_START_LINE" "TermSurf geometry layer=appkit event=presented_pixels .*pane_id:${DT_PANE_ID} .*appkit_pixel=[0-9]+x[0-9]+ .*context_id=${DT_CONTEXT_ID}" "DevTools AppKit presented pixels" 60)"
+  DT_PIXEL="$(extract_appkit_pixel "$DT_PIXELS_LINE")"
+  DT_PIXEL_WIDTH="${DT_PIXEL%x*}"
+  DT_PIXEL_HEIGHT="${DT_PIXEL#*x}"
+  log "devtools_surface_id=$DT_SURFACE_ID"
+  log "devtools_selected_tab_id=$DT_SELECTED_TAB_ID"
+  log "devtools_context_id=$DT_CONTEXT_ID"
+  log "devtools_grid=$DT_GRID"
+  log "devtools_frame=$DT_FRAME"
+  log "devtools_appkit_pixel=$DT_PIXEL"
+  log "devtools_backing_scale=$DT_BACKING_SCALE"
+  require_trace_after "$DEVTOOLS_TRACE_START_LINE" "ca-context tab=${DT_BROWSER_TAB_ID} pane=${DT_PANE_ID} inspected_tab_id=${A_BROWSER_TAB_ID}" "Roamium reported DevTools CA context"
+  require_trace_after "$DEVTOOLS_TRACE_START_LINE" "resize tab_id=${DT_BROWSER_TAB_ID} pane_id=${DT_PANE_ID} pixel_width=${DT_PIXEL_WIDTH} pixel_height=${DT_PIXEL_HEIGHT} screen_x=0 screen_y=0 screen_width=0 screen_height=0 screen_scale=0 ffi=ts_set_view_size" "Roamium resized DevTools to AppKit pixel size"
+  screencapture -x -o -l"$A_WINDOW_ID" "$SCREENSHOT_DEVTOOLS_SPLIT"
+  log "devtools_split_screenshot_exit=$?"
+
+  DT_WIN_LINE="$(window_bounds_for "$A_WINDOW_ID")" || fail "failed to resolve DevTools window bounds"
+  IFS=$'\t' read -r _DT_WID DT_WX DT_WY DT_WW DT_WH <<<"$DT_WIN_LINE"
+  DT_ROOT_HEIGHT="$(pair_height "$(extract_root_frame_size "$DT_PRESENT_LINE")")"
+  DT_CONTENT_Y_OFFSET="$(awk -v wh="$DT_WH" -v root_h="$DT_ROOT_HEIGHT" 'BEGIN { print int(wh - root_h) }')"
+  A_SPLIT_INSIDE_X="$(awk -v wx="$DT_WX" -v frame_x="$A_SPLIT_FRAME_X" -v frame_w="$A_SPLIT_FRAME_WIDTH" 'BEGIN { print int(wx + frame_x + (frame_w / 2) + 0.5) }')"
+  A_SPLIT_INSIDE_Y="$(awk -v wy="$DT_WY" -v content_y="$DT_CONTENT_Y_OFFSET" -v frame_y="$A_SPLIT_FRAME_Y" -v frame_h="$A_SPLIT_FRAME_HEIGHT" 'BEGIN { print int(wy + content_y + frame_y + (frame_h / 2) + 0.5) }')"
+  DT_INSIDE_X="$(awk -v wx="$DT_WX" -v surface_x="$A_SPLIT_ROOT_FRAME_WIDTH" -v frame_x="$DT_FRAME_X" -v frame_w="$DT_FRAME_WIDTH" 'BEGIN { print int(wx + surface_x + frame_x + (frame_w / 2) + 0.5) }')"
+  DT_INSIDE_Y="$(awk -v wy="$DT_WY" -v content_y="$DT_CONTENT_Y_OFFSET" -v frame_y="$DT_FRAME_Y" -v frame_h="$DT_FRAME_HEIGHT" 'BEGIN { print int(wy + content_y + frame_y + (frame_h / 2) + 0.5) }')"
+
+  A_HIT_START_LINE="$(log_line_count)"
+  A_HIT_TRACE_START_LINE="$(trace_line_count)"
+  click_global_point "$A_SPLIT_INSIDE_X" "$A_SPLIT_INSIDE_Y" "devtools_normal_inside"
+  A_HIT_LINE="$(wait_for_hit_after "$A_HIT_START_LINE" "$A_CONTEXT_ID" "normal browser hit-test after DevTools split")"
+  require_text "$A_HIT_LINE" "overlay_frame=${A_SPLIT_FRAME}" "normal browser hit-test uses split frame"
+  require_no_trace_after "$A_HIT_TRACE_START_LINE" "mouse-event tab=${DT_BROWSER_TAB_ID} pane=${DT_PANE_ID}" "normal browser click did not route to DevTools"
+
+  DT_HIT_START_LINE="$(log_line_count)"
+  DT_HIT_TRACE_START_LINE="$(trace_line_count)"
+  click_global_point "$DT_INSIDE_X" "$DT_INSIDE_Y" "devtools_inside"
+  DT_HIT_LINE="$(wait_for_hit_after "$DT_HIT_START_LINE" "$DT_CONTEXT_ID" "DevTools hit-test")"
+  require_text "$DT_HIT_LINE" "overlay_frame=${DT_FRAME}" "DevTools hit-test uses DevTools frame"
+  require_trace_after "$DT_HIT_TRACE_START_LINE" "mouse-move tab=${DT_BROWSER_TAB_ID} pane=${DT_PANE_ID}" "DevTools pointer move reached DevTools browser"
+  require_no_trace_after "$DT_HIT_TRACE_START_LINE" "mouse-event tab=${A_BROWSER_TAB_ID} pane=${A_PANE_ID}" "DevTools click did not route to normal browser"
+
+  DT_MODE_TRACE_START_LINE="$(trace_line_count)"
+  swift "$ROOT/scripts/ghostty-app/inject.swift" key 36 >>"$HARNESS_LOG" 2>&1
+  require_trace_after "$DT_MODE_TRACE_START_LINE" "focus-changed tab=${DT_BROWSER_TAB_ID} pane=${DT_PANE_ID} ffi=ts_set_focus focused=true" "Roamium observed DevTools focus=true"
+
+  DT_CLICK_TRACE_START_LINE="$(trace_line_count)"
+  click_global_point "$DT_INSIDE_X" "$DT_INSIDE_Y" "devtools_inside_focused"
+  require_trace_after "$DT_CLICK_TRACE_START_LINE" "mouse-event tab=${DT_BROWSER_TAB_ID} pane=${DT_PANE_ID}" "focused DevTools click reached DevTools browser"
+  require_no_trace_after "$DT_CLICK_TRACE_START_LINE" "mouse-event tab=${A_BROWSER_TAB_ID} pane=${A_PANE_ID}" "focused DevTools click did not route to normal browser"
+
+  DT_KEY_START_LINE="$(trace_line_count)"
+  printf 'ISSUE809_EXP24_DEVTOOLS\n' >"$BROWSER_FOCUS_COMMAND"
+  swift "$ROOT/scripts/ghostty-app/inject.swift" type "$BROWSER_FOCUS_COMMAND" >>"$HARNESS_LOG" 2>&1
+  require_trace_after "$DT_KEY_START_LINE" "key-event tab=${DT_BROWSER_TAB_ID} pane=${DT_PANE_ID}" "DevTools keyboard marker reached DevTools"
+  require_no_trace_after "$DT_KEY_START_LINE" "key-event tab=${A_BROWSER_TAB_ID} pane=${A_PANE_ID}" "DevTools keyboard marker did not reach normal browser"
+
+  swift "$ROOT/scripts/ghostty-app/inject.swift" key 53 >>"$HARNESS_LOG" 2>&1
+  A_MODE_TRACE_START_LINE="$(trace_line_count)"
+  click_global_point "$A_SPLIT_INSIDE_X" "$A_SPLIT_INSIDE_Y" "devtools_normal_refocus"
+  swift "$ROOT/scripts/ghostty-app/inject.swift" key 36 >>"$HARNESS_LOG" 2>&1
+  require_trace_after "$A_MODE_TRACE_START_LINE" "focus-changed tab=${A_BROWSER_TAB_ID} pane=${A_PANE_ID} ffi=ts_set_focus focused=true" "Roamium observed normal browser focus=true after DevTools"
+  A_KEY_START_LINE="$(trace_line_count)"
+  printf 'ISSUE809_EXP24_NORMAL\n' >"$BROWSER_FOCUS_COMMAND"
+  swift "$ROOT/scripts/ghostty-app/inject.swift" type "$BROWSER_FOCUS_COMMAND" >>"$HARNESS_LOG" 2>&1
+  require_trace_after "$A_KEY_START_LINE" "key-event tab=${A_BROWSER_TAB_ID} pane=${A_PANE_ID}" "normal browser keyboard marker reached normal browser"
+  require_no_trace_after "$A_KEY_START_LINE" "key-event tab=${DT_BROWSER_TAB_ID} pane=${DT_PANE_ID}" "normal browser keyboard marker did not reach DevTools"
 fi
 
 if [ "$SCENARIO" = "split-right" ]; then

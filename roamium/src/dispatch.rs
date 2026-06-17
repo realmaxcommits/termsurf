@@ -134,6 +134,10 @@ pub fn handle_message(msg: &TermSurfMessage) {
     match inner {
         Msg::CreateTab(m) => {
             let url = CString::new(m.url.as_str()).unwrap();
+            trace_pdf_input(format!(
+                "create-tab pane={} pixel_width={} pixel_height={} url={}",
+                m.pane_id, m.pixel_width, m.pixel_height, m.url
+            ));
             tabs().push(TabEntry {
                 handle: std::ptr::null_mut(),
                 tab_id: 0,
@@ -153,6 +157,10 @@ pub fn handle_message(msg: &TermSurfMessage) {
             };
         }
         Msg::CreateDevtoolsTab(m) => {
+            trace_pdf_input(format!(
+                "create-devtools-tab pane={} inspected_tab_id={} pixel_width={} pixel_height={} ffi=ts_create_devtools_web_contents",
+                m.pane_id, m.inspected_tab_id, m.pixel_width, m.pixel_height
+            ));
             tabs().push(TabEntry {
                 handle: std::ptr::null_mut(),
                 tab_id: 0,
@@ -481,6 +489,10 @@ pub unsafe extern "C" fn on_tab_ready(wc: TsWebContents, tab_id: i32, _user_data
     });
     let Some(t) = t else { return };
     t.tab_id = tab_id as i64;
+    trace_pdf_input(format!(
+        "tab-ready tab={} pane={} inspected_tab_id={}",
+        t.tab_id, t.pane_id, t.inspected_tab_id
+    ));
 
     let msg = TermSurfMessage {
         msg: Some(Msg::TabReady(proto::termsurf::TabReady {
@@ -499,6 +511,10 @@ pub unsafe extern "C" fn on_ca_context_id(
     _user_data: *mut c_void,
 ) {
     let Some(t) = find_by_handle(wc) else { return };
+    trace_pdf_input(format!(
+        "ca-context tab={} pane={} inspected_tab_id={} context_id={} pixel_width={} pixel_height={}",
+        t.tab_id, t.pane_id, t.inspected_tab_id, ca_context_id, width, height
+    ));
     let msg = TermSurfMessage {
         msg: Some(Msg::CaContext(proto::termsurf::CaContext {
             tab_id: t.tab_id,
