@@ -962,6 +962,11 @@ fn handleSetOverlay(tui_fd: std.posix.fd_t, req: ?*c.Termsurf__SetOverlay) void 
             "SetOverlay: reused pending server key={s}/{s} pane_count={} has_fd={}",
             .{ servers[server_index].profileName(), servers[server_index].browserName(), servers[server_index].pane_count, servers[server_index].attached_fd >= 0 },
         );
+        if (servers[server_index].attached_fd >= 0) {
+            sendCreateTab(servers[server_index].attached_fd, &panes[pane_index]) catch |err| {
+                log.warn("SetOverlay: attached CreateTab send failed pane_id={s} err={}", .{ pane_id, err });
+            };
+        }
     } else {
         const server_index = reserveServer() orelse {
             log.warn("SetOverlay: server limit reached profile={s} browser={s}", .{ profile, browser });

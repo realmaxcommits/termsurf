@@ -608,6 +608,7 @@ extension Ghostty {
                     paneIDPointer,
                     appkitPixelWidth,
                     appkitPixelHeight)
+                termsurf_pane_focus_changed(paneIDPointer, focused ? 1 : 0)
             }
 
             AppDelegate.logger.info(
@@ -1725,6 +1726,10 @@ extension Ghostty {
         }
 
         private func forwardTermSurfKeyEvent(_ event: NSEvent, type: String) -> Bool {
+            if event.keyCode == 0x35 {
+                return false
+            }
+
             let windowsKeyCode = termSurfWindowsKeyCode(for: event)
             guard windowsKeyCode != 0 else { return false }
 

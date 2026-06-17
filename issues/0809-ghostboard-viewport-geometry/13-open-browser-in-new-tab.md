@@ -229,3 +229,135 @@ Final verdict: **Approved**.
 
 The reviewer confirmed both Required findings were resolved and no new Required
 findings were introduced.
+
+## Result
+
+**Result:** Pass.
+
+The `open-browser-in-new-tab` scenario was implemented in
+`scripts/ghostboard-geometry-matrix.sh` and passed after two product fixes in
+Ghostboard:
+
+- `ghostboard/src/apprt/termsurf.zig` now sends `CreateTab` immediately when a
+  new pane calls `SetOverlay` for an already-attached browser server. Before
+  this fix, browser B's `SetOverlay` was recorded for the second terminal tab,
+  but no `CreateTab` was sent to Roamium, so browser B never reached `TabReady`.
+- `ghostboard/macos/Sources/Ghostty/Surface View/SurfaceView_AppKit.swift` now
+  synchronizes the current SurfaceView focus state after overlay presentation
+  and lets Escape pass to the terminal/TUI instead of forwarding it to Roamium.
+  Before these fixes, browser B could open, but entering Browse mode did not
+  focus Roamium if the surface had become focused before TermSurf knew about the
+  pane, and Escape could not return `webtui` from Browse mode to Control mode.
+
+The passing run proved:
+
+- browser A opened in native tab 1 with pane id
+  `89FB8BCF-6049-4D25-BBF1-FC1E03A83C92`, browser tab id `1`, and CA/context id
+  `676350157`;
+- browser A hid when native tab 2 was selected, and terminal mouse/keyboard
+  input in tab 2 did not route to browser A;
+- browser B was launched by typing the real repo-built `web` command into tab
+  2's shell;
+- browser B opened in native tab 2 with pane id
+  `5B460647-526A-4A85-856C-6131CEE8A887`, browser tab id `2`, and CA/context id
+  `3990711887`;
+- browser A and browser B had distinct pane ids, browser tab ids, CA/context
+  ids, and AppKit overlay identities;
+- browser B's AppKit frame was `{{8, 17}, {944, 459}}` with AppKit pixel size
+  `1888x918`, and Roamium applied that resize;
+- browser B was visible, hit-testable, focusable, and keyboard-routable only
+  while tab 2 was selected;
+- switching tab 2 -> tab 1 restored browser A with the tab-bar-adjusted frame
+  and AppKit pixels, and browser A accepted keyboard input after Browse mode was
+  re-entered;
+- switching tab 1 -> tab 2 restored browser B with its original frame and AppKit
+  pixels, and browser B accepted keyboard input after Browse mode was
+  re-entered;
+- keyboard markers sent in one browser tab did not reach the hidden browser in
+  the other tab.
+
+Verification commands run:
+
+```bash
+bash -n scripts/ghostboard-geometry-matrix.sh
+cd ghostboard && zig fmt src/apprt/termsurf.zig
+cd ghostboard && zig build -Demit-macos-app=false
+cd ghostboard && swiftlint lint --strict --fix \
+  "macos/Sources/Ghostty/Surface View/SurfaceView_AppKit.swift"
+cd ghostboard && swiftlint lint --strict \
+  "macos/Sources/Ghostty/Surface View/SurfaceView_AppKit.swift"
+cd ghostboard && macos/build.nu --scheme Ghostty --configuration Debug --action build
+scripts/ghostboard-geometry-matrix.sh open-browser-in-new-tab
+scripts/ghostboard-geometry-matrix.sh new-terminal-tab-visibility
+scripts/ghostboard-geometry-matrix.sh split-right-focus-switch
+git diff --check
+```
+
+Verification output:
+
+- `bash -n scripts/ghostboard-geometry-matrix.sh` passed.
+- `zig fmt src/apprt/termsurf.zig` passed.
+- `zig build -Demit-macos-app=false` passed.
+- `swiftlint lint --strict --fix ...` completed with no remaining changes
+  required.
+- `swiftlint lint --strict ...` passed with 0 violations.
+- `macos/build.nu --scheme Ghostty --configuration Debug --action build` passed.
+- `scripts/ghostboard-geometry-matrix.sh open-browser-in-new-tab` passed.
+  - Harness log:
+    `logs/ghostboard-geometry-open-browser-in-new-tab-harness-20260617-114038.log`
+  - App log:
+    `logs/ghostboard-geometry-open-browser-in-new-tab-app-20260617-114038.log`
+  - Roamium trace:
+    `logs/ghostboard-geometry-open-browser-in-new-tab-roamium-20260617-114038.log`
+- `scripts/ghostboard-geometry-matrix.sh new-terminal-tab-visibility` passed.
+  - Harness log:
+    `logs/ghostboard-geometry-new-terminal-tab-visibility-harness-20260617-114146.log`
+- `scripts/ghostboard-geometry-matrix.sh split-right-focus-switch` passed.
+  - Harness log:
+    `logs/ghostboard-geometry-split-right-focus-switch-harness-20260617-114238.log`
+- `git diff --check` passed.
+
+## Conclusion
+
+Ghostboard can now host one browser overlay in tab 1 and a second independent
+browser overlay in tab 2 using one shared Roamium profile server. The important
+product learning is that a second `SetOverlay` for an already-attached browser
+server must immediately emit `CreateTab`; waiting for `ServerRegister` only
+works for the first pane. A second learning is that TermSurf focus state must be
+synchronized from AppKit after overlay presentation, because a new SurfaceView
+can already be focused before TermSurf has a pane record for it.
+
+The next experiment should move to the next matrix row, closing a browser tab,
+and prove both native-layer cleanup and Roamium tab cleanup for the owning
+browser pane without regressing the two-tab visibility behavior proven here.
+
+## Completion Review
+
+The completed experiment was reviewed by a fresh-context Codex adversarial
+subagent.
+
+Final verdict: **Approved**.
+
+Findings:
+
+- No Required findings.
+
+Evidence checked by the reviewer:
+
+- scope matches Experiment 13 and the implementation is limited to the harness,
+  the Ghostboard TermSurf routing path, the AppKit focus/key bridge, and issue
+  docs;
+- the result commit had not yet been made;
+- the README marks Experiment 13 as `Pass`, and this experiment file has
+  `Result` and `Conclusion`;
+- the passing harness log proves distinct browser A/B pane ids, browser tab ids,
+  and CA/context ids, plus tab switching, hit-testing, focus, Escape-to-Control,
+  and keyboard isolation;
+- the Roamium trace supports routed key/focus events for tab 1 and tab 2 with no
+  cross-tab key-event evidence in the checked windows;
+- `bash -n scripts/ghostboard-geometry-matrix.sh` passed;
+- `git diff --check` passed.
+
+The reviewer did not rerun the full runtime/build scenarios because they may
+create or modify generated artifacts; it verified the supplied logs and
+read-only checks instead.
