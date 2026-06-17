@@ -228,3 +228,129 @@ Final verdict: **Approved**.
 
 The reviewer confirmed the prior Required finding was resolved and reported no
 new findings.
+
+## Result
+
+**Result:** Pass.
+
+The `split-right-close-sibling` scenario is implemented in
+`scripts/ghostboard-geometry-matrix.sh`. The harness now:
+
+- accepts `split-right-close-sibling` in addition to the prior scenarios;
+- adds scenario-local config:
+  - `confirm-close-surface = false`;
+  - `keybind = ctrl+d=new_split:right`;
+  - `keybind = ctrl+k=close_surface`;
+- creates a right-side split from the browser-owning pane;
+- relies on the known Ghostty/Ghostboard behavior that `new_split:right` leaves
+  focus on the newly created sibling pane;
+- invokes Control-K to close the focused sibling pane through the public
+  `close_surface` keybinding;
+- verifies that AppKit, Zig, and Roamium all resize the original browser pane
+  back to the full single-pane geometry after sibling close;
+- captures a post-close-sibling screenshot;
+- verifies a positive hit test inside the expanded browser overlay;
+- verifies a positive hit test in the former sibling-pane area, proving that the
+  original browser overlay now occupies the reclaimed pane space.
+
+This experiment required no Ghostboard product source changes and no product
+rebuild. The only implementation change was in the reusable geometry harness.
+
+Two early harness runs failed after proving the close-sibling geometry because
+the new former-sibling hit-test calculation referenced `SPLIT_FRAME_WIDTH`
+before assigning it inside the new scenario block. The harness was fixed to
+derive the split frame width immediately after recording the split baseline, and
+the scenario then passed.
+
+Final passing artifacts:
+
+- split-right-close-sibling app log:
+  `logs/ghostboard-geometry-split-right-close-sibling-app-20260617-090717.log`
+- split-right-close-sibling harness log:
+  `logs/ghostboard-geometry-split-right-close-sibling-harness-20260617-090717.log`
+- split-right-close-sibling initial screenshot:
+  `logs/ghostboard-geometry-split-right-close-sibling-screenshot-20260617-090717.png`
+- split-right-close-sibling post-close screenshot:
+  `logs/ghostboard-geometry-split-right-close-sibling-close-screenshot-20260617-090717.png`
+- split-right-close-sibling Roamium trace:
+  `logs/ghostboard-geometry-split-right-close-sibling-roamium-20260617-090717.log`
+- initial-open regression app log:
+  `logs/ghostboard-geometry-initial-open-app-20260617-090736.log`
+- initial-open regression harness log:
+  `logs/ghostboard-geometry-initial-open-harness-20260617-090736.log`
+- split-right regression app log:
+  `logs/ghostboard-geometry-split-right-app-20260617-090742.log`
+- split-right regression harness log:
+  `logs/ghostboard-geometry-split-right-harness-20260617-090742.log`
+- split-right-resize regression app log:
+  `logs/ghostboard-geometry-split-right-resize-app-20260617-090823.log`
+- split-right-resize regression harness log:
+  `logs/ghostboard-geometry-split-right-resize-harness-20260617-090823.log`
+- split-right-equalize regression app log:
+  `logs/ghostboard-geometry-split-right-equalize-app-20260617-090905.log`
+- split-right-equalize regression harness log:
+  `logs/ghostboard-geometry-split-right-equalize-harness-20260617-090905.log`
+- split-right-zoom regression app log:
+  `logs/ghostboard-geometry-split-right-zoom-app-20260617-090949.log`
+- split-right-zoom regression harness log:
+  `logs/ghostboard-geometry-split-right-zoom-harness-20260617-090949.log`
+
+Key runtime evidence from the passing `split-right-close-sibling` run:
+
+- initial frame: `944x493`, AppKit pixel size `1888x986`;
+- post-split sibling-open baseline: `456x493`, AppKit pixel size `912x986`;
+- post-close frame: `944x493`, AppKit pixel size `1888x986`;
+- pane id: `F586185F-0CE6-4005-B56C-EEA48B5CB038`;
+- browser tab id: `1`;
+- context id: `508646670`;
+- positive post-close hit point: `747,395`;
+- positive former-sibling-area hit point: `975,395`.
+
+Verification commands run:
+
+```bash
+bash -n scripts/ghostboard-geometry-matrix.sh
+git diff --check
+scripts/ghostboard-geometry-matrix.sh split-right-close-sibling
+scripts/ghostboard-geometry-matrix.sh initial-open
+scripts/ghostboard-geometry-matrix.sh split-right
+scripts/ghostboard-geometry-matrix.sh split-right-resize
+scripts/ghostboard-geometry-matrix.sh split-right-equalize
+scripts/ghostboard-geometry-matrix.sh split-right-zoom
+```
+
+The required adjacent regression sweep was run serially.
+
+## Completion Review
+
+The completed experiment was reviewed by a fresh-context Codex adversarial
+subagent.
+
+Verdict: **Approved**.
+
+The reviewer reported no Required findings. It independently verified that:
+
+- only the expected harness and Issue 809 docs are modified;
+- `HEAD` is still the plan commit, so the result commit has not been made early;
+- `bash -n scripts/ghostboard-geometry-matrix.sh` passes;
+- `git diff --check` passes;
+- the harness config uses `confirm-close-surface = false` and
+  `ctrl+k=close_surface`;
+- post-close AppKit, Zig, Roamium, and hit-test checks are bounded after the
+  close-key phase;
+- the claimed passing artifacts exist and the harness logs end in `PASS`.
+
+The reviewer did not rerun the GUI scenario because doing so would create new
+logs/screenshots and launch or kill processes, which was outside the requested
+read-only review discipline.
+
+## Conclusion
+
+The close-sibling matrix row passes for a two-pane split-right layout. A browser
+in the original left pane expands back to the full single-pane geometry after
+the focused right sibling pane closes, and AppKit, Zig, Roamium, screenshot, and
+input-hit evidence stay aligned after the transition.
+
+The next experiment should move to the next untested matrix row, most likely
+closing the browser-owning pane and proving the native webview layer, browser
+state, and input routing are cleaned up instead of leaving stale geometry.

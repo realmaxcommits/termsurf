@@ -190,4 +190,4 @@ work together, not just individually.
 - [Experiment 8: Split-right zoom restore](08-split-right-zoom-restore.md) —
   **Pass**
 - [Experiment 9: Close split-right sibling](09-close-split-right-sibling.md) —
-  **Designed**
+  **Pass**
