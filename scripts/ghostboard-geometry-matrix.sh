@@ -27,6 +27,8 @@ SCREENSHOT_TAB_BROWSER_B="$LOG_DIR/ghostboard-geometry-${SCENARIO}-browser-b-scr
 SCREENSHOT_TAB_BROWSER_A_RESTORED="$LOG_DIR/ghostboard-geometry-${SCENARIO}-browser-a-restored-screenshot-${TS}.png"
 SCREENSHOT_TAB_BROWSER_B_RESTORED="$LOG_DIR/ghostboard-geometry-${SCENARIO}-browser-b-restored-screenshot-${TS}.png"
 SCREENSHOT_TAB_AFTER_CLOSE="$LOG_DIR/ghostboard-geometry-${SCENARIO}-after-close-screenshot-${TS}.png"
+SCREENSHOT_WINDOW_B="$LOG_DIR/ghostboard-geometry-${SCENARIO}-window-b-screenshot-${TS}.png"
+SCREENSHOT_WINDOW_A_RESTORED="$LOG_DIR/ghostboard-geometry-${SCENARIO}-window-a-restored-screenshot-${TS}.png"
 ROAMIUM_TRACE="$LOG_DIR/ghostboard-geometry-${SCENARIO}-roamium-${TS}.log"
 SIBLING_ALIVE_COMMAND="$RUN_DIR/sibling-alive-command.txt"
 SIBLING_FOCUS_COMMAND="$RUN_DIR/sibling-focus-command.txt"
@@ -206,6 +208,10 @@ extract_frame_x() {
 
 extract_frame_y() {
   printf '%s\n' "$1" | sed -E 's/.*overlay_frame=\{\{[^,]+, ([^}]+)\}, \{[^}]+\}\}.*/\1/'
+}
+
+extract_root_frame_size() {
+  printf '%s\n' "$1" | sed -E 's/.*root_frame=\{\{[^}]+\}, \{([^,]+), ([^}]+)\}\}.*/\1x\2/'
 }
 
 pair_width() {
@@ -867,6 +873,17 @@ window_bounds_for() {
   swift "$WINDOW_BOUNDS" "$1"
 }
 
+app_windows() {
+  swift "$APP_WINDOWS" "$PID"
+}
+
+focus_window_bounds() {
+  local bounds="$1"
+  local bid bx by bw bh
+  IFS=$'\t' read -r bid bx by bw bh <<<"$bounds"
+  swift "$FOCUS_WINDOW" "$PID" "$bx" "$by" "$bw" "$bh"
+}
+
 set_window_size() {
   local width="$1"
   local height="$2"
@@ -908,7 +925,7 @@ click_negative_global_point() {
 }
 
 case "$SCENARIO" in
-  initial-open|window-resize|split-right|split-down|split-right-resize|split-right-equalize|split-right-zoom|split-right-close-sibling|split-right-close-browser-pane|split-right-focus-switch|new-terminal-tab-visibility|open-browser-in-new-tab|close-browser-tab) ;;
+  initial-open|window-resize|split-right|split-down|split-right-resize|split-right-equalize|split-right-zoom|split-right-close-sibling|split-right-close-browser-pane|split-right-focus-switch|new-terminal-tab-visibility|open-browser-in-new-tab|close-browser-tab|open-browser-in-new-window) ;;
   *)
     fail "unsupported scenario: $SCENARIO"
     ;;
@@ -923,7 +940,9 @@ require_readable "$ROOT/scripts/ghostty-app/winid.swift"
 COMMAND="$RUN_DIR/run-web.sh"
 CONFIG="$RUN_DIR/config"
 WINDOW_BOUNDS="$RUN_DIR/window-bounds.swift"
+APP_WINDOWS="$RUN_DIR/app-windows.swift"
 ACTIVATE_APP="$RUN_DIR/activate-app.swift"
+FOCUS_WINDOW="$RUN_DIR/focus-window.swift"
 RESIZE_WINDOW="$RUN_DIR/resize-window.swift"
 cat >"$COMMAND" <<EOF
 #!/usr/bin/env bash
@@ -931,7 +950,7 @@ exec "$WEB" --browser "$ROAMIUM" "$URL"
 EOF
 chmod +x "$COMMAND"
 
-if [ "$SCENARIO" = "new-terminal-tab-visibility" ] || [ "$SCENARIO" = "open-browser-in-new-tab" ] || [ "$SCENARIO" = "close-browser-tab" ]; then
+if [ "$SCENARIO" = "new-terminal-tab-visibility" ] || [ "$SCENARIO" = "open-browser-in-new-tab" ] || [ "$SCENARIO" = "close-browser-tab" ] || [ "$SCENARIO" = "open-browser-in-new-window" ]; then
   FIRST_RUN_MARKER="$RUN_DIR/first-web-ran"
   cat >"$COMMAND" <<EOF
 #!/usr/bin/env bash
@@ -964,6 +983,12 @@ if [ "$SCENARIO" = "close-browser-tab" ]; then
   cat >>"$CONFIG" <<'EOF'
 confirm-close-surface = false
 keybind = ctrl+w=close_tab
+EOF
+fi
+
+if [ "$SCENARIO" = "open-browser-in-new-window" ]; then
+  cat >>"$CONFIG" <<'EOF'
+keybind = ctrl+b=new_window
 EOF
 fi
 
@@ -1038,6 +1063,33 @@ for window in info {
 exit(1)
 EOF
 
+cat >"$APP_WINDOWS" <<'EOF'
+import CoreGraphics
+import Foundation
+
+guard CommandLine.arguments.count == 2,
+      let targetPID = Int(CommandLine.arguments[1]),
+      let info = CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as? [[String: Any]]
+else {
+    exit(2)
+}
+
+for window in info {
+    let pid = (window[kCGWindowOwnerPID as String] as? Int) ?? -1
+    let layer = (window[kCGWindowLayer as String] as? Int) ?? -1
+    let onscreen = (window[kCGWindowIsOnscreen as String] as? Bool) ?? false
+    guard pid == targetPID, layer == 0, onscreen else { continue }
+    guard let id = window[kCGWindowNumber as String] as? Int else { continue }
+    let bounds = (window[kCGWindowBounds as String] as? [String: Any]) ?? [:]
+    let x = Int((bounds["X"] as? Double) ?? 0)
+    let y = Int((bounds["Y"] as? Double) ?? 0)
+    let width = Int((bounds["Width"] as? Double) ?? 0)
+    let height = Int((bounds["Height"] as? Double) ?? 0)
+    guard width >= 50, height >= 50 else { continue }
+    print("\(id)\t\(x)\t\(y)\t\(width)\t\(height)")
+}
+EOF
+
 cat >"$ACTIVATE_APP" <<'EOF'
 import AppKit
 import Foundation
@@ -1051,6 +1103,82 @@ else {
 
 app.activate(options: [.activateAllWindows, .activateIgnoringOtherApps])
 Thread.sleep(forTimeInterval: 0.5)
+EOF
+
+cat >"$FOCUS_WINDOW" <<'EOF'
+import ApplicationServices
+import Foundation
+
+guard CommandLine.arguments.count == 6,
+      let rawPID = Int32(CommandLine.arguments[1]),
+      let targetX = Double(CommandLine.arguments[2]),
+      let targetY = Double(CommandLine.arguments[3]),
+      let targetWidth = Double(CommandLine.arguments[4]),
+      let targetHeight = Double(CommandLine.arguments[5])
+else {
+    fputs("usage: focus-window.swift <pid> <x> <y> <width> <height>\n", stderr)
+    exit(2)
+}
+
+guard AXIsProcessTrusted() else {
+    fputs("accessibility permission is not trusted for window focus automation\n", stderr)
+    exit(3)
+}
+
+func point(_ value: CFTypeRef?) -> CGPoint? {
+    guard let value, CFGetTypeID(value) == AXValueGetTypeID() else { return nil }
+    var result = CGPoint.zero
+    guard AXValueGetValue(value as! AXValue, .cgPoint, &result) else { return nil }
+    return result
+}
+
+func size(_ value: CFTypeRef?) -> CGSize? {
+    guard let value, CFGetTypeID(value) == AXValueGetTypeID() else { return nil }
+    var result = CGSize.zero
+    guard AXValueGetValue(value as! AXValue, .cgSize, &result) else { return nil }
+    return result
+}
+
+let app = AXUIElementCreateApplication(pid_t(rawPID))
+var windowsValue: CFTypeRef?
+let windowsResult = AXUIElementCopyAttributeValue(
+    app,
+    kAXWindowsAttribute as CFString,
+    &windowsValue
+)
+
+guard windowsResult == .success,
+      let windows = windowsValue as? [AXUIElement]
+else {
+    fputs("could not read target app windows: \(windowsResult.rawValue)\n", stderr)
+    exit(4)
+}
+
+for window in windows {
+    var positionValue: CFTypeRef?
+    var sizeValue: CFTypeRef?
+    guard AXUIElementCopyAttributeValue(window, kAXPositionAttribute as CFString, &positionValue) == .success,
+          AXUIElementCopyAttributeValue(window, kAXSizeAttribute as CFString, &sizeValue) == .success,
+          let position = point(positionValue),
+          let windowSize = size(sizeValue)
+    else { continue }
+
+    let positionMatches = abs(Double(position.x) - targetX) <= 4 &&
+        abs(Double(position.y) - targetY) <= 4
+    let sizeMatches = abs(Double(windowSize.width) - targetWidth) <= 8 &&
+        abs(Double(windowSize.height) - targetHeight) <= 8
+    guard positionMatches && sizeMatches else { continue }
+
+    _ = AXUIElementPerformAction(window, kAXRaiseAction as CFString)
+    _ = AXUIElementSetAttributeValue(app, kAXFocusedWindowAttribute as CFString, window)
+    _ = AXUIElementSetAttributeValue(window, kAXMainAttribute as CFString, kCFBooleanTrue)
+    _ = AXUIElementSetAttributeValue(window, kAXFocusedAttribute as CFString, kCFBooleanTrue)
+    Thread.sleep(forTimeInterval: 0.5)
+    exit(0)
+}
+
+fputs("no matching accessibility window for bounds \(targetX),\(targetY) \(targetWidth)x\(targetHeight)\n", stderr)
+exit(5)
 EOF
 
 cat >"$RESIZE_WINDOW" <<'EOF'
@@ -1163,6 +1291,12 @@ if [ "$SCENARIO" = "open-browser-in-new-tab" ] || [ "$SCENARIO" = "close-browser
   log "browser_b_restored_screenshot=$SCREENSHOT_TAB_BROWSER_B_RESTORED"
   log "after_close_screenshot=$SCREENSHOT_TAB_AFTER_CLOSE"
   log "second_browser_command=$SECOND_BROWSER_COMMAND"
+fi
+if [ "$SCENARIO" = "open-browser-in-new-window" ]; then
+  log "window_b_screenshot=$SCREENSHOT_WINDOW_B"
+  log "window_a_restored_screenshot=$SCREENSHOT_WINDOW_A_RESTORED"
+  log "window_b_command=$SECOND_BROWSER_COMMAND"
+  log "first_run_wrapper_command_log=$NEW_TAB_COMMAND_LOG"
 fi
 
 GHOSTTY_CONFIG_PATH="$CONFIG" \
@@ -1290,6 +1424,176 @@ require_log "TermSurf geometry .*scenario=${SCENARIO}" "timestamped run contains
 require_log 'window_id:[^ ]+ surface_id:[^ ]+ selected_tab_id:[^ ]+ pane_id:[^ ]+ browser_tab_id:[^ ]+' "canonical identity tuple fields"
 require_readable "$ROAMIUM_TRACE"
 require_trace "resize tab_id=${BROWSER_TAB_ID} pane_id=${PANE_ID} pixel_width=${APPKIT_PIXEL_WIDTH} pixel_height=${APPKIT_PIXEL_HEIGHT} screen_x=0 screen_y=0 screen_width=0 screen_height=0 screen_scale=0 ffi=ts_set_view_size" "Roamium applied resize to AppKit pixel size via ts_set_view_size"
+
+if [ "$SCENARIO" = "open-browser-in-new-window" ]; then
+  A_WINDOW_ID="$WID"
+  A_SELECTED_TAB_ID="$(extract_selected_tab_id "$APPKIT_PRESENT_LINE")"
+  A_PANE_ID="$PANE_ID"
+  A_BROWSER_TAB_ID="$BROWSER_TAB_ID"
+  A_CONTEXT_ID="$CONTEXT_ID"
+  A_FRAME="$OVERLAY_FRAME"
+  A_FRAME_SIZE="$OVERLAY_FRAME_SIZE"
+  A_FRAME_X="$OVERLAY_FRAME_X"
+  A_FRAME_Y="$OVERLAY_FRAME_Y"
+  A_ROOT_FRAME_SIZE="$(extract_root_frame_size "$APPKIT_PRESENT_LINE")"
+  A_PIXEL="$APPKIT_PIXEL"
+  log "browser_a_window_id=$A_WINDOW_ID"
+  log "browser_a_selected_tab_id=$A_SELECTED_TAB_ID"
+  log "browser_a_pane_id=$A_PANE_ID"
+  log "browser_a_browser_tab_id=$A_BROWSER_TAB_ID"
+  log "browser_a_context_id=$A_CONTEXT_ID"
+
+  NEW_WINDOW_START_LINE="$(log_line_count)"
+  NEW_WINDOW_TRACE_START_LINE="$(trace_line_count)"
+  log "new_window_keybind=ctrl+b=new_window"
+  swift "$ROOT/scripts/ghostty-app/inject.swift" key 11 control >>"$HARNESS_LOG" 2>&1
+  delay 2
+
+  require_log_after "$NEW_WINDOW_START_LINE" "dispatching action target=surface action=.new_window" "new window action dispatched"
+  require_log_after "$NEW_WINDOW_START_LINE" 'starting command command=`/usr/bin/login`' "new window started plain login shell"
+  if [ -s "$NEW_TAB_COMMAND_LOG" ]; then
+    fail "new window unexpectedly inherited and ran the first-run web wrapper"
+  fi
+  log "PASS: new window did not inherit the first-run web wrapper"
+
+  B_WIN_LINE=""
+  for _ in $(seq 1 30); do
+    B_WIN_LINE="$(app_windows | awk -F '\t' -v old="$A_WINDOW_ID" '$1 != old { print; exit }' || true)"
+    if [ -n "$B_WIN_LINE" ]; then
+      break
+    fi
+    delay 1
+  done
+  [ -n "$B_WIN_LINE" ] || fail "timed out waiting for second Ghostboard window"
+  IFS=$'\t' read -r B_WINDOW_ID B_WX B_WY B_WW B_WH <<<"$B_WIN_LINE"
+  [ "$B_WINDOW_ID" != "$A_WINDOW_ID" ] || fail "new window reused browser A window id"
+  log "window_b=$B_WIN_LINE"
+
+  click_window_center "$B_WIN_LINE" "window_b_shell"
+  delay 1
+
+  BROWSER_B_START_LINE="$(log_line_count)"
+  BROWSER_B_TRACE_START_LINE="$(trace_line_count)"
+  printf '"%s" --browser "%s" "%s"' "$WEB" "$ROAMIUM" "$URL_B" >"$SECOND_BROWSER_COMMAND"
+  log "browser_b_command=$(cat "$SECOND_BROWSER_COMMAND")"
+  swift "$ROOT/scripts/ghostty-app/inject.swift" type "$SECOND_BROWSER_COMMAND" >>"$HARNESS_LOG" 2>&1
+  swift "$ROOT/scripts/ghostty-app/inject.swift" key 36 >>"$HARNESS_LOG" 2>&1
+
+  B_TAB_READY_LINE="$(wait_for_different_zig_event_after "$BROWSER_B_START_LINE" "tab_ready" "$A_PANE_ID" "browser B Zig tab_ready")"
+  B_PANE_ID="$(extract_pane_id "$B_TAB_READY_LINE")"
+  B_BROWSER_TAB_ID="$(extract_browser_tab_id "$B_TAB_READY_LINE")"
+  [ -n "$B_PANE_ID" ] || fail "could not extract browser B pane id"
+  [ -n "$B_BROWSER_TAB_ID" ] || fail "could not extract browser B tab id"
+  [ "$B_PANE_ID" != "$A_PANE_ID" ] || fail "browser B reused browser A pane id"
+  [ "$B_BROWSER_TAB_ID" != "$A_BROWSER_TAB_ID" ] || fail "browser B reused browser A tab id"
+  log "browser_b_pane_id=$B_PANE_ID"
+  log "browser_b_browser_tab_id=$B_BROWSER_TAB_ID"
+
+  B_CA_CONTEXT_LINE="$(wait_for_line_after "$BROWSER_B_START_LINE" "TermSurf geometry layer=zig event=ca_context .*pane_id:${B_PANE_ID} .*browser_tab_id:${B_BROWSER_TAB_ID}" "browser B Zig ca_context")"
+  B_CONTEXT_ID="$(extract_context_id "$B_CA_CONTEXT_LINE")"
+  [ -n "$B_CONTEXT_ID" ] || fail "could not extract browser B context id"
+  [ "$B_CONTEXT_ID" != "$A_CONTEXT_ID" ] || fail "browser B reused browser A CA/context id"
+  log "browser_b_context_id=$B_CONTEXT_ID"
+
+  B_APPKIT_PRESENT_LINE="$(wait_for_line_after "$BROWSER_B_START_LINE" "TermSurf geometry layer=appkit event=presented .*pane_id:${B_PANE_ID} .*context_id=${B_CONTEXT_ID}" "browser B AppKit presentation")"
+  B_APPKIT_PIXELS_LINE="$(wait_for_line_after "$BROWSER_B_START_LINE" "TermSurf geometry layer=appkit event=presented_pixels .*pane_id:${B_PANE_ID} .*context_id=${B_CONTEXT_ID}" "browser B AppKit pixels")"
+  B_PRESENT_WINDOW_ID="$(printf '%s\n' "$B_APPKIT_PRESENT_LINE" | sed -E 's/.*window_id:([^ ]+) .*/\1/')"
+  B_SELECTED_TAB_ID="$(extract_selected_tab_id "$B_APPKIT_PRESENT_LINE")"
+  B_FRAME="$(extract_overlay_frame "$B_APPKIT_PRESENT_LINE")"
+  B_FRAME_SIZE="$(extract_frame_size "$B_APPKIT_PRESENT_LINE")"
+  B_FRAME_X="$(extract_frame_x "$B_APPKIT_PRESENT_LINE")"
+  B_FRAME_Y="$(extract_frame_y "$B_APPKIT_PRESENT_LINE")"
+  B_PIXEL="$(extract_appkit_pixel "$B_APPKIT_PIXELS_LINE")"
+  [ "$B_PRESENT_WINDOW_ID" = "$B_WINDOW_ID" ] || fail "browser B AppKit window id mismatch: expected=$B_WINDOW_ID actual=$B_PRESENT_WINDOW_ID"
+  [ "$B_SELECTED_TAB_ID" = "$B_WINDOW_ID" ] || fail "browser B selected tab id mismatch: expected=$B_WINDOW_ID actual=$B_SELECTED_TAB_ID"
+  log "browser_b_window_id=$B_PRESENT_WINDOW_ID"
+  log "browser_b_selected_tab_id=$B_SELECTED_TAB_ID"
+  log "browser_b_overlay_frame=$B_FRAME"
+  log "browser_b_overlay_frame_size=$B_FRAME_SIZE"
+  log "browser_b_appkit_pixel=$B_PIXEL"
+
+  B_PIXEL_WIDTH="${B_PIXEL%x*}"
+  B_PIXEL_HEIGHT="${B_PIXEL#*x}"
+  require_trace_after "$BROWSER_B_TRACE_START_LINE" "resize tab_id=${B_BROWSER_TAB_ID} pane_id=${B_PANE_ID} pixel_width=${B_PIXEL_WIDTH} pixel_height=${B_PIXEL_HEIGHT} screen_x=0 screen_y=0 screen_width=0 screen_height=0 screen_scale=0 ffi=ts_set_view_size" "Roamium applied browser B resize to AppKit pixel size"
+
+  if tail -n +"$((BROWSER_B_START_LINE + 1))" "$APP_LOG" |
+    grep -E "TermSurf geometry layer=appkit event=presented .*window_id:${B_WINDOW_ID} .*pane_id:${A_PANE_ID} .*context_id=${A_CONTEXT_ID} .*visible=true" >/dev/null 2>&1; then
+    fail "browser A overlay was presented as visible in window B"
+  fi
+  log "PASS: browser A was not presented as visible in window B"
+
+  screencapture -x -o -l"$B_WINDOW_ID" "$SCREENSHOT_WINDOW_B"
+  log "window_b_screenshot_exit=$?"
+
+  B_CLICK_X="$(awk -v wx="$B_WX" -v frame_x="$B_FRAME_X" -v frame_size="$B_FRAME_SIZE" 'BEGIN { split(frame_size, parts, "x"); print int(wx + frame_x + (parts[1] / 2) + 0.5) }')"
+  B_CLICK_Y="$(awk -v wy="$B_WY" -v frame_y="$B_FRAME_Y" -v frame_size="$B_FRAME_SIZE" 'BEGIN { split(frame_size, parts, "x"); print int(wy + frame_y + (parts[2] / 2) + 0.5) }')"
+  B_HIT_START_LINE="$(log_line_count)"
+  click_global_point "$B_CLICK_X" "$B_CLICK_Y" "browser_b_window_area"
+  B_HIT_LINE="$(wait_for_hit_after "$B_HIT_START_LINE" "$B_CONTEXT_ID" "browser B hit-test in window B")"
+  require_text "$B_HIT_LINE" "window_id:${B_WINDOW_ID}" "browser B hit-test has window B id"
+  require_text "$B_HIT_LINE" "selected_tab_id:${B_SELECTED_TAB_ID}" "browser B hit-test has window B selected tab id"
+  require_text "$B_HIT_LINE" "overlay_frame=${B_FRAME}" "browser B hit-test uses browser B frame"
+  require_text "$B_HIT_LINE" "web_point={" "browser B hit-test includes webview-relative point"
+
+  B_MODE_START_LINE="$(log_line_count)"
+  B_MODE_TRACE_START_LINE="$(trace_line_count)"
+  log "browser_b_mode_key=enter=Mode::Browse"
+  swift "$ROOT/scripts/ghostty-app/inject.swift" key 36 >>"$HARNESS_LOG" 2>&1
+  wait_for_log_after "$B_MODE_START_LINE" "ModeChanged: pane_id=${B_PANE_ID} browsing=true" "browser B webtui entered browse mode"
+  require_trace_after "$B_MODE_TRACE_START_LINE" "focus-changed tab=${B_BROWSER_TAB_ID} pane=${B_PANE_ID} ffi=ts_set_focus focused=true" "Roamium observed browser B focus=true after browse mode"
+
+  B_KEY_START_LINE="$(trace_line_count)"
+  printf 'ISSUE809_EXP15_BROWSER_B_WINDOW\n' >"$BROWSER_FOCUS_COMMAND"
+  swift "$ROOT/scripts/ghostty-app/inject.swift" type "$BROWSER_FOCUS_COMMAND" >>"$HARNESS_LOG" 2>&1
+  require_trace_after "$B_KEY_START_LINE" "key-event tab=${B_BROWSER_TAB_ID} pane=${B_PANE_ID}" "browser B keyboard marker reached browser B"
+  require_no_trace_after "$B_KEY_START_LINE" "key-event tab=${A_BROWSER_TAB_ID} pane=${A_PANE_ID}" "browser B keyboard marker did not reach browser A"
+
+  B_CONTROL_START_LINE="$(log_line_count)"
+  B_CONTROL_TRACE_START_LINE="$(trace_line_count)"
+  log "browser_b_control_key=escape=Mode::Control"
+  swift "$ROOT/scripts/ghostty-app/inject.swift" key 53 >>"$HARNESS_LOG" 2>&1
+  wait_for_log_after "$B_CONTROL_START_LINE" "ModeChanged: pane_id=${B_PANE_ID} browsing=false" "browser B webtui returned to control mode"
+  require_trace_after "$B_CONTROL_TRACE_START_LINE" "focus-changed tab=${B_BROWSER_TAB_ID} pane=${B_PANE_ID} ffi=ts_set_focus focused=false" "Roamium observed browser B focus=false after control mode"
+
+  A_RESTORE_START_LINE="$(log_line_count)"
+  A_RESTORE_TRACE_START_LINE="$(trace_line_count)"
+  A_WIN_LINE="$(window_bounds_for "$A_WINDOW_ID")" || fail "failed to resolve browser A window bounds for window id=$A_WINDOW_ID"
+  focus_window_bounds "$A_WIN_LINE" >>"$HARNESS_LOG" 2>&1 || fail "failed to focus browser A window via accessibility"
+  IFS=$'\t' read -r _A_WID A_WX A_WY A_WW A_WH <<<"$A_WIN_LINE"
+  A_ROOT_HEIGHT="$(pair_height "$A_ROOT_FRAME_SIZE")"
+  A_CONTENT_Y_OFFSET="$(awk -v wh="$A_WH" -v root_h="$A_ROOT_HEIGHT" 'BEGIN { print int(wh - root_h) }')"
+  A_VISIBLE_X="$(awk -v wx="$A_WX" -v frame_x="$A_FRAME_X" 'BEGIN { print int(wx + frame_x + 4) }')"
+  A_VISIBLE_Y="$(awk -v wy="$A_WY" -v content_y="$A_CONTENT_Y_OFFSET" -v frame_y="$A_FRAME_Y" 'BEGIN { print int(wy + content_y + frame_y + 4) }')"
+  A_HIT_START_LINE="$(log_line_count)"
+  click_global_point "$A_VISIBLE_X" "$A_VISIBLE_Y" "window_a_visible_edge_restore"
+  A_HIT_LINE="$(wait_for_hit_after "$A_HIT_START_LINE" "$A_CONTEXT_ID" "browser A restored visible hit-test in window A")"
+  require_no_different_appkit_frame_after "$A_RESTORE_START_LINE" "$A_PANE_ID" "$A_CONTEXT_ID" "$A_FRAME" "browser A kept AppKit frame after returning to window A"
+  require_no_different_appkit_pixels_after "$A_RESTORE_START_LINE" "$A_PANE_ID" "$A_CONTEXT_ID" "$A_PIXEL" "browser A kept AppKit pixels after returning to window A"
+
+  require_text "$A_HIT_LINE" "window_id:${A_WINDOW_ID}" "browser A restored hit-test has window A id"
+  require_text "$A_HIT_LINE" "selected_tab_id:${A_SELECTED_TAB_ID}" "browser A restored hit-test has original selected tab id"
+  require_text "$A_HIT_LINE" "overlay_frame=${A_FRAME}" "browser A restored hit-test uses browser A frame"
+  require_text "$A_HIT_LINE" "web_point={" "browser A restored hit-test includes webview-relative point"
+
+  A_MODE_START_LINE="$(log_line_count)"
+  A_MODE_TRACE_START_LINE="$(trace_line_count)"
+  log "browser_a_mode_key=enter=Mode::Browse"
+  swift "$ROOT/scripts/ghostty-app/inject.swift" key 36 >>"$HARNESS_LOG" 2>&1
+  wait_for_log_after "$A_MODE_START_LINE" "ModeChanged: pane_id=${A_PANE_ID} browsing=true" "browser A webtui entered browse mode after window restore"
+  require_trace_after "$A_MODE_TRACE_START_LINE" "focus-changed tab=${A_BROWSER_TAB_ID} pane=${A_PANE_ID} ffi=ts_set_focus focused=true" "Roamium observed browser A focus=true after window restore"
+
+  A_KEY_START_LINE="$(trace_line_count)"
+  printf 'ISSUE809_EXP15_BROWSER_A_WINDOW\n' >"$BROWSER_FOCUS_COMMAND"
+  swift "$ROOT/scripts/ghostty-app/inject.swift" type "$BROWSER_FOCUS_COMMAND" >>"$HARNESS_LOG" 2>&1
+  require_trace_after "$A_KEY_START_LINE" "key-event tab=${A_BROWSER_TAB_ID} pane=${A_PANE_ID}" "browser A keyboard marker reached browser A"
+  require_no_trace_after "$A_KEY_START_LINE" "key-event tab=${B_BROWSER_TAB_ID} pane=${B_PANE_ID}" "browser A keyboard marker did not reach browser B"
+
+  screencapture -x -o -l"$A_WINDOW_ID" "$SCREENSHOT_WINDOW_A_RESTORED"
+  log "window_a_restored_screenshot_exit=$?"
+
+  [ "$NEW_WINDOW_TRACE_START_LINE" -lt "$BROWSER_B_TRACE_START_LINE" ] || fail "trace boundaries for browser B window open were not monotonic"
+  [ "$BROWSER_B_TRACE_START_LINE" -lt "$A_RESTORE_TRACE_START_LINE" ] || fail "trace boundaries for browser A window restore were not monotonic"
+fi
 
 if [ "$SCENARIO" = "new-terminal-tab-visibility" ]; then
   BASE_SELECTED_TAB_ID="$(printf '%s\n' "$APPKIT_PRESENT_LINE" | sed -E 's/.*selected_tab_id:([^ ]+) .*/\1/')"

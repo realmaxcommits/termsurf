@@ -211,3 +211,100 @@ Fix:
 Final verdict: **APPROVED**.
 
 Findings after re-review: none.
+
+## Result
+
+**Result:** Pass
+
+Experiment 15 added the `open-browser-in-new-window` scenario to
+`scripts/ghostboard-geometry-matrix.sh`. No Ghostboard, Roamium, or `webtui`
+product source changes were needed.
+
+The scenario launches browser A in window A through the existing first-run
+wrapper, invokes the public `new_window` action through a scenario-local
+`ctrl+b=new_window` keybinding, verifies window B starts a plain login shell,
+then types a real repo-built `web --browser ... https://example.org` command
+into window B. The passing run proved:
+
+- window B was created by the user-visible `new_window` action;
+- window B did not inherit the first-run web wrapper;
+- browser A and browser B used distinct native window ids, selected tab ids,
+  pane ids, browser tab ids, and CA/context ids;
+- browser B presented only in window B with its own AppKit frame, AppKit pixel
+  size, Roamium resize trace, screenshot, and hit-test evidence;
+- browser A was not freshly presented as visible under window B's window id;
+- Browse-mode keyboard input in window B reached browser B and did not reach
+  browser A;
+- after returning browser B to Control mode, browser A could be refocused from
+  its visible, non-overlapped window region;
+- browser A kept its original AppKit frame and pixel size after returning from
+  window B;
+- browser A remained hit-testable, focusable, and keyboard-routable in window A;
+- keyboard input after returning to window A reached browser A and did not reach
+  browser B.
+
+The first harness attempts failed while returning from window B to window A. The
+product behavior was not the failure: macOS cascaded window B over most of
+window A, and the harness tried to click window A's covered center. The final
+harness computes the AppKit content-view Y offset from the native CG window
+height and `root_frame` height, then clicks a visible point inside browser A's
+overlay. That exposed point produces the restored browser A hit-test and avoids
+accepting a window B click as browser A evidence.
+
+Verification:
+
+```bash
+bash -n scripts/ghostboard-geometry-matrix.sh
+git diff --check
+scripts/ghostboard-geometry-matrix.sh open-browser-in-new-window
+scripts/ghostboard-geometry-matrix.sh open-browser-in-new-tab
+scripts/ghostboard-geometry-matrix.sh split-right-focus-switch
+```
+
+Passing evidence:
+
+- Open browser in new window:
+  `logs/ghostboard-geometry-open-browser-in-new-window-harness-20260617-123011.log`
+- Open browser in new window app log:
+  `logs/ghostboard-geometry-open-browser-in-new-window-app-20260617-123011.log`
+- Open browser in new window Roamium trace:
+  `logs/ghostboard-geometry-open-browser-in-new-window-roamium-20260617-123011.log`
+- Window B screenshot:
+  `logs/ghostboard-geometry-open-browser-in-new-window-window-b-screenshot-20260617-123011.png`
+- Window A restored screenshot:
+  `logs/ghostboard-geometry-open-browser-in-new-window-window-a-restored-screenshot-20260617-123011.png`
+- Adjacent `open-browser-in-new-tab` regression:
+  `logs/ghostboard-geometry-open-browser-in-new-tab-harness-20260617-123033.log`
+- Adjacent `split-right-focus-switch` regression:
+  `logs/ghostboard-geometry-split-right-focus-switch-harness-20260617-123131.log`
+
+No product build was needed because only the shell harness and issue documents
+changed.
+
+## Completion Review
+
+Fresh-context adversarial completion review approved the result before the
+result commit.
+
+Verdict: **APPROVED**.
+
+Findings: none.
+
+The reviewer inspected the working-tree diff for
+`scripts/ghostboard-geometry-matrix.sh`, this experiment file, and the issue
+README; checked the issue workflow, result documentation, README status, and
+verification evidence; and confirmed the result commit had not yet been made.
+
+## Conclusion
+
+Current Ghostboard already handles the one-browser-per-window case correctly.
+The durable coverage added here proves that browser overlays are scoped by
+native window, selected tab, pane id, browser tab id, and context id, and that
+keyboard routing follows the active browser after switching between native
+windows.
+
+The main harness learning is that native window coordinates and AppKit
+content-view coordinates are not identical on macOS: the content view begins
+below the native window's titlebar/chrome area. For overlapped windows, restored
+window hit-tests should target a visible overlay point converted through the
+content-view offset, not the window center.
