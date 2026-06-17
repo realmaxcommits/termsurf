@@ -177,3 +177,5 @@ work together, not just individually.
 
 - [Experiment 1: Geometry observability harness](01-geometry-observability-harness.md)
   — **Pass**
+- [Experiment 2: Initial viewport fill](02-initial-viewport-fill.md) —
+  **Designed**
