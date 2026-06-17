@@ -193,3 +193,108 @@ Fix:
 
 Re-review verdict: **Approved**. The reviewer confirmed the required finding was
 resolved and reported no new required findings.
+
+## Result
+
+**Result:** Pass.
+
+The `window-resize` scenario is implemented in
+`scripts/ghostboard-geometry-matrix.sh`. The harness now:
+
+- accepts `window-resize` in addition to `initial-open`;
+- records separate grow and shrink screenshot artifact paths;
+- creates a Swift Accessibility helper that resizes the running TermSurf window
+  with `AXUIElementSetAttributeValue`;
+- rejects stale evidence by recording the app-log line number before each resize
+  phase and only accepting AppKit/Zig/hit-test records written after that phase;
+- verifies grown and shrunken AppKit overlay frame sizes, AppKit-presented pixel
+  sizes, Zig AppKit-pixel records, Roamium `ts_set_view_size` trace records, and
+  hit-test records after both resize phases.
+
+No Ghostboard product source changes were needed for this row. Current
+Ghostboard already follows ordinary window grow/shrink transitions once the
+harness can actually resize the window.
+
+One failed intermediate run used System Events to set the target process window
+size. System Events returned success, but the window bounds remained `648x448`,
+and the app emitted no new AppKit presentation geometry. Replacing that with the
+direct Accessibility helper made the resize deterministic.
+
+Final passing artifacts:
+
+- initial-open app log:
+  `logs/ghostboard-geometry-initial-open-app-20260617-074127.log`
+- initial-open harness log:
+  `logs/ghostboard-geometry-initial-open-harness-20260617-074127.log`
+- initial-open screenshot:
+  `logs/ghostboard-geometry-initial-open-screenshot-20260617-074127.png`
+- initial-open Roamium trace:
+  `logs/ghostboard-geometry-initial-open-roamium-20260617-074127.log`
+- window-resize app log:
+  `logs/ghostboard-geometry-window-resize-app-20260617-074104.log`
+- window-resize harness log:
+  `logs/ghostboard-geometry-window-resize-harness-20260617-074104.log`
+- window-resize initial screenshot:
+  `logs/ghostboard-geometry-window-resize-screenshot-20260617-074104.png`
+- window-resize grow screenshot:
+  `logs/ghostboard-geometry-window-resize-grow-screenshot-20260617-074104.png`
+- window-resize shrink screenshot:
+  `logs/ghostboard-geometry-window-resize-shrink-screenshot-20260617-074104.png`
+- window-resize Roamium trace:
+  `logs/ghostboard-geometry-window-resize-roamium-20260617-074104.log`
+
+Key passing evidence from the `window-resize` run:
+
+- initial AppKit overlay frame: `624x272`, AppKit pixel size: `1248x544`;
+- grown window bounds: `968x668`;
+- grown AppKit overlay frame: `944x493`, AppKit pixel size: `1888x986`;
+- Roamium applied the grown resize with `ffi=ts_set_view_size`;
+- grown hit test reported `hit=true` and a current `web_point`;
+- shrunken window bounds: `728x508`;
+- shrunken AppKit overlay frame: `704x323`, AppKit pixel size: `1408x646`;
+- Roamium applied the shrunken resize with `ffi=ts_set_view_size`;
+- shrunken hit test reported `hit=true` and a current `web_point`.
+
+Verification commands run:
+
+```bash
+bash -n scripts/ghostboard-geometry-matrix.sh
+git diff --check
+scripts/ghostboard-geometry-matrix.sh window-resize
+scripts/ghostboard-geometry-matrix.sh initial-open
+```
+
+The grow and shrink screenshots were visually inspected. Both show Example
+Domain filling the resized browser viewport with no stale right/bottom gap and
+no obvious overflow into the surrounding terminal UI.
+
+## Conclusion
+
+The window resize larger and window resize smaller matrix rows pass in current
+Ghostboard. The reusable geometry harness now has deterministic Accessibility
+window resizing and phase-bounded log checks, which should be reused by later
+dynamic geometry rows such as split resize, tab/window switching, and
+fullscreen/restore.
+
+## Completion Review
+
+The completed experiment was reviewed by a fresh-context Codex adversarial
+subagent.
+
+Verdict: **Approved**.
+
+The reviewer reported no required findings and independently verified:
+
+- only the expected harness and issue-document files were modified;
+- no result commit had been made before review;
+- `bash -n scripts/ghostboard-geometry-matrix.sh` passed;
+- `git diff --check` passed;
+- the README marks Experiment 3 as `Pass`;
+- this experiment file has `Result` and `Conclusion`;
+- the diff scope is harness/docs only;
+- the logs show grow/shrink window bounds, AppKit overlay frames and pixels, Zig
+  AppKit pixel receipt, Roamium `ts_set_view_size`, and hit-test records after
+  both resize phases;
+- the initial-open regression artifacts passed with matching AppKit/Zig/Roamium
+  evidence;
+- the screenshot artifacts exist and have expected resized dimensions.

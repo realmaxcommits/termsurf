@@ -14,6 +14,8 @@ URL="${TERMSURF_GEOMETRY_URL:-https://example.com}"
 APP_LOG="$LOG_DIR/ghostboard-geometry-${SCENARIO}-app-${TS}.log"
 HARNESS_LOG="$LOG_DIR/ghostboard-geometry-${SCENARIO}-harness-${TS}.log"
 SCREENSHOT="$LOG_DIR/ghostboard-geometry-${SCENARIO}-screenshot-${TS}.png"
+SCREENSHOT_GROW="$LOG_DIR/ghostboard-geometry-${SCENARIO}-grow-screenshot-${TS}.png"
+SCREENSHOT_SHRINK="$LOG_DIR/ghostboard-geometry-${SCENARIO}-shrink-screenshot-${TS}.png"
 ROAMIUM_TRACE="$LOG_DIR/ghostboard-geometry-${SCENARIO}-roamium-${TS}.log"
 PID=""
 
@@ -74,6 +76,17 @@ require_log() {
   fi
 }
 
+require_log_after() {
+  local start_line="$1"
+  local pattern="$2"
+  local label="$3"
+  if tail -n +"$((start_line + 1))" "$APP_LOG" | grep -E "$pattern" >/dev/null 2>&1; then
+    log "PASS: $label"
+  else
+    fail "missing $label"
+  fi
+}
+
 require_trace() {
   local needle="$1"
   local label="$2"
@@ -94,8 +107,130 @@ require_text() {
   esac
 }
 
+log_line_count() {
+  wc -l <"$APP_LOG" | tr -d ' '
+}
+
+extract_appkit_pixel() {
+  printf '%s\n' "$1" | sed -E 's/.*appkit_pixel=([^ ]+).*/\1/'
+}
+
+extract_frame_size() {
+  printf '%s\n' "$1" | sed -E 's/.*overlay_frame=\{\{[^}]+\}, \{([^,]+), ([^}]+)\}\}.*/\1x\2/'
+}
+
+pair_width() {
+  printf '%s\n' "$1" | awk -Fx '{print $1}'
+}
+
+pair_height() {
+  printf '%s\n' "$1" | awk -Fx '{print $2}'
+}
+
+compare_pair() {
+  local pair="$1"
+  local ref="$2"
+  local mode="$3"
+  local width height ref_width ref_height
+  width="$(pair_width "$pair")"
+  height="$(pair_height "$pair")"
+  ref_width="$(pair_width "$ref")"
+  ref_height="$(pair_height "$ref")"
+  awk \
+    -v width="$width" \
+    -v height="$height" \
+    -v ref_width="$ref_width" \
+    -v ref_height="$ref_height" \
+    -v mode="$mode" \
+    'BEGIN {
+      if (mode == "gt") { exit !((width > ref_width) && (height > ref_height)) }
+      if (mode == "lt") { exit !((width < ref_width) && (height < ref_height)) }
+      exit 1
+    }'
+}
+
+wait_for_appkit_pixels_after() {
+  local start_line="$1"
+  local ref_pixel="$2"
+  local mode="$3"
+  local label="$4"
+  local attempts="${5:-30}"
+  local line pixel
+  for _ in $(seq 1 "$attempts"); do
+    while IFS= read -r line; do
+      pixel="$(extract_appkit_pixel "$line")"
+      if [ -n "$pixel" ] && compare_pair "$pixel" "$ref_pixel" "$mode"; then
+        printf '%s\n' "$line"
+        return 0
+      fi
+    done < <(tail -n +"$((start_line + 1))" "$APP_LOG" | grep -E 'TermSurf geometry layer=appkit event=presented_pixels' || true)
+    delay 1
+  done
+  fail "timed out waiting for $label"
+}
+
+wait_for_appkit_frame_after() {
+  local start_line="$1"
+  local ref_frame="$2"
+  local mode="$3"
+  local label="$4"
+  local attempts="${5:-30}"
+  local line frame_size
+  for _ in $(seq 1 "$attempts"); do
+    while IFS= read -r line; do
+      frame_size="$(extract_frame_size "$line")"
+      if [ -n "$frame_size" ] && [ "$frame_size" != "$line" ] && compare_pair "$frame_size" "$ref_frame" "$mode"; then
+        printf '%s\n' "$line"
+        return 0
+      fi
+    done < <(tail -n +"$((start_line + 1))" "$APP_LOG" | grep -E 'TermSurf geometry layer=appkit event=presented ' || true)
+    delay 1
+  done
+  fail "timed out waiting for $label"
+}
+
+wait_for_hit_after() {
+  local start_line="$1"
+  local context_id="$2"
+  local label="$3"
+  local attempts="${4:-30}"
+  local line
+  for _ in $(seq 1 "$attempts"); do
+    line="$(tail -n +"$((start_line + 1))" "$APP_LOG" | grep -E "TermSurf geometry layer=appkit event=hit_test .*context_id=${context_id} .*hit=true .*web_point=\\{" | tail -1 || true)"
+    if [ -n "$line" ]; then
+      printf '%s\n' "$line"
+      return 0
+    fi
+    delay 1
+  done
+  fail "timed out waiting for $label"
+}
+
+window_bounds() {
+  swift "$WINDOW_BOUNDS" "$WID"
+}
+
+set_window_size() {
+  local width="$1"
+  local height="$2"
+  swift "$RESIZE_WINDOW" "$PID" 40 80 "$width" "$height"
+}
+
+click_window_center() {
+  local bounds="$1"
+  local label="$2"
+  local bid bx by bw bh click_x click_y
+  IFS=$'\t' read -r bid bx by bw bh <<<"$bounds"
+  click_x=$((bx + bw / 2))
+  click_y=$((by + bh / 2))
+  log "${label}_input_point=${click_x},${click_y}"
+  swift "$ROOT/scripts/ghostty-app/inject.swift" move "$click_x" "$click_y" >>"$HARNESS_LOG" 2>&1
+  delay 0.25
+  swift "$ROOT/scripts/ghostty-app/inject.swift" click "$click_x" "$click_y" left 1 >>"$HARNESS_LOG" 2>&1
+}
+
 case "$SCENARIO" in
-  initial-open) ;;
+  initial-open|window-resize) ;;
   *)
     fail "unsupported scenario: $SCENARIO"
     ;;
@@ -111,6 +246,7 @@ COMMAND="$RUN_DIR/run-web.sh"
 CONFIG="$RUN_DIR/config"
 WINDOW_BOUNDS="$RUN_DIR/window-bounds.swift"
 ACTIVATE_APP="$RUN_DIR/activate-app.swift"
+RESIZE_WINDOW="$RUN_DIR/resize-window.swift"
 cat >"$COMMAND" <<EOF
 #!/usr/bin/env bash
 exec "$WEB" --browser "$ROAMIUM" "$URL"
@@ -161,6 +297,71 @@ app.activate(options: [.activateAllWindows, .activateIgnoringOtherApps])
 Thread.sleep(forTimeInterval: 0.5)
 EOF
 
+cat >"$RESIZE_WINDOW" <<'EOF'
+import ApplicationServices
+import Foundation
+
+guard CommandLine.arguments.count == 6,
+      let rawPID = Int32(CommandLine.arguments[1]),
+      let x = Double(CommandLine.arguments[2]),
+      let y = Double(CommandLine.arguments[3]),
+      let width = Double(CommandLine.arguments[4]),
+      let height = Double(CommandLine.arguments[5])
+else {
+    fputs("usage: resize-window.swift <pid> <x> <y> <width> <height>\n", stderr)
+    exit(2)
+}
+
+guard AXIsProcessTrusted() else {
+    fputs("accessibility permission is not trusted for window resize automation\n", stderr)
+    exit(3)
+}
+
+let app = AXUIElementCreateApplication(pid_t(rawPID))
+var windowsValue: CFTypeRef?
+let windowsResult = AXUIElementCopyAttributeValue(
+    app,
+    kAXWindowsAttribute as CFString,
+    &windowsValue
+)
+
+guard windowsResult == .success,
+      let windows = windowsValue as? [AXUIElement],
+      let window = windows.first
+else {
+    fputs("could not read target app windows: \(windowsResult.rawValue)\n", stderr)
+    exit(4)
+}
+
+var position = CGPoint(x: x, y: y)
+var size = CGSize(width: width, height: height)
+
+guard let positionValue = AXValueCreate(.cgPoint, &position),
+      let sizeValue = AXValueCreate(.cgSize, &size)
+else {
+    fputs("could not create accessibility values\n", stderr)
+    exit(5)
+}
+
+let positionResult = AXUIElementSetAttributeValue(
+    window,
+    kAXPositionAttribute as CFString,
+    positionValue
+)
+let sizeResult = AXUIElementSetAttributeValue(
+    window,
+    kAXSizeAttribute as CFString,
+    sizeValue
+)
+
+guard positionResult == .success, sizeResult == .success else {
+    fputs("resize failed position=\(positionResult.rawValue) size=\(sizeResult.rawValue)\n", stderr)
+    exit(6)
+}
+
+Thread.sleep(forTimeInterval: 0.5)
+EOF
+
 log "scenario=$SCENARIO"
 log "run_dir=$RUN_DIR"
 log "app=$APP"
@@ -170,6 +371,10 @@ log "url=$URL"
 log "app_log=$APP_LOG"
 log "roamium_trace=$ROAMIUM_TRACE"
 log "screenshot=$SCREENSHOT"
+if [ "$SCENARIO" = "window-resize" ]; then
+  log "grow_screenshot=$SCREENSHOT_GROW"
+  log "shrink_screenshot=$SCREENSHOT_SHRINK"
+fi
 
 GHOSTTY_CONFIG_PATH="$CONFIG" \
 GHOSTTY_LOG=stderr \
@@ -194,19 +399,14 @@ log "presented_window_id=$WID"
 swift "$ACTIVATE_APP" "$PID" >>"$HARNESS_LOG" 2>&1 || fail "failed to activate pid=$PID"
 delay 0.5
 
-WIN_LINE="$(swift "$WINDOW_BOUNDS" "$WID")" || fail "failed to resolve bounds for window id=$WID"
+WIN_LINE="$(window_bounds)" || fail "failed to resolve bounds for window id=$WID"
 IFS=$'\t' read -r WID WX WY WW WH <<<"$WIN_LINE"
 log "window=$WIN_LINE"
 
 screencapture -x -o -l"$WID" "$SCREENSHOT"
 log "screenshot_exit=$?"
 
-CLICK_X=$((WX + WW / 2))
-CLICK_Y=$((WY + WH / 2))
-log "input_point=${CLICK_X},${CLICK_Y}"
-swift "$ROOT/scripts/ghostty-app/inject.swift" move "$CLICK_X" "$CLICK_Y" >>"$HARNESS_LOG" 2>&1
-delay 0.25
-swift "$ROOT/scripts/ghostty-app/inject.swift" click "$CLICK_X" "$CLICK_Y" left 1 >>"$HARNESS_LOG" 2>&1
+click_window_center "$WIN_LINE" "initial"
 delay 1
 
 require_log 'TermSurf geometry layer=zig' "Zig geometry record"
@@ -245,6 +445,8 @@ BROWSER_PIXEL="$(printf '%s\n' "$ZIG_PRESENT_LINE" | sed -E 's/.*browser_pixel=(
 [ -n "$BROWSER_PIXEL" ] || fail "could not extract Zig browser pixel size"
 OVERLAY_FRAME="$(printf '%s\n' "$APPKIT_PRESENT_LINE" | sed -E 's/.*overlay_frame=([^ ]+ [^ ]+ [^ ]+ [^ ]+) root_frame=.*/\1/')"
 [ -n "$OVERLAY_FRAME" ] && [ "$OVERLAY_FRAME" != "none" ] || fail "could not extract AppKit overlay frame"
+OVERLAY_FRAME_SIZE="$(extract_frame_size "$APPKIT_PRESENT_LINE")"
+[ -n "$OVERLAY_FRAME_SIZE" ] && [ "$OVERLAY_FRAME_SIZE" != "$APPKIT_PRESENT_LINE" ] || fail "could not extract AppKit overlay frame size"
 APPKIT_PIXEL="$(printf '%s\n' "$APPKIT_PIXELS_LINE" | sed -E 's/.*appkit_pixel=([^ ]+).*/\1/')"
 [ -n "$APPKIT_PIXEL" ] || fail "could not extract AppKit presented pixel size"
 APPKIT_PIXEL_WIDTH="${APPKIT_PIXEL%x*}"
@@ -256,6 +458,7 @@ log "correlation_context_id=$CONTEXT_ID"
 log "correlation_grid=$GRID"
 log "correlation_browser_pixel=$BROWSER_PIXEL"
 log "correlation_overlay_frame=$OVERLAY_FRAME"
+log "correlation_overlay_frame_size=$OVERLAY_FRAME_SIZE"
 log "correlation_appkit_pixel=$APPKIT_PIXEL"
 log "correlation_scenario=$SCENARIO"
 log "correlation_timestamp=$TS"
@@ -289,5 +492,70 @@ require_log "TermSurf geometry .*scenario=${SCENARIO}" "timestamped run contains
 require_log 'window_id:[^ ]+ surface_id:[^ ]+ selected_tab_id:[^ ]+ pane_id:[^ ]+ browser_tab_id:[^ ]+' "canonical identity tuple fields"
 require_readable "$ROAMIUM_TRACE"
 require_trace "resize tab_id=${BROWSER_TAB_ID} pane_id=${PANE_ID} pixel_width=${APPKIT_PIXEL_WIDTH} pixel_height=${APPKIT_PIXEL_HEIGHT} screen_x=0 screen_y=0 screen_width=0 screen_height=0 screen_scale=0 ffi=ts_set_view_size" "Roamium applied resize to AppKit pixel size via ts_set_view_size"
+
+if [ "$SCENARIO" = "window-resize" ]; then
+  INITIAL_PIXEL="$APPKIT_PIXEL"
+  INITIAL_FRAME_SIZE="$OVERLAY_FRAME_SIZE"
+  INITIAL_WW="$WW"
+  INITIAL_WH="$WH"
+
+  GROW_WIDTH=$((INITIAL_WW + 320))
+  GROW_HEIGHT=$((INITIAL_WH + 220))
+  log "resize_grow_target=${GROW_WIDTH}x${GROW_HEIGHT}"
+  GROW_START_LINE="$(log_line_count)"
+  set_window_size "$GROW_WIDTH" "$GROW_HEIGHT" >>"$HARNESS_LOG" 2>&1 || fail "failed to grow window via System Events"
+  delay 1
+  GROW_WIN_LINE="$(window_bounds)" || fail "failed to resolve grown window bounds for window id=$WID"
+  log "grow_window=$GROW_WIN_LINE"
+  GROW_PRESENT_LINE="$(wait_for_appkit_frame_after "$GROW_START_LINE" "$INITIAL_FRAME_SIZE" gt "grown AppKit overlay frame")"
+  GROW_PIXELS_LINE="$(wait_for_appkit_pixels_after "$GROW_START_LINE" "$INITIAL_PIXEL" gt "grown AppKit presented pixels")"
+  GROW_FRAME_SIZE="$(extract_frame_size "$GROW_PRESENT_LINE")"
+  GROW_PIXEL="$(extract_appkit_pixel "$GROW_PIXELS_LINE")"
+  GROW_PIXEL_WIDTH="${GROW_PIXEL%x*}"
+  GROW_PIXEL_HEIGHT="${GROW_PIXEL#*x}"
+  log "PASS: observed grown AppKit overlay frame overlay_frame_size=$GROW_FRAME_SIZE"
+  log "PASS: observed grown AppKit presented pixels appkit_pixel=$GROW_PIXEL"
+  log "grow_overlay_frame_size=$GROW_FRAME_SIZE"
+  log "grow_appkit_pixel=$GROW_PIXEL"
+  require_log_after "$GROW_START_LINE" "TermSurf geometry layer=zig event=appkit_presented_pixels .*pane_id:${PANE_ID} .*appkit_pixel=${GROW_PIXEL}" "Zig records grown AppKit presented pixel size"
+  require_trace "resize tab_id=${BROWSER_TAB_ID} pane_id=${PANE_ID} pixel_width=${GROW_PIXEL_WIDTH} pixel_height=${GROW_PIXEL_HEIGHT} screen_x=0 screen_y=0 screen_width=0 screen_height=0 screen_scale=0 ffi=ts_set_view_size" "Roamium applied grow resize to AppKit pixel size via ts_set_view_size"
+  screencapture -x -o -l"$WID" "$SCREENSHOT_GROW"
+  log "grow_screenshot_exit=$?"
+  GROW_HIT_START_LINE="$(log_line_count)"
+  click_window_center "$GROW_WIN_LINE" "grow"
+  GROW_HIT_LINE="$(wait_for_hit_after "$GROW_HIT_START_LINE" "$CONTEXT_ID" "grown AppKit hit-test")"
+  log "PASS: observed grown AppKit hit-test"
+  require_text "$GROW_HIT_LINE" "overlay_frame=" "grown hit-test includes current overlay frame"
+  require_text "$GROW_HIT_LINE" "web_point={" "grown hit-test includes webview-relative point"
+
+  SHRINK_WIDTH=$((INITIAL_WW + 80))
+  SHRINK_HEIGHT=$((INITIAL_WH + 60))
+  log "resize_shrink_target=${SHRINK_WIDTH}x${SHRINK_HEIGHT}"
+  SHRINK_START_LINE="$(log_line_count)"
+  set_window_size "$SHRINK_WIDTH" "$SHRINK_HEIGHT" >>"$HARNESS_LOG" 2>&1 || fail "failed to shrink window via System Events"
+  delay 1
+  SHRINK_WIN_LINE="$(window_bounds)" || fail "failed to resolve shrunken window bounds for window id=$WID"
+  log "shrink_window=$SHRINK_WIN_LINE"
+  SHRINK_PRESENT_LINE="$(wait_for_appkit_frame_after "$SHRINK_START_LINE" "$GROW_FRAME_SIZE" lt "shrunken AppKit overlay frame")"
+  SHRINK_PIXELS_LINE="$(wait_for_appkit_pixels_after "$SHRINK_START_LINE" "$GROW_PIXEL" lt "shrunken AppKit presented pixels")"
+  SHRINK_FRAME_SIZE="$(extract_frame_size "$SHRINK_PRESENT_LINE")"
+  SHRINK_PIXEL="$(extract_appkit_pixel "$SHRINK_PIXELS_LINE")"
+  SHRINK_PIXEL_WIDTH="${SHRINK_PIXEL%x*}"
+  SHRINK_PIXEL_HEIGHT="${SHRINK_PIXEL#*x}"
+  log "PASS: observed shrunken AppKit overlay frame overlay_frame_size=$SHRINK_FRAME_SIZE"
+  log "PASS: observed shrunken AppKit presented pixels appkit_pixel=$SHRINK_PIXEL"
+  log "shrink_overlay_frame_size=$SHRINK_FRAME_SIZE"
+  log "shrink_appkit_pixel=$SHRINK_PIXEL"
+  require_log_after "$SHRINK_START_LINE" "TermSurf geometry layer=zig event=appkit_presented_pixels .*pane_id:${PANE_ID} .*appkit_pixel=${SHRINK_PIXEL}" "Zig records shrunken AppKit presented pixel size"
+  require_trace "resize tab_id=${BROWSER_TAB_ID} pane_id=${PANE_ID} pixel_width=${SHRINK_PIXEL_WIDTH} pixel_height=${SHRINK_PIXEL_HEIGHT} screen_x=0 screen_y=0 screen_width=0 screen_height=0 screen_scale=0 ffi=ts_set_view_size" "Roamium applied shrink resize to AppKit pixel size via ts_set_view_size"
+  screencapture -x -o -l"$WID" "$SCREENSHOT_SHRINK"
+  log "shrink_screenshot_exit=$?"
+  SHRINK_HIT_START_LINE="$(log_line_count)"
+  click_window_center "$SHRINK_WIN_LINE" "shrink"
+  SHRINK_HIT_LINE="$(wait_for_hit_after "$SHRINK_HIT_START_LINE" "$CONTEXT_ID" "shrunken AppKit hit-test")"
+  log "PASS: observed shrunken AppKit hit-test"
+  require_text "$SHRINK_HIT_LINE" "overlay_frame=" "shrunken hit-test includes current overlay frame"
+  require_text "$SHRINK_HIT_LINE" "web_point={" "shrunken hit-test includes webview-relative point"
+fi
 
 log "PASS: scenario $SCENARIO"
