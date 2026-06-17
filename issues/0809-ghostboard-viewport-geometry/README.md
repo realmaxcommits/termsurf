@@ -218,3 +218,5 @@ work together, not just individually.
   — **Pass**
 - [Experiment 23: Browser navigation geometry](23-browser-navigation-geometry.md)
   — **Pass**
+- [Experiment 24: DevTools split geometry](24-devtools-split-geometry.md) —
+  **Designed**
