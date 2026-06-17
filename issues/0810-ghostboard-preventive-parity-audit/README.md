@@ -148,4 +148,4 @@ The final issue conclusion should include:
   **Pass**
 - [Experiment 3: Direct browser paths](03-direct-browser-paths.md) — **Pass**
 - [Experiment 4: Historical issue inventory](04-historical-issue-inventory.md) —
-  **Designed**
+  **Pass**
