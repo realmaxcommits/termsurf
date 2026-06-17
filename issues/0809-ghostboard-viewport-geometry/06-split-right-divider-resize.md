@@ -200,3 +200,121 @@ diff has started beyond README/design docs, and the plan is plausible against
 the current `resize_split` parser, keybinding/action path, macOS resize
 notification path, split-tree `.right` semantics, and existing geometry harness
 evidence model.
+
+## Result
+
+**Result:** Pass.
+
+The `split-right-resize` scenario is implemented in
+`scripts/ghostboard-geometry-matrix.sh`. The harness now:
+
+- accepts `split-right-resize` in addition to the prior scenarios;
+- adds scenario-local keybindings:
+  - `keybind = ctrl+d=new_split:right`;
+  - `keybind = ctrl+l=resize_split:right,20`;
+- creates a right-side split from the browser-owning pane;
+- records the post-split frame/pixels as the divider-resize baseline;
+- injects Control-L to move the vertical divider right;
+- waits for a divider-resized AppKit frame for the original pane/context;
+- verifies that the browser overlay width grows while height remains stable;
+- verifies that AppKit-presented pixel width grows while pixel height remains
+  stable;
+- verifies that Zig records the divider-resized AppKit-presented pixel size for
+  the original pane;
+- verifies that Roamium applies the divider-resized AppKit pixel size with
+  `ffi=ts_set_view_size` after the divider-resize trace boundary;
+- captures a post-divider-resize screenshot;
+- verifies a positive hit test inside the divider-resized browser overlay;
+- verifies the right sibling pane area does not route input to the original
+  browser context.
+
+No Ghostboard product source changes were needed for this row. Current
+Ghostboard already keeps the browser attached to the original pane and resizes
+it correctly after the split divider moves.
+
+Final passing artifacts:
+
+- split-right-resize app log:
+  `logs/ghostboard-geometry-split-right-resize-app-20260617-082457.log`
+- split-right-resize harness log:
+  `logs/ghostboard-geometry-split-right-resize-harness-20260617-082457.log`
+- split-right-resize initial screenshot:
+  `logs/ghostboard-geometry-split-right-resize-screenshot-20260617-082457.png`
+- split-right-resize post-divider-resize screenshot:
+  `logs/ghostboard-geometry-split-right-resize-split-screenshot-20260617-082457.png`
+- split-right-resize Roamium trace:
+  `logs/ghostboard-geometry-split-right-resize-roamium-20260617-082457.log`
+- initial-open regression app log:
+  `logs/ghostboard-geometry-initial-open-app-20260617-082550.log`
+- initial-open regression harness log:
+  `logs/ghostboard-geometry-initial-open-harness-20260617-082550.log`
+- window-resize regression app log:
+  `logs/ghostboard-geometry-window-resize-app-20260617-082557.log`
+- window-resize regression harness log:
+  `logs/ghostboard-geometry-window-resize-harness-20260617-082557.log`
+- split-right regression app log:
+  `logs/ghostboard-geometry-split-right-app-20260617-082613.log`
+- split-right regression harness log:
+  `logs/ghostboard-geometry-split-right-harness-20260617-082613.log`
+- split-down regression app log:
+  `logs/ghostboard-geometry-split-down-app-20260617-082658.log`
+- split-down regression harness log:
+  `logs/ghostboard-geometry-split-down-harness-20260617-082658.log`
+
+Key passing evidence from the `split-right-resize` run:
+
+- pre-split AppKit overlay frame: `944x493`, AppKit pixel size: `1888x986`;
+- post-split AppKit overlay frame: `456x493`, AppKit pixel size: `912x986`;
+- divider-resized AppKit overlay frame: `480x493`, AppKit pixel size: `960x986`;
+- the original pane id remained `DF3D8449-13CC-423B-B843-500329CD670F`;
+- the original browser tab id remained `1`;
+- Roamium applied the divider-resized resize with `ffi=ts_set_view_size`;
+- the post-divider-resize positive click reported `hit=true` with a current
+  `web_point`;
+- the right-sibling negative click did not route to the original browser
+  context.
+
+Verification commands run:
+
+```bash
+bash -n scripts/ghostboard-geometry-matrix.sh
+git diff --check
+scripts/ghostboard-geometry-matrix.sh split-right-resize
+scripts/ghostboard-geometry-matrix.sh initial-open
+scripts/ghostboard-geometry-matrix.sh window-resize
+scripts/ghostboard-geometry-matrix.sh split-right
+scripts/ghostboard-geometry-matrix.sh split-down
+```
+
+The post-divider-resize screenshot was visually inspected. It shows the browser
+filling the widened left pane while the shell remains in the right sibling pane.
+
+## Conclusion
+
+The split-right divider-resize matrix row passes in current Ghostboard. The
+browser stays attached to the original pane, follows a user-visible
+`resize_split:right,20` divider move, forwards the corrected size to Roamium,
+and preserves input routing after the divider moves.
+
+## Completion Review
+
+The completed experiment was reviewed by a fresh-context Codex adversarial
+subagent.
+
+Verdict: **Approved**.
+
+The reviewer reported no findings and independently verified:
+
+- only the expected harness and issue-document files were modified;
+- no result commit had been made before review;
+- `bash -n scripts/ghostboard-geometry-matrix.sh` passed;
+- `git diff --check` passed;
+- the README marks Experiment 6 as `Pass`;
+- this experiment file has `Result` and `Conclusion`;
+- the harness uses scenario-local `ctrl+d` and `ctrl+l` keybindings;
+- the logs show `new_split:right`, then `resize_split:right,20`, then
+  post-divider frame/pixel resize from `456x493` / `912x986` to `480x493` /
+  `960x986`, with Zig, Roamium, positive hit-test, and sibling negative
+  evidence;
+- the regression harness logs for `initial-open`, `window-resize`,
+  `split-right`, and `split-down` all end in `PASS`.

@@ -221,6 +221,28 @@ compare_split_down_pair() {
     }'
 }
 
+compare_split_right_resize_pair() {
+  local pair="$1"
+  local ref="$2"
+  local tolerance="$3"
+  local width height ref_width ref_height
+  width="$(pair_width "$pair")"
+  height="$(pair_height "$pair")"
+  ref_width="$(pair_width "$ref")"
+  ref_height="$(pair_height "$ref")"
+  awk \
+    -v width="$width" \
+    -v height="$height" \
+    -v ref_width="$ref_width" \
+    -v ref_height="$ref_height" \
+    -v tolerance="$tolerance" \
+    'BEGIN {
+      delta = height - ref_height
+      if (delta < 0) delta = -delta
+      exit !((width > ref_width) && (delta <= tolerance))
+    }'
+}
+
 wait_for_appkit_pixels_after() {
   local start_line="$1"
   local ref_pixel="$2"
@@ -345,6 +367,48 @@ wait_for_split_down_pixels_after() {
   fail "timed out waiting for $label"
 }
 
+wait_for_split_right_resize_frame_after() {
+  local start_line="$1"
+  local pane_id="$2"
+  local context_id="$3"
+  local ref_frame="$4"
+  local label="$5"
+  local attempts="${6:-30}"
+  local line frame_size
+  for _ in $(seq 1 "$attempts"); do
+    while IFS= read -r line; do
+      frame_size="$(extract_frame_size "$line")"
+      if [ -n "$frame_size" ] && [ "$frame_size" != "$line" ] && compare_split_right_resize_pair "$frame_size" "$ref_frame" 8; then
+        printf '%s\n' "$line"
+        return 0
+      fi
+    done < <(tail -n +"$((start_line + 1))" "$APP_LOG" | grep -E "TermSurf geometry layer=appkit event=presented .*pane_id:${pane_id} .*context_id=${context_id}" || true)
+    delay 1
+  done
+  fail "timed out waiting for $label"
+}
+
+wait_for_split_right_resize_pixels_after() {
+  local start_line="$1"
+  local pane_id="$2"
+  local context_id="$3"
+  local ref_pixel="$4"
+  local label="$5"
+  local attempts="${6:-30}"
+  local line pixel
+  for _ in $(seq 1 "$attempts"); do
+    while IFS= read -r line; do
+      pixel="$(extract_appkit_pixel "$line")"
+      if [ -n "$pixel" ] && compare_split_right_resize_pair "$pixel" "$ref_pixel" 16; then
+        printf '%s\n' "$line"
+        return 0
+      fi
+    done < <(tail -n +"$((start_line + 1))" "$APP_LOG" | grep -E "TermSurf geometry layer=appkit event=presented_pixels .*pane_id:${pane_id} .*context_id=${context_id}" || true)
+    delay 1
+  done
+  fail "timed out waiting for $label"
+}
+
 wait_for_hit_after() {
   local start_line="$1"
   local context_id="$2"
@@ -422,7 +486,7 @@ click_global_point() {
 }
 
 case "$SCENARIO" in
-  initial-open|window-resize|split-right|split-down) ;;
+  initial-open|window-resize|split-right|split-down|split-right-resize) ;;
   *)
     fail "unsupported scenario: $SCENARIO"
     ;;
@@ -450,9 +514,15 @@ window-save-state = never
 initial-command = direct:$COMMAND
 EOF
 
-if [ "$SCENARIO" = "split-right" ]; then
+if [ "$SCENARIO" = "split-right" ] || [ "$SCENARIO" = "split-right-resize" ]; then
   cat >>"$CONFIG" <<'EOF'
 keybind = ctrl+d=new_split:right
+EOF
+fi
+
+if [ "$SCENARIO" = "split-right-resize" ]; then
+  cat >>"$CONFIG" <<'EOF'
+keybind = ctrl+l=resize_split:right,20
 EOF
 fi
 
@@ -580,7 +650,7 @@ if [ "$SCENARIO" = "window-resize" ]; then
   log "grow_screenshot=$SCREENSHOT_GROW"
   log "shrink_screenshot=$SCREENSHOT_SHRINK"
 fi
-if [ "$SCENARIO" = "split-right" ] || [ "$SCENARIO" = "split-down" ]; then
+if [ "$SCENARIO" = "split-right" ] || [ "$SCENARIO" = "split-down" ] || [ "$SCENARIO" = "split-right-resize" ]; then
   log "split_screenshot=$SCREENSHOT_SPLIT"
 fi
 
@@ -814,6 +884,70 @@ if [ "$SCENARIO" = "split-right" ]; then
   SPLIT_NEGATIVE_START_LINE="$(log_line_count)"
   click_global_point "$SPLIT_NEGATIVE_X" "$SPLIT_NEGATIVE_Y" "split_sibling_negative"
   wait_for_negative_hit_after "$SPLIT_NEGATIVE_START_LINE" "$CONTEXT_ID" "split-right sibling-pane negative hit-test" allow-absent
+fi
+
+if [ "$SCENARIO" = "split-right-resize" ]; then
+  SPLIT_START_LINE="$(log_line_count)"
+  SPLIT_TRACE_START_LINE="$(trace_line_count)"
+  log "split_keybind=ctrl+d=new_split:right"
+  swift "$ROOT/scripts/ghostty-app/inject.swift" key 2 control >>"$HARNESS_LOG" 2>&1
+  delay 1
+
+  SPLIT_PRESENT_LINE="$(wait_for_split_right_frame_after "$SPLIT_START_LINE" "$PANE_ID" "$CONTEXT_ID" "$OVERLAY_FRAME_SIZE" "split-right AppKit overlay frame")"
+  SPLIT_PIXELS_LINE="$(wait_for_split_right_pixels_after "$SPLIT_START_LINE" "$PANE_ID" "$CONTEXT_ID" "$APPKIT_PIXEL" "split-right AppKit presented pixels")"
+  SPLIT_FRAME_SIZE="$(extract_frame_size "$SPLIT_PRESENT_LINE")"
+  SPLIT_FRAME_X="$(extract_frame_x "$SPLIT_PRESENT_LINE")"
+  SPLIT_PIXEL="$(extract_appkit_pixel "$SPLIT_PIXELS_LINE")"
+  SPLIT_PIXEL_WIDTH="${SPLIT_PIXEL%x*}"
+  SPLIT_PIXEL_HEIGHT="${SPLIT_PIXEL#*x}"
+  log "PASS: observed split-right AppKit overlay frame overlay_frame_size=$SPLIT_FRAME_SIZE"
+  log "PASS: observed split-right AppKit presented pixels appkit_pixel=$SPLIT_PIXEL"
+  log "split_overlay_frame_size=$SPLIT_FRAME_SIZE"
+  log "split_overlay_frame_x=$SPLIT_FRAME_X"
+  log "split_appkit_pixel=$SPLIT_PIXEL"
+  require_log_after "$SPLIT_START_LINE" "TermSurf geometry layer=zig event=appkit_presented_pixels .*pane_id:${PANE_ID} .*appkit_pixel=${SPLIT_PIXEL}" "Zig records split-right AppKit presented pixel size"
+  require_trace_after "$SPLIT_TRACE_START_LINE" "resize tab_id=${BROWSER_TAB_ID} pane_id=${PANE_ID} pixel_width=${SPLIT_PIXEL_WIDTH} pixel_height=${SPLIT_PIXEL_HEIGHT} screen_x=0 screen_y=0 screen_width=0 screen_height=0 screen_scale=0 ffi=ts_set_view_size" "Roamium applied split-right resize to AppKit pixel size via ts_set_view_size"
+
+  DIVIDER_START_LINE="$(log_line_count)"
+  DIVIDER_TRACE_START_LINE="$(trace_line_count)"
+  log "resize_split_keybind=ctrl+l=resize_split:right,20"
+  swift "$ROOT/scripts/ghostty-app/inject.swift" key 37 control >>"$HARNESS_LOG" 2>&1
+  delay 1
+
+  DIVIDER_PRESENT_LINE="$(wait_for_split_right_resize_frame_after "$DIVIDER_START_LINE" "$PANE_ID" "$CONTEXT_ID" "$SPLIT_FRAME_SIZE" "split-right divider-resized AppKit overlay frame")"
+  DIVIDER_PIXELS_LINE="$(wait_for_split_right_resize_pixels_after "$DIVIDER_START_LINE" "$PANE_ID" "$CONTEXT_ID" "$SPLIT_PIXEL" "split-right divider-resized AppKit presented pixels")"
+  DIVIDER_FRAME_SIZE="$(extract_frame_size "$DIVIDER_PRESENT_LINE")"
+  DIVIDER_FRAME_X="$(extract_frame_x "$DIVIDER_PRESENT_LINE")"
+  DIVIDER_PIXEL="$(extract_appkit_pixel "$DIVIDER_PIXELS_LINE")"
+  DIVIDER_PIXEL_WIDTH="${DIVIDER_PIXEL%x*}"
+  DIVIDER_PIXEL_HEIGHT="${DIVIDER_PIXEL#*x}"
+  log "PASS: observed split-right divider-resized AppKit overlay frame overlay_frame_size=$DIVIDER_FRAME_SIZE"
+  log "PASS: observed split-right divider-resized AppKit presented pixels appkit_pixel=$DIVIDER_PIXEL"
+  log "divider_overlay_frame_size=$DIVIDER_FRAME_SIZE"
+  log "divider_overlay_frame_x=$DIVIDER_FRAME_X"
+  log "divider_appkit_pixel=$DIVIDER_PIXEL"
+  require_log_after "$DIVIDER_START_LINE" "TermSurf geometry layer=zig event=appkit_presented_pixels .*pane_id:${PANE_ID} .*appkit_pixel=${DIVIDER_PIXEL}" "Zig records split-right divider-resized AppKit presented pixel size"
+  require_trace_after "$DIVIDER_TRACE_START_LINE" "resize tab_id=${BROWSER_TAB_ID} pane_id=${PANE_ID} pixel_width=${DIVIDER_PIXEL_WIDTH} pixel_height=${DIVIDER_PIXEL_HEIGHT} screen_x=0 screen_y=0 screen_width=0 screen_height=0 screen_scale=0 ffi=ts_set_view_size" "Roamium applied split-right divider resize to AppKit pixel size via ts_set_view_size"
+  screencapture -x -o -l"$WID" "$SCREENSHOT_SPLIT"
+  log "divider_screenshot_exit=$?"
+
+  DIVIDER_WIN_LINE="$(window_bounds)" || fail "failed to resolve divider-resized window bounds for window id=$WID"
+  IFS=$'\t' read -r _DIVIDER_WID DIVIDER_WX DIVIDER_WY DIVIDER_WW DIVIDER_WH <<<"$DIVIDER_WIN_LINE"
+  DIVIDER_FRAME_WIDTH="$(pair_width "$DIVIDER_FRAME_SIZE")"
+  DIVIDER_INSIDE_X="$(awk -v wx="$DIVIDER_WX" -v frame_x="$DIVIDER_FRAME_X" -v frame_w="$DIVIDER_FRAME_WIDTH" 'BEGIN { print int(wx + frame_x + (frame_w / 2) + 0.5) }')"
+  DIVIDER_INSIDE_Y=$((DIVIDER_WY + DIVIDER_WH / 2))
+  DIVIDER_HIT_START_LINE="$(log_line_count)"
+  click_global_point "$DIVIDER_INSIDE_X" "$DIVIDER_INSIDE_Y" "divider_inside"
+  DIVIDER_HIT_LINE="$(wait_for_hit_after "$DIVIDER_HIT_START_LINE" "$CONTEXT_ID" "split-right divider-resized AppKit hit-test")"
+  log "PASS: observed split-right divider-resized AppKit hit-test"
+  require_text "$DIVIDER_HIT_LINE" "overlay_frame=" "split-right divider-resized hit-test includes current overlay frame"
+  require_text "$DIVIDER_HIT_LINE" "web_point={" "split-right divider-resized hit-test includes webview-relative point"
+
+  DIVIDER_NEGATIVE_X="$(awk -v wx="$DIVIDER_WX" -v frame_x="$DIVIDER_FRAME_X" -v frame_w="$DIVIDER_FRAME_WIDTH" -v ww="$DIVIDER_WW" 'BEGIN { print int(wx + frame_x + frame_w + ((ww - frame_x - frame_w) / 2) + 0.5) }')"
+  DIVIDER_NEGATIVE_Y="$DIVIDER_INSIDE_Y"
+  DIVIDER_NEGATIVE_START_LINE="$(log_line_count)"
+  click_global_point "$DIVIDER_NEGATIVE_X" "$DIVIDER_NEGATIVE_Y" "divider_sibling_negative"
+  wait_for_negative_hit_after "$DIVIDER_NEGATIVE_START_LINE" "$CONTEXT_ID" "split-right divider-resized sibling-pane negative hit-test" allow-absent
 fi
 
 if [ "$SCENARIO" = "split-down" ]; then
