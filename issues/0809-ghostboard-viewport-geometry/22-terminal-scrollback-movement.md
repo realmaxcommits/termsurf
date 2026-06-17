@@ -254,3 +254,133 @@ Fresh-context adversarial re-review approved the design before implementation.
 Verdict: **APPROVED**.
 
 Findings: none.
+
+## Result
+
+**Result:** Pass
+
+Experiment 22 implemented and verified terminal scrollback movement for the
+active browser-owning screen.
+
+Changes made:
+
+- `webtui/src/main.rs`
+  - Added `--primary-screen`, a narrow user-visible mode that keeps `webtui` on
+    the terminal primary screen instead of entering the alternate screen. The
+    default remains alternate-screen mode.
+- `ghostboard/macos/Sources/Ghostty/Surface View/SurfaceScrollView.swift`
+  - Added scenario-gated `TERMSURF_GEOMETRY_TRACE=1` scrollback records emitted
+    to stderr, including `documentVisibleRect`, document height, cell height,
+    scrollbar `total`, `offset`, `len`, and a derived visible row.
+- `scripts/ghostboard-geometry-matrix.sh`
+  - Added the `terminal-scrollback-movement` scenario.
+  - Added `scroll-to-bottom = no-keystroke, no-output` to the scenario config so
+    Browse-mode keyboard input can be tested while the terminal remains scrolled
+    back.
+  - Added checks for baseline-at-bottom, scrolled-back, and returned-to-bottom
+    scrollview evidence, stable AppKit frame/pixels, no Roamium resize,
+    inside/outside mouse hit testing, and keyboard routing while scrolled back
+    and after returning to bottom.
+
+Passing runtime evidence:
+
+- Main scenario:
+  `logs/ghostboard-geometry-terminal-scrollback-movement-harness-20260617-142243.log`
+- App log:
+  `logs/ghostboard-geometry-terminal-scrollback-movement-app-20260617-142243.log`
+- Roamium trace:
+  `logs/ghostboard-geometry-terminal-scrollback-movement-roamium-20260617-142243.log`
+- Screenshots:
+  - `logs/ghostboard-geometry-terminal-scrollback-movement-screenshot-20260617-142243.png`
+  - `logs/ghostboard-geometry-terminal-scrollback-movement-scrollback-up-screenshot-20260617-142243.png`
+  - `logs/ghostboard-geometry-terminal-scrollback-movement-scrollback-bottom-screenshot-20260617-142243.png`
+
+Key evidence from the passing run:
+
+- Baseline identity: `window_id=980`,
+  `surface_id=888D0342-8714-4997-98E5-C1EB23851ED8`, `selected_tab_id=980`,
+  `pane_id=888D0342-8714-4997-98E5-C1EB23851ED8`, `browser_tab_id=1`,
+  `context_id=2838900272`.
+- Baseline frame and pixels: `overlay_frame={{8, 17}, {1176, 748}}`,
+  `appkit_pixel=2352x1496`, `backing_scale=2.0`.
+- Baseline scrollback evidence: `scrollbar_total=182`, `scrollbar_len=50`,
+  `derived_row=132`.
+- Scrolled-back evidence after `ctrl+u=scroll_page_up`: `derived_row=82`.
+- Scrolled-back invariants: AppKit frame stayed stable, AppKit pixels stayed
+  stable, and no Roamium resize was emitted.
+- Mouse input while scrolled back: inside-overlay hit testing used the baseline
+  AppKit frame and matching identity; the outside-overlay point produced
+  explicit `hit=false`.
+- Keyboard input while scrolled back: Browse mode focused the same Roamium tab
+  and `ISSUE809_EXP22_SCROLLBACK_UP` reached the browser while the harness
+  verified no scrollview record returned to the baseline bottom row.
+- Returned-to-bottom evidence after `ctrl+b=scroll_to_bottom`:
+  `derived_row=132`.
+- Returned-to-bottom invariants: AppKit frame stayed stable, AppKit pixels
+  stayed stable, no Roamium resize was emitted, mouse hit testing still used the
+  baseline AppKit frame, and `ISSUE809_EXP22_SCROLLBACK_BOTTOM` reached the same
+  browser.
+
+Verification commands:
+
+```bash
+bash -n scripts/ghostboard-geometry-matrix.sh
+git diff --check
+cargo fmt
+cargo check -p webtui
+cargo build -p webtui
+cd ghostboard
+macos/build.nu --scheme Ghostty --configuration Debug --action build
+cd ..
+scripts/ghostboard-geometry-matrix.sh terminal-scrollback-movement
+scripts/ghostboard-geometry-matrix.sh tui-overlay-resize-command
+scripts/ghostboard-geometry-matrix.sh window-resize
+```
+
+All verification commands passed.
+
+Adjacent regression evidence:
+
+- TUI overlay resize command:
+  `logs/ghostboard-geometry-tui-overlay-resize-command-harness-20260617-141904.log`
+- Window resize:
+  `logs/ghostboard-geometry-window-resize-harness-20260617-141921.log`
+
+## Conclusion
+
+Ghostboard keeps browser overlays attached to the live pane viewport during
+terminal scrollback movement. The browser overlay does not follow historical
+scrollback content, does not resize during terminal scrollback, and continues to
+route mouse and keyboard input to the correct browser identity while scrolled
+back and after returning to bottom.
+
+The useful implementation learning is that `webtui` normally enters the
+alternate screen, so terminal scrollback must either be proven against active
+primary-screen history or tested through a user-visible primary-screen mode. The
+other important learning is that Ghostty's default
+`scroll-to-bottom = keystroke, no-output` behavior can invalidate scrolled-back
+keyboard tests. For this geometry scenario, disabling keystroke/output
+auto-scroll is necessary to prove browser keyboard routing while the terminal
+remains scrolled back.
+
+## Completion Review
+
+Fresh-context adversarial completion review returned **APPROVED**.
+
+Required findings: none.
+
+Optional finding:
+
+- `scripts/ghostboard-geometry-matrix.sh` allowed the scrolled-back
+  outside-overlay hit-test to pass without an explicit `hit=false` record
+  because the call used `allow-absent`.
+
+Fix:
+
+- Tightened the Experiment 22 outside-overlay assertion to require an explicit
+  `hit=false` record.
+- Re-ran `scripts/ghostboard-geometry-matrix.sh terminal-scrollback-movement`;
+  the stricter run passed and produced explicit `hit=false` evidence in
+  `logs/ghostboard-geometry-terminal-scrollback-movement-harness-20260617-142243.log`.
+
+Final verdict: **APPROVED**.

@@ -271,6 +271,10 @@ struct Cli {
     /// Browser binary to use ("chromium", "plusium", or absolute path)
     #[arg(short, long, global = true)]
     browser: Option<String>,
+
+    /// Render in the primary terminal screen instead of the alternate screen
+    #[arg(long, global = true)]
+    primary_screen: bool,
 }
 
 #[derive(Subcommand)]
@@ -441,10 +445,16 @@ fn main() -> io::Result<()> {
         }
     }
 
-    // Enter raw mode and alternate screen.
+    let use_alternate_screen = !cli.primary_screen;
+
+    // Enter raw mode and the requested terminal screen.
     enable_raw_mode()?;
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
+    if use_alternate_screen {
+        execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
+    } else {
+        execute!(stdout, EnableMouseCapture)?;
+    }
     let mut terminal = Terminal::new(CrosstermBackend::new(stdout))?;
 
     // Crossterm reader thread — forwards relevant terminal events (Issue 668).
@@ -1251,11 +1261,15 @@ fn main() -> io::Result<()> {
     // Restore terminal. The compositor connection drops here, which closes
     // the XPC connection and triggers overlay cleanup.
     disable_raw_mode()?;
-    execute!(
-        terminal.backend_mut(),
-        DisableMouseCapture,
-        LeaveAlternateScreen
-    )?;
+    if use_alternate_screen {
+        execute!(
+            terminal.backend_mut(),
+            DisableMouseCapture,
+            LeaveAlternateScreen
+        )?;
+    } else {
+        execute!(terminal.backend_mut(), DisableMouseCapture)?;
+    }
     Ok(())
 }
 

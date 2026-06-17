@@ -42,6 +42,8 @@ SCREENSHOT_FONT_INCREASE="$LOG_DIR/ghostboard-geometry-${SCENARIO}-font-increase
 SCREENSHOT_FONT_DECREASE="$LOG_DIR/ghostboard-geometry-${SCENARIO}-font-decrease-screenshot-${TS}.png"
 SCREENSHOT_TUI_SHRINK="$LOG_DIR/ghostboard-geometry-${SCENARIO}-tui-shrink-screenshot-${TS}.png"
 SCREENSHOT_TUI_RESET="$LOG_DIR/ghostboard-geometry-${SCENARIO}-tui-reset-screenshot-${TS}.png"
+SCREENSHOT_SCROLLBACK_UP="$LOG_DIR/ghostboard-geometry-${SCENARIO}-scrollback-up-screenshot-${TS}.png"
+SCREENSHOT_SCROLLBACK_BOTTOM="$LOG_DIR/ghostboard-geometry-${SCENARIO}-scrollback-bottom-screenshot-${TS}.png"
 ROAMIUM_TRACE="$LOG_DIR/ghostboard-geometry-${SCENARIO}-roamium-${TS}.log"
 SIBLING_ALIVE_COMMAND="$RUN_DIR/sibling-alive-command.txt"
 SIBLING_FOCUS_COMMAND="$RUN_DIR/sibling-focus-command.txt"
@@ -224,6 +226,18 @@ extract_grid_width() {
 
 extract_grid_height() {
   printf '%s\n' "$1" | sed -E 's/^[0-9]+x([0-9]+).*/\1/'
+}
+
+extract_scrollback_row() {
+  printf '%s\n' "$1" | sed -E 's/.*derived_row=([^ ]+).*/\1/'
+}
+
+extract_scrollback_total() {
+  printf '%s\n' "$1" | sed -E 's/.*scrollbar_total=([^ ]+).*/\1/'
+}
+
+extract_scrollback_len() {
+  printf '%s\n' "$1" | sed -E 's/.*scrollbar_len=([^ ]+).*/\1/'
 }
 
 extract_cell_size() {
@@ -877,6 +891,73 @@ wait_for_changed_appkit_pixels_after() {
   fail "timed out waiting for $label"
 }
 
+wait_for_scrollback_row_less_after() {
+  local start_line="$1"
+  local pane_id="$2"
+  local ref_row="$3"
+  local label="$4"
+  local attempts="${5:-30}"
+  local line row
+  for _ in $(seq 1 "$attempts"); do
+    while IFS= read -r line; do
+      row="$(extract_scrollback_row "$line")"
+      case "$row" in
+        ''|unknown:*|*[!0-9]*) continue ;;
+      esac
+      if [ "$row" -lt "$ref_row" ]; then
+        printf '%s\n' "$line"
+        return 0
+      fi
+    done < <(tail -n +"$((start_line + 1))" "$APP_LOG" |
+      grep -E "TermSurf geometry layer=scrollview .*pane_id:${pane_id}" || true)
+    delay 1
+  done
+  fail "timed out waiting for $label"
+}
+
+wait_for_scrollback_row_at_least_after() {
+  local start_line="$1"
+  local pane_id="$2"
+  local ref_row="$3"
+  local label="$4"
+  local attempts="${5:-30}"
+  local line row
+  for _ in $(seq 1 "$attempts"); do
+    while IFS= read -r line; do
+      row="$(extract_scrollback_row "$line")"
+      case "$row" in
+        ''|unknown:*|*[!0-9]*) continue ;;
+      esac
+      if [ "$row" -ge "$ref_row" ]; then
+        printf '%s\n' "$line"
+        return 0
+      fi
+    done < <(tail -n +"$((start_line + 1))" "$APP_LOG" |
+      grep -E "TermSurf geometry layer=scrollview .*pane_id:${pane_id}" || true)
+    delay 1
+  done
+  fail "timed out waiting for $label"
+}
+
+require_no_scrollback_row_at_least_after() {
+  local start_line="$1"
+  local pane_id="$2"
+  local ref_row="$3"
+  local label="$4"
+  local line row
+  while IFS= read -r line; do
+    row="$(extract_scrollback_row "$line")"
+    case "$row" in
+      ''|unknown:*|*[!0-9]*) continue ;;
+    esac
+    if [ "$row" -ge "$ref_row" ]; then
+      fail "$label: saw row=$row >= ref=$ref_row in line: $line"
+    fi
+  done < <(tail -n +"$((start_line + 1))" "$APP_LOG" |
+    grep -E "TermSurf geometry layer=scrollview .*pane_id:${pane_id}" || true)
+  log "PASS: $label"
+}
+
 wait_for_selected_tab_change_after() {
   local start_line="$1"
   local selected_tab_id="$2"
@@ -979,7 +1060,7 @@ click_negative_global_point() {
 }
 
 case "$SCENARIO" in
-  initial-open|window-resize|split-right|split-down|split-right-resize|split-right-equalize|split-right-zoom|split-right-close-sibling|split-right-close-browser-pane|split-right-focus-switch|new-terminal-tab-visibility|open-browser-in-new-tab|close-browser-tab|open-browser-in-new-window|multiple-windows-with-browsers|display-move-backing-scale|fullscreen-unfullscreen|minimize-hide-restore|font-size-cell-metrics|tui-overlay-resize-command) ;;
+  initial-open|window-resize|split-right|split-down|split-right-resize|split-right-equalize|split-right-zoom|split-right-close-sibling|split-right-close-browser-pane|split-right-focus-switch|new-terminal-tab-visibility|open-browser-in-new-tab|close-browser-tab|open-browser-in-new-window|multiple-windows-with-browsers|display-move-backing-scale|fullscreen-unfullscreen|minimize-hide-restore|font-size-cell-metrics|tui-overlay-resize-command|terminal-scrollback-movement) ;;
   *)
     fail "unsupported scenario: $SCENARIO"
     ;;
@@ -1007,6 +1088,17 @@ cat >"$COMMAND" <<EOF
 exec "$WEB" --browser "$ROAMIUM" "$URL"
 EOF
 chmod +x "$COMMAND"
+
+if [ "$SCENARIO" = "terminal-scrollback-movement" ]; then
+  cat >"$COMMAND" <<EOF
+#!/usr/bin/env bash
+for i in \$(seq 1 180); do
+  printf 'ISSUE809_EXP22_SCROLLBACK_HISTORY_%03d\\n' "\$i"
+done
+exec "$WEB" --primary-screen --browser "$ROAMIUM" "$URL"
+EOF
+  chmod +x "$COMMAND"
+fi
 
 if [ "$SCENARIO" = "new-terminal-tab-visibility" ] || [ "$SCENARIO" = "open-browser-in-new-tab" ] || [ "$SCENARIO" = "close-browser-tab" ] || [ "$SCENARIO" = "open-browser-in-new-window" ] || [ "$SCENARIO" = "multiple-windows-with-browsers" ]; then
   FIRST_RUN_MARKER="$RUN_DIR/first-web-ran"
@@ -1054,6 +1146,15 @@ if [ "$SCENARIO" = "font-size-cell-metrics" ]; then
   cat >>"$CONFIG" <<'EOF'
 keybind = ctrl+u=increase_font_size:2
 keybind = ctrl+y=decrease_font_size:2
+EOF
+fi
+
+if [ "$SCENARIO" = "terminal-scrollback-movement" ]; then
+  cat >>"$CONFIG" <<'EOF'
+scroll-to-bottom = no-keystroke, no-output
+keybind = ctrl+u=scroll_page_up
+keybind = ctrl+y=scroll_page_down
+keybind = ctrl+b=scroll_to_bottom
 EOF
 fi
 
@@ -1672,6 +1773,10 @@ if [ "$SCENARIO" = "tui-overlay-resize-command" ]; then
   log "tui_reset_screenshot=$SCREENSHOT_TUI_RESET"
   log "tui_viewport_shrink_command=$TUI_VIEWPORT_SHRINK_COMMAND"
   log "tui_viewport_reset_command=$TUI_VIEWPORT_RESET_COMMAND"
+fi
+if [ "$SCENARIO" = "terminal-scrollback-movement" ]; then
+  log "scrollback_up_screenshot=$SCREENSHOT_SCROLLBACK_UP"
+  log "scrollback_bottom_screenshot=$SCREENSHOT_SCROLLBACK_BOTTOM"
 fi
 
 GHOSTTY_CONFIG_PATH="$CONFIG" \
@@ -3646,6 +3751,139 @@ if [ "$SCENARIO" = "tui-overlay-resize-command" ]; then
 
   [ "$SHRINK_TRACE_START_LINE" -lt "$SHRINK_MODE_TRACE_START_LINE" ] || fail "trace boundaries for TUI shrink were not monotonic"
   [ "$SHRINK_MODE_TRACE_START_LINE" -lt "$RESET_TRACE_START_LINE" ] || fail "trace boundaries for TUI reset were not monotonic"
+fi
+
+if [ "$SCENARIO" = "terminal-scrollback-movement" ]; then
+  A_WINDOW_ID="$WID"
+  A_SURFACE_ID="$(extract_surface_id "$APPKIT_PRESENT_LINE")"
+  A_SELECTED_TAB_ID="$(extract_selected_tab_id "$APPKIT_PRESENT_LINE")"
+  A_PANE_ID="$PANE_ID"
+  A_BROWSER_TAB_ID="$BROWSER_TAB_ID"
+  A_CONTEXT_ID="$CONTEXT_ID"
+  A_GRID="$(extract_grid "$APPKIT_PRESENT_LINE")"
+  A_FRAME="$OVERLAY_FRAME"
+  A_FRAME_SIZE="$OVERLAY_FRAME_SIZE"
+  A_FRAME_X="$OVERLAY_FRAME_X"
+  A_FRAME_Y="$OVERLAY_FRAME_Y"
+  A_FRAME_WIDTH="$(pair_width "$A_FRAME_SIZE")"
+  A_FRAME_HEIGHT="$(pair_height "$A_FRAME_SIZE")"
+  A_ROOT_FRAME_SIZE="$(extract_root_frame_size "$APPKIT_PRESENT_LINE")"
+  A_PIXEL="$APPKIT_PIXEL"
+  A_BACKING_SCALE="$(extract_backing_scale "$APPKIT_PRESENT_LINE")"
+  log "scrollback_baseline_window_id=$A_WINDOW_ID"
+  log "scrollback_baseline_surface_id=$A_SURFACE_ID"
+  log "scrollback_baseline_selected_tab_id=$A_SELECTED_TAB_ID"
+  log "scrollback_baseline_pane_id=$A_PANE_ID"
+  log "scrollback_baseline_browser_tab_id=$A_BROWSER_TAB_ID"
+  log "scrollback_baseline_context_id=$A_CONTEXT_ID"
+  log "scrollback_baseline_grid=$A_GRID"
+  log "scrollback_baseline_frame=$A_FRAME"
+  log "scrollback_baseline_appkit_pixel=$A_PIXEL"
+  log "scrollback_baseline_backing_scale=$A_BACKING_SCALE"
+
+  BASE_SCROLL_LINE="$(wait_for_line_after 0 "TermSurf geometry layer=scrollview .*pane_id:${A_PANE_ID} .*scrollbar_total=[0-9]+ .*scrollbar_offset=[0-9]+ .*scrollbar_len=[0-9]+ .*derived_row=[0-9]+" "baseline scrollback visible-rect evidence" 45)"
+  BASE_SCROLL_ROW="$(extract_scrollback_row "$BASE_SCROLL_LINE")"
+  BASE_SCROLL_TOTAL="$(extract_scrollback_total "$BASE_SCROLL_LINE")"
+  BASE_SCROLL_LEN="$(extract_scrollback_len "$BASE_SCROLL_LINE")"
+  [ "$BASE_SCROLL_TOTAL" -gt "$BASE_SCROLL_LEN" ] || fail "scrollback total is not larger than viewport length: total=$BASE_SCROLL_TOTAL len=$BASE_SCROLL_LEN"
+  [ "$BASE_SCROLL_ROW" -gt 0 ] || fail "baseline scrollback row did not prove primary-screen history: row=$BASE_SCROLL_ROW"
+  log "scrollback_baseline_evidence=$BASE_SCROLL_LINE"
+  log "scrollback_baseline_row=$BASE_SCROLL_ROW"
+  log "scrollback_total=$BASE_SCROLL_TOTAL"
+  log "scrollback_len=$BASE_SCROLL_LEN"
+
+  SCROLL_UP_START_LINE="$(log_line_count)"
+  SCROLL_UP_TRACE_START_LINE="$(trace_line_count)"
+  log "scrollback_up_keybind=ctrl+u=scroll_page_up"
+  swift "$ROOT/scripts/ghostty-app/inject.swift" key 32 control >>"$HARNESS_LOG" 2>&1
+  delay 1
+  SCROLLED_LINE="$(wait_for_scrollback_row_less_after "$SCROLL_UP_START_LINE" "$A_PANE_ID" "$BASE_SCROLL_ROW" "scrolled-back visible row" 45)"
+  SCROLLED_ROW="$(extract_scrollback_row "$SCROLLED_LINE")"
+  log "scrollback_scrolled_evidence=$SCROLLED_LINE"
+  log "scrollback_scrolled_row=$SCROLLED_ROW"
+  require_no_different_appkit_frame_after "$SCROLL_UP_START_LINE" "$A_PANE_ID" "$A_CONTEXT_ID" "$A_FRAME" "scrolled-back AppKit frame stayed stable"
+  require_no_different_appkit_pixels_after "$SCROLL_UP_START_LINE" "$A_PANE_ID" "$A_CONTEXT_ID" "$A_PIXEL" "scrolled-back AppKit pixels stayed stable"
+  require_no_trace_after "$SCROLL_UP_TRACE_START_LINE" "resize tab_id=${A_BROWSER_TAB_ID} pane_id=${A_PANE_ID}" "scrolled-back terminal scrollback did not resize Roamium"
+  screencapture -x -o -l"$A_WINDOW_ID" "$SCREENSHOT_SCROLLBACK_UP"
+  log "scrollback_up_screenshot_exit=$?"
+
+  SCROLL_WIN_LINE="$(window_bounds_for "$A_WINDOW_ID")" || fail "failed to resolve scrolled-back window bounds"
+  [ "$SCROLL_WIN_LINE" = "$WIN_LINE" ] || fail "scrollback movement changed window bounds: baseline=$WIN_LINE scrolled=$SCROLL_WIN_LINE"
+  IFS=$'\t' read -r _SCROLL_WID SCROLL_WX SCROLL_WY SCROLL_WW SCROLL_WH <<<"$SCROLL_WIN_LINE"
+  SCROLL_ROOT_HEIGHT="$(pair_height "$A_ROOT_FRAME_SIZE")"
+  SCROLL_CONTENT_Y_OFFSET="$(awk -v wh="$SCROLL_WH" -v root_h="$SCROLL_ROOT_HEIGHT" 'BEGIN { print int(wh - root_h) }')"
+  SCROLL_INSIDE_X="$(awk -v wx="$SCROLL_WX" -v frame_x="$A_FRAME_X" -v frame_w="$A_FRAME_WIDTH" 'BEGIN { print int(wx + frame_x + (frame_w / 2) + 0.5) }')"
+  SCROLL_INSIDE_Y="$(awk -v wy="$SCROLL_WY" -v content_y="$SCROLL_CONTENT_Y_OFFSET" -v frame_y="$A_FRAME_Y" -v frame_h="$A_FRAME_HEIGHT" 'BEGIN { print int(wy + content_y + frame_y + (frame_h / 2) + 0.5) }')"
+  SCROLL_HIT_START_LINE="$(log_line_count)"
+  click_global_point "$SCROLL_INSIDE_X" "$SCROLL_INSIDE_Y" "scrollback_inside"
+  SCROLL_HIT_LINE="$(wait_for_hit_after "$SCROLL_HIT_START_LINE" "$A_CONTEXT_ID" "scrolled-back browser hit-test")"
+  require_text "$SCROLL_HIT_LINE" "window_id:${A_WINDOW_ID}" "scrolled-back hit-test has window id"
+  require_text "$SCROLL_HIT_LINE" "surface_id:${A_SURFACE_ID}" "scrolled-back hit-test has surface id"
+  require_text "$SCROLL_HIT_LINE" "selected_tab_id:${A_SELECTED_TAB_ID}" "scrolled-back hit-test has selected tab id"
+  require_text "$SCROLL_HIT_LINE" "overlay_frame=${A_FRAME}" "scrolled-back hit-test uses baseline AppKit frame"
+  require_text "$SCROLL_HIT_LINE" "web_point={" "scrolled-back hit-test includes webview-relative point"
+
+  OUTSIDE_X="$SCROLL_INSIDE_X"
+  OUTSIDE_Y="$(awk -v wy="$SCROLL_WY" -v content_y="$SCROLL_CONTENT_Y_OFFSET" -v frame_y="$A_FRAME_Y" -v frame_h="$A_FRAME_HEIGHT" 'BEGIN { print int(wy + content_y + frame_y + frame_h + 20) }')"
+  click_negative_global_point "$OUTSIDE_X" "$OUTSIDE_Y" "scrollback_outside_overlay"
+  wait_for_negative_hit_after "$NEGATIVE_HIT_START_LINE" "$A_CONTEXT_ID" "scrolled-back outside-overlay hit-test"
+
+  SCROLL_MODE_START_LINE="$(log_line_count)"
+  SCROLL_MODE_TRACE_START_LINE="$(trace_line_count)"
+  log "scrollback_mode_key=enter=Mode::Browse"
+  swift "$ROOT/scripts/ghostty-app/inject.swift" key 36 >>"$HARNESS_LOG" 2>&1
+  wait_for_log_after "$SCROLL_MODE_START_LINE" "ModeChanged: pane_id=${A_PANE_ID} browsing=true" "scrolled-back webtui entered browse mode"
+  require_trace_after "$SCROLL_MODE_TRACE_START_LINE" "focus-changed tab=${A_BROWSER_TAB_ID} pane=${A_PANE_ID} ffi=ts_set_focus focused=true" "Roamium observed focus=true while scrolled back"
+  SCROLL_KEY_START_LINE="$(trace_line_count)"
+  printf 'ISSUE809_EXP22_SCROLLBACK_UP\n' >"$BROWSER_FOCUS_COMMAND"
+  swift "$ROOT/scripts/ghostty-app/inject.swift" type "$BROWSER_FOCUS_COMMAND" >>"$HARNESS_LOG" 2>&1
+  require_trace_after "$SCROLL_KEY_START_LINE" "key-event tab=${A_BROWSER_TAB_ID} pane=${A_PANE_ID}" "scrolled-back keyboard marker reached browser"
+  require_no_scrollback_row_at_least_after "$SCROLL_MODE_START_LINE" "$A_PANE_ID" "$BASE_SCROLL_ROW" "keyboard while scrolled back did not force terminal to bottom"
+
+  SCROLL_CONTROL_START_LINE="$(log_line_count)"
+  SCROLL_CONTROL_TRACE_START_LINE="$(trace_line_count)"
+  log "scrollback_control_key=escape=Mode::Control"
+  swift "$ROOT/scripts/ghostty-app/inject.swift" key 53 >>"$HARNESS_LOG" 2>&1
+  wait_for_log_after "$SCROLL_CONTROL_START_LINE" "ModeChanged: pane_id=${A_PANE_ID} browsing=false" "scrolled-back webtui returned to control mode"
+  require_trace_after "$SCROLL_CONTROL_TRACE_START_LINE" "focus-changed tab=${A_BROWSER_TAB_ID} pane=${A_PANE_ID} ffi=ts_set_focus focused=false" "Roamium observed focus=false before scrollback bottom"
+
+  BOTTOM_START_LINE="$(log_line_count)"
+  BOTTOM_TRACE_START_LINE="$(trace_line_count)"
+  log "scrollback_bottom_keybind=ctrl+b=scroll_to_bottom"
+  swift "$ROOT/scripts/ghostty-app/inject.swift" key 11 control >>"$HARNESS_LOG" 2>&1
+  delay 1
+  BOTTOM_LINE="$(wait_for_scrollback_row_at_least_after "$BOTTOM_START_LINE" "$A_PANE_ID" "$BASE_SCROLL_ROW" "returned-to-bottom visible row" 45)"
+  BOTTOM_ROW="$(extract_scrollback_row "$BOTTOM_LINE")"
+  log "scrollback_bottom_evidence=$BOTTOM_LINE"
+  log "scrollback_bottom_row=$BOTTOM_ROW"
+  require_no_different_appkit_frame_after "$BOTTOM_START_LINE" "$A_PANE_ID" "$A_CONTEXT_ID" "$A_FRAME" "returned-to-bottom AppKit frame stayed stable"
+  require_no_different_appkit_pixels_after "$BOTTOM_START_LINE" "$A_PANE_ID" "$A_CONTEXT_ID" "$A_PIXEL" "returned-to-bottom AppKit pixels stayed stable"
+  require_no_trace_after "$BOTTOM_TRACE_START_LINE" "resize tab_id=${A_BROWSER_TAB_ID} pane_id=${A_PANE_ID}" "returned-to-bottom terminal scrollback did not resize Roamium"
+  screencapture -x -o -l"$A_WINDOW_ID" "$SCREENSHOT_SCROLLBACK_BOTTOM"
+  log "scrollback_bottom_screenshot_exit=$?"
+
+  BOTTOM_HIT_START_LINE="$(log_line_count)"
+  click_window_center "$SCROLL_WIN_LINE" "scrollback_bottom_browser_area"
+  BOTTOM_HIT_LINE="$(wait_for_hit_after "$BOTTOM_HIT_START_LINE" "$A_CONTEXT_ID" "returned-to-bottom browser hit-test")"
+  require_text "$BOTTOM_HIT_LINE" "window_id:${A_WINDOW_ID}" "returned-to-bottom hit-test has window id"
+  require_text "$BOTTOM_HIT_LINE" "surface_id:${A_SURFACE_ID}" "returned-to-bottom hit-test has surface id"
+  require_text "$BOTTOM_HIT_LINE" "selected_tab_id:${A_SELECTED_TAB_ID}" "returned-to-bottom hit-test has selected tab id"
+  require_text "$BOTTOM_HIT_LINE" "overlay_frame=${A_FRAME}" "returned-to-bottom hit-test uses baseline AppKit frame"
+  require_text "$BOTTOM_HIT_LINE" "web_point={" "returned-to-bottom hit-test includes webview-relative point"
+
+  BOTTOM_MODE_START_LINE="$(log_line_count)"
+  BOTTOM_MODE_TRACE_START_LINE="$(trace_line_count)"
+  log "scrollback_bottom_mode_key=enter=Mode::Browse"
+  swift "$ROOT/scripts/ghostty-app/inject.swift" key 36 >>"$HARNESS_LOG" 2>&1
+  wait_for_log_after "$BOTTOM_MODE_START_LINE" "ModeChanged: pane_id=${A_PANE_ID} browsing=true" "returned-to-bottom webtui entered browse mode"
+  require_trace_after "$BOTTOM_MODE_TRACE_START_LINE" "focus-changed tab=${A_BROWSER_TAB_ID} pane=${A_PANE_ID} ffi=ts_set_focus focused=true" "Roamium observed focus=true after return to bottom"
+  BOTTOM_KEY_START_LINE="$(trace_line_count)"
+  printf 'ISSUE809_EXP22_SCROLLBACK_BOTTOM\n' >"$BROWSER_FOCUS_COMMAND"
+  swift "$ROOT/scripts/ghostty-app/inject.swift" type "$BROWSER_FOCUS_COMMAND" >>"$HARNESS_LOG" 2>&1
+  require_trace_after "$BOTTOM_KEY_START_LINE" "key-event tab=${A_BROWSER_TAB_ID} pane=${A_PANE_ID}" "returned-to-bottom keyboard marker reached browser"
+
+  [ "$SCROLL_UP_TRACE_START_LINE" -lt "$SCROLL_MODE_TRACE_START_LINE" ] || fail "trace boundaries for scrollback-up were not monotonic"
+  [ "$SCROLL_MODE_TRACE_START_LINE" -lt "$BOTTOM_TRACE_START_LINE" ] || fail "trace boundaries for scrollback-bottom were not monotonic"
 fi
 
 if [ "$SCENARIO" = "split-right" ]; then

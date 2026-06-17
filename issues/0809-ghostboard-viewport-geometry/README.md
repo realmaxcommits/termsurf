@@ -215,4 +215,4 @@ work together, not just individually.
 - [Experiment 21: TUI overlay resize command](21-tui-overlay-resize-command.md)
   — **Pass**
 - [Experiment 22: Terminal scrollback movement](22-terminal-scrollback-movement.md)
-  — **Designed**
+  — **Pass**

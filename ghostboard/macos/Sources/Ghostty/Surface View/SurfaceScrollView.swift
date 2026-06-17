@@ -25,6 +25,39 @@ class SurfaceScrollView: NSView {
     /// on the same row.
     private var lastSentRow: Int?
 
+    private var termSurfGeometryTraceEnabled: Bool {
+        ProcessInfo.processInfo.environment["TERMSURF_GEOMETRY_TRACE"] == "1"
+    }
+
+    private var termSurfGeometryScenario: String {
+        ProcessInfo.processInfo.environment["TERMSURF_GEOMETRY_SCENARIO"] ?? "unknown"
+    }
+
+    private func termSurfLogScrollback(event: String, note: String) {
+        guard termSurfGeometryTraceEnabled else { return }
+
+        let visibleRect = scrollView.contentView.documentVisibleRect
+        let documentHeight = documentView.frame.height
+        let cellHeight = surfaceView.cellSize.height
+        let scrollbar = surfaceView.scrollbar
+        let total = scrollbar.map { String($0.total) } ?? "unknown"
+        let offset = scrollbar.map { String($0.offset) } ?? "unknown"
+        let len = scrollbar.map { String($0.len) } ?? "unknown"
+        let derivedRow: String
+        if cellHeight > 0 {
+            let scrollOffset = documentHeight - visibleRect.origin.y - visibleRect.height
+            derivedRow = String(Int(scrollOffset / cellHeight))
+        } else {
+            derivedRow = "unknown:zero-cell-height"
+        }
+        let windowID = surfaceView.window.map { String($0.windowNumber) } ?? "unknown:no-window"
+        let selectedTabID = surfaceView.window?.tabGroup?.selectedWindow.map { String($0.windowNumber) } ?? windowID
+        let line = "TermSurf geometry layer=scrollview event=\(event) scenario=\(termSurfGeometryScenario) identity=window_id:\(windowID) surface_id:\(surfaceView.id.uuidString) selected_tab_id:\(selectedTabID) pane_id:\(surfaceView.id.uuidString) browser_tab_id:unknown:scrollback visible_rect=\(NSStringFromRect(visibleRect)) document_height=\(documentHeight) cell_height=\(cellHeight) scrollbar_total=\(total) scrollbar_offset=\(offset) scrollbar_len=\(len) derived_row=\(derivedRow) note=\(note)\n"
+        if let data = line.data(using: .utf8) {
+            FileHandle.standardError.write(data)
+        }
+    }
+
     init(contentSize: CGSize, surfaceView: Ghostty.SurfaceView) {
         self.surfaceView = surfaceView
         // The scroll view is our outermost view that controls all our scrollbar
@@ -239,6 +272,7 @@ class SurfaceScrollView: NSView {
 
         // Always update our scrolled view with the latest dimensions
         scrollView.reflectScrolledClipView(scrollView.contentView)
+        termSurfLogScrollback(event: "synchronized", note: "scroll-view-synchronized")
     }
 
     // MARK: Notifications
@@ -283,6 +317,7 @@ class SurfaceScrollView: NSView {
 
         // Use the keybinding action to scroll.
         _ = surfaceView.surfaceModel?.perform(action: "scroll_to_row:\(row)")
+        termSurfLogScrollback(event: "live_scroll", note: "sent-scroll-to-row")
     }
 
     /// Handles scrollbar state updates from the terminal core.
@@ -302,6 +337,7 @@ class SurfaceScrollView: NSView {
         }
         surfaceView.scrollbar = scrollbar
         synchronizeScrollView()
+        termSurfLogScrollback(event: "scrollbar_update", note: "received-scrollbar-update")
     }
 
     /// Handles a change in the frame of NSScrollPocket styling overlays
