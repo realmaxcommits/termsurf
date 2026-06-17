@@ -196,4 +196,4 @@ work together, not just individually.
 - [Experiment 11: Same-tab focus switching](11-same-tab-focus-switch.md) —
   **Pass**
 - [Experiment 12: New terminal tab visibility](12-new-terminal-tab-visibility.md)
-  — **Designed**
+  — **Pass**

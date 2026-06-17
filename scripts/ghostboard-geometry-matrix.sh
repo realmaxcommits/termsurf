@@ -20,10 +20,14 @@ SCREENSHOT_SPLIT="$LOG_DIR/ghostboard-geometry-${SCENARIO}-split-screenshot-${TS
 SCREENSHOT_ZOOM="$LOG_DIR/ghostboard-geometry-${SCENARIO}-zoom-screenshot-${TS}.png"
 SCREENSHOT_UNZOOM="$LOG_DIR/ghostboard-geometry-${SCENARIO}-unzoom-screenshot-${TS}.png"
 SCREENSHOT_CLOSE="$LOG_DIR/ghostboard-geometry-${SCENARIO}-close-screenshot-${TS}.png"
+SCREENSHOT_TAB_NEW="$LOG_DIR/ghostboard-geometry-${SCENARIO}-new-tab-screenshot-${TS}.png"
+SCREENSHOT_TAB_BACK="$LOG_DIR/ghostboard-geometry-${SCENARIO}-back-tab-screenshot-${TS}.png"
 ROAMIUM_TRACE="$LOG_DIR/ghostboard-geometry-${SCENARIO}-roamium-${TS}.log"
 SIBLING_ALIVE_COMMAND="$RUN_DIR/sibling-alive-command.txt"
 SIBLING_FOCUS_COMMAND="$RUN_DIR/sibling-focus-command.txt"
 BROWSER_FOCUS_COMMAND="$RUN_DIR/browser-focus-command.txt"
+NEW_TAB_COMMAND_LOG="$RUN_DIR/new-tab-command.log"
+NEW_TAB_MARKER_COMMAND="$RUN_DIR/new-tab-marker-command.txt"
 PID=""
 
 mkdir -p "$LOG_DIR"
@@ -164,6 +168,14 @@ log_line_count() {
 
 extract_appkit_pixel() {
   printf '%s\n' "$1" | sed -E 's/.*appkit_pixel=([^ ]+).*/\1/'
+}
+
+extract_selected_tab_id() {
+  printf '%s\n' "$1" | sed -E 's/.*selected_tab_id:([^ ]+) .*/\1/'
+}
+
+extract_overlay_frame() {
+  printf '%s\n' "$1" | sed -E 's/.*overlay_frame=(\{\{[^}]+\}, \{[^}]+\}\}).*/\1/'
 }
 
 extract_frame_size() {
@@ -659,8 +671,142 @@ require_no_different_appkit_pixels_after() {
   log "PASS: $label"
 }
 
+wait_for_exact_appkit_frame_after() {
+  local start_line="$1"
+  local pane_id="$2"
+  local context_id="$3"
+  local expected_frame="$4"
+  local label="$5"
+  local attempts="${6:-30}"
+  local line
+  for _ in $(seq 1 "$attempts"); do
+    line="$(tail -n +"$((start_line + 1))" "$APP_LOG" |
+      grep -E "TermSurf geometry layer=appkit event=presented .*pane_id:${pane_id} .*context_id=${context_id}" |
+      grep -F "overlay_frame=$expected_frame" |
+      tail -1 || true)"
+    if [ -n "$line" ]; then
+      printf '%s\n' "$line"
+      return 0
+    fi
+    delay 1
+  done
+  fail "timed out waiting for $label"
+}
+
+wait_for_exact_appkit_pixels_after() {
+  local start_line="$1"
+  local pane_id="$2"
+  local context_id="$3"
+  local expected_pixel="$4"
+  local label="$5"
+  local attempts="${6:-30}"
+  local line
+  for _ in $(seq 1 "$attempts"); do
+    line="$(tail -n +"$((start_line + 1))" "$APP_LOG" |
+      grep -E "TermSurf geometry layer=appkit event=presented_pixels .*pane_id:${pane_id} .*context_id=${context_id}" |
+      grep -F "appkit_pixel=$expected_pixel" |
+      tail -1 || true)"
+    if [ -n "$line" ]; then
+      printf '%s\n' "$line"
+      return 0
+    fi
+    delay 1
+  done
+  fail "timed out waiting for $label"
+}
+
+wait_for_changed_appkit_frame_after() {
+  local start_line="$1"
+  local pane_id="$2"
+  local context_id="$3"
+  local expected_frame="$4"
+  local label="$5"
+  local attempts="${6:-30}"
+  local line frame
+  for _ in $(seq 1 "$attempts"); do
+    while IFS= read -r line; do
+      frame="$(extract_overlay_frame "$line")"
+      if [ -n "$frame" ] && [ "$frame" != "$line" ] && [ "$frame" != "$expected_frame" ]; then
+        printf '%s\n' "$line"
+        return 0
+      fi
+    done < <(tail -n +"$((start_line + 1))" "$APP_LOG" |
+      grep -E "TermSurf geometry layer=appkit event=presented .*pane_id:${pane_id} .*context_id=${context_id}" || true)
+    delay 1
+  done
+  fail "timed out waiting for $label"
+}
+
+wait_for_changed_appkit_pixels_after() {
+  local start_line="$1"
+  local pane_id="$2"
+  local context_id="$3"
+  local expected_pixel="$4"
+  local label="$5"
+  local attempts="${6:-30}"
+  local line pixel
+  for _ in $(seq 1 "$attempts"); do
+    while IFS= read -r line; do
+      pixel="$(extract_appkit_pixel "$line")"
+      if [ -n "$pixel" ] && [ "$pixel" != "$line" ] && [ "$pixel" != "$expected_pixel" ]; then
+        printf '%s\n' "$line"
+        return 0
+      fi
+    done < <(tail -n +"$((start_line + 1))" "$APP_LOG" |
+      grep -E "TermSurf geometry layer=appkit event=presented_pixels .*pane_id:${pane_id} .*context_id=${context_id}" || true)
+    delay 1
+  done
+  fail "timed out waiting for $label"
+}
+
+wait_for_selected_tab_change_after() {
+  local start_line="$1"
+  local selected_tab_id="$2"
+  local label="$3"
+  local attempts="${4:-30}"
+  local line changed_id
+  for _ in $(seq 1 "$attempts"); do
+    while IFS= read -r line; do
+      changed_id="$(extract_selected_tab_id "$line")"
+      case "$changed_id" in
+        ""|"$line"|"$selected_tab_id"|unknown:*|-1) ;;
+        *)
+          printf '%s\n' "$line"
+          return 0
+          ;;
+      esac
+    done < <(tail -n +"$((start_line + 1))" "$APP_LOG" |
+      grep -E "TermSurf geometry layer=appkit event=.*selected_tab_id:" || true)
+    delay 1
+  done
+  fail "timed out waiting for $label"
+}
+
+wait_for_selected_tab_id_after() {
+  local start_line="$1"
+  local selected_tab_id="$2"
+  local label="$3"
+  local attempts="${4:-30}"
+  local line
+  for _ in $(seq 1 "$attempts"); do
+    line="$(tail -n +"$((start_line + 1))" "$APP_LOG" |
+      grep -E "TermSurf geometry layer=appkit event=.*selected_tab_id:${selected_tab_id}" |
+      tail -1 || true)"
+    if [ -n "$line" ]; then
+      printf '%s\n' "$line"
+      return 0
+    fi
+    delay 1
+  done
+  fail "timed out waiting for $label"
+}
+
 window_bounds() {
   swift "$WINDOW_BOUNDS" "$WID"
+}
+
+window_bounds_for() {
+  swift "$WINDOW_BOUNDS" "$1"
 }
 
 set_window_size() {
@@ -704,7 +850,7 @@ click_negative_global_point() {
 }
 
 case "$SCENARIO" in
-  initial-open|window-resize|split-right|split-down|split-right-resize|split-right-equalize|split-right-zoom|split-right-close-sibling|split-right-close-browser-pane|split-right-focus-switch) ;;
+  initial-open|window-resize|split-right|split-down|split-right-resize|split-right-equalize|split-right-zoom|split-right-close-sibling|split-right-close-browser-pane|split-right-focus-switch|new-terminal-tab-visibility) ;;
   *)
     fail "unsupported scenario: $SCENARIO"
     ;;
@@ -727,10 +873,33 @@ exec "$WEB" --browser "$ROAMIUM" "$URL"
 EOF
 chmod +x "$COMMAND"
 
+if [ "$SCENARIO" = "new-terminal-tab-visibility" ]; then
+  FIRST_RUN_MARKER="$RUN_DIR/first-web-ran"
+  cat >"$COMMAND" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+if mkdir "$FIRST_RUN_MARKER" 2>/dev/null; then
+  exec "$WEB" --browser "$ROAMIUM" "$URL"
+fi
+printf 'new-tab-command invocation pid=%s\\n' "\$\$" >>"$NEW_TAB_COMMAND_LOG"
+exec /bin/zsh -f -c 'printf "ISSUE809_EXP12_NEW_TAB_READY\\n"; while :; do sleep 60; done'
+EOF
+  chmod +x "$COMMAND"
+fi
+
 cat >"$CONFIG" <<EOF
 window-save-state = never
 initial-command = direct:$COMMAND
 EOF
+
+if [ "$SCENARIO" = "new-terminal-tab-visibility" ]; then
+  cat >>"$CONFIG" <<'EOF'
+keybind = ctrl+t=new_tab
+keybind = ctrl+1=goto_tab:1
+keybind = ctrl+2=goto_tab:2
+keybind = ctrl+p=previous_tab
+EOF
+fi
 
 if [ "$SCENARIO" = "split-right" ] || [ "$SCENARIO" = "split-right-resize" ] || [ "$SCENARIO" = "split-right-equalize" ] || [ "$SCENARIO" = "split-right-zoom" ] || [ "$SCENARIO" = "split-right-focus-switch" ]; then
   cat >>"$CONFIG" <<'EOF'
@@ -915,6 +1084,12 @@ if [ "$SCENARIO" = "split-right-focus-switch" ]; then
   log "sibling_focus_command=$SIBLING_FOCUS_COMMAND"
   log "browser_focus_command=$BROWSER_FOCUS_COMMAND"
 fi
+if [ "$SCENARIO" = "new-terminal-tab-visibility" ]; then
+  log "new_tab_screenshot=$SCREENSHOT_TAB_NEW"
+  log "back_tab_screenshot=$SCREENSHOT_TAB_BACK"
+  log "new_tab_command_log=$NEW_TAB_COMMAND_LOG"
+  log "new_tab_marker_command=$NEW_TAB_MARKER_COMMAND"
+fi
 
 GHOSTTY_CONFIG_PATH="$CONFIG" \
 GHOSTTY_LOG=stderr \
@@ -1041,6 +1216,140 @@ require_log "TermSurf geometry .*scenario=${SCENARIO}" "timestamped run contains
 require_log 'window_id:[^ ]+ surface_id:[^ ]+ selected_tab_id:[^ ]+ pane_id:[^ ]+ browser_tab_id:[^ ]+' "canonical identity tuple fields"
 require_readable "$ROAMIUM_TRACE"
 require_trace "resize tab_id=${BROWSER_TAB_ID} pane_id=${PANE_ID} pixel_width=${APPKIT_PIXEL_WIDTH} pixel_height=${APPKIT_PIXEL_HEIGHT} screen_x=0 screen_y=0 screen_width=0 screen_height=0 screen_scale=0 ffi=ts_set_view_size" "Roamium applied resize to AppKit pixel size via ts_set_view_size"
+
+if [ "$SCENARIO" = "new-terminal-tab-visibility" ]; then
+  BASE_SELECTED_TAB_ID="$(printf '%s\n' "$APPKIT_PRESENT_LINE" | sed -E 's/.*selected_tab_id:([^ ]+) .*/\1/')"
+  [ -n "$BASE_SELECTED_TAB_ID" ] || fail "could not extract baseline selected tab id"
+  BASE_FRAME="$OVERLAY_FRAME"
+  BASE_FRAME_SIZE="$OVERLAY_FRAME_SIZE"
+  BASE_FRAME_X="$OVERLAY_FRAME_X"
+  BASE_FRAME_Y="$OVERLAY_FRAME_Y"
+  BASE_PIXEL="$APPKIT_PIXEL"
+  log "baseline_selected_tab_id=$BASE_SELECTED_TAB_ID"
+
+  NEW_TAB_START_LINE="$(log_line_count)"
+  NEW_TAB_TRACE_START_LINE="$(trace_line_count)"
+  log "new_tab_keybind=ctrl+t=new_tab"
+  swift "$ROOT/scripts/ghostty-app/inject.swift" key 17 control >>"$HARNESS_LOG" 2>&1
+  delay 2
+
+  require_log_after "$NEW_TAB_START_LINE" "dispatching action target=surface action=.new_tab" "new terminal tab action dispatched"
+  require_log_after "$NEW_TAB_START_LINE" 'starting command command=`/usr/bin/login`' "new terminal tab started plain login shell"
+  if [ -s "$NEW_TAB_COMMAND_LOG" ]; then
+    fail "new terminal tab unexpectedly inherited and ran the first-run web wrapper"
+  fi
+  log "PASS: new terminal tab did not inherit the first-run web wrapper"
+
+  TABBED_PRESENT_LINE="$(wait_for_changed_appkit_frame_after "$NEW_TAB_START_LINE" "$PANE_ID" "$CONTEXT_ID" "$BASE_FRAME" "browser tab geometry adjusted for native tab bar")"
+  TABBED_PIXELS_LINE="$(wait_for_changed_appkit_pixels_after "$NEW_TAB_START_LINE" "$PANE_ID" "$CONTEXT_ID" "$BASE_PIXEL" "browser tab AppKit pixels adjusted for native tab bar")"
+  TABBED_FRAME="$(extract_overlay_frame "$TABBED_PRESENT_LINE")"
+  TABBED_FRAME_SIZE="$(extract_frame_size "$TABBED_PRESENT_LINE")"
+  TABBED_FRAME_X="$(extract_frame_x "$TABBED_PRESENT_LINE")"
+  TABBED_FRAME_Y="$(extract_frame_y "$TABBED_PRESENT_LINE")"
+  TABBED_PIXEL="$(extract_appkit_pixel "$TABBED_PIXELS_LINE")"
+  log "tabbed_overlay_frame=$TABBED_FRAME"
+  log "tabbed_overlay_frame_size=$TABBED_FRAME_SIZE"
+  log "tabbed_appkit_pixel=$TABBED_PIXEL"
+
+  NEW_TAB_SELECT_START_LINE="$(log_line_count)"
+  log "select_new_tab_keybind=ctrl+2=goto_tab:2"
+  swift "$ROOT/scripts/ghostty-app/inject.swift" key 19 control >>"$HARNESS_LOG" 2>&1
+  delay 1
+
+  NEW_SELECTED_TAB_LINE="$(wait_for_selected_tab_change_after "$NEW_TAB_SELECT_START_LINE" "$BASE_SELECTED_TAB_ID" "new terminal tab selected")"
+  NEW_SELECTED_TAB_ID="$(extract_selected_tab_id "$NEW_SELECTED_TAB_LINE")"
+  [ -n "$NEW_SELECTED_TAB_ID" ] || fail "could not extract selected tab id for new terminal tab"
+  log "PASS: new terminal tab selected"
+  log "new_selected_tab_id=$NEW_SELECTED_TAB_ID"
+
+  if tail -n +"$((NEW_TAB_START_LINE + 1))" "$APP_LOG" |
+    grep -E "TermSurf geometry layer=zig event=(tab_ready|ca_context) " |
+    grep -Fv "pane_id:${PANE_ID}" >/dev/null 2>&1; then
+    fail "new terminal tab created a second browser pane/context"
+  fi
+  log "PASS: new terminal tab did not create a second browser pane/context"
+  if tail -n +"$((NEW_TAB_TRACE_START_LINE + 1))" "$ROAMIUM_TRACE" |
+    grep -E "resize tab_id=|title-changed tab=|key-event tab=|mouse-event tab=|mouse-move tab=" |
+    grep -Fv "pane_id=${PANE_ID}" |
+    grep -Fv "pane=${PANE_ID}" >/dev/null 2>&1; then
+    fail "Roamium trace shows activity for a second browser context after new tab"
+  fi
+  log "PASS: Roamium trace shows no second browser context after new tab"
+
+  screencapture -x -o -l"$NEW_SELECTED_TAB_ID" "$SCREENSHOT_TAB_NEW"
+  log "new_tab_screenshot_exit=$?"
+
+  if tail -n +"$((NEW_TAB_SELECT_START_LINE + 1))" "$APP_LOG" |
+    grep -E "TermSurf geometry layer=appkit event=presented .*pane_id:${PANE_ID} .*context_id=${CONTEXT_ID} .*visible=true .*selected_tab_id:${NEW_SELECTED_TAB_ID}" >/dev/null 2>&1; then
+    fail "original browser overlay was presented as visible in the selected new tab"
+  fi
+  log "PASS: original browser overlay was not freshly presented as visible in the selected new tab"
+
+  TAB_WIN_LINE="$(window_bounds_for "$NEW_SELECTED_TAB_ID")" || fail "failed to resolve new-tab window bounds for window id=$NEW_SELECTED_TAB_ID"
+  IFS=$'\t' read -r _TAB_WID TAB_WX TAB_WY TAB_WW TAB_WH <<<"$TAB_WIN_LINE"
+  TAB_BROWSER_X="$(awk -v wx="$TAB_WX" -v frame_x="$TABBED_FRAME_X" -v frame_size="$TABBED_FRAME_SIZE" 'BEGIN { split(frame_size, parts, "x"); print int(wx + frame_x + (parts[1] / 2) + 0.5) }')"
+  TAB_BROWSER_Y="$(awk -v wy="$TAB_WY" -v frame_y="$TABBED_FRAME_Y" -v frame_size="$TABBED_FRAME_SIZE" 'BEGIN { split(frame_size, parts, "x"); print int(wy + frame_y + (parts[2] / 2) + 0.5) }')"
+
+  click_negative_global_point "$TAB_BROWSER_X" "$TAB_BROWSER_Y" "new_tab_former_browser_area"
+  wait_for_negative_hit_after "$NEGATIVE_HIT_START_LINE" "$CONTEXT_ID" "new terminal tab former browser area negative hit-test" allow-absent
+
+  NEW_TAB_KEY_START_LINE="$(trace_line_count)"
+  printf 'ISSUE809_EXP12_NEW_TAB_TERMINAL\n' >"$NEW_TAB_MARKER_COMMAND"
+  swift "$ROOT/scripts/ghostty-app/inject.swift" type "$NEW_TAB_MARKER_COMMAND" >>"$HARNESS_LOG" 2>&1
+  delay 1
+  require_no_trace_after "$NEW_TAB_KEY_START_LINE" "key-event tab=${BROWSER_TAB_ID} pane=${PANE_ID}" "new terminal tab keyboard marker did not reach original browser context"
+
+  SWITCH_BACK_START_LINE="$(log_line_count)"
+  SWITCH_BACK_TRACE_START_LINE="$(trace_line_count)"
+  log "switch_back_keybind=ctrl+p=previous_tab"
+  swift "$ROOT/scripts/ghostty-app/inject.swift" key 35 control >>"$HARNESS_LOG" 2>&1
+  delay 1
+
+  wait_for_log_after "$SWITCH_BACK_START_LINE" "Pane focus changed: pane_id=${PANE_ID} focused=true" "original browser pane focused again after tab switch"
+  require_no_different_appkit_frame_after "$SWITCH_BACK_START_LINE" "$PANE_ID" "$CONTEXT_ID" "$TABBED_FRAME" "browser tab kept tab-bar-adjusted AppKit frame after switch back"
+  require_no_different_appkit_pixels_after "$SWITCH_BACK_START_LINE" "$PANE_ID" "$CONTEXT_ID" "$TABBED_PIXEL" "browser tab kept tab-bar-adjusted AppKit pixels after switch back"
+
+  BROWSER_RESTORE_HIT_START_LINE="$(log_line_count)"
+  TAB_WIN_LINE="$(window_bounds_for "$BASE_SELECTED_TAB_ID")" || fail "failed to resolve restored browser-tab window bounds for window id=$BASE_SELECTED_TAB_ID"
+  IFS=$'\t' read -r _TAB_WID TAB_WX TAB_WY TAB_WW TAB_WH <<<"$TAB_WIN_LINE"
+  TAB_BROWSER_X="$(awk -v wx="$TAB_WX" -v frame_x="$TABBED_FRAME_X" -v frame_size="$TABBED_FRAME_SIZE" 'BEGIN { split(frame_size, parts, "x"); print int(wx + frame_x + (parts[1] / 2) + 0.5) }')"
+  TAB_BROWSER_Y="$(awk -v wy="$TAB_WY" -v frame_y="$TABBED_FRAME_Y" -v frame_size="$TABBED_FRAME_SIZE" 'BEGIN { split(frame_size, parts, "x"); print int(wy + frame_y + (parts[2] / 2) + 0.5) }')"
+  click_global_point "$TAB_BROWSER_X" "$TAB_BROWSER_Y" "restored_browser_area"
+  RESTORE_HIT_LINE="$(wait_for_hit_after "$BROWSER_RESTORE_HIT_START_LINE" "$CONTEXT_ID" "restored browser tab hit-test")"
+  RESTORE_HIT_FRAME_SIZE="$(extract_frame_size "$RESTORE_HIT_LINE")"
+  RESTORE_HIT_FRAME_X="$(extract_frame_x "$RESTORE_HIT_LINE")"
+  RESTORE_HIT_FRAME_Y="$(extract_frame_y "$RESTORE_HIT_LINE")"
+  require_text "$RESTORE_HIT_LINE" "selected_tab_id:${BASE_SELECTED_TAB_ID}" "restored browser hit-test has original selected tab id"
+  [ "$RESTORE_HIT_FRAME_SIZE" = "$TABBED_FRAME_SIZE" ] || fail "restored hit-test frame size changed: expected=$TABBED_FRAME_SIZE actual=$RESTORE_HIT_FRAME_SIZE"
+  [ "$RESTORE_HIT_FRAME_X" = "$TABBED_FRAME_X" ] || fail "restored hit-test frame x changed: expected=$TABBED_FRAME_X actual=$RESTORE_HIT_FRAME_X"
+  [ "$RESTORE_HIT_FRAME_Y" = "$TABBED_FRAME_Y" ] || fail "restored hit-test frame y changed: expected=$TABBED_FRAME_Y actual=$RESTORE_HIT_FRAME_Y"
+  require_text "$RESTORE_HIT_LINE" "web_point={" "restored browser hit-test includes webview-relative point"
+  log "PASS: restored browser hit-test uses tab-bar-adjusted overlay frame"
+
+  BROWSER_MODE_START_LINE="$(log_line_count)"
+  BROWSER_MODE_TRACE_START_LINE="$(trace_line_count)"
+  log "restored_browser_mode_key=enter=Mode::Browse"
+  swift "$ROOT/scripts/ghostty-app/inject.swift" key 36 >>"$HARNESS_LOG" 2>&1
+  wait_for_log_after "$BROWSER_MODE_START_LINE" "ModeChanged: pane_id=${PANE_ID} browsing=true" "webtui entered browse mode after tab restore"
+  require_trace_after "$BROWSER_MODE_TRACE_START_LINE" "focus-changed tab=${BROWSER_TAB_ID} pane=${PANE_ID} ffi=ts_set_focus focused=true" "Roamium observed restored browser pane focus=true after browse mode"
+
+  BROWSER_KEY_START_LINE="$(trace_line_count)"
+  printf 'ISSUE809_EXP12_BROWSER_RESTORED\n' >"$BROWSER_FOCUS_COMMAND"
+  swift "$ROOT/scripts/ghostty-app/inject.swift" type "$BROWSER_FOCUS_COMMAND" >>"$HARNESS_LOG" 2>&1
+  BROWSER_KEY_SEEN=""
+  for _ in $(seq 1 10); do
+    if tail -n +"$((BROWSER_KEY_START_LINE + 1))" "$ROAMIUM_TRACE" | grep -F "key-event tab=${BROWSER_TAB_ID} pane=${PANE_ID}" >/dev/null 2>&1; then
+      BROWSER_KEY_SEEN="1"
+      break
+    fi
+    delay 1
+  done
+  [ -n "$BROWSER_KEY_SEEN" ] || fail "restored browser tab keyboard marker did not reach original browser context"
+  log "PASS: restored browser tab keyboard marker reached original browser context"
+
+  screencapture -x -o -l"$WID" "$SCREENSHOT_TAB_BACK"
+  log "back_tab_screenshot_exit=$?"
+fi
 
 if [ "$SCENARIO" = "window-resize" ]; then
   INITIAL_PIXEL="$APPKIT_PIXEL"

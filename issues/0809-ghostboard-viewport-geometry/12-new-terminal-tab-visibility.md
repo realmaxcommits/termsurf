@@ -35,6 +35,7 @@ Planned files:
     - `keybind = ctrl+t=new_tab`;
     - `keybind = ctrl+1=goto_tab:1`;
     - `keybind = ctrl+2=goto_tab:2`;
+    - `keybind = ctrl+p=previous_tab`;
   - launch the same repo-built `TermSurf.app`, `target/debug/web`, and Roamium
     trace setup as existing scenarios;
   - replace the ordinary one-line `run-web.sh` with a first-run wrapper for this
@@ -51,7 +52,8 @@ Planned files:
   - inject Control-T to create a new terminal tab;
   - wait until AppKit logs show the original browser surface is no longer the
     selected tab, or until the original surface logs `view_did_hide`;
-  - prove the first-run wrapper recorded a plain-shell second invocation;
+  - prove the new terminal tab starts as a plain login shell and does not
+    inherit the first-run `webtui` wrapper;
   - prove no second browser tab/context is created after the new-tab boundary;
   - capture a screenshot while the new terminal tab is selected;
   - prove the hidden-tab state does not present the original browser overlay as
@@ -62,12 +64,14 @@ Planned files:
   - type a deterministic marker in the new terminal tab and prove Roamium does
     not receive browser key events for the original browser tab and pane after
     the new-tab boundary;
-  - inject Control-1 to switch back to the browser tab;
-  - wait for AppKit visibility or presentation evidence showing the original
-    browser surface is selected again;
+  - inject Control-P to switch back to the browser tab with the public
+    `previous_tab` action;
+  - wait for the original browser pane to regain focus;
+  - prove no post-switch AppKit presentation or pixel record changed the
+    tab-bar-adjusted baseline geometry;
   - prove the original browser overlay reappears with the same pane id, browser
-    tab id, context id, overlay frame, and AppKit-presented pixel size, or with
-    a fresh matching presentation after tab re-selection;
+    tab id, context id, and tab-bar-adjusted overlay frame using a fresh
+    hit-test on the restored tab;
   - click inside the restored browser overlay and prove hit testing routes to
     the original browser context with the same overlay frame and a current
     webview-relative point;
@@ -162,8 +166,8 @@ Pass criteria:
   - initial-open still correlates AppKit, Zig, Roamium, screenshot, and hit
     test;
   - the new tab is created by the scenario-local `ctrl+t` keybinding;
-  - the inherited-tab initial command uses the first-run wrapper, and the second
-    invocation is a plain terminal command rather than `webtui`;
+  - the new terminal tab starts a plain login shell and does not inherit the
+    first-run `webtui` wrapper;
   - no second browser tab id, pane id, or CA context is created after the
     new-tab boundary;
   - while the new terminal tab is selected, the original browser tab's native
@@ -174,10 +178,11 @@ Pass criteria:
     tab is selected does not route to the original browser context;
   - keyboard input typed in the new terminal tab does not reach Roamium as
     browser input for the original browser context;
-  - switching back with `ctrl+1` selects the original browser tab;
+  - switching back with `ctrl+p` / `previous_tab` focuses the original browser
+    pane again;
   - after switching back, the original browser overlay is visible again with the
-    same pane id, browser tab id, context id, frame, and AppKit-presented pixel
-    size as the baseline, or with a fresh matching re-presentation;
+    same pane id, browser tab id, context id, and tab-bar-adjusted frame as the
+    baseline, and no AppKit log records a conflicting frame or pixel size;
   - clicking the restored browser overlay produces a fresh `hit=true` hit-test
     for the original browser context with a current webview-relative point and
     the same overlay frame as the baseline;
@@ -243,3 +248,122 @@ Final verdict: **Approved**.
 The reviewer confirmed the required inherited-command issue is resolved by the
 first-run wrapper requirement, the plan-commit/design-review workflow concern is
 resolved, and no Required findings remain.
+
+## Result
+
+**Result:** Pass
+
+Implemented `new-terminal-tab-visibility` in
+`scripts/ghostboard-geometry-matrix.sh`. No Ghostboard product source changes
+were needed.
+
+The passing run was:
+
+```bash
+scripts/ghostboard-geometry-matrix.sh new-terminal-tab-visibility
+```
+
+Run evidence:
+
+- harness log:
+  `logs/ghostboard-geometry-new-terminal-tab-visibility-harness-20260617-110857.log`
+- app log:
+  `logs/ghostboard-geometry-new-terminal-tab-visibility-app-20260617-110857.log`
+- Roamium trace:
+  `logs/ghostboard-geometry-new-terminal-tab-visibility-roamium-20260617-110857.log`
+- initial screenshot:
+  `logs/ghostboard-geometry-new-terminal-tab-visibility-screenshot-20260617-110857.png`
+- new terminal tab screenshot:
+  `logs/ghostboard-geometry-new-terminal-tab-visibility-new-tab-screenshot-20260617-110857.png`
+- restored browser tab screenshot:
+  `logs/ghostboard-geometry-new-terminal-tab-visibility-back-tab-screenshot-20260617-110857.png`
+
+The passing run proved:
+
+- initial browser geometry still correlates across Zig, bridge, AppKit, Roamium,
+  screenshot, and hit-test evidence;
+- `ctrl+t` dispatches the public `.new_tab` action;
+- the new native terminal tab starts `/usr/bin/login` as a plain shell and does
+  not inherit the first-run `webtui` wrapper;
+- the browser tab's geometry shrinks from `944x493` / `1888x986` to `944x459` /
+  `1888x918` when the native tab bar appears, and that tab-bar-adjusted geometry
+  becomes the correct restore baseline;
+- selecting the second native tab with `ctrl+2` changes `selected_tab_id` from
+  `11748` to `11761`;
+- no second Zig browser pane/context and no second Roamium browser context are
+  created after opening the new terminal tab;
+- the original browser overlay is not freshly presented as visible in the
+  selected new terminal tab;
+- clicking the old browser rectangle while the new terminal tab is selected does
+  not route to the original browser context;
+- typing in the new terminal tab does not reach Roamium as a key event for the
+  original browser context;
+- switching back with `ctrl+p` / `previous_tab` focuses the original browser
+  pane again;
+- after switching back, no AppKit log records a conflicting frame or pixel size;
+- a fresh restored-tab hit-test has the original `selected_tab_id`, the original
+  browser context id, a current `web_point`, and the tab-bar-adjusted `944x459`
+  overlay frame;
+- after entering Browse mode, Roamium receives `focused=true` and then receives
+  the restored browser keyboard marker.
+
+Verification commands run:
+
+```bash
+bash -n scripts/ghostboard-geometry-matrix.sh
+scripts/ghostboard-geometry-matrix.sh new-terminal-tab-visibility
+scripts/ghostboard-geometry-matrix.sh split-right-focus-switch
+scripts/ghostboard-geometry-matrix.sh initial-open
+```
+
+`split-right-focus-switch` passed in run
+`logs/ghostboard-geometry-split-right-focus-switch-harness-20260617-110958.log`.
+`initial-open` passed when run serially in
+`logs/ghostboard-geometry-initial-open-harness-20260617-111019.log`.
+
+An earlier parallel `initial-open` run at
+`logs/ghostboard-geometry-initial-open-harness-20260617-110958.log` failed to
+observe the initial hit-test while another GUI automation scenario was running
+at the same time. The serial rerun passed, so viewport geometry did not regress;
+the harness scenarios should be run serially when they depend on global macOS
+keyboard/mouse focus.
+
+## Conclusion
+
+The new-tab visibility matrix row is covered. Current Ghostboard hides the
+browser from the selected new terminal tab, prevents mouse and keyboard input in
+that tab from reaching the old browser context, and restores the original
+browser tab with correct tab-bar-adjusted geometry and input routing.
+
+Two useful implementation learnings should inform later tab experiments:
+
+- Ghostboard/Ghostty macOS `new_tab` in this path starts a plain login shell and
+  does not inherit the harness `initial-command`; the first-run wrapper remains
+  harmless guardrail evidence but is not used by the new tab.
+- Switching back to an already-presented browser tab does not necessarily emit a
+  fresh AppKit `presented` record. The durable restore proof is pane focus,
+  absence of conflicting geometry logs, screenshot evidence, and a fresh
+  restored-tab hit-test with the expected selected tab id and overlay frame.
+
+## Completion Review
+
+The completed experiment was reviewed by a fresh-context Codex adversarial
+subagent.
+
+Verdict: **Approved**.
+
+Findings: none.
+
+The reviewer independently verified:
+
+- the result commit had not yet been made;
+- the diff only touches the harness and Issue 809 documentation, with no product
+  source changes;
+- `bash -n scripts/ghostboard-geometry-matrix.sh` passed;
+- `git diff --check` passed for the reviewed diff;
+- the README marks Experiment 12 as `Pass`, and this experiment file has
+  `Result` and `Conclusion`;
+- the claimed logs support the pass, including the serial rerun of
+  `initial-open`;
+- the screenshots match the claims: the new terminal tab has no browser overlay,
+  and the restored tab shows the browser overlay again.
