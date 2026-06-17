@@ -1914,6 +1914,68 @@ fn cleanupTuiPanes(fd: std.posix.fd_t) void {
     }
 }
 
+pub fn paneClosed(pane_id: []const u8) void {
+    var close_tab: ?CloseTabSnapshot = null;
+    var clear_overlay: ?ClearOverlaySnapshot = null;
+
+    state_mutex.lock();
+
+    if (findPane(pane_id)) |pane_index| {
+        const pane = &panes[pane_index];
+        const profile = pane.profileName();
+        const browser = pane.browserName();
+        const tab_id = pane.tab_id;
+
+        if (last_browser_pane_len > 0 and
+            std.mem.eql(u8, last_browser_pane[0..last_browser_pane_len], pane_id))
+        {
+            last_browser_pane_len = 0;
+        }
+
+        if (tab_id != 0) removeTabLookupForPane(profile, browser, tab_id, pane_id);
+
+        if (findServer(profile, browser)) |server_index| {
+            if (servers[server_index].pane_count > 0) {
+                servers[server_index].pane_count -= 1;
+            }
+
+            if (tab_id != 0 and servers[server_index].attached_fd >= 0) {
+                var snapshot: CloseTabSnapshot = .{
+                    .browser_fd = servers[server_index].attached_fd,
+                    .tab_id = tab_id,
+                };
+                if (copyText(&snapshot.pane_id, &snapshot.pane_id_len, pane_id)) {
+                    close_tab = snapshot;
+                }
+            }
+        }
+
+        if (pane.ca_context_id != 0) {
+            var snapshot: ClearOverlaySnapshot = .{};
+            if (copyText(&snapshot.pane_id, &snapshot.pane_id_len, pane_id)) {
+                clear_overlay = snapshot;
+            }
+        }
+
+        log.info("Pane close cleanup: pane_id={s} tab_id={}", .{ pane_id, tab_id });
+        pane.* = .{};
+    } else {
+        log.info("Pane close cleanup skipped: unknown pane_id={s}", .{pane_id});
+    }
+
+    state_mutex.unlock();
+
+    if (clear_overlay) |*snapshot| {
+        clearOverlay(snapshot);
+    }
+
+    if (close_tab) |*snapshot| {
+        sendCloseTab(snapshot) catch |err| {
+            log.warn("CloseTab send failed pane_id={s} err={}", .{ snapshot.paneId(), err });
+        };
+    }
+}
+
 fn clearOverlay(snapshot: *const ClearOverlaySnapshot) void {
     geometryTraceClear("clear_overlay_call", snapshot, "calling-appkit-bridge");
     termsurf_clear_overlay(snapshot.pane_id[0..snapshot.pane_id_len :0].ptr);

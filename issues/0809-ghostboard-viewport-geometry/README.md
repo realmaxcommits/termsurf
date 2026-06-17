@@ -192,4 +192,4 @@ work together, not just individually.
 - [Experiment 9: Close split-right sibling](09-close-split-right-sibling.md) —
   **Pass**
 - [Experiment 10: Close browser-owning pane](10-close-browser-pane.md) —
-  **Designed**
+  **Pass**

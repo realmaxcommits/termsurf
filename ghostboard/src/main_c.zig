@@ -251,6 +251,10 @@ pub export fn termsurf_forward_scroll_event(
     )) 1 else 0;
 }
 
+pub export fn termsurf_pane_closed(pane_id: [*:0]const u8) void {
+    termsurf.paneClosed(std.mem.span(pane_id));
+}
+
 test "ghostty_string_s empty string" {
     const testing = std.testing;
     const empty_string = String.empty;

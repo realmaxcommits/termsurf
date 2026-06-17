@@ -301,3 +301,184 @@ Final verdict: **Approved**.
 The reviewer confirmed that the keybinding-precedence proof, mandatory
 Roamium-side `CloseTab` evidence, and positive sibling-survival requirement
 resolved the prior findings and reported no new Required findings.
+
+## Result
+
+**Result:** Pass.
+
+Experiment 10 required product fixes. The first implementation attempts showed
+that focusing the browser overlay with a click did not reliably make the owning
+surface the focused Ghostty surface for later `close_surface` keybinding
+dispatch, and closing a browser-owning pane did not synchronously clean up the
+TermSurf pane state before the terminal/TUI connection lifecycle caught up.
+
+Implemented changes:
+
+- `scripts/ghostboard-geometry-matrix.sh`
+  - added `split-right-close-browser-pane`;
+  - configured scenario-local `confirm-close-surface = false`;
+  - configured `ctrl+d=new_split:right` and `ctrl+k=close_surface`;
+  - focused the browser-owning pane with real mouse input before close;
+  - proved Control-K reaches close cleanup instead of only being forwarded to
+    Roamium browser input;
+  - proved Zig `clear_overlay_call`, Swift bridge `clear_request`, bridge
+    `clear_rejected note=no-surface` or AppKit clear, Zig `CloseTab`,
+    Roamium-side tab destruction/removal, stale-hit-test removal, and remaining
+    sibling keyboard survival;
+  - made negative hit-test clicks move the cursor to the target before opening
+    the assertion boundary, so mouse-move events generated while crossing the
+    browser pane are not counted as the final negative click.
+- `ghostboard/macos/Sources/Ghostty/Surface View/SurfaceView_AppKit.swift`
+  - changed TermSurf overlay mouse focus transfer from AppKit-only
+    `makeFirstResponder` calls to `Ghostty.moveFocus(to:)`, so browser-pane
+    clicks update Ghostty's focused surface before keybindings are invoked;
+  - added geometry-trace-only key dispatch breadcrumbs for `key_down`,
+    `key_down_forwarded`, `perform_key_equivalent`, and
+    `perform_key_equivalent_binding`.
+- `ghostboard/macos/Sources/Features/Terminal/BaseTerminalController.swift`
+  - notifies Zig with every pane id in the node being removed before the split
+    tree is rewritten for destructive closes;
+  - leaves TermSurf pane state intact when a split is removed from one window
+    only because it is being moved into another window.
+- `ghostboard/macos/Sources/App/macOS/ghostty-bridging-header.h`
+  - exposes the pane-close bridge function to Swift.
+- `ghostboard/src/main_c.zig`
+  - exports `termsurf_pane_closed`.
+- `ghostboard/src/apprt/termsurf.zig`
+  - added `paneClosed`, which removes the pane's tab lookup, decrements the
+    browser server pane count, clears `last_browser_pane`, snapshots and sends
+    `ClearOverlay` and `CloseTab` when applicable, and clears the pane state.
+- `roamium/src/dispatch.rs`
+  - added trace-only `CloseTab` receipt/destruction/removal logging under the
+    existing run-specific trace path.
+
+Verification commands passed:
+
+```bash
+cargo fmt -- roamium/src/dispatch.rs
+zig fmt ghostboard/src/apprt/termsurf.zig ghostboard/src/main_c.zig
+bash -n scripts/ghostboard-geometry-matrix.sh
+git diff --check
+cargo check -p roamium
+cd ghostboard && zig build -Demit-macos-app=false
+cd ghostboard && swiftlint lint --strict --fix \
+  "macos/Sources/App/macOS/ghostty-bridging-header.h" \
+  "macos/Sources/Features/Terminal/BaseTerminalController.swift" \
+  "macos/Sources/Ghostty/Surface View/SurfaceView_AppKit.swift"
+cd ghostboard && swiftlint lint --strict \
+  "macos/Sources/App/macOS/ghostty-bridging-header.h" \
+  "macos/Sources/Features/Terminal/BaseTerminalController.swift" \
+  "macos/Sources/Ghostty/Surface View/SurfaceView_AppKit.swift"
+cd ghostboard && macos/build.nu --scheme Ghostty --configuration Debug --action build
+```
+
+The final fresh-build close-browser-pane run passed:
+
+```bash
+scripts/ghostboard-geometry-matrix.sh split-right-close-browser-pane
+```
+
+Evidence from the passing run:
+
+- timestamp: `20260617-100459`;
+- app log:
+  `logs/ghostboard-geometry-split-right-close-browser-pane-app-20260617-100459.log`;
+- harness log:
+  `logs/ghostboard-geometry-split-right-close-browser-pane-harness-20260617-100459.log`;
+- Roamium trace:
+  `logs/ghostboard-geometry-split-right-close-browser-pane-roamium-20260617-100459.log`;
+- screenshot:
+  `logs/ghostboard-geometry-split-right-close-browser-pane-screenshot-20260617-100459.png`;
+- post-close screenshot:
+  `logs/ghostboard-geometry-split-right-close-browser-pane-close-screenshot-20260617-100459.png`;
+- pane id: `E94AD514-82AA-4485-B698-F8AF7B1C21DD`;
+- browser tab id: `1`;
+- context id: `995197359`;
+- initial overlay frame: `{{8, 17}, {944, 493}}`;
+- split overlay frame: `456x493`;
+- AppKit pixel size after split: `912x986`;
+- `clear_result=surface-already-gone`, meaning the Swift bridge observed that
+  the surface had already been removed by the close path before the async clear
+  could target an AppKit surface;
+- Roamium trace proved
+  `close-tab tab_id=1 pane_id=E94AD514-82AA-4485-B698-F8AF7B1C21DD result=destroying ffi=ts_destroy_web_contents`;
+- Roamium trace proved `close-tab tab_id=1 result=removed`;
+- the former browser-pane area did not route to the old browser context after
+  close;
+- the remaining sibling area did not route to the old browser context after
+  close;
+- the remaining sibling pane received post-close keyboard events.
+
+Adjacent regression sweep passed serially:
+
+```bash
+for scenario in initial-open split-right split-right-resize \
+  split-right-equalize split-right-zoom split-right-close-sibling \
+  split-right-close-browser-pane; do
+  scripts/ghostboard-geometry-matrix.sh "$scenario"
+done
+```
+
+Passing run timestamps:
+
+- `initial-open`: `20260617-095428`;
+- `split-right`: `20260617-095435`;
+- `split-right-resize`: `20260617-095516`;
+- `split-right-equalize`: `20260617-095558`;
+- `split-right-zoom`: `20260617-095641`;
+- `split-right-close-sibling`: `20260617-095656`;
+- `split-right-close-browser-pane`: `20260617-095707`.
+
+## Completion Review
+
+The first completion review was performed by a fresh-context Codex adversarial
+subagent.
+
+Verdict: **Changes required**.
+
+Finding:
+
+- Required:
+  `ghostboard/macos/Sources/Features/Terminal/BaseTerminalController.swift`
+  called `termsurf_pane_closed` from `removeSurfaceNode`, but
+  `removeSurfaceNode` is also used for cross-window split moves. A browser pane
+  moved into another window would therefore incorrectly clear its TermSurf pane
+  state and send `CloseTab`.
+
+Fix:
+
+- Added an explicit `closeTermSurfPanes` parameter to `removeSurfaceNode`,
+  defaulting to `true` for destructive close paths.
+- Passed `closeTermSurfPanes: false` for the cross-window move/reparent path.
+- Re-ran Swift lint, the macOS build, and
+  `scripts/ghostboard-geometry-matrix.sh split-right-close-browser-pane`
+  successfully after the fix.
+
+The same fresh-context Codex adversarial subagent re-reviewed the cleanup-scope
+fix.
+
+Final verdict: **Approved**.
+
+The reviewer confirmed that destructive close paths still use the default
+`closeTermSurfPanes: true`, the cross-window move/reparent path now uses
+`closeTermSurfPanes: false`, and the experiment file cites the post-fix
+`20260617-100459` passing run with matching harness and Roamium evidence.
+
+## Conclusion
+
+Closing the browser-owning pane now cleans up the TermSurf overlay and browser
+tab deterministically at the pane-close boundary. The key fix is that the Swift
+close path tells Zig which pane ids are being removed before the split tree is
+rewritten; Zig can then clear the native overlay, remove stale pane/tab state,
+and send `CloseTab` to Roamium while it still has the browser mapping.
+
+The experiment also clarified a focus invariant: browser-overlay mouse clicks
+must update Ghostty's focused surface with `Ghostty.moveFocus(to:)`, not merely
+make the NSView first responder. Without that, user-visible keybindings such as
+`close_surface` can target the wrong split after mouse-focused browser input.
+
+Finally, the harness now avoids a false negative in stale-hit-test checks by
+starting negative-click assertions after cursor movement completes. The negative
+checks still fail if the final click routes to the old browser context, but they
+no longer fail on intermediate mouse-move events generated while crossing the
+browser pane.

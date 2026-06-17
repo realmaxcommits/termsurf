@@ -870,13 +870,13 @@ extension Ghostty {
             // being used to transfer split focus. Consume it so it does not
             // get forwarded to the terminal as a mouse click.
             if NSApp.isActive && window.isKeyWindow {
-                window.makeFirstResponder(self)
+                Ghostty.moveFocus(to: self)
                 suppressNextLeftMouseUp = true
                 return nil
             }
 
             // Make ourselves the first responder
-            window.makeFirstResponder(self)
+            Ghostty.moveFocus(to: self)
 
             // We have to keep processing the event so that AppKit can properly
             // focus the window and dispatch events. If you return nil here then
@@ -1094,7 +1094,7 @@ extension Ghostty {
 
         override func mouseDown(with event: NSEvent) {
             if forwardTermSurfMouseEvent(event, type: "down", button: "left") {
-                window?.makeFirstResponder(self)
+                Ghostty.moveFocus(to: self)
                 return
             }
 
@@ -1324,7 +1324,13 @@ extension Ghostty {
         }
 
         override func keyDown(with event: NSEvent) {
+            termSurfLogGeometry(
+                event: "key_down",
+                note: "key_code=\(event.keyCode) modifiers=\(termSurfModifiers(event.modifierFlags)) focused=\(focused)")
             if forwardTermSurfKeyDown(event) {
+                termSurfLogGeometry(
+                    event: "key_down_forwarded",
+                    note: "key_code=\(event.keyCode) modifiers=\(termSurfModifiers(event.modifierFlags)) focused=\(focused)")
                 return
             }
 
@@ -1487,6 +1493,9 @@ extension Ghostty {
 
         /// Special case handling for some control keys
         override func performKeyEquivalent(with event: NSEvent) -> Bool {
+            termSurfLogGeometry(
+                event: "perform_key_equivalent",
+                note: "key_code=\(event.keyCode) modifiers=\(termSurfModifiers(event.modifierFlags)) focused=\(focused)")
             // We only care about key down events. It might not even be possible
             // to receive any other event type here.
             guard event.type == .keyDown else { return false }
@@ -1512,6 +1521,9 @@ extension Ghostty {
 
             // If this is a binding then we want to perform it.
             if let bindingFlags {
+                termSurfLogGeometry(
+                    event: "perform_key_equivalent_binding",
+                    note: "key_code=\(event.keyCode) modifiers=\(termSurfModifiers(event.modifierFlags)) focused=\(focused) flags=\(bindingFlags.rawValue)")
                 // Attempt to trigger a menu item for this key binding. We only do this if:
                 //   - We're not in a key sequence or table (those are separate bindings)
                 //   - The binding is NOT `all` (menu uses FirstResponder chain)

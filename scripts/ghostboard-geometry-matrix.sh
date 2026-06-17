@@ -21,6 +21,7 @@ SCREENSHOT_ZOOM="$LOG_DIR/ghostboard-geometry-${SCENARIO}-zoom-screenshot-${TS}.
 SCREENSHOT_UNZOOM="$LOG_DIR/ghostboard-geometry-${SCENARIO}-unzoom-screenshot-${TS}.png"
 SCREENSHOT_CLOSE="$LOG_DIR/ghostboard-geometry-${SCENARIO}-close-screenshot-${TS}.png"
 ROAMIUM_TRACE="$LOG_DIR/ghostboard-geometry-${SCENARIO}-roamium-${TS}.log"
+SIBLING_ALIVE_COMMAND="$RUN_DIR/sibling-alive-command.txt"
 PID=""
 
 mkdir -p "$LOG_DIR"
@@ -89,6 +90,21 @@ require_log_after() {
   else
     fail "missing $label"
   fi
+}
+
+wait_for_log_after() {
+  local start_line="$1"
+  local pattern="$2"
+  local label="$3"
+  local attempts="${4:-30}"
+  for _ in $(seq 1 "$attempts"); do
+    if tail -n +"$((start_line + 1))" "$APP_LOG" | grep -E "$pattern" >/dev/null 2>&1; then
+      log "PASS: $label"
+      return 0
+    fi
+    delay 1
+  done
+  fail "timed out waiting for $label"
 }
 
 require_trace() {
@@ -630,8 +646,19 @@ click_global_point() {
   swift "$ROOT/scripts/ghostty-app/inject.swift" click "$x" "$y" left 1 >>"$HARNESS_LOG" 2>&1
 }
 
+click_negative_global_point() {
+  local x="$1"
+  local y="$2"
+  local label="$3"
+  log "${label}_input_point=${x},${y}"
+  swift "$ROOT/scripts/ghostty-app/inject.swift" move "$x" "$y" >>"$HARNESS_LOG" 2>&1
+  delay 0.25
+  NEGATIVE_HIT_START_LINE="$(log_line_count)"
+  swift "$ROOT/scripts/ghostty-app/inject.swift" click "$x" "$y" left 1 >>"$HARNESS_LOG" 2>&1
+}
+
 case "$SCENARIO" in
-  initial-open|window-resize|split-right|split-down|split-right-resize|split-right-equalize|split-right-zoom|split-right-close-sibling) ;;
+  initial-open|window-resize|split-right|split-down|split-right-resize|split-right-equalize|split-right-zoom|split-right-close-sibling|split-right-close-browser-pane) ;;
   *)
     fail "unsupported scenario: $SCENARIO"
     ;;
@@ -666,6 +693,14 @@ EOF
 fi
 
 if [ "$SCENARIO" = "split-right-close-sibling" ]; then
+  cat >>"$CONFIG" <<'EOF'
+confirm-close-surface = false
+keybind = ctrl+d=new_split:right
+keybind = ctrl+k=close_surface
+EOF
+fi
+
+if [ "$SCENARIO" = "split-right-close-browser-pane" ]; then
   cat >>"$CONFIG" <<'EOF'
 confirm-close-surface = false
 keybind = ctrl+d=new_split:right
@@ -825,6 +860,10 @@ fi
 if [ "$SCENARIO" = "split-right-close-sibling" ]; then
   log "close_screenshot=$SCREENSHOT_CLOSE"
 fi
+if [ "$SCENARIO" = "split-right-close-browser-pane" ]; then
+  log "close_screenshot=$SCREENSHOT_CLOSE"
+  log "sibling_alive_command=$SIBLING_ALIVE_COMMAND"
+fi
 
 GHOSTTY_CONFIG_PATH="$CONFIG" \
 GHOSTTY_LOG=stderr \
@@ -865,7 +904,6 @@ require_log 'TermSurf geometry layer=appkit event=presented ' "AppKit presented 
 require_log 'TermSurf geometry layer=appkit event=hit_test .*hit=true' "AppKit hit-test geometry record"
 require_log "scenario=${SCENARIO}" "scenario id in geometry records"
 
-TAB_READY_LINE="$(grep -E 'TermSurf geometry layer=zig event=tab_ready' "$APP_LOG" | tail -1)"
 CA_CONTEXT_LINE="$(grep -E 'TermSurf geometry layer=zig event=ca_context' "$APP_LOG" | tail -1)"
 ZIG_PRESENT_LINE="$(grep -E 'TermSurf geometry layer=zig event=present_overlay_call' "$APP_LOG" | tail -1)"
 BRIDGE_PRESENT_LINE="$(grep -E 'TermSurf geometry layer=bridge event=present_target_found' "$APP_LOG" | tail -1)"
@@ -873,7 +911,6 @@ APPKIT_PRESENT_LINE="$(grep -E 'TermSurf geometry layer=appkit event=presented '
 APPKIT_PIXELS_LINE="$(grep -E 'TermSurf geometry layer=appkit event=presented_pixels' "$APP_LOG" | tail -1)"
 HIT_TEST_LINE="$(grep -E 'TermSurf geometry layer=appkit event=hit_test .*hit=true' "$APP_LOG" | tail -1)"
 
-[ -n "$TAB_READY_LINE" ] || fail "missing Zig tab_ready geometry line"
 [ -n "$CA_CONTEXT_LINE" ] || fail "missing Zig ca_context geometry line"
 [ -n "$ZIG_PRESENT_LINE" ] || fail "missing Zig present_overlay_call geometry line"
 [ -n "$BRIDGE_PRESENT_LINE" ] || fail "missing bridge present_target_found geometry line"
@@ -887,6 +924,11 @@ BROWSER_TAB_ID="$(printf '%s\n' "$CA_CONTEXT_LINE" | sed -E 's/.*browser_tab_id:
 case "$BROWSER_TAB_ID" in
   ''|unknown:*) fail "could not extract concrete browser tab id from Zig ca_context" ;;
 esac
+TAB_READY_LINE="$(grep -E "TermSurf geometry layer=zig event=tab_ready .*pane_id:${PANE_ID} .*browser_tab_id:${BROWSER_TAB_ID}" "$APP_LOG" | tail -1 || true)"
+if [ -z "$TAB_READY_LINE" ] && grep -E "TabReady: pane_id=${PANE_ID} tab_id=${BROWSER_TAB_ID}" "$APP_LOG" >/dev/null 2>&1; then
+  TAB_READY_LINE="pane_id:${PANE_ID} browser_tab_id:${BROWSER_TAB_ID} note=tab-ready-log-fallback"
+fi
+[ -n "$TAB_READY_LINE" ] || fail "missing Zig tab_ready geometry line for pane id and browser tab id"
 CONTEXT_ID="$(printf '%s\n' "$ZIG_PRESENT_LINE" | sed -E 's/.*context_id=([0-9]+).*/\1/')"
 [ -n "$CONTEXT_ID" ] || fail "could not extract context id"
 GRID="$(printf '%s\n' "$ZIG_PRESENT_LINE" | sed -E 's/.*grid=([^ ]+).*/\1/')"
@@ -1054,9 +1096,8 @@ if [ "$SCENARIO" = "split-right" ]; then
 
   SPLIT_NEGATIVE_X="$(awk -v wx="$SPLIT_WX" -v frame_x="$SPLIT_FRAME_X" -v frame_w="$SPLIT_FRAME_WIDTH" -v old_w="$INITIAL_FRAME_WIDTH" 'BEGIN { print int(wx + frame_x + frame_w + ((old_w - frame_w) / 2) + 0.5) }')"
   SPLIT_NEGATIVE_Y="$SPLIT_INSIDE_Y"
-  SPLIT_NEGATIVE_START_LINE="$(log_line_count)"
-  click_global_point "$SPLIT_NEGATIVE_X" "$SPLIT_NEGATIVE_Y" "split_sibling_negative"
-  wait_for_negative_hit_after "$SPLIT_NEGATIVE_START_LINE" "$CONTEXT_ID" "split-right sibling-pane negative hit-test" allow-absent
+  click_negative_global_point "$SPLIT_NEGATIVE_X" "$SPLIT_NEGATIVE_Y" "split_sibling_negative"
+  wait_for_negative_hit_after "$NEGATIVE_HIT_START_LINE" "$CONTEXT_ID" "split-right sibling-pane negative hit-test" allow-absent
 fi
 
 if [ "$SCENARIO" = "split-right-resize" ]; then
@@ -1119,9 +1160,8 @@ if [ "$SCENARIO" = "split-right-resize" ]; then
 
   DIVIDER_NEGATIVE_X="$(awk -v wx="$DIVIDER_WX" -v frame_x="$DIVIDER_FRAME_X" -v frame_w="$DIVIDER_FRAME_WIDTH" -v ww="$DIVIDER_WW" 'BEGIN { print int(wx + frame_x + frame_w + ((ww - frame_x - frame_w) / 2) + 0.5) }')"
   DIVIDER_NEGATIVE_Y="$DIVIDER_INSIDE_Y"
-  DIVIDER_NEGATIVE_START_LINE="$(log_line_count)"
-  click_global_point "$DIVIDER_NEGATIVE_X" "$DIVIDER_NEGATIVE_Y" "divider_sibling_negative"
-  wait_for_negative_hit_after "$DIVIDER_NEGATIVE_START_LINE" "$CONTEXT_ID" "split-right divider-resized sibling-pane negative hit-test" allow-absent
+  click_negative_global_point "$DIVIDER_NEGATIVE_X" "$DIVIDER_NEGATIVE_Y" "divider_sibling_negative"
+  wait_for_negative_hit_after "$NEGATIVE_HIT_START_LINE" "$CONTEXT_ID" "split-right divider-resized sibling-pane negative hit-test" allow-absent
 fi
 
 if [ "$SCENARIO" = "split-right-equalize" ]; then
@@ -1203,9 +1243,8 @@ if [ "$SCENARIO" = "split-right-equalize" ]; then
 
   EQUALIZE_NEGATIVE_X="$(awk -v wx="$EQUALIZE_WX" -v frame_x="$EQUALIZE_FRAME_X" -v frame_w="$EQUALIZE_FRAME_WIDTH" -v ww="$EQUALIZE_WW" 'BEGIN { print int(wx + frame_x + frame_w + ((ww - frame_x - frame_w) / 2) + 0.5) }')"
   EQUALIZE_NEGATIVE_Y="$EQUALIZE_INSIDE_Y"
-  EQUALIZE_NEGATIVE_START_LINE="$(log_line_count)"
-  click_global_point "$EQUALIZE_NEGATIVE_X" "$EQUALIZE_NEGATIVE_Y" "equalize_sibling_negative"
-  wait_for_negative_hit_after "$EQUALIZE_NEGATIVE_START_LINE" "$CONTEXT_ID" "split-right equalized sibling-pane negative hit-test" allow-absent
+  click_negative_global_point "$EQUALIZE_NEGATIVE_X" "$EQUALIZE_NEGATIVE_Y" "equalize_sibling_negative"
+  wait_for_negative_hit_after "$NEGATIVE_HIT_START_LINE" "$CONTEXT_ID" "split-right equalized sibling-pane negative hit-test" allow-absent
 fi
 
 if [ "$SCENARIO" = "split-right-zoom" ]; then
@@ -1314,9 +1353,8 @@ if [ "$SCENARIO" = "split-right-zoom" ]; then
 
   UNZOOM_NEGATIVE_X="$(awk -v wx="$UNZOOM_WX" -v frame_x="$UNZOOM_FRAME_X" -v frame_w="$UNZOOM_FRAME_WIDTH" -v ww="$UNZOOM_WW" 'BEGIN { print int(wx + frame_x + frame_w + ((ww - frame_x - frame_w) / 2) + 0.5) }')"
   UNZOOM_NEGATIVE_Y="$UNZOOM_INSIDE_Y"
-  UNZOOM_NEGATIVE_START_LINE="$(log_line_count)"
-  click_global_point "$UNZOOM_NEGATIVE_X" "$UNZOOM_NEGATIVE_Y" "unzoom_sibling_negative"
-  wait_for_negative_hit_after "$UNZOOM_NEGATIVE_START_LINE" "$CONTEXT_ID" "split-right unzoomed sibling-pane negative hit-test" allow-absent
+  click_negative_global_point "$UNZOOM_NEGATIVE_X" "$UNZOOM_NEGATIVE_Y" "unzoom_sibling_negative"
+  wait_for_negative_hit_after "$NEGATIVE_HIT_START_LINE" "$CONTEXT_ID" "split-right unzoomed sibling-pane negative hit-test" allow-absent
 fi
 
 if [ "$SCENARIO" = "split-right-close-sibling" ]; then
@@ -1388,6 +1426,112 @@ if [ "$SCENARIO" = "split-right-close-sibling" ]; then
   require_text "$FORMER_SIBLING_HIT_LINE" "web_point={" "former sibling area hit-test includes webview-relative point"
 fi
 
+if [ "$SCENARIO" = "split-right-close-browser-pane" ]; then
+  log "confirm_close_surface=false"
+  SPLIT_START_LINE="$(log_line_count)"
+  SPLIT_TRACE_START_LINE="$(trace_line_count)"
+  log "split_keybind=ctrl+d=new_split:right"
+  swift "$ROOT/scripts/ghostty-app/inject.swift" key 2 control >>"$HARNESS_LOG" 2>&1
+  delay 1
+
+  SPLIT_PRESENT_LINE="$(wait_for_split_right_frame_after "$SPLIT_START_LINE" "$PANE_ID" "$CONTEXT_ID" "$OVERLAY_FRAME_SIZE" "split-right AppKit overlay frame")"
+  SPLIT_PIXELS_LINE="$(wait_for_split_right_pixels_after "$SPLIT_START_LINE" "$PANE_ID" "$CONTEXT_ID" "$APPKIT_PIXEL" "split-right AppKit presented pixels")"
+  SPLIT_FRAME_SIZE="$(extract_frame_size "$SPLIT_PRESENT_LINE")"
+  SPLIT_FRAME_X="$(extract_frame_x "$SPLIT_PRESENT_LINE")"
+  SPLIT_PIXEL="$(extract_appkit_pixel "$SPLIT_PIXELS_LINE")"
+  SPLIT_PIXEL_WIDTH="${SPLIT_PIXEL%x*}"
+  SPLIT_PIXEL_HEIGHT="${SPLIT_PIXEL#*x}"
+  SPLIT_FRAME_WIDTH="$(pair_width "$SPLIT_FRAME_SIZE")"
+  INITIAL_FRAME_WIDTH="$(pair_width "$OVERLAY_FRAME_SIZE")"
+  log "PASS: observed split-right AppKit overlay frame overlay_frame_size=$SPLIT_FRAME_SIZE"
+  log "PASS: observed split-right AppKit presented pixels appkit_pixel=$SPLIT_PIXEL"
+  log "split_overlay_frame_size=$SPLIT_FRAME_SIZE"
+  log "split_overlay_frame_x=$SPLIT_FRAME_X"
+  log "split_appkit_pixel=$SPLIT_PIXEL"
+  require_log_after "$SPLIT_START_LINE" "TermSurf geometry layer=zig event=appkit_presented_pixels .*pane_id:${PANE_ID} .*appkit_pixel=${SPLIT_PIXEL}" "Zig records split-right AppKit presented pixel size"
+  require_trace_after "$SPLIT_TRACE_START_LINE" "resize tab_id=${BROWSER_TAB_ID} pane_id=${PANE_ID} pixel_width=${SPLIT_PIXEL_WIDTH} pixel_height=${SPLIT_PIXEL_HEIGHT} screen_x=0 screen_y=0 screen_width=0 screen_height=0 screen_scale=0 ffi=ts_set_view_size" "Roamium applied split-right resize to AppKit pixel size via ts_set_view_size"
+
+  SPLIT_WIN_LINE="$(window_bounds)" || fail "failed to resolve split window bounds for window id=$WID"
+  IFS=$'\t' read -r _SPLIT_WID SPLIT_WX SPLIT_WY SPLIT_WW SPLIT_WH <<<"$SPLIT_WIN_LINE"
+  BROWSER_FOCUS_X="$(awk -v wx="$SPLIT_WX" -v frame_x="$SPLIT_FRAME_X" -v frame_w="$SPLIT_FRAME_WIDTH" 'BEGIN { print int(wx + frame_x + (frame_w / 2) + 0.5) }')"
+  BROWSER_FOCUS_Y=$((SPLIT_WY + SPLIT_WH / 2))
+  BROWSER_FOCUS_HIT_START_LINE="$(log_line_count)"
+  click_global_point "$BROWSER_FOCUS_X" "$BROWSER_FOCUS_Y" "close_browser_focus"
+  BROWSER_FOCUS_HIT_LINE="$(wait_for_hit_after "$BROWSER_FOCUS_HIT_START_LINE" "$CONTEXT_ID" "split-right browser-pane focus hit-test")"
+  log "PASS: focused split-right browser pane before close"
+  require_text "$BROWSER_FOCUS_HIT_LINE" "overlay_frame=" "split-right browser-pane focus hit-test includes current overlay frame"
+  require_text "$BROWSER_FOCUS_HIT_LINE" "web_point={" "split-right browser-pane focus hit-test includes webview-relative point"
+
+  CLOSE_START_LINE="$(log_line_count)"
+  CLOSE_TRACE_START_LINE="$(trace_line_count)"
+  log "close_keybind=ctrl+k=close_surface"
+  swift "$ROOT/scripts/ghostty-app/inject.swift" key 40 control >>"$HARNESS_LOG" 2>&1
+  delay 1
+
+  CLEAR_OVERLAY_SEEN=""
+  for _ in $(seq 1 30); do
+    if tail -n +"$((CLOSE_START_LINE + 1))" "$APP_LOG" | grep -E "TermSurf geometry layer=zig event=clear_overlay_call .*pane_id:${PANE_ID}" >/dev/null 2>&1; then
+      CLEAR_OVERLAY_SEEN="1"
+      break
+    fi
+    if tail -n +"$((CLOSE_TRACE_START_LINE + 1))" "$ROAMIUM_TRACE" | grep -F "key-event tab=${BROWSER_TAB_ID} pane=${PANE_ID}" >/dev/null 2>&1; then
+      fail "Control-K was forwarded to Roamium browser input before close_surface cleanup"
+    fi
+    delay 1
+  done
+  [ -n "$CLEAR_OVERLAY_SEEN" ] || fail "timed out waiting for Zig records browser-pane clear_overlay_call after close"
+  log "PASS: Zig records browser-pane clear_overlay_call after close"
+
+  wait_for_log_after "$CLOSE_START_LINE" "TermSurf geometry layer=bridge event=clear_request .*pane_id:${PANE_ID}" "Swift bridge records browser-pane clear_request after close"
+
+  CLEAR_RESULT=""
+  for _ in $(seq 1 30); do
+    if tail -n +"$((CLOSE_START_LINE + 1))" "$APP_LOG" | grep -E "TermSurf geometry layer=bridge event=clear_target_found .*pane_id:${PANE_ID}" >/dev/null 2>&1 &&
+      tail -n +"$((CLOSE_START_LINE + 1))" "$APP_LOG" | grep -E "TermSurf geometry layer=appkit event=clear .*pane_id:${PANE_ID}" >/dev/null 2>&1; then
+      CLEAR_RESULT="target-found"
+      break
+    fi
+    if tail -n +"$((CLOSE_START_LINE + 1))" "$APP_LOG" | grep -E "TermSurf geometry layer=bridge event=clear_rejected .*pane_id:${PANE_ID} .*note=no-surface" >/dev/null 2>&1; then
+      CLEAR_RESULT="surface-already-gone"
+      break
+    fi
+    delay 1
+  done
+  [ -n "$CLEAR_RESULT" ] || fail "missing AppKit clear or bridge no-surface cleanup evidence after browser-pane close"
+  log "PASS: observed browser-pane clear result clear_result=$CLEAR_RESULT"
+
+  require_log_after "$CLOSE_START_LINE" "CloseTab: pane_id=${PANE_ID} tab_id=${BROWSER_TAB_ID}" "Zig records CloseTab for browser pane after close"
+  require_trace_after "$CLOSE_TRACE_START_LINE" "close-tab tab_id=${BROWSER_TAB_ID} pane_id=${PANE_ID} result=destroying ffi=ts_destroy_web_contents" "Roamium received CloseTab and destroyed browser tab"
+  require_trace_after "$CLOSE_TRACE_START_LINE" "close-tab tab_id=${BROWSER_TAB_ID} result=removed" "Roamium removed closed browser tab"
+
+  screencapture -x -o -l"$WID" "$SCREENSHOT_CLOSE"
+  log "close_screenshot_exit=$?"
+
+  FORMER_BROWSER_X="$BROWSER_FOCUS_X"
+  FORMER_BROWSER_Y="$BROWSER_FOCUS_Y"
+  click_negative_global_point "$FORMER_BROWSER_X" "$FORMER_BROWSER_Y" "former_browser_after_close"
+  wait_for_negative_hit_after "$NEGATIVE_HIT_START_LINE" "$CONTEXT_ID" "former browser-pane area after browser close" allow-absent
+
+  REMAINING_SIBLING_X="$(awk -v wx="$SPLIT_WX" -v frame_x="$SPLIT_FRAME_X" -v split_w="$SPLIT_FRAME_WIDTH" -v initial_w="$INITIAL_FRAME_WIDTH" 'BEGIN { print int(wx + frame_x + split_w + ((initial_w - split_w) / 2) + 0.5) }')"
+  REMAINING_SIBLING_Y="$BROWSER_FOCUS_Y"
+  click_negative_global_point "$REMAINING_SIBLING_X" "$REMAINING_SIBLING_Y" "remaining_sibling_after_close"
+  wait_for_negative_hit_after "$NEGATIVE_HIT_START_LINE" "$CONTEXT_ID" "remaining sibling area after browser close" allow-absent
+
+  SIBLING_KEY_START_LINE="$(log_line_count)"
+  printf 'ISSUE809_EXP10_SIBLING_ALIVE\n' >"$SIBLING_ALIVE_COMMAND"
+  swift "$ROOT/scripts/ghostty-app/inject.swift" type "$SIBLING_ALIVE_COMMAND" >>"$HARNESS_LOG" 2>&1
+  SIBLING_KEY_SEEN=""
+  for _ in $(seq 1 10); do
+    if tail -n +"$((SIBLING_KEY_START_LINE + 1))" "$APP_LOG" | grep -E "TermSurf geometry layer=appkit event=key_down .*overlay_frame=none .*visible=false .*focused=true" >/dev/null 2>&1; then
+      SIBLING_KEY_SEEN="1"
+      break
+    fi
+    delay 1
+  done
+  [ -n "$SIBLING_KEY_SEEN" ] || fail "remaining sibling pane did not receive post-close keyboard events"
+  log "PASS: remaining sibling pane received post-close keyboard events"
+fi
+
 if [ "$SCENARIO" = "split-down" ]; then
   SPLIT_START_LINE="$(log_line_count)"
   SPLIT_TRACE_START_LINE="$(trace_line_count)"
@@ -1430,9 +1574,8 @@ if [ "$SCENARIO" = "split-down" ]; then
 
   SPLIT_NEGATIVE_X="$SPLIT_INSIDE_X"
   SPLIT_NEGATIVE_Y=$((SPLIT_WY + 285))
-  SPLIT_NEGATIVE_START_LINE="$(log_line_count)"
-  click_global_point "$SPLIT_NEGATIVE_X" "$SPLIT_NEGATIVE_Y" "split_sibling_negative"
-  wait_for_negative_hit_after "$SPLIT_NEGATIVE_START_LINE" "$CONTEXT_ID" "split-down sibling-pane negative hit-test"
+  click_negative_global_point "$SPLIT_NEGATIVE_X" "$SPLIT_NEGATIVE_Y" "split_sibling_negative"
+  wait_for_negative_hit_after "$NEGATIVE_HIT_START_LINE" "$CONTEXT_ID" "split-down sibling-pane negative hit-test"
 fi
 
 log "PASS: scenario $SCENARIO"
