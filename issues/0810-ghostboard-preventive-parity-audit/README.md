@@ -139,3 +139,8 @@ The final issue conclusion should include:
   focused issue to verify or reject it.
 - The final conclusion ranks follow-up candidates by likelihood and impact.
 - No application code is changed while solving this issue.
+
+## Experiments
+
+- [Experiment 1: Protocol message inventory](01-protocol-message-inventory.md) —
+  **Designed**
