@@ -197,3 +197,104 @@ Fresh-context adversarial review approved the design before implementation.
 Verdict: **APPROVED**.
 
 Findings: none.
+
+## Result
+
+**Result:** Pass
+
+Implemented the `font-size-cell-metrics` scenario in
+`scripts/ghostboard-geometry-matrix.sh`.
+
+The passing target run was:
+
+```bash
+scripts/ghostboard-geometry-matrix.sh font-size-cell-metrics
+```
+
+Evidence:
+
+- Harness log:
+  `logs/ghostboard-geometry-font-size-cell-metrics-harness-20260617-134213.log`
+- App log:
+  `logs/ghostboard-geometry-font-size-cell-metrics-app-20260617-134213.log`
+- Roamium trace:
+  `logs/ghostboard-geometry-font-size-cell-metrics-roamium-20260617-134213.log`
+- Baseline screenshot:
+  `logs/ghostboard-geometry-font-size-cell-metrics-screenshot-20260617-134213.png`
+- Font-increase screenshot:
+  `logs/ghostboard-geometry-font-size-cell-metrics-font-increase-screenshot-20260617-134213.png`
+- Font-decrease screenshot:
+  `logs/ghostboard-geometry-font-size-cell-metrics-font-decrease-screenshot-20260617-134213.png`
+
+The run proved:
+
+- font-size changes were invoked through scenario-local user-visible keybinds:
+  `ctrl+u=increase_font_size:2` and `ctrl+y=decrease_font_size:2`;
+- the browser kept the same window id, surface id, selected tab id, pane id,
+  browser tab id, and context id across both font-size transitions;
+- increasing font size changed the terminal metrics from
+  `grid=117x34+1+1 cell=8.0x17.0 frame={{8, 17}, {936, 578}} appkit_pixel=1872x1156`
+  to
+  `grid=104x28+1+1 cell=9.0x20.0 frame={{9, 20}, {936, 560}} appkit_pixel=1872x1120`;
+- the harness computed the current AppKit pixel size from the fresh
+  post-increase frame and backing scale and matched it to the post-increase
+  `presented_pixels` record;
+- Zig recorded the post-increase AppKit pixel size and Roamium received it via
+  `ts_set_view_size`;
+- post-increase mouse hit-testing used the current AppKit frame and included
+  webview-relative coordinates;
+- Browse-mode keyboard input after font increase reached the browser;
+- decreasing font size returned to the baseline grid, cell size, frame, and
+  AppKit pixel size;
+- the harness computed the current AppKit pixel size from the fresh
+  post-decrease frame and backing scale and matched it to the post-decrease
+  `presented_pixels` record;
+- Zig recorded the post-decrease AppKit pixel size and Roamium received it via
+  `ts_set_view_size`;
+- post-decrease mouse hit-testing and Browse-mode keyboard input worked again.
+
+Adjacent regression runs also passed:
+
+```bash
+scripts/ghostboard-geometry-matrix.sh window-resize
+scripts/ghostboard-geometry-matrix.sh minimize-hide-restore
+```
+
+Evidence:
+
+- Window-resize harness log:
+  `logs/ghostboard-geometry-window-resize-harness-20260617-134240.log`
+- Window-resize app log:
+  `logs/ghostboard-geometry-window-resize-app-20260617-134240.log`
+- Window-resize Roamium trace:
+  `logs/ghostboard-geometry-window-resize-roamium-20260617-134240.log`
+- Minimize/hide harness log:
+  `logs/ghostboard-geometry-minimize-hide-restore-harness-20260617-134256.log`
+- Minimize/hide app log:
+  `logs/ghostboard-geometry-minimize-hide-restore-app-20260617-134256.log`
+- Minimize/hide Roamium trace:
+  `logs/ghostboard-geometry-minimize-hide-restore-roamium-20260617-134256.log`
+
+Validation:
+
+```bash
+bash -n scripts/ghostboard-geometry-matrix.sh
+git diff --check
+```
+
+Both checks passed.
+
+## Conclusion
+
+Ghostboard recomputes browser overlay geometry correctly when terminal font
+metrics change. The browser keeps the same identity while grid and cell size
+changes produce current AppKit frame/pixel records, Roamium resize delivery,
+mouse hit-testing, and keyboard routing.
+
+## Completion Review
+
+Fresh-context adversarial completion review approved the completed result.
+
+Verdict: **APPROVED**.
+
+Findings: none.

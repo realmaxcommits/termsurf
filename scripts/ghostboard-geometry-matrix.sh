@@ -38,6 +38,8 @@ SCREENSHOT_FULLSCREEN="$LOG_DIR/ghostboard-geometry-${SCENARIO}-fullscreen-scree
 SCREENSHOT_UNFULLSCREEN="$LOG_DIR/ghostboard-geometry-${SCENARIO}-unfullscreen-screenshot-${TS}.png"
 SCREENSHOT_MINIMIZE_RESTORED="$LOG_DIR/ghostboard-geometry-${SCENARIO}-minimize-restored-screenshot-${TS}.png"
 SCREENSHOT_HIDE_RESTORED="$LOG_DIR/ghostboard-geometry-${SCENARIO}-hide-restored-screenshot-${TS}.png"
+SCREENSHOT_FONT_INCREASE="$LOG_DIR/ghostboard-geometry-${SCENARIO}-font-increase-screenshot-${TS}.png"
+SCREENSHOT_FONT_DECREASE="$LOG_DIR/ghostboard-geometry-${SCENARIO}-font-decrease-screenshot-${TS}.png"
 ROAMIUM_TRACE="$LOG_DIR/ghostboard-geometry-${SCENARIO}-roamium-${TS}.log"
 SIBLING_ALIVE_COMMAND="$RUN_DIR/sibling-alive-command.txt"
 SIBLING_FOCUS_COMMAND="$RUN_DIR/sibling-focus-command.txt"
@@ -206,6 +208,14 @@ extract_browser_tab_id() {
 
 extract_context_id() {
   printf '%s\n' "$1" | sed -E 's/.*context_id=([^ ]+).*/\1/'
+}
+
+extract_grid() {
+  printf '%s\n' "$1" | sed -E 's/.*grid=([^ ]+).*/\1/'
+}
+
+extract_cell_size() {
+  printf '%s\n' "$1" | sed -E 's/.*cell=([^ ]+).*/\1/'
 }
 
 extract_overlay_frame() {
@@ -957,7 +967,7 @@ click_negative_global_point() {
 }
 
 case "$SCENARIO" in
-  initial-open|window-resize|split-right|split-down|split-right-resize|split-right-equalize|split-right-zoom|split-right-close-sibling|split-right-close-browser-pane|split-right-focus-switch|new-terminal-tab-visibility|open-browser-in-new-tab|close-browser-tab|open-browser-in-new-window|multiple-windows-with-browsers|display-move-backing-scale|fullscreen-unfullscreen|minimize-hide-restore) ;;
+  initial-open|window-resize|split-right|split-down|split-right-resize|split-right-equalize|split-right-zoom|split-right-close-sibling|split-right-close-browser-pane|split-right-focus-switch|new-terminal-tab-visibility|open-browser-in-new-tab|close-browser-tab|open-browser-in-new-window|multiple-windows-with-browsers|display-move-backing-scale|fullscreen-unfullscreen|minimize-hide-restore|font-size-cell-metrics) ;;
   *)
     fail "unsupported scenario: $SCENARIO"
     ;;
@@ -1025,6 +1035,13 @@ fi
 if [ "$SCENARIO" = "open-browser-in-new-window" ] || [ "$SCENARIO" = "multiple-windows-with-browsers" ]; then
   cat >>"$CONFIG" <<'EOF'
 keybind = ctrl+b=new_window
+EOF
+fi
+
+if [ "$SCENARIO" = "font-size-cell-metrics" ]; then
+  cat >>"$CONFIG" <<'EOF'
+keybind = ctrl+u=increase_font_size:2
+keybind = ctrl+y=decrease_font_size:2
 EOF
 fi
 
@@ -1633,6 +1650,10 @@ fi
 if [ "$SCENARIO" = "minimize-hide-restore" ]; then
   log "minimize_restored_screenshot=$SCREENSHOT_MINIMIZE_RESTORED"
   log "hide_restored_screenshot=$SCREENSHOT_HIDE_RESTORED"
+fi
+if [ "$SCENARIO" = "font-size-cell-metrics" ]; then
+  log "font_increase_screenshot=$SCREENSHOT_FONT_INCREASE"
+  log "font_decrease_screenshot=$SCREENSHOT_FONT_DECREASE"
 fi
 
 GHOSTTY_CONFIG_PATH="$CONFIG" \
@@ -3278,6 +3299,151 @@ if [ "$SCENARIO" = "window-resize" ]; then
   log "PASS: observed shrunken AppKit hit-test"
   require_text "$SHRINK_HIT_LINE" "overlay_frame=" "shrunken hit-test includes current overlay frame"
   require_text "$SHRINK_HIT_LINE" "web_point={" "shrunken hit-test includes webview-relative point"
+fi
+
+if [ "$SCENARIO" = "font-size-cell-metrics" ]; then
+  A_WINDOW_ID="$WID"
+  A_SURFACE_ID="$(extract_surface_id "$APPKIT_PRESENT_LINE")"
+  A_SELECTED_TAB_ID="$(extract_selected_tab_id "$APPKIT_PRESENT_LINE")"
+  A_PANE_ID="$PANE_ID"
+  A_BROWSER_TAB_ID="$BROWSER_TAB_ID"
+  A_CONTEXT_ID="$CONTEXT_ID"
+  A_GRID="$(extract_grid "$APPKIT_PRESENT_LINE")"
+  A_CELL="$(extract_cell_size "$APPKIT_PRESENT_LINE")"
+  A_FRAME="$OVERLAY_FRAME"
+  A_FRAME_SIZE="$OVERLAY_FRAME_SIZE"
+  A_PIXEL="$APPKIT_PIXEL"
+  A_BACKING_SCALE="$(extract_backing_scale "$APPKIT_PRESENT_LINE")"
+  log "font_baseline_window_id=$A_WINDOW_ID"
+  log "font_baseline_surface_id=$A_SURFACE_ID"
+  log "font_baseline_selected_tab_id=$A_SELECTED_TAB_ID"
+  log "font_baseline_pane_id=$A_PANE_ID"
+  log "font_baseline_browser_tab_id=$A_BROWSER_TAB_ID"
+  log "font_baseline_context_id=$A_CONTEXT_ID"
+  log "font_baseline_grid=$A_GRID"
+  log "font_baseline_cell=$A_CELL"
+  log "font_baseline_frame=$A_FRAME"
+  log "font_baseline_appkit_pixel=$A_PIXEL"
+  log "font_baseline_backing_scale=$A_BACKING_SCALE"
+
+  INCREASE_START_LINE="$(log_line_count)"
+  INCREASE_TRACE_START_LINE="$(trace_line_count)"
+  log "font_increase_keybind=ctrl+u=increase_font_size:2"
+  swift "$ROOT/scripts/ghostty-app/inject.swift" key 32 control >>"$HARNESS_LOG" 2>&1
+  delay 1
+  INCREASE_PRESENT_LINE="$(wait_for_changed_appkit_frame_after "$INCREASE_START_LINE" "$A_PANE_ID" "$A_CONTEXT_ID" "$A_FRAME" "font-increased AppKit overlay frame" 45)"
+  INCREASE_PIXELS_LINE="$(wait_for_changed_appkit_pixels_after "$INCREASE_START_LINE" "$A_PANE_ID" "$A_CONTEXT_ID" "$A_PIXEL" "font-increased AppKit pixels" 45)"
+  INCREASE_WINDOW_ID="$(printf '%s\n' "$INCREASE_PRESENT_LINE" | sed -E 's/.*window_id:([^ ]+) .*/\1/')"
+  INCREASE_SURFACE_ID="$(extract_surface_id "$INCREASE_PRESENT_LINE")"
+  INCREASE_SELECTED_TAB_ID="$(extract_selected_tab_id "$INCREASE_PRESENT_LINE")"
+  INCREASE_GRID="$(extract_grid "$INCREASE_PRESENT_LINE")"
+  INCREASE_CELL="$(extract_cell_size "$INCREASE_PRESENT_LINE")"
+  INCREASE_FRAME="$(extract_overlay_frame "$INCREASE_PRESENT_LINE")"
+  INCREASE_PIXEL="$(extract_appkit_pixel "$INCREASE_PIXELS_LINE")"
+  INCREASE_SCALE="$(extract_backing_scale "$INCREASE_PRESENT_LINE")"
+  INCREASE_CURRENT_PIXEL="$(appkit_pixel_from_geometry_line "$INCREASE_PRESENT_LINE")"
+  [ "$INCREASE_WINDOW_ID" = "$A_WINDOW_ID" ] || fail "font-increase window id changed unexpectedly: expected=$A_WINDOW_ID actual=$INCREASE_WINDOW_ID"
+  [ "$INCREASE_SURFACE_ID" = "$A_SURFACE_ID" ] || fail "font-increase surface id changed"
+  [ "$INCREASE_SELECTED_TAB_ID" = "$A_SELECTED_TAB_ID" ] || fail "font-increase selected tab id changed"
+  [ "$INCREASE_GRID" != "$A_GRID" ] || fail "font-increase grid did not change: $INCREASE_GRID"
+  [ "$INCREASE_CELL" != "$A_CELL" ] || fail "font-increase cell size did not change: $INCREASE_CELL"
+  [ "$INCREASE_SCALE" = "$A_BACKING_SCALE" ] || fail "font-increase backing scale mismatch: expected=$A_BACKING_SCALE actual=$INCREASE_SCALE"
+  [ "$INCREASE_CURRENT_PIXEL" = "$INCREASE_PIXEL" ] || fail "font-increase current frame-derived pixel mismatch: expected=$INCREASE_PIXEL actual=$INCREASE_CURRENT_PIXEL"
+  log "font_increase_grid=$INCREASE_GRID"
+  log "font_increase_cell=$INCREASE_CELL"
+  log "font_increase_frame=$INCREASE_FRAME"
+  log "font_increase_appkit_pixel=$INCREASE_PIXEL"
+  log "PASS: font-increase current AppKit pixel matched presented pixels"
+  INCREASE_PIXEL_WIDTH="${INCREASE_PIXEL%x*}"
+  INCREASE_PIXEL_HEIGHT="${INCREASE_PIXEL#*x}"
+  require_log_after "$INCREASE_START_LINE" "TermSurf geometry layer=zig event=appkit_presented_pixels .*pane_id:${A_PANE_ID} .*appkit_pixel=${INCREASE_PIXEL}" "Zig records font-increased AppKit presented pixel size"
+  require_trace_after "$INCREASE_TRACE_START_LINE" "resize tab_id=${A_BROWSER_TAB_ID} pane_id=${A_PANE_ID} pixel_width=${INCREASE_PIXEL_WIDTH} pixel_height=${INCREASE_PIXEL_HEIGHT} screen_x=0 screen_y=0 screen_width=0 screen_height=0 screen_scale=0 ffi=ts_set_view_size" "Roamium applied font-increase resize to AppKit pixel size"
+
+  screencapture -x -o -l"$A_WINDOW_ID" "$SCREENSHOT_FONT_INCREASE"
+  log "font_increase_screenshot_exit=$?"
+  INCREASE_WIN_LINE="$(window_bounds_for "$A_WINDOW_ID")" || fail "failed to resolve font-increased window bounds"
+  INCREASE_HIT_START_LINE="$(log_line_count)"
+  click_window_center "$INCREASE_WIN_LINE" "font_increase_browser_area"
+  INCREASE_HIT_LINE="$(wait_for_hit_after "$INCREASE_HIT_START_LINE" "$A_CONTEXT_ID" "font-increased browser hit-test")"
+  require_text "$INCREASE_HIT_LINE" "window_id:${A_WINDOW_ID}" "font-increased hit-test has window id"
+  require_text "$INCREASE_HIT_LINE" "surface_id:${A_SURFACE_ID}" "font-increased hit-test has surface id"
+  require_text "$INCREASE_HIT_LINE" "selected_tab_id:${A_SELECTED_TAB_ID}" "font-increased hit-test has selected tab id"
+  require_text "$INCREASE_HIT_LINE" "overlay_frame=${INCREASE_FRAME}" "font-increased hit-test uses current AppKit frame"
+  require_text "$INCREASE_HIT_LINE" "web_point={" "font-increased hit-test includes webview-relative point"
+
+  INCREASE_MODE_START_LINE="$(log_line_count)"
+  INCREASE_MODE_TRACE_START_LINE="$(trace_line_count)"
+  log "font_increase_mode_key=enter=Mode::Browse"
+  swift "$ROOT/scripts/ghostty-app/inject.swift" key 36 >>"$HARNESS_LOG" 2>&1
+  wait_for_log_after "$INCREASE_MODE_START_LINE" "ModeChanged: pane_id=${A_PANE_ID} browsing=true" "font-increased webtui entered browse mode"
+  require_trace_after "$INCREASE_MODE_TRACE_START_LINE" "focus-changed tab=${A_BROWSER_TAB_ID} pane=${A_PANE_ID} ffi=ts_set_focus focused=true" "Roamium observed focus=true after font increase"
+  INCREASE_KEY_START_LINE="$(trace_line_count)"
+  printf 'ISSUE809_EXP20_FONT_INCREASE\n' >"$BROWSER_FOCUS_COMMAND"
+  swift "$ROOT/scripts/ghostty-app/inject.swift" type "$BROWSER_FOCUS_COMMAND" >>"$HARNESS_LOG" 2>&1
+  require_trace_after "$INCREASE_KEY_START_LINE" "key-event tab=${A_BROWSER_TAB_ID} pane=${A_PANE_ID}" "font-increased keyboard marker reached browser"
+
+  INCREASE_CONTROL_START_LINE="$(log_line_count)"
+  INCREASE_CONTROL_TRACE_START_LINE="$(trace_line_count)"
+  log "font_increase_control_key=escape=Mode::Control"
+  swift "$ROOT/scripts/ghostty-app/inject.swift" key 53 >>"$HARNESS_LOG" 2>&1
+  wait_for_log_after "$INCREASE_CONTROL_START_LINE" "ModeChanged: pane_id=${A_PANE_ID} browsing=false" "font-increased webtui returned to control mode"
+  require_trace_after "$INCREASE_CONTROL_TRACE_START_LINE" "focus-changed tab=${A_BROWSER_TAB_ID} pane=${A_PANE_ID} ffi=ts_set_focus focused=false" "Roamium observed focus=false before font decrease"
+
+  DECREASE_START_LINE="$(log_line_count)"
+  DECREASE_TRACE_START_LINE="$(trace_line_count)"
+  log "font_decrease_keybind=ctrl+y=decrease_font_size:2"
+  swift "$ROOT/scripts/ghostty-app/inject.swift" key 16 control >>"$HARNESS_LOG" 2>&1
+  delay 1
+  DECREASE_PRESENT_LINE="$(wait_for_exact_appkit_frame_after "$DECREASE_START_LINE" "$A_PANE_ID" "$A_CONTEXT_ID" "$A_FRAME" "font-decreased AppKit overlay frame" 45)"
+  DECREASE_PIXELS_LINE="$(wait_for_exact_appkit_pixels_after "$DECREASE_START_LINE" "$A_PANE_ID" "$A_CONTEXT_ID" "$A_PIXEL" "font-decreased AppKit pixels" 45)"
+  DECREASE_WINDOW_ID="$(printf '%s\n' "$DECREASE_PRESENT_LINE" | sed -E 's/.*window_id:([^ ]+) .*/\1/')"
+  DECREASE_SURFACE_ID="$(extract_surface_id "$DECREASE_PRESENT_LINE")"
+  DECREASE_SELECTED_TAB_ID="$(extract_selected_tab_id "$DECREASE_PRESENT_LINE")"
+  DECREASE_GRID="$(extract_grid "$DECREASE_PRESENT_LINE")"
+  DECREASE_CELL="$(extract_cell_size "$DECREASE_PRESENT_LINE")"
+  DECREASE_FRAME="$(extract_overlay_frame "$DECREASE_PRESENT_LINE")"
+  DECREASE_PIXEL="$(extract_appkit_pixel "$DECREASE_PIXELS_LINE")"
+  DECREASE_SCALE="$(extract_backing_scale "$DECREASE_PRESENT_LINE")"
+  DECREASE_CURRENT_PIXEL="$(appkit_pixel_from_geometry_line "$DECREASE_PRESENT_LINE")"
+  [ "$DECREASE_WINDOW_ID" = "$A_WINDOW_ID" ] || fail "font-decrease window id changed unexpectedly: expected=$A_WINDOW_ID actual=$DECREASE_WINDOW_ID"
+  [ "$DECREASE_SURFACE_ID" = "$A_SURFACE_ID" ] || fail "font-decrease surface id changed"
+  [ "$DECREASE_SELECTED_TAB_ID" = "$A_SELECTED_TAB_ID" ] || fail "font-decrease selected tab id changed"
+  [ "$DECREASE_GRID" = "$A_GRID" ] || fail "font-decrease grid did not return to baseline: expected=$A_GRID actual=$DECREASE_GRID"
+  [ "$DECREASE_CELL" = "$A_CELL" ] || fail "font-decrease cell did not return to baseline: expected=$A_CELL actual=$DECREASE_CELL"
+  [ "$DECREASE_SCALE" = "$A_BACKING_SCALE" ] || fail "font-decrease backing scale mismatch: expected=$A_BACKING_SCALE actual=$DECREASE_SCALE"
+  [ "$DECREASE_CURRENT_PIXEL" = "$DECREASE_PIXEL" ] || fail "font-decrease current frame-derived pixel mismatch: expected=$DECREASE_PIXEL actual=$DECREASE_CURRENT_PIXEL"
+  log "font_decrease_grid=$DECREASE_GRID"
+  log "font_decrease_cell=$DECREASE_CELL"
+  log "font_decrease_frame=$DECREASE_FRAME"
+  log "font_decrease_appkit_pixel=$DECREASE_PIXEL"
+  log "PASS: font-decrease current AppKit pixel matched presented pixels"
+  DECREASE_PIXEL_WIDTH="${DECREASE_PIXEL%x*}"
+  DECREASE_PIXEL_HEIGHT="${DECREASE_PIXEL#*x}"
+  require_log_after "$DECREASE_START_LINE" "TermSurf geometry layer=zig event=appkit_presented_pixels .*pane_id:${A_PANE_ID} .*appkit_pixel=${DECREASE_PIXEL}" "Zig records font-decreased AppKit presented pixel size"
+  require_trace_after "$DECREASE_TRACE_START_LINE" "resize tab_id=${A_BROWSER_TAB_ID} pane_id=${A_PANE_ID} pixel_width=${DECREASE_PIXEL_WIDTH} pixel_height=${DECREASE_PIXEL_HEIGHT} screen_x=0 screen_y=0 screen_width=0 screen_height=0 screen_scale=0 ffi=ts_set_view_size" "Roamium applied font-decrease resize to AppKit pixel size"
+
+  screencapture -x -o -l"$A_WINDOW_ID" "$SCREENSHOT_FONT_DECREASE"
+  log "font_decrease_screenshot_exit=$?"
+  DECREASE_WIN_LINE="$(window_bounds_for "$A_WINDOW_ID")" || fail "failed to resolve font-decreased window bounds"
+  DECREASE_HIT_START_LINE="$(log_line_count)"
+  click_window_center "$DECREASE_WIN_LINE" "font_decrease_browser_area"
+  DECREASE_HIT_LINE="$(wait_for_hit_after "$DECREASE_HIT_START_LINE" "$A_CONTEXT_ID" "font-decreased browser hit-test")"
+  require_text "$DECREASE_HIT_LINE" "window_id:${A_WINDOW_ID}" "font-decreased hit-test has window id"
+  require_text "$DECREASE_HIT_LINE" "surface_id:${A_SURFACE_ID}" "font-decreased hit-test has surface id"
+  require_text "$DECREASE_HIT_LINE" "selected_tab_id:${A_SELECTED_TAB_ID}" "font-decreased hit-test has selected tab id"
+  require_text "$DECREASE_HIT_LINE" "overlay_frame=${DECREASE_FRAME}" "font-decreased hit-test uses current AppKit frame"
+  require_text "$DECREASE_HIT_LINE" "web_point={" "font-decreased hit-test includes webview-relative point"
+
+  DECREASE_MODE_START_LINE="$(log_line_count)"
+  DECREASE_MODE_TRACE_START_LINE="$(trace_line_count)"
+  log "font_decrease_mode_key=enter=Mode::Browse"
+  swift "$ROOT/scripts/ghostty-app/inject.swift" key 36 >>"$HARNESS_LOG" 2>&1
+  wait_for_log_after "$DECREASE_MODE_START_LINE" "ModeChanged: pane_id=${A_PANE_ID} browsing=true" "font-decreased webtui entered browse mode"
+  require_trace_after "$DECREASE_MODE_TRACE_START_LINE" "focus-changed tab=${A_BROWSER_TAB_ID} pane=${A_PANE_ID} ffi=ts_set_focus focused=true" "Roamium observed focus=true after font decrease"
+  DECREASE_KEY_START_LINE="$(trace_line_count)"
+  printf 'ISSUE809_EXP20_FONT_DECREASE\n' >"$BROWSER_FOCUS_COMMAND"
+  swift "$ROOT/scripts/ghostty-app/inject.swift" type "$BROWSER_FOCUS_COMMAND" >>"$HARNESS_LOG" 2>&1
+  require_trace_after "$DECREASE_KEY_START_LINE" "key-event tab=${A_BROWSER_TAB_ID} pane=${A_PANE_ID}" "font-decreased keyboard marker reached browser"
 fi
 
 if [ "$SCENARIO" = "split-right" ]; then
