@@ -197,3 +197,85 @@ Read-only checks performed by the reviewer:
 - `bash -n scripts/ghostboard-geometry-matrix.sh`
 - targeted inspection of the issue README, experiment design, harness patterns,
   Roamium key trace format, Zig forwarding, and Swift key forwarding
+
+## Result
+
+**Result:** Pass
+
+Implemented the `keyboard-after-tab-window-switch` scenario in
+`scripts/ghostboard-geometry-matrix.sh`. The scenario launches browser A in the
+first tab, proves text typed in a plain terminal tab does not reach browser A,
+switches back to A and proves keyboard delivery, launches browser B in a second
+tab and proves only B receives keyboard input, returns to A and proves only A
+receives keyboard input, launches browser C in a second window and proves only C
+receives keyboard input, then returns to A and proves only A receives keyboard
+input.
+
+The scenario brackets each keyboard assertion with a fresh Roamium trace line
+count and requires Browse-mode/focus evidence before accepting a positive
+keyboard delivery result. It also verifies inactive browser silence after every
+active-browser marker.
+
+No Ghostboard, Roamium, or `webtui` product code changed. The only non-harness
+support change was in `scripts/ghostty-app/inject.swift`: Unicode typing now
+sets empty CGEvent flags explicitly so a previous synthetic control-key event
+cannot leak a modifier into later text input.
+
+Verification passed:
+
+```bash
+bash -n scripts/ghostboard-geometry-matrix.sh
+git diff --check
+scripts/ghostboard-geometry-matrix.sh keyboard-after-tab-window-switch
+scripts/ghostboard-geometry-matrix.sh new-terminal-tab-visibility
+scripts/ghostboard-geometry-matrix.sh open-browser-in-new-tab
+scripts/ghostboard-geometry-matrix.sh open-browser-in-new-window
+```
+
+Evidence:
+
+- New scenario harness log:
+  `logs/ghostboard-geometry-keyboard-after-tab-window-switch-harness-20260617-153525.log`
+- New scenario app log:
+  `logs/ghostboard-geometry-keyboard-after-tab-window-switch-app-20260617-153525.log`
+- New scenario Roamium trace:
+  `logs/ghostboard-geometry-keyboard-after-tab-window-switch-roamium-20260617-153525.log`
+- `new-terminal-tab-visibility` harness log:
+  `logs/ghostboard-geometry-new-terminal-tab-visibility-harness-20260617-153610.log`
+- `open-browser-in-new-tab` harness log:
+  `logs/ghostboard-geometry-open-browser-in-new-tab-harness-20260617-153700.log`
+- `open-browser-in-new-window` harness log:
+  `logs/ghostboard-geometry-open-browser-in-new-window-harness-20260617-153758.log`
+
+## Conclusion
+
+Keyboard routing after tab and window selection changes is now covered by a
+durable GUI regression scenario. The run proved the current focused browser is
+the only browser receiving keyboard input across the risky boundaries: browser
+tab to plain terminal tab and back, browser A to browser B and back, and browser
+A to browser C in another window and back.
+
+The useful harness learning is that typed Unicode CGEvents must explicitly clear
+their modifier flags. Without that, a synthetic Control keybind can leak into
+later text events in the VM and accidentally turn marker text into control-key
+actions.
+
+## Completion Review
+
+Fresh-context adversarial completion review returned **APPROVED**.
+
+Findings: none.
+
+Read-only checks performed by the reviewer:
+
+- inspected the implementation diff from plan commit `f7533e84a`;
+- `bash -n scripts/ghostboard-geometry-matrix.sh`;
+- `git diff --check`;
+- `prettier --check` for the issue README and experiment file;
+- verified the result commit had not already been made;
+- verified the new scenario and adjacent regression logs end in `PASS`.
+
+Reviewer conclusion: the scenario evidence covers plain terminal tab silence,
+browser A return delivery, browser B active with A silent, A return with B
+silent, browser C active with A/B silent, and final A return with B/C silent.
+The injector change is scoped to the test harness and exercised by the GUI runs.

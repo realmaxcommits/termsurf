@@ -98,9 +98,11 @@ case "type":
     for unit in text.utf16 {
         var value = unit
         let down = key(0, true)
+        down?.flags = []
         down?.keyboardSetUnicodeString(stringLength: 1, unicodeString: &value)
         post(down)
         let up = key(0, false)
+        up?.flags = []
         up?.keyboardSetUnicodeString(stringLength: 1, unicodeString: &value)
         post(up)
         usleep(1_000)

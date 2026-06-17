@@ -1279,8 +1279,71 @@ click_negative_global_point() {
   swift "$ROOT/scripts/ghostty-app/inject.swift" click "$x" "$y" left 1 >>"$HARNESS_LOG" 2>&1
 }
 
+click_browser_frame_center() {
+  local bounds="$1"
+  local frame_x="$2"
+  local frame_y="$3"
+  local frame_size="$4"
+  local label="$5"
+  local bid bx by bw bh click_x click_y
+  IFS=$'\t' read -r bid bx by bw bh <<<"$bounds"
+  click_x="$(awk -v wx="$bx" -v fx="$frame_x" -v fs="$frame_size" 'BEGIN { split(fs, parts, "x"); print int(wx + fx + (parts[1] / 2) + 0.5) }')"
+  click_y="$(awk -v wy="$by" -v fy="$frame_y" -v fs="$frame_size" 'BEGIN { split(fs, parts, "x"); print int(wy + fy + (parts[2] / 2) + 0.5) }')"
+  click_global_point "$click_x" "$click_y" "$label"
+}
+
+enter_browser_browse() {
+  local label="$1"
+  local pane_id="$2"
+  local browser_tab_id="$3"
+  local mode_start_line
+  local mode_trace_start_line
+  mode_start_line="$(log_line_count)"
+  mode_trace_start_line="$(trace_line_count)"
+  log "${label}_mode_key=enter=Mode::Browse"
+  swift "$ROOT/scripts/ghostty-app/inject.swift" key 36 >>"$HARNESS_LOG" 2>&1
+  wait_for_log_after "$mode_start_line" "ModeChanged: pane_id=${pane_id} browsing=true" "$label webtui entered browse mode"
+  require_trace_after "$mode_trace_start_line" "focus-changed tab=${browser_tab_id} pane=${pane_id} ffi=ts_set_focus focused=true" "Roamium observed $label focus=true after browse mode"
+}
+
+leave_browser_browse() {
+  local label="$1"
+  local pane_id="$2"
+  local browser_tab_id="$3"
+  local control_start_line
+  local control_trace_start_line
+  control_start_line="$(log_line_count)"
+  control_trace_start_line="$(trace_line_count)"
+  log "${label}_control_key=escape=Mode::Control"
+  swift "$ROOT/scripts/ghostty-app/inject.swift" key 53 >>"$HARNESS_LOG" 2>&1
+  wait_for_log_after "$control_start_line" "ModeChanged: pane_id=${pane_id} browsing=false" "$label webtui returned to control mode"
+  require_trace_after "$control_trace_start_line" "focus-changed tab=${browser_tab_id} pane=${pane_id} ffi=ts_set_focus focused=false" "Roamium observed $label focus=false after control mode"
+}
+
+type_marker_require_only() {
+  local label="$1"
+  local marker="$2"
+  local active_tab_id="$3"
+  local active_pane_id="$4"
+  local inactive_tab_id_1="${5:-}"
+  local inactive_pane_id_1="${6:-}"
+  local inactive_tab_id_2="${7:-}"
+  local inactive_pane_id_2="${8:-}"
+  local key_start_line
+  key_start_line="$(trace_line_count)"
+  printf '%s\n' "$marker" >"$BROWSER_FOCUS_COMMAND"
+  swift "$ROOT/scripts/ghostty-app/inject.swift" type "$BROWSER_FOCUS_COMMAND" >>"$HARNESS_LOG" 2>&1
+  require_trace_after "$key_start_line" "key-event tab=${active_tab_id} pane=${active_pane_id}" "$label keyboard marker reached active browser"
+  if [ -n "$inactive_tab_id_1" ] && [ -n "$inactive_pane_id_1" ]; then
+    require_no_trace_after "$key_start_line" "key-event tab=${inactive_tab_id_1} pane=${inactive_pane_id_1}" "$label keyboard marker did not reach inactive browser 1"
+  fi
+  if [ -n "$inactive_tab_id_2" ] && [ -n "$inactive_pane_id_2" ]; then
+    require_no_trace_after "$key_start_line" "key-event tab=${inactive_tab_id_2} pane=${inactive_pane_id_2}" "$label keyboard marker did not reach inactive browser 2"
+  fi
+}
+
 case "$SCENARIO" in
-  initial-open|window-resize|split-right|split-down|split-right-resize|split-right-equalize|split-right-zoom|split-right-close-sibling|split-right-close-browser-pane|split-right-focus-switch|new-terminal-tab-visibility|open-browser-in-new-tab|close-browser-tab|open-browser-in-new-window|multiple-windows-with-browsers|display-move-backing-scale|fullscreen-unfullscreen|minimize-hide-restore|font-size-cell-metrics|tui-overlay-resize-command|terminal-scrollback-movement|browser-navigation-geometry|devtools-split-geometry|mouse-after-geometry-change) ;;
+  initial-open|window-resize|split-right|split-down|split-right-resize|split-right-equalize|split-right-zoom|split-right-close-sibling|split-right-close-browser-pane|split-right-focus-switch|new-terminal-tab-visibility|open-browser-in-new-tab|close-browser-tab|open-browser-in-new-window|multiple-windows-with-browsers|display-move-backing-scale|fullscreen-unfullscreen|minimize-hide-restore|font-size-cell-metrics|tui-overlay-resize-command|terminal-scrollback-movement|browser-navigation-geometry|devtools-split-geometry|mouse-after-geometry-change|keyboard-after-tab-window-switch) ;;
   *)
     fail "unsupported scenario: $SCENARIO"
     ;;
@@ -1320,7 +1383,7 @@ EOF
   chmod +x "$COMMAND"
 fi
 
-if [ "$SCENARIO" = "new-terminal-tab-visibility" ] || [ "$SCENARIO" = "open-browser-in-new-tab" ] || [ "$SCENARIO" = "close-browser-tab" ] || [ "$SCENARIO" = "open-browser-in-new-window" ] || [ "$SCENARIO" = "multiple-windows-with-browsers" ]; then
+if [ "$SCENARIO" = "new-terminal-tab-visibility" ] || [ "$SCENARIO" = "open-browser-in-new-tab" ] || [ "$SCENARIO" = "close-browser-tab" ] || [ "$SCENARIO" = "open-browser-in-new-window" ] || [ "$SCENARIO" = "multiple-windows-with-browsers" ] || [ "$SCENARIO" = "keyboard-after-tab-window-switch" ]; then
   FIRST_RUN_MARKER="$RUN_DIR/first-web-ran"
   cat >"$COMMAND" <<EOF
 #!/usr/bin/env bash
@@ -1339,7 +1402,7 @@ window-save-state = never
 initial-command = direct:$COMMAND
 EOF
 
-if [ "$SCENARIO" = "new-terminal-tab-visibility" ] || [ "$SCENARIO" = "open-browser-in-new-tab" ] || [ "$SCENARIO" = "close-browser-tab" ]; then
+if [ "$SCENARIO" = "new-terminal-tab-visibility" ] || [ "$SCENARIO" = "open-browser-in-new-tab" ] || [ "$SCENARIO" = "close-browser-tab" ] || [ "$SCENARIO" = "keyboard-after-tab-window-switch" ]; then
   cat >>"$CONFIG" <<'EOF'
 keybind = ctrl+t=new_tab
 keybind = ctrl+1=goto_tab:1
@@ -1356,7 +1419,7 @@ keybind = ctrl+w=close_tab
 EOF
 fi
 
-if [ "$SCENARIO" = "open-browser-in-new-window" ] || [ "$SCENARIO" = "multiple-windows-with-browsers" ]; then
+if [ "$SCENARIO" = "open-browser-in-new-window" ] || [ "$SCENARIO" = "multiple-windows-with-browsers" ] || [ "$SCENARIO" = "keyboard-after-tab-window-switch" ]; then
   cat >>"$CONFIG" <<'EOF'
 keybind = ctrl+b=new_window
 EOF
@@ -1971,6 +2034,17 @@ if [ "$SCENARIO" = "multiple-windows-with-browsers" ]; then
   log "window_b_command=$SECOND_BROWSER_COMMAND"
   log "window_c_command=$THIRD_BROWSER_COMMAND"
   log "first_run_wrapper_command_log=$NEW_TAB_COMMAND_LOG"
+fi
+if [ "$SCENARIO" = "keyboard-after-tab-window-switch" ]; then
+  log "new_tab_screenshot=$SCREENSHOT_TAB_NEW"
+  log "browser_b_screenshot=$SCREENSHOT_TAB_BROWSER_B"
+  log "browser_a_restored_screenshot=$SCREENSHOT_TAB_BROWSER_A_RESTORED"
+  log "window_c_screenshot=$SCREENSHOT_WINDOW_C"
+  log "window_a_restored_screenshot=$SCREENSHOT_WINDOW_A_RESTORED"
+  log "second_browser_command=$SECOND_BROWSER_COMMAND"
+  log "third_browser_command=$THIRD_BROWSER_COMMAND"
+  log "first_run_wrapper_command_log=$NEW_TAB_COMMAND_LOG"
+  log "new_tab_marker_command=$NEW_TAB_MARKER_COMMAND"
 fi
 if [ "$SCENARIO" = "display-move-backing-scale" ]; then
   log "display_moved_screenshot=$SCREENSHOT_DISPLAY_MOVED"
@@ -3592,6 +3666,267 @@ if [ "$SCENARIO" = "open-browser-in-new-tab" ] || [ "$SCENARIO" = "close-browser
   [ "$BROWSER_B_TRACE_START_LINE" -lt "$SWITCH_B_TRACE_START_LINE" ] || fail "trace boundaries for browser B restore were not monotonic"
   [ "$NEW_TAB_TRACE_START_LINE" -lt "$BROWSER_B_TRACE_START_LINE" ] || fail "trace boundaries for browser B open were not monotonic"
   fi
+fi
+
+if [ "$SCENARIO" = "keyboard-after-tab-window-switch" ]; then
+  A_WINDOW_ID="$WID"
+  A_SELECTED_TAB_ID="$(extract_selected_tab_id "$APPKIT_PRESENT_LINE")"
+  [ -n "$A_SELECTED_TAB_ID" ] || fail "could not extract browser A selected tab id"
+  A_PANE_ID="$PANE_ID"
+  A_BROWSER_TAB_ID="$BROWSER_TAB_ID"
+  A_CONTEXT_ID="$CONTEXT_ID"
+  A_FRAME="$OVERLAY_FRAME"
+  A_FRAME_SIZE="$OVERLAY_FRAME_SIZE"
+  A_FRAME_X="$OVERLAY_FRAME_X"
+  A_FRAME_Y="$OVERLAY_FRAME_Y"
+  A_PIXEL="$APPKIT_PIXEL"
+  log "keyboard_browser_a_window_id=$A_WINDOW_ID"
+  log "keyboard_browser_a_selected_tab_id=$A_SELECTED_TAB_ID"
+  log "keyboard_browser_a_pane_id=$A_PANE_ID"
+  log "keyboard_browser_a_browser_tab_id=$A_BROWSER_TAB_ID"
+  log "keyboard_browser_a_context_id=$A_CONTEXT_ID"
+
+  NEW_TAB_START_LINE="$(log_line_count)"
+  NEW_TAB_TRACE_START_LINE="$(trace_line_count)"
+  log "keyboard_new_tab_keybind=ctrl+t=new_tab"
+  swift "$ROOT/scripts/ghostty-app/inject.swift" key 17 control >>"$HARNESS_LOG" 2>&1
+  delay 2
+
+  require_log_after "$NEW_TAB_START_LINE" "dispatching action target=surface action=.new_tab" "keyboard switch new terminal tab action dispatched"
+  require_log_after "$NEW_TAB_START_LINE" 'starting command command=`/usr/bin/login`' "keyboard switch new terminal tab started plain login shell"
+  if [ -s "$NEW_TAB_COMMAND_LOG" ]; then
+    fail "keyboard switch new terminal tab unexpectedly inherited and ran the first-run web wrapper"
+  fi
+  log "PASS: keyboard switch new terminal tab did not inherit the first-run web wrapper"
+
+  A_TABBED_PRESENT_LINE="$(wait_for_changed_appkit_frame_after "$NEW_TAB_START_LINE" "$A_PANE_ID" "$A_CONTEXT_ID" "$A_FRAME" "keyboard switch browser A geometry adjusted for native tab bar")"
+  A_TABBED_PIXELS_LINE="$(wait_for_changed_appkit_pixels_after "$NEW_TAB_START_LINE" "$A_PANE_ID" "$A_CONTEXT_ID" "$A_PIXEL" "keyboard switch browser A AppKit pixels adjusted for native tab bar")"
+  A_TABBED_FRAME="$(extract_overlay_frame "$A_TABBED_PRESENT_LINE")"
+  A_TABBED_FRAME_SIZE="$(extract_frame_size "$A_TABBED_PRESENT_LINE")"
+  A_TABBED_FRAME_X="$(extract_frame_x "$A_TABBED_PRESENT_LINE")"
+  A_TABBED_FRAME_Y="$(extract_frame_y "$A_TABBED_PRESENT_LINE")"
+  A_TABBED_PIXEL="$(extract_appkit_pixel "$A_TABBED_PIXELS_LINE")"
+  log "keyboard_browser_a_tabbed_overlay_frame=$A_TABBED_FRAME"
+  log "keyboard_browser_a_tabbed_overlay_frame_size=$A_TABBED_FRAME_SIZE"
+  log "keyboard_browser_a_tabbed_appkit_pixel=$A_TABBED_PIXEL"
+
+  TAB2_SELECT_START_LINE="$(log_line_count)"
+  log "keyboard_select_tab2_keybind=ctrl+2=goto_tab:2"
+  swift "$ROOT/scripts/ghostty-app/inject.swift" key 19 control >>"$HARNESS_LOG" 2>&1
+  delay 1
+
+  TAB2_SELECTED_LINE="$(wait_for_selected_tab_change_after "$TAB2_SELECT_START_LINE" "$A_SELECTED_TAB_ID" "keyboard switch plain terminal tab selected")"
+  TAB2_SELECTED_TAB_ID="$(extract_selected_tab_id "$TAB2_SELECTED_LINE")"
+  [ -n "$TAB2_SELECTED_TAB_ID" ] || fail "could not extract selected tab id for keyboard switch tab 2"
+  log "keyboard_tab2_selected_tab_id=$TAB2_SELECTED_TAB_ID"
+
+  screencapture -x -o -l"$TAB2_SELECTED_TAB_ID" "$SCREENSHOT_TAB_NEW"
+  log "keyboard_new_tab_screenshot_exit=$?"
+
+  PLAIN_TAB_KEY_START_LINE="$(trace_line_count)"
+  printf 'ISSUE809_EXP26_PLAIN_TERMINAL_TAB\n' >"$NEW_TAB_MARKER_COMMAND"
+  swift "$ROOT/scripts/ghostty-app/inject.swift" type "$NEW_TAB_MARKER_COMMAND" >>"$HARNESS_LOG" 2>&1
+  swift "$ROOT/scripts/ghostty-app/inject.swift" key 36 >>"$HARNESS_LOG" 2>&1
+  delay 1
+  require_no_trace_after "$PLAIN_TAB_KEY_START_LINE" "key-event tab=${A_BROWSER_TAB_ID} pane=${A_PANE_ID}" "plain terminal tab keyboard marker did not reach browser A"
+
+  SWITCH_A_FROM_PLAIN_START_LINE="$(log_line_count)"
+  log "keyboard_switch_a_from_plain_keybind=ctrl+p=previous_tab"
+  swift "$ROOT/scripts/ghostty-app/inject.swift" key 35 control >>"$HARNESS_LOG" 2>&1
+  delay 1
+  wait_for_log_after "$SWITCH_A_FROM_PLAIN_START_LINE" "Pane focus changed: pane_id=${A_PANE_ID} focused=true" "keyboard switch browser A pane focused after returning from plain tab"
+  require_no_different_appkit_frame_after "$SWITCH_A_FROM_PLAIN_START_LINE" "$A_PANE_ID" "$A_CONTEXT_ID" "$A_TABBED_FRAME" "keyboard switch browser A kept tab-bar-adjusted AppKit frame after plain-tab return"
+  require_no_different_appkit_pixels_after "$SWITCH_A_FROM_PLAIN_START_LINE" "$A_PANE_ID" "$A_CONTEXT_ID" "$A_TABBED_PIXEL" "keyboard switch browser A kept tab-bar-adjusted AppKit pixels after plain-tab return"
+
+  TAB1_WIN_LINE="$(window_bounds_for "$A_SELECTED_TAB_ID")" || fail "failed to resolve browser A tab window bounds for window id=$A_SELECTED_TAB_ID"
+  A_CLICK_START_LINE="$(log_line_count)"
+  click_browser_frame_center "$TAB1_WIN_LINE" "$A_TABBED_FRAME_X" "$A_TABBED_FRAME_Y" "$A_TABBED_FRAME_SIZE" "keyboard_browser_a_after_plain_tab"
+  A_HIT_LINE="$(wait_for_hit_after "$A_CLICK_START_LINE" "$A_CONTEXT_ID" "keyboard switch browser A hit-test after plain-tab return")"
+  require_text "$A_HIT_LINE" "selected_tab_id:${A_SELECTED_TAB_ID}" "keyboard switch browser A hit-test has tab 1 selected tab id"
+  require_text "$A_HIT_LINE" "overlay_frame=${A_TABBED_FRAME}" "keyboard switch browser A hit-test uses tabbed frame"
+  enter_browser_browse "keyboard_browser_a_after_plain_tab" "$A_PANE_ID" "$A_BROWSER_TAB_ID"
+  type_marker_require_only "keyboard browser A after plain-tab return" "ISSUE809_EXP26_BROWSER_A_AFTER_PLAIN_TAB" "$A_BROWSER_TAB_ID" "$A_PANE_ID"
+  leave_browser_browse "keyboard_browser_a_after_plain_tab" "$A_PANE_ID" "$A_BROWSER_TAB_ID"
+
+  SWITCH_TAB2_START_LINE="$(log_line_count)"
+  log "keyboard_switch_tab2_for_browser_b_keybind=ctrl+2=goto_tab:2"
+  swift "$ROOT/scripts/ghostty-app/inject.swift" key 19 control >>"$HARNESS_LOG" 2>&1
+  delay 1
+  require_log_after "$SWITCH_TAB2_START_LINE" "dispatching action target=surface action=.goto_tab value=@enumFromInt\\(2\\)" "keyboard switch tab 2 goto action dispatched before browser B"
+
+  BROWSER_B_START_LINE="$(log_line_count)"
+  BROWSER_B_TRACE_START_LINE="$(trace_line_count)"
+  printf '"%s" --browser "%s" "%s"' "$WEB" "$ROAMIUM" "$URL_B" >"$SECOND_BROWSER_COMMAND"
+  log "keyboard_browser_b_command=$(cat "$SECOND_BROWSER_COMMAND")"
+  swift "$ROOT/scripts/ghostty-app/inject.swift" type "$SECOND_BROWSER_COMMAND" >>"$HARNESS_LOG" 2>&1
+  swift "$ROOT/scripts/ghostty-app/inject.swift" key 36 >>"$HARNESS_LOG" 2>&1
+
+  B_CA_CONTEXT_LINE="$(wait_for_different_zig_event_after "$BROWSER_B_START_LINE" "ca_context" "$A_PANE_ID" "keyboard switch browser B Zig ca_context")"
+  B_PANE_ID="$(extract_pane_id "$B_CA_CONTEXT_LINE")"
+  B_BROWSER_TAB_ID="$(extract_browser_tab_id "$B_CA_CONTEXT_LINE")"
+  B_CONTEXT_ID="$(extract_context_id "$B_CA_CONTEXT_LINE")"
+  [ -n "$B_PANE_ID" ] || fail "could not extract keyboard switch browser B pane id"
+  [ -n "$B_BROWSER_TAB_ID" ] || fail "could not extract keyboard switch browser B tab id"
+  [ -n "$B_CONTEXT_ID" ] || fail "could not extract keyboard switch browser B context id"
+  [ "$B_PANE_ID" != "$A_PANE_ID" ] || fail "keyboard switch browser B reused browser A pane id"
+  [ "$B_BROWSER_TAB_ID" != "$A_BROWSER_TAB_ID" ] || fail "keyboard switch browser B reused browser A tab id"
+  [ "$B_CONTEXT_ID" != "$A_CONTEXT_ID" ] || fail "keyboard switch browser B reused browser A CA/context id"
+  log "keyboard_browser_b_pane_id=$B_PANE_ID"
+  log "keyboard_browser_b_browser_tab_id=$B_BROWSER_TAB_ID"
+  log "keyboard_browser_b_context_id=$B_CONTEXT_ID"
+
+  B_APPKIT_PRESENT_LINE="$(wait_for_line_after "$BROWSER_B_START_LINE" "TermSurf geometry layer=appkit event=presented .*pane_id:${B_PANE_ID} .*context_id=${B_CONTEXT_ID}" "keyboard switch browser B AppKit presentation")"
+  B_APPKIT_PIXELS_LINE="$(wait_for_line_after "$BROWSER_B_START_LINE" "TermSurf geometry layer=appkit event=presented_pixels .*pane_id:${B_PANE_ID} .*context_id=${B_CONTEXT_ID}" "keyboard switch browser B AppKit pixels")"
+  B_SELECTED_TAB_ID="$(extract_selected_tab_id "$B_APPKIT_PRESENT_LINE")"
+  B_FRAME="$(extract_overlay_frame "$B_APPKIT_PRESENT_LINE")"
+  B_FRAME_SIZE="$(extract_frame_size "$B_APPKIT_PRESENT_LINE")"
+  B_FRAME_X="$(extract_frame_x "$B_APPKIT_PRESENT_LINE")"
+  B_FRAME_Y="$(extract_frame_y "$B_APPKIT_PRESENT_LINE")"
+  B_PIXEL="$(extract_appkit_pixel "$B_APPKIT_PIXELS_LINE")"
+  [ "$B_SELECTED_TAB_ID" = "$TAB2_SELECTED_TAB_ID" ] || fail "keyboard switch browser B selected tab mismatch: expected=$TAB2_SELECTED_TAB_ID actual=$B_SELECTED_TAB_ID"
+  log "keyboard_browser_b_selected_tab_id=$B_SELECTED_TAB_ID"
+  log "keyboard_browser_b_overlay_frame=$B_FRAME"
+  log "keyboard_browser_b_overlay_frame_size=$B_FRAME_SIZE"
+  log "keyboard_browser_b_appkit_pixel=$B_PIXEL"
+
+  B_PIXEL_WIDTH="${B_PIXEL%x*}"
+  B_PIXEL_HEIGHT="${B_PIXEL#*x}"
+  require_trace_after "$BROWSER_B_TRACE_START_LINE" "resize tab_id=${B_BROWSER_TAB_ID} pane_id=${B_PANE_ID} pixel_width=${B_PIXEL_WIDTH} pixel_height=${B_PIXEL_HEIGHT} screen_x=0 screen_y=0 screen_width=0 screen_height=0 screen_scale=0 ffi=ts_set_view_size" "Roamium applied keyboard switch browser B resize to AppKit pixel size"
+
+  TAB2_WIN_LINE="$(window_bounds_for "$TAB2_SELECTED_TAB_ID")" || fail "failed to resolve browser B tab window bounds for window id=$TAB2_SELECTED_TAB_ID"
+  B_CLICK_START_LINE="$(log_line_count)"
+  click_browser_frame_center "$TAB2_WIN_LINE" "$B_FRAME_X" "$B_FRAME_Y" "$B_FRAME_SIZE" "keyboard_browser_b_tab"
+  B_HIT_LINE="$(wait_for_hit_after "$B_CLICK_START_LINE" "$B_CONTEXT_ID" "keyboard switch browser B hit-test")"
+  require_text "$B_HIT_LINE" "selected_tab_id:${TAB2_SELECTED_TAB_ID}" "keyboard switch browser B hit-test has tab 2 selected tab id"
+  require_text "$B_HIT_LINE" "overlay_frame=${B_FRAME}" "keyboard switch browser B hit-test uses browser B frame"
+  enter_browser_browse "keyboard_browser_b_tab" "$B_PANE_ID" "$B_BROWSER_TAB_ID"
+  type_marker_require_only "keyboard browser B tab" "ISSUE809_EXP26_BROWSER_B_TAB" "$B_BROWSER_TAB_ID" "$B_PANE_ID" "$A_BROWSER_TAB_ID" "$A_PANE_ID"
+  leave_browser_browse "keyboard_browser_b_tab" "$B_PANE_ID" "$B_BROWSER_TAB_ID"
+  screencapture -x -o -l"$TAB2_SELECTED_TAB_ID" "$SCREENSHOT_TAB_BROWSER_B"
+  log "keyboard_browser_b_screenshot_exit=$?"
+
+  SWITCH_A_FROM_B_START_LINE="$(log_line_count)"
+  log "keyboard_switch_a_from_b_keybind=ctrl+p=previous_tab"
+  swift "$ROOT/scripts/ghostty-app/inject.swift" key 35 control >>"$HARNESS_LOG" 2>&1
+  delay 1
+  wait_for_log_after "$SWITCH_A_FROM_B_START_LINE" "Pane focus changed: pane_id=${A_PANE_ID} focused=true" "keyboard switch browser A pane focused after returning from browser B"
+  require_no_different_appkit_frame_after "$SWITCH_A_FROM_B_START_LINE" "$A_PANE_ID" "$A_CONTEXT_ID" "$A_TABBED_FRAME" "keyboard switch browser A kept frame after browser B tab"
+  require_no_different_appkit_pixels_after "$SWITCH_A_FROM_B_START_LINE" "$A_PANE_ID" "$A_CONTEXT_ID" "$A_TABBED_PIXEL" "keyboard switch browser A kept pixels after browser B tab"
+  TAB1_WIN_LINE="$(window_bounds_for "$A_SELECTED_TAB_ID")" || fail "failed to resolve restored browser A window bounds for window id=$A_SELECTED_TAB_ID"
+  A_FROM_B_CLICK_START_LINE="$(log_line_count)"
+  click_browser_frame_center "$TAB1_WIN_LINE" "$A_TABBED_FRAME_X" "$A_TABBED_FRAME_Y" "$A_TABBED_FRAME_SIZE" "keyboard_browser_a_after_browser_b"
+  A_FROM_B_HIT_LINE="$(wait_for_hit_after "$A_FROM_B_CLICK_START_LINE" "$A_CONTEXT_ID" "keyboard switch browser A hit-test after browser B")"
+  require_text "$A_FROM_B_HIT_LINE" "selected_tab_id:${A_SELECTED_TAB_ID}" "keyboard switch browser A after browser B hit-test has tab 1 selected tab id"
+  require_text "$A_FROM_B_HIT_LINE" "overlay_frame=${A_TABBED_FRAME}" "keyboard switch browser A after browser B hit-test uses browser A frame"
+  enter_browser_browse "keyboard_browser_a_after_browser_b" "$A_PANE_ID" "$A_BROWSER_TAB_ID"
+  type_marker_require_only "keyboard browser A after browser B" "ISSUE809_EXP26_BROWSER_A_AFTER_BROWSER_B" "$A_BROWSER_TAB_ID" "$A_PANE_ID" "$B_BROWSER_TAB_ID" "$B_PANE_ID"
+  leave_browser_browse "keyboard_browser_a_after_browser_b" "$A_PANE_ID" "$A_BROWSER_TAB_ID"
+  screencapture -x -o -l"$A_SELECTED_TAB_ID" "$SCREENSHOT_TAB_BROWSER_A_RESTORED"
+  log "keyboard_browser_a_restored_screenshot_exit=$?"
+
+  NEW_WINDOW_C_START_LINE="$(log_line_count)"
+  log "keyboard_new_window_c_keybind=ctrl+b=new_window"
+  swift "$ROOT/scripts/ghostty-app/inject.swift" key 11 control >>"$HARNESS_LOG" 2>&1
+  delay 2
+
+  require_log_after "$NEW_WINDOW_C_START_LINE" "dispatching action target=surface action=.new_window" "keyboard switch window C new-window action dispatched"
+  require_log_after "$NEW_WINDOW_C_START_LINE" 'starting command command=`/usr/bin/login`' "keyboard switch window C started plain login shell"
+  C_WIN_LINE=""
+  for _ in $(seq 1 30); do
+    C_WIN_LINE="$(app_windows | awk -F '\t' -v old="$A_WINDOW_ID" '$1 != old { print; exit }' || true)"
+    if [ -n "$C_WIN_LINE" ]; then
+      break
+    fi
+    delay 1
+  done
+  [ -n "$C_WIN_LINE" ] || fail "timed out waiting for keyboard switch second Ghostboard window"
+  IFS=$'\t' read -r C_WINDOW_ID C_WX C_WY C_WW C_WH <<<"$C_WIN_LINE"
+  [ "$C_WINDOW_ID" != "$A_WINDOW_ID" ] || fail "keyboard switch window C reused browser A window id"
+  log "keyboard_window_c=$C_WIN_LINE"
+
+  click_window_center "$C_WIN_LINE" "keyboard_window_c_shell"
+  delay 1
+
+  BROWSER_C_START_LINE="$(log_line_count)"
+  BROWSER_C_TRACE_START_LINE="$(trace_line_count)"
+  printf '"%s" --browser "%s" "%s"' "$WEB" "$ROAMIUM" "$URL_C" >"$THIRD_BROWSER_COMMAND"
+  log "keyboard_browser_c_command=$(cat "$THIRD_BROWSER_COMMAND")"
+  swift "$ROOT/scripts/ghostty-app/inject.swift" type "$THIRD_BROWSER_COMMAND" >>"$HARNESS_LOG" 2>&1
+  swift "$ROOT/scripts/ghostty-app/inject.swift" key 36 >>"$HARNESS_LOG" 2>&1
+
+  C_CA_CONTEXT_LINE="$(wait_for_different_zig_event_after "$BROWSER_C_START_LINE" "ca_context" "$A_PANE_ID" "keyboard switch browser C Zig ca_context")"
+  C_PANE_ID="$(extract_pane_id "$C_CA_CONTEXT_LINE")"
+  C_BROWSER_TAB_ID="$(extract_browser_tab_id "$C_CA_CONTEXT_LINE")"
+  C_CONTEXT_ID="$(extract_context_id "$C_CA_CONTEXT_LINE")"
+  [ -n "$C_PANE_ID" ] || fail "could not extract keyboard switch browser C pane id"
+  [ -n "$C_BROWSER_TAB_ID" ] || fail "could not extract keyboard switch browser C tab id"
+  [ -n "$C_CONTEXT_ID" ] || fail "could not extract keyboard switch browser C context id"
+  [ "$C_PANE_ID" != "$A_PANE_ID" ] || fail "keyboard switch browser C reused browser A pane id"
+  [ "$C_PANE_ID" != "$B_PANE_ID" ] || fail "keyboard switch browser C reused browser B pane id"
+  [ "$C_BROWSER_TAB_ID" != "$A_BROWSER_TAB_ID" ] || fail "keyboard switch browser C reused browser A tab id"
+  [ "$C_BROWSER_TAB_ID" != "$B_BROWSER_TAB_ID" ] || fail "keyboard switch browser C reused browser B tab id"
+  [ "$C_CONTEXT_ID" != "$A_CONTEXT_ID" ] || fail "keyboard switch browser C reused browser A CA/context id"
+  [ "$C_CONTEXT_ID" != "$B_CONTEXT_ID" ] || fail "keyboard switch browser C reused browser B CA/context id"
+  log "keyboard_browser_c_pane_id=$C_PANE_ID"
+  log "keyboard_browser_c_browser_tab_id=$C_BROWSER_TAB_ID"
+  log "keyboard_browser_c_context_id=$C_CONTEXT_ID"
+
+  C_APPKIT_PRESENT_LINE="$(wait_for_line_after "$BROWSER_C_START_LINE" "TermSurf geometry layer=appkit event=presented .*pane_id:${C_PANE_ID} .*context_id=${C_CONTEXT_ID}" "keyboard switch browser C AppKit presentation")"
+  C_APPKIT_PIXELS_LINE="$(wait_for_line_after "$BROWSER_C_START_LINE" "TermSurf geometry layer=appkit event=presented_pixels .*pane_id:${C_PANE_ID} .*context_id=${C_CONTEXT_ID}" "keyboard switch browser C AppKit pixels")"
+  C_PRESENT_WINDOW_ID="$(printf '%s\n' "$C_APPKIT_PRESENT_LINE" | sed -E 's/.*window_id:([^ ]+) .*/\1/')"
+  C_SELECTED_TAB_ID="$(extract_selected_tab_id "$C_APPKIT_PRESENT_LINE")"
+  C_FRAME="$(extract_overlay_frame "$C_APPKIT_PRESENT_LINE")"
+  C_FRAME_SIZE="$(extract_frame_size "$C_APPKIT_PRESENT_LINE")"
+  C_FRAME_X="$(extract_frame_x "$C_APPKIT_PRESENT_LINE")"
+  C_FRAME_Y="$(extract_frame_y "$C_APPKIT_PRESENT_LINE")"
+  C_PIXEL="$(extract_appkit_pixel "$C_APPKIT_PIXELS_LINE")"
+  [ "$C_PRESENT_WINDOW_ID" = "$C_WINDOW_ID" ] || fail "keyboard switch browser C AppKit window id mismatch: expected=$C_WINDOW_ID actual=$C_PRESENT_WINDOW_ID"
+  [ "$C_SELECTED_TAB_ID" = "$C_WINDOW_ID" ] || fail "keyboard switch browser C selected tab id mismatch: expected=$C_WINDOW_ID actual=$C_SELECTED_TAB_ID"
+  log "keyboard_browser_c_selected_tab_id=$C_SELECTED_TAB_ID"
+  log "keyboard_browser_c_overlay_frame=$C_FRAME"
+  log "keyboard_browser_c_overlay_frame_size=$C_FRAME_SIZE"
+  log "keyboard_browser_c_appkit_pixel=$C_PIXEL"
+
+  C_PIXEL_WIDTH="${C_PIXEL%x*}"
+  C_PIXEL_HEIGHT="${C_PIXEL#*x}"
+  require_trace_after "$BROWSER_C_TRACE_START_LINE" "resize tab_id=${C_BROWSER_TAB_ID} pane_id=${C_PANE_ID} pixel_width=${C_PIXEL_WIDTH} pixel_height=${C_PIXEL_HEIGHT} screen_x=0 screen_y=0 screen_width=0 screen_height=0 screen_scale=0 ffi=ts_set_view_size" "Roamium applied keyboard switch browser C resize to AppKit pixel size"
+
+  C_CLICK_START_LINE="$(log_line_count)"
+  click_browser_frame_center "$C_WIN_LINE" "$C_FRAME_X" "$C_FRAME_Y" "$C_FRAME_SIZE" "keyboard_browser_c_window"
+  C_HIT_LINE="$(wait_for_hit_after "$C_CLICK_START_LINE" "$C_CONTEXT_ID" "keyboard switch browser C hit-test")"
+  require_text "$C_HIT_LINE" "window_id:${C_WINDOW_ID}" "keyboard switch browser C hit-test has window C id"
+  require_text "$C_HIT_LINE" "selected_tab_id:${C_SELECTED_TAB_ID}" "keyboard switch browser C hit-test has selected tab C id"
+  require_text "$C_HIT_LINE" "overlay_frame=${C_FRAME}" "keyboard switch browser C hit-test uses browser C frame"
+  enter_browser_browse "keyboard_browser_c_window" "$C_PANE_ID" "$C_BROWSER_TAB_ID"
+  type_marker_require_only "keyboard browser C window" "ISSUE809_EXP26_BROWSER_C_WINDOW" "$C_BROWSER_TAB_ID" "$C_PANE_ID" "$A_BROWSER_TAB_ID" "$A_PANE_ID" "$B_BROWSER_TAB_ID" "$B_PANE_ID"
+  leave_browser_browse "keyboard_browser_c_window" "$C_PANE_ID" "$C_BROWSER_TAB_ID"
+  screencapture -x -o -l"$C_WINDOW_ID" "$SCREENSHOT_WINDOW_C"
+  log "keyboard_browser_c_screenshot_exit=$?"
+
+  A_WINDOW_RESTORE_START_LINE="$(log_line_count)"
+  A_WIN_LINE="$(window_bounds_for "$A_SELECTED_TAB_ID")" || fail "failed to resolve browser A window bounds after window C for window id=$A_SELECTED_TAB_ID"
+  focus_window_bounds "$A_WIN_LINE" >>"$HARNESS_LOG" 2>&1 || fail "failed to focus browser A window after window C"
+  delay 1
+  log "keyboard_select_tab1_after_window_c_keybind=ctrl+1=goto_tab:1"
+  swift "$ROOT/scripts/ghostty-app/inject.swift" key 18 control >>"$HARNESS_LOG" 2>&1
+  delay 1
+  wait_for_log_after "$A_WINDOW_RESTORE_START_LINE" "Pane focus changed: pane_id=${A_PANE_ID} focused=true" "keyboard switch browser A pane focused after returning from window C"
+  require_no_different_appkit_frame_after "$A_WINDOW_RESTORE_START_LINE" "$A_PANE_ID" "$A_CONTEXT_ID" "$A_TABBED_FRAME" "keyboard switch browser A kept frame after window C"
+  require_no_different_appkit_pixels_after "$A_WINDOW_RESTORE_START_LINE" "$A_PANE_ID" "$A_CONTEXT_ID" "$A_TABBED_PIXEL" "keyboard switch browser A kept pixels after window C"
+
+  A_AFTER_WINDOW_CLICK_START_LINE="$(log_line_count)"
+  A_WIN_LINE="$(window_bounds_for "$A_SELECTED_TAB_ID")" || fail "failed to resolve restored browser A window bounds after window C"
+  click_browser_frame_center "$A_WIN_LINE" "$A_TABBED_FRAME_X" "$A_TABBED_FRAME_Y" "$A_TABBED_FRAME_SIZE" "keyboard_browser_a_after_window_c"
+  A_AFTER_WINDOW_HIT_LINE="$(wait_for_hit_after "$A_AFTER_WINDOW_CLICK_START_LINE" "$A_CONTEXT_ID" "keyboard switch browser A hit-test after window C")"
+  require_text "$A_AFTER_WINDOW_HIT_LINE" "selected_tab_id:${A_SELECTED_TAB_ID}" "keyboard switch browser A after window C hit-test has tab 1 selected tab id"
+  require_text "$A_AFTER_WINDOW_HIT_LINE" "overlay_frame=${A_TABBED_FRAME}" "keyboard switch browser A after window C hit-test uses browser A frame"
+  enter_browser_browse "keyboard_browser_a_after_window_c" "$A_PANE_ID" "$A_BROWSER_TAB_ID"
+  type_marker_require_only "keyboard browser A after window C" "ISSUE809_EXP26_BROWSER_A_AFTER_WINDOW_C" "$A_BROWSER_TAB_ID" "$A_PANE_ID" "$B_BROWSER_TAB_ID" "$B_PANE_ID" "$C_BROWSER_TAB_ID" "$C_PANE_ID"
+  screencapture -x -o -l"$A_SELECTED_TAB_ID" "$SCREENSHOT_WINDOW_A_RESTORED"
+  log "keyboard_window_a_restored_screenshot_exit=$?"
+
+  [ "$NEW_TAB_TRACE_START_LINE" -lt "$BROWSER_B_TRACE_START_LINE" ] || fail "keyboard switch trace boundaries for browser B open were not monotonic"
+  [ "$BROWSER_B_TRACE_START_LINE" -lt "$BROWSER_C_TRACE_START_LINE" ] || fail "keyboard switch trace boundaries for browser C open were not monotonic"
 fi
 
 if [ "$SCENARIO" = "window-resize" ]; then
