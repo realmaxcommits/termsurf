@@ -193,3 +193,5 @@ work together, not just individually.
   **Pass**
 - [Experiment 10: Close browser-owning pane](10-close-browser-pane.md) —
   **Pass**
+- [Experiment 11: Same-tab focus switching](11-same-tab-focus-switch.md) —
+  **Designed**
