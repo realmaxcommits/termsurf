@@ -36,3 +36,8 @@ Verification should include at least:
 - hover over selectable text or an input shows an I-beam cursor;
 - hover over ordinary page background returns to the default cursor;
 - cursor state follows pane/tab focus and does not leak between browser panes.
+
+## Experiments
+
+- [Experiment 1: Wire browser cursor updates into AppKit](01-wire-browser-cursor-updates.md)
+  — **Designed**
