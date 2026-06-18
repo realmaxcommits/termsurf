@@ -834,6 +834,9 @@ fn main() -> io::Result<()> {
                     if let Some(accepted) = reply {
                         let tab_id = auth.tab_id;
                         let request_id = auth.request_id;
+                        let url = auth.url.clone();
+                        let auth_scheme = auth.auth_scheme.clone();
+                        let realm = auth.realm.clone();
                         let previous_mode = auth.previous_mode.clone();
                         let username = if accepted {
                             auth.username.clone()
@@ -851,6 +854,21 @@ fn main() -> io::Result<()> {
                         if let Some(ref conn) = compositor {
                             conn.send_http_auth_reply(
                                 tab_id, request_id, accepted, &username, &password,
+                            );
+                        }
+                        if let Some(trace) = state_trace.as_mut() {
+                            trace.write(
+                                "http_auth_reply",
+                                &[
+                                    ("tab_id", tab_id.to_string()),
+                                    ("request_id", request_id.to_string()),
+                                    ("url", url),
+                                    ("auth_scheme", auth_scheme),
+                                    ("realm", realm),
+                                    ("accepted", accepted.to_string()),
+                                    ("username", username.clone()),
+                                    ("password_len", password.chars().count().to_string()),
+                                ],
                             );
                         }
                         pending_auth = None;
@@ -1322,6 +1340,21 @@ fn main() -> io::Result<()> {
                         if !duplicate {
                             let previous_mode = mode.clone();
                             mode = Mode::Auth;
+                            if let Some(trace) = state_trace.as_mut() {
+                                trace.write(
+                                    "http_auth_request",
+                                    &[
+                                        ("tab_id", tab_id.to_string()),
+                                        ("request_id", request_id.to_string()),
+                                        ("url", url.clone()),
+                                        ("auth_scheme", auth_scheme.clone()),
+                                        ("challenger", challenger.clone()),
+                                        ("realm", realm.clone()),
+                                        ("is_proxy", is_proxy.to_string()),
+                                        ("first_auth_attempt", first_auth_attempt.to_string()),
+                                    ],
+                                );
+                            }
                             pending_auth = Some(PendingHttpAuth {
                                 tab_id,
                                 request_id,

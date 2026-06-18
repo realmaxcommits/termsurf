@@ -66,6 +66,8 @@ DEVTOOLS_OVERLAY_PROBE="$RUN_DIR/devtools-overlay-probe.py"
 STATE_WEB_ROOT="$RUN_DIR/browser-state-site"
 DIALOG_WEB_ROOT="$RUN_DIR/javascript-dialog-site"
 DIALOG_TYPE_COMMAND="$RUN_DIR/dialog-type-command.txt"
+AUTH_WEB_ROOT="$RUN_DIR/http-auth-site"
+AUTH_TYPE_COMMAND="$RUN_DIR/http-auth-type-command.txt"
 NEW_TAB_COMMAND_LOG="$RUN_DIR/new-tab-command.log"
 NEW_TAB_MARKER_COMMAND="$RUN_DIR/new-tab-marker-command.txt"
 SECOND_BROWSER_COMMAND="$RUN_DIR/second-browser-command.txt"
@@ -1629,7 +1631,7 @@ devtools_overlay_probe() {
 }
 
 case "$SCENARIO" in
-  initial-open|launch-discovery-contract|named-roamium-debug-launch|named-roamium-invalid-env|hello-config-homepage|hello-config-browser-list|hello-empty-browser-list|browser-state-smoke|javascript-dialog-smoke|window-resize|split-right|split-down|split-right-resize|split-right-equalize|split-right-zoom|split-right-close-sibling|split-right-close-browser-pane|split-right-focus-switch|new-terminal-tab-visibility|open-browser-in-new-tab|close-browser-tab|open-browser-in-new-window|multiple-windows-with-browsers|display-move-backing-scale|fullscreen-unfullscreen|minimize-hide-restore|font-size-cell-metrics|tui-overlay-resize-command|terminal-scrollback-movement|browser-navigation-geometry|devtools-split-geometry|devtools-singleton-guard|mouse-after-geometry-change|keyboard-after-tab-window-switch|gui-active-multi-tab) ;;
+  initial-open|launch-discovery-contract|named-roamium-debug-launch|named-roamium-invalid-env|hello-config-homepage|hello-config-browser-list|hello-empty-browser-list|browser-state-smoke|javascript-dialog-smoke|http-auth-smoke|window-resize|split-right|split-down|split-right-resize|split-right-equalize|split-right-zoom|split-right-close-sibling|split-right-close-browser-pane|split-right-focus-switch|new-terminal-tab-visibility|open-browser-in-new-tab|close-browser-tab|open-browser-in-new-window|multiple-windows-with-browsers|display-move-backing-scale|fullscreen-unfullscreen|minimize-hide-restore|font-size-cell-metrics|tui-overlay-resize-command|terminal-scrollback-movement|browser-navigation-geometry|devtools-split-geometry|devtools-singleton-guard|mouse-after-geometry-change|keyboard-after-tab-window-switch|gui-active-multi-tab) ;;
   *)
     fail "unsupported scenario: $SCENARIO"
     ;;
@@ -1861,6 +1863,105 @@ PY
   log "javascript_dialog_web_root=$DIALOG_WEB_ROOT"
   log "javascript_dialog_http_pid=$HTTP_PID"
   log "javascript_dialog_url=$URL"
+fi
+
+if [ "$SCENARIO" = "http-auth-smoke" ]; then
+  AUTH_HTTP_PORT="$(python3 - <<'PY'
+import socket
+
+with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+    s.bind(("127.0.0.1", 0))
+    print(s.getsockname()[1])
+PY
+)"
+  mkdir -p "$AUTH_WEB_ROOT"
+  cat >"$AUTH_WEB_ROOT/server.py" <<'PY'
+import base64
+import http.server
+import socketserver
+import sys
+
+PORT = int(sys.argv[1])
+EXPECTED = "Basic " + base64.b64encode(b"user:passwd").decode("ascii")
+
+class Handler(http.server.BaseHTTPRequestHandler):
+    def log_message(self, fmt, *args):
+        sys.stderr.write("%s\n" % (fmt % args))
+
+    def send_html(self, title, body):
+        data = f"""<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>{title}</title>
+    <style>
+      body {{ margin: 0; font: 16px -apple-system, BlinkMacSystemFont, sans-serif; }}
+      a {{ position: absolute; left: 32px; }}
+      #cancel-link {{ top: 48px; }}
+      #public-link {{ top: 98px; }}
+    </style>
+    <script>console.log("{body}");</script>
+  </head>
+  <body>
+    <div>{body}</div>
+    <a id="cancel-link" href="/auth-cancel/cancel.html">ISSUE816_AUTH_CANCEL_LINK</a>
+    <a id="public-link" href="/public.html">ISSUE816_AUTH_PUBLIC_LINK</a>
+  </body>
+</html>
+""".encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+    def do_GET(self):
+        if self.path.startswith("/auth/") or self.path.startswith("/auth-cancel/"):
+            if self.headers.get("Authorization") != EXPECTED:
+                realm = "Issue816Cancel" if self.path.startswith("/auth-cancel/") else "Issue816Auth"
+                self.send_response(401)
+                self.send_header("WWW-Authenticate", f'Basic realm="{realm}"')
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
+            marker = "ISSUE816_AUTH_CANCEL_UNEXPECTED_SUCCESS" if self.path.startswith("/auth-cancel/") else "ISSUE816_AUTH_SUCCESS"
+            title = "Issue 816 Auth Cancel Unexpected Success" if self.path.startswith("/auth-cancel/") else "Issue 816 Auth Success"
+            self.send_html(title, marker)
+            return
+        if self.path.startswith("/public.html"):
+            self.send_html("Issue 816 Auth Public", "ISSUE816_AUTH_PUBLIC")
+            return
+        self.send_html("Issue 816 Auth Index", "ISSUE816_AUTH_INDEX")
+
+with socketserver.TCPServer(("127.0.0.1", PORT), Handler) as httpd:
+    httpd.serve_forever()
+PY
+  python3 "$AUTH_WEB_ROOT/server.py" "$AUTH_HTTP_PORT" >>"$HARNESS_LOG" 2>&1 &
+  HTTP_PID="$!"
+  URL="http://127.0.0.1:${AUTH_HTTP_PORT}/auth/success.html"
+  for _ in $(seq 1 30); do
+    if python3 - "http://127.0.0.1:${AUTH_HTTP_PORT}/public.html" <<'PY' >/dev/null 2>&1
+import sys
+import urllib.request
+
+with urllib.request.urlopen(sys.argv[1], timeout=1) as response:
+    raise SystemExit(0 if response.status == 200 else 1)
+PY
+    then
+      break
+    fi
+    delay 0.25
+  done
+  python3 - "http://127.0.0.1:${AUTH_HTTP_PORT}/public.html" <<'PY' >/dev/null 2>&1 || fail "HTTP auth fixture did not become ready"
+import sys
+import urllib.request
+
+with urllib.request.urlopen(sys.argv[1], timeout=1) as response:
+    raise SystemExit(0 if response.status == 200 else 1)
+PY
+  log "http_auth_web_root=$AUTH_WEB_ROOT"
+  log "http_auth_http_pid=$HTTP_PID"
+  log "http_auth_url=$URL"
 fi
 
 COMMAND="$RUN_DIR/run-web.sh"
@@ -2769,6 +2870,9 @@ fi
 if [ "$SCENARIO" = "javascript-dialog-smoke" ]; then
   log "webtui_state_trace=$WEBTUI_STATE_TRACE"
 fi
+if [ "$SCENARIO" = "http-auth-smoke" ]; then
+  log "webtui_state_trace=$WEBTUI_STATE_TRACE"
+fi
 if [ "$SCENARIO" = "window-resize" ]; then
   log "grow_screenshot=$SCREENSHOT_GROW"
   log "shrink_screenshot=$SCREENSHOT_SHRINK"
@@ -3173,6 +3277,75 @@ if [ "$SCENARIO" = "javascript-dialog-smoke" ]; then
   wait_for_state_trace_after "$BEFOREUNLOAD_PROCEED_START_LINE" "event=url_changed[[:space:]]+url=${DIALOG_AWAY_URL}" "beforeunload proceed navigated away" 45
   wait_for_state_trace_after "$BEFOREUNLOAD_PROCEED_START_LINE" "event=title_changed[[:space:]]+title=Issue 816 Dialog away loaded" "beforeunload proceed loaded away title" 45
   wait_for_state_trace_after "$BEFOREUNLOAD_PROCEED_START_LINE" "event=console_message.*message=ISSUE816_DIALOG_RESULT case=beforeunload-proceed value=away" "page observed beforeunload proceed result" 45
+fi
+
+if [ "$SCENARIO" = "http-auth-smoke" ]; then
+  auth_request_id() {
+    local start_line="$1"
+    local pattern="$2"
+    tail -n +"$((start_line + 1))" "$WEBTUI_STATE_TRACE" \
+      | grep -E "$pattern" \
+      | tail -1 \
+      | sed -E 's/.*request_id=([0-9]+).*/\1/'
+  }
+
+  type_auth_text() {
+    local value="$1"
+    local label="$2"
+    printf '%s' "$value" >"$AUTH_TYPE_COMMAND"
+    swift "$ROOT/scripts/ghostty-app/inject.swift" type "$AUTH_TYPE_COMMAND" >>"$HARNESS_LOG" 2>&1
+    log "http_auth_type_${label}_len=${#value}"
+  }
+
+  wait_for_state_trace "event=http_auth_request.*auth_scheme=basic.*realm=Issue816Auth" "webtui HTTP auth request" 45
+  AUTH_SUCCESS_REQUEST_ID="$(auth_request_id 0 "event=http_auth_request.*auth_scheme=basic.*realm=Issue816Auth")"
+  [ -n "$AUTH_SUCCESS_REQUEST_ID" ] || fail "missing request id for HTTP auth success"
+  wait_for_trace_regex "http-auth-request tab=${BROWSER_TAB_ID} .*request_id=${AUTH_SUCCESS_REQUEST_ID} .*scheme=basic .*realm=Issue816Auth" "Roamium HTTP auth request" 45
+  type_auth_text "user" "username"
+  swift "$ROOT/scripts/ghostty-app/inject.swift" key 36 >>"$HARNESS_LOG" 2>&1
+  log "http_auth_key_username=enter"
+  type_auth_text "passwd" "password"
+  swift "$ROOT/scripts/ghostty-app/inject.swift" key 36 >>"$HARNESS_LOG" 2>&1
+  log "http_auth_key_password=enter"
+  wait_for_state_trace "event=http_auth_reply.*request_id=${AUTH_SUCCESS_REQUEST_ID}.*accepted=true.*username=user.*password_len=6" "webtui HTTP auth success reply" 45
+  wait_for_trace_regex "http-auth-reply tab=${BROWSER_TAB_ID} .*request_id=${AUTH_SUCCESS_REQUEST_ID} accepted=true username=user password_len=6 ok=true" "Roamium HTTP auth success reply" 45
+  wait_for_state_trace "event=title_changed.*title=Issue 816 Auth Success" "authenticated page title" 45
+  wait_for_state_trace "event=console_message.*message=ISSUE816_AUTH_SUCCESS" "authenticated page success marker" 45
+
+  AUTH_WIN_LINE="$(window_bounds)" || fail "failed to resolve HTTP auth window bounds"
+  AUTH_CANCEL_START_LINE="$(state_trace_line_count)"
+  AUTH_CANCEL_URL="http://127.0.0.1:${AUTH_HTTP_PORT}/auth-cancel/cancel.html"
+  IFS=$'\t' read -r AUTH_CANCEL_X AUTH_CANCEL_Y <<<"$(global_point_for_web_point "$AUTH_WIN_LINE" "$APPKIT_PRESENT_LINE" 140 58)"
+  click_global_point "$AUTH_CANCEL_X" "$AUTH_CANCEL_Y" "http_auth_cancel_link"
+  wait_for_state_trace_after "$AUTH_CANCEL_START_LINE" "event=http_auth_request.*url=${AUTH_CANCEL_URL}.*auth_scheme=basic.*realm=Issue816Cancel" "webtui HTTP auth cancel request" 45
+  AUTH_CANCEL_REQUEST_ID="$(auth_request_id "$AUTH_CANCEL_START_LINE" "event=http_auth_request.*url=${AUTH_CANCEL_URL}.*auth_scheme=basic.*realm=Issue816Cancel")"
+  [ -n "$AUTH_CANCEL_REQUEST_ID" ] || fail "missing request id for HTTP auth cancel"
+  wait_for_trace_regex "http-auth-request tab=${BROWSER_TAB_ID} .*request_id=${AUTH_CANCEL_REQUEST_ID} .*scheme=basic .*realm=Issue816Cancel" "Roamium HTTP auth cancel request" 45
+  swift "$ROOT/scripts/ghostty-app/inject.swift" key 53 >>"$HARNESS_LOG" 2>&1
+  log "http_auth_key_cancel=esc"
+  wait_for_state_trace_after "$AUTH_CANCEL_START_LINE" "event=http_auth_reply.*request_id=${AUTH_CANCEL_REQUEST_ID}.*accepted=false.*password_len=0" "webtui HTTP auth cancel reply" 45
+  wait_for_trace_regex "http-auth-reply tab=${BROWSER_TAB_ID} .*request_id=${AUTH_CANCEL_REQUEST_ID} accepted=false username= password_len=0 ok=true" "Roamium HTTP auth cancel reply" 45
+  require_no_state_trace_after "$AUTH_CANCEL_START_LINE" "event=console_message.*message=ISSUE816_AUTH_CANCEL_UNEXPECTED_SUCCESS" "HTTP auth cancel did not authenticate protected page"
+
+  AUTH_PUBLIC_START_LINE="$(state_trace_line_count)"
+  AUTH_PUBLIC_URL="http://127.0.0.1:${AUTH_HTTP_PORT}/public.html"
+  log "http_auth_public_edit_key=shift+a=edit-url-end"
+  swift "$ROOT/scripts/ghostty-app/inject.swift" key 0 shift >>"$HARNESS_LOG" 2>&1
+  delay 0.5
+  for _ in $(seq 1 120); do
+    swift "$ROOT/scripts/ghostty-app/inject.swift" key 51 >>"$HARNESS_LOG" 2>&1
+  done
+  printf '%s' "$AUTH_PUBLIC_URL" >"$AUTH_TYPE_COMMAND"
+  swift "$ROOT/scripts/ghostty-app/inject.swift" type "$AUTH_TYPE_COMMAND" >>"$HARNESS_LOG" 2>&1
+  swift "$ROOT/scripts/ghostty-app/inject.swift" key 36 >>"$HARNESS_LOG" 2>&1
+  wait_for_state_trace_after "$AUTH_PUBLIC_START_LINE" "event=url_changed[[:space:]]+url=${AUTH_PUBLIC_URL}" "public navigation after auth cancel" 45
+  wait_for_state_trace_after "$AUTH_PUBLIC_START_LINE" "event=title_changed.*title=Issue 816 Auth Public" "public page title after auth cancel" 45
+  wait_for_state_trace_after "$AUTH_PUBLIC_START_LINE" "event=console_message.*message=ISSUE816_AUTH_PUBLIC" "public page marker after auth cancel" 45
+
+  if grep -F "passwd" "$APP_LOG" "$ROAMIUM_TRACE" "$WEBTUI_STATE_TRACE" "$HARNESS_LOG" >/dev/null 2>&1; then
+    fail "HTTP auth password leaked into logs or traces"
+  fi
+  log "PASS: HTTP auth password did not appear in logs or traces"
 fi
 
 if [ "$SCENARIO" = "named-roamium-debug-launch" ]; then

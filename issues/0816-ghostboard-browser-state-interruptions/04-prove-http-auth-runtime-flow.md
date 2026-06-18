@@ -154,3 +154,95 @@ Fresh-context adversarial review by Codex subagent `Helmholtz`:
   Ghostboard app files change or a Ghostboard rebuild is needed.
 - **Re-review verdict:** Approved. The reviewer confirmed the prior finding was
   resolved and no new required findings were introduced.
+
+## Result
+
+**Result:** Pass.
+
+Implemented a focused `http-auth-smoke` scenario in
+`scripts/ghostboard-geometry-matrix.sh`, test-only webtui auth trace events, and
+stable Roamium HTTP auth request/reply trace lines that do not include password
+contents. The runtime smoke passed both HTTP Basic Auth success and cancellation
+under debug Ghostboard.
+
+Per-feature result:
+
+| Feature               | Result | Evidence                                                                     |
+| --------------------- | ------ | ---------------------------------------------------------------------------- |
+| Auth request delivery | Pass   | Roamium and webtui recorded Basic auth request metadata.                     |
+| Auth success reply    | Pass   | webtui sent `accepted=true`; Roamium reply returned `ok=true`.               |
+| Authenticated page    | Pass   | webtui received `Issue 816 Auth Success` and `ISSUE816_AUTH_SUCCESS`.        |
+| Auth cancel reply     | Pass   | webtui sent `accepted=false`; Roamium reply returned `ok=true`.              |
+| Post-cancel recovery  | Pass   | Public page navigation/title/console marker worked after cancel.             |
+| Password log hygiene  | Pass   | The password string did not appear in app, Roamium, webtui, or harness logs. |
+
+Final successful runtime command:
+
+```bash
+scripts/ghostboard-geometry-matrix.sh http-auth-smoke
+```
+
+Final evidence artifacts:
+
+- Harness log:
+  `logs/ghostboard-geometry-http-auth-smoke-harness-20260617-231713.log`
+- App log: `logs/ghostboard-geometry-http-auth-smoke-app-20260617-231713.log`
+- Roamium trace:
+  `logs/ghostboard-geometry-http-auth-smoke-roamium-20260617-231713.log`
+- Webtui state trace:
+  `logs/ghostboard-geometry-http-auth-smoke-webtui-20260617-231713.log`
+- Screenshot:
+  `logs/ghostboard-geometry-http-auth-smoke-screenshot-20260617-231713.png`
+
+Changed files:
+
+- `scripts/ghostboard-geometry-matrix.sh`
+  - Adds the `http-auth-smoke` scenario, local Basic Auth fixture, success and
+    cancellation assertions, post-cancel public navigation, and password leak
+    checks across logs/traces.
+- `webtui/src/main.rs`
+  - Adds test-only `http_auth_request` and `http_auth_reply` state trace events
+    under `TERMSURF_WEBTUI_STATE_TRACE_FILE`, recording password length but not
+    password contents.
+- `roamium/src/dispatch.rs`
+  - Writes HTTP auth request/reply metadata to the stable Roamium trace,
+    recording password length but not password contents.
+
+Verification run:
+
+```bash
+prettier --check --prose-wrap always --print-width 80 issues/0816-ghostboard-browser-state-interruptions/README.md issues/0816-ghostboard-browser-state-interruptions/04-prove-http-auth-runtime-flow.md
+cargo fmt -- webtui/src/main.rs roamium/src/dispatch.rs
+cargo fmt --check -- webtui/src/main.rs roamium/src/dispatch.rs
+cargo check -p webtui
+cargo check -p roamium
+./scripts/build.sh webtui
+./scripts/build.sh roamium
+bash -n scripts/ghostboard-geometry-matrix.sh
+git diff --check
+scripts/ghostboard-geometry-matrix.sh http-auth-smoke
+```
+
+`shellcheck scripts/ghostboard-geometry-matrix.sh` could not be run because
+`shellcheck` is not installed on this VM.
+
+## Completion Review
+
+Fresh-context adversarial review by Codex subagent `Harvey`:
+
+- **Verdict:** Approved.
+- **Findings:** None.
+- **Review notes:** The reviewer checked the result against the implementation
+  diff, final `20260617-231713` runtime evidence, password-log hygiene, and the
+  required static/build checks.
+
+## Conclusion
+
+HTTP Basic Auth parity is proven for the current Ghostboard/webtui/Roamium
+stack. The auth challenge reaches webtui over the direct browser path, webtui
+renders and replies through terminal input, Roamium forwards the reply to
+Chromium, and the page observes the expected authenticated result.
+
+Cancellation is also covered: Esc sends `accepted=false`, the protected cancel
+page is not authenticated, and the browser remains usable afterward. Password
+contents are not written to the checked logs or traces.

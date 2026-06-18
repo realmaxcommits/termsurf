@@ -48,4 +48,4 @@ owning component before any fix.
 - [Experiment 3: Prove JavaScript dialog runtime flow](03-prove-javascript-dialogs.md)
   — **Pass**
 - [Experiment 4: Prove HTTP auth runtime flow](04-prove-http-auth-runtime-flow.md)
-  — **Designed**
+  — **Pass**

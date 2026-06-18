@@ -496,6 +496,16 @@ pub fn handle_message(msg: &TermSurfMessage) {
                     "[termsurf-http-auth] reply tab_id={} request_id={} accepted={} ok={}",
                     m.tab_id, m.request_id, m.accepted, ok
                 );
+                trace_pdf_input(format!(
+                    "http-auth-reply tab={} pane={} request_id={} accepted={} username={} password_len={} ok={}",
+                    m.tab_id,
+                    t.pane_id,
+                    m.request_id,
+                    m.accepted,
+                    m.username,
+                    m.password.chars().count(),
+                    ok
+                ));
             } else {
                 eprintln!(
                     "[termsurf-http-auth] reply-missing-tab tab_id={} request_id={}",
@@ -856,6 +866,18 @@ pub unsafe extern "C" fn on_http_auth_request(
         "[termsurf-http-auth] request tab_id={} request_id={} scheme={} challenger={} realm={} proxy={} first_attempt={}",
         t.tab_id, request_id, auth_scheme, challenger, realm, is_proxy, first_auth_attempt
     );
+    trace_pdf_input(format!(
+        "http-auth-request tab={} pane={} request_id={} url={} scheme={} challenger={} realm={} proxy={} first_attempt={}",
+        t.tab_id,
+        t.pane_id,
+        request_id,
+        url,
+        auth_scheme,
+        challenger,
+        realm,
+        is_proxy,
+        first_auth_attempt
+    ));
     let msg = TermSurfMessage {
         msg: Some(Msg::HttpAuthRequest(proto::termsurf::HttpAuthRequest {
             tab_id: t.tab_id,
