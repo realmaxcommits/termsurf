@@ -1,0 +1,39 @@
++++
+status = "open"
+opened = "2026-06-17"
++++
+
+# Issue 816: Ghostboard Browser State and Interruption Walkthrough
+
+## Goal
+
+Prove or reject the medium-likelihood browser-state and interruption-flow gaps
+from Issue 810.
+
+## Background
+
+Issue 810 grouped these as `Maybe` findings. Static or partial evidence exists
+for many paths through direct Roamium sockets, but Ghostboard runtime proof is
+missing for the full walkthrough.
+
+Covered behaviors include:
+
+- loading state;
+- page title;
+- hover target URL;
+- console messages;
+- JavaScript dialogs;
+- HTTP auth;
+- renderer crash recovery;
+- color scheme;
+- target blank;
+- refresh/reload;
+- copy-current-URL;
+- default white page background.
+
+## Analysis
+
+This issue should start as a walkthrough and regression-design issue. It should
+only fix app code after a focused experiment proves a specific missing behavior.
+Because many flows are engine- or webtui-owned, each finding must identify the
+owning component before any fix.

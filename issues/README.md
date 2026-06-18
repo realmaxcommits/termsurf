@@ -2,13 +2,23 @@
 
 ## Open
 
-| #                                                 | Title                                | Opened     |
-| ------------------------------------------------- | ------------------------------------ | ---------- |
-| [0756](0756-surfari/README.md)                    | Surfari — WebKit engine for TermSurf | 2026-03-16 |
-| [0795](0795-pdf-native-print/README.md)           | PDF Native Print                     | 2026-05-30 |
-| [0797](0797-pdf-core-workflow-coverage/README.md) | PDF Core Workflow Coverage           | 2026-05-30 |
-| [0798](0798-pdf-advanced-features/README.md)      | PDF Advanced Features                | 2026-05-30 |
-| [0803](0803-roastty-debug-overlay/README.md)      | Roastty Debug Overlay                | 2026-06-13 |
+| #                                                               | Title                                                 | Opened     |
+| --------------------------------------------------------------- | ----------------------------------------------------- | ---------- |
+| [0756](0756-surfari/README.md)                                  | Surfari — WebKit engine for TermSurf                  | 2026-03-16 |
+| [0795](0795-pdf-native-print/README.md)                         | PDF Native Print                                      | 2026-05-30 |
+| [0797](0797-pdf-core-workflow-coverage/README.md)               | PDF Core Workflow Coverage                            | 2026-05-30 |
+| [0798](0798-pdf-advanced-features/README.md)                    | PDF Advanced Features                                 | 2026-05-30 |
+| [0803](0803-roastty-debug-overlay/README.md)                    | Roastty Debug Overlay                                 | 2026-06-13 |
+| [0811](0811-ghostboard-cursor-feedback/README.md)               | Ghostboard Cursor Feedback                            | 2026-06-17 |
+| [0812](0812-ghostboard-gui-active-state/README.md)              | Ghostboard GUI Active State                           | 2026-06-17 |
+| [0813](0813-ghostboard-devtools-singleton-guard/README.md)      | Ghostboard One-DevTools-Per-Tab Guard                 | 2026-06-17 |
+| [0814](0814-ghostboard-launch-discovery-workflow/README.md)     | Ghostboard Launch and Browser Discovery Workflow      | 2026-06-17 |
+| [0815](0815-ghostboard-hello-reply-config/README.md)            | Ghostboard HelloReply Configuration                   | 2026-06-17 |
+| [0816](0816-ghostboard-browser-state-interruptions/README.md)   | Ghostboard Browser State and Interruption Walkthrough | 2026-06-17 |
+| [0817](0817-ghostboard-input-focus-regression-matrix/README.md) | Ghostboard Input and Focus Regression Matrix          | 2026-06-17 |
+| [0818](0818-ghostboard-profile-tab-lifecycle-matrix/README.md)  | Ghostboard Profile, Tab, and Lifecycle Matrix         | 2026-06-17 |
+| [0819](0819-ghostboard-packaging-identity-hardening/README.md)  | Ghostboard Packaging and Identity Hardening           | 2026-06-17 |
+| [0820](0820-ghostboard-performance-smoke-tests/README.md)       | Ghostboard Performance Smoke Tests                    | 2026-06-17 |
 
 ## Closed
 
