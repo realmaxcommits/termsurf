@@ -136,3 +136,94 @@ After implementation and verification:
   file; and
 - commit the reviewed result separately before designing or implementing the
   next experiment.
+
+## Result
+
+**Result:** Pass
+
+Implemented a focused `ghostboard-config-paths` scenario in
+`scripts/ghostboard-geometry-matrix.sh`. The scenario launches
+`TermSurf Ghostboard.app` in isolated subcases with temporary `HOME` and
+`XDG_CONFIG_HOME` values. Each subcase seeds every relevant candidate path with
+a different observable `homepage` value and a complete `initial-command`, then
+verifies the loaded file through both app logs and `HelloReply`/webtui behavior.
+
+The runtime proof passed:
+
+```bash
+scripts/ghostboard-geometry-matrix.sh ghostboard-config-paths
+```
+
+Observed subcases:
+
+- `explicit-env`: with `GHOSTTY_CONFIG_PATH` set, Ghostboard read the explicit
+  file: `$RUN_DIR/config-paths-explicit-env/explicit-config`.
+- `xdg-default`: without `GHOSTTY_CONFIG_PATH`, Ghostboard read
+  `$XDG_CONFIG_HOME/termsurf/config`.
+- `no-current-xdg`: without `GHOSTTY_CONFIG_PATH` and without a current
+  `$XDG_CONFIG_HOME/termsurf/config`, Ghostboard did not load any seeded
+  inherited config candidate. It logged creation of the default
+  `$XDG_CONFIG_HOME/termsurf/config` template and used default Hello config
+  values.
+
+Across those subcases, the seeded inherited candidates were not selected:
+
+- `$XDG_CONFIG_HOME/ghostty/config.ghostty`
+- `$HOME/Library/Application Support/com.mitchellh.ghostty/config.ghostty`
+- `$HOME/Library/Application Support/com.termsurf/config.ghostty`
+- `$HOME/Library/Application Support/com.termsurf/config`
+- `$HOME/Library/Application Support/com.termsurf.ghostboard/config.ghostty`
+- `$HOME/Library/Application Support/com.termsurf.ghostboard/config`
+
+Evidence came from app log lines such as:
+
+- `reading configuration file path=...`
+- `creating template config file: path=...`
+- `TermSurf Hello config homepage=... browsers=roamium`
+- `TermSurf HelloReply sent homepage=... browsers=roamium`
+- `SetOverlay: pane_id=... profile=default browser=roamium url=...`
+
+The explicit and XDG-loaded cases also verified that the no-`--browser` webtui
+launch used the debug Roamium resolver through `TERMSURF_ROAMIUM_PATH`, so the
+scenario did not depend on an installed Roamium.
+
+Formatting and static checks:
+
+```bash
+bash -n scripts/ghostboard-geometry-matrix.sh
+prettier --write --prose-wrap always --print-width 80 \
+  issues/0819-ghostboard-packaging-identity-hardening/README.md \
+  issues/0819-ghostboard-packaging-identity-hardening/05-prove-config-loading-paths.md
+git diff --check
+```
+
+## Conclusion
+
+The current Ghostboard config-loading contract is now proven:
+
+1. `GHOSTTY_CONFIG_PATH` is the highest-priority explicit config path.
+2. Without `GHOSTTY_CONFIG_PATH`, Ghostboard loads
+   `$XDG_CONFIG_HOME/termsurf/config`.
+3. If `$XDG_CONFIG_HOME/termsurf/config` is absent, Ghostboard does not fall
+   back to the tested inherited Ghostty XDG or macOS Application Support paths;
+   it creates the default TermSurf XDG template and uses default runtime config
+   values.
+
+Future config docs and Settings UI work should describe
+`$XDG_CONFIG_HOME/termsurf/config` as the normal Ghostboard config location
+unless a later experiment intentionally changes the runtime behavior.
+
+## Completion Review
+
+Fresh-context adversarial completion review by Codex subagent `Faraday the 2nd`:
+
+- **Initial verdict:** Changes required.
+- **Required finding:** The first implementation proved explicit
+  `GHOSTTY_CONFIG_PATH` and current TermSurf XDG precedence, but did not prove
+  whether inherited Ghostty or bundle-id-derived Application Support paths were
+  loaded when `$XDG_CONFIG_HOME/termsurf/config` was absent. Fixed by adding the
+  `no-current-xdg` subcase, which seeds the inherited/App Support candidates
+  while omitting the current TermSurf XDG config, then verifies that no config
+  file is loaded, no fallback sentinel homepage is consumed, and the default
+  TermSurf XDG template path is used.
+- **Re-review verdict:** Approved.

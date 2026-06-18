@@ -1727,7 +1727,7 @@ devtools_overlay_probe() {
 }
 
 case "$SCENARIO" in
-  initial-open|launch-discovery-contract|named-roamium-debug-launch|named-roamium-invalid-env|hello-config-homepage|hello-config-browser-list|hello-empty-browser-list|browser-state-smoke|javascript-dialog-smoke|http-auth-smoke|renderer-crash-smoke|color-scheme-smoke|copy-current-url-smoke|browser-input-granularity|multi-profile-isolation|same-profile-server-lifecycle|tui-disconnect-reconnect|visible-profile-identity|two-browser-split-routing|window-resize|split-right|split-down|split-right-resize|split-right-equalize|split-right-zoom|split-right-close-sibling|split-right-close-browser-pane|split-right-focus-switch|new-terminal-tab-visibility|open-browser-in-new-tab|close-browser-tab|open-browser-in-new-window|multiple-windows-with-browsers|display-move-backing-scale|fullscreen-unfullscreen|minimize-hide-restore|font-size-cell-metrics|tui-overlay-resize-command|terminal-scrollback-movement|browser-navigation-geometry|devtools-split-geometry|devtools-singleton-guard|mouse-after-geometry-change|keyboard-after-tab-window-switch|gui-active-multi-tab) ;;
+  initial-open|launch-discovery-contract|named-roamium-debug-launch|named-roamium-invalid-env|hello-config-homepage|hello-config-browser-list|hello-empty-browser-list|ghostboard-config-paths|browser-state-smoke|javascript-dialog-smoke|http-auth-smoke|renderer-crash-smoke|color-scheme-smoke|copy-current-url-smoke|browser-input-granularity|multi-profile-isolation|same-profile-server-lifecycle|tui-disconnect-reconnect|visible-profile-identity|two-browser-split-routing|window-resize|split-right|split-down|split-right-resize|split-right-equalize|split-right-zoom|split-right-close-sibling|split-right-close-browser-pane|split-right-focus-switch|new-terminal-tab-visibility|open-browser-in-new-tab|close-browser-tab|open-browser-in-new-window|multiple-windows-with-browsers|display-move-backing-scale|fullscreen-unfullscreen|minimize-hide-restore|font-size-cell-metrics|tui-overlay-resize-command|terminal-scrollback-movement|browser-navigation-geometry|devtools-split-geometry|devtools-singleton-guard|mouse-after-geometry-change|keyboard-after-tab-window-switch|gui-active-multi-tab) ;;
   *)
     fail "unsupported scenario: $SCENARIO"
     ;;
@@ -2558,6 +2558,14 @@ EOF
   chmod +x "$COMMAND"
 fi
 
+if [ "$SCENARIO" = "ghostboard-config-paths" ]; then
+  cat >"$COMMAND" <<EOF
+#!/usr/bin/env bash
+exec "$WEB"
+EOF
+  chmod +x "$COMMAND"
+fi
+
 if [ "$SCENARIO" = "hello-config-browser-list" ] || [ "$SCENARIO" = "hello-empty-browser-list" ]; then
   cat >"$COMMAND" <<EOF
 #!/usr/bin/env bash
@@ -2683,6 +2691,168 @@ if [ "$SCENARIO" = "hello-empty-browser-list" ]; then
   cat >>"$CONFIG" <<'EOF'
 browser = ""
 EOF
+fi
+
+if [ "$SCENARIO" = "ghostboard-config-paths" ]; then
+  write_config_path_case_config() {
+    local path="$1"
+    local command="$2"
+    local homepage="$3"
+    mkdir -p "$(dirname "$path")"
+    cat >"$path" <<EOF
+window-save-state = never
+initial-command = direct:$command
+homepage = "$homepage"
+EOF
+  }
+
+  wait_for_config_path_log() {
+    local needle="$1"
+    local label="$2"
+    local attempts="${3:-30}"
+    for _ in $(seq 1 "$attempts"); do
+      if grep -F -- "$needle" "$APP_LOG" >/dev/null 2>&1; then
+        log "PASS: $label"
+        return 0
+      fi
+      delay 1
+    done
+    fail "timed out waiting for $label"
+  }
+
+  require_config_path_log() {
+    local needle="$1"
+    local label="$2"
+    if grep -F -- "$needle" "$APP_LOG" >/dev/null 2>&1; then
+      log "PASS: $label"
+    else
+      fail "missing $label"
+    fi
+  }
+
+  require_no_config_path_log() {
+    local pattern="$1"
+    local label="$2"
+    if grep -E "$pattern" "$APP_LOG" >/dev/null 2>&1; then
+      fail "$label"
+    fi
+    log "PASS: $label"
+  }
+
+  run_config_path_case() {
+    local label="$1"
+    local mode="$2"
+    local expected_path="$3"
+    local expected_homepage="$4"
+    local case_dir="$RUN_DIR/config-paths-$label"
+    local case_home="$case_dir/home"
+    local case_xdg="$case_dir/xdg"
+    local case_command="$case_dir/run-web.sh"
+    local explicit_config="$case_dir/explicit-config"
+    local xdg_termsurf_config="$case_xdg/termsurf/config"
+    local xdg_ghostty_config="$case_xdg/ghostty/config.ghostty"
+    local app_support_ghostty_config="$case_home/Library/Application Support/com.mitchellh.ghostty/config.ghostty"
+    local app_support_termsurf_config_ghostty="$case_home/Library/Application Support/com.termsurf/config.ghostty"
+    local app_support_termsurf_config="$case_home/Library/Application Support/com.termsurf/config"
+    local app_support_ghostboard_config_ghostty="$case_home/Library/Application Support/com.termsurf.ghostboard/config.ghostty"
+    local app_support_ghostboard_config="$case_home/Library/Application Support/com.termsurf.ghostboard/config"
+    local sentinel_prefix="https://example.net/issue819-exp5-$label"
+
+    mkdir -p "$case_dir"
+    cat >"$case_command" <<EOF
+#!/usr/bin/env bash
+exec "$WEB"
+EOF
+    chmod +x "$case_command"
+
+    write_config_path_case_config "$explicit_config" "$case_command" "$sentinel_prefix-explicit"
+    if [ "$mode" != "no-xdg" ]; then
+      write_config_path_case_config "$xdg_termsurf_config" "$case_command" "$sentinel_prefix-xdg-termsurf"
+    fi
+    write_config_path_case_config "$xdg_ghostty_config" "$case_command" "$sentinel_prefix-xdg-ghostty"
+    write_config_path_case_config "$app_support_ghostty_config" "$case_command" "$sentinel_prefix-appsupport-ghostty"
+    write_config_path_case_config "$app_support_termsurf_config_ghostty" "$case_command" "$sentinel_prefix-appsupport-termsurf-config-ghostty"
+    write_config_path_case_config "$app_support_termsurf_config" "$case_command" "$sentinel_prefix-appsupport-termsurf-config"
+    write_config_path_case_config "$app_support_ghostboard_config_ghostty" "$case_command" "$sentinel_prefix-appsupport-ghostboard-config-ghostty"
+    write_config_path_case_config "$app_support_ghostboard_config" "$case_command" "$sentinel_prefix-appsupport-ghostboard-config"
+
+    APP_LOG="$LOG_DIR/ghostboard-geometry-${SCENARIO}-${label}-app-${TS}.log"
+    WEBTUI_STATE_TRACE="$LOG_DIR/ghostboard-geometry-${SCENARIO}-${label}-webtui-${TS}.log"
+    ROAMIUM_TRACE="$LOG_DIR/ghostboard-geometry-${SCENARIO}-${label}-roamium-${TS}.log"
+    log "config_path_case=$label"
+    log "config_path_case_app_log=$APP_LOG"
+    log "config_path_case_expected_path=$expected_path"
+    log "config_path_case_expected_homepage=$expected_homepage"
+
+    if [ "$mode" = "explicit" ]; then
+      env \
+        HOME="$case_home" \
+        XDG_CONFIG_HOME="$case_xdg" \
+        GHOSTTY_CONFIG_PATH="$explicit_config" \
+        GHOSTTY_LOG=stderr \
+        TERMSURF_GEOMETRY_TRACE=1 \
+        TERMSURF_GEOMETRY_SCENARIO="${SCENARIO}-${label}" \
+        TERMSURF_ROAMIUM_PATH="$ROAMIUM_PATH_FOR_APP" \
+        TERMSURF_WEBTUI_STATE_TRACE_FILE="$WEBTUI_STATE_TRACE" \
+        TERMSURF_INPUT_TRACE=1 \
+        TERMSURF_PDF_INPUT_TRACE=1 \
+        TERMSURF_PDF_INPUT_TRACE_FILE="$ROAMIUM_TRACE" \
+        "$APP_BIN" >"$APP_LOG" 2>&1 &
+    else
+      env \
+        HOME="$case_home" \
+        XDG_CONFIG_HOME="$case_xdg" \
+        GHOSTTY_LOG=stderr \
+        TERMSURF_GEOMETRY_TRACE=1 \
+        TERMSURF_GEOMETRY_SCENARIO="${SCENARIO}-${label}" \
+        TERMSURF_ROAMIUM_PATH="$ROAMIUM_PATH_FOR_APP" \
+        TERMSURF_WEBTUI_STATE_TRACE_FILE="$WEBTUI_STATE_TRACE" \
+        TERMSURF_INPUT_TRACE=1 \
+        TERMSURF_PDF_INPUT_TRACE=1 \
+        TERMSURF_PDF_INPUT_TRACE_FILE="$ROAMIUM_TRACE" \
+        "$APP_BIN" >"$APP_LOG" 2>&1 &
+    fi
+    PID="$!"
+    log "config_path_case_pid=$PID"
+
+    if [ "$mode" = "no-xdg" ]; then
+      delay 3
+      if grep -F -- "reading configuration file path=" "$APP_LOG" >/dev/null 2>&1; then
+        fail "$label unexpectedly loaded a config file"
+      fi
+      log "PASS: $label did not load a config file when current XDG config was absent"
+      wait_for_config_path_log "creating template config file: path=$expected_path" "$label created default XDG config template" 10
+      require_no_config_path_log "reading configuration file path=.*(ghostty/config\\.ghostty|Application Support)" "$label did not load inherited Ghostty or Application Support fallback paths"
+      if grep -F -- "$sentinel_prefix-" "$APP_LOG" >/dev/null 2>&1; then
+        fail "$label leaked a fallback sentinel homepage into app logs"
+      fi
+      log "PASS: $label did not consume any fallback sentinel homepage"
+    else
+      wait_for_config_path_log "reading configuration file path=$expected_path" "$label loaded expected config path" 45
+      wait_for_config_path_log "TermSurf Hello config homepage=$expected_homepage browsers=roamium" "$label loaded expected homepage" 45
+      wait_for_config_path_log "TermSurf HelloReply sent homepage=$expected_homepage browsers=roamium" "$label sent expected HelloReply homepage" 45
+      wait_for_log "SetOverlay: pane_id=.* profile=default browser=roamium url=${expected_homepage}" "$label webtui consumed expected homepage" 45
+
+      require_no_config_path_log "reading configuration file path=.*(ghostty/config\\.ghostty|Application Support)" "$label did not load inherited Ghostty or Application Support config paths"
+      require_config_path_log "SetOverlay: named browser resolved browser=roamium env=TERMSURF_ROAMIUM_PATH path=${ROAMIUM}" "$label used debug Roamium resolver"
+    fi
+
+    kill "$PID" >/dev/null 2>&1 || true
+    delay 0.5
+    kill -9 "$PID" >/dev/null 2>&1 || true
+    PID=""
+  }
+
+  log "scenario=$SCENARIO"
+  log "run_dir=$RUN_DIR"
+  log "app=$APP"
+  log "web=$WEB"
+  log "roamium=$ROAMIUM"
+  run_config_path_case "explicit-env" "explicit" "$RUN_DIR/config-paths-explicit-env/explicit-config" "https://example.net/issue819-exp5-explicit-env-explicit"
+  run_config_path_case "xdg-default" "default" "$RUN_DIR/config-paths-xdg-default/xdg/termsurf/config" "https://example.net/issue819-exp5-xdg-default-xdg-termsurf"
+  run_config_path_case "no-current-xdg" "no-xdg" "$RUN_DIR/config-paths-no-current-xdg/xdg/termsurf/config" ""
+  log "PASS: scenario ghostboard-config-paths"
+  exit 0
 fi
 
 if [ "$SCENARIO" = "new-terminal-tab-visibility" ] || [ "$SCENARIO" = "open-browser-in-new-tab" ] || [ "$SCENARIO" = "close-browser-tab" ] || [ "$SCENARIO" = "same-profile-server-lifecycle" ] || [ "$SCENARIO" = "tui-disconnect-reconnect" ] || [ "$SCENARIO" = "visible-profile-identity" ] || [ "$SCENARIO" = "keyboard-after-tab-window-switch" ] || [ "$SCENARIO" = "gui-active-multi-tab" ] || [ "$SCENARIO" = "devtools-singleton-guard" ] || [ "$SCENARIO" = "multi-profile-isolation" ]; then

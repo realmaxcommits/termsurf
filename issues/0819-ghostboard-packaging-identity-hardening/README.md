@@ -43,4 +43,4 @@ Verification should include:
 - [Experiment 4: Clean user-visible Ghostty identity](04-clean-user-visible-ghostty-identity.md)
   — **Pass**
 - [Experiment 5: Prove config loading paths](05-prove-config-loading-paths.md) —
-  **Designed**
+  **Pass**
