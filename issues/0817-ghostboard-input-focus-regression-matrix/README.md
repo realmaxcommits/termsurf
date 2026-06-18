@@ -39,4 +39,4 @@ manual or screenshot-heavy cases separated from fast smoke tests.
 ## Experiments
 
 - [Experiment 1: Establish input/focus baseline matrix](01-establish-input-focus-baseline.md)
-  — **Designed**
+  — **Partial**
