@@ -1,6 +1,7 @@
 +++
-status = "open"
+status = "closed"
 opened = "2026-06-17"
+closed = "2026-06-18"
 +++
 
 # Issue 819: Ghostboard Packaging and Identity Hardening
@@ -52,3 +53,34 @@ Verification should include:
   — **Pass**
 - [Experiment 9: Define installed Roamium discovery](09-define-installed-roamium-discovery.md)
   — **Pass**
+
+## Conclusion
+
+Issue 819 is closed. Ghostboard now has a deliberate packaging and identity
+contract across app naming, bundle identity, config loading, developer launch
+paths, install scripts, and release installed-Roamium discovery.
+
+Final coverage:
+
+- Public macOS app identity is `TermSurf Ghostboard`, with bundle metadata,
+  process names, menus, user-facing strings, icon assets, and launch docs
+  aligned to that identity.
+- Config loading is documented and verified for `~/.config/ghostboard/config`,
+  `~/.config/roastty/config`, XDG config, and explicit harness config paths,
+  with stale Ghostty-facing docs cleaned up where they affected user behavior.
+- `scripts/build.sh`, `scripts/install.sh`, and `scripts/uninstall.sh` support
+  Ghostboard as a first-class component and expose testable install roots for
+  non-destructive verification.
+- Debug browser discovery remains deterministic: named/default `roamium`
+  requires an absolute `TERMSURF_ROAMIUM_PATH`, so debug tests cannot
+  accidentally pass by using stale installed binaries.
+- Release Ghostboard can launch named/default `roamium` without
+  `TERMSURF_ROAMIUM_PATH` by resolving the canonical installed Roamium path at
+  `/opt/homebrew/opt/termsurf-roamium/roamium`.
+- Manual install/uninstall scripts, the Homebrew cask, launch-discovery docs,
+  and the runtime resolver agree on the installed Roamium location.
+
+Experiment 7 was partial because privileged `/Applications` install/uninstall
+verification could not run non-destructively in the harness. Experiment 8 added
+the non-privileged install-root coverage, and Experiment 9 completed installed
+Roamium discovery coverage, so no Issue 819 follow-up remains.
