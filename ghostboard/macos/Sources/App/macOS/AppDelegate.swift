@@ -349,6 +349,8 @@ class AppDelegate: NSObject,
     }
 
     func applicationDidBecomeActive(_ notification: Notification) {
+        termsurf_gui_active_changed(1)
+
         // If we're back manually then clear the hidden state because macOS handles it.
         self.hiddenState = nil
 
@@ -366,6 +368,10 @@ class AppDelegate: NSObject,
                 undoManager.enableUndoRegistration()
             }
         }
+    }
+
+    func applicationDidResignActive(_ notification: Notification) {
+        termsurf_gui_active_changed(0)
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {

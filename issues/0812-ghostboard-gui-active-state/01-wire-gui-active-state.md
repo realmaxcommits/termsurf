@@ -154,3 +154,164 @@ Fresh-context adversarial review by Codex subagent `Pasteur`:
   skipping checks.
 - **Re-review verdict:** Approved. The reviewer confirmed the missing hygiene
   checks were added and found no new required issues.
+
+## Result
+
+**Result:** Partial
+
+Implemented Ghostboard GUI active-state signaling and verified Roamium receives
+the state changes during the one-browser-pane minimize/hide/restore runtime
+scenario. The experiment remains partial because the planned broad test targets
+did not pass in this VM and the recorded runtime evidence did not cover the
+planned two-tab or two-pane stale/duplicate-active case.
+
+Source changes:
+
+- `ghostboard/src/apprt/termsurf.zig`
+  - added `guiActiveChanged(active: bool)`;
+  - snapshots send targets under `state_mutex` and sends after unlocking;
+  - sends `SetGuiActive(active=false, reason="gui_deactivated", tab_id=0)` to
+    each live attached browser server on deactivation;
+  - sends `SetGuiActive(active=true, reason="gui_activated")` to the focused
+    browser tab on activation;
+  - records a pending activation when AppKit reports activation before the
+    focused browsing pane has a tab/server ready, then flushes it from mode or
+    pane-focus updates;
+  - logs skipped and successful sends.
+- `ghostboard/src/main_c.zig`
+  - exported `termsurf_gui_active_changed`.
+- `ghostboard/macos/Sources/App/macOS/ghostty-bridging-header.h`
+  - declared the new bridge.
+- `ghostboard/macos/Sources/App/macOS/AppDelegate.swift`
+  - calls the bridge from `applicationDidBecomeActive` and
+    `applicationDidResignActive`.
+- `roamium/src/dispatch.rs`
+  - added trace logging in `Msg::SetGuiActive` so the runtime harness can prove
+    Roamium received the message.
+
+Baseline evidence before implementation:
+
+- `cd ghostboard && zig build -Demit-macos-app=false` passed.
+- `cd ghostboard && macos/build.nu --scheme Ghostty --configuration Debug --action build`
+  passed.
+- `scripts/ghostboard-geometry-matrix.sh minimize-hide-restore` passed, but the
+  logs showed only existing focus messages:
+  - app log:
+    `logs/ghostboard-geometry-minimize-hide-restore-app-20260617-193906.log`
+  - Roamium trace:
+    `logs/ghostboard-geometry-minimize-hide-restore-roamium-20260617-193906.log`
+- The baseline logs had `FocusChanged` / `focus-changed` evidence but no
+  `SetGuiActive` / `set-gui-active` evidence.
+
+Static and build verification:
+
+- `zig fmt ghostboard/src/apprt/termsurf.zig ghostboard/src/main_c.zig` passed.
+- `cargo fmt -- roamium/src/dispatch.rs` passed.
+- `cargo check -p roamium` passed.
+- `./scripts/build.sh roamium` passed and copied the rebuilt local Roamium
+  binary into `chromium/src/out/Default/roamium`.
+- `cd ghostboard && zig build -Demit-macos-app=false` passed.
+- `cd ghostboard && macos/build.nu --scheme Ghostty --configuration Debug --action build`
+  passed after removing stale test bundle artifacts left behind by the failed
+  test command:
+  - `ghostboard/macos/build/Debug/TermSurf.app/Contents/PlugIns/GhosttyTests.xctest`
+  - `ghostboard/macos/build/Debug/GhosttyUITests-Runner.app`
+- `git diff --check` passed.
+
+Verification caveats:
+
+- `cd ghostboard && swiftlint lint --strict --fix` failed because the VM shell
+  cannot find `swiftlint`:
+
+  ```text
+  zsh:1: command not found: swiftlint
+  ```
+
+  The macOS Xcode build still ran its SwiftLint build phase.
+
+- `cd ghostboard && macos/build.nu --scheme Ghostty --configuration Debug --action test`
+  failed in the existing `GhosttyTests` test target with linker errors. The
+  failed result bundle was:
+  `/Users/astrohacker/Library/Developer/Xcode/DerivedData/Ghostty-argaxstpsdjkjudxknbvwcoaqdrq/Logs/Test/Test-Ghostty-2026.06.17_19-42-30--0500.xcresult`.
+
+- `cd ghostboard && zig build test` failed in the existing test path. The Zig
+  test target first reported an Xcode test dependency failure and then failed
+  linking the `ghostty-test` target because several AppKit bridge symbols were
+  undefined:
+
+  ```text
+  error: undefined symbol: _termsurf_clear_overlay
+  error: undefined symbol: _termsurf_open_split
+  error: undefined symbol: _termsurf_present_overlay
+  error: undefined symbol: _termsurf_set_cursor
+  ```
+
+Runtime verification after implementation:
+
+- Final runtime command:
+  `scripts/ghostboard-geometry-matrix.sh minimize-hide-restore`
+- Result: `PASS: scenario minimize-hide-restore`
+- App log:
+  `logs/ghostboard-geometry-minimize-hide-restore-app-20260617-194802.log`
+- Roamium trace:
+  `logs/ghostboard-geometry-minimize-hide-restore-roamium-20260617-194802.log`
+
+Ghostboard send evidence:
+
+```text
+SetGuiActive: tab_id=0 active=false reason=gui_deactivated
+SetGuiActive: pane_id=E24AE127-9AE3-43F7-AE96-179686971BC1 tab_id=1 active=true reason=gui_activated
+SetGuiActive: tab_id=0 active=false reason=gui_deactivated
+SetGuiActive: pane_id=E24AE127-9AE3-43F7-AE96-179686971BC1 tab_id=1 active=true reason=gui_activated
+```
+
+Roamium receipt and input-preservation evidence:
+
+```text
+roamium set-gui-active tab=0 active=false reason=gui_deactivated target_count=1
+roamium set-gui-active tab=1 pane=E24AE127-9AE3-43F7-AE96-179686971BC1 active=true reason=gui_activated target_count=1
+roamium focus-changed tab=1 pane=E24AE127-9AE3-43F7-AE96-179686971BC1 ffi=ts_set_focus focused=true
+roamium key-event tab=1 pane=E24AE127-9AE3-43F7-AE96-179686971BC1 ffi=ts_forward_key_event type=down windows_key_code=65 utf8_len=1 modifiers=0
+```
+
+Observed final runtime counts:
+
+```text
+app_deactivated=2
+app_activated=2
+trace_deactivated=2
+trace_activated=2
+trace_focus_true=2
+trace_key=120
+```
+
+## Conclusion
+
+Ghostboard now sends GUI activation state to Roamium. Deactivation broadcasts
+`SetGuiActive(active=false, tab_id=0)` to the attached browser server,
+activation targets the focused browser tab, Roamium trace logs prove receipt,
+and keyboard input continues after the deactivate/reactivate cycle.
+
+The implementation is in place and the one-pane runtime behavior is proven, but
+Issue 812 should not close yet. The next experiment must either make the broad
+test targets pass or explicitly bound them as pre-existing harness failures, and
+it must add two-tab or two-pane runtime evidence that active-state messages do
+not go stale or duplicate onto an unfocused browser tab.
+
+## Completion Review
+
+Fresh-context adversarial review by Codex subagent `Hooke`:
+
+- **Verdict:** Changes required.
+- **Required finding:** The experiment result and README were marked `Pass` even
+  though the planned pass criteria required all static/build checks to pass, and
+  `macos/build.nu --action test` plus `zig build test` failed.
+- **Required finding:** The recorded runtime evidence only covered one
+  browser-pane/tab and did not prove the planned two-tab or two-pane
+  stale/duplicate-active behavior.
+- **Resolution:** Downgraded the experiment result and README status to
+  `Partial`, and recorded the remaining verification gaps as required follow-up
+  work for the next experiment.
+- **Re-review verdict:** Approved. The reviewer confirmed the result and README
+  now accurately mark the experiment as `Partial` and explicitly preserve the
+  unresolved test-target and two-pane/two-tab verification gaps.

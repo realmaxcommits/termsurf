@@ -379,15 +379,30 @@ pub fn handle_message(msg: &TermSurfMessage) {
             let reason =
                 CString::new(m.reason.as_str()).unwrap_or_else(|_| CString::new("").unwrap());
             if m.tab_id == 0 {
+                let mut target_count = 0;
                 for t in tabs().iter() {
                     if !t.handle.is_null() {
+                        target_count += 1;
                         unsafe { ffi::ts_set_gui_active(t.handle, m.active, reason.as_ptr()) };
                     }
                 }
+                trace_pdf_input(format!(
+                    "set-gui-active tab=0 active={} reason={} target_count={}",
+                    m.active, m.reason, target_count
+                ));
             } else if let Some(t) = find_by_tab_id(m.tab_id) {
                 if !t.handle.is_null() {
+                    trace_pdf_input(format!(
+                        "set-gui-active tab={} pane={} active={} reason={} target_count=1",
+                        m.tab_id, t.pane_id, m.active, m.reason
+                    ));
                     unsafe { ffi::ts_set_gui_active(t.handle, m.active, reason.as_ptr()) };
                 }
+            } else {
+                trace_pdf_input(format!(
+                    "set-gui-active tab={} active={} reason={} result=no-tab",
+                    m.tab_id, m.active, m.reason
+                ));
             }
         }
         Msg::JavascriptDialogReply(m) => {

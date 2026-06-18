@@ -33,4 +33,4 @@ Verification should include:
 ## Experiments
 
 - [Experiment 1: Wire GUI active state into Roamium](01-wire-gui-active-state.md)
-  — **Designed**
+  — **Partial**

@@ -259,6 +259,10 @@ pub export fn termsurf_pane_focus_changed(pane_id: [*:0]const u8, focused: i32) 
     termsurf.paneFocusChanged(std.mem.span(pane_id), focused != 0);
 }
 
+pub export fn termsurf_gui_active_changed(active: i32) void {
+    termsurf.guiActiveChanged(active != 0);
+}
+
 test "ghostty_string_s empty string" {
     const testing = std.testing;
     const empty_string = String.empty;

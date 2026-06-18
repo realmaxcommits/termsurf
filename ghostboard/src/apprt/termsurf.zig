@@ -193,6 +193,19 @@ const FocusChangedSnapshot = struct {
     }
 };
 
+const GuiActiveTarget = struct {
+    browser_fd: std.posix.fd_t = -1,
+    pane_id: [max_pane_id_len]u8 = undefined,
+    pane_id_len: usize = 0,
+    tab_id: i64 = 0,
+    active: bool = false,
+    has_pane: bool = false,
+
+    fn paneId(self: *const GuiActiveTarget) []const u8 {
+        return self.pane_id[0..self.pane_id_len];
+    }
+};
+
 const BrowserInputSnapshot = struct {
     browser_fd: std.posix.fd_t = -1,
     pane_id: [max_pane_id_len]u8 = undefined,
@@ -354,6 +367,8 @@ var servers: [max_servers]ServerState = [_]ServerState{.{}} ** max_servers;
 var tab_lookups: [max_tab_lookups]TabLookupState = [_]TabLookupState{.{}} ** max_tab_lookups;
 var last_browser_pane: [max_pane_id_len]u8 = undefined;
 var last_browser_pane_len: usize = 0;
+var gui_active: bool = false;
+var pending_gui_activation: bool = false;
 
 pub fn start() !void {
     mutex.lock();
@@ -1383,6 +1398,7 @@ fn handleModeChanged(req: ?*c.Termsurf__ModeChanged) void {
     const pane_id = cString(mode.*.pane_id);
     const browsing = mode.*.browsing != 0;
     var focus_changed: ?FocusChangedSnapshot = null;
+    var gui_active_target: ?GuiActiveTarget = null;
 
     state_mutex.lock();
     const pane_index = findPane(pane_id) orelse {
@@ -1395,6 +1411,10 @@ fn handleModeChanged(req: ?*c.Termsurf__ModeChanged) void {
     if (browsing) {
         if (panes[pane_index].focused) {
             focus_changed = snapshotFocusChanged(&panes[pane_index], true);
+            if (pending_gui_activation) {
+                gui_active_target = snapshotGuiActiveTarget(&panes[pane_index]);
+                if (gui_active_target != null) pending_gui_activation = false;
+            }
         }
     } else {
         focus_changed = snapshotFocusChanged(&panes[pane_index], false);
@@ -1407,10 +1427,19 @@ fn handleModeChanged(req: ?*c.Termsurf__ModeChanged) void {
             log.warn("FocusChanged send failed pane_id={s} err={}", .{ snapshot.paneId(), err });
         };
     }
+    if (gui_active_target) |target| {
+        sendGuiActive(&target, "gui_activated") catch |err| {
+            log.warn(
+                "SetGuiActive send failed pane_id={s} tab_id={} active=true reason=gui_activated err={}",
+                .{ target.paneId(), target.tab_id, err },
+            );
+        };
+    }
 }
 
 pub fn paneFocusChanged(pane_id: []const u8, focused: bool) void {
     var focus_changed: ?FocusChangedSnapshot = null;
+    var gui_active_target: ?GuiActiveTarget = null;
 
     state_mutex.lock();
     if (findPane(pane_id)) |pane_index| {
@@ -1418,6 +1447,10 @@ pub fn paneFocusChanged(pane_id: []const u8, focused: bool) void {
         if (focused) {
             if (panes[pane_index].browsing) {
                 focus_changed = snapshotFocusChanged(&panes[pane_index], true);
+                if (pending_gui_activation) {
+                    gui_active_target = snapshotGuiActiveTarget(&panes[pane_index]);
+                    if (gui_active_target != null) pending_gui_activation = false;
+                }
             }
         } else {
             focus_changed = snapshotFocusChanged(&panes[pane_index], false);
@@ -1431,6 +1464,84 @@ pub fn paneFocusChanged(pane_id: []const u8, focused: bool) void {
             log.warn("FocusChanged send failed pane_id={s} err={}", .{ snapshot.paneId(), err });
         };
     }
+    if (gui_active_target) |target| {
+        sendGuiActive(&target, "gui_activated") catch |err| {
+            log.warn(
+                "SetGuiActive send failed pane_id={s} tab_id={} active=true reason=gui_activated err={}",
+                .{ target.paneId(), target.tab_id, err },
+            );
+        };
+    }
+}
+
+pub fn guiActiveChanged(active: bool) void {
+    var targets: [max_servers]GuiActiveTarget = [_]GuiActiveTarget{.{}} ** max_servers;
+    var target_count: usize = 0;
+
+    state_mutex.lock();
+    gui_active = active;
+    if (active) {
+        for (&panes) |*pane| {
+            if (!pane.in_use or !pane.focused or !pane.browsing or pane.tab_id == 0) continue;
+            targets[target_count] = snapshotGuiActiveTarget(pane) orelse continue;
+            target_count += 1;
+            break;
+        }
+        pending_gui_activation = target_count == 0;
+    } else {
+        pending_gui_activation = false;
+        for (&servers) |*server| {
+            if (!server.in_use or server.attached_fd < 0) continue;
+            targets[target_count] = .{
+                .browser_fd = server.attached_fd,
+                .tab_id = 0,
+                .active = false,
+                .has_pane = false,
+            };
+            target_count += 1;
+        }
+    }
+    state_mutex.unlock();
+
+    const reason: [:0]const u8 = if (active) "gui_activated" else "gui_deactivated";
+    if (target_count == 0) {
+        log.info(
+            "SetGuiActive skipped active={} reason={s} targets=0 pending_activation={}",
+            .{ active, reason, pending_gui_activation },
+        );
+        return;
+    }
+
+    for (targets[0..target_count]) |*target| {
+        sendGuiActive(target, reason) catch |err| {
+            if (target.has_pane) {
+                log.warn(
+                    "SetGuiActive send failed pane_id={s} tab_id={} active={} reason={s} err={}",
+                    .{ target.paneId(), target.tab_id, active, reason, err },
+                );
+            } else {
+                log.warn(
+                    "SetGuiActive send failed tab_id={} active={} reason={s} err={}",
+                    .{ target.tab_id, active, reason, err },
+                );
+            }
+        };
+    }
+}
+
+fn snapshotGuiActiveTarget(pane: *const PaneState) ?GuiActiveTarget {
+    if (!gui_active or pane.tab_id == 0) return null;
+    const server_index = findServer(pane.profileName(), pane.browserName()) orelse return null;
+    if (servers[server_index].attached_fd < 0) return null;
+
+    var target: GuiActiveTarget = .{
+        .browser_fd = servers[server_index].attached_fd,
+        .tab_id = pane.tab_id,
+        .active = true,
+        .has_pane = true,
+    };
+    if (!copyText(&target.pane_id, &target.pane_id_len, pane.paneId())) return null;
+    return target;
 }
 
 fn snapshotFocusChanged(pane: *const PaneState, focused: bool) ?FocusChangedSnapshot {
@@ -1463,6 +1574,32 @@ fn sendFocusChanged(snapshot: *const FocusChangedSnapshot) !void {
         "FocusChanged: pane_id={s} tab_id={} focused={}",
         .{ snapshot.paneId(), snapshot.tab_id, snapshot.focused },
     );
+}
+
+fn sendGuiActive(target: *const GuiActiveTarget, reason: [:0]const u8) !void {
+    var set_gui_active: c.Termsurf__SetGuiActive = undefined;
+    c.termsurf__set_gui_active__init(&set_gui_active);
+    set_gui_active.tab_id = target.tab_id;
+    set_gui_active.active = if (target.active) 1 else 0;
+    set_gui_active.reason = @constCast(reason.ptr);
+
+    var wrapper: c.Termsurf__TermSurfMessage = undefined;
+    c.termsurf__term_surf_message__init(&wrapper);
+    wrapper.msg_case = c.TERMSURF__TERM_SURF_MESSAGE__MSG_SET_GUI_ACTIVE;
+    wrapper.unnamed_0.set_gui_active = &set_gui_active;
+
+    try sendProtobuf(target.browser_fd, &wrapper);
+    if (target.has_pane) {
+        log.info(
+            "SetGuiActive: pane_id={s} tab_id={} active={} reason={s}",
+            .{ target.paneId(), target.tab_id, target.active, reason },
+        );
+    } else {
+        log.info(
+            "SetGuiActive: tab_id={} active={} reason={s}",
+            .{ target.tab_id, target.active, reason },
+        );
+    }
 }
 
 pub fn forwardKeyEvent(
