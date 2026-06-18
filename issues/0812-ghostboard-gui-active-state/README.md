@@ -1,6 +1,7 @@
 +++
-status = "open"
+status = "closed"
 opened = "2026-06-17"
+closed = "2026-06-17"
 +++
 
 # Issue 812: Ghostboard GUI Active State
@@ -36,3 +37,17 @@ Verification should include:
   — **Partial**
 - [Experiment 2: Prove active state across browser tabs](02-prove-active-state-across-browser-tabs.md)
   — **Pass**
+
+## Conclusion
+
+Ghostboard now sends GUI active/inactive state to Roamium using `SetGuiActive`.
+Experiment 1 wired AppKit activation and deactivation into Ghostboard's browser
+state path and proved the one-browser path, while Experiment 2 added a
+multi-native-tab regression scenario proving that deactivation broadcasts
+inactive state, activation targets only the focused browser tab, switching tabs
+changes the next activation target, and browser keyboard input remains scoped to
+the focused tab after activation.
+
+The remaining broad Ghostty test-target failures are documented as pre-existing
+local test-harness/environment gaps because the same failures reproduce in the
+baseline worktree.
