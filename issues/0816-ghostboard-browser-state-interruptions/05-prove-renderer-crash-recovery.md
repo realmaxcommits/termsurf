@@ -178,3 +178,110 @@ Fresh-context adversarial review by Codex subagent `Lovelace`:
   approval, recorded findings/fixes, and a plan commit before implementation.
 - **Re-review verdict:** Approved. The reviewer confirmed the prior findings
   were resolved and no new required findings were introduced.
+
+## Result
+
+**Result:** Pass
+
+Implemented a focused renderer crash recovery smoke for debug Ghostboard.
+
+Code changes:
+
+- `roamium/src/dispatch.rs` now emits a stable `renderer-crashed` trace line
+  when the existing Chromium renderer-crash callback fires.
+- `webtui/src/main.rs` now records a test-only `renderer_crashed` state-trace
+  event and includes `loading_bar_active`, `renderer_crash_active`,
+  `renderer_crash_tab_id`, and `renderer_crash_status` in `render_state` trace
+  lines.
+- `scripts/ghostboard-geometry-matrix.sh` now has a `renderer-crash-smoke`
+  scenario that:
+  - serves an initial local page and a same-tab recovery page;
+  - navigates the active tab to `chrome://crash/` through the webtui URL editor;
+  - asserts Roamium's `renderer-crashed` trace for the active tab;
+  - asserts webtui's `renderer_crashed` event and active crash render state;
+  - asserts stale post-crash events do not clear crash state or restart loading
+    before recovery;
+  - navigates the same tab to the local recovery page;
+  - asserts recovery URL/title/console/render-state evidence and Roamium
+    liveness through recovery.
+
+Verification:
+
+- `prettier --write --prose-wrap always --print-width 80 issues/0816-ghostboard-browser-state-interruptions/README.md issues/0816-ghostboard-browser-state-interruptions/05-prove-renderer-crash-recovery.md`
+  — pass.
+- `cargo fmt -- webtui/src/main.rs roamium/src/dispatch.rs` — pass.
+- `bash -n scripts/ghostboard-geometry-matrix.sh` — pass.
+- `cargo check -p webtui` — pass.
+- `cargo build -p webtui` — pass.
+- `cargo check -p roamium` — pass.
+- `./scripts/build.sh roamium` — pass.
+- `shellcheck scripts/ghostboard-geometry-matrix.sh` — not run; `shellcheck` is
+  not installed on this VM.
+- `git diff --check` — pass.
+- `scripts/ghostboard-geometry-matrix.sh renderer-crash-smoke` — pass on the
+  final run after tightening the status assertions.
+
+Passing runtime evidence:
+
+- Harness log:
+  `logs/ghostboard-geometry-renderer-crash-smoke-harness-20260617-233913.log`.
+- App log:
+  `logs/ghostboard-geometry-renderer-crash-smoke-app-20260617-233913.log`.
+- Roamium trace:
+  `logs/ghostboard-geometry-renderer-crash-smoke-roamium-20260617-233913.log`.
+- webtui state trace:
+  `logs/ghostboard-geometry-renderer-crash-smoke-webtui-20260617-233913.log`.
+- Screenshot:
+  `logs/ghostboard-geometry-renderer-crash-smoke-screenshot-20260617-233913.png`.
+
+Key passing assertions from the runtime smoke:
+
+- Roamium recorded:
+  `renderer-crashed tab=1 ... status=crashed code=3 url=chrome://crash/ can_reload=true`.
+- webtui recorded `event=renderer_crashed` for the same tab.
+- webtui render state showed `loading_bar_active=false` and
+  `renderer_crash_active=true` with `renderer_crash_status=crashed` after the
+  crash.
+- No stale post-crash render state cleared `renderer_crash_active` before the
+  recovery navigation.
+- No stale post-crash `loading_state state=loading` appeared before recovery.
+- The same tab recovered to the local recovery page and webtui recorded the
+  recovery URL, title, console marker, and final render state with
+  `loading_bar_active=false` and `renderer_crash_active=false`.
+- Roamium recorded the recovery page title after the crash, proving browser
+  liveness through same-tab recovery.
+
+The first runtime attempt used an overly strict render-state regex that expected
+`renderer_crash_active=false` before `title=Issue 816 Crash Recovery`, while the
+trace writes `title` before crash fields. The trace already proved correct
+behavior, so the assertion was fixed to match the field order and to require the
+final recovery console marker and inactive loading state.
+
+## Completion Review
+
+Fresh-context adversarial completion review by Codex subagent `Huygens`:
+
+- **Initial verdict:** Changes required.
+- **Required finding:** The harness accepted any non-space renderer crash status
+  (`status=[^ ]+`) even though the approved design required explicit non-normal
+  termination status evidence.
+- **Resolution:** Accepted. The harness now requires `status=crashed` in the
+  Roamium `renderer-crashed` trace assertion, the webtui `renderer_crashed`
+  event assertion, and the webtui active-crash `render_state` assertion.
+- **Re-run evidence:**
+  `scripts/ghostboard-geometry-matrix.sh renderer-crash-smoke` passed with the
+  stricter assertions at timestamp `20260617-233913`.
+- **Re-review verdict:** Approved. The reviewer confirmed the prior finding was
+  resolved and no required findings remained.
+
+## Conclusion
+
+Renderer crash recovery is now proven under debug Ghostboard for the direct
+Roamium-to-webtui state path. The active tab can be crashed with
+`chrome://crash/`, webtui records and renders crash state without being cleared
+by stale events, and the same tab can recover to a normal local page with
+Roamium still alive.
+
+This experiment did not require Ghostboard compositor changes or Chromium
+changes. The remaining Issue 816 gaps should move to color scheme and
+copy-current-URL coverage.

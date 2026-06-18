@@ -674,6 +674,10 @@ pub unsafe extern "C" fn on_renderer_crashed(
         "[termsurf-renderer-crash] tab_id={} status={} code={} url={} can_reload={}",
         t.tab_id, termination_status, termination_status_code, url, can_reload
     );
+    trace_pdf_input(format!(
+        "renderer-crashed tab={} pane={} status={} code={} url={} can_reload={}",
+        t.tab_id, t.pane_id, termination_status, termination_status_code, url, can_reload
+    ));
     let msg = TermSurfMessage {
         msg: Some(Msg::RendererCrashed(proto::termsurf::RendererCrashed {
             tab_id: t.tab_id,

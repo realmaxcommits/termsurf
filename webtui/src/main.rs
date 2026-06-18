@@ -603,13 +603,28 @@ fn main() -> io::Result<()> {
         })?;
         if let Some(trace) = state_trace.as_mut() {
             let latest_console = console_log.last();
+            let (renderer_crash_active, renderer_crash_tab_id, renderer_crash_status) =
+                renderer_crash
+                    .as_ref()
+                    .map(|crash| {
+                        (
+                            true,
+                            crash.tab_id.to_string(),
+                            crash.termination_status.clone(),
+                        )
+                    })
+                    .unwrap_or_else(|| (false, String::new(), String::new()));
             let render_trace = format!(
-                "{}\t{}\t{}\t{}\t{}\t{}",
+                "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
                 url,
                 page_title,
                 target_url,
                 page_loaded,
                 browser_ready,
+                loading_bar_active,
+                renderer_crash_active,
+                renderer_crash_tab_id,
+                renderer_crash_status,
                 latest_console
                     .map(|entry| entry.message.as_str())
                     .unwrap_or_default()
@@ -623,6 +638,10 @@ fn main() -> io::Result<()> {
                         ("target_url", target_url.clone()),
                         ("page_loaded", page_loaded.to_string()),
                         ("browser_ready", browser_ready.to_string()),
+                        ("loading_bar_active", loading_bar_active.to_string()),
+                        ("renderer_crash_active", renderer_crash_active.to_string()),
+                        ("renderer_crash_tab_id", renderer_crash_tab_id),
+                        ("renderer_crash_status", renderer_crash_status),
                         (
                             "latest_console",
                             latest_console
@@ -1240,6 +1259,18 @@ fn main() -> io::Result<()> {
                         loading_bar_active = false;
                         loading_bar_start = None;
                         renderer_crash_recovery_load_started = false;
+                        if let Some(trace) = state_trace.as_mut() {
+                            trace.write(
+                                "renderer_crashed",
+                                &[
+                                    ("tab_id", tab_id.to_string()),
+                                    ("status", termination_status.clone()),
+                                    ("code", termination_status_code.to_string()),
+                                    ("url", url.clone()),
+                                    ("can_reload", can_reload.to_string()),
+                                ],
+                            );
+                        }
                         renderer_crash = Some(RendererCrashState {
                             tab_id,
                             termination_status,

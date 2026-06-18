@@ -68,6 +68,8 @@ DIALOG_WEB_ROOT="$RUN_DIR/javascript-dialog-site"
 DIALOG_TYPE_COMMAND="$RUN_DIR/dialog-type-command.txt"
 AUTH_WEB_ROOT="$RUN_DIR/http-auth-site"
 AUTH_TYPE_COMMAND="$RUN_DIR/http-auth-type-command.txt"
+CRASH_WEB_ROOT="$RUN_DIR/renderer-crash-site"
+CRASH_TYPE_COMMAND="$RUN_DIR/renderer-crash-type-command.txt"
 NEW_TAB_COMMAND_LOG="$RUN_DIR/new-tab-command.log"
 NEW_TAB_MARKER_COMMAND="$RUN_DIR/new-tab-marker-command.txt"
 SECOND_BROWSER_COMMAND="$RUN_DIR/second-browser-command.txt"
@@ -1560,6 +1562,22 @@ leave_browser_browse() {
   require_trace_after "$control_trace_start_line" "focus-changed tab=${browser_tab_id} pane=${pane_id} ffi=ts_set_focus focused=false" "Roamium observed $label focus=false after control mode"
 }
 
+edit_url_replace() {
+  local label="$1"
+  local target_url="$2"
+  swift "$ROOT/scripts/ghostty-app/inject.swift" key 53 >>"$HARNESS_LOG" 2>&1 || true
+  delay 0.25
+  log "${label}_edit_key=shift+a=edit-url-end"
+  swift "$ROOT/scripts/ghostty-app/inject.swift" key 0 shift >>"$HARNESS_LOG" 2>&1
+  delay 0.5
+  for _ in $(seq 1 180); do
+    swift "$ROOT/scripts/ghostty-app/inject.swift" key 51 >>"$HARNESS_LOG" 2>&1
+  done
+  printf '%s' "$target_url" >"$CRASH_TYPE_COMMAND"
+  swift "$ROOT/scripts/ghostty-app/inject.swift" type "$CRASH_TYPE_COMMAND" >>"$HARNESS_LOG" 2>&1
+  swift "$ROOT/scripts/ghostty-app/inject.swift" key 36 >>"$HARNESS_LOG" 2>&1
+}
+
 type_marker_require_only() {
   local label="$1"
   local marker="$2"
@@ -1631,7 +1649,7 @@ devtools_overlay_probe() {
 }
 
 case "$SCENARIO" in
-  initial-open|launch-discovery-contract|named-roamium-debug-launch|named-roamium-invalid-env|hello-config-homepage|hello-config-browser-list|hello-empty-browser-list|browser-state-smoke|javascript-dialog-smoke|http-auth-smoke|window-resize|split-right|split-down|split-right-resize|split-right-equalize|split-right-zoom|split-right-close-sibling|split-right-close-browser-pane|split-right-focus-switch|new-terminal-tab-visibility|open-browser-in-new-tab|close-browser-tab|open-browser-in-new-window|multiple-windows-with-browsers|display-move-backing-scale|fullscreen-unfullscreen|minimize-hide-restore|font-size-cell-metrics|tui-overlay-resize-command|terminal-scrollback-movement|browser-navigation-geometry|devtools-split-geometry|devtools-singleton-guard|mouse-after-geometry-change|keyboard-after-tab-window-switch|gui-active-multi-tab) ;;
+  initial-open|launch-discovery-contract|named-roamium-debug-launch|named-roamium-invalid-env|hello-config-homepage|hello-config-browser-list|hello-empty-browser-list|browser-state-smoke|javascript-dialog-smoke|http-auth-smoke|renderer-crash-smoke|window-resize|split-right|split-down|split-right-resize|split-right-equalize|split-right-zoom|split-right-close-sibling|split-right-close-browser-pane|split-right-focus-switch|new-terminal-tab-visibility|open-browser-in-new-tab|close-browser-tab|open-browser-in-new-window|multiple-windows-with-browsers|display-move-backing-scale|fullscreen-unfullscreen|minimize-hide-restore|font-size-cell-metrics|tui-overlay-resize-command|terminal-scrollback-movement|browser-navigation-geometry|devtools-split-geometry|devtools-singleton-guard|mouse-after-geometry-change|keyboard-after-tab-window-switch|gui-active-multi-tab) ;;
   *)
     fail "unsupported scenario: $SCENARIO"
     ;;
@@ -1962,6 +1980,94 @@ PY
   log "http_auth_web_root=$AUTH_WEB_ROOT"
   log "http_auth_http_pid=$HTTP_PID"
   log "http_auth_url=$URL"
+fi
+
+if [ "$SCENARIO" = "renderer-crash-smoke" ]; then
+  CRASH_HTTP_PORT="$(python3 - <<'PY'
+import socket
+
+with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+    s.bind(("127.0.0.1", 0))
+    print(s.getsockname()[1])
+PY
+)"
+  mkdir -p "$CRASH_WEB_ROOT"
+  cat >"$CRASH_WEB_ROOT/index.html" <<'EOF'
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>Issue 816 Crash Initial</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        background: #ffffff;
+        color: #111111;
+        font: 16px -apple-system, BlinkMacSystemFont, sans-serif;
+      }
+    </style>
+    <script>
+      console.log("ISSUE816_CRASH_INITIAL_READY");
+      window.addEventListener("load", () => {
+        document.title = "Issue 816 Crash Initial Ready";
+      });
+    </script>
+  </head>
+  <body>ISSUE816_CRASH_INITIAL</body>
+</html>
+EOF
+  cat >"$CRASH_WEB_ROOT/recovery.html" <<'EOF'
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>Issue 816 Crash Recovery</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        background: #ffffff;
+        color: #111111;
+        font: 16px -apple-system, BlinkMacSystemFont, sans-serif;
+      }
+    </style>
+    <script>
+      console.log("ISSUE816_CRASH_RECOVERY");
+      window.addEventListener("load", () => {
+        document.body.dataset.issue816Recovery = "ready";
+      });
+    </script>
+  </head>
+  <body>ISSUE816_CRASH_RECOVERY_BODY</body>
+</html>
+EOF
+  python3 -m http.server "$CRASH_HTTP_PORT" --bind 127.0.0.1 --directory "$CRASH_WEB_ROOT" >>"$HARNESS_LOG" 2>&1 &
+  HTTP_PID="$!"
+  URL="http://127.0.0.1:${CRASH_HTTP_PORT}/index.html"
+  for _ in $(seq 1 30); do
+    if python3 - "$URL" <<'PY' >/dev/null 2>&1
+import sys
+import urllib.request
+
+with urllib.request.urlopen(sys.argv[1], timeout=1) as response:
+    raise SystemExit(0 if response.status == 200 else 1)
+PY
+    then
+      break
+    fi
+    delay 0.25
+  done
+  python3 - "$URL" <<'PY' >/dev/null 2>&1 || fail "renderer crash HTTP fixture did not become ready"
+import sys
+import urllib.request
+
+with urllib.request.urlopen(sys.argv[1], timeout=1) as response:
+    raise SystemExit(0 if response.status == 200 else 1)
+PY
+  log "renderer_crash_web_root=$CRASH_WEB_ROOT"
+  log "renderer_crash_http_pid=$HTTP_PID"
+  log "renderer_crash_url=$URL"
 fi
 
 COMMAND="$RUN_DIR/run-web.sh"
@@ -2873,6 +2979,9 @@ fi
 if [ "$SCENARIO" = "http-auth-smoke" ]; then
   log "webtui_state_trace=$WEBTUI_STATE_TRACE"
 fi
+if [ "$SCENARIO" = "renderer-crash-smoke" ]; then
+  log "webtui_state_trace=$WEBTUI_STATE_TRACE"
+fi
 if [ "$SCENARIO" = "window-resize" ]; then
   log "grow_screenshot=$SCREENSHOT_GROW"
   log "shrink_screenshot=$SCREENSHOT_SHRINK"
@@ -3346,6 +3455,52 @@ if [ "$SCENARIO" = "http-auth-smoke" ]; then
     fail "HTTP auth password leaked into logs or traces"
   fi
   log "PASS: HTTP auth password did not appear in logs or traces"
+fi
+
+if [ "$SCENARIO" = "renderer-crash-smoke" ]; then
+  CRASH_URL="chrome://crash/"
+  CRASH_RECOVERY_URL="http://127.0.0.1:${CRASH_HTTP_PORT}/recovery.html"
+
+  wait_for_state_trace "event=url_changed.*url=${URL}" "webtui initial crash fixture URL" 45
+  wait_for_state_trace "event=title_changed.*title=Issue 816 Crash Initial Ready" "webtui initial crash fixture title" 45
+  wait_for_state_trace "event=console_message.*message=ISSUE816_CRASH_INITIAL_READY" "webtui initial crash fixture console marker" 45
+
+  CRASH_TRACE_START_LINE="$(trace_line_count)"
+  CRASH_STATE_START_LINE="$(state_trace_line_count)"
+  log "renderer_crash_navigate_url=${CRASH_URL}"
+  edit_url_replace "renderer_crash" "$CRASH_URL"
+
+  CRASH_TRACE_LINE="$(wait_for_trace_line_after \
+    "$CRASH_TRACE_START_LINE" \
+    "renderer-crashed tab=${BROWSER_TAB_ID} pane=${PANE_ID} status=crashed code=[0-9-]+ url=chrome://crash/ can_reload=true" \
+    "Roamium renderer crash event" \
+    60)"
+  log "PASS: Roamium renderer crash event: $CRASH_TRACE_LINE"
+  wait_for_state_trace_after "$CRASH_STATE_START_LINE" "event=renderer_crashed.*tab_id=${BROWSER_TAB_ID}.*status=crashed.*url=chrome://crash/.*can_reload=true" "webtui renderer crash state event" 60
+  wait_for_state_trace_after "$CRASH_STATE_START_LINE" "event=render_state.*loading_bar_active=false.*renderer_crash_active=true.*renderer_crash_tab_id=${BROWSER_TAB_ID}.*renderer_crash_status=crashed" "webtui render state shows active crash without stuck loading" 60
+
+  CRASH_EVENT_LINE="$(
+    grep -nE "event=renderer_crashed.*tab_id=${BROWSER_TAB_ID}.*status=crashed.*url=chrome://crash/.*can_reload=true" "$WEBTUI_STATE_TRACE" |
+      tail -1 |
+      cut -d: -f1
+  )"
+  case "$CRASH_EVENT_LINE" in
+    ''|*[!0-9]*) fail "could not locate webtui renderer crash event line" ;;
+  esac
+  delay 2
+  require_no_state_trace_after "$CRASH_EVENT_LINE" "event=render_state.*renderer_crash_active=false" "stale post-crash events did not clear crash state before recovery"
+  require_no_state_trace_after "$CRASH_EVENT_LINE" "event=loading_state.*state=loading" "stale post-crash events did not restart loading before recovery"
+
+  RECOVERY_TRACE_START_LINE="$(trace_line_count)"
+  RECOVERY_STATE_START_LINE="$(state_trace_line_count)"
+  log "renderer_crash_recovery_url=${CRASH_RECOVERY_URL}"
+  edit_url_replace "renderer_crash_recovery" "$CRASH_RECOVERY_URL"
+  wait_for_trace_line_after "$RECOVERY_TRACE_START_LINE" "navigate tab=${BROWSER_TAB_ID} pane=${PANE_ID} url=${CRASH_RECOVERY_URL}" "Roamium recovery navigation" 60 >/dev/null
+  wait_for_state_trace_after "$RECOVERY_STATE_START_LINE" "event=url_changed[[:space:]]+url=${CRASH_RECOVERY_URL}" "webtui recovery URL" 60
+  wait_for_state_trace_after "$RECOVERY_STATE_START_LINE" "event=title_changed.*title=Issue 816 Crash Recovery" "webtui recovery title" 60
+  wait_for_state_trace_after "$RECOVERY_STATE_START_LINE" "event=console_message.*message=ISSUE816_CRASH_RECOVERY" "webtui recovery console marker" 60
+  wait_for_state_trace_after "$RECOVERY_STATE_START_LINE" "event=render_state.*title=Issue 816 Crash Recovery.*loading_bar_active=false.*renderer_crash_active=false.*latest_console=ISSUE816_CRASH_RECOVERY" "webtui render state cleared crash after recovery"
+  require_trace_after "$RECOVERY_TRACE_START_LINE" "title-changed tab=${BROWSER_TAB_ID} pane=${PANE_ID} title=Issue 816 Crash Recovery" "Roamium stayed alive through recovery"
 fi
 
 if [ "$SCENARIO" = "named-roamium-debug-launch" ]; then

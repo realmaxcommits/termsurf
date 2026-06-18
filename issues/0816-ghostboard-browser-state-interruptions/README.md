@@ -50,4 +50,4 @@ owning component before any fix.
 - [Experiment 4: Prove HTTP auth runtime flow](04-prove-http-auth-runtime-flow.md)
   — **Pass**
 - [Experiment 5: Prove renderer crash recovery](05-prove-renderer-crash-recovery.md)
-  — **Designed**
+  — **Pass**
