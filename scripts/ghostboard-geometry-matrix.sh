@@ -1687,7 +1687,7 @@ devtools_overlay_probe() {
 }
 
 case "$SCENARIO" in
-  initial-open|launch-discovery-contract|named-roamium-debug-launch|named-roamium-invalid-env|hello-config-homepage|hello-config-browser-list|hello-empty-browser-list|browser-state-smoke|javascript-dialog-smoke|http-auth-smoke|renderer-crash-smoke|color-scheme-smoke|copy-current-url-smoke|browser-input-granularity|multi-profile-isolation|window-resize|split-right|split-down|split-right-resize|split-right-equalize|split-right-zoom|split-right-close-sibling|split-right-close-browser-pane|split-right-focus-switch|new-terminal-tab-visibility|open-browser-in-new-tab|close-browser-tab|open-browser-in-new-window|multiple-windows-with-browsers|display-move-backing-scale|fullscreen-unfullscreen|minimize-hide-restore|font-size-cell-metrics|tui-overlay-resize-command|terminal-scrollback-movement|browser-navigation-geometry|devtools-split-geometry|devtools-singleton-guard|mouse-after-geometry-change|keyboard-after-tab-window-switch|gui-active-multi-tab) ;;
+  initial-open|launch-discovery-contract|named-roamium-debug-launch|named-roamium-invalid-env|hello-config-homepage|hello-config-browser-list|hello-empty-browser-list|browser-state-smoke|javascript-dialog-smoke|http-auth-smoke|renderer-crash-smoke|color-scheme-smoke|copy-current-url-smoke|browser-input-granularity|multi-profile-isolation|same-profile-server-lifecycle|window-resize|split-right|split-down|split-right-resize|split-right-equalize|split-right-zoom|split-right-close-sibling|split-right-close-browser-pane|split-right-focus-switch|new-terminal-tab-visibility|open-browser-in-new-tab|close-browser-tab|open-browser-in-new-window|multiple-windows-with-browsers|display-move-backing-scale|fullscreen-unfullscreen|minimize-hide-restore|font-size-cell-metrics|tui-overlay-resize-command|terminal-scrollback-movement|browser-navigation-geometry|devtools-split-geometry|devtools-singleton-guard|mouse-after-geometry-change|keyboard-after-tab-window-switch|gui-active-multi-tab) ;;
   *)
     fail "unsupported scenario: $SCENARIO"
     ;;
@@ -2581,7 +2581,7 @@ EOF
   chmod +x "$COMMAND"
 fi
 
-if [ "$SCENARIO" = "new-terminal-tab-visibility" ] || [ "$SCENARIO" = "open-browser-in-new-tab" ] || [ "$SCENARIO" = "close-browser-tab" ] || [ "$SCENARIO" = "open-browser-in-new-window" ] || [ "$SCENARIO" = "multiple-windows-with-browsers" ] || [ "$SCENARIO" = "keyboard-after-tab-window-switch" ] || [ "$SCENARIO" = "gui-active-multi-tab" ] || [ "$SCENARIO" = "devtools-singleton-guard" ] || [ "$SCENARIO" = "multi-profile-isolation" ]; then
+if [ "$SCENARIO" = "new-terminal-tab-visibility" ] || [ "$SCENARIO" = "open-browser-in-new-tab" ] || [ "$SCENARIO" = "close-browser-tab" ] || [ "$SCENARIO" = "same-profile-server-lifecycle" ] || [ "$SCENARIO" = "open-browser-in-new-window" ] || [ "$SCENARIO" = "multiple-windows-with-browsers" ] || [ "$SCENARIO" = "keyboard-after-tab-window-switch" ] || [ "$SCENARIO" = "gui-active-multi-tab" ] || [ "$SCENARIO" = "devtools-singleton-guard" ] || [ "$SCENARIO" = "multi-profile-isolation" ]; then
   FIRST_RUN_MARKER="$RUN_DIR/first-web-ran"
   cat >"$COMMAND" <<EOF
 #!/usr/bin/env bash
@@ -2601,6 +2601,19 @@ if [ "$SCENARIO" = "multi-profile-isolation" ]; then
 set -euo pipefail
 if mkdir "$FIRST_RUN_MARKER" 2>/dev/null; then
   exec "$WEB" --browser "$ROAMIUM" --profile profilea "$PROFILE_URL_A"
+fi
+printf 'new-tab-command invocation pid=%s\\n' "\$\$" >>"$NEW_TAB_COMMAND_LOG"
+exec /bin/zsh -f -c 'printf "ISSUE809_EXP12_NEW_TAB_READY\\n"; while :; do sleep 60; done'
+EOF
+  chmod +x "$COMMAND"
+fi
+
+if [ "$SCENARIO" = "same-profile-server-lifecycle" ]; then
+  cat >"$COMMAND" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+if mkdir "$FIRST_RUN_MARKER" 2>/dev/null; then
+  exec "$WEB" --browser "$ROAMIUM" --profile default "$URL"
 fi
 printf 'new-tab-command invocation pid=%s\\n' "\$\$" >>"$NEW_TAB_COMMAND_LOG"
 exec /bin/zsh -f -c 'printf "ISSUE809_EXP12_NEW_TAB_READY\\n"; while :; do sleep 60; done'
@@ -2632,7 +2645,7 @@ browser = ""
 EOF
 fi
 
-if [ "$SCENARIO" = "new-terminal-tab-visibility" ] || [ "$SCENARIO" = "open-browser-in-new-tab" ] || [ "$SCENARIO" = "close-browser-tab" ] || [ "$SCENARIO" = "keyboard-after-tab-window-switch" ] || [ "$SCENARIO" = "gui-active-multi-tab" ] || [ "$SCENARIO" = "devtools-singleton-guard" ] || [ "$SCENARIO" = "multi-profile-isolation" ]; then
+if [ "$SCENARIO" = "new-terminal-tab-visibility" ] || [ "$SCENARIO" = "open-browser-in-new-tab" ] || [ "$SCENARIO" = "close-browser-tab" ] || [ "$SCENARIO" = "same-profile-server-lifecycle" ] || [ "$SCENARIO" = "keyboard-after-tab-window-switch" ] || [ "$SCENARIO" = "gui-active-multi-tab" ] || [ "$SCENARIO" = "devtools-singleton-guard" ] || [ "$SCENARIO" = "multi-profile-isolation" ]; then
   cat >>"$CONFIG" <<'EOF'
 keybind = ctrl+t=new_tab
 keybind = ctrl+1=goto_tab:1
@@ -2642,7 +2655,7 @@ keybind = ctrl+n=next_tab
 EOF
 fi
 
-if [ "$SCENARIO" = "close-browser-tab" ]; then
+if [ "$SCENARIO" = "close-browser-tab" ] || [ "$SCENARIO" = "same-profile-server-lifecycle" ]; then
   cat >>"$CONFIG" <<'EOF'
 confirm-close-surface = false
 keybind = ctrl+w=close_tab
@@ -3449,7 +3462,7 @@ if [ "$SCENARIO" = "new-terminal-tab-visibility" ]; then
   log "new_tab_command_log=$NEW_TAB_COMMAND_LOG"
   log "new_tab_marker_command=$NEW_TAB_MARKER_COMMAND"
 fi
-if [ "$SCENARIO" = "open-browser-in-new-tab" ] || [ "$SCENARIO" = "close-browser-tab" ] || [ "$SCENARIO" = "gui-active-multi-tab" ] || [ "$SCENARIO" = "multi-profile-isolation" ]; then
+if [ "$SCENARIO" = "open-browser-in-new-tab" ] || [ "$SCENARIO" = "close-browser-tab" ] || [ "$SCENARIO" = "same-profile-server-lifecycle" ] || [ "$SCENARIO" = "gui-active-multi-tab" ] || [ "$SCENARIO" = "multi-profile-isolation" ]; then
   log "new_tab_screenshot=$SCREENSHOT_TAB_NEW"
   log "browser_b_screenshot=$SCREENSHOT_TAB_BROWSER_B"
   log "browser_a_restored_screenshot=$SCREENSHOT_TAB_BROWSER_A_RESTORED"
@@ -5434,7 +5447,7 @@ if [ "$SCENARIO" = "new-terminal-tab-visibility" ]; then
   log "back_tab_screenshot_exit=$?"
 fi
 
-if [ "$SCENARIO" = "open-browser-in-new-tab" ] || [ "$SCENARIO" = "close-browser-tab" ] || [ "$SCENARIO" = "gui-active-multi-tab" ]; then
+if [ "$SCENARIO" = "open-browser-in-new-tab" ] || [ "$SCENARIO" = "close-browser-tab" ] || [ "$SCENARIO" = "same-profile-server-lifecycle" ] || [ "$SCENARIO" = "gui-active-multi-tab" ]; then
   A_SELECTED_TAB_ID="$(extract_selected_tab_id "$APPKIT_PRESENT_LINE")"
   [ -n "$A_SELECTED_TAB_ID" ] || fail "could not extract browser A selected tab id"
   A_PANE_ID="$PANE_ID"
@@ -5449,6 +5462,17 @@ if [ "$SCENARIO" = "open-browser-in-new-tab" ] || [ "$SCENARIO" = "close-browser
   log "browser_a_pane_id=$A_PANE_ID"
   log "browser_a_browser_tab_id=$A_BROWSER_TAB_ID"
   log "browser_a_context_id=$A_CONTEXT_ID"
+
+  if [ "$SCENARIO" = "same-profile-server-lifecycle" ]; then
+    require_log "SetOverlay: pane_id=${A_PANE_ID} profile=default browser=${ROAMIUM}" "browser A SetOverlay uses default profile and absolute Roamium path"
+    require_log "SetOverlay: created pending server key=default/${ROAMIUM} pane_count=1" "browser A created default profile server"
+    SHARED_SPAWN_LINE="$(grep -E "spawned browser path=${ROAMIUM} pid=[0-9]+ profile=default .*--user-data-dir=.*chromium-profiles/default" "$APP_LOG" | tail -1 || true)"
+    [ -n "$SHARED_SPAWN_LINE" ] || fail "missing default profile Roamium spawn line"
+    SHARED_SPAWN_PID="$(printf '%s\n' "$SHARED_SPAWN_LINE" | sed -E 's/.* pid=([0-9]+) profile=.*/\1/')"
+    [ -n "$SHARED_SPAWN_PID" ] || fail "failed to extract shared Roamium pid"
+    log "same_profile_shared_spawn_pid=$SHARED_SPAWN_PID"
+    log "PASS: browser A spawned shared default profile server"
+  fi
 
   NEW_TAB_START_LINE="$(log_line_count)"
   NEW_TAB_TRACE_START_LINE="$(trace_line_count)"
@@ -5510,10 +5534,24 @@ if [ "$SCENARIO" = "open-browser-in-new-tab" ] || [ "$SCENARIO" = "close-browser
 
   BROWSER_B_START_LINE="$(log_line_count)"
   BROWSER_B_TRACE_START_LINE="$(trace_line_count)"
-  printf '"%s" --browser "%s" "%s"' "$WEB" "$ROAMIUM" "$URL_B" >"$SECOND_BROWSER_COMMAND"
+  if [ "$SCENARIO" = "same-profile-server-lifecycle" ]; then
+    printf '"%s" --browser "%s" --profile default "%s"' "$WEB" "$ROAMIUM" "$URL_B" >"$SECOND_BROWSER_COMMAND"
+  else
+    printf '"%s" --browser "%s" "%s"' "$WEB" "$ROAMIUM" "$URL_B" >"$SECOND_BROWSER_COMMAND"
+  fi
   log "browser_b_command=$(cat "$SECOND_BROWSER_COMMAND")"
   swift "$ROOT/scripts/ghostty-app/inject.swift" type "$SECOND_BROWSER_COMMAND" >>"$HARNESS_LOG" 2>&1
   swift "$ROOT/scripts/ghostty-app/inject.swift" key 36 >>"$HARNESS_LOG" 2>&1
+
+  if [ "$SCENARIO" = "same-profile-server-lifecycle" ]; then
+    wait_for_log_after "$BROWSER_B_START_LINE" "SetOverlay: pane_id=[^ ]+ profile=default browser=${ROAMIUM}" "browser B SetOverlay uses default profile and absolute Roamium path"
+    wait_for_log_after "$BROWSER_B_START_LINE" "SetOverlay: reused pending server key=default/${ROAMIUM} pane_count=2 has_fd=true" "browser B reused shared default profile server"
+    if tail -n +"$((BROWSER_B_START_LINE + 1))" "$APP_LOG" | grep -E "spawned browser path=${ROAMIUM} pid=[0-9]+ profile=default" >/dev/null 2>&1; then
+      fail "browser B spawned a second default profile Roamium process"
+    fi
+    kill -0 "$SHARED_SPAWN_PID" >/dev/null 2>&1 || fail "shared Roamium pid died while browser B was opening"
+    log "PASS: browser B reused shared Roamium pid without a second spawn"
+  fi
 
   B_CA_CONTEXT_LINE="$(wait_for_different_zig_event_after "$BROWSER_B_START_LINE" "ca_context" "$A_PANE_ID" "browser B Zig ca_context")"
   B_PANE_ID="$(extract_pane_id "$B_CA_CONTEXT_LINE")"
@@ -5585,7 +5623,7 @@ if [ "$SCENARIO" = "open-browser-in-new-tab" ] || [ "$SCENARIO" = "close-browser
   wait_for_log_after "$B_CONTROL_START_LINE" "ModeChanged: pane_id=${B_PANE_ID} browsing=false" "browser B webtui returned to control mode"
   require_trace_after "$B_CONTROL_TRACE_START_LINE" "focus-changed tab=${B_BROWSER_TAB_ID} pane=${B_PANE_ID} ffi=ts_set_focus focused=false" "Roamium observed browser B focus=false after control mode"
 
-  if [ "$SCENARIO" = "close-browser-tab" ]; then
+  if [ "$SCENARIO" = "close-browser-tab" ] || [ "$SCENARIO" = "same-profile-server-lifecycle" ]; then
     CLOSE_TAB_START_LINE="$(log_line_count)"
     CLOSE_TAB_TRACE_START_LINE="$(trace_line_count)"
     log "close_tab_keybind=ctrl+w=close_tab"
@@ -5683,12 +5721,150 @@ if [ "$SCENARIO" = "open-browser-in-new-tab" ] || [ "$SCENARIO" = "close-browser
     swift "$ROOT/scripts/ghostty-app/inject.swift" type "$BROWSER_FOCUS_COMMAND" >>"$HARNESS_LOG" 2>&1
     require_trace_after "$A_AFTER_CLOSE_KEY_START_LINE" "key-event tab=${A_BROWSER_TAB_ID} pane=${A_PANE_ID}" "browser A keyboard marker reached browser A after browser B tab close"
     require_no_trace_after "$A_AFTER_CLOSE_KEY_START_LINE" "key-event tab=${B_BROWSER_TAB_ID} pane=${B_PANE_ID}" "browser A keyboard marker did not reach closed browser B"
+    if [ "$SCENARIO" = "same-profile-server-lifecycle" ]; then
+      leave_browser_browse "browser_a_after_browser_b_close" "$A_PANE_ID" "$A_BROWSER_TAB_ID"
+    fi
 
     screencapture -x -o -l"$A_SELECTED_TAB_ID" "$SCREENSHOT_TAB_AFTER_CLOSE"
     log "after_close_screenshot_exit=$?"
 
     [ "$NEW_TAB_TRACE_START_LINE" -lt "$BROWSER_B_TRACE_START_LINE" ] || fail "trace boundaries for browser B open were not monotonic"
     [ "$BROWSER_B_TRACE_START_LINE" -lt "$CLOSE_TAB_TRACE_START_LINE" ] || fail "trace boundaries for browser B close were not monotonic"
+
+    if [ "$SCENARIO" = "same-profile-server-lifecycle" ]; then
+      kill -0 "$SHARED_SPAWN_PID" >/dev/null 2>&1 || fail "shared Roamium pid died after browser B close while browser A remained alive"
+      if tail -n +"$((CLOSE_TAB_START_LINE + 1))" "$APP_LOG" | grep -E "spawned browser path=${ROAMIUM} pid=[0-9]+ profile=default" >/dev/null 2>&1; then
+        fail "closing browser B caused an unexpected default profile Roamium respawn"
+      fi
+      log "PASS: shared Roamium pid survived browser B close without respawn"
+
+      C_TAB_START_LINE="$(log_line_count)"
+      C_TAB_TRACE_START_LINE="$(trace_line_count)"
+      log "browser_c_new_tab_keybind=ctrl+t=new_tab"
+      swift "$ROOT/scripts/ghostty-app/inject.swift" key 17 control >>"$HARNESS_LOG" 2>&1
+      delay 1
+      require_log_after "$C_TAB_START_LINE" "dispatching action target=surface action=.new_tab" "browser C native tab action dispatched"
+      require_log_after "$C_TAB_START_LINE" 'starting command command=`/usr/bin/login`' "browser C native tab started login shell"
+      if [ -s "$NEW_TAB_COMMAND_LOG" ]; then
+        fail "browser C native tab inherited the first-run web wrapper"
+      fi
+      log "PASS: browser C native tab did not inherit first-run web wrapper"
+
+      log "browser_c_select_tab2_keybind=ctrl+2=goto_tab:2"
+      swift "$ROOT/scripts/ghostty-app/inject.swift" key 19 control >>"$HARNESS_LOG" 2>&1
+      delay 1
+      C_SELECTED_LINE="$(wait_for_selected_tab_change_after "$C_TAB_START_LINE" "$A_SELECTED_TAB_ID" "browser C tab selected")"
+      C_SELECTED_TAB_ID="$(extract_selected_tab_id "$C_SELECTED_LINE")"
+      [ -n "$C_SELECTED_TAB_ID" ] || fail "failed to extract browser C selected tab id"
+      [ "$C_SELECTED_TAB_ID" != "$A_SELECTED_TAB_ID" ] || fail "browser C reused browser A native tab id"
+      [ "$C_SELECTED_TAB_ID" != "$TAB2_SELECTED_TAB_ID" ] || fail "browser C reused closed browser B native tab id"
+      log "browser_c_selected_tab_id=$C_SELECTED_TAB_ID"
+
+      printf '"%s" --browser "%s" --profile default "%s"' "$WEB" "$ROAMIUM" "$URL_C" >"$THIRD_BROWSER_COMMAND"
+      log "browser_c_command=$(cat "$THIRD_BROWSER_COMMAND")"
+      swift "$ROOT/scripts/ghostty-app/inject.swift" type "$THIRD_BROWSER_COMMAND" >>"$HARNESS_LOG" 2>&1
+      swift "$ROOT/scripts/ghostty-app/inject.swift" key 36 >>"$HARNESS_LOG" 2>&1
+
+      C_SET_LINE="$(wait_for_line_after "$C_TAB_START_LINE" "SetOverlay: pane_id=[^ ]+ profile=default browser=${ROAMIUM} url=${URL_C}" "browser C SetOverlay uses default profile and absolute Roamium path")"
+      C_SET_PANE_ID="$(printf '%s\n' "$C_SET_LINE" | sed -E 's/.*SetOverlay: pane_id=([^ ]+) .*/\1/')"
+      [ -n "$C_SET_PANE_ID" ] || fail "failed to extract browser C SetOverlay pane id"
+      [ "$C_SET_PANE_ID" != "$A_PANE_ID" ] || fail "browser C SetOverlay matched browser A pane id"
+      [ "$C_SET_PANE_ID" != "$B_PANE_ID" ] || fail "browser C SetOverlay matched closed browser B pane id"
+      wait_for_log_after "$C_TAB_START_LINE" "SetOverlay: reused pending server key=default/${ROAMIUM} pane_count=2 has_fd=true" "browser C reused shared default profile server"
+      if tail -n +"$((C_TAB_START_LINE + 1))" "$APP_LOG" | grep -E "spawned browser path=${ROAMIUM} pid=[0-9]+ profile=default" >/dev/null 2>&1; then
+        fail "browser C spawned a second default profile Roamium process"
+      fi
+      kill -0 "$SHARED_SPAWN_PID" >/dev/null 2>&1 || fail "shared Roamium pid died while browser C was opening"
+
+      C_CA_CONTEXT_LINE="$(wait_for_different_zig_event_after "$C_TAB_START_LINE" "ca_context" "$A_PANE_ID" "browser C Zig ca_context")"
+      C_PANE_ID="$(extract_pane_id "$C_CA_CONTEXT_LINE")"
+      C_BROWSER_TAB_ID="$(extract_browser_tab_id "$C_CA_CONTEXT_LINE")"
+      C_CONTEXT_ID="$(extract_context_id "$C_CA_CONTEXT_LINE")"
+      [ -n "$C_PANE_ID" ] || fail "could not extract browser C pane id"
+      [ -n "$C_BROWSER_TAB_ID" ] || fail "could not extract browser C tab id"
+      [ -n "$C_CONTEXT_ID" ] || fail "could not extract browser C context id"
+      [ "$C_PANE_ID" != "$A_PANE_ID" ] || fail "browser C reused browser A pane id"
+      [ "$C_PANE_ID" != "$B_PANE_ID" ] || fail "browser C reused closed browser B pane id"
+      [ "$C_BROWSER_TAB_ID" != "$A_BROWSER_TAB_ID" ] || fail "browser C reused browser A tab id"
+      [ "$C_BROWSER_TAB_ID" != "$B_BROWSER_TAB_ID" ] || fail "browser C reused closed browser B tab id"
+      [ "$C_CONTEXT_ID" != "$A_CONTEXT_ID" ] || fail "browser C reused browser A CA/context id"
+      [ "$C_CONTEXT_ID" != "$B_CONTEXT_ID" ] || fail "browser C reused closed browser B CA/context id"
+      log "browser_c_pane_id=$C_PANE_ID"
+      log "browser_c_browser_tab_id=$C_BROWSER_TAB_ID"
+      log "browser_c_context_id=$C_CONTEXT_ID"
+
+      C_APPKIT_PRESENT_LINE="$(wait_for_line_after "$C_TAB_START_LINE" "TermSurf geometry layer=appkit event=presented .*pane_id:${C_PANE_ID} .*context_id=${C_CONTEXT_ID}" "browser C AppKit presentation")"
+      C_SELECTED_PRESENTED_TAB_ID="$(extract_selected_tab_id "$C_APPKIT_PRESENT_LINE")"
+      C_FRAME="$(extract_overlay_frame "$C_APPKIT_PRESENT_LINE")"
+      C_FRAME_SIZE="$(extract_frame_size "$C_APPKIT_PRESENT_LINE")"
+      C_FRAME_X="$(extract_frame_x "$C_APPKIT_PRESENT_LINE")"
+      C_FRAME_Y="$(extract_frame_y "$C_APPKIT_PRESENT_LINE")"
+      [ "$C_SELECTED_PRESENTED_TAB_ID" = "$C_SELECTED_TAB_ID" ] || fail "browser C selected tab mismatch: expected=$C_SELECTED_TAB_ID actual=$C_SELECTED_PRESENTED_TAB_ID"
+
+      TABC_WIN_LINE="$(window_bounds_for "$C_SELECTED_TAB_ID")" || fail "failed to resolve browser C window bounds for window id=$C_SELECTED_TAB_ID"
+      IFS=$'\t' read -r _TABC_WID TABC_WX TABC_WY TABC_WW TABC_WH <<<"$TABC_WIN_LINE"
+      C_CLICK_X="$(awk -v wx="$TABC_WX" -v frame_x="$C_FRAME_X" -v frame_size="$C_FRAME_SIZE" 'BEGIN { split(frame_size, parts, "x"); print int(wx + frame_x + (parts[1] / 2) + 0.5) }')"
+      C_CLICK_Y="$(awk -v wy="$TABC_WY" -v frame_y="$C_FRAME_Y" -v frame_size="$C_FRAME_SIZE" 'BEGIN { split(frame_size, parts, "x"); print int(wy + frame_y + (parts[2] / 2) + 0.5) }')"
+      C_HIT_START_LINE="$(log_line_count)"
+      click_global_point "$C_CLICK_X" "$C_CLICK_Y" "browser_c_area"
+      C_HIT_LINE="$(wait_for_hit_after "$C_HIT_START_LINE" "$C_CONTEXT_ID" "browser C hit-test")"
+      require_text "$C_HIT_LINE" "selected_tab_id:${C_SELECTED_TAB_ID}" "browser C hit-test has browser C selected tab id"
+      require_text "$C_HIT_LINE" "overlay_frame=${C_FRAME}" "browser C hit-test uses browser C frame"
+
+      enter_browser_browse "browser_c" "$C_PANE_ID" "$C_BROWSER_TAB_ID"
+      C_KEY_START_LINE="$(trace_line_count)"
+      printf 'ISSUE818_EXP3_BROWSER_C\n' >"$BROWSER_FOCUS_COMMAND"
+      swift "$ROOT/scripts/ghostty-app/inject.swift" type "$BROWSER_FOCUS_COMMAND" >>"$HARNESS_LOG" 2>&1
+      require_trace_after "$C_KEY_START_LINE" "key-event tab=${C_BROWSER_TAB_ID} pane=${C_PANE_ID}" "browser C keyboard marker reached browser C"
+      require_no_trace_after "$C_KEY_START_LINE" "key-event tab=${A_BROWSER_TAB_ID} pane=${A_PANE_ID}" "browser C keyboard marker did not reach browser A"
+      require_no_trace_after "$C_KEY_START_LINE" "key-event tab=${B_BROWSER_TAB_ID} pane=${B_PANE_ID}" "browser C keyboard marker did not reach closed browser B"
+      leave_browser_browse "browser_c" "$C_PANE_ID" "$C_BROWSER_TAB_ID"
+
+      C_CLOSE_START_LINE="$(log_line_count)"
+      C_CLOSE_TRACE_START_LINE="$(trace_line_count)"
+      log "browser_c_close_keybind=ctrl+w=close_tab"
+      swift "$ROOT/scripts/ghostty-app/inject.swift" key 13 control >>"$HARNESS_LOG" 2>&1
+      delay 1
+      require_log_after "$C_CLOSE_START_LINE" "CloseTab: pane_id=${C_PANE_ID} tab_id=${C_BROWSER_TAB_ID}" "Zig records CloseTab for browser C after tab close"
+      require_trace_after "$C_CLOSE_TRACE_START_LINE" "close-tab tab_id=${C_BROWSER_TAB_ID} pane_id=${C_PANE_ID} result=destroying ffi=ts_destroy_web_contents" "Roamium received CloseTab and destroyed browser C"
+      require_trace_after "$C_CLOSE_TRACE_START_LINE" "close-tab tab_id=${C_BROWSER_TAB_ID} result=removed" "Roamium removed closed browser C tab"
+      kill -0 "$SHARED_SPAWN_PID" >/dev/null 2>&1 || fail "shared Roamium pid died after browser C close while browser A remained alive"
+      log "PASS: shared Roamium pid survived browser C close"
+
+      require_log_after "$C_CLOSE_START_LINE" "Pane focus changed: pane_id=${A_PANE_ID} focused=true" "browser A pane focused after browser C close"
+      TAB1_AFTER_C_WIN_LINE="$(window_bounds_for "$A_SELECTED_TAB_ID")" || fail "failed to resolve browser A window bounds after browser C close for window id=$A_SELECTED_TAB_ID"
+      IFS=$'\t' read -r _TAB1_AFTER_C_WID TAB1_AFTER_C_WX TAB1_AFTER_C_WY TAB1_AFTER_C_WW TAB1_AFTER_C_WH <<<"$TAB1_AFTER_C_WIN_LINE"
+      A_AFTER_C_X="$(awk -v wx="$TAB1_AFTER_C_WX" -v frame_x="$A_AFTER_CLOSE_FRAME_X" -v frame_size="$A_AFTER_CLOSE_FRAME_SIZE" 'BEGIN { split(frame_size, parts, "x"); print int(wx + frame_x + (parts[1] / 2) + 0.5) }')"
+      A_AFTER_C_Y="$(awk -v wy="$TAB1_AFTER_C_WY" -v frame_y="$A_AFTER_CLOSE_FRAME_Y" -v frame_size="$A_AFTER_CLOSE_FRAME_SIZE" 'BEGIN { split(frame_size, parts, "x"); print int(wy + frame_y + (parts[2] / 2) + 0.5) }')"
+      A_AFTER_C_HIT_START_LINE="$(log_line_count)"
+      click_global_point "$A_AFTER_C_X" "$A_AFTER_C_Y" "browser_a_after_browser_c_close_area"
+      A_AFTER_C_HIT_LINE="$(wait_for_hit_after "$A_AFTER_C_HIT_START_LINE" "$A_CONTEXT_ID" "browser A after browser C close hit-test")"
+      require_text "$A_AFTER_C_HIT_LINE" "selected_tab_id:${A_SELECTED_TAB_ID}" "browser A after browser C close hit-test has tab 1 selected tab id"
+      require_text "$A_AFTER_C_HIT_LINE" "overlay_frame=${A_AFTER_CLOSE_FRAME}" "browser A after browser C close hit-test uses browser A restored frame"
+      enter_browser_browse "browser_a_after_browser_c_close" "$A_PANE_ID" "$A_BROWSER_TAB_ID"
+      A_AFTER_C_KEY_START_LINE="$(trace_line_count)"
+      printf 'ISSUE818_EXP3_BROWSER_A_AFTER_C\n' >"$BROWSER_FOCUS_COMMAND"
+      swift "$ROOT/scripts/ghostty-app/inject.swift" type "$BROWSER_FOCUS_COMMAND" >>"$HARNESS_LOG" 2>&1
+      require_trace_after "$A_AFTER_C_KEY_START_LINE" "key-event tab=${A_BROWSER_TAB_ID} pane=${A_PANE_ID}" "browser A keyboard marker reached browser A after browser C close"
+      require_no_trace_after "$A_AFTER_C_KEY_START_LINE" "key-event tab=${B_BROWSER_TAB_ID} pane=${B_PANE_ID}" "browser A keyboard marker did not reach closed browser B after browser C close"
+      require_no_trace_after "$A_AFTER_C_KEY_START_LINE" "key-event tab=${C_BROWSER_TAB_ID} pane=${C_PANE_ID}" "browser A keyboard marker did not reach closed browser C"
+      leave_browser_browse "browser_a_after_browser_c_close" "$A_PANE_ID" "$A_BROWSER_TAB_ID"
+
+      A_FINAL_START_LINE="$(log_line_count)"
+      log "browser_a_final_close_keybind=ctrl+w=close_tab"
+      swift "$ROOT/scripts/ghostty-app/inject.swift" key 13 control >>"$HARNESS_LOG" 2>&1
+      delay 2
+      require_log_after "$A_FINAL_START_LINE" "CloseTab: pane_id=${A_PANE_ID} tab_id=${A_BROWSER_TAB_ID}" "Zig records CloseTab for final browser A close"
+      for _ in $(seq 1 15); do
+        if ! kill -0 "$SHARED_SPAWN_PID" >/dev/null 2>&1; then
+          log "PASS: shared Roamium pid exited after final browser close"
+          SHARED_PID_EXITED="1"
+          break
+        fi
+        delay 1
+      done
+      [ "${SHARED_PID_EXITED:-}" = "1" ] || fail "shared Roamium pid remained alive after final browser close"
+    fi
   fi
 
   if [ "$SCENARIO" = "open-browser-in-new-tab" ] || [ "$SCENARIO" = "gui-active-multi-tab" ]; then

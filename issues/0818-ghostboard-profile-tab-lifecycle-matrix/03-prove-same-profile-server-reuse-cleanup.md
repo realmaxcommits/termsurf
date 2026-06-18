@@ -156,3 +156,91 @@ After implementation and verification:
   file; and
 - commit the reviewed result separately before designing or implementing the
   next experiment.
+
+## Result
+
+**Result:** Partial
+
+The `same-profile-server-lifecycle` runtime scenario was added to
+`scripts/ghostboard-geometry-matrix.sh`. The scenario proves same-profile server
+reuse, close of browser B, reopen of browser C, and input routing for browsers
+A/B/C, but it exposes a lifecycle cleanup bug before final server-process
+cleanup can be proven.
+
+Verification run:
+
+```bash
+bash -n scripts/ghostboard-geometry-matrix.sh
+git diff --check
+scripts/ghostboard-geometry-matrix.sh same-profile-server-lifecycle
+```
+
+Runtime artifacts from the most complete run:
+
+- App log:
+  `/Users/astrohacker/dev/termsurf/logs/ghostboard-geometry-same-profile-server-lifecycle-app-20260618-015349.log`
+- Roamium trace:
+  `/Users/astrohacker/dev/termsurf/logs/ghostboard-geometry-same-profile-server-lifecycle-roamium-20260618-015349.log`
+- Harness log:
+  `/Users/astrohacker/dev/termsurf/logs/ghostboard-geometry-same-profile-server-lifecycle-harness-20260618-015349.log`
+
+Observed pass evidence:
+
+- Browser A created `default/${ROAMIUM}` and spawned shared Roamium pid `18019`.
+- Browser B launched with `--profile default`, reused `default/${ROAMIUM}` with
+  `pane_count=2 has_fd=true`, and did not spawn a second default-profile Roamium
+  process.
+- Browser B received mouse and keyboard input only while active.
+- Closing browser B selected browser A, sent `CloseTab` for browser B, Roamium
+  destroyed and removed browser B tab id `2`, closed browser B did not receive
+  later input, and the shared Roamium pid stayed alive without respawn.
+- Browser A remained interactive after browser B closed.
+- Browser C reopened in tab id `3` with the same `default/${ROAMIUM}` server and
+  shared Roamium pid, received a fresh pane id and CA context id, and received
+  mouse and keyboard input only while active.
+
+Observed failure:
+
+- After browser C returned to Control mode, `ctrl+w` produced the AppKit
+  close-tab key equivalent for browser C's native tab, but Ghostboard did not
+  log `CloseTab: pane_id=391FD398-3785-4304-ABCE-C7D28638785C tab_id=3` during
+  the close path.
+- The app later logged teardown-time cleanup for browser C:
+  `TUI disconnect cleanup: pane_id=391FD398-3785-4304-ABCE-C7D28638785C tab_id=3`
+  followed by `CloseTab send failed ... err=error.NotOpenForWriting`.
+- Because browser C cleanup failed before normal `CloseTab` delivery, the
+  scenario could not proceed to prove browser A after C close or final shared
+  server-process cleanup.
+
+## Conclusion
+
+Same-profile server reuse works for simultaneous and reopened browser tabs:
+Ghostboard reuses the existing default-profile Roamium server instead of
+spawning duplicates, and routing remains isolated across browser A, browser B,
+and reopened browser C.
+
+The remaining blocker is cleanup for a reopened same-profile browser tab. The
+next experiment should fix the browser C close path so closing a reopened
+same-profile browser tab sends `CloseTab` while the shared server is still
+writable, then rerun this scenario through browser A post-C-close and final
+server-process cleanup.
+
+## Completion Review
+
+Fresh-context adversarial completion review by Codex subagent `Feynman the 2nd`:
+
+- **Verdict:** Approved.
+- **Required findings:** None.
+- **Evidence checked by reviewer:** last commit was still the plan commit
+  `bc0a7a5df`; only the Issue 818 docs and harness were modified;
+  `bash -n scripts/ghostboard-geometry-matrix.sh` and `git diff --check` passed;
+  README marks Experiment 3 as `Partial`; this experiment file has Result and
+  Conclusion; harness assertions are non-vacuous for same-profile reuse, no
+  second default-profile spawn, browser B close/removal, browser A post-B-close
+  routing, browser C reopen identity freshness, browser C reuse, and browser C
+  routing.
+- **Runtime-log check:** The reviewer confirmed browser C `ctrl+w` produced the
+  AppKit key equivalent at app log lines 2980-2981, but no normal `CloseTab` for
+  pane `391FD398-3785-4304-ABCE-C7D28638785C` / tab `3`; later teardown logged
+  `TUI disconnect cleanup` at line 3058 and
+  `CloseTab send failed ... NotOpenForWriting` at line 3067.

@@ -42,4 +42,4 @@ process exit.
 - [Experiment 2: Prove multi-profile isolation](02-prove-multi-profile-isolation.md)
   — **Pass**
 - [Experiment 3: Prove same-profile server reuse and cleanup](03-prove-same-profile-server-reuse-cleanup.md)
-  — **Designed**
+  — **Partial**
