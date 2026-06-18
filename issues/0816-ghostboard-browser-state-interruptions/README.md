@@ -1,6 +1,7 @@
 +++
-status = "open"
+status = "closed"
 opened = "2026-06-17"
+closed = "2026-06-18"
 +++
 
 # Issue 816: Ghostboard Browser State and Interruption Walkthrough
@@ -55,3 +56,30 @@ owning component before any fix.
   **Pass**
 - [Experiment 7: Prove copy-current-URL](07-prove-copy-current-url.md) —
   **Pass**
+
+## Conclusion
+
+Issue 816 is closed. The walkthrough proved the medium-likelihood browser-state
+and interruption gaps from Issue 810 under the current debug Ghostboard +
+webtui + Roamium path.
+
+The final coverage is:
+
+- loading state, including the initially missing first `loading` event;
+- page title updates;
+- hover target URL;
+- console messages;
+- target blank navigation;
+- refresh/reload;
+- default white page background;
+- JavaScript `alert`, `confirm`, `prompt`, and `beforeunload` flows;
+- HTTP auth success, cancel, post-cancel recovery, and password non-leakage;
+- renderer crash state and recovery;
+- runtime color scheme changes; and
+- Cmd+C copy-current-URL with Ghostboard feedback plus Browse-mode
+  non-interference.
+
+The main ownership finding is that most browser-state and interruption flows are
+normal direct webtui/Roamium behavior after `BrowserReady`, while the macOS
+Cmd+C current-URL path must be Ghostboard-owned because AppKit can consume the
+key before webtui sees it.
