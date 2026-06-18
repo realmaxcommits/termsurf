@@ -1,6 +1,7 @@
 +++
-status = "open"
+status = "closed"
 opened = "2026-06-17"
+closed = "2026-06-18"
 +++
 
 # Issue 818: Ghostboard Profile, Tab, and Lifecycle Matrix
@@ -51,3 +52,47 @@ process exit.
   — **Pass**
 - [Experiment 7: Prove visible profile identity](07-prove-visible-profile-identity.md)
   — **Pass**
+
+## Conclusion
+
+Issue 818 is closed. The Ghostboard profile, tab, pane, DevTools, reconnect,
+close/reopen, and lifecycle matrix is now covered by focused runtime proofs and
+targeted fixes.
+
+Final coverage:
+
+- multi-profile isolation: Experiment 2 proved distinct profile server keys,
+  Roamium processes, profile-specific user-data directories, storage isolation,
+  and input routing isolation;
+- multi-tab routing: Experiment 1 carried forward the passing native-tab routing
+  rows, and Experiments 3 and 4 proved same-profile A/B/C native-tab routing
+  through close and reopen;
+- same-profile server reuse, normal close/reopen, stale tab cleanup, and final
+  process cleanup: Experiments 3 and 4 proved reuse, exposed/fixed the
+  native-tab close cleanup path, prevented late closed-pane `SetOverlay`
+  recreation, removed closed tabs in Roamium, and proved the final shared
+  Roamium pid exited after the last browser closed;
+- multi-pane routing: Experiment 5 proved two simultaneous browser panes in one
+  split route mouse and keyboard input independently;
+- warm reconnect: Experiment 6 proved TUI disconnect cleanup, shared server
+  preservation, and later reconnect on the warm server;
+- DevTools target lookup: Experiment 1 carried forward the passing
+  `devtools-singleton-guard` runtime row from the baseline matrix;
+- user-visible profile identity: Experiment 7 proved the rendered webtui
+  viewport identity label for default profile, non-default profile, and DevTools
+  inspected-tab identity.
+
+The main source fixes made during this issue were:
+
+- Ghostboard native tab-close cleanup now sends `CloseTab` while the shared
+  profile server is writable and keeps the server alive until the final pane
+  closes.
+- Roamium now keeps browser FFI handles in a tab table so `CloseTab` can destroy
+  the correct tab by id.
+- webtui now traces the same identity label string it renders in the viewport
+  footer, enabling durable regression coverage for visible profile identity.
+
+The remaining cleanup noise observed in some harness runs is process-teardown
+related and is not part of Issue 818's lifecycle invariants. Future work should
+track that as a separate issue only if it becomes user-visible or blocks
+automated runs.
