@@ -41,3 +41,5 @@ benchmarks.
   — **Partial**
 - [Experiment 2: Unblock pointer-dependent diagnostics](02-unblock-pointer-dependent-diagnostics.md)
   — **Partial**
+- [Experiment 3: Add non-pointer performance diagnostics](03-add-non-pointer-performance-diagnostics.md)
+  — **Designed**
