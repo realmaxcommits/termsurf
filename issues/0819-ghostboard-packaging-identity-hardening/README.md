@@ -46,3 +46,5 @@ Verification should include:
   **Pass**
 - [Experiment 6: Align config path documentation](06-align-config-path-documentation.md)
   — **Pass**
+- [Experiment 7: Add Ghostboard script component](07-add-ghostboard-script-component.md)
+  — **Designed**
