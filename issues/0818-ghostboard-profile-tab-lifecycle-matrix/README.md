@@ -45,3 +45,5 @@ process exit.
   — **Partial**
 - [Experiment 4: Fix native tab-close TermSurf cleanup](04-fix-native-tab-close-termsurf-cleanup.md)
   — **Pass**
+- [Experiment 5: Prove two-browser split-pane routing](05-prove-two-browser-split-routing.md)
+  — **Designed**
