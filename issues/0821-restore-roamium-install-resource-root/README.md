@@ -104,4 +104,5 @@ installed Roamium path.
 ## Experiments
 
 - [Experiment 1: Copy Generated Resource Packs](01-copy-generated-resource-packs.md)
-  — **Designed**
+  — **Partial** (packaging paths fixed; privileged default install and GUI
+  startup still need sudo-capable verification)

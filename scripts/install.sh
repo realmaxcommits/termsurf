@@ -4,6 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_DIR="$(dirname "$SCRIPT_DIR")"
 CHROMIUM_OUT="$REPO_DIR/chromium/src/out/Default"
+source "$SCRIPT_DIR/roamium-resources.sh"
 LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/LaunchServices.framework/Versions/A/Support/lsregister"
 GHOSTBOARD_RELEASE_APP="$REPO_DIR/ghostboard/macos/build/Release/TermSurf Ghostboard.app"
 APPLICATIONS_DIR="${TERMSURF_APPLICATIONS_DIR:-/Applications}"
@@ -67,13 +68,7 @@ install_roamium() {
   mkdir -p "$INSTALL_DIR"
   cp "$ROAMIUM_SRC" "$INSTALL_DIR/roamium"
 
-  echo "==> Copying dylibs..."
-  cp "$CHROMIUM_OUT"/*.dylib "$INSTALL_DIR/"
-
-  echo "==> Copying resources..."
-  cp "$CHROMIUM_OUT"/*.pak "$INSTALL_DIR/"
-  cp "$CHROMIUM_OUT/icudtl.dat" "$INSTALL_DIR/"
-  cp "$CHROMIUM_OUT"/v8_context_snapshot*.bin "$INSTALL_DIR/"
+  copy_roamium_runtime_resources "$CHROMIUM_OUT" "$INSTALL_DIR"
 
   echo "==> Codesigning Roamium..."
   codesign --force --sign - "$INSTALL_DIR/roamium" || true

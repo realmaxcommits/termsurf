@@ -7,6 +7,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_DIR="$(dirname "$SCRIPT_DIR")"
+source "$SCRIPT_DIR/roamium-resources.sh"
 VERSION="${1:-0.1.0}"
 ARCH="aarch64-apple-darwin"
 TARBALL_NAME="termsurf-${VERSION}-${ARCH}.tar.gz"
@@ -41,11 +42,7 @@ cp "$REPO_DIR/wezboard/target/release/wezboard" "$STAGING_DIR/"
 cp "$REPO_DIR/target/release/roamium" "$STAGING_DIR/roamium/"
 
 # Copy Chromium dylibs and resources
-echo "==> Copying Chromium dylibs and resources..."
-cp "$CHROMIUM_OUT"/*.dylib "$STAGING_DIR/roamium/"
-cp "$CHROMIUM_OUT"/*.pak "$STAGING_DIR/roamium/"
-cp "$CHROMIUM_OUT/icudtl.dat" "$STAGING_DIR/roamium/"
-cp "$CHROMIUM_OUT"/v8_context_snapshot*.bin "$STAGING_DIR/roamium/"
+copy_roamium_runtime_resources "$CHROMIUM_OUT" "$STAGING_DIR/roamium"
 
 # Copy .app bundle
 echo "==> Copying Wezboard.app..."
@@ -69,6 +66,12 @@ tar czf "$REPO_DIR/dist/$TARBALL_NAME" .
 # Compute SHA256
 SHA=$(shasum -a 256 "$REPO_DIR/dist/$TARBALL_NAME" | awk '{print $1}')
 echo "==> SHA256: $SHA"
+
+if [ "${TERMSURF_RELEASE_PACKAGE_ONLY:-0}" = "1" ]; then
+  echo "==> Package-only mode: skipping GitHub upload and Homebrew cask update."
+  echo "==> Tarball: dist/$TARBALL_NAME"
+  exit 0
+fi
 
 # Upload to GitHub (delete old release if it exists)
 echo "==> Uploading to GitHub..."
