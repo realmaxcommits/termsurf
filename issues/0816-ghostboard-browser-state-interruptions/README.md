@@ -45,3 +45,5 @@ owning component before any fix.
   `loading`)
 - [Experiment 2: Fix initial loading-state start](02-fix-initial-loading-state-start.md)
   — **Pass**
+- [Experiment 3: Prove JavaScript dialog runtime flow](03-prove-javascript-dialogs.md)
+  — **Designed**
