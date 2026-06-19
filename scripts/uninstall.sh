@@ -67,7 +67,7 @@ uninstall_ghostboard() {
   if [ "$COMPONENT" = "ghostboard" ]; then
     APP_DIR="$APPLICATIONS_DIR"
   fi
-  local APP="$APP_DIR/TermSurf Ghostboard.app"
+  local APP="$APP_DIR/TermSurf.app"
 
   echo "==> Uninstalling Ghostboard..."
   rm -rf "$APP"

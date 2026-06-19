@@ -6,7 +6,7 @@ REPO_DIR="$(dirname "$SCRIPT_DIR")"
 CHROMIUM_OUT="$REPO_DIR/chromium/src/out/Default"
 source "$SCRIPT_DIR/roamium-resources.sh"
 LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/LaunchServices.framework/Versions/A/Support/lsregister"
-GHOSTBOARD_RELEASE_APP="$REPO_DIR/ghostboard/macos/build/Release/TermSurf Ghostboard.app"
+GHOSTBOARD_RELEASE_APP="$REPO_DIR/ghostboard/macos/build/Release/TermSurf.app"
 APPLICATIONS_DIR="${TERMSURF_APPLICATIONS_DIR:-/Applications}"
 ROAMIUM_INSTALL_DIR="${TERMSURF_ROAMIUM_INSTALL_DIR:-/opt/homebrew/opt/termsurf-roamium}"
 
@@ -18,7 +18,7 @@ if [ -z "$COMPONENT" ]; then
   exit 1
 fi
 
-if [ "$COMPONENT" = "ghostboard" ] && [ ! -x "$GHOSTBOARD_RELEASE_APP/Contents/MacOS/ghostboard" ]; then
+if [ "$COMPONENT" = "ghostboard" ] && [ ! -x "$GHOSTBOARD_RELEASE_APP/Contents/MacOS/termsurf" ]; then
   echo "Error: Release app not found at $GHOSTBOARD_RELEASE_APP"
   echo "Run: scripts/build.sh ghostboard --release"
   exit 1
@@ -119,9 +119,9 @@ install_ghostboard() {
   if [ "$COMPONENT" = "ghostboard" ]; then
     APP_DIR="$APPLICATIONS_DIR"
   fi
-  local APP="$APP_DIR/TermSurf Ghostboard.app"
+  local APP="$APP_DIR/TermSurf.app"
 
-  if [ ! -x "$APP_SRC/Contents/MacOS/ghostboard" ]; then
+  if [ ! -x "$APP_SRC/Contents/MacOS/termsurf" ]; then
     echo "Error: Release app not found at $APP_SRC"
     echo "Run: scripts/build.sh ghostboard --release"
     exit 1

@@ -136,10 +136,10 @@ build_ghostboard() {
   echo "==> Building Ghostboard ($CONFIGURATION)..."
   ./build.nu --configuration "$CONFIGURATION" --action build
   if $RELEASE; then
-    codesign --force --deep --sign - "build/$CONFIGURATION/TermSurf Ghostboard.app"
+    codesign --force --deep --sign - "build/$CONFIGURATION/TermSurf.app"
   fi
-  echo "  Ghostboard: $REPO_DIR/ghostboard/macos/build/$CONFIGURATION/TermSurf Ghostboard.app"
-  echo "  Ghostboard executable: $REPO_DIR/ghostboard/macos/build/$CONFIGURATION/TermSurf Ghostboard.app/Contents/MacOS/ghostboard"
+  echo "  Ghostboard: $REPO_DIR/ghostboard/macos/build/$CONFIGURATION/TermSurf.app"
+  echo "  Ghostboard executable: $REPO_DIR/ghostboard/macos/build/$CONFIGURATION/TermSurf.app/Contents/MacOS/termsurf"
 }
 
 case "$COMPONENT" in
