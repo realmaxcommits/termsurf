@@ -238,3 +238,175 @@ Required findings and fixes:
 The first re-review confirmed that failure evidence extraction was reachable but
 still required current-run artifact correlation. The final re-review approved
 the marker-based artifact capture and found no remaining required findings.
+
+## Result
+
+**Result:** Partial
+
+The remaining matrix resumed from the first row after
+`display-move-backing-scale` with `TERMSURF_GHOSTBOARD_APP`, `TERMSURF_WEB`,
+`TERMSURF_ROAMIUM`, and `TERMSURF_INSTALLED_ROAMIUM` unset.
+
+Summary log:
+
+```text
+logs/issue-0826-exp11-remaining-matrix-summary-20260619-132215.log
+```
+
+Passed rows:
+
+- `fullscreen-unfullscreen`
+- `minimize-hide-restore`
+- `font-size-cell-metrics`
+- `tui-overlay-resize-command`
+- `terminal-scrollback-movement`
+
+First failing row:
+
+- `browser-navigation-geometry`
+
+Summary evidence:
+
+```text
+RUN fullscreen-unfullscreen
+RESULT fullscreen-unfullscreen PASS
+RUN minimize-hide-restore
+RESULT minimize-hide-restore PASS
+RUN font-size-cell-metrics
+RESULT font-size-cell-metrics PASS
+RUN tui-overlay-resize-command
+RESULT tui-overlay-resize-command PASS
+RUN terminal-scrollback-movement
+RESULT terminal-scrollback-movement PASS
+RUN browser-navigation-geometry
+FAIL: missing Roamium received Navigate for browser tab
+RESULT browser-navigation-geometry FAIL exit=1
+```
+
+Current-run artifact capture worked and recorded required harness, app, and
+Roamium paths for every attempted row in:
+
+```text
+logs/issue-0826-exp11-artifacts.log
+```
+
+The failing row artifacts are:
+
+```text
+FAILED_SCENARIO=browser-navigation-geometry
+FAILED_APP_LOG=logs/ghostboard-geometry-browser-navigation-geometry-app-20260619-132359.log
+FAILED_HARNESS_LOG=logs/ghostboard-geometry-browser-navigation-geometry-harness-20260619-132359.log
+FAILED_ROAMIUM_TRACE=logs/ghostboard-geometry-browser-navigation-geometry-roamium-20260619-132359.log
+```
+
+Focused failure evidence was written to:
+
+```text
+logs/issue-0826-exp11-failure-artifacts.log
+logs/issue-0826-exp11-failure-evidence.log
+logs/issue-0826-exp11-failure-roamium-evidence.log
+logs/issue-0826-exp11-navigation-focused-evidence.log
+```
+
+The failing harness reached the navigation test with stable baseline overlay
+identity:
+
+```text
+navigation_baseline_window_id=13432
+navigation_baseline_surface_id=7EA5BCA6-2C9C-4E7B-9151-68498FA993DB
+navigation_baseline_selected_tab_id=13432
+navigation_baseline_pane_id=7EA5BCA6-2C9C-4E7B-9151-68498FA993DB
+navigation_baseline_browser_tab_id=1
+navigation_baseline_context_id=4032185689
+navigation_baseline_grid=158x43+1+1
+navigation_baseline_frame={{8, 17}, {1264, 731}}
+navigation_baseline_appkit_pixel=2528x1462
+navigation_append_command_text=?termsurf_issue809_exp23=20260619-132359
+navigation_edit_key=shift+a=edit-url-end
+FAIL: missing Roamium received Navigate for browser tab
+```
+
+The app log shows that Chromium did navigate after the edit-key step:
+
+```text
+[termsurf-pdf] navigation-throttles frame_tree_node_id=1 url=https://example.com/?termsurf_issue809_exp23=20260619-132359 ...
+info(termsurf): TermSurf message decoded type=UrlChanged
+info(termsurf): TermSurf message decoded type=TargetUrlChanged
+```
+
+The app log also shows the browser entered Browse mode after the navigation
+sequence:
+
+```text
+info(termsurf): ModeChanged: pane_id=7EA5BCA6-2C9C-4E7B-9151-68498FA993DB browsing=true
+info(termsurf): FocusChanged: pane_id=7EA5BCA6-2C9C-4E7B-9151-68498FA993DB tab_id=1 focused=true
+```
+
+But the Roamium trace for that run contains resize, mouse, and focus evidence
+only; it does not contain the expected `navigate tab=1 pane=... url=...` line:
+
+```text
+roamium resize tab_id=1 pane_id=7EA5BCA6-2C9C-4E7B-9151-68498FA993DB pixel_width=2528 pixel_height=1462 ...
+roamium mouse-event tab=1 pane=7EA5BCA6-2C9C-4E7B-9151-68498FA993DB ...
+roamium focus-changed tab=1 pane=7EA5BCA6-2C9C-4E7B-9151-68498FA993DB ffi=ts_set_focus focused=false
+roamium focus-changed tab=1 pane=7EA5BCA6-2C9C-4E7B-9151-68498FA993DB ffi=ts_set_focus focused=true
+```
+
+This means the row failed specifically at the expected Roamium `Navigate` trace
+evidence. The current evidence does not yet prove whether the product failed to
+send a `Navigate` message, Roamium performed navigation through a different path
+than the trace expects, or the inherited harness expectation is stale for the
+current webtui/Ghostboard navigation flow.
+
+Final checks:
+
+- `bash -n scripts/ghostboard-geometry-matrix.sh` passed.
+- Prettier passed for the issue README and this experiment file.
+- `git diff --check` passed.
+- Cleanup left no stale matching app, web, or Roamium processes:
+  `logs/issue-0826-exp11-post-cleanup-processes.log` is empty.
+- Forbidden product/source paths are clean:
+  `logs/issue-0826-exp11-forbidden-top-status.log` is empty.
+- The nested Chromium checkout is clean:
+  - `logs/issue-0826-exp11-chromium-status.log` is empty.
+  - `logs/issue-0826-exp11-chromium-diff-name-only.log` is empty.
+- `logs/issue-0826-exp11-git-diff-name-only.log` contains only the issue README
+  and Experiment 11 result documentation changes.
+
+## Conclusion
+
+Experiment 11 proved five more post-display viewport rows on the updated
+Ghostboard build. It stopped at the first remaining failure,
+`browser-navigation-geometry`, where the page appears to navigate and app-side
+URL state changes arrive, but the inherited harness does not see the expected
+Roamium `navigate` trace.
+
+The next experiment should localize `browser-navigation-geometry` before any
+product change: determine whether `shift+a=edit-url-end` is expected to produce
+a TermSurf `Navigate` message in the current webtui flow, whether Ghostboard
+sends such a message to Roamium, and whether Roamium should trace that path.
+
+## Completion Review
+
+An adversarial Codex subagent reviewed the completed experiment with fresh
+context.
+
+**Verdict:** Approved.
+
+Required findings: none.
+
+Optional finding and fix:
+
+- The result initially said `logs/issue-0826-exp11-git-diff-name-only.log`
+  contained only the README status change, but the result documentation itself
+  was added after that log was captured. Fixed by regenerating the diff-name log
+  after result recording and updating the final-check note to say it contains
+  only the issue README and Experiment 11 result documentation changes.
+
+The reviewer independently verified that
+`bash -n scripts/ghostboard-geometry-matrix.sh` and `git diff --check` passed,
+that the result commit had not already been made, that the summary log shows
+five passing rows followed by the first failure at
+`browser-navigation-geometry`, that the failure evidence matches the missing
+Roamium `Navigate` trace, and that forbidden product/source paths, cleanup logs,
+and Chromium scope logs are clean.
