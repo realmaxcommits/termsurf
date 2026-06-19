@@ -1,6 +1,7 @@
 +++
-status = "open"
+status = "closed"
 opened = "2026-06-19"
+closed = "2026-06-19"
 +++
 
 # Issue 827: Ghostboard TermSurf Icon
@@ -97,3 +98,29 @@ Do not create experiments upfront. Design Experiment 1 after this issue is open.
 
 - [Experiment 1: Replace Ghostboard icon assets with the TermSurf logo](01-replace-ghostboard-icon-assets.md)
   — **Pass**
+
+## Conclusion
+
+Ghostboard now uses the same TermSurf wave/prompt logo as Wezboard for its macOS
+app icon source assets and in-app icon image source assets.
+
+Experiment 1 replaced the inherited `$W` artwork in:
+
+```text
+ghostboard/macos/Assets.xcassets/TermSurf.appiconset/
+ghostboard/macos/Assets.xcassets/AppIconImage.imageset/
+```
+
+The replacement assets were generated from the existing Wezboard TermSurf icon:
+
+```text
+wezboard/assets/macos/TermSurf Wezboard.app/Contents/Resources/wezboard.icns
+```
+
+Verification rebuilt the release `TermSurf.app`, inspected the generated
+`TermSurf.icns` directly with `iconutil`, confirmed `Assets.car` contains both
+`TermSurf` and `AppIconImage` renditions, and installed Ghostboard into a
+temporary Applications directory. The checks inspect bundle resources directly
+instead of relying on Finder, Dock, or LaunchServices icon caches.
+
+Issue 827 is closed.
