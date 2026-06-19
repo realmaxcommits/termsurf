@@ -1,6 +1,7 @@
 +++
-status = "open"
+status = "closed"
 opened = "2026-06-19"
+closed = "2026-06-19"
 +++
 
 # Issue 823: Ghostboard Split Pane Border Configuration
@@ -178,3 +179,16 @@ config and split-view structure before editing code.
 
 - [Experiment 1: Port split pane border config](01-port-split-pane-border-config.md)
   — **Pass**
+
+## Conclusion
+
+Ghostboard now restores the legacy split-pane border configuration behavior on
+macOS. The implementation adds the legacy config keys, clamps border width and
+unfocused saturation, bridges the settings into Swift, draws focused and
+unfocused split borders with hit testing disabled, insets terminal/progress
+content by the border width, and preserves browser overlay geometry in split
+layouts.
+
+Experiment 1 verified enabled, clamped, disabled, missing-color,
+browser-overlay, hit-test, focus-switch, and adjacent no-border regression
+cases. The completion review approved the result with no findings.
