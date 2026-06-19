@@ -1,6 +1,7 @@
 +++
-status = "open"
+status = "closed"
 opened = "2026-06-19"
+closed = "2026-06-19"
 +++
 
 # Issue 825: Frontend Status Documentation
@@ -66,3 +67,15 @@ referenced as history, but should not be rewritten.
 
 - [Experiment 1: Update frontend status docs](01-update-frontend-status-docs.md)
   — **Pass**
+
+## Conclusion
+
+Issue 825 is closed. Current mutable documentation now identifies Ghostboard as
+the primary TermSurf frontend, Wezboard as deprecated/reference code, and
+Roastty as a proof-of-concept rather than the production path.
+
+The root development guide, README, historical prototype docs, vendor notes,
+Ghostboard-local build notes, and the open Surfari issue were updated. Closed
+issue records were not modified. Verification passed for stale-status greps,
+open issue greps, closed issue guard, markdown formatting, `AGENTS.md` /
+`CLAUDE.md` consistency, and `git diff --check`.
