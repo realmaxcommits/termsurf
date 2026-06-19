@@ -89,3 +89,8 @@ in a predictable location.
 ## Notes
 
 Do not create experiments upfront. Design Experiment 1 after this issue is open.
+
+## Experiments
+
+- [Experiment 1: Align Ghostboard cask packaging](01-align-ghostboard-cask-packaging.md)
+  — **Designed**
