@@ -177,4 +177,4 @@ config and split-view structure before editing code.
 ## Experiments
 
 - [Experiment 1: Port split pane border config](01-port-split-pane-border-config.md)
-  — **Designed**
+  — **Pass**

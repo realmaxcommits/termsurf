@@ -75,10 +75,10 @@ extension Ghostty {
             saturation: Double,
             focusedColorPresent: Bool,
             unfocusedColorPresent: Bool,
-            borderDrawn: Bool,
-            colorKey: String
+            borderDrawn: Bool
         ) {
 #if canImport(AppKit)
+            let colorKey = isFocused ? "focused-split-border-color" : "unfocused-split-border-color"
             termsurfLogGeometry(
                 "layer=appkit event=split_border_config scenario=\(termsurfGeometryScenario()) identity=\(surfaceView.termSurfGeometryIdentity(browserTabID: "unknown:split-border")) is_split=\(isSplit) focused=\(isFocused) border_width=\(configNumber(borderWidth)) focused_color_present=\(focusedColorPresent) unfocused_color_present=\(unfocusedColorPresent) saturation=\(configNumber(saturation)) border_drawn=\(borderDrawn) border_color_key=\(colorKey) note=swift-config-bridge")
 #endif
@@ -306,17 +306,16 @@ extension Ghostty {
                     let borderColor = isFocused ? focusedColor : unfocusedColor
                     let colorKey = isFocused ? "focused-split-border-color" : "unfocused-split-border-color"
                     let borderDrawn = borderWidth > 0 && borderColor != nil
-                    let _ = traceSplitBorderConfig(
+                    let _: Void = traceSplitBorderConfig(
                         isFocused: isFocused,
                         borderWidth: borderWidth,
                         saturation: ghostty.config.unfocusedSplitSaturation,
                         focusedColorPresent: focusedColor != nil,
                         unfocusedColorPresent: unfocusedColor != nil,
-                        borderDrawn: borderDrawn,
-                        colorKey: colorKey
+                        borderDrawn: borderDrawn
                     )
                     if borderDrawn, let color = borderColor {
-                        let _ = traceSplitBorderDraw(
+                        let _: Void = traceSplitBorderDraw(
                             isFocused: isFocused,
                             borderWidth: borderWidth,
                             colorKey: colorKey

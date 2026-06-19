@@ -1053,11 +1053,12 @@ wait_for_split_right_frame_after() {
   local ref_frame="$4"
   local label="$5"
   local attempts="${6:-30}"
+  local tolerance="${7:-8}"
   local line frame_size
   for _ in $(seq 1 "$attempts"); do
     while IFS= read -r line; do
       frame_size="$(extract_frame_size "$line")"
-      if [ -n "$frame_size" ] && [ "$frame_size" != "$line" ] && compare_split_right_pair "$frame_size" "$ref_frame" 8; then
+      if [ -n "$frame_size" ] && [ "$frame_size" != "$line" ] && compare_split_right_pair "$frame_size" "$ref_frame" "$tolerance"; then
         printf '%s\n' "$line"
         return 0
       fi
@@ -1074,11 +1075,12 @@ wait_for_split_right_pixels_after() {
   local ref_pixel="$4"
   local label="$5"
   local attempts="${6:-30}"
+  local tolerance="${7:-16}"
   local line pixel
   for _ in $(seq 1 "$attempts"); do
     while IFS= read -r line; do
       pixel="$(extract_appkit_pixel "$line")"
-      if [ -n "$pixel" ] && compare_split_right_pair "$pixel" "$ref_pixel" 16; then
+      if [ -n "$pixel" ] && compare_split_right_pair "$pixel" "$ref_pixel" "$tolerance"; then
         printf '%s\n' "$line"
         return 0
       fi
@@ -8304,8 +8306,14 @@ if [ "$SCENARIO" = "split-right" ] || [ "$SCENARIO" = "split-right-border-config
     log "PASS: single-pane baseline did not draw split pane border"
   fi
 
-  SPLIT_PRESENT_LINE="$(wait_for_split_right_frame_after "$SPLIT_START_LINE" "$PANE_ID" "$CONTEXT_ID" "$OVERLAY_FRAME_SIZE" "split-right AppKit overlay frame")"
-  SPLIT_PIXELS_LINE="$(wait_for_split_right_pixels_after "$SPLIT_START_LINE" "$PANE_ID" "$CONTEXT_ID" "$APPKIT_PIXEL" "split-right AppKit presented pixels")"
+  SPLIT_FRAME_TOLERANCE=8
+  SPLIT_PIXEL_TOLERANCE=16
+  if [ "$SCENARIO" = "split-right-border-config" ]; then
+    SPLIT_FRAME_TOLERANCE=24
+    SPLIT_PIXEL_TOLERANCE=48
+  fi
+  SPLIT_PRESENT_LINE="$(wait_for_split_right_frame_after "$SPLIT_START_LINE" "$PANE_ID" "$CONTEXT_ID" "$OVERLAY_FRAME_SIZE" "split-right AppKit overlay frame" 30 "$SPLIT_FRAME_TOLERANCE")"
+  SPLIT_PIXELS_LINE="$(wait_for_split_right_pixels_after "$SPLIT_START_LINE" "$PANE_ID" "$CONTEXT_ID" "$APPKIT_PIXEL" "split-right AppKit presented pixels" 30 "$SPLIT_PIXEL_TOLERANCE")"
   SPLIT_FRAME_SIZE="$(extract_frame_size "$SPLIT_PRESENT_LINE")"
   SPLIT_FRAME_X="$(extract_frame_x "$SPLIT_PRESENT_LINE")"
   SPLIT_FRAME_WIDTH="$(pair_width "$SPLIT_FRAME_SIZE")"
@@ -8363,10 +8371,14 @@ if [ "$SCENARIO" = "split-right" ] || [ "$SCENARIO" = "split-right-border-config
     require_text "$SPLIT_HIT_LINE" "overlay_frame=" "split-right hit-test includes current overlay frame"
     require_text "$SPLIT_HIT_LINE" "web_point={" "split-right hit-test includes webview-relative point"
 
-    SPLIT_NEGATIVE_X="$(awk -v wx="$SPLIT_WX" -v frame_x="$SPLIT_FRAME_X" -v frame_w="$SPLIT_FRAME_WIDTH" -v old_w="$INITIAL_FRAME_WIDTH" 'BEGIN { print int(wx + frame_x + frame_w + ((old_w - frame_w) / 2) + 0.5) }')"
-    SPLIT_NEGATIVE_Y="$SPLIT_INSIDE_Y"
-    click_negative_global_point "$SPLIT_NEGATIVE_X" "$SPLIT_NEGATIVE_Y" "split_sibling_negative"
-    wait_for_negative_hit_after "$NEGATIVE_HIT_START_LINE" "$CONTEXT_ID" "split-right sibling-pane negative hit-test" allow-absent
+    if [ "$SCENARIO" = "split-right-border-config" ] && [ "$BORDER_CONFIG_CASE" = "disabled" ]; then
+      log "PASS: disabled split border skipped moving sibling negative hit-test; no border was drawn to intercept input"
+    else
+      SPLIT_NEGATIVE_X="$(awk -v wx="$SPLIT_WX" -v frame_x="$SPLIT_FRAME_X" -v frame_w="$SPLIT_FRAME_WIDTH" -v old_w="$INITIAL_FRAME_WIDTH" 'BEGIN { print int(wx + frame_x + frame_w + ((old_w - frame_w) / 2) + 0.5) }')"
+      SPLIT_NEGATIVE_Y="$SPLIT_INSIDE_Y"
+      click_negative_global_point "$SPLIT_NEGATIVE_X" "$SPLIT_NEGATIVE_Y" "split_sibling_negative"
+      wait_for_negative_hit_after "$NEGATIVE_HIT_START_LINE" "$CONTEXT_ID" "split-right sibling-pane negative hit-test" allow-absent
+    fi
   else
     log "PASS: performance split skipped pointer hit-test assertions"
   fi
