@@ -157,3 +157,106 @@ The optional process-detection finding was also addressed by replacing broad
 The re-review approved the design with no required findings. Its optional
 finding was adopted by repeating the absolute `APP` assignment in the process
 check and quit command blocks, so each block can run in a fresh shell.
+
+## Result
+
+**Result:** Pass
+
+The merged app bundle from Experiment 3 exists and can be launched by absolute
+path on this macOS VM.
+
+Preflight observations:
+
+- `git status --short` was clean before the launch run.
+- `CFBundleIdentifier` is `com.termsurf.ghostboard.debug`.
+- `CFBundleExecutable` is `ghostboard`.
+- `CFBundleName` and `CFBundleDisplayName` are both `TermSurf Ghostboard`.
+
+Launch command:
+
+```bash
+APP="$PWD/ghostboard/macos/build/Debug/TermSurf Ghostboard.app"
+osascript -e "tell application \"$APP\" to activate" \
+  > logs/issue-0826-exp04-launch.log 2>&1
+```
+
+The launch command exited `0` and produced an empty launch log.
+
+Process check:
+
+```text
+21266 /Users/astrohack /Users/astrohacker/dev/termsurf/ghostboard/macos/build/Debug/TermSurf Ghostboard.app/Contents/MacOS/ghostboard
+```
+
+The running process came from the built app bundle path, so the test did not
+accidentally target another installed application.
+
+The unified log was captured with `/usr/bin/log` after the shell builtin name
+collision made plain `log show ...` fail with `zsh:log:5: too many arguments`.
+The corrected log capture is in `logs/issue-0826-exp04-system.log`.
+
+Important unified-log observations:
+
+- LaunchServices registered `TermSurf Ghostboard`.
+- RunningBoard checked launch for the exact built executable path.
+- macOS reported the executable, debug dylib, DockTile plugin, and Sparkle
+  framework as adhoc signed. This is expected for the local Debug build and did
+  not block launch.
+- The app checked in, stayed alive long enough for inspection, and later logged
+  normal AppKit termination after the quit command.
+- Sentry wrote a crash envelope at
+  `/Users/astrohacker/.local/state/ghostty/crash/5e76317e-6ced-4afa-b2e7-53378676c2ba.ghosttycrash`.
+  The envelope was created during this launch, but its embedded event timestamp
+  was `2026-06-19T14:10:34.051349Z`, earlier than this launch window, and the
+  process remained alive until the explicit quit command. That makes it look
+  like a pending/stale fatal report was flushed during startup rather than this
+  launch crashing.
+
+Quit command:
+
+```bash
+APP="$PWD/ghostboard/macos/build/Debug/TermSurf Ghostboard.app"
+osascript -e "tell application \"$APP\" to quit" \
+  > logs/issue-0826-exp04-quit.log 2>&1
+```
+
+The quit command exited `0` and produced an empty quit log. A post-quit process
+check found no remaining built-app process.
+
+Verification artifacts:
+
+- `logs/issue-0826-exp04-launch.log`: empty.
+- `logs/issue-0826-exp04-process.log`: one matching built-app process.
+- `logs/issue-0826-exp04-system.log`: 499 unified-log lines.
+- `logs/issue-0826-exp04-quit.log`: empty.
+- `logs/issue-0826-exp04-post-quit-process.log`: empty.
+
+No source files were changed, so `zig fmt` and SwiftLint were skipped. Markdown
+formatting was run for this experiment file and the issue README.
+
+## Conclusion
+
+Basic macOS launch is proven for the merged Ghostboard tree: the Debug app
+bundle launches by absolute path, creates a running process from the built
+bundle, and quits cleanly without force-kill.
+
+This experiment also confirmed that identity is not yet at the issue target: the
+built bundle still presents as `TermSurf Ghostboard`, the bundle ID is
+`com.termsurf.ghostboard.debug`, and the executable is `ghostboard`. A later
+experiment must verify and fix app identity, CLI naming, and config path before
+the issue can be closed.
+
+## Result Review
+
+An adversarial Codex subagent reviewed the completed experiment with fresh
+context.
+
+**Verdict:** Approved.
+
+The reviewer reported no required, optional, or nit findings. It independently
+checked that only the two issue docs changed, the README status is `Pass`, the
+experiment contains `Result` and `Conclusion`, the recorded plist values match
+the built app, the logs support launch and clean quit from the built app path,
+and the Sentry envelope timestamp predates the launch window, making the
+stale-flush explanation justified. The reviewer also confirmed the result commit
+had not already been made.
