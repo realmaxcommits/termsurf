@@ -204,3 +204,134 @@ from the repo root and would write outside repo `logs/`. Fixed by moving the
 redirection inside the subshell.
 
 The final re-review approved the design with no required findings.
+
+## Result
+
+**Result:** Partial
+
+The required builds passed:
+
+- `cargo build -p webtui`
+  - Log: `logs/issue-0826-exp07-webtui-build.log`
+- `cd ghostboard && macos/build.nu --configuration Debug --action build`
+  - Log: `logs/issue-0826-exp07-macos-build.log`
+
+The inherited matrix was run with `TERMSURF_GHOSTBOARD_APP`, `TERMSURF_WEB`,
+`TERMSURF_ROAMIUM`, and `TERMSURF_INSTALLED_ROAMIUM` explicitly unset. The
+failure-safe loop stopped at the first failing row, as intended:
+
+```text
+SUMMARY=logs/issue-0826-exp07-viewport-matrix-summary-20260619-120602.log
+RUN initial-open
+RESULT initial-open PASS
+RUN window-resize
+RESULT window-resize PASS
+RUN split-right
+RESULT split-right PASS
+RUN split-down
+RESULT split-down PASS
+RUN split-right-resize
+RESULT split-right-resize PASS
+RUN split-right-equalize
+RESULT split-right-equalize PASS
+RUN split-right-zoom
+RESULT split-right-zoom PASS
+RUN split-right-close-sibling
+RESULT split-right-close-sibling FAIL exit=1
+```
+
+The passing rows used the renamed default app target and real browser path:
+
+```text
+app=/Users/astrohacker/dev/termsurf/ghostboard/macos/build/Debug/TermSurf.app
+web=/Users/astrohacker/dev/termsurf/target/debug/web
+roamium=/Users/astrohacker/dev/termsurf/chromium/src/out/Default/roamium
+url=https://example.com
+```
+
+### Per-Scenario Evidence
+
+| Scenario                    | Status | Harness log                                                                      | App log                                                                      | Roamium trace                                                                    | Screenshot                                                                          | Behavior covered                                  |
+| --------------------------- | ------ | -------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- | -------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- | ------------------------------------------------- |
+| `initial-open`              | Pass   | `logs/ghostboard-geometry-initial-open-harness-20260619-120602.log`              | `logs/ghostboard-geometry-initial-open-app-20260619-120602.log`              | `logs/ghostboard-geometry-initial-open-roamium-20260619-120602.log`              | `logs/ghostboard-geometry-initial-open-screenshot-20260619-120602.png`              | Baseline pane/browser identity and viewport fill. |
+| `window-resize`             | Pass   | `logs/ghostboard-geometry-window-resize-harness-20260619-120611.log`             | `logs/ghostboard-geometry-window-resize-app-20260619-120611.log`             | `logs/ghostboard-geometry-window-resize-roamium-20260619-120611.log`             | `logs/ghostboard-geometry-window-resize-screenshot-20260619-120611.png`             | Browser follows larger and smaller window sizes.  |
+| `split-right`               | Pass   | `logs/ghostboard-geometry-split-right-harness-20260619-120623.log`               | `logs/ghostboard-geometry-split-right-app-20260619-120623.log`               | `logs/ghostboard-geometry-split-right-roamium-20260619-120623.log`               | `logs/ghostboard-geometry-split-right-screenshot-20260619-120623.png`               | Browser follows horizontal split and hit-test.    |
+| `split-down`                | Pass   | `logs/ghostboard-geometry-split-down-harness-20260619-120704.log`                | `logs/ghostboard-geometry-split-down-app-20260619-120704.log`                | `logs/ghostboard-geometry-split-down-roamium-20260619-120704.log`                | `logs/ghostboard-geometry-split-down-screenshot-20260619-120704.png`                | Browser follows vertical split and hit-test.      |
+| `split-right-resize`        | Pass   | `logs/ghostboard-geometry-split-right-resize-harness-20260619-120746.log`        | `logs/ghostboard-geometry-split-right-resize-app-20260619-120746.log`        | `logs/ghostboard-geometry-split-right-resize-roamium-20260619-120746.log`        | `logs/ghostboard-geometry-split-right-resize-screenshot-20260619-120746.png`        | Browser follows divider resize.                   |
+| `split-right-equalize`      | Pass   | `logs/ghostboard-geometry-split-right-equalize-harness-20260619-120829.log`      | `logs/ghostboard-geometry-split-right-equalize-app-20260619-120829.log`      | `logs/ghostboard-geometry-split-right-equalize-roamium-20260619-120829.log`      | `logs/ghostboard-geometry-split-right-equalize-screenshot-20260619-120829.png`      | Browser follows split equalize/rebalance.         |
+| `split-right-zoom`          | Pass   | `logs/ghostboard-geometry-split-right-zoom-harness-20260619-120913.log`          | `logs/ghostboard-geometry-split-right-zoom-app-20260619-120913.log`          | `logs/ghostboard-geometry-split-right-zoom-roamium-20260619-120913.log`          | `logs/ghostboard-geometry-split-right-zoom-screenshot-20260619-120913.png`          | Browser follows zoom and unzoom.                  |
+| `split-right-close-sibling` | Fail   | `logs/ghostboard-geometry-split-right-close-sibling-harness-20260619-120928.log` | `logs/ghostboard-geometry-split-right-close-sibling-app-20260619-120928.log` | `logs/ghostboard-geometry-split-right-close-sibling-roamium-20260619-120928.log` | `logs/ghostboard-geometry-split-right-close-sibling-screenshot-20260619-120928.png` | Stable regression before sibling close.           |
+
+The first failure occurred in `split-right-close-sibling`. The harness timed out
+waiting for the split-right AppKit overlay frame immediately after injecting the
+configured split keybind:
+
+```text
+confirm_close_surface=false
+split_keybind=ctrl+d=new_split:right
+FAIL: timed out waiting for split-right AppKit overlay frame
+```
+
+The app log shows that the split key did not produce a split. Instead, the app
+cleared the existing browser overlay and then panicked after a failed browser
+`CloseTab` send:
+
+```text
+TermSurf geometry layer=zig event=clear_overlay_call ... pane_id=72840494-D9C9-4FF9-960F-4401E6BCBC7D ... note=calling-appkit-bridge
+warning(termsurf): CloseTab send failed pane_id=72840494-D9C9-4FF9-960F-4401E6BCBC7D err=error.NotOpenForWriting
+thread 5330052 panic: reached unreachable code
+```
+
+A standalone rerun of the same scenario reproduced the same failure mode:
+
+```text
+logs/issue-0826-exp07-split-right-close-sibling-rerun.log
+logs/ghostboard-geometry-split-right-close-sibling-harness-20260619-121040.log
+logs/ghostboard-geometry-split-right-close-sibling-app-20260619-121040.log
+```
+
+The rerun again timed out waiting for the split-right frame, while the app log
+again showed:
+
+```text
+TermSurf geometry layer=zig event=clear_overlay_call ... pane_id=B95F1E79-464B-49B4-94FE-878598F68E78 ... note=calling-appkit-bridge
+warning(termsurf): CloseTab send failed pane_id=B95F1E79-464B-49B4-94FE-878598F68E78 err=error.NotOpenForWriting
+thread 5332212 panic: reached unreachable code
+```
+
+Cleanup and hygiene checks passed after the failed matrix and rerun:
+
+- no stale matching `TermSurf.app/Contents/MacOS/termsurf`, `target/debug/web`,
+  or `chromium/src/out/Default/roamium` processes remained;
+- `bash -n scripts/ghostboard-geometry-matrix.sh` passed;
+- `git diff --check` passed;
+- top-level forbidden-path status for `webtui/`, `roamium/`,
+  `proto/termsurf.proto`, `chromium/README.md`, and `chromium/patches` was
+  empty;
+- nested `git -C chromium/src status --short` and
+  `git -C chromium/src diff --name-only` were empty;
+- there were no source changes in this experiment before result documentation
+  was recorded.
+
+## Result Review
+
+An adversarial Codex subagent reviewed the completed experiment with fresh
+context.
+
+**Verdict:** Approved.
+
+Findings: none.
+
+## Conclusion
+
+The updated Ghostboard preserved the inherited viewport behavior through initial
+open, window resize, horizontal split, vertical split, split divider resize,
+split equalize, and split zoom/unzoom. The first stable regression is
+`split-right-close-sibling`: while trying to create the split for that scenario,
+the app clears the browser overlay and panics on
+`CloseTab send failed ... error.NotOpenForWriting`.
+
+The next experiment should localize and fix why the split key path is being
+interpreted as browser overlay teardown or otherwise reaching `CloseTab` with a
+closed writer in this scenario. After that fix, rerun
+`split-right-close-sibling` and then resume the remaining inherited matrix rows.

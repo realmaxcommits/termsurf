@@ -196,4 +196,4 @@ previous experiment has produced a result.
 - [Experiment 6: Verify real Roamium overlay smoke](06-verify-real-roamium-overlay-smoke.md)
   — **Pass**
 - [Experiment 7: Run inherited viewport matrix](07-run-inherited-viewport-matrix.md)
-  — **Designed**
+  — **Partial**
