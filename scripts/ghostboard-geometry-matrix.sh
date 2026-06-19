@@ -17,6 +17,7 @@ INSTALLED_ROAMIUM="${TERMSURF_INSTALLED_ROAMIUM:-$ROAMIUM}"
 ROAMIUM_PATH_FOR_APP="$ROAMIUM"
 POINTER_DRIVER="${TERMSURF_GEOMETRY_POINTER_DRIVER:-cgevent}"
 URL="${TERMSURF_GEOMETRY_URL:-https://example.com}"
+BORDER_CONFIG_CASE="${TERMSURF_SPLIT_BORDER_CONFIG_CASE:-enabled}"
 HELLO_CONFIG_HOMEPAGE="${TERMSURF_HELLO_CONFIG_HOMEPAGE:-https://example.net/issue-815-homepage}"
 HELLO_CONFIG_SECOND_BROWSER="${TERMSURF_HELLO_CONFIG_SECOND_BROWSER:-debug-roamium}"
 URL_B="${TERMSURF_GEOMETRY_SECOND_URL:-https://example.org}"
@@ -1809,7 +1810,7 @@ devtools_overlay_probe() {
 }
 
 case "$SCENARIO" in
-  initial-open|launch-discovery-contract|named-roamium-debug-launch|named-roamium-invalid-env|installed-roamium-release-launch|hello-config-homepage|hello-config-browser-list|hello-empty-browser-list|ghostboard-config-paths|browser-state-smoke|browser-command-navigation|javascript-dialog-smoke|http-auth-smoke|renderer-crash-smoke|color-scheme-smoke|copy-current-url-smoke|browser-input-granularity|multi-profile-isolation|same-profile-server-lifecycle|tui-disconnect-reconnect|visible-profile-identity|two-browser-split-routing|window-resize|performance-window-resize|split-right|performance-split-right|split-down|split-right-resize|split-right-equalize|split-right-zoom|split-right-close-sibling|split-right-close-browser-pane|split-right-focus-switch|new-terminal-tab-visibility|open-browser-in-new-tab|close-browser-tab|open-browser-in-new-window|multiple-windows-with-browsers|display-move-backing-scale|fullscreen-unfullscreen|minimize-hide-restore|font-size-cell-metrics|tui-overlay-resize-command|terminal-scrollback-movement|browser-navigation-geometry|devtools-split-geometry|devtools-singleton-guard|mouse-after-geometry-change|keyboard-after-tab-window-switch|gui-active-multi-tab) ;;
+  initial-open|launch-discovery-contract|named-roamium-debug-launch|named-roamium-invalid-env|installed-roamium-release-launch|hello-config-homepage|hello-config-browser-list|hello-empty-browser-list|ghostboard-config-paths|browser-state-smoke|browser-command-navigation|javascript-dialog-smoke|http-auth-smoke|renderer-crash-smoke|color-scheme-smoke|copy-current-url-smoke|browser-input-granularity|multi-profile-isolation|same-profile-server-lifecycle|tui-disconnect-reconnect|visible-profile-identity|two-browser-split-routing|window-resize|performance-window-resize|split-right|split-right-border-config|performance-split-right|split-down|split-right-resize|split-right-equalize|split-right-zoom|split-right-close-sibling|split-right-close-browser-pane|split-right-focus-switch|new-terminal-tab-visibility|open-browser-in-new-tab|close-browser-tab|open-browser-in-new-window|multiple-windows-with-browsers|display-move-backing-scale|fullscreen-unfullscreen|minimize-hide-restore|font-size-cell-metrics|tui-overlay-resize-command|terminal-scrollback-movement|browser-navigation-geometry|devtools-split-geometry|devtools-singleton-guard|mouse-after-geometry-change|keyboard-after-tab-window-switch|gui-active-multi-tab) ;;
   *)
     fail "unsupported scenario: $SCENARIO"
     ;;
@@ -2783,6 +2784,52 @@ browser = $HELLO_CONFIG_SECOND_BROWSER
 EOF
 fi
 
+if [ "$SCENARIO" = "split-right-border-config" ]; then
+  case "$BORDER_CONFIG_CASE" in
+    enabled)
+      cat >>"$CONFIG" <<'EOF'
+focused-split-border-color = 7dcfff
+unfocused-split-border-color = 565f89
+split-border-width = 2
+unfocused-split-saturation = 0.5
+EOF
+      ;;
+    clamp)
+      cat >>"$CONFIG" <<'EOF'
+focused-split-border-color = 7dcfff
+unfocused-split-border-color = 565f89
+split-border-width = 99
+unfocused-split-saturation = 99
+EOF
+      ;;
+    disabled)
+      cat >>"$CONFIG" <<'EOF'
+focused-split-border-color = 7dcfff
+unfocused-split-border-color = 565f89
+split-border-width = 0
+unfocused-split-saturation = 0.5
+EOF
+      ;;
+    missing-focused)
+      cat >>"$CONFIG" <<'EOF'
+unfocused-split-border-color = 565f89
+split-border-width = 2
+unfocused-split-saturation = 0.5
+EOF
+      ;;
+    missing-unfocused)
+      cat >>"$CONFIG" <<'EOF'
+focused-split-border-color = 7dcfff
+split-border-width = 2
+unfocused-split-saturation = 0.5
+EOF
+      ;;
+    *)
+      fail "unsupported TERMSURF_SPLIT_BORDER_CONFIG_CASE: $BORDER_CONFIG_CASE"
+      ;;
+  esac
+fi
+
 if [ "$SCENARIO" = "hello-empty-browser-list" ]; then
   cat >>"$CONFIG" <<'EOF'
 browser = ""
@@ -2995,7 +3042,7 @@ keybind = ctrl+b=scroll_to_bottom
 EOF
 fi
 
-if [ "$SCENARIO" = "split-right" ] || [ "$SCENARIO" = "split-right-resize" ] || [ "$SCENARIO" = "split-right-equalize" ] || [ "$SCENARIO" = "split-right-zoom" ] || [ "$SCENARIO" = "split-right-focus-switch" ] || [ "$SCENARIO" = "two-browser-split-routing" ] || [ "$SCENARIO" = "mouse-after-geometry-change" ]; then
+if [ "$SCENARIO" = "split-right" ] || [ "$SCENARIO" = "split-right-border-config" ] || [ "$SCENARIO" = "split-right-resize" ] || [ "$SCENARIO" = "split-right-equalize" ] || [ "$SCENARIO" = "split-right-zoom" ] || [ "$SCENARIO" = "split-right-focus-switch" ] || [ "$SCENARIO" = "two-browser-split-routing" ] || [ "$SCENARIO" = "mouse-after-geometry-change" ]; then
   cat >>"$CONFIG" <<'EOF'
 keybind = ctrl+d=new_split:right
 EOF
@@ -3753,8 +3800,11 @@ if [ "$SCENARIO" = "window-resize" ] || [ "$SCENARIO" = "performance-window-resi
   log "grow_screenshot=$SCREENSHOT_GROW"
   log "shrink_screenshot=$SCREENSHOT_SHRINK"
 fi
-if [ "$SCENARIO" = "split-right" ] || [ "$SCENARIO" = "split-down" ] || [ "$SCENARIO" = "split-right-resize" ] || [ "$SCENARIO" = "split-right-equalize" ]; then
+if [ "$SCENARIO" = "split-right" ] || [ "$SCENARIO" = "split-right-border-config" ] || [ "$SCENARIO" = "split-down" ] || [ "$SCENARIO" = "split-right-resize" ] || [ "$SCENARIO" = "split-right-equalize" ]; then
   log "split_screenshot=$SCREENSHOT_SPLIT"
+fi
+if [ "$SCENARIO" = "split-right-border-config" ]; then
+  log "split_border_config_case=$BORDER_CONFIG_CASE"
 fi
 if [ "$SCENARIO" = "split-right-zoom" ]; then
   log "zoom_screenshot=$SCREENSHOT_ZOOM"
@@ -8230,7 +8280,7 @@ if [ "$SCENARIO" = "two-browser-split-routing" ]; then
   require_no_log_after "$B_CLOSE_START_LINE" "SetOverlay: pane_id=${B_PANE_ID}" "closed browser B did not recreate a live overlay"
 fi
 
-if [ "$SCENARIO" = "split-right" ] || [ "$SCENARIO" = "performance-split-right" ]; then
+if [ "$SCENARIO" = "split-right" ] || [ "$SCENARIO" = "split-right-border-config" ] || [ "$SCENARIO" = "performance-split-right" ]; then
   SPLIT_START_LINE="$(log_line_count)"
   SPLIT_TRACE_START_LINE="$(trace_line_count)"
   if [ "$SCENARIO" = "performance-split-right" ]; then
@@ -8246,6 +8296,13 @@ if [ "$SCENARIO" = "split-right" ] || [ "$SCENARIO" = "performance-split-right" 
     swift "$ROOT/scripts/ghostty-app/inject.swift" key 2 control >>"$HARNESS_LOG" 2>&1
   fi
   delay 1
+
+  if [ "$SCENARIO" = "split-right-border-config" ]; then
+    if head -n "$SPLIT_START_LINE" "$APP_LOG" | grep -E "TermSurf geometry layer=appkit event=split_border_draw" >/dev/null 2>&1; then
+      fail "single-pane baseline drew a split pane border before split"
+    fi
+    log "PASS: single-pane baseline did not draw split pane border"
+  fi
 
   SPLIT_PRESENT_LINE="$(wait_for_split_right_frame_after "$SPLIT_START_LINE" "$PANE_ID" "$CONTEXT_ID" "$OVERLAY_FRAME_SIZE" "split-right AppKit overlay frame")"
   SPLIT_PIXELS_LINE="$(wait_for_split_right_pixels_after "$SPLIT_START_LINE" "$PANE_ID" "$CONTEXT_ID" "$APPKIT_PIXEL" "split-right AppKit presented pixels")"
@@ -8265,7 +8322,34 @@ if [ "$SCENARIO" = "split-right" ] || [ "$SCENARIO" = "performance-split-right" 
   screencapture -x -o -l"$WID" "$SCREENSHOT_SPLIT"
   log "split_screenshot_exit=$?"
 
-  if [ "$SCENARIO" = "split-right" ]; then
+  if [ "$SCENARIO" = "split-right-border-config" ]; then
+    case "$BORDER_CONFIG_CASE" in
+      enabled)
+        require_log_after "$SPLIT_START_LINE" "TermSurf geometry layer=appkit event=split_border_config .*is_split=true .*focused=true .*border_width=2 .*focused_color_present=true .*unfocused_color_present=true .*saturation=0.5 .*border_drawn=true .*border_color_key=focused-split-border-color" "focused split border config bridged enabled values"
+        require_log_after "$SPLIT_START_LINE" "TermSurf geometry layer=appkit event=split_border_config .*is_split=true .*focused=false .*border_width=2 .*focused_color_present=true .*unfocused_color_present=true .*saturation=0.5 .*border_drawn=true .*border_color_key=unfocused-split-border-color" "unfocused split border config bridged enabled values"
+        require_log_after "$SPLIT_START_LINE" "TermSurf geometry layer=appkit event=split_border_draw .*focused=true .*border_width=2 .*border_color_key=focused-split-border-color .*hit_testing=false" "focused split border draw logged with hit testing disabled"
+        require_log_after "$SPLIT_START_LINE" "TermSurf geometry layer=appkit event=split_border_draw .*focused=false .*border_width=2 .*border_color_key=unfocused-split-border-color .*hit_testing=false" "unfocused split border draw logged with hit testing disabled"
+        ;;
+      clamp)
+        require_log_after "$SPLIT_START_LINE" "TermSurf geometry layer=appkit event=split_border_config .*is_split=true .*border_width=10 .*focused_color_present=true .*unfocused_color_present=true .*saturation=1 .*border_drawn=true" "split border config bridged clamped values"
+        require_log_after "$SPLIT_START_LINE" "TermSurf geometry layer=appkit event=split_border_draw .*border_width=10 .*hit_testing=false" "clamped split border draw logged with hit testing disabled"
+        ;;
+      disabled)
+        require_log_after "$SPLIT_START_LINE" "TermSurf geometry layer=appkit event=split_border_config .*is_split=true .*border_width=0 .*focused_color_present=true .*unfocused_color_present=true .*saturation=0.5 .*border_drawn=false" "disabled split border config bridged width zero"
+        require_no_log_after "$SPLIT_START_LINE" "TermSurf geometry layer=appkit event=split_border_draw" "disabled split border did not draw"
+        ;;
+      missing-focused)
+        require_log_after "$SPLIT_START_LINE" "TermSurf geometry layer=appkit event=split_border_config .*is_split=true .*focused=true .*border_width=2 .*focused_color_present=false .*unfocused_color_present=true .*saturation=0.5 .*border_drawn=false .*border_color_key=focused-split-border-color" "missing focused color prevents focused border draw"
+        require_log_after "$SPLIT_START_LINE" "TermSurf geometry layer=appkit event=split_border_draw .*focused=false .*border_width=2 .*border_color_key=unfocused-split-border-color .*hit_testing=false" "missing focused color still allows unfocused border draw"
+        ;;
+      missing-unfocused)
+        require_log_after "$SPLIT_START_LINE" "TermSurf geometry layer=appkit event=split_border_draw .*focused=true .*border_width=2 .*border_color_key=focused-split-border-color .*hit_testing=false" "missing unfocused color still allows focused border draw"
+        require_log_after "$SPLIT_START_LINE" "TermSurf geometry layer=appkit event=split_border_config .*is_split=true .*focused=false .*border_width=2 .*focused_color_present=true .*unfocused_color_present=false .*saturation=0.5 .*border_drawn=false .*border_color_key=unfocused-split-border-color" "missing unfocused color prevents unfocused border draw"
+        ;;
+    esac
+  fi
+
+  if [ "$SCENARIO" = "split-right" ] || [ "$SCENARIO" = "split-right-border-config" ]; then
     SPLIT_WIN_LINE="$(window_bounds)" || fail "failed to resolve split window bounds for window id=$WID"
     IFS=$'\t' read -r _SPLIT_WID SPLIT_WX SPLIT_WY SPLIT_WW SPLIT_WH <<<"$SPLIT_WIN_LINE"
     SPLIT_FRAME_WIDTH="$(pair_width "$SPLIT_FRAME_SIZE")"

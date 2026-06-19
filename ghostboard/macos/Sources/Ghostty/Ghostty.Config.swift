@@ -580,6 +580,50 @@ extension Ghostty {
             )
         }
 
+        var focusedSplitBorderColor: Color? {
+            guard let config = self.config else { return nil }
+            var color: ghostty_config_color_s = .init()
+            let key = "focused-split-border-color"
+            if !ghostty_config_get(config, &color, key, UInt(key.lengthOfBytes(using: .utf8))) {
+                return nil
+            }
+            return .init(
+                red: Double(color.r) / 255,
+                green: Double(color.g) / 255,
+                blue: Double(color.b) / 255
+            )
+        }
+
+        var unfocusedSplitBorderColor: Color? {
+            guard let config = self.config else { return nil }
+            var color: ghostty_config_color_s = .init()
+            let key = "unfocused-split-border-color"
+            if !ghostty_config_get(config, &color, key, UInt(key.lengthOfBytes(using: .utf8))) {
+                return nil
+            }
+            return .init(
+                red: Double(color.r) / 255,
+                green: Double(color.g) / 255,
+                blue: Double(color.b) / 255
+            )
+        }
+
+        var splitBorderWidth: Double {
+            guard let config = self.config else { return 0 }
+            var value: Double = 0
+            let key = "split-border-width"
+            _ = ghostty_config_get(config, &value, key, UInt(key.lengthOfBytes(using: .utf8)))
+            return value
+        }
+
+        var unfocusedSplitSaturation: Double {
+            guard let config = self.config else { return 1.0 }
+            var value: Double = 1.0
+            let key = "unfocused-split-saturation"
+            _ = ghostty_config_get(config, &value, key, UInt(key.lengthOfBytes(using: .utf8)))
+            return value
+        }
+
         #if canImport(AppKit)
         var quickTerminalPosition: QuickTerminalPosition {
             guard let config = self.config else { return .top }

@@ -62,6 +62,39 @@ extension Ghostty {
             surfaceFocus || lastFocusedSurface?.value === surfaceView
         }
 
+        private func configNumber(_ value: Double) -> String {
+            if value.rounded() == value {
+                return String(Int(value))
+            }
+            return String(value)
+        }
+
+        private func traceSplitBorderConfig(
+            isFocused: Bool,
+            borderWidth: Double,
+            saturation: Double,
+            focusedColorPresent: Bool,
+            unfocusedColorPresent: Bool,
+            borderDrawn: Bool,
+            colorKey: String
+        ) {
+#if canImport(AppKit)
+            termsurfLogGeometry(
+                "layer=appkit event=split_border_config scenario=\(termsurfGeometryScenario()) identity=\(surfaceView.termSurfGeometryIdentity(browserTabID: "unknown:split-border")) is_split=\(isSplit) focused=\(isFocused) border_width=\(configNumber(borderWidth)) focused_color_present=\(focusedColorPresent) unfocused_color_present=\(unfocusedColorPresent) saturation=\(configNumber(saturation)) border_drawn=\(borderDrawn) border_color_key=\(colorKey) note=swift-config-bridge")
+#endif
+        }
+
+        private func traceSplitBorderDraw(
+            isFocused: Bool,
+            borderWidth: Double,
+            colorKey: String
+        ) {
+#if canImport(AppKit)
+            termsurfLogGeometry(
+                "layer=appkit event=split_border_draw scenario=\(termsurfGeometryScenario()) identity=\(surfaceView.termSurfGeometryIdentity(browserTabID: "unknown:split-border")) is_split=\(isSplit) focused=\(isFocused) border_width=\(configNumber(borderWidth)) border_color_key=\(colorKey) hit_testing=false note=stroke-border")
+#endif
+        }
+
         var body: some View {
             let center = NotificationCenter.default
 
@@ -75,8 +108,19 @@ extension Ghostty {
                     let pubResign = center.publisher(for: NSWindow.didResignKeyNotification)
                     #endif
 
-                    SurfaceRepresentable(view: surfaceView, size: geo.size)
+                    let borderWidth = ghostty.config.splitBorderWidth
+                    let borderInset = CGFloat(isSplit ? borderWidth : 0)
+                    let insetSize = CGSize(
+                        width: max(10, geo.size.width - borderInset * 2),
+                        height: max(10, geo.size.height - borderInset * 2)
+                    )
+                    let saturation = ghostty.config.unfocusedSplitSaturation
+
+                    SurfaceRepresentable(view: surfaceView, size: insetSize)
+                        .frame(width: insetSize.width, height: insetSize.height)
+                        .offset(x: borderInset, y: borderInset)
                         .focused($surfaceFocus)
+                        .saturation(isSplit && !isFocusedSurface ? saturation : 1.0)
                         .focusedValue(\.ghosttySurfacePwd, surfaceView.pwd)
                         .focusedValue(\.ghosttySurfaceView, surfaceView)
                         .focusedValue(\.ghosttySurfaceCellSize, surfaceView.cellSize)
@@ -111,10 +155,12 @@ extension Ghostty {
 
                 // Progress report
                 if let progressReport = surfaceView.progressReport, progressReport.state != .remove {
+                    let borderInset = CGFloat(isSplit ? ghostty.config.splitBorderWidth : 0)
                     VStack(spacing: 0) {
                         SurfaceProgressBar(report: progressReport)
                         Spacer()
                     }
+                    .padding(borderInset)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                     .allowsHitTesting(false)
                     .transition(.opacity)
@@ -249,6 +295,35 @@ extension Ghostty {
                             .fill(ghostty.config.unfocusedSplitFill)
                             .allowsHitTesting(false)
                             .opacity(overlayOpacity)
+                    }
+                }
+
+                if isSplit {
+                    let borderWidth = ghostty.config.splitBorderWidth
+                    let focusedColor = ghostty.config.focusedSplitBorderColor
+                    let unfocusedColor = ghostty.config.unfocusedSplitBorderColor
+                    let isFocused = isFocusedSurface
+                    let borderColor = isFocused ? focusedColor : unfocusedColor
+                    let colorKey = isFocused ? "focused-split-border-color" : "unfocused-split-border-color"
+                    let borderDrawn = borderWidth > 0 && borderColor != nil
+                    let _ = traceSplitBorderConfig(
+                        isFocused: isFocused,
+                        borderWidth: borderWidth,
+                        saturation: ghostty.config.unfocusedSplitSaturation,
+                        focusedColorPresent: focusedColor != nil,
+                        unfocusedColorPresent: unfocusedColor != nil,
+                        borderDrawn: borderDrawn,
+                        colorKey: colorKey
+                    )
+                    if borderDrawn, let color = borderColor {
+                        let _ = traceSplitBorderDraw(
+                            isFocused: isFocused,
+                            borderWidth: borderWidth,
+                            colorKey: colorKey
+                        )
+                        Rectangle()
+                            .strokeBorder(color, lineWidth: CGFloat(borderWidth))
+                            .allowsHitTesting(false)
                     }
                 }
 
