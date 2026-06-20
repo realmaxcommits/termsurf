@@ -60,3 +60,8 @@ Expected release artifacts:
   the cask install or uninstall paths.
 - The issue records exact install, upgrade, uninstall, and smoke-test commands
   used to verify the release.
+
+## Experiments
+
+- [Experiment 1: Build, publish, and verify 1.0.0](01-build-publish-and-verify-1-0-0.md)
+  — **Designed**
