@@ -2,10 +2,10 @@
 
 `libtermsurf_webkit` is the macOS WebKit C ABI for Surfari.
 
-This directory currently contains the Issue 756 Experiment 5 scaffold: a
-buildable dynamic library, public C header, and C smoke test that exercise the
-initial WebKit browser-view lifecycle through `ts_*` functions compatible with
-Roamium's Rust FFI shape.
+This directory contains the macOS `libtermsurf_webkit` scaffold: a buildable
+dynamic library, public C header, and C smoke test that exercise the initial
+WebKit browser-view lifecycle through `ts_*` functions compatible with Roamium's
+Rust FFI shape.
 
 ## Build
 
@@ -39,15 +39,33 @@ DYLD_FRAMEWORK_PATH="$(pwd)/webkit/src/WebKitBuild/Debug" \
 
 The smoke test initializes the library, creates persistent and incognito browser
 contexts, creates a WebKit-backed web contents, receives lifecycle callbacks,
-navigates between deterministic local pages, resizes the view, destroys the
-objects, and quits.
+navigates between deterministic local pages, resizes the view, forwards
+mouse/scroll/keyboard input, exercises AppKit first-responder and inactive
+state, destroys the objects, and quits.
 
 `DYLD_FRAMEWORK_PATH` is required because WebKit's debug framework has
 source-built transitive framework dependencies such as `JavaScriptCore`.
 
 ## Current Limitations
 
-Experiment 5 implements the first lifecycle slice only. Input forwarding,
-DevTools, JavaScript dialogs, HTTP auth, renderer crash reporting, cursor
-updates, and target URL updates are exported as Roamium-compatible symbols but
-are not implemented yet.
+Implemented:
+
+- lifecycle entry, task posting, and quit;
+- persistent and incognito browser contexts;
+- WebKit-backed web contents creation/destruction;
+- navigation and resize;
+- AppKit first-responder assignment and GUI active/inactive state;
+- mouse move, mouse click, wheel scroll, and keyboard forwarding through Cocoa
+  events;
+- dark/light appearance assignment through `NSAppearance`;
+- tab ready, CA context ID, URL, loading, and title callbacks.
+
+Still unsupported:
+
+- DevTools;
+- DOM-visible focus state from `ts_set_focus(true)`;
+- JavaScript dialogs;
+- HTTP auth;
+- renderer crash reporting;
+- cursor updates;
+- target URL updates.

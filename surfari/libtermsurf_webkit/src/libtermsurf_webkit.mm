@@ -13,6 +13,14 @@
 - (void)invalidate;
 @end
 
+@interface NSEvent (TermSurfPrivate)
+- (NSEvent *)_eventRelativeToWindow:(NSWindow *)window;
+@end
+
+@interface NSApplication (TermSurfPrivate)
+- (void)_setCurrentEvent:(NSEvent *)event;
+@end
+
 struct CallbackState {
     ts_initialized_cb on_initialized = nullptr;
     void *on_initialized_data = nullptr;
@@ -61,7 +69,13 @@ struct WebContents {
     CAContext *remote_context;
     int width;
     int height;
+    bool gui_active;
+    bool focused;
+    bool dark;
 };
+
+typedef void (*ts_webkit_test_eval_cb)(const char *result, void *user_data);
+typedef void (*ts_webkit_test_task_cb)(void *user_data);
 
 static NSString *stringFromCString(const char *value)
 {
@@ -81,6 +95,94 @@ static NSURL *urlFromCString(const char *value)
         return url;
 
     return [NSURL fileURLWithPath:string];
+}
+
+static NSEventModifierFlags cocoaModifiers(int modifiers)
+{
+    NSEventModifierFlags flags = 0;
+    if (modifiers & (1 << 0))
+        flags |= NSEventModifierFlagShift;
+    if (modifiers & (1 << 1))
+        flags |= NSEventModifierFlagControl;
+    if (modifiers & (1 << 2))
+        flags |= NSEventModifierFlagOption;
+    if (modifiers & (1 << 3))
+        flags |= NSEventModifierFlagCommand;
+    return flags;
+}
+
+static NSPoint eventLocationInWindow(WebContents *contents, int x, int y)
+{
+    NSPoint localPoint = NSMakePoint(x, y);
+    return [contents->web_view convertPoint:localPoint toView:nil];
+}
+
+static CGPoint eventLocationInGlobalScreen(WebContents *contents, int x, int y)
+{
+    NSPoint windowPoint = eventLocationInWindow(contents, x, y);
+    NSPoint screenPoint = [contents->window convertPointToScreen:windowPoint];
+    CGFloat screenHeight = NSScreen.screens.firstObject.frame.size.height;
+    return CGPointMake(screenPoint.x, screenHeight - screenPoint.y);
+}
+
+static NSView *targetViewForPoint(WebContents *contents, int x, int y)
+{
+    NSPoint localPoint = NSMakePoint(x, y);
+    return [contents->web_view hitTest:localPoint] ?: contents->web_view;
+}
+
+static NSEventType mouseEventType(int type, int button)
+{
+    if (button == 1)
+        return type == 1 ? NSEventTypeRightMouseUp : NSEventTypeRightMouseDown;
+    if (button == 2)
+        return type == 1 ? NSEventTypeOtherMouseUp : NSEventTypeOtherMouseDown;
+    return type == 1 ? NSEventTypeLeftMouseUp : NSEventTypeLeftMouseDown;
+}
+
+static void deliverMouseEvent(WebContents *contents, NSEvent *event)
+{
+    NSPoint localPoint = [contents->web_view convertPoint:event.locationInWindow fromView:nil];
+    NSView *target = [contents->web_view hitTest:localPoint] ?: contents->web_view;
+    switch (event.type) {
+    case NSEventTypeLeftMouseDown:
+        [NSApp _setCurrentEvent:event];
+        [target mouseDown:event];
+        [NSApp _setCurrentEvent:nil];
+        break;
+    case NSEventTypeLeftMouseUp:
+        [NSApp _setCurrentEvent:event];
+        [target mouseUp:event];
+        [NSApp _setCurrentEvent:nil];
+        break;
+    case NSEventTypeRightMouseDown:
+        [NSApp _setCurrentEvent:event];
+        [target rightMouseDown:event];
+        [NSApp _setCurrentEvent:nil];
+        break;
+    case NSEventTypeRightMouseUp:
+        [NSApp _setCurrentEvent:event];
+        [target rightMouseUp:event];
+        [NSApp _setCurrentEvent:nil];
+        break;
+    case NSEventTypeOtherMouseDown:
+        [NSApp _setCurrentEvent:event];
+        [target otherMouseDown:event];
+        [NSApp _setCurrentEvent:nil];
+        break;
+    case NSEventTypeOtherMouseUp:
+        [NSApp _setCurrentEvent:event];
+        [target otherMouseUp:event];
+        [NSApp _setCurrentEvent:nil];
+        break;
+    case NSEventTypeMouseMoved:
+        [NSApp _setCurrentEvent:event];
+        [target mouseMoved:event];
+        [NSApp _setCurrentEvent:nil];
+        break;
+    default:
+        break;
+    }
 }
 
 static void withCString(NSString *value, void (^block)(const char *))
@@ -253,17 +355,22 @@ ts_web_contents_t ts_create_web_contents(ts_browser_context_t ctx, const char *u
     contents->tab_id = g_next_tab_id.fetch_add(1);
     contents->width = width;
     contents->height = height;
+    contents->gui_active = true;
+    contents->focused = false;
+    contents->dark = dark;
 
     NSRect frame = NSMakeRect(80, 80, MAX(width, 64), MAX(height, 64));
     contents->window = [[NSWindow alloc] initWithContentRect:frame styleMask:NSWindowStyleMaskBorderless backing:NSBackingStoreBuffered defer:NO];
     contents->window.releasedWhenClosed = NO;
     contents->window.title = @"libtermsurf_webkit";
+    contents->window.acceptsMouseMovedEvents = YES;
 
     WKWebViewConfiguration *configuration = [[WKWebViewConfiguration alloc] init];
     configuration.websiteDataStore = context->data_store;
     contents->web_view = [[WKWebView alloc] initWithFrame:contents->window.contentView.bounds configuration:configuration];
     contents->web_view.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
     contents->web_view.wantsLayer = YES;
+    contents->web_view.appearance = [NSAppearance appearanceNamed:dark ? NSAppearanceNameDarkAqua : NSAppearanceNameAqua];
 
     contents->navigation_delegate = [[TSNavigationDelegate alloc] init];
     contents->navigation_delegate.owner = contents;
@@ -356,21 +463,62 @@ void ts_set_view_size(
 
 void ts_forward_mouse_event(ts_web_contents_t wc, int type, int button, int x, int y, int click_count, int modifiers)
 {
-    (void)wc;
-    (void)type;
-    (void)button;
-    (void)x;
-    (void)y;
-    (void)click_count;
-    (void)modifiers;
+    WebContents *contents = static_cast<WebContents *>(wc);
+    if (!contents)
+        return;
+
+    NSEvent *event = [NSEvent mouseEventWithType:mouseEventType(type, button)
+        location:eventLocationInWindow(contents, x, y)
+        modifierFlags:cocoaModifiers(modifiers)
+        timestamp:[[NSDate date] timeIntervalSince1970]
+        windowNumber:contents->window.windowNumber
+        context:nil
+        eventNumber:0
+        clickCount:MAX(click_count, 1)
+        pressure:type == 0 ? 1.0 : 0.0];
+    deliverMouseEvent(contents, event);
 }
 
 void ts_forward_mouse_move(ts_web_contents_t wc, int x, int y, int modifiers)
 {
-    (void)wc;
-    (void)x;
-    (void)y;
-    (void)modifiers;
+    WebContents *contents = static_cast<WebContents *>(wc);
+    if (!contents)
+        return;
+
+    NSEvent *event = [NSEvent mouseEventWithType:NSEventTypeMouseMoved
+        location:eventLocationInWindow(contents, x, y)
+        modifierFlags:cocoaModifiers(modifiers)
+        timestamp:[[NSDate date] timeIntervalSince1970]
+        windowNumber:contents->window.windowNumber
+        context:nil
+        eventNumber:0
+        clickCount:0
+        pressure:0.0];
+    NSEvent *enter = [NSEvent enterExitEventWithType:NSEventTypeMouseEntered
+        location:eventLocationInWindow(contents, x, y)
+        modifierFlags:cocoaModifiers(modifiers)
+        timestamp:[[NSDate date] timeIntervalSince1970]
+        windowNumber:contents->window.windowNumber
+        context:nil
+        eventNumber:0
+        trackingNumber:1
+        userData:nil];
+    [targetViewForPoint(contents, x, y) mouseEntered:enter];
+    deliverMouseEvent(contents, event);
+
+    NSEvent *drag_event = [NSEvent mouseEventWithType:NSEventTypeLeftMouseDragged
+        location:eventLocationInWindow(contents, x, y)
+        modifierFlags:cocoaModifiers(modifiers)
+        timestamp:[[NSDate date] timeIntervalSince1970]
+        windowNumber:contents->window.windowNumber
+        context:nil
+        eventNumber:0
+        clickCount:0
+        pressure:0.0];
+    NSView *target = targetViewForPoint(contents, x, y);
+    [NSApp _setCurrentEvent:drag_event];
+    [target mouseDragged:drag_event];
+    [NSApp _setCurrentEvent:nil];
 }
 
 void ts_forward_scroll_event(
@@ -384,43 +532,103 @@ void ts_forward_scroll_event(
     bool precise,
     int modifiers)
 {
-    (void)wc;
-    (void)x;
-    (void)y;
-    (void)delta_x;
-    (void)delta_y;
     (void)phase;
     (void)momentum_phase;
     (void)precise;
-    (void)modifiers;
+
+    WebContents *contents = static_cast<WebContents *>(wc);
+    if (!contents)
+        return;
+
+    CGEventRef cg_event = CGEventCreateScrollWheelEvent2(nullptr, kCGScrollEventUnitPixel, 2, delta_y, delta_x, 0);
+    if (!cg_event)
+        return;
+    CGEventSetLocation(cg_event, eventLocationInGlobalScreen(contents, x, y));
+    CGEventSetFlags(cg_event, (CGEventFlags)cocoaModifiers(modifiers));
+    CGEventSetIntegerValueField(cg_event, kCGScrollWheelEventIsContinuous, precise ? 1 : 0);
+    NSEvent *event = [NSEvent eventWithCGEvent:cg_event];
+    CFRelease(cg_event);
+    NSView *target = [contents->web_view hitTest:event.locationInWindow] ?: targetViewForPoint(contents, x, y);
+    [NSApp _setCurrentEvent:event];
+    [target scrollWheel:event];
+    [NSApp _setCurrentEvent:nil];
 }
 
 void ts_forward_key_event(ts_web_contents_t wc, int type, int keycode, const char *utf8, int modifiers)
 {
-    (void)wc;
-    (void)type;
-    (void)keycode;
-    (void)utf8;
-    (void)modifiers;
+    WebContents *contents = static_cast<WebContents *>(wc);
+    if (!contents)
+        return;
+
+    NSString *characters = stringFromCString(utf8);
+    NSEventType eventType = type == 1 ? NSEventTypeKeyUp : NSEventTypeKeyDown;
+    NSEvent *event = [NSEvent keyEventWithType:eventType
+        location:NSMakePoint(0, 0)
+        modifierFlags:cocoaModifiers(modifiers)
+        timestamp:[[NSDate date] timeIntervalSince1970]
+        windowNumber:contents->window.windowNumber
+        context:nil
+        characters:characters
+        charactersIgnoringModifiers:characters
+        isARepeat:type == 2
+        keyCode:(unsigned short)keycode];
+
+    if (eventType == NSEventTypeKeyUp)
+    {
+        [NSApp _setCurrentEvent:event];
+        [contents->web_view keyUp:event];
+        [NSApp _setCurrentEvent:nil];
+    } else {
+        [NSApp _setCurrentEvent:event];
+        [contents->web_view keyDown:event];
+        [NSApp _setCurrentEvent:nil];
+    }
 }
 
 void ts_set_focus(ts_web_contents_t wc, bool focused)
 {
-    (void)wc;
-    (void)focused;
+    WebContents *contents = static_cast<WebContents *>(wc);
+    if (!contents)
+        return;
+
+    contents->focused = focused;
+    if (focused) {
+        [NSApp activateIgnoringOtherApps:YES];
+        [contents->window makeKeyAndOrderFront:nil];
+        [contents->window makeFirstResponder:contents->web_view];
+    } else {
+        [contents->window makeFirstResponder:nil];
+        [contents->window resignKeyWindow];
+    }
 }
 
 void ts_set_gui_active(ts_web_contents_t wc, bool active, const char *reason)
 {
-    (void)wc;
-    (void)active;
     (void)reason;
+    WebContents *contents = static_cast<WebContents *>(wc);
+    if (!contents)
+        return;
+
+    contents->gui_active = active;
+    if (active) {
+        [NSApp activateIgnoringOtherApps:YES];
+        [contents->window orderFront:nil];
+        if (contents->focused)
+            [contents->window makeFirstResponder:contents->web_view];
+    } else {
+        [contents->window makeFirstResponder:nil];
+        [contents->window resignKeyWindow];
+    }
 }
 
 void ts_set_color_scheme(ts_web_contents_t wc, bool dark)
 {
-    (void)wc;
-    (void)dark;
+    WebContents *contents = static_cast<WebContents *>(wc);
+    if (!contents)
+        return;
+
+    contents->dark = dark;
+    contents->web_view.appearance = [NSAppearance appearanceNamed:dark ? NSAppearanceNameDarkAqua : NSAppearanceNameAqua];
 }
 
 bool ts_reply_javascript_dialog(ts_web_contents_t wc, uint64_t request_id, bool accepted, const char *prompt_text)
@@ -506,4 +714,38 @@ void ts_set_on_renderer_crashed(ts_renderer_crashed_cb cb, void *user_data)
 {
     g_callbacks.on_renderer_crashed = cb;
     g_callbacks.on_renderer_crashed_data = user_data;
+}
+
+extern "C" void ts_webkit_test_evaluate_javascript(
+    ts_web_contents_t wc,
+    const char *script,
+    ts_webkit_test_eval_cb callback,
+    void *user_data)
+{
+    WebContents *contents = static_cast<WebContents *>(wc);
+    if (!contents || !callback)
+        return;
+
+    NSString *source = stringFromCString(script);
+    [contents->web_view evaluateJavaScript:source completionHandler:^(id result, NSError *error) {
+        NSString *value = @"";
+        if (error)
+            value = [NSString stringWithFormat:@"ERROR:%@", error.localizedDescription];
+        else if ([result isKindOfClass:NSString.class])
+            value = result;
+        else if (result)
+            value = [result description];
+        withCString(value, ^(const char *c_value) {
+            callback(c_value, user_data);
+        });
+    }];
+}
+
+extern "C" void ts_webkit_test_post_delayed_task(double seconds, ts_webkit_test_task_cb callback, void *user_data)
+{
+    if (!callback)
+        return;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(seconds * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        callback(user_data);
+    });
 }
