@@ -134,6 +134,49 @@ Surfari should first try to use WebKit's existing `RemoteLayerTree`,
 surface to Ghostboard. Only if that path cannot satisfy the TermSurf compositor
 contract should we patch lower-level WebKit internals.
 
+### End-to-end completion checklist
+
+This checklist tracks the full Surfari strategy from proof-of-concept through
+production TermSurf integration. Items must be checked off as they are finished,
+and the experiment that proves each item should be linked or referenced in the
+surrounding issue text.
+
+- [x] Shallow clone WebKit into `webkit/src` and prove the checkout builds on
+      macOS.
+- [ ] Prove WebKit content can be hosted outside its original WebKit process
+      boundary by exporting a WebKit render surface or hosting context and
+      displaying it in a separate host window/process.
+- [ ] Confirm the hosted WebKit surface resizes correctly, animates, scrolls,
+      survives navigation, and remains stable across repeated show/hide cycles.
+- [ ] Establish WebKit branch and patch management analogous to Chromium:
+      issue-specific branches, documented upstream commit ancestry, build
+      commands, and a clear record of each TermSurf patch.
+- [ ] Create `libtermsurf_webkit` with a C ABI backed by Objective-C++/Cocoa on
+      macOS.
+- [ ] Implement the core `libtermsurf_webkit` API: initialize, shutdown, create
+      and destroy browser views, navigate, reload, stop, resize, focus, forward
+      mouse/keyboard/wheel input, report browser state, and expose compositing
+      handles.
+- [ ] Create the Surfari Rust binary by reusing the Roamium-style Unix socket,
+      protobuf dispatch, process lifecycle, and profile management code.
+- [ ] Run Surfari outside Ghostboard with a small test driver or harness and
+      prove the Rust process can drive WebKit through `libtermsurf_webkit`.
+- [ ] Audit Surfari against Roamium and the existing TermSurf protobuf messages;
+      mark every message supported, unsupported, or requiring a protocol
+      extension.
+- [ ] Modify `termsurf.proto` only where WebKit exposes a real browser
+      capability that the current protocol cannot express.
+- [ ] Integrate Surfari with Ghostboard engine launching, profile selection,
+      socket routing, and overlay hosting.
+- [ ] Test Surfari inside the real TermSurf app with navigation, keyboard input,
+      click, drag, scroll, resize, pane resize, split panes, tab switching,
+      window switching, focus changes, shutdown, restart, profile isolation, and
+      crash handling.
+- [ ] Add focused regression guards for behavior that is proven to work, keeping
+      the tests small enough that the suite remains practical to run.
+- [ ] Re-run the full Ghostboard/Roamium feature matrix against
+      Ghostboard/Surfari and document any engine-specific differences.
+
 ### Compositing: the key open question
 
 Chromium uses CALayerHost for zero-copy GPU compositing. A `CAContext` ID
