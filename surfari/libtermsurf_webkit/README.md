@@ -60,6 +60,8 @@ Implemented:
   events;
 - dark/light appearance assignment through `NSAppearance`;
 - tab ready, CA context ID, URL, loading, and title callbacks;
+- pointer, hand, and i-beam cursor updates through the TermSurf WebKit cursor
+  hook;
 - target URL updates through WebKit hover hit testing;
 - JavaScript alert, confirm, and prompt requests through `WKUIDelegate`, with
   pending request IDs and `ts_reply_javascript_dialog`;
@@ -70,5 +72,4 @@ Still unsupported:
 
 - DevTools;
 - renderer crash reporting;
-- cursor updates;
 - console messages.

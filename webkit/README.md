@@ -57,9 +57,10 @@ temporary exception.
 
 ## Branches
 
-| Branch                      | Base commit                                | Issue                                         | Description                     |
-| --------------------------- | ------------------------------------------ | --------------------------------------------- | ------------------------------- |
-| `webkit-1452a439-issue-756` | `1452a43959523449099b2616793fd2c5b6a6487e` | [Issue 756](../issues/0756-surfari/README.md) | Surfari WebKit integration base |
+| Branch                            | Base commit                                | Issue                                         | Description                     |
+| --------------------------------- | ------------------------------------------ | --------------------------------------------- | ------------------------------- |
+| `webkit-1452a439-issue-756`       | `1452a43959523449099b2616793fd2c5b6a6487e` | [Issue 756](../issues/0756-surfari/README.md) | Surfari WebKit integration base |
+| `webkit-1452a439-issue-756-exp12` | `1452a43959523449099b2616793fd2c5b6a6487e` | [Issue 756](../issues/0756-surfari/README.md) | Cursor notification hook        |
 
 ## Patches
 

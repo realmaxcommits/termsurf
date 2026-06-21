@@ -17,8 +17,12 @@
       }
 
       #input-target {
+        position: absolute;
+        left: 360px;
+        top: 270px;
         width: 220px;
         height: 32px;
+        cursor: text;
       }
 
       #scroll-target {
@@ -33,6 +37,23 @@
         padding: 8px 12px;
         background: #2f81f7;
         color: #ffffff;
+        cursor: pointer;
+      }
+
+      #pointer-region {
+        cursor: default;
+      }
+
+      #hand-region {
+        position: absolute;
+        left: 360px;
+        top: 220px;
+        width: 220px;
+        height: 32px;
+        cursor: pointer;
+        user-select: none;
+        background: #8b949e;
+        color: #0d1117;
       }
     </style>
   </head>
@@ -40,6 +61,8 @@
     <main>
       <h1>Surfari ABI Navigation Page</h1>
       <input id="input-target" />
+      <div id="pointer-region">Pointer region</div>
+      <div id="hand-region">Hand cursor region</div>
       <a
         id="target-link"
         href="https://example.test/surfari-target"

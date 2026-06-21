@@ -164,3 +164,71 @@ or creates a broad/unreviewable WebKit patch.
 Adversarial subagent review, fresh context, read-only.
 
 Verdict: **Approved**. No findings.
+
+## Result
+
+**Result:** Pass
+
+Experiment 12 added a small WebKit macOS source hook in
+`PageClientImpl::setCursor`. The hook posts
+`TermSurfWebKitCursorChangedNotification` with the owning `WKWebView` as the
+notification object and the raw WebCore cursor enum in `cursorType`. Surfari
+observes that notification for its owned `WKWebView`, maps WebCore pointer,
+hand, and i-beam values to the existing Chromium/TermSurf cursor integers, and
+suppresses duplicate callbacks.
+
+The smoke harness now asserts the cursor sequence instead of only logging it. It
+moves through deterministic pointer, hand, and text regions with short delays
+between regions so WebKit processes each hover state. The passing log is
+`logs/issue756-exp12-cursor-hook.log`.
+
+Key evidence from the passing smoke run:
+
+```text
+CALLBACK cursor cursor_type=0
+CALLBACK cursor cursor_type=2
+CALLBACK cursor cursor_type=3
+SMOKE_PASS initialized=1 tab_ready=1 ca_context=5 url=6 loading_started=4 loading_finished=4 title=3 navigations=4 resized=1 focus=1 input=1 target_url=1 cursor=1 js_dialogs=1 http_auth=1
+SMOKE_EXIT_STATUS=0
+```
+
+WebKit branch state:
+
+- Branch: `webkit-1452a439-issue-756-exp12`
+- Base: `1452a43959523449099b2616793fd2c5b6a6487e`
+- Commit: `cdfb8cbf86f7c5e52cef0b2f14e8ab30ceeea91c`
+- Patch archive:
+  `webkit/patches/issue-756/0001-Notify-TermSurf-cursor-changes.patch`
+
+The result also adds a root `.gitattributes` rule for `*.patch` files so
+`git diff --check` does not reject syntactically required blank context lines in
+`git format-patch` archives while source-file whitespace checks remain active.
+
+## Conclusion
+
+Surfari now has verified pointer, hand, and i-beam cursor callbacks through a
+tracked WebKit source hook. The cursor smoke exposed an important testing
+detail: WebKit may coalesce back-to-back synthetic hover moves, so cursor tests
+must give WebKit a short run-loop interval between distinct hover regions.
+
+The next experiment can move to another unsupported Surfari feature, with cursor
+updates removed from the unsupported list.
+
+## Completion Review
+
+Adversarial subagent review, fresh context, read-only.
+
+Verdict: **Approved**. No findings.
+
+The reviewer independently checked the main repo had not yet made the result
+commit, the WebKit checkout was on `webkit-1452a439-issue-756-exp12` at
+`cdfb8cbf86f7c5e52cef0b2f14e8ab30ceeea91c`, the patch archive matched the WebKit
+commit, cursor enum mapping was correct, the smoke log contained the `0`, `2`,
+`3` cursor sequence and `SMOKE_EXIT_STATUS=0`, and formatting, whitespace,
+symbol, and linkage checks passed.
+
+Focused re-review after adding `.gitattributes`: **Approved**. No findings. The
+reviewer checked that the rule applies only to `*.patch`, only disables
+`blank-at-eol` and `blank-at-eof` for generated patch archives, leaves normal
+source/docs files with default whitespace handling, and keeps
+`git diff --staged --check` and Prettier passing.

@@ -69,6 +69,8 @@ struct CallbackState {
 static CallbackState g_callbacks;
 static std::atomic<int> g_next_tab_id{1};
 static std::atomic<uint64_t> g_next_request_id{1};
+static NSString *const TermSurfCursorChangedNotification = @"TermSurfWebKitCursorChangedNotification";
+static NSString *const TermSurfCursorTypeKey = @"cursorType";
 
 struct BrowserContext {
     WKWebsiteDataStore *data_store;
@@ -104,6 +106,9 @@ struct WebContents {
     NSMutableDictionary<NSNumber *, TSPendingJavaScriptDialog *> *pending_javascript_dialogs;
     NSMutableDictionary<NSNumber *, TSPendingHttpAuthRequest *> *pending_http_auth_requests;
     NSString *last_target_url;
+    id cursor_observer;
+    int last_cursor_type;
+    bool suppress_cursor_notifications;
     CAContext *remote_context;
     int width;
     int height;
@@ -271,6 +276,45 @@ static void fireTargetUrl(WebContents *contents, NSString *url)
     withCString(target_url, ^(const char *c_url) {
         g_callbacks.on_target_url_changed(contents, c_url, g_callbacks.on_target_url_changed_data);
     });
+}
+
+static int chromiumCursorTypeForWebCoreCursorType(NSInteger cursor_type)
+{
+    switch (cursor_type) {
+    case 3:
+        return 2;
+    case 4:
+        return 3;
+    default:
+        return 0;
+    }
+}
+
+static void fireCursorChanged(WebContents *contents, int cursor_type)
+{
+    if (!contents || !g_callbacks.on_cursor_changed)
+        return;
+    if (contents->suppress_cursor_notifications)
+        return;
+    if (contents->last_cursor_type == cursor_type)
+        return;
+
+    contents->last_cursor_type = cursor_type;
+    g_callbacks.on_cursor_changed(contents, cursor_type, g_callbacks.on_cursor_changed_data);
+}
+
+static void installCursorObserver(WebContents *contents)
+{
+    contents->cursor_observer = [[NSNotificationCenter defaultCenter]
+        addObserverForName:TermSurfCursorChangedNotification
+                    object:contents->web_view
+                     queue:nil
+                usingBlock:^(NSNotification *notification) {
+                    NSNumber *cursor_type = notification.userInfo[TermSurfCursorTypeKey];
+                    if (![cursor_type isKindOfClass:NSNumber.class])
+                        return;
+                    fireCursorChanged(contents, chromiumCursorTypeForWebCoreCursorType(cursor_type.integerValue));
+                }];
 }
 
 static void fireJavaScriptDialog(
@@ -601,6 +645,8 @@ ts_web_contents_t ts_create_web_contents(ts_browser_context_t ctx, const char *u
     contents->gui_active = true;
     contents->focused = false;
     contents->dark = dark;
+    contents->last_cursor_type = -999;
+    contents->suppress_cursor_notifications = false;
     contents->pending_javascript_dialogs = [[NSMutableDictionary alloc] init];
     contents->pending_http_auth_requests = [[NSMutableDictionary alloc] init];
 
@@ -623,6 +669,7 @@ ts_web_contents_t ts_create_web_contents(ts_browser_context_t ctx, const char *u
     contents->ui_delegate = [[TSUIDelegate alloc] init];
     contents->ui_delegate.owner = contents;
     contents->web_view.UIDelegate = contents->ui_delegate;
+    installCursorObserver(contents);
 
     [contents->window.contentView addSubview:contents->web_view];
     [contents->window orderFront:nil];
@@ -657,6 +704,8 @@ void ts_destroy_web_contents(ts_web_contents_t wc)
         return;
 
     [contents->remote_context invalidate];
+    if (contents->cursor_observer)
+        [[NSNotificationCenter defaultCenter] removeObserver:contents->cursor_observer];
     contents->web_view.navigationDelegate = nil;
     contents->web_view.UIDelegate = nil;
     [contents->pending_javascript_dialogs removeAllObjects];
@@ -768,7 +817,9 @@ void ts_forward_mouse_move(ts_web_contents_t wc, int x, int y, int modifiers)
         pressure:0.0];
     NSView *target = targetViewForPoint(contents, x, y);
     [NSApp _setCurrentEvent:drag_event];
+    contents->suppress_cursor_notifications = true;
     [target mouseDragged:drag_event];
+    contents->suppress_cursor_notifications = false;
     [NSApp _setCurrentEvent:nil];
 }
 

@@ -284,4 +284,4 @@ recovery. Much of this code can inform Surfari's implementation.
 - [Experiment 11: Implement WebKit cursor callbacks](11-webkit-cursor-callbacks.md)
   — **Partial**
 - [Experiment 12: Hook WebKit cursor changes](12-webkit-cursor-hook.md) —
-  **Designed**
+  **Pass**

@@ -24,5 +24,6 @@ git -C webkit/src switch -C webkit-{short-base}-issue-{N} {base-commit}
 git -C webkit/src am ../../webkit/patches/issue-{N}/*.patch
 ```
 
-Issue 756 has not archived WebKit source patches yet; Experiments 1-4 are
-bootstrap, compositor-proof, lifecycle-proof, and workflow setup only.
+Issue 756 archives WebKit source patches in `issue-756/`. Experiment 12 added
+the first patch, a macOS `PageClientImpl` cursor notification hook used by
+Surfari cursor callbacks.

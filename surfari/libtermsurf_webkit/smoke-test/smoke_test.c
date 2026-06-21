@@ -31,6 +31,9 @@ struct State {
     int target_url_checked;
     int target_url_events;
     char target_url_sequence[2][256];
+    int cursor_checked;
+    int cursor_events;
+    int cursor_sequence[3];
     int javascript_dialog_requests;
     int javascript_dialog_checked;
     int stale_javascript_dialog_replies;
@@ -49,9 +52,15 @@ static void query_focus_state(void *user_data);
 static void run_pointer_key_sequence(void *user_data);
 static void run_target_url_sequence(void *user_data);
 static void check_target_url_sequence(void *user_data);
+static void run_cursor_sequence(void *user_data);
+static void capture_cursor_sequence(void *user_data);
+static void move_cursor_to_hand(void *user_data);
+static void move_cursor_to_ibeam(void *user_data);
+static void check_cursor_sequence(void *user_data);
 static void run_javascript_dialog_sequence(void *user_data);
 static void run_http_auth_sequence(void *user_data);
 static void query_http_auth_accept_state(void *user_data);
+static void on_cursor_changed(ts_web_contents_t wc, int cursor_type, void *user_data);
 
 static void fail(const char *message)
 {
@@ -194,6 +203,8 @@ static void finish(void *user_data)
         fail("input check missing");
     if (!state->target_url_checked)
         fail("target URL check missing");
+    if (!state->cursor_checked)
+        fail("cursor check missing");
     if (state->javascript_dialog_requests != 3)
         fail("javascript dialog request count mismatch");
     if (!state->javascript_dialog_checked)
@@ -213,7 +224,7 @@ static void finish(void *user_data)
     ts_destroy_browser_context(state->persistent_context);
     ts_destroy_browser_context(state->incognito_context);
     stop_auth_server(state);
-    printf("SMOKE_PASS initialized=%d tab_ready=%d ca_context=%d url=%d loading_started=%d loading_finished=%d title=%d navigations=%d resized=%d focus=%d input=%d target_url=%d js_dialogs=%d http_auth=%d\n",
+    printf("SMOKE_PASS initialized=%d tab_ready=%d ca_context=%d url=%d loading_started=%d loading_finished=%d title=%d navigations=%d resized=%d focus=%d input=%d target_url=%d cursor=%d js_dialogs=%d http_auth=%d\n",
         state->initialized,
         state->tab_ready,
         state->context_id_count,
@@ -226,6 +237,7 @@ static void finish(void *user_data)
         state->focus_checked,
         state->input_checked,
         state->target_url_checked,
+        state->cursor_checked,
         state->javascript_dialog_checked,
         state->http_auth_accept_checked && state->http_auth_reject_checked);
     fflush(stdout);
@@ -259,7 +271,7 @@ static void check_input_result(const char *result, void *user_data)
     if (!strstr(result, "\"colorScheme\":\"dark\""))
         fail("dark color scheme was not observed");
     state->input_checked = 1;
-    ts_post_task(run_target_url_sequence, state);
+    ts_post_task(run_cursor_sequence, state);
 }
 
 static void check_target_url_sequence(void *user_data)
@@ -275,6 +287,22 @@ static void check_target_url_sequence(void *user_data)
     ts_post_task(run_javascript_dialog_sequence, state);
 }
 
+static void check_cursor_sequence(void *user_data)
+{
+    struct State *state = (struct State *)user_data;
+    if (state->cursor_events != 3)
+        fail("cursor callback count mismatch");
+    if (state->cursor_sequence[0] != 0)
+        fail("pointer cursor callback mismatch");
+    if (state->cursor_sequence[1] != 2)
+        fail("hand cursor callback mismatch");
+    if (state->cursor_sequence[2] != 3)
+        fail("i-beam cursor callback mismatch");
+    state->cursor_checked = 1;
+    ts_set_on_cursor_changed(NULL, NULL);
+    ts_post_task(run_target_url_sequence, state);
+}
+
 static void run_target_url_sequence(void *user_data)
 {
     struct State *state = (struct State *)user_data;
@@ -282,6 +310,37 @@ static void run_target_url_sequence(void *user_data)
     ts_forward_mouse_move(state->web_contents, 408, 116, 0);
     ts_forward_mouse_move(state->web_contents, 20, 20, 0);
     ts_webkit_test_post_delayed_task(0.5, check_target_url_sequence, state);
+}
+
+static void capture_cursor_sequence(void *user_data)
+{
+    struct State *state = (struct State *)user_data;
+    ts_set_on_cursor_changed(on_cursor_changed, state);
+    ts_forward_mouse_move(state->web_contents, 280, 112, 0);
+    ts_forward_mouse_move(state->web_contents, 292, 116, 0);
+    ts_webkit_test_post_delayed_task(0.2, move_cursor_to_hand, state);
+}
+
+static void move_cursor_to_hand(void *user_data)
+{
+    struct State *state = (struct State *)user_data;
+    ts_forward_mouse_move(state->web_contents, 390, 236, 0);
+    ts_forward_mouse_move(state->web_contents, 404, 238, 0);
+    ts_webkit_test_post_delayed_task(0.2, move_cursor_to_ibeam, state);
+}
+
+static void move_cursor_to_ibeam(void *user_data)
+{
+    struct State *state = (struct State *)user_data;
+    ts_forward_mouse_move(state->web_contents, 390, 286, 0);
+    ts_forward_mouse_move(state->web_contents, 404, 288, 0);
+    ts_webkit_test_post_delayed_task(0.5, check_cursor_sequence, state);
+}
+
+static void run_cursor_sequence(void *user_data)
+{
+    struct State *state = (struct State *)user_data;
+    ts_webkit_test_post_delayed_task(0.2, capture_cursor_sequence, state);
 }
 
 static void query_input_state(void *user_data)
@@ -484,6 +543,16 @@ static void on_target_url_changed(ts_web_contents_t wc, const char *url, void *u
             url ? url : "");
     }
     state->target_url_events++;
+}
+
+static void on_cursor_changed(ts_web_contents_t wc, int cursor_type, void *user_data)
+{
+    (void)wc;
+    struct State *state = (struct State *)user_data;
+    printf("CALLBACK cursor cursor_type=%d\n", cursor_type);
+    if (state->cursor_events < 3)
+        state->cursor_sequence[state->cursor_events] = cursor_type;
+    state->cursor_events++;
 }
 
 static void on_javascript_dialog_request(
