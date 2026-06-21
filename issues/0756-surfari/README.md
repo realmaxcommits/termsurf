@@ -273,3 +273,5 @@ recovery. Much of this code can inform Surfari's implementation.
   — **Pass**
 - [Experiment 6: Implement core WebKit input API](06-core-webkit-input-api.md) —
   **Partial**
+- [Experiment 7: Resolve WebKit focus semantics](07-webkit-focus-semantics.md) —
+  **Designed**
