@@ -40,7 +40,7 @@ DYLD_FRAMEWORK_PATH="$(pwd)/webkit/src/WebKitBuild/Debug" \
 The smoke test initializes the library, creates persistent and incognito browser
 contexts, creates a WebKit-backed web contents, receives lifecycle callbacks,
 navigates between deterministic local pages, resizes the view, forwards
-mouse/scroll/keyboard input, exercises AppKit first-responder and inactive
+mouse/scroll/keyboard input, verifies page-visible WebKit focus and inactive
 state, destroys the objects, and quits.
 
 `DYLD_FRAMEWORK_PATH` is required because WebKit's debug framework has
@@ -54,7 +54,8 @@ Implemented:
 - persistent and incognito browser contexts;
 - WebKit-backed web contents creation/destruction;
 - navigation and resize;
-- AppKit first-responder assignment and GUI active/inactive state;
+- AppKit first-responder assignment, page-visible focus, and GUI active/inactive
+  state;
 - mouse move, mouse click, wheel scroll, and keyboard forwarding through Cocoa
   events;
 - dark/light appearance assignment through `NSAppearance`;
@@ -63,7 +64,6 @@ Implemented:
 Still unsupported:
 
 - DevTools;
-- DOM-visible focus state from `ts_set_focus(true)`;
 - JavaScript dialogs;
 - HTTP auth;
 - renderer crash reporting;

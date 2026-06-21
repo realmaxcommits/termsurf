@@ -21,10 +21,12 @@ struct State {
     int title_changed;
     int navigations_finished;
     int resized;
+    int focus_checked;
     int input_checked;
 };
 
 static void run_input_sequence(void *user_data);
+static void query_focus_state(void *user_data);
 static void run_pointer_key_sequence(void *user_data);
 
 static void fail(const char *message)
@@ -57,13 +59,15 @@ static void finish(void *user_data)
         fail("second navigation did not finish");
     if (!state->resized)
         fail("resize callback missing");
+    if (!state->focus_checked)
+        fail("focus check missing");
     if (!state->input_checked)
         fail("input check missing");
 
     ts_destroy_web_contents(state->web_contents);
     ts_destroy_browser_context(state->persistent_context);
     ts_destroy_browser_context(state->incognito_context);
-    printf("SMOKE_PASS initialized=%d tab_ready=%d ca_context=%d url=%d loading_started=%d loading_finished=%d title=%d navigations=%d resized=%d input=%d\n",
+    printf("SMOKE_PASS initialized=%d tab_ready=%d ca_context=%d url=%d loading_started=%d loading_finished=%d title=%d navigations=%d resized=%d focus=%d input=%d\n",
         state->initialized,
         state->tab_ready,
         state->context_id_count,
@@ -73,6 +77,7 @@ static void finish(void *user_data)
         state->title_changed,
         state->navigations_finished,
         state->resized,
+        state->focus_checked,
         state->input_checked);
     fflush(stdout);
     ts_quit();
@@ -118,13 +123,35 @@ static void query_input_state(void *user_data)
         state);
 }
 
+static void check_focus_result(const char *result, void *user_data)
+{
+    struct State *state = (struct State *)user_data;
+    printf("CALLBACK focus_state %s\n", result ? result : "");
+    if (!result)
+        fail("focus state result missing");
+    if (!strstr(result, "\"focus\":true") && !strstr(result, "\"hasFocus\":true"))
+        fail("focus was not observed");
+    state->focus_checked = 1;
+    ts_post_task(run_pointer_key_sequence, state);
+}
+
+static void query_focus_state(void *user_data)
+{
+    struct State *state = (struct State *)user_data;
+    ts_webkit_test_evaluate_javascript(
+        state->web_contents,
+        "JSON.stringify({ focus: window.__surfariState.focus, focusIn: window.__surfariState.focusIn, hasFocus: document.hasFocus(), activeElement: document.activeElement ? document.activeElement.id : \"\" })",
+        check_focus_result,
+        state);
+}
+
 static void run_input_sequence(void *user_data)
 {
     struct State *state = (struct State *)user_data;
     ts_set_color_scheme(state->web_contents, true);
     ts_set_gui_active(state->web_contents, true, "smoke-test-active");
     ts_set_focus(state->web_contents, true);
-    ts_webkit_test_post_delayed_task(0.2, run_pointer_key_sequence, state);
+    ts_webkit_test_post_delayed_task(0.2, query_focus_state, state);
 }
 
 static void run_pointer_key_sequence(void *user_data)

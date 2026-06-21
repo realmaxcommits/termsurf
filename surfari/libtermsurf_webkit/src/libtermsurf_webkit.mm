@@ -21,6 +21,21 @@
 - (void)_setCurrentEvent:(NSEvent *)event;
 @end
 
+@interface TSHostWindow : NSWindow
+@end
+
+@implementation TSHostWindow
+- (BOOL)canBecomeKeyWindow
+{
+    return YES;
+}
+
+- (BOOL)canBecomeMainWindow
+{
+    return YES;
+}
+@end
+
 struct CallbackState {
     ts_initialized_cb on_initialized = nullptr;
     void *on_initialized_data = nullptr;
@@ -360,7 +375,7 @@ ts_web_contents_t ts_create_web_contents(ts_browser_context_t ctx, const char *u
     contents->dark = dark;
 
     NSRect frame = NSMakeRect(80, 80, MAX(width, 64), MAX(height, 64));
-    contents->window = [[NSWindow alloc] initWithContentRect:frame styleMask:NSWindowStyleMaskBorderless backing:NSBackingStoreBuffered defer:NO];
+    contents->window = [[TSHostWindow alloc] initWithContentRect:frame styleMask:NSWindowStyleMaskBorderless backing:NSBackingStoreBuffered defer:NO];
     contents->window.releasedWhenClosed = NO;
     contents->window.title = @"libtermsurf_webkit";
     contents->window.acceptsMouseMovedEvents = YES;
@@ -595,7 +610,9 @@ void ts_set_focus(ts_web_contents_t wc, bool focused)
     if (focused) {
         [NSApp activateIgnoringOtherApps:YES];
         [contents->window makeKeyAndOrderFront:nil];
-        [contents->window makeFirstResponder:contents->web_view];
+        [contents->window makeKeyWindow];
+        if ([contents->window makeFirstResponder:contents->web_view])
+            [contents->web_view becomeFirstResponder];
     } else {
         [contents->window makeFirstResponder:nil];
         [contents->window resignKeyWindow];
@@ -612,9 +629,10 @@ void ts_set_gui_active(ts_web_contents_t wc, bool active, const char *reason)
     contents->gui_active = active;
     if (active) {
         [NSApp activateIgnoringOtherApps:YES];
-        [contents->window orderFront:nil];
-        if (contents->focused)
-            [contents->window makeFirstResponder:contents->web_view];
+        [contents->window makeKeyAndOrderFront:nil];
+        [contents->window makeKeyWindow];
+        if (contents->focused && [contents->window makeFirstResponder:contents->web_view])
+            [contents->web_view becomeFirstResponder];
     } else {
         [contents->window makeFirstResponder:nil];
         [contents->window resignKeyWindow];
