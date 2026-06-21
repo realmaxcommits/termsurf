@@ -62,12 +62,12 @@ Implemented:
 - tab ready, CA context ID, URL, loading, and title callbacks;
 - JavaScript alert, confirm, and prompt requests through `WKUIDelegate`, with
   pending request IDs and `ts_reply_javascript_dialog`;
-- Roamium/Chromium-compatible HTTP auth callback typedef ordering.
+- HTTP Basic auth requests through `WKNavigationDelegate`, with
+  Roamium/Chromium-compatible field normalization and `ts_reply_http_auth`.
 
 Still unsupported:
 
 - DevTools;
-- HTTP auth request handling and replies;
 - renderer crash reporting;
 - cursor updates;
 - target URL updates;

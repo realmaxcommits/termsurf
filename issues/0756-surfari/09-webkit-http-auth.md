@@ -157,3 +157,101 @@ Required findings fixed:
 
 The reviewer re-reviewed these fixes and approved the design with no remaining
 required findings.
+
+## Result
+
+**Result:** Pass
+
+`libtermsurf_webkit` now implements HTTP Basic auth requests through WebKit's
+real `WKNavigationDelegate` authentication challenge path. The implementation
+creates pending auth requests only for non-proxy
+`NSURLAuthenticationMethodHTTPBasic` challenges when a TermSurf callback is
+registered. Unsupported or no-callback challenges synchronously complete with
+`NSURLSessionAuthChallengeRejectProtectionSpace` and do not leave pending state.
+
+The emitted C callback payload is normalized to match Roamium/Chromium/proto
+semantics:
+
+- `auth_scheme` is `basic`;
+- `challenger` is serialized as `scheme://host[:port]`;
+- `realm` comes from the protection space;
+- `is_proxy` is false for the supported path;
+- `first_auth_attempt` is derived from `previousFailureCount == 0`;
+- `is_primary_main_frame_navigation` and `is_navigation` are true for the proven
+  main-frame smoke navigations.
+
+`ts_reply_http_auth` now returns `true` for a pending request, creates an
+`NSURLCredential` for accepted replies, cancels rejected replies, removes the
+pending request, and returns `false` for repeated or unknown request IDs.
+
+The smoke harness now owns a deterministic loopback HTTP server. It serves a
+protected `/auth-accept` path that succeeds only after the expected Basic
+Authorization header and a protected `/auth-reject` path used to prove valid
+rejected replies complete the WebKit challenge with cancellation.
+
+The passing smoke log recorded:
+
+```text
+CALLBACK focus_state {"focus":true,"focusIn":false,"hasFocus":true,"activeElement":""}
+CALLBACK input_state {"focus":true,"focusIn":false,"blur":true,"move":"120,130","click":"140,150,0","scroll":-120,"key":"a","colorScheme":"dark"}
+CALLBACK javascript_dialog request_id=1 type=alert origin=file:///Users/astrohacker/dev/termsurf/surfari/libtermsurf_webkit/test-content/navigation.html message=surfari-alert default=
+CALLBACK javascript_dialog request_id=2 type=confirm origin=file:///Users/astrohacker/dev/termsurf/surfari/libtermsurf_webkit/test-content/navigation.html message=surfari-confirm default=
+CALLBACK javascript_dialog request_id=3 type=prompt origin=file:///Users/astrohacker/dev/termsurf/surfari/libtermsurf_webkit/test-content/navigation.html message=surfari-prompt default=default-prompt
+CALLBACK javascript_dialog_state {"alert":"done","confirm":true,"prompt":"surfari-prompt-reply"}
+CALLBACK http_auth request_id=4 url=http://127.0.0.1:49992/auth-accept scheme=basic challenger=http://127.0.0.1:49992 realm=surfari proxy=0 first=1 primary=1 navigation=1
+CALLBACK http_auth_accept_state Surfari Auth OK:auth-ok
+CALLBACK http_auth request_id=5 url=http://127.0.0.1:49992/auth-reject scheme=basic challenger=http://127.0.0.1:49992 realm=surfari proxy=0 first=1 primary=1 navigation=1
+SMOKE_PASS initialized=1 tab_ready=1 ca_context=5 url=6 loading_started=4 loading_finished=4 title=3 navigations=4 resized=1 focus=1 input=1 js_dialogs=1 http_auth=1
+SMOKE_EXIT_STATUS=0
+```
+
+The rejected auth navigation logs WebKit's expected cancellation:
+
+```text
+provisional navigation failed: Error Domain=NSURLErrorDomain Code=-999 "cancelled"
+```
+
+Additional verification passed:
+
+```text
+surfari/libtermsurf_webkit/build.sh
+nm -gU surfari/libtermsurf_webkit/build/libtermsurf_webkit.dylib | rg ' _ts_|_ts_webkit_test' | sort
+otool -L surfari/libtermsurf_webkit/build/libtermsurf_webkit.dylib | rg 'WebKit|JavaScriptCore|libtermsurf'
+otool -L surfari/libtermsurf_webkit/build/smoke-test | rg 'WebKit|JavaScriptCore|libtermsurf'
+git diff --check
+git -C webkit/src status --short
+git -C webkit/src rev-parse HEAD
+git -C webkit/src rev-parse --abbrev-ref HEAD
+git -C webkit/src rev-parse --is-shallow-repository
+```
+
+`webkit/src` remained unchanged at `1452a43959523449099b2616793fd2c5b6a6487e` on
+branch `webkit-1452a439-issue-756`, and the checkout is still shallow.
+
+## Conclusion
+
+HTTP Basic auth is now implemented and proven in `libtermsurf_webkit`. The next
+browser-state gaps are renderer crash reporting, target URL changes, cursor
+updates, and console messages.
+
+## Completion Review
+
+An adversarial Codex subagent reviewed the completed experiment with fresh
+context.
+
+**Verdict:** Approved.
+
+Required findings: none.
+
+The reviewer independently verified that:
+
+- implementation scope matches Experiment 9;
+- auth payload order and normalization match proto/Roamium/Chromium
+  expectations;
+- unsupported/no-callback challenges complete immediately with reject
+  disposition;
+- accepted, rejected, stale, and unknown replies are covered by smoke logic;
+- prior lifecycle/input/focus/dialog smoke coverage still passes;
+- README status is `Pass` and HTTP auth support is documented;
+- `webkit/src` is unchanged, shallow, and on branch `webkit-1452a439-issue-756`;
+- `git diff --check`, build, smoke test, symbols, and linkage checks passed.

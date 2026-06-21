@@ -278,4 +278,4 @@ recovery. Much of this code can inform Surfari's implementation.
 - [Experiment 8: Implement WebKit browser state callbacks](08-webkit-browser-state-callbacks.md)
   — **Partial**
 - [Experiment 9: Implement WebKit HTTP auth callbacks](09-webkit-http-auth.md) —
-  **Designed**
+  **Pass**

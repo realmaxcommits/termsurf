@@ -89,6 +89,10 @@ struct WebContents;
 @property(nonatomic, copy) void (^promptCompletion)(NSString *);
 @end
 
+@interface TSPendingHttpAuthRequest : NSObject
+@property(nonatomic, copy) void (^completion)(NSURLSessionAuthChallengeDisposition, NSURLCredential *);
+@end
+
 struct WebContents {
     int tab_id;
     NSWindow *window;
@@ -96,6 +100,7 @@ struct WebContents {
     TSNavigationDelegate *navigation_delegate;
     TSUIDelegate *ui_delegate;
     NSMutableDictionary<NSNumber *, TSPendingJavaScriptDialog *> *pending_javascript_dialogs;
+    NSMutableDictionary<NSNumber *, TSPendingHttpAuthRequest *> *pending_http_auth_requests;
     CAContext *remote_context;
     int width;
     int height;
@@ -276,6 +281,69 @@ static void fireJavaScriptDialog(
     });
 }
 
+static NSString *httpAuthScheme(NSURLAuthenticationChallenge *challenge)
+{
+    NSString *method = challenge.protectionSpace.authenticationMethod;
+    if ([method isEqualToString:NSURLAuthenticationMethodHTTPBasic])
+        return @"basic";
+    return @"";
+}
+
+static NSString *httpAuthChallenger(WKWebView *webView, NSURLAuthenticationChallenge *challenge)
+{
+    NSURLProtectionSpace *space = challenge.protectionSpace;
+    NSString *scheme = space.protocol ?: webView.URL.scheme ?: @"http";
+    NSString *host = space.host ?: @"";
+    NSInteger port = space.port;
+    BOOL defaultPort = ([scheme isEqualToString:@"http"] && port == 80) || ([scheme isEqualToString:@"https"] && port == 443);
+    if (port > 0 && !defaultPort)
+        return [NSString stringWithFormat:@"%@://%@:%ld", scheme, host, (long)port];
+    return [NSString stringWithFormat:@"%@://%@", scheme, host];
+}
+
+static bool isSupportedHttpAuthChallenge(NSURLAuthenticationChallenge *challenge)
+{
+    NSURLProtectionSpace *space = challenge.protectionSpace;
+    return !space.isProxy && [space.authenticationMethod isEqualToString:NSURLAuthenticationMethodHTTPBasic];
+}
+
+static void fireHttpAuthRequest(
+    WebContents *contents,
+    uint64_t request_id,
+    NSString *url,
+    NSString *auth_scheme,
+    NSString *challenger,
+    NSString *realm,
+    bool is_proxy,
+    bool first_auth_attempt,
+    bool is_primary_main_frame_navigation,
+    bool is_navigation)
+{
+    if (!g_callbacks.on_http_auth_request)
+        return;
+
+    withCString(url, ^(const char *c_url) {
+        withCString(auth_scheme, ^(const char *c_auth_scheme) {
+            withCString(challenger, ^(const char *c_challenger) {
+                withCString(realm, ^(const char *c_realm) {
+                    g_callbacks.on_http_auth_request(
+                        contents,
+                        request_id,
+                        c_url,
+                        c_auth_scheme,
+                        c_challenger,
+                        c_realm,
+                        is_proxy,
+                        first_auth_attempt,
+                        is_primary_main_frame_navigation,
+                        is_navigation,
+                        g_callbacks.on_http_auth_request_data);
+                });
+            });
+        });
+    });
+}
+
 static void exportContext(WebContents *contents)
 {
     if (!contents || !contents->web_view)
@@ -339,9 +407,40 @@ static void exportContext(WebContents *contents)
     NSLog(@"[libtermsurf_webkit] provisional navigation failed: %@", error);
     fireLoading(self.owner, webView.URL.absoluteString, 0);
 }
+
+- (void)webView:(WKWebView *)webView didReceiveAuthenticationChallenge:(NSURLAuthenticationChallenge *)challenge completionHandler:(void (^)(NSURLSessionAuthChallengeDisposition, NSURLCredential *))completionHandler
+{
+    WebContents *contents = self.owner;
+    if (!contents || !g_callbacks.on_http_auth_request || !isSupportedHttpAuthChallenge(challenge)) {
+        completionHandler(NSURLSessionAuthChallengeRejectProtectionSpace, nil);
+        return;
+    }
+
+    uint64_t request_id = g_next_request_id.fetch_add(1);
+    TSPendingHttpAuthRequest *pending = [[TSPendingHttpAuthRequest alloc] init];
+    pending.completion = completionHandler;
+    contents->pending_http_auth_requests[@(request_id)] = pending;
+
+    NSURLProtectionSpace *space = challenge.protectionSpace;
+    NSString *url = webView.URL.absoluteString ?: @"";
+    fireHttpAuthRequest(
+        contents,
+        request_id,
+        url,
+        httpAuthScheme(challenge),
+        httpAuthChallenger(webView, challenge),
+        space.realm ?: @"",
+        space.isProxy,
+        challenge.previousFailureCount == 0,
+        true,
+        true);
+}
 @end
 
 @implementation TSPendingJavaScriptDialog
+@end
+
+@implementation TSPendingHttpAuthRequest
 @end
 
 @implementation TSUIDelegate
@@ -474,6 +573,7 @@ ts_web_contents_t ts_create_web_contents(ts_browser_context_t ctx, const char *u
     contents->focused = false;
     contents->dark = dark;
     contents->pending_javascript_dialogs = [[NSMutableDictionary alloc] init];
+    contents->pending_http_auth_requests = [[NSMutableDictionary alloc] init];
 
     NSRect frame = NSMakeRect(80, 80, MAX(width, 64), MAX(height, 64));
     contents->window = [[TSHostWindow alloc] initWithContentRect:frame styleMask:NSWindowStyleMaskBorderless backing:NSBackingStoreBuffered defer:NO];
@@ -531,6 +631,7 @@ void ts_destroy_web_contents(ts_web_contents_t wc)
     contents->web_view.navigationDelegate = nil;
     contents->web_view.UIDelegate = nil;
     [contents->pending_javascript_dialogs removeAllObjects];
+    [contents->pending_http_auth_requests removeAllObjects];
     [contents->web_view removeFromSuperview];
     [contents->window close];
     delete contents;
@@ -784,12 +885,25 @@ bool ts_reply_javascript_dialog(ts_web_contents_t wc, uint64_t request_id, bool 
 
 bool ts_reply_http_auth(ts_web_contents_t wc, uint64_t request_id, bool accepted, const char *username, const char *password)
 {
-    (void)wc;
-    (void)request_id;
-    (void)accepted;
-    (void)username;
-    (void)password;
-    return false;
+    WebContents *contents = static_cast<WebContents *>(wc);
+    if (!contents)
+        return false;
+
+    NSNumber *key = @(request_id);
+    TSPendingHttpAuthRequest *pending = contents->pending_http_auth_requests[key];
+    if (!pending)
+        return false;
+
+    [contents->pending_http_auth_requests removeObjectForKey:key];
+    if (accepted) {
+        NSURLCredential *credential = [NSURLCredential credentialWithUser:stringFromCString(username)
+                                                                  password:stringFromCString(password)
+                                                               persistence:NSURLCredentialPersistenceForSession];
+        pending.completion(NSURLSessionAuthChallengeUseCredential, credential);
+    } else {
+        pending.completion(NSURLSessionAuthChallengeCancelAuthenticationChallenge, nil);
+    }
+    return true;
 }
 
 void ts_set_on_tab_ready(ts_tab_ready_cb cb, void *user_data)
