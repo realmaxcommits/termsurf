@@ -96,3 +96,112 @@ An adversarial Codex subagent reviewed the design with fresh context.
 **Verdict:** Approved.
 
 Findings: none.
+
+## Result
+
+**Result:** Pass
+
+`webkit/README.md` now documents the local WebKit workspace, upstream remote,
+current verified base commit, branch naming convention, branch table, patch
+archive layout, patch generation commands, patch application commands, and rules
+for deepening the shallow checkout.
+
+`webkit/patches/README.md` now exists as the tracked placeholder and operating
+notes for future WebKit patch archives. No non-empty WebKit patches were created
+because this experiment did not modify WebKit source.
+
+`.gitignore` now keeps `webkit/src` and WebKit build output ignored while
+allowing `webkit/README.md` and `webkit/patches/` to be tracked by the main
+TermSurf repo.
+
+The local WebKit issue branch was created from the verified upstream commit:
+
+```bash
+git -C webkit/src switch -c webkit-1452a439-issue-756 1452a43959523449099b2616793fd2c5b6a6487e
+```
+
+Output:
+
+```text
+Switched to a new branch 'webkit-1452a439-issue-756'
+1452a43959523449099b2616793fd2c5b6a6487e
+webkit-1452a439-issue-756
+true
+```
+
+Final verification:
+
+```bash
+git status --short
+```
+
+```text
+ M .gitignore
+ M webkit/README.md
+?? webkit/patches/
+```
+
+```bash
+git -C webkit/src status --short
+git -C webkit/src rev-parse HEAD
+git -C webkit/src rev-parse --abbrev-ref HEAD
+git -C webkit/src rev-parse --is-shallow-repository
+```
+
+```text
+1452a43959523449099b2616793fd2c5b6a6487e
+webkit-1452a439-issue-756
+true
+```
+
+The empty first line from `git -C webkit/src status --short` confirms the
+ignored WebKit checkout is clean.
+
+```bash
+find webkit/patches -maxdepth 3 -type f | sort
+```
+
+```text
+webkit/patches/README.md
+```
+
+```bash
+git diff --check
+```
+
+```text
+
+```
+
+`git diff --check` produced no output.
+
+## Conclusion
+
+TermSurf now has a documented WebKit branch and patch workflow analogous to the
+Chromium workflow, adapted for a shallow WebKit checkout and patch archives
+tracked outside the ignored `webkit/src` tree. The next experiment can start
+introducing the first `libtermsurf_webkit` surface without also inventing source
+control mechanics.
+
+## Completion Review
+
+An adversarial Codex subagent reviewed the completed experiment with fresh
+context.
+
+**Initial verdict:** Changes required.
+
+Required finding:
+
+- `webkit/README.md` documented the WebKit remote as `upstream`, but the actual
+  `webkit/src` checkout uses `origin`, and the documented apply workflow also
+  uses `origin`.
+
+Fix:
+
+- Updated `webkit/README.md` to document the remote as `origin`.
+
+**Re-review verdict:** Approved.
+
+The reviewer confirmed that `webkit/README.md` now documents `origin`, matching
+`git -C webkit/src remote -v`, and that no new required findings were introduced
+by the fix.

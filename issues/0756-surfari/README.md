@@ -148,7 +148,7 @@ surrounding issue text.
       displaying it in a separate host window/process.
 - [x] Confirm the hosted WebKit surface resizes correctly, animates, scrolls,
       survives navigation, and remains stable across repeated show/hide cycles.
-- [ ] Establish WebKit branch and patch management analogous to Chromium:
+- [x] Establish WebKit branch and patch management analogous to Chromium:
       issue-specific branches, documented upstream commit ancestry, build
       commands, and a clear record of each TermSurf patch.
 - [ ] Create `libtermsurf_webkit` with a C ABI backed by Objective-C++/Cocoa on
@@ -268,4 +268,4 @@ recovery. Much of this code can inform Surfari's implementation.
 - [Experiment 3: Stress hosted WebKit surface lifecycle](03-hosted-surface-lifecycle.md)
   — **Pass**
 - [Experiment 4: Establish WebKit branch workflow](04-webkit-branch-workflow.md)
-  — **Designed**
+  — **Pass**
