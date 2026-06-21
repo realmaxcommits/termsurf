@@ -137,3 +137,48 @@ testing, or cannot identify a concrete next step.
 Adversarial subagent review, fresh context, read-only.
 
 Verdict: **Approved**. No findings.
+
+## Result
+
+**Result:** Partial
+
+The no-WebKit-patch approach was tested and rejected. The attempted
+implementation observed AppKit cursor state after forwarded mouse movement and
+then tried a stronger in-process `NSCursor.set()` observer. It also tried
+warping the global cursor to the forwarded mouse position before dispatching the
+synthetic Cocoa mouse event.
+
+The smoke test still observed only a pointer/arrow cursor callback:
+
+```text
+CALLBACK target_url url=https://example.test/surfari-target
+CALLBACK target_url url=
+CALLBACK cursor cursor_type=0
+SMOKE_FAIL cursor callback count mismatch
+SMOKE_EXIT_STATUS=1
+```
+
+The useful finding is in WebKit's local source:
+`Source/WebKit/UIProcess/mac/PageClientImplMac.mm` has
+`PageClientImpl::setCursor(const WebCore::Cursor&)`, which rejects cursor
+updates unless the real active window and global mouse-location guards pass.
+Surfari's synthetic mouse movement is sufficient for WebKit hover hit testing
+and target URL callbacks, but it is not sufficient to reliably observe the
+non-pointer AppKit cursor changes from outside WebKit.
+
+The failed production/test edits were removed. Cursor updates remain listed as
+unsupported in `surfari/libtermsurf_webkit/README.md`.
+
+## Conclusion
+
+Surfari needs a WebKit source hook for cursor updates. The next experiment
+should patch the local WebKit branch at or near `PageClientImpl::setCursor` or
+`WebPageProxy::setCursor`, expose the WebCore cursor type to
+`libtermsurf_webkit`, map it to Chromium-compatible `ui::mojom::CursorType`
+integer values, and then re-run the smoke proof for pointer, hand, and i-beam.
+
+## Completion Review
+
+Adversarial subagent review, fresh context, read-only.
+
+Verdict: **Approved**. No findings.
