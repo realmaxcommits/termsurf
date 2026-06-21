@@ -313,4 +313,4 @@ recovery. Much of this code can inform Surfari's implementation.
 - [Experiment 23: Add focused Surfari input regression guard](23-surfari-input-regression-guard.md)
   — **Pass**
 - [Experiment 24: Define Surfari real-app matrix](24-surfari-real-app-matrix.md)
-  — **Designed**
+  — **Pass**

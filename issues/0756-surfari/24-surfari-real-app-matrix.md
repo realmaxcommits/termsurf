@@ -91,3 +91,54 @@ inventory/tranche planning rather than execution, all remaining real-app
 checklist items are listed, the design avoids overclaiming and requires evidence
 for `Proven` rows, the verification has concrete pass/fail criteria and hygiene
 checks, and no plan commit had already been made.
+
+## Result
+
+**Result:** Pass
+
+Added `issues/0756-surfari/real-app-matrix.md`. The matrix includes every
+remaining real-app checklist item and records a conservative status for each:
+
+- `Proven`: keyboard input, scroll/wheel, single-window resize, and shutdown.
+- `Partial`: navigation, click, and focus changes.
+- `Missing`: drag, pane resize, split panes, tab switching, window switching,
+  restart, profile isolation, and crash handling.
+
+The matrix cites existing evidence from Experiments 20-23 where direct evidence
+exists, and it leaves rows unproven where evidence is missing. It also maps
+relevant Roamium scenarios from `scripts/ghostboard-geometry-matrix.sh` so later
+Surfari experiments can reuse fixture/assertion patterns without blindly running
+the Roamium-specific harness.
+
+The recommended tranche order is:
+
+1. lifecycle/navigation/resize/shutdown/restart;
+2. pane/split/tab/window/focus geometry;
+3. input details such as click, drag, and coordinate fidelity;
+4. profile isolation and crash handling;
+5. Ghostboard/Roamium feature comparison.
+
+Verification:
+
+- `git diff --check` passed.
+- `prettier --check --prose-wrap always --print-width 80 issues/0756-surfari/README.md issues/0756-surfari/24-surfari-real-app-matrix.md issues/0756-surfari/real-app-matrix.md`
+  passed.
+
+## Conclusion
+
+Issue 756 now has an explicit real-app Surfari matrix rather than a broad
+checklist sentence. The matrix does not complete the remaining real-app work; it
+makes the remaining work actionable and auditable. Experiment 25 should run the
+first tranche: lifecycle/navigation/resize/shutdown/restart.
+
+## Completion Review
+
+Adversarial completion review first returned `CHANGES REQUIRED` because the
+matrix covered the real-app behavior list but did not include a separate row for
+the remaining Ghostboard/Roamium feature-matrix comparison checklist item. I
+added the `Roamium comparison` row with status, current evidence, required
+proof, and proposed scenario.
+
+Re-review returned `APPROVED` with no Required findings. The reviewer confirmed
+that the prior Required finding is resolved and no new Required findings were
+introduced.
