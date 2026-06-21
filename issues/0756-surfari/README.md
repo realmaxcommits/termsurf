@@ -285,3 +285,5 @@ recovery. Much of this code can inform Surfari's implementation.
   — **Partial**
 - [Experiment 12: Hook WebKit cursor changes](12-webkit-cursor-hook.md) —
   **Pass**
+- [Experiment 13: Implement WebKit console messages](13-webkit-console-messages.md)
+  — **Designed**
