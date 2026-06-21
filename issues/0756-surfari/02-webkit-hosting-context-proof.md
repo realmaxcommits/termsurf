@@ -155,3 +155,207 @@ The fixed design was re-reviewed by the same adversarial Codex subagent.
 
 The re-review confirmed that the two-process owner-to-host handoff is now
 required for Pass, and that same-process prototypes are explicitly Partial.
+
+## Result
+
+**Result:** Pass
+
+The compositor proof harness succeeded. A WebKit-owning process created a
+`WKWebView`, loaded deterministic local HTML, exported the WebKit view's layer
+through a private Core Animation remote context, and launched a separate host
+process with the exported context ID. The host process created a `CALayerHost`
+for that context ID and displayed the WebKit-rendered content without creating
+its own `WKWebView`.
+
+Implemented harness files:
+
+- `surfari-proofs/hosting-context/README.md`
+- `surfari-proofs/hosting-context/build.sh`
+- `surfari-proofs/hosting-context/WebKitHostingProof.m`
+- `surfari-proofs/hosting-context/test-content/index.html`
+- `surfari-proofs/hosting-context/test-content/navigation.html`
+- `surfari-proofs/hosting-context/.gitignore`
+
+The harness uses a single Objective-C binary with two modes:
+
+```text
+WebKitHostingProof --owner
+WebKitHostingProof --host <context-id>
+```
+
+The owner process performs the browser work. The host process only creates a
+window with a `CALayerHost` pointed at the exported context ID.
+
+Relevant implementation hook:
+
+```objc
+self.remoteContext = [CAContext remoteContextWithOptions:@{
+    @"kCAContextCIFilterBehavior" : @"ignore",
+}];
+self.remoteContext.layer = self.webView.layer;
+uint32_t contextId = self.remoteContext.contextId;
+```
+
+The host side uses:
+
+```objc
+CALayerHost *hostLayer = [CALayerHost layer];
+hostLayer.contextId = self.contextId;
+```
+
+This proof used raw `CAContext` / `CALayerHost` SPI. It did not require a WebKit
+source patch and did not use WebKit's internal `LayerHostingContext` wrapper
+directly. The local WebKit source remains relevant because `LayerHostingContext`
+wraps the same conceptual primitives and should still inform the future
+`libtermsurf_webkit` API.
+
+Verification commands:
+
+```text
+$ surfari-proofs/hosting-context/build.sh
+built surfari-proofs/hosting-context/build/WebKitHostingProof
+
+$ webkit/src/Tools/Scripts/build-webkit --debug
+** BUILD SUCCEEDED ** [34.024 sec]
+** BUILD SUCCEEDED ** [0.528 sec]
+WebKit is now built (00m:40s).
+
+$ git -C webkit/src rev-parse HEAD
+1452a43959523449099b2616793fd2c5b6a6487e
+
+$ git -C webkit/src rev-parse --abbrev-ref HEAD
+main
+
+$ git -C webkit/src status --short
+<clean>
+```
+
+The harness run wrote logs to `logs/issue756-exp2-hosting-proof.log` and
+screenshots to:
+
+- `logs/issue756-exp2-screen-scroll.png`
+- `logs/issue756-exp2-screen-navigation.png`
+- `logs/issue756-exp2-screen.png` (copy of the final navigation screenshot)
+
+Relevant log output:
+
+```text
+OWNER_LOADING pid=60363 url=/Users/astrohacker/dev/termsurf/surfari-proofs/hosting-context/test-content/index.html
+OWNER_NAVIGATION_FINISHED pid=60363 url=file:///Users/astrohacker/dev/termsurf/surfari-proofs/hosting-context/test-content/index.html
+OWNER_EXPORTED_CONTEXT pid=60363 context_id=2129917052 webview_layer=0x77d3d2700
+OWNER_LAUNCHED_HOST host_pid=60373 context_id=2129917052
+HOST_READY pid=60373 context_id=2129917052 host_has_no_wkwebview=1
+OWNER_RESIZED_WEBVIEW pid=60363 size=620x388
+OWNER_NAVIGATING_AFTER_EXPORT pid=60363 url=/Users/astrohacker/dev/termsurf/surfari-proofs/hosting-context/test-content/navigation.html
+OWNER_NAVIGATION_FINISHED pid=60363 url=file:///Users/astrohacker/dev/termsurf/surfari-proofs/hosting-context/test-content/navigation.html
+```
+
+After completion review found that the original result did not separately record
+scroll/dynamic-update evidence, the harness was strengthened with a
+`WKScriptMessageHandler`. The initial page now reports the JavaScript-driven
+scroll/update milestone from inside WebKit. The same JavaScript update changes
+the document background to red and changes target text/color so the hosted
+surface has visible dynamic-rendering evidence:
+
+```text
+OWNER_SCRIPT_MESSAGE pid=60994 name=proof body={
+    event = scrolled;
+    scrollY = 720;
+    status = "Owner page updated by JavaScript animation tick.";
+}
+```
+
+The rerun also captured the same owner/host handoff, resize, and post-export
+navigation:
+
+```text
+OWNER_EXPORTED_CONTEXT pid=60994 context_id=2877406041 webview_layer=0x81cee2730
+OWNER_LAUNCHED_HOST host_pid=61001 context_id=2877406041
+HOST_READY pid=61001 context_id=2877406041 host_has_no_wkwebview=1
+OWNER_RESIZED_WEBVIEW pid=60994 size=620x388
+OWNER_NAVIGATING_AFTER_EXPORT pid=60994 url=/Users/astrohacker/dev/termsurf/surfari-proofs/hosting-context/test-content/navigation.html
+OWNER_NAVIGATION_FINISHED pid=60994 url=file:///Users/astrohacker/dev/termsurf/surfari-proofs/hosting-context/test-content/navigation.html
+```
+
+Visual inspection of the screenshots confirmed:
+
+- the owner and host are separate visible windows;
+- the owner window is blank after export because its WebKit layer was moved into
+  the remote context;
+- `logs/issue756-exp2-screen-scroll.png` shows the host window displaying the
+  initial WebKit page after the JavaScript-triggered dynamic update and scroll:
+  the hosted surface has turned red and the scrollbar has moved down;
+- `logs/issue756-exp2-screen-navigation.png` shows the host window displaying
+  the WebKit-rendered navigation page;
+- the displayed page says `Issue 756 navigation complete`;
+- the host process log states `host_has_no_wkwebview=1`.
+
+Final status checks:
+
+```text
+$ git status --short
+?? surfari-proofs/
+
+$ git status --short --ignored surfari-proofs/hosting-context
+?? surfari-proofs/hosting-context/
+!! surfari-proofs/hosting-context/build/
+```
+
+The untracked `surfari-proofs/` directory contains the intended harness source.
+The compiled binary is under the ignored `build/` directory and is not intended
+to be committed.
+
+## Conclusion
+
+The core compositor assumption is viable on macOS: a process that owns a
+`WKWebView` can export that rendered surface through a Core Animation context
+ID, and a separate host process can display it through `CALayerHost` without
+creating its own `WKWebView`.
+
+This is the critical proof needed before building `libtermsurf_webkit` and the
+Surfari Rust process. The next experiment should establish the durable WebKit
+branch/patch workflow and decide whether `libtermsurf_webkit` should:
+
+- use raw `CAContext` / `CALayerHost` SPI directly for the first macOS
+  implementation; or
+- add a small WebKit-side wrapper around WebKit's existing `LayerHostingContext`
+  path so Surfari can expose a cleaner engine-owned compositor API.
+
+## Completion Review
+
+An adversarial Codex subagent reviewed the completed experiment with fresh
+context.
+
+**Verdict:** Changes required.
+
+Finding:
+
+- **Required:** The original result evidence did not separately prove the
+  experiment's visible dynamic-rendering and scrolling criteria. It recorded the
+  process handoff, resize, navigation, and final navigation screenshot, but not
+  visible hosted animation/scroll/update evidence.
+
+Fix:
+
+- Added a `WKScriptMessageHandler` to the owner process.
+- Updated the initial test page so JavaScript changes visible page state, turns
+  the document red, scrolls to `720`, and reports the update through WebKit
+  script messaging.
+- Captured `logs/issue756-exp2-screen-scroll.png`, which visibly shows the
+  hosted surface after the dynamic update and scroll.
+- Updated the result section to record the script message, the scroll
+  screenshot, and the visible dynamic-rendering evidence.
+
+A focused re-review initially found that scroll evidence was present but the
+visible dynamic-rendering evidence was still too indirect. The test page was
+then changed so the JavaScript update turns the whole hosted surface red before
+the scroll screenshot is captured.
+
+The fixed result was re-reviewed by an adversarial Codex subagent.
+
+**Final verdict:** Approved.
+
+The re-review confirmed that the prior required finding is resolved: the log
+records the WebKit script message with `event = scrolled` and `scrollY = 720`,
+`logs/issue756-exp2-screen-scroll.png` visibly shows the hosted surface turned
+red with the scrollbar moved down, and no new required findings were introduced.
