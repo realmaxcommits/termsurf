@@ -91,6 +91,49 @@ libtermsurf_webkit (Objective-C/C++, C API)
 - Surfari — Rust binary handling Unix socket IPC, protobuf parsing, and process
   lifecycle. Almost entirely reusable from Roamium.
 
+### Guiding strategy
+
+Surfari should keep the same process architecture as Roamium, but WebKit has a
+different natural embedding seam than Chromium. Chromium gave us `content_shell`
+as the practical proof that an embedder can own the browser process and expose a
+surface. For WebKit, the equivalent starting point is MiniBrowser, especially
+the macOS WebKit2 implementation under `Tools/MiniBrowser/mac`.
+
+The production shape should be:
+
+```
+WebKit MiniBrowser/WKWebView/WebKit2 embedding
+        ↓ wrapped by
+libtermsurf_webkit (Objective-C++ implementation, C ABI)
+        ↓ called by
+Surfari (Rust process, shared Roamium-style IPC/protobuf lifecycle)
+```
+
+The C ABI should look as much like `libtermsurf_chromium` as possible:
+initialize the engine, create and destroy browser views, navigate, resize,
+focus, forward mouse/keyboard/wheel input, report state changes, expose
+compositing handles, and shut down cleanly. Internally, the macOS implementation
+will be Objective-C++/Cocoa because the supported WebKit embedding API is
+`WKWebView`.
+
+MiniBrowser is the WebKit analogue to Chromium `content_shell`: it shows the
+smallest supported browser embedder. WebKitTestRunner is the automation and test
+harness reference: it shows how WebKit injects input, toggles runtime flags, and
+drives browser behavior under test. WebKitGTK and WPE are cross-platform
+embedding references, but they are not the primary macOS implementation path.
+
+Putting `WKWebView` directly inside Ghostboard is useful only as a temporary
+prototype if we need to validate terminal overlay behavior quickly. It is not
+the production Surfari architecture because it collapses the engine into the GUI
+process and breaks the one-engine-process-per-profile model that keeps TermSurf
+uniform across Chromium, WebKit, Gecko, and future engines.
+
+The first deep WebKit question is compositor export, not basic embedding.
+Surfari should first try to use WebKit's existing `RemoteLayerTree`,
+`LayerHostingContext`, and `HostingContext` machinery to expose a renderable
+surface to Ghostboard. Only if that path cannot satisfy the TermSurf compositor
+contract should we patch lower-level WebKit internals.
+
 ### Compositing: the key open question
 
 Chromium uses CALayerHost for zero-copy GPU compositing. A `CAContext` ID
