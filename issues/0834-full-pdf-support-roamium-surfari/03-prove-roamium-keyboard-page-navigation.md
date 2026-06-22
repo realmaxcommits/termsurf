@@ -140,3 +140,101 @@ or cannot be automated with a concrete first failing layer.
 This experiment fails if neither navigation path can be proven, if the harness
 claims success without state/screenshot evidence, or if it bypasses the TermSurf
 keyboard path for the keyboard navigation row.
+
+## Result
+
+**Result:** Pass
+
+This experiment added a focused Roamium PDF navigation harness and proved both
+current navigation rows:
+
+- TermSurf protocol keyboard page/scroll navigation;
+- PDF toolbar page-selector navigation.
+
+Two initial runs exposed harness issues rather than product-code failures:
+
+- `logs/issue-834-exp3-keyboard-page-scroll` failed with
+  `first_failing_hop = "pdf-keyboard-navigation-no-change"` because the harness
+  focused the tab but did not first click the PDF plugin. The trace showed six
+  protocol key messages reached Roamium and Chromium, but Chromium classified
+  the key target as `root` and routed through `root-direct`.
+- `logs/issue-834-exp3-toolbar-page-selector` failed with
+  `first_failing_hop = "page-selector-action-failed"` because the DevTools
+  helper looked for `#pageSelector` too shallowly and missed the nested shadow
+  root where the page selector lives.
+
+Both harness issues were fixed:
+
+- the keyboard probe now sends a TermSurf protocol mouse click at the PDF plugin
+  center before sending protocol key events;
+- the DevTools helper now searches nested shadow roots for `#pageSelector`.
+
+No product code was changed.
+
+| Area                                 | Command                                                                                                                                                         | Exit status | Summary result                                            | Evidence                                                                                                                                                                                                                                                                   |
+| ------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------- | --------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Python syntax check                  | `python3 -m py_compile scripts/test-issue-834-pdf-navigation.py`                                                                                                | 0           | Pass                                                      | Command completed without output                                                                                                                                                                                                                                           |
+| Node syntax check                    | `node --check scripts/probe-pdf-navigation.mjs`                                                                                                                 | 0           | Pass                                                      | Command completed without output                                                                                                                                                                                                                                           |
+| Keyboard page/scroll, first attempt  | `python3 scripts/test-issue-834-pdf-navigation.py --log-dir logs/issue-834-exp3-keyboard-page-scroll --serve-bitcoin-pdf --probe keyboard-page-scroll`          | 1           | `first_failing_hop = "pdf-keyboard-navigation-no-change"` | `logs/issue-834-exp3-keyboard-page-scroll/pdf-navigation-summary.json`                                                                                                                                                                                                     |
+| Keyboard page/scroll, passing rerun  | `python3 scripts/test-issue-834-pdf-navigation.py --log-dir logs/issue-834-exp3-keyboard-page-scroll-rerun1 --serve-bitcoin-pdf --probe keyboard-page-scroll`   | 0           | `first_failing_hop = "no-failure-observed"`               | `logs/issue-834-exp3-keyboard-page-scroll-rerun1/pdf-navigation-summary.json`; `logs/issue-834-exp3-keyboard-page-scroll-rerun1/before/pdf-navigation-devtools-summary.json`; `logs/issue-834-exp3-keyboard-page-scroll-rerun1/after/pdf-navigation-devtools-summary.json` |
+| Toolbar page selector, first attempt | `python3 scripts/test-issue-834-pdf-navigation.py --log-dir logs/issue-834-exp3-toolbar-page-selector --serve-bitcoin-pdf --probe toolbar-page-selector`        | 1           | `first_failing_hop = "page-selector-action-failed"`       | `logs/issue-834-exp3-toolbar-page-selector/pdf-navigation-summary.json`; `logs/issue-834-exp3-toolbar-page-selector/toolbar-page-selector/pdf-navigation-devtools-summary.json`                                                                                            |
+| Toolbar page selector, passing rerun | `python3 scripts/test-issue-834-pdf-navigation.py --log-dir logs/issue-834-exp3-toolbar-page-selector-rerun1 --serve-bitcoin-pdf --probe toolbar-page-selector` | 0           | `first_failing_hop = "no-failure-observed"`               | `logs/issue-834-exp3-toolbar-page-selector-rerun1/pdf-navigation-summary.json`; `logs/issue-834-exp3-toolbar-page-selector-rerun1/toolbar-page-selector/pdf-navigation-devtools-summary.json`                                                                              |
+
+Passing keyboard evidence:
+
+- protocol focus was sent;
+- two protocol mouse messages clicked the PDF plugin at `{x: 450.5, y: 253.0}`;
+- six protocol key messages were sent;
+- Roamium key receive and FFI trace lines were present;
+- Chromium key routing trace lines were present;
+- Chromium classified the key target as `pdf-plugin`, not `root`;
+- viewer page state changed from page `1` to page `4`;
+- before/after screenshots changed;
+- summary result was `first_failing_hop = "no-failure-observed"`.
+
+Passing page-selector evidence:
+
+- the nested `#pageSelector` was found;
+- the helper changed the selector from `1` to target `2`;
+- immediate selector value became `2`;
+- viewer page state changed from page `1` to page `2`;
+- page selector state changed from `1` to `2`;
+- before/after screenshots changed;
+- nested DevTools summary reported `status = "pass"` and
+  `firstFailingHop = "no-failure-observed"`;
+- top-level harness summary reported
+  `first_failing_hop = "no-failure-observed"`.
+
+Current matrix deltas from this experiment:
+
+| Feature                               | Roamium status after Experiment 3 | Evidence                                                                                                                                  |
+| ------------------------------------- | --------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| Keyboard page/scroll navigation       | Proven                            | Passing rerun sent TermSurf protocol mouse/focus/key events, routed keys to `pdf-plugin`, moved page `1` to `4`, and changed screenshots. |
+| Toolbar page navigation/page selector | Proven                            | Passing rerun changed nested `#pageSelector` from `1` to `2`, moved viewer page `1` to `2`, and changed screenshots.                      |
+
+Rows still not proven current after this experiment include internal and
+external PDF links, find/search, copy/save restrictions and disabled toolbar
+states, password-protected PDFs, malformed/error PDFs, forms, annotations,
+context menus, accessibility/searchify, real native print UI behavior, and
+split/tab/window geometry with PDFs open.
+
+## Conclusion
+
+Roamium's current PDF keyboard and page-selector navigation workflows are
+working. The important implementation lesson is that protocol keyboard
+navigation must first focus and click the PDF plugin; focusing only the tab can
+leave keys routed to the root widget, which produces no visible PDF navigation.
+
+The next Roamium experiment should move to another unproven core workflow,
+likely internal/external PDF links or PDF find/search.
+
+## Completion Review
+
+Fresh-context adversarial review by Codex subagent `Fermat`: **Approved**.
+
+Findings: none.
+
+The reviewer verified the diff, worktree status, TermSurf protocol event path,
+log summaries, README status, Result/Conclusion presence, and hygiene checks.
+The reviewer reported that `git diff --check`, `python3 -m py_compile`,
+`node --check`, and read-only Prettier check passed.
