@@ -176,6 +176,8 @@ Each feature row should ultimately record:
   — **Partial**
 - [Experiment 28: Cancel parent print sheet through Accessibility](28-cancel-parent-print-sheet-accessibility.md)
   — **Pass**
+- [Experiment 29: Add native print to Roamium regression guards](29-add-native-print-regression-guard.md)
+  — **Designed**
 
 ## Roamium Phase
 
