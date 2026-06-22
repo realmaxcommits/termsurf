@@ -171,3 +171,164 @@ This experiment fails if no valid password-protected fixture can be produced, if
 the unrestricted control fails, if the password is submitted through DevTools
 instead of TermSurf protocol input, or if the raw password leaks into logs or
 result JSON.
+
+## Result
+
+**Result:** Partial
+
+The password PDF harness was added without product code changes. It proves that
+Roamium can load password-protected PDFs when the password is typed through the
+TermSurf protocol and the visible Chromium PDF password dialog submit button is
+clicked. It also exposes a remaining keyboard gap: Enter key events reach the
+PDF extension target but do not submit the password dialog.
+
+New files:
+
+- `scripts/probe-pdf-password.mjs` — DevTools observer for Chromium PDF viewer
+  password dialog and load state.
+- `scripts/test-issue-834-pdf-password.py` — TermSurf protocol harness that
+  generates fixtures with `qpdf`, launches repo-built Roamium, serves PDFs over
+  local HTTP, sends mouse/key input through the TermSurf protobuf path, and
+  writes `pdf-password-summary.json`. The harness treats the user password,
+  wrong password, and qpdf owner password as fixed test secrets and redacts all
+  three from recorded commands and command output.
+
+Verification commands:
+
+```bash
+node --check scripts/probe-pdf-password.mjs
+PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile scripts/test-issue-834-pdf-password.py
+git diff --check
+python3 scripts/test-issue-834-pdf-password.py \
+  --log-dir logs/issue-834-exp7-password-control-final \
+  --probe unrestricted-control
+python3 scripts/test-issue-834-pdf-password.py \
+  --log-dir logs/issue-834-exp7-password-protected-correct-final \
+  --probe password-protected \
+  --credential-flow correct-only \
+  --submit-mode click
+python3 scripts/test-issue-834-pdf-password.py \
+  --log-dir logs/issue-834-exp7-password-protected-wrong-final \
+  --probe password-protected \
+  --credential-flow wrong-only \
+  --submit-mode click
+python3 scripts/test-issue-834-pdf-password.py \
+  --log-dir logs/issue-834-exp7-password-protected-enter-final \
+  --probe password-protected \
+  --credential-flow correct-only \
+  --submit-mode enter
+```
+
+The syntax checks, whitespace check, unrestricted control, click-submit
+correct-password probe, and click-submit wrong-password probe exited 0. The
+Enter-only protected probe exited 1 and recorded the first failing hop as
+`correct-password-not-accepted`.
+
+Evidence:
+
+- `logs/issue-834-exp7-password-control-final/pdf-password-summary.json`
+  recorded `first_failing_hop = "no-failure-observed"`,
+  `unrestricted_control_loaded = true`, `prompt_before_password = false`, and no
+  raw password leaks.
+- `logs/issue-834-exp7-password-protected-correct-final/pdf-password-summary.json`
+  recorded `first_failing_hop = "no-failure-observed"`,
+  `prompt_before_password = true`, `correct_password_loaded = true`,
+  `submit_mode = "click"`, `protocol_key_messages_sent = 22`,
+  `protocol_mouse_messages_sent = 4`, `typed_secret_lengths = [11]`, and no raw
+  password leaks. The loaded PDF state was observed in the Chromium PDF
+  extension child target with `loadState = "success"`, `loadProgress = 100`,
+  `docLength = 9`, and a non-empty plugin rectangle.
+- `logs/issue-834-exp7-password-protected-wrong-final/pdf-password-summary.json`
+  recorded `first_failing_hop = "no-failure-observed"`,
+  `prompt_before_password = true`, `wrong_password_rejected = true`,
+  `wrong_password_invalid_observed = true`, `submit_mode = "click"`,
+  `protocol_key_messages_sent = 26`, `protocol_mouse_messages_sent = 4`,
+  `typed_secret_lengths = [13]`, and no raw password leaks.
+- `logs/issue-834-exp7-password-protected-enter-final/pdf-password-summary.json`
+  recorded `first_failing_hop = "correct-password-not-accepted"`,
+  `prompt_before_password = true`, `correct_password_loaded = false`,
+  `submit_mode = "enter"`, `protocol_key_messages_sent = 24`,
+  `protocol_mouse_messages_sent = 2`, `typed_secret_lengths = [11]`, and no raw
+  password leaks. The summary includes Enter key down/up events with
+  `windows_key_code = 13`; after those events, the password dialog was still
+  present with `valueLength = 11` and `invalid = false`.
+- A repository-local scan of the four final log directories found no occurrences
+  of the fixed user password, wrong password, or qpdf owner password:
+  `rg -n "issue834pdf|issue834wrong|owner-issue834-exp7" logs/issue-834-exp7-password-*-final -S`.
+  The regenerated qpdf command summaries contain `<redacted-test-password>` for
+  both user and owner passwords.
+
+The final proof uses two protected runs instead of one combined
+wrong-then-correct run. An intermediate combined run proved wrong-password
+rejection but could not reliably clear the invalid password field before
+submitting the correct password. Splitting the proof keeps the product behavior
+under test unchanged: passwords are still entered through TermSurf protocol key
+events, while DevTools only observes the Chromium PDF viewer state.
+
+The harness also now records `submit_mode` and can explicitly run click, Enter,
+or Enter-then-click submission modes. It targets the native inner input inside
+Chromium's `cr-input` password field when DevTools can observe it.
+
+## Completion Review
+
+Fresh-context adversarial review by Codex subagent `Pasteur`: **Changes
+required**.
+
+Required finding: the first recorded result claimed the final protected probes
+covered Enter-key submission, but the harness clicked the submit button whenever
+it was available and only used Enter as a fallback. The final summaries did not
+include `windows_key_code = 13`.
+
+Fix: the harness now has an explicit `--submit-mode`, the final evidence
+includes an Enter-only protected probe, and this result is recorded as Partial
+because Enter reached the PDF extension but did not submit the password dialog.
+
+Optional finding: remove untracked Python bytecode. Fixed by deleting
+`scripts/__pycache__/`.
+
+Fresh-context adversarial re-review by Codex subagent `Socrates`: **Changes
+required**.
+
+Required finding: the qpdf owner password was neither redacted nor scanned, and
+appeared verbatim in the first regenerated summaries even though
+`raw_password_leaks = []`.
+
+Fix: `scripts/test-issue-834-pdf-password.py` now defines the owner password as
+a fixture password, redacts it from command/stdout/stderr records, includes it
+in raw-password leak checks, and the four final log directories were
+regenerated.
+
+Fresh-context adversarial re-review by Codex subagent `Mencius`: **Approved**.
+
+Findings: none.
+
+The reviewer confirmed that the prior findings are resolved: Enter submission is
+no longer overclaimed, Experiment 7 is marked Partial in the README and
+experiment file, the Enter-only run records `windows_key_code = 13` with
+`first_failing_hop = "correct-password-not-accepted"`, the qpdf owner password
+is included in fixture-password redaction and leak checks, regenerated summaries
+redact qpdf user and owner password arguments, the four final log directories
+contain no fixed test passwords, no product code changed, and no result commit
+was made before review.
+
+## Conclusion
+
+Roamium password-protected PDFs are partially proven:
+
+- unrestricted control PDFs load normally without a password prompt;
+- protected PDFs show password UI before credentials are entered and do not load
+  prematurely;
+- correct-password credential entry through the TermSurf protocol plus a
+  submit-button click loads the PDF;
+- wrong-password credential entry through the TermSurf protocol remains in the
+  password UI and exposes a stable invalid-password state when submitted with
+  the button;
+- Enter key events are delivered to the PDF extension target, but Enter does not
+  submit the password dialog;
+- the harness redacts the fixed test passwords and verifies they do not appear
+  in the result summary or key logs.
+
+No Roamium, Chromium, Ghostboard, or protocol code changed in this experiment.
+The next experiment should decide whether Enter-to-submit is required parity and
+either fix the keyboard synthesis path or explicitly document that the Chromium
+PDF password dialog requires button activation in TermSurf.
