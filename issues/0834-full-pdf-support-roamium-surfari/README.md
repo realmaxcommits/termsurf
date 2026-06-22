@@ -64,7 +64,7 @@ should be informed by the previous result.
       and pointing them here.
 - [x] Define the full cross-engine PDF feature matrix.
 - [ ] Finish Roamium PDF support.
-- [ ] Add durable Roamium regression guards for every completed PDF workflow.
+- [x] Add durable Roamium regression guards for every completed PDF workflow.
 - [ ] Audit WebKit/Safari PDF capabilities relevant to Surfari.
 - [ ] Prove basic Surfari PDF rendering in the real TermSurf app.
 - [ ] Implement or fix Surfari PDF behavior where probes expose TermSurf
@@ -149,7 +149,7 @@ Each feature row should ultimately record:
 - [Experiment 14: Compare Roamium PDF form input paths](14-compare-roamium-pdf-form-input-paths.md)
   — **Pass**
 - [Experiment 15: Add Roamium PDF regression guard](15-add-roamium-pdf-regression-guard.md)
-  — **Designed**
+  — **Pass**
 
 ## Roamium Phase
 

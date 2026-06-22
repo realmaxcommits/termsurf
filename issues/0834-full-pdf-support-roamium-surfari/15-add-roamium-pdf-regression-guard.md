@@ -208,3 +208,162 @@ Fixes:
 Re-review verdict: **Approved**.
 
 The reviewer confirmed that no Required findings remain.
+
+## Result
+
+**Result:** Pass
+
+Added `scripts/test-issue-834-roamium-pdf-regression.py`, a tiered Roamium PDF
+regression runner that orchestrates existing Issue 794, Issue 796, and Issue 834
+probes instead of duplicating feature logic.
+
+The runner writes `roamium-pdf-regression-summary.json` with:
+
+- `tier`;
+- `first_failing_hop`;
+- `overall_result`;
+- `checks`;
+- per-check `name`, `command`, `returncode`, `summary_path`,
+  `first_failing_hop`, `result`, stdout/stderr paths, and optional
+  `accepted_limitation`;
+- `skipped_unsafe_checks`;
+- `duration_seconds`.
+
+Implemented tiers:
+
+- `smoke`: toolbar events and protocol mouse click;
+- `forms`: the Experiment 14 TermSurf-vs-DevTools forms compare guard;
+- `focused`: all safe completed Roamium PDF workflows covered by current probes;
+- `unsafe-manual`: dry/list-only native print production-dialog entry.
+
+The focused tier covers:
+
+- toolbar events;
+- protocol mouse click;
+- save/title/local parity and contained print intercept;
+- protocol scroll;
+- protocol resize;
+- protocol select/copy;
+- PDF security guards;
+- keyboard page/scroll navigation;
+- toolbar page selector;
+- internal PDF links;
+- external PDF links;
+- find/search;
+- unrestricted restriction control;
+- restricted document copy behavior with the known Chromium download limitation;
+- password unrestricted control;
+- password correct Enter submission;
+- password wrong Enter rejection;
+- valid PDF error control;
+- malformed PDF fixtures;
+- valid-to-malformed same-tab stale-state protection;
+- PDF forms compare.
+
+The security guard uses a short temporary log directory and copies results back
+into the requested issue log directory, ignoring leftover `gui.sock` socket
+files. This avoids the macOS `AF_UNIX` path-length failure in the older security
+harness while still preserving logs under the regression run directory.
+
+Final verification commands:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile \
+  scripts/test-issue-834-roamium-pdf-regression.py
+
+rm -rf scripts/__pycache__
+
+python3 scripts/test-issue-834-roamium-pdf-regression.py \
+  --log-dir logs/issue-834-exp15-roamium-pdf-regression-smoke \
+  --tier smoke
+
+python3 scripts/test-issue-834-roamium-pdf-regression.py \
+  --log-dir logs/issue-834-exp15-roamium-pdf-regression-forms \
+  --tier forms
+
+python3 scripts/test-issue-834-roamium-pdf-regression.py \
+  --log-dir logs/issue-834-exp15-roamium-pdf-regression-unsafe-manual \
+  --tier unsafe-manual
+
+python3 scripts/test-issue-834-roamium-pdf-regression.py \
+  --log-dir logs/issue-834-exp15-roamium-pdf-regression-focused \
+  --tier focused
+
+git diff --check
+```
+
+Final evidence:
+
+- `logs/issue-834-exp15-roamium-pdf-regression-smoke/roamium-pdf-regression-summary.json`
+  recorded `overall_result = "pass"`,
+  `first_failing_hop = "no-failure-observed"`, duration `31.556` seconds, and 2
+  passing checks.
+- `logs/issue-834-exp15-roamium-pdf-regression-forms/roamium-pdf-regression-summary.json`
+  recorded `overall_result = "pass"`,
+  `first_failing_hop = "no-failure-observed"`, duration `206.201` seconds, and 1
+  passing check. The nested forms summary recorded no TermSurf/DevTools
+  divergences.
+- `logs/issue-834-exp15-roamium-pdf-regression-unsafe-manual/roamium-pdf-regression-summary.json`
+  recorded `overall_result = "skipped-unsafe"`, with native print production
+  dialog listed as `skipped-unsafe`. It ran no production print click.
+- `logs/issue-834-exp15-roamium-pdf-regression-focused/roamium-pdf-regression-summary.json`
+  recorded `overall_result = "pass"`,
+  `first_failing_hop = "no-failure-observed"`, duration `563.59` seconds, 20
+  passing checks, 1 accepted limitation, 0 failures, and 0 automation gaps.
+
+The accepted limitation is the known Experiment 6 Chromium behavior:
+copy-restricted PDFs block copy, but current Chromium does not expose an
+original-file download restriction after load for the fixture. The runner
+records this as `accepted-limitation` rather than treating it as an ordinary
+pass.
+
+No Roamium, Chromium, Ghostboard, protocol, or browser-engine product source was
+changed.
+
+## Conclusion
+
+Roamium now has a durable PDF regression entry point for the safe completed
+workflows from Issue 834. The focused tier is broad enough for PDF/input changes
+and the smoke tier is a cheaper development guard. Native print production UI
+remains excluded from unattended automation until a separate safe watcher
+preflight is proven.
+
+The next Issue 834 experiment should return to finishing Roamium PDF support.
+The remaining Roamium gap with the clearest current blocker is native print
+safety from Experiment 10: establish a safe native-dialog watcher preflight or
+another objective cancel-only mechanism before clicking the production print
+control.
+
+## Completion Review
+
+An adversarial Codex subagent reviewed the completed experiment with fresh
+context.
+
+Initial verdict: **Changes Required**.
+
+Required finding:
+
+- the runner could silently pass with a stale child summary if a reused child
+  log directory already contained the expected summary and the current child run
+  failed to write a fresh one.
+
+Optional finding:
+
+- accepted limitation classification depended on the child returning nonzero; it
+  should depend on the accepted `first_failing_hop` instead.
+
+Fixes:
+
+- `scripts/test-issue-834-roamium-pdf-regression.py` now removes each per-check
+  directory before launching that child, so selected checks must produce a
+  current-run summary;
+- accepted limitations now classify as `accepted-limitation` whenever their
+  accepted hop is observed, independent of the child exit-code convention;
+- the `smoke`, `forms`, `unsafe-manual`, and `focused` tiers were rerun after
+  the fixes.
+
+Re-review verdict: **Approved**.
+
+The reviewer confirmed the stale-summary and accepted-limitation fixes. It also
+noted that its own read-only Python compile check recreated
+`scripts/__pycache__/`; that cache directory was removed before commit.
