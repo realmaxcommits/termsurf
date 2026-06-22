@@ -172,6 +172,8 @@ Each feature row should ultimately record:
   — **Partial**
 - [Experiment 26: Retry parent-window print sheet after activation](26-retry-parent-window-print-sheet-after-activation.md)
   — **Partial**
+- [Experiment 27: Inspect parent print sheet visibility](27-inspect-parent-print-sheet-visibility.md)
+  — **Designed**
 
 ## Roamium Phase
 
