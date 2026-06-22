@@ -122,6 +122,8 @@ Each feature row should ultimately record:
 
 - [Experiment 1: Define the cross-engine PDF matrix](01-define-cross-engine-pdf-matrix.md)
   — **Pass**
+- [Experiment 2: Rerun the Roamium PDF baseline](02-rerun-roamium-pdf-baseline.md)
+  — **Designed**
 
 ## Roamium Phase
 
