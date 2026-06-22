@@ -118,6 +118,11 @@ Each feature row should ultimately record:
 - known engine-specific differences;
 - links to the experiment(s) and logs proving the status.
 
+## Experiments
+
+- [Experiment 1: Define the cross-engine PDF matrix](01-define-cross-engine-pdf-matrix.md)
+  — **Designed**
+
 ## Roamium Phase
 
 Start with the evidence from Issues 794 and 796. Roamium's core PDF viewer is
