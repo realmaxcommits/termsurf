@@ -128,6 +128,8 @@ Each feature row should ultimately record:
   — **Pass**
 - [Experiment 4: Prove Roamium PDF links](04-prove-roamium-pdf-links.md) —
   **Pass**
+- [Experiment 5: Prove Roamium PDF find/search](05-prove-roamium-pdf-find-search.md)
+  — **Designed**
 
 ## Roamium Phase
 
