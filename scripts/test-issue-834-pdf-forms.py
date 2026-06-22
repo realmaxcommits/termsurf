@@ -14,6 +14,7 @@ import socketserver
 import struct
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import zlib
@@ -145,6 +146,7 @@ class HarnessState:
     devtools_port: int | None = None
     mouse_messages_sent: list[dict[str, Any]] = dataclass_field(default_factory=list)
     key_messages_sent: list[dict[str, Any]] = dataclass_field(default_factory=list)
+    devtools_actions_sent: list[dict[str, Any]] = dataclass_field(default_factory=list)
     roamium_trace_init: bool = False
     roamium_mouse_event_line: bool = False
     roamium_key_event_line: bool = False
@@ -405,11 +407,14 @@ def run_snapshot(
     name: str,
     timeout_seconds: int,
     settle_seconds: int,
+    action: str | None = None,
+    action_x: float | None = None,
+    action_y: float | None = None,
+    action_text: str | None = None,
 ) -> dict[str, Any] | None:
     out_dir = log_dir / "devtools"
     out_dir.mkdir(parents=True, exist_ok=True)
-    proc = subprocess.run(
-        [
+    cmd = [
             "node",
             str(FORMS_PROBE),
             "--devtools-port",
@@ -424,7 +429,17 @@ def run_snapshot(
             str(timeout_seconds),
             "--settle-seconds",
             str(settle_seconds),
-        ],
+    ]
+    if action:
+        cmd += ["--action", action]
+    if action_x is not None:
+        cmd += ["--action-x", str(action_x)]
+    if action_y is not None:
+        cmd += ["--action-y", str(action_y)]
+    if action_text is not None:
+        cmd += ["--action-text", action_text]
+    proc = subprocess.run(
+        cmd,
         cwd=str(ROOT),
         text=True,
         stdout=subprocess.PIPE,
@@ -437,6 +452,21 @@ def run_snapshot(
     if not path.exists():
         return None
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def record_devtools_action(state: HarnessState, name: str, summary: dict[str, Any] | None) -> None:
+    if not summary or "actionResult" not in summary:
+        return
+    results = summary.get("actionResult") or []
+    state.devtools_actions_sent.append(
+        {
+            "index": len(state.devtools_actions_sent),
+            "name": name,
+            "count": len(results),
+            "ok": bool(results) and all(bool(item.get("ok")) for item in results),
+            "results": results,
+        }
+    )
 
 
 def pdf_value(summary: dict[str, Any] | None) -> dict[str, Any]:
@@ -646,6 +676,7 @@ def scenario_needs_checkbox(scenario: str) -> bool:
 
 
 def classify(
+    input_path: str,
     scenario: str,
     state: HarnessState,
     before: dict[str, Any] | None,
@@ -665,9 +696,17 @@ def classify(
         state.first_failing_hop = "pdf-load-failed"
     elif not geometry.get("ok"):
         state.first_failing_hop = "form-geometry-observable-missing"
-    elif not state.mouse_messages_sent or (scenario_needs_text(scenario) and not state.key_messages_sent):
+    elif input_path == "devtools" and not state.devtools_actions_sent:
+        state.first_failing_hop = "devtools-input-not-sent"
+    elif input_path == "devtools" and not all(item.get("ok") for item in state.devtools_actions_sent):
+        state.first_failing_hop = "devtools-input-state-missing"
+    elif input_path == "termsurf" and (
+        not state.mouse_messages_sent or (scenario_needs_text(scenario) and not state.key_messages_sent)
+    ):
         state.first_failing_hop = "protocol-input-not-sent"
-    elif not state.roamium_mouse_event_line or (scenario_needs_text(scenario) and not state.roamium_key_event_line):
+    elif input_path == "termsurf" and (
+        not state.roamium_mouse_event_line or (scenario_needs_text(scenario) and not state.roamium_key_event_line)
+    ):
         state.first_failing_hop = "roamium-input-trace-missing"
     elif scenario_needs_text(scenario) and not localized(text_diff):
         state.first_failing_hop = "form-text-value-missing"
@@ -691,6 +730,8 @@ def write_summary(log_dir: pathlib.Path, state: HarnessState, extra: dict[str, A
         "protocol_mouse_messages": state.mouse_messages_sent,
         "protocol_key_messages_sent": len(state.key_messages_sent),
         "protocol_key_messages": state.key_messages_sent,
+        "devtools_actions_sent": len(state.devtools_actions_sent),
+        "devtools_actions": state.devtools_actions_sent,
         "roamium_trace_init": state.roamium_trace_init,
         "roamium_mouse_event_line": state.roamium_mouse_event_line,
         "roamium_key_event_line": state.roamium_key_event_line,
@@ -706,6 +747,11 @@ def write_summary(log_dir: pathlib.Path, state: HarnessState, extra: dict[str, A
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--log-dir", required=True)
+    parser.add_argument(
+        "--input-path",
+        choices=["termsurf", "devtools", "compare"],
+        default="termsurf",
+    )
     parser.add_argument(
         "--scenario",
         choices=[
@@ -735,6 +781,105 @@ def parse_args() -> argparse.Namespace:
 def run_combined(args: argparse.Namespace) -> int:
     log_dir = pathlib.Path(args.log_dir).resolve()
     log_dir.mkdir(parents=True, exist_ok=True)
+    if args.input_path == "compare":
+        path_runs: dict[str, dict[str, Any]] = {}
+        path_commands: dict[str, dict[str, Any]] = {}
+        for input_path in ("termsurf", "devtools"):
+            path_dir = log_dir / input_path
+            cmd = [
+                sys.executable,
+                str(pathlib.Path(__file__).resolve()),
+                "--log-dir",
+                str(path_dir),
+                "--scenario",
+                "combined",
+                "--input-path",
+                input_path,
+                "--width",
+                str(args.width),
+                "--height",
+                str(args.height),
+                "--setup-timeout",
+                str(args.setup_timeout),
+                "--capture-timeout-seconds",
+                str(args.capture_timeout_seconds),
+                "--settle-seconds",
+                str(args.settle_seconds),
+            ]
+            proc = subprocess.run(
+                cmd,
+                cwd=str(ROOT),
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+            path_commands[input_path] = {
+                "cmd": cmd,
+                "returncode": proc.returncode,
+                "stdout": proc.stdout,
+                "stderr": proc.stderr,
+            }
+            summary_path = path_dir / "pdf-forms-summary.json"
+            path_runs[input_path] = (
+                json.loads(summary_path.read_text(encoding="utf-8")) if summary_path.exists() else {}
+            )
+
+        def scenario_hop(path_summary: dict[str, Any], name: str) -> str | None:
+            top_level = {
+                "text": "text_scenario",
+                "checkbox": "checkbox_scenario",
+                "text-then-checkbox": "text_then_checkbox_scenario",
+                "checkbox-then-text": "checkbox_then_text_scenario",
+            }
+            if name in top_level:
+                return (path_summary.get(top_level[name]) or {}).get("first_failing_hop")
+            return ((path_summary.get("focus_reset_scenarios") or {}).get(name) or {}).get(
+                "first_failing_hop"
+            )
+
+        comparable_scenarios = (
+            "text",
+            "checkbox",
+            "text-then-checkbox",
+            "checkbox-then-text",
+            "text-bg-checkbox",
+            "checkbox-bg-text",
+        )
+        divergences = {}
+        for name in comparable_scenarios:
+            termsurf_hop = scenario_hop(path_runs.get("termsurf", {}), name)
+            devtools_hop = scenario_hop(path_runs.get("devtools", {}), name)
+            if termsurf_hop != devtools_hop:
+                divergences[name] = {"termsurf": termsurf_hop, "devtools": devtools_hop}
+        termsurf_hop = path_runs.get("termsurf", {}).get("first_failing_hop")
+        devtools_hop = path_runs.get("devtools", {}).get("first_failing_hop")
+        child_failure = any(item.get("returncode") != 0 for item in path_commands.values())
+        if child_failure:
+            first_failing_hop = "automation-gap"
+        elif divergences:
+            first_failing_hop = "termsurf-devtools-divergence"
+        elif termsurf_hop == devtools_hop == "form-sequence-workaround-required":
+            first_failing_hop = "chromium-pdf-focus-semantics"
+        elif termsurf_hop == devtools_hop == "no-failure-observed":
+            first_failing_hop = "no-failure-observed"
+        else:
+            first_failing_hop = termsurf_hop or devtools_hop or "devtools-input-state-missing"
+        data = {
+            "scenario": "combined",
+            "input_path": "compare",
+            "first_failing_hop": first_failing_hop,
+            "termsurf_results": path_runs.get("termsurf"),
+            "devtools_results": path_runs.get("devtools"),
+            "input_path_divergences": divergences,
+            "path_commands": path_commands,
+        }
+        (log_dir / "pdf-forms-summary.json").write_text(
+            json.dumps(data, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        return 0 if first_failing_hop in ("no-failure-observed", "chromium-pdf-focus-semantics") else 1
+
     runs: dict[str, dict[str, Any]] = {}
     commands: dict[str, dict[str, Any]] = {}
     scenarios = (
@@ -750,8 +895,8 @@ def run_combined(args: argparse.Namespace) -> int:
         "checkbox-double-text",
     )
     scenario_dirs = {
-        "text": "text",
-        "checkbox": "checkbox",
+        "text": "t",
+        "checkbox": "c",
         "text-then-checkbox": "ttc",
         "checkbox-then-text": "ctt",
         "text-bg-checkbox": "tbc",
@@ -770,6 +915,8 @@ def run_combined(args: argparse.Namespace) -> int:
             str(scenario_dir),
             "--scenario",
             scenario,
+            "--input-path",
+            args.input_path,
             "--width",
             str(args.width),
             "--height",
@@ -828,6 +975,7 @@ def run_combined(args: argparse.Namespace) -> int:
         first_failing_hop = next(iter(sequence_failures.values()), "sequence-scenario-missing")
     data = {
         "scenario": "combined",
+        "input_path": args.input_path,
         "first_failing_hop": first_failing_hop,
         "text_scenario": runs.get("text"),
         "checkbox_scenario": runs.get("checkbox"),
@@ -876,15 +1024,13 @@ def main() -> int:
     pdf_server = start_pdf_server(log_dir, args.pdf_port, pathlib.Path(fixture["path"]))
     host, port = pdf_server.server_address
     url = f"http://{host}:{port}/form.pdf"
-    socket_path = log_dir / "gui.sock"
-    try:
-        socket_path.unlink()
-    except FileNotFoundError:
-        pass
+    socket_tmp = tempfile.TemporaryDirectory(prefix="ts834-pdf-")
+    socket_path = pathlib.Path(socket_tmp.name) / "gui.sock"
 
     state = HarnessState()
     extra: dict[str, Any] = {
         "scenario": args.scenario,
+        "input_path": args.input_path,
         "url": url,
         "fixture": fixture,
         "http_server": {"host": host, "port": port},
@@ -952,38 +1098,78 @@ def main() -> int:
                         "checkbox-escape-text",
                         "checkbox-double-text",
                     ):
-                        send_click(conn, state, checkbox_click["x"], checkbox_click["y"], "agree")
-                        time.sleep(0.5)
-                        after_checkbox = run_snapshot(
-                            log_dir,
-                            state.devtools_port,
-                            "form.pdf",
-                            "after-checkbox",
-                            args.capture_timeout_seconds,
-                            args.settle_seconds,
-                        )
+                        if args.input_path == "devtools":
+                            after_checkbox = run_snapshot(
+                                log_dir,
+                                state.devtools_port,
+                                "form.pdf",
+                                "after-checkbox",
+                                args.capture_timeout_seconds,
+                                args.settle_seconds,
+                                action="click",
+                                action_x=checkbox_click["x"],
+                                action_y=checkbox_click["y"],
+                            )
+                            record_devtools_action(state, "agree", after_checkbox)
+                        else:
+                            send_click(conn, state, checkbox_click["x"], checkbox_click["y"], "agree")
+                            time.sleep(0.5)
+                            after_checkbox = run_snapshot(
+                                log_dir,
+                                state.devtools_port,
+                                "form.pdf",
+                                "after-checkbox",
+                                args.capture_timeout_seconds,
+                                args.settle_seconds,
+                            )
                         if args.scenario == "checkbox-bg-text":
-                            send_click(conn, state, background_click["x"], background_click["y"], "background")
-                            time.sleep(0.2)
-                            after_reset = run_snapshot(
-                                log_dir,
-                                state.devtools_port,
-                                "form.pdf",
-                                "after-reset",
-                                args.capture_timeout_seconds,
-                                args.settle_seconds,
-                            )
+                            if args.input_path == "devtools":
+                                after_reset = run_snapshot(
+                                    log_dir,
+                                    state.devtools_port,
+                                    "form.pdf",
+                                    "after-reset",
+                                    args.capture_timeout_seconds,
+                                    args.settle_seconds,
+                                    action="click",
+                                    action_x=background_click["x"],
+                                    action_y=background_click["y"],
+                                )
+                                record_devtools_action(state, "background", after_reset)
+                            else:
+                                send_click(conn, state, background_click["x"], background_click["y"], "background")
+                                time.sleep(0.2)
+                                after_reset = run_snapshot(
+                                    log_dir,
+                                    state.devtools_port,
+                                    "form.pdf",
+                                    "after-reset",
+                                    args.capture_timeout_seconds,
+                                    args.settle_seconds,
+                                )
                         elif args.scenario == "checkbox-escape-text":
-                            send_escape(conn, state)
-                            time.sleep(0.2)
-                            after_reset = run_snapshot(
-                                log_dir,
-                                state.devtools_port,
-                                "form.pdf",
-                                "after-reset",
-                                args.capture_timeout_seconds,
-                                args.settle_seconds,
-                            )
+                            if args.input_path == "devtools":
+                                after_reset = run_snapshot(
+                                    log_dir,
+                                    state.devtools_port,
+                                    "form.pdf",
+                                    "after-reset",
+                                    args.capture_timeout_seconds,
+                                    args.settle_seconds,
+                                    action="escape",
+                                )
+                                record_devtools_action(state, "escape", after_reset)
+                            else:
+                                send_escape(conn, state)
+                                time.sleep(0.2)
+                                after_reset = run_snapshot(
+                                    log_dir,
+                                    state.devtools_port,
+                                    "form.pdf",
+                                    "after-reset",
+                                    args.capture_timeout_seconds,
+                                    args.settle_seconds,
+                                )
                     if args.scenario in (
                         "text",
                         "text-then-checkbox",
@@ -995,19 +1181,57 @@ def main() -> int:
                         "checkbox-escape-text",
                         "checkbox-double-text",
                     ):
-                        send_click(conn, state, name_click["x"], name_click["y"], "name")
-                        if args.scenario == "checkbox-double-text":
-                            send_click(conn, state, name_click["x"], name_click["y"], "name-double")
-                        send_text(conn, state, TEXT_VALUE)
-                        time.sleep(0.5)
-                        after_text = run_snapshot(
-                            log_dir,
-                            state.devtools_port,
-                            "form.pdf",
-                            "after-text",
-                            args.capture_timeout_seconds,
-                            args.settle_seconds,
-                        )
+                        if args.input_path == "devtools":
+                            after_text = run_snapshot(
+                                log_dir,
+                                state.devtools_port,
+                                "form.pdf",
+                                "after-name-click",
+                                args.capture_timeout_seconds,
+                                args.settle_seconds,
+                                action="click",
+                                action_x=name_click["x"],
+                                action_y=name_click["y"],
+                            )
+                            record_devtools_action(state, "name", after_text)
+                            if args.scenario == "checkbox-double-text":
+                                after_text = run_snapshot(
+                                    log_dir,
+                                    state.devtools_port,
+                                    "form.pdf",
+                                    "after-name-double",
+                                    args.capture_timeout_seconds,
+                                    args.settle_seconds,
+                                    action="click",
+                                    action_x=name_click["x"],
+                                    action_y=name_click["y"],
+                                )
+                                record_devtools_action(state, "name-double", after_text)
+                            after_text = run_snapshot(
+                                log_dir,
+                                state.devtools_port,
+                                "form.pdf",
+                                "after-text",
+                                args.capture_timeout_seconds,
+                                args.settle_seconds,
+                                action="text",
+                                action_text=TEXT_VALUE,
+                            )
+                            record_devtools_action(state, "text", after_text)
+                        else:
+                            send_click(conn, state, name_click["x"], name_click["y"], "name")
+                            if args.scenario == "checkbox-double-text":
+                                send_click(conn, state, name_click["x"], name_click["y"], "name-double")
+                            send_text(conn, state, TEXT_VALUE)
+                            time.sleep(0.5)
+                            after_text = run_snapshot(
+                                log_dir,
+                                state.devtools_port,
+                                "form.pdf",
+                                "after-text",
+                                args.capture_timeout_seconds,
+                                args.settle_seconds,
+                            )
                     if args.scenario in (
                         "text-then-checkbox",
                         "text-bg-checkbox",
@@ -1015,39 +1239,92 @@ def main() -> int:
                         "text-double-checkbox",
                     ):
                         if args.scenario == "text-bg-checkbox":
-                            send_click(conn, state, background_click["x"], background_click["y"], "background")
-                            time.sleep(0.2)
-                            after_reset = run_snapshot(
-                                log_dir,
-                                state.devtools_port,
-                                "form.pdf",
-                                "after-reset",
-                                args.capture_timeout_seconds,
-                                args.settle_seconds,
-                            )
+                            if args.input_path == "devtools":
+                                after_reset = run_snapshot(
+                                    log_dir,
+                                    state.devtools_port,
+                                    "form.pdf",
+                                    "after-reset",
+                                    args.capture_timeout_seconds,
+                                    args.settle_seconds,
+                                    action="click",
+                                    action_x=background_click["x"],
+                                    action_y=background_click["y"],
+                                )
+                                record_devtools_action(state, "background", after_reset)
+                            else:
+                                send_click(conn, state, background_click["x"], background_click["y"], "background")
+                                time.sleep(0.2)
+                                after_reset = run_snapshot(
+                                    log_dir,
+                                    state.devtools_port,
+                                    "form.pdf",
+                                    "after-reset",
+                                    args.capture_timeout_seconds,
+                                    args.settle_seconds,
+                                )
                         elif args.scenario == "text-escape-checkbox":
-                            send_escape(conn, state)
-                            time.sleep(0.2)
-                            after_reset = run_snapshot(
+                            if args.input_path == "devtools":
+                                after_reset = run_snapshot(
+                                    log_dir,
+                                    state.devtools_port,
+                                    "form.pdf",
+                                    "after-reset",
+                                    args.capture_timeout_seconds,
+                                    args.settle_seconds,
+                                    action="escape",
+                                )
+                                record_devtools_action(state, "escape", after_reset)
+                            else:
+                                send_escape(conn, state)
+                                time.sleep(0.2)
+                                after_reset = run_snapshot(
+                                    log_dir,
+                                    state.devtools_port,
+                                    "form.pdf",
+                                    "after-reset",
+                                    args.capture_timeout_seconds,
+                                    args.settle_seconds,
+                                )
+                        if args.input_path == "devtools":
+                            after_checkbox = run_snapshot(
                                 log_dir,
                                 state.devtools_port,
                                 "form.pdf",
-                                "after-reset",
+                                "after-checkbox",
+                                args.capture_timeout_seconds,
+                                args.settle_seconds,
+                                action="click",
+                                action_x=checkbox_click["x"],
+                                action_y=checkbox_click["y"],
+                            )
+                            record_devtools_action(state, "agree", after_checkbox)
+                            if args.scenario == "text-double-checkbox":
+                                after_checkbox = run_snapshot(
+                                    log_dir,
+                                    state.devtools_port,
+                                    "form.pdf",
+                                    "after-checkbox-double",
+                                    args.capture_timeout_seconds,
+                                    args.settle_seconds,
+                                    action="click",
+                                    action_x=checkbox_click["x"],
+                                    action_y=checkbox_click["y"],
+                                )
+                                record_devtools_action(state, "agree-double", after_checkbox)
+                        else:
+                            send_click(conn, state, checkbox_click["x"], checkbox_click["y"], "agree")
+                            if args.scenario == "text-double-checkbox":
+                                send_click(conn, state, checkbox_click["x"], checkbox_click["y"], "agree-double")
+                            time.sleep(0.5)
+                            after_checkbox = run_snapshot(
+                                log_dir,
+                                state.devtools_port,
+                                "form.pdf",
+                                "after-checkbox",
                                 args.capture_timeout_seconds,
                                 args.settle_seconds,
                             )
-                        send_click(conn, state, checkbox_click["x"], checkbox_click["y"], "agree")
-                        if args.scenario == "text-double-checkbox":
-                            send_click(conn, state, checkbox_click["x"], checkbox_click["y"], "agree-double")
-                        time.sleep(0.5)
-                        after_checkbox = run_snapshot(
-                            log_dir,
-                            state.devtools_port,
-                            "form.pdf",
-                            "after-checkbox",
-                            args.capture_timeout_seconds,
-                            args.settle_seconds,
-                        )
                     dpr = float((pdf_value(before).get("viewport") or {}).get("devicePixelRatio") or 1)
                     if after_text:
                         text_before = before
@@ -1087,7 +1364,7 @@ def main() -> int:
                 "http_requests": FormPdfHandler.requests,
             }
         )
-        classify(args.scenario, state, before, geometry, text_diff, checkbox_diff)
+        classify(args.input_path, args.scenario, state, before, geometry, text_diff, checkbox_diff)
         write_summary(log_dir, state, extra)
         return 0 if state.first_failing_hop != "automation-gap" else 1
     finally:
@@ -1102,6 +1379,7 @@ def main() -> int:
         stderr.close()
         listener.close()
         pdf_server.shutdown()
+        socket_tmp.cleanup()
 
 
 if __name__ == "__main__":

@@ -22,6 +22,8 @@ function parseArgs(argv) {
   args.timeoutSeconds = Number(args.timeoutSeconds);
   args.settleSeconds = Number(args.settleSeconds);
   args.outDir = path.resolve(args.outDir);
+  if (args.actionX !== undefined) args.actionX = Number(args.actionX);
+  if (args.actionY !== undefined) args.actionY = Number(args.actionY);
   return args;
 }
 
@@ -289,6 +291,84 @@ function pluginLoaded(collected) {
   });
 }
 
+async function dispatchMouseClick(client, x, y) {
+  const events = [
+    { type: "mouseMoved", x, y, button: "none", buttons: 0 },
+    { type: "mousePressed", x, y, button: "left", buttons: 1, clickCount: 1 },
+    { type: "mouseReleased", x, y, button: "left", buttons: 0, clickCount: 1 },
+  ];
+  const results = [];
+  for (const params of events) {
+    results.push(await safeSend(client, "Input.dispatchMouseEvent", params));
+    await sleep(40);
+  }
+  return results;
+}
+
+async function dispatchText(client, text) {
+  const results = [];
+  for (const ch of text) {
+    const code = ch.length === 1 ? ch.toUpperCase().charCodeAt(0) : 0;
+    const key = ch;
+    results.push(
+      await safeSend(client, "Input.dispatchKeyEvent", {
+        type: "keyDown",
+        key,
+        text: ch,
+        unmodifiedText: ch,
+        windowsVirtualKeyCode: code,
+        nativeVirtualKeyCode: code,
+      }),
+    );
+    await sleep(30);
+    results.push(
+      await safeSend(client, "Input.dispatchKeyEvent", {
+        type: "keyUp",
+        key,
+        windowsVirtualKeyCode: code,
+        nativeVirtualKeyCode: code,
+      }),
+    );
+    await sleep(30);
+  }
+  return results;
+}
+
+async function dispatchEscape(client) {
+  return [
+    await safeSend(client, "Input.dispatchKeyEvent", {
+      type: "keyDown",
+      key: "Escape",
+      code: "Escape",
+      windowsVirtualKeyCode: 27,
+      nativeVirtualKeyCode: 27,
+    }),
+    await safeSend(client, "Input.dispatchKeyEvent", {
+      type: "keyUp",
+      key: "Escape",
+      code: "Escape",
+      windowsVirtualKeyCode: 27,
+      nativeVirtualKeyCode: 27,
+    }),
+  ];
+}
+
+async function runAction(client, args, summary) {
+  if (!args.action) return;
+  if (args.action === "click") {
+    if (!Number.isFinite(args.actionX) || !Number.isFinite(args.actionY)) {
+      throw new Error("click action requires --action-x and --action-y");
+    }
+    summary.actionResult = await dispatchMouseClick(client, args.actionX, args.actionY);
+  } else if (args.action === "text") {
+    summary.actionResult = await dispatchText(client, args.actionText || "");
+  } else if (args.action === "escape") {
+    summary.actionResult = await dispatchEscape(client);
+  } else {
+    throw new Error(`unknown action: ${args.action}`);
+  }
+}
+
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   fs.mkdirSync(args.outDir, { recursive: true });
@@ -307,6 +387,7 @@ async function main() {
       summary[`${domain}Enabled`] = await safeSend(client, `${domain}.enable`);
     }
     await safeSend(client, "Page.bringToFront");
+    await runAction(client, args, summary);
     await sleep(args.settleSeconds * 1000);
     const collected = await collectStates(client);
     summary.children = collected.children;

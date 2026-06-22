@@ -178,3 +178,112 @@ An adversarial Codex subagent reviewed the design with fresh context.
 Verdict: **Approved**.
 
 The reviewer found no required changes.
+
+## Result
+
+**Result:** Pass
+
+The A/B comparison proved the direct PDF form sequence failure was specific to
+the TermSurf/Roamium input path, not Chromium PDF form focus semantics.
+
+Before the product fix, the same generated AcroForm fixture and calibrated field
+geometry produced this comparison:
+
+- DevTools input: `no-failure-observed`;
+- TermSurf protocol input: `form-sequence-workaround-required`;
+- direct `text-then-checkbox`: TermSurf `form-checkbox-state-missing`, DevTools
+  `no-failure-observed`;
+- direct `checkbox-then-text`: TermSurf `form-text-value-missing`, DevTools
+  `no-failure-observed`.
+
+The narrow product fix is in `roamium/src/dispatch.rs`: when Roamium receives a
+TermSurf mouse `down` event, it now first forwards a synthetic
+`ts_forward_mouse_move` at the same coordinates before forwarding the existing
+mouse event. This matches the input shape used by Chromium DevTools
+`Input.dispatchMouseEvent`, which sends `mouseMoved`, `mousePressed`, and
+`mouseReleased`.
+
+The harness was extended so this remains testable:
+
+- `scripts/probe-pdf-forms.mjs` can now dispatch DevTools mouse, text, and
+  Escape actions before collecting PDF form snapshots;
+- `scripts/test-issue-834-pdf-forms.py` now supports `--input-path termsurf`,
+  `--input-path devtools`, and `--input-path compare`;
+- the compare mode records `termsurf_results`, `devtools_results`,
+  `input_path_divergences`, and `first_failing_hop`;
+- per-run sockets now use a short temporary path so nested issue log directories
+  do not exceed the macOS `AF_UNIX` path limit.
+
+After rebuilding Roamium, the final comparison log is
+`logs/issue-834-exp14-roamium-pdf-form-input-paths-final/pdf-forms-summary.json`.
+It records:
+
+- top-level `first_failing_hop`: `no-failure-observed`;
+- `input_path_divergences`: `{}`;
+- TermSurf path `first_failing_hop`: `no-failure-observed`;
+- DevTools path `first_failing_hop`: `no-failure-observed`;
+- direct `text`, `checkbox`, `text-then-checkbox`, and `checkbox-then-text`:
+  `no-failure-observed` for both paths;
+- reset variants `text-bg-checkbox`, `text-escape-checkbox`,
+  `text-double-checkbox`, `checkbox-bg-text`, `checkbox-escape-text`, and
+  `checkbox-double-text`: `no-failure-observed` for both paths;
+- both child commands returned `0`;
+- TermSurf trace logs include 22 `pre-click-synthesis` entries.
+
+Verification commands run:
+
+```bash
+node --check scripts/probe-pdf-forms.mjs
+
+PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile \
+  scripts/test-issue-834-pdf-forms.py
+
+rm -rf scripts/__pycache__
+
+cargo fmt
+
+./scripts/build.sh roamium
+
+python3 scripts/test-issue-834-pdf-forms.py \
+  --log-dir logs/issue-834-exp14-roamium-pdf-form-input-paths-final \
+  --input-path compare
+
+git diff --check
+```
+
+No Chromium source was modified, so no Chromium branch or patch archive was
+needed.
+
+## Conclusion
+
+Roamium PDF forms now pass the individual form scenarios, direct same-document
+text/checkbox switching scenarios, and the focus-reset variants through the real
+TermSurf protocol path. The bug was a product input-routing mismatch: Roamium
+was forwarding click press/release without the preceding movement event that
+Chromium PDF form focus expected in this path.
+
+The next Issue 834 experiment should move on from Roamium PDF form input. Good
+candidates are either converting the Roamium PDF coverage into a durable
+regression guard or tackling the next incomplete Roamium PDF area, such as
+native print behavior or the remaining advanced PDF surfaces from Experiment 11.
+
+## Completion Review
+
+An adversarial Codex subagent reviewed the completed experiment with fresh
+context.
+
+Verdict: **Approved**.
+
+The reviewer found no required issues. It raised one optional issue:
+
+- compare mode returned success for `termsurf-devtools-divergence`, which made
+  the command weaker as a future regression guard.
+
+Accepted fix:
+
+- `scripts/test-issue-834-pdf-forms.py` now returns success from compare mode
+  only for `no-failure-observed` or the explicitly accepted
+  `chromium-pdf-focus-semantics` classification. It returns failure for
+  `termsurf-devtools-divergence` and other unresolved classifications.
+
+The same reviewer re-reviewed the fix and approved it with no findings.

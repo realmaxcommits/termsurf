@@ -147,7 +147,7 @@ Each feature row should ultimately record:
 - [Experiment 13: Fix Roamium PDF form sequences](13-fix-roamium-pdf-form-sequence.md)
   — **Partial**
 - [Experiment 14: Compare Roamium PDF form input paths](14-compare-roamium-pdf-form-input-paths.md)
-  — **Designed**
+  — **Pass**
 
 ## Roamium Phase
 
