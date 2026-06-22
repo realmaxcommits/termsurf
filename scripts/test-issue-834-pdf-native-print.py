@@ -589,9 +589,125 @@ def mechanism_coregraphics_click_cancel(log_dir: pathlib.Path, title: str, timeo
     }
 
 
+def swift_ax_press_cancel(log_dir: pathlib.Path, pid: int, title: str, timeout: float) -> dict[str, Any]:
+    source = r'''
+import ApplicationServices
+import Foundation
+
+let pid = pid_t(Int(CommandLine.arguments[1]) ?? -1)
+let title = CommandLine.arguments[2]
+let deadline = Date().addingTimeInterval(Double(CommandLine.arguments[3]) ?? 5.0)
+
+func stringAttr(_ element: AXUIElement, _ attr: String) -> String {
+    var value: CFTypeRef?
+    let err = AXUIElementCopyAttributeValue(element, attr as CFString, &value)
+    guard err == .success else { return "" }
+    return (value as? String) ?? ""
+}
+
+func children(_ element: AXUIElement) -> [AXUIElement] {
+    var value: CFTypeRef?
+    let err = AXUIElementCopyAttributeValue(element, kAXChildrenAttribute as CFString, &value)
+    guard err == .success else { return [] }
+    return (value as? [AXUIElement]) ?? []
+}
+
+func findCancel(_ element: AXUIElement) -> AXUIElement? {
+    let role = stringAttr(element, kAXRoleAttribute)
+    let elementTitle = stringAttr(element, kAXTitleAttribute)
+    let description = stringAttr(element, kAXDescriptionAttribute)
+    if role == kAXButtonRole && (elementTitle == "Cancel" || description == "Cancel") {
+        return element
+    }
+    for child in children(element) {
+        if let match = findCancel(child) { return match }
+    }
+    return nil
+}
+
+let app = AXUIElementCreateApplication(pid)
+let trusted = AXIsProcessTrusted()
+
+while Date() < deadline {
+    var value: CFTypeRef?
+    let err = AXUIElementCopyAttributeValue(app, kAXWindowsAttribute as CFString, &value)
+    if err != .success {
+        print("{\"trusted\":\(trusted),\"pressed\":false,\"error\":\(err.rawValue)}")
+        exit(1)
+    }
+    let windows = (value as? [AXUIElement]) ?? []
+    for window in windows {
+        let windowTitle = stringAttr(window, kAXTitleAttribute)
+        if windowTitle.contains(title), let button = findCancel(window) {
+            let pressErr = AXUIElementPerformAction(button, kAXPressAction as CFString)
+            print("{\"trusted\":\(trusted),\"pressed\":\(pressErr == .success),\"pressError\":\(pressErr.rawValue),\"windowTitle\":\"\(windowTitle)\"}")
+            exit(pressErr == .success ? 0 : 1)
+        }
+    }
+    Thread.sleep(forTimeInterval: 0.2)
+}
+
+print("{\"trusted\":\(trusted),\"pressed\":false,\"error\":\"not-found\"}")
+exit(1)
+'''
+    with tempfile.TemporaryDirectory(prefix="ts834-axcancel-") as tmp:
+        script = pathlib.Path(tmp) / "press_cancel.swift"
+        script.write_text(source, encoding="utf-8")
+        result = run_cmd(["swift", str(script), str(pid), title, str(timeout)], timeout=timeout + 3)
+    parsed: dict[str, Any] = {"pressed": False}
+    try:
+        parsed = json.loads(result.get("stdout") or "{}")
+    except json.JSONDecodeError:
+        parsed = {"pressed": False, "parse_error": result.get("stdout")}
+    return {"mechanism": "swift-accessibility-press-cancel", "result": result, **parsed}
+
+
+def mechanism_accessibility_press_cancel(log_dir: pathlib.Path, title: str, timeout: float) -> dict[str, Any]:
+    proc, stdout_path, stderr_path = start_harmless_dialog(
+        title, timeout, log_dir, "accessibility-press"
+    )
+    observed = swift_cgwindow_observe(log_dir, title, timeout)
+    cancel = {"pressed": False, "result": {"returncode": None, "stdout": "", "stderr": ""}}
+    if observed.get("observed"):
+        cancel = swift_ax_press_cancel(log_dir, proc.pid, title, timeout)
+        time.sleep(0.5)
+    finish = finish_dialog(proc, timeout + 2, stdout_path, stderr_path)
+    disappearance = swift_cgwindow_observe(log_dir, title, 1)
+    diagnostics = []
+    stderr = (
+        ((observed.get("result") or {}).get("stderr") or "")
+        + "\n"
+        + ((cancel.get("result") or {}).get("stderr") or "")
+        + "\n"
+        + ((disappearance.get("result") or {}).get("stderr") or "")
+    )
+    if "not authorized" in stderr or "not trusted" in stderr or "not allowed" in stderr:
+        diagnostics.append("accessibility-permission-denied")
+    if cancel.get("trusted") is False:
+        diagnostics.append("accessibility-not-trusted")
+    return {
+        "name": "accessibility-press-cancel-button",
+        "production_print_compatible": True,
+        "dialog_pid": proc.pid,
+        "observed": bool(observed.get("observed")),
+        "cancel_sent": bool(cancel.get("pressed") and finish.get("cancelled")),
+        "disappeared": bool(not disappearance.get("observed")),
+        "dialog_result": finish,
+        "observation": observed,
+        "cancel": {
+            "method": "accessibility-press-cancel-button",
+            "result": cancel,
+            "cancel_sent": bool(cancel.get("pressed") and finish.get("cancelled")),
+        },
+        "disappearance": disappearance,
+        "permission_diagnostics": sorted(set(diagnostics)),
+    }
+
+
 def preflight_result_from_mechanisms(log_dir: pathlib.Path, timeout: float) -> dict[str, Any]:
     mechanisms = [
         mechanism_system_events(log_dir, PREFLIGHT_TITLE, timeout),
+        mechanism_accessibility_press_cancel(log_dir, PREFLIGHT_TITLE, timeout),
         mechanism_coregraphics_escape(log_dir, PREFLIGHT_TITLE, timeout),
         mechanism_coregraphics_click_cancel(log_dir, PREFLIGHT_TITLE, timeout),
         mechanism_coregraphics_kill(log_dir, PREFLIGHT_TITLE, timeout),
@@ -676,18 +792,24 @@ def watch_and_cancel_print_dialog(timeout: float) -> dict[str, Any]:
     with tempfile.TemporaryDirectory(prefix="ts834-print-watch-") as tmp:
         log_dir = pathlib.Path(tmp)
         observed = swift_cgwindow_observe_any(log_dir, ["Print", "Printer"], timeout)
-        result = {"returncode": 1, "stdout": "", "stderr": "", "timed_out": False}
+        cancel = {"pressed": False, "result": {"returncode": 1, "stdout": "", "stderr": ""}}
         if observed.get("observed"):
-            result = run_cmd(["swift", str(CGEVENT_INJECT), "key", "53"], timeout=5)
+            cancel = swift_ax_press_cancel(
+                log_dir,
+                int(observed.get("pid") or -1),
+                str(observed.get("name") or "Print"),
+                timeout,
+            )
             time.sleep(0.5)
         disappearance = swift_cgwindow_observe_any(log_dir, ["Print", "Printer"], 1)
     return {
-        "mechanism": "coregraphics-print-window-cgevent-escape",
+        "mechanism": "coregraphics-print-window-accessibility-press-cancel",
         "observation": observed,
         "disappearance": disappearance,
-        "result": result,
+        "result": cancel.get("result"),
+        "cancel": cancel,
         "dialog_observed": bool(observed.get("observed")),
-        "cancel_sent": bool(observed.get("observed") and result.get("returncode") == 0),
+        "cancel_sent": bool(observed.get("observed") and cancel.get("pressed")),
         "disappeared": bool(not disappearance.get("observed")),
     }
 

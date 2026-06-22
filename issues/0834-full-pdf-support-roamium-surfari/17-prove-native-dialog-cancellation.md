@@ -156,3 +156,90 @@ An adversarial Codex subagent reviewed the design with fresh context.
 Verdict: **Approved**.
 
 The reviewer found no issues.
+
+## Result
+
+**Result:** Pass
+
+Extended `scripts/test-issue-834-pdf-native-print.py` with a
+production-compatible Accessibility cancellation mechanism for the harmless
+native-dialog preflight.
+
+The new passing mechanism is `accessibility-press-cancel-button`:
+
+- CoreGraphics observes the harmless dialog by title and captures its owner PID;
+- a Swift Accessibility helper creates an AX application element for that PID;
+- the helper finds the matching window and recursively locates the `Cancel`
+  button;
+- it invokes `AXPress` on that button;
+- the dialog process exits with `User canceled. (-128)`;
+- CoreGraphics verifies the dialog disappeared.
+
+The harness also still records the Experiment 16 mechanisms:
+
+- System Events remains blocked by `system-events-assistive-access-denied`;
+- CGEvent Escape sends successfully but the dialog times out with
+  `gave up:true`;
+- CGEvent click attempts send successfully but the dialog still times out with
+  `gave up:true`;
+- process termination cleans up the harmless dialog, but is marked
+  `production_print_compatible = false`.
+
+Final evidence:
+
+- summary:
+  `logs/issue-834-exp17-native-dialog-cancellation/native-dialog-preflight-summary.json`;
+- `overall_result = "pass"`;
+- `first_failing_hop = "no-failure-observed"`;
+- `selected_mechanism = "accessibility-press-cancel-button"`;
+- `safe_for_production_print_probe = true`;
+- `production_print_click_attempted = false`;
+- selected mechanism recorded `observed = true`, `cancel_sent = true`, and
+  `disappeared = true`;
+- selected mechanism's dialog result recorded `cancelled = true` and stderr
+  `User canceled. (-128)`;
+- print queues before and after were empty.
+
+The future production print watcher now uses CoreGraphics observation for
+`Print` / `Printer` windows and the same Accessibility Cancel-button press
+mechanism. This experiment did not run that production print path.
+
+Verification commands run:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile \
+  scripts/test-issue-834-pdf-native-print.py
+
+rm -rf scripts/__pycache__
+
+python3 scripts/test-issue-834-pdf-native-print.py \
+  --log-dir logs/issue-834-exp17-native-dialog-cancellation \
+  --probe watcher-preflight
+
+git diff --check
+```
+
+No production print dialog was opened, no production PDF print control was
+clicked, and no print job was submitted.
+
+## Conclusion
+
+The native-dialog safety gate now has a production-compatible cancellation
+mechanism on this VM: CoreGraphics window observation plus Accessibility
+`AXPress` on the Cancel button. The remaining Roamium native-print work can now
+return to the real PDF print probe, still behind the hard
+`--allow-native-dialog-click` safety flag.
+
+The next experiment should click the production Roamium PDF print control only
+after the preflight passes, watch for a native Print/Printer window using the
+CoreGraphics/Accessibility mechanism, cancel it, and prove from queue state that
+no print job was submitted.
+
+## Completion Review
+
+An adversarial Codex subagent reviewed the completed experiment with fresh
+context.
+
+Verdict: **Approved**.
+
+The reviewer found no issues.
