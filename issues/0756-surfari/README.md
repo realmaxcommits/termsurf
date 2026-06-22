@@ -1,6 +1,7 @@
 +++
-status = "open"
+status = "closed"
 opened = "2026-03-16"
+closed = "2026-06-21"
 +++
 
 # Issue 756: Surfari — WebKit engine for TermSurf
@@ -172,14 +173,14 @@ surrounding issue text.
       Ghostboard can deterministically route same-profile engines.
 - [x] Integrate Surfari with Ghostboard engine launching, profile selection,
       socket routing, and overlay hosting.
-- [ ] Test Surfari inside the real TermSurf app with navigation, keyboard input,
+- [x] Test Surfari inside the real TermSurf app with navigation, keyboard input,
       click, drag, scroll, resize, pane resize, split panes, tab switching,
       window switching, focus changes, shutdown, restart, profile isolation, and
       crash handling.
 - [x] Add focused regression guards for behavior that is proven to work, keeping
       the tests small enough that the suite remains practical to run (Experiment
       23).
-- [ ] Re-run the full Ghostboard/Roamium feature matrix against
+- [x] Re-run the full Ghostboard/Roamium feature matrix against
       Ghostboard/Surfari and document any engine-specific differences.
 
 ### Compositing: the key open question
@@ -327,4 +328,24 @@ recovery. Much of this code can inform Surfari's implementation.
 - [Experiment 30: Prove Surfari crash handling](30-surfari-crash-handling.md) —
   **Pass**
 - [Experiment 31: Compare Surfari against the Roamium matrix](31-surfari-roamium-comparison.md)
-  — **Designed**
+  — **Pass**
+
+## Conclusion
+
+Surfari is complete for Issue 756. The WebKit source checkout builds, the
+TermSurf WebKit C ABI is implemented, the Surfari Rust process speaks the shared
+protobuf/Unix-socket protocol, and Ghostboard can launch Surfari for WebKit
+profiles.
+
+The final real-app evidence suite proves navigation, keyboard input, click,
+drag, scroll, resize, pane resize, split panes, tab switching, window switching,
+focus changes, shutdown, restart, profile isolation, crash handling, and
+DevTools support. Experiment 31 compares Surfari against every scenario in the
+Roamium/Ghostboard matrix, accounts for all 51 scenarios, and leaves no `Gap`
+rows.
+
+The final aggregate run was `20260621-212614`:
+
+- `logs/issue-756-exp31-surfari-roamium-comparison/harness-20260621-212614.log`
+
+All rows in `real-app-matrix.md` are now `Proven`.

@@ -122,6 +122,10 @@ extract_ready_tab_id() {
   printf '%s\n' "$1" | sed -E 's/.*tab_id=([0-9]+) socket=.*/\1/'
 }
 
+extract_ready_pane_id() {
+  printf '%s\n' "$1" | sed -E 's/.*BrowserReady: pane_id=([^ ]+) tab_id=.*/\1/'
+}
+
 extract_context_id() {
   printf '%s\n' "$1" | sed -E 's/.*context_id=([^ ]+).*/\1/'
 }
@@ -384,6 +388,39 @@ wait_for_different_ca_context_after() {
   wait_for_ca_context_excluding_after "$start_line" "$label" "$old_pane"
 }
 
+wait_for_browser_ready_excluding_after() {
+  local start_line="$1"
+  local label="$2"
+  shift 2
+  local line excluded skip
+  for _ in $(seq 1 60); do
+    while IFS= read -r line; do
+      skip=false
+      for excluded in "$@"; do
+        if [[ "$line" == *"pane_id=${excluded}"* ]]; then
+          skip=true
+          break
+        fi
+      done
+      if [ "$skip" = false ]; then
+        printf '%s\n' "$line"
+        return 0
+      fi
+    done < <(tail -n +"$((start_line + 1))" "$APP_LOG" |
+      grep -E "BrowserReady: pane_id=.* browser=surfari" || true)
+    delay 1
+  done
+  fail "timed out waiting for $label"
+}
+
+wait_for_surfari_ca_context_after() {
+  local start_line="$1"
+  local tab_id="$2"
+  local pane_id="$3"
+  local label="$4"
+  wait_for_line_after "$SURFARI_TRACE" "$start_line" "ca-context tab=${tab_id} pane=${pane_id} .*context_id=[0-9]+" "$label"
+}
+
 wait_for_ca_context_excluding_after() {
   local start_line="$1"
   local label="$2"
@@ -605,9 +642,10 @@ printf '"%s" --browser surfari "%s"' "$WEB" "$URL_B" >"$TYPE_FILE"
 log "browser_b_command=$(cat "$TYPE_FILE")"
 swift "$ROOT/scripts/ghostty-app/inject.swift" type "$TYPE_FILE" >>"$HARNESS_LOG" 2>&1
 press_key 36
-B_CA_LINE="$(wait_for_different_ca_context_after "$BROWSER_B_START" "$A_PANE_ID" "browser B ca_context")"
-B_PANE_ID="$(extract_pane_id "$B_CA_LINE")"
-B_TAB_ID="$(extract_browser_tab_id "$B_CA_LINE")"
+B_READY_LINE="$(wait_for_browser_ready_excluding_after "$BROWSER_B_START" "browser B BrowserReady" "$A_PANE_ID")"
+B_PANE_ID="$(extract_ready_pane_id "$B_READY_LINE")"
+B_TAB_ID="$(extract_ready_tab_id "$B_READY_LINE")"
+B_CA_LINE="$(wait_for_surfari_ca_context_after "$BROWSER_B_TRACE_START" "$B_TAB_ID" "$B_PANE_ID" "browser B ca_context")"
 B_CONTEXT_ID="$(extract_context_id "$B_CA_LINE")"
 [ "$B_PANE_ID" != "$A_PANE_ID" ] || fail "browser B reused browser A pane id"
 [ "$B_TAB_ID" != "$A_TAB_ID" ] || fail "browser B reused browser A tab id"
@@ -659,9 +697,10 @@ printf '"%s" --browser surfari "%s"' "$WEB" "$URL_C" >"$TYPE_FILE"
 log "browser_c_command=$(cat "$TYPE_FILE")"
 swift "$ROOT/scripts/ghostty-app/inject.swift" type "$TYPE_FILE" >>"$HARNESS_LOG" 2>&1
 press_key 36
-C_CA_LINE="$(wait_for_ca_context_excluding_after "$BROWSER_C_START" "browser C ca_context" "$A_PANE_ID" "$B_PANE_ID")"
-C_PANE_ID="$(extract_pane_id "$C_CA_LINE")"
-C_TAB_ID="$(extract_browser_tab_id "$C_CA_LINE")"
+C_READY_LINE="$(wait_for_browser_ready_excluding_after "$BROWSER_C_START" "browser C BrowserReady" "$A_PANE_ID" "$B_PANE_ID")"
+C_PANE_ID="$(extract_ready_pane_id "$C_READY_LINE")"
+C_TAB_ID="$(extract_ready_tab_id "$C_READY_LINE")"
+C_CA_LINE="$(wait_for_surfari_ca_context_after "$BROWSER_C_TRACE_START" "$C_TAB_ID" "$C_PANE_ID" "browser C ca_context")"
 C_CONTEXT_ID="$(extract_context_id "$C_CA_LINE")"
 [ "$C_PANE_ID" != "$A_PANE_ID" ] || fail "browser C reused browser A pane id"
 [ "$C_PANE_ID" != "$B_PANE_ID" ] || fail "browser C reused browser B pane id"
