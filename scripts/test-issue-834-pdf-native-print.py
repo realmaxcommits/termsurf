@@ -9,11 +9,13 @@ import json
 import os
 import pathlib
 import re
+import signal
 import socket
 import socketserver
 import struct
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 from dataclasses import dataclass
@@ -34,6 +36,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 ROAMIUM = ROOT / "chromium/src/out/Default/roamium"
 BITCOIN_PDF = ROOT / "test-html/public/bitcoin.pdf"
 SAVE_PRINT_TITLE_LOCAL_PROBE = ROOT / "scripts/probe-pdf-save-print-title-local.mjs"
+CGEVENT_INJECT = ROOT / "scripts/ghostty-app/inject.swift"
 DEVTOOLS_RE = re.compile(r"DevTools listening on ws://127\.0\.0\.1:(\d+)/")
 PREFLIGHT_TITLE = "TermSurf Native Print Safety Preflight"
 
@@ -141,6 +144,10 @@ def run_cmd(cmd: list[str], timeout: float = 10) -> dict[str, Any]:
             "stderr": exc.stderr or "",
             "timed_out": True,
         }
+
+
+def write_json(path: pathlib.Path, value: dict[str, Any]) -> None:
+    path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
 def print_queue_state() -> dict[str, Any]:
@@ -280,94 +287,408 @@ return "not-cancelled"
     }
 
 
-def preflight_dialog(timeout: float) -> dict[str, Any]:
-    dialog = subprocess.Popen(
+def start_harmless_dialog(
+    title: str, timeout: float, log_dir: pathlib.Path, name: str
+) -> tuple[subprocess.Popen, pathlib.Path, pathlib.Path]:
+    stdout_path = log_dir / f"{name}.dialog.stdout"
+    stderr_path = log_dir / f"{name}.dialog.stderr"
+    proc = subprocess.Popen(
         [
             "osascript",
             "-e",
             (
                 f'display dialog "Cancel-only preflight for TermSurf native print automation." '
-                f'with title "{PREFLIGHT_TITLE}" buttons {{"Cancel"}} default button "Cancel" '
+                f'with title "{title}" buttons {{"Cancel"}} default button "Cancel" '
                 f'cancel button "Cancel" giving up after {int(timeout)}'
             ),
         ],
         cwd=str(ROOT),
         text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        stdout=stdout_path.open("w", encoding="utf-8"),
+        stderr=stderr_path.open("w", encoding="utf-8"),
     )
     time.sleep(0.5)
-    observed = watcher_observe_title(PREFLIGHT_TITLE, timeout)
-    cancel = watcher_cancel_title(PREFLIGHT_TITLE, timeout) if observed["observed"] else {
+    return proc, stdout_path, stderr_path
+
+
+def finish_dialog(
+    proc: subprocess.Popen,
+    timeout: float,
+    stdout_path: pathlib.Path | None = None,
+    stderr_path: pathlib.Path | None = None,
+) -> dict[str, Any]:
+    try:
+        proc.wait(timeout=timeout)
+        timed_out = False
+    except subprocess.TimeoutExpired:
+        proc.terminate()
+        try:
+            proc.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=2)
+        timed_out = True
+    stdout = read_text(stdout_path) if stdout_path else ""
+    stderr = read_text(stderr_path) if stderr_path else ""
+    cancelled = False
+    if not timed_out and proc.returncode is not None and proc.returncode >= 0:
+        cancelled = "gave up:true" not in stdout and (
+            "User canceled" in stderr or "button returned:" in stdout or proc.returncode != 0
+        )
+    return {
+        "returncode": proc.returncode,
+        "timed_out": timed_out,
+        "stdout": stdout,
+        "stderr": stderr,
+        "cancelled": cancelled,
+    }
+
+
+def permission_diagnostic(result: dict[str, Any]) -> str | None:
+    text = f"{result.get('stdout') or ''}\n{result.get('stderr') or ''}"
+    if "not allowed assistive access" in text or "-25211" in text:
+        return "system-events-assistive-access-denied"
+    if "not authorized to send Apple events" in text:
+        return "apple-events-automation-denied"
+    return None
+
+
+def mechanism_system_events(log_dir: pathlib.Path, title: str, timeout: float) -> dict[str, Any]:
+    proc, stdout_path, stderr_path = start_harmless_dialog(title, timeout, log_dir, "system-events")
+    observed = watcher_observe_title(title, timeout)
+    cancel = watcher_cancel_title(title, timeout) if observed["observed"] else {
         "cancel_sent": False,
         "skipped": "dialog-not-observed",
     }
-    try:
-        stdout, stderr = dialog.communicate(timeout=timeout + 3)
-        dialog_result = {
-            "returncode": dialog.returncode,
-            "stdout": stdout,
-            "stderr": stderr,
-            "timed_out": False,
-        }
-    except subprocess.TimeoutExpired:
-        dialog.kill()
-        stdout, stderr = dialog.communicate()
-        dialog_result = {
-            "returncode": dialog.returncode,
-            "stdout": stdout,
-            "stderr": stderr,
-            "timed_out": True,
-        }
-    disappearance = watcher_observe_title(PREFLIGHT_TITLE, 1)
+    finish = finish_dialog(proc, timeout + 2, stdout_path, stderr_path)
+    disappearance = watcher_observe_title(title, 1)
+    diagnostics = [
+        item
+        for item in (
+            permission_diagnostic(observed.get("result") or {}),
+            permission_diagnostic((cancel or {}).get("result") or {}),
+            permission_diagnostic(disappearance.get("result") or {}),
+        )
+        if item
+    ]
     return {
-        "mechanism": "osascript-display-dialog-plus-system-events",
-        "dialog_title": PREFLIGHT_TITLE,
-        "observed": observed,
+        "name": "system-events-window-title-escape",
+        "production_print_compatible": True,
+        "dialog_pid": proc.pid,
+        "observed": bool(observed.get("observed")),
+        "cancel_sent": bool(cancel.get("cancel_sent") and finish.get("cancelled")),
+        "disappeared": bool(not disappearance.get("observed")),
+        "dialog_result": finish,
+        "observation": observed,
         "cancel": cancel,
-        "dialog_result": dialog_result,
-        "disappearance": {
-            **disappearance,
-            "disappeared": not disappearance["observed"],
-        },
-        "passed": bool(
-            observed["observed"]
-            and cancel.get("cancel_sent")
-            and not disappearance["observed"]
-        ),
+        "disappearance": disappearance,
+        "permission_diagnostics": sorted(set(diagnostics)),
     }
 
 
-def watch_and_cancel_print_dialog(timeout: float) -> dict[str, Any]:
-    script = f'''
-set deadline to (current date) + {timeout}
-repeat while (current date) < deadline
-  tell application "System Events"
-    repeat with proc in application processes
-      set procName to name of proc
-      repeat with win in windows of proc
-        try
-          set winName to name of win
-          if winName contains "Print" or winName contains "Printer" then
-            key code 53
-            return "print-dialog-cancel-sent process=" & procName & " window=" & winName
-          end if
-        end try
-      end repeat
-    end repeat
-  end tell
-  delay 0.1
-end repeat
-return "not-observed"
+def swift_cgwindow_observe_any(log_dir: pathlib.Path, titles: list[str], timeout: float) -> dict[str, Any]:
+    source = r'''
+import CoreGraphics
+import Foundation
+
+let titles = CommandLine.arguments[1].split(separator: "\u{1f}").map(String.init)
+let deadline = Date().addingTimeInterval(Double(CommandLine.arguments[2]) ?? 5.0)
+
+while Date() < deadline {
+    if let info = CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as? [[String: Any]] {
+        for window in info {
+            let name = (window[kCGWindowName as String] as? String) ?? ""
+            let owner = (window[kCGWindowOwnerName as String] as? String) ?? ""
+            let pid = (window[kCGWindowOwnerPID as String] as? Int) ?? -1
+            let onscreen = (window[kCGWindowIsOnscreen as String] as? Bool) ?? false
+            let bounds = (window[kCGWindowBounds as String] as? [String: Any]) ?? [:]
+            let x = Int((bounds["X"] as? Double) ?? 0)
+            let y = Int((bounds["Y"] as? Double) ?? 0)
+            let width = Int((bounds["Width"] as? Double) ?? 0)
+            let height = Int((bounds["Height"] as? Double) ?? 0)
+            if onscreen && titles.contains(where: { name.contains($0) }) {
+                print("{\"observed\":true,\"owner\":\"\(owner)\",\"pid\":\(pid),\"name\":\"\(name)\",\"bounds\":{\"x\":\(x),\"y\":\(y),\"width\":\(width),\"height\":\(height)}}")
+                exit(0)
+            }
+        }
+    }
+    Thread.sleep(forTimeInterval: 0.2)
+}
+print("{\"observed\":false}")
+exit(1)
 '''
-    result = run_cmd(["osascript", "-e", script], timeout=timeout + 3)
+    with tempfile.TemporaryDirectory(prefix="ts834-cgwindow-") as tmp:
+        script = pathlib.Path(tmp) / "observe.swift"
+        script.write_text(source, encoding="utf-8")
+        result = run_cmd(["swift", str(script), "\x1f".join(titles), str(timeout)], timeout=timeout + 3)
+    parsed: dict[str, Any] = {"observed": False}
+    try:
+        parsed = json.loads(result.get("stdout") or "{}")
+    except json.JSONDecodeError:
+        parsed = {"observed": False, "parse_error": result.get("stdout")}
     return {
-        "mechanism": "osascript-system-events-print-window-escape",
+        "mechanism": "swift-coregraphics-window-title",
         "result": result,
-        "dialog_observed": result["returncode"] == 0
-        and "print-dialog-cancel-sent" in result["stdout"],
-        "cancel_sent": result["returncode"] == 0
-        and "print-dialog-cancel-sent" in result["stdout"],
+        **parsed,
+    }
+
+
+def swift_cgwindow_observe(log_dir: pathlib.Path, title: str, timeout: float) -> dict[str, Any]:
+    return swift_cgwindow_observe_any(log_dir, [title], timeout)
+
+
+def mechanism_coregraphics_kill(log_dir: pathlib.Path, title: str, timeout: float) -> dict[str, Any]:
+    proc, stdout_path, stderr_path = start_harmless_dialog(title, timeout, log_dir, "coregraphics")
+    observed = swift_cgwindow_observe(log_dir, title, timeout)
+    cancel_sent = False
+    if observed.get("observed"):
+        proc.send_signal(signal.SIGTERM)
+        cancel_sent = True
+    finish = finish_dialog(proc, timeout + 2, stdout_path, stderr_path)
+    disappearance = swift_cgwindow_observe(log_dir, title, 1)
+    diagnostics = []
+    stderr = ((observed.get("result") or {}).get("stderr") or "") + "\n" + (
+        (disappearance.get("result") or {}).get("stderr") or ""
+    )
+    if "not authorized" in stderr or "Screen Recording" in stderr:
+        diagnostics.append("screen-recording-or-window-list-permission-denied")
+    return {
+        "name": "coregraphics-window-title-terminate-dialog",
+        "production_print_compatible": False,
+        "dialog_pid": proc.pid,
+        "observed": bool(observed.get("observed")),
+        "cancel_sent": cancel_sent,
+        "disappeared": bool(not disappearance.get("observed")),
+        "dialog_result": finish,
+        "observation": observed,
+        "cancel": {"method": "terminate-dialog-process", "cancel_sent": cancel_sent},
+        "disappearance": disappearance,
+        "permission_diagnostics": sorted(set(diagnostics)),
+    }
+
+
+def mechanism_coregraphics_escape(log_dir: pathlib.Path, title: str, timeout: float) -> dict[str, Any]:
+    proc, stdout_path, stderr_path = start_harmless_dialog(
+        title, timeout, log_dir, "coregraphics-escape"
+    )
+    observed = swift_cgwindow_observe(log_dir, title, timeout)
+    cancel = {"returncode": None, "stdout": "", "stderr": "", "timed_out": False}
+    if observed.get("observed"):
+        cancel = run_cmd(["swift", str(CGEVENT_INJECT), "key", "53"], timeout=5)
+        time.sleep(0.5)
+    finish = finish_dialog(proc, timeout + 2, stdout_path, stderr_path)
+    disappearance = swift_cgwindow_observe(log_dir, title, 1)
+    diagnostics = []
+    stderr = (
+        ((observed.get("result") or {}).get("stderr") or "")
+        + "\n"
+        + (cancel.get("stderr") or "")
+        + "\n"
+        + ((disappearance.get("result") or {}).get("stderr") or "")
+    )
+    if "not authorized" in stderr or "Screen Recording" in stderr:
+        diagnostics.append("screen-recording-or-window-list-permission-denied")
+    if "not trusted" in stderr or "accessibility" in stderr.lower():
+        diagnostics.append("coregraphics-input-accessibility-denied")
+    return {
+        "name": "coregraphics-window-title-cgevent-escape",
+        "production_print_compatible": True,
+        "dialog_pid": proc.pid,
+        "observed": bool(observed.get("observed")),
+        "cancel_sent": bool(
+            observed.get("observed") and cancel.get("returncode") == 0 and finish.get("cancelled")
+        ),
+        "disappeared": bool(not disappearance.get("observed")),
+        "dialog_result": finish,
+        "observation": observed,
+        "cancel": {
+            "method": "cgevent-escape",
+            "result": cancel,
+            "cancel_sent": bool(
+                observed.get("observed") and cancel.get("returncode") == 0 and finish.get("cancelled")
+            ),
+        },
+        "disappearance": disappearance,
+        "permission_diagnostics": sorted(set(diagnostics)),
+}
+
+
+def mechanism_coregraphics_click_cancel(log_dir: pathlib.Path, title: str, timeout: float) -> dict[str, Any]:
+    proc, stdout_path, stderr_path = start_harmless_dialog(
+        title, timeout, log_dir, "coregraphics-click"
+    )
+    observed = swift_cgwindow_observe(log_dir, title, timeout)
+    cancel = {"returncode": None, "stdout": "", "stderr": "", "timed_out": False}
+    bounds = observed.get("bounds") or {}
+    click_attempts: list[dict[str, Any]] = []
+    if observed.get("observed") and bounds:
+        for x_ratio in (0.50, 0.62, 0.74):
+            click_x = float(bounds.get("x") or 0) + float(bounds.get("width") or 0) * x_ratio
+            click_y = float(bounds.get("y") or 0) + float(bounds.get("height") or 0) - 32.0
+            cancel = run_cmd(
+                [
+                    "swift",
+                    str(CGEVENT_INJECT),
+                    "click",
+                    f"{click_x:.0f}",
+                    f"{click_y:.0f}",
+                    "left",
+                    "1",
+                ],
+                timeout=5,
+            )
+            click_attempts.append(
+                {
+                    "x": round(click_x, 1),
+                    "y": round(click_y, 1),
+                    "x_ratio": x_ratio,
+                    "returncode": cancel.get("returncode"),
+                }
+            )
+            time.sleep(0.5)
+            if proc.poll() is not None:
+                break
+    finish = finish_dialog(proc, timeout + 2, stdout_path, stderr_path)
+    disappearance = swift_cgwindow_observe(log_dir, title, 1)
+    diagnostics = []
+    stderr = (
+        ((observed.get("result") or {}).get("stderr") or "")
+        + "\n"
+        + (cancel.get("stderr") or "")
+        + "\n"
+        + ((disappearance.get("result") or {}).get("stderr") or "")
+    )
+    if "not authorized" in stderr or "Screen Recording" in stderr:
+        diagnostics.append("screen-recording-or-window-list-permission-denied")
+    if "not trusted" in stderr or "accessibility" in stderr.lower():
+        diagnostics.append("coregraphics-input-accessibility-denied")
+    return {
+        "name": "coregraphics-window-title-cgevent-click-cancel",
+        "production_print_compatible": True,
+        "dialog_pid": proc.pid,
+        "observed": bool(observed.get("observed")),
+        "cancel_sent": bool(
+            observed.get("observed") and cancel.get("returncode") == 0 and finish.get("cancelled")
+        ),
+        "disappeared": bool(not disappearance.get("observed")),
+        "dialog_result": finish,
+        "observation": observed,
+        "cancel": {
+            "method": "cgevent-click-cancel",
+            "result": cancel,
+            "bounds": bounds,
+            "click_attempts": click_attempts,
+            "cancel_sent": bool(
+                observed.get("observed")
+                and cancel.get("returncode") == 0
+                and finish.get("cancelled")
+            ),
+        },
+        "disappearance": disappearance,
+        "permission_diagnostics": sorted(set(diagnostics)),
+    }
+
+
+def preflight_result_from_mechanisms(log_dir: pathlib.Path, timeout: float) -> dict[str, Any]:
+    mechanisms = [
+        mechanism_system_events(log_dir, PREFLIGHT_TITLE, timeout),
+        mechanism_coregraphics_escape(log_dir, PREFLIGHT_TITLE, timeout),
+        mechanism_coregraphics_click_cancel(log_dir, PREFLIGHT_TITLE, timeout),
+        mechanism_coregraphics_kill(log_dir, PREFLIGHT_TITLE, timeout),
+    ]
+    first_failing_hop, selected = classify_preflight(mechanisms)
+    selected_data = next((item for item in mechanisms if item.get("name") == selected), None)
+    return {
+        "mechanism": "multi-mechanism-native-dialog-preflight",
+        "dialog_title": PREFLIGHT_TITLE,
+        "mechanisms": mechanisms,
+        "selected_mechanism": selected,
+        "observed": (selected_data or {}).get("observation", {"observed": False}),
+        "cancel": (selected_data or {}).get("cancel", {"cancel_sent": False}),
+        "dialog_result": (selected_data or {}).get("dialog_result"),
+        "disappearance": {
+            **((selected_data or {}).get("disappearance") or {"observed": True}),
+            "disappeared": bool(selected_data and selected_data.get("disappeared")),
+        },
+        "first_failing_hop": first_failing_hop,
+        "passed": selected is not None,
+    }
+
+
+def classify_preflight(mechanisms: list[dict[str, Any]]) -> tuple[str, str | None]:
+    for mechanism in mechanisms:
+        if (
+            mechanism.get("production_print_compatible") is not False
+            and mechanism.get("observed")
+            and mechanism.get("cancel_sent")
+            and mechanism.get("disappeared")
+        ):
+            return "no-failure-observed", mechanism.get("name")
+    if any(
+        mechanism.get("production_print_compatible") is not False
+        and mechanism.get("observed")
+        and not mechanism.get("cancel_sent")
+        for mechanism in mechanisms
+    ):
+        return "dialog-cancel-failed", None
+    for mechanism in mechanisms:
+        diagnostics = mechanism.get("permission_diagnostics") or []
+        if diagnostics:
+            return "permission-denied", None
+    if any(not mechanism.get("observed") for mechanism in mechanisms):
+        return "dialog-observation-failed", None
+    if any(not mechanism.get("cancel_sent") for mechanism in mechanisms):
+        return "dialog-cancel-failed", None
+    if any(not mechanism.get("disappeared") for mechanism in mechanisms):
+        return "dialog-disappearance-not-proven", None
+    return "automation-gap", None
+
+
+def run_watcher_preflight(log_dir: pathlib.Path, timeout: float) -> int:
+    log_dir.mkdir(parents=True, exist_ok=True)
+    queue_before = print_queue_state()
+    preflight = preflight_result_from_mechanisms(log_dir, timeout)
+    mechanisms = preflight["mechanisms"]
+    queue_after = print_queue_state()
+    selected = preflight["selected_mechanism"]
+    summary = {
+        "probe": "watcher-preflight",
+        "dialog_title": PREFLIGHT_TITLE,
+        "first_failing_hop": preflight["first_failing_hop"],
+        "overall_result": "pass" if preflight["first_failing_hop"] == "no-failure-observed" else "partial",
+        "mechanisms": mechanisms,
+        "selected_mechanism": selected,
+        "safe_for_production_print_probe": selected is not None,
+        "production_print_click_attempted": False,
+        "print_queue_before": queue_before,
+        "print_queue_after": queue_after,
+    }
+    write_json(log_dir / "native-dialog-preflight-summary.json", summary)
+    return 0 if selected else 1
+
+
+def preflight_dialog(timeout: float) -> dict[str, Any]:
+    with tempfile.TemporaryDirectory(prefix="ts834-preflight-") as tmp:
+        return preflight_result_from_mechanisms(pathlib.Path(tmp), timeout)
+
+
+def watch_and_cancel_print_dialog(timeout: float) -> dict[str, Any]:
+    with tempfile.TemporaryDirectory(prefix="ts834-print-watch-") as tmp:
+        log_dir = pathlib.Path(tmp)
+        observed = swift_cgwindow_observe_any(log_dir, ["Print", "Printer"], timeout)
+        result = {"returncode": 1, "stdout": "", "stderr": "", "timed_out": False}
+        if observed.get("observed"):
+            result = run_cmd(["swift", str(CGEVENT_INJECT), "key", "53"], timeout=5)
+            time.sleep(0.5)
+        disappearance = swift_cgwindow_observe_any(log_dir, ["Print", "Printer"], 1)
+    return {
+        "mechanism": "coregraphics-print-window-cgevent-escape",
+        "observation": observed,
+        "disappearance": disappearance,
+        "result": result,
+        "dialog_observed": bool(observed.get("observed")),
+        "cancel_sent": bool(observed.get("observed") and result.get("returncode") == 0),
+        "disappeared": bool(not disappearance.get("observed")),
     }
 
 
@@ -514,7 +835,11 @@ def write_summary(
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--log-dir", required=True)
-    parser.add_argument("--probe", choices=["safety-gate", "native-dialog"], required=True)
+    parser.add_argument(
+        "--probe",
+        choices=["safety-gate", "native-dialog", "watcher-preflight"],
+        required=True,
+    )
     parser.add_argument("--allow-native-dialog-click", action="store_true")
     parser.add_argument("--width", type=int, default=1200)
     parser.add_argument("--height", type=int, default=900)
@@ -530,6 +855,8 @@ def main() -> int:
     args = parse_args()
     log_dir = pathlib.Path(args.log_dir).resolve()
     log_dir.mkdir(parents=True, exist_ok=True)
+    if args.probe == "watcher-preflight":
+        return run_watcher_preflight(log_dir, args.watch_timeout)
     if not ROAMIUM.exists():
         raise SystemExit(f"missing Roamium binary: {ROAMIUM}")
     if not BITCOIN_PDF.exists():

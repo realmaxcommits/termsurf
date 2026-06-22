@@ -147,6 +147,11 @@ observes, cancels, and verifies disappearance of the dialog, records that no
 production print click occurred, and marks the next native PDF print experiment
 safe to attempt the production print click behind that mechanism.
 
+If the selected mechanism cancels the harmless dialog by terminating the
+harmless dialog process, the result must explicitly record that this proves
+observation and cleanup for a safe next experiment but does not by itself prove
+that the production print dialog can be cancelled with the same action.
+
 ## Partial Criteria
 
 This experiment is partial if it improves diagnostics or tests additional
@@ -166,3 +171,116 @@ An adversarial Codex subagent reviewed the design with fresh context.
 Verdict: **Approved**.
 
 The reviewer found no required issues.
+
+## Result
+
+**Result:** Partial
+
+Added a preflight-only watcher probe to
+`scripts/test-issue-834-pdf-native-print.py`:
+
+```bash
+python3 scripts/test-issue-834-pdf-native-print.py \
+  --log-dir logs/issue-834-exp16-native-dialog-preflight \
+  --probe watcher-preflight
+```
+
+This probe does not launch Roamium and does not click the production PDF print
+control. It opens harmless non-print dialogs with the unique title
+`TermSurf Native Print Safety Preflight`, tests watcher mechanisms, records
+print queue state before and after, and writes
+`native-dialog-preflight-summary.json`.
+
+Tested mechanisms:
+
+- `system-events-window-title-escape`;
+- `coregraphics-window-title-cgevent-escape`;
+- `coregraphics-window-title-cgevent-click-cancel`;
+- `coregraphics-window-title-terminate-dialog`.
+
+Final evidence:
+
+- summary:
+  `logs/issue-834-exp16-native-dialog-preflight/native-dialog-preflight-summary.json`;
+- `overall_result = "partial"`;
+- `first_failing_hop = "dialog-cancel-failed"`;
+- `selected_mechanism = null`;
+- `safe_for_production_print_probe = false`;
+- `production_print_click_attempted = false`;
+- System Events still failed with `system-events-assistive-access-denied`;
+- CoreGraphics window enumeration observed the harmless dialog;
+- CGEvent Escape and CGEvent click attempts did not cancel the harmless dialog:
+  the dialog result was `button returned:, gave up:true`, meaning it timed out;
+- terminating the harmless `osascript` dialog process observed and cleaned up
+  the dialog, but that mechanism is marked `production_print_compatible = false`
+  because it does not prove that a real production print dialog can be
+  cancelled;
+- print queues before and after were empty.
+
+The existing native-dialog path now reuses the same multi-mechanism preflight,
+but the preflight correctly refuses to mark production print probing safe until
+a production-compatible cancel action is proven.
+
+Verification commands run:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile \
+  scripts/test-issue-834-pdf-native-print.py
+
+rm -rf scripts/__pycache__
+
+python3 scripts/test-issue-834-pdf-native-print.py \
+  --log-dir logs/issue-834-exp16-native-dialog-preflight \
+  --probe watcher-preflight
+
+git diff --check
+```
+
+No production print dialog was opened, no production print control was clicked,
+and no print job was submitted.
+
+## Completion Review
+
+An adversarial Codex subagent reviewed the completed experiment with fresh
+context.
+
+Initial verdict: **Changes Required**.
+
+Required findings:
+
+- the first result overclaimed that CGEvent Escape cancelled the harmless
+  dialog, but the dialog stdout recorded `gave up:true`, proving it timed out
+  instead;
+- the summary incorrectly recorded `overall_result = "pass"` and
+  `safe_for_production_print_probe = true` without a production-compatible
+  cancellation mechanism.
+
+Fixes:
+
+- the harness now records dialog stdout/stderr in `dialog_result`;
+- CGEvent Escape and CGEvent click mechanisms only set `cancel_sent = true` when
+  the dialog's own result proves a non-timeout cancellation;
+- process termination is recorded as cleanup evidence but marked
+  `production_print_compatible = false`;
+- the final preflight summary was regenerated and now records
+  `overall_result = "partial"`, `first_failing_hop = "dialog-cancel-failed"`,
+  and `safe_for_production_print_probe = false`.
+
+Re-review verdict: **Approved**.
+
+The reviewer confirmed the overclaim was fixed and found no remaining issues.
+
+## Conclusion
+
+Experiment 16 improved the native-print safety picture but did not fully resolve
+the blocker. CoreGraphics window enumeration can objectively observe harmless
+native dialogs on this VM, and process termination can clean up the harmless
+`osascript` dialog. However, neither CGEvent Escape nor the tested CGEvent click
+positions produced a proven dialog cancellation; both allowed the harmless
+dialog to time out.
+
+The next Issue 834 experiment should continue the watcher work rather than
+clicking production print. It should either find a production-compatible
+CoreGraphics/AppKit/Accessibility cancel action for the observed dialog or
+document the exact macOS permission that must be granted before System Events or
+another mechanism can cancel native dialogs safely.
